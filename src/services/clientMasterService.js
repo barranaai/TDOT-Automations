@@ -62,7 +62,6 @@ async function getDocumentCollectionStartedItems() {
           name
           column_values {
             id
-            title
             text
             type
           }
