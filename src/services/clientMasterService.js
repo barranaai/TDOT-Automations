@@ -15,12 +15,12 @@ async function getCaseStageColumnId(boardId = clientMasterBoardId) {
   }
 
   const data = await mondayApi.query(
-    `query getBoardColumns($boardIds: [Int!]!) {
+    `query getBoardColumns($boardIds: [ID!]!) {
       boards(ids: $boardIds) {
         columns { id title }
       }
     }`,
-    { boardIds: [Number(boardId)] }
+    { boardIds: [String(boardId)] }
   );
 
   const columns = data?.boards?.[0]?.columns;
