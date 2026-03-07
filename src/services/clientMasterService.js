@@ -5,15 +5,9 @@ const CASE_STAGE_COLUMN_TITLE = 'Case Stage';
 const DOCUMENT_COLLECTION_STARTED = 'Document Collection Started';
 
 /**
- * Get the column id for "Case Stage" on the Client Master board.
- * @param {string|number} boardId - Board ID (defaults to config clientMasterBoardId)
- * @returns {Promise<string|null>} Column id or null if not found
+ * Fetch board columns as a map of { [columnId]: columnTitle }.
  */
-async function getCaseStageColumnId(boardId = clientMasterBoardId) {
-  if (!boardId) {
-    throw new Error('Client Master Board ID is not configured (MONDAY_CLIENT_MASTER_BOARD_ID)');
-  }
-
+async function getBoardColumnMap(boardId) {
   const data = await mondayApi.query(
     `query getBoardColumns($boardIds: [ID!]!) {
       boards(ids: $boardIds) {
@@ -28,15 +22,17 @@ async function getCaseStageColumnId(boardId = clientMasterBoardId) {
     throw new Error(`Board ${boardId} not found or has no columns`);
   }
 
-  const caseStageColumn = columns.find(
-    (col) => col.title && col.title.trim().toLowerCase() === CASE_STAGE_COLUMN_TITLE.toLowerCase()
-  );
-  return caseStageColumn ? caseStageColumn.id : null;
+  const map = {};
+  for (const col of columns) {
+    map[col.id] = col.title;
+  }
+  return map;
 }
 
 /**
  * Fetch all items on Client Master board where Case Stage = "Document Collection Started".
- * @returns {Promise<Array>} List of items with id, name, and column_values
+ * Returns each item with a clean named `fields` object instead of a raw column_values array.
+ * @returns {Promise<Array>}
  */
 async function getDocumentCollectionStartedItems() {
   const boardId = clientMasterBoardId;
@@ -44,10 +40,16 @@ async function getDocumentCollectionStartedItems() {
     throw new Error('Client Master Board ID is not configured (MONDAY_CLIENT_MASTER_BOARD_ID)');
   }
 
-  const columnId = await getCaseStageColumnId(boardId);
-  if (!columnId) {
+  // Fetch column map and Case Stage column id in parallel
+  const columnMap = await getBoardColumnMap(boardId);
+
+  const caseStageEntry = Object.entries(columnMap).find(
+    ([, title]) => title.trim().toLowerCase() === CASE_STAGE_COLUMN_TITLE.toLowerCase()
+  );
+  if (!caseStageEntry) {
     throw new Error(`Column "${CASE_STAGE_COLUMN_TITLE}" not found on Client Master board`);
   }
+  const caseStageColumnId = caseStageEntry[0];
 
   const data = await mondayApi.query(
     `query getItemsByCaseStage($boardId: ID!, $columnId: String!, $columnValue: String!) {
@@ -63,23 +65,37 @@ async function getDocumentCollectionStartedItems() {
           column_values {
             id
             text
-            type
           }
         }
       }
     }`,
     {
       boardId: String(boardId),
-      columnId,
+      columnId: caseStageColumnId,
       columnValue: DOCUMENT_COLLECTION_STARTED,
     }
   );
 
-  const items = data?.items_page_by_column_values?.items ?? [];
-  return items;
+  const rawItems = data?.items_page_by_column_values?.items ?? [];
+
+  // Shape each item into a clean object
+  return rawItems.map((item) => {
+    const fields = {};
+    for (const col of item.column_values) {
+      const title = columnMap[col.id];
+      if (title && col.text) {
+        fields[title] = col.text;
+      }
+    }
+    return {
+      id: item.id,
+      name: item.name,
+      fields,
+    };
+  });
 }
 
 module.exports = {
-  getCaseStageColumnId,
+  getBoardColumnMap,
   getDocumentCollectionStartedItems,
 };
