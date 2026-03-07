@@ -50,30 +50,33 @@ async function getDocumentCollectionStartedItems() {
   }
 
   const data = await mondayApi.query(
-    `query getItemsByCaseStage($boardId: Int!, $columnId: String!, $columnValue: String!) {
-      items_by_column_values(
+    `query getItemsByCaseStage($boardId: ID!, $columnId: String!, $columnValue: String!) {
+      items_page_by_column_values(
+        limit: 500,
         board_id: $boardId,
-        column_id: $columnId,
-        column_value: $columnValue
+        columns: [{ column_id: $columnId, column_values: [$columnValue] }]
       ) {
-        id
-        name
-        column_values {
+        cursor
+        items {
           id
-          title
-          text
-          type
+          name
+          column_values {
+            id
+            title
+            text
+            type
+          }
         }
       }
     }`,
     {
-      boardId: Number(boardId),
+      boardId: String(boardId),
       columnId,
       columnValue: DOCUMENT_COLLECTION_STARTED,
     }
   );
 
-  const items = data?.items_by_column_values ?? [];
+  const items = data?.items_page_by_column_values?.items ?? [];
   return items;
 }
 
