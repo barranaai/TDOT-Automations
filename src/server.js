@@ -3,6 +3,8 @@ const express = require('express');
 const mondayWebhookRouter = require('./routes/mondayWebhook');
 const mondayApi = require('./services/mondayApi');
 const clientMasterService = require('./services/clientMasterService');
+const boardService = require('./services/boardService');
+const { templateBoardId, executionBoardId, clientMasterBoardId } = require('../config/monday');
 
 const app = express();
 const PORT = process.env.PORT || 5050;
@@ -35,6 +37,34 @@ app.get('/api/client-master/document-collection-started', async (req, res) => {
     const message = err.response?.data?.errors?.[0]?.message || err.message;
     console.error('Error fetching document collection started items:', message);
     res.status(500).json({ error: message });
+  }
+});
+
+// Board discovery endpoints (Step 1 — read-only)
+app.get('/api/boards/template', async (req, res) => {
+  try {
+    const board = await boardService.getBoardStructure(templateBoardId);
+    res.json(board);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/boards/execution', async (req, res) => {
+  try {
+    const board = await boardService.getBoardStructure(executionBoardId);
+    res.json(board);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/boards/client-master', async (req, res) => {
+  try {
+    const board = await boardService.getBoardStructure(clientMasterBoardId);
+    res.json(board);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
