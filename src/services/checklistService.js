@@ -1,12 +1,39 @@
 const mondayApi = require('./mondayApi');
-const extractColumnValue = require('../utils/extractColumnValue');
 
-async function handleEvent(event) {
-  const { type, pulseId, boardId, columnId } = event;
+/**
+ * Triggered automatically when an item's Case Stage changes to
+ * "Document Collection Started" on the Client Master board.
+ *
+ * @param {{ itemId: string|number, boardId: string|number }} param
+ */
+async function onDocumentCollectionStarted({ itemId, boardId }) {
+  console.log(`[ChecklistService] Running automation for item ${itemId} on board ${boardId}`);
 
-  console.log(`Event received — type: ${type}, item: ${pulseId}, board: ${boardId}`);
+  // Fetch the item details
+  const data = await mondayApi.query(
+    `query getItem($itemId: ID!) {
+      items(ids: [$itemId]) {
+        id
+        name
+        column_values { id text }
+      }
+    }`,
+    { itemId: String(itemId) }
+  );
 
-  // TODO: implement checklist automation logic
+  const item = data?.items?.[0];
+  if (!item) {
+    console.warn(`[ChecklistService] Item ${itemId} not found`);
+    return;
+  }
+
+  console.log(`[ChecklistService] Processing: "${item.name}" (id: ${item.id})`);
+
+  // TODO: add your automation logic here, e.g.
+  //   - send a notification / email
+  //   - create sub-items or a checklist
+  //   - update another column
+  //   - post to Slack
 }
 
-module.exports = { handleEvent };
+module.exports = { onDocumentCollectionStarted };
