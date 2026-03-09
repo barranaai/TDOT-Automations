@@ -1,0 +1,107 @@
+const mondayApi = require('./mondayApi');
+const { getQuestionnaireItemsByCaseType } = require('./questionnaireTemplateService');
+const { createMissingQuestionnaireItems } = require('./questionnaireExecutionService');
+
+// Client Master column IDs
+const CM_COLS = {
+  caseReferenceNumber:          'text_mm142s49',
+  primaryCaseType:              'dropdown_mm0xd1qn',
+  caseSubType:                  'text_mm17vbph',
+  questionnaireTemplateApplied: 'color_mm0x3tpw',
+};
+
+const QUESTIONNAIRE_NOT_APPLIED_VALUE = 'No';
+
+/**
+ * Triggered when Case Stage → "Document Collection Started".
+ * Runs only if "Questionnaire Template Applied" = "No" on the Client Master item.
+ *
+ * @param {{ itemId: string|number, boardId: string|number }} param
+ */
+async function onDocumentCollectionStarted({ itemId, boardId }) {
+  console.log(`[QuestionnaireService] Triggered for item ${itemId} on board ${boardId}`);
+
+  // 1. Fetch Client Master item
+  const data = await mondayApi.query(
+    `query getItem($itemId: ID!) {
+      items(ids: [$itemId]) {
+        id
+        name
+        column_values(ids: [
+          "${CM_COLS.caseReferenceNumber}",
+          "${CM_COLS.primaryCaseType}",
+          "${CM_COLS.caseSubType}",
+          "${CM_COLS.questionnaireTemplateApplied}"
+        ]) {
+          id
+          text
+        }
+      }
+    }`,
+    { itemId: String(itemId) }
+  );
+
+  const item = data?.items?.[0];
+  if (!item) {
+    console.warn(`[QuestionnaireService] Item ${itemId} not found`);
+    return;
+  }
+
+  // 2. Extract columns
+  const colMap = {};
+  for (const col of item.column_values) {
+    colMap[col.id] = col.text;
+  }
+
+  const caseRef             = colMap[CM_COLS.caseReferenceNumber];
+  const caseType            = colMap[CM_COLS.primaryCaseType];
+  const caseSubType         = colMap[CM_COLS.caseSubType] || null;
+  const questionnaireStatus = colMap[CM_COLS.questionnaireTemplateApplied];
+
+  console.log(
+    `[QuestionnaireService] Item: "${item.name}" | Ref: ${caseRef} | ` +
+    `Type: ${caseType} | SubType: ${caseSubType} | Questionnaire Applied: ${questionnaireStatus}`
+  );
+
+  // 3. Guard: only proceed if Questionnaire Template Applied = "No"
+  if (questionnaireStatus && questionnaireStatus.trim().toLowerCase() !== QUESTIONNAIRE_NOT_APPLIED_VALUE.toLowerCase()) {
+    console.log(`[QuestionnaireService] Questionnaire already applied ("${questionnaireStatus}"). Skipping.`);
+    return;
+  }
+
+  if (!caseRef) {
+    console.warn(`[QuestionnaireService] No Case Reference Number for item ${itemId}. Skipping.`);
+    return;
+  }
+
+  if (!caseType) {
+    console.warn(`[QuestionnaireService] No Primary Case Type for item ${itemId}. Skipping.`);
+    return;
+  }
+
+  // 4. Fetch matching template questions
+  let templateItems;
+  try {
+    templateItems = await getQuestionnaireItemsByCaseType(caseType);
+    console.log(`[QuestionnaireService] Found ${templateItems.length} template questions for "${caseType}"`);
+  } catch (err) {
+    console.error(`[QuestionnaireService] Template lookup failed: ${err.message}`);
+    return;
+  }
+
+  if (!templateItems.length) {
+    console.warn(`[QuestionnaireService] No questionnaire items for case type "${caseType}". Nothing to create.`);
+    return;
+  }
+
+  // 5. Create missing questionnaire execution items
+  const { created, skipped } = await createMissingQuestionnaireItems({
+    caseRef,
+    clientMasterItemId: String(itemId),
+    templateItems,
+  });
+
+  console.log(`[QuestionnaireService] Done — created: ${created}, skipped (already existed): ${skipped}`);
+}
+
+module.exports = { onDocumentCollectionStarted };

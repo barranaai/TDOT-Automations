@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const checklistService = require('../services/checklistService');
+const questionnaireService = require('../services/questionnaireService');
 
 const CASE_STAGE_COLUMN_TITLE = 'Case Stage';
 const DOCUMENT_COLLECTION_STARTED = 'Document Collection Started';
@@ -23,7 +24,7 @@ router.post('/', async (req, res) => {
   try {
     const { type, columnTitle, value, pulseId, boardId } = event;
 
-    // Only act on column value changes for "Case Stage"
+    // Only act on column value changes for "Case Stage" → "Document Collection Started"
     if (
       type === 'update_column_value' &&
       columnTitle === CASE_STAGE_COLUMN_TITLE &&
@@ -32,7 +33,12 @@ router.post('/', async (req, res) => {
       console.log(
         `[Webhook] Case Stage → "${DOCUMENT_COLLECTION_STARTED}" for item ${pulseId} on board ${boardId}`
       );
-      await checklistService.onDocumentCollectionStarted({ itemId: pulseId, boardId });
+
+      // Run both automations in parallel
+      await Promise.allSettled([
+        checklistService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
+        questionnaireService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
+      ]);
     }
   } catch (err) {
     console.error('[Webhook] Error handling event:', err.message);
