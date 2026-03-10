@@ -49,9 +49,9 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
     colMap[col.id] = col.text;
   }
 
-  const caseRef      = colMap[CM_COLS.caseReferenceNumber];
-  const caseType     = colMap[CM_COLS.primaryCaseType];
-  const caseSubType  = colMap[CM_COLS.caseSubType] || null;
+  const caseRef      = (colMap[CM_COLS.caseReferenceNumber] || '').replace(/\s+/g, ' ').trim();
+  const caseType     = (colMap[CM_COLS.primaryCaseType] || '').trim();
+  const caseSubType  = (colMap[CM_COLS.caseSubType] || '').trim() || null;
 
   console.log(`[ChecklistService] Item: "${item.name}" | Ref: ${caseRef} | Type: ${caseType} | SubType: ${caseSubType}`);
 
