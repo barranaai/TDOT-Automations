@@ -113,14 +113,15 @@ function formPage(caseRef, sections) {
       const st    = STATUS_STYLE[doc.status] || STATUS_STYLE['Missing'];
       const canUpload = doc.status !== 'Reviewed';
       return `
-      <div class="doc-row" id="doc_${doc.id}">
+      <div class="doc-row${doc.status === 'Rework Required' ? ' needs-action' : ''}" id="doc_${doc.id}">
         <div class="doc-info">
           <div class="doc-top">
             <span class="doc-code">${esc(doc.documentCode)}</span>
-            ${doc.requiredType === 'Mandatory' ? '<span class="badge mandatory">Required</span>' : `<span class="badge optional">${esc(doc.requiredType)}</span>`}
+            ${doc.status === 'Rework Required' ? '<span class="badge action-required">⚠️ Re-upload Required</span>' : (doc.requiredType === 'Mandatory' ? '<span class="badge mandatory">Required</span>' : `<span class="badge optional">${esc(doc.requiredType)}</span>`)}
             ${doc.blocking === 'Yes' ? '<span class="badge blocking">Blocking</span>' : ''}
           </div>
           <div class="doc-name">${esc(doc.name)}</div>
+          ${doc.status === 'Rework Required' && doc.reviewNotes ? `<div class="doc-review-note">📋 <strong>Officer note:</strong> ${esc(doc.reviewNotes)}</div>` : ''}
           ${doc.description ? `<div class="doc-desc">${esc(doc.description)}</div>` : ''}
           ${doc.clientInstructions ? `<div class="doc-instructions">💡 ${esc(doc.clientInstructions)}</div>` : ''}
           ${doc.source ? `<div class="doc-meta">Source: ${esc(doc.source)}</div>` : ''}
@@ -211,9 +212,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .badge.mandatory{background:#fef2f2;color:#dc2626}
 .badge.optional{background:#f0fdf4;color:#16a34a}
 .badge.blocking{background:#fff7ed;color:#ea580c}
+.badge.action-required{background:#fff7ed;color:#ea580c;border:1px solid #fed7aa;font-weight:700}
+.doc-row.needs-action{border:2px solid #f97316!important;background:#fff7ed!important;border-radius:10px}
 .doc-name{font-size:.92rem;font-weight:500;color:#1e293b;line-height:1.4}
 .doc-desc{font-size:.82rem;color:#475569;margin-top:.3rem;line-height:1.5}
 .doc-instructions{font-size:.82rem;color:#2563eb;background:#eff6ff;padding:.35rem .6rem;border-radius:6px;margin-top:.35rem;line-height:1.5;border-left:3px solid #93c5fd}
+.doc-review-note{font-size:.82rem;color:#9a3412;background:#ffedd5;padding:.4rem .7rem;border-radius:6px;margin-top:.35rem;line-height:1.5;border-left:3px solid #f97316}
 .doc-meta{font-size:.75rem;color:#94a3b8;margin-top:.2rem}
 .doc-actions{display:flex;flex-direction:column;align-items:flex-end;gap:.4rem;flex-shrink:0}
 .doc-status{display:inline-flex;align-items:center;font-size:.75rem;font-weight:600;padding:.25rem .65rem;border-radius:99px;white-space:nowrap}

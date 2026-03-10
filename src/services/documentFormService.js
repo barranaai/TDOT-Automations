@@ -12,6 +12,8 @@ const REVIEW_REQ_COL  = 'color_mm0z796e';
 
 const TEMPLATE_BOARD_ID = process.env.MONDAY_TEMPLATE_BOARD_ID || '18401624183';
 
+const REVIEW_NOTES_COL = 'long_text_mm0zbpr';
+
 const FETCH_COLS = [
   'text_mm0zr7tf',      // Document Code
   'color_mm0zwgvr',     // Document Status
@@ -20,6 +22,7 @@ const FETCH_COLS = [
   'lookup_mm0zb0p6',    // Blocking Document (mirror)
   'lookup_mm0zj5rt',    // Document Source (mirror)
   'date_mm0zyw0m',      // Last Upload Date
+  REVIEW_NOTES_COL,     // Review Notes (shown to client on Rework Required)
 ];
 
 /**
@@ -123,6 +126,7 @@ async function getCaseDocuments(caseRef) {
         lastUpload:         col('date_mm0zyw0m'),
         description:        tmpl.description || '',
         clientInstructions: tmpl.clientInstructions || '',
+        reviewNotes:        col(REVIEW_NOTES_COL) || '',
       };
     })
     .sort((a, b) => {

@@ -128,16 +128,20 @@ function formPage(caseRef, sections) {
     const icon = CATEGORY_ICONS[sec.category] || '📋';
     const isLast = idx === total - 1;
 
-    const questionsHtml = sec.items.map((q) => `
-      <div class="question" data-item-id="${q.id}">
+    const questionsHtml = sec.items.map((q) => {
+      const needsAction = q.responseStatus === 'Needs Clarification';
+      return `
+      <div class="question${needsAction ? ' needs-action' : ''}" data-item-id="${q.id}">
         <div class="q-header">
           <span class="q-code">${esc(q.questionCode)}</span>
-          ${q.required === 'Mandatory' ? '<span class="badge mandatory">Required</span>' : '<span class="badge optional">Optional</span>'}
+          ${needsAction ? '<span class="badge action-required">⚠️ Action Required</span>' : (q.required === 'Mandatory' ? '<span class="badge mandatory">Required</span>' : '<span class="badge optional">Optional</span>')}
         </div>
         <label class="q-label" for="ans_${q.id}">${esc(q.name)}</label>
-        ${q.helpText ? `<div class="q-help">💡 ${esc(q.helpText)}</div>` : ''}
+        ${needsAction && q.reviewNotes ? `<div class="q-review-note">📋 <strong>Officer note:</strong> ${esc(q.reviewNotes)}</div>` : ''}
+        ${!needsAction && q.helpText ? `<div class="q-help">💡 ${esc(q.helpText)}</div>` : ''}
         ${renderInput(q)}
-      </div>`).join('');
+      </div>`;
+    }).join('');
 
     return `
     <div class="panel" id="panel_${idx}" style="display:none">
@@ -213,6 +217,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .badge.optional{background:#f0fdf4;color:#16a34a}
 .q-label{display:block;font-size:.9rem;font-weight:500;color:#374151;margin-bottom:.3rem;line-height:1.5}
 .q-help{font-size:.8rem;color:#2563eb;background:#eff6ff;padding:.3rem .65rem;border-radius:6px;margin-bottom:.45rem;line-height:1.5;border-left:3px solid #93c5fd}
+.needs-action{border:2px solid #f97316!important;background:#fff7ed!important;border-radius:10px}
+.needs-action .q-label{color:#c2410c}
+.q-review-note{font-size:.82rem;color:#9a3412;background:#ffedd5;padding:.4rem .7rem;border-radius:6px;margin-bottom:.45rem;line-height:1.5;border-left:3px solid #f97316}
+.badge.action-required{background:#fff7ed;color:#ea580c;border:1px solid #fed7aa;font-size:.68rem;font-weight:700;padding:.15rem .45rem;border-radius:4px}
 .form-input{width:100%;padding:.6rem .9rem;border:1.5px solid #d1d5db;border-radius:8px;font-size:.9rem;font-family:inherit;outline:none;transition:border .2s,box-shadow .2s;background:#fff;color:#1e293b}
 .form-input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
 .textarea{resize:vertical;min-height:80px}

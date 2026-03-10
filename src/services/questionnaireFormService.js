@@ -9,12 +9,16 @@ const LAST_RESP_DATE        = 'date_mm13v6wg';
 const RESPONSE_STATUS_COL   = 'color_mm135pm1';
 const REVIEW_REQUIRED_COL   = 'color_mm13f095';
 
+const REVIEW_NOTES_COL = 'long_text_mm13kr4w';
+
 const FETCH_COLS = [
   'lookup_mm13fva6',   // Question Category
   'lookup_mm13nnd0',   // Input Type
   'lookup_mm1333gw',   // Required Type
   'lookup_mm12m2ej',   // Question Code
   CLIENT_RESP_COL,     // Client Response (current answer)
+  RESPONSE_STATUS_COL, // Response Status (for highlighting)
+  REVIEW_NOTES_COL,    // Review Notes (shown to client on Needs Clarification)
 ];
 
 /**
@@ -109,14 +113,16 @@ async function getCaseItems(caseRef) {
       }
 
       return {
-        id:           item.id,
-        name:         item.name,
-        category:     col('lookup_mm13fva6') || 'General',
-        inputType:    col('lookup_mm13nnd0') || 'Short Text',
-        required:     col('lookup_mm1333gw') || 'Mandatory',
-        questionCode: col('lookup_mm12m2ej') || '',
+        id:             item.id,
+        name:           item.name,
+        category:       col('lookup_mm13fva6') || 'General',
+        inputType:      col('lookup_mm13nnd0') || 'Short Text',
+        required:       col('lookup_mm1333gw') || 'Mandatory',
+        questionCode:   col('lookup_mm12m2ej') || '',
         currentAnswer,
-        helpText:     helpTextMap[item.name.trim()] || '',
+        helpText:       helpTextMap[item.name.trim()] || '',
+        responseStatus: col(RESPONSE_STATUS_COL) || '',
+        reviewNotes:    col(REVIEW_NOTES_COL) || '',
       };
     })
     .sort((a, b) => {
