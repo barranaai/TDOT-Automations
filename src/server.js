@@ -8,8 +8,9 @@ const clientMasterService = require('./services/clientMasterService');
 const boardService = require('./services/boardService');
 const webhookManager  = require('./services/webhookManager');
 const { startScheduler } = require('./services/scheduler');
-const slaRiskEngine      = require('./services/slaRiskEngine');
-const chasingLoopService = require('./services/chasingLoopService');
+const caseReadinessService = require('./services/caseReadinessService');
+const slaRiskEngine        = require('./services/slaRiskEngine');
+const chasingLoopService   = require('./services/chasingLoopService');
 const { templateBoardId, executionBoardId, clientMasterBoardId } = require('../config/monday');
 
 const app = express();
@@ -65,6 +66,14 @@ app.get('/api/boards/execution', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Manual trigger — run Case Readiness Engine immediately
+app.post('/api/readiness/run', async (req, res) => {
+  res.json({ status: 'triggered', message: 'Case Readiness Engine running in background…' });
+  caseReadinessService.runDailyReadinessCheck().catch((err) =>
+    console.error('[Readiness] Manual run failed:', err.message)
+  );
 });
 
 // Manual trigger — run SLA & Risk Engine immediately
