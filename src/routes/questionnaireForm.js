@@ -135,6 +135,7 @@ function formPage(caseRef, sections) {
           ${q.required === 'Mandatory' ? '<span class="badge mandatory">Required</span>' : '<span class="badge optional">Optional</span>'}
         </div>
         <label class="q-label" for="ans_${q.id}">${esc(q.name)}</label>
+        ${q.helpText ? `<div class="q-help">💡 ${esc(q.helpText)}</div>` : ''}
         ${renderInput(q)}
       </div>`).join('');
 
@@ -210,7 +211,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .badge{font-size:.65rem;font-weight:700;padding:.15rem .45rem;border-radius:4px;text-transform:uppercase;letter-spacing:.04em}
 .badge.mandatory{background:#fef2f2;color:#dc2626}
 .badge.optional{background:#f0fdf4;color:#16a34a}
-.q-label{display:block;font-size:.9rem;font-weight:500;color:#374151;margin-bottom:.45rem;line-height:1.5}
+.q-label{display:block;font-size:.9rem;font-weight:500;color:#374151;margin-bottom:.3rem;line-height:1.5}
+.q-help{font-size:.8rem;color:#2563eb;background:#eff6ff;padding:.3rem .65rem;border-radius:6px;margin-bottom:.45rem;line-height:1.5;border-left:3px solid #93c5fd}
 .form-input{width:100%;padding:.6rem .9rem;border:1.5px solid #d1d5db;border-radius:8px;font-size:.9rem;font-family:inherit;outline:none;transition:border .2s,box-shadow .2s;background:#fff;color:#1e293b}
 .form-input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
 .textarea{resize:vertical;min-height:80px}
