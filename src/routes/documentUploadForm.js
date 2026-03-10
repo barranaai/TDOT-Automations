@@ -2,6 +2,7 @@ const express = require('express');
 const multer  = require('multer');
 const router  = express.Router();
 const { getCaseDocuments, uploadFileToMonday, markDocumentReceived } = require('../services/documentFormService');
+const { updateLastActivityDate } = require('../services/clientMasterService');
 
 // Store uploads in memory (max 20 MB per file)
 const upload = multer({
@@ -431,6 +432,7 @@ router.get('/:caseRef', async (req, res) => {
 });
 
 router.post('/:caseRef/upload/:itemId', upload.single('file'), async (req, res) => {
+  const caseRef = decodeURIComponent(req.params.caseRef).trim();
   const itemId  = req.params.itemId;
   const file    = req.file;
 
@@ -442,6 +444,8 @@ router.post('/:caseRef/upload/:itemId', upload.single('file'), async (req, res) 
     await uploadFileToMonday(itemId, file.buffer, file.originalname, file.mimetype);
     await markDocumentReceived(itemId);
     res.json({ success: true });
+    // Non-blocking — update client activity timestamp on master board
+    updateLastActivityDate(caseRef).catch(() => {});
   } catch (err) {
     console.error('[DocForm] Upload error for item', itemId, ':', err.message);
     res.status(500).json({ success: false, error: err.message });

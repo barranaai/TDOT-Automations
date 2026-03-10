@@ -1,6 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const { getCaseItems, saveAnswers, submitQuestionnaire } = require('../services/questionnaireFormService');
+const { updateLastActivityDate } = require('../services/clientMasterService');
 
 // ─── Category display order ───────────────────────────────────────────────────
 const CATEGORY_ORDER = ['Personal', 'Background', 'Travel', 'Education', 'Employment', 'Legal', 'Financial', 'General'];
@@ -491,6 +492,8 @@ router.post('/:caseRef/save', async (req, res) => {
   try {
     const result = await saveAnswers(answers);
     res.json({ success: true, ...result });
+    // Non-blocking — update client activity timestamp on master board
+    updateLastActivityDate(caseRef).catch(() => {});
   } catch (err) {
     console.error('[QuestionnaireForm] Save error:', err.message);
     res.status(500).json({ success: false, error: err.message });

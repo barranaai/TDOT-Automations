@@ -95,7 +95,62 @@ async function getDocumentCollectionStartedItems() {
   });
 }
 
+// ─── Chasing Loop helpers ─────────────────────────────────────────────────────
+
+const CASE_REF_COL       = 'text_mm142s49';
+const LAST_ACTIVITY_COL  = 'date_mm1amqyr';
+
+/**
+ * Find the Client Master item ID for a given Case Reference Number.
+ * Returns the item ID string, or null if not found.
+ */
+async function findItemByCaseRef(caseRef) {
+  const data = await mondayApi.query(
+    `query($boardId: ID!, $colId: String!, $val: String!) {
+       items_page_by_column_values(
+         limit: 1,
+         board_id: $boardId,
+         columns: [{ column_id: $colId, column_values: [$val] }]
+       ) { items { id } }
+     }`,
+    {
+      boardId: String(clientMasterBoardId),
+      colId:   CASE_REF_COL,
+      val:     caseRef,
+    }
+  );
+  return data?.items_page_by_column_values?.items?.[0]?.id || null;
+}
+
+/**
+ * Update the Last Client Activity Date on the Client Master item to today.
+ * Called whenever a client submits questionnaire answers or uploads a document.
+ */
+async function updateLastActivityDate(caseRef) {
+  try {
+    const itemId = await findItemByCaseRef(caseRef);
+    if (!itemId) return;
+    const today = new Date().toISOString().split('T')[0];
+    await mondayApi.query(
+      `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
+         change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues) { id }
+       }`,
+      {
+        boardId:   String(clientMasterBoardId),
+        itemId:    String(itemId),
+        colValues: JSON.stringify({ [LAST_ACTIVITY_COL]: { date: today } }),
+      }
+    );
+    console.log(`[ClientMaster] Last activity date updated for case ${caseRef}`);
+  } catch (err) {
+    // Non-critical — log and move on
+    console.warn(`[ClientMaster] Failed to update last activity for ${caseRef}:`, err.message);
+  }
+}
+
 module.exports = {
   getBoardColumnMap,
   getDocumentCollectionStartedItems,
+  findItemByCaseRef,
+  updateLastActivityDate,
 };

@@ -8,7 +8,8 @@ const clientMasterService = require('./services/clientMasterService');
 const boardService = require('./services/boardService');
 const webhookManager  = require('./services/webhookManager');
 const { startScheduler } = require('./services/scheduler');
-const slaRiskEngine   = require('./services/slaRiskEngine');
+const slaRiskEngine      = require('./services/slaRiskEngine');
+const chasingLoopService = require('./services/chasingLoopService');
 const { templateBoardId, executionBoardId, clientMasterBoardId } = require('../config/monday');
 
 const app = express();
@@ -71,6 +72,14 @@ app.post('/api/sla/run', async (req, res) => {
   res.json({ status: 'triggered', message: 'SLA & Risk Engine running in background…' });
   slaRiskEngine.runDailyCheck().catch((err) =>
     console.error('[SLAEngine] Manual run failed:', err.message)
+  );
+});
+
+// Manual trigger — run Client Chasing Loop immediately
+app.post('/api/chasing/run', async (req, res) => {
+  res.json({ status: 'triggered', message: 'Client Chasing Loop running in background…' });
+  chasingLoopService.runChasingLoop().catch((err) =>
+    console.error('[ChasingLoop] Manual run failed:', err.message)
   );
 });
 
