@@ -4,9 +4,11 @@ const checklistService     = require('../services/checklistService');
 const questionnaireService = require('../services/questionnaireService');
 const caseRefService       = require('../services/caseRefService');
 const accessTokenService   = require('../services/accessTokenService');
+const retainerService      = require('../services/retainerService');
 
 const CASE_STAGE_COL_TITLE        = 'Case Stage';
 const CASE_TYPE_COL_ID            = 'dropdown_mm0xd1qn';
+const RETAINER_STATUS_COL_ID      = 'color_mm0x9fnn';
 const DOCUMENT_COLLECTION_STARTED = 'Document Collection Started';
 
 router.post('/', async (req, res) => {
@@ -37,6 +39,14 @@ router.post('/', async (req, res) => {
     }
 
     if (type !== 'update_column_value') return;
+
+    // ── Retainer Payment Status → Paid ───────────────────────────────────
+    if (columnId === RETAINER_STATUS_COL_ID && value?.label?.text === 'Paid') {
+      console.log(`[Webhook] Retainer marked as Paid for item ${pulseId}`);
+      retainerService.onRetainerPaid({ itemId: pulseId }).catch(err =>
+        console.error('[Retainer] Error:', err.message)
+      );
+    }
 
     // ── Primary Case Type set → generate Case Reference Number ───────────
     if (columnId === CASE_TYPE_COL_ID) {
