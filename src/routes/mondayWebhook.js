@@ -5,6 +5,7 @@ const questionnaireService = require('../services/questionnaireService');
 const caseRefService       = require('../services/caseRefService');
 const accessTokenService   = require('../services/accessTokenService');
 const retainerService      = require('../services/retainerService');
+const emailService         = require('../services/emailService');
 
 const CASE_STAGE_COL_TITLE        = 'Case Stage';
 const CASE_TYPE_COL_ID            = 'dropdown_mm0xd1qn';
@@ -72,6 +73,11 @@ router.post('/', async (req, res) => {
         checklistService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
         questionnaireService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
       ]);
+
+      // Send client intake email with both form links
+      emailService.sendIntakeEmail(pulseId).catch(err =>
+        console.error('[Email] Failed to send intake email:', err.message)
+      );
     }
   } catch (err) {
     console.error('[Webhook] Error handling event:', err.message);
