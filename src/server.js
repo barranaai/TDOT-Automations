@@ -5,6 +5,7 @@ const questionnaireFormRouter = require('./routes/questionnaireForm');
 const mondayApi = require('./services/mondayApi');
 const clientMasterService = require('./services/clientMasterService');
 const boardService = require('./services/boardService');
+const webhookManager = require('./services/webhookManager');
 const { templateBoardId, executionBoardId, clientMasterBoardId } = require('../config/monday');
 
 const app = express();
@@ -72,4 +73,5 @@ app.get('/api/boards/client-master', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  webhookManager.ensureWebhookRegistered();
 });
