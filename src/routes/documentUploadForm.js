@@ -121,8 +121,10 @@ function formPage(caseRef, sections) {
             ${doc.blocking === 'Yes' ? '<span class="badge blocking">Blocking</span>' : ''}
           </div>
           <div class="doc-name">${esc(doc.name)}</div>
-          ${doc.source ? `<div class="doc-source">Source: ${esc(doc.source)}</div>` : ''}
-          ${doc.lastUpload ? `<div class="doc-source">Last uploaded: ${esc(doc.lastUpload)}</div>` : ''}
+          ${doc.description ? `<div class="doc-desc">${esc(doc.description)}</div>` : ''}
+          ${doc.clientInstructions ? `<div class="doc-instructions">💡 ${esc(doc.clientInstructions)}</div>` : ''}
+          ${doc.source ? `<div class="doc-meta">Source: ${esc(doc.source)}</div>` : ''}
+          ${doc.lastUpload ? `<div class="doc-meta">Last uploaded: ${esc(doc.lastUpload)}</div>` : ''}
         </div>
         <div class="doc-actions">
           <span class="doc-status" style="background:${st.bg};color:${st.color}">
@@ -210,7 +212,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .badge.optional{background:#f0fdf4;color:#16a34a}
 .badge.blocking{background:#fff7ed;color:#ea580c}
 .doc-name{font-size:.92rem;font-weight:500;color:#1e293b;line-height:1.4}
-.doc-source{font-size:.75rem;color:#94a3b8;margin-top:.2rem}
+.doc-desc{font-size:.82rem;color:#475569;margin-top:.3rem;line-height:1.5}
+.doc-instructions{font-size:.82rem;color:#2563eb;background:#eff6ff;padding:.35rem .6rem;border-radius:6px;margin-top:.35rem;line-height:1.5;border-left:3px solid #93c5fd}
+.doc-meta{font-size:.75rem;color:#94a3b8;margin-top:.2rem}
 .doc-actions{display:flex;flex-direction:column;align-items:flex-end;gap:.4rem;flex-shrink:0}
 .doc-status{display:inline-flex;align-items:center;font-size:.75rem;font-weight:600;padding:.25rem .65rem;border-radius:99px;white-space:nowrap}
 .btn-upload{display:inline-flex;align-items:center;padding:.4rem .9rem;background:#1e3a5f;color:#fff;border-radius:7px;font-size:.8rem;font-weight:600;cursor:pointer;transition:background .2s;white-space:nowrap}
