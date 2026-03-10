@@ -1,11 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const checklistService     = require('../services/checklistService');
-const questionnaireService = require('../services/questionnaireService');
-const caseRefService       = require('../services/caseRefService');
-const accessTokenService   = require('../services/accessTokenService');
-const retainerService      = require('../services/retainerService');
-const emailService         = require('../services/emailService');
+const checklistService            = require('../services/checklistService');
+const questionnaireService        = require('../services/questionnaireService');
+const caseRefService              = require('../services/caseRefService');
+const accessTokenService          = require('../services/accessTokenService');
+const retainerService             = require('../services/retainerService');
+const emailService                = require('../services/emailService');
+const questionnaireReviewService  = require('../services/questionnaireReviewService');
+const documentReviewService       = require('../services/documentReviewService');
+
+const CLIENT_MASTER_BOARD_ID               = String(process.env.MONDAY_CLIENT_MASTER_BOARD_ID || '');
+const QUESTIONNAIRE_EXECUTION_BOARD_ID     = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
+const DOCUMENT_EXECUTION_BOARD_ID         = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
 
 const CASE_STAGE_COL_TITLE        = 'Case Stage';
 const CASE_TYPE_COL_ID            = 'dropdown_mm0xd1qn';
@@ -29,8 +35,27 @@ router.post('/', async (req, res) => {
 
   try {
     const { type, columnTitle, columnId, value, pulseId, boardId } = event;
+    const boardIdStr = String(boardId || '');
 
-    // ── New item created → generate Access Token ─────────────────────────
+    // ── Questionnaire Execution Board events ─────────────────────────────
+    if (boardIdStr === QUESTIONNAIRE_EXECUTION_BOARD_ID && type === 'update_column_value') {
+      questionnaireReviewService.onColumnChange({ itemId: pulseId, columnId, value }).catch(err =>
+        console.error('[QReview] Error:', err.message)
+      );
+      return;
+    }
+
+    // ── Document Checklist Execution Board events ─────────────────────────
+    if (boardIdStr === DOCUMENT_EXECUTION_BOARD_ID && type === 'update_column_value') {
+      documentReviewService.onColumnChange({ itemId: pulseId, columnId, value }).catch(err =>
+        console.error('[DocReview] Error:', err.message)
+      );
+      return;
+    }
+
+    // ── Client Master Board events ────────────────────────────────────────
+
+    // New item created → generate Access Token
     if (type === 'create_item') {
       console.log(`[Webhook] New item created: ${pulseId} on board ${boardId}`);
       accessTokenService.onItemCreated({ itemId: pulseId }).catch(err =>
@@ -41,7 +66,7 @@ router.post('/', async (req, res) => {
 
     if (type !== 'update_column_value') return;
 
-    // ── Retainer Payment Status → Paid ───────────────────────────────────
+    // Retainer Payment Status → Paid
     if (columnId === RETAINER_STATUS_COL_ID && value?.label?.text === 'Paid') {
       console.log(`[Webhook] Retainer marked as Paid for item ${pulseId}`);
       retainerService.onRetainerPaid({ itemId: pulseId }).catch(err =>
@@ -49,7 +74,7 @@ router.post('/', async (req, res) => {
       );
     }
 
-    // ── Primary Case Type set → generate Case Reference Number ───────────
+    // Primary Case Type set → generate Case Reference Number
     if (columnId === CASE_TYPE_COL_ID) {
       const caseType = value?.chosenValues?.[0]?.name || '';
       if (caseType) {
@@ -60,7 +85,7 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // ── Case Stage → Document Collection Started ─────────────────────────
+    // Case Stage → Document Collection Started
     if (
       columnTitle === CASE_STAGE_COL_TITLE &&
       value?.label?.text === DOCUMENT_COLLECTION_STARTED

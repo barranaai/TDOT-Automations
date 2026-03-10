@@ -5,15 +5,31 @@ const WEBHOOK_URL = process.env.RENDER_URL
   ? `${process.env.RENDER_URL}/webhook/monday`
   : 'https://tdot-automations.onrender.com/webhook/monday';
 
-// Webhooks we need registered on the Client Master Board
-const REQUIRED_WEBHOOKS = [
-  'change_column_value', // Case Stage changes, Case Type changes, etc.
-  'create_item',         // New item created → generate Access Token
+// Each board and its required webhook event types
+const BOARD_CONFIGS = [
+  {
+    name:   'Client Master Board',
+    boardId: clientMasterBoardId,
+    events: [
+      'change_column_value', // Case Stage, Case Type, Retainer Status changes
+      'create_item',         // New item → generate Access Token
+    ],
+  },
+  {
+    name:    'Questionnaire Execution Board',
+    boardId: process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488',
+    events: ['change_column_value'], // Response Status changes
+  },
+  {
+    name:    'Document Checklist Execution Board',
+    boardId: process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593',
+    events: ['change_column_value'], // Document Status changes
+  },
 ];
 
-async function ensureWebhookRegistered() {
-  if (!clientMasterBoardId) {
-    console.warn('[Webhook] MONDAY_CLIENT_MASTER_BOARD_ID not set — skipping webhook check');
+async function ensureBoardWebhooks({ name, boardId, events }) {
+  if (!boardId) {
+    console.warn(`[Webhook] Board ID not set for "${name}" — skipping webhook check`);
     return;
   }
 
@@ -22,36 +38,38 @@ async function ensureWebhookRegistered() {
       `query($boardId: ID!) {
          webhooks(board_id: $boardId) { id event }
        }`,
-      { boardId: String(clientMasterBoardId) }
+      { boardId: String(boardId) }
     );
 
     const registered = new Set((data.webhooks || []).map(wh => wh.event));
 
-    for (const event of REQUIRED_WEBHOOKS) {
+    for (const event of events) {
       if (registered.has(event)) {
         const id = data.webhooks.find(wh => wh.event === event).id;
-        console.log(`[Webhook] "${event}" already registered (id: ${id})`);
+        console.log(`[Webhook] [${name}] "${event}" already registered (id: ${id})`);
         continue;
       }
 
-      console.log(`[Webhook] "${event}" not registered — registering now...`);
+      console.log(`[Webhook] [${name}] "${event}" not registered — registering now...`);
       const result = await mondayApi.query(
         `mutation($boardId: ID!, $url: String!, $event: WebhookEventType!) {
            create_webhook(board_id: $boardId, url: $url, event: $event) {
              id board_id
            }
          }`,
-        {
-          boardId: String(clientMasterBoardId),
-          url:     WEBHOOK_URL,
-          event,
-        }
+        { boardId: String(boardId), url: WEBHOOK_URL, event }
       );
 
-      console.log(`[Webhook] "${event}" registered successfully (id: ${result.create_webhook.id})`);
+      console.log(`[Webhook] [${name}] "${event}" registered successfully (id: ${result.create_webhook.id})`);
     }
   } catch (err) {
-    console.error('[Webhook] Failed to verify/register webhooks:', err.message);
+    console.error(`[Webhook] [${name}] Failed to verify/register webhooks:`, err.message);
+  }
+}
+
+async function ensureWebhookRegistered() {
+  for (const config of BOARD_CONFIGS) {
+    await ensureBoardWebhooks(config);
   }
 }
 

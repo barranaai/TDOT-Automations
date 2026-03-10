@@ -1,11 +1,13 @@
 require('dotenv').config();
 const mondayApi = require('./mondayApi');
 
-const BOARD_ID          = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
-const TEMPLATE_BOARD_ID = process.env.MONDAY_QUESTIONNAIRE_TEMPLATE_BOARD_ID  || '18402113809';
-const CASE_REF_COL      = 'text_mm12dgy9';
-const CLIENT_RESP_COL   = 'long_text_mm13xjp5';
-const LAST_RESP_DATE    = 'date_mm13v6wg';
+const BOARD_ID              = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
+const TEMPLATE_BOARD_ID     = process.env.MONDAY_QUESTIONNAIRE_TEMPLATE_BOARD_ID  || '18402113809';
+const CASE_REF_COL          = 'text_mm12dgy9';
+const CLIENT_RESP_COL       = 'long_text_mm13xjp5';
+const LAST_RESP_DATE        = 'date_mm13v6wg';
+const RESPONSE_STATUS_COL   = 'color_mm135pm1';
+const REVIEW_REQUIRED_COL   = 'color_mm13f095';
 
 const FETCH_COLS = [
   'lookup_mm13fva6',   // Question Category
@@ -136,8 +138,10 @@ async function saveAnswers(answers) {
       .filter(({ answer }) => answer !== undefined && answer !== null)
       .map(({ itemId, answer }) => {
         const colValues = JSON.stringify({
-          [CLIENT_RESP_COL]: { text: String(answer) },
-          [LAST_RESP_DATE]:  { date: today },
+          [CLIENT_RESP_COL]:     { text: String(answer) },
+          [LAST_RESP_DATE]:      { date: today },
+          [RESPONSE_STATUS_COL]: { label: 'Answered' },
+          [REVIEW_REQUIRED_COL]: { label: 'Yes' },
         });
         return mondayApi.query(
           `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
