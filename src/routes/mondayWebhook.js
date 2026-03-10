@@ -3,9 +3,10 @@ const router = express.Router();
 const checklistService     = require('../services/checklistService');
 const questionnaireService = require('../services/questionnaireService');
 const caseRefService       = require('../services/caseRefService');
+const accessTokenService   = require('../services/accessTokenService');
 
-const CASE_STAGE_COL_TITLE   = 'Case Stage';
-const CASE_TYPE_COL_ID       = 'dropdown_mm0xd1qn';
+const CASE_STAGE_COL_TITLE        = 'Case Stage';
+const CASE_TYPE_COL_ID            = 'dropdown_mm0xd1qn';
 const DOCUMENT_COLLECTION_STARTED = 'Document Collection Started';
 
 router.post('/', async (req, res) => {
@@ -26,9 +27,18 @@ router.post('/', async (req, res) => {
   try {
     const { type, columnTitle, columnId, value, pulseId, boardId } = event;
 
+    // ── New item created → generate Access Token ─────────────────────────
+    if (type === 'create_item') {
+      console.log(`[Webhook] New item created: ${pulseId} on board ${boardId}`);
+      accessTokenService.onItemCreated({ itemId: pulseId }).catch(err =>
+        console.error('[AccessToken] Error:', err.message)
+      );
+      return;
+    }
+
     if (type !== 'update_column_value') return;
 
-    // Auto-generate Case Reference Number when Primary Case Type is first set
+    // ── Primary Case Type set → generate Case Reference Number ───────────
     if (columnId === CASE_TYPE_COL_ID) {
       const caseType = value?.chosenValues?.[0]?.name || '';
       if (caseType) {
@@ -39,7 +49,7 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Trigger checklist + questionnaire when Case Stage → "Document Collection Started"
+    // ── Case Stage → Document Collection Started ─────────────────────────
     if (
       columnTitle === CASE_STAGE_COL_TITLE &&
       value?.label?.text === DOCUMENT_COLLECTION_STARTED
