@@ -1,81 +1,97 @@
 require('dotenv').config();
 const mondayApi = require('./mondayApi');
 
-const BOARD_ID               = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
-const TEMPLATE_BOARD_ID      = process.env.MONDAY_QUESTIONNAIRE_TEMPLATE_BOARD_ID  || '18402113809';
-const CASE_REF_COL           = 'text_mm12dgy9';
-const CLIENT_RESP_COL        = 'long_text_mm13xjp5';
-const LAST_RESP_DATE         = 'date_mm13v6wg';
-const TEMPLATE_RELATION_COL  = 'board_relation_mm12yvmf';
-const HELP_TEXT_COL          = 'long_text_mm12df2b';
+const BOARD_ID          = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
+const TEMPLATE_BOARD_ID = process.env.MONDAY_QUESTIONNAIRE_TEMPLATE_BOARD_ID  || '18402113809';
+const CASE_REF_COL      = 'text_mm12dgy9';
+const CLIENT_RESP_COL   = 'long_text_mm13xjp5';
+const LAST_RESP_DATE    = 'date_mm13v6wg';
 
 const FETCH_COLS = [
-  'lookup_mm13fva6',        // Question Category
-  'lookup_mm13nnd0',        // Input Type
-  'lookup_mm1333gw',        // Required Type
-  'lookup_mm12m2ej',        // Question Code
-  CLIENT_RESP_COL,          // Client Response (current answer)
-  TEMPLATE_RELATION_COL,    // Link to Questionnaire Template Board
+  'lookup_mm13fva6',   // Question Category
+  'lookup_mm13nnd0',   // Input Type
+  'lookup_mm1333gw',   // Required Type
+  'lookup_mm12m2ej',   // Question Code
+  CLIENT_RESP_COL,     // Client Response (current answer)
 ];
+
+/**
+ * Fetch all template help texts keyed by Question Code.
+ */
+async function getTemplateHelpTextByCode() {
+  const map  = {};
+  let cursor = null;
+
+  do {
+    let data;
+    if (cursor) {
+      data = await mondayApi.query(
+        `query($cursor: String!) {
+           boards(ids: ["${TEMPLATE_BOARD_ID}"]) {
+             items_page(limit: 200, cursor: $cursor) {
+               cursor
+               items {
+                 column_values(ids: ["text_mm1235b5","long_text_mm12df2b"]) { id text }
+               }
+             }
+           }
+         }`,
+        { cursor }
+      );
+    } else {
+      data = await mondayApi.query(
+        `{
+           boards(ids: ["${TEMPLATE_BOARD_ID}"]) {
+             items_page(limit: 200) {
+               cursor
+               items {
+                 column_values(ids: ["text_mm1235b5","long_text_mm12df2b"]) { id text }
+               }
+             }
+           }
+         }`
+      );
+    }
+
+    const page = data.boards[0].items_page;
+    for (const item of page.items) {
+      const col  = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
+      const code = col('text_mm1235b5');
+      if (code) map[code] = col('long_text_mm12df2b');
+    }
+    cursor = page.cursor || null;
+  } while (cursor);
+
+  return map;
+}
 
 /**
  * Fetch all questionnaire execution items for a given case reference.
  * Returns items sorted by category then question code.
  */
 async function getCaseItems(caseRef) {
-  const data = await mondayApi.query(
-    `query($boardId: ID!, $caseRef: String!) {
-      items_page_by_column_values(
-        limit: 500,
-        board_id: $boardId,
-        columns: [{ column_id: "${CASE_REF_COL}", column_values: [$caseRef] }]
-      ) {
-        items {
-          id
-          name
-          column_values(ids: ${JSON.stringify(FETCH_COLS)}) {
-            id text value
-          }
-        }
-      }
-    }`,
-    { boardId: BOARD_ID, caseRef }
-  );
+  const [data, helpTextMap] = await Promise.all([
+    mondayApi.query(
+      `query($boardId: ID!, $caseRef: String!) {
+         items_page_by_column_values(
+           limit: 500,
+           board_id: $boardId,
+           columns: [{ column_id: "${CASE_REF_COL}", column_values: [$caseRef] }]
+         ) {
+           items {
+             id
+             name
+             column_values(ids: ${JSON.stringify(FETCH_COLS)}) { id text value }
+           }
+         }
+       }`,
+      { boardId: BOARD_ID, caseRef }
+    ),
+    getTemplateHelpTextByCode(),
+  ]);
 
   const items = data?.items_page_by_column_values?.items || [];
   if (!items.length) return [];
-
-  // Collect linked template item IDs from the board_relation column
-  const templateIdMap = {}; // executionItemId → templateItemId
-  items.forEach((item) => {
-    const relCol = item.column_values.find((c) => c.id === TEMPLATE_RELATION_COL);
-    if (relCol?.value) {
-      try {
-        const parsed   = JSON.parse(relCol.value);
-        const linkedId = (parsed.linkedPulseIds || [])[0];
-        if (linkedId) templateIdMap[item.id] = String(linkedId);
-      } catch { /* ignore */ }
-    }
-  });
-
-  // Batch-fetch Help Text from the Questionnaire Template Board
-  const helpTextMap = {};
-  const templateIds = Object.values(templateIdMap);
-  if (templateIds.length) {
-    const tData = await mondayApi.query(
-      `query($ids: [ID!]!) {
-         items(ids: $ids) {
-           id
-           column_values(ids: ["${HELP_TEXT_COL}"]) { id text }
-         }
-       }`,
-      { ids: templateIds }
-    );
-    (tData.items || []).forEach((tItem) => {
-      const helpText = tItem.column_values.find((c) => c.id === HELP_TEXT_COL)?.text?.trim() || '';
-      helpTextMap[String(tItem.id)] = helpText;
-    });
-  }
 
   return items
     .map((item) => {
@@ -87,18 +103,16 @@ async function getCaseItems(caseRef) {
         try { currentAnswer = JSON.parse(rawVal)?.text || ''; } catch { currentAnswer = col(CLIENT_RESP_COL); }
       }
 
-      const templateId = templateIdMap[item.id];
-      const helpText   = templateId ? (helpTextMap[templateId] || '') : '';
-
+      const questionCode = col('lookup_mm12m2ej');
       return {
         id:           item.id,
         name:         item.name,
         category:     col('lookup_mm13fva6') || 'General',
         inputType:    col('lookup_mm13nnd0') || 'Short Text',
         required:     col('lookup_mm1333gw') || 'Mandatory',
-        questionCode: col('lookup_mm12m2ej') || '',
+        questionCode,
         currentAnswer,
-        helpText,
+        helpText:     helpTextMap[questionCode] || '',
       };
     })
     .sort((a, b) => {
