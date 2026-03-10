@@ -24,7 +24,7 @@ const CASE_TYPE_ABBR = {
   'Parents/Grandparents':        'PGP',
   'PGWP':                        'PGWP',
   'PFL':                         'PFL',
-  'PR card Renewal':             'PCR',
+  'PR Card Renewal':             'PCR',
   'PRTD':                        'PRTD',
   'Reconsideration':             'RECON',
   'Refugee':                     'REF',
@@ -35,13 +35,13 @@ const CASE_TYPE_ABBR = {
   'SCLPC-WP':                    'SCLWP',
   'SOWP':                        'SOWP',
   'Study Permit':                'SP',
-  'Study Permit Ext':            'SPE',
+  'Study Permit Extension':      'SPE',
   'Supervisa':                   'SV',
   'TRV':                         'TRV',
   'US Visa':                     'UV',
   'Visitor Extension':           'VE',
   'Visitor Visa':                'VV',
-  'Work Permit Ext':             'WPE',
+  'Work Permit Extension':       'WPE',
 };
 
 async function getAllCaseRefs() {
