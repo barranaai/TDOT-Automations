@@ -6,7 +6,9 @@ const documentUploadRouter   = require('./routes/documentUploadForm');
 const mondayApi = require('./services/mondayApi');
 const clientMasterService = require('./services/clientMasterService');
 const boardService = require('./services/boardService');
-const webhookManager = require('./services/webhookManager');
+const webhookManager  = require('./services/webhookManager');
+const { startScheduler } = require('./services/scheduler');
+const slaRiskEngine   = require('./services/slaRiskEngine');
 const { templateBoardId, executionBoardId, clientMasterBoardId } = require('../config/monday');
 
 const app = express();
@@ -64,6 +66,14 @@ app.get('/api/boards/execution', async (req, res) => {
   }
 });
 
+// Manual trigger — run SLA & Risk Engine immediately
+app.post('/api/sla/run', async (req, res) => {
+  res.json({ status: 'triggered', message: 'SLA & Risk Engine running in background…' });
+  slaRiskEngine.runDailyCheck().catch((err) =>
+    console.error('[SLAEngine] Manual run failed:', err.message)
+  );
+});
+
 app.get('/api/boards/client-master', async (req, res) => {
   try {
     const board = await boardService.getBoardStructure(clientMasterBoardId);
@@ -76,4 +86,5 @@ app.get('/api/boards/client-master', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   webhookManager.ensureWebhookRegistered();
+  startScheduler();
 });
