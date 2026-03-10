@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const mondayWebhookRouter    = require('./routes/mondayWebhook');
 const questionnaireFormRouter = require('./routes/questionnaireForm');
+const documentUploadRouter   = require('./routes/documentUploadForm');
 const mondayApi = require('./services/mondayApi');
 const clientMasterService = require('./services/clientMasterService');
 const boardService = require('./services/boardService');
@@ -15,6 +16,7 @@ app.use(express.json());
 
 app.use('/webhook/monday', mondayWebhookRouter);
 app.use('/questionnaire',  questionnaireFormRouter);
+app.use('/documents',      documentUploadRouter);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
