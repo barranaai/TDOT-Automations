@@ -16,9 +16,11 @@ const FETCH_COLS = [
 ];
 
 /**
- * Fetch all template help texts keyed by Question Code.
+ * Fetch all template help texts keyed by question name (item name).
+ * The Question Code mirror on the execution board returns null, so we
+ * match by the question text which is identical on both boards.
  */
-async function getTemplateHelpTextByCode() {
+async function getTemplateHelpTextByName() {
   const map  = {};
   let cursor = null;
 
@@ -31,7 +33,8 @@ async function getTemplateHelpTextByCode() {
              items_page(limit: 200, cursor: $cursor) {
                cursor
                items {
-                 column_values(ids: ["text_mm1235b5","long_text_mm12df2b"]) { id text }
+                 name
+                 column_values(ids: ["long_text_mm12df2b"]) { id text }
                }
              }
            }
@@ -45,7 +48,8 @@ async function getTemplateHelpTextByCode() {
              items_page(limit: 200) {
                cursor
                items {
-                 column_values(ids: ["text_mm1235b5","long_text_mm12df2b"]) { id text }
+                 name
+                 column_values(ids: ["long_text_mm12df2b"]) { id text }
                }
              }
            }
@@ -55,9 +59,8 @@ async function getTemplateHelpTextByCode() {
 
     const page = data.boards[0].items_page;
     for (const item of page.items) {
-      const col  = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
-      const code = col('text_mm1235b5');
-      if (code) map[code] = col('long_text_mm12df2b');
+      const helpText = item.column_values.find((c) => c.id === 'long_text_mm12df2b')?.text?.trim() || '';
+      if (item.name && helpText) map[item.name.trim()] = helpText;
     }
     cursor = page.cursor || null;
   } while (cursor);
@@ -87,7 +90,7 @@ async function getCaseItems(caseRef) {
        }`,
       { boardId: BOARD_ID, caseRef }
     ),
-    getTemplateHelpTextByCode(),
+    getTemplateHelpTextByName(),
   ]);
 
   const items = data?.items_page_by_column_values?.items || [];
@@ -103,16 +106,15 @@ async function getCaseItems(caseRef) {
         try { currentAnswer = JSON.parse(rawVal)?.text || ''; } catch { currentAnswer = col(CLIENT_RESP_COL); }
       }
 
-      const questionCode = col('lookup_mm12m2ej');
       return {
         id:           item.id,
         name:         item.name,
         category:     col('lookup_mm13fva6') || 'General',
         inputType:    col('lookup_mm13nnd0') || 'Short Text',
         required:     col('lookup_mm1333gw') || 'Mandatory',
-        questionCode,
+        questionCode: col('lookup_mm12m2ej') || '',
         currentAnswer,
-        helpText:     helpTextMap[questionCode] || '',
+        helpText:     helpTextMap[item.name.trim()] || '',
       };
     })
     .sort((a, b) => {
