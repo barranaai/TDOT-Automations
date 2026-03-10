@@ -8,6 +8,7 @@ const REVIEW_DATE_COL     = 'date_mm0z7vfg';
 const ESCALATION_COL      = 'color_mm0zthce';
 const REVIEW_NOTES_COL    = 'long_text_mm0zbpr';
 const CASE_REF_COL        = 'text_mm0z2cck';
+const REWORK_COUNT_COL    = 'numeric_mm0zwf95';
 
 async function updateCols(itemId, colValues) {
   await mondayApi.query(
@@ -35,35 +36,46 @@ async function onDocumentReviewed({ itemId }) {
 
 /**
  * Document Status → Rework Required
- * Set Escalation Required = Triggered by Rework
- * Queue revision notification email to client
+ * Increment Rework Count, set Escalation Required,
+ * and queue revision notification email to client.
  */
 async function onReworkRequired({ itemId }) {
-  await updateCols(itemId, {
-    [ESCALATION_COL]: { label: 'Triggered by Rework' },
-  });
-  console.log(`[DocReview] Rework required for item ${itemId} — escalation triggered`);
-
-  // Fetch item name, review notes and case reference for notification
   try {
+    // Fetch current count + notification data in one query
     const data = await mondayApi.query(
       `query($itemId: ID!) {
          items(ids: [$itemId]) {
            name
-           column_values(ids: ["${REVIEW_NOTES_COL}", "${CASE_REF_COL}"]) { id text }
+           column_values(ids: [
+             "${REWORK_COUNT_COL}",
+             "${REVIEW_NOTES_COL}",
+             "${CASE_REF_COL}"
+           ]) { id text }
          }
        }`,
       { itemId: String(itemId) }
     );
-    const item        = data?.items?.[0];
-    const col         = (id) => item?.column_values?.find((c) => c.id === id)?.text?.trim() || '';
-    const caseRef     = col(CASE_REF_COL);
-    const reviewNotes = col(REVIEW_NOTES_COL);
+    const item         = data?.items?.[0];
+    const col          = (id) => item?.column_values?.find((c) => c.id === id)?.text?.trim() || '';
+    const currentCount = parseInt(col(REWORK_COUNT_COL), 10) || 0;
+    const caseRef      = col(CASE_REF_COL);
+    const reviewNotes  = col(REVIEW_NOTES_COL);
+
+    // Increment count and set escalation in one write
+    await updateCols(itemId, {
+      [ESCALATION_COL]:   { label: 'Triggered by Rework' },
+      [REWORK_COUNT_COL]: currentCount + 1,
+    });
+    console.log(
+      `[DocReview] Rework required for item ${itemId} — ` +
+      `rework count: ${currentCount + 1}, escalation triggered`
+    );
+
     if (caseRef) {
       revisionNotificationService.queueItem(caseRef, item.name, reviewNotes, 'document');
     }
   } catch (err) {
-    console.error(`[DocReview] Failed to queue revision notification for item ${itemId}:`, err.message);
+    console.error(`[DocReview] Failed to handle rework for item ${itemId}:`, err.message);
   }
 }
 

@@ -1,13 +1,14 @@
 const mondayApi                  = require('./mondayApi');
 const revisionNotificationService = require('./revisionNotificationService');
 
-const BOARD_ID            = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
-const RESPONSE_STATUS_COL = 'color_mm135pm1';
-const REVIEW_REQUIRED_COL = 'color_mm13f095';
-const REVIEW_DATE_COL     = 'date_mm13rn5h';
-const ESCALATION_COL      = 'color_mm13gtd5';
-const REVIEW_NOTES_COL    = 'long_text_mm13kr4w';
-const CASE_REF_COL        = 'text_mm12dgy9';
+const BOARD_ID               = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
+const RESPONSE_STATUS_COL    = 'color_mm135pm1';
+const REVIEW_REQUIRED_COL    = 'color_mm13f095';
+const REVIEW_DATE_COL        = 'date_mm13rn5h';
+const ESCALATION_COL         = 'color_mm13gtd5';
+const REVIEW_NOTES_COL       = 'long_text_mm13kr4w';
+const CASE_REF_COL           = 'text_mm12dgy9';
+const CLARIFICATION_COUNT_COL = 'numeric_mm13sx0f';
 
 async function updateCols(itemId, colValues) {
   await mondayApi.query(
@@ -35,35 +36,46 @@ async function onResponseReviewed({ itemId }) {
 
 /**
  * Response Status → Needs Clarification
- * Set Escalation Required = Triggered by Clarification
- * Queue revision notification email to client
+ * Increment Clarification Count, set Escalation Required,
+ * and queue revision notification email to client.
  */
 async function onNeedsClarification({ itemId }) {
-  await updateCols(itemId, {
-    [ESCALATION_COL]: { label: 'Triggered by Clarification' },
-  });
-  console.log(`[QReview] Needs clarification for item ${itemId} — escalation triggered`);
-
-  // Fetch item name, review notes and case reference for notification
   try {
+    // Fetch current count + notification data in one query
     const data = await mondayApi.query(
       `query($itemId: ID!) {
          items(ids: [$itemId]) {
            name
-           column_values(ids: ["${REVIEW_NOTES_COL}", "${CASE_REF_COL}"]) { id text }
+           column_values(ids: [
+             "${CLARIFICATION_COUNT_COL}",
+             "${REVIEW_NOTES_COL}",
+             "${CASE_REF_COL}"
+           ]) { id text }
          }
        }`,
       { itemId: String(itemId) }
     );
-    const item       = data?.items?.[0];
-    const col        = (id) => item?.column_values?.find((c) => c.id === id)?.text?.trim() || '';
-    const caseRef    = col(CASE_REF_COL);
-    const reviewNotes = col(REVIEW_NOTES_COL);
+    const item              = data?.items?.[0];
+    const col               = (id) => item?.column_values?.find((c) => c.id === id)?.text?.trim() || '';
+    const currentCount      = parseInt(col(CLARIFICATION_COUNT_COL), 10) || 0;
+    const caseRef           = col(CASE_REF_COL);
+    const reviewNotes       = col(REVIEW_NOTES_COL);
+
+    // Increment count and set escalation in one write
+    await updateCols(itemId, {
+      [ESCALATION_COL]:          { label: 'Triggered by Clarification' },
+      [CLARIFICATION_COUNT_COL]: currentCount + 1,
+    });
+    console.log(
+      `[QReview] Needs clarification for item ${itemId} — ` +
+      `clarification count: ${currentCount + 1}, escalation triggered`
+    );
+
     if (caseRef) {
       revisionNotificationService.queueItem(caseRef, item.name, reviewNotes, 'questionnaire');
     }
   } catch (err) {
-    console.error(`[QReview] Failed to queue revision notification for item ${itemId}:`, err.message);
+    console.error(`[QReview] Failed to handle clarification for item ${itemId}:`, err.message);
   }
 }
 
