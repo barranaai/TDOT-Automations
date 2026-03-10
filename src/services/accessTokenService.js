@@ -4,8 +4,10 @@ const { clientMasterBoardId } = require('../../config/monday');
 const ACCESS_TOKEN_COL = 'text_mm0x6haq';
 
 function generateToken(itemId) {
-  const rand = String(Math.floor(1000 + Math.random() * 9000));
-  return `TDOT-${itemId}-${rand}`;
+  const now = new Date();
+  const mm  = String(now.getMonth() + 1).padStart(2, '0');
+  const dd  = String(now.getDate()).padStart(2, '0');
+  return `TDOT-${itemId}-${mm}${dd}`;
 }
 
 async function onItemCreated({ itemId }) {
