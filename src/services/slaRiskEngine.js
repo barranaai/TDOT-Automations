@@ -29,6 +29,9 @@ const SLA_COLS = {
   expirySensitivity:'numeric_mm13rz8j',
   minThreshold:     'numeric_mm13t15j',
   profileActive:    'color_mm1361s8',
+  orangeThreshold:  'numeric_mm1adysk',   // editable per case type
+  redThreshold:     'numeric_mm1ayq6w',   // editable per case type
+  expiryWarningDays:'numeric_mm1a5694',   // editable per case type
 };
 
 // Stages the engine processes (skip submitted/closed cases)
@@ -38,13 +41,6 @@ const ACTIVE_STAGES = new Set([
   'Submission Preparation',
   'Stuck',
 ]);
-
-// Base risk band thresholds (% of time consumed)
-const ORANGE_THRESHOLD = 60;
-const RED_THRESHOLD    = 80;
-
-// Base expiry warning window in days
-const BASE_EXPIRY_DAYS = 90;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -70,15 +66,12 @@ function toNum(text) {
 }
 
 /**
- * Urgency-adjusted risk band.
- * Higher urgency → thresholds tighten (escalates sooner).
+ * Risk band using thresholds read directly from the SLA Config Board.
+ * Both values are fully editable per case type in Monday.com.
  */
-function calcRiskBand(pctTimeConsumed, urgencyWeight = 5) {
-  const adj    = (urgencyWeight - 5) * 2;   // –8 to +10
-  const orange = Math.max(40, ORANGE_THRESHOLD - adj);
-  const red    = Math.max(55, RED_THRESHOLD  - adj);
-  if (pctTimeConsumed >= red)    return 'Red';
-  if (pctTimeConsumed >= orange) return 'Orange';
+function calcRiskBand(pctTimeConsumed, orangeThreshold, redThreshold) {
+  if (pctTimeConsumed >= redThreshold)    return 'Red';
+  if (pctTimeConsumed >= orangeThreshold) return 'Orange';
   return 'Green';
 }
 
@@ -109,7 +102,10 @@ async function loadSLAProfiles() {
                "${SLA_COLS.urgencyWeight}",
                "${SLA_COLS.expirySensitivity}",
                "${SLA_COLS.minThreshold}",
-               "${SLA_COLS.profileActive}"
+               "${SLA_COLS.profileActive}",
+               "${SLA_COLS.orangeThreshold}",
+               "${SLA_COLS.redThreshold}",
+               "${SLA_COLS.expiryWarningDays}"
              ]) { id text }
            }
          }
@@ -122,10 +118,13 @@ async function loadSLAProfiles() {
     const col = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
     if (col(SLA_COLS.profileActive) !== 'Yes') continue;
     profiles[item.name] = {
-      slaTotalDays:      toNum(col(SLA_COLS.slaTotalDays))     || 60,
-      urgencyWeight:     toNum(col(SLA_COLS.urgencyWeight))    || 5,
-      expirySensitivity: toNum(col(SLA_COLS.expirySensitivity))|| 5,
-      minThreshold:      toNum(col(SLA_COLS.minThreshold))     || 80,
+      slaTotalDays:      toNum(col(SLA_COLS.slaTotalDays))      || 60,
+      urgencyWeight:     toNum(col(SLA_COLS.urgencyWeight))     || 5,
+      expirySensitivity: toNum(col(SLA_COLS.expirySensitivity)) || 5,
+      minThreshold:      toNum(col(SLA_COLS.minThreshold))      || 80,
+      orangeThreshold:   toNum(col(SLA_COLS.orangeThreshold))   || 60,
+      redThreshold:      toNum(col(SLA_COLS.redThreshold))      || 80,
+      expiryWarningDays: toNum(col(SLA_COLS.expiryWarningDays)) || 90,
     };
   }
   console.log(`[SLAEngine] Loaded ${Object.keys(profiles).length} SLA profiles`);
@@ -199,6 +198,7 @@ function processCase(item, profiles) {
 
   const profile = profiles[caseType] || {
     slaTotalDays: 60, urgencyWeight: 5, expirySensitivity: 5, minThreshold: 80,
+    orangeThreshold: 60, redThreshold: 80, expiryWarningDays: 90,
   };
 
   const daysElapsed   = daysBetween(startDate);
@@ -209,12 +209,13 @@ function processCase(item, profiles) {
   const qReadiness   = toNum(col(CM.qReadiness));
   const docReadiness = toNum(col(CM.docReadiness));
 
-  const riskBand     = calcRiskBand(pctConsumed, profile.urgencyWeight);
+  // Both thresholds come directly from the SLA Config Board row for this case type
+  const riskBand     = calcRiskBand(pctConsumed, profile.orangeThreshold, profile.redThreshold);
   const healthStatus = calcHealthStatus(riskBand, qReadiness, docReadiness, expectedReady);
   const slaFlagged   = riskBand !== 'Green';
 
-  // Expiry check — window adjusted by sensitivity (higher = watch further ahead)
-  const expiryDays = BASE_EXPIRY_DAYS + (profile.expirySensitivity - 5) * 10;
+  // Expiry window comes directly from the SLA Config Board row
+  const expiryDays = profile.expiryWarningDays;
   const expiryDates = [col(CM.passportExpiry), col(CM.ieltsExpiry), col(CM.medicalExpiry)];
   const expiryFlagged = expiryDates.some((d) => {
     if (!d) return false;
