@@ -1,9 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const checklistService = require('../services/checklistService');
+const checklistService     = require('../services/checklistService');
 const questionnaireService = require('../services/questionnaireService');
+const caseRefService       = require('../services/caseRefService');
 
-const CASE_STAGE_COLUMN_TITLE = 'Case Stage';
+const CASE_STAGE_COL_TITLE   = 'Case Stage';
+const CASE_TYPE_COL_ID       = 'dropdown_mm0xd1qn';
 const DOCUMENT_COLLECTION_STARTED = 'Document Collection Started';
 
 router.post('/', async (req, res) => {
@@ -22,19 +24,30 @@ router.post('/', async (req, res) => {
   res.json({ status: 'received' });
 
   try {
-    const { type, columnTitle, value, pulseId, boardId } = event;
+    const { type, columnTitle, columnId, value, pulseId, boardId } = event;
 
-    // Only act on column value changes for "Case Stage" → "Document Collection Started"
+    if (type !== 'update_column_value') return;
+
+    // Auto-generate Case Reference Number when Primary Case Type is first set
+    if (columnId === CASE_TYPE_COL_ID) {
+      const caseType = value?.chosenValues?.[0]?.name || '';
+      if (caseType) {
+        console.log(`[Webhook] Primary Case Type set to "${caseType}" for item ${pulseId}`);
+        caseRefService.onCaseTypeSet({ itemId: pulseId, caseType }).catch(err =>
+          console.error('[CaseRef] Error assigning case ref:', err.message)
+        );
+      }
+    }
+
+    // Trigger checklist + questionnaire when Case Stage → "Document Collection Started"
     if (
-      type === 'update_column_value' &&
-      columnTitle === CASE_STAGE_COLUMN_TITLE &&
+      columnTitle === CASE_STAGE_COL_TITLE &&
       value?.label?.text === DOCUMENT_COLLECTION_STARTED
     ) {
       console.log(
         `[Webhook] Case Stage → "${DOCUMENT_COLLECTION_STARTED}" for item ${pulseId} on board ${boardId}`
       );
 
-      // Run both automations in parallel
       await Promise.allSettled([
         checklistService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
         questionnaireService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
