@@ -16,12 +16,10 @@
  *  onSubmissionReady() — called by webhook handler when supervisor sets Submission Ready
  */
 
-const { Resend } = require('resend');
-const mondayApi  = require('./mondayApi');
+const { sendEmail: msSend } = require('./microsoftMailService');
+const mondayApi             = require('./mondayApi');
 const { clientMasterBoardId } = require('../../config/monday');
 
-const resend       = new Resend(process.env.RESEND_API_KEY);
-const EMAIL_FROM   = process.env.EMAIL_FROM    || 'TDOT Immigration <noreply@tdotimmigration.ca>';
 const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
 
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
@@ -102,9 +100,7 @@ async function postMondayComment(masterItemId, body) {
 
 async function sendEmail(to, subject, html) {
   if (!to.length) return;
-  const params = { from: EMAIL_FROM, to, subject, html };
-  if (EMAIL_REPLY_TO) params.reply_to = EMAIL_REPLY_TO;
-  await resend.emails.send(params);
+  await msSend({ to, subject, html, replyTo: EMAIL_REPLY_TO || undefined });
   console.log(`[StageGate] ✉ Email sent to: ${to.join(', ')}`);
 }
 

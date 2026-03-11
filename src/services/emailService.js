@@ -1,5 +1,5 @@
-const { Resend } = require('resend');
-const mondayApi = require('./mondayApi');
+const { sendEmail }  = require('./microsoftMailService');
+const mondayApi      = require('./mondayApi');
 const { clientMasterBoardId } = require('../../config/monday');
 
 const CM_COLS = {
@@ -10,15 +10,8 @@ const CM_COLS = {
   accessToken: 'text_mm0x6haq',
 };
 
-const BASE_URL      = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
-const EMAIL_FROM    = process.env.EMAIL_FROM || 'TDOT Immigration <noreply@tdotimmigration.ca>';
+const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
 const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
-
-function getResendClient() {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) throw new Error('RESEND_API_KEY is not set in environment');
-  return new Resend(apiKey);
-}
 
 async function getClientDetails(itemId) {
   const data = await mondayApi.query(
@@ -173,25 +166,14 @@ async function sendIntakeEmail(itemId) {
   const questionnaireUrl = `${BASE_URL}/questionnaire/${encodedRef}`;
   const documentsUrl     = `${BASE_URL}/documents/${encodedRef}`;
 
-  const resend = getResendClient();
-
-  const emailOptions = {
-    from:    EMAIL_FROM,
-    to:      [client.clientEmail],
+  await sendEmail({
+    to:      client.clientEmail,
     subject: `Action Required — Your ${client.caseType || 'Immigration'} Case Is Ready (${client.caseRef})`,
     html:    buildEmailHtml({ ...client, questionnaireUrl, documentsUrl }),
-  };
+    replyTo: EMAIL_REPLY_TO || undefined,
+  });
 
-  if (EMAIL_REPLY_TO) emailOptions.reply_to = EMAIL_REPLY_TO;
-
-  const { data, error } = await resend.emails.send(emailOptions);
-
-  if (error) {
-    throw new Error(`Resend error: ${JSON.stringify(error)}`);
-  }
-
-  console.log(`[Email] Intake email sent to ${client.clientEmail} for case ${client.caseRef} (id: ${data.id})`);
-  return data;
+  console.log(`[Email] Intake email sent to ${client.clientEmail} for case ${client.caseRef}`);
 }
 
 module.exports = { sendIntakeEmail };

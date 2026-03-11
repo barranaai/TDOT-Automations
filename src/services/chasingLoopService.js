@@ -1,11 +1,9 @@
-const { Resend }   = require('resend');
-const mondayApi    = require('./mondayApi');
+const { sendEmail } = require('./microsoftMailService');
+const mondayApi     = require('./mondayApi');
 const { clientMasterBoardId } = require('../../config/monday');
 
-const resend       = new Resend(process.env.RESEND_API_KEY);
-const SLA_BOARD_ID = process.env.MONDAY_SLA_CONFIG_BOARD_ID || '18402401449';
-const BASE_URL     = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
-const EMAIL_FROM   = process.env.EMAIL_FROM  || 'TDOT Immigration <noreply@tdotimmigration.ca>';
+const SLA_BOARD_ID   = process.env.MONDAY_SLA_CONFIG_BOARD_ID || '18402401449';
+const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
 const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
 
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
@@ -238,15 +236,13 @@ async function sendChasingEmail(type, { clientEmail, clientName, caseRef, token 
   }
 
   const { subject, html } = buildChasingEmail(type, { clientName, caseRef, token });
-  const params = {
-    from:    EMAIL_FROM,
-    to:      [clientEmail],
+
+  await sendEmail({
+    to:      clientEmail,
     subject,
     html,
-  };
-  if (EMAIL_REPLY_TO) params.reply_to = EMAIL_REPLY_TO;
-
-  await resend.emails.send(params);
+    replyTo: EMAIL_REPLY_TO || undefined,
+  });
   console.log(`[ChasingLoop] ✉ ${type} email sent to ${clientEmail} for case ${caseRef}`);
 }
 

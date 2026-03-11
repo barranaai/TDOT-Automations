@@ -1,9 +1,8 @@
-const { Resend } = require('resend');
-const mondayApi  = require('./mondayApi');
+const { sendEmail } = require('./microsoftMailService');
+const mondayApi     = require('./mondayApi');
 const { clientMasterBoardId } = require('../../config/monday');
 
-const BASE_URL      = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
-const EMAIL_FROM    = process.env.EMAIL_FROM || 'TDOT Immigration <noreply@tdotimmigration.ca>';
+const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
 const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
 
 // Batch window — wait this many ms after the last change before sending
@@ -133,24 +132,19 @@ async function flushQueue(caseRef) {
     return;
   }
 
-  const resend = new Resend(process.env.RESEND_API_KEY);
   const totalCount = questionnaire.length + documents.length;
   const subject    = `Action Required: ${totalCount} item${totalCount !== 1 ? 's' : ''} need${totalCount === 1 ? 's' : ''} your attention — Case ${caseRef}`;
 
-  const emailOptions = {
-    from:    EMAIL_FROM,
+  await sendEmail({
     to:      client.clientEmail,
     subject,
     html:    buildRevisionEmailHtml({ ...client, questionnaire, documents }),
-  };
-  if (EMAIL_REPLY_TO) emailOptions.reply_to = EMAIL_REPLY_TO;
-
-  const { data, error } = await resend.emails.send(emailOptions);
-  if (error) throw new Error(`Resend error: ${JSON.stringify(error)}`);
+    replyTo: EMAIL_REPLY_TO || undefined,
+  });
 
   console.log(
     `[RevisionNotify] Sent to ${client.clientEmail} for case ${caseRef} — ` +
-    `${questionnaire.length} questionnaire, ${documents.length} document items (id: ${data.id})`
+    `${questionnaire.length} questionnaire, ${documents.length} document items`
   );
 }
 
