@@ -1,5 +1,6 @@
-const express = require('express');
-const router = express.Router();
+const express    = require('express');
+const router     = express.Router();
+const mondayApi  = require('../services/mondayApi');
 const checklistService            = require('../services/checklistService');
 const questionnaireService        = require('../services/questionnaireService');
 const caseRefService              = require('../services/caseRefService');
@@ -8,15 +9,19 @@ const retainerService             = require('../services/retainerService');
 const emailService                = require('../services/emailService');
 const questionnaireReviewService  = require('../services/questionnaireReviewService');
 const documentReviewService       = require('../services/documentReviewService');
+const stageGateService            = require('../services/stageGateService');
 
 const CLIENT_MASTER_BOARD_ID               = String(process.env.MONDAY_CLIENT_MASTER_BOARD_ID || '');
 const QUESTIONNAIRE_EXECUTION_BOARD_ID     = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
 const DOCUMENT_EXECUTION_BOARD_ID         = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
 
+const CASE_STAGE_COL_ID           = 'color_mm0x8faa';
 const CASE_STAGE_COL_TITLE        = 'Case Stage';
 const CASE_TYPE_COL_ID            = 'dropdown_mm0xd1qn';
 const RETAINER_STATUS_COL_ID      = 'color_mm0x9fnn';
+const CASE_REF_COL_ID             = 'text_mm142s49';
 const DOCUMENT_COLLECTION_STARTED = 'Document Collection Started';
+const SUBMISSION_READY            = 'Submission Ready';
 
 router.post('/', async (req, res) => {
   // Monday.com challenge handshake (required when registering a webhook)
@@ -85,24 +90,35 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Case Stage → Document Collection Started
-    if (
-      columnTitle === CASE_STAGE_COL_TITLE &&
-      value?.label?.text === DOCUMENT_COLLECTION_STARTED
-    ) {
-      console.log(
-        `[Webhook] Case Stage → "${DOCUMENT_COLLECTION_STARTED}" for item ${pulseId} on board ${boardId}`
-      );
+    // Case Stage changes
+    if (columnTitle === CASE_STAGE_COL_TITLE) {
+      const newStage = value?.label?.text || '';
 
-      await Promise.allSettled([
-        checklistService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
-        questionnaireService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
-      ]);
+      // → Document Collection Started: create execution rows + send intake email
+      if (newStage === DOCUMENT_COLLECTION_STARTED) {
+        console.log(`[Webhook] Case Stage → "${DOCUMENT_COLLECTION_STARTED}" for item ${pulseId}`);
+        await Promise.allSettled([
+          checklistService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
+          questionnaireService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
+        ]);
+        emailService.sendIntakeEmail(pulseId).catch(err =>
+          console.error('[Email] Failed to send intake email:', err.message)
+        );
+      }
 
-      // Send client intake email with both form links
-      emailService.sendIntakeEmail(pulseId).catch(err =>
-        console.error('[Email] Failed to send intake email:', err.message)
-      );
+      // → Submission Ready (set manually by supervisor): lock the case
+      if (newStage === SUBMISSION_READY) {
+        console.log(`[Webhook] Case Stage → "${SUBMISSION_READY}" for item ${pulseId} — locking`);
+        // Fetch case ref for logging
+        const itemData = await mondayApi.query(
+          `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
+          { id: String(pulseId) }
+        ).catch(() => null);
+        const caseRef = itemData?.items?.[0]?.column_values?.[0]?.text?.trim() || String(pulseId);
+        stageGateService.onSubmissionReady({ masterItemId: pulseId, caseRef }).catch(err =>
+          console.error('[StageGate] Submission Ready lock failed:', err.message)
+        );
+      }
     }
   } catch (err) {
     console.error('[Webhook] Error handling event:', err.message);

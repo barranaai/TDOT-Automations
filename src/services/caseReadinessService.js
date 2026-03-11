@@ -12,8 +12,8 @@
  *  - scheduler               (daily, before SLA & Risk Engine runs)
  */
 
-const mondayApi         = require('./mondayApi');
-const automationLockService = require('./automationLockService');
+const mondayApi      = require('./mondayApi');
+const stageGateService = require('./stageGateService');
 const { clientMasterBoardId } = require('../../config/monday');
 
 const Q_BOARD_ID  = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
@@ -248,10 +248,18 @@ async function calculateForCase({ masterItemId, caseRef, caseType, caseStage, ch
     (result.fullyComplete ? '→ FULLY COMPLETE' : result.thresholdMet ? '→ threshold met' : '')
   );
 
-  // Trigger automation lock if the case just crossed the full completion threshold
-  if (checkLock && result.fullyComplete && caseStage === 'Document Collection Started') {
-    automationLockService.onCaseComplete({ masterItemId, caseRef, caseType })
-      .catch((err) => console.error(`[Readiness] Lock failed for ${caseRef}:`, err.message));
+  if (!checkLock) return result;
+
+  // Gate 1: threshold met → Internal Review (from Document Collection Started only)
+  if (result.thresholdMet && !result.fullyComplete && caseStage === 'Document Collection Started') {
+    stageGateService.onThresholdMet({ masterItemId, caseRef, caseType })
+      .catch((err) => console.error(`[Readiness] Threshold gate failed for ${caseRef}:`, err.message));
+  }
+
+  // Gate 2: 100% complete → Submission Preparation (from Internal Review only)
+  if (result.fullyComplete && caseStage === 'Internal Review') {
+    stageGateService.onFullyComplete({ masterItemId, caseRef, caseType })
+      .catch((err) => console.error(`[Readiness] Submission prep gate failed for ${caseRef}:`, err.message));
   }
 
   return result;
