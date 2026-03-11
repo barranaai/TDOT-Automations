@@ -118,14 +118,20 @@ Once the above steps are complete, please securely share the following five item
     Client ID
     Client Secret
     OneDrive user email or SharePoint site URL
-    The email address that should be used as the sender for all automated emails (e.g. noreply@yourcompany.com or admin@yourcompany.com). This mailbox must exist in your Microsoft 365 account.
+    The email address that should be used as the sender for all automated emails (e.g. noreply@yourcompany.com or admin@yourcompany.com).
+
+    Important: This mailbox must already exist in your Microsoft 365 account before we can use it. You have two options:
+
+    Option A — Use an existing mailbox such as admin@yourcompany.com or info@yourcompany.com. No extra setup is needed. Just confirm the address.
+
+    Option B — Create a dedicated sender address such as noreply@yourcompany.com. This requires your Microsoft 365 admin to create it as a Shared Mailbox first. A shared mailbox does not require a paid licence. To create one, go to Microsoft 365 Admin Centre, then Users, then Shared Mailboxes, and add a new one with the address you want.
 
 
 Security Notes
 
 The Client Secret will be stored in an encrypted environment variable on our secure server — never in any code file or spreadsheet.
 
-The app will only have access to OneDrive and SharePoint file storage. It cannot access your emails, calendar, Teams messages, or any other Microsoft 365 service.
+The app will only have access to OneDrive file storage and the ability to send outgoing emails on behalf of the designated mailbox. It cannot read your emails, access your calendar, Teams messages, or any other Microsoft 365 service.
 
 You can revoke access at any time by deleting the app registration or the client secret in Azure Portal.
 
