@@ -2,6 +2,7 @@ const cron                  = require('node-cron');
 const caseReadinessService  = require('./caseReadinessService');
 const slaRiskEngine         = require('./slaRiskEngine');
 const expiryRiskEngine      = require('./expiryRiskEngine');
+const caseHealthEngine      = require('./caseHealthEngine');
 const chasingLoopService    = require('./chasingLoopService');
 
 /**
@@ -9,14 +10,16 @@ const chasingLoopService    = require('./chasingLoopService');
  * Called once from server.js on startup.
  *
  * Daily sequence at 07:00:
- *   1. Case Readiness Engine — calculates Q+Doc readiness, writes to master,
+ *   1. Case Readiness Engine — Q+Doc readiness, writes to master,
  *                              triggers stage gates (Internal Review / Submission Prep)
- *   2. SLA & Risk Engine     — uses fresh readiness values to compute Risk Band,
- *                              Health Status, Days Elapsed, Expiry Flag.
- *                              Forces Risk Band to Orange/Red when expiry is flagged.
- *   3. Expiry Risk Engine    — detects new/escalating expiry flags, sets
- *                              Escalation Required, sends alert emails to supervisor
- *   4. Chasing Loop          — sends reminder emails based on SLA offsets
+ *   2. SLA & Risk Engine     — Risk Band, Days Elapsed, Expiry Flag.
+ *                              Forces Risk Band to Orange/Red when expiry is close.
+ *   3. Expiry Risk Engine    — detects new/escalating expiry flags,
+ *                              sets Escalation Required, emails supervisor
+ *   4. Case Health Engine    — synthesises all signals into Case Health Status,
+ *                              Client Delay Level, Client Responsiveness Score,
+ *                              and Client-Blocked Status
+ *   5. Chasing Loop          — sends timed reminder emails based on SLA offsets
  */
 function startScheduler() {
   cron.schedule('0 7 * * *', async () => {
@@ -36,14 +39,21 @@ function startScheduler() {
       console.error('[Scheduler] SLA & Risk Engine failed:', err.message);
     }
 
-    // Step 3 — Expiry Risk Engine (escalation + notifications for expiry flags)
+    // Step 3 — Expiry Risk Engine (escalation + notifications for new expiry flags)
     try {
       await expiryRiskEngine.runExpiryCheck();
     } catch (err) {
       console.error('[Scheduler] Expiry Risk Engine failed:', err.message);
     }
 
-    // Step 4 — Client Chasing Loop
+    // Step 4 — Case Health Engine (full health synthesis across all signals)
+    try {
+      await caseHealthEngine.runHealthCheck();
+    } catch (err) {
+      console.error('[Scheduler] Case Health Engine failed:', err.message);
+    }
+
+    // Step 5 — Client Chasing Loop
     try {
       await chasingLoopService.runChasingLoop();
     } catch (err) {
@@ -53,7 +63,7 @@ function startScheduler() {
     console.log('[Scheduler] ── Daily jobs complete ──');
   });
 
-  console.log('[Scheduler] Jobs registered — Readiness → SLA → Expiry → Chasing run daily at 07:00');
+  console.log('[Scheduler] Jobs registered — Readiness → SLA → Expiry → Health → Chasing at 07:00');
 }
 
 module.exports = { startScheduler };
