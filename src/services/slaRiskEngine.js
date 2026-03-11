@@ -5,21 +5,22 @@ const SLA_BOARD_ID = process.env.MONDAY_SLA_CONFIG_BOARD_ID || '18402401449';
 
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
 const CM = {
-  caseStage:         'color_mm0x8faa',
-  stageStartDate:    'date_mm0xjm1z',
-  caseType:          'dropdown_mm0xd1qn',
-  daysElapsed:       'numeric_mm0x58n1',
-  slaTotalDays:      'numeric_mm0x9mjz',
-  expectedReadiness: 'numeric_mm0xrbk1',
-  slaRiskBand:       'color_mm0xszmm',
-  caseHealthStatus:  'color_mm0xf5ry',
-  slaRiskFlag:       'color_mm1ar8sh',   // Flagged / Clear
-  expiryRiskFlag:    'color_mm1a7vbn',   // Flagged / Clear
-  passportExpiry:    'date_mm0xe7fp',
-  ieltsExpiry:       'date_mm0xvb0g',
-  medicalExpiry:     'date_mm0x8c3t',
-  qReadiness:        'numeric_mm0x9dea',
-  docReadiness:      'numeric_mm0x5g9x',
+  caseStage:            'color_mm0x8faa',
+  stageStartDate:       'date_mm0xjm1z',
+  caseType:             'dropdown_mm0xd1qn',
+  daysElapsed:          'numeric_mm0x58n1',
+  slaTotalDays:         'numeric_mm0x9mjz',
+  stageExpectedDuration:'numeric_mm0xg6pw',   // Stage Expected Duration (from SLA Config)
+  expectedReadiness:    'numeric_mm0xrbk1',
+  slaRiskBand:          'color_mm0xszmm',
+  caseHealthStatus:     'color_mm0xf5ry',
+  slaRiskFlag:          'color_mm1ar8sh',     // Flagged / Clear
+  expiryRiskFlag:       'color_mm1a7vbn',     // Flagged / Clear
+  passportExpiry:       'date_mm0xe7fp',
+  ieltsExpiry:          'date_mm0xvb0g',
+  medicalExpiry:        'date_mm0x8c3t',
+  qReadiness:           'numeric_mm0x9dea',
+  docReadiness:         'numeric_mm0x5g9x',
 };
 
 // ─── Column IDs — SLA Config Board ───────────────────────────────────────────
@@ -252,13 +253,14 @@ function processCase(item, profiles) {
 
 async function writeUpdates(itemId, result) {
   const colValues = JSON.stringify({
-    [CM.daysElapsed]:       result.daysElapsed,
-    [CM.slaTotalDays]:      result.slaTotalDays,
-    [CM.expectedReadiness]: result.expectedReadiness,
-    [CM.slaRiskBand]:       { label: result.riskBand },
-    [CM.caseHealthStatus]:  { label: result.healthStatus },
-    [CM.slaRiskFlag]:       { label: result.slaFlagged    ? 'Flagged' : 'Clear' },
-    [CM.expiryRiskFlag]:    { label: result.expiryFlagged ? 'Flagged' : 'Clear' },
+    [CM.daysElapsed]:            result.daysElapsed,
+    [CM.slaTotalDays]:           result.slaTotalDays,
+    [CM.stageExpectedDuration]:  result.slaTotalDays,   // keeps Stage Overrun formula fed
+    [CM.expectedReadiness]:      result.expectedReadiness,
+    [CM.slaRiskBand]:            { label: result.riskBand },
+    [CM.caseHealthStatus]:       { label: result.healthStatus },
+    [CM.slaRiskFlag]:            { label: result.slaFlagged    ? 'Flagged' : 'Clear' },
+    [CM.expiryRiskFlag]:         { label: result.expiryFlagged ? 'Flagged' : 'Clear' },
   });
 
   await mondayApi.query(

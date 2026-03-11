@@ -61,8 +61,8 @@ const CM = {
   blockingQCount:        'numeric_mm0xbpn1',
   reminderCount:         'numeric_mm1a4e8r',
   chasingStage:          'color_mm1abve4',          // Pending / R1 Sent / R2 Sent / Final Notice Sent / Client Blocked / Resolved
-  inactivityCounter:     'formula_mm0xkdf4',        // formula — TODAY() - Last Client Activity Date
-  daysToHardDeadline:    'formula_mm0xb5wm',        // formula — Hard Deadline - TODAY()
+  inactivityCounter:     'formula_mm1bq0vg',        // formula — TODAY() - Last Client Activity Date
+  daysToHardDeadline:    'formula_mm1brk6q',        // formula — Hard Deadline - TODAY()
   caseHealthStatus:      'color_mm0xf5ry',          // Green / Orange / Red  (engine output)
   clientBlockedStatus:   'color_mm1b5gqv',          // Yes / No              (engine output)
   clientDelayLevel:      'color_mm1bq05h',          // Low / Medium / High   (engine output)
