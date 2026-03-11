@@ -215,23 +215,34 @@ function processCase(item, profiles) {
   const slaFlagged   = riskBand !== 'Green';
 
   // Expiry window comes directly from the SLA Config Board row
-  const expiryDays = profile.expiryWarningDays;
+  const expiryDays  = profile.expiryWarningDays;
   const expiryDates = [col(CM.passportExpiry), col(CM.ieltsExpiry), col(CM.medicalExpiry)];
-  const expiryFlagged = expiryDates.some((d) => {
-    if (!d) return false;
-    const days = daysUntil(d);
-    return days >= 0 && days <= expiryDays;
-  });
+  const daysToExpiries = expiryDates
+    .map((d) => (d ? daysUntil(d) : Infinity))
+    .filter((d) => d >= 0);
+  const minDaysToExpiry = daysToExpiries.length ? Math.min(...daysToExpiries) : Infinity;
+  const expiryFlagged   = minDaysToExpiry <= expiryDays;
+  const expiryCritical  = minDaysToExpiry <= 30; // always a hard critical threshold
+
+  // If expiry is flagged, force risk band up — expiry risk overrides SLA time assessment
+  let finalRiskBand = riskBand;
+  if (expiryFlagged) {
+    if (expiryCritical) finalRiskBand = 'Red';
+    else if (finalRiskBand === 'Green') finalRiskBand = 'Orange';
+  }
+  const finalHealthStatus = calcHealthStatus(finalRiskBand, qReadiness, docReadiness, expectedReady);
 
   return {
     itemId: item.id,
     daysElapsed,
     slaTotalDays,
     expectedReadiness: expectedReady,
-    riskBand,
-    healthStatus,
-    slaFlagged,
+    riskBand:          finalRiskBand,      // expiry-adjusted
+    healthStatus:      finalHealthStatus,  // expiry-adjusted
+    slaFlagged:        finalRiskBand !== 'Green',
     expiryFlagged,
+    expiryCritical,
+    minDaysToExpiry,
     pctConsumed,
     caseType,
   };

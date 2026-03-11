@@ -10,6 +10,7 @@ const webhookManager  = require('./services/webhookManager');
 const { startScheduler } = require('./services/scheduler');
 const caseReadinessService = require('./services/caseReadinessService');
 const slaRiskEngine        = require('./services/slaRiskEngine');
+const expiryRiskEngine     = require('./services/expiryRiskEngine');
 const chasingLoopService   = require('./services/chasingLoopService');
 const { templateBoardId, executionBoardId, clientMasterBoardId } = require('../config/monday');
 
@@ -81,6 +82,14 @@ app.post('/api/sla/run', async (req, res) => {
   res.json({ status: 'triggered', message: 'SLA & Risk Engine running in background…' });
   slaRiskEngine.runDailyCheck().catch((err) =>
     console.error('[SLAEngine] Manual run failed:', err.message)
+  );
+});
+
+// Manual trigger — run Expiry Risk Engine immediately
+app.post('/api/expiry/run', async (req, res) => {
+  res.json({ status: 'triggered', message: 'Expiry Risk Engine running in background…' });
+  expiryRiskEngine.runExpiryCheck().catch((err) =>
+    console.error('[ExpiryEngine] Manual run failed:', err.message)
   );
 });
 
