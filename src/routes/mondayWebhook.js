@@ -10,10 +10,21 @@ const emailService                = require('../services/emailService');
 const questionnaireReviewService  = require('../services/questionnaireReviewService');
 const documentReviewService       = require('../services/documentReviewService');
 const stageGateService            = require('../services/stageGateService');
+const notify                      = require('../services/mondayNotificationService');
 
 const CLIENT_MASTER_BOARD_ID               = String(process.env.MONDAY_CLIENT_MASTER_BOARD_ID || '');
 const QUESTIONNAIRE_EXECUTION_BOARD_ID     = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
 const DOCUMENT_EXECUTION_BOARD_ID         = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
+
+// Column IDs — Document Execution Board
+const DOC_STATUS_COL     = 'color_mm0zwgvr';
+// Column IDs — Questionnaire Execution Board
+const Q_RESPONSE_COL     = 'color_mm135pm1';
+// Column IDs — Client Master Board
+const CASE_HEALTH_COL    = 'color_mm0xf5ry';
+const EXPIRY_FLAG_COL    = 'color_mm1a7vbn';
+const CLIENT_BLOCKED_COL = 'color_mm1b5gqv';
+const ESCALATION_CM_COL  = 'color_mm0x7bje';
 
 const CASE_STAGE_COL_ID           = 'color_mm0x8faa';
 const CASE_STAGE_COL_TITLE        = 'Case Stage';
@@ -42,11 +53,24 @@ router.post('/', async (req, res) => {
     const { type, columnTitle, columnId, value, pulseId, boardId } = event;
     const boardIdStr = String(boardId || '');
 
+    const itemName = event.pulseName || event.itemName || String(pulseId);
+
     // ── Questionnaire Execution Board events ─────────────────────────────
     if (boardIdStr === QUESTIONNAIRE_EXECUTION_BOARD_ID && type === 'update_column_value') {
       questionnaireReviewService.onColumnChange({ itemId: pulseId, columnId, value }).catch(err =>
         console.error('[QReview] Error:', err.message)
       );
+
+      // Notify reviewer when a response is answered
+      if (columnId === Q_RESPONSE_COL) {
+        const label = value?.label?.text || '';
+        if (label === 'Answered') {
+          notify.onResponseAnswered(pulseId, itemName).catch(() => {});
+        }
+        if (label === 'Needs Clarification') {
+          notify.onNeedsClarificationNotify(pulseId, itemName).catch(() => {});
+        }
+      }
       return;
     }
 
@@ -55,6 +79,17 @@ router.post('/', async (req, res) => {
       documentReviewService.onColumnChange({ itemId: pulseId, columnId, value }).catch(err =>
         console.error('[DocReview] Error:', err.message)
       );
+
+      // Notify reviewer when a document is received
+      if (columnId === DOC_STATUS_COL) {
+        const label = value?.label?.text || '';
+        if (label === 'Received') {
+          notify.onDocumentReceived(pulseId, itemName).catch(() => {});
+        }
+        if (label === 'Rework Required') {
+          notify.onDocumentReworkRequired(pulseId, itemName).catch(() => {});
+        }
+      }
       return;
     }
 
@@ -70,6 +105,41 @@ router.post('/', async (req, res) => {
     }
 
     if (type !== 'update_column_value') return;
+
+    // ── Client Master notification triggers ───────────────────────────────
+
+    // Case Health → Red
+    if (columnId === CASE_HEALTH_COL && value?.label?.text === 'Red') {
+      const caseRef = event.value?.label?.text || '';
+      notify.onCaseHealthRed(pulseId, itemName, caseRef).catch(() => {});
+    }
+
+    // Expiry Risk Flag → Flagged
+    if (columnId === EXPIRY_FLAG_COL && value?.label?.text === 'Flagged') {
+      const caseRef = await mondayApi.query(
+        `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
+        { id: String(pulseId) }
+      ).then(d => d?.items?.[0]?.column_values?.[0]?.text?.trim() || '').catch(() => '');
+      notify.onExpiryFlagged(pulseId, itemName, caseRef).catch(() => {});
+    }
+
+    // Client-Blocked Status → Yes
+    if (columnId === CLIENT_BLOCKED_COL && value?.label?.text === 'Yes') {
+      const caseRef = await mondayApi.query(
+        `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
+        { id: String(pulseId) }
+      ).then(d => d?.items?.[0]?.column_values?.[0]?.text?.trim() || '').catch(() => '');
+      notify.onClientBlocked(pulseId, itemName, caseRef).catch(() => {});
+    }
+
+    // Escalation Required → Yes (Client Master only)
+    if (columnId === ESCALATION_CM_COL && value?.label?.text === 'Yes') {
+      const caseRef = await mondayApi.query(
+        `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
+        { id: String(pulseId) }
+      ).then(d => d?.items?.[0]?.column_values?.[0]?.text?.trim() || '').catch(() => '');
+      notify.onEscalationRequired(pulseId, itemName, caseRef).catch(() => {});
+    }
 
     // Retainer Payment Status → Paid
     if (columnId === RETAINER_STATUS_COL_ID && value?.label?.text === 'Paid') {
