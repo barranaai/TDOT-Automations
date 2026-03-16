@@ -12,7 +12,8 @@ const caseReadinessService = require('./services/caseReadinessService');
 const slaRiskEngine        = require('./services/slaRiskEngine');
 const expiryRiskEngine     = require('./services/expiryRiskEngine');
 const caseHealthEngine     = require('./services/caseHealthEngine');
-const chasingLoopService   = require('./services/chasingLoopService');
+const chasingLoopService          = require('./services/chasingLoopService');
+const escalationRoutingService    = require('./services/escalationRoutingService');
 const { templateBoardId, executionBoardId, clientMasterBoardId } = require('../config/monday');
 
 const app = express();
@@ -99,6 +100,14 @@ app.post('/api/expiry/run', async (req, res) => {
   res.json({ status: 'triggered', message: 'Expiry Risk Engine running in background…' });
   expiryRiskEngine.runExpiryCheck().catch((err) =>
     console.error('[ExpiryEngine] Manual run failed:', err.message)
+  );
+});
+
+// Manual trigger — run Escalation Routing Engine immediately
+app.post('/api/escalation/run', async (req, res) => {
+  res.json({ status: 'triggered', message: 'Escalation Routing Engine running in background…' });
+  escalationRoutingService.runEscalationRouting().catch((err) =>
+    console.error('[EscRouting] Manual run failed:', err.message)
   );
 });
 

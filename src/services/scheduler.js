@@ -1,9 +1,10 @@
-const cron                  = require('node-cron');
-const caseReadinessService  = require('./caseReadinessService');
-const slaRiskEngine         = require('./slaRiskEngine');
-const expiryRiskEngine      = require('./expiryRiskEngine');
-const caseHealthEngine      = require('./caseHealthEngine');
-const chasingLoopService    = require('./chasingLoopService');
+const cron                      = require('node-cron');
+const caseReadinessService      = require('./caseReadinessService');
+const slaRiskEngine             = require('./slaRiskEngine');
+const expiryRiskEngine          = require('./expiryRiskEngine');
+const caseHealthEngine          = require('./caseHealthEngine');
+const chasingLoopService        = require('./chasingLoopService');
+const escalationRoutingService  = require('./escalationRoutingService');
 
 /**
  * Schedules all recurring background jobs.
@@ -19,7 +20,9 @@ const chasingLoopService    = require('./chasingLoopService');
  *   4. Case Health Engine    — synthesises all signals into Case Health Status,
  *                              Client Delay Level, Client Responsiveness Score,
  *                              and Client-Blocked Status
- *   5. Chasing Loop          — sends timed reminder emails based on SLA offsets
+ *   5. Escalation Routing    — matches each case to Escalation Routing Matrix rules,
+ *                              notifies supervisors/directors, applies stage/SLA actions
+ *   6. Chasing Loop          — sends timed reminder emails based on SLA offsets
  */
 function startScheduler() {
   cron.schedule('0 7 * * *', async () => {
@@ -53,7 +56,14 @@ function startScheduler() {
       console.error('[Scheduler] Case Health Engine failed:', err.message);
     }
 
-    // Step 5 — Client Chasing Loop
+    // Step 5 — Escalation Routing Engine (applies matrix rules to Orange/Red cases)
+    try {
+      await escalationRoutingService.runEscalationRouting();
+    } catch (err) {
+      console.error('[Scheduler] Escalation Routing Engine failed:', err.message);
+    }
+
+    // Step 6 — Client Chasing Loop
     try {
       await chasingLoopService.runChasingLoop();
     } catch (err) {
@@ -63,7 +73,7 @@ function startScheduler() {
     console.log('[Scheduler] ── Daily jobs complete ──');
   });
 
-  console.log('[Scheduler] Jobs registered — Readiness → SLA → Expiry → Health → Chasing at 07:00');
+  console.log('[Scheduler] Jobs registered — Readiness → SLA → Expiry → Health → Escalation → Chasing at 07:00');
 }
 
 module.exports = { startScheduler };
