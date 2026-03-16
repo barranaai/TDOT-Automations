@@ -21,18 +21,23 @@ const CM = {
   medicalExpiry:        'date_mm0x8c3t',
   qReadiness:           'numeric_mm0x9dea',
   docReadiness:         'numeric_mm0x5g9x',
+  hardDeadline:         'date_mm0x5pqd',
+  softDeadline:         'date_mm0x26t4',
+  submissionPrepDeadline: 'date_mm0xfgbp',
 };
 
 // ─── Column IDs — SLA Config Board ───────────────────────────────────────────
 const SLA_COLS = {
-  slaTotalDays:     'numeric_mm13xx3y',
-  urgencyWeight:    'numeric_mm13re1s',
-  expirySensitivity:'numeric_mm13rz8j',
-  minThreshold:     'numeric_mm13t15j',
-  profileActive:    'color_mm1361s8',
-  orangeThreshold:  'numeric_mm1adysk',   // editable per case type
-  redThreshold:     'numeric_mm1ayq6w',   // editable per case type
-  expiryWarningDays:'numeric_mm1a5694',   // editable per case type
+  slaTotalDays:        'numeric_mm13xx3y',
+  urgencyWeight:       'numeric_mm13re1s',
+  expirySensitivity:   'numeric_mm13rz8j',
+  minThreshold:        'numeric_mm13t15j',
+  profileActive:       'color_mm1361s8',
+  orangeThreshold:     'numeric_mm1adysk',   // editable per case type
+  redThreshold:        'numeric_mm1ayq6w',   // editable per case type
+  expiryWarningDays:   'numeric_mm1a5694',   // editable per case type
+  hardDeadlineOffset:  'numeric_mm13z1k',    // days buffer before SLA end → Hard Deadline
+  softDeadlineOffset:  'numeric_mm13mqh2',   // days buffer before SLA end → Soft Deadline
 };
 
 // Stages the engine processes (skip submitted/closed cases)
@@ -44,6 +49,13 @@ const ACTIVE_STAGES = new Set([
 ]);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function addDays(dateStr, days) {
+  if (!dateStr || days == null) return null;
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split('T')[0]; // YYYY-MM-DD
+}
 
 function daysBetween(dateStr) {
   if (!dateStr) return 0;
@@ -106,7 +118,9 @@ async function loadSLAProfiles() {
                "${SLA_COLS.profileActive}",
                "${SLA_COLS.orangeThreshold}",
                "${SLA_COLS.redThreshold}",
-               "${SLA_COLS.expiryWarningDays}"
+               "${SLA_COLS.expiryWarningDays}",
+               "${SLA_COLS.hardDeadlineOffset}",
+               "${SLA_COLS.softDeadlineOffset}"
              ]) { id text }
            }
          }
@@ -118,14 +132,19 @@ async function loadSLAProfiles() {
   for (const item of data.boards[0].items_page.items) {
     const col = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
     if (col(SLA_COLS.profileActive) !== 'Yes') continue;
+    const slaTotalDays = toNum(col(SLA_COLS.slaTotalDays)) || 60;
     profiles[item.name] = {
-      slaTotalDays:      toNum(col(SLA_COLS.slaTotalDays))      || 60,
-      urgencyWeight:     toNum(col(SLA_COLS.urgencyWeight))     || 5,
-      expirySensitivity: toNum(col(SLA_COLS.expirySensitivity)) || 5,
-      minThreshold:      toNum(col(SLA_COLS.minThreshold))      || 80,
-      orangeThreshold:   toNum(col(SLA_COLS.orangeThreshold))   || 60,
-      redThreshold:      toNum(col(SLA_COLS.redThreshold))      || 80,
-      expiryWarningDays: toNum(col(SLA_COLS.expiryWarningDays)) || 90,
+      slaTotalDays,
+      urgencyWeight:      toNum(col(SLA_COLS.urgencyWeight))     || 5,
+      expirySensitivity:  toNum(col(SLA_COLS.expirySensitivity)) || 5,
+      minThreshold:       toNum(col(SLA_COLS.minThreshold))      || 80,
+      orangeThreshold:    toNum(col(SLA_COLS.orangeThreshold))   || 60,
+      redThreshold:       toNum(col(SLA_COLS.redThreshold))      || 80,
+      expiryWarningDays:  toNum(col(SLA_COLS.expiryWarningDays)) || 90,
+      // Deadline dates are computed as: Stage Start + (SLA Total − offset)
+      // A larger offset = more buffer before the SLA period ends
+      hardDeadlineOffset: toNum(col(SLA_COLS.hardDeadlineOffset)) || 5,
+      softDeadlineOffset: toNum(col(SLA_COLS.softDeadlineOffset)) || 10,
     };
   }
   console.log(`[SLAEngine] Loaded ${Object.keys(profiles).length} SLA profiles`);
@@ -200,10 +219,19 @@ function processCase(item, profiles) {
   const profile = profiles[caseType] || {
     slaTotalDays: 60, urgencyWeight: 5, expirySensitivity: 5, minThreshold: 80,
     orangeThreshold: 60, redThreshold: 80, expiryWarningDays: 90,
+    hardDeadlineOffset: 5, softDeadlineOffset: 10,
   };
 
-  const daysElapsed   = daysBetween(startDate);
-  const slaTotalDays  = profile.slaTotalDays;
+  const daysElapsed  = daysBetween(startDate);
+  const slaTotalDays = profile.slaTotalDays;
+
+  // Deadline dates — derived from Stage Start Date and SLA config offsets
+  // Hard Deadline = start + (SLA days − hard offset) = latest possible internal deadline
+  // Soft Deadline = start + (SLA days − soft offset) = "should be done" date
+  // Submission Prep Deadline = 7 days before Soft Deadline = when all docs must be compiled
+  const hardDeadline         = addDays(startDate, slaTotalDays - profile.hardDeadlineOffset);
+  const softDeadline         = addDays(startDate, slaTotalDays - profile.softDeadlineOffset);
+  const submissionPrepDeadline = addDays(softDeadline, -7);
   const pctConsumed   = slaTotalDays > 0 ? Math.round((daysElapsed / slaTotalDays) * 100) : 0;
   const expectedReady = Math.min(pctConsumed, 100);
 
@@ -246,12 +274,20 @@ function processCase(item, profiles) {
     minDaysToExpiry,
     pctConsumed,
     caseType,
+    hardDeadline,
+    softDeadline,
+    submissionPrepDeadline,
   };
 }
 
 // ─── Write updates ────────────────────────────────────────────────────────────
 
 async function writeUpdates(itemId, result) {
+  const deadlines = {};
+  if (result.hardDeadline)          deadlines[CM.hardDeadline]          = { date: result.hardDeadline };
+  if (result.softDeadline)          deadlines[CM.softDeadline]          = { date: result.softDeadline };
+  if (result.submissionPrepDeadline) deadlines[CM.submissionPrepDeadline] = { date: result.submissionPrepDeadline };
+
   const colValues = JSON.stringify({
     [CM.daysElapsed]:            result.daysElapsed,
     [CM.slaTotalDays]:           result.slaTotalDays,
@@ -261,6 +297,7 @@ async function writeUpdates(itemId, result) {
     [CM.caseHealthStatus]:       { label: result.healthStatus },
     [CM.slaRiskFlag]:            { label: result.slaFlagged    ? 'Flagged' : 'Clear' },
     [CM.expiryRiskFlag]:         { label: result.expiryFlagged ? 'Flagged' : 'Clear' },
+    ...deadlines,
   });
 
   await mondayApi.query(
@@ -299,8 +336,9 @@ async function runDailyCheck() {
       console.log(
         `[SLAEngine] ✓ ${item.name} — ${result.caseType} | ` +
         `${result.daysElapsed}/${result.slaTotalDays}d (${result.pctConsumed}%) | ` +
-        `Band: ${result.riskBand} | Health: ${result.healthStatus}` +
-        (result.expiryFlagged ? ' | ⚠ EXPIRY' : '')
+        `Band: ${result.riskBand} | Health: ${result.healthStatus} | ` +
+        `Deadlines: Soft=${result.softDeadline || 'N/A'} Hard=${result.hardDeadline || 'N/A'} Prep=${result.submissionPrepDeadline || 'N/A'}` +
+        (result.expiryFlagged ? ' | EXPIRY' : '')
       );
       // Gentle rate limiting
       await new Promise((r) => setTimeout(r, 150));
