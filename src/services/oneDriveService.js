@@ -145,4 +145,47 @@ async function createClientFolders({ clientName, caseRef, categories }) {
   return categoryLinks;
 }
 
-module.exports = { createClientFolders };
+/**
+ * Upload a file buffer into the client's category subfolder in OneDrive.
+ * If a file with the same name already exists, OneDrive automatically keeps
+ * the previous version in version history (replace behaviour).
+ *
+ * @param {{
+ *   clientName: string,
+ *   caseRef:    string,
+ *   category:   string,
+ *   filename:   string,
+ *   buffer:     Buffer,
+ *   mimeType:   string,
+ * }} params
+ * @returns {Promise<string>} webUrl of the uploaded file
+ */
+async function uploadFile({ clientName, caseRef, category, filename, buffer, mimeType }) {
+  const token    = await getAccessToken();
+  const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+  const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim() || 'document';
+
+  // PUT /drive/root:/{path}/{filename}:/content  → creates or replaces the file
+  const filePath = `${ROOT_FOLDER}/${safeName}/${category}/${safeFile}`;
+  const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
+  const url      = `${userBase()}/root:/${encoded}:/content`;
+
+  try {
+    const res = await axios.put(url, buffer, {
+      headers: {
+        Authorization:  `Bearer ${token}`,
+        'Content-Type': mimeType || 'application/octet-stream',
+      },
+      maxContentLength: Infinity,
+      maxBodyLength:    Infinity,
+    });
+    console.log(`[OneDrive] File uploaded → ${res.data.webUrl}`);
+    return res.data.webUrl;
+  } catch (err) {
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error(`[OneDrive] File upload failed (${err.response?.status}): ${detail}`);
+    throw new Error(`OneDrive upload failed: ${detail}`);
+  }
+}
+
+module.exports = { createClientFolders, uploadFile };

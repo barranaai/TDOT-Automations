@@ -1,7 +1,7 @@
 const express = require('express');
 const multer  = require('multer');
 const router  = express.Router();
-const { getCaseDocuments, uploadFileToMonday, markDocumentReceived } = require('../services/documentFormService');
+const { getCaseDocuments, uploadFileToOneDrive, markDocumentReceived } = require('../services/documentFormService');
 const { updateLastActivityDate } = require('../services/clientMasterService');
 const { calculateForCaseRef }   = require('../services/caseReadinessService');
 
@@ -442,7 +442,7 @@ router.post('/:caseRef/upload/:itemId', upload.single('file'), async (req, res) 
   }
 
   try {
-    await uploadFileToMonday(itemId, file.buffer, file.originalname, file.mimetype);
+    await uploadFileToOneDrive(itemId, caseRef, file.buffer, file.originalname, file.mimetype);
     await markDocumentReceived(itemId);
     res.json({ success: true });
     // Non-blocking post-upload: update activity date + recalculate readiness

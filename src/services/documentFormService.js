@@ -1,7 +1,8 @@
 const axios    = require('axios');
 const FormData = require('form-data');
 const mondayApi = require('./mondayApi');
-const { apiKey } = require('../../config/monday');
+const { apiKey, clientMasterBoardId } = require('../../config/monday');
+const { uploadFile: uploadFileToOneDriveStorage } = require('./oneDriveService');
 
 const BOARD_ID       = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
 const CASE_REF_COL   = 'text_mm0z2cck';
@@ -197,4 +198,53 @@ async function markDocumentReceived(itemId) {
   );
 }
 
-module.exports = { getCaseDocuments, uploadFileToMonday, markDocumentReceived };
+// Client Master column IDs (used to look up client name at upload time)
+const CM_BOARD_ID    = clientMasterBoardId || process.env.MONDAY_CLIENT_MASTER_BOARD_ID || '18215065533';
+const CM_CASE_REF    = 'text_mm142s49';
+const EXEC_CATEGORY  = 'lookup_mm0zqbvt'; // Document Category mirror on Execution Board
+
+/**
+ * Upload a file to the client's OneDrive category subfolder.
+ * Looks up the document category from the execution item and the client name
+ * from the Client Master board, then delegates to oneDriveService.uploadFile().
+ */
+async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, mimeType) {
+  // 1. Get the document category from the execution item's mirror column
+  const execData = await mondayApi.query(
+    `query($itemId: ID!) {
+       items(ids: [$itemId]) {
+         column_values(ids: ["${EXEC_CATEGORY}"]) { id text }
+       }
+     }`,
+    { itemId: String(itemId) }
+  );
+  const category = execData?.items?.[0]?.column_values
+    ?.find((c) => c.id === EXEC_CATEGORY)?.text?.trim() || 'General';
+
+  // 2. Get the client name from Client Master (used to reconstruct the folder path)
+  const masterData = await mondayApi.query(
+    `query($boardId: ID!, $colId: String!, $val: String!) {
+       items_page_by_column_values(
+         limit: 1,
+         board_id: $boardId,
+         columns: [{ column_id: $colId, column_values: [$val] }]
+       ) { items { name } }
+     }`,
+    { boardId: String(CM_BOARD_ID), colId: CM_CASE_REF, val: caseRef }
+  );
+  const clientName = masterData?.items_page_by_column_values?.items?.[0]?.name || 'Unknown Client';
+
+  console.log(`[DocForm] Uploading "${originalName}" for case ${caseRef} | client "${clientName}" | category "${category}"`);
+
+  // 3. Upload to OneDrive — returns the webUrl of the stored file
+  return uploadFileToOneDriveStorage({
+    clientName,
+    caseRef,
+    category,
+    filename:  originalName,
+    buffer:    fileBuffer,
+    mimeType,
+  });
+}
+
+module.exports = { getCaseDocuments, uploadFileToMonday, uploadFileToOneDrive, markDocumentReceived };
