@@ -284,4 +284,29 @@ async function onSubmissionReady({ masterItemId, caseRef }) {
   console.log(`[StageGate] ✅ ${caseRef} locked at Submission Ready`);
 }
 
-module.exports = { onThresholdMet, onFullyComplete, onSubmissionReady };
+// ─── Manual stage advance: reset Stage Start Date ─────────────────────────────
+
+/**
+ * Called by the webhook when Case Stage is manually set to "Internal Review"
+ * or "Submission Preparation" directly in Monday.com (bypassing the automated
+ * threshold gates).
+ *
+ * Also fires when the automated gates advance the stage (since they update
+ * Case Stage via a mutation which triggers the webhook). In that case the
+ * Stage Start Date was already set to today in the same mutation, so writing
+ * it again is a harmless no-op.
+ *
+ * Deliberately does NOT touch Chasing Stage — the automated path already
+ * sets it to "Resolved" in the same mutation, and we must not overwrite it.
+ *
+ * @param {{ masterItemId: string|number, newStage: string, caseRef: string }} param
+ */
+async function onStageAdvanced({ masterItemId, newStage, caseRef }) {
+  const today = new Date().toISOString().split('T')[0];
+  await updateColumns(masterItemId, {
+    [CM.stageStartDate]: { date: today },
+  });
+  console.log(`[StageGate] Stage Start Date reset to ${today} for ${caseRef} (→ ${newStage})`);
+}
+
+module.exports = { onThresholdMet, onFullyComplete, onSubmissionReady, onStageAdvanced };

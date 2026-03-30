@@ -10,6 +10,7 @@ const emailService                = require('../services/emailService');
 const questionnaireReviewService  = require('../services/questionnaireReviewService');
 const documentReviewService       = require('../services/documentReviewService');
 const stageGateService            = require('../services/stageGateService');
+const { onStageAdvanced }         = stageGateService;
 const notify                      = require('../services/mondayNotificationService');
 
 const CLIENT_MASTER_BOARD_ID               = String(process.env.MONDAY_CLIENT_MASTER_BOARD_ID || '');
@@ -187,6 +188,20 @@ router.post('/', async (req, res) => {
         const caseRef = itemData?.items?.[0]?.column_values?.[0]?.text?.trim() || String(pulseId);
         stageGateService.onSubmissionReady({ masterItemId: pulseId, caseRef }).catch(err =>
           console.error('[StageGate] Submission Ready lock failed:', err.message)
+        );
+      }
+
+      // → Internal Review or Submission Preparation: reset Stage Start Date
+      // Covers both manual changes and automated gate advances (harmless duplicate in the latter case).
+      if (newStage === 'Internal Review' || newStage === 'Submission Preparation') {
+        const refData = await mondayApi.query(
+          `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
+          { id: String(pulseId) }
+        ).catch(() => null);
+        const caseRef = refData?.items?.[0]?.column_values?.[0]?.text?.trim() || String(pulseId);
+        console.log(`[Webhook] Case Stage → "${newStage}" for ${caseRef} — resetting Stage Start Date`);
+        onStageAdvanced({ masterItemId: pulseId, newStage, caseRef }).catch(err =>
+          console.error('[StageGate] Stage Start Date reset failed:', err.message)
         );
       }
     }
