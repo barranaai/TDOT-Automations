@@ -24,20 +24,22 @@ const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
 
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
 const CM = {
-  caseStage:       'color_mm0x8faa',
-  stageStartDate:  'date_mm0xjm1z',
-  automationLock:  'color_mm0x3x1x',
-  readyForReview:  'color_mm0xh2fh',
-  readyForSubPrep: 'color_mm0xqsk4',
-  chasingStage:    'color_mm1abve4',
-  docThresholdMet: 'color_mm0xvxq2',
-  caseManager:     'multiple_person_mm0xhmgk',
-  opsSupervisor:   'multiple_person_mm0xp0sq',
-  clientName:      'text_mm0x1zdk',
-  caseRef:         'text_mm142s49',
-  caseType:        'dropdown_mm0xd1qn',
-  qReadiness:      'numeric_mm0x9dea',
-  docReadiness:    'numeric_mm0x5g9x',
+  caseStage:           'color_mm0x8faa',
+  stageStartDate:      'date_mm0xjm1z',
+  automationLock:      'color_mm0x3x1x',
+  readyForReview:      'color_mm0xh2fh',
+  readyForSubPrep:     'color_mm0xqsk4',
+  chasingStage:        'color_mm1abve4',
+  docThresholdMet:     'color_mm0xvxq2',
+  caseManager:         'multiple_person_mm0xhmgk',
+  opsSupervisor:       'multiple_person_mm0xp0sq',
+  clientName:          'text_mm0x1zdk',
+  caseRef:             'text_mm142s49',
+  caseType:            'dropdown_mm0xd1qn',
+  qReadiness:          'numeric_mm0x9dea',
+  docReadiness:        'numeric_mm0x5g9x',
+  escalationRequired:  'color_mm0x7bje',
+  escalationReason:    'text_mm0xvpr9',
 };
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -284,6 +286,44 @@ async function onSubmissionReady({ masterItemId, caseRef }) {
   console.log(`[StageGate] ✅ ${caseRef} locked at Submission Ready`);
 }
 
+// ─── Terminal stage: lock case and stop all engines ───────────────────────────
+
+/**
+ * Update these labels if your Monday.com board uses different values for
+ * terminal (end-of-case) stages.
+ */
+const TERMINAL_STAGES = new Set(['Closed', 'Withdrawn', 'Cancelled']);
+
+/**
+ * Called by the webhook when Case Stage is set to a terminal value
+ * (Closed, Withdrawn, Cancelled) in Monday.com.
+ *
+ * Sets Automation Lock = Yes so all daily engines skip the item going forward,
+ * resets Chasing Stage to Resolved to stop any in-flight chasing state,
+ * and clears Escalation Required / Escalation Reason.
+ *
+ * Safe to call multiple times — all writes are idempotent.
+ *
+ * @param {{ masterItemId: string|number, newStage: string, caseRef: string }} param
+ */
+async function onCaseClosed({ masterItemId, newStage, caseRef }) {
+  await updateColumns(masterItemId, {
+    [CM.automationLock]:     { label: 'Yes'      },
+    [CM.chasingStage]:       { label: 'Resolved' },
+    [CM.escalationRequired]: { label: 'No'       },
+    [CM.escalationReason]:   '',
+  });
+
+  await postMondayComment(
+    masterItemId,
+    `🔒 *Case ${newStage}*\n\n` +
+    `${caseRef} has been marked as **${newStage}**.\n` +
+    `Automation Lock has been set — all automated engines (SLA, health, chasing, escalation) will now skip this case.`
+  );
+
+  console.log(`[StageGate] 🔒 ${caseRef} → ${newStage} — locked and chasing cleared`);
+}
+
 // ─── Manual stage advance: reset Stage Start Date ─────────────────────────────
 
 /**
@@ -309,4 +349,4 @@ async function onStageAdvanced({ masterItemId, newStage, caseRef }) {
   console.log(`[StageGate] Stage Start Date reset to ${today} for ${caseRef} (→ ${newStage})`);
 }
 
-module.exports = { onThresholdMet, onFullyComplete, onSubmissionReady, onStageAdvanced };
+module.exports = { onThresholdMet, onFullyComplete, onSubmissionReady, onStageAdvanced, onCaseClosed, TERMINAL_STAGES };
