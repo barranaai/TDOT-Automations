@@ -4,6 +4,7 @@ const { clientMasterBoardId } = require('../../config/monday');
 const COLS = {
   paymentDate:              'date_mm0xgk76',
   caseStage:                'color_mm0x8faa',
+  stageStartDate:           'date_mm0xjm1z',
   checklistTemplateApplied: 'color_mm0xs7kp',
   questionnaireApplied:     'color_mm0x3tpw',
   automationLock:           'color_mm0x3x1x',
@@ -15,6 +16,7 @@ async function onRetainerPaid({ itemId }) {
   const colValues = JSON.stringify({
     [COLS.paymentDate]:              { date: today },
     [COLS.caseStage]:                { label: 'Document Collection Started' },
+    [COLS.stageStartDate]:           { date: today },
     [COLS.checklistTemplateApplied]: { label: 'No' },
     [COLS.questionnaireApplied]:     { label: 'No' },
     [COLS.automationLock]:           { label: 'No' },
