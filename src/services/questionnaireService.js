@@ -1,4 +1,5 @@
 const mondayApi = require('./mondayApi');
+const { clientMasterBoardId } = require('../../config/monday');
 const { getQuestionnaireItemsByCaseType } = require('./questionnaireTemplateService');
 const { createMissingQuestionnaireItems } = require('./questionnaireExecutionService');
 
@@ -102,6 +103,19 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
   });
 
   console.log(`[QuestionnaireService] Done — created: ${created}, skipped (already existed): ${skipped}`);
+
+  // Mark questionnaire template as applied so the guard correctly blocks any future re-trigger
+  await mondayApi.query(
+    `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
+       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues) { id }
+     }`,
+    {
+      boardId:   String(clientMasterBoardId),
+      itemId:    String(itemId),
+      colValues: JSON.stringify({ [CM_COLS.questionnaireTemplateApplied]: { label: 'Yes' } }),
+    }
+  );
+  console.log(`[QuestionnaireService] Questionnaire Applied → Yes for ${caseRef}`);
 }
 
 module.exports = { onDocumentCollectionStarted };

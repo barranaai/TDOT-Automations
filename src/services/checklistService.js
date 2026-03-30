@@ -1,13 +1,15 @@
 const mondayApi = require('./mondayApi');
+const { clientMasterBoardId } = require('../../config/monday');
 const { getTemplateItemsByCaseType } = require('./templateService');
 const { createMissingExecutionItems } = require('./executionService');
 const { createClientFolders } = require('./oneDriveService');
 
 // Client Master column IDs
 const CM_COLS = {
-  caseReferenceNumber: 'text_mm142s49',
-  primaryCaseType:     'dropdown_mm0xd1qn',
-  caseSubType:         'text_mm17vbph',
+  caseReferenceNumber:     'text_mm142s49',
+  primaryCaseType:         'dropdown_mm0xd1qn',
+  caseSubType:             'text_mm17vbph',
+  checklistTemplateApplied:'color_mm0xs7kp',
 };
 
 /**
@@ -28,7 +30,8 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
         column_values(ids: [
           "${CM_COLS.caseReferenceNumber}",
           "${CM_COLS.primaryCaseType}",
-          "${CM_COLS.caseSubType}"
+          "${CM_COLS.caseSubType}",
+          "${CM_COLS.checklistTemplateApplied}"
         ]) {
           id
           text
@@ -50,11 +53,18 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
     colMap[col.id] = col.text;
   }
 
-  const caseRef      = (colMap[CM_COLS.caseReferenceNumber] || '').replace(/\s+/g, ' ').trim();
-  const caseType     = (colMap[CM_COLS.primaryCaseType] || '').trim();
-  const caseSubType  = (colMap[CM_COLS.caseSubType] || '').trim() || null;
+  const caseRef           = (colMap[CM_COLS.caseReferenceNumber] || '').replace(/\s+/g, ' ').trim();
+  const caseType          = (colMap[CM_COLS.primaryCaseType] || '').trim();
+  const caseSubType       = (colMap[CM_COLS.caseSubType] || '').trim() || null;
+  const checklistApplied  = (colMap[CM_COLS.checklistTemplateApplied] || '').trim();
 
-  console.log(`[ChecklistService] Item: "${item.name}" | Ref: ${caseRef} | Type: ${caseType} | SubType: ${caseSubType}`);
+  console.log(`[ChecklistService] Item: "${item.name}" | Ref: ${caseRef} | Type: ${caseType} | SubType: ${caseSubType} | Checklist Applied: ${checklistApplied}`);
+
+  // Guard: skip if checklist was already applied
+  if (checklistApplied.toLowerCase() === 'yes') {
+    console.log(`[ChecklistService] Checklist already applied for ${caseRef}. Skipping.`);
+    return;
+  }
 
   if (!caseRef) {
     console.warn(`[ChecklistService] No Case Reference Number found for item ${itemId}. Skipping.`);
@@ -109,6 +119,19 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
   });
 
   console.log(`[ChecklistService] Done — created: ${created}, skipped (already existed): ${skipped}`);
+
+  // Mark checklist template as applied so this cannot run again for the same case
+  await mondayApi.query(
+    `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
+       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues) { id }
+     }`,
+    {
+      boardId:   String(clientMasterBoardId),
+      itemId:    String(itemId),
+      colValues: JSON.stringify({ [CM_COLS.checklistTemplateApplied]: { label: 'Yes' } }),
+    }
+  );
+  console.log(`[ChecklistService] Checklist Template Applied → Yes for ${caseRef}`);
 }
 
 module.exports = { onDocumentCollectionStarted };
