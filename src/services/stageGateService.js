@@ -289,10 +289,10 @@ async function onSubmissionReady({ masterItemId, caseRef }) {
 // ─── Terminal stage: lock case and stop all engines ───────────────────────────
 
 /**
- * Update these labels if your Monday.com board uses different values for
- * terminal (end-of-case) stages.
+ * Terminal (end-of-case) stages — automation lock fires for any of these.
+ * Update this set if new terminal stages are added to the Case Stage dropdown.
  */
-const TERMINAL_STAGES = new Set(['Closed', 'Withdrawn', 'Cancelled']);
+const TERMINAL_STAGES = new Set(['Submitted']);
 
 /**
  * Called by the webhook when Case Stage is set to a terminal value
