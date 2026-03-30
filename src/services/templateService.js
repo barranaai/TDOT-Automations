@@ -3,8 +3,9 @@ const { templateBoardId } = require('../../config/monday');
 
 // Template Board column IDs
 const TEMPLATE_COLS = {
-  documentCode: 'text_mm0xprz5',
-  caseSubType: 'text_mm16wrft',
+  documentCode:     'text_mm0xprz5',
+  caseSubType:      'text_mm16wrft',
+  documentCategory: 'dropdown_mm0x41zm',
 };
 
 // Template Board group titles → group IDs (pre-fetched from board structure)
@@ -73,7 +74,7 @@ async function getTemplateItemsByCaseType(primaryCaseType, caseSubType = null) {
             items {
               id
               name
-              column_values(ids: ["${TEMPLATE_COLS.documentCode}", "${TEMPLATE_COLS.caseSubType}"]) {
+              column_values(ids: ["${TEMPLATE_COLS.documentCode}", "${TEMPLATE_COLS.caseSubType}", "${TEMPLATE_COLS.documentCategory}"]) {
                 id
                 text
               }
@@ -93,10 +94,11 @@ async function getTemplateItemsByCaseType(primaryCaseType, caseSubType = null) {
       colMap[col.id] = col.text;
     }
     return {
-      id: item.id,
-      name: item.name,
-      documentCode: colMap[TEMPLATE_COLS.documentCode] || '',
-      caseSubType: colMap[TEMPLATE_COLS.caseSubType] || '',
+      id:               item.id,
+      name:             item.name,
+      documentCode:     colMap[TEMPLATE_COLS.documentCode]     || '',
+      caseSubType:      colMap[TEMPLATE_COLS.caseSubType]      || '',
+      documentCategory: colMap[TEMPLATE_COLS.documentCategory] || '',
     };
   });
 

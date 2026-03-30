@@ -11,6 +11,7 @@ const EXEC_COLS = {
   templateBoard:       'board_relation_mm0zhagw',  // connect → Template Board
   caseSubType:         'text_mm17zdy7',
   intakeItemId:        'text_mm0zfsp1',
+  documentFolder:      'link_mm1yrnz1',            // OneDrive category folder URL
 };
 
 // The single execution group — rename this in Monday to "Active Cases Execution" if desired
@@ -66,6 +67,8 @@ async function getExistingUniqueKeys(caseRef) {
  *   caseSubType: string,
  *   clientMasterItemId: string,
  *   templateItemId: string,
+ *   folderUrl?: string,       - OneDrive category folder sharing URL (optional)
+ *   documentCategory?: string - Category label for display text on link
  * }} itemData
  */
 async function createExecutionItem(itemData) {
@@ -77,9 +80,11 @@ async function createExecutionItem(itemData) {
     caseSubType,
     clientMasterItemId,
     templateItemId,
+    folderUrl,
+    documentCategory,
   } = itemData;
 
-  const columnValues = JSON.stringify({
+  const colValues = {
     [EXEC_COLS.caseReferenceNumber]: caseRef,
     [EXEC_COLS.uniqueKey]:           uniqueKey,
     [EXEC_COLS.documentCode]:        documentCode,
@@ -88,7 +93,16 @@ async function createExecutionItem(itemData) {
     [EXEC_COLS.clientCase]:          { item_ids: [Number(clientMasterItemId)] },
     [EXEC_COLS.clientMasterBoard]:   { item_ids: [Number(clientMasterItemId)] },
     [EXEC_COLS.templateBoard]:       { item_ids: [Number(templateItemId)] },
-  });
+  };
+
+  if (folderUrl) {
+    colValues[EXEC_COLS.documentFolder] = {
+      url:  folderUrl,
+      text: documentCategory ? `${documentCategory} Folder` : 'Open Folder',
+    };
+  }
+
+  const columnValues = JSON.stringify(colValues);
 
   const data = await mondayApi.query(
     `mutation createItem(
@@ -126,10 +140,11 @@ async function createExecutionItem(itemData) {
  *   caseRef: string,
  *   clientMasterItemId: string,
  *   templateItems: Array,
+ *   categoryLinks?: { [category: string]: string }, - OneDrive folder URLs keyed by Document Category
  * }} params
  * @returns {Promise<{ created: number, skipped: number }>}
  */
-async function createMissingExecutionItems({ caseRef, clientMasterItemId, templateItems }) {
+async function createMissingExecutionItems({ caseRef, clientMasterItemId, templateItems, categoryLinks = {} }) {
   const existingKeys = await getExistingUniqueKeys(caseRef);
   console.log(`[ExecutionService] Existing keys for "${caseRef}": ${existingKeys.size}`);
 
@@ -147,6 +162,8 @@ async function createMissingExecutionItems({ caseRef, clientMasterItemId, templa
       continue;
     }
 
+    const folderUrl = tmpl.documentCategory ? categoryLinks[tmpl.documentCategory] : undefined;
+
     try {
       const result = await createExecutionItem({
         name:               tmpl.name,
@@ -156,8 +173,10 @@ async function createMissingExecutionItems({ caseRef, clientMasterItemId, templa
         caseSubType:        tmpl.caseSubType,
         clientMasterItemId,
         templateItemId:     tmpl.id,
+        folderUrl,
+        documentCategory:   tmpl.documentCategory,
       });
-      console.log(`[ExecutionService] Created: "${tmpl.name}" (id: ${result?.id})`);
+      console.log(`[ExecutionService] Created: "${tmpl.name}" (id: ${result?.id})${folderUrl ? ' + folder link' : ''}`);
       created++;
     } catch (err) {
       console.error(`[ExecutionService] Failed to create "${tmpl.name}":`, err.message);

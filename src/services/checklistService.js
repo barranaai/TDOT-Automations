@@ -1,6 +1,7 @@
 const mondayApi = require('./mondayApi');
 const { getTemplateItemsByCaseType } = require('./templateService');
 const { createMissingExecutionItems } = require('./executionService');
+const { createClientFolders } = require('./oneDriveService');
 
 // Client Master column IDs
 const CM_COLS = {
@@ -80,11 +81,31 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
     return;
   }
 
-  // 4. Create missing execution items (with duplicate prevention)
+  // 4. Create OneDrive category folders and get sharing links
+  const uniqueCategories = [...new Set(
+    templateItems.map(t => t.documentCategory).filter(Boolean)
+  )];
+
+  let categoryLinks = {};
+  if (uniqueCategories.length) {
+    try {
+      categoryLinks = await createClientFolders({
+        clientName: item.name,
+        caseRef,
+        categories: uniqueCategories,
+      });
+      console.log(`[ChecklistService] OneDrive folders created for ${Object.keys(categoryLinks).length} categories`);
+    } catch (err) {
+      console.warn(`[ChecklistService] OneDrive folder creation failed — continuing without folder links:`, err.message);
+    }
+  }
+
+  // 5. Create missing execution items (with duplicate prevention)
   const { created, skipped } = await createMissingExecutionItems({
     caseRef,
     clientMasterItemId: String(itemId),
     templateItems,
+    categoryLinks,
   });
 
   console.log(`[ChecklistService] Done — created: ${created}, skipped (already existed): ${skipped}`);

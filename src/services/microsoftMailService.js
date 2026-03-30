@@ -108,4 +108,4 @@ async function sendEmail({ to, subject, html, replyTo }) {
   );
 }
 
-module.exports = { sendEmail };
+module.exports = { sendEmail, getAccessToken };
