@@ -70,32 +70,43 @@ function landingPage(error = '') {
 <title>Client Questionnaire</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f4f8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
-.card{background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.10);padding:2.5rem 2rem;width:100%;max-width:440px;text-align:center}
-.logo{font-size:2rem;margin-bottom:.5rem}
-h1{font-size:1.5rem;color:#1e3a5f;margin-bottom:.5rem}
-p{color:#64748b;font-size:.95rem;margin-bottom:1.75rem;line-height:1.5}
-label{display:block;text-align:left;font-size:.85rem;font-weight:600;color:#374151;margin-bottom:.4rem}
-input[type=text]{width:100%;padding:.7rem 1rem;border:1.5px solid #d1d5db;border-radius:8px;font-size:1rem;outline:none;transition:border .2s}
-input[type=text]:focus{border-color:#2563eb}
-.btn{display:block;width:100%;margin-top:1rem;padding:.8rem;background:#1e3a5f;color:#fff;font-size:1rem;font-weight:600;border:none;border-radius:8px;cursor:pointer;transition:background .2s}
-.btn:hover{background:#2563eb}
-.error{background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;padding:.75rem 1rem;border-radius:8px;margin-bottom:1.25rem;font-size:.9rem}
-.hint{font-size:.8rem;color:#9ca3af;margin-top:1rem}
+:root{--brand:rgb(143,5,5);--brand-dark:#6d0404;--brand-faint:rgba(143,5,5,.08)}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;background:#e8e8e8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
+.card{background:#fff;border-radius:18px;box-shadow:0 12px 48px rgba(0,0,0,.15);width:100%;max-width:420px;overflow:hidden;text-align:center}
+.card-header{background:#1a1a1a;padding:1.75rem 2rem 1.6rem;display:flex;flex-direction:column;align-items:center;gap:.55rem}
+.logo-img{height:38px;object-fit:contain}
+.brand-sub{font-size:.65rem;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.38);font-weight:600}
+.card-body{padding:1.85rem 2.25rem 2rem}
+h1{font-size:1.2rem;color:#111;margin-bottom:.4rem;font-weight:700}
+.card-body>p{color:#666;font-size:.9rem;margin-bottom:1.65rem;line-height:1.65}
+label{display:block;text-align:left;font-size:.8rem;font-weight:600;color:#222;margin-bottom:.42rem;letter-spacing:.01em}
+input[type=text]{width:100%;padding:.72rem 1rem;border:1.5px solid #ddd;border-radius:9px;font-size:.93rem;outline:none;transition:border-color .2s,box-shadow .2s;color:#111;background:#fff}
+input[type=text]:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-faint)}
+.btn{display:block;width:100%;margin-top:1.1rem;padding:.82rem;background:var(--brand);color:#fff;font-size:.92rem;font-weight:700;border:none;border-radius:9px;cursor:pointer;transition:background .2s;letter-spacing:.02em}
+.btn:hover{background:var(--brand-dark)}
+.error{background:#fff5f5;border:1.5px solid #fecaca;color:#9b1c1c;padding:.7rem 1rem;border-radius:9px;margin-bottom:1.2rem;font-size:.86rem;text-align:left;line-height:1.5}
+.hint{font-size:.76rem;color:#aaa;margin-top:1rem;line-height:1.5}
+.card-footer{padding:.8rem;background:#f5f5f5;border-top:1px solid #eee;font-size:.68rem;color:#bbb;letter-spacing:.06em;text-transform:uppercase}
 </style>
 </head>
 <body>
 <div class="card">
-  <div class="logo">📋</div>
-  <h1>Client Questionnaire</h1>
-  <p>Please enter your <strong>Case Reference Number</strong> to access and complete your questionnaire.</p>
-  ${error ? `<div class="error">⚠️ ${esc(error)}</div>` : ''}
-  <form method="GET" action="">
-    <label for="caseRef">Case Reference Number</label>
-    <input type="text" id="caseRef" name="ref" placeholder="e.g. TDOT-2025-001" autocomplete="off" required>
-    <button class="btn" type="submit">Access My Questionnaire →</button>
-  </form>
-  <p class="hint">If you don't know your case reference, please contact your consultant.</p>
+  <div class="card-header">
+    <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration" class="logo-img">
+    <span class="brand-sub">Client Portal</span>
+  </div>
+  <div class="card-body">
+    <h1>Client Questionnaire</h1>
+    <p>Enter your <strong>Case Reference Number</strong> to access and complete your questionnaire.</p>
+    ${error ? `<div class="error">${esc(error)}</div>` : ''}
+    <form method="GET" action="">
+      <label for="caseRef">Case Reference Number</label>
+      <input type="text" id="caseRef" name="ref" placeholder="e.g. 2026-SP-001" autocomplete="off" required>
+      <button class="btn" type="submit">Access My Questionnaire →</button>
+    </form>
+    <p class="hint">Don't know your case reference? Contact your consultant.</p>
+  </div>
+  <div class="card-footer">TDOT Immigration &nbsp;·&nbsp; Secure Client Portal</div>
 </div>
 <script>
   const form = document.querySelector('form');
@@ -175,92 +186,97 @@ function formPage(caseRef, sections) {
 <title>Questionnaire — ${esc(caseRef)}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f4f8;color:#1e293b;min-height:100vh}
+:root{--brand:rgb(143,5,5);--brand-dark:#6d0404;--brand-faint:rgba(143,5,5,.07)}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;background:#e8e8e8;color:#111;min-height:100vh}
 
 /* ── Top bar ── */
-.top-bar{background:#1e3a5f;color:#fff;padding:.7rem 1.25rem;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;box-shadow:0 2px 10px rgba(0,0,0,.25)}
-.top-bar-left h1{font-size:1rem;font-weight:700;line-height:1.3}
-.top-bar-left .case-ref{font-size:.78rem;opacity:.7;margin-top:.1rem}
-.btn-submit-top{background:#10b981;color:#fff;border:none;padding:.45rem 1rem;border-radius:6px;font-weight:600;font-size:.82rem;cursor:pointer;white-space:nowrap}
-.btn-submit-top:hover{background:#059669}
+.top-bar{background:#1a1a1a;color:#fff;padding:.65rem 1.5rem;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;box-shadow:0 2px 16px rgba(0,0,0,.45)}
+.top-bar-brand{display:flex;align-items:center;gap:.85rem}
+.top-bar-logo{height:30px;object-fit:contain;flex-shrink:0}
+.top-bar-divider{width:1px;height:22px;background:rgba(255,255,255,.15);flex-shrink:0}
+.top-bar-info h1{font-size:.88rem;font-weight:700;color:#fff;line-height:1.3}
+.top-bar-info .case-ref{font-size:.7rem;color:rgba(255,255,255,.42);margin-top:.08rem}
+.btn-submit-top{background:var(--brand);color:#fff;border:none;padding:.42rem 1rem;border-radius:7px;font-weight:700;font-size:.77rem;cursor:pointer;white-space:nowrap;letter-spacing:.02em;transition:background .2s;flex-shrink:0}
+.btn-submit-top:hover{background:var(--brand-dark)}
 
 /* ── Progress bar ── */
-.progress-wrap{background:#1e3a5f;padding:.3rem 1.25rem .75rem;position:sticky;top:52px;z-index:199}
-.progress-text{font-size:.72rem;color:rgba(255,255,255,.7);margin-bottom:.3rem}
-.progress-track{background:rgba(255,255,255,.18);border-radius:99px;height:5px}
-.progress-fill{background:#10b981;height:5px;border-radius:99px;transition:width .4s}
+.progress-wrap{background:#111;padding:.3rem 1.5rem .65rem;position:sticky;top:52px;z-index:199}
+.progress-text{font-size:.67rem;color:rgba(255,255,255,.42);margin-bottom:.3rem;letter-spacing:.02em}
+.progress-track{background:rgba(255,255,255,.13);border-radius:99px;height:3px}
+.progress-fill{background:var(--brand);height:3px;border-radius:99px;transition:width .45s}
 
 /* ── Step pills ── */
-.steps-wrap{background:#fff;border-bottom:1px solid #e2e8f0;position:sticky;top:96px;z-index:198;overflow-x:auto;-webkit-overflow-scrolling:touch}
-.steps-inner{display:flex;gap:0;min-width:max-content;padding:0}
-.step-pill{display:flex;align-items:center;gap:.4rem;padding:.65rem 1.1rem;border:none;background:transparent;cursor:pointer;font-size:.8rem;color:#64748b;border-bottom:2px solid transparent;transition:all .2s;white-space:nowrap;font-family:inherit}
-.step-pill:hover{background:#f8fafc;color:#1e3a5f}
-.step-pill.active{color:#1e3a5f;border-bottom-color:#2563eb;font-weight:600;background:#eff6ff}
-.step-pill.done{color:#10b981}
-.step-pill.done .pill-num{background:#10b981;color:#fff}
-.pill-num{width:20px;height:20px;border-radius:50%;background:#e2e8f0;color:#64748b;font-size:.7rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s}
-.step-pill.active .pill-num{background:#2563eb;color:#fff}
+.steps-wrap{background:#fff;border-bottom:1px solid #e8e8e8;position:sticky;top:90px;z-index:198;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.steps-inner{display:flex;min-width:max-content}
+.step-pill{display:flex;align-items:center;gap:.4rem;padding:.62rem 1.1rem;border:none;background:transparent;cursor:pointer;font-size:.77rem;color:#777;border-bottom:2.5px solid transparent;transition:all .2s;white-space:nowrap;font-family:inherit}
+.step-pill:hover{background:#fafafa;color:#111}
+.step-pill.active{color:var(--brand);border-bottom-color:var(--brand);font-weight:600;background:var(--brand-faint)}
+.step-pill.done{color:#059669}
+.step-pill.done .pill-num{background:#059669;color:#fff}
+.pill-num{width:19px;height:19px;border-radius:50%;background:#e8e8e8;color:#777;font-size:.67rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s}
+.step-pill.active .pill-num{background:var(--brand);color:#fff}
 
 /* ── Panel ── */
-.main{max-width:820px;margin:1.5rem auto;padding:0 1rem 4rem}
-.panel{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08);overflow:hidden}
-.panel-header{padding:1.1rem 1.5rem;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between}
-.panel-title{font-size:1.15rem;font-weight:700;color:#1e3a5f}
-.panel-meta{font-size:.8rem;color:#64748b;background:#f1f5f9;padding:.2rem .65rem;border-radius:99px}
+.main{max-width:800px;margin:1.5rem auto;padding:0 1rem 4rem}
+.panel{background:#fff;border-radius:14px;box-shadow:0 2px 16px rgba(0,0,0,.07);overflow:hidden}
+.panel-header{padding:1.1rem 1.5rem;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;justify-content:space-between}
+.panel-title{font-size:1.08rem;font-weight:700;color:#111}
+.panel-meta{font-size:.76rem;color:#888;background:#f3f3f3;padding:.2rem .65rem;border-radius:99px}
 .panel-body{padding:1.25rem 1.5rem}
 
 /* ── Questions ── */
-.question{margin-bottom:1.4rem;padding-bottom:1.4rem;border-bottom:1px solid #f8fafc}
+.question{margin-bottom:1.4rem;padding-bottom:1.4rem;border-bottom:1px solid #f3f3f3}
 .question:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
-.q-header{display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem}
-.q-code{font-size:.7rem;color:#94a3b8;font-family:monospace;letter-spacing:.02em}
-.badge{font-size:.65rem;font-weight:700;padding:.15rem .45rem;border-radius:4px;text-transform:uppercase;letter-spacing:.04em}
-.badge.mandatory{background:#fef2f2;color:#dc2626}
-.badge.optional{background:#f0fdf4;color:#16a34a}
-.q-label{display:block;font-size:.9rem;font-weight:500;color:#374151;margin-bottom:.3rem;line-height:1.5}
-.q-help{font-size:.8rem;color:#2563eb;background:#eff6ff;padding:.3rem .65rem;border-radius:6px;margin-bottom:.45rem;line-height:1.5;border-left:3px solid #93c5fd}
-.needs-action{border:2px solid #f97316!important;background:#fff7ed!important;border-radius:10px}
+.q-header{display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem;flex-wrap:wrap}
+.q-code{font-size:.67rem;color:#c0c0c0;font-family:monospace;letter-spacing:.04em}
+.badge{font-size:.62rem;font-weight:700;padding:.15rem .5rem;border-radius:5px;text-transform:uppercase;letter-spacing:.05em}
+.badge.mandatory{background:#fff0f0;color:#9b1c1c}
+.badge.optional{background:#f0fdf4;color:#15803d}
+.q-label{display:block;font-size:.9rem;font-weight:500;color:#222;margin-bottom:.35rem;line-height:1.55}
+.q-help{font-size:.79rem;color:#555;background:#f7f7f7;padding:.35rem .65rem;border-radius:7px;margin-bottom:.45rem;line-height:1.5;border-left:3px solid #ddd}
+.needs-action{border:2px solid #f97316!important;background:#fffbf5!important;border-radius:12px;padding:.85rem 1rem!important}
 .needs-action .q-label{color:#c2410c}
-.q-review-note{font-size:.82rem;color:#9a3412;background:#ffedd5;padding:.4rem .7rem;border-radius:6px;margin-bottom:.45rem;line-height:1.5;border-left:3px solid #f97316}
-.badge.action-required{background:#fff7ed;color:#ea580c;border:1px solid #fed7aa;font-size:.68rem;font-weight:700;padding:.15rem .45rem;border-radius:4px}
-.form-input{width:100%;padding:.6rem .9rem;border:1.5px solid #d1d5db;border-radius:8px;font-size:.9rem;font-family:inherit;outline:none;transition:border .2s,box-shadow .2s;background:#fff;color:#1e293b}
-.form-input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
-.textarea{resize:vertical;min-height:80px}
-.file-note{font-size:.82rem;color:#64748b;background:#f8fafc;padding:.6rem .9rem;border-radius:8px;border:1px dashed #cbd5e1;line-height:1.4}
+.q-review-note{font-size:.8rem;color:#9a3412;background:#fff7ed;padding:.4rem .7rem;border-radius:7px;margin-bottom:.45rem;line-height:1.5;border-left:3px solid #fb923c}
+.badge.action-required{background:#fff7ed;color:#ea580c;border:1px solid #fed7aa}
+.form-input{width:100%;padding:.62rem .9rem;border:1.5px solid #ddd;border-radius:9px;font-size:.9rem;font-family:inherit;outline:none;transition:border-color .2s,box-shadow .2s;background:#fff;color:#111}
+.form-input:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-faint)}
+.textarea{resize:vertical;min-height:80px;line-height:1.55}
+.file-note{font-size:.8rem;color:#888;background:#f9f9f9;padding:.6rem .9rem;border-radius:9px;border:1.5px dashed #e0e0e0;line-height:1.4}
 
 /* ── Footer nav ── */
-.panel-footer{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.5rem;border-top:1px solid #f1f5f9;background:#fafbfc;gap:.75rem;flex-wrap:wrap}
+.panel-footer{display:flex;align-items:center;justify-content:space-between;padding:.95rem 1.5rem;border-top:1px solid #f0f0f0;background:#fafafa;gap:.75rem;flex-wrap:wrap}
 .footer-left{flex:1;min-width:0}
-.footer-right{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
-.save-msg{font-size:.82rem;color:#10b981}
-.btn-nav{padding:.6rem 1.3rem;border:none;border-radius:8px;font-size:.88rem;font-weight:600;cursor:pointer;transition:background .2s,opacity .2s;font-family:inherit}
-.btn-back{background:#f1f5f9;color:#475569}
-.btn-back:hover{background:#e2e8f0}
-.btn-save{background:#1e3a5f;color:#fff}
-.btn-save:hover{background:#2563eb}
-.btn-next{background:#2563eb;color:#fff}
-.btn-next:hover{background:#1d4ed8}
-.btn-submit{background:#10b981;color:#fff}
-.btn-submit:hover{background:#059669}
-.btn-nav:disabled{opacity:.5;cursor:not-allowed}
+.footer-right{display:flex;gap:.55rem;align-items:center;flex-wrap:wrap}
+.save-msg{font-size:.79rem;color:#059669;font-weight:500}
+.btn-nav{padding:.58rem 1.25rem;border:none;border-radius:8px;font-size:.85rem;font-weight:600;cursor:pointer;transition:all .2s;font-family:inherit}
+.btn-back{background:#f0f0f0;color:#444}
+.btn-back:hover{background:#e4e4e4}
+.btn-save{background:#1a1a1a;color:#fff}
+.btn-save:hover{background:#333}
+.btn-next{background:var(--brand);color:#fff}
+.btn-next:hover{background:var(--brand-dark)}
+.btn-submit{background:#059669;color:#fff}
+.btn-submit:hover{background:#047857}
+.btn-nav:disabled{opacity:.45;cursor:not-allowed}
 
 /* ── Toast ── */
-.toast{position:fixed;bottom:1.5rem;right:1.5rem;background:#1e293b;color:#fff;padding:.75rem 1.1rem;border-radius:8px;font-size:.88rem;box-shadow:0 4px 18px rgba(0,0,0,.2);opacity:0;transform:translateY(6px);transition:all .3s;pointer-events:none;z-index:999;max-width:280px}
+.toast{position:fixed;bottom:1.5rem;right:1.5rem;background:#1a1a1a;color:#fff;padding:.72rem 1.1rem;border-radius:9px;font-size:.85rem;box-shadow:0 4px 22px rgba(0,0,0,.28);opacity:0;transform:translateY(6px);transition:all .3s;pointer-events:none;z-index:999;max-width:280px}
 .toast.show{opacity:1;transform:translateY(0)}
-.toast.success{background:#10b981}
-.toast.error{background:#dc2626}
+.toast.success{background:#059669}
+.toast.error{background:var(--brand)}
 
 /* ── Success screen ── */
-.success-panel{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08);text-align:center;padding:3.5rem 2rem}
-.success-panel .s-icon{font-size:3.5rem;margin-bottom:1rem}
-.success-panel h2{color:#10b981;font-size:1.6rem;margin-bottom:.6rem}
-.success-panel p{color:#64748b;font-size:.95rem;line-height:1.6}
+.success-panel{background:#fff;border-radius:14px;box-shadow:0 2px 16px rgba(0,0,0,.07);text-align:center;padding:3.5rem 2rem}
+.success-panel .s-icon{font-size:3rem;margin-bottom:1rem}
+.success-panel h2{color:#059669;font-size:1.5rem;margin-bottom:.6rem;font-weight:700}
+.success-panel p{color:#666;font-size:.93rem;line-height:1.65}
 
 @media(max-width:600px){
-  .top-bar{flex-wrap:wrap;gap:.4rem}
+  .top-bar{padding:.6rem 1rem;gap:.5rem}
+  .top-bar-divider{display:none}
   .panel-header{flex-direction:column;align-items:flex-start;gap:.35rem}
   .panel-body{padding:1rem}
-  .panel-footer{padding:.85rem 1rem}
+  .panel-footer{padding:.8rem 1rem}
   .footer-right{width:100%;justify-content:flex-end}
   .main{padding:0 .5rem 4rem}
 }
@@ -270,11 +286,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 <!-- Top bar -->
 <div class="top-bar">
-  <div class="top-bar-left">
-    <h1>📋 Client Questionnaire</h1>
-    <div class="case-ref">Case: ${esc(caseRef)}</div>
+  <div class="top-bar-brand">
+    <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration" class="top-bar-logo">
+    <div class="top-bar-divider"></div>
+    <div class="top-bar-info">
+      <h1>Client Questionnaire</h1>
+      <div class="case-ref">Case Ref: ${esc(caseRef)}</div>
+    </div>
   </div>
-  <button class="btn-submit-top" onclick="submitAll()">✓ Submit All</button>
+  <button class="btn-submit-top" onclick="submitAll()">Submit All</button>
 </div>
 
 <!-- Progress -->
