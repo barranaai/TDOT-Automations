@@ -40,6 +40,7 @@ const CM = {
   docReadiness:        'numeric_mm0x5g9x',
   escalationRequired:  'color_mm0x7bje',
   escalationReason:    'text_mm0xvpr9',
+  reminderCount:       'numeric_mm1a4e8r',
 };
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -363,9 +364,11 @@ async function onCaseClosed({ masterItemId, newStage, caseRef }) {
 async function onStageAdvanced({ masterItemId, newStage, caseRef }) {
   const today = new Date().toISOString().split('T')[0];
   await updateColumns(masterItemId, {
-    [CM.stageStartDate]: { date: today },
+    [CM.stageStartDate]: { date: today    },
+    [CM.chasingStage]:   { label: 'Resolved' },
+    [CM.reminderCount]:  0,
   });
-  console.log(`[StageGate] Stage Start Date reset to ${today} for ${caseRef} (→ ${newStage})`);
+  console.log(`[StageGate] Stage advanced for ${caseRef} (→ ${newStage}): Start Date reset, Chasing Stage = Resolved, Reminder Count = 0`);
 }
 
 module.exports = { onThresholdMet, onFullyComplete, onSubmissionReady, onStageAdvanced, onCaseClosed, onEscalationCleared, TERMINAL_STAGES };
