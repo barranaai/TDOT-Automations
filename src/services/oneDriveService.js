@@ -12,66 +12,73 @@
  *           ├── Legal/
  *           ├── Medical/
  *           └── (one subfolder per unique Document Category in the checklist)
- *
- * Returns a map of { [category]: sharingUrl } so each checklist row can be linked
- * to its correct category folder on the Document Checklist Execution Board.
  */
 
 const axios = require('axios');
 const { getAccessToken } = require('./microsoftMailService');
 
-const DRIVE_USER   = process.env.MS_FROM_EMAIL || 'noreply@tdotimm.com';
-const ROOT_FOLDER  = 'Client Documents';
-const GRAPH_BASE   = 'https://graph.microsoft.com/v1.0';
+const DRIVE_USER  = process.env.MS_FROM_EMAIL || 'noreply@tdotimm.com';
+const ROOT_FOLDER = 'Client Documents';
+const GRAPH_BASE  = 'https://graph.microsoft.com/v1.0';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── URL helpers ─────────────────────────────────────────────────────────────
 
-function driveUrl(path) {
-  const encoded = encodeURIComponent(path).replace(/%2F/g, '/');
-  return `${GRAPH_BASE}/users/${encodeURIComponent(DRIVE_USER)}/drive/root:/${encoded}:`;
+function userBase() {
+  return `${GRAPH_BASE}/users/${encodeURIComponent(DRIVE_USER)}/drive`;
 }
 
+/** POST target for creating a child inside a given path (or at root if no path). */
+function childrenUrl(parentPath) {
+  if (!parentPath) return `${userBase()}/root/children`;
+  const encoded = parentPath.split('/').map(encodeURIComponent).join('/');
+  return `${userBase()}/root:/${encoded}:/children`;
+}
+
+/** GET / PATCH target for an item at a given path. */
+function itemUrl(path) {
+  const encoded = path.split('/').map(encodeURIComponent).join('/');
+  return `${userBase()}/root:/${encoded}:`;
+}
+
+// ─── Core helpers ─────────────────────────────────────────────────────────────
+
 /**
- * Create a folder at the given OneDrive path if it does not already exist.
- * Uses PUT with conflictBehavior=fail to avoid overwriting; on 409 (already exists),
- * fetches the existing item instead.
- *
- * @param {string} token   - MS Graph access token
- * @param {string} path    - Path relative to drive root, e.g. "Client Documents/Smith - 2026-CIT-001"
- * @returns {Promise<{ id: string, webUrl: string }>}
+ * Create a folder inside parentPath (or at drive root if parentPath is null).
+ * If the folder already exists (409), fetch and return the existing item.
  */
-async function ensureFolder(token, path) {
-  const url = driveUrl(path);
+async function ensureFolder(token, parentPath, folderName) {
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
   try {
-    const res = await axios.put(
-      url,
-      { folder: {}, '@microsoft.graph.conflictBehavior': 'fail' },
-      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    const res = await axios.post(
+      childrenUrl(parentPath),
+      { name: folderName, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' },
+      { headers }
     );
     return { id: res.data.id, webUrl: res.data.webUrl };
   } catch (err) {
     if (err.response?.status === 409) {
-      // Folder already exists — fetch it
-      const res = await axios.get(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const fullPath = parentPath ? `${parentPath}/${folderName}` : folderName;
+      const res = await axios.get(itemUrl(fullPath), { headers });
       return { id: res.data.id, webUrl: res.data.webUrl };
     }
+    // Log the full Graph API error body for diagnosis
+    const graphError = err.response?.data?.error;
+    console.error(
+      `[OneDrive] API error creating "${folderName}" under "${parentPath || 'root'}":`,
+      graphError ? `${graphError.code} — ${graphError.message}` : err.message
+    );
     throw err;
   }
 }
 
 /**
- * Generate an organisation-scoped edit sharing link for a drive item.
+ * Generate an organisation-scoped edit sharing link.
  * Any member of the organisation can open it without individual sharing.
- *
- * @param {string} token   - MS Graph access token
- * @param {string} itemId  - OneDrive item ID
- * @returns {Promise<string>} Sharing URL
  */
 async function createOrgLink(token, itemId) {
   const res = await axios.post(
-    `${GRAPH_BASE}/users/${encodeURIComponent(DRIVE_USER)}/drive/items/${itemId}/createLink`,
+    `${userBase()}/items/${itemId}/createLink`,
     { type: 'edit', scope: 'organization' },
     { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
   );
@@ -87,9 +94,9 @@ async function createOrgLink(token, itemId) {
  * @param {{
  *   clientName: string,
  *   caseRef:    string,
- *   categories: string[],   - unique Document Category values from the checklist
+ *   categories: string[],
  * }} params
- * @returns {Promise<{ [category: string]: string }>} Map of category → sharing URL
+ * @returns {Promise<{ [category: string]: string }>}
  */
 async function createClientFolders({ clientName, caseRef, categories }) {
   if (!categories.length) {
@@ -100,15 +107,15 @@ async function createClientFolders({ clientName, caseRef, categories }) {
   const token = await getAccessToken();
 
   // Sanitise folder name — remove characters not allowed in OneDrive paths
-  const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+  const safeName   = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+  const clientPath = `${ROOT_FOLDER}/${safeName}`;
 
-  // 1. Ensure root "Client Documents" folder exists
-  await ensureFolder(token, ROOT_FOLDER);
+  // 1. Ensure root "Client Documents" folder
+  await ensureFolder(token, null, ROOT_FOLDER);
   console.log(`[OneDrive] Root folder ready: ${ROOT_FOLDER}`);
 
-  // 2. Ensure client folder exists
-  const clientPath = `${ROOT_FOLDER}/${safeName}`;
-  await ensureFolder(token, clientPath);
+  // 2. Ensure client folder
+  await ensureFolder(token, ROOT_FOLDER, safeName);
   console.log(`[OneDrive] Client folder ready: ${clientPath}`);
 
   // 3. Create one subfolder per unique category and generate a sharing link
@@ -116,17 +123,14 @@ async function createClientFolders({ clientName, caseRef, categories }) {
 
   for (const category of categories) {
     if (!category) continue;
-    const categoryPath = `${clientPath}/${category}`;
     try {
-      const { id } = await ensureFolder(token, categoryPath);
+      const { id } = await ensureFolder(token, clientPath, category);
       const sharingUrl = await createOrgLink(token, id);
       categoryLinks[category] = sharingUrl;
       console.log(`[OneDrive] ✓ ${category} → ${sharingUrl}`);
     } catch (err) {
       console.error(`[OneDrive] Failed to create folder for category "${category}":`, err.message);
     }
-
-    // Brief pause to avoid Graph API rate limits
     await new Promise(r => setTimeout(r, 150));
   }
 
