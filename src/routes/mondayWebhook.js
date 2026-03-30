@@ -10,7 +10,7 @@ const emailService                = require('../services/emailService');
 const questionnaireReviewService  = require('../services/questionnaireReviewService');
 const documentReviewService       = require('../services/documentReviewService');
 const stageGateService            = require('../services/stageGateService');
-const { onStageAdvanced, onCaseClosed, TERMINAL_STAGES } = stageGateService;
+const { onStageAdvanced, onCaseClosed, onEscalationCleared, TERMINAL_STAGES } = stageGateService;
 const notify                      = require('../services/mondayNotificationService');
 
 const CLIENT_MASTER_BOARD_ID               = String(process.env.MONDAY_CLIENT_MASTER_BOARD_ID || '');
@@ -140,6 +140,17 @@ router.post('/', async (req, res) => {
         { id: String(pulseId) }
       ).then(d => d?.items?.[0]?.column_values?.[0]?.text?.trim() || '').catch(() => '');
       notify.onEscalationRequired(pulseId, itemName, caseRef).catch(() => {});
+    }
+
+    // Escalation Required → No: clear stale Escalation Reason
+    if (columnId === ESCALATION_CM_COL && value?.label?.text === 'No') {
+      const caseRef = await mondayApi.query(
+        `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
+        { id: String(pulseId) }
+      ).then(d => d?.items?.[0]?.column_values?.[0]?.text?.trim() || '').catch(() => '');
+      onEscalationCleared({ masterItemId: pulseId, caseRef }).catch(err =>
+        console.error('[StageGate] Escalation clear failed:', err.message)
+      );
     }
 
     // Retainer Payment Status → Paid

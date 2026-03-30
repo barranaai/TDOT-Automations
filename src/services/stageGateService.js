@@ -286,6 +286,25 @@ async function onSubmissionReady({ masterItemId, caseRef }) {
   console.log(`[StageGate] ✅ ${caseRef} locked at Submission Ready`);
 }
 
+// ─── Escalation cleared: wipe stale Escalation Reason ────────────────────────
+
+/**
+ * Called by the webhook when Escalation Required is set to "No".
+ * Clears the Escalation Reason text so stale reasons don't persist on the board.
+ *
+ * Fires for both manual resets and automated clears (e.g. expiryRiskEngine
+ * resolving). Writing an empty string to a text column is idempotent — safe
+ * to call multiple times.
+ *
+ * @param {{ masterItemId: string|number, caseRef: string }} param
+ */
+async function onEscalationCleared({ masterItemId, caseRef }) {
+  await updateColumns(masterItemId, {
+    [CM.escalationReason]: '',
+  });
+  console.log(`[StageGate] Escalation Reason cleared for ${caseRef}`);
+}
+
 // ─── Terminal stage: lock case and stop all engines ───────────────────────────
 
 /**
@@ -349,4 +368,4 @@ async function onStageAdvanced({ masterItemId, newStage, caseRef }) {
   console.log(`[StageGate] Stage Start Date reset to ${today} for ${caseRef} (→ ${newStage})`);
 }
 
-module.exports = { onThresholdMet, onFullyComplete, onSubmissionReady, onStageAdvanced, onCaseClosed, TERMINAL_STAGES };
+module.exports = { onThresholdMet, onFullyComplete, onSubmissionReady, onStageAdvanced, onCaseClosed, onEscalationCleared, TERMINAL_STAGES };
