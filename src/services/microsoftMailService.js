@@ -96,16 +96,21 @@ async function sendEmail({ to, subject, html, replyTo }) {
 
   const token = await getAccessToken();
 
-  await axios.post(
-    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromEmail)}/sendMail`,
-    { message, saveToSentItems: true },
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-    }
-  );
+  try {
+    await axios.post(
+      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromEmail)}/sendMail`,
+      { message, saveToSentItems: true },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+  } catch (err) {
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    throw new Error(`sendMail failed (${err.response?.status}): ${detail}`);
+  }
 }
 
 module.exports = { sendEmail, getAccessToken };

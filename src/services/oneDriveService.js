@@ -63,11 +63,8 @@ async function ensureFolder(token, parentPath, folderName) {
       return { id: res.data.id, webUrl: res.data.webUrl };
     }
     // Log the full Graph API error body for diagnosis
-    const graphError = err.response?.data?.error;
-    console.error(
-      `[OneDrive] API error creating "${folderName}" under "${parentPath || 'root'}":`,
-      graphError ? `${graphError.code} — ${graphError.message}` : err.message
-    );
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error(`[OneDrive] API error creating "${folderName}" under "${parentPath || 'root'}": ${detail}`);
     throw err;
   }
 }
@@ -104,7 +101,18 @@ async function createClientFolders({ clientName, caseRef, categories }) {
     return {};
   }
 
-  const token = await getAccessToken();
+  let token;
+  try {
+    console.log('[OneDrive] Acquiring MS Graph access token...');
+    token = await getAccessToken();
+    console.log('[OneDrive] Token acquired successfully');
+  } catch (err) {
+    const detail = err.response?.data
+      ? JSON.stringify(err.response.data)
+      : err.message;
+    console.error('[OneDrive] Token acquisition failed:', detail);
+    throw err;
+  }
 
   // Sanitise folder name — remove characters not allowed in OneDrive paths
   const safeName   = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
