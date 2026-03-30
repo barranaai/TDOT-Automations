@@ -25,6 +25,7 @@ const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
 const CM = {
   caseStage:       'color_mm0x8faa',
+  stageStartDate:  'date_mm0xjm1z',
   automationLock:  'color_mm0x3x1x',
   readyForReview:  'color_mm0xh2fh',
   readyForSubPrep: 'color_mm0xqsk4',
@@ -155,10 +156,12 @@ async function onThresholdMet({ masterItemId, caseRef, caseType }) {
   const clientName = col(CM.clientName);
   const qPct       = col(CM.qReadiness);
   const docPct     = col(CM.docReadiness);
+  const today      = new Date().toISOString().split('T')[0];
 
-  // Advance stage + set readiness flags
+  // Advance stage + reset Stage Start Date for fresh SLA clock
   await updateColumns(masterItemId, {
     [CM.caseStage]:      { label: 'Internal Review' },
+    [CM.stageStartDate]: { date: today              },
     [CM.readyForReview]: { label: 'Done'            },
     [CM.docThresholdMet]:{ label: 'Yes'             },
     [CM.chasingStage]:   { label: 'Resolved'        },
@@ -219,9 +222,12 @@ async function onFullyComplete({ masterItemId, caseRef, caseType }) {
   }
 
   const clientName = col(CM.clientName);
+  const today      = new Date().toISOString().split('T')[0];
 
+  // Advance stage + reset Stage Start Date for fresh SLA clock
   await updateColumns(masterItemId, {
     [CM.caseStage]:      { label: 'Submission Preparation' },
+    [CM.stageStartDate]: { date: today                    },
     [CM.readyForSubPrep]:{ label: 'Done'                  },
   });
   console.log(`[StageGate] ✓ ${caseRef} → Submission Preparation (100% complete)`);
