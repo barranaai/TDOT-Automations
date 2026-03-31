@@ -109,11 +109,21 @@ function formPage(caseRef, sections) {
   const pct          = totalDocs ? Math.round((uploadedDocs / totalDocs) * 100) : 0;
   const total        = sections.length;
 
+  // Find first section with a Rework Required item and total flagged count
+  let firstFlaggedStep = -1;
+  let flaggedCount = 0;
+  sections.forEach((sec, idx) => {
+    const flagged = sec.items.filter((i) => i.status === 'Rework Required');
+    flaggedCount += flagged.length;
+    if (firstFlaggedStep === -1 && flagged.length > 0) firstFlaggedStep = idx;
+  });
+
   const stepPills = sections.map((sec, idx) => {
-    const icon = CATEGORY_ICONS[sec.category] || '📋';
-    return `<button class="step-pill" id="pill_${idx}" onclick="goToStep(${idx})" title="${esc(sec.category)}">
+    const icon        = CATEGORY_ICONS[sec.category] || '📋';
+    const hasFlagged  = sec.items.some((i) => i.status === 'Rework Required');
+    return `<button class="step-pill${hasFlagged ? ' flagged' : ''}" id="pill_${idx}" onclick="goToStep(${idx})" title="${esc(sec.category)}">
       <span class="pill-num">${idx + 1}</span>
-      <span class="pill-label">${icon} ${esc(sec.category)}</span>
+      <span class="pill-label">${icon} ${esc(sec.category)}${hasFlagged ? ' ⚠️' : ''}</span>
     </button>`;
   }).join('');
 
@@ -134,7 +144,11 @@ function formPage(caseRef, sections) {
             ${doc.blocking === 'Yes' ? '<span class="badge blocking">Blocking</span>' : ''}
           </div>
           <div class="doc-name">${esc(doc.name)}</div>
-          ${doc.status === 'Rework Required' && doc.reviewNotes ? `<div class="doc-review-note">📋 <strong>Officer note:</strong> ${esc(doc.reviewNotes)}</div>` : ''}
+          ${doc.status === 'Rework Required' ? `
+          <div class="doc-review-note">
+            <div class="doc-review-note-header">💬 Feedback from your case officer</div>
+            <div class="doc-review-note-body">${doc.reviewNotes ? esc(doc.reviewNotes) : 'Please re-upload this document with the necessary corrections.'}</div>
+          </div>` : ''}
           ${doc.description ? `<div class="doc-desc">${esc(doc.description)}</div>` : ''}
           ${doc.clientInstructions ? `<div class="doc-instructions">💡 ${esc(doc.clientInstructions)}</div>` : ''}
           ${doc.source ? `<div class="doc-meta">Source: ${esc(doc.source)}</div>` : ''}
@@ -234,7 +248,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .doc-name{font-size:.9rem;font-weight:600;color:#111;line-height:1.4}
 .doc-desc{font-size:.8rem;color:#555;margin-top:.3rem;line-height:1.5}
 .doc-instructions{font-size:.8rem;color:#444;background:#f7f7f7;padding:.35rem .6rem;border-radius:7px;margin-top:.35rem;line-height:1.5;border-left:3px solid #ddd}
-.doc-review-note{font-size:.8rem;color:#9a3412;background:#fff7ed;padding:.4rem .7rem;border-radius:7px;margin-top:.35rem;line-height:1.5;border-left:3px solid #fb923c}
+.doc-review-note{background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #f97316;border-radius:8px;margin-top:.5rem;overflow:hidden}
+.doc-review-note-header{font-size:.73rem;font-weight:700;color:#c2410c;padding:.35rem .7rem;background:#fff0e6;border-bottom:1px solid #fed7aa;letter-spacing:.02em}
+.doc-review-note-body{font-size:.82rem;color:#7c2d12;padding:.4rem .7rem;line-height:1.55}
+.flagged-banner{display:flex;align-items:center;gap:.85rem;background:#fffbeb;border:1.5px solid #fcd34d;border-radius:11px;padding:.9rem 1.1rem;margin:1rem auto;max-width:800px;flex-wrap:wrap}
+.flagged-banner-icon{font-size:1.3rem;flex-shrink:0}
+.flagged-banner-text{flex:1;font-size:.85rem;color:#78350f;line-height:1.5}
+.flagged-banner-btn{padding:.42rem 1rem;background:#d97706;color:#fff;border:none;border-radius:7px;font-size:.82rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .2s}
+.flagged-banner-btn:hover{background:#b45309}
+.step-pill.flagged{color:#ea580c}
+.step-pill.flagged .pill-num{background:#fff7ed;color:#ea580c;border:1.5px solid #fb923c}
 .doc-meta{font-size:.73rem;color:#bbb;margin-top:.2rem}
 .doc-actions{display:flex;flex-direction:column;align-items:flex-end;gap:.4rem;flex-shrink:0}
 .doc-status{display:inline-flex;align-items:center;font-size:.73rem;font-weight:600;padding:.22rem .6rem;border-radius:99px;white-space:nowrap}
@@ -291,6 +314,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
   <div class="progress-track"><div class="progress-fill" id="progressFill" style="width:${pct}%"></div></div>
 </div>
 
+${flaggedCount > 0 ? `
+<div class="flagged-banner" id="flaggedBanner">
+  <span class="flagged-banner-icon">⚠️</span>
+  <span class="flagged-banner-text">
+    <strong>${flaggedCount} document${flaggedCount !== 1 ? 's' : ''} require${flaggedCount === 1 ? 's' : ''} re-upload.</strong>
+    Our case officer has left notes — please review and re-upload the highlighted documents.
+  </span>
+  <button class="flagged-banner-btn" onclick="jumpToFirstFlagged()">Review Now →</button>
+</div>` : ''}
+
 <div class="steps-wrap">
   <div class="steps-inner">${stepPills}</div>
 </div>
@@ -302,11 +335,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 <div class="toast" id="toast"></div>
 
 <script>
-const CASE_REF  = ${JSON.stringify(caseRef)};
-const TOTAL     = ${total};
-let currentStep = 0;
+const CASE_REF      = ${JSON.stringify(caseRef)};
+const TOTAL         = ${total};
+const FIRST_FLAGGED = ${firstFlaggedStep};
+let currentStep   = 0;
 let uploadedCount = ${uploadedDocs};
 let totalCount    = ${totalDocs};
+
+// Sections that contain at least one Rework Required item
+const FLAGGED_SECTIONS = new Set(${JSON.stringify(
+  sections.map((sec, idx) => sec.items.some((i) => i.status === 'Rework Required') ? idx : -1).filter((i) => i !== -1)
+)});
 
 function goToStep(idx) {
   document.getElementById('panel_' + currentStep).style.display = 'none';
@@ -320,6 +359,7 @@ function updateStepPills() {
   for (let i = 0; i < TOTAL; i++) {
     const pill = document.getElementById('pill_' + i);
     pill.classList.remove('active', 'done');
+    if (FLAGGED_SECTIONS.has(i)) pill.classList.add('flagged');
     if (i === currentStep) pill.classList.add('active');
     else if (i < currentStep) pill.classList.add('done');
   }
@@ -327,7 +367,25 @@ function updateStepPills() {
     .scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
 }
 
-goToStep(0);
+function jumpToFirstFlagged() {
+  if (FIRST_FLAGGED === -1) return;
+  goToStep(FIRST_FLAGGED);
+  setTimeout(() => {
+    const firstFlagged = document.querySelector('#panel_' + FIRST_FLAGGED + ' .needs-action');
+    if (firstFlagged) {
+      firstFlagged.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      firstFlagged.style.transition = 'box-shadow .3s';
+      firstFlagged.style.boxShadow = '0 0 0 3px rgba(249,115,22,.5)';
+      setTimeout(() => { firstFlagged.style.boxShadow = ''; }, 1800);
+    }
+  }, 350);
+}
+
+if (FIRST_FLAGGED !== -1) {
+  jumpToFirstFlagged();
+} else {
+  goToStep(0);
+}
 
 function updateProgress() {
   const pct = totalCount ? Math.round((uploadedCount / totalCount) * 100) : 0;
