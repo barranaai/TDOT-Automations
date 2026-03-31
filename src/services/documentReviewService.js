@@ -1,5 +1,6 @@
 const mondayApi                  = require('./mondayApi');
 const revisionNotificationService = require('./revisionNotificationService');
+const { clientMasterBoardId }    = require('../../config/monday');
 
 const BOARD_ID            = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
 const DOC_STATUS_COL      = 'color_mm0zwgvr';
@@ -10,6 +11,11 @@ const REVIEW_NOTES_COL    = 'long_text_mm0zbpr';
 const CASE_REF_COL        = 'text_mm0z2cck';
 const REWORK_COUNT_COL    = 'numeric_mm0zwf95';
 
+// Client Master column IDs — escalation
+const CM_CASE_REF_COL         = 'text_mm142s49';
+const CM_ESCALATION_REQ_COL   = 'color_mm0x7bje';
+const CM_ESCALATION_REASON_COL = 'text_mm0xvpr9';
+
 async function updateCols(itemId, colValues) {
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
@@ -19,6 +25,55 @@ async function updateCols(itemId, colValues) {
      }`,
     { boardId: BOARD_ID, itemId: String(itemId), colValues: JSON.stringify(colValues) }
   );
+}
+
+/**
+ * Look up the Client Master item ID for a given case reference, then set
+ * Escalation Required = Yes and populate Escalation Reason.
+ * The webhook on the Client Master board will pick up the Escalation Required
+ * change and fire the supervisor/case-manager notification automatically.
+ */
+async function escalateToClientMaster(caseRef, documentName) {
+  try {
+    const data = await mondayApi.query(
+      `query($boardId: ID!, $colId: String!, $val: String!) {
+         items_page_by_column_values(
+           limit: 1,
+           board_id: $boardId,
+           columns: [{ column_id: $colId, column_values: [$val] }]
+         ) { items { id } }
+       }`,
+      {
+        boardId: String(clientMasterBoardId),
+        colId:   CM_CASE_REF_COL,
+        val:     caseRef,
+      }
+    );
+
+    const masterItemId = data?.items_page_by_column_values?.items?.[0]?.id;
+    if (!masterItemId) {
+      console.warn(`[DocReview] No Client Master item found for case ref "${caseRef}" — skipping escalation`);
+      return;
+    }
+
+    await mondayApi.query(
+      `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
+         change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues) { id }
+       }`,
+      {
+        boardId:   String(clientMasterBoardId),
+        itemId:    String(masterItemId),
+        colValues: JSON.stringify({
+          [CM_ESCALATION_REQ_COL]:    { label: 'Yes' },
+          [CM_ESCALATION_REASON_COL]: `Document rework required — ${documentName} (${caseRef})`,
+        }),
+      }
+    );
+
+    console.log(`[DocReview] Escalation raised on Client Master for ${caseRef} — document: "${documentName}"`);
+  } catch (err) {
+    console.error(`[DocReview] Failed to escalate to Client Master for ${caseRef}:`, err.message);
+  }
 }
 
 /**
@@ -73,6 +128,8 @@ async function onReworkRequired({ itemId }) {
 
     if (caseRef) {
       revisionNotificationService.queueItem(caseRef, item.name, reviewNotes, 'document');
+      // Escalate to Client Master — webhook will fire onEscalationRequired notification
+      await escalateToClientMaster(caseRef, item.name);
     }
   } catch (err) {
     console.error(`[DocReview] Failed to handle rework for item ${itemId}:`, err.message);
