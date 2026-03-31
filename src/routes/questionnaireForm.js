@@ -159,7 +159,11 @@ function formPage(caseRef, sections) {
           ${needsAction ? '<span class="badge action-required">⚠️ Action Required</span>' : (q.required === 'Mandatory' ? '<span class="badge mandatory">Required</span>' : '<span class="badge optional">Optional</span>')}
         </div>
         <label class="q-label" for="ans_${q.id}">${esc(q.name)}</label>
-        ${needsAction && q.reviewNotes ? `<div class="q-review-note">📋 <strong>Officer note:</strong> ${esc(q.reviewNotes)}</div>` : ''}
+        ${needsAction ? `
+        <div class="q-review-note">
+          <div class="q-review-note-header">💬 Feedback from your case officer</div>
+          <div class="q-review-note-body">${q.reviewNotes ? esc(q.reviewNotes) : 'Please review and update your answer for this question.'}</div>
+        </div>` : ''}
         ${!needsAction && q.helpText ? `<div class="q-help">💡 ${esc(q.helpText)}</div>` : ''}
         ${renderInput(q)}
       </div>`;
@@ -244,8 +248,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .q-label{display:block;font-size:.9rem;font-weight:500;color:#222;margin-bottom:.35rem;line-height:1.55}
 .q-help{font-size:.79rem;color:#555;background:#f7f7f7;padding:.35rem .65rem;border-radius:7px;margin-bottom:.45rem;line-height:1.5;border-left:3px solid #ddd}
 .needs-action{border:2px solid #f97316!important;background:#fffbf5!important;border-radius:12px;padding:.85rem 1rem!important}
-.needs-action .q-label{color:#c2410c}
-.q-review-note{font-size:.8rem;color:#9a3412;background:#fff7ed;padding:.4rem .7rem;border-radius:7px;margin-bottom:.45rem;line-height:1.5;border-left:3px solid #fb923c}
+.needs-action .q-label{color:#c2410c;font-weight:700}
+.q-review-note{background:#fff3e0;border:1.5px solid #fb923c;border-radius:8px;padding:.7rem .9rem;margin-bottom:.6rem;margin-top:.1rem}
+.q-review-note-header{font-size:.75rem;font-weight:700;color:#c2410c;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.35rem}
+.q-review-note-body{font-size:.88rem;color:#7c2d12;line-height:1.6;white-space:pre-wrap}
 .badge.action-required{background:#fff7ed;color:#ea580c;border:1px solid #fed7aa}
 .form-input{width:100%;padding:.62rem .9rem;border:1.5px solid #ddd;border-radius:9px;font-size:.9rem;font-family:inherit;outline:none;transition:border-color .2s,box-shadow .2s;background:#fff;color:#111}
 .form-input:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-faint)}

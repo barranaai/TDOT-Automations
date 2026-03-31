@@ -55,7 +55,7 @@ function buildRevisionEmailHtml({ clientName, caseRef, questionnaire, documents 
     <tr>
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">
         <div style="font-weight:600;color:#1e293b;font-size:.9rem;">${name}</div>
-        ${notes ? `<div style="margin-top:4px;font-size:.82rem;color:#475569;">${notes}</div>` : ''}
+        <div style="margin-top:4px;font-size:.82rem;color:#475569;">${notes || 'Please review and update your answer for this question.'}</div>
       </td>
     </tr>`).join('');
 
@@ -63,7 +63,7 @@ function buildRevisionEmailHtml({ clientName, caseRef, questionnaire, documents 
     <tr>
       <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;">
         <div style="font-weight:600;color:#1e293b;font-size:.9rem;">${name}</div>
-        ${notes ? `<div style="margin-top:4px;font-size:.82rem;color:#475569;">${notes}</div>` : ''}
+        <div style="margin-top:4px;font-size:.82rem;color:#475569;">${notes || 'Please re-upload this document.'}</div>
       </td>
     </tr>`).join('');
 
