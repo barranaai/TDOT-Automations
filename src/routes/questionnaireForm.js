@@ -126,6 +126,15 @@ function formPage(caseRef, sections) {
   const pct      = totalQ ? Math.round((answered / totalQ) * 100) : 0;
   const total    = sections.length;
 
+  // Find the first section containing a flagged question and total flagged count
+  let firstFlaggedStep = -1;
+  let flaggedCount = 0;
+  sections.forEach((sec, idx) => {
+    const flagged = sec.items.filter((i) => i.responseStatus === 'Needs Clarification');
+    flaggedCount += flagged.length;
+    if (firstFlaggedStep === -1 && flagged.length > 0) firstFlaggedStep = idx;
+  });
+
   // Build step indicator pills
   const stepPills = sections.map((sec, idx) => {
     const icon = CATEGORY_ICONS[sec.category] || '📋';
@@ -271,6 +280,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .success-panel h2{color:#059669;font-size:1.5rem;margin-bottom:.6rem;font-weight:700}
 .success-panel p{color:#666;font-size:.93rem;line-height:1.65}
 
+.step-pill.flagged{border-color:#f59e0b!important;color:#92400e!important}
+.step-pill.flagged .pill-num{background:#f59e0b!important}
+.flagged-banner{display:flex;align-items:center;gap:1rem;background:#fff3cd;border:1.5px solid #f59e0b;border-radius:10px;padding:.85rem 1.2rem;margin:0 auto 1rem;max-width:900px;width:calc(100% - 2rem)}
+.flagged-banner-icon{font-size:1.3rem;flex-shrink:0}
+.flagged-banner-text{flex:1;font-size:.88rem;color:#92400e;line-height:1.5}
+.flagged-banner-text strong{color:#78350f}
+.flagged-banner-btn{flex-shrink:0;background:#f59e0b;color:#fff;border:none;border-radius:6px;padding:.45rem .9rem;font-size:.82rem;font-weight:600;cursor:pointer;white-space:nowrap}
+.flagged-banner-btn:hover{background:#d97706}
+
 @media(max-width:600px){
   .top-bar{padding:.6rem 1rem;gap:.5rem}
   .top-bar-divider{display:none}
@@ -279,6 +297,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
   .panel-footer{padding:.8rem 1rem}
   .footer-right{width:100%;justify-content:flex-end}
   .main{padding:0 .5rem 4rem}
+  .flagged-banner{flex-wrap:wrap;gap:.6rem}
+  .flagged-banner-btn{width:100%}
 }
 </style>
 </head>
@@ -296,6 +316,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
   </div>
   <button class="btn-submit-top" onclick="submitAll()">Submit All</button>
 </div>
+
+<!-- Flagged items alert banner -->
+${flaggedCount > 0 ? `
+<div class="flagged-banner" id="flaggedBanner">
+  <span class="flagged-banner-icon">⚠️</span>
+  <span class="flagged-banner-text">
+    <strong>${flaggedCount} question${flaggedCount !== 1 ? 's' : ''} need${flaggedCount === 1 ? 's' : ''} your attention.</strong>
+    Our case officer has left notes — please review and update your answers.
+  </span>
+  <button class="flagged-banner-btn" onclick="jumpToFirstFlagged()">Review Now →</button>
+</div>` : ''}
 
 <!-- Progress -->
 <div class="progress-wrap">
@@ -316,8 +347,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 <div class="toast" id="toast"></div>
 
 <script>
-const CASE_REF = ${JSON.stringify(caseRef)};
-const TOTAL    = ${total};
+const CASE_REF          = ${JSON.stringify(caseRef)};
+const TOTAL             = ${total};
+const FIRST_FLAGGED     = ${firstFlaggedStep};   // -1 if no flagged items
 let currentStep = 0;
 let totalQ     = ${totalQ};
 
@@ -334,17 +366,43 @@ function goToStep(idx) {
 function updateStepPills() {
   for (let i = 0; i < TOTAL; i++) {
     const pill = document.getElementById('pill_' + i);
-    pill.classList.remove('active', 'done');
+    pill.classList.remove('active', 'done', 'flagged');
     if (i === currentStep) pill.classList.add('active');
     else if (i < currentStep) pill.classList.add('done');
   }
+  // Mark pills that contain flagged items
+  document.querySelectorAll('.step-pill').forEach((pill, i) => {
+    const panel = document.getElementById('panel_' + i);
+    if (panel && panel.querySelector('.needs-action')) pill.classList.add('flagged');
+  });
   // Scroll the active pill into view
   const activePill = document.getElementById('pill_' + currentStep);
   if (activePill) activePill.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
 }
 
-// Show first panel on load
-goToStep(0);
+// Jump to first flagged question (called by banner button and on load)
+function jumpToFirstFlagged() {
+  if (FIRST_FLAGGED === -1) return;
+  goToStep(FIRST_FLAGGED);
+  // After the panel is visible, scroll to the first flagged question within it
+  setTimeout(() => {
+    const firstFlagged = document.querySelector('#panel_' + FIRST_FLAGGED + ' .needs-action');
+    if (firstFlagged) {
+      firstFlagged.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Brief highlight pulse to draw the eye
+      firstFlagged.style.transition = 'box-shadow .3s';
+      firstFlagged.style.boxShadow = '0 0 0 3px rgba(239,68,68,.5)';
+      setTimeout(() => { firstFlagged.style.boxShadow = ''; }, 1800);
+    }
+  }, 350);
+}
+
+// On load: jump to first flagged section if any, otherwise show step 0
+if (FIRST_FLAGGED !== -1) {
+  jumpToFirstFlagged();
+} else {
+  goToStep(0);
+}
 
 // ── Progress ───────────────────────────────────────────────────────────────
 function updateProgress() {
