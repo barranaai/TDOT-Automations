@@ -51,8 +51,6 @@ View: Escalated Items
     Note: The Escalation Required column on this board uses specific labels — not "Yes".
     Use this filter instead:
     Filter 1: Escalation Required = Triggered by Rework
-    OR Filter 2: Escalation Required = Triggered by SLA
-    (Set the condition between them to OR)
 
 View: Reviewed Today
     Filter 1: Review Completed Date = Today
@@ -73,8 +71,6 @@ View: Escalated Items
     Note: The Escalation Required column on this board uses specific labels — not "Yes".
     Use this filter instead:
     Filter 1: Escalation Required = Triggered by Clarification
-    OR Filter 2: Escalation Required = Triggered by SLA
-    (Set the condition between them to OR)
 
 View: Reviewed Today
     Filter 1: Review Completed Date = Today
@@ -99,6 +95,48 @@ View: Client Blocked
 View: Case Health Overview
     No filter — shows all active cases
     Sort by: Case Health Status (Red first)
+
+
+PART 1B — Create Two Formula Columns on the Client Master Board
+
+Two formula columns are referenced in the dashboard widgets but do not exist yet.
+You must create them manually in Monday.com before setting up the widgets.
+
+
+Formula Column 1 — Days to Hard Deadline
+
+This shows how many calendar days remain before the case Hard Deadline.
+Turns negative once the deadline has passed.
+
+Steps:
+1. Open the Client Master Board
+2. Click the + button at the far right of the column headers to add a new column
+3. Choose Formula as the column type
+4. Name it: Days to Hard Deadline
+5. Enter this formula:
+   {Hard Deadline} - TODAY()
+   (Monday will automatically convert date subtraction to a number of days)
+6. Click Create Column
+7. The column will now show a live countdown for every row that has a Hard Deadline set
+
+
+Formula Column 2 — Overall Case Readiness %
+
+This shows the average of Questionnaire Readiness % and Documents Readiness %
+as a single combined readiness score per case.
+
+Steps:
+1. On the Client Master Board, click + to add a new column
+2. Choose Formula as the column type
+3. Name it: Overall Case Readiness %
+4. Enter this formula:
+   ROUND(({Questionnaire Readiness %} + {Documents Readiness %}) / 2, 0)
+5. Click Create Column
+6. The column will display 0–100 representing combined case readiness
+
+Note: Both columns use curly-brace references to the exact column names on your board.
+If your column names differ slightly (e.g. "Q Readiness %" instead of "Questionnaire Readiness %"),
+adjust the formula to match.
 
 
 PART 2 — Create the Dashboards
@@ -166,7 +204,7 @@ Widget 2 — My Questionnaire Review Queue
 Widget 3 — My Cases Health
     Widget type: Table
     Board: Client Master Board
-    Filter: Case Manager = Me OR Case Support Officer = Me
+    Filter: Case Manager = Me OR Ops Supervisor = Me
     Columns to show: Case Reference Number, Case Type, Case Stage, Questionnaire Readiness %, Documents Readiness %, Blocking Docs Count, Blocking Questions Count, Days to Hard Deadline, SLA Risk Band, Expiry Risk Flag, Client-Blocked Status, Case Health Status
     Sort by: Case Health Status (Red first)
     Title: My Cases — Health Snapshot
@@ -212,8 +250,8 @@ Widget 3 — Client Blocked Cases
 Widget 4 — Escalated Items (Documents)
     Widget type: Table
     Board: Document Checklist Execution Board
-    Filter: Escalation Required = Yes
-    Columns to show: Case Reference, Document Name, Escalation Required, Escalation Reason, Document Status, Assigned Reviewer
+    Filter: Escalation Required = Triggered by Rework
+    Columns to show: Case Reference, Document Name, Escalation Required, Rework Count, Document Status, Assigned Reviewer
     Title: Escalated Documents
 
 Widget 5 — Escalated Items (Questionnaire)
