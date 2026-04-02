@@ -25,7 +25,7 @@ function renderInput(q) {
 
   switch (q.inputType) {
     case 'Long Text':
-      return `<textarea id="${id}" name="${id}" class="${cls} textarea" rows="3">${v}</textarea>`;
+      return `<textarea id="${id}" name="${id}" class="${cls} textarea" rows="6">${v}</textarea>`;
 
     case 'Date':
       return `<input type="date" id="${id}" name="${id}" class="${cls}" value="${v}">`;
@@ -43,7 +43,8 @@ function renderInput(q) {
       return `<p class="file-note">📎 Please email supporting documents to your assigned consultant referencing your case number.</p>`;
 
     default:
-      return `<input type="text" id="${id}" name="${id}" class="${cls}" value="${v}">`;
+      // All questions use a textarea so clients have enough room to answer fully
+      return `<textarea id="${id}" name="${id}" class="${cls} textarea" rows="3">${v}</textarea>`;
   }
 }
 
