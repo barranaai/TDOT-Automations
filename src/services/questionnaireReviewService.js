@@ -137,10 +137,51 @@ async function onNeedsClarification({ itemId }) {
 }
 
 /**
+ * Review Notes column filled in → queue client email immediately.
+ * The officer doesn't need to change the status separately.
+ */
+async function onReviewNotesSet({ itemId }) {
+  try {
+    const data = await mondayApi.query(
+      `query($itemId: ID!) {
+         items(ids: [$itemId]) {
+           name
+           column_values(ids: ["${REVIEW_NOTES_COL}", "${CASE_REF_COL}"]) { id text }
+         }
+       }`,
+      { itemId: String(itemId) }
+    );
+    const item        = data?.items?.[0];
+    const col         = (id) => item?.column_values?.find((c) => c.id === id)?.text?.trim() || '';
+    const reviewNotes = col(REVIEW_NOTES_COL);
+    const caseRef     = col(CASE_REF_COL);
+
+    if (!reviewNotes || !caseRef) return;
+
+    revisionNotificationService.queueItem(caseRef, item.name, reviewNotes, 'questionnaire');
+    console.log(`[QReview] Review notes set for item ${itemId} — queued client email for case ${caseRef}`);
+
+    // Also escalate so status + Client Master are updated
+    await onNeedsClarification({ itemId });
+  } catch (err) {
+    console.error(`[QReview] Failed to handle review notes for item ${itemId}:`, err.message);
+  }
+}
+
+/**
  * Main entry point — called from webhook handler when a column changes
  * on the Questionnaire Execution Board.
  */
 async function onColumnChange({ itemId, columnId, value }) {
+  // Review Notes filled in → notify client + set Needs Clarification status
+  if (columnId === REVIEW_NOTES_COL) {
+    const notes = value?.text || value?.value || '';
+    if (notes) {
+      await onReviewNotesSet({ itemId });
+    }
+    return;
+  }
+
   if (columnId !== RESPONSE_STATUS_COL) return;
 
   const label = value?.label?.text || '';
