@@ -203,7 +203,6 @@ const CM_BOARD_ID         = clientMasterBoardId || process.env.MONDAY_CLIENT_MAS
 const CM_CASE_REF         = 'text_mm142s49';
 const EXEC_CATEGORY       = 'lookup_mm0zqbvt'; // Document Category mirror on Execution Board
 const EXEC_INTAKE_ID_COL  = 'text_mm0zfsp1';   // Stores the template board item ID
-const TEMPLATE_BOARD_ID   = process.env.MONDAY_TEMPLATE_BOARD_ID || '18401624183';
 const TEMPLATE_CATEGORY_COL = 'dropdown_mm0x41zm'; // Document Category on Template Board
 
 /**
