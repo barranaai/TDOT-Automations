@@ -4,7 +4,7 @@ const { templateBoardId } = require('../../config/monday');
 // Template Board column IDs
 const TEMPLATE_COLS = {
   documentCode:     'text_mm0xprz5',
-  caseSubType:      'text_mm16wrft',
+  caseSubType:      'dropdown_mm204y6w',  // dropdown written by rebuildTemplateBoards.js
   documentCategory: 'dropdown_mm0x41zm',
 };
 
