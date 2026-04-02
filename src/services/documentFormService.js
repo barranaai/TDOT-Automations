@@ -199,27 +199,75 @@ async function markDocumentReceived(itemId) {
 }
 
 // Client Master column IDs (used to look up client name at upload time)
-const CM_BOARD_ID    = clientMasterBoardId || process.env.MONDAY_CLIENT_MASTER_BOARD_ID || '18215065533';
-const CM_CASE_REF    = 'text_mm142s49';
-const EXEC_CATEGORY  = 'lookup_mm0zqbvt'; // Document Category mirror on Execution Board
+const CM_BOARD_ID         = clientMasterBoardId || process.env.MONDAY_CLIENT_MASTER_BOARD_ID || '18215065533';
+const CM_CASE_REF         = 'text_mm142s49';
+const EXEC_CATEGORY       = 'lookup_mm0zqbvt'; // Document Category mirror on Execution Board
+const EXEC_INTAKE_ID_COL  = 'text_mm0zfsp1';   // Stores the template board item ID
+const TEMPLATE_BOARD_ID   = process.env.MONDAY_TEMPLATE_BOARD_ID || '18401624183';
+const TEMPLATE_CATEGORY_COL = 'dropdown_mm0x41zm'; // Document Category on Template Board
 
 /**
- * Upload a file to the client's OneDrive category subfolder.
- * Looks up the document category from the execution item and the client name
- * from the Client Master board, then delegates to oneDriveService.uploadFile().
+ * Resolve the Document Category for an execution item.
+ *
+ * Strategy (two-tier, most reliable first):
+ *  1. Mirror column lookup_mm0zqbvt — works when board_relation_mm0zhagw is set.
+ *  2. Direct fetch from Template Board via the intakeItemId stored in text_mm0zfsp1 —
+ *     guarantees the correct value even when the board_relation column is empty.
  */
-async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, mimeType) {
-  // 1. Get the document category from the execution item's mirror column
+async function resolveDocumentCategory(itemId) {
   const execData = await mondayApi.query(
     `query($itemId: ID!) {
        items(ids: [$itemId]) {
-         column_values(ids: ["${EXEC_CATEGORY}"]) { id text }
+         column_values(ids: ["${EXEC_CATEGORY}", "${EXEC_INTAKE_ID_COL}"]) { id text }
        }
      }`,
     { itemId: String(itemId) }
   );
-  const category = execData?.items?.[0]?.column_values
-    ?.find((c) => c.id === EXEC_CATEGORY)?.text?.trim() || 'General';
+
+  const cols       = execData?.items?.[0]?.column_values || [];
+  const mirrorText = cols.find((c) => c.id === EXEC_CATEGORY)?.text?.trim() || '';
+  const intakeId   = cols.find((c) => c.id === EXEC_INTAKE_ID_COL)?.text?.trim() || '';
+
+  // Tier-1: mirror column returned a value — use it directly
+  if (mirrorText) {
+    console.log(`[DocForm] Category from mirror column: "${mirrorText}"`);
+    return mirrorText;
+  }
+
+  // Tier-2: mirror is empty — fetch directly from Template Board
+  if (intakeId) {
+    try {
+      const tmplData = await mondayApi.query(
+        `query($itemId: ID!) {
+           items(ids: [$itemId]) {
+             column_values(ids: ["${TEMPLATE_CATEGORY_COL}"]) { id text }
+           }
+         }`,
+        { itemId: intakeId }
+      );
+      const cat = tmplData?.items?.[0]?.column_values
+        ?.find((c) => c.id === TEMPLATE_CATEGORY_COL)?.text?.trim() || '';
+      if (cat) {
+        console.log(`[DocForm] Category from template board (intakeId ${intakeId}): "${cat}"`);
+        return cat;
+      }
+    } catch (err) {
+      console.warn(`[DocForm] Template category lookup failed for intakeId ${intakeId}: ${err.message}`);
+    }
+  }
+
+  console.warn(`[DocForm] Category could not be resolved for execution item ${itemId} — defaulting to "Other"`);
+  return 'Other';
+}
+
+/**
+ * Upload a file to the client's OneDrive category subfolder.
+ * Resolves the document category from the execution item (mirror → template fallback),
+ * looks up the client name from the Client Master board, then delegates to oneDriveService.
+ */
+async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, mimeType) {
+  // 1. Resolve the document category (mirror → template board fallback)
+  const category = await resolveDocumentCategory(itemId);
 
   // 2. Get the client name from Client Master (used to reconstruct the folder path)
   const masterData = await mondayApi.query(

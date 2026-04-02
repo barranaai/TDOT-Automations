@@ -84,26 +84,25 @@ async function createExecutionItem(itemData) {
     documentCategory,
   } = itemData;
 
-  const colValues = {
+  // Monday.com silently ignores board_relation columns set inside create_item.
+  // Board relations (clientCase, clientMasterBoard, templateBoard) must be set
+  // via a separate change_multiple_column_values mutation after creation.
+  const createColValues = {
     [EXEC_COLS.caseReferenceNumber]: caseRef,
     [EXEC_COLS.uniqueKey]:           uniqueKey,
     [EXEC_COLS.documentCode]:        documentCode,
     [EXEC_COLS.caseSubType]:         caseSubType,
     [EXEC_COLS.intakeItemId]:        templateItemId,
-    [EXEC_COLS.clientCase]:          { item_ids: [Number(clientMasterItemId)] },
-    [EXEC_COLS.clientMasterBoard]:   { item_ids: [Number(clientMasterItemId)] },
-    [EXEC_COLS.templateBoard]:       { item_ids: [Number(templateItemId)] },
   };
 
   if (folderUrl) {
-    colValues[EXEC_COLS.documentFolder] = {
+    createColValues[EXEC_COLS.documentFolder] = {
       url:  folderUrl,
       text: documentCategory ? `${documentCategory} Folder` : 'Open Folder',
     };
   }
 
-  const columnValues = JSON.stringify(colValues);
-
+  // Step 1: Create the item (without board_relation columns)
   const data = await mondayApi.query(
     `mutation createItem(
       $boardId: ID!,
@@ -125,11 +124,40 @@ async function createExecutionItem(itemData) {
       boardId:      String(executionBoardId),
       groupId:      EXECUTION_GROUP_ID,
       itemName:     name,
-      columnValues,
+      columnValues: JSON.stringify(createColValues),
     }
   );
 
-  return data?.create_item;
+  const createdItem = data?.create_item;
+  if (!createdItem?.id) return createdItem;
+
+  // Step 2: Set board_relation columns separately (Monday.com requires this)
+  const relationColValues = {
+    [EXEC_COLS.clientCase]:        { item_ids: [Number(clientMasterItemId)] },
+    [EXEC_COLS.clientMasterBoard]: { item_ids: [Number(clientMasterItemId)] },
+    [EXEC_COLS.templateBoard]:     { item_ids: [Number(templateItemId)] },
+  };
+
+  try {
+    await mondayApi.query(
+      `mutation setRelations($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
+         change_multiple_column_values(
+           board_id:      $boardId,
+           item_id:       $itemId,
+           column_values: $colValues
+         ) { id }
+       }`,
+      {
+        boardId:   String(executionBoardId),
+        itemId:    String(createdItem.id),
+        colValues: JSON.stringify(relationColValues),
+      }
+    );
+  } catch (err) {
+    console.warn(`[ExecutionService] Board relation set failed for item ${createdItem.id}: ${err.message}`);
+  }
+
+  return createdItem;
 }
 
 /**
