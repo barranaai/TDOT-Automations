@@ -120,7 +120,7 @@ async function getCaseDocuments(caseRef) {
         name:               item.name,
         documentCode:       code,
         status:             col('color_mm0zwgvr') || 'Missing',
-        requiredType:       col('lookup_mm0z1chx') || 'Mandatory',
+        requiredType:       col('lookup_mm0z1chx') || '',
         category:           col('lookup_mm0zqbvt') || 'General',
         blocking:           col('lookup_mm0zb0p6'),
         source:             col('lookup_mm0zj5rt'),

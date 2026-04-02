@@ -140,7 +140,7 @@ function formPage(caseRef, sections) {
         <div class="doc-info">
           <div class="doc-top">
             <span class="doc-code">${esc(doc.documentCode)}</span>
-            ${doc.status === 'Rework Required' ? '<span class="badge action-required">⚠️ Re-upload Required</span>' : (doc.requiredType === 'Mandatory' ? '<span class="badge mandatory">Required</span>' : `<span class="badge optional">${esc(doc.requiredType)}</span>`)}
+            ${doc.status === 'Rework Required' ? '<span class="badge action-required">⚠️ Re-upload Required</span>' : ''}
             ${doc.blocking === 'Yes' ? '<span class="badge blocking">Blocking</span>' : ''}
           </div>
           <div class="doc-name">${esc(doc.name)}</div>
