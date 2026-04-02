@@ -117,7 +117,7 @@ async function getCaseItems(caseRef) {
         name:           item.name,
         category:       col('lookup_mm13fva6') || 'General',
         inputType:      col('lookup_mm13nnd0') || 'Short Text',
-        required:       col('lookup_mm1333gw') || 'Mandatory',
+        required:       col('lookup_mm1333gw') || '',
         questionCode:   col('lookup_mm12m2ej') || '',
         currentAnswer,
         helpText:       helpTextMap[item.name.trim()] || '',
@@ -143,12 +143,17 @@ async function saveAnswers(answers) {
     answers
       .filter(({ answer }) => answer !== undefined && answer !== null)
       .map(({ itemId, answer }) => {
-        const colValues = JSON.stringify({
-          [CLIENT_RESP_COL]:     { text: String(answer) },
-          [LAST_RESP_DATE]:      { date: today },
-          [RESPONSE_STATUS_COL]: { label: 'Answered' },
-          [REVIEW_REQUIRED_COL]: { label: 'Yes' },
-        });
+        const hasAnswer = String(answer).trim() !== '';
+        const colValues = hasAnswer
+          ? JSON.stringify({
+              [CLIENT_RESP_COL]:     { text: String(answer) },
+              [LAST_RESP_DATE]:      { date: today },
+              [RESPONSE_STATUS_COL]: { label: 'Answered' },
+              [REVIEW_REQUIRED_COL]: { label: 'Yes' },
+            })
+          : JSON.stringify({
+              [CLIENT_RESP_COL]: { text: '' },
+            });
         return mondayApi.query(
           `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
             change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues) { id }

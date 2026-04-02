@@ -156,7 +156,7 @@ function formPage(caseRef, sections) {
       <div class="question${needsAction ? ' needs-action' : ''}" data-item-id="${q.id}">
         <div class="q-header">
           <span class="q-code">${esc(q.questionCode)}</span>
-          ${needsAction ? '<span class="badge action-required">⚠️ Action Required</span>' : (q.required === 'Mandatory' ? '<span class="badge mandatory">Required</span>' : '<span class="badge optional">Optional</span>')}
+          ${needsAction ? '<span class="badge action-required">⚠️ Action Required</span>' : ''}
         </div>
         <label class="q-label" for="ans_${q.id}">${esc(q.name)}</label>
         ${needsAction ? `
