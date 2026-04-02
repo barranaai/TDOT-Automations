@@ -1,8 +1,10 @@
 const mondayApi = require('./mondayApi');
 const { clientMasterBoardId } = require('../../config/monday');
+const { SUB_TYPES_BY_CASE } = require('../../config/caseTypes');
 
-const CASE_REF_COL  = 'text_mm142s49';
-const CASE_TYPE_COL = 'dropdown_mm0xd1qn';
+const CASE_REF_COL      = 'text_mm142s49';
+const CASE_TYPE_COL     = 'dropdown_mm0xd1qn';
+const SUB_TYPE_HINT_COL = 'text_mm21gw44';
 
 const CASE_TYPE_ABBR = {
   'AAIP':                                                          'AAIP',
@@ -135,10 +137,40 @@ async function generateCaseRef(caseType) {
   return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
 }
 
+async function updateSubTypeHint(itemId, caseType) {
+  const subTypes = SUB_TYPES_BY_CASE[caseType] || [];
+  const hint = subTypes.length
+    ? subTypes.join('  |  ')
+    : '—  (no sub types for this case type)';
+
+  await mondayApi.query(
+    `mutation($itemId: ID!, $boardId: ID!, $value: JSON!) {
+       change_column_value(
+         item_id:   $itemId,
+         board_id:  $boardId,
+         column_id: "${SUB_TYPE_HINT_COL}",
+         value:     $value
+       ) { id }
+     }`,
+    {
+      itemId:  String(itemId),
+      boardId: String(clientMasterBoardId),
+      value:   JSON.stringify(hint),
+    }
+  );
+
+  console.log(`[CaseRef] Sub Type hint updated for item ${itemId}: "${hint}"`);
+}
+
 async function onCaseTypeSet({ itemId, caseType }) {
   if (!caseType) return;
 
-  // Only assign if the item doesn't already have a case ref
+  // Update the Sub Type hint column immediately so staff see valid options
+  await updateSubTypeHint(itemId, caseType).catch(err =>
+    console.error('[CaseRef] Error updating sub type hint:', err.message)
+  );
+
+  // Only assign a Case Ref if the item doesn't already have one
   const existing = await getItemCaseRef(itemId);
   if (existing) {
     console.log(`[CaseRef] Item ${itemId} already has ref "${existing}", skipping`);
