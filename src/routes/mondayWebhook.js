@@ -33,6 +33,7 @@ const CASE_STAGE_COL_TITLE        = 'Case Stage';
 const CASE_TYPE_COL_ID            = 'dropdown_mm0xd1qn';
 const RETAINER_STATUS_COL_ID      = 'color_mm0x9fnn';
 const CASE_REF_COL_ID             = 'text_mm142s49';
+const CLIENT_EMAIL_COL_ID         = 'text_mm0xw6bp';
 const DOCUMENT_COLLECTION_STARTED = 'Document Collection Started';
 const SUBMISSION_READY            = 'Submission Ready';
 
@@ -159,6 +160,13 @@ router.post('/', async (req, res) => {
       console.log(`[Webhook] Retainer marked as Paid for item ${pulseId}`);
       retainerService.onRetainerPaid({ itemId: pulseId }).catch(err =>
         console.error('[Retainer] Error:', err.message)
+      );
+    }
+
+    // Client Email corrected → resend intake email if already sent to wrong address
+    if (columnId === CLIENT_EMAIL_COL_ID) {
+      emailService.onClientEmailChanged(pulseId).catch(err =>
+        console.error('[Email] Failed to handle client email change:', err.message)
       );
     }
 

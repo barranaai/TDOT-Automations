@@ -8,7 +8,20 @@ const CM_COLS = {
   caseRef:     'text_mm142s49',
   caseType:    'dropdown_mm0xd1qn',
   accessToken: 'text_mm0x6haq',
+  caseStage:   'color_mm0x8faa',
 };
+
+// Stages that indicate the intake email has already been sent.
+// Only resend if the case is in one of these stages when the email is corrected.
+// Early stages (before "Document Collection Started") are excluded — the email
+// hasn't been sent yet, so the next normal send will use the corrected address.
+// "Submitted" is excluded — the case is closed and resending serves no purpose.
+const STAGES_REQUIRING_RESEND = new Set([
+  'Document Collection Started',
+  'Internal Review',
+  'Submission Preparation',
+  'Submission Ready',
+]);
 
 const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
 const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
@@ -146,6 +159,68 @@ function buildEmailHtml({ clientName, caseRef, caseType, accessToken, questionna
 }
 
 /**
+ * Called when the "Client Email" column is corrected on the Client Master Board.
+ *
+ * If the case has already passed the intake-email stage, the officer has
+ * corrected an address after the original email was sent to the wrong inbox.
+ * This resends the intake email to the updated (correct) address and posts
+ * an audit comment on the Monday item so the correction is traceable.
+ *
+ * Safe no-ops:
+ *  - Email cleared / blank value            → skipped (logged)
+ *  - Stage is before Document Collection    → skipped (email not yet sent)
+ *  - Stage is "Submitted" (terminal)        → skipped (case is closed)
+ */
+async function onClientEmailChanged(itemId) {
+  // Single query: fetch case stage, the now-updated email, and case ref
+  const data = await mondayApi.query(
+    `query($itemId: ID!) {
+       items(ids: [$itemId]) {
+         column_values(ids: [
+           "${CM_COLS.caseStage}",
+           "${CM_COLS.clientEmail}",
+           "${CM_COLS.caseRef}"
+         ]) { id text }
+       }
+     }`,
+    { itemId: String(itemId) }
+  );
+
+  const cols      = data?.items?.[0]?.column_values || [];
+  const col       = (id) => cols.find((c) => c.id === id)?.text?.replace(/\s+/g, ' ').trim() || '';
+  const caseStage = col(CM_COLS.caseStage);
+  const newEmail  = col(CM_COLS.clientEmail);
+  const caseRef   = col(CM_COLS.caseRef);
+
+  const label = caseRef || `item ${itemId}`;
+
+  if (!newEmail) {
+    console.log(`[Email] Client email cleared for ${label} — skipping resend`);
+    return;
+  }
+
+  if (!STAGES_REQUIRING_RESEND.has(caseStage)) {
+    console.log(`[Email] Client email updated for ${label}, stage "${caseStage || 'unknown'}" — intake email not yet sent, no resend needed`);
+    return;
+  }
+
+  console.log(`[Email] Client email corrected for ${label} (stage: "${caseStage}") — resending intake email to ${newEmail}`);
+
+  await sendIntakeEmail(itemId);
+
+  // Audit comment on the Monday item so the correction is fully traceable
+  await mondayApi.query(
+    `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+    {
+      itemId: String(itemId),
+      body: `Intake email resent — client email address was corrected.\nNew address: ${newEmail}\nCase stage at time of correction: ${caseStage}`,
+    }
+  );
+
+  console.log(`[Email] Audit comment posted on ${label} after email correction resend`);
+}
+
+/**
  * Send the client intake email with questionnaire + document upload links.
  * Called after both templates are applied for a case.
  */
@@ -176,4 +251,4 @@ async function sendIntakeEmail(itemId) {
   console.log(`[Email] Intake email sent to ${client.clientEmail} for case ${client.caseRef}`);
 }
 
-module.exports = { sendIntakeEmail };
+module.exports = { sendIntakeEmail, onClientEmailChanged };
