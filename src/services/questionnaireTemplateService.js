@@ -4,47 +4,67 @@ const { questionnaireTemplateBoardId } = require('../../config/monday');
 // Questionnaire Template Board column IDs
 const TEMPLATE_COLS = {
   questionCode: 'text_mm1235b5',
+  caseSubType:  'dropdown_mm20h84d',
 };
 
-// Case type group map (title → group ID)
+// Case type group map (title → group ID) — sourced from rebuilt Questionnaire Template Board
 const GROUP_MAP = {
-  'AIP':                         'group_mm12m7f0',
-  'BOWP':                        'group_mm12cgfa',
-  'Citizenship':                 'group_mm12kq85',
-  'CO-OP WP':                    'group_mm1229a6',
-  'Concurrent WP':               'group_mm1256v0',
-  'EE after ITA':                'group_mm125mdm',
-  'ETA':                         'group_mm121fps',
-  'Federal PR':                  'group_mm12e6e0',
-  'Inland Spousal Sponsorship':  'group_mm12ep73',
-  'LMIA':                        'group_mm12v89',
-  'LMIA based WP':               'group_mm12er01',
-  'LMIA exempt WP':              'group_mm12s894',
-  'Miscellaneous':               'group_mm128jk5',
-  'NSNP':                        'group_mm1283re',
-  'OINP':                        'group_mm122xzw',
-  'Outland Spousal Sponsorship': 'group_mm12pgz2',
-  'Parents/Grandparents':        'group_mm12kthv',
-  'PGWP':                        'group_mm12pwz4',
-  'PFL':                         'group_mm12vhkn',
-  'PR Card Renewal':             'group_mm12kg5w',
-  'PRTD':                        'group_mm124765',
-  'Reconsideration':             'group_mm12j65z',
-  'Refugee':                     'group_mm12z9eg',
-  'Refugee WP':                  'group_mm123r23',
-  'Request Letter':              'group_mm12m9xy',
-  'Restoration+Visitor Record':  'group_mm12rxjs',
-  'Restoration+WP':              'group_mm12yb75',
-  'SCLPC-WP':                    'group_mm127g0g',
-  'SOWP':                        'group_mm12xza9',
-  'Study Permit':                'group_mm123x60',
-  'Study Permit Extension':      'group_mm124nqc',
-  'Supervisa':                   'group_mm12ard',
-  'TRV':                         'group_mm1244hn',
-  'US visa':                     'group_mm126xq6',
-  'Visitor Extension':           'group_mm123d40',
-  'Visitor Visa':                'group_mm1223sz',
-  'Work Permit Extension':       'group_mm12e00c',
+  'AAIP':                                                          'group_mm20sjnv',
+  'Addition of Spouse':                                            'group_mm20jq48',
+  'Amendment of Document':                                         'group_mm201mmw',
+  'Appeal':                                                        'group_mm20t5jp',
+  'BCPNP':                                                         'group_mm20d5rn',
+  'BOWP':                                                          'group_mm20txp0',
+  'Canadian Experience Class (EE after ITA)':                      'group_mm201d6x',
+  'Canadian Experience Class (Profile Recreation+ITA+Submission)': 'group_mm203gyt',
+  'Canadian Experience Class (Profile+ITA+Submission)':            'group_mm20jyw',
+  'Child Sponsorship':                                             'group_mm20rr64',
+  'Citizenship':                                                   'group_mm20xxw5',
+  'Co-op WP':                                                      'group_mm20c3hw',
+  'Concurrent WP':                                                 'group_mm20sxhe',
+  'ETA':                                                           'group_mm20pz8',
+  'Employer Portal':                                               'group_mm20f7dg',
+  'Federal PR':                                                    'group_mm20fm5z',
+  'Francophone Mobility WP':                                       'group_mm201r8h',
+  'H & C':                                                         'group_mm209z6a',
+  'ICAS/WES/IQAS':                                                 'group_mm20ms3j',
+  'Inland Spousal Sponsorship':                                    'group_mm20xy8v',
+  'Invitation Letter':                                             'group_mm20jbtn',
+  'LMIA':                                                          'group_mm205afy',
+  'LMIA Based WP':                                                 'group_mm20x7js',
+  'LMIA Exempt WP':                                                'group_mm20m302',
+  'Manitoba PNP':                                                  'group_mm20dqcn',
+  'Miscellaneous':                                                 'group_mm20xmdk',
+  'NB WP Extension':                                               'group_mm209bzx',
+  'NSNP':                                                          'group_mm20m499',
+  'Notary':                                                        'group_mm20wmqy',
+  'OCI / Passport Surrender':                                      'group_mm2033w',
+  'OINP':                                                          'group_mm2020hr',
+  'Outland Spousal Sponsorship':                                   'group_mm20f38v',
+  'PFL':                                                           'group_mm20hp1m',
+  'PGWP':                                                          'group_mm20y2ee',
+  'PR Card Renewal':                                               'group_mm201hzk',
+  'PRAA':                                                          'group_mm20hywp',
+  'PRTD':                                                          'group_mm20ws1j',
+  'Parents/Grandparents Sponsorship':                              'group_mm205fss',
+  'RCIP':                                                          'group_mm20pj8x',
+  'RNIP':                                                          'group_mm209pvx',
+  'Reconsideration':                                               'group_mm20zwea',
+  'Refugee':                                                       'group_mm20hx6z',
+  'Refugee WP':                                                    'group_mm20b835',
+  'Renunciation of PR':                                            'group_mm20awrs',
+  'Request Letter':                                                'group_mm203fsb',
+  'SCLPC WP':                                                      'group_mm20gjez',
+  'SNIP':                                                          'group_mm20g6dt',
+  'SOWP':                                                          'group_mm20ja9g',
+  'Study Permit':                                                  'group_mm20gqek',
+  'Study Permit Extension':                                        'group_mm20xrvj',
+  'Supervisa':                                                     'group_mm20dd92',
+  'TRP':                                                           'group_mm20cj4h',
+  'TRV':                                                           'group_mm2027z7',
+  'USA Visa':                                                      'group_mm20gqnz',
+  'Visitor Record / Extension':                                    'group_mm20b82n',
+  'Visitor Visa':                                                  'group_mm20eet1',
 };
 
 /**
@@ -53,7 +73,17 @@ const GROUP_MAP = {
  * @param {string} primaryCaseType - Must exactly match a template board group title
  * @returns {Promise<Array<{ id, name, questionCode }>>}
  */
-async function getQuestionnaireItemsByCaseType(primaryCaseType) {
+/**
+ * Fetch all questionnaire template items for a given Primary Case Type.
+ * Optionally filters by Case Sub Type if provided:
+ *   - Items with no Sub Type set → included for all sub types
+ *   - Items with a Sub Type set → included only when it matches
+ *
+ * @param {string} primaryCaseType
+ * @param {string|null} caseSubType
+ * @returns {Promise<Array>} Array of { id, name, questionCode, caseSubType }
+ */
+async function getQuestionnaireItemsByCaseType(primaryCaseType, caseSubType = null) {
   const groupId = GROUP_MAP[primaryCaseType?.trim()];
   if (!groupId) {
     throw new Error(
@@ -70,7 +100,7 @@ async function getQuestionnaireItemsByCaseType(primaryCaseType) {
             items {
               id
               name
-              column_values(ids: ["${TEMPLATE_COLS.questionCode}"]) {
+              column_values(ids: ["${TEMPLATE_COLS.questionCode}", "${TEMPLATE_COLS.caseSubType}"]) {
                 id
                 text
               }
@@ -84,14 +114,27 @@ async function getQuestionnaireItemsByCaseType(primaryCaseType) {
 
   const items = data?.boards?.[0]?.groups?.[0]?.items_page?.items ?? [];
 
-  return items.map((item) => {
-    const qCode = item.column_values.find((c) => c.id === TEMPLATE_COLS.questionCode);
+  const mapped = items.map((item) => {
+    const colMap = {};
+    for (const col of item.column_values) colMap[col.id] = col.text;
     return {
       id:           item.id,
       name:         item.name,
-      questionCode: qCode?.text || '',
+      questionCode: colMap[TEMPLATE_COLS.questionCode] || '',
+      caseSubType:  colMap[TEMPLATE_COLS.caseSubType]  || '',
     };
   });
+
+  if (caseSubType) {
+    const normalised = caseSubType.trim().toLowerCase();
+    return mapped.filter(
+      (item) =>
+        !item.caseSubType ||
+        item.caseSubType.trim().toLowerCase() === normalised
+    );
+  }
+
+  return mapped;
 }
 
 module.exports = { getQuestionnaireItemsByCaseType };

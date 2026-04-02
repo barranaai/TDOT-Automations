@@ -83,8 +83,11 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
   // 4. Fetch matching template questions
   let templateItems;
   try {
-    templateItems = await getQuestionnaireItemsByCaseType(caseType);
-    console.log(`[QuestionnaireService] Found ${templateItems.length} template questions for "${caseType}"`);
+    templateItems = await getQuestionnaireItemsByCaseType(caseType, caseSubType);
+    console.log(
+      `[QuestionnaireService] Found ${templateItems.length} template questions for "${caseType}"` +
+      (caseSubType ? ` (sub type: "${caseSubType}")` : ' (no sub type filter)')
+    );
   } catch (err) {
     console.error(`[QuestionnaireService] Template lookup failed: ${err.message}`);
     return;
