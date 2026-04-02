@@ -212,6 +212,35 @@ async function onEscalationRequired(masterItemId, itemName, caseRef) {
   console.log(`[Notify] Escalation required — notified supervisor(s) for ${caseRef}`);
 }
 
+// ─── Case Assignment triggers ─────────────────────────────────────────────────
+
+const ROLE_LABELS = {
+  'multiple_person_mm0xhmgk': 'Case Manager',
+  'multiple_person_mm0xm710': 'Case Support Officer',
+  'multiple_person_mm0xp0sq': 'Ops Supervisor',
+  'multiple_person_mm0xgpt':  'Stage Owner',
+};
+
+/**
+ * Called when any people column on the Client Master Board changes.
+ * Notifies newly assigned person(s) with their role and case details.
+ */
+async function onCaseAssigned({ masterItemId, itemName, columnId, newValue }) {
+  const role = ROLE_LABELS[columnId];
+  if (!role) return;
+
+  const newIds = extractPersonIds(newValue);
+  if (!newIds.length) return;
+
+  // Fetch the Case Ref so the notification message is useful
+  const caseRef = await getCaseRefFromItem(masterItemId, CM_COLS.caseRef).catch(() => '');
+  const caseLabel = caseRef ? ` (${caseRef})` : '';
+
+  const text = `You have been assigned as ${role} for case: "${itemName}"${caseLabel}`;
+  await notifyAll(newIds, text, masterItemId);
+  console.log(`[Notify] Assignment — notified ${newIds.length} person(s) as ${role} for item ${masterItemId}`);
+}
+
 module.exports = {
   onDocumentReceived,
   onDocumentReworkRequired,
@@ -221,4 +250,6 @@ module.exports = {
   onExpiryFlagged,
   onClientBlocked,
   onEscalationRequired,
+  onCaseAssigned,
+  ASSIGNMENT_COL_IDS: Object.keys(ROLE_LABELS),
 };

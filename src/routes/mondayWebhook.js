@@ -12,6 +12,7 @@ const documentReviewService       = require('../services/documentReviewService')
 const stageGateService            = require('../services/stageGateService');
 const { onStageAdvanced, onCaseClosed, onEscalationCleared, TERMINAL_STAGES } = stageGateService;
 const notify                      = require('../services/mondayNotificationService');
+const { ASSIGNMENT_COL_IDS }      = notify;
 
 const CLIENT_MASTER_BOARD_ID               = String(process.env.MONDAY_CLIENT_MASTER_BOARD_ID || '');
 const QUESTIONNAIRE_EXECUTION_BOARD_ID     = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
@@ -159,6 +160,16 @@ router.post('/', async (req, res) => {
       retainerService.onRetainerPaid({ itemId: pulseId }).catch(err =>
         console.error('[Retainer] Error:', err.message)
       );
+    }
+
+    // People column changed → notify newly assigned person
+    if (ASSIGNMENT_COL_IDS.includes(columnId)) {
+      notify.onCaseAssigned({
+        masterItemId: pulseId,
+        itemName,
+        columnId,
+        newValue: JSON.stringify(value),
+      }).catch(() => {});
     }
 
     // Primary Case Type set → generate Case Reference Number
