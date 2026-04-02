@@ -7,7 +7,7 @@ const { createMissingQuestionnaireItems } = require('./questionnaireExecutionSer
 const CM_COLS = {
   caseReferenceNumber:          'text_mm142s49',
   primaryCaseType:              'dropdown_mm0xd1qn',
-  caseSubType:                  'text_mm17vbph',
+  caseSubType:                  'dropdown_mm0x4t91',
   questionnaireTemplateApplied: 'color_mm0x3tpw',
 };
 
