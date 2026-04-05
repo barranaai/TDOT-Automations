@@ -1,13 +1,17 @@
+const crypto    = require('crypto');
 const mondayApi = require('./mondayApi');
 const { clientMasterBoardId } = require('../../config/monday');
 
 const ACCESS_TOKEN_COL = 'text_mm0x6haq';
 
-function generateToken(itemId) {
-  const now = new Date();
-  const mm  = String(now.getMonth() + 1).padStart(2, '0');
-  const dd  = String(now.getDate()).padStart(2, '0');
-  return `TDOT-${itemId}-${mm}${dd}`;
+/**
+ * Generate a cryptographically secure access token.
+ * Format: TDOT-<32 random hex chars>
+ * Previous format (TDOT-{itemId}-{MMDD}) is still valid for existing items
+ * because validation always compares stored vs. provided value.
+ */
+function generateToken() {
+  return `TDOT-${crypto.randomBytes(16).toString('hex')}`;
 }
 
 async function onItemCreated({ itemId }) {
@@ -28,7 +32,7 @@ async function onItemCreated({ itemId }) {
       return;
     }
 
-    const token = generateToken(itemId);
+    const token = generateToken();
 
     await mondayApi.query(
       `mutation($itemId: ID!, $boardId: ID!, $value: JSON!) {

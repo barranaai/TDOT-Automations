@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spousal Sponsorship – Questionnaire</title>
+<style>
+:root {
+  --orange: #ED7D31;
+  --red: #D32F2F;
+  --light-bg: #FFF8F0;
+  --border: #E0E0E0;
+  --text: #333;
+  --white: #FFFFFF;
+  --shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #F5F5F5; color: var(--text); line-height: 1.5; }
+.container { max-width: 980px; margin: 0 auto; padding: 20px; }
+h1 { text-align: center; color: var(--red); font-size: 1.55rem; margin-bottom: 6px; }
+.subtitle { text-align: center; color: #666; font-size: 0.9rem; margin-bottom: 20px; }
+.instructions { background: #FFF3E0; border-left: 4px solid var(--orange); padding: 12px 16px; margin-bottom: 24px; font-size: 0.9rem; border-radius: 0 4px 4px 0; }
+
+/* Top-level applicant block */
+.applicant-accordion { margin-bottom: 20px; border-radius: 8px; overflow: hidden; box-shadow: var(--shadow); }
+.applicant-header { background: var(--red); color: var(--white); padding: 16px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 1.15rem; font-weight: 700; user-select: none; }
+.applicant-header:hover { filter: brightness(1.1); }
+.applicant-header .chevron { transition: transform 0.3s; font-size: 1.2rem; }
+.applicant-header.active .chevron { transform: rotate(180deg); }
+.applicant-body { background: var(--white); display: none; padding: 20px; }
+.applicant-body.open { display: block; }
+
+/* Section accordion */
+.accordion { margin-bottom: 12px; border-radius: 6px; overflow: hidden; box-shadow: var(--shadow); }
+.accordion-header { background: #B71C1C; color: var(--white); padding: 13px 18px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 1rem; font-weight: 600; user-select: none; }
+.accordion-header:hover { filter: brightness(1.1); }
+.accordion-header .chevron { transition: transform 0.3s; }
+.accordion-header.active .chevron { transform: rotate(180deg); }
+.accordion-body { background: var(--white); display: none; padding: 18px; }
+.accordion-body.open { display: block; }
+
+/* Sub-accordion */
+.sub-accordion { margin-bottom: 10px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.sub-accordion-header { background: var(--white); padding: 11px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: 600; color: var(--text); border-bottom: 1px solid var(--border); }
+.sub-accordion-header:hover { background: var(--light-bg); }
+.sub-accordion-header .chevron { transition: transform 0.3s; }
+.sub-accordion-header.active .chevron { transform: rotate(180deg); }
+.sub-accordion-body { display: none; padding: 16px; }
+.sub-accordion-body.open { display: block; }
+
+/* Form */
+.form-row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 14px; }
+.form-group { flex: 1; min-width: 220px; }
+.form-group.full { flex-basis: 100%; }
+label { display: block; font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; color: #555; }
+input[type="text"], input[type="email"], input[type="tel"], select, textarea {
+  width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.95rem; font-family: inherit; transition: border-color 0.2s;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 2px rgba(237,125,49,0.15); }
+textarea { resize: vertical; min-height: 60px; }
+.section-note { font-size: 0.85rem; color: #666; margin-bottom: 12px; font-style: italic; }
+
+/* Conditional */
+.conditional { display: none; margin-top: 10px; padding: 14px; background: #FAFAFA; border-left: 3px solid var(--orange); border-radius: 0 4px 4px 0; }
+.conditional.visible { display: block; }
+
+/* Education levels table */
+.edu-level-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+.edu-level-table th { background: var(--orange); color: var(--white); padding: 10px 12px; text-align: left; font-weight: 600; }
+.edu-level-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 0.92rem; }
+.edu-level-table td:last-child { width: 200px; }
+
+/* Dynamic table */
+.table-wrapper { overflow-x: auto; margin-bottom: 10px; }
+table.dynamic-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+table.dynamic-table th { background: var(--orange); color: var(--white); padding: 10px 8px; text-align: left; font-weight: 600; white-space: nowrap; }
+table.dynamic-table td { padding: 6px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.dynamic-table td input, table.dynamic-table td select, table.dynamic-table td textarea { font-size: 0.85rem; padding: 6px 8px; }
+table.dynamic-table td textarea { min-height: 36px; }
+.btn { padding: 8px 18px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.88rem; font-weight: 600; }
+.btn-add { background: var(--orange); color: var(--white); margin-right: 8px; }
+.btn-add:hover { filter: brightness(1.1); }
+.btn-remove { background: #EF5350; color: var(--white); font-size: 0.8rem; padding: 4px 10px; }
+.btn-remove:hover { filter: brightness(1.1); }
+.table-actions { margin-top: 8px; }
+
+/* Background yes/no */
+.bg-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+.bg-table th { background: var(--orange); color: var(--white); padding: 10px 12px; text-align: left; font-weight: 600; }
+.bg-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; font-size: 0.92rem; }
+.bg-table td:last-child { width: 130px; }
+
+/* Participation table */
+.part-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+.part-table th { background: var(--orange); color: var(--white); padding: 10px 12px; text-align: left; font-weight: 600; }
+.part-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 0.92rem; }
+.part-table td:last-child { width: 130px; }
+
+@media (max-width: 600px) {
+  .form-group { min-width: 100%; }
+  .container { padding: 10px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Questionnaire for Spousal Sponsorship</h1>
+  <p class="subtitle">Main Applicant's Details – Page 1 &nbsp;|&nbsp; Sponsor's Details – Page 12 &nbsp;|&nbsp; Relationship Details – Page 16</p>
+  <div class="instructions"><strong>PLEASE READ THE INSTRUCTIONS BEFORE ANSWERING THE QUESTIONS</strong></div>
+
+  <!-- ================================================================ -->
+  <!--                        MAIN APPLICANT                           -->
+  <!-- ================================================================ -->
+  <div class="applicant-accordion">
+    <div class="applicant-header" onclick="toggleApplicant(this)">Main Applicant <span class="chevron">▼</span></div>
+    <div class="applicant-body">
+
+      <!-- Section 1 - Profile Details -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Section 1 – Profile Details <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Personal Details <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <div class="form-row">
+                <div class="form-group"><label>Email Address</label><input type="email"></div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label>Family Name (Surname)</label><input type="text"></div>
+                <div class="form-group"><label>Given Name</label><input type="text"></div>
+              </div>
+              <div class="form-row">
+                <div class="form-group full">
+                  <label>Have you ever used any other name?</label>
+                  <select onchange="toggleConditional(this,'ma-other-name')"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select>
+                </div>
+              </div>
+              <div class="conditional" id="ma-other-name">
+                <div class="form-row">
+                  <div class="form-group"><label>Family Name</label><input type="text"></div>
+                  <div class="form-group"><label>Given Name</label><input type="text"></div>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label>Eye Color</label><input type="text"></div>
+                <div class="form-group"><label>Your height in cm</label><input type="text"></div>
+                <div class="form-group"><label>Mother Tongue</label><input type="text"></div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label>Country of Citizenship</label><input type="text"></div>
+                <div class="form-group"><label>Current Residence Country</label><input type="text"></div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label>In the last 5 years have you lived in any other country?</label>
+                  <select><option value="">-- Select --</option><option>No</option><option>Yes</option></select>
+                </div>
+                <div class="form-group"><label>Have you taken an English Test?</label>
+                  <select><option value="">-- Select --</option><option>No</option><option>Yes</option></select>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label>Are you a permanent resident of the US with a valid green card?</label>
+                  <select><option value="">-- Select --</option><option>No</option><option>Yes</option></select>
+                </div>
+                <div class="form-group"><label>Do you have Canadian Visa? If Yes, Which one?</label><input type="text"></div>
+              </div>
+
+              <h4 style="margin:16px 0 8px;color:var(--red);">First Entry to Canada</h4>
+              <div class="form-row">
+                <div class="form-group"><label>Date (DD/MM/YYYY)</label><input type="text" placeholder="DD/MM/YYYY"></div>
+                <div class="form-group"><label>Location</label><input type="text"></div>
+                <div class="form-group"><label>Status</label><input type="text"></div>
+              </div>
+
+              <h4 style="margin:16px 0 8px;color:var(--red);">Latest Entry to Canada</h4>
+              <div class="form-row">
+                <div class="form-group"><label>Date (DD/MM/YYYY)</label><input type="text" placeholder="DD/MM/YYYY"></div>
+                <div class="form-group"><label>Location</label><input type="text"></div>
+                <div class="form-group"><label>Status</label><input type="text"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Flagged Polling <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <div class="form-row">
+                <div class="form-group full">
+                  <label>Have you ever flagged polled and entered Canada for yourself or friend or family?</label>
+                  <select onchange="toggleConditional(this,'ma-flagged')"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select>
+                </div>
+              </div>
+              <div class="conditional" id="ma-flagged">
+                <div class="table-wrapper">
+                  <table class="dynamic-table" id="tbl-ma-flagged">
+                    <thead><tr><th>Date (DD/MM/YYYY)</th><th>Location (Border Name)</th><th>Decision (Approved / Refused)</th><th></th></tr></thead>
+                    <tbody><tr>
+                      <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                      <td><input type="text"></td>
+                      <td><select><option value="">-- Select --</option><option>Approved</option><option>Refused</option></select></td>
+                      <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+                    </tr></tbody>
+                  </table>
+                </div>
+                <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-flagged',['text|DD/MM/YYYY','text|','select|Approved,Refused'])">+ Add Row</button></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Marital Status <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <div class="form-row">
+                <div class="form-group"><label>Current Marital Status</label>
+                  <select onchange="toggleConditional(this,'ma-spouse')"><option value="">-- Select --</option><option value="no">Single</option><option value="yes">Married</option><option value="yes">Common-Law</option><option value="no">Widowed</option><option value="no">Divorced</option><option value="no">Separated</option></select>
+                </div>
+                <div class="form-group"><label>Date of Marriage / Common Law (DD/MM/YYYY)</label><input type="text" placeholder="DD/MM/YYYY"></div>
+              </div>
+              <div class="conditional" id="ma-spouse">
+                <div class="form-row">
+                  <div class="form-group"><label>Spouse's Family Name</label><input type="text"></div>
+                  <div class="form-group"><label>Spouse's Given Name</label><input type="text"></div>
+                  <div class="form-group"><label>Spouse's Date of Birth</label><input type="text" placeholder="DD/MM/YYYY"></div>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group full">
+                  <label>Have you previously been married or in a common-law relationship?</label>
+                  <select onchange="toggleConditional(this,'ma-prev-marriage')"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select>
+                </div>
+              </div>
+              <div class="conditional" id="ma-prev-marriage">
+                <div class="form-row">
+                  <div class="form-group"><label>Date of Marriage / Common Law (DD/MM/YYYY)</label><input type="text" placeholder="DD/MM/YYYY"></div>
+                  <div class="form-group"><label>Date of Divorce / Separation (DD/MM/YYYY)</label><input type="text" placeholder="DD/MM/YYYY"></div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group"><label>Spouse's Family Name</label><input type="text"></div>
+                  <div class="form-group"><label>Spouse's Given Name</label><input type="text"></div>
+                  <div class="form-group"><label>Spouse's Date of Birth</label><input type="text" placeholder="DD/MM/YYYY"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2 - Contact Details -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Section 2 – Contact Details <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Contact Information <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <div class="form-row">
+                <div class="form-group"><label>Mobile Number</label><input type="tel"></div>
+                <div class="form-group"><label>Email Address</label><input type="email"></div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label>Mailing Address</label><input type="text"></div>
+              </div>
+            </div>
+          </div>
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Address History (Past 10 Years) <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <p class="section-note">Please list all addresses, both inside and outside Canada, for 10-years period. Ensure you include the full dates (DD/MM/YYYY) for each address history.</p>
+              <div class="table-wrapper">
+                <table class="dynamic-table" id="tbl-ma-address">
+                  <thead><tr><th>From (DD/MM/YYYY)</th><th>To (DD/MM/YYYY)</th><th>Unit / Apartment No.</th><th>Street No.</th><th>Street Name</th><th>City / Town</th><th>Province / State</th><th>Country</th><th>Postal Code</th><th></th></tr></thead>
+                  <tbody><tr>
+                    <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                    <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+                  </tr></tbody>
+                </table>
+              </div>
+              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-address',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|','text|','text|','text|'])">+ Add Row</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 3 - Education -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Section 3 – Education <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+          <p class="section-note">Give the number of years of school you successfully completed for each of the following levels of education:</p>
+          <table class="edu-level-table">
+            <thead><tr><th>Level of Education</th><th>Number of Years</th></tr></thead>
+            <tbody>
+              <tr><td>Elementary school (Grade 1 to 8)</td><td><input type="text"></td></tr>
+              <tr><td>Secondary school / High School (Grade 9 to 12)</td><td><input type="text"></td></tr>
+              <tr><td>University / College</td><td><input type="text"></td></tr>
+              <tr><td>Trade school or other post secondary school</td><td><input type="text"></td></tr>
+            </tbody>
+          </table>
+          <p class="section-note" style="margin-top:12px;">Ensure you include the full dates (DD/MM/YYYY) for each period. Please provide details of your education including High School (Grade 9 to 12), College, University or any apprentice training.</p>
+          <div class="table-wrapper">
+            <table class="dynamic-table" id="tbl-ma-education">
+              <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Course / Program Name</th><th>Education Institute</th><th>City</th><th>Country</th><th></th></tr></thead>
+              <tbody><tr>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-education',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button></div>
+        </div>
+      </div>
+
+      <!-- Section 4 - Personal History -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Section 4 – Personal History <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+          <p class="section-note">Provide details of your personal history in the last ten years. Ensure you include the full dates (DD/MM/YYYY) for each period of employment, education, or unemployment. Provide details including part-time, full-time employment, foreign work experience, education etc. Include self-employment details including Uber, Skip, Door-dash or any other work experience. There should be no gaps in your timeline.</p>
+          <div class="table-wrapper">
+            <table class="dynamic-table" id="tbl-ma-history">
+              <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title / Education</th><th>Company / School Name</th><th>City and Country</th><th>Status</th><th></th></tr></thead>
+              <tbody><tr>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-history',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button></div>
+          <div style="margin-top:16px;">
+            <div class="form-group full">
+              <label>Have you declared your international experience in any of your previous IRCC applications (e.g., Study Permit, Work Permit, Visitor Visa, PNP, etc.)? – YES or NO. If NO, please provide an explanation.</label>
+              <select onchange="toggleConditional(this,'ma-ircc-exp')"><option value="">-- Select --</option><option value="yes">Yes</option><option value="no">No</option></select>
+            </div>
+            <div class="conditional" id="ma-ircc-exp">
+              <div class="form-group full"><label>Explanation</label><textarea placeholder="Please provide an explanation"></textarea></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 5 - Family Information -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Section 5 – Family Information <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Parent's and Spouse's Information <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <p class="section-note">Please provide the required information for your father, mother, wife, or husband. If deceased, kindly specify the date and city/town of death. If the person is residing in Canada, please mention their status with address.</p>
+              <div class="table-wrapper">
+                <table class="dynamic-table" id="tbl-ma-parents">
+                  <thead><tr><th>Full Name (As per Passport)</th><th>Marital Status</th><th>Date of Birth</th><th>Country of Birth</th><th>Full Address</th><th>Current Occupation (Job Title)</th><th></th></tr></thead>
+                  <tbody><tr>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+                  </tr></tbody>
+                </table>
+              </div>
+              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-parents',['text|','text|','text|DD/MM/YYYY','text|','text|','text|'])">+ Add Row</button></div>
+              <div class="form-row" style="margin-top:14px;">
+                <div class="form-group"><label>Father's Family Name at Birth</label><input type="text"></div>
+                <div class="form-group"><label>Mother's Family Name at Birth</label><input type="text"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Children's Information <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <p class="section-note">Please provide the required information for your children including all sons, daughters, and adopted children. If deceased, kindly specify the date and city/town of death. If the person is residing in Canada, please mention their status with address.</p>
+              <div class="table-wrapper">
+                <table class="dynamic-table" id="tbl-ma-children">
+                  <thead><tr><th>Full Name (As per Passport)</th><th>Marital Status</th><th>Date of Birth</th><th>Country of Birth</th><th>Full Address</th><th>Current Occupation (Job Title)</th><th></th></tr></thead>
+                  <tbody><tr>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+                  </tr></tbody>
+                </table>
+              </div>
+              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-children',['text|','text|','text|DD/MM/YYYY','text|','text|','text|'])">+ Add Row</button></div>
+            </div>
+          </div>
+
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Sibling's Information <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <p class="section-note">Please provide the required information for your brother and sister including half brother and sister, stepbrother and sister. If deceased, kindly specify the date and city/town of death. If the person is residing in Canada, please mention their status with address.</p>
+              <div class="table-wrapper">
+                <table class="dynamic-table" id="tbl-ma-siblings">
+                  <thead><tr><th>Full Name (As per Passport)</th><th>Marital Status</th><th>Date of Birth</th><th>Country of Birth</th><th>Full Address</th><th>Current Occupation (Job Title)</th><th></th></tr></thead>
+                  <tbody><tr>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+                  </tr></tbody>
+                </table>
+              </div>
+              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-siblings',['text|','text|','text|DD/MM/YYYY','text|','text|','text|'])">+ Add Row</button></div>
+            </div>
+          </div>
+
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Deceased Family Members <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <p class="section-note">If deceased, kindly specify the date and city/town of death.</p>
+              <div class="table-wrapper">
+                <table class="dynamic-table" id="tbl-ma-deceased">
+                  <thead><tr><th>Family Name (As per Passport)</th><th>Given Name</th><th>Relationship</th><th>Date of Death</th><th>City and Country of Death</th><th></th></tr></thead>
+                  <tbody><tr>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text"></td>
+                    <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                    <td><input type="text"></td>
+                    <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+                  </tr></tbody>
+                </table>
+              </div>
+              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-deceased',['text|','text|','text|','text|DD/MM/YYYY','text|'])">+ Add Row</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 6 - Travel History -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Section 6 – Travel History (Past 10 Years) <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+          <p class="section-note">Please provide your travel history for the past 10 years (including your home country). Ensure you include the full dates (DD/MM/YYYY) for each period of travel history. Please mention what your status was (Student, Visitor, Worker, Citizen etc.)</p>
+          <div class="table-wrapper">
+            <table class="dynamic-table" id="tbl-ma-travel">
+              <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Status</th><th>City</th><th>Country</th><th>Purpose of Travelling</th><th></th></tr></thead>
+              <tbody><tr>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="Student, Visitor, Worker..."></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-travel',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|Student, Visitor, Worker...','text|','text|','text|'])">+ Add Row</button></div>
+        </div>
+      </div>
+
+      <!-- Background Information -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Background Information – Main Applicant <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+          <table class="bg-table">
+            <thead><tr><th>Question</th><th>Answer (Yes / No)</th></tr></thead>
+            <tbody>
+              <tr><td>Within the past two years, have you or a family member ever had tuberculosis of the lungs or been in close contact with a person with tuberculosis?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td></tr>
+              <tr><td>Do you have any physical or mental disorder that would require social and/or health services, other than medication, during a stay in Canada?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td></tr>
+              <tr><td>Have you ever remained beyond the validity of your status, attended school without authorization or worked without authorization in Canada?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td></tr>
+              <tr><td>Have you ever been refused a visa or permit, denied entry or ordered to leave Canada or any other country or territory?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td></tr>
+              <tr><td>Have you previously applied to enter or remain in Canada?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td></tr>
+              <tr><td>Have you ever committed, been arrested, been charged with or convicted of any criminal offence in any country or territory?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td></tr>
+              <tr><td>Did you serve in any military, militia, or civil defence unit or serve in a security organization or police force (including non obligatory national service, reserve or volunteer units)?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td></tr>
+              <tr><td>Are you, or have you ever been a member or associated with any political party, or other group or organization which has engaged in or advocated violence as a means to achieving a political or religious objective, or prisoners or civilians, looting or desecration of religious buildings?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td></tr>
+              <tr><td>Have you ever witnessed or participated in the ill treatment of prisoners or civilians, looting or desecration of religious buildings?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td></tr>
+            </tbody>
+          </table>
+          <div class="form-group full">
+            <label>If any of the answers is Yes, please provide the details</label>
+            <textarea rows="4" placeholder="Provide complete details here..."></textarea>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!--                       SPONSOR'S DETAILS                         -->
+  <!-- ================================================================ -->
+  <div class="applicant-accordion">
+    <div class="applicant-header" onclick="toggleApplicant(this)">Sponsor's Personal Details <span class="chevron">▼</span></div>
+    <div class="applicant-body">
+      <p class="section-note" style="margin-bottom:16px;">(Permanent Resident of Canada / Citizen of Canada)</p>
+
+      <!-- Section 1 - Profile Details -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Section 1 – Profile Details <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Personal Details <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <div class="form-row">
+                <div class="form-group"><label>Family Name (Surname)</label><input type="text"></div>
+                <div class="form-group"><label>Given Name</label><input type="text"></div>
+              </div>
+              <div class="form-row">
+                <div class="form-group full">
+                  <label>Have you ever used any other name?</label>
+                  <select onchange="toggleConditional(this,'sp-other-name')"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select>
+                </div>
+              </div>
+              <div class="conditional" id="sp-other-name">
+                <div class="form-row">
+                  <div class="form-group"><label>Family Name</label><input type="text"></div>
+                  <div class="form-group"><label>Given Name</label><input type="text"></div>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group full">
+                  <label>Have you ever sponsored in the past, or currently sponsoring any other family member in different application?</label>
+                  <select><option value="">-- Select --</option><option>No</option><option>Yes</option></select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Marital Status <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <div class="form-row">
+                <div class="form-group"><label>Current Marital Status</label>
+                  <select onchange="toggleConditional(this,'sp-spouse')"><option value="">-- Select --</option><option value="no">Single</option><option value="yes">Married</option><option value="yes">Common-Law</option><option value="no">Widowed</option><option value="no">Divorced</option><option value="no">Separated</option></select>
+                </div>
+                <div class="form-group"><label>Date of Marriage</label><input type="text" placeholder="DD/MM/YYYY"></div>
+              </div>
+              <div class="conditional" id="sp-spouse">
+                <div class="form-row">
+                  <div class="form-group"><label>Spouse's Family Name</label><input type="text"></div>
+                  <div class="form-group"><label>Spouse's Given Name</label><input type="text"></div>
+                  <div class="form-group"><label>Spouse's Date of Birth</label><input type="text" placeholder="DD/MM/YYYY"></div>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group full">
+                  <label>Have you previously been married or in a common-law relationship?</label>
+                  <select onchange="toggleConditional(this,'sp-prev-marriage')"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select>
+                </div>
+              </div>
+              <div class="conditional" id="sp-prev-marriage">
+                <div class="form-row">
+                  <div class="form-group"><label>Date of Marriage</label><input type="text" placeholder="DD/MM/YYYY"></div>
+                  <div class="form-group"><label>Date of Divorce / Separation / Death</label><input type="text" placeholder="DD/MM/YYYY"></div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group"><label>Spouse's Family Name</label><input type="text"></div>
+                  <div class="form-group"><label>Spouse's Given Name</label><input type="text"></div>
+                  <div class="form-group"><label>Spouse's Date of Birth</label><input type="text" placeholder="DD/MM/YYYY"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Contact Details <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <div class="form-row">
+                <div class="form-group"><label>Mobile Number</label><input type="tel"></div>
+                <div class="form-group"><label>Email Address</label><input type="email"></div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label>Mailing Address</label><input type="text"></div>
+                <div class="form-group"><label>Residential Address</label><input type="text"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2 - Address History -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Section 2 – Address History (Past 5 Years) <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+          <p class="section-note">Please list all addresses, both inside and outside Canada, during your entire 5-year eligibility period. Ensure that the addresses mentioned are consistent with those provided in your PR application. Do not leave any gaps between addresses. Ensure you include the full dates (DD/MM/YYYY) for each address history.</p>
+          <div class="table-wrapper">
+            <table class="dynamic-table" id="tbl-sp-address">
+              <thead><tr><th>From (DD/MM/YYYY)</th><th>To (DD/MM/YYYY)</th><th>Unit / Apartment No.</th><th>Street No.</th><th>Street Name</th><th>City</th><th>Province</th><th>Country</th><th>Postal Code</th><th></th></tr></thead>
+              <tbody><tr>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-sp-address',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|','text|','text|','text|'])">+ Add Row</button></div>
+        </div>
+      </div>
+
+      <!-- Section 3 - Education and Employment -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Section 3 – Education and Employment <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Education <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <p class="section-note">Give the number of years of school you successfully completed for each of the following levels of education:</p>
+              <table class="edu-level-table">
+                <thead><tr><th>Level of Education</th><th>Number of Years</th></tr></thead>
+                <tbody>
+                  <tr><td>Elementary school (Grade 1 to 8)</td><td><input type="text"></td></tr>
+                  <tr><td>Secondary school / High School (Grade 9 to 12)</td><td><input type="text"></td></tr>
+                  <tr><td>University / College</td><td><input type="text"></td></tr>
+                  <tr><td>Trade school or other post secondary school</td><td><input type="text"></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="sub-accordion">
+            <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Employment History <span class="chevron">▼</span></div>
+            <div class="sub-accordion-body">
+              <p class="section-note">Ensure you include the full dates (DD/MM/YYYY) for each period of employment. Provide details including part-time, full-time employment, foreign work experience etc. Include self-employment details including Uber, Skip, Door-dash or any other business. The information you provide should match exactly with the details in your Permanent Residency (PR) application.</p>
+              <div class="table-wrapper">
+                <table class="dynamic-table" id="tbl-sp-employment">
+                  <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>Company Details (Company Name, Full Address, Number)</th><th>Monthly Gross Salary</th><th></th></tr></thead>
+                  <tbody><tr>
+                    <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                    <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                    <td><input type="text"></td>
+                    <td><textarea></textarea></td>
+                    <td><input type="text"></td>
+                    <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+                  </tr></tbody>
+                </table>
+              </div>
+              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-sp-employment',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','textarea|','text|'])">+ Add Row</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 4 - Travel History -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Section 4 – Travel History (Past 10 Years) <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+          <p class="section-note">Please provide your travel history for the past 10 years (including your home country). Ensure you include the full dates (DD/MM/YYYY) for each period of travel history. Please mention what your status was (Student, Visitor, Worker, Citizen etc.)</p>
+          <div class="table-wrapper">
+            <table class="dynamic-table" id="tbl-sp-travel">
+              <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Status</th><th>City</th><th>Country</th><th>Purpose of Travelling</th><th></th></tr></thead>
+              <tbody><tr>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="Student, Visitor, Worker..."></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-sp-travel',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|Student, Visitor, Worker...','text|','text|','text|'])">+ Add Row</button></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!--                     RELATIONSHIP DETAILS                        -->
+  <!-- ================================================================ -->
+  <div class="applicant-accordion">
+    <div class="applicant-header" onclick="toggleApplicant(this)">Relationship Details <span class="chevron">▼</span></div>
+    <div class="applicant-body">
+
+      <!-- Communication -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Section 1 – Relationship Details <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+          <div class="form-row">
+            <div class="form-group"><label>What language do you communicate with each other?</label><input type="text"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group full"><label>How often do you communicate when you are not together and how?</label><textarea></textarea></div>
+          </div>
+
+          <h4 style="margin:16px 0 8px;color:var(--red);">Was the Sponsor related to you before this relationship (family related or related to any member of your family)? If yes, provide details below:</h4>
+          <div class="table-wrapper">
+            <table class="dynamic-table" id="tbl-rel-related">
+              <thead><tr><th>Family Name</th><th>Given Name</th><th>Date of Birth (DD/MM/YYYY)</th><th>Relationship</th><th></th></tr></thead>
+              <tbody><tr>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-rel-related',['text|','text|','text|DD/MM/YYYY','text|'])">+ Add Row</button></div>
+
+          <h4 style="margin:20px 0 8px;color:var(--red);">Do you have any family members living in Canada? If yes, provide details below:</h4>
+          <div class="table-wrapper">
+            <table class="dynamic-table" id="tbl-rel-family-canada">
+              <thead><tr><th>Family Name</th><th>Given Name</th><th>Date of Birth (DD/MM/YYYY)</th><th>Place of Birth</th><th>Marital Status</th><th>Relationship</th><th>Current Complete Address</th><th></th></tr></thead>
+              <tbody><tr>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-rel-family-canada',['text|','text|','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button></div>
+        </div>
+      </div>
+
+      <!-- Relationship Story -->
+      <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion(this)">Relationship Story <span class="chevron">▼</span></div>
+        <div class="accordion-body">
+          <div class="form-row">
+            <div class="form-group"><label>When was the first time you met in person? Date (DD/MM/YYYY)</label><input type="text" placeholder="DD/MM/YYYY"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group full"><label>Describe the circumstances of your first meeting?</label><textarea></textarea></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group full"><label>Did anyone introduce you? If yes provide the details, who was it?</label><textarea></textarea></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group full"><label>Did you have any contact before you met in person? If yes, provide details – who initiated the first contact, provide date of the first contact, was it by phone, social media, etc.</label><textarea></textarea></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Are you living together now?</label>
+              <select><option value="">-- Select --</option><option>Yes</option><option>No</option></select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group full"><label>How long have you been living together? If you are not living together explain why.</label><textarea></textarea></div>
+          </div>
+
+          <h4 style="margin:16px 0 8px;color:var(--red);">Was your marriage arranged? (by whom, when, where)</h4>
+          <div class="form-row">
+            <div class="form-group"><label>Whom</label><input type="text"></div>
+            <div class="form-group"><label>When (DD/MM/YYYY)</label><input type="text" placeholder="DD/MM/YYYY"></div>
+            <div class="form-group"><label>Where (City, Country)</label><input type="text"></div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group full"><label>Are you pregnant? If yes, what is the due date?</label><input type="text" placeholder="Yes / No – Due Date if applicable"></div>
+          </div>
+
+          <h4 style="margin:16px 0 8px;color:var(--red);">If you are not living together, have you visited each other during your relationship? Provide details below:</h4>
+          <div class="table-wrapper">
+            <table class="dynamic-table" id="tbl-rel-visits">
+              <thead><tr><th>From (DD/MM/YYYY)</th><th>To (DD/MM/YYYY)</th><th>Who Traveled to Visit Whom?</th><th>Did you stay together at the same location? (Yes / No)</th><th>Where did you stay? (Full Address)</th><th></th></tr></thead>
+              <tbody><tr>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text"></td>
+                <td><select><option value="">-- Select --</option><option>Yes</option><option>No</option></select></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-rel-visits',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','select|Yes,No','text|'])">+ Add Row</button></div>
+
+          <h4 style="margin:20px 0 8px;color:var(--red);">Do your family and friends know about your relationship? Provide details below. If no, explain why.</h4>
+          <div class="table-wrapper">
+            <table class="dynamic-table" id="tbl-rel-friends">
+              <thead><tr><th>Family Name</th><th>Given Name</th><th>Related to Sponsor or Applicant</th><th>Relationship</th><th>Date they met sponsor or applicant for the first time (DD/MM/YYYY)</th><th></th></tr></thead>
+              <tbody><tr>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-rel-friends',['text|','text|','text|','text|','text|DD/MM/YYYY'])">+ Add Row</button></div>
+
+          <h4 style="margin:20px 0 8px;color:var(--red);">Were there any formal ceremonies or events to recognize or celebrate your relationship? (Engagement Ceremony, Traditional Ceremony, Honeymoon, etc.) Provide details below:</h4>
+          <div class="table-wrapper">
+            <table class="dynamic-table" id="tbl-rel-ceremonies">
+              <thead><tr><th>Date (DD/MM/YYYY)</th><th>Description of Ceremony</th><th>Location (Full Address)</th><th>Number of Guests</th><th>Who Performed the Ceremony</th><th></th></tr></thead>
+              <tbody><tr>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-rel-ceremonies',['text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button></div>
+
+          <h4 style="margin:20px 0 8px;color:var(--red);">Have your parents (sponsor and applicant) or other family members participated in the events described above? If not, please explain why they didn't participate.</h4>
+          <table class="part-table">
+            <thead><tr><th>Person</th><th>Yes / No</th></tr></thead>
+            <tbody>
+              <tr><td>Applicant's parents?</td><td><select><option value="">-- Select --</option><option>Yes</option><option>No</option></select></td></tr>
+              <tr><td>Applicant's other family members?</td><td><select><option value="">-- Select --</option><option>Yes</option><option>No</option></select></td></tr>
+              <tr><td>Applicant's Children?</td><td><select><option value="">-- Select --</option><option>Yes</option><option>No</option></select></td></tr>
+              <tr><td>Sponsor's Parents?</td><td><select><option value="">-- Select --</option><option>Yes</option><option>No</option></select></td></tr>
+              <tr><td>Sponsor's other family members?</td><td><select><option value="">-- Select --</option><option>Yes</option><option>No</option></select></td></tr>
+              <tr><td>Sponsor's Children?</td><td><select><option value="">-- Select --</option><option>Yes</option><option>No</option></select></td></tr>
+            </tbody>
+          </table>
+          <div class="form-group full">
+            <label>If no, please explain why they didn't participate</label>
+            <textarea rows="3" placeholder="Provide explanation here..."></textarea>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+function toggleApplicant(el) {
+  const body = el.nextElementSibling;
+  const isOpen = body.classList.contains('open');
+  el.classList.toggle('active', !isOpen);
+  body.classList.toggle('open', !isOpen);
+}
+function toggleAccordion(el) {
+  const body = el.nextElementSibling;
+  const isOpen = body.classList.contains('open');
+  el.classList.toggle('active', !isOpen);
+  body.classList.toggle('open', !isOpen);
+}
+function toggleSubAccordion(el) {
+  const body = el.nextElementSibling;
+  const isOpen = body.classList.contains('open');
+  el.classList.toggle('active', !isOpen);
+  body.classList.toggle('open', !isOpen);
+}
+function toggleConditional(selectEl, targetId) {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  if (targetId === 'ma-ircc-exp') {
+    target.classList.toggle('visible', selectEl.value === 'no');
+    target.style.display = selectEl.value === 'no' ? 'block' : 'none';
+  } else {
+    target.classList.toggle('visible', selectEl.value === 'yes');
+    target.style.display = selectEl.value === 'yes' ? 'block' : 'none';
+  }
+}
+function addRow(tableId, colDefs) {
+  const tbody = document.getElementById(tableId).querySelector('tbody');
+  const tr = document.createElement('tr');
+  colDefs.forEach(def => {
+    const td = document.createElement('td');
+    const [type, ...rest] = def.split('|');
+    const val = rest.join('|');
+    if (type === 'select') {
+      const sel = document.createElement('select');
+      sel.innerHTML = '<option value="">-- Select --</option>' + val.split(',').map(o => `<option>${o.trim()}</option>`).join('');
+      td.appendChild(sel);
+    } else if (type === 'textarea') {
+      const ta = document.createElement('textarea');
+      ta.style.minHeight = '36px';
+      ta.style.fontSize = '0.85rem';
+      ta.style.padding = '6px 8px';
+      td.appendChild(ta);
+    } else {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      if (val) inp.placeholder = val;
+      td.appendChild(inp);
+    }
+    tr.appendChild(td);
+  });
+  const actionTd = document.createElement('td');
+  actionTd.innerHTML = '<button class="btn btn-remove" onclick="removeRow(this)">✕</button>';
+  tr.appendChild(actionTd);
+  tbody.appendChild(tr);
+}
+function removeRow(btn) {
+  const tbody = btn.closest('tbody');
+  if (tbody.rows.length > 1) btn.closest('tr').remove();
+}
+</script>
+</body>
+</html>

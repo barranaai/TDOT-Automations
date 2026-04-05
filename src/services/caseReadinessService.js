@@ -123,6 +123,12 @@ async function fetchExecutionItems(boardId, caseRefColId, fetchColIds, caseRef) 
 // ─── Calculate questionnaire readiness metrics ────────────────────────────────
 
 function calcQMetrics(items) {
+  // If there are no Q board items the case uses the HTML questionnaire form.
+  // Return a sentinel so callers know not to overwrite the form-submitted value.
+  if (!items.length) {
+    return { readinessPct: null, blockingCount: 0, totalCountable: 0, htmlFormMode: true };
+  }
+
   let countable   = 0;
   let reviewed    = 0;
   let blocking    = 0;
@@ -141,7 +147,7 @@ function calcQMetrics(items) {
   }
 
   const readinessPct = countable > 0 ? Math.round((reviewed / countable) * 100) : 0;
-  return { readinessPct, blockingCount: blocking, totalCountable: countable };
+  return { readinessPct, blockingCount: blocking, totalCountable: countable, htmlFormMode: false };
 }
 
 // ─── Calculate document readiness metrics ────────────────────────────────────
@@ -174,23 +180,34 @@ function calcDocMetrics(items) {
 // ─── Write calculated metrics to Client Master Board ─────────────────────────
 
 async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshold) {
-  const qReady   = qMetrics.readinessPct;
-  const docReady = docMetrics.readinessPct;
-  const totalBlocking = qMetrics.blockingCount + docMetrics.blockingCount;
+  const docReady      = docMetrics.readinessPct;
+  const htmlFormMode  = qMetrics.htmlFormMode;
 
-  const thresholdMet   = qReady >= minThreshold && docReady >= minThreshold && totalBlocking === 0;
-  const fullyComplete  = qReady >= FULL_LOCK_THRESHOLD && docReady >= FULL_LOCK_THRESHOLD && totalBlocking === 0;
-
+  // When the case uses HTML-form questionnaires (no Q board items exist), preserve
+  // whatever Q readiness the form submission has already written.  Only update
+  // document-related columns so the daily scheduler cannot reset the form value to 0.
   const colValues = {
-    [CM.qReadiness]:       qReady,
     [CM.docReadiness]:     docReady,
-    [CM.blockingQCount]:   qMetrics.blockingCount,
     [CM.blockingDocCount]: docMetrics.blockingCount,
     [CM.missingRequired]:  docMetrics.missingRequired,
-    [CM.qCompletionStatus]:{ label: qReady >= FULL_LOCK_THRESHOLD ? 'Done' : 'Working on it' },
-    [CM.docThresholdMet]:  { label: thresholdMet ? 'Yes' : 'No' },
-    [CM.readyForReview]:   { label: thresholdMet ? 'Done' : 'Working on it' },
   };
+
+  let thresholdMet  = false;
+  let fullyComplete = false;
+  let qReady        = 0;
+
+  if (!htmlFormMode) {
+    qReady        = qMetrics.readinessPct;
+    const totalBlocking = qMetrics.blockingCount + docMetrics.blockingCount;
+    thresholdMet  = qReady >= minThreshold && docReady >= minThreshold && totalBlocking === 0;
+    fullyComplete = qReady >= FULL_LOCK_THRESHOLD && docReady >= FULL_LOCK_THRESHOLD && totalBlocking === 0;
+
+    colValues[CM.qReadiness]        = qReady;
+    colValues[CM.blockingQCount]    = qMetrics.blockingCount;
+    colValues[CM.qCompletionStatus] = { label: qReady >= FULL_LOCK_THRESHOLD ? 'Done' : 'Working on it' };
+    colValues[CM.docThresholdMet]   = { label: thresholdMet ? 'Yes' : 'No' };
+    colValues[CM.readyForReview]    = { label: thresholdMet ? 'Done' : 'Working on it' };
+  }
 
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
@@ -203,7 +220,7 @@ async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshol
     }
   );
 
-  return { qReady, docReady, totalBlocking, thresholdMet, fullyComplete };
+  return { qReady, docReady, totalBlocking: qMetrics.blockingCount + docMetrics.blockingCount, thresholdMet, fullyComplete };
 }
 
 // ─── Core: calculate for one case ────────────────────────────────────────────
@@ -242,13 +259,15 @@ async function calculateForCase({ masterItemId, caseRef, caseType, caseStage, ch
   const docMetrics   = calcDocMetrics(dItems);
   const result       = await writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshold);
 
+  const htmlFormMode = qMetrics.htmlFormMode;
   console.log(
-    `[Readiness] ${caseRef} | Q:${result.qReady}% Doc:${result.docReady}% ` +
+    `[Readiness] ${caseRef} | Q:${htmlFormMode ? '(html-form)' : result.qReady + '%'} Doc:${result.docReady}% ` +
     `Blocking:${result.totalBlocking} Threshold:${minThreshold}% ` +
-    (result.fullyComplete ? '→ FULLY COMPLETE' : result.thresholdMet ? '→ threshold met' : '')
+    (htmlFormMode ? '(Q columns preserved)' : result.fullyComplete ? '→ FULLY COMPLETE' : result.thresholdMet ? '→ threshold met' : '')
   );
 
-  if (!checkLock) return result;
+  // Stage gates are skipped for HTML-form cases — the form submission handles them.
+  if (!checkLock || htmlFormMode) return result;
 
   // Gate 1: threshold met → Internal Review (from Document Collection Started only)
   if (result.thresholdMet && !result.fullyComplete && caseStage === 'Document Collection Started') {

@@ -2,6 +2,7 @@ const mondayApi = require('./mondayApi');
 const { clientMasterBoardId } = require('../../config/monday');
 const { getQuestionnaireItemsByCaseType } = require('./questionnaireTemplateService');
 const { createMissingQuestionnaireItems } = require('./questionnaireExecutionService');
+const { resolveForm } = require('../../config/questionnaireFormMap');
 
 // Client Master column IDs
 const CM_COLS = {
@@ -77,6 +78,29 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
 
   if (!caseType) {
     console.warn(`[QuestionnaireService] No Primary Case Type for item ${itemId}. Skipping.`);
+    return;
+  }
+
+  // 3b. Guard: if this case type is served by an HTML questionnaire form,
+  //     skip Q board creation entirely.  The client fills the HTML form directly.
+  const htmlFormFiles = resolveForm(caseType, caseSubType);
+  if (htmlFormFiles) {
+    console.log(
+      `[QuestionnaireService] HTML form mapped for "${caseType}" (sub-type: "${caseSubType || 'none'}"). ` +
+      'Skipping Q board item creation — questionnaire is served via /q route.'
+    );
+    // Mark the flag so this guard doesn't run again on future triggers
+    await mondayApi.query(
+      `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
+         change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues) { id }
+       }`,
+      {
+        boardId:   String(clientMasterBoardId),
+        itemId:    String(itemId),
+        colValues: JSON.stringify({ [CM_COLS.questionnaireTemplateApplied]: { label: 'Yes' } }),
+      }
+    );
+    console.log(`[QuestionnaireService] Questionnaire Applied → Yes for ${caseRef} (HTML form)`);
     return;
   }
 

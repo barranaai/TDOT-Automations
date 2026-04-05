@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Express Entry Profile Creation - Questionnaire</title>
+<style>
+  :root {
+    --orange: #ED7D31;
+    --red: #D32F2F;
+    --dark: #333;
+    --light-bg: #f8f9fa;
+    --border: #ddd;
+    --white: #fff;
+    --shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: var(--light-bg);
+    color: var(--dark);
+    line-height: 1.6;
+  }
+  .header {
+    background: linear-gradient(135deg, var(--orange), #e06520);
+    color: var(--white);
+    padding: 24px 32px;
+    text-align: center;
+    position: sticky; top: 0; z-index: 100;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+  }
+  .header h1 { font-size: 1.4rem; font-weight: 600; }
+  .header .subtitle { font-size: 0.85rem; opacity: 0.9; margin-top: 4px; }
+  .notice {
+    background: #FFF3CD;
+    border-left: 4px solid var(--orange);
+    padding: 12px 20px;
+    margin: 20px auto;
+    max-width: 960px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    border-radius: 0 6px 6px 0;
+  }
+  .container { max-width: 960px; margin: 0 auto 60px; padding: 0 16px; }
+  .top-accordion {
+    margin-top: 20px;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+  }
+  .top-accordion-header {
+    background: var(--red);
+    color: var(--white);
+    padding: 16px 24px;
+    font-size: 1.15rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+    transition: background 0.2s;
+  }
+  .top-accordion-header:hover { background: #b71c1c; }
+  .top-accordion-header .chevron { transition: transform 0.3s; font-size: 1.2rem; }
+  .top-accordion-header.active .chevron { transform: rotate(180deg); }
+  .top-accordion-body { display: none; background: var(--white); }
+  .top-accordion-body.open { display: block; }
+  .sub-accordion { border-bottom: 1px solid #eee; }
+  .sub-accordion:last-child { border-bottom: none; }
+  .sub-accordion-header {
+    background: var(--white);
+    padding: 14px 24px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--red);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background 0.15s;
+  }
+  .sub-accordion-header:hover { background: #fafafa; }
+  .sub-accordion-header .chevron { transition: transform 0.3s; color: #999; }
+  .sub-accordion-header.active { background: #fff8f6; }
+  .sub-accordion-header.active .chevron { transform: rotate(180deg); color: var(--red); }
+  .sub-accordion-body { display: none; padding: 20px 24px 28px; background: var(--white); }
+  .sub-accordion-body.open { display: block; }
+  .form-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .form-group { flex: 1; min-width: 200px; }
+  .form-group.full { flex-basis: 100%; }
+  .form-group label {
+    display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; color: #555;
+  }
+  .form-group input, .form-group select, .form-group textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 0.9rem; transition: border-color 0.2s, box-shadow 0.2s; background: var(--white);
+  }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px rgba(237,125,49,0.15);
+  }
+  .form-group textarea { resize: vertical; min-height: 60px; }
+  .form-group .hint { font-size: 0.75rem; color: #999; margin-top: 2px; }
+  .conditional { display: none; }
+  .conditional.visible { display: block; }
+  .dynamic-table-wrapper { overflow-x: auto; margin-top: 8px; }
+  .dynamic-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .dynamic-table th {
+    background: #f5f5f5; padding: 10px 8px; text-align: left; font-weight: 600;
+    color: #555; border: 1px solid var(--border); white-space: nowrap;
+  }
+  .dynamic-table td { padding: 6px 4px; border: 1px solid var(--border); vertical-align: top; }
+  .dynamic-table td input, .dynamic-table td select, .dynamic-table td textarea {
+    width: 100%; padding: 8px 6px; border: 1px solid #e0e0e0; border-radius: 4px; font-size: 0.85rem;
+  }
+  .dynamic-table td input:focus, .dynamic-table td select:focus, .dynamic-table td textarea:focus { outline: none; border-color: var(--orange); }
+  .btn {
+    padding: 8px 18px; border: none; border-radius: 6px; font-size: 0.85rem;
+    font-weight: 600; cursor: pointer; transition: background 0.2s, transform 0.1s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-add { background: var(--orange); color: var(--white); margin-top: 10px; }
+  .btn-add:hover { background: #d56a20; }
+  .btn-remove { background: #f5f5f5; color: var(--red); font-size: 0.8rem; padding: 6px 12px; }
+  .btn-remove:hover { background: #fee; }
+  .section-desc {
+    background: #f9f9f9; border-left: 3px solid var(--orange); padding: 10px 16px;
+    margin-bottom: 20px; font-size: 0.85rem; color: #666; border-radius: 0 6px 6px 0;
+  }
+  .important-note {
+    background: #FFF3CD; border-left: 3px solid #e6a800; padding: 10px 16px;
+    margin: 16px 0; font-size: 0.85rem; color: #856404; border-radius: 0 6px 6px 0; font-weight: 600;
+  }
+  @media (max-width: 600px) {
+    .header { padding: 16px; }
+    .header h1 { font-size: 1.1rem; }
+    .form-row { flex-direction: column; gap: 12px; }
+    .form-group { min-width: 100%; }
+    .sub-accordion-body { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Questionnaire for Express Entry Profile Creation</h1>
+  <div class="subtitle">Express Entry Profile / PNP Profile Creation</div>
+</div>
+
+<div class="notice">
+  Please read the instruction before answering the questions. Ensure all dates are in DD/MM/YYYY format.
+</div>
+
+<div class="container">
+
+<!-- ============================== MAIN APPLICANT ============================== -->
+<div class="top-accordion">
+  <div class="top-accordion-header active" onclick="toggleTop(this)">
+    Main Applicant
+    <span class="chevron">&#9662;</span>
+  </div>
+  <div class="top-accordion-body open">
+
+    <!-- Section 1: Profile Details -->
+    <div class="sub-accordion">
+      <div class="sub-accordion-header active" onclick="toggleSub(this)">
+        Section 1 &mdash; Profile Details
+        <span class="chevron">&#9662;</span>
+      </div>
+      <div class="sub-accordion-body open">
+
+        <h4 style="margin-bottom:12px; color:var(--red);">Personal Details</h4>
+
+        <div class="form-row">
+          <div class="form-group"><label>Family Name (Surname)</label><input type="text" placeholder="As per passport"></div>
+          <div class="form-group"><label>Given Name</label><input type="text" placeholder="As per passport"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label>Have you ever used any other name? (If yes, please provide details)</label>
+            <select onchange="toggleConditional(this, 'ma-other-name')">
+              <option value="">-- Select --</option>
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </div>
+        </div>
+        <div id="ma-other-name" class="conditional">
+          <div class="form-row">
+            <div class="form-group"><label>Family Name:</label><input type="text"></div>
+            <div class="form-group"><label>Given Name:</label><input type="text"></div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Current Residence Country</label><input type="text"></div>
+          <div class="form-group"><label>Status in Current Country (Visitor, Student, Worker, Citizen)</label>
+            <select>
+              <option value="">-- Select --</option>
+              <option>Visitor</option>
+              <option>Student</option>
+              <option>Worker</option>
+              <option>Citizen</option>
+              <option>Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>PGWP Application Submission Date</label><input type="text" placeholder="DD/MONTH/YEAR"><div class="hint">DD/MONTH/YEAR</div></div>
+          <div class="form-group"><label>Native Language</label><input type="text"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Residential Address Postal Code</label><input type="text"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label>Do you have siblings in Canada as a Permanent Resident?</label>
+            <select onchange="toggleConditional(this, 'ma-siblings-province')">
+              <option value="">-- Select --</option>
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </div>
+        </div>
+        <div id="ma-siblings-province" class="conditional">
+          <div class="form-row">
+            <div class="form-group full"><label>If yes, in which province he/she resides</label><input type="text" placeholder="e.g. Ontario, British Columbia"></div>
+          </div>
+        </div>
+
+        <h4 style="margin: 24px 0 12px; color:var(--red);">Marital Status</h4>
+
+        <div class="form-row">
+          <div class="form-group"><label>Current Marital Status</label>
+            <select><option value="">-- Select --</option><option>Single</option><option>Married</option><option>Common-Law</option><option>Divorced</option><option>Separated</option><option>Widowed</option></select>
+          </div>
+          <div class="form-group"><label>Accompany to the Application? (If yes, please provide details in dependent section)</label>
+            <select><option value="">-- Select --</option><option>Yes</option><option>No</option></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Date of Marriage / Common Law</label><input type="text" placeholder="DD/MM/YYYY"><div class="hint">DD/MM/YYYY</div></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Spouse&rsquo;s Family Name</label><input type="text"></div>
+          <div class="form-group"><label>Spouse&rsquo;s Given Name</label><input type="text"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Spouse&rsquo;s Date of Birth</label><input type="text" placeholder="DD/MM/YYYY"><div class="hint">DD/MM/YYYY</div></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label>Do you have dependent children? How Many?</label>
+            <input type="text" placeholder="e.g. No / Yes - 2">
+          </div>
+        </div>
+
+        <h4 style="margin: 24px 0 12px; color:var(--red);">Contact Details</h4>
+
+        <div class="form-row">
+          <div class="form-group"><label>Mobile Number</label><input type="tel"></div>
+          <div class="form-group"><label>Email Address</label><input type="email"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Section 2: Education -->
+    <div class="sub-accordion">
+      <div class="sub-accordion-header" onclick="toggleSub(this)">
+        Section 2 &mdash; Education
+        <span class="chevron">&#9662;</span>
+      </div>
+      <div class="sub-accordion-body">
+        <div class="section-desc">
+          Ensure you include the full dates (DD/MM/YYYY) for each period of employment, education, or unemployment. Please provide details of your education including &ndash; College, University or any apprentice training.
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label>Did you complete at least 50% of the study or training program&rsquo;s courses through in-person learning? &ndash; If Yes, please provide the duration of Online program.</label>
+            <textarea placeholder="e.g. Yes – 6 months online out of 2 years / No"></textarea>
+          </div>
+        </div>
+        <div class="dynamic-table-wrapper">
+          <table class="dynamic-table" id="ma-education">
+            <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Course / Program Name</th><th>Education Institute</th><th>Campus Address with Postal Code</th><th>City, Country</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">Remove</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <button class="btn btn-add" onclick="addRow('ma-education', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button>
+      </div>
+    </div>
+
+    <!-- Employment History -->
+    <div class="sub-accordion">
+      <div class="sub-accordion-header" onclick="toggleSub(this)">
+        Section 2 &mdash; Employment History
+        <span class="chevron">&#9662;</span>
+      </div>
+      <div class="sub-accordion-body">
+        <div class="section-desc">
+          Ensure you include the full dates (DD/MM/YYYY) for each period of employment. Provide complete details of your employment history, as this information will be used to calculate points under the Express Entry system.
+        </div>
+
+        <div class="form-row">
+          <div class="form-group full">
+            <label>Have you declared your foreign work experience in any of your previous IRCC applications (e.g., Study Permit, Work Permit, Visitor Visa, PNP, etc.)? &ndash; YES or NO. If NO, please provide an explanation.</label>
+            <select onchange="toggleConditional(this, 'ma-foreign-exp')">
+              <option value="">-- Select --</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+        </div>
+        <div id="ma-foreign-exp" class="conditional">
+          <div class="form-row"><div class="form-group full"><label>Explanation</label><textarea placeholder="Please explain..."></textarea></div></div>
+        </div>
+        <div class="important-note">Must answer the above question.</div>
+
+        <div class="dynamic-table-wrapper">
+          <table class="dynamic-table" id="ma-employment">
+            <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>Company Name</th><th>Full Address of Company with Postal Code</th><th>Country</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">Remove</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <button class="btn btn-add" onclick="addRow('ma-employment', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button>
+
+        <div style="margin-top: 28px;">
+          <div class="section-desc">
+            If you took any vacation or break between jobs, or during your employment, kindly mention the duration and exact dates of the time off.
+          </div>
+          <div class="dynamic-table-wrapper">
+            <table class="dynamic-table" id="ma-vacation">
+              <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Reason for Vacation</th><th></th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                  <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                  <td><input type="text"></td>
+                  <td><button class="btn btn-remove" onclick="removeRow(this)">Remove</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <button class="btn btn-add" onclick="addRow('ma-vacation', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|'])">+ Add Row</button>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============================== DEPENDENT (IF ACCOMPANY) ============================== -->
+<div class="top-accordion">
+  <div class="top-accordion-header" onclick="toggleTop(this)">
+    Dependent (If Accompany)
+    <span class="chevron">&#9662;</span>
+  </div>
+  <div class="top-accordion-body">
+
+    <!-- Section 1: Profile Details -->
+    <div class="sub-accordion">
+      <div class="sub-accordion-header" onclick="toggleSub(this)">
+        Section 1 &mdash; Profile Details
+        <span class="chevron">&#9662;</span>
+      </div>
+      <div class="sub-accordion-body">
+
+        <h4 style="margin-bottom:12px; color:var(--red);">Personal Details</h4>
+
+        <div class="form-row">
+          <div class="form-group"><label>Family Name (Surname)</label><input type="text" placeholder="As per passport"></div>
+          <div class="form-group"><label>Given Name</label><input type="text" placeholder="As per passport"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label>Have you ever used any other name? (If yes, please provide details)</label>
+            <select onchange="toggleConditional(this, 'dep-other-name')">
+              <option value="">-- Select --</option>
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </div>
+        </div>
+        <div id="dep-other-name" class="conditional">
+          <div class="form-row">
+            <div class="form-group"><label>Family Name:</label><input type="text"></div>
+            <div class="form-group"><label>Given Name:</label><input type="text"></div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Current Residence Country</label><input type="text"></div>
+          <div class="form-group"><label>Status in Current Country (Visitor, Student, Worker, Citizen)</label>
+            <select>
+              <option value="">-- Select --</option>
+              <option>Visitor</option>
+              <option>Student</option>
+              <option>Worker</option>
+              <option>Citizen</option>
+              <option>Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Native Language</label><input type="text"></div>
+          <div class="form-group"><label>Residential Address Postal Code</label><input type="text"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label>Do you have siblings in Canada as a Permanent Resident?</label>
+            <select onchange="toggleConditional(this, 'dep-siblings-province')">
+              <option value="">-- Select --</option>
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </div>
+        </div>
+        <div id="dep-siblings-province" class="conditional">
+          <div class="form-row">
+            <div class="form-group full"><label>If yes, in which province he/she resides</label><input type="text" placeholder="e.g. Ontario, British Columbia"></div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label>Do you have valid language test results?</label>
+            <select><option value="">-- Select --</option><option>No</option><option>Yes</option></select>
+          </div>
+        </div>
+
+        <h4 style="margin: 24px 0 12px; color:var(--red);">Contact Details</h4>
+
+        <div class="form-row">
+          <div class="form-group"><label>Mobile Number</label><input type="tel"></div>
+          <div class="form-group"><label>Email Address</label><input type="email"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Section 2: Education -->
+    <div class="sub-accordion">
+      <div class="sub-accordion-header" onclick="toggleSub(this)">
+        Section 2 &mdash; Education
+        <span class="chevron">&#9662;</span>
+      </div>
+      <div class="sub-accordion-body">
+        <div class="section-desc">
+          Ensure you include the full dates (DD/MM/YYYY) for each period of employment, education, or unemployment. Please provide details of your education including &ndash; College, University or any apprentice training.
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label>Did you complete at least 50% of the study or training program&rsquo;s courses through in-person learning? &ndash; If Yes, please provide the duration of Online program.</label>
+            <textarea placeholder="e.g. Yes – 6 months online out of 2 years / No"></textarea>
+          </div>
+        </div>
+        <div class="dynamic-table-wrapper">
+          <table class="dynamic-table" id="dep-education">
+            <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Course / Program Name</th><th>Education Institute</th><th>Campus Address with Postal Code</th><th>City, Country</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">Remove</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <button class="btn btn-add" onclick="addRow('dep-education', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button>
+      </div>
+    </div>
+
+    <!-- Employment History -->
+    <div class="sub-accordion">
+      <div class="sub-accordion-header" onclick="toggleSub(this)">
+        Section 2 &mdash; Employment History
+        <span class="chevron">&#9662;</span>
+      </div>
+      <div class="sub-accordion-body">
+        <div class="section-desc">
+          Ensure you include the full dates (DD/MM/YYYY) for each period of employment. Provide complete details of your employment history, as this information will be used to calculate points under the Express Entry system.
+        </div>
+
+        <div class="dynamic-table-wrapper">
+          <table class="dynamic-table" id="dep-employment">
+            <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>Company Name</th><th>City</th><th>Country</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><input type="text"></td>
+                <td><button class="btn btn-remove" onclick="removeRow(this)">Remove</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <button class="btn btn-add" onclick="addRow('dep-employment', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button>
+
+        <div style="margin-top: 28px;">
+          <div class="section-desc">
+            If you took any vacation or break between jobs, or during your employment, kindly mention the duration and exact dates of the time off.
+          </div>
+          <div class="dynamic-table-wrapper">
+            <table class="dynamic-table" id="dep-vacation">
+              <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Reason for Vacation</th><th></th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                  <td><input type="text" placeholder="DD/MM/YYYY"></td>
+                  <td><input type="text"></td>
+                  <td><button class="btn btn-remove" onclick="removeRow(this)">Remove</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <button class="btn btn-add" onclick="addRow('dep-vacation', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|'])">+ Add Row</button>
+        </div>
+
+        <div class="form-row" style="margin-top:20px;">
+          <div class="form-group full">
+            <label>Have you declared your international experience in any of your previous IRCC applications (e.g., Study Permit, Work Permit, Visitor Visa, PNP, etc.)? &ndash; YES or NO. If NO, please provide an explanation.</label>
+            <select onchange="toggleConditional(this, 'dep-intl-exp')">
+              <option value="">-- Select --</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+        </div>
+        <div id="dep-intl-exp" class="conditional">
+          <div class="form-row"><div class="form-group full"><label>Explanation</label><textarea placeholder="Please explain..."></textarea></div></div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</div><!-- /container -->
+
+<script>
+function toggleTop(header) {
+  header.classList.toggle('active');
+  header.nextElementSibling.classList.toggle('open');
+}
+function toggleSub(header) {
+  header.classList.toggle('active');
+  header.nextElementSibling.classList.toggle('open');
+}
+function toggleConditional(selectEl, targetId) {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  if (selectEl.value === 'yes' || selectEl.value === 'no') {
+    if (targetId.includes('exp') || targetId.includes('foreign')) {
+      // For explanation fields, show on "No"
+      if (selectEl.value === 'no') {
+        target.classList.add('visible');
+        target.style.display = 'block';
+      } else {
+        target.classList.remove('visible');
+        target.style.display = 'none';
+      }
+    } else {
+      // For other conditionals, show on "Yes"
+      if (selectEl.value === 'yes') {
+        target.classList.add('visible');
+        target.style.display = 'block';
+      } else {
+        target.classList.remove('visible');
+        target.style.display = 'none';
+      }
+    }
+  }
+}
+function addRow(tableId, colDefs) {
+  const tbody = document.getElementById(tableId).querySelector('tbody');
+  const tr = document.createElement('tr');
+  colDefs.forEach(def => {
+    const td = document.createElement('td');
+    const [type, value] = def.split('|');
+    if (type === 'select') {
+      const sel = document.createElement('select');
+      sel.innerHTML = '<option value="">--</option>';
+      value.split(',').forEach(opt => { sel.innerHTML += `<option>${opt}</option>`; });
+      td.appendChild(sel);
+    } else {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      if (value) inp.placeholder = value;
+      td.appendChild(inp);
+    }
+    tr.appendChild(td);
+  });
+  const tdBtn = document.createElement('td');
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-remove';
+  btn.textContent = 'Remove';
+  btn.onclick = function() { removeRow(this); };
+  tdBtn.appendChild(btn);
+  tr.appendChild(tdBtn);
+  tbody.appendChild(tr);
+}
+function removeRow(btn) {
+  const tbody = btn.closest('tbody');
+  if (tbody.rows.length > 1) btn.closest('tr').remove();
+}
+</script>
+
+</body>
+</html>

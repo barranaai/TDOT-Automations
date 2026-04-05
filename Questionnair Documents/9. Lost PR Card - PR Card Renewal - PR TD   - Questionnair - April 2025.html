@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lost PR Card / PR Card Renewal – Questionnaire</title>
+<style>
+:root {
+  --orange: #ED7D31;
+  --red: #D32F2F;
+  --light-bg: #FFF8F0;
+  --border: #E0E0E0;
+  --text: #333;
+  --white: #FFFFFF;
+  --shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #F5F5F5; color: var(--text); line-height: 1.5; }
+.container { max-width: 960px; margin: 0 auto; padding: 20px; }
+h1 { text-align: center; color: var(--red); font-size: 1.5rem; margin-bottom: 20px; }
+.instructions { background: #FFF3E0; border-left: 4px solid var(--orange); padding: 12px 16px; margin-bottom: 24px; font-size: 0.9rem; border-radius: 0 4px 4px 0; }
+
+/* Accordion */
+.accordion { margin-bottom: 12px; border-radius: 8px; overflow: hidden; box-shadow: var(--shadow); }
+.accordion-header { background: var(--red); color: var(--white); padding: 14px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 1.05rem; font-weight: 600; user-select: none; }
+.accordion-header:hover { filter: brightness(1.1); }
+.accordion-header .chevron { transition: transform 0.3s; font-size: 1.1rem; }
+.accordion-header.active .chevron { transform: rotate(180deg); }
+.accordion-body { background: var(--white); display: none; padding: 20px; }
+.accordion-body.open { display: block; }
+
+/* Sub-accordion */
+.sub-accordion { margin-bottom: 10px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.sub-accordion-header { background: var(--white); padding: 12px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: 600; color: var(--text); border-bottom: 1px solid var(--border); }
+.sub-accordion-header:hover { background: var(--light-bg); }
+.sub-accordion-header .chevron { transition: transform 0.3s; }
+.sub-accordion-header.active .chevron { transform: rotate(180deg); }
+.sub-accordion-body { display: none; padding: 16px; }
+.sub-accordion-body.open { display: block; }
+
+/* Form elements */
+.form-row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 14px; }
+.form-group { flex: 1; min-width: 220px; }
+.form-group.full { flex-basis: 100%; }
+label { display: block; font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; color: #555; }
+input[type="text"], input[type="email"], input[type="tel"], select, textarea {
+  width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.95rem; font-family: inherit; transition: border-color 0.2s;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 2px rgba(237,125,49,0.15); }
+textarea { resize: vertical; min-height: 60px; }
+.section-note { font-size: 0.85rem; color: #666; margin-bottom: 12px; font-style: italic; }
+
+/* Conditional */
+.conditional { display: none; margin-top: 10px; padding: 14px; background: #FAFAFA; border-left: 3px solid var(--orange); border-radius: 0 4px 4px 0; }
+.conditional.visible { display: block; }
+
+/* Yes/No question rows */
+.yn-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+.yn-table th { background: var(--orange); color: var(--white); padding: 10px 12px; text-align: left; font-weight: 600; }
+.yn-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; font-size: 0.92rem; }
+.yn-table td:last-child { width: 130px; }
+
+/* Dynamic table */
+.table-wrapper { overflow-x: auto; margin-bottom: 10px; }
+table.dynamic-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+table.dynamic-table th { background: var(--orange); color: var(--white); padding: 10px 8px; text-align: left; font-weight: 600; white-space: nowrap; }
+table.dynamic-table td { padding: 6px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.dynamic-table td input, table.dynamic-table td select { font-size: 0.85rem; padding: 6px 8px; }
+.btn { padding: 8px 18px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.88rem; font-weight: 600; }
+.btn-add { background: var(--orange); color: var(--white); margin-right: 8px; }
+.btn-add:hover { filter: brightness(1.1); }
+.btn-remove { background: #EF5350; color: var(--white); font-size: 0.8rem; padding: 4px 10px; }
+.btn-remove:hover { filter: brightness(1.1); }
+.table-actions { margin-top: 8px; }
+
+/* Statutory questions */
+.stat-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+.stat-table th { background: var(--orange); color: var(--white); padding: 10px 12px; text-align: left; }
+.stat-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.stat-table td:first-child { width: 40px; text-align: center; font-weight: 700; }
+.stat-table td:last-child { width: 120px; }
+.q-text { font-size: 0.92rem; }
+
+@media (max-width: 600px) {
+  .form-group { min-width: 100%; }
+  .container { padding: 10px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Questionnaire for Lost PR Card / PR Card Renewal</h1>
+  <div class="instructions"><strong>PLEASE READ ALL THE INSTRUCTIONS BEFORE ANSWERING THE QUESTIONS</strong></div>
+
+  <!-- ===================== SECTION 1 - PROFILE DETAILS ===================== -->
+  <div class="accordion">
+    <div class="accordion-header" onclick="toggleAccordion(this)">Section 1 – Profile Details <span class="chevron">▼</span></div>
+    <div class="accordion-body">
+
+      <!-- Personal Details -->
+      <div class="sub-accordion">
+        <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Personal Details <span class="chevron">▼</span></div>
+        <div class="sub-accordion-body">
+          <div class="form-row">
+            <div class="form-group"><label>Family Name (Surname)</label><input type="text"></div>
+            <div class="form-group"><label>Given Name</label><input type="text"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group full">
+              <label>Have you ever used any other name?</label>
+              <select onchange="toggleConditional(this,'other-name')"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select>
+            </div>
+          </div>
+          <div class="conditional" id="other-name">
+            <div class="form-row">
+              <div class="form-group"><label>Family Name</label><input type="text"></div>
+              <div class="form-group"><label>Given Name</label><input type="text"></div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Country of Citizenship</label><input type="text"></div>
+            <div class="form-group"><label>Current Residence Country</label><input type="text"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Date you became PR in Canada</label><input type="text" placeholder="DD/MM/YYYY"></div>
+            <div class="form-group"><label>Place you became PR in Canada</label><input type="text"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Eye Color</label><input type="text"></div>
+            <div class="form-group"><label>Height (in cm)</label><input type="text"></div>
+          </div>
+
+          <table class="yn-table" style="margin-top:16px;">
+            <thead><tr><th>Question</th><th>Answer (Yes / No)</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Have you ever been issued a removal order?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td>
+              </tr>
+              <tr>
+                <td>Has an immigration officer ever issued you an inadmissibility report under subsection 44(1) of the Immigration, Refugee and Protection Act?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td>
+              </tr>
+              <tr>
+                <td>Have you ever lost your status as a PR of Canada?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td>
+              </tr>
+              <tr>
+                <td>Have you ever submitted an appeal to the Immigration Appeal Division of the Refugee Board against a decision on the residence obligation?</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td>
+              </tr>
+              <tr>
+                <td>Have you ever been issued any of the following? – Travel Document or PRTD</td>
+                <td><select><option value="">-- Select --</option><option>No</option><option>Yes</option></select></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Marital Status -->
+      <div class="sub-accordion">
+        <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Marital Status <span class="chevron">▼</span></div>
+        <div class="sub-accordion-body">
+          <div class="form-row">
+            <div class="form-group"><label>Current Marital Status</label>
+              <select onchange="toggleConditional(this,'spouse-details')"><option value="">-- Select --</option><option value="no">Single</option><option value="yes">Married</option><option value="yes">Common-Law</option><option value="no">Widowed</option><option value="no">Divorced</option><option value="no">Separated</option></select>
+            </div>
+            <div class="form-group"><label>Date of Marriage</label><input type="text" placeholder="DD/MM/YYYY"></div>
+          </div>
+          <div class="conditional" id="spouse-details">
+            <div class="form-row">
+              <div class="form-group"><label>Spouse's Family Name</label><input type="text"></div>
+              <div class="form-group"><label>Spouse's Given Name</label><input type="text"></div>
+              <div class="form-group"><label>Spouse's Date of Birth</label><input type="text" placeholder="DD/MM/YYYY"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Contact Details -->
+      <div class="sub-accordion">
+        <div class="sub-accordion-header" onclick="toggleSubAccordion(this)">Contact Details <span class="chevron">▼</span></div>
+        <div class="sub-accordion-body">
+          <div class="form-row">
+            <div class="form-group"><label>Mobile Number</label><input type="tel"></div>
+            <div class="form-group"><label>Email Address</label><input type="email"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Mailing Address</label><input type="text"></div>
+            <div class="form-group"><label>Residential Address</label><input type="text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== ADDRESS DETAILS (PAST 5 YEARS) ===================== -->
+  <div class="accordion">
+    <div class="accordion-header" onclick="toggleAccordion(this)">Address Details (Past 5 Years) <span class="chevron">▼</span></div>
+    <div class="accordion-body">
+      <p class="section-note">Please list all addresses, both inside and outside Canada, during your entire 5-year eligibility period. Ensure you include the full dates (DD/MM/YYYY) for each address history.</p>
+      <div class="table-wrapper">
+        <table class="dynamic-table" id="tbl-address">
+          <thead><tr><th>From (DD/MM/YYYY)</th><th>To (DD/MM/YYYY)</th><th>Unit / Apartment No.</th><th>Street No.</th><th>Street Name</th><th>City</th><th>Province</th><th>Country</th><th>Postal Code</th><th></th></tr></thead>
+          <tbody>
+            <tr>
+              <td><input type="text" placeholder="DD/MM/YYYY"></td>
+              <td><input type="text" placeholder="DD/MM/YYYY"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-address',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|','text|','text|','text|'])">+ Add Row</button></div>
+    </div>
+  </div>
+
+  <!-- ===================== TRAVEL HISTORY ===================== -->
+  <div class="accordion">
+    <div class="accordion-header" onclick="toggleAccordion(this)">Travel History (Past 5 Years) <span class="chevron">▼</span></div>
+    <div class="accordion-body">
+      <p class="section-note">Please provide your travel history for the past 5 years (including your home country). Ensure you include the full dates (DD/MM/YYYY) for each period of travel history.</p>
+      <div class="table-wrapper">
+        <table class="dynamic-table" id="tbl-travel">
+          <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Status</th><th>City</th><th>Country</th><th>Purpose of Travelling</th><th></th></tr></thead>
+          <tbody>
+            <tr>
+              <td><input type="text" placeholder="DD/MM/YYYY"></td>
+              <td><input type="text" placeholder="DD/MM/YYYY"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-travel',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button></div>
+    </div>
+  </div>
+
+  <!-- ===================== PERSONAL HISTORY ===================== -->
+  <div class="accordion">
+    <div class="accordion-header" onclick="toggleAccordion(this)">Personal History (Past 5 Years) <span class="chevron">▼</span></div>
+    <div class="accordion-body">
+      <p class="section-note">Please provide the details of all your full-time and part-time employment, self-employment, education, and unemployment history over the past 5 years. Ensure you include the full dates (DD/MM/YYYY) for each period. There should be no gaps in your timeline.</p>
+      <div class="table-wrapper">
+        <table class="dynamic-table" id="tbl-personal">
+          <thead><tr><th>From (DD/MM/YYYY)</th><th>To (DD/MM/YYYY)</th><th>Occupation / Activity</th><th>Company / Education Institute</th><th>Unit / Apartment No.</th><th>Street No. and Name</th><th>City</th><th>Country</th><th>Postal Code</th><th></th></tr></thead>
+          <tbody>
+            <tr>
+              <td><input type="text" placeholder="DD/MM/YYYY"></td>
+              <td><input type="text" placeholder="DD/MM/YYYY"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><input type="text"></td>
+              <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-personal',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|','text|','text|','text|'])">+ Add Row</button></div>
+    </div>
+  </div>
+
+  <!-- ===================== STATUTORY QUESTIONS ===================== -->
+  <div class="accordion">
+    <div class="accordion-header" onclick="toggleAccordion(this)">Section 4 &mdash; Statutory Questions <span class="chevron">▼</span></div>
+    <div class="accordion-body">
+      <table class="stat-table">
+        <thead><tr><th>#</th><th>Questions</th><th>Answer Yes or No</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td class="q-text">Have you been employed on a full-time basis by a Canadian business outside Canada or in the federal public administration or the public service of a province, while you were absent from Canada?</td>
+            <td><select><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td class="q-text">Have you been accompanying a Canadian citizen who is your spouse, common-law partner, or in the case of a child, your parent, while you were absent from Canada?</td>
+            <td><select><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td class="q-text">Have you been accompanying a PR who is your spouse, common-law partner, or in the case of a child, your parent, and who is employed on a full-time basis by a Canadian business outside Canada or in the federal public administration or the public service of a province while you were absent from Canada?</td>
+            <td><select><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td class="q-text">Have you been refused refugee status, or an immigrant or permanent resident visa (including a Certificate de selection du Québec (CSQ) or application to the Provincial Nominee Program) or visitor or temporary resident visa, to Canada?</td>
+            <td><select><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function toggleAccordion(el) {
+  const body = el.nextElementSibling;
+  const isOpen = body.classList.contains('open');
+  el.classList.toggle('active', !isOpen);
+  body.classList.toggle('open', !isOpen);
+}
+function toggleSubAccordion(el) {
+  const body = el.nextElementSibling;
+  const isOpen = body.classList.contains('open');
+  el.classList.toggle('active', !isOpen);
+  body.classList.toggle('open', !isOpen);
+}
+function toggleConditional(selectEl, targetId) {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  target.classList.toggle('visible', selectEl.value === 'yes');
+  target.style.display = selectEl.value === 'yes' ? 'block' : 'none';
+}
+function addRow(tableId, colDefs) {
+  const tbody = document.getElementById(tableId).querySelector('tbody');
+  const tr = document.createElement('tr');
+  colDefs.forEach(def => {
+    const td = document.createElement('td');
+    const [type, ...rest] = def.split('|');
+    const val = rest.join('|');
+    if (type === 'select') {
+      const sel = document.createElement('select');
+      sel.innerHTML = '<option value="">-- Select --</option>' + val.split(',').map(o => `<option>${o.trim()}</option>`).join('');
+      td.appendChild(sel);
+    } else {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      if (val) inp.placeholder = val;
+      td.appendChild(inp);
+    }
+    tr.appendChild(td);
+  });
+  const actionTd = document.createElement('td');
+  actionTd.innerHTML = '<button class="btn btn-remove" onclick="removeRow(this)">✕</button>';
+  tr.appendChild(actionTd);
+  tbody.appendChild(tr);
+}
+function removeRow(btn) {
+  const tbody = btn.closest('tbody');
+  if (tbody.rows.length > 1) btn.closest('tr').remove();
+}
+</script>
+</body>
+</html>

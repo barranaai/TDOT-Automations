@@ -238,7 +238,10 @@ async function sendIntakeEmail(itemId) {
   }
 
   const encodedRef      = encodeURIComponent(client.caseRef);
-  const questionnaireUrl = `${BASE_URL}/questionnaire/${encodedRef}`;
+  // New HTML-form questionnaire URL — token is required for access
+  const questionnaireUrl = client.accessToken
+    ? `${BASE_URL}/q/${encodedRef}?t=${encodeURIComponent(client.accessToken)}`
+    : `${BASE_URL}/q/${encodedRef}`;
   const documentsUrl     = `${BASE_URL}/documents/${encodedRef}`;
 
   await sendEmail({

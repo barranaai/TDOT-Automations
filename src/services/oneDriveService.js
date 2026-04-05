@@ -188,4 +188,53 @@ async function uploadFile({ clientName, caseRef, category, filename, buffer, mim
   }
 }
 
-module.exports = { createClientFolders, uploadFile };
+/**
+ * Read a file from the client's folder in OneDrive and return its content as a Buffer.
+ * Returns null if the file does not exist (404 from Graph API).
+ *
+ * @param {{
+ *   clientName: string,
+ *   caseRef:    string,
+ *   subfolder:  string,   e.g. 'Questionnaire'
+ *   filename:   string,
+ * }} params
+ * @returns {Promise<Buffer|null>}
+ */
+async function readFile({ clientName, caseRef, subfolder, filename }) {
+  const token    = await getAccessToken();
+  const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+  const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim();
+
+  const filePath = `${ROOT_FOLDER}/${safeName}/${subfolder}/${safeFile}`;
+  const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
+  const url      = `${userBase()}/root:/${encoded}:/content`;
+
+  try {
+    const res = await axios.get(url, {
+      headers:      { Authorization: `Bearer ${token}` },
+      responseType: 'arraybuffer',
+    });
+    return Buffer.from(res.data);
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    throw new Error(`OneDrive read failed: ${detail}`);
+  }
+}
+
+/**
+ * Ensure the client root folder exists in OneDrive (creates it if missing).
+ * Safe to call before the document-upload flow has run — will not duplicate folders.
+ *
+ * @param {{ clientName: string, caseRef: string }} params
+ */
+async function ensureClientFolder({ clientName, caseRef }) {
+  const token    = await getAccessToken();
+  const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+
+  await ensureFolder(token, null, ROOT_FOLDER);
+  await ensureFolder(token, ROOT_FOLDER, safeName);
+  console.log(`[OneDrive] Client folder ensured: ${ROOT_FOLDER}/${safeName}`);
+}
+
+module.exports = { createClientFolders, uploadFile, readFile, ensureClientFolder };
