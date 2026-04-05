@@ -633,8 +633,8 @@ function buildReviewPage({ caseRef, formKey, formTitle, fields, flags, staffName
       if (!count) { alert('Flag at least one field before sending.'); return; }
 
       var confirmed = confirm(
-        'Send a correction request email to the client?\n\n' +
-        count + ' flag' + (count !== 1 ? 's' : '') + ' will be included.\n\n' +
+        'Send a correction request email to the client?\\n\\n' +
+        count + ' flag' + (count !== 1 ? 's' : '') + ' will be included.\\n\\n' +
         'The client will receive an email with a direct link to update their questionnaire.'
       );
       if (!confirmed) return;
