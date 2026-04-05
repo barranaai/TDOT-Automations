@@ -587,9 +587,9 @@ ${hasAdditionalForm ? `
   async function doSubmit() {
     var p = getProgress();
     var confirmed = confirm(
-      'Submit your questionnaire?\n\n' +
-      'Completion: ' + p.pct + '% (' + p.filled + ' of ' + p.total + ' fields)\n\n' +
-      (p.pct < 100 ? 'Note: some fields are still empty. You can still submit — your consultant will follow up.\n\n' : '') +
+      'Submit your questionnaire?\\n\\n' +
+      'Completion: ' + p.pct + '% (' + p.filled + ' of ' + p.total + ' fields)\\n\\n' +
+      (p.pct < 100 ? 'Note: some fields are still empty. You can still submit — your consultant will follow up.\\n\\n' : '') +
       'Click OK to submit.'
     );
     if (!confirmed) return;
@@ -620,7 +620,7 @@ ${hasAdditionalForm ? `
         '</div>';
     } catch (err) {
       console.error('[TDOT] Submit error:', err);
-      alert('Submission failed. Please try again or contact your consultant.\n\nError: ' + err.message);
+      alert('Submission failed. Please try again or contact your consultant.\\n\\nError: ' + err.message);
       if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '✅ Submit Questionnaire'; }
     }
   }
