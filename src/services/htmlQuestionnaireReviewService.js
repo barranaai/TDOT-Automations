@@ -19,11 +19,12 @@ const QUESTIONNAIRE_SUBFOLDER = 'Questionnaire';
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
 
 const CM = {
-  caseRef:    'text_mm142s49',
-  caseType:   'dropdown_mm0xd1qn',
-  clientName: 'text_mm0x1zdk',
-  clientEmail:'text_mm0xw6bp',
-  accessToken:'text_mm0x6haq',
+  caseRef:     'text_mm142s49',
+  caseType:    'dropdown_mm0xd1qn',
+  caseSubType: 'dropdown_mm0x4t91',
+  clientName:  'text_mm0x1zdk',
+  clientEmail: 'text_mm0xw6bp',
+  accessToken: 'text_mm0x6haq',
 };
 
 const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
@@ -90,7 +91,7 @@ async function getCaseDetails(caseRef) {
          items {
            id
            column_values(ids: [
-             "${CM.caseRef}", "${CM.caseType}",
+             "${CM.caseRef}", "${CM.caseType}", "${CM.caseSubType}",
              "${CM.clientName}", "${CM.clientEmail}", "${CM.accessToken}"
            ]) { id text }
          }
@@ -106,6 +107,7 @@ async function getCaseDetails(caseRef) {
   return {
     itemId:      item.id,
     caseType:    col(CM.caseType),
+    caseSubType: col(CM.caseSubType) || null,
     clientName:  col(CM.clientName),
     clientEmail: col(CM.clientEmail),
     accessToken: col(CM.accessToken),

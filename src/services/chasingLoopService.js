@@ -230,13 +230,13 @@ function buildChasingEmail(type, { clientName, caseRef, token, qLink }) {
 
 // ─── Send one chasing email ───────────────────────────────────────────────────
 
-async function sendChasingEmail(type, { clientEmail, clientName, caseRef, token }) {
+async function sendChasingEmail(type, { clientEmail, clientName, caseRef, token, qLink }) {
   if (!clientEmail) {
     console.warn(`[ChasingLoop] No email for case ${caseRef} — skipping send`);
     return;
   }
 
-  const { subject, html } = buildChasingEmail(type, { clientName, caseRef, token });
+  const { subject, html } = buildChasingEmail(type, { clientName, caseRef, token, qLink });
 
   await sendEmail({
     to:      clientEmail,
