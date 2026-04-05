@@ -1,6 +1,7 @@
 const { sendEmail } = require('./microsoftMailService');
 const mondayApi     = require('./mondayApi');
 const { clientMasterBoardId } = require('../../config/monday');
+const { resolveForm } = require('../../config/questionnaireFormMap');
 
 const SLA_BOARD_ID   = process.env.MONDAY_SLA_CONFIG_BOARD_ID || '18402401449';
 const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
@@ -11,6 +12,7 @@ const CM = {
   caseStage:          'color_mm0x8faa',
   stageStartDate:     'date_mm0xjm1z',
   caseType:           'dropdown_mm0xd1qn',
+  caseSubType:        'dropdown_mm0x4t91',
   caseRef:            'text_mm142s49',
   clientName:         'text_mm0x1zdk',
   clientEmail:        'text_mm0xw6bp',
@@ -82,7 +84,7 @@ async function loadReminderOffsets() {
 
 async function fetchChasableCases() {
   const FETCH_IDS = [
-    CM.caseStage, CM.stageStartDate, CM.caseType,
+    CM.caseStage, CM.stageStartDate, CM.caseType, CM.caseSubType,
     CM.caseRef, CM.clientName, CM.clientEmail, CM.accessToken,
     CM.automationLock, CM.manualOverride, CM.escalationRequired,
     CM.qReadiness, CM.docReadiness,
@@ -144,8 +146,7 @@ function hoursSince(dateStr) {
 
 // ─── Email templates ──────────────────────────────────────────────────────────
 
-function buildChasingEmail(type, { clientName, caseRef, token }) {
-  const qLink  = `${BASE_URL}/questionnaire/${encodeURIComponent(caseRef)}`;
+function buildChasingEmail(type, { clientName, caseRef, token, qLink }) {
   const docLink = `${BASE_URL}/documents/${encodeURIComponent(caseRef)}`;
   const name   = clientName || 'Client';
 
@@ -276,6 +277,7 @@ async function processCase(item, offsets) {
   const clientEmail = col(CM.clientEmail);
   const caseRef     = col(CM.caseRef);
   const caseType    = col(CM.caseType);
+  const caseSubType = col(CM.caseSubType) || null;
   const startDate   = col(CM.stageStartDate);
 
   if (!startDate)     return 'no-start-date';
@@ -301,7 +303,15 @@ async function processCase(item, offsets) {
   const reminderCount = parseInt(col(CM.reminderCount), 10) || 0;
   const token         = col(CM.accessToken);
   const clientName    = col(CM.clientName);
-  const emailCtx      = { clientEmail, clientName, caseRef, token };
+
+  // Build the correct questionnaire link depending on whether this case uses
+  // the new HTML form system or the legacy Monday questionnaire board.
+  const isHtmlFormCase = Boolean(resolveForm(caseType, caseSubType));
+  const qLink = isHtmlFormCase && token
+    ? `${BASE_URL}/q/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(token)}`
+    : `${BASE_URL}/questionnaire/${encodeURIComponent(caseRef)}`;
+
+  const emailCtx = { clientEmail, clientName, caseRef, token, qLink };
 
   // ── Stage machine ────────────────────────────────────────────────────────────
   if (chasingStage === 'Client Blocked') {

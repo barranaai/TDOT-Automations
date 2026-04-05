@@ -373,7 +373,7 @@ router.post('/:caseRef/submit', async (req, res) => {
   }
 
   try {
-    const { itemId, clientName, formFiles } = await svc.validateAccess(caseRef, token);
+    const { itemId, clientName, caseType, formFiles } = await svc.validateAccess(caseRef, token);
 
     const key       = formKey || 'primary';
     const formTitle = key === 'additional' && formFiles?.additional
@@ -381,7 +381,7 @@ router.post('/:caseRef/submit', async (req, res) => {
       : (formFiles?.primary || '').replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
 
     await svc.saveFormData({ clientName, caseRef, itemId, formKey: key, fields, completionPct: completionPct || 0 });
-    await svc.markSubmitted({ itemId, caseRef, formKey: key, formLabel: formTitle, completionPct: completionPct || 0 });
+    await svc.markSubmitted({ itemId, caseRef, caseType, formKey: key, formLabel: formTitle, completionPct: completionPct || 0 });
 
     return res.json({ ok: true });
   } catch (err) {

@@ -399,4 +399,4 @@ async function calculateForCaseRef(caseRef) {
   });
 }
 
-module.exports = { calculateForCase, calculateForCaseRef, runDailyReadinessCheck };
+module.exports = { calculateForCase, calculateForCaseRef, runDailyReadinessCheck, loadThresholds };

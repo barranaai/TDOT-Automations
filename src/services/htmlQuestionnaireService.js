@@ -11,10 +11,12 @@
 
 'use strict';
 
-const fs         = require('fs');
-const path       = require('path');
-const mondayApi  = require('./mondayApi');
-const oneDrive   = require('./oneDriveService');
+const fs               = require('fs');
+const path             = require('path');
+const mondayApi        = require('./mondayApi');
+const oneDrive         = require('./oneDriveService');
+const stageGateService = require('./stageGateService');
+const { loadThresholds } = require('./caseReadinessService');
 const { clientMasterBoardId } = require('../../config/monday');
 const { FORMS_DIR, resolveForm } = require('../../config/questionnaireFormMap');
 
@@ -30,6 +32,10 @@ const CM = {
   clientName:        'text_mm0x1zdk',
   qReadiness:        'numeric_mm0x9dea',
   qCompletionStatus: 'color_mm0x9s08',   // labels: Done / Working on it
+  // Extra columns read during stage-gate check (not written)
+  caseStage:         'color_mm0x8faa',
+  docReadiness:      'numeric_mm0x5g9x',
+  automationLock:    'color_mm0x3x1x',
 };
 
 const QUESTIONNAIRE_SUBFOLDER = 'Questionnaire';
@@ -215,14 +221,16 @@ async function saveFormData({ clientName, caseRef, itemId, formKey, fields, comp
 
 /**
  * Mark a questionnaire form as submitted.
- * Updates Q readiness on Monday.com and posts an audit comment.
+ * Updates Q readiness on Monday.com, posts an audit comment, and
+ * triggers stage gates if the completion threshold has been crossed.
  *
- * @param {{ itemId, caseRef, formKey, formLabel, completionPct }} params
+ * @param {{ itemId, caseRef, caseType, formKey, formLabel, completionPct }} params
+ *   caseType is required for threshold lookup and stage gate calls.
  */
-async function markSubmitted({ itemId, caseRef, formKey, formLabel, completionPct }) {
+async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, completionPct }) {
   const pct = Math.round(completionPct);
 
-  // Update Q Readiness and Q Completion Status on the Client Master Board
+  // ── Step 1: Update Q Readiness and Q Completion Status ────────────────────
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
        change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
@@ -237,7 +245,7 @@ async function markSubmitted({ itemId, caseRef, formKey, formLabel, completionPc
     }
   );
 
-  // Audit comment on the item (includes staff review link)
+  // ── Step 2: Audit comment with staff review link ───────────────────────────
   const label       = formLabel ? `"${formLabel}"` : `(${formKey})`;
   const submittedAt = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
   const reviewUrl   = `${BASE_URL}/q/${encodeURIComponent(caseRef)}/review?formKey=${encodeURIComponent(formKey)}`;
@@ -251,6 +259,75 @@ async function markSubmitted({ itemId, caseRef, formKey, formLabel, completionPc
   );
 
   console.log(`[HtmlQ] Marked submitted — ${caseRef}/${formKey} at ${pct}%`);
+
+  // ── Step 3: Stage gate check ───────────────────────────────────────────────
+  // Fire-and-forget: errors here must not block the submit response to the client.
+  checkStageGate({ itemId, caseRef, caseType, qPct: pct }).catch((err) =>
+    console.error(`[HtmlQ] Stage gate check failed for ${caseRef}:`, err.message)
+  );
+}
+
+/**
+ * Check whether the form submission has crossed the readiness threshold
+ * and fire the appropriate stage gate if so.
+ *
+ * Reads the current case stage, doc readiness, and automation lock from Monday
+ * so it can make the same decision the daily readiness scan would make.
+ */
+async function checkStageGate({ itemId, caseRef, caseType, qPct }) {
+  // Fetch current case state — we need stage, doc readiness, and automation lock
+  const data = await mondayApi.query(
+    `query($itemId: ID!) {
+       items(ids: [$itemId]) {
+         column_values(ids: [
+           "${CM.caseStage}", "${CM.docReadiness}", "${CM.automationLock}"
+         ]) { id text }
+       }
+     }`,
+    { itemId: String(itemId) }
+  );
+
+  const cols    = data?.items?.[0]?.column_values || [];
+  const col     = (id) => cols.find(c => c.id === id)?.text?.trim() || '';
+  const stage   = col(CM.caseStage);
+  const docPct  = parseFloat(col(CM.docReadiness)) || 0;
+  const locked  = col(CM.automationLock) === 'Yes';
+
+  if (locked) {
+    console.log(`[HtmlQ] Stage gate skipped — automation locked for ${caseRef}`);
+    return;
+  }
+
+  // Only eligible stages can advance via stage gates
+  const eligibleStages = new Set(['Document Collection Started', 'Internal Review']);
+  if (!eligibleStages.has(stage)) {
+    console.log(`[HtmlQ] Stage gate skipped — stage "${stage}" not eligible for ${caseRef}`);
+    return;
+  }
+
+  // Load the SLA threshold for this case type (cached, ~30-min TTL)
+  const thresholds    = await loadThresholds();
+  const minThreshold  = thresholds[caseType] || 80;
+
+  const thresholdMet  = qPct >= minThreshold && docPct >= minThreshold;
+  const fullyComplete = qPct >= 100 && docPct >= 100;
+
+  console.log(
+    `[HtmlQ] Stage gate check — ${caseRef} | Q:${qPct}% Doc:${docPct}% ` +
+    `Threshold:${minThreshold}% Stage:"${stage}" | ` +
+    (fullyComplete ? 'FULLY COMPLETE' : thresholdMet ? 'THRESHOLD MET' : 'below threshold')
+  );
+
+  if (fullyComplete && stage === 'Internal Review') {
+    stageGateService.onFullyComplete({ masterItemId: itemId, caseRef, caseType })
+      .catch(err => console.error(`[HtmlQ] onFullyComplete failed for ${caseRef}:`, err.message));
+    return;
+  }
+
+  if (thresholdMet && stage === 'Document Collection Started') {
+    stageGateService.onThresholdMet({ masterItemId: itemId, caseRef, caseType })
+      .catch(err => console.error(`[HtmlQ] onThresholdMet failed for ${caseRef}:`, err.message));
+  }
 }
 
 // ─── Injection script builder ─────────────────────────────────────────────────
