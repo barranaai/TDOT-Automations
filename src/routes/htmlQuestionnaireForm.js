@@ -163,12 +163,18 @@ router.get('/auth/monday/callback', async (req, res) => {
     );
   }
 
-  // Verify the user is from the right organisation
-  if (STAFF_EMAIL_DOMAIN && !me.email.toLowerCase().endsWith('@' + STAFF_EMAIL_DOMAIN.toLowerCase())) {
-    console.warn(`[StaffAuth] Access denied — email ${me.email} not in @${STAFF_EMAIL_DOMAIN}`);
-    return res.status(403).type('html').send(
-      svc.buildErrorPage(`Access is restricted to ${STAFF_EMAIL_DOMAIN} accounts.`)
-    );
+  // Verify the user is from an allowed organisation.
+  // STAFF_EMAIL_DOMAIN may be a comma-separated list, e.g. "tdotimm.com,gmail.com"
+  if (STAFF_EMAIL_DOMAIN) {
+    const allowedDomains = STAFF_EMAIL_DOMAIN.split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+    const emailLower     = me.email.toLowerCase();
+    const allowed        = allowedDomains.some(d => emailLower.endsWith('@' + d));
+    if (!allowed) {
+      console.warn(`[StaffAuth] Access denied — email ${me.email} not in [${allowedDomains.join(', ')}]`);
+      return res.status(403).type('html').send(
+        svc.buildErrorPage(`Access is restricted to: ${allowedDomains.join(', ')} accounts.`)
+      );
+    }
   }
 
   // Issue the staff session cookie
