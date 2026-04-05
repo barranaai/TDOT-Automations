@@ -20,6 +20,8 @@ const { FORMS_DIR, resolveForm } = require('../../config/questionnaireFormMap');
 
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
 
+const BASE_URL = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
+
 const CM = {
   caseRef:           'text_mm142s49',
   caseType:          'dropdown_mm0xd1qn',
@@ -235,10 +237,11 @@ async function markSubmitted({ itemId, caseRef, formKey, formLabel, completionPc
     }
   );
 
-  // Audit comment on the item
-  const label     = formLabel ? `"${formLabel}"` : `(${formKey})`;
+  // Audit comment on the item (includes staff review link)
+  const label       = formLabel ? `"${formLabel}"` : `(${formKey})`;
   const submittedAt = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
-  const comment   = `📋 Questionnaire Submitted\n\nForm: ${label}\nCase: ${caseRef}\nCompletion: ${pct}%\nSubmitted: ${submittedAt} (Toronto)\n\nData saved to client OneDrive folder.`;
+  const reviewUrl   = `${BASE_URL}/q/${encodeURIComponent(caseRef)}/review?formKey=${encodeURIComponent(formKey)}`;
+  const comment     = `📋 Questionnaire Submitted\n\nForm: ${label}\nCase: ${caseRef}\nCompletion: ${pct}%\nSubmitted: ${submittedAt} (Toronto)\n\nData saved to client OneDrive folder.\n\n🔍 Staff Review Link:\n${reviewUrl}`;
 
   await mondayApi.query(
     `mutation($itemId: ID!, $body: String!) {
@@ -541,6 +544,69 @@ ${hasAdditionalForm ? `
     }
   }
 
+  /* ── Flags (correction notes from consultant) ── */
+
+  async function loadAndApplyFlags() {
+    try {
+      var res = await fetch(
+        '/q/' + encodeURIComponent(CASE_REF) + '/flags' +
+        '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(FORM_KEY),
+        { method: 'GET' }
+      );
+      if (!res.ok) return;
+      var data = await res.json();
+      if (!data.flags || !Object.keys(data.flags).length) return;
+
+      var fields = collectFields();
+      for (var fi = 0; fi < fields.length; fi++) {
+        var f    = fields[fi];
+        var flag = data.flags[f.key];
+        if (!flag) continue;
+
+        /* Highlight the input */
+        f.el.style.borderColor = '#f97316';
+        f.el.style.outline     = '2px solid #fed7aa';
+
+        /* Insert a note below the input */
+        var note = document.createElement('div');
+        note.setAttribute('data-tdot-flag', f.key);
+        note.style.cssText =
+          'margin-top:6px;padding:8px 12px;background:#fff7ed;border:1px solid #fed7aa;' +
+          'border-radius:6px;font-size:13px;color:#92400e;line-height:1.5;';
+        note.innerHTML = '<strong>💬 Consultant note:</strong> ' +
+          escHtml(flag.comment);
+
+        var parent = f.el.parentElement;
+        if (parent) {
+          var existing = parent.querySelector('[data-tdot-flag="' + f.key + '"]');
+          if (existing) existing.remove();
+          parent.appendChild(note);
+        }
+      }
+
+      /* Banner at top of page */
+      var flagCount = Object.keys(data.flags).length;
+      var banner = document.createElement('div');
+      banner.style.cssText =
+        'position:sticky;top:0;z-index:91;background:#fff7ed;border-bottom:2px solid #fed7aa;' +
+        'padding:10px 24px;font-family:Segoe UI,sans-serif;font-size:14px;color:#92400e;' +
+        'display:flex;align-items:center;gap:10px;';
+      banner.innerHTML =
+        '<span style="font-size:18px">🚩</span>' +
+        '<strong>Your consultant has flagged ' + flagCount + ' item' + (flagCount !== 1 ? 's' : '') +
+        ' for correction.</strong> Scroll down to see the highlighted fields, update your answers, then click Save.';
+      document.body.insertBefore(banner, document.body.firstChild);
+    } catch (err) {
+      console.error('[TDOT] Flags load error:', err);
+    }
+  }
+
+  function escHtml(s) {
+    return String(s || '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
   /* ── Pre-fill ── */
 
   async function expandTableRows(savedFields) {
@@ -672,6 +738,7 @@ ${hasAdditionalForm ? `
     document.addEventListener('input',  function () { invalidateCache(); updateProgressUI(); });
 
     await loadAndPrefill();
+    await loadAndApplyFlags();
     updateProgressUI();
     scheduleAutoSave();
   }

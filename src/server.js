@@ -1,5 +1,6 @@
 require('dotenv').config();
-const express = require('express');
+const express    = require('express');
+const cookieParser = require('cookie-parser');
 const mondayWebhookRouter       = require('./routes/mondayWebhook');
 const questionnaireFormRouter    = require('./routes/questionnaireForm');
 const documentUploadRouter       = require('./routes/documentUploadForm');
@@ -21,6 +22,7 @@ const app = express();
 const PORT = process.env.PORT || 5050;
 
 app.use(express.json());
+app.use(cookieParser());
 
 app.use('/webhook/monday', mondayWebhookRouter);
 app.use('/questionnaire',  questionnaireFormRouter);
