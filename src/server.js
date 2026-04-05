@@ -16,6 +16,7 @@ const expiryRiskEngine     = require('./services/expiryRiskEngine');
 const caseHealthEngine     = require('./services/caseHealthEngine');
 const chasingLoopService          = require('./services/chasingLoopService');
 const escalationRoutingService    = require('./services/escalationRoutingService');
+const emailService                = require('./services/emailService');
 const { templateBoardId, executionBoardId, clientMasterBoardId } = require('../config/monday');
 
 const app = express();
@@ -31,6 +32,20 @@ app.use('/q',              htmlQuestionnaireRouter);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+// Manual trigger — resend intake email for a specific Client Master item ID
+// Usage: POST /api/resend-intake/<itemId>
+// Useful when a token was missing or an email was sent with a broken link.
+app.post('/api/resend-intake/:itemId', async (req, res) => {
+  const { itemId } = req.params;
+  if (!itemId || !/^\d+$/.test(itemId)) {
+    return res.status(400).json({ error: 'itemId must be a numeric Monday item ID' });
+  }
+  res.json({ status: 'triggered', message: `Resending intake email for item ${itemId}…` });
+  emailService.sendIntakeEmail(itemId).catch((err) =>
+    console.error(`[ResendIntake] Failed for item ${itemId}:`, err.message)
+  );
 });
 
 app.get('/api/monday-test', async (req, res) => {

@@ -1,5 +1,6 @@
 const { sendEmail }  = require('./microsoftMailService');
 const mondayApi      = require('./mondayApi');
+const { ensureAccessToken } = require('./accessTokenService');
 const { clientMasterBoardId } = require('../../config/monday');
 
 const CM_COLS = {
@@ -237,11 +238,23 @@ async function sendIntakeEmail(itemId) {
     return;
   }
 
-  const encodedRef      = encodeURIComponent(client.caseRef);
-  // New HTML-form questionnaire URL — token is required for access
-  const questionnaireUrl = client.accessToken
-    ? `${BASE_URL}/q/${encodedRef}?t=${encodeURIComponent(client.accessToken)}`
-    : `${BASE_URL}/q/${encodedRef}`;
+  const encodedRef = encodeURIComponent(client.caseRef);
+
+  // Guarantee a valid token exists before building the URL.
+  // If the create_item webhook missed or was delayed, generate one now so the
+  // client always receives a working link.
+  const accessToken = client.accessToken
+    || await ensureAccessToken(itemId).catch((err) => {
+      console.error(`[Email] Could not ensure access token for item ${itemId}:`, err.message);
+      return '';
+    });
+
+  if (!accessToken) {
+    console.error(`[Email] No access token available for item ${itemId} (${client.caseRef}) — intake email not sent`);
+    return;
+  }
+
+  const questionnaireUrl = `${BASE_URL}/q/${encodedRef}?t=${encodeURIComponent(accessToken)}`;
   const documentsUrl     = `${BASE_URL}/documents/${encodedRef}`;
 
   await sendEmail({
