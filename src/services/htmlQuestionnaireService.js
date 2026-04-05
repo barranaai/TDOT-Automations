@@ -35,6 +35,7 @@ const CM = {
   // Extra columns read during stage-gate check (not written)
   caseStage:         'color_mm0x8faa',
   docReadiness:      'numeric_mm0x5g9x',
+  blockingDocCount:  'numeric_mm0xje6p', // written by daily readiness scan
   automationLock:    'color_mm0x3x1x',
 };
 
@@ -280,18 +281,20 @@ async function checkStageGate({ itemId, caseRef, caseType, qPct }) {
     `query($itemId: ID!) {
        items(ids: [$itemId]) {
          column_values(ids: [
-           "${CM.caseStage}", "${CM.docReadiness}", "${CM.automationLock}"
+           "${CM.caseStage}", "${CM.docReadiness}",
+           "${CM.blockingDocCount}", "${CM.automationLock}"
          ]) { id text }
        }
      }`,
     { itemId: String(itemId) }
   );
 
-  const cols    = data?.items?.[0]?.column_values || [];
-  const col     = (id) => cols.find(c => c.id === id)?.text?.trim() || '';
-  const stage   = col(CM.caseStage);
-  const docPct  = parseFloat(col(CM.docReadiness)) || 0;
-  const locked  = col(CM.automationLock) === 'Yes';
+  const cols        = data?.items?.[0]?.column_values || [];
+  const col         = (id) => cols.find(c => c.id === id)?.text?.trim() || '';
+  const stage       = col(CM.caseStage);
+  const docPct      = parseFloat(col(CM.docReadiness)) || 0;
+  const blockingDoc = parseInt(col(CM.blockingDocCount), 10) || 0;
+  const locked      = col(CM.automationLock) === 'Yes';
 
   if (locked) {
     console.log(`[HtmlQ] Stage gate skipped — automation locked for ${caseRef}`);
@@ -309,13 +312,14 @@ async function checkStageGate({ itemId, caseRef, caseType, qPct }) {
   const thresholds    = await loadThresholds();
   const minThreshold  = thresholds[caseType] || 80;
 
-  const thresholdMet  = qPct >= minThreshold && docPct >= minThreshold;
-  const fullyComplete = qPct >= 100 && docPct >= 100;
+  // Mirror the daily scan logic exactly: blocking docs prevent gate advancement
+  const thresholdMet  = qPct >= minThreshold && docPct >= minThreshold && blockingDoc === 0;
+  const fullyComplete = qPct >= 100 && docPct >= 100 && blockingDoc === 0;
 
   console.log(
     `[HtmlQ] Stage gate check — ${caseRef} | Q:${qPct}% Doc:${docPct}% ` +
-    `Threshold:${minThreshold}% Stage:"${stage}" | ` +
-    (fullyComplete ? 'FULLY COMPLETE' : thresholdMet ? 'THRESHOLD MET' : 'below threshold')
+    `BlockingDocs:${blockingDoc} Threshold:${minThreshold}% Stage:"${stage}" | ` +
+    (fullyComplete ? 'FULLY COMPLETE' : thresholdMet ? 'THRESHOLD MET' : 'below threshold / blocking')
   );
 
   if (fullyComplete && stage === 'Internal Review') {
