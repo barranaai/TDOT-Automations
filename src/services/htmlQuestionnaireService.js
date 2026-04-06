@@ -42,66 +42,39 @@ const QUESTIONNAIRE_SUBFOLDER = 'Questionnaire';
 
 // ─── RFC 4180 CSV helpers ─────────────────────────────────────────────────────
 
-function csvEscape(value) {
-  const s = String(value == null ? '' : value);
-  // Always quote — handles commas, newlines, and quotes inside values safely
-  return '"' + s.replace(/"/g, '""') + '"';
+// ─── JSON data helpers ────────────────────────────────────────────────────────
+// Storing form data as JSON (same approach as officer flags) — simpler,
+// more reliable, and easier to debug than CSV.
+
+function toJson(fields, completionPct) {
+  return JSON.stringify({ fields, completionPct: completionPct || 0, savedAt: new Date().toISOString() }, null, 2);
 }
 
-function toCsv(fields) {
-  const header = 'section,label,key,value\r\n';
-  const rows   = fields
-    .map(f => [f.section, f.label, f.key, f.value].map(csvEscape).join(','))
-    .join('\r\n');
-  return header + rows;
+function parseJson(text) {
+  try {
+    const obj = JSON.parse(text);
+    if (Array.isArray(obj)) return obj;           // legacy plain array
+    if (Array.isArray(obj.fields)) return obj.fields;
+    return [];
+  } catch {
+    return [];
+  }
 }
 
-/** RFC 4180 parser — correctly handles multi-line quoted fields. */
-function parseCsv(text) {
+// ─── Legacy CSV fallback (read-only — for any existing .csv files) ────────────
+
+function parseCsvLegacy(text) {
+  const lines = text.split(/\r?\n/);
   const result = [];
-  let i = 0;
-
-  function parseField() {
-    let field = '';
-    if (i < text.length && text[i] === '"') {
-      i++; // skip opening quote
-      while (i < text.length) {
-        if (text[i] === '"') {
-          if (text[i + 1] === '"') { field += '"'; i += 2; }
-          else { i++; break; }
-        } else {
-          field += text[i++];
-        }
-      }
-    } else {
-      while (i < text.length && text[i] !== ',' && text[i] !== '\r' && text[i] !== '\n') {
-        field += text[i++];
-      }
-    }
-    return field;
+  for (let i = 1; i < lines.length; i++) {       // skip header row
+    const line = lines[i].trim();
+    if (!line) continue;
+    // Simple split on comma — values were always quoted so strip outer quotes
+    const parts = line.match(/("(?:[^"]|"")*"|[^,]*),?/g) || [];
+    const unquote = s => s.replace(/,$/, '').replace(/^"|"$/g, '').replace(/""/g, '"');
+    const [section, label, key, value] = parts.map(unquote);
+    if (key) result.push({ section: section || '', label: label || '', key, value: value || '' });
   }
-
-  function parseRecord() {
-    const fields = [];
-    while (i < text.length) {
-      fields.push(parseField());
-      if (i < text.length && text[i] === ',') { i++; } else { break; }
-    }
-    if (i < text.length && text[i] === '\r') i++;
-    if (i < text.length && text[i] === '\n') i++;
-    return fields;
-  }
-
-  parseRecord(); // skip CSV header row
-
-  while (i < text.length) {
-    if (text[i] === '\r' || text[i] === '\n') { i++; continue; }
-    const rec = parseRecord();
-    if (rec.length >= 4 && rec[2]) {
-      result.push({ section: rec[0], label: rec[1], key: rec[2], value: rec[3] || '' });
-    }
-  }
-
   return result;
 }
 
@@ -172,24 +145,49 @@ async function validateAccess(caseRef, token) {
 
 // ─── OneDrive data operations ─────────────────────────────────────────────────
 
+function dataFilename(caseRef, formKey) {
+  return `questionnaire-${caseRef}-${formKey}.json`;
+}
+
+/** @deprecated Only used for backward-compat fallback read of old .csv files. */
 function csvFilename(caseRef, formKey) {
   return `questionnaire-${caseRef}-${formKey}.csv`;
 }
 
 /**
  * Load previously saved questionnaire data for a given form.
+ * Reads the JSON file first; falls back to the legacy CSV if JSON is not found.
  * Returns an array of { section, label, key, value } objects, or [] if none saved.
  */
 async function loadFormData({ clientName, caseRef, formKey }) {
   try {
-    const buf = await oneDrive.readFile({
+    // ── Primary: JSON file ──────────────────────────────────────────────────
+    const jsonBuf = await oneDrive.readFile({
+      clientName,
+      caseRef,
+      subfolder: QUESTIONNAIRE_SUBFOLDER,
+      filename:  dataFilename(caseRef, formKey),
+    });
+    if (jsonBuf) {
+      const fields = parseJson(jsonBuf.toString('utf8'));
+      console.log(`[HtmlQ] Loaded ${fields.length} fields (JSON) for ${caseRef}/${formKey}`);
+      return fields;
+    }
+
+    // ── Fallback: legacy CSV file ────────────────────────────────────────────
+    const csvBuf = await oneDrive.readFile({
       clientName,
       caseRef,
       subfolder: QUESTIONNAIRE_SUBFOLDER,
       filename:  csvFilename(caseRef, formKey),
     });
-    if (!buf) return [];
-    return parseCsv(buf.toString('utf8'));
+    if (csvBuf) {
+      const fields = parseCsvLegacy(csvBuf.toString('utf8'));
+      console.log(`[HtmlQ] Loaded ${fields.length} fields (CSV legacy) for ${caseRef}/${formKey}`);
+      return fields;
+    }
+
+    return [];
   } catch (err) {
     console.error(`[HtmlQ] loadFormData failed for ${caseRef}/${formKey}:`, err.message);
     return [];
@@ -197,15 +195,15 @@ async function loadFormData({ clientName, caseRef, formKey }) {
 }
 
 /**
- * Save questionnaire data to OneDrive, replacing any previous file.
+ * Save questionnaire data to OneDrive as JSON, replacing any previous file.
  *
  * @param {{ clientName, caseRef, itemId, formKey, fields, completionPct }} params
  *   fields: [{ section, label, key, value }]
  */
 async function saveFormData({ clientName, caseRef, itemId, formKey, fields, completionPct }) {
-  const csvContent = toCsv(fields);
-  const buffer     = Buffer.from(csvContent, 'utf8');
-  const filename   = csvFilename(caseRef, formKey);
+  const content  = toJson(fields, completionPct);
+  const buffer   = Buffer.from(content, 'utf8');
+  const filename = dataFilename(caseRef, formKey);
 
   // Ensure the client folder exists (safe to call even if it was already created)
   await oneDrive.ensureClientFolder({ clientName, caseRef });
@@ -216,10 +214,11 @@ async function saveFormData({ clientName, caseRef, itemId, formKey, fields, comp
     category: QUESTIONNAIRE_SUBFOLDER,
     filename,
     buffer,
-    mimeType: 'text/csv',
+    mimeType: 'application/json',
   });
 
-  console.log(`[HtmlQ] Saved ${fields.length} fields for ${caseRef}/${formKey} (${completionPct}%)`);
+  const filled = fields.filter(f => f.value && f.value.trim()).length;
+  console.log(`[HtmlQ] Saved ${fields.length} fields (${filled} non-empty) as JSON for ${caseRef}/${formKey} (${completionPct}%)`);
 }
 
 /**
