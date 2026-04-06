@@ -29,7 +29,6 @@ const CM = {
   caseType:          'dropdown_mm0xd1qn',
   caseSubType:       'dropdown_mm0x4t91',
   accessToken:       'text_mm0x6haq',
-  clientName:        'text_mm0x1zdk',
   qReadiness:        'numeric_mm0x9dea',
   qCompletionStatus: 'color_mm0x9s08',   // labels: Done / Working on it
   // Extra columns read during stage-gate check (not written)
@@ -121,9 +120,10 @@ async function lookupCase(caseRef) {
        ) {
          items {
            id
+           name
            column_values(ids: [
              "${CM.caseRef}", "${CM.caseType}", "${CM.caseSubType}",
-             "${CM.accessToken}", "${CM.clientName}"
+             "${CM.accessToken}"
            ]) { id text }
          }
        }
@@ -138,7 +138,9 @@ async function lookupCase(caseRef) {
 
   return {
     itemId:      item.id,
-    clientName:  col(CM.clientName),
+    /* Use the item's display name (same source as the document-upload service)
+     * so that questionnaire CSVs land in the same OneDrive folder as documents. */
+    clientName:  (item.name || '').trim() || 'Unknown Client',
     caseType:    col(CM.caseType),
     caseSubType: col(CM.caseSubType) || null,
     accessToken: col(CM.accessToken),

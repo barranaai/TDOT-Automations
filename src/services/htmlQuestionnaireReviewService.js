@@ -22,7 +22,6 @@ const CM = {
   caseRef:     'text_mm142s49',
   caseType:    'dropdown_mm0xd1qn',
   caseSubType: 'dropdown_mm0x4t91',
-  clientName:  'text_mm0x1zdk',
   clientEmail: 'text_mm0xw6bp',
   accessToken: 'text_mm0x6haq',
 };
@@ -90,9 +89,10 @@ async function getCaseDetails(caseRef) {
        ) {
          items {
            id
+           name
            column_values(ids: [
              "${CM.caseRef}", "${CM.caseType}", "${CM.caseSubType}",
-             "${CM.clientName}", "${CM.clientEmail}", "${CM.accessToken}"
+             "${CM.clientEmail}", "${CM.accessToken}"
            ]) { id text }
          }
        }
@@ -106,9 +106,11 @@ async function getCaseDetails(caseRef) {
   const col = (id) => item.column_values.find(c => c.id === id)?.text?.trim() || '';
   return {
     itemId:      item.id,
+    /* Use item.name (Monday item title) — same source as documentFormService.js
+     * so that flags land in the same OneDrive folder as uploaded documents.   */
+    clientName:  (item.name || '').trim() || 'Unknown Client',
     caseType:    col(CM.caseType),
     caseSubType: col(CM.caseSubType) || null,
-    clientName:  col(CM.clientName),
     clientEmail: col(CM.clientEmail),
     accessToken: col(CM.accessToken),
   };
