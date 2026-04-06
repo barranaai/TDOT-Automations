@@ -14,6 +14,7 @@
  *
  * ── Staff review routes (behind requireStaffAuth) ─────────────────────────
  * GET  /q/:caseRef/review       Staff review page
+ * GET  /q/:caseRef/export-pdf   Export questionnaire as printable PDF report
  * POST /q/:caseRef/flag         Save/update correction flags
  * POST /q/:caseRef/notify       Send correction email to client
  */
@@ -237,6 +238,51 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
   } catch (err) {
     console.error(`[/q/review] Error for ${caseRef}:`, err.message);
     return res.status(500).type('html').send(svc.buildErrorPage('An error occurred loading the review page.'));
+  }
+});
+
+// ─── PDF export — GET /q/:caseRef/export-pdf ─────────────────────────────────
+//
+// Opens a clean, print-ready HTML report in a new tab with the browser's
+// print / Save-as-PDF dialog triggered automatically.  No extra libraries.
+
+router.get('/:caseRef/export-pdf', requireStaffAuth, async (req, res) => {
+  const caseRef = sanitiseCaseRef(req.params.caseRef);
+  const formKey = (req.query.formKey || 'primary').trim();
+
+  try {
+    const caseDetails = await review.getCaseDetails(caseRef);
+    if (!caseDetails) {
+      return res.status(404).type('html').send(svc.buildErrorPage('Case not found.'));
+    }
+
+    const { clientName, caseType, caseSubType } = caseDetails;
+
+    const [fields, flags] = await Promise.all([
+      svc.loadFormData({ clientName, caseRef, formKey }),
+      review.loadFlags({ clientName, caseRef, formKey }),
+    ]);
+
+    if (!fields.length) {
+      return res.type('html').send(svc.buildErrorPage(
+        'No submitted data found for this case. The client may not have completed the questionnaire yet.'
+      ));
+    }
+
+    const html = svc.buildPrintPage({
+      caseRef,
+      clientName,
+      caseType,
+      caseSubType,
+      savedFields: fields,
+      savedFlags:  flags,
+      staffName:   req.staff.name,
+    });
+
+    return res.type('html').send(html);
+  } catch (err) {
+    console.error(`[/q/export-pdf] Error for ${caseRef}:`, err.message);
+    return res.status(500).type('html').send(svc.buildErrorPage('An error occurred generating the PDF export.'));
   }
 });
 

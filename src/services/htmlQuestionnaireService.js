@@ -1171,6 +1171,7 @@ body { padding-top: 62px !important; }
 }
 #tdot-notify-btn:hover { background: #047857; }
 #tdot-notify-btn:disabled { opacity: .45; cursor: not-allowed; }
+#tdot-export-btn:hover { background: rgba(255,255,255,.15) !important; }
 #tdot-notify-msg { font-size: 12px; color: #86efac; }
 
 /* Read-only field styling */
@@ -1601,6 +1602,11 @@ input[disabled], select[disabled], textarea[disabled] {
       '<div class="rb-right">' +
         '<span id="tdot-flag-count">0 flags</span>' +
         '<span id="tdot-notify-msg"></span>' +
+        '<button id="tdot-export-btn" type="button" ' +
+          'onclick="window.open(\'/q/\' + encodeURIComponent(CASE_REF) + \'/export-pdf?formKey=\' + encodeURIComponent(FORM_KEY), \'_blank\')" ' +
+          'style="padding:7px 16px;border:1px solid rgba(255,255,255,.35);border-radius:6px;background:transparent;color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">' +
+          '⬇ Export PDF' +
+        '</button>' +
         '<button id="tdot-notify-btn" type="button">Send Correction Request (0)</button>' +
       '</div>';
     document.body.insertBefore(bar, document.body.firstChild);
@@ -1670,6 +1676,319 @@ function buildReviewFormPage({ formFile, caseRef, formKey, staffName, savedField
   return html + script;
 }
 
+// ─── PDF Export page ─────────────────────────────────────────────────────────
+//
+// Generates a clean, printer-friendly HTML report from saved field data.
+// Opened in a new tab by the "Export PDF" button on the review bar; the
+// browser's native print / Save as PDF dialog is triggered automatically.
+// No external libraries are required.
+
+function buildPrintPage({ caseRef, clientName, caseType, caseSubType, savedFields, savedFlags, staffName }) {
+
+  // ── Group fields by section (preserving insertion order) ─────────────────
+  const sectionMap = new Map();
+  for (const f of savedFields) {
+    const sec = (f.section || 'General').trim();
+    if (!sectionMap.has(sec)) sectionMap.set(sec, []);
+    sectionMap.get(sec).push(f);
+  }
+
+  const totalFields    = savedFields.length;
+  const answeredFields = savedFields.filter(f => f.value && f.value.trim()).length;
+  const pct            = totalFields > 0 ? Math.round(answeredFields / totalFields * 100) : 0;
+  const flagCount      = savedFlags ? Object.keys(savedFlags).length : 0;
+  const caseLabel      = caseSubType ? `${caseType} — ${caseSubType}` : caseType;
+  const exportedAt     = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true, dateStyle: 'long', timeStyle: 'short' });
+
+  // ── Build sections HTML ───────────────────────────────────────────────────
+  let sectionsHtml = '';
+  let fieldIndex   = 0;
+
+  for (const [sectionName, fields] of sectionMap) {
+    const rowsHtml = fields.map(f => {
+      fieldIndex++;
+      const isFlagged    = savedFlags && savedFlags[f.key];
+      const flagComment  = isFlagged ? (savedFlags[f.key].comment || '') : '';
+      const hasValue     = f.value && f.value.trim();
+      const displayValue = hasValue ? f.value.trim() : '';
+
+      // Format multi-line values (e.g. addresses, notes)
+      const formattedValue = displayValue
+        ? displayValue.split(/\n/).map(l => `<span>${escHtml(l)}</span>`).join('<br>')
+        : '<span class="no-answer">— Not provided —</span>';
+
+      return `
+        <tr class="${isFlagged ? 'row-flagged' : (hasValue ? '' : 'row-empty')}">
+          <td class="q-num">${fieldIndex}</td>
+          <td class="q-label">${escHtml(f.label || f.key || '')}</td>
+          <td class="q-answer">
+            ${formattedValue}
+            ${isFlagged ? `<div class="flag-note">⚑ Officer note: ${escHtml(flagComment)}</div>` : ''}
+          </td>
+        </tr>`;
+    }).join('');
+
+    sectionsHtml += `
+      <div class="section">
+        <div class="section-header">${escHtml(sectionName)}</div>
+        <table class="field-table">
+          <colgroup>
+            <col style="width:40px">
+            <col style="width:42%">
+            <col>
+          </colgroup>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>`;
+  }
+
+  if (!sectionsHtml) {
+    sectionsHtml = '<p class="no-data">No field data found for this questionnaire.</p>';
+  }
+
+  // ── Status pill ───────────────────────────────────────────────────────────
+  const pillClass = pct >= 80 ? 'pill-green' : (pct >= 40 ? 'pill-amber' : 'pill-red');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Questionnaire Export — ${escHtml(caseRef)}</title>
+  <style>
+    /* ── Base ──────────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      font-size: 13px;
+      color: #1f2937;
+      background: #f8fafc;
+      margin: 0;
+      padding: 0;
+    }
+    a { color: #1e40af; }
+
+    /* ── Screen-only toolbar ───────────────────────────────────────────────── */
+    #print-toolbar {
+      position: fixed; top: 0; left: 0; right: 0; height: 50px;
+      background: #1e3a5f; color: #fff;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 24px; z-index: 9999;
+      font-size: 13px; gap: 16px;
+    }
+    #print-toolbar .tb-title { font-weight: 700; }
+    #print-toolbar .tb-sub   { font-size: 11px; color: rgba(255,255,255,.65); margin-top: 1px; }
+    #print-toolbar .tb-btns  { display: flex; gap: 10px; flex-shrink: 0; }
+    .btn-print {
+      padding: 7px 18px; background: #059669; color: #fff;
+      border: none; border-radius: 6px; font-size: 13px; font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-print:hover { background: #047857; }
+    .btn-close {
+      padding: 7px 14px; background: transparent; color: rgba(255,255,255,.8);
+      border: 1px solid rgba(255,255,255,.3); border-radius: 6px; font-size: 13px;
+      cursor: pointer;
+    }
+    .btn-close:hover { background: rgba(255,255,255,.1); }
+
+    /* ── Page wrapper ──────────────────────────────────────────────────────── */
+    .page-wrapper {
+      max-width: 820px; margin: 70px auto 40px; padding: 0 20px;
+    }
+
+    /* ── Report header ─────────────────────────────────────────────────────── */
+    .report-header {
+      background: #1e3a5f; color: #fff;
+      border-radius: 12px; padding: 28px 32px; margin-bottom: 24px;
+    }
+    .report-header .org-name {
+      font-size: 11px; font-weight: 600; letter-spacing: 1.2px;
+      text-transform: uppercase; color: rgba(255,255,255,.6); margin-bottom: 6px;
+    }
+    .report-header h1 {
+      font-size: 22px; font-weight: 700; margin: 0 0 14px;
+    }
+    .meta-grid {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 32px;
+      font-size: 12px;
+    }
+    .meta-grid dt { color: rgba(255,255,255,.55); margin-bottom: 1px; }
+    .meta-grid dd { color: #fff; font-weight: 600; margin: 0; }
+
+    /* ── Summary bar ───────────────────────────────────────────────────────── */
+    .summary-bar {
+      display: flex; gap: 14px; margin-bottom: 24px; flex-wrap: wrap;
+    }
+    .summary-card {
+      flex: 1; min-width: 130px;
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+      padding: 14px 18px; text-align: center;
+    }
+    .summary-card .sc-value { font-size: 26px; font-weight: 700; color: #1e3a5f; }
+    .summary-card .sc-label { font-size: 11px; color: #6b7280; margin-top: 2px; }
+    .pill {
+      display: inline-block; padding: 3px 10px; border-radius: 20px;
+      font-size: 11px; font-weight: 700;
+    }
+    .pill-green  { background: #d1fae5; color: #065f46; }
+    .pill-amber  { background: #fef3c7; color: #92400e; }
+    .pill-red    { background: #fee2e2; color: #991b1b; }
+    ${flagCount > 0 ? `.flag-warning {
+      background: #fff7ed; border: 1px solid #fde68a; border-radius: 10px;
+      padding: 12px 18px; margin-bottom: 20px; font-size: 13px; color: #92400e;
+      display: flex; align-items: center; gap: 10px;
+    }` : ''}
+
+    /* ── Sections ──────────────────────────────────────────────────────────── */
+    .section { margin-bottom: 24px; }
+    .section-header {
+      background: #1e3a5f; color: #fff;
+      font-size: 12px; font-weight: 700; letter-spacing: .5px;
+      padding: 8px 16px; border-radius: 8px 8px 0 0;
+      text-transform: uppercase;
+    }
+    .field-table {
+      width: 100%; border-collapse: collapse;
+      background: #fff;
+      border: 1px solid #e5e7eb; border-top: none;
+      border-radius: 0 0 8px 8px; overflow: hidden;
+    }
+    .field-table td {
+      padding: 9px 12px;
+      border-bottom: 1px solid #f3f4f6;
+      vertical-align: top;
+      font-size: 12.5px;
+      line-height: 1.5;
+    }
+    .field-table tbody tr:last-child td { border-bottom: none; }
+    .q-num {
+      color: #9ca3af; font-size: 11px; text-align: right;
+      padding-right: 6px; white-space: nowrap;
+    }
+    .q-label { color: #374151; font-weight: 600; }
+    .q-answer { color: #111827; }
+    .no-answer { color: #9ca3af; font-style: italic; }
+    .row-flagged { background: #fffbeb !important; }
+    .row-empty   { background: #fafafa; }
+    .flag-note {
+      margin-top: 6px; font-size: 11.5px; color: #92400e;
+      background: #fef3c7; border-left: 3px solid #f59e0b;
+      padding: 4px 8px; border-radius: 0 5px 5px 0;
+    }
+    .no-data { color: #6b7280; font-style: italic; text-align: center; padding: 40px; }
+
+    /* ── Footer ────────────────────────────────────────────────────────────── */
+    .report-footer {
+      margin-top: 32px; padding-top: 16px;
+      border-top: 1px solid #e5e7eb;
+      font-size: 11px; color: #9ca3af; text-align: center; line-height: 1.7;
+    }
+
+    /* ── Print overrides ───────────────────────────────────────────────────── */
+    @media print {
+      body { background: white; font-size: 11pt; }
+      #print-toolbar { display: none !important; }
+      .page-wrapper { margin-top: 0; max-width: 100%; padding: 0; }
+      .report-header { border-radius: 0; padding: 18px 20px; }
+      .report-header h1 { font-size: 17pt; }
+      .summary-bar { break-inside: avoid; }
+      .summary-card { border: 1px solid #d1d5db; }
+      .section { break-inside: avoid; page-break-inside: avoid; }
+      .section-header { border-radius: 0; }
+      .field-table { border-left: none; border-right: none; border-radius: 0; }
+      .field-table td { font-size: 10pt; }
+      .report-footer { font-size: 9pt; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Screen-only toolbar -->
+<div id="print-toolbar">
+  <div>
+    <div class="tb-title">Questionnaire Export — ${escHtml(caseRef)}</div>
+    <div class="tb-sub">${escHtml(clientName)}</div>
+  </div>
+  <div class="tb-btns">
+    <button class="btn-print" onclick="window.print()">⬇ Save as PDF / Print</button>
+    <button class="btn-close" onclick="window.close()">Close</button>
+  </div>
+</div>
+
+<div class="page-wrapper">
+
+  <!-- Report header -->
+  <div class="report-header">
+    <div class="org-name">TDOT Immigration</div>
+    <h1>Questionnaire Submission Report</h1>
+    <dl class="meta-grid">
+      <dt>Case Reference</dt><dd>${escHtml(caseRef)}</dd>
+      <dt>Client Name</dt><dd>${escHtml(clientName)}</dd>
+      <dt>Case Type</dt><dd>${escHtml(caseLabel)}</dd>
+      <dt>Exported By</dt><dd>${escHtml(staffName)}</dd>
+      <dt>Export Date &amp; Time</dt><dd>${escHtml(exportedAt)}</dd>
+      <dt>Completion</dt><dd><span class="pill ${pillClass}">${pct}%</span></dd>
+    </dl>
+  </div>
+
+  <!-- Summary cards -->
+  <div class="summary-bar">
+    <div class="summary-card">
+      <div class="sc-value">${answeredFields}</div>
+      <div class="sc-label">Fields Answered</div>
+    </div>
+    <div class="summary-card">
+      <div class="sc-value">${totalFields - answeredFields}</div>
+      <div class="sc-label">Fields Not Provided</div>
+    </div>
+    <div class="summary-card">
+      <div class="sc-value">${pct}%</div>
+      <div class="sc-label">Completion Rate</div>
+    </div>
+    <div class="summary-card">
+      <div class="sc-value" style="color:${flagCount > 0 ? '#b45309' : '#059669'}">${flagCount}</div>
+      <div class="sc-label">Officer Flags</div>
+    </div>
+  </div>
+
+  ${flagCount > 0 ? `<div class="flag-warning">
+    ⚑ &nbsp; <strong>${flagCount} field${flagCount === 1 ? '' : 's'} flagged for correction.</strong>
+    These are highlighted below in amber and include officer notes.
+  </div>` : ''}
+
+  <!-- Questionnaire sections -->
+  ${sectionsHtml}
+
+  <!-- Footer -->
+  <div class="report-footer">
+    <p>Generated on ${escHtml(exportedAt)} by ${escHtml(staffName)} — TDOT Immigration Internal Use Only</p>
+    <p>This document contains confidential client information. Do not distribute outside authorised staff.</p>
+  </div>
+
+</div>
+
+<script>
+  // Auto-open print dialog after a short delay so the page is fully rendered
+  window.addEventListener('load', function () {
+    setTimeout(function () { window.print(); }, 800);
+  });
+</script>
+
+</body>
+</html>`;
+}
+
+// ─── HTML escape helper (shared) ─────────────────────────────────────────────
+function escHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 module.exports = {
   validateAccess,
   resolveForm,
@@ -1678,6 +1997,7 @@ module.exports = {
   markSubmitted,
   buildFormPage,
   buildReviewFormPage,
+  buildPrintPage,
   buildOverviewPage,
   buildPlaceholderPage,
   buildErrorPage,
