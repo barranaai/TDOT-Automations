@@ -1217,65 +1217,135 @@ input[disabled], select[disabled], textarea[disabled] {
 
   /* ── Pre-fill from saved data ── */
 
+  function setValue(el, val) {
+    if (!el || val === undefined || val === null) return;
+    if (el.tagName === 'SELECT') {
+      // Try exact match first, then case-insensitive
+      var opts = Array.prototype.slice.call(el.options);
+      var match = opts.find(function(o) { return o.value === val; }) ||
+                  opts.find(function(o) { return o.value.toLowerCase() === String(val).toLowerCase(); }) ||
+                  opts.find(function(o) { return o.text.toLowerCase() === String(val).toLowerCase(); });
+      if (match) { el.value = match.value; }
+    } else {
+      el.value = val;
+    }
+  }
+
   function prefill(fields) {
     console.log('[TDOT Review] SAVED_DATA entries:', SAVED_DATA.length, '  DOM fields:', fields.length);
 
-    // Diagnostic: show first 3 entries from each side so we can compare keys
-    if (SAVED_DATA.length > 0) {
-      console.log('[TDOT Review] SAVED_DATA[0]:', JSON.stringify(SAVED_DATA[0]));
-      if (SAVED_DATA[1]) console.log('[TDOT Review] SAVED_DATA[1]:', JSON.stringify(SAVED_DATA[1]));
-    }
+    /* ── Self-test: verify el.value assignment works at all ── */
     if (fields.length > 0) {
-      console.log('[TDOT Review] field[0]: key=' + fields[0].key + '  label=' + fields[0].label + '  tag=' + fields[0].el.tagName);
-      if (fields[1]) console.log('[TDOT Review] field[1]: key=' + fields[1].key + '  label=' + fields[1].label);
+      var testEl = fields[0].el;
+      var prev   = testEl.value;
+      testEl.value = '__TDOT_TEST__';
+      var testResult = testEl.value;
+      testEl.value = prev; // restore
+      console.log('[TDOT Review] Value assignment self-test:', testResult === '__TDOT_TEST__' ? 'OK' : 'BROKEN — el.value does not stick! tag=' + testEl.tagName + ' type=' + testEl.type);
     }
 
-    // Primary: match by key
-    var saved = {};
+    /* Dump first 3 saved entries and field entries for comparison */
+    for (var di = 0; di < Math.min(3, SAVED_DATA.length); di++) {
+      console.log('[TDOT Review] SAVED_DATA[' + di + ']:', JSON.stringify(SAVED_DATA[di]));
+    }
+    for (var fi = 0; fi < Math.min(3, fields.length); fi++) {
+      console.log('[TDOT Review] field[' + fi + ']: key=' + fields[fi].key + ' label=' + fields[fi].label + ' tag=' + fields[fi].el.tagName);
+    }
+
+    /* ── Strategy 1: key-based match ── */
+    var byKey = {};
     for (var i = 0; i < SAVED_DATA.length; i++) {
       var entry = SAVED_DATA[i];
-      if (entry && entry.key) saved[entry.key] = entry.value;
+      if (entry && entry.key && entry.value !== undefined) byKey[entry.key] = entry.value;
     }
-
-    var matched = 0;
+    var keyMatched = 0;
     for (var j = 0; j < fields.length; j++) {
-      var v = saved[fields[j].key];
-      if (v !== undefined && v !== '') {
-        fields[j].el.value = v;
-        matched++;
-      }
+      var v = byKey[fields[j].key];
+      if (v !== undefined && v !== '') { setValue(fields[j].el, v); keyMatched++; }
     }
-    console.log('[TDOT Review] Key-matched fields:', matched);
+    console.log('[TDOT Review] Key-matched:', keyMatched);
 
-    // Fallback: positional match — both client and review traverse .form-group
-    // elements in identical DOM order, so index i in SAVED_DATA = field i in DOM.
-    if (matched === 0 && SAVED_DATA.length > 0) {
-      console.warn('[TDOT Review] Key matching found 0 — using positional fallback');
-      var limit = Math.min(fields.length, SAVED_DATA.length);
-      for (var k = 0; k < limit; k++) {
-        var d = SAVED_DATA[k];
-        if (d && d.value !== undefined && d.value !== '') {
-          fields[k].el.value = d.value;
+    /* ── Strategy 2: label+occurrence match ── */
+    if (keyMatched === 0) {
+      console.warn('[TDOT Review] Key match 0 — trying label+occurrence');
+      var byLabel = {};
+      for (var li = 0; li < SAVED_DATA.length; li++) {
+        var ld = SAVED_DATA[li];
+        if (!ld) continue;
+        var lbl = (ld.label || '').trim().toLowerCase();
+        if (!byLabel[lbl]) byLabel[lbl] = [];
+        byLabel[lbl].push(ld.value);
+      }
+      var lblOcc = {};
+      var lblMatched = 0;
+      for (var lj = 0; lj < fields.length; lj++) {
+        var fld = fields[lj];
+        var fkey = (fld.label || '').trim().toLowerCase();
+        var occ  = lblOcc[fkey] || 0;
+        lblOcc[fkey] = occ + 1;
+        if (byLabel[fkey] && byLabel[fkey][occ] !== undefined && byLabel[fkey][occ] !== '') {
+          setValue(fld.el, byLabel[fkey][occ]);
+          lblMatched++;
         }
       }
-      // Verify the assignment actually worked on the first non-empty field
-      for (var vi = 0; vi < Math.min(5, fields.length); vi++) {
-        if (SAVED_DATA[vi] && SAVED_DATA[vi].value) {
-          console.log('[TDOT Review] Positional check field[' + vi + '] el.value=',
-            JSON.stringify(fields[vi].el.value),
-            ' (expected:', JSON.stringify(SAVED_DATA[vi].value), ')');
-          break;
+      console.log('[TDOT Review] Label-matched:', lblMatched);
+
+      /* ── Strategy 3: positional match as last resort ── */
+      if (lblMatched === 0) {
+        console.warn('[TDOT Review] Label match 0 — using positional fallback');
+        var limit = Math.min(fields.length, SAVED_DATA.length);
+        var posMatched = 0;
+        for (var k = 0; k < limit; k++) {
+          var pd = SAVED_DATA[k];
+          if (pd && pd.value !== undefined && pd.value !== '') {
+            setValue(fields[k].el, pd.value);
+            posMatched++;
+          }
+        }
+        console.log('[TDOT Review] Positional-matched:', posMatched);
+
+        /* Verify first 3 assignments stuck */
+        for (var vi = 0; vi < Math.min(limit, 10); vi++) {
+          if (SAVED_DATA[vi] && SAVED_DATA[vi].value !== '') {
+            console.log('[TDOT Review] pos[' + vi + '] expected=' + JSON.stringify(SAVED_DATA[vi].value) + ' got=' + JSON.stringify(fields[vi].el.value));
+          }
         }
       }
     }
   }
 
-  /* ── Disable all inputs ── */
+  /* ── Make form read-only via CSS (not disabled attribute) ── */
+  /* Using pointer-events:none keeps values visible without browser quirks   */
+  /* that sometimes prevent disabled inputs from displaying assigned values. */
 
-  function disableAll() {
-    document.querySelectorAll('input, select, textarea').forEach(function (el) {
-      el.disabled = true;
-    });
+  function makeReadOnly() {
+    var style = document.createElement('style');
+    style.textContent =
+      /* Lock ALL form inputs — flag editor overrides these below */
+      'input, select, textarea {' +
+        'pointer-events: none !important;' +
+        'user-select: none !important;' +
+        '-webkit-user-select: none !important;' +
+        'cursor: default !important;' +
+        'background: #f9fafb !important;' +
+        'color: #374151 !important;' +
+        'border-color: #e5e7eb !important;' +
+      '}' +
+      'select { -webkit-appearance: none !important; appearance: none !important; }' +
+      /* Higher specificity overrides unlock the flag editor and review bar */
+      '.tdot-flag-editor textarea {' +
+        'pointer-events: auto !important;' +
+        'cursor: text !important;' +
+        'user-select: text !important;' +
+        'background: white !important;' +
+        'color: #111 !important;' +
+        '-webkit-appearance: auto !important; appearance: auto !important;' +
+      '}' +
+      '.tdot-flag-editor button, .tdot-flag-btn, #tdot-review-bar button {' +
+        'pointer-events: auto !important;' +
+        'cursor: pointer !important;' +
+      '}';
+    document.head.appendChild(style);
   }
 
   /* ── Flag counter UI ── */
@@ -1434,7 +1504,7 @@ input[disabled], select[disabled], textarea[disabled] {
     expandAll();
     var fields = collectFields();
     prefill(fields);
-    disableAll();
+    makeReadOnly();
     fields.forEach(attachFlagUI);
     createReviewBar();
     updateFlagCount();
