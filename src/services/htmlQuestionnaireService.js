@@ -424,7 +424,7 @@ ${hasAdditionalForm ? `
       var prev = current.previousElementSibling;
       if (prev) {
         var onclick = prev.getAttribute('onclick') || '';
-        if (onclick.indexOf('toggleTop') !== -1 || onclick.indexOf('toggleSub') !== -1) {
+        if (onclick.indexOf('toggleTop') !== -1 || onclick.indexOf('toggleSub') !== -1 || onclick.indexOf('toggleApplicant') !== -1 || onclick.indexOf('toggleAccordion') !== -1) {
           var text = getHeadingText(prev);
           if (text) parts.unshift(text);
         }
@@ -825,19 +825,51 @@ ${hasAdditionalForm ? `
       /* Invalidate cache — rows may have been added */
       invalidateCache();
 
-      var saved = {};
+      /* Build two lookup maps: by key (exact) and by label+occurrence (fallback) */
+      var byKey   = {};
+      var byLabel = {};
       for (var i = 0; i < sourceFields.length; i++) {
-        saved[sourceFields[i].key] = sourceFields[i].value;
+        var sf = sourceFields[i];
+        if (!sf.value || !sf.value.trim()) continue;
+        byKey[sf.key] = sf.value;
+        var lbl = (sf.label || '').trim().toLowerCase();
+        if (!byLabel[lbl]) byLabel[lbl] = [];
+        byLabel[lbl].push(sf.value);
       }
 
+      console.log('[TDOT] Saved keys (' + Object.keys(byKey).length + '):', Object.keys(byKey).slice(0, 4));
+
       var fields = collectFields();
+      console.log('[TDOT] DOM fields: ' + fields.length + ', first 4 keys:', fields.slice(0, 4).map(function(f){ return f.key; }));
+
+      var matched = 0;
+      var lblOcc  = {};
       for (var fi = 0; fi < fields.length; fi++) {
-        var f = fields[fi];
-        if (saved[f.key] !== undefined && saved[f.key] !== '') {
-          f.el.value = saved[f.key];
+        var f   = fields[fi];
+        var val = byKey[f.key];
+
+        /* Fallback: label+occurrence match (handles key-format changes between deploys) */
+        if (!val) {
+          var fLbl  = (f.label || '').trim().toLowerCase();
+          var occ   = lblOcc[fLbl] || 0;
+          lblOcc[fLbl] = occ + 1;
+          if (byLabel[fLbl] && byLabel[fLbl][occ]) val = byLabel[fLbl][occ];
+        }
+
+        if (val) {
+          if (f.el.tagName === 'SELECT') {
+            var opts = Array.prototype.slice.call(f.el.options);
+            var opt  = opts.find(function(o){ return o.value === val; }) ||
+                       opts.find(function(o){ return o.value.toLowerCase() === val.toLowerCase(); });
+            if (opt) f.el.value = opt.value;
+          } else {
+            f.el.value = val;
+          }
+          matched++;
           try { f.el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
         }
       }
+      console.log('[TDOT] Pre-fill applied: ' + matched + ' fields (of ' + Object.keys(byKey).length + ' saved).');
 
       /* If we used local data, push it to the server so it is persisted */
       if (localFilled > serverFilled) {
@@ -1218,7 +1250,7 @@ input[disabled], select[disabled], textarea[disabled] {
       var prev = current.previousElementSibling;
       if (prev) {
         var oc = prev.getAttribute('onclick') || '';
-        if (oc.indexOf('toggleTop') !== -1 || oc.indexOf('toggleSub') !== -1) {
+        if (oc.indexOf('toggleTop') !== -1 || oc.indexOf('toggleSub') !== -1 || oc.indexOf('toggleApplicant') !== -1 || oc.indexOf('toggleAccordion') !== -1) {
           var t = getHeadingText(prev);
           if (t) parts.unshift(t);
         }
