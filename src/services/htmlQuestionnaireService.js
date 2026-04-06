@@ -1010,6 +1010,401 @@ function buildErrorPage(message) {
 </html>`;
 }
 
+// ─── Review-mode page builder ─────────────────────────────────────────────────
+
+/**
+ * Build the CSS + JS block injected into the HTML form for staff review mode.
+ * Uses the same field-collection logic as the client script so keys match exactly.
+ */
+function buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, savedFlags }) {
+  return `
+<!-- TDOT Review Mode — injected by server -->
+<style>
+body { padding-top: 62px !important; }
+#tdot-review-bar {
+  position: fixed; top: 0; left: 0; right: 0;
+  background: #1e3a5f; color: #fff;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px; height: 54px; z-index: 9999;
+  box-shadow: 0 3px 16px rgba(0,0,0,0.22);
+  font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; gap: 16px;
+}
+#tdot-review-bar .rb-left  { display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
+#tdot-review-bar .rb-title { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#tdot-review-bar .rb-sub   { font-size: 11px; color: rgba(255,255,255,.65); white-space: nowrap; }
+#tdot-review-bar .rb-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+#tdot-flag-count { font-size: 13px; color: rgba(255,255,255,.8); }
+#tdot-notify-btn {
+  padding: 7px 16px; border: none; border-radius: 6px;
+  background: #059669; color: #fff; font-size: 13px; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+}
+#tdot-notify-btn:hover { background: #047857; }
+#tdot-notify-btn:disabled { opacity: .45; cursor: not-allowed; }
+#tdot-notify-msg { font-size: 12px; color: #86efac; }
+
+/* Read-only field styling */
+input[disabled], select[disabled], textarea[disabled] {
+  background: #f9fafb !important;
+  color: #374151 !important;
+  cursor: default !important;
+  opacity: 1 !important;
+  border-color: #e5e7eb !important;
+}
+
+/* Flag button */
+.tdot-flag-wrap { position: relative; }
+.tdot-flag-btn {
+  position: absolute; top: -2px; right: 0;
+  background: none; border: 1px solid #d1d5db; border-radius: 5px;
+  font-size: 11px; font-weight: 600; color: #6b7280;
+  padding: 2px 8px; cursor: pointer; white-space: nowrap;
+  display: flex; align-items: center; gap: 4px;
+  transition: background .15s, border-color .15s;
+}
+.tdot-flag-btn:hover { background: #fff7ed; border-color: #f59e0b; color: #b45309; }
+.tdot-flag-btn.flagged { background: #fff7ed; border-color: #f59e0b; color: #b45309; font-weight: 700; }
+
+/* Flag inline editor */
+.tdot-flag-editor {
+  margin-top: 8px; background: #fffbeb; border: 1px solid #fde68a;
+  border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.tdot-flag-editor textarea {
+  width: 100%; border: 1px solid #fcd34d; border-radius: 6px;
+  padding: 6px 8px; font-size: 13px; font-family: inherit; resize: vertical;
+  min-height: 60px; background: #fff;
+}
+.tdot-flag-editor .fe-actions { display: flex; gap: 8px; }
+.tdot-flag-editor .fe-save {
+  padding: 5px 14px; background: #f59e0b; color: #fff;
+  border: none; border-radius: 5px; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.tdot-flag-editor .fe-save:hover { background: #d97706; }
+.tdot-flag-editor .fe-remove {
+  padding: 5px 14px; background: #fff; color: #dc2626;
+  border: 1px solid #fca5a5; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.tdot-flag-editor .fe-remove:hover { background: #fef2f2; }
+.tdot-flag-editor .fe-cancel {
+  padding: 5px 14px; background: #fff; color: #6b7280;
+  border: 1px solid #d1d5db; border-radius: 5px; font-size: 12px; cursor: pointer;
+}
+.tdot-flag-note {
+  margin-top: 8px; background: #fffbeb; border-left: 3px solid #f59e0b;
+  padding: 6px 10px; font-size: 12px; color: #92400e; border-radius: 0 6px 6px 0;
+}
+
+/* Highlight flagged form-groups */
+.form-group.tdot-flagged { background: #fffbeb !important; border-radius: 8px; padding: 8px !important; margin: -8px !important; }
+</style>
+<script>
+(function () {
+  'use strict';
+
+  /* ── Server-injected data ── */
+  var CASE_REF    = ${JSON.stringify(String(caseRef))};
+  var FORM_KEY    = ${JSON.stringify(String(formKey))};
+  var STAFF_NAME  = ${JSON.stringify(String(staffName))};
+  var SAVED_DATA  = ${JSON.stringify(savedFields)};
+  var flags       = ${JSON.stringify(savedFlags)};
+
+  /* ── Utilities (identical to client script so keys match) ── */
+
+  function slugify(s) {
+    return String(s || '').toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/, '').slice(0, 90);
+  }
+
+  function getHeadingText(el) {
+    return Array.from(el.childNodes)
+      .filter(function (n) {
+        return n.nodeType === 3 ||
+               (n.nodeType === 1 && !n.classList.contains('chevron') && n.tagName !== 'SPAN');
+      })
+      .map(function (n) { return n.textContent.trim(); })
+      .join(' ').trim();
+  }
+
+  function getSectionContext(el) {
+    var parts = [], current = el.parentElement;
+    while (current && current !== document.body) {
+      var prev = current.previousElementSibling;
+      if (prev) {
+        var oc = prev.getAttribute('onclick') || '';
+        if (oc.indexOf('toggleTop') !== -1 || oc.indexOf('toggleSub') !== -1) {
+          var t = getHeadingText(prev);
+          if (t) parts.unshift(t);
+        }
+      }
+      current = current.parentElement;
+    }
+    return parts.join(' \u203a ');
+  }
+
+  function collectFields() {
+    var fields = [], seen = [], keyMap = {};
+    function makeKey(section, label) {
+      var base = slugify(section + '__' + label);
+      if (!keyMap[base]) { keyMap[base] = 0; return base; }
+      keyMap[base]++; return base + '-' + keyMap[base];
+    }
+
+    var groups = document.querySelectorAll('.form-group');
+    for (var gi = 0; gi < groups.length; gi++) {
+      var group = groups[gi];
+      var lbl   = group.querySelector('label');
+      var inp   = group.querySelector('input, select, textarea');
+      if (!lbl || !inp || seen.indexOf(inp) !== -1) continue;
+      seen.push(inp);
+      var labelText = lbl.textContent.trim();
+      var section   = getSectionContext(group);
+      fields.push({ section: section, label: labelText, key: makeKey(section, labelText), el: inp, group: group });
+    }
+
+    var tables = document.querySelectorAll('.dynamic-table');
+    for (var ti = 0; ti < tables.length; ti++) {
+      var table   = tables[ti];
+      var tableId = table.id || ('table-' + ti);
+      var headers = [];
+      var ths     = table.querySelectorAll('thead th');
+      for (var hi = 0; hi < ths.length; hi++) {
+        var h = ths[hi].textContent.trim();
+        if (h && h.toLowerCase() !== 'remove' && h !== '') headers.push(h);
+      }
+      var tbody = table.querySelector('tbody');
+      if (!tbody) continue;
+      var rows = tbody.querySelectorAll('tr');
+      for (var ri = 0; ri < rows.length; ri++) {
+        var row = rows[ri], rowInputs = row.querySelectorAll('input, select');
+        for (var ci = 0; ci < headers.length; ci++) {
+          var cell = rowInputs[ci];
+          if (!cell || seen.indexOf(cell) !== -1) continue;
+          seen.push(cell);
+          var section2   = getSectionContext(table);
+          var labelText2 = headers[ci] + ' \u2014 Row ' + (ri + 1);
+          var key2       = slugify(section2 + '--tbl-' + slugify(tableId) + '--r' + (ri + 1) + '--' + headers[ci]);
+          fields.push({ section: section2 + ' \u203a Table', label: labelText2, key: key2, el: cell, group: row });
+        }
+      }
+    }
+    return fields;
+  }
+
+  /* ── Expand all accordions ── */
+
+  function expandAll() {
+    document.querySelectorAll('.accordion-body, .applicant-body, .sub-accordion-body').forEach(function (el) {
+      el.style.display = 'block';
+    });
+    document.querySelectorAll('.conditional-section').forEach(function (el) {
+      el.style.display = 'block';
+    });
+  }
+
+  /* ── Pre-fill from saved data ── */
+
+  function prefill(fields) {
+    var saved = {};
+    for (var i = 0; i < SAVED_DATA.length; i++) { saved[SAVED_DATA[i].key] = SAVED_DATA[i].value; }
+    for (var j = 0; j < fields.length; j++) {
+      var f = fields[j];
+      if (saved[f.key] !== undefined) f.el.value = saved[f.key];
+    }
+  }
+
+  /* ── Disable all inputs ── */
+
+  function disableAll() {
+    document.querySelectorAll('input, select, textarea').forEach(function (el) {
+      el.disabled = true;
+    });
+  }
+
+  /* ── Flag counter UI ── */
+
+  function updateFlagCount() {
+    var n   = Object.keys(flags).length;
+    var cnt = document.getElementById('tdot-flag-count');
+    var btn = document.getElementById('tdot-notify-btn');
+    if (cnt) cnt.textContent = n + ' flag' + (n !== 1 ? 's' : '');
+    if (btn) btn.textContent = 'Send Correction Request (' + n + ')';
+  }
+
+  /* ── Persist flags to server ── */
+
+  async function persistFlags() {
+    await fetch('/q/' + encodeURIComponent(CASE_REF) + '/flag', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ formKey: FORM_KEY, flags: flags }),
+      credentials: 'same-origin',
+    });
+  }
+
+  /* ── Build flag button + inline editor for one field ── */
+
+  function attachFlagUI(field) {
+    var group = field.group;
+    if (!group) return;
+
+    /* Wrap the group so we can position the flag button */
+    group.classList.add('tdot-flag-wrap');
+    group.style.position = 'relative';
+
+    var btn = document.createElement('button');
+    btn.className = 'tdot-flag-btn' + (flags[field.key] ? ' flagged' : '');
+    btn.type      = 'button';
+    btn.innerHTML = flags[field.key] ? '\ud83d\udea9 Flagged' : '\ud83d\udea9 Flag';
+    group.appendChild(btn);
+
+    /* Inline editor container (hidden by default) */
+    var editor = null;
+
+    /* Note shown when flagged */
+    var note = null;
+
+    function renderNote() {
+      if (note) note.remove();
+      note = null;
+      if (!flags[field.key]) return;
+      note = document.createElement('div');
+      note.className = 'tdot-flag-note';
+      note.textContent = '\ud83d\udcac ' + flags[field.key].comment;
+      group.appendChild(note);
+      group.classList.add('tdot-flagged');
+    }
+
+    function openEditor() {
+      if (editor) { editor.remove(); editor = null; return; }
+      var existing = (flags[field.key] || {}).comment || '';
+      editor = document.createElement('div');
+      editor.className = 'tdot-flag-editor';
+      editor.innerHTML =
+        '<textarea placeholder="Write a note for the client about this field...">' + existing + '</textarea>' +
+        '<div class="fe-actions">' +
+          '<button class="fe-save" type="button">Save Flag</button>' +
+          (flags[field.key] ? '<button class="fe-remove" type="button">Remove Flag</button>' : '') +
+          '<button class="fe-cancel" type="button">Cancel</button>' +
+        '</div>';
+
+      editor.querySelector('.fe-save').onclick = async function () {
+        var comment = editor.querySelector('textarea').value.trim();
+        if (!comment) { alert('Please write a note before saving.'); return; }
+        flags[field.key] = { label: field.label, section: field.section, comment: comment, flaggedBy: STAFF_NAME, flaggedAt: new Date().toISOString() };
+        btn.className = 'tdot-flag-btn flagged';
+        btn.innerHTML = '\ud83d\udea9 Flagged';
+        editor.remove(); editor = null;
+        renderNote();
+        updateFlagCount();
+        await persistFlags();
+      };
+
+      var removeBtn = editor.querySelector('.fe-remove');
+      if (removeBtn) {
+        removeBtn.onclick = async function () {
+          if (!confirm('Remove this flag?')) return;
+          delete flags[field.key];
+          btn.className = 'tdot-flag-btn';
+          btn.innerHTML = '\ud83d\udea9 Flag';
+          editor.remove(); editor = null;
+          if (note) { note.remove(); note = null; }
+          group.classList.remove('tdot-flagged');
+          updateFlagCount();
+          await persistFlags();
+        };
+      }
+
+      editor.querySelector('.fe-cancel').onclick = function () { editor.remove(); editor = null; };
+      group.appendChild(editor);
+    }
+
+    btn.onclick = openEditor;
+    renderNote();
+  }
+
+  /* ── Review bar ── */
+
+  function createReviewBar() {
+    var bar = document.createElement('div');
+    bar.id  = 'tdot-review-bar';
+    bar.innerHTML =
+      '<div class="rb-left">' +
+        '<div class="rb-title">\ud83d\udd0d Questionnaire Review \u2014 ' + CASE_REF + '</div>' +
+        '<div class="rb-sub">Reviewing as ' + STAFF_NAME + '</div>' +
+      '</div>' +
+      '<div class="rb-right">' +
+        '<span id="tdot-flag-count">0 flags</span>' +
+        '<span id="tdot-notify-msg"></span>' +
+        '<button id="tdot-notify-btn" type="button">Send Correction Request (0)</button>' +
+      '</div>';
+    document.body.insertBefore(bar, document.body.firstChild);
+
+    document.getElementById('tdot-notify-btn').onclick = async function () {
+      var n = Object.keys(flags).length;
+      if (!n) { alert('Flag at least one field before sending.'); return; }
+      if (!confirm('Send a correction request email to the client?\\n\\n' + n + ' flag' + (n !== 1 ? 's' : '') + ' will be included.')) return;
+      var btn = document.getElementById('tdot-notify-btn');
+      var msg = document.getElementById('tdot-notify-msg');
+      btn.disabled = true;
+      try {
+        var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/notify', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ formKey: FORM_KEY }),
+          credentials: 'same-origin',
+        });
+        if (!res.ok) throw new Error('Server error ' + res.status);
+        if (msg) { msg.textContent = '\u2713 Email sent'; msg.style.color = '#86efac'; }
+      } catch (err) {
+        alert('Failed to send: ' + err.message);
+        btn.disabled = false;
+      }
+    };
+  }
+
+  /* ── Init ── */
+
+  function init() {
+    expandAll();
+    var fields = collectFields();
+    prefill(fields);
+    disableAll();
+    fields.forEach(attachFlagUI);
+    createReviewBar();
+    updateFlagCount();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+`;
+}
+
+/**
+ * Serve the actual HTML questionnaire form in read-only staff-review mode.
+ * Staff can flag individual fields with comments and send correction requests.
+ * Uses the same field-collection logic as the client script so flag keys match exactly.
+ */
+function buildReviewFormPage({ formFile, caseRef, formKey, staffName, savedFields, savedFlags }) {
+  const filePath = path.join(FORMS_DIR, formFile);
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Form file not found: ${formFile}`);
+  }
+
+  const html   = fs.readFileSync(filePath, 'utf8');
+  const script = buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, savedFlags });
+
+  if (html.includes('</body>')) {
+    return html.replace('</body>', script + '\n</body>');
+  }
+  return html + script;
+}
+
 module.exports = {
   validateAccess,
   resolveForm,
@@ -1017,6 +1412,7 @@ module.exports = {
   saveFormData,
   markSubmitted,
   buildFormPage,
+  buildReviewFormPage,
   buildOverviewPage,
   buildPlaceholderPage,
   buildErrorPage,

@@ -210,23 +210,23 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
       ));
     }
 
-    // Derive a friendly form title from the form map (optional, best-effort)
+    // Resolve which HTML file to serve
     const { resolveForm } = require('../../config/questionnaireFormMap');
     const { caseSubType } = caseDetails;
     const formFiles = resolveForm(caseType, caseSubType) || {};
-    const rawFile   = formKey === 'additional' ? (formFiles.additional || '') : (formFiles.primary || '');
-    const formTitle = rawFile
-      ? rawFile.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim()
-      : formKey;
+    const formFile  = formKey === 'additional' ? formFiles.additional : formFiles.primary;
 
-    const html = review.buildReviewPage({
+    if (!formFile) {
+      return res.status(404).type('html').send(svc.buildErrorPage('Form file not found for this case type.'));
+    }
+
+    const html = svc.buildReviewFormPage({
+      formFile,
       caseRef,
       formKey,
-      formTitle,
-      fields,
-      flags,
       staffName:   req.staff.name,
-      caseDetails: { ...caseDetails, caseSubType },
+      savedFields: fields,
+      savedFlags:  flags,
     });
 
     return res.type('html').send(html);
