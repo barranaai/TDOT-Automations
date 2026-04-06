@@ -443,6 +443,34 @@ ${hasAdditionalForm ? `
     return true;
   }
 
+  /* ── Dirty-tracking — only auto-save when the user has made changes ── */
+
+  var _isDirty       = false;
+  var _autoSaveTimer = null;
+
+  /* localStorage key for local backup */
+  var _LS_KEY = 'tdot_form_' + CASE_REF + '_' + FORM_KEY;
+
+  function markDirty() { _isDirty = true; }
+
+  /* Write current fields to localStorage (cheap, synchronous) */
+  function backupToLocal() {
+    try {
+      var data = getSerializableFields ? getSerializableFields() : null;
+      if (data) localStorage.setItem(_LS_KEY, JSON.stringify({ ts: Date.now(), fields: data }));
+    } catch (e) { /* storage quota or private mode — ignore */ }
+  }
+
+  /* Read back from localStorage. Returns [] if nothing stored. */
+  function restoreFromLocal() {
+    try {
+      var raw = localStorage.getItem(_LS_KEY);
+      if (!raw) return [];
+      var obj = JSON.parse(raw);
+      return Array.isArray(obj.fields) ? obj.fields : [];
+    } catch (e) { return []; }
+  }
+
   /* ── Field collection ── */
 
   var _fieldCache = null;
@@ -557,26 +585,43 @@ ${hasAdditionalForm ? `
     var msg     = document.getElementById('tdot-saved-msg');
     if (!silent && saveBtn) saveBtn.disabled = true;
 
+    var currentFields = getSerializableFields();
+    var p             = getProgress();
+
+    /* ── Local backup first — always, even if server is unreachable ── */
+    backupToLocal();
+
+    /* ── Guard: do not overwrite server data with an empty form ──────────────
+     * If the current form has 0% completion, there is nothing useful to save.
+     * This prevents a race where a failed pre-fill leaves the form blank and
+     * the subsequent auto-save wipes the server CSV.                         */
+    if (p.pct === 0 && silent) {
+      console.log('[TDOT] Auto-save skipped — form is empty (pre-fill may still be loading).');
+      if (!silent && saveBtn) saveBtn.disabled = false;
+      return;
+    }
+
     try {
-      var p = getProgress();
       var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/save', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           token:         TOKEN,
           formKey:       FORM_KEY,
-          fields:        getSerializableFields(),
+          fields:        currentFields,
           completionPct: p.pct,
         }),
       });
       if (!res.ok) throw new Error('Save failed (' + res.status + ')');
+      _isDirty = false;
       if (msg) {
         msg.textContent = '✓ Saved at ' + new Date().toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' });
+        msg.style.color = '';
         setTimeout(function () { if (msg) msg.textContent = ''; }, 8000);
       }
     } catch (err) {
       console.error('[TDOT] Save error:', err);
-      if (msg) { msg.textContent = '⚠ Save failed — check connection'; msg.style.color = '#fca5a5'; }
+      if (msg) { msg.textContent = '⚠ Save failed — your data is backed up locally'; msg.style.color = '#fca5a5'; }
     } finally {
       if (!silent && saveBtn) saveBtn.disabled = false;
     }
@@ -609,6 +654,12 @@ ${hasAdditionalForm ? `
         }),
       });
       if (!res.ok) throw new Error('Submit failed (' + res.status + ')');
+
+      /* Stop the auto-save timer so it cannot overwrite the submitted CSV */
+      if (_autoSaveTimer) { clearInterval(_autoSaveTimer); _autoSaveTimer = null; }
+
+      /* Clear local backup — the server now has the authoritative copy */
+      try { localStorage.removeItem(_LS_KEY); } catch (e) {}
 
       /* Show a success message and disable further editing */
       document.body.innerHTML =
@@ -735,24 +786,47 @@ ${hasAdditionalForm ? `
 
   async function loadAndPrefill() {
     try {
-      var res = await fetch(
-        '/q/' + encodeURIComponent(CASE_REF) + '/data' +
-        '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(FORM_KEY),
-        { method: 'GET' }
-      );
-      if (!res.ok) return;
-      var data = await res.json();
-      if (!data.fields || !data.fields.length) return;
+      /* ── Fetch server data ── */
+      var serverFields = [];
+      try {
+        var res = await fetch(
+          '/q/' + encodeURIComponent(CASE_REF) + '/data' +
+          '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(FORM_KEY),
+          { method: 'GET' }
+        );
+        if (res.ok) {
+          var data = await res.json();
+          if (data.fields && Array.isArray(data.fields)) serverFields = data.fields;
+        }
+      } catch (fetchErr) {
+        console.warn('[TDOT] Could not reach server for pre-fill, checking local backup.', fetchErr);
+      }
+
+      /* Count non-empty server values */
+      var serverFilled = serverFields.filter(function (f) { return f.value && f.value.trim(); }).length;
+
+      /* ── Local backup ── */
+      var localFields  = restoreFromLocal();
+      var localFilled  = localFields.filter(function (f) { return f.value && f.value.trim(); }).length;
+
+      /* Use whichever source has more data */
+      var sourceFields = (localFilled > serverFilled) ? localFields : serverFields;
+      var sourceLabel  = (localFilled > serverFilled) ? 'local backup' : 'server';
+      var sourceFilled = Math.max(serverFilled, localFilled);
+
+      if (!sourceFilled) return; /* Nothing saved anywhere — fresh form */
+
+      console.log('[TDOT] Pre-filling from ' + sourceLabel + ': ' + sourceFilled + ' non-empty fields.');
 
       /* Expand dynamic tables first, then fill */
-      await expandTableRows(data.fields);
+      await expandTableRows(sourceFields);
 
       /* Invalidate cache — rows may have been added */
       invalidateCache();
 
-      var saved   = {};
-      for (var i = 0; i < data.fields.length; i++) {
-        saved[data.fields[i].key] = data.fields[i].value;
+      var saved = {};
+      for (var i = 0; i < sourceFields.length; i++) {
+        saved[sourceFields[i].key] = sourceFields[i].value;
       }
 
       var fields = collectFields();
@@ -762,6 +836,12 @@ ${hasAdditionalForm ? `
           f.el.value = saved[f.key];
           try { f.el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
         }
+      }
+
+      /* If we used local data, push it to the server so it is persisted */
+      if (localFilled > serverFilled) {
+        console.log('[TDOT] Local backup has more data than server — syncing to server.');
+        markDirty();
       }
 
       updateProgressUI();
@@ -800,7 +880,9 @@ ${hasAdditionalForm ? `
   /* ── Auto-save ── */
 
   function scheduleAutoSave() {
-    setInterval(function () { doSave(true); }, 3 * 60 * 1000); // every 3 min
+    _autoSaveTimer = setInterval(function () {
+      if (_isDirty) doSave(true);
+    }, 60 * 1000); // check every 60 s, only saves when form is modified
   }
 
   /* ── Expose globals for inline button handlers ── */
@@ -814,9 +896,9 @@ ${hasAdditionalForm ? `
     createToolbar();
     ${overviewUrl ? 'createNavTab();' : ''}
 
-    /* Listen for any field change to update progress and invalidate cache */
-    document.addEventListener('change', function () { invalidateCache(); updateProgressUI(); });
-    document.addEventListener('input',  function () { invalidateCache(); updateProgressUI(); });
+    /* Listen for any field change to update progress, invalidate cache and mark dirty */
+    document.addEventListener('change', function () { markDirty(); invalidateCache(); updateProgressUI(); });
+    document.addEventListener('input',  function () { markDirty(); invalidateCache(); updateProgressUI(); });
 
     await loadAndPrefill();
     await loadAndApplyFlags();
