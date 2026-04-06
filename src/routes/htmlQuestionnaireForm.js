@@ -204,9 +204,13 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
       review.loadFlags({ clientName, caseRef, formKey }),
     ]);
 
-    if (!fields.length) {
+    const hasData = fields.some(f => f.value && f.value.trim() !== '');
+
+    if (!fields.length || !hasData) {
       return res.type('html').send(svc.buildErrorPage(
-        'No submitted data found for this case and form. The client may not have submitted yet.'
+        fields.length
+          ? 'The client has opened the questionnaire but has not yet filled in any answers. Please ask them to complete and submit the form before reviewing.'
+          : 'No submitted data found for this case. The client may not have opened the questionnaire yet.'
       ));
     }
 
