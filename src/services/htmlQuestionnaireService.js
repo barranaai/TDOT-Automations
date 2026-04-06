@@ -1603,13 +1603,16 @@ input[disabled], select[disabled], textarea[disabled] {
         '<span id="tdot-flag-count">0 flags</span>' +
         '<span id="tdot-notify-msg"></span>' +
         '<button id="tdot-export-btn" type="button" ' +
-          'onclick="window.open(\'/q/\' + encodeURIComponent(CASE_REF) + \'/export-pdf?formKey=\' + encodeURIComponent(FORM_KEY), \'_blank\')" ' +
           'style="padding:7px 16px;border:1px solid rgba(255,255,255,.35);border-radius:6px;background:transparent;color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">' +
-          '⬇ Export PDF' +
+          '\u2b07 Export PDF' +
         '</button>' +
         '<button id="tdot-notify-btn" type="button">Send Correction Request (0)</button>' +
       '</div>';
     document.body.insertBefore(bar, document.body.firstChild);
+
+    document.getElementById('tdot-export-btn').onclick = function () {
+      window.open('/q/' + encodeURIComponent(CASE_REF) + '/export-pdf?formKey=' + encodeURIComponent(FORM_KEY), '_blank');
+    };
 
     document.getElementById('tdot-notify-btn').onclick = async function () {
       var n = Object.keys(flags).length;
