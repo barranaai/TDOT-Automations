@@ -548,11 +548,26 @@ ${hasAdditionalForm ? `
     var total  = 0;
     var filled = 0;
     for (var i = 0; i < fields.length; i++) {
-      var f = fields[i];
-      if (!isVisible(f.el)) continue;
-      total++;
+      var f   = fields[i];
       var val = (f.el.value || '').trim();
-      if (val && val !== 'Select...' && val !== '') filled++;
+      /* Skip fields inside genuinely-hidden conditional sections:
+       * a conditional section is hidden only when its controlling select
+       * is set to a non-triggering value, so those fields truly don't apply.
+       * Fields inside collapsed (but not conditional) accordions DO count —
+       * the client must open every section and fill it in.                 */
+      var inConditional = false;
+      var node = f.el.parentElement;
+      while (node && node !== document.body) {
+        if ((node.classList.contains('conditional') || node.classList.contains('refusal-details')) &&
+            node.style.display === 'none' && !node.classList.contains('visible')) {
+          inConditional = true;
+          break;
+        }
+        node = node.parentElement;
+      }
+      if (inConditional) continue;
+      total++;
+      if (val && val !== '-- Select --' && val !== 'Select...' && val !== '') filled++;
     }
     var pct = total > 0 ? Math.round(filled / total * 100) : 0;
     return { total: total, filled: filled, pct: pct };
