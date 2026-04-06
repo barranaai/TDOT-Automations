@@ -98,8 +98,12 @@ router.post('/', async (req, res) => {
 
     // ── Client Master Board events ────────────────────────────────────────
 
-    // New item created → generate Access Token
+    // New item created → generate Access Token (Client Master board only)
     if (type === 'create_item') {
+      if (CLIENT_MASTER_BOARD_ID && boardIdStr !== CLIENT_MASTER_BOARD_ID) {
+        console.log(`[Webhook] Ignoring create_item from non-client-master board ${boardId}`);
+        return;
+      }
       console.log(`[Webhook] New item created: ${pulseId} on board ${boardId}`);
       accessTokenService.onItemCreated({ itemId: pulseId }).catch(err =>
         console.error('[AccessToken] Error:', err.message)
@@ -113,7 +117,10 @@ router.post('/', async (req, res) => {
 
     // Case Health → Red
     if (columnId === CASE_HEALTH_COL && value?.label?.text === 'Red') {
-      const caseRef = event.value?.label?.text || '';
+      const caseRef = await mondayApi.query(
+        `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
+        { id: String(pulseId) }
+      ).then(d => d?.items?.[0]?.column_values?.[0]?.text?.trim() || '').catch(() => '');
       notify.onCaseHealthRed(pulseId, itemName, caseRef).catch(() => {});
     }
 
@@ -191,8 +198,8 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Case Stage changes
-    if (columnTitle === CASE_STAGE_COL_TITLE) {
+    // Case Stage changes (matched by column ID; title kept as fallback label only)
+    if (columnId === CASE_STAGE_COL_ID) {
       const newStage = value?.label?.text || '';
 
       // → Document Collection Started: create execution rows + send intake email
