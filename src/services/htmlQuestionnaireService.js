@@ -1052,14 +1052,17 @@ input[disabled], select[disabled], textarea[disabled] {
   border-color: #e5e7eb !important;
 }
 
-/* Flag button */
-.tdot-flag-wrap { position: relative; }
+/* Label-row wrapper (label + flag button side-by-side) */
+.tdot-label-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 4px;
+}
+.tdot-label-row label { margin: 0 !important; flex: 1; }
 .tdot-flag-btn {
-  position: absolute; top: -2px; right: 0;
+  flex-shrink: 0;
   background: none; border: 1px solid #d1d5db; border-radius: 5px;
   font-size: 11px; font-weight: 600; color: #6b7280;
   padding: 2px 8px; cursor: pointer; white-space: nowrap;
-  display: flex; align-items: center; gap: 4px;
   transition: background .15s, border-color .15s;
 }
 .tdot-flag-btn:hover { background: #fff7ed; border-color: #f59e0b; color: #b45309; }
@@ -1191,13 +1194,23 @@ input[disabled], select[disabled], textarea[disabled] {
     return fields;
   }
 
-  /* ── Expand all accordions ── */
+  /* ── Expand all accordions and conditional sections ── */
 
   function expandAll() {
-    document.querySelectorAll('.accordion-body, .applicant-body, .sub-accordion-body').forEach(function (el) {
+    document.querySelectorAll(
+      '.accordion-body, .applicant-body, .sub-accordion-body, .open, .active'
+    ).forEach(function (el) {
       el.style.display = 'block';
     });
-    document.querySelectorAll('.conditional-section').forEach(function (el) {
+    // Expand ALL collapsible bodies regardless of class naming convention
+    document.querySelectorAll('[class*="body"], [class*="content"], [class*="panel"]').forEach(function (el) {
+      var s = window.getComputedStyle(el);
+      if (s.display === 'none' && el.querySelectorAll('input, select, textarea').length > 0) {
+        el.style.display = 'block';
+      }
+    });
+    // Conditional sections (both .conditional and .conditional-section)
+    document.querySelectorAll('.conditional, .conditional-section').forEach(function (el) {
       el.style.display = 'block';
     });
   }
@@ -1205,11 +1218,35 @@ input[disabled], select[disabled], textarea[disabled] {
   /* ── Pre-fill from saved data ── */
 
   function prefill(fields) {
+    console.log('[TDOT Review] SAVED_DATA entries:', SAVED_DATA.length, '  DOM fields:', fields.length);
+
+    // Primary: match by key (keys are generated identically in client + review scripts)
     var saved = {};
-    for (var i = 0; i < SAVED_DATA.length; i++) { saved[SAVED_DATA[i].key] = SAVED_DATA[i].value; }
+    for (var i = 0; i < SAVED_DATA.length; i++) {
+      if (SAVED_DATA[i].key) saved[SAVED_DATA[i].key] = SAVED_DATA[i].value;
+    }
+
+    var matched = 0;
     for (var j = 0; j < fields.length; j++) {
-      var f = fields[j];
-      if (saved[f.key] !== undefined) f.el.value = saved[f.key];
+      var v = saved[fields[j].key];
+      if (v !== undefined && v !== '') {
+        fields[j].el.value = v;
+        matched++;
+      }
+    }
+    console.log('[TDOT Review] Key-matched fields:', matched);
+
+    // Fallback: if key matching found nothing, match by DOM position.
+    // Both client submission and review use querySelectorAll('.form-group') in
+    // document order, so position i in SAVED_DATA corresponds to field i in DOM.
+    if (matched === 0 && SAVED_DATA.length > 0) {
+      console.warn('[TDOT Review] Key matching found 0 — using positional fallback');
+      var limit = Math.min(fields.length, SAVED_DATA.length);
+      for (var k = 0; k < limit; k++) {
+        if (SAVED_DATA[k] && SAVED_DATA[k].value !== undefined) {
+          fields[k].el.value = SAVED_DATA[k].value;
+        }
+      }
     }
   }
 
@@ -1248,15 +1285,23 @@ input[disabled], select[disabled], textarea[disabled] {
     var group = field.group;
     if (!group) return;
 
-    /* Wrap the group so we can position the flag button */
-    group.classList.add('tdot-flag-wrap');
-    group.style.position = 'relative';
-
     var btn = document.createElement('button');
     btn.className = 'tdot-flag-btn' + (flags[field.key] ? ' flagged' : '');
     btn.type      = 'button';
     btn.innerHTML = flags[field.key] ? '\ud83d\udea9 Flagged' : '\ud83d\udea9 Flag';
-    group.appendChild(btn);
+
+    /* Place the flag button inline with the label — wrap both in a flex row */
+    var lbl = group.querySelector('label');
+    if (lbl) {
+      var row = document.createElement('div');
+      row.className = 'tdot-label-row';
+      lbl.parentNode.insertBefore(row, lbl);
+      row.appendChild(lbl);
+      row.appendChild(btn);
+    } else {
+      /* Table row or labelless group — prepend the button */
+      group.insertBefore(btn, group.firstChild);
+    }
 
     /* Inline editor container (hidden by default) */
     var editor = null;
