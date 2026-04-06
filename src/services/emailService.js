@@ -4,7 +4,6 @@ const { ensureAccessToken } = require('./accessTokenService');
 const { clientMasterBoardId } = require('../../config/monday');
 
 const CM_COLS = {
-  clientName:  'text_mm0x1zdk',
   clientEmail: 'text_mm0xw6bp',
   caseRef:     'text_mm142s49',
   caseType:    'dropdown_mm0xd1qn',
@@ -31,17 +30,19 @@ async function getClientDetails(itemId) {
   const data = await mondayApi.query(
     `query($itemId: ID!) {
        items(ids: [$itemId]) {
+         name
          column_values(ids: ${JSON.stringify(Object.values(CM_COLS))}) { id text }
        }
      }`,
     { itemId: String(itemId) }
   );
 
-  const cols    = data.items[0]?.column_values || [];
+  const item    = data.items[0];
+  const cols    = item?.column_values || [];
   const col     = (id) => cols.find((c) => c.id === id)?.text?.replace(/\s+/g, ' ').trim() || '';
 
   return {
-    clientName:  col(CM_COLS.clientName),
+    clientName:  (item?.name || '').trim() || 'Client',
     clientEmail: col(CM_COLS.clientEmail),
     caseRef:     col(CM_COLS.caseRef),
     caseType:    col(CM_COLS.caseType),

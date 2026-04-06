@@ -33,7 +33,6 @@ const CM = {
   docThresholdMet:     'color_mm0xvxq2',
   caseManager:         'multiple_person_mm0xhmgk',
   opsSupervisor:       'multiple_person_mm0xp0sq',
-  clientName:          'text_mm0x1zdk',
   caseRef:             'text_mm142s49',
   caseType:            'dropdown_mm0xd1qn',
   qReadiness:          'numeric_mm0x9dea',
@@ -67,7 +66,7 @@ async function fetchUserEmails(userIds) {
 
 async function fetchCaseDetails(masterItemId) {
   const FETCH_IDS = [
-    CM.caseRef, CM.caseType, CM.clientName, CM.caseStage, CM.automationLock,
+    CM.caseRef, CM.caseType, CM.caseStage, CM.automationLock,
     CM.caseManager, CM.opsSupervisor, CM.qReadiness, CM.docReadiness,
   ];
   const data = await mondayApi.query(
@@ -156,7 +155,7 @@ async function onThresholdMet({ masterItemId, caseRef, caseType }) {
     return;
   }
 
-  const clientName = col(CM.clientName);
+  const clientName = (item.name || '').trim() || 'Client';
   const qPct       = col(CM.qReadiness);
   const docPct     = col(CM.docReadiness);
   const today      = new Date().toISOString().split('T')[0];
@@ -224,7 +223,7 @@ async function onFullyComplete({ masterItemId, caseRef, caseType }) {
     return;
   }
 
-  const clientName = col(CM.clientName);
+  const clientName = (item.name || '').trim() || 'Client';
   const today      = new Date().toISOString().split('T')[0];
 
   // Advance stage + reset Stage Start Date for fresh SLA clock
@@ -310,9 +309,18 @@ async function onEscalationCleared({ masterItemId, caseRef }) {
 
 /**
  * Terminal (end-of-case) stages — automation lock fires for any of these.
+ * All engines (SLA, health, chasing, escalation) skip cases in these stages.
  * Update this set if new terminal stages are added to the Case Stage dropdown.
  */
-const TERMINAL_STAGES = new Set(['Submitted']);
+const TERMINAL_STAGES = new Set([
+  'Submitted',
+  'Approved',
+  'Refused',
+  'Closed',
+  'Withdrawn',
+  'Cancelled',
+  'Archived',
+]);
 
 /**
  * Called by the webhook when Case Stage is set to a terminal value

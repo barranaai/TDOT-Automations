@@ -53,7 +53,6 @@ const CM = {
   readyForReview:      'color_mm0xh2fh',    // labels: Done / Working on it
   caseManager:         'multiple_person_mm0xhmgk',
   opsSupervisor:       'multiple_person_mm0xp0sq',
-  clientName:          'text_mm0x1zdk',
   accessToken:         'text_mm0x6haq',
   chasingStage:        'color_mm1abve4',
 };

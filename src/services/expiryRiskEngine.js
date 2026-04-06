@@ -32,7 +32,6 @@ const CM = {
   caseStage:          'color_mm0x8faa',
   caseType:           'dropdown_mm0xd1qn',
   caseRef:            'text_mm142s49',
-  clientName:         'text_mm0x1zdk',
   passportExpiry:     'date_mm0xe7fp',
   ieltsExpiry:        'date_mm0xvb0g',
   medicalExpiry:      'date_mm0x8c3t',
@@ -112,7 +111,7 @@ async function loadExpiryWindows() {
 
 async function fetchCases() {
   const FETCH_IDS = [
-    CM.caseStage, CM.caseType, CM.caseRef, CM.clientName,
+    CM.caseStage, CM.caseType, CM.caseRef,
     CM.passportExpiry, CM.ieltsExpiry, CM.medicalExpiry,
     CM.expiryRiskFlag, CM.expiryAlertSent,
     CM.escalationRequired, CM.escalationReason,
@@ -276,7 +275,7 @@ async function processCase(item, expiryWindows) {
       expiryLabel: urgentExpiry.label,
       daysLeft:    urgentExpiry.daysLeft,
       caseRef,
-      clientName: col(CM.clientName),
+      clientName: (item.name || '').trim() || 'Client',
       caseType,
     });
   } catch (err) {

@@ -14,7 +14,6 @@ const CM = {
   caseType:           'dropdown_mm0xd1qn',
   caseSubType:        'dropdown_mm0x4t91',
   caseRef:            'text_mm142s49',
-  clientName:         'text_mm0x1zdk',
   clientEmail:        'text_mm0xw6bp',
   accessToken:        'text_mm0x6haq',
   automationLock:     'color_mm0x3x1x',
@@ -85,7 +84,7 @@ async function loadReminderOffsets() {
 async function fetchChasableCases() {
   const FETCH_IDS = [
     CM.caseStage, CM.stageStartDate, CM.caseType, CM.caseSubType,
-    CM.caseRef, CM.clientName, CM.clientEmail, CM.accessToken,
+    CM.caseRef, CM.clientEmail, CM.accessToken,
     CM.automationLock, CM.manualOverride, CM.escalationRequired,
     CM.qReadiness, CM.docReadiness,
     CM.chasingStage, CM.reminderCount, CM.lastActivityDate,
@@ -302,7 +301,7 @@ async function processCase(item, offsets) {
   const chasingStage  = col(CM.chasingStage);
   const reminderCount = parseInt(col(CM.reminderCount), 10) || 0;
   const token         = col(CM.accessToken);
-  const clientName    = col(CM.clientName);
+  const clientName    = (item.name || '').trim() || 'Client';
 
   // Build the correct questionnaire link depending on whether this case uses
   // the new HTML form system or the legacy Monday questionnaire board.

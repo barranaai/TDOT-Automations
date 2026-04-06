@@ -98,7 +98,6 @@ const RULE = {
 
 const CM = {
   caseRef:            'text_mm142s49',
-  clientName:         'text_mm0x1zdk',
   clientEmail:        'text_mm0xw6bp',
   accessToken:        'text_mm0x6haq',
   caseType:           'dropdown_mm0xd1qn',
@@ -283,7 +282,7 @@ function findRule(rules, { caseType, caseStage, riskBand }) {
 
 async function fetchCases() {
   const FETCH_IDS = [
-    CM.caseRef, CM.clientName, CM.clientEmail, CM.accessToken,
+    CM.caseRef, CM.clientEmail, CM.accessToken,
     CM.caseType, CM.caseStage, CM.slaRiskBand,
     CM.automationLock, CM.manualOverride,
     CM.escalationRequired, CM.escalationReason,
@@ -330,7 +329,7 @@ async function applyRule(item, rule) {
   const colVal = (id) => item.column_values.find((c) => c.id === id)?.value || '';
 
   const caseRef    = col(CM.caseRef)    || item.name;
-  const clientName = col(CM.clientName);
+  const clientName = (item.name || '').trim() || 'Client';
   const clientEmail= col(CM.clientEmail);
   const caseType   = col(CM.caseType);
   const itemId     = item.id;

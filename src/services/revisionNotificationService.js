@@ -22,8 +22,8 @@ async function getClientByCaseRef(caseRef) {
          columns: [{ column_id: "text_mm142s49", column_values: [$caseRef] }]
        ) {
          items {
+           name
            column_values(ids: [
-             "text_mm0x1zdk",
              "text_mm0xw6bp",
              "text_mm142s49"
            ]) { id text }
@@ -38,7 +38,7 @@ async function getClientByCaseRef(caseRef) {
 
   const col = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
   return {
-    clientName:  col('text_mm0x1zdk') || 'Valued Client',
+    clientName:  (item.name || '').trim() || 'Valued Client',
     clientEmail: col('text_mm0xw6bp'),
     caseRef:     col('text_mm142s49'),
   };
