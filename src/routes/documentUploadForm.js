@@ -51,6 +51,18 @@ const STATUS_STYLE = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+const MEMBER_ICONS = {
+  'Principal Applicant':       '👤',
+  'Spouse / Common-Law Partner': '👫',
+  'Dependent Child':           '👶',
+  'Sponsor':                   '🤝',
+  'Worker Spouse':             '💼',
+};
+
+function memberIcon(memberType) {
+  return MEMBER_ICONS[memberType] || '👤';
+}
+
 function esc(str = '') {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -58,6 +70,15 @@ function esc(str = '') {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+// Canonical order for member types (Principal Applicant always first)
+const MEMBER_ORDER = [
+  'Principal Applicant',
+  'Spouse / Common-Law Partner',
+  'Dependent Child',
+  'Sponsor',
+  'Worker Spouse',
+];
 
 function groupByCategory(items) {
   const map = {};
@@ -70,6 +91,32 @@ function groupByCategory(items) {
     .filter((c) => map[c])
     .concat(Object.keys(map).filter((c) => !CATEGORY_ORDER.includes(c)))
     .map((c) => ({ category: c, items: map[c] }));
+}
+
+/**
+ * Group items by applicant type → then by category within each member group.
+ * Returns { isMultiMember: bool, members: [{ memberType, sections }] }
+ */
+function groupByMemberAndCategory(items) {
+  const memberMap = {};
+  items.forEach((item) => {
+    const mt = item.applicantType || 'Principal Applicant';
+    if (!memberMap[mt]) memberMap[mt] = [];
+    memberMap[mt].push(item);
+  });
+
+  const memberTypes = MEMBER_ORDER
+    .filter((m) => memberMap[m])
+    .concat(Object.keys(memberMap).filter((m) => !MEMBER_ORDER.includes(m)));
+
+  const isMultiMember = memberTypes.length > 1;
+
+  const members = memberTypes.map((mt) => ({
+    memberType: mt,
+    sections:   groupByCategory(memberMap[mt]),
+  }));
+
+  return { isMultiMember, members };
 }
 
 // ─── Landing page ─────────────────────────────────────────────────────────────
@@ -125,46 +172,12 @@ input[type=text]:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--bran
 </html>`;
 }
 
-// ─── Main upload form ──────────────────────────────────────────────────────────
+// ─── Shared HTML helpers ───────────────────────────────────────────────────────
 
-function formPage(caseRef, clientName, sections) {
-  const totalDocs    = sections.reduce((s, sec) => s + sec.items.length, 0);
-  const uploadedDocs = sections.reduce(
-    (s, sec) => s + sec.items.filter((i) => i.status !== 'Missing').length, 0
-  );
-  const pct   = totalDocs ? Math.round((uploadedDocs / totalDocs) * 100) : 0;
-  const total = sections.length;
-
-  let firstFlaggedStep = -1;
-  let flaggedCount     = 0;
-  sections.forEach((sec, idx) => {
-    const flagged = sec.items.filter((i) => i.status === 'Rework Required');
-    flaggedCount += flagged.length;
-    if (firstFlaggedStep === -1 && flagged.length > 0) firstFlaggedStep = idx;
-  });
-
-  const stepPills = sections
-    .map((sec, idx) => {
-      const icon       = CATEGORY_ICONS[sec.category] || '📋';
-      const hasFlagged = sec.items.some((i) => i.status === 'Rework Required');
-      return `<button class="step-pill${hasFlagged ? ' flagged' : ''}" id="pill_${idx}" onclick="goToStep(${idx})" title="${esc(sec.category)}">
-        <span class="pill-num">${idx + 1}</span>
-        <span class="pill-label">${icon} ${esc(sec.category)}${hasFlagged ? ' ⚠️' : ''}</span>
-      </button>`;
-    })
-    .join('');
-
-  const panels = sections
-    .map((sec, idx) => {
-      const icon     = CATEGORY_ICONS[sec.category] || '📋';
-      const isLast   = idx === total - 1;
-      const uploaded = sec.items.filter((i) => i.status !== 'Missing').length;
-
-      const docsHtml = sec.items
-        .map((doc) => {
-          const st        = STATUS_STYLE[doc.status] || STATUS_STYLE['Missing'];
-          const canUpload = doc.status !== 'Reviewed';
-          return `
+function docRowHtml(doc, caseRef) {
+  const st        = STATUS_STYLE[doc.status] || STATUS_STYLE['Missing'];
+  const canUpload = doc.status !== 'Reviewed';
+  return `
         <div class="doc-row${doc.status === 'Rework Required' ? ' needs-action' : ''}"
              id="doc_${doc.id}"
              data-status="${esc(doc.status)}">
@@ -202,16 +215,97 @@ function formPage(caseRef, clientName, sections) {
             <div class="upload-msg" id="umsg_${doc.id}"></div>
           </div>
         </div>`;
-        })
-        .join('');
+}
+
+// ─── Main upload form ──────────────────────────────────────────────────────────
+
+/**
+ * @param {string}  caseRef
+ * @param {string}  clientName
+ * @param {Array}   members       - [{ memberType, sections: [{ category, items }] }]
+ * @param {boolean} isMultiMember - show member tabs when true
+ */
+function formPage(caseRef, clientName, members, isMultiMember) {
+  // Flatten all items for global counts
+  const allItems     = members.flatMap((m) => m.sections.flatMap((s) => s.items));
+  const totalDocs    = allItems.length;
+  const uploadedDocs = allItems.filter((i) => i.status !== 'Missing').length;
+  const pct          = totalDocs ? Math.round((uploadedDocs / totalDocs) * 100) : 0;
+
+  // Build flat step list: if single member → steps = categories;
+  // if multi-member → steps = members (each member is one step containing all its category sections)
+  let steps;
+  if (isMultiMember) {
+    steps = members.map((m) => ({
+      label:     m.memberType,
+      icon:      memberIcon(m.memberType),
+      items:     m.sections.flatMap((s) => s.items),
+      sections:  m.sections,
+      isMember:  true,
+    }));
+  } else {
+    // Single member: use flat category steps (original behaviour)
+    steps = members[0].sections.map((sec) => ({
+      label:    sec.category,
+      icon:     CATEGORY_ICONS[sec.category] || '📋',
+      items:    sec.items,
+      sections: [sec],
+      isMember: false,
+    }));
+  }
+
+  const total = steps.length;
+
+  let firstFlaggedStep = -1;
+  let flaggedCount     = 0;
+  steps.forEach((step, idx) => {
+    const flagged = step.items.filter((i) => i.status === 'Rework Required');
+    flaggedCount += flagged.length;
+    if (firstFlaggedStep === -1 && flagged.length > 0) firstFlaggedStep = idx;
+  });
+
+  const stepPills = steps
+    .map((step, idx) => {
+      const hasFlagged = step.items.some((i) => i.status === 'Rework Required');
+      return `<button class="step-pill${hasFlagged ? ' flagged' : ''}" id="pill_${idx}" onclick="goToStep(${idx})" title="${esc(step.label)}">
+        <span class="pill-num">${idx + 1}</span>
+        <span class="pill-label">${step.icon} ${esc(step.label)}${hasFlagged ? ' ⚠️' : ''}</span>
+      </button>`;
+    })
+    .join('');
+
+  const panels = steps
+    .map((step, idx) => {
+      const isLast   = idx === total - 1;
+      const uploaded = step.items.filter((i) => i.status !== 'Missing').length;
+
+      // Build body: if isMember, render category sub-headers within the panel;
+      // otherwise just render doc rows directly
+      let bodyHtml;
+      if (step.isMember) {
+        bodyHtml = step.sections.map((sec) => {
+          const catIcon  = CATEGORY_ICONS[sec.category] || '📋';
+          const catUpl   = sec.items.filter((i) => i.status !== 'Missing').length;
+          return `
+      <div class="cat-group">
+        <div class="cat-header">
+          <span class="cat-title">${catIcon} ${esc(sec.category)}</span>
+          <span class="cat-count">${catUpl} / ${sec.items.length}</span>
+        </div>
+        ${sec.items.map((doc) => docRowHtml(doc, caseRef)).join('')}
+      </div>`;
+        }).join('');
+      } else {
+        bodyHtml = step.items.map((doc) => docRowHtml(doc, caseRef)).join('');
+      }
 
       return `
     <div class="panel" id="panel_${idx}" style="display:none">
       <div class="panel-header">
-        <div class="panel-title">${icon} ${esc(sec.category)}</div>
-        <div class="panel-meta" id="pmeta_${idx}">${uploaded} of ${sec.items.length} uploaded</div>
+        <div class="panel-title">${step.icon} ${esc(step.label)}</div>
+        <div class="panel-meta" id="pmeta_${idx}">${uploaded} of ${step.items.length} uploaded</div>
       </div>
-      <div class="panel-body">${docsHtml}</div>
+      <div class="panel-body">${bodyHtml}</div>
       <div class="panel-footer">
         <div class="footer-right">
           ${idx > 0 ? `<button class="btn-nav btn-back" onclick="goToStep(${idx - 1})">← Back</button>` : ''}
@@ -298,6 +392,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .flagged-banner-btn{padding:.42rem 1rem;background:#d97706;color:#fff;border:none;border-radius:7px;font-size:.82rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .2s}
 .flagged-banner-btn:hover{background:#b45309}
 
+.cat-group{border-bottom:1px solid #f0f0f0}
+.cat-group:last-child{border-bottom:none}
+.cat-header{display:flex;align-items:center;justify-content:space-between;padding:.65rem 1.5rem .5rem;background:#fafafa;border-bottom:1px solid #f0f0f0}
+.cat-title{font-size:.82rem;font-weight:700;color:#555;letter-spacing:.01em}
+.cat-count{font-size:.73rem;color:#aaa;background:#f0f0f0;padding:.12rem .5rem;border-radius:99px}
 .panel-footer{display:flex;align-items:center;justify-content:flex-end;padding:.95rem 1.5rem;border-top:1px solid #f0f0f0;background:#fafafa;gap:.6rem}
 .btn-nav{padding:.58rem 1.25rem;border:none;border-radius:8px;font-size:.85rem;font-weight:600;cursor:pointer;transition:all .2s;font-family:inherit}
 .btn-back{background:#f0f0f0;color:#444}
@@ -502,6 +601,14 @@ function updatePanelMeta(idx) {
   });
   const meta = document.getElementById('pmeta_' + idx);
   if (meta) meta.textContent = uploaded + ' of ' + rows.length + ' uploaded';
+  // Also update cat-count badges inside member panels
+  panel.querySelectorAll('.cat-group').forEach((grp) => {
+    const grpRows = grp.querySelectorAll('.doc-row');
+    let grpUpl = 0;
+    grpRows.forEach((r) => { if (r.dataset.status && r.dataset.status !== 'Missing') grpUpl++; });
+    const badge = grp.querySelector('.cat-count');
+    if (badge) badge.textContent = grpUpl + ' / ' + grpRows.length;
+  });
 }
 
 async function submitDone() {
@@ -551,8 +658,8 @@ router.get('/:caseRef', async (req, res) => {
         )}`
       );
     }
-    const sections = groupByCategory(items);
-    res.send(formPage(caseRef, clientName, sections));
+    const { isMultiMember, members } = groupByMemberAndCategory(items);
+    res.send(formPage(caseRef, clientName, members, isMultiMember));
   } catch (err) {
     console.error('[DocForm] Error loading form:', err.message);
     res.redirect(

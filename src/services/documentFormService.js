@@ -19,9 +19,10 @@ const INTAKE_ID_COL       = 'text_mm0zfsp1';   // Template Board item ID (stored
 const CATEGORY_MIRROR_COL = 'lookup_mm0zqbvt'; // Document Category (mirror — often null)
 
 // Template Board columns
-const TMPL_DESC_COL         = 'long_text_mm0zmb7j'; // Description
-const TMPL_INSTRUCTIONS_COL = 'long_text_mm0z10mg'; // Client-Facing Instructions
-const TMPL_CATEGORY_COL     = 'dropdown_mm0x41zm';  // Document Category
+const TMPL_DESC_COL           = 'long_text_mm0zmb7j'; // Description
+const TMPL_INSTRUCTIONS_COL   = 'long_text_mm0z10mg'; // Client-Facing Instructions
+const TMPL_CATEGORY_COL       = 'dropdown_mm0x41zm';  // Document Category
+const TMPL_APPLICANT_TYPE_COL = 'dropdown_mm261bn6';  // Applicant Type (which member)
 
 // Client Master Board columns
 const CM_CASE_REF_COL = 'text_mm142s49'; // Case Reference Number
@@ -134,7 +135,8 @@ async function getCaseDocuments(caseRef) {
            column_values(ids: [
              "${TMPL_DESC_COL}",
              "${TMPL_INSTRUCTIONS_COL}",
-             "${TMPL_CATEGORY_COL}"
+             "${TMPL_CATEGORY_COL}",
+             "${TMPL_APPLICANT_TYPE_COL}"
            ]) { id text }
          }
        }`,
@@ -147,6 +149,7 @@ async function getCaseDocuments(caseRef) {
         description:        tc(TMPL_DESC_COL),
         clientInstructions: tc(TMPL_INSTRUCTIONS_COL),
         category:           tc(TMPL_CATEGORY_COL),
+        applicantType:      tc(TMPL_APPLICANT_TYPE_COL) || 'Principal Applicant',
       };
     }
   }
@@ -167,6 +170,7 @@ async function getCaseDocuments(caseRef) {
         documentCode:       c(DOC_CODE_COL),
         status:             c(DOC_STATUS_COL) || 'Missing',
         category,
+        applicantType:      tmpl.applicantType || 'Principal Applicant',
         lastUpload:         c(UPLOAD_DATE_COL),
         description:        tmpl.description        || '',
         clientInstructions: tmpl.clientInstructions || '',
@@ -175,8 +179,15 @@ async function getCaseDocuments(caseRef) {
       };
     })
     .sort((a, b) => {
+      // Primary: applicant type (Principal Applicant first)
+      const aType = a.applicantType || 'Principal Applicant';
+      const bType = b.applicantType || 'Principal Applicant';
+      if (aType < bType) return -1;
+      if (aType > bType) return  1;
+      // Secondary: category
       if (a.category < b.category) return -1;
       if (a.category > b.category) return  1;
+      // Tertiary: document code
       return (a.documentCode || '').localeCompare(
         b.documentCode || '', undefined, { numeric: true }
       );
