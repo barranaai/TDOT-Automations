@@ -205,9 +205,10 @@ function docRowHtml(doc, caseRef) {
             <label class="btn-upload" for="file_${doc.id}">
               ${doc.status === 'Missing' ? '⬆ Upload' : '🔄 Re-upload'}
             </label>
-            <input type="file" id="file_${doc.id}" style="display:none"
+            <input type="file" id="file_${doc.id}" style="display:none" multiple
               accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.heic,.webp,.xlsx,.xls,.csv,.zip"
               onchange="handleUpload('${esc(doc.id)}', '${esc(caseRef)}', this)">
+            <div class="upload-hint">Multiple files allowed</div>
             ` : '<span class="reviewed-tag">✓ Reviewed</span>'}
             <div class="upload-progress" id="prog_${doc.id}" style="display:none">
               <div class="progress-bar-inner" id="pbar_${doc.id}"></div>
@@ -382,6 +383,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .btn-upload{display:inline-flex;align-items:center;padding:.38rem .9rem;background:var(--brand);color:#fff;border-radius:7px;font-size:.78rem;font-weight:700;cursor:pointer;transition:background .2s;white-space:nowrap;letter-spacing:.01em}
 .btn-upload:hover{background:var(--brand-dark)}
 .reviewed-tag{font-size:.78rem;color:#059669;font-weight:600}
+.upload-hint{font-size:.68rem;color:#bbb;text-align:right;margin-top:.1rem}
 .upload-progress{width:110px;height:3px;background:#e8e8e8;border-radius:99px;overflow:hidden;margin-top:.25rem}
 .progress-bar-inner{height:3px;background:var(--brand);border-radius:99px;width:0;transition:width .3s}
 .upload-msg{font-size:.73rem;color:#888;text-align:right;min-height:1em}
@@ -473,7 +475,7 @@ let uploadedCount = ${uploadedDocs};
 let totalCount    = ${totalDocs};
 
 const FLAGGED_SECTIONS = new Set(${JSON.stringify(
-  sections
+  steps
     .map((sec, idx) => (sec.items.some((i) => i.status === 'Rework Required') ? idx : -1))
     .filter((i) => i !== -1)
 )});
@@ -534,8 +536,8 @@ function showToast(msg, type = 'success') {
 }
 
 async function handleUpload(itemId, caseRef, input) {
-  const file = input.files[0];
-  if (!file) return;
+  const files = Array.from(input.files);
+  if (!files.length) return;
 
   const prog  = document.getElementById('prog_'  + itemId);
   const pbar  = document.getElementById('pbar_'  + itemId);
@@ -543,52 +545,83 @@ async function handleUpload(itemId, caseRef, input) {
   const row   = document.getElementById('doc_'   + itemId);
   const label = row.querySelector('.btn-upload');
 
+  const wasAlreadyUploaded = row.dataset.status && row.dataset.status !== 'Missing';
+
   prog.style.display = 'block';
-  pbar.style.width   = '30%';
-  msg.textContent    = 'Uploading…';
+  pbar.style.width   = '0%';
+  msg.textContent    = files.length > 1 ? \`Uploading 1 of \${files.length}…\` : 'Uploading…';
+  msg.style.color    = '#888';
   if (label) { label.style.pointerEvents = 'none'; label.style.opacity = '.6'; }
 
-  const formData = new FormData();
-  formData.append('file', file);
+  let succeeded = 0;
+  let failed    = 0;
+  const failedNames = [];
 
-  try {
-    pbar.style.width = '60%';
-    const res  = await fetch(
-      '/documents/' + encodeURIComponent(caseRef) + '/upload/' + itemId,
-      { method: 'POST', body: formData }
-    );
-    const data = await res.json();
-    pbar.style.width = '100%';
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    // Progress reflects files done so far
+    pbar.style.width = Math.round((i / files.length) * 90) + '%';
+    if (files.length > 1) {
+      msg.textContent = \`Uploading \${i + 1} of \${files.length}: \${file.name}\`;
+    }
 
-    if (data.success) {
-      msg.textContent    = '✓ Uploaded successfully';
-      msg.style.color    = '#10b981';
-      row.dataset.status = 'Received';
+    const formData = new FormData();
+    formData.append('file', file);
 
-      const statusEl = row.querySelector('.doc-status');
-      if (statusEl) {
-        statusEl.style.background = '#eff6ff';
-        statusEl.style.color      = '#2563eb';
-        statusEl.innerHTML = '<span style="background:#2563eb;width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:.35rem"></span>Received';
+    try {
+      const res  = await fetch(
+        '/documents/' + encodeURIComponent(caseRef) + '/upload/' + itemId,
+        { method: 'POST', body: formData }
+      );
+      const data = await res.json();
+
+      if (data.success) {
+        succeeded++;
+      } else {
+        failed++;
+        failedNames.push(file.name);
+        showToast('Failed: ' + file.name, 'error');
       }
+    } catch (e) {
+      failed++;
+      failedNames.push(file.name);
+      showToast('Network error: ' + file.name, 'error');
+    }
+  }
+
+  pbar.style.width = '100%';
+
+  if (succeeded > 0) {
+    const uploadLabel = succeeded === 1 ? '1 file' : succeeded + ' files';
+    msg.textContent = failed === 0
+      ? (files.length > 1 ? \`✓ \${uploadLabel} uploaded\` : '✓ Uploaded successfully')
+      : \`✓ \${uploadLabel} uploaded, \${failed} failed\`;
+    msg.style.color = failed > 0 ? '#d97706' : '#10b981';
+
+    row.dataset.status = 'Received';
+    const statusEl = row.querySelector('.doc-status');
+    if (statusEl) {
+      statusEl.style.background = '#eff6ff';
+      statusEl.style.color      = '#2563eb';
+      statusEl.innerHTML = '<span style="background:#2563eb;width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:.35rem"></span>Received';
+    }
+
+    if (!wasAlreadyUploaded) {
       uploadedCount++;
       updateProgress();
       updatePanelMeta(currentStep);
-      showToast('Document uploaded!');
-    } else {
-      msg.textContent = '⚠ ' + (data.error || 'Upload failed. Please try again.');
-      msg.style.color = '#dc2626';
-      showToast('Upload failed', 'error');
     }
-  } catch (e) {
-    msg.textContent = '⚠ Network error. Please try again.';
+
+    showToast(files.length > 1 ? \`\${succeeded} file\${succeeded !== 1 ? 's' : ''} uploaded!\` : 'Document uploaded!');
+  } else {
+    msg.textContent = '⚠ All uploads failed. Please try again.';
     msg.style.color = '#dc2626';
-    showToast('Network error', 'error');
-  } finally {
-    setTimeout(() => { prog.style.display = 'none'; pbar.style.width = '0'; }, 1500);
-    if (label) { label.style.pointerEvents = ''; label.style.opacity = ''; }
-    input.value = '';
+    showToast('Upload failed', 'error');
   }
+
+  setTimeout(() => { prog.style.display = 'none'; pbar.style.width = '0'; }, 1800);
+  if (label) { label.style.pointerEvents = ''; label.style.opacity = ''; }
+  input.value = '';
 }
 
 function updatePanelMeta(idx) {
