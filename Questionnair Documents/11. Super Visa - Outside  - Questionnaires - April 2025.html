@@ -5,17 +5,74 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Super Visa Outside Canada – Questionnaire</title>
 <style>
+
 :root {
+
+  --brand: #8f0505;
+
+  --brand-dark: #6d0404;
+
   --orange: #ED7D31;
-  --red: #D32F2F;
-  --light-bg: #FFF8F0;
-  --border: #E0E0E0;
-  --text: #333;
-  --white: #FFFFFF;
-  --shadow: 0 2px 8px rgba(0,0,0,0.08);
+
+  --red: #8f0505;
+
+  --dark: #111827;
+
+  --light-bg: #eceef1;
+
+  --border: #e5e7eb;
+
+  --white: #fff;
+
+  --shadow: 0 4px 20px rgba(0,0,0,.08);
+
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #F5F5F5; color: var(--text); line-height: 1.5; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #eceef1; color: var(--text); line-height: 1.5; }
+
+.header {
+  background: #1a1a1a;
+  color: #fff;
+  padding: 0.7rem 1.6rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 20px rgba(0,0,0,.5);
+  border-bottom: 2px solid #8f0505;
+}
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  flex-shrink: 0;
+}
+.header-logo {
+  height: 30px;
+  object-fit: contain;
+}
+.header-divider {
+  width: 1px;
+  height: 24px;
+  background: rgba(255,255,255,.15);
+  flex-shrink: 0;
+}
+.header-info h1 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+}
+.header-info .subtitle {
+  font-size: 0.68rem;
+  color: rgba(255,255,255,.38);
+  margin-top: 0.1rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 .container { max-width: 960px; margin: 0 auto; padding: 20px; }
 h1 { text-align: center; color: var(--red); font-size: 1.6rem; margin-bottom: 6px; }
 .subtitle { text-align: center; color: #666; font-size: 0.95rem; margin-bottom: 20px; }
@@ -89,9 +146,17 @@ table.dynamic-table td input, table.dynamic-table td select { font-size: 0.85rem
 </style>
 </head>
 <body>
+<div class="header">
+  <div class="header-brand">
+    <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration" class="header-logo">
+    <div class="header-divider"></div>
+  </div>
+  <div class="header-info">
+    <h1>Questionnaire for Temporary Resident Application</h1>
+    <p class="subtitle">TDOT Immigration · Client Portal</p>
+  </div>
+</div>
 <div class="container">
-  <h1>Questionnaire for Temporary Resident Application</h1>
-  <p class="subtitle">Super Visa Outside Canada</p>
   <div class="instructions"><strong>PLEASE READ ALL INSTRUCTIONS BEFORE ANSWERING THE QUESTIONS</strong></div>
 
   <!-- ===================== SECTION 1 - PROFILE DETAILS ===================== -->
