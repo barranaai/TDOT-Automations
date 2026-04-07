@@ -2,7 +2,7 @@
  * OneDrive Service
  *
  * Creates per-client folder structures in the noreply@tdotimm.com OneDrive for Business
- * and generates organisation-scoped sharing links for each Document Category subfolder.
+ * and uploads client documents organised by Document Category.
  *
  * Folder structure:
  *   OneDrive (noreply@tdotimm.com)
@@ -10,7 +10,6 @@
  *       └── {Client Name} - {Case Reference}/
  *           ├── Identity/
  *           ├── Legal/
- *           ├── Medical/
  *           └── (one subfolder per unique Document Category in the checklist)
  */
 
@@ -21,20 +20,33 @@ const DRIVE_USER  = process.env.MS_FROM_EMAIL || 'noreply@tdotimm.com';
 const ROOT_FOLDER = 'Client Documents';
 const GRAPH_BASE  = 'https://graph.microsoft.com/v1.0';
 
-// ─── URL helpers ─────────────────────────────────────────────────────────────
+// ─── Token cache ──────────────────────────────────────────────────────────────
+// Access tokens are valid for ~60 minutes. We cache for 55 minutes to avoid
+// fetching a new token on every upload operation.
+
+let _cachedToken  = null;
+let _tokenExpiry  = 0;
+
+async function getCachedToken() {
+  if (_cachedToken && Date.now() < _tokenExpiry) return _cachedToken;
+  _cachedToken = await getAccessToken();
+  _tokenExpiry  = Date.now() + 55 * 60 * 1000; // 55 minutes
+  console.log('[OneDrive] Access token refreshed');
+  return _cachedToken;
+}
+
+// ─── URL helpers ──────────────────────────────────────────────────────────────
 
 function userBase() {
   return `${GRAPH_BASE}/users/${encodeURIComponent(DRIVE_USER)}/drive`;
 }
 
-/** POST target for creating a child inside a given path (or at root if no path). */
 function childrenUrl(parentPath) {
   if (!parentPath) return `${userBase()}/root/children`;
   const encoded = parentPath.split('/').map(encodeURIComponent).join('/');
   return `${userBase()}/root:/${encoded}:/children`;
 }
 
-/** GET / PATCH target for an item at a given path. */
 function itemUrl(path) {
   const encoded = path.split('/').map(encodeURIComponent).join('/');
   return `${userBase()}/root:/${encoded}:`;
@@ -43,11 +55,14 @@ function itemUrl(path) {
 // ─── Core helpers ─────────────────────────────────────────────────────────────
 
 /**
- * Create a folder inside parentPath (or at drive root if parentPath is null).
+ * Create a folder at parentPath/folderName.
  * If the folder already exists (409), fetch and return the existing item.
  */
 async function ensureFolder(token, parentPath, folderName) {
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const headers = {
+    Authorization:  `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
 
   try {
     const res = await axios.post(
@@ -58,20 +73,19 @@ async function ensureFolder(token, parentPath, folderName) {
     return { id: res.data.id, webUrl: res.data.webUrl };
   } catch (err) {
     if (err.response?.status === 409) {
+      // Folder already exists — fetch the existing item
       const fullPath = parentPath ? `${parentPath}/${folderName}` : folderName;
       const res = await axios.get(itemUrl(fullPath), { headers });
       return { id: res.data.id, webUrl: res.data.webUrl };
     }
-    // Log the full Graph API error body for diagnosis
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error(`[OneDrive] API error creating "${folderName}" under "${parentPath || 'root'}": ${detail}`);
+    console.error(`[OneDrive] Error creating folder "${folderName}" under "${parentPath || 'root'}": ${detail}`);
     throw err;
   }
 }
 
 /**
- * Generate an organisation-scoped edit sharing link.
- * Any member of the organisation can open it without individual sharing.
+ * Generate an organisation-scoped edit sharing link for a folder.
  */
 async function createOrgLink(token, itemId) {
   const res = await axios.post(
@@ -85,7 +99,7 @@ async function createOrgLink(token, itemId) {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Create the client folder structure in OneDrive and return a sharing link
+ * Create the full client folder structure in OneDrive and return a sharing link
  * per Document Category.
  *
  * @param {{
@@ -101,32 +115,17 @@ async function createClientFolders({ clientName, caseRef, categories }) {
     return {};
   }
 
-  let token;
-  try {
-    console.log('[OneDrive] Acquiring MS Graph access token...');
-    token = await getAccessToken();
-    console.log('[OneDrive] Token acquired successfully');
-  } catch (err) {
-    const detail = err.response?.data
-      ? JSON.stringify(err.response.data)
-      : err.message;
-    console.error('[OneDrive] Token acquisition failed:', detail);
-    throw err;
-  }
+  const token = await getCachedToken();
 
-  // Sanitise folder name — remove characters not allowed in OneDrive paths
   const safeName   = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
   const clientPath = `${ROOT_FOLDER}/${safeName}`;
 
-  // 1. Ensure root "Client Documents" folder
   await ensureFolder(token, null, ROOT_FOLDER);
   console.log(`[OneDrive] Root folder ready: ${ROOT_FOLDER}`);
 
-  // 2. Ensure client folder
   await ensureFolder(token, ROOT_FOLDER, safeName);
   console.log(`[OneDrive] Client folder ready: ${clientPath}`);
 
-  // 3. Create one subfolder per unique category and generate a sharing link
   const categoryLinks = {};
 
   for (const category of categories) {
@@ -137,18 +136,17 @@ async function createClientFolders({ clientName, caseRef, categories }) {
       categoryLinks[category] = sharingUrl;
       console.log(`[OneDrive] ✓ ${category} → ${sharingUrl}`);
     } catch (err) {
-      console.error(`[OneDrive] Failed to create folder for category "${category}":`, err.message);
+      console.error(`[OneDrive] Failed to create folder for category "${category}": ${err.message}`);
     }
-    await new Promise(r => setTimeout(r, 150));
   }
 
   return categoryLinks;
 }
 
 /**
- * Upload a file buffer into the client's category subfolder in OneDrive.
- * If a file with the same name already exists, OneDrive automatically keeps
- * the previous version in version history (replace behaviour).
+ * Upload a file buffer to the client's category subfolder in OneDrive.
+ * Uses a PUT to the full path — Graph API creates parent folders automatically
+ * if they don't exist. Existing files are replaced (version history is kept).
  *
  * @param {{
  *   clientName: string,
@@ -161,11 +159,10 @@ async function createClientFolders({ clientName, caseRef, categories }) {
  * @returns {Promise<string>} webUrl of the uploaded file
  */
 async function uploadFile({ clientName, caseRef, category, filename, buffer, mimeType }) {
-  const token    = await getAccessToken();
+  const token    = await getCachedToken();
   const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
   const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim() || 'document';
 
-  // PUT /drive/root:/{path}/{filename}:/content  → creates or replaces the file
   const filePath = `${ROOT_FOLDER}/${safeName}/${category}/${safeFile}`;
   const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
   const url      = `${userBase()}/root:/${encoded}:/content`;
@@ -179,29 +176,36 @@ async function uploadFile({ clientName, caseRef, category, filename, buffer, mim
       maxContentLength: Infinity,
       maxBodyLength:    Infinity,
     });
-    console.log(`[OneDrive] File uploaded → ${res.data.webUrl}`);
+    console.log(`[OneDrive] Uploaded → ${res.data.webUrl}`);
     return res.data.webUrl;
   } catch (err) {
+    // If token expired mid-operation, invalidate cache and retry once
+    if (err.response?.status === 401) {
+      console.warn('[OneDrive] 401 on upload — invalidating token cache and retrying');
+      _cachedToken = null;
+      _tokenExpiry = 0;
+      return uploadFile({ clientName, caseRef, category, filename, buffer, mimeType });
+    }
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error(`[OneDrive] File upload failed (${err.response?.status}): ${detail}`);
+    console.error(`[OneDrive] Upload failed (${err.response?.status}): ${detail}`);
     throw new Error(`OneDrive upload failed: ${detail}`);
   }
 }
 
 /**
- * Read a file from the client's folder in OneDrive and return its content as a Buffer.
- * Returns null if the file does not exist (404 from Graph API).
+ * Read a file from the client's OneDrive folder and return it as a Buffer.
+ * Returns null if the file does not exist (404).
  *
  * @param {{
  *   clientName: string,
  *   caseRef:    string,
- *   subfolder:  string,   e.g. 'Questionnaire'
+ *   subfolder:  string,
  *   filename:   string,
  * }} params
  * @returns {Promise<Buffer|null>}
  */
 async function readFile({ clientName, caseRef, subfolder, filename }) {
-  const token    = await getAccessToken();
+  const token    = await getCachedToken();
   const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
   const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim();
 
@@ -223,13 +227,13 @@ async function readFile({ clientName, caseRef, subfolder, filename }) {
 }
 
 /**
- * Ensure the client root folder exists in OneDrive (creates it if missing).
- * Safe to call before the document-upload flow has run — will not duplicate folders.
+ * Ensure the client root folder exists in OneDrive.
+ * Safe to call before any uploads — will not duplicate folders.
  *
  * @param {{ clientName: string, caseRef: string }} params
  */
 async function ensureClientFolder({ clientName, caseRef }) {
-  const token    = await getAccessToken();
+  const token    = await getCachedToken();
   const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
 
   await ensureFolder(token, null, ROOT_FOLDER);
