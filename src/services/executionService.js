@@ -12,6 +12,8 @@ const EXEC_COLS = {
   caseSubType:         'text_mm17zdy7',
   intakeItemId:        'text_mm0zfsp1',
   documentFolder:      'link_mm1yrnz1',            // OneDrive category folder URL
+  applicantType:       'text_mm26jcv7',            // Applicant Type (direct text — no mirror)
+  documentCategory:    'text_mm261tka',            // Document Category (direct text — no mirror)
 };
 
 // The single execution group — rename this in Monday to "Active Cases Execution" if desired
@@ -82,6 +84,7 @@ async function createExecutionItem(itemData) {
     templateItemId,
     folderUrl,
     documentCategory,
+    applicantType,
   } = itemData;
 
   // Monday.com silently ignores board_relation columns set inside create_item.
@@ -94,6 +97,9 @@ async function createExecutionItem(itemData) {
     [EXEC_COLS.caseSubType]:         caseSubType,
     [EXEC_COLS.intakeItemId]:        templateItemId,
   };
+
+  if (documentCategory) createColValues[EXEC_COLS.documentCategory] = documentCategory;
+  if (applicantType)    createColValues[EXEC_COLS.applicantType]     = applicantType;
 
   if (folderUrl) {
     createColValues[EXEC_COLS.documentFolder] = {
@@ -203,6 +209,7 @@ async function createMissingExecutionItems({ caseRef, clientMasterItemId, templa
         templateItemId:     tmpl.id,
         folderUrl,
         documentCategory:   tmpl.documentCategory,
+        applicantType:      tmpl.applicantType,
       });
       console.log(`[ExecutionService] Created: "${tmpl.name}" (id: ${result?.id})${folderUrl ? ' + folder link' : ''}`);
       created++;
