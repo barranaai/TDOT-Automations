@@ -85,7 +85,6 @@ router.get('/auth/monday', (req, res) => {
   const url = new URL('https://auth.monday.com/oauth2/authorize');
   url.searchParams.set('client_id',     MONDAY_CLIENT_ID);
   url.searchParams.set('redirect_uri',  REDIRECT_URI);
-  url.searchParams.set('scope',         'me:read');
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('state',         state);
 
