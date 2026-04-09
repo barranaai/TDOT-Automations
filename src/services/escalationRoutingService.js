@@ -63,7 +63,7 @@ const mondayApi             = require('./mondayApi');
 const { sendEmail }         = require('./microsoftMailService');
 const { clientMasterBoardId } = require('../../config/monday');
 
-const ESC_BOARD_ID   = process.env.MONDAY_ESCALATION_BOARD_ID || '18402406604';
+const ESC_BOARD_ID   = process.env.MONDAY_ESCALATION_MATRIX_BOARD_ID || '18402406604';
 const BASE_URL       = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
 const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
 

@@ -93,7 +93,7 @@ function calcDelayLevel(chasingStage, reminderCount, inactivityDays) {
   ) return 'High';
 
   if (
-    chasingStage === 'R2 Sent' ||
+    chasingStage === 'Reminder 2 Sent' ||
     chasingStage === 'Final Notice Sent' ||
     reminderCount >= 2 ||
     inactivityDays > 10
