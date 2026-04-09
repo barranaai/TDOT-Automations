@@ -657,13 +657,13 @@ function dismissDisclaimer() {
   if (!document.getElementById('discCheck').checked) return;
   overlay.style.opacity    = '0';
   overlay.style.transition = 'opacity .25s';
-  setTimeout(() => { overlay.style.display = 'none'; }, 260);
+  setTimeout(() => {
+    overlay.style.display        = 'none';
+    document.body.style.overflow = '';   // restore page scrolling
+  }, 260);
 }
 // Prevent background scroll while modal is open
 document.body.style.overflow = 'hidden';
-document.getElementById('discOverlay').addEventListener('transitionend', function() {
-  if (this.style.display === 'none') document.body.style.overflow = '';
-});
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FLAGGED_SECTIONS = new Set(${JSON.stringify(
