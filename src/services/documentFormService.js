@@ -15,10 +15,11 @@ function getDisclaimerMap() {
   return _disclaimerMap;
 }
 
-const DEFAULT_DISCLAIMER =
-  'Documents accepted in English/French. If in another language, please include the original, ' +
-  'a copy with stamp, and the translated document with stamp. Only well-scanned documents will ' +
-  'be accepted. Our team may ask for additional documents or information as we review.';
+const DEFAULT_DISCLAIMER = [
+  'Documents accepted in English/French. If in another language, please include the original, a copy with stamp, and the translated document with stamp.',
+  'Only well-scanned documents will be accepted.',
+  'Our team may ask for additional documents or information as we review.',
+];
 
 // ─── Board / Column IDs ───────────────────────────────────────────────────────
 

@@ -233,19 +233,34 @@ function extractDisclaimer(text) {
     }
   }
 
-  let result = disclaimerLines.join(' ').replace(/\s+/g, ' ').trim();
+  let raw = disclaimerLines.join(' ').replace(/\s+/g, ' ').trim();
 
   // Strip anything from "Documents for the..." onwards if it leaked through
-  result = result.replace(/\s*Documents for the\b.*/i, '').trim();
-  result = result.replace(/\s*►\s*Documents\b.*/i, '').trim();
+  raw = raw.replace(/\s*Documents for the\b.*/i, '').trim();
+  raw = raw.replace(/\s*►\s*Documents\b.*/i, '').trim();
   // Strip trailing website / address artifacts
-  result = result.replace(/\s*tdotimm\.com\b.*/i, '').trim();
-  result = result.replace(/\s*20 de boers\b.*/i, '').trim();
+  raw = raw.replace(/\s*tdotimm\.com\b.*/i, '').trim();
+  raw = raw.replace(/\s*20 de boers\b.*/i, '').trim();
   // Fix font-encoding space artifacts (e.g. "o ther" → "other", "sca nned" → "scanned")
-  result = result.replace(/\bo ther\b/g, 'other');
-  result = result.replace(/\bsca nned\b/g, 'scanned');
+  raw = raw.replace(/\bo ther\b/g, 'other');
+  raw = raw.replace(/\bsca nned\b/g, 'scanned');
+  // Fix "document s" typo
+  raw = raw.replace(/\bdocument s\b/g, 'documents');
+  // Remove checkbox symbol artifact
+  raw = raw.replace(/☑/g, '').replace(/\s{2,}/g, ' ').trim();
 
-  return result;
+  // ── Remove the AI/Artificial Intelligence sentence entirely ──────────────────
+  raw = raw.replace(/This application is processed by Artificial Intelligence[^.]*\./gi, '').trim();
+  raw = raw.replace(/\s{2,}/g, ' ').trim();
+
+  // ── Split into individual bullet points ───────────────────────────────────────
+  // Split on sentence boundaries: ". ", "! ", "; " where the next word is capitalised
+  const bullets = raw
+    .split(/(?<=[.!])\s+(?=[A-Z])/)
+    .map(s => s.trim().replace(/[.!]+$/, '').trim())  // strip trailing punctuation
+    .filter(s => s.length > 10);                       // drop very short fragments
+
+  return bullets;
 }
 
 // ─── Walk PDFs ─────────────────────────────────────────────────────────────────
@@ -292,14 +307,15 @@ async function main() {
 
     const key = `${mapping.caseType}|${mapping.subType}`;
 
-    if (!disclaimer) {
+    if (!disclaimer || !disclaimer.length) {
       console.warn(`  ❌ No disclaimer found in: ${basename}`);
       continue;
     }
 
     disclaimerMap[key] = disclaimer;
-    console.log(`  ✅ [${key}]`);
-    console.log(`     "${disclaimer.substring(0, 100)}…"\n`);
+    console.log(`  ✅ [${key}]  (${disclaimer.length} bullets)`);
+    disclaimer.forEach((b, i) => console.log(`     ${i + 1}. ${b.substring(0, 90)}`));
+    console.log('');
   }
 
   // Save

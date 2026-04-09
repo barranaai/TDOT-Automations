@@ -221,13 +221,13 @@ function docRowHtml(doc, caseRef) {
 // ─── Main upload form ──────────────────────────────────────────────────────────
 
 /**
- * @param {string}  caseRef
- * @param {string}  clientName
- * @param {Array}   members       - [{ memberType, sections: [{ category, items }] }]
- * @param {boolean} isMultiMember - show member tabs when true
- * @param {string}  disclaimer    - case-specific disclaimer text from PDF
+ * @param {string}   caseRef
+ * @param {string}   clientName
+ * @param {Array}    members       - [{ memberType, sections: [{ category, items }] }]
+ * @param {boolean}  isMultiMember - show member tabs when true
+ * @param {string[]} disclaimer    - case-specific disclaimer bullets from PDF
  */
-function formPage(caseRef, clientName, members, isMultiMember, disclaimer = '') {
+function formPage(caseRef, clientName, members, isMultiMember, disclaimer = []) {
   // Flatten all items for global counts
   const allItems     = members.flatMap((m) => m.sections.flatMap((s) => s.items));
   const totalDocs    = allItems.length;
@@ -472,6 +472,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .disc-label{font-size:.65rem;font-weight:800;color:var(--brand);letter-spacing:.12em;text-transform:uppercase;margin-bottom:.7rem;display:flex;align-items:center;gap:.4rem}
 .disc-label::before{content:'';display:inline-block;width:3px;height:13px;background:var(--brand);border-radius:2px}
 .disc-text{background:#fef2f2;border:1.5px solid rgba(143,5,5,.15);border-radius:10px;padding:1rem 1.15rem;font-size:.84rem;color:#374151;line-height:1.75;margin-bottom:1.5rem}
+.disc-text ul{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:.55rem}
+.disc-text li{display:flex;align-items:flex-start;gap:.65rem}
+.disc-text li::before{content:'';display:block;width:6px;height:6px;border-radius:50%;background:var(--brand);margin-top:.52em;flex-shrink:0}
 .disc-footer{display:flex;align-items:center;gap:.75rem}
 .disc-checkbox-wrap{display:flex;align-items:center;gap:.55rem;cursor:pointer;flex:1}
 .disc-checkbox-wrap input[type=checkbox]{width:17px;height:17px;accent-color:var(--brand);cursor:pointer;flex-shrink:0}
@@ -501,7 +504,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
     </div>
     <div class="disc-body">
       <div class="disc-label">Disclaimer</div>
-      <div class="disc-text">${esc(disclaimer)}</div>
+      <div class="disc-text">
+        <ul>${(Array.isArray(disclaimer) ? disclaimer : [disclaimer])
+          .map(b => `<li><span>${esc(b.trim())}</span></li>`)
+          .join('')}</ul>
+      </div>
       <div class="disc-footer">
         <label class="disc-checkbox-wrap">
           <input type="checkbox" id="discCheck" onchange="toggleDiscBtn()">
