@@ -71,6 +71,83 @@ function esc(str = '') {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * Convert raw Client-Facing Instruction text into structured HTML.
+ *
+ * Detection order:
+ *  1. Existing bullet chars (•, -, –) → split into <ul><li> list
+ *  2. Multi-line text (newline-separated) → each line becomes a <li>
+ *  3. Single line with multiple sentences → split on sentence boundaries
+ *  4. Single sentence → plain <span> (no bullet list needed)
+ *
+ * URLs are always rendered as clickable <a> links.
+ */
+function formatInstructions(raw) {
+  if (!raw || !raw.trim()) return '';
+  const text = raw.trim();
+
+  // Render a text fragment safely, converting bare URLs to clickable links
+  function renderFrag(str) {
+    const parts = str.split(/(https?:\/\/\S+)/);
+    return parts.map((part, i) =>
+      i % 2 === 1
+        ? `<a href="${esc(part)}" target="_blank" rel="noopener noreferrer">${esc(part)}</a>`
+        : esc(part)
+    ).join('');
+  }
+
+  function wrapItems(arr) {
+    const clean = arr.map(s => s.trim()).filter(s => s.length > 2);
+    if (clean.length === 1) return `<span>${renderFrag(clean[0])}</span>`;
+    return `<ul>${clean.map(s => `<li>${renderFrag(s)}</li>`).join('')}</ul>`;
+  }
+
+  // ── 1. Already uses bullet characters (•  -  –) ──────────────────────────
+  if (/^[•\-–]\s/m.test(text)) {
+    const lines  = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const bullets = [];
+    let cur = '';
+    for (const line of lines) {
+      if (/^[•\-–]\s/.test(line)) {
+        if (cur) bullets.push(cur);
+        cur = line.replace(/^[•\-–]\s+/, '').trim();
+      } else if (cur) {
+        cur += ' ' + line;         // continuation of previous bullet
+      } else {
+        bullets.push(line);        // header-like line before first bullet
+      }
+    }
+    if (cur) bullets.push(cur);
+    if (bullets.length > 0) return wrapItems(bullets);
+  }
+
+  // ── 2. Multi-line text ────────────────────────────────────────────────────
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length > 1) {
+    // Merge continuation lines (no sentence-ending punctuation + starts lowercase)
+    const merged = [];
+    for (const line of lines) {
+      const last = merged[merged.length - 1];
+      if (last && !/[.!?:,]$/.test(last) && /^[a-z]/.test(line)) {
+        merged[merged.length - 1] = last + ' ' + line;
+      } else {
+        merged.push(line);
+      }
+    }
+    return wrapItems(merged);
+  }
+
+  // ── 3. Single line — split on sentence boundaries ────────────────────────
+  const sentences = text
+    .split(/(?<=[.!])\s+(?=[A-Z])/)
+    .map(s => s.trim())
+    .filter(s => s.length > 5);
+  if (sentences.length > 1) return wrapItems(sentences);
+
+  // ── 4. Single sentence ────────────────────────────────────────────────────
+  return `<span>${renderFrag(text)}</span>`;
+}
+
 // Canonical order for member types (Principal Applicant always first)
 const MEMBER_ORDER = [
   'Principal Applicant',
@@ -193,7 +270,7 @@ function docRowHtml(doc, caseRef) {
               <div class="doc-review-note-header">💬 Feedback from your case officer</div>
               <div class="doc-review-note-body">${doc.reviewNotes ? esc(doc.reviewNotes) : 'Please re-upload this document with the necessary corrections.'}</div>
             </div>` : ''}
-            ${doc.clientInstructions ? `<div class="doc-instructions">💡 ${esc(doc.clientInstructions)}</div>` : ''}
+            ${doc.clientInstructions ? `<div class="doc-instructions">💡 ${formatInstructions(doc.clientInstructions)}</div>` : ''}
             ${doc.lastUpload ? `<div class="doc-meta">Last uploaded: ${esc(doc.lastUpload)}</div>` : ''}
           </div>
           <div class="doc-actions">
@@ -399,7 +476,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .badge.action-required{background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange-border)}
 .doc-name{font-size:.93rem;font-weight:600;color:var(--gray-900);line-height:1.45}
 .doc-desc{font-size:.8rem;color:var(--gray-500);margin-top:.32rem;line-height:1.55}
-.doc-instructions{font-size:.79rem;color:#92400e;background:var(--amber-bg);border:1px solid var(--amber-border);border-left:3px solid #f59e0b;padding:.5rem .75rem;border-radius:var(--radius-sm);margin-top:.45rem;line-height:1.6;white-space:pre-line}
+.doc-instructions{font-size:.79rem;color:#92400e;background:var(--amber-bg);border:1px solid var(--amber-border);border-left:3px solid #f59e0b;padding:.5rem .75rem;border-radius:var(--radius-sm);margin-top:.45rem;line-height:1.6}
+.doc-instructions ul{list-style:none;padding:0;margin:.2rem 0 0;display:flex;flex-direction:column;gap:.3rem}
+.doc-instructions li{display:flex;align-items:flex-start;gap:.5rem}
+.doc-instructions li::before{content:'';display:block;width:5px;height:5px;border-radius:50%;background:#f59e0b;margin-top:.52em;flex-shrink:0}
+.doc-instructions a{color:#92400e;text-decoration:underline;word-break:break-all}
 .doc-review-note{background:var(--orange-bg);border:1px solid var(--orange-border);border-left:4px solid var(--orange);border-radius:var(--radius-sm);margin-top:.55rem;overflow:hidden}
 .doc-review-note-header{font-size:.71rem;font-weight:700;color:#c2410c;padding:.35rem .75rem;background:#ffedd5;border-bottom:1px solid var(--orange-border);letter-spacing:.03em;text-transform:uppercase}
 .doc-review-note-body{font-size:.82rem;color:#7c2d12;padding:.45rem .75rem;line-height:1.55}
