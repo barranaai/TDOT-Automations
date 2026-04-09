@@ -1,6 +1,24 @@
+const path      = require('path');
+const fs        = require('fs');
 const mondayApi = require('./mondayApi');
 const { uploadFile: uploadToOneDrive } = require('./oneDriveService');
 const { clientMasterBoardId } = require('../../config/monday');
+
+// ─── Disclaimer map (keyed by "caseType|subType") ────────────────────────────
+const DISCLAIMER_MAP_PATH = path.join(__dirname, '../data/disclaimerMap.json');
+let _disclaimerMap = null;
+function getDisclaimerMap() {
+  if (!_disclaimerMap) {
+    try { _disclaimerMap = JSON.parse(fs.readFileSync(DISCLAIMER_MAP_PATH, 'utf8')); }
+    catch { _disclaimerMap = {}; }
+  }
+  return _disclaimerMap;
+}
+
+const DEFAULT_DISCLAIMER =
+  'Documents accepted in English/French. If in another language, please include the original, ' +
+  'a copy with stamp, and the translated document with stamp. Only well-scanned documents will ' +
+  'be accepted. Our team may ask for additional documents or information as we review.';
 
 // ─── Board / Column IDs ───────────────────────────────────────────────────────
 
@@ -25,7 +43,9 @@ const TMPL_CATEGORY_COL       = 'dropdown_mm0x41zm';  // Document Category
 const TMPL_APPLICANT_TYPE_COL = 'dropdown_mm261bn6';  // Applicant Type (which member)
 
 // Client Master Board columns
-const CM_CASE_REF_COL = 'text_mm142s49'; // Case Reference Number
+const CM_CASE_REF_COL  = 'text_mm142s49';    // Case Reference Number
+const CM_CASE_TYPE_COL = 'dropdown_mm0xd1qn'; // Primary Case Type
+const CM_SUB_TYPE_COL  = 'dropdown_mm0x4t91'; // Case Sub Type
 
 // Columns to fetch per execution item
 const FETCH_COLS = [
@@ -54,6 +74,42 @@ async function getClientName(caseRef) {
     { boardId: String(CM_BOARD_ID), caseRef }
   );
   return data?.items_page_by_column_values?.items?.[0]?.name?.trim() || 'Unknown Client';
+}
+
+/**
+ * Fetch the disclaimer text matching the case's Primary Case Type + Sub Type.
+ * Falls back to a generic disclaimer if no exact match is found.
+ */
+async function getDisclaimerForCase(caseRef) {
+  try {
+    const data = await mondayApi.query(
+      `query($boardId: ID!, $caseRef: String!) {
+         items_page_by_column_values(
+           limit: 1,
+           board_id: $boardId,
+           columns: [{ column_id: "${CM_CASE_REF_COL}", column_values: [$caseRef] }]
+         ) {
+           items {
+             column_values(ids: ["${CM_CASE_TYPE_COL}", "${CM_SUB_TYPE_COL}"]) { id text }
+           }
+         }
+       }`,
+      { boardId: String(CM_BOARD_ID), caseRef }
+    );
+
+    const cols    = data?.items_page_by_column_values?.items?.[0]?.column_values || [];
+    const caseType = cols.find(c => c.id === CM_CASE_TYPE_COL)?.text?.trim() || '';
+    const subType  = cols.find(c => c.id === CM_SUB_TYPE_COL)?.text?.trim()  || '';
+
+    const map  = getDisclaimerMap();
+    const key  = `${caseType}|${subType}`;
+    const fallback = map[`${caseType}|`] || DEFAULT_DISCLAIMER;
+
+    return map[key] || fallback;
+  } catch (err) {
+    console.warn(`[DocForm] Disclaimer lookup failed for "${caseRef}": ${err.message}`);
+    return DEFAULT_DISCLAIMER;
+  }
 }
 
 /**
@@ -199,11 +255,12 @@ async function getCaseDocuments(caseRef) {
  * Used by the form route to populate both the document list and the top bar.
  */
 async function getCaseSummary(caseRef) {
-  const [items, clientName] = await Promise.all([
+  const [items, clientName, disclaimer] = await Promise.all([
     getCaseDocuments(caseRef),
     getClientName(caseRef),
+    getDisclaimerForCase(caseRef),
   ]);
-  return { items, clientName };
+  return { items, clientName, disclaimer };
 }
 
 // ─── Public: post-upload actions ─────────────────────────────────────────────
@@ -284,6 +341,7 @@ async function markDocumentReceived(itemId) {
 module.exports = {
   getCaseDocuments,
   getCaseSummary,
+  getDisclaimerForCase,
   uploadFileToOneDrive,
   markDocumentReceived,
 };

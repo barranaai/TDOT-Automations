@@ -225,8 +225,9 @@ function docRowHtml(doc, caseRef) {
  * @param {string}  clientName
  * @param {Array}   members       - [{ memberType, sections: [{ category, items }] }]
  * @param {boolean} isMultiMember - show member tabs when true
+ * @param {string}  disclaimer    - case-specific disclaimer text from PDF
  */
-function formPage(caseRef, clientName, members, isMultiMember) {
+function formPage(caseRef, clientName, members, isMultiMember, disclaimer = '') {
   // Flatten all items for global counts
   const allItems     = members.flatMap((m) => m.sections.flatMap((s) => s.items));
   const totalDocs    = allItems.length;
@@ -458,9 +459,59 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
   .cat-header{padding-left:1rem;padding-right:1rem}
   .upload-msg{max-width:100%}
 }
+
+/* ── Disclaimer modal ── */
+.disc-overlay{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(3px)}
+.disc-modal{background:#fff;border-radius:18px;max-width:560px;width:100%;box-shadow:0 24px 80px rgba(0,0,0,.35);overflow:hidden;animation:discIn .28s cubic-bezier(.34,1.56,.64,1)}
+@keyframes discIn{from{opacity:0;transform:scale(.92) translateY(12px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.disc-header{background:#1a1a1a;padding:1.4rem 1.8rem 1.3rem;display:flex;align-items:center;gap:.85rem;border-bottom:2px solid var(--brand)}
+.disc-header img{height:32px;object-fit:contain;flex-shrink:0}
+.disc-header-text h2{font-size:.85rem;font-weight:700;color:#fff;letter-spacing:.01em}
+.disc-header-text p{font-size:.63rem;color:rgba(255,255,255,.4);letter-spacing:.08em;text-transform:uppercase;margin-top:.1rem}
+.disc-body{padding:1.7rem 1.8rem 1.4rem}
+.disc-label{font-size:.65rem;font-weight:800;color:var(--brand);letter-spacing:.12em;text-transform:uppercase;margin-bottom:.7rem;display:flex;align-items:center;gap:.4rem}
+.disc-label::before{content:'';display:inline-block;width:3px;height:13px;background:var(--brand);border-radius:2px}
+.disc-text{background:#fef2f2;border:1.5px solid rgba(143,5,5,.15);border-radius:10px;padding:1rem 1.15rem;font-size:.84rem;color:#374151;line-height:1.75;margin-bottom:1.5rem}
+.disc-footer{display:flex;align-items:center;gap:.75rem}
+.disc-checkbox-wrap{display:flex;align-items:center;gap:.55rem;cursor:pointer;flex:1}
+.disc-checkbox-wrap input[type=checkbox]{width:17px;height:17px;accent-color:var(--brand);cursor:pointer;flex-shrink:0}
+.disc-checkbox-wrap span{font-size:.78rem;color:var(--gray-600);line-height:1.4;user-select:none}
+.disc-btn{padding:.72rem 1.4rem;background:#ccc;color:#fff;border:none;border-radius:9px;font-size:.85rem;font-weight:700;cursor:not-allowed;transition:background .2s,transform .1s;white-space:nowrap;font-family:inherit;flex-shrink:0}
+.disc-btn.ready{background:var(--brand);cursor:pointer}
+.disc-btn.ready:hover{background:var(--brand-dark);transform:translateY(-1px)}
+.disc-btn.ready:active{transform:translateY(0)}
+@media(max-width:520px){
+  .disc-body{padding:1.3rem 1.2rem 1.1rem}
+  .disc-footer{flex-direction:column;align-items:stretch}
+  .disc-btn{text-align:center}
+}
 </style>
 </head>
 <body>
+
+<!-- ── Disclaimer modal ── -->
+<div class="disc-overlay" id="discOverlay">
+  <div class="disc-modal" role="dialog" aria-modal="true" aria-labelledby="discTitle">
+    <div class="disc-header">
+      <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration">
+      <div class="disc-header-text">
+        <h2 id="discTitle">Document Submission Guidelines</h2>
+        <p>Please read before uploading</p>
+      </div>
+    </div>
+    <div class="disc-body">
+      <div class="disc-label">Disclaimer</div>
+      <div class="disc-text">${esc(disclaimer)}</div>
+      <div class="disc-footer">
+        <label class="disc-checkbox-wrap">
+          <input type="checkbox" id="discCheck" onchange="toggleDiscBtn()">
+          <span>I have read and understood the above disclaimer</span>
+        </label>
+        <button class="disc-btn" id="discBtn" disabled onclick="dismissDisclaimer()">I Understand</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="top-bar">
   <div class="top-bar-brand">
@@ -505,6 +556,27 @@ const FIRST_FLAGGED = ${firstFlaggedStep};
 let currentStep   = 0;
 let uploadedCount = ${uploadedDocs};
 let totalCount    = ${totalDocs};
+
+// ── Disclaimer modal ──────────────────────────────────────────────────────────
+function toggleDiscBtn() {
+  const checked = document.getElementById('discCheck').checked;
+  const btn     = document.getElementById('discBtn');
+  btn.disabled  = !checked;
+  btn.classList.toggle('ready', checked);
+}
+function dismissDisclaimer() {
+  const overlay = document.getElementById('discOverlay');
+  if (!document.getElementById('discCheck').checked) return;
+  overlay.style.opacity    = '0';
+  overlay.style.transition = 'opacity .25s';
+  setTimeout(() => { overlay.style.display = 'none'; }, 260);
+}
+// Prevent background scroll while modal is open
+document.body.style.overflow = 'hidden';
+document.getElementById('discOverlay').addEventListener('transitionend', function() {
+  if (this.style.display === 'none') document.body.style.overflow = '';
+});
+// ─────────────────────────────────────────────────────────────────────────────
 
 const FLAGGED_SECTIONS = new Set(${JSON.stringify(
   steps
@@ -716,7 +788,7 @@ router.get('/', (req, res) => {
 router.get('/:caseRef', async (req, res) => {
   const caseRef = decodeURIComponent(req.params.caseRef).trim();
   try {
-    const { items, clientName } = await getCaseSummary(caseRef);
+    const { items, clientName, disclaimer } = await getCaseSummary(caseRef);
     if (!items.length) {
       return res.redirect(
         `/documents?error=${encodeURIComponent(
@@ -725,7 +797,7 @@ router.get('/:caseRef', async (req, res) => {
       );
     }
     const { isMultiMember, members } = groupByMemberAndCategory(items);
-    res.send(formPage(caseRef, clientName, members, isMultiMember));
+    res.send(formPage(caseRef, clientName, members, isMultiMember, disclaimer));
   } catch (err) {
     console.error('[DocForm] Error loading form:', err.message);
     res.redirect(
