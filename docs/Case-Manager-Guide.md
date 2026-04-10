@@ -11,16 +11,17 @@
 
 1. [System Overview](#1-system-overview)
 2. [Creating a New Case](#2-creating-a-new-case)
-3. [What Happens Automatically (and When)](#3-what-happens-automatically-and-when)
-4. [Monitoring Case Readiness](#4-monitoring-case-readiness)
-5. [Reviewing Documents](#5-reviewing-documents)
-6. [Reviewing the Questionnaire](#6-reviewing-the-questionnaire)
-7. [Moving a Case Through Stages](#7-moving-a-case-through-stages)
-8. [SLA, Health & Escalation](#8-sla-health--escalation)
-9. [Notifications You Will Receive](#9-notifications-you-will-receive)
-10. [Special Situations & Manual Controls](#10-special-situations--manual-controls)
-11. [Quick Reference Card](#11-quick-reference-card)
-12. [SLA Configuration Board](#12-sla-configuration-board)
+3. [Client Master Board — Column Reference](#3-client-master-board--column-reference)
+4. [What Happens Automatically (and When)](#4-what-happens-automatically-and-when)
+5. [Monitoring Case Readiness](#5-monitoring-case-readiness)
+6. [Reviewing Documents](#6-reviewing-documents)
+7. [Reviewing the Questionnaire](#7-reviewing-the-questionnaire)
+8. [Moving a Case Through Stages](#8-moving-a-case-through-stages)
+9. [SLA, Health & Escalation](#9-sla-health--escalation)
+10. [Notifications You Will Receive](#10-notifications-you-will-receive)
+11. [Special Situations & Manual Controls](#11-special-situations--manual-controls)
+12. [Quick Reference Card](#12-quick-reference-card)
+13. [SLA Configuration Board](#13-sla-configuration-board)
 
 ---
 
@@ -78,7 +79,102 @@ This is the **master trigger** that sets up the entire case:
 
 ---
 
-## 3. What Happens Automatically (and When)
+## 3. Client Master Board — Column Reference
+
+This section lists every column on the Client Master Board and tells you exactly what to do with it — fill it in, leave it alone, or use it only in special situations.
+
+### 🟦 Fill in when creating the case (required)
+
+These columns must be filled before marking Retainer as Paid. Missing any of these will cause automation to produce incomplete results or skip the case entirely.
+
+| Column | What to enter | Why it matters |
+|---|---|---|
+| **Item Title** | Client's full legal name (e.g. `John Smith`) | Used as the OneDrive folder name, in all emails, and in all notifications. Must match exactly what staff call the client. |
+| **Client Email** | Client's email address | Every automated email — intake, chasing, correction requests — is sent here. |
+| **Primary Case Type** | Select from dropdown | Triggers automatic Case Reference Number generation. Also determines which document checklist and questionnaire are created. |
+| **Case Sub-Type** | Select if the case type has sub-types | Determines which specific questionnaire form the client receives. Leave blank if there is only one form for the case type. |
+| **Case Manager** | Assign the lead officer | Receives document review notifications, stage gate emails, health alerts, and expiry warnings. |
+| **Ops Supervisor** | Assign the supervising officer | Receives escalation alerts, expiry warnings, and client-blocked notifications. |
+
+### 🟩 Fill in as soon as the information is available
+
+These columns are not required at creation but must be filled in before the case progresses — missing them means the automation cannot do its full job.
+
+| Column | What to enter | When to fill it | What breaks if missing |
+|---|---|---|---|
+| **Passport Expiry** | Date from the client's passport | As soon as you receive the passport copy | Expiry engine cannot flag approaching expiry — no early warning |
+| **IELTS Expiry** | Date the IELTS test result expires | When IELTS result is received | Same — expiry alert will not fire |
+| **Medical Expiry** | Date the IME medical report expires | When medical is done | Same |
+| **Case Support Officer** | Assign if a support officer is involved | When assigned | Support officer will not receive assignment or escalation notifications |
+| **Retainer Status** | Set to **Paid** | Once payment is confirmed | This is the master trigger — without it, no execution rows are created and no email is sent |
+
+### 🟨 Fill in at specific stages (manual decisions)
+
+These are the columns you change as the case moves forward. They require a deliberate decision from you.
+
+| Column | What to set | When |
+|---|---|---|
+| **Case Stage** | Advance manually for: `Submission Ready`, `Submitted`, and all terminal stages | After your review confirms the case is ready, or when the outcome is received. All other stage advances happen automatically. |
+| **Manual Override** | Set to **Yes** | When a client has a legitimate reason for not responding (travelling, waiting on third-party, spoken to you directly). Pauses chasing emails only. Set back to **No** when ready to resume. |
+| **Automation Lock** | Set to **Yes** | When you need to put the entire case on hold — stops all daily engines. Set back to **No** to resume. Note: the system sets this automatically at case closure. |
+| **Escalation Required** | Set to **Yes** | If you identify an escalation need that the system hasn't flagged automatically (e.g., legal complication, complaint). Set to **No** once resolved — clears the escalation reason automatically. |
+
+### 🟥 Do not touch — auto-populated by automation
+
+These columns are written by the automation engines every day. **Do not manually edit them** — any manual change will be overwritten at the next daily run.
+
+| Column | Set by |
+|---|---|
+| **Case Reference Number** | `caseRefService` — fires when Case Type is set |
+| **Access Token** | `accessTokenService` — fires when item is created |
+| **Q Readiness %** | Daily readiness scan |
+| **Doc Readiness %** | Daily readiness scan |
+| **Q Completion Status** | Daily readiness scan + questionnaire submission |
+| **Doc Threshold Met** | Daily readiness scan |
+| **Ready for Review** | Daily readiness scan |
+| **Ready for Sub Prep** | Stage gate |
+| **Blocking Doc Count** | Daily readiness scan |
+| **Blocking Q Count** | Daily readiness scan |
+| **Missing Required** | Daily readiness scan |
+| **Checklist Template Applied** | `checklistService` on Document Collection Started |
+| **Q Template Applied** | `questionnaireService` on Document Collection Started |
+| **Stage Start Date** | Resets automatically on every stage advance |
+| **Payment Date** | Set by `retainerService` when Retainer → Paid |
+| **Chasing Stage** | Chasing loop (Pending → Reminder 1 → 2 → Final → Client Blocked → Resolved) |
+| **Reminder Count** | Chasing loop |
+| **Last Client Activity** | Updated automatically when client uploads a file or saves questionnaire |
+| **SLA Risk Band** | SLA engine (Green / Orange / Red) |
+| **SLA Risk Flag** | SLA engine |
+| **Expiry Risk Flag** | SLA engine + Expiry engine |
+| **Expiry Alert Sent** | Expiry engine (tracks whether warning/critical email has been sent) |
+| **Case Health Status** | Case health engine |
+| **Client Blocked Status** | Case health engine |
+| **Client Delay Level** | Case health engine |
+| **Client Responsiveness Score** | Case health engine |
+| **Days Elapsed** | SLA engine |
+| **SLA Total Days** | SLA engine |
+| **Stage Expected Duration** | SLA engine |
+| **Expected Readiness %** | SLA engine |
+| **Hard Deadline** | SLA engine |
+| **Soft Deadline** | SLA engine |
+| **Submission Prep Deadline** | SLA engine |
+| **Priority Score** | Escalation routing engine |
+| **Escalation Last Notified** | Escalation routing engine |
+| **Escalation Reason** | Stage gate / expiry engine / escalation routing |
+| **Sub-Type Hint** | `caseRefService` — internal helper for case reference format |
+
+### ⬜ Read-only formula columns (computed by Monday.com)
+
+These are formula columns — Monday.com calculates them automatically from other column values. You cannot and should not edit them.
+
+| Column | What it shows |
+|---|---|
+| **Inactivity Counter** | Number of days since the client last interacted with the portal |
+| **Days to Hard Deadline** | Countdown to the Hard Deadline date |
+
+---
+
+## 4. What Happens Automatically (and When)
 
 This section explains what the system does without anyone touching it. Understanding this helps you know what to expect and when to step in.
 
@@ -110,7 +206,7 @@ This section explains what the system does without anyone touching it. Understan
 
 ---
 
-## 4. Monitoring Case Readiness
+## 5. Monitoring Case Readiness
 
 ### The readiness columns to watch
 
@@ -137,7 +233,7 @@ The minimum readiness percentage needed to advance a case is **80% by default**.
 
 ---
 
-## 5. Reviewing Documents
+## 6. Reviewing Documents
 
 ### Where to review
 
@@ -167,7 +263,7 @@ Each row represents one document item. The key columns are:
 
 ---
 
-## 6. Reviewing the Questionnaire
+## 7. Reviewing the Questionnaire
 
 For cases using the new HTML questionnaire forms, clients fill in their answers on a web page. You review those answers through the **staff review page**.
 
@@ -219,7 +315,7 @@ Use your browser's **File → Print → Save as PDF** or the green "Save as PDF 
 
 ---
 
-## 7. Moving a Case Through Stages
+## 8. Moving a Case Through Stages
 
 The **Case Stage** column on the Client Master Board controls where a case is in its lifecycle. Most transitions happen automatically, but some require a manual decision from you.
 
@@ -261,7 +357,7 @@ This column is reset automatically every time the case advances to a new stage. 
 
 ---
 
-## 8. SLA, Health & Escalation
+## 9. SLA, Health & Escalation
 
 ### SLA columns (updated daily)
 
@@ -311,7 +407,7 @@ Set this to **Yes** if a client has a valid reason for delay and you want to **p
 
 ---
 
-## 9. Notifications You Will Receive
+## 10. Notifications You Will Receive
 
 All notifications are sent via Monday.com's notification system (bell icon, top right).
 
@@ -329,7 +425,7 @@ All notifications are sent via Monday.com's notification system (bell icon, top 
 
 ---
 
-## 10. Special Situations & Manual Controls
+## 11. Special Situations & Manual Controls
 
 ### Client gives you a corrected email address
 Update the **Client Email** column. The intake email is automatically re-sent to the new address. No other action needed.
@@ -355,7 +451,7 @@ Some case types are marked "TO BE FINALIZED". Clients will see a placeholder pag
 
 ---
 
-## 11. Quick Reference Card
+## 12. Quick Reference Card
 
 > Print or bookmark this section for quick lookups.
 
@@ -401,7 +497,7 @@ https://tdot-automations.onrender.com/q/{CASE-REFERENCE}/review
 
 ---
 
-## 12. SLA Configuration Board
+## 13. SLA Configuration Board
 
 > **Board ID:** 18402401449  
 > **Who manages it:** Ops Supervisor / System Admin  
