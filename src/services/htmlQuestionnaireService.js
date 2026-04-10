@@ -1779,13 +1779,17 @@ ${hasAdditionalForm ? `
   function createNavTab() {
     var nav = document.createElement('div');
     nav.className = 'tdot-nav-bar';
+    var primaryTitle = IS_ADDITIONAL ? OTHER_FORM_TITLE : ${JSON.stringify(formTitle || '')};
+    var additionalTitle = IS_ADDITIONAL ? ${JSON.stringify(formTitle || '')} : OTHER_FORM_TITLE;
+    var primaryUrl = IS_ADDITIONAL ? OTHER_FORM_URL : '';
+    var additionalUrl = IS_ADDITIONAL ? '' : OTHER_FORM_URL;
     nav.innerHTML =
-      '<span class="tdot-nav-tab active" style="cursor:default">' +
-        (IS_ADDITIONAL ? '📋 ' : '📝 ') + ${JSON.stringify(formTitle || '')} +
-      '</span>' +
-      '<a href="' + OTHER_FORM_URL + '" class="tdot-nav-tab">' +
-        (IS_ADDITIONAL ? '📝 ' : '📋 ') + OTHER_FORM_TITLE +
-      '</a>';
+      (primaryUrl
+        ? '<a href="' + primaryUrl + '" class="tdot-nav-tab">📝 ' + primaryTitle + '</a>'
+        : '<span class="tdot-nav-tab active" style="cursor:default">📝 ' + primaryTitle + '</span>') +
+      (additionalUrl
+        ? '<a href="' + additionalUrl + '" class="tdot-nav-tab">📋 ' + additionalTitle + '</a>'
+        : '<span class="tdot-nav-tab active" style="cursor:default">📋 ' + additionalTitle + '</span>');
     document.body.insertBefore(nav, document.body.firstChild);
   }
   ` : overviewUrl ? `
