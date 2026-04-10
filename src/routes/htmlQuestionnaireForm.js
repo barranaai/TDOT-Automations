@@ -200,8 +200,53 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
       return res.status(404).type('html').send(svc.buildErrorPage('Case not found.'));
     }
 
-    const { clientName, caseType } = caseDetails;
+    const { clientName, caseType, caseSubType } = caseDetails;
 
+    // Resolve form files and check for multi-member case
+    const { resolveForm } = require('../../config/questionnaireFormMap');
+    const formFiles   = resolveForm(caseType, caseSubType) || {};
+    const memberTypes = resolveMemberTypes(caseType, caseSubType);
+    const hasTwo      = Boolean(formFiles?.additional);
+    const isMultiMember = memberTypes.length > 0 && !hasTwo;
+
+    // ── Multi-member review: show all members in one page ──────────────────
+    if (isMultiMember && (formKey === 'primary' || !req.query.formKey)) {
+      const members = await svc.loadMembers({ clientName, caseRef });
+      const allMembersData = [];
+      for (const member of members) {
+        const [mFields, mFlags] = await Promise.all([
+          svc.loadFormData({ clientName, caseRef, formKey: member.key }),
+          review.loadFlags({ clientName, caseRef, formKey: member.key }),
+        ]);
+        allMembersData.push({ ...member, fields: mFields, flags: mFlags });
+      }
+
+      const anyData = allMembersData.some(m =>
+        m.fields.length > 0 && m.fields.some(f => f.value && f.value.trim())
+      );
+      if (!anyData) {
+        return res.type('html').send(svc.buildErrorPage(
+          'No submitted data found for this case. The client may not have completed the questionnaire yet.'
+        ));
+      }
+
+      const formFile = formFiles.primary;
+      if (!formFile) {
+        return res.status(404).type('html').send(svc.buildErrorPage('Form file not found for this case type.'));
+      }
+
+      return res.type('html').send(svc.buildReviewFormPage({
+        formFile,
+        caseRef,
+        formKey: 'primary',
+        staffName:    req.staff.name,
+        savedFields:  allMembersData[0].fields,
+        savedFlags:   allMembersData[0].flags,
+        members:      allMembersData,
+      }));
+    }
+
+    // ── Single-member review (original logic) ──────────────────────────────
     const [fields, flags] = await Promise.all([
       svc.loadFormData({ clientName, caseRef, formKey }),
       review.loadFlags({ clientName, caseRef, formKey }),
@@ -217,11 +262,9 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
       ));
     }
 
-    // Resolve which HTML file to serve
-    const { resolveForm } = require('../../config/questionnaireFormMap');
-    const { caseSubType } = caseDetails;
-    const formFiles = resolveForm(caseType, caseSubType) || {};
-    const formFile  = formKey === 'additional' ? formFiles.additional : formFiles.primary;
+    const formFile = (formKey === 'additional' || formKey.endsWith('-additional'))
+      ? formFiles.additional
+      : formFiles.primary;
 
     if (!formFile) {
       return res.status(404).type('html').send(svc.buildErrorPage('Form file not found for this case type.'));
@@ -565,19 +608,35 @@ router.get('/:caseRef', async (req, res) => {
       }));
     }
 
-    // ── No f= param: show the overview page with member cards ──────────────
+    // ── No f= param ───────────────────────────────────────────────────────
     if (!fParam) {
       const members      = await svc.loadMembers({ clientName, caseRef });
       const withStatuses = await svc.getMemberStatuses({ clientName, caseRef, members, formFiles });
 
-      return res.type('html').send(
-        svc.buildOverviewPage({
-          caseRef, token,
-          members:            withStatuses,
-          formFiles,
-          allowedMemberTypes: memberTypes,
-        })
-      );
+      // ── Dual-form cases: still use overview page (two separate HTML files) ─
+      if (hasTwo) {
+        return res.type('html').send(
+          svc.buildOverviewPage({
+            caseRef, token,
+            members:            withStatuses,
+            formFiles,
+            allowedMemberTypes: memberTypes,
+          })
+        );
+      }
+
+      // ── Single-form multi-member: serve form directly with all members ────
+      const formTitle = formFiles.primary.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
+      return res.type('html').send(svc.buildFormPage({
+        formFile:          formFiles.primary,
+        caseRef, token,
+        formKey:           'primary',
+        formTitle,
+        hasAdditionalForm: false,
+        overviewUrl:       '',
+        members:           withStatuses,
+        allowedMemberTypes: memberTypes,
+      }));
     }
 
     // ── f= param present: serve the specific form for the member ───────────

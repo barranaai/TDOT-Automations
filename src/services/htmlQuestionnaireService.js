@@ -636,7 +636,8 @@ async function checkStageGate({ itemId, caseRef, caseType, qPct }) {
  * @param {{ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl }} params
  * @returns {string}  HTML string ready to splice into the form HTML
  */
-function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel }) {
+function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes }) {
+  const isMultiMember = Array.isArray(members) && members.length > 0;
   return `
 <!-- TDOT Dynamic Questionnaire — injected by server -->
 <style>
@@ -663,6 +664,55 @@ function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditiona
 .tdot-btn-submit:hover { background: #047857; }
 .tdot-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 body { padding-bottom: 68px !important; }
+${isMultiMember ? `
+/* ── Multi-member mode ── */
+.mm-section-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,0.18); padding: 4px 14px;
+  border-radius: 6px; font-size: 13px; font-weight: 700;
+  letter-spacing: 0.02em; color: #fff; margin-left: 6px;
+}
+.mm-remove-btn {
+  position: absolute; top: 12px; right: 16px; z-index: 5;
+  background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 6px; width: 30px; height: 30px; cursor: pointer;
+  font-size: 16px; color: rgba(255,255,255,0.7);
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.mm-remove-btn:hover { background: #dc2626; border-color: #dc2626; color: #fff; }
+.mm-add-area {
+  max-width: 900px; margin: 24px auto 80px; text-align: center;
+}
+.mm-add-btn {
+  padding: 14px 32px; background: #fff; border: 2px dashed #cbd5e1;
+  border-radius: 12px; font-size: 15px; font-weight: 600; color: #475569;
+  cursor: pointer; transition: all 0.15s;
+}
+.mm-add-btn:hover { border-color: #1e3a5f; color: #1e3a5f; background: #f0f4f8; }
+.mm-add-menu {
+  margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px;
+  justify-content: center;
+}
+.mm-add-option {
+  padding: 10px 18px; background: #fff; border: 1px solid #e2e8f0;
+  border-radius: 8px; font-size: 13px; font-weight: 500; color: #334155;
+  cursor: pointer; transition: all 0.15s;
+}
+.mm-add-option:hover { background: #eff6ff; border-color: #93c5fd; color: #1e3a5f; }
+.mm-toast {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+  background: #1e3a5f; color: #fff; padding: 12px 24px; border-radius: 8px;
+  font-size: 14px; font-weight: 500; z-index: 10000; display: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+}
+.mm-member-status {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 600; margin-left: 8px;
+}
+.mm-member-status.submitted { background: #dcfce7; color: #166534; }
+.mm-member-status.in-progress { background: #fef9c3; color: #854d0e; }
+` : ''}
 ${hasAdditionalForm ? `
 .tdot-nav-bar {
   display: flex; background: #f8fafc; border-bottom: 2px solid #dde3ea;
@@ -686,6 +736,9 @@ ${hasAdditionalForm ? `
   var FORM_KEY       = ${JSON.stringify(String(formKey))};
   var OVERVIEW_URL   = ${JSON.stringify(overviewUrl || '')};
   var MEMBER_LABEL   = ${JSON.stringify(memberLabel || '')};
+  var MEMBERS        = ${JSON.stringify(isMultiMember ? members : [])};
+  var ALLOWED_TYPES  = ${JSON.stringify(isMultiMember ? (allowedMemberTypes || []) : [])};
+  var IS_MULTI       = MEMBERS.length > 0;
 
   /* ── Utilities ── */
 
@@ -712,6 +765,10 @@ ${hasAdditionalForm ? `
     var parts   = [];
     var current = el.parentElement;
     while (current && current !== document.body) {
+      /* In multi-member mode, stop before the top-level member header
+         so that field keys are identical across member sections */
+      if (IS_MULTI && current.parentElement &&
+          current.parentElement.hasAttribute('data-member-key')) break;
       var prev = current.previousElementSibling;
       if (prev) {
         var onclick = prev.getAttribute('onclick') || '';
@@ -748,8 +805,20 @@ ${hasAdditionalForm ? `
   /* Write current fields to localStorage (cheap, synchronous) */
   function backupToLocal() {
     try {
-      var data = getSerializableFields ? getSerializableFields() : null;
-      if (data) localStorage.setItem(_LS_KEY, JSON.stringify({ ts: Date.now(), fields: data }));
+      if (IS_MULTI) {
+        var memberKeys = getActiveMemberKeys();
+        for (var i = 0; i < memberKeys.length; i++) {
+          var mk = memberKeys[i];
+          var data = getSerializableFieldsForMember(mk);
+          if (data && data.length) {
+            localStorage.setItem('tdot_form_' + CASE_REF + '_' + mk,
+              JSON.stringify({ ts: Date.now(), fields: data }));
+          }
+        }
+      } else {
+        var data = getSerializableFields ? getSerializableFields() : null;
+        if (data) localStorage.setItem(_LS_KEY, JSON.stringify({ ts: Date.now(), fields: data }));
+      }
     } catch (e) { /* storage quota or private mode — ignore */ }
   }
 
@@ -777,11 +846,26 @@ ${hasAdditionalForm ? `
     var seen    = [];
     var keyMap  = {};
 
-    function makeKey(section, label) {
+    function makeKey(section, label, el) {
+      /* In multi-member mode, prefix the key counter with the member key
+         so that identical sub-section fields in different member sections
+         don't collide in the dedup map. */
+      var mk = IS_MULTI ? getMemberKeyForEl(el) : '';
       var base = slugify(section + '__' + label);
-      if (!keyMap[base]) { keyMap[base] = 0; return base; }
-      keyMap[base]++;
-      return base + '-' + keyMap[base];
+      var counterKey = mk ? mk + '::' + base : base;
+      if (keyMap[counterKey] === undefined) { keyMap[counterKey] = 1; return base; }
+      keyMap[counterKey]++;
+      return base + '-' + keyMap[counterKey];
+    }
+
+    /* Helper: check if element is inside a mm-hidden sub-section */
+    function isInHiddenMmSection(el) {
+      var n = el;
+      while (n && n !== document.body) {
+        if (n.getAttribute && n.getAttribute('data-mm-hidden') === 'true') return true;
+        n = n.parentElement;
+      }
+      return false;
     }
 
     /* 1 — Standard form-group inputs */
@@ -791,16 +875,18 @@ ${hasAdditionalForm ? `
       var lbl   = group.querySelector('label');
       var inp   = group.querySelector('input, select, textarea');
       if (!lbl || !inp || seen.indexOf(inp) !== -1) continue;
+      if (IS_MULTI && isInHiddenMmSection(group)) continue;
       seen.push(inp);
       var labelText = lbl.textContent.trim();
       var section   = getSectionContext(group);
-      fields.push({ section: section, label: labelText, key: makeKey(section, labelText), el: inp });
+      fields.push({ section: section, label: labelText, key: makeKey(section, labelText, inp), el: inp });
     }
 
     /* 2 — Dynamic table rows */
     var tables = document.querySelectorAll('.dynamic-table');
     for (var ti = 0; ti < tables.length; ti++) {
       var table   = tables[ti];
+      if (IS_MULTI && isInHiddenMmSection(table)) continue;
       var tableId = table.id || ('table-' + ti);
       var headers = [];
       var ths     = table.querySelectorAll('thead th');
@@ -835,17 +921,25 @@ ${hasAdditionalForm ? `
   /* ── Progress ── */
 
   function getProgress() {
+    if (IS_MULTI) {
+      /* Aggregate progress across all members */
+      var memberKeys = getActiveMemberKeys();
+      var total = 0, filled = 0;
+      for (var i = 0; i < memberKeys.length; i++) {
+        var mp = getProgressForMember(memberKeys[i]);
+        total  += mp.total;
+        filled += mp.filled;
+      }
+      var pct = total > 0 ? Math.round(filled / total * 100) : 0;
+      return { total: total, filled: filled, pct: pct };
+    }
+
     var fields = collectFields();
     var total  = 0;
     var filled = 0;
     for (var i = 0; i < fields.length; i++) {
       var f   = fields[i];
       var val = (f.el.value || '').trim();
-      /* Skip fields inside genuinely-hidden conditional sections:
-       * a conditional section is hidden only when its controlling select
-       * is set to a non-triggering value, so those fields truly don't apply.
-       * Fields inside collapsed (but not conditional) accordions DO count —
-       * the client must open every section and fill it in.                 */
       var inConditional = false;
       var node = f.el.parentElement;
       while (node && node !== document.body) {
@@ -853,6 +947,9 @@ ${hasAdditionalForm ? `
             node.style.display === 'none' && !node.classList.contains('visible')) {
           inConditional = true;
           break;
+        }
+        if (node.getAttribute('data-mm-hidden') === 'true') {
+          inConditional = true; break;
         }
         node = node.parentElement;
       }
@@ -892,16 +989,49 @@ ${hasAdditionalForm ? `
     var msg     = document.getElementById('tdot-saved-msg');
     if (!silent && saveBtn) saveBtn.disabled = true;
 
+    /* ── Local backup first — always ── */
+    backupToLocal();
+
+    if (IS_MULTI) {
+      /* ── Multi-member save: save each member separately ── */
+      var memberKeys = getActiveMemberKeys();
+      var anyFailed = false;
+      for (var mi = 0; mi < memberKeys.length; mi++) {
+        var mk = memberKeys[mi];
+        var mFields = getSerializableFieldsForMember(mk);
+        var mProg   = getProgressForMember(mk);
+        if (mProg.pct === 0 && silent) continue; /* skip empty members on auto-save */
+        try {
+          var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/save', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ token: TOKEN, formKey: mk, fields: mFields, completionPct: mProg.pct }),
+          });
+          if (!res.ok) throw new Error('Save failed for ' + mk);
+        } catch (err) {
+          console.error('[TDOT] Save error for ' + mk + ':', err);
+          anyFailed = true;
+        }
+      }
+      _isDirty = false;
+      if (msg) {
+        if (anyFailed) {
+          msg.textContent = '⚠ Some sections failed to save';
+          msg.style.color = '#fca5a5';
+        } else {
+          msg.textContent = '✓ Saved at ' + new Date().toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' });
+          msg.style.color = '';
+          setTimeout(function () { if (msg) msg.textContent = ''; }, 8000);
+        }
+      }
+      if (!silent && saveBtn) saveBtn.disabled = false;
+      return;
+    }
+
+    /* ── Single-member save (original logic) ── */
     var currentFields = getSerializableFields();
     var p             = getProgress();
 
-    /* ── Local backup first — always, even if server is unreachable ── */
-    backupToLocal();
-
-    /* ── Guard: do not overwrite server data with an empty form ──────────────
-     * If the current form has 0% completion, there is nothing useful to save.
-     * This prevents a race where a failed pre-fill leaves the form blank and
-     * the subsequent auto-save wipes the server CSV.                         */
     if (p.pct === 0 && silent) {
       console.log('[TDOT] Auto-save skipped — form is empty (pre-fill may still be loading).');
       if (!silent && saveBtn) saveBtn.disabled = false;
@@ -950,31 +1080,53 @@ ${hasAdditionalForm ? `
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Submitting…'; }
 
     try {
-      var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/submit', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          token:         TOKEN,
-          formKey:       FORM_KEY,
-          fields:        getSerializableFields(),
-          completionPct: p.pct,
-        }),
-      });
-      if (!res.ok) throw new Error('Submit failed (' + res.status + ')');
+      if (IS_MULTI) {
+        /* ── Multi-member submit: submit each member ── */
+        var memberKeys = getActiveMemberKeys();
+        for (var mi = 0; mi < memberKeys.length; mi++) {
+          var mk = memberKeys[mi];
+          var mFields = getSerializableFieldsForMember(mk);
+          var mProg   = getProgressForMember(mk);
+          var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/submit', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ token: TOKEN, formKey: mk, fields: mFields, completionPct: mProg.pct }),
+          });
+          if (!res.ok) throw new Error('Submit failed for ' + mk + ' (' + res.status + ')');
+        }
+      } else {
+        /* ── Single-member submit ── */
+        var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/submit', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            token:         TOKEN,
+            formKey:       FORM_KEY,
+            fields:        getSerializableFields(),
+            completionPct: p.pct,
+          }),
+        });
+        if (!res.ok) throw new Error('Submit failed (' + res.status + ')');
+      }
 
-      /* Stop the auto-save timer so it cannot overwrite the submitted CSV */
+      /* Stop the auto-save timer */
       if (_autoSaveTimer) { clearInterval(_autoSaveTimer); _autoSaveTimer = null; }
 
-      /* Clear local backup — the server now has the authoritative copy */
+      /* Clear local backup */
       try { localStorage.removeItem(_LS_KEY); } catch (e) {}
+      if (IS_MULTI) {
+        var mKeys = getActiveMemberKeys();
+        for (var k = 0; k < mKeys.length; k++) {
+          try { localStorage.removeItem('tdot_form_' + CASE_REF + '_' + mKeys[k]); } catch (e) {}
+        }
+      }
 
-      /* Show a success message and disable further editing */
+      /* Show a success message */
       document.body.innerHTML =
         '<div style="font-family:Segoe UI,sans-serif;max-width:600px;margin:80px auto;text-align:center;padding:40px 24px">' +
         '<div style="font-size:56px;margin-bottom:20px">✅</div>' +
         '<h2 style="color:#1e3a5f;margin-bottom:12px">Questionnaire Submitted</h2>' +
         '<p style="color:#6b7280;font-size:15px">Thank you! Your answers have been saved and your consultant has been notified.</p>' +
-        (OVERVIEW_URL ? '<p style="margin-top:28px"><a href="' + OVERVIEW_URL + '" style="color:#1e3a5f;font-weight:600">← Back to questionnaire overview</a></p>' : '') +
         '</div>';
     } catch (err) {
       console.error('[TDOT] Submit error:', err);
@@ -1046,9 +1198,63 @@ ${hasAdditionalForm ? `
       .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
+  /* ── Multi-member flags ── */
+
+  async function loadAndApplyFlagsForMember(memberKey) {
+    try {
+      var res = await fetch(
+        '/q/' + encodeURIComponent(CASE_REF) + '/flags' +
+        '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(memberKey),
+        { method: 'GET' }
+      );
+      if (!res.ok) return;
+      var data = await res.json();
+      if (!data.flags || !Object.keys(data.flags).length) return;
+
+      var fields = collectFields();
+      var memberFields = fields.filter(function(f) { return getMemberKeyForEl(f.el) === memberKey; });
+      var flagCount = 0;
+
+      for (var fi = 0; fi < memberFields.length; fi++) {
+        var f    = memberFields[fi];
+        var flag = data.flags[f.key];
+        if (!flag) continue;
+        flagCount++;
+
+        f.el.style.borderColor = '#f97316';
+        f.el.style.outline     = '2px solid #fed7aa';
+
+        var note = document.createElement('div');
+        note.style.cssText =
+          'margin-top:6px;padding:8px 12px;background:#fff7ed;border:1px solid #fed7aa;' +
+          'border-radius:6px;font-size:13px;color:#92400e;line-height:1.5;';
+        note.innerHTML = '<strong>\ud83d\udcac Consultant note:</strong> ' + escHtml(flag.comment);
+
+        var parent = f.el.parentElement;
+        if (parent) parent.appendChild(note);
+      }
+
+      if (flagCount > 0) {
+        /* Find the member section header and add a flag indicator */
+        var section = document.querySelector('[data-member-key="' + memberKey + '"]');
+        if (section) {
+          var header = section.querySelector('.top-accordion-header, .applicant-header');
+          if (header) {
+            var badge = document.createElement('span');
+            badge.style.cssText = 'display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#fff7ed;color:#92400e;border:1px solid #fed7aa;margin-left:8px;';
+            badge.textContent = '\ud83d\udea9 ' + flagCount + ' flag' + (flagCount !== 1 ? 's' : '');
+            header.appendChild(badge);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[TDOT] Flags load error for ' + memberKey + ':', err);
+    }
+  }
+
   /* ── Pre-fill ── */
 
-  async function expandTableRows(savedFields) {
+  async function expandTableRows(savedFields, scopeEl) {
     /* Build a map: tableId slug → max row index found in saved data */
     var tableMaxRow = {};
     for (var i = 0; i < savedFields.length; i++) {
@@ -1063,7 +1269,8 @@ ${hasAdditionalForm ? `
       }
     }
 
-    var tables = document.querySelectorAll('.dynamic-table');
+    var root = scopeEl || document;
+    var tables = root.querySelectorAll('.dynamic-table');
     for (var ti = 0; ti < tables.length; ti++) {
       var table   = tables[ti];
       var tblSlug = slugify(table.id || ('table-' + ti));
@@ -1091,102 +1298,455 @@ ${hasAdditionalForm ? `
     }
   }
 
+  async function prefillMemberSection(memberKey, sectionEl) {
+    /* Load saved data for this member from the server */
+    var serverFields = [];
+    try {
+      var res = await fetch(
+        '/q/' + encodeURIComponent(CASE_REF) + '/data' +
+        '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(memberKey),
+        { method: 'GET' }
+      );
+      if (res.ok) {
+        var data = await res.json();
+        if (data.fields && Array.isArray(data.fields)) serverFields = data.fields;
+      }
+    } catch (fetchErr) {
+      console.warn('[TDOT] Could not reach server for pre-fill (' + memberKey + ').', fetchErr);
+    }
+
+    /* Local backup */
+    var localKey = 'tdot_form_' + CASE_REF + '_' + memberKey;
+    var localFields = [];
+    try {
+      var raw = localStorage.getItem(localKey);
+      if (raw) { var obj = JSON.parse(raw); localFields = Array.isArray(obj.fields) ? obj.fields : []; }
+    } catch (e) {}
+
+    var serverFilled = serverFields.filter(function(f) { return f.value && f.value.trim(); }).length;
+    var localFilled  = localFields.filter(function(f) { return f.value && f.value.trim(); }).length;
+    var sourceFields = (localFilled > serverFilled) ? localFields : serverFields;
+    var sourceFilled = Math.max(serverFilled, localFilled);
+    if (!sourceFilled) return;
+
+    console.log('[TDOT] Pre-filling ' + memberKey + ': ' + sourceFilled + ' non-empty fields.');
+
+    /* Expand dynamic tables within this member's section only */
+    await expandTableRows(sourceFields, sectionEl);
+    invalidateCache();
+
+    /* Build lookup maps */
+    var byKey = {}, byLabel = {};
+    for (var i = 0; i < sourceFields.length; i++) {
+      var sf = sourceFields[i];
+      if (!sf.value || !sf.value.trim()) continue;
+      byKey[sf.key] = sf.value;
+      var lbl = (sf.label || '').trim().toLowerCase();
+      if (!byLabel[lbl]) byLabel[lbl] = [];
+      byLabel[lbl].push(sf.value);
+    }
+
+    /* Get fields within this member section only */
+    var fields = collectFields();
+    var memberFields = sectionEl
+      ? fields.filter(function(f) { return getMemberKeyForEl(f.el) === memberKey; })
+      : fields;
+
+    var matched = 0, lblOcc = {};
+    for (var fi = 0; fi < memberFields.length; fi++) {
+      var f   = memberFields[fi];
+      var val = byKey[f.key];
+      if (!val) {
+        var fLbl = (f.label || '').trim().toLowerCase();
+        var occ  = lblOcc[fLbl] || 0;
+        lblOcc[fLbl] = occ + 1;
+        if (byLabel[fLbl] && byLabel[fLbl][occ]) val = byLabel[fLbl][occ];
+      }
+      if (val) {
+        if (f.el.tagName === 'SELECT') {
+          var opts = Array.prototype.slice.call(f.el.options);
+          var opt  = opts.find(function(o){ return o.value === val; }) ||
+                     opts.find(function(o){ return o.value.toLowerCase() === val.toLowerCase(); });
+          if (opt) f.el.value = opt.value;
+        } else {
+          f.el.value = val;
+        }
+        matched++;
+        try { f.el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+      }
+    }
+    console.log('[TDOT] Pre-fill ' + memberKey + ': ' + matched + ' fields matched.');
+    if (localFilled > serverFilled) markDirty();
+  }
+
   async function loadAndPrefill() {
     try {
-      /* ── Fetch server data ── */
-      var serverFields = [];
-      try {
-        var res = await fetch(
-          '/q/' + encodeURIComponent(CASE_REF) + '/data' +
-          '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(FORM_KEY),
-          { method: 'GET' }
-        );
-        if (res.ok) {
-          var data = await res.json();
-          if (data.fields && Array.isArray(data.fields)) serverFields = data.fields;
+      if (IS_MULTI) {
+        /* ── Multi-member pre-fill: load each member's data ── */
+        var memberSections = document.querySelectorAll('[data-member-key]');
+        for (var si = 0; si < memberSections.length; si++) {
+          var mk = memberSections[si].getAttribute('data-member-key');
+          await prefillMemberSection(mk, memberSections[si]);
         }
-      } catch (fetchErr) {
-        console.warn('[TDOT] Could not reach server for pre-fill, checking local backup.', fetchErr);
+        updateProgressUI();
+        return;
       }
 
-      /* Count non-empty server values */
-      var serverFilled = serverFields.filter(function (f) { return f.value && f.value.trim(); }).length;
-
-      /* ── Local backup ── */
-      var localFields  = restoreFromLocal();
-      var localFilled  = localFields.filter(function (f) { return f.value && f.value.trim(); }).length;
-
-      /* Use whichever source has more data */
-      var sourceFields = (localFilled > serverFilled) ? localFields : serverFields;
-      var sourceLabel  = (localFilled > serverFilled) ? 'local backup' : 'server';
-      var sourceFilled = Math.max(serverFilled, localFilled);
-
-      if (!sourceFilled) return; /* Nothing saved anywhere — fresh form */
-
-      console.log('[TDOT] Pre-filling from ' + sourceLabel + ': ' + sourceFilled + ' non-empty fields.');
-
-      /* Expand dynamic tables first, then fill */
-      await expandTableRows(sourceFields);
-
-      /* Invalidate cache — rows may have been added */
-      invalidateCache();
-
-      /* Build two lookup maps: by key (exact) and by label+occurrence (fallback) */
-      var byKey   = {};
-      var byLabel = {};
-      for (var i = 0; i < sourceFields.length; i++) {
-        var sf = sourceFields[i];
-        if (!sf.value || !sf.value.trim()) continue;
-        byKey[sf.key] = sf.value;
-        var lbl = (sf.label || '').trim().toLowerCase();
-        if (!byLabel[lbl]) byLabel[lbl] = [];
-        byLabel[lbl].push(sf.value);
-      }
-
-      console.log('[TDOT] Saved keys (' + Object.keys(byKey).length + '):', Object.keys(byKey).slice(0, 4));
-
-      var fields = collectFields();
-      console.log('[TDOT] DOM fields: ' + fields.length + ', first 4 keys:', fields.slice(0, 4).map(function(f){ return f.key; }));
-
-      var matched = 0;
-      var lblOcc  = {};
-      for (var fi = 0; fi < fields.length; fi++) {
-        var f   = fields[fi];
-        var val = byKey[f.key];
-
-        /* Fallback: label+occurrence match (handles key-format changes between deploys) */
-        if (!val) {
-          var fLbl  = (f.label || '').trim().toLowerCase();
-          var occ   = lblOcc[fLbl] || 0;
-          lblOcc[fLbl] = occ + 1;
-          if (byLabel[fLbl] && byLabel[fLbl][occ]) val = byLabel[fLbl][occ];
-        }
-
-        if (val) {
-          if (f.el.tagName === 'SELECT') {
-            var opts = Array.prototype.slice.call(f.el.options);
-            var opt  = opts.find(function(o){ return o.value === val; }) ||
-                       opts.find(function(o){ return o.value.toLowerCase() === val.toLowerCase(); });
-            if (opt) f.el.value = opt.value;
-          } else {
-            f.el.value = val;
-          }
-          matched++;
-          try { f.el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
-        }
-      }
-      console.log('[TDOT] Pre-fill applied: ' + matched + ' fields (of ' + Object.keys(byKey).length + ' saved).');
-
-      /* If we used local data, push it to the server so it is persisted */
-      if (localFilled > serverFilled) {
-        console.log('[TDOT] Local backup has more data than server — syncing to server.');
-        markDirty();
-      }
-
+      /* ── Single-member pre-fill (original logic) ── */
+      await prefillMemberSection(FORM_KEY, null);
       updateProgressUI();
     } catch (err) {
       console.error('[TDOT] Pre-fill error:', err);
     }
+  }
+
+  /* ── Multi-member DOM setup ── */
+
+  var _memberBlueprint = null;
+
+  /* Which sub-sections to KEEP per member type (matched case-insensitively against header text).
+     Types not listed here keep ALL sub-sections (spouse, worker spouse, sponsor). */
+  var KEEP_SECTIONS_FOR = {
+    'Dependent Child': ['profile', 'personal', 'passport', 'flagged'],
+    'Parent':          ['profile', 'personal', 'passport', 'address', 'contact', 'flagged'],
+    'Sibling':         ['profile', 'personal', 'passport', 'flagged'],
+  };
+
+  var MEMBER_ICONS = {
+    'Principal Applicant':        '👤',
+    'Spouse / Common-Law Partner': '💑',
+    'Dependent Child':            '👶',
+    'Sponsor':                    '🏠',
+    'Worker Spouse':              '👷',
+    'Parent':                     '👨‍👩‍👧',
+    'Sibling':                    '👫',
+  };
+
+  function findTopSections() {
+    /* Find all top-level accordion sections — handles both naming conventions */
+    var sections = document.querySelectorAll('.top-accordion, .applicant-accordion');
+    return Array.prototype.slice.call(sections);
+  }
+
+  function findSectionHeader(section) {
+    return section.querySelector('.top-accordion-header, .applicant-header');
+  }
+
+  function findSectionBody(section) {
+    return section.querySelector('.top-accordion-body, .applicant-body');
+  }
+
+  function setupMultiMemberDOM() {
+    var topSections = findTopSections();
+    if (topSections.length === 0) return;
+
+    /* The first section is always the primary applicant */
+    var primarySection = topSections[0];
+    primarySection.setAttribute('data-member-key', 'primary');
+
+    /* Everything after the first section is a "dependent" section — use the first
+       one as the blueprint for cloning, then remove ALL of them from the DOM. */
+    if (topSections.length > 1) {
+      _memberBlueprint = topSections[1].cloneNode(true);
+      for (var i = 1; i < topSections.length; i++) {
+        topSections[i].remove();
+      }
+    } else {
+      /* No dependent section in template — clone primary as a stripped blueprint */
+      _memberBlueprint = primarySection.cloneNode(true);
+    }
+
+    /* Create sections for each non-primary member from the manifest */
+    var insertRef = primarySection;
+    for (var mi = 0; mi < MEMBERS.length; mi++) {
+      var m = MEMBERS[mi];
+      if (m.key === 'primary') continue;
+      var section = createMemberSection(m);
+      insertRef.parentNode.insertBefore(section, insertRef.nextSibling);
+      insertRef = section;
+    }
+
+    /* Add the "Add Family Member" button if there are allowed types */
+    if (ALLOWED_TYPES.length > 0) {
+      var addArea = createAddMemberArea();
+      insertRef.parentNode.insertBefore(addArea, insertRef.nextSibling);
+    }
+
+    /* Add toast element for notifications */
+    var toast = document.createElement('div');
+    toast.className = 'mm-toast';
+    toast.id = 'mm-toast';
+    document.body.appendChild(toast);
+  }
+
+  function createMemberSection(member) {
+    var section = _memberBlueprint.cloneNode(true);
+    section.setAttribute('data-member-key', member.key);
+    section.style.position = 'relative';
+
+    /* Update the header text */
+    var header = findSectionHeader(section);
+    if (header) {
+      var chevron = header.querySelector('.chevron');
+      var icon = MEMBER_ICONS[member.type] || '👤';
+      header.textContent = '';
+      header.appendChild(document.createTextNode(icon + '  ' + member.label));
+      if (member.type !== 'Principal Applicant') {
+        var typeBadge = document.createElement('span');
+        typeBadge.className = 'mm-section-badge';
+        typeBadge.textContent = member.type.split(' / ')[0];
+        header.appendChild(typeBadge);
+      }
+      if (member.status === 'Submitted') {
+        var statusBadge = document.createElement('span');
+        statusBadge.className = 'mm-member-status submitted';
+        statusBadge.textContent = '✅ Submitted';
+        header.appendChild(statusBadge);
+      }
+      if (chevron) header.appendChild(chevron.cloneNode(true));
+    }
+
+    /* Make the body visible / open */
+    var body = findSectionBody(section);
+    if (body) {
+      body.classList.add('open');
+      body.style.display = '';
+    }
+
+    /* Adjust sub-sections based on member type */
+    adjustSectionsForType(section, member.type);
+
+    /* Deduplicate IDs to avoid DOM conflicts */
+    deduplicateIds(section, member.key);
+
+    /* Re-attach onclick handlers for accordions inside the clone */
+    reattachAccordionHandlers(section);
+
+    /* Add remove button for non-primary, non-submitted members */
+    if (member.key !== 'primary' && member.status !== 'Submitted') {
+      var removeBtn = document.createElement('button');
+      removeBtn.className = 'mm-remove-btn';
+      removeBtn.title = 'Remove ' + member.label;
+      removeBtn.textContent = '✕';
+      removeBtn.onclick = function() { removeMemberAction(member.key, member.label); };
+      section.appendChild(removeBtn);
+    }
+
+    return section;
+  }
+
+  function adjustSectionsForType(section, memberType) {
+    var keepList = KEEP_SECTIONS_FOR[memberType];
+    if (!keepList) return; /* Keep all sections for spouse/worker-spouse/sponsor */
+
+    /* Find all sub-accordion sections within this member section */
+    var subAccordions = section.querySelectorAll('.sub-accordion, .accordion');
+    for (var i = 0; i < subAccordions.length; i++) {
+      var sub = subAccordions[i];
+      var subHeader = sub.querySelector('.sub-accordion-header, .accordion-header');
+      if (!subHeader) continue;
+      var text = (subHeader.textContent || '').toLowerCase();
+
+      var keep = false;
+      for (var k = 0; k < keepList.length; k++) {
+        if (text.indexOf(keepList[k]) !== -1) { keep = true; break; }
+      }
+      if (!keep) {
+        sub.style.display = 'none';
+        sub.setAttribute('data-mm-hidden', 'true');
+      }
+    }
+  }
+
+  function deduplicateIds(section, memberKey) {
+    var els = section.querySelectorAll('[id]');
+    for (var i = 0; i < els.length; i++) {
+      els[i].id = memberKey + '-' + els[i].id;
+    }
+    /* Update onclick handlers that reference IDs (toggleConditional calls) */
+    var onclickEls = section.querySelectorAll('[onchange]');
+    for (var j = 0; j < onclickEls.length; j++) {
+      var oc = onclickEls[j].getAttribute('onchange') || '';
+      if (oc.indexOf('toggleConditional') !== -1) {
+        /* Replace the ID reference inside toggleConditional(this, 'id') */
+        onclickEls[j].setAttribute('onchange',
+          oc.replace(/toggleConditional\(this,\s*'([^']+)'\)/,
+            "toggleConditional(this,'" + memberKey + "-$1')"));
+      }
+    }
+  }
+
+  function reattachAccordionHandlers(section) {
+    /* The cloned elements have onclick as HTML attributes, which should still work.
+       But just in case, re-add handlers for common accordion toggle patterns. */
+    var headers = section.querySelectorAll(
+      '.top-accordion-header, .applicant-header, ' +
+      '.sub-accordion-header, .accordion-header'
+    );
+    for (var i = 0; i < headers.length; i++) {
+      var h = headers[i];
+      if (!h.getAttribute('onclick')) {
+        (function(header) {
+          header.style.cursor = 'pointer';
+          header.addEventListener('click', function() {
+            var body = header.nextElementSibling;
+            if (body) {
+              var isOpen = body.classList.contains('open') || body.style.display !== 'none';
+              if (isOpen) {
+                body.classList.remove('open');
+                body.style.display = 'none';
+              } else {
+                body.classList.add('open');
+                body.style.display = '';
+              }
+            }
+          });
+        })(h);
+      }
+    }
+  }
+
+  function createAddMemberArea() {
+    var area = document.createElement('div');
+    area.className = 'mm-add-area';
+    area.id = 'mm-add-area';
+
+    var btn = document.createElement('button');
+    btn.className = 'mm-add-btn';
+    btn.textContent = '+ Add Family Member';
+    btn.onclick = function() {
+      var menu = document.getElementById('mm-add-menu');
+      menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
+    };
+    area.appendChild(btn);
+
+    var menu = document.createElement('div');
+    menu.className = 'mm-add-menu';
+    menu.id = 'mm-add-menu';
+    menu.style.display = 'none';
+
+    for (var i = 0; i < ALLOWED_TYPES.length; i++) {
+      (function(type) {
+        var opt = document.createElement('button');
+        opt.className = 'mm-add-option';
+        var icon = MEMBER_ICONS[type] || '👤';
+        opt.textContent = icon + '  ' + type.split(' / ')[0];
+        opt.onclick = function() { addMemberAction(type); };
+        menu.appendChild(opt);
+      })(ALLOWED_TYPES[i]);
+    }
+
+    area.appendChild(menu);
+    return area;
+  }
+
+  function mmToast(msg, duration) {
+    var el = document.getElementById('mm-toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = 'block';
+    setTimeout(function() { el.style.display = 'none'; }, duration || 3000);
+  }
+
+  function addMemberAction(memberType) {
+    mmToast('Adding ' + memberType.split(' / ')[0] + '…');
+    fetch('/q/' + encodeURIComponent(CASE_REF) + '/add-member', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, memberType: memberType }),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        mmToast(data.member.label + ' added!');
+        setTimeout(function() { window.location.reload(); }, 600);
+      } else {
+        mmToast('Error: ' + (data.error || 'Could not add'), 4000);
+      }
+    })
+    .catch(function() { mmToast('Network error — try again', 4000); });
+  }
+
+  function removeMemberAction(memberKey, memberLabel) {
+    if (!confirm('Remove ' + memberLabel + '? Any unsaved answers will be lost.')) return;
+    mmToast('Removing ' + memberLabel + '…');
+    fetch('/q/' + encodeURIComponent(CASE_REF) + '/remove-member', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, memberKey: memberKey }),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        mmToast(memberLabel + ' removed.');
+        /* Remove the section from DOM */
+        var el = document.querySelector('[data-member-key="' + memberKey + '"]');
+        if (el) el.remove();
+        invalidateCache();
+        updateProgressUI();
+      } else {
+        mmToast('Error: ' + (data.error || 'Could not remove'), 4000);
+      }
+    })
+    .catch(function() { mmToast('Network error — try again', 4000); });
+  }
+
+  /* ── Multi-member field helpers ── */
+
+  function getMemberKeyForEl(el) {
+    if (!IS_MULTI) return FORM_KEY;
+    var section = el.closest('[data-member-key]');
+    return section ? section.getAttribute('data-member-key') : FORM_KEY;
+  }
+
+  function getActiveMemberKeys() {
+    if (!IS_MULTI) return [FORM_KEY];
+    var sections = document.querySelectorAll('[data-member-key]');
+    var keys = [];
+    for (var i = 0; i < sections.length; i++) {
+      keys.push(sections[i].getAttribute('data-member-key'));
+    }
+    return keys;
+  }
+
+  function getSerializableFieldsForMember(memberKey) {
+    var fields = collectFields();
+    var result = [];
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      if (getMemberKeyForEl(f.el) === memberKey) {
+        result.push({ section: f.section, label: f.label, key: f.key, value: f.el.value || '' });
+      }
+    }
+    return result;
+  }
+
+  function getProgressForMember(memberKey) {
+    var fields = collectFields();
+    var total = 0, filled = 0;
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      if (getMemberKeyForEl(f.el) !== memberKey) continue;
+      var val = (f.el.value || '').trim();
+      var inConditional = false;
+      var node = f.el.parentElement;
+      while (node && node !== document.body) {
+        if ((node.classList.contains('conditional') || node.classList.contains('refusal-details')) &&
+            node.style.display === 'none' && !node.classList.contains('visible')) {
+          inConditional = true; break;
+        }
+        /* Don't count fields in mm-hidden sub-sections */
+        if (node.getAttribute('data-mm-hidden') === 'true') {
+          inConditional = true; break;
+        }
+        node = node.parentElement;
+      }
+      if (inConditional) continue;
+      total++;
+      if (val && val !== '-- Select --' && val !== 'Select...' && val !== '') filled++;
+    }
+    var pct = total > 0 ? Math.round(filled / total * 100) : 0;
+    return { total: total, filled: filled, pct: pct };
   }
 
   /* ── Toolbar ── */
@@ -1239,6 +1799,9 @@ ${hasAdditionalForm ? `
   /* ── Initialise ── */
 
   async function init() {
+    /* Set up multi-member DOM before anything else */
+    if (IS_MULTI) setupMultiMemberDOM();
+
     createToolbar();
     ${overviewUrl ? 'createNavTab();' : ''}
 
@@ -1247,7 +1810,15 @@ ${hasAdditionalForm ? `
     document.addEventListener('input',  function () { markDirty(); invalidateCache(); updateProgressUI(); });
 
     await loadAndPrefill();
-    await loadAndApplyFlags();
+    if (IS_MULTI) {
+      /* Load flags for each member section */
+      var memberKeys = getActiveMemberKeys();
+      for (var fi = 0; fi < memberKeys.length; fi++) {
+        await loadAndApplyFlagsForMember(memberKeys[fi]);
+      }
+    } else {
+      await loadAndApplyFlags();
+    }
     updateProgressUI();
     scheduleAutoSave();
   }
@@ -1270,7 +1841,7 @@ ${hasAdditionalForm ? `
  * @param {{ formFile, caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl }} params
  * @returns {string} Complete HTML ready to send to the browser
  */
-function buildFormPage({ formFile, caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel }) {
+function buildFormPage({ formFile, caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes }) {
   const filePath = path.join(FORMS_DIR, formFile);
 
   if (!fs.existsSync(filePath)) {
@@ -1278,7 +1849,7 @@ function buildFormPage({ formFile, caseRef, token, formKey, formTitle, hasAdditi
   }
 
   const html   = fs.readFileSync(filePath, 'utf8');
-  const script = buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel });
+  const script = buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes });
 
   // Inject immediately before </body>
   if (html.includes('</body>')) {
@@ -1645,11 +2216,25 @@ function buildErrorPage(message) {
  * Build the CSS + JS block injected into the HTML form for staff review mode.
  * Uses the same field-collection logic as the client script so keys match exactly.
  */
-function buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, savedFlags }) {
+function buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, savedFlags, members }) {
+  const isMultiMember = Array.isArray(members) && members.length > 1;
   return `
 <!-- TDOT Review Mode — injected by server -->
 <style>
 body { padding-top: 62px !important; }
+${isMultiMember ? `
+/* Multi-member review styles */
+.mm-review-section-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,0.18); padding: 3px 12px;
+  border-radius: 5px; font-size: 12px; font-weight: 700; color: #fff;
+  margin-left: 6px;
+}
+.mm-review-member-divider {
+  border: none; border-top: 3px solid #1e3a5f; margin: 32px 0 8px;
+  position: relative;
+}
+` : ''}
 #tdot-review-bar {
   position: fixed; top: 0; left: 0; right: 0;
   background: #1e3a5f; color: #fff;
@@ -1741,6 +2326,8 @@ input[disabled], select[disabled], textarea[disabled] {
   var STAFF_NAME  = ${JSON.stringify(String(staffName))};
   var SAVED_DATA  = ${JSON.stringify(savedFields)};
   var flags       = ${JSON.stringify(savedFlags)};
+  var REVIEW_MEMBERS = ${JSON.stringify(isMultiMember ? members.map(m => ({ key: m.key, type: m.type, label: m.label, fields: m.fields, flags: m.flags })) : [])};
+  var IS_MULTI_REVIEW = REVIEW_MEMBERS.length > 1;
 
   /* ── Utilities (identical to client script so keys match) ── */
 
@@ -1762,6 +2349,9 @@ input[disabled], select[disabled], textarea[disabled] {
   function getSectionContext(el) {
     var parts = [], current = el.parentElement;
     while (current && current !== document.body) {
+      /* In multi-member review, stop at member section boundary */
+      if (IS_MULTI_REVIEW && current.parentElement &&
+          current.parentElement.hasAttribute('data-member-key')) break;
       var prev = current.previousElementSibling;
       if (prev) {
         var oc = prev.getAttribute('onclick') || '';
@@ -1775,12 +2365,20 @@ input[disabled], select[disabled], textarea[disabled] {
     return parts.join(' \u203a ');
   }
 
+  function getMemberKeyForEl(el) {
+    if (!IS_MULTI_REVIEW) return FORM_KEY;
+    var section = el.closest('[data-member-key]');
+    return section ? section.getAttribute('data-member-key') : FORM_KEY;
+  }
+
   function collectFields() {
     var fields = [], seen = [], keyMap = {};
-    function makeKey(section, label) {
+    function makeKey(section, label, el) {
+      var mk = IS_MULTI_REVIEW ? getMemberKeyForEl(el) : '';
       var base = slugify(section + '__' + label);
-      if (!keyMap[base]) { keyMap[base] = 0; return base; }
-      keyMap[base]++; return base + '-' + keyMap[base];
+      var counterKey = mk ? mk + '::' + base : base;
+      if (keyMap[counterKey] === undefined) { keyMap[counterKey] = 1; return base; }
+      keyMap[counterKey]++; return base + '-' + keyMap[counterKey];
     }
 
     var groups = document.querySelectorAll('.form-group');
@@ -1792,7 +2390,7 @@ input[disabled], select[disabled], textarea[disabled] {
       seen.push(inp);
       var labelText = lbl.textContent.trim();
       var section   = getSectionContext(group);
-      fields.push({ section: section, label: labelText, key: makeKey(section, labelText), el: inp, group: group });
+      fields.push({ section: section, label: labelText, key: makeKey(section, labelText, inp), el: inp, group: group });
     }
 
     var tables = document.querySelectorAll('.dynamic-table');
@@ -1991,6 +2589,32 @@ input[disabled], select[disabled], textarea[disabled] {
   /* ── Persist flags to server ── */
 
   async function persistFlags() {
+    if (IS_MULTI_REVIEW) {
+      /* Persist flags per member — split global flags map by member prefix */
+      var perMember = {};
+      for (var fk in flags) {
+        if (!flags.hasOwnProperty(fk)) continue;
+        var match = fk.match(/^__([^_]+(?:-[^_]+)*)__(.+)$/);
+        if (match) {
+          var mk = match[1], realKey = match[2];
+          if (!perMember[mk]) perMember[mk] = {};
+          perMember[mk][realKey] = flags[fk];
+        } else {
+          /* Primary applicant flags (no prefix) */
+          if (!perMember['primary']) perMember['primary'] = {};
+          perMember['primary'][fk] = flags[fk];
+        }
+      }
+      for (var memberKey in perMember) {
+        await fetch('/q/' + encodeURIComponent(CASE_REF) + '/flag', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ formKey: memberKey, flags: perMember[memberKey] }),
+          credentials: 'same-origin',
+        });
+      }
+      return;
+    }
     await fetch('/q/' + encodeURIComponent(CASE_REF) + '/flag', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2005,10 +2629,17 @@ input[disabled], select[disabled], textarea[disabled] {
     var group = field.group;
     if (!group) return;
 
+    /* In multi-member review, prefix the flag key with __memberKey__ */
+    var flagKey = field.key;
+    if (IS_MULTI_REVIEW) {
+      var mk = getMemberKeyForEl(field.el);
+      flagKey = '__' + mk + '__' + field.key;
+    }
+
     var btn = document.createElement('button');
-    btn.className = 'tdot-flag-btn' + (flags[field.key] ? ' flagged' : '');
+    btn.className = 'tdot-flag-btn' + (flags[flagKey] ? ' flagged' : '');
     btn.type      = 'button';
-    btn.innerHTML = flags[field.key] ? '\ud83d\udea9 Flagged' : '\ud83d\udea9 Flag';
+    btn.innerHTML = flags[flagKey] ? '\ud83d\udea9 Flagged' : '\ud83d\udea9 Flag';
 
     /* Place the flag button inline with the label — wrap both in a flex row */
     var lbl = group.querySelector('label');
@@ -2032,31 +2663,31 @@ input[disabled], select[disabled], textarea[disabled] {
     function renderNote() {
       if (note) note.remove();
       note = null;
-      if (!flags[field.key]) return;
+      if (!flags[flagKey]) return;
       note = document.createElement('div');
       note.className = 'tdot-flag-note';
-      note.textContent = '\ud83d\udcac ' + flags[field.key].comment;
+      note.textContent = '\ud83d\udcac ' + flags[flagKey].comment;
       group.appendChild(note);
       group.classList.add('tdot-flagged');
     }
 
     function openEditor() {
       if (editor) { editor.remove(); editor = null; return; }
-      var existing = (flags[field.key] || {}).comment || '';
+      var existing = (flags[flagKey] || {}).comment || '';
       editor = document.createElement('div');
       editor.className = 'tdot-flag-editor';
       editor.innerHTML =
         '<textarea placeholder="Write a note for the client about this field...">' + existing + '</textarea>' +
         '<div class="fe-actions">' +
           '<button class="fe-save" type="button">Save Flag</button>' +
-          (flags[field.key] ? '<button class="fe-remove" type="button">Remove Flag</button>' : '') +
+          (flags[flagKey] ? '<button class="fe-remove" type="button">Remove Flag</button>' : '') +
           '<button class="fe-cancel" type="button">Cancel</button>' +
         '</div>';
 
       editor.querySelector('.fe-save').onclick = async function () {
         var comment = editor.querySelector('textarea').value.trim();
         if (!comment) { alert('Please write a note before saving.'); return; }
-        flags[field.key] = { label: field.label, section: field.section, comment: comment, flaggedBy: STAFF_NAME, flaggedAt: new Date().toISOString() };
+        flags[flagKey] = { label: field.label, section: field.section, comment: comment, flaggedBy: STAFF_NAME, flaggedAt: new Date().toISOString() };
         btn.className = 'tdot-flag-btn flagged';
         btn.innerHTML = '\ud83d\udea9 Flagged';
         editor.remove(); editor = null;
@@ -2069,7 +2700,7 @@ input[disabled], select[disabled], textarea[disabled] {
       if (removeBtn) {
         removeBtn.onclick = async function () {
           if (!confirm('Remove this flag?')) return;
-          delete flags[field.key];
+          delete flags[flagKey];
           btn.className = 'tdot-flag-btn';
           btn.innerHTML = '\ud83d\udea9 Flag';
           editor.remove(); editor = null;
@@ -2121,13 +2752,34 @@ input[disabled], select[disabled], textarea[disabled] {
       var msg = document.getElementById('tdot-notify-msg');
       btn.disabled = true;
       try {
-        var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/notify', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ formKey: FORM_KEY }),
-          credentials: 'same-origin',
-        });
-        if (!res.ok) throw new Error('Server error ' + res.status);
+        if (IS_MULTI_REVIEW) {
+          /* Multi-member: collect unique member keys from flags and send for each */
+          var memberKeys = {};
+          for (var fk in flags) {
+            if (!flags.hasOwnProperty(fk)) continue;
+            var parts = fk.split('::');
+            var mk = parts.length > 1 ? parts[0] : 'primary';
+            memberKeys[mk] = true;
+          }
+          var keys = Object.keys(memberKeys);
+          for (var ki = 0; ki < keys.length; ki++) {
+            var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/notify', {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ formKey: keys[ki] }),
+              credentials: 'same-origin',
+            });
+            if (!res.ok) throw new Error('Server error ' + res.status + ' for member ' + keys[ki]);
+          }
+        } else {
+          var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/notify', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ formKey: FORM_KEY }),
+            credentials: 'same-origin',
+          });
+          if (!res.ok) throw new Error('Server error ' + res.status);
+        }
         if (msg) { msg.textContent = '\u2713 Email sent'; msg.style.color = '#86efac'; }
       } catch (err) {
         alert('Failed to send: ' + err.message);
@@ -2138,10 +2790,155 @@ input[disabled], select[disabled], textarea[disabled] {
 
   /* ── Init ── */
 
+  /* ── Multi-member review DOM setup ── */
+
+  var MEMBER_ICONS = {
+    'Principal Applicant':        '👤',
+    'Spouse / Common-Law Partner': '💑',
+    'Dependent Child':            '👶',
+    'Sponsor':                    '🏠',
+    'Worker Spouse':              '👷',
+    'Parent':                     '👨‍👩‍👧',
+    'Sibling':                    '👫',
+  };
+
+  var KEEP_SECTIONS_FOR = {
+    'Dependent Child': ['profile', 'personal', 'passport', 'flagged'],
+    'Parent':          ['profile', 'personal', 'passport', 'address', 'contact', 'flagged'],
+    'Sibling':         ['profile', 'personal', 'passport', 'flagged'],
+  };
+
+  function setupMultiMemberReview() {
+    var topSections = document.querySelectorAll('.top-accordion, .applicant-accordion');
+    topSections = Array.prototype.slice.call(topSections);
+    if (topSections.length === 0) return;
+
+    var primarySection = topSections[0];
+    primarySection.setAttribute('data-member-key', 'primary');
+
+    /* Clone the dependent section as blueprint, remove all dependent sections */
+    var blueprint = topSections.length > 1 ? topSections[1].cloneNode(true) : primarySection.cloneNode(true);
+    for (var i = 1; i < topSections.length; i++) topSections[i].remove();
+
+    /* Create sections for each non-primary member */
+    var insertRef = primarySection;
+    for (var mi = 0; mi < REVIEW_MEMBERS.length; mi++) {
+      var m = REVIEW_MEMBERS[mi];
+      if (m.key === 'primary') continue;
+
+      var section = blueprint.cloneNode(true);
+      section.setAttribute('data-member-key', m.key);
+      section.style.position = 'relative';
+
+      /* Update header */
+      var header = section.querySelector('.top-accordion-header, .applicant-header');
+      if (header) {
+        var chevron = header.querySelector('.chevron');
+        var icon = MEMBER_ICONS[m.type] || '👤';
+        header.textContent = '';
+        header.appendChild(document.createTextNode(icon + '  ' + m.label));
+        var typeBadge = document.createElement('span');
+        typeBadge.className = 'mm-review-section-label';
+        typeBadge.textContent = m.type.split(' / ')[0];
+        header.appendChild(typeBadge);
+        if (chevron) header.appendChild(chevron.cloneNode(true));
+      }
+
+      /* Adjust sub-sections for member type */
+      var keepList = KEEP_SECTIONS_FOR[m.type];
+      if (keepList) {
+        var subs = section.querySelectorAll('.sub-accordion, .accordion');
+        for (var si = 0; si < subs.length; si++) {
+          var subH = subs[si].querySelector('.sub-accordion-header, .accordion-header');
+          if (!subH) continue;
+          var text = (subH.textContent || '').toLowerCase();
+          var keep = false;
+          for (var k = 0; k < keepList.length; k++) {
+            if (text.indexOf(keepList[k]) !== -1) { keep = true; break; }
+          }
+          if (!keep) subs[si].style.display = 'none';
+        }
+      }
+
+      /* Deduplicate IDs */
+      var idEls = section.querySelectorAll('[id]');
+      for (var ii = 0; ii < idEls.length; ii++) idEls[ii].id = m.key + '-' + idEls[ii].id;
+      var ocEls = section.querySelectorAll('[onchange]');
+      for (var oi = 0; oi < ocEls.length; oi++) {
+        var oc = ocEls[oi].getAttribute('onchange') || '';
+        if (oc.indexOf('toggleConditional') !== -1) {
+          ocEls[oi].setAttribute('onchange',
+            oc.replace(/toggleConditional\\(this,\\s*'([^']+)'\\)/,
+              "toggleConditional(this,'" + m.key + "-$1')"));
+        }
+      }
+
+      insertRef.parentNode.insertBefore(section, insertRef.nextSibling);
+      insertRef = section;
+    }
+  }
+
+  function prefillMultiMemberReview() {
+    for (var mi = 0; mi < REVIEW_MEMBERS.length; mi++) {
+      var m = REVIEW_MEMBERS[mi];
+      var memberSection = document.querySelector('[data-member-key="' + m.key + '"]');
+      if (!memberSection || !m.fields || !m.fields.length) continue;
+
+      /* Collect fields only within this member section */
+      var allFields = collectFields();
+      var memberFields = allFields.filter(function(f) {
+        return getMemberKeyForEl(f.el) === m.key;
+      });
+
+      /* Build lookup maps from member's saved data */
+      var byKey = {}, byLabel = {};
+      for (var i = 0; i < m.fields.length; i++) {
+        var sf = m.fields[i];
+        if (!sf.value || !sf.value.trim()) continue;
+        byKey[sf.key] = sf.value;
+        var lbl = (sf.label || '').trim().toLowerCase();
+        if (!byLabel[lbl]) byLabel[lbl] = [];
+        byLabel[lbl].push(sf.value);
+      }
+
+      var matched = 0, lblOcc = {};
+      for (var fi = 0; fi < memberFields.length; fi++) {
+        var f = memberFields[fi];
+        var val = byKey[f.key];
+        if (!val) {
+          var fLbl = (f.label || '').trim().toLowerCase();
+          var occ = lblOcc[fLbl] || 0;
+          lblOcc[fLbl] = occ + 1;
+          if (byLabel[fLbl] && byLabel[fLbl][occ]) val = byLabel[fLbl][occ];
+        }
+        if (val) { setValue(f.el, val); matched++; }
+      }
+      console.log('[TDOT Review] Pre-filled ' + m.key + ': ' + matched + ' fields');
+
+      /* Merge member flags into the global flags map (prefixed) */
+      if (m.flags) {
+        for (var fk in m.flags) {
+          if (m.flags.hasOwnProperty(fk)) {
+            flags['__' + m.key + '__' + fk] = m.flags[fk];
+          }
+        }
+      }
+    }
+  }
+
   function init() {
+    if (IS_MULTI_REVIEW) {
+      setupMultiMemberReview();
+    }
     expandAll();
     var fields = collectFields();
-    prefill(fields);
+
+    if (IS_MULTI_REVIEW) {
+      prefillMultiMemberReview();
+    } else {
+      prefill(fields);
+    }
+
     makeReadOnly();
     fields.forEach(attachFlagUI);
     createReviewBar();
@@ -2163,14 +2960,14 @@ input[disabled], select[disabled], textarea[disabled] {
  * Staff can flag individual fields with comments and send correction requests.
  * Uses the same field-collection logic as the client script so flag keys match exactly.
  */
-function buildReviewFormPage({ formFile, caseRef, formKey, staffName, savedFields, savedFlags }) {
+function buildReviewFormPage({ formFile, caseRef, formKey, staffName, savedFields, savedFlags, members }) {
   const filePath = path.join(FORMS_DIR, formFile);
   if (!fs.existsSync(filePath)) {
     throw new Error(`Form file not found: ${formFile}`);
   }
 
   const html   = fs.readFileSync(filePath, 'utf8');
-  const script = buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, savedFlags });
+  const script = buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, savedFlags, members });
 
   if (html.includes('</body>')) {
     return html.replace('</body>', script + '\n</body>');
