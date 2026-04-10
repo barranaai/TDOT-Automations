@@ -207,16 +207,21 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
     const formFiles   = resolveForm(caseType, caseSubType) || {};
     const memberTypes = resolveMemberTypes(caseType, caseSubType);
     const hasTwo      = Boolean(formFiles?.additional);
-    const isMultiMember = memberTypes.length > 0 && !hasTwo;
+    const isMultiMember = memberTypes.length > 0;
+
+    // Determine which form file to review (primary vs additional)
+    const isAdditionalReview = (formKey === 'additional' || formKey.endsWith('-additional'));
+    const reviewFormFile     = isAdditionalReview ? formFiles.additional : formFiles.primary;
+    const formKeySuffix      = isAdditionalReview ? '-additional' : '';
 
     // ── Multi-member review: show all members in one page ──────────────────
-    if (isMultiMember && (formKey === 'primary' || !req.query.formKey)) {
+    if (isMultiMember && (formKey === 'primary' || formKey === 'additional' || !req.query.formKey)) {
       const members = await svc.loadMembers({ clientName, caseRef });
       const allMembersData = [];
       for (const member of members) {
         const [mFields, mFlags] = await Promise.all([
-          svc.loadFormData({ clientName, caseRef, formKey: member.key }),
-          review.loadFlags({ clientName, caseRef, formKey: member.key }),
+          svc.loadFormData({ clientName, caseRef, formKey: member.key + formKeySuffix }),
+          review.loadFlags({ clientName, caseRef, formKey: member.key + formKeySuffix }),
         ]);
         allMembersData.push({ ...member, fields: mFields, flags: mFlags });
       }
@@ -230,7 +235,7 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
         ));
       }
 
-      const formFile = formFiles.primary;
+      const formFile = reviewFormFile || formFiles.primary;
       if (!formFile) {
         return res.status(404).type('html').send(svc.buildErrorPage('Form file not found for this case type.'));
       }
@@ -238,11 +243,12 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
       return res.type('html').send(svc.buildReviewFormPage({
         formFile,
         caseRef,
-        formKey: 'primary',
+        formKey: 'primary' + formKeySuffix,
         staffName:    req.staff.name,
         savedFields:  allMembersData[0].fields,
         savedFlags:   allMembersData[0].flags,
         members:      allMembersData,
+        formKeySuffix,
       }));
     }
 
@@ -609,33 +615,40 @@ router.get('/:caseRef', async (req, res) => {
     }
 
     // ── No f= param ───────────────────────────────────────────────────────
+    // Serve the form directly with inline member sections.
+    // For dual-form cases, form=additional selects the second form file;
+    // default (no form param) serves the primary form with a nav banner.
     if (!fParam) {
       const members      = await svc.loadMembers({ clientName, caseRef });
       const withStatuses = await svc.getMemberStatuses({ clientName, caseRef, members, formFiles });
 
-      // ── Dual-form cases: still use overview page (two separate HTML files) ─
-      if (hasTwo) {
-        return res.type('html').send(
-          svc.buildOverviewPage({
-            caseRef, token,
-            members:            withStatuses,
-            formFiles,
-            allowedMemberTypes: memberTypes,
-          })
-        );
-      }
+      const isAdditionalView = (formParam === 'additional') && hasTwo;
+      const formFile  = isAdditionalView ? formFiles.additional : formFiles.primary;
+      const formTitle = formFile.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
+      const formKeySuffix = isAdditionalView ? '-additional' : '';
 
-      // ── Single-form multi-member: serve form directly with all members ────
-      const formTitle = formFiles.primary.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
+      // Build cross-links for dual-form navigation banner
+      const otherFormUrl = hasTwo
+        ? `/q/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(token)}${isAdditionalView ? '' : '&form=additional'}`
+        : '';
+      const otherFormTitle = hasTwo
+        ? (isAdditionalView ? formFiles.primary : formFiles.additional)
+            .replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim()
+        : '';
+
       return res.type('html').send(svc.buildFormPage({
-        formFile:          formFiles.primary,
+        formFile,
         caseRef, token,
-        formKey:           'primary',
+        formKey:            'primary' + formKeySuffix,
         formTitle,
-        hasAdditionalForm: false,
-        overviewUrl:       '',
-        members:           withStatuses,
-        allowedMemberTypes: memberTypes,
+        hasAdditionalForm:  hasTwo,
+        overviewUrl:        '',
+        members:            hasMembers ? withStatuses : undefined,
+        allowedMemberTypes: hasMembers ? memberTypes : undefined,
+        otherFormUrl,
+        otherFormTitle,
+        isAdditionalForm:   isAdditionalView,
+        formKeySuffix,
       }));
     }
 

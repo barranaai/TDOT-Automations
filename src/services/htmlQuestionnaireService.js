@@ -636,7 +636,7 @@ async function checkStageGate({ itemId, caseRef, caseType, qPct }) {
  * @param {{ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl }} params
  * @returns {string}  HTML string ready to splice into the form HTML
  */
-function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes }) {
+function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes, otherFormUrl, otherFormTitle, isAdditionalForm, formKeySuffix }) {
   const isMultiMember = Array.isArray(members) && members.length > 0;
   return `
 <!-- TDOT Dynamic Questionnaire — injected by server -->
@@ -739,6 +739,10 @@ ${hasAdditionalForm ? `
   var MEMBERS        = ${JSON.stringify(isMultiMember ? members : [])};
   var ALLOWED_TYPES  = ${JSON.stringify(isMultiMember ? (allowedMemberTypes || []) : [])};
   var IS_MULTI       = MEMBERS.length > 0;
+  var OTHER_FORM_URL   = ${JSON.stringify(otherFormUrl || '')};
+  var OTHER_FORM_TITLE = ${JSON.stringify(otherFormTitle || '')};
+  var IS_ADDITIONAL    = ${JSON.stringify(Boolean(isAdditionalForm))};
+  var FORM_KEY_SUFFIX  = ${JSON.stringify(formKeySuffix || '')};
 
   /* ── Utilities ── */
 
@@ -811,7 +815,7 @@ ${hasAdditionalForm ? `
           var mk = memberKeys[i];
           var data = getSerializableFieldsForMember(mk);
           if (data && data.length) {
-            localStorage.setItem('tdot_form_' + CASE_REF + '_' + mk,
+            localStorage.setItem('tdot_form_' + CASE_REF + '_' + mk + FORM_KEY_SUFFIX,
               JSON.stringify({ ts: Date.now(), fields: data }));
           }
         }
@@ -1005,7 +1009,7 @@ ${hasAdditionalForm ? `
           var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/save', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ token: TOKEN, formKey: mk, fields: mFields, completionPct: mProg.pct }),
+            body:    JSON.stringify({ token: TOKEN, formKey: mk + FORM_KEY_SUFFIX, fields: mFields, completionPct: mProg.pct }),
           });
           if (!res.ok) throw new Error('Save failed for ' + mk);
         } catch (err) {
@@ -1090,7 +1094,7 @@ ${hasAdditionalForm ? `
           var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/submit', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ token: TOKEN, formKey: mk, fields: mFields, completionPct: mProg.pct }),
+            body:    JSON.stringify({ token: TOKEN, formKey: mk + FORM_KEY_SUFFIX, fields: mFields, completionPct: mProg.pct }),
           });
           if (!res.ok) throw new Error('Submit failed for ' + mk + ' (' + res.status + ')');
         }
@@ -1204,7 +1208,7 @@ ${hasAdditionalForm ? `
     try {
       var res = await fetch(
         '/q/' + encodeURIComponent(CASE_REF) + '/flags' +
-        '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(memberKey),
+        '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(memberKey + FORM_KEY_SUFFIX),
         { method: 'GET' }
       );
       if (!res.ok) return;
@@ -1304,7 +1308,7 @@ ${hasAdditionalForm ? `
     try {
       var res = await fetch(
         '/q/' + encodeURIComponent(CASE_REF) + '/data' +
-        '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(memberKey),
+        '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(memberKey + FORM_KEY_SUFFIX),
         { method: 'GET' }
       );
       if (res.ok) {
@@ -1316,7 +1320,7 @@ ${hasAdditionalForm ? `
     }
 
     /* Local backup */
-    var localKey = 'tdot_form_' + CASE_REF + '_' + memberKey;
+    var localKey = 'tdot_form_' + CASE_REF + '_' + memberKey + FORM_KEY_SUFFIX;
     var localFields = [];
     try {
       var raw = localStorage.getItem(localKey);
@@ -1771,14 +1775,24 @@ ${hasAdditionalForm ? `
   }
 
   /* ── Navigation tabs (two-form cases) ── */
-  ${overviewUrl ? `
+  ${otherFormUrl ? `
   function createNavTab() {
     var nav = document.createElement('div');
     nav.className = 'tdot-nav-bar';
-    var memberNote = MEMBER_LABEL && MEMBER_LABEL !== 'Primary Applicant'
-      ? '<span style="margin-left:auto;font-size:13px;font-weight:600;color:#1e3a5f;padding:8px 16px">' + MEMBER_LABEL.replace(/</g,'&lt;') + '</span>'
-      : '';
-    nav.innerHTML = '<a href="' + OVERVIEW_URL + '" class="tdot-nav-tab">← All Forms</a>' + memberNote;
+    nav.innerHTML =
+      '<span class="tdot-nav-tab active" style="cursor:default">' +
+        (IS_ADDITIONAL ? '📋 ' : '📝 ') + ${JSON.stringify(formTitle || '')} +
+      '</span>' +
+      '<a href="' + OTHER_FORM_URL + '" class="tdot-nav-tab">' +
+        (IS_ADDITIONAL ? '📝 ' : '📋 ') + OTHER_FORM_TITLE +
+      '</a>';
+    document.body.insertBefore(nav, document.body.firstChild);
+  }
+  ` : overviewUrl ? `
+  function createNavTab() {
+    var nav = document.createElement('div');
+    nav.className = 'tdot-nav-bar';
+    nav.innerHTML = '<a href="' + OVERVIEW_URL + '" class="tdot-nav-tab">← All Forms</a>';
     document.body.insertBefore(nav, document.body.firstChild);
   }
   ` : '/* single-form case — no nav tab */'}
@@ -1803,7 +1817,7 @@ ${hasAdditionalForm ? `
     if (IS_MULTI) setupMultiMemberDOM();
 
     createToolbar();
-    ${overviewUrl ? 'createNavTab();' : ''}
+    ${(overviewUrl || otherFormUrl) ? 'createNavTab();' : ''}
 
     /* Listen for any field change to update progress, invalidate cache and mark dirty */
     document.addEventListener('change', function () { markDirty(); invalidateCache(); updateProgressUI(); });
@@ -1841,7 +1855,7 @@ ${hasAdditionalForm ? `
  * @param {{ formFile, caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl }} params
  * @returns {string} Complete HTML ready to send to the browser
  */
-function buildFormPage({ formFile, caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes }) {
+function buildFormPage({ formFile, caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes, otherFormUrl, otherFormTitle, isAdditionalForm, formKeySuffix }) {
   const filePath = path.join(FORMS_DIR, formFile);
 
   if (!fs.existsSync(filePath)) {
@@ -1849,7 +1863,7 @@ function buildFormPage({ formFile, caseRef, token, formKey, formTitle, hasAdditi
   }
 
   const html   = fs.readFileSync(filePath, 'utf8');
-  const script = buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes });
+  const script = buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes, otherFormUrl, otherFormTitle, isAdditionalForm, formKeySuffix });
 
   // Inject immediately before </body>
   if (html.includes('</body>')) {
@@ -2216,7 +2230,7 @@ function buildErrorPage(message) {
  * Build the CSS + JS block injected into the HTML form for staff review mode.
  * Uses the same field-collection logic as the client script so keys match exactly.
  */
-function buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, savedFlags, members }) {
+function buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, savedFlags, members, formKeySuffix }) {
   const isMultiMember = Array.isArray(members) && members.length > 1;
   return `
 <!-- TDOT Review Mode — injected by server -->
@@ -2328,6 +2342,7 @@ input[disabled], select[disabled], textarea[disabled] {
   var flags       = ${JSON.stringify(savedFlags)};
   var REVIEW_MEMBERS = ${JSON.stringify(isMultiMember ? members.map(m => ({ key: m.key, type: m.type, label: m.label, fields: m.fields, flags: m.flags })) : [])};
   var IS_MULTI_REVIEW = REVIEW_MEMBERS.length > 1;
+  var REVIEW_KEY_SUFFIX = ${JSON.stringify(formKeySuffix || '')};
 
   /* ── Utilities (identical to client script so keys match) ── */
 
@@ -2609,7 +2624,7 @@ input[disabled], select[disabled], textarea[disabled] {
         await fetch('/q/' + encodeURIComponent(CASE_REF) + '/flag', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ formKey: memberKey, flags: perMember[memberKey] }),
+          body:    JSON.stringify({ formKey: memberKey + REVIEW_KEY_SUFFIX, flags: perMember[memberKey] }),
           credentials: 'same-origin',
         });
       }
@@ -2757,8 +2772,8 @@ input[disabled], select[disabled], textarea[disabled] {
           var memberKeys = {};
           for (var fk in flags) {
             if (!flags.hasOwnProperty(fk)) continue;
-            var parts = fk.split('::');
-            var mk = parts.length > 1 ? parts[0] : 'primary';
+            var match = fk.match(/^__([^_]+(?:-[^_]+)*)__(.+)$/);
+            var mk = match ? match[1] : 'primary';
             memberKeys[mk] = true;
           }
           var keys = Object.keys(memberKeys);
@@ -2766,7 +2781,7 @@ input[disabled], select[disabled], textarea[disabled] {
             var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/notify', {
               method:  'POST',
               headers: { 'Content-Type': 'application/json' },
-              body:    JSON.stringify({ formKey: keys[ki] }),
+              body:    JSON.stringify({ formKey: keys[ki] + REVIEW_KEY_SUFFIX }),
               credentials: 'same-origin',
             });
             if (!res.ok) throw new Error('Server error ' + res.status + ' for member ' + keys[ki]);
@@ -2960,14 +2975,14 @@ input[disabled], select[disabled], textarea[disabled] {
  * Staff can flag individual fields with comments and send correction requests.
  * Uses the same field-collection logic as the client script so flag keys match exactly.
  */
-function buildReviewFormPage({ formFile, caseRef, formKey, staffName, savedFields, savedFlags, members }) {
+function buildReviewFormPage({ formFile, caseRef, formKey, staffName, savedFields, savedFlags, members, formKeySuffix }) {
   const filePath = path.join(FORMS_DIR, formFile);
   if (!fs.existsSync(filePath)) {
     throw new Error(`Form file not found: ${formFile}`);
   }
 
   const html   = fs.readFileSync(filePath, 'utf8');
-  const script = buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, savedFlags, members });
+  const script = buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, savedFlags, members, formKeySuffix });
 
   if (html.includes('</body>')) {
     return html.replace('</body>', script + '\n</body>');
