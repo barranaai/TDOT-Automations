@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path       = require('path');
 const express    = require('express');
 const cookieParser = require('cookie-parser');
 const mondayWebhookRouter       = require('./routes/mondayWebhook');
@@ -29,6 +30,8 @@ app.use('/webhook/monday', mondayWebhookRouter);
 app.use('/questionnaire',  questionnaireFormRouter);
 app.use('/documents',      documentUploadRouter);
 app.use('/q',              htmlQuestionnaireRouter);
+
+app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
 
 app.get('/', (_req, res) => res.json({ status: 'ok' }));
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
