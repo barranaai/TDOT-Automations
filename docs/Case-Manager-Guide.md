@@ -20,6 +20,7 @@
 9. [Notifications You Will Receive](#9-notifications-you-will-receive)
 10. [Special Situations & Manual Controls](#10-special-situations--manual-controls)
 11. [Quick Reference Card](#11-quick-reference-card)
+12. [SLA Configuration Board](#12-sla-configuration-board)
 
 ---
 
@@ -397,6 +398,218 @@ https://tdot-automations.onrender.com/q/{CASE-REFERENCE}/review
 |---|---|---|
 | **Manual Override = Yes** | Chasing emails only | Client has a valid reason for delay — don't want to chase them but case is still active |
 | **Automation Lock = Yes** | Everything (SLA, health, chasing, escalation) | Case is on hold, disputed, or needs manual handling only |
+
+---
+
+## 12. SLA Configuration Board
+
+> **Board ID:** 18402401449  
+> **Who manages it:** Ops Supervisor / System Admin  
+> **Access level:** All team members can view; only supervisors should edit
+
+### What this board is
+
+The SLA Configuration Board is the **control panel for all automation rules**. Every automated behaviour that varies by case type — how long a case should take, when to chase the client, when to raise a red flag, what readiness score is needed to advance — is configured here, not hardcoded.
+
+**Structure: one row per case type.**  
+Each row is named exactly after the Case Type as it appears in the Client Master Board dropdown (e.g., `Visitor Visa Outside Canada`, `Express Entry Profile`). The automation reads this board every morning to pick up the latest settings before running.
+
+> **Changes take effect the next morning** — the engines load the board once at the start of each daily run. No restart or redeploy is needed.
+
+---
+
+### Column-by-column explanation
+
+#### 🟢 Profile Active
+**Type:** Status (Yes / No)  
+**Default if missing:** Profile is ignored
+
+This is the on/off switch for the entire row. Set to **Yes** to enable all automation for that case type. Set to **No** to disable it without deleting the row (useful for case types under review or not yet in use).
+
+> If a case type has no active profile, it falls back to system defaults: 60 day SLA, 80% readiness threshold, 7/14/21/30 day chasing intervals.
+
+---
+
+#### 📅 SLA Total Days
+**Type:** Number  
+**Example:** `60` (Visitor Visa), `90` (Express Entry), `120` (Spousal Sponsorship)
+
+The **total expected number of days** to complete a case from when it enters Document Collection Started to when it is ready for submission.
+
+This is the master clock for the entire SLA engine. Every deadline date, every risk band, and every "% time consumed" calculation is based on this number.
+
+**How it is used:**
+- `Days Elapsed ÷ SLA Total Days × 100` = % of time consumed
+- If % consumed ≥ Orange Threshold → SLA Risk Band turns Orange
+- If % consumed ≥ Red Threshold → SLA Risk Band turns Red
+- Hard / Soft deadlines are calculated as: `Stage Start Date + (SLA Total Days − offset)`
+
+---
+
+#### ✅ Min Threshold (Readiness %)
+**Type:** Number (percentage, e.g., `80`)  
+**Default:** 80%
+
+The **minimum readiness percentage** a case must reach on both documents and questionnaire before the stage gate fires. The case will not automatically advance from Document Collection Started to Internal Review (or from Internal Review to Submission Preparation) until:
+
+- Q Readiness % ≥ this value, **AND**
+- Doc Readiness % ≥ this value, **AND**
+- Blocking Doc Count = 0
+
+Set this lower (e.g., 70) for case types where some documents are commonly unavailable at the time of collection. Set it at 100 for case types that require a complete file before review.
+
+---
+
+#### 🟠 Orange Threshold
+**Type:** Number (percentage of SLA time consumed, e.g., `60`)  
+**Default:** 60%
+
+When the case has consumed **60% or more of its SLA Total Days**, the SLA Risk Band column on the Client Master turns **Orange**. This is the "approaching deadline" warning.
+
+**Example:** A Visitor Visa case with 60 SLA days turns Orange after 36 days in Document Collection Started.
+
+---
+
+#### 🔴 Red Threshold
+**Type:** Number (percentage of SLA time consumed, e.g., `80`)  
+**Default:** 80%
+
+When the case has consumed **80% or more of its SLA Total Days**, the SLA Risk Band turns **Red**, the Case Health Status also turns Red, and the case manager is notified.
+
+**Example:** Same 60-day case turns Red after 48 days.
+
+> If an expiry date (passport/IELTS/medical) is also within the warning window, the risk band is forced up regardless of where the SLA time stands — expiry risk always overrides.
+
+---
+
+#### 📆 Hard Deadline Offset
+**Type:** Number (days, e.g., `5`)  
+**Default:** 5 days
+
+Used to calculate the **Hard Deadline** date on the Client Master Board:
+
+```
+Hard Deadline = Stage Start Date + (SLA Total Days − Hard Deadline Offset)
+```
+
+A higher offset pushes the Hard Deadline earlier, giving more buffer. The Hard Deadline represents the absolute latest internal date by which the case file must be ready before the SLA window closes.
+
+**Example:** 60-day SLA, offset 5 → Hard Deadline = Day 55.
+
+---
+
+#### 📆 Soft Deadline Offset
+**Type:** Number (days, e.g., `10`)  
+**Default:** 10 days
+
+Used to calculate the **Soft Deadline** date:
+
+```
+Soft Deadline = Stage Start Date + (SLA Total Days − Soft Deadline Offset)
+```
+
+The Soft Deadline is the "should be done by" target — an internal prompt that the case needs to be wrapping up. It is always earlier than the Hard Deadline.
+
+The system also calculates a **Submission Prep Deadline** = Soft Deadline − 7 days, which is when all documents should be compiled and ready for the application package.
+
+**Example:** 60-day SLA, offset 10 → Soft Deadline = Day 50, Prep Deadline = Day 43.
+
+---
+
+#### ⏱️ Reminder 1 Offset (Chasing — First Reminder)
+**Type:** Number (days of inactivity, e.g., `7`)  
+**Default:** 7 days
+
+If a client has not uploaded any documents or submitted their questionnaire within **this many days** of the case opening, the chasing loop sends the **first reminder email** automatically.
+
+The inactivity clock is reset every time the client uploads a document or saves questionnaire answers.
+
+---
+
+#### ⏱️ Reminder 2 Offset (Chasing — Second Reminder)
+**Type:** Number (days, e.g., `14`)  
+**Default:** 14 days
+
+If the client still hasn't responded after **Reminder 1**, a second, firmer reminder is sent after this many total days of inactivity.
+
+---
+
+#### ⏱️ Final Notice Offset (Chasing — Final Warning)
+**Type:** Number (days, e.g., `21`)  
+**Default:** 21 days
+
+After this many total days of inactivity, the chasing loop sends a **final notice** — a clear warning that the case will be escalated if there is no response.
+
+---
+
+#### ⚠️ Escalation Offset (Chasing — Client Blocked)
+**Type:** Number (days, e.g., `30`)  
+**Default:** 30 days
+
+If the client has still not responded after the Final Notice and this many total days of inactivity, the system:
+- Sets **Chasing Stage = Client Blocked**
+- Sets **Escalation Required = Yes**
+- Notifies the Ops Supervisor
+
+This is the automatic escalation trigger for non-responsive clients.
+
+> **The four chasing offsets work as a ladder:** R1 → R2 → Final → Escalation. Each fires only once per period of inactivity. If the client responds, the chain resets.
+
+---
+
+#### 📅 Expiry Warning Days
+**Type:** Number (days, e.g., `90`)  
+**Default:** 90 days
+
+How many days before a document expiry date (Passport, IELTS, Medical) to start raising the **Expiry Risk Flag** and notifying the case manager.
+
+Set this higher for case types with long processing times where an expiry could become a problem mid-case. Set it lower for short-turnaround case types.
+
+> The **Critical Expiry** threshold is hardcoded at 30 days — within 30 days of expiry the risk band is forced to Red regardless of this setting.
+
+---
+
+#### 🎯 Urgency Weight
+**Type:** Number (1–10, e.g., `7`)
+
+A multiplier used by the **Escalation Routing engine** when calculating the **Priority Score** for a case. A higher weight means this case type scores higher in the priority queue when multiple escalation rules are being evaluated simultaneously.
+
+Use higher values for time-sensitive case types (e.g., work permits with imminent start dates) and lower values for less urgent types.
+
+---
+
+#### 🔬 Expiry Sensitivity
+**Type:** Number (1–10, e.g., `5`)
+
+A second multiplier for the Escalation Routing engine — specifically how much weight to give to upcoming expiry dates when calculating the overall Priority Score for a case. A higher value makes expiry proximity a stronger factor in routing decisions.
+
+---
+
+### Summary: which engine reads which column
+
+| Column | Read by |
+|---|---|
+| Profile Active | All 4 engines (readiness, SLA, chasing, expiry) |
+| SLA Total Days | SLA Risk Engine |
+| Min Threshold | Readiness Engine + Stage Gate |
+| Orange / Red Threshold | SLA Risk Engine |
+| Hard / Soft Deadline Offset | SLA Risk Engine |
+| Expiry Warning Days | SLA Risk Engine + Expiry Engine |
+| Reminder 1 / 2 / Final / Escalation Offset | Chasing Loop |
+| Urgency Weight | Escalation Routing Engine |
+| Expiry Sensitivity | Escalation Routing Engine |
+
+---
+
+### Editing the SLA Config Board
+
+1. Open the **SLA Config Board** in Monday.com
+2. Find the row for the case type you want to adjust
+3. Update the relevant column value
+4. Changes are picked up **automatically the next morning** — no restart needed
+5. To test immediately, ask your system admin to trigger a manual engine run
+
+> **Never rename a row.** The row name must exactly match the Case Type dropdown value on the Client Master Board. If they don't match, the automation falls back to system defaults for that case type and no warning is shown.
 
 ---
 
