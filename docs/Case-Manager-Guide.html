@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TDOT Immigration — Case Manager Guide</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:        #1a3558;
+      --navy-light:  #224472;
+      --blue:        #2563eb;
+      --blue-bg:     #eff6ff;
+      --green:       #047857;
+      --green-bg:    #ecfdf5;
+      --amber:       #b45309;
+      --amber-bg:    #fffbeb;
+      --red:         #b91c1c;
+      --red-bg:      #fef2f2;
+      --border:      #e2e8f0;
+      --text:        #1e293b;
+      --muted:       #64748b;
+      --surface:     #f8fafc;
+      --white:       #ffffff;
+      --font:        -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      --mono:        'SF Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+    }
+
+    body {
+      font-family: var(--font);
+      font-size: 15px;
+      line-height: 1.75;
+      color: var(--text);
+      background: var(--surface);
+      padding-bottom: 80px;
+    }
+
+    /* ─── Document header ─────────────────────────── */
+    .doc-header {
+      background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 100%);
+      color: var(--white);
+      padding: 48px 60px 40px;
+    }
+    .doc-header .eyebrow {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      opacity: 0.65;
+      margin-bottom: 10px;
+    }
+    .doc-header h1 {
+      font-size: 2.1rem;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      line-height: 1.2;
+    }
+    .doc-header .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      margin-top: 18px;
+    }
+    .doc-header .meta-item {
+      font-size: 0.82rem;
+      opacity: 0.72;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .doc-header .meta-item::before { content: '▸'; opacity: 0.6; }
+
+    /* ─── Layout wrapper ─────────────────────────── */
+    .page {
+      max-width: 940px;
+      margin: 44px auto;
+      padding: 0 32px;
+    }
+
+    /* ─── Table of contents ──────────────────────── */
+    .toc {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 30px 36px;
+      margin-bottom: 52px;
+    }
+    .toc-label {
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 18px;
+    }
+    .toc ol {
+      list-style: none;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px 40px;
+      counter-reset: toc-counter;
+    }
+    .toc li {
+      counter-increment: toc-counter;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .toc li::before {
+      content: counter(toc-counter) '.';
+      font-size: 0.75rem;
+      color: var(--muted);
+      min-width: 20px;
+      flex-shrink: 0;
+    }
+    .toc li a {
+      text-decoration: none;
+      color: var(--blue);
+      font-size: 0.88rem;
+      font-weight: 500;
+    }
+    .toc li a:hover { text-decoration: underline; }
+
+    /* ─── Section ────────────────────────────────── */
+    .section {
+      margin-bottom: 60px;
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 26px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid var(--border);
+    }
+    .section-num {
+      background: var(--navy);
+      color: var(--white);
+      font-size: 0.78rem;
+      font-weight: 800;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      letter-spacing: 0.3px;
+    }
+    .section-title {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: var(--navy);
+      letter-spacing: -0.4px;
+    }
+
+    /* ─── Sub-heading ────────────────────────────── */
+    .subhead {
+      font-size: 0.96rem;
+      font-weight: 700;
+      color: var(--navy);
+      margin: 30px 0 12px;
+      padding-left: 14px;
+      border-left: 3px solid var(--blue);
+    }
+
+    /* ─── Step label ─────────────────────────────── */
+    .step-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--blue);
+      margin: 26px 0 8px;
+    }
+
+    /* ─── Paragraphs & lists ─────────────────────── */
+    p { margin-bottom: 14px; }
+    p:last-child { margin-bottom: 0; }
+
+    ul, ol { margin: 10px 0 16px 26px; }
+    li { margin-bottom: 6px; }
+    ul li { list-style: disc; }
+    ol li { list-style: decimal; }
+
+    /* ─── Tables ─────────────────────────────────── */
+    .tbl-wrap {
+      overflow-x: auto;
+      margin: 14px 0 24px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    thead th {
+      background: var(--navy);
+      color: var(--white);
+      padding: 11px 16px;
+      text-align: left;
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      white-space: nowrap;
+    }
+    tbody tr:nth-child(even) { background: var(--surface); }
+    tbody tr:hover { background: var(--blue-bg); }
+    td {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+
+    /* ─── Callout boxes ──────────────────────────── */
+    .note {
+      border-left: 4px solid var(--blue);
+      background: var(--blue-bg);
+      border-radius: 0 8px 8px 0;
+      padding: 13px 18px;
+      margin: 14px 0 20px;
+      font-size: 0.88rem;
+    }
+    .note.warn {
+      border-color: var(--amber);
+      background: var(--amber-bg);
+    }
+    .note.danger {
+      border-color: var(--red);
+      background: var(--red-bg);
+    }
+    .note.board {
+      border-color: var(--navy);
+      background: #eef2f8;
+    }
+    .note p { margin-bottom: 6px; }
+    .note p:last-child { margin-bottom: 0; }
+    .note ul { margin-top: 8px; }
+
+    /* ─── Code ───────────────────────────────────── */
+    code {
+      font-family: var(--mono);
+      font-size: 0.8em;
+      background: #f1f5f9;
+      color: #0f4c81;
+      padding: 2px 7px;
+      border-radius: 4px;
+    }
+    pre {
+      font-family: var(--mono);
+      font-size: 0.84rem;
+      background: #1e293b;
+      color: #cbd5e1;
+      padding: 18px 22px;
+      border-radius: 10px;
+      overflow-x: auto;
+      margin: 14px 0 22px;
+      line-height: 1.65;
+    }
+    pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
+
+    /* ─── Stage flow diagram ─────────────────────── */
+    .stage-flow {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 22px 28px;
+      font-family: var(--mono);
+      font-size: 0.84rem;
+      line-height: 2.1;
+      margin: 16px 0 24px;
+    }
+    .stage-name { color: var(--navy); font-weight: 700; }
+    .stage-note { color: var(--muted); font-size: 0.78rem; }
+
+    /* ─── Divider ────────────────────────────────── */
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 52px 0;
+    }
+
+    /* ─── Footer ─────────────────────────────────── */
+    .doc-footer {
+      border-top: 1px solid var(--border);
+      padding-top: 22px;
+      text-align: center;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    /* ─── Print ──────────────────────────────────── */
+    @media print {
+      body { background: white; font-size: 12px; }
+      .doc-header, .section-num, thead { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .section { break-inside: avoid; }
+      .toc { break-inside: avoid; }
+      .tbl-wrap { overflow: visible; }
+    }
+
+    @media (max-width: 640px) {
+      .doc-header { padding: 32px 24px; }
+      .doc-header h1 { font-size: 1.5rem; }
+      .page { padding: 0 18px; }
+      .toc ol { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══ Header ══════════════════════════════════════════ -->
+<header class="doc-header">
+  <div style="max-width: 940px; margin: 0 auto; padding: 0 32px;">
+    <div class="eyebrow">Automation System Walkthrough</div>
+    <h1>TDOT Immigration — Case Manager Guide</h1>
+    <div class="meta-row">
+      <span class="meta-item">Audience: Case managers and officers familiar with Monday.com</span>
+      <span class="meta-item">Format: In-person screen-share session</span>
+      <span class="meta-item">Last updated: April 2026</span>
+    </div>
+  </div>
+</header>
+
+<div class="page">
+
+  <!-- ══ Table of Contents ═══════════════════════════ -->
+  <div class="toc">
+    <div class="toc-label">Table of Contents</div>
+    <ol>
+      <li><a href="#s1">System Overview</a></li>
+      <li><a href="#s2">Creating a New Case</a></li>
+      <li><a href="#s3">Client Master Board — Column Reference</a></li>
+      <li><a href="#s4">What Happens Automatically (and When)</a></li>
+      <li><a href="#s5">Monitoring Case Readiness</a></li>
+      <li><a href="#s6">Reviewing Documents</a></li>
+      <li><a href="#s7">Reviewing the Questionnaire</a></li>
+      <li><a href="#s8">Moving a Case Through Stages</a></li>
+      <li><a href="#s9">SLA, Health &amp; Escalation</a></li>
+      <li><a href="#s10">Notifications You Will Receive</a></li>
+      <li><a href="#s11">Special Situations &amp; Manual Controls</a></li>
+      <li><a href="#s12">Quick Reference Card</a></li>
+      <li><a href="#s13">SLA Configuration Board</a></li>
+    </ol>
+  </div>
+
+
+  <!-- ══ Section 1 ════════════════════════════════════ -->
+  <div class="section" id="s1">
+    <div class="section-header">
+      <div class="section-num">1</div>
+      <div class="section-title">System Overview</div>
+    </div>
+    <p>The system has three layers:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Layer</th><th>Where</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td>Case Management Hub</td><td>Monday.com — Client Master Board</td><td>The single source of truth for every case. All readiness scores, stages, and flags live here.</td></tr>
+          <tr><td>Execution Boards</td><td>Monday.com — Document &amp; Questionnaire Boards</td><td>One row per document or question per case. Updated as clients submit.</td></tr>
+          <tr><td>Client Portal</td><td>Web browser (hosted)</td><td>Two secure pages the client accesses via emailed links — one for documents, one for the questionnaire.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Your job as a case manager is primarily on the Client Master Board. The execution boards and client portal are updated automatically. You review them, flag issues, and move the case forward when ready.</p>
+  </div>
+
+
+  <!-- ══ Section 2 ════════════════════════════════════ -->
+  <div class="section" id="s2">
+    <div class="section-header">
+      <div class="section-num">2</div>
+      <div class="section-title">Creating a New Case</div>
+    </div>
+
+    <div class="step-label">Step 1 — Create the item on the Client Master Board</div>
+    <p>Create a new item on the Client Master Board in Monday.com. The item title must be the client's full name — this is what all automation, emails, and OneDrive folders use.</p>
+    <div class="note">
+      <p>Example: <strong>John Smith</strong></p>
+      <p>Not: Smith case &nbsp;—&nbsp; or &nbsp;—&nbsp; New client April</p>
+    </div>
+
+    <div class="step-label">Step 2 — Fill in the required columns</div>
+    <p>These columns must be filled in before the retainer is marked as Paid:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>What to enter</th><th>Why it matters</th></tr></thead>
+        <tbody>
+          <tr><td>Item Title</td><td>Client's full legal name</td><td>Used as the folder name in OneDrive and in all emails</td></tr>
+          <tr><td>Client Email</td><td>Client's email address</td><td>All automated emails go here</td></tr>
+          <tr><td>Primary Case Type</td><td>Select from dropdown</td><td>Triggers Case Reference Number generation automatically</td></tr>
+          <tr><td>Case Sub-Type</td><td>Select if applicable</td><td>Determines which questionnaire form is sent</td></tr>
+          <tr><td>Case Manager</td><td>Assign yourself or the lead officer</td><td>Used for notifications and escalation routing</td></tr>
+          <tr><td>Ops Supervisor</td><td>Assign the supervising officer</td><td>Copied on escalation and expiry alerts</td></tr>
+          <tr><td>Passport Expiry / IELTS Expiry / Medical Expiry</td><td>Fill in if known</td><td>SLA engine monitors these and alerts before they expire</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="step-label">Step 3 — Mark Retainer as Paid</div>
+    <p>Once the client has paid, set the Retainer Status column to Paid. This is the master trigger that sets up the entire case:</p>
+    <ul>
+      <li>Payment date is recorded</li>
+      <li>Case Stage advances to Document Collection Started</li>
+      <li>All document checklist items are created on the Execution Board</li>
+      <li>The questionnaire is set up, or an HTML form link is generated</li>
+      <li>The intake email is sent to the client with their personal document upload link and questionnaire link</li>
+      <li>Automation Lock is cleared — all engines begin monitoring this case</li>
+    </ul>
+    <div class="note">
+      <p>If the Case Reference Number column is empty after setting Case Type, wait 10–15 seconds and refresh. It is generated automatically.</p>
+    </div>
+  </div>
+
+
+  <!-- ══ Section 3 ════════════════════════════════════ -->
+  <div class="section" id="s3">
+    <div class="section-header">
+      <div class="section-num">3</div>
+      <div class="section-title">Client Master Board — Column Reference</div>
+    </div>
+    <p>This section lists every column on the Client Master Board and tells you exactly what to do with it — fill it in, leave it alone, or use it only in special situations.</p>
+
+    <div class="subhead">Fill in when creating the case (required)</div>
+    <p>These columns must be filled before marking Retainer as Paid. Missing any of these will cause automation to produce incomplete results or skip the case entirely.</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>What to enter</th><th>Why it matters</th></tr></thead>
+        <tbody>
+          <tr><td>Item Title</td><td>Client's full legal name (e.g. John Smith)</td><td>Used as the OneDrive folder name, in all emails, and in all notifications. Must match exactly what staff call the client.</td></tr>
+          <tr><td>Client Email</td><td>Client's email address</td><td>Every automated email — intake, chasing, correction requests — is sent here.</td></tr>
+          <tr><td>Primary Case Type</td><td>Select from dropdown</td><td>Triggers automatic Case Reference Number generation. Also determines which document checklist and questionnaire are created.</td></tr>
+          <tr><td>Case Sub-Type</td><td>Select if the case type has sub-types</td><td>Determines which specific questionnaire form the client receives. Leave blank if there is only one form for the case type.</td></tr>
+          <tr><td>Case Manager</td><td>Assign the lead officer</td><td>Receives document review notifications, stage gate emails, health alerts, and expiry warnings.</td></tr>
+          <tr><td>Ops Supervisor</td><td>Assign the supervising officer</td><td>Receives escalation alerts, expiry warnings, and client-blocked notifications.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">Fill in as soon as the information is available</div>
+    <p>These columns are not required at creation but must be filled in before the case progresses — missing them means the automation cannot do its full job.</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>What to enter</th><th>When to fill it</th><th>What breaks if missing</th></tr></thead>
+        <tbody>
+          <tr><td>Passport Expiry</td><td>Date from the client's passport</td><td>As soon as you receive the passport copy</td><td>Expiry engine cannot flag approaching expiry — no early warning</td></tr>
+          <tr><td>IELTS Expiry</td><td>Date the IELTS test result expires</td><td>When IELTS result is received</td><td>Same — expiry alert will not fire</td></tr>
+          <tr><td>Medical Expiry</td><td>Date the IME medical report expires</td><td>When medical is done</td><td>Same</td></tr>
+          <tr><td>Case Support Officer</td><td>Assign if a support officer is involved</td><td>When assigned</td><td>Support officer will not receive assignment or escalation notifications</td></tr>
+          <tr><td>Retainer Status</td><td>Set to Paid</td><td>Once payment is confirmed</td><td>This is the master trigger — without it, no execution rows are created and no email is sent</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">Fill in at specific stages (manual decisions)</div>
+    <p>These are the columns you change as the case moves forward. They require a deliberate decision from you.</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>What to set</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td>Case Stage</td><td>Advance manually for: Submission Ready, Submitted, and all terminal stages</td><td>After your review confirms the case is ready, or when the outcome is received. All other stage advances happen automatically.</td></tr>
+          <tr><td>Manual Override</td><td>Set to Yes</td><td>When a client has a legitimate reason for not responding (travelling, waiting on third-party, spoken to you directly). Pauses chasing emails only. Set back to No when ready to resume.</td></tr>
+          <tr><td>Automation Lock</td><td>Set to Yes</td><td>When you need to put the entire case on hold — stops all daily engines. Set back to No to resume. Note: the system sets this automatically at case closure.</td></tr>
+          <tr><td>Escalation Required</td><td>Set to Yes</td><td>If you identify an escalation need that the system has not flagged automatically (e.g., legal complication, complaint). Set to No once resolved — clears the escalation reason automatically.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">Do not touch — auto-populated by automation</div>
+    <p>These columns are written by the automation engines every day. Do not manually edit them — any manual change will be overwritten at the next daily run.</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>Set by</th></tr></thead>
+        <tbody>
+          <tr><td>Case Reference Number</td><td>Fires automatically when Case Type is set</td></tr>
+          <tr><td>Access Token</td><td>Generated automatically when the item is created</td></tr>
+          <tr><td>Q Readiness %</td><td>Daily readiness scan</td></tr>
+          <tr><td>Doc Readiness %</td><td>Daily readiness scan</td></tr>
+          <tr><td>Q Completion Status</td><td>Daily readiness scan and questionnaire submission</td></tr>
+          <tr><td>Doc Threshold Met</td><td>Daily readiness scan</td></tr>
+          <tr><td>Ready for Review</td><td>Daily readiness scan</td></tr>
+          <tr><td>Ready for Sub Prep</td><td>Stage gate</td></tr>
+          <tr><td>Blocking Doc Count</td><td>Daily readiness scan</td></tr>
+          <tr><td>Blocking Q Count</td><td>Daily readiness scan</td></tr>
+          <tr><td>Missing Required</td><td>Daily readiness scan</td></tr>
+          <tr><td>Checklist Template Applied</td><td>Checklist service on Document Collection Started</td></tr>
+          <tr><td>Q Template Applied</td><td>Questionnaire service on Document Collection Started</td></tr>
+          <tr><td>Stage Start Date</td><td>Resets automatically on every stage advance</td></tr>
+          <tr><td>Payment Date</td><td>Set automatically when Retainer is marked Paid</td></tr>
+          <tr><td>Chasing Stage</td><td>Chasing loop (Pending → Reminder 1 → Reminder 2 → Final Notice → Client Blocked → Resolved)</td></tr>
+          <tr><td>Reminder Count</td><td>Chasing loop</td></tr>
+          <tr><td>Last Client Activity</td><td>Updated automatically when client uploads a file or saves questionnaire</td></tr>
+          <tr><td>SLA Risk Band</td><td>SLA engine (Green / Orange / Red)</td></tr>
+          <tr><td>SLA Risk Flag</td><td>SLA engine</td></tr>
+          <tr><td>Expiry Risk Flag</td><td>SLA engine and Expiry engine</td></tr>
+          <tr><td>Expiry Alert Sent</td><td>Expiry engine — tracks whether a warning or critical email has been sent</td></tr>
+          <tr><td>Case Health Status</td><td>Case health engine</td></tr>
+          <tr><td>Client Blocked Status</td><td>Case health engine</td></tr>
+          <tr><td>Client Delay Level</td><td>Case health engine</td></tr>
+          <tr><td>Client Responsiveness Score</td><td>Case health engine</td></tr>
+          <tr><td>Days Elapsed</td><td>SLA engine</td></tr>
+          <tr><td>SLA Total Days</td><td>SLA engine</td></tr>
+          <tr><td>Stage Expected Duration</td><td>SLA engine</td></tr>
+          <tr><td>Expected Readiness %</td><td>SLA engine</td></tr>
+          <tr><td>Hard Deadline</td><td>SLA engine</td></tr>
+          <tr><td>Soft Deadline</td><td>SLA engine</td></tr>
+          <tr><td>Submission Prep Deadline</td><td>SLA engine</td></tr>
+          <tr><td>Priority Score</td><td>Escalation routing engine</td></tr>
+          <tr><td>Escalation Last Notified</td><td>Escalation routing engine</td></tr>
+          <tr><td>Escalation Reason</td><td>Stage gate, expiry engine, and escalation routing</td></tr>
+          <tr><td>Sub-Type Hint</td><td>Internal helper for case reference format — do not edit</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">Read-only formula columns (computed by Monday.com)</div>
+    <p>These are formula columns — Monday.com calculates them automatically from other column values. You cannot and should not edit them.</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>What it shows</th></tr></thead>
+        <tbody>
+          <tr><td>Inactivity Counter</td><td>Number of days since the client last interacted with the portal</td></tr>
+          <tr><td>Days to Hard Deadline</td><td>Countdown to the Hard Deadline date</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+
+  <!-- ══ Section 4 ════════════════════════════════════ -->
+  <div class="section" id="s4">
+    <div class="section-header">
+      <div class="section-num">4</div>
+      <div class="section-title">What Happens Automatically (and When)</div>
+    </div>
+    <p>This section explains what the system does without anyone touching it. Understanding this helps you know what to expect and when to step in.</p>
+
+    <div class="subhead">On Item Creation</div>
+    <p>An access token is generated and stored silently. This is the security key embedded in the client's document and questionnaire links.</p>
+
+    <div class="subhead">When Case Type is Set</div>
+    <p>The Case Reference Number is generated automatically (e.g., 2026-VV-013).</p>
+
+    <div class="subhead">When Retainer is Marked Paid</div>
+    <ul>
+      <li>Case Stage is set to Document Collection Started</li>
+      <li>Document checklist rows are created on the Execution Board</li>
+      <li>Questionnaire is set up</li>
+      <li>Intake email is sent to the client</li>
+    </ul>
+
+    <div class="subhead">When Client Email is Corrected</div>
+    <p>If the email column is updated while the case is active (Document Collection Started through Submission Preparation), the intake email is automatically re-sent to the new address. No action needed.</p>
+
+    <div class="subhead">Daily (runs every morning)</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Engine</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td>Readiness Scan</td><td>Counts documents and questionnaire answers. Updates Q Readiness %, Doc Readiness %, and Blocking Doc Count on the Client Master Board.</td></tr>
+          <tr><td>Stage Gates</td><td>If readiness meets the threshold (typically 80%) with zero blocking items, the case automatically advances from Document Collection Started to Internal Review, or from Internal Review to Submission Preparation.</td></tr>
+          <tr><td>Chasing Loop</td><td>If a client has not responded in a set number of days (configured per case type in the SLA Config board), reminder emails are sent automatically. Escalates through: Reminder 1 → Reminder 2 → Final Notice → Client Blocked.</td></tr>
+          <tr><td>SLA Engine</td><td>Calculates days elapsed, expected deadlines, and SLA Risk Band (Green / Orange / Red). Updates SLA columns on the board.</td></tr>
+          <tr><td>Case Health Engine</td><td>Scores overall case health based on multiple signals (SLA, client responsiveness, blocking items). Sets Case Health Status.</td></tr>
+          <tr><td>Expiry Engine</td><td>Checks passport, IELTS, and medical expiry dates. Flags and emails the case manager if any are approaching.</td></tr>
+          <tr><td>Escalation Routing</td><td>Applies escalation rules (configured in the SLA Config board) to high-risk cases. Can re-assign, lock stages, or send final notices automatically.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+
+  <!-- ══ Section 5 ════════════════════════════════════ -->
+  <div class="section" id="s5">
+    <div class="section-header">
+      <div class="section-num">5</div>
+      <div class="section-title">Monitoring Case Readiness</div>
+    </div>
+
+    <div class="subhead">The readiness columns to watch</div>
+    <p>On the Client Master Board, these columns tell you where the case stands:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>What it shows</th></tr></thead>
+        <tbody>
+          <tr><td>Q Readiness %</td><td>Percentage of questionnaire fields completed by the client</td></tr>
+          <tr><td>Q Completion Status</td><td>Working on it (in progress) or Done (submitted)</td></tr>
+          <tr><td>Doc Readiness %</td><td>Percentage of required documents received and reviewed</td></tr>
+          <tr><td>Doc Threshold Met</td><td>Yes when doc readiness meets the threshold — green light for stage advance</td></tr>
+          <tr><td>Ready for Review</td><td>Done when both Q and Doc readiness meet threshold with no blocking items</td></tr>
+          <tr><td>Blocking Doc Count</td><td>Number of required documents that are still Missing</td></tr>
+          <tr><td>Missing Required</td><td>Number of required items (docs and questions) outstanding</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">The readiness threshold</div>
+    <p>The minimum readiness percentage needed to advance a case is 80% by default. Some case types have different thresholds configured in the SLA Config board. The case will not advance to Internal Review until:</p>
+    <ul>
+      <li>Q Readiness % is at or above the threshold, AND</li>
+      <li>Doc Readiness % is at or above the threshold, AND</li>
+      <li>Blocking Doc Count is 0</li>
+    </ul>
+    <div class="note warn">
+      <p>Blocking documents are items marked as "must be received before the case can proceed." Even at 99%, if one blocking document is missing the case will not advance automatically.</p>
+    </div>
+  </div>
+
+
+  <!-- ══ Section 6 ════════════════════════════════════ -->
+  <div class="section" id="s6">
+    <div class="section-header">
+      <div class="section-num">6</div>
+      <div class="section-title">Reviewing Documents</div>
+    </div>
+
+    <div class="subhead">Where to review</div>
+    <p>Open the Document Checklist Execution Board in Monday.com. Filter by the client's case reference number or find the group for their case type. Each row represents one document item. The key columns are:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>Document Status</td><td>Missing / Received / Reviewed / Rework Required</td></tr>
+          <tr><td>Last Upload Date</td><td>When the client last uploaded a file for this item</td></tr>
+          <tr><td>Review Notes</td><td>Your notes to the client (shown on their upload page when status is Rework Required)</td></tr>
+          <tr><td>Required Type</td><td>Required / Optional / Conditional</td></tr>
+          <tr><td>Blocking Document</td><td>Yes or No — whether missing this document blocks the stage gate</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">Your review workflow</div>
+    <ol>
+      <li>Open the Execution Board and find the client's document rows.</li>
+      <li>For each document with status Received:
+        <ul>
+          <li>Open the file attachment to review it.</li>
+          <li>If acceptable — change status to Reviewed.</li>
+          <li>If it needs to be redone — change status to Rework Required and enter instructions in the Review Notes column.</li>
+        </ul>
+      </li>
+      <li>The client will automatically receive a revision notification email within 2 minutes of you marking items as Rework Required. The email lists every item flagged in that batch with your review notes.</li>
+      <li>The Doc Readiness % on the Client Master Board updates the following morning (daily scan), or immediately after the client's next upload.</li>
+    </ol>
+    <div class="note">
+      <p>You do not need to chase the client manually. The chasing loop sends reminder emails automatically based on inactivity days. See Section 9.</p>
+    </div>
+  </div>
+
+
+  <!-- ══ Section 7 ════════════════════════════════════ -->
+  <div class="section" id="s7">
+    <div class="section-header">
+      <div class="section-num">7</div>
+      <div class="section-title">Reviewing the Questionnaire</div>
+    </div>
+    <p>For cases using the new HTML questionnaire forms, clients fill in their answers on a web page. You review those answers through the staff review page.</p>
+
+    <div class="subhead">Accessing the review page</div>
+    <p>The URL format is:</p>
+    <pre>https://tdot-automations.onrender.com/q/{CASE-REFERENCE}/review</pre>
+    <p>You can also add it as a button or link in the Monday.com item. The first time you open it, you will be asked to log in with your Monday.com account.</p>
+    <div class="note">
+      <p>Only email addresses from authorised domains can access the review page.</p>
+    </div>
+
+    <div class="subhead">What the review page shows</div>
+    <ul>
+      <li>The full questionnaire form with the client's answers pre-filled</li>
+      <li>All sections expanded so everything is visible at once</li>
+      <li>Flag buttons next to every question</li>
+    </ul>
+
+    <div class="subhead">Flagging items for correction</div>
+    <ol>
+      <li>Click the Flag (⚑) button next to any question that needs attention.</li>
+      <li>Type your comment or instruction in the note box that appears.</li>
+      <li>Click Save Flag.</li>
+      <li>Flagged items are highlighted in amber.</li>
+    </ol>
+    <p>Flags are saved instantly to the case's OneDrive folder.</p>
+
+    <div class="subhead">Sending the correction request</div>
+    <p>Once you have flagged all the items that need attention:</p>
+    <ol>
+      <li>Click Send Correction Request in the toolbar at the top.</li>
+      <li>Confirm the prompt.</li>
+      <li>The client receives an email listing every flagged question with your notes and a link to re-open their form.</li>
+    </ol>
+    <p>When the client re-submits, the flags remain visible to you until you manually remove them.</p>
+
+    <div class="subhead">Exporting the questionnaire as PDF</div>
+    <p>Click the Export PDF button (⬇) in the toolbar. A new tab opens with a clean, printable report showing:</p>
+    <ul>
+      <li>Case details summary</li>
+      <li>All questions and answers grouped by section</li>
+      <li>Flagged items highlighted in amber with your officer notes</li>
+      <li>Completion statistics</li>
+    </ul>
+    <p>Use your browser's File → Print → Save as PDF, or click the green Save as PDF / Print button on the page.</p>
+  </div>
+
+
+  <!-- ══ Section 8 ════════════════════════════════════ -->
+  <div class="section" id="s8">
+    <div class="section-header">
+      <div class="section-num">8</div>
+      <div class="section-title">Moving a Case Through Stages</div>
+    </div>
+    <p>The Case Stage column on the Client Master Board controls where a case is in its lifecycle. Most transitions happen automatically, but some require a manual decision from you.</p>
+
+    <div class="subhead">Stage lifecycle</div>
+    <div class="stage-flow">
+      <span class="stage-name">[Intake]</span><br>
+      &nbsp;&nbsp;&nbsp;↓ <span class="stage-note">Retainer marked Paid — automatic</span><br>
+      <span class="stage-name">[Document Collection Started]</span><br>
+      &nbsp;&nbsp;&nbsp;↓ <span class="stage-note">Readiness ≥ threshold + no blocking items — automatic, next morning</span><br>
+      <span class="stage-name">[Internal Review]</span><br>
+      &nbsp;&nbsp;&nbsp;↓ <span class="stage-note">100% readiness + no blocking items — automatic, next morning</span><br>
+      <span class="stage-name">[Submission Preparation]</span><br>
+      &nbsp;&nbsp;&nbsp;↓ <span class="stage-note">You decide the case is ready for submission — MANUAL</span><br>
+      <span class="stage-name">[Submission Ready]</span><br>
+      &nbsp;&nbsp;&nbsp;↓ <span class="stage-note">After submission — MANUAL</span><br>
+      <span class="stage-name">[Submitted]</span><br>
+      &nbsp;&nbsp;&nbsp;↓ <span class="stage-note">Outcome received — MANUAL</span><br>
+      <span class="stage-name">[Approved] / [Refused] / [Closed] / [Withdrawn] / [Cancelled] / [Archived]</span>
+    </div>
+
+    <div class="subhead">Manual stage changes you are responsible for</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Stage</th><th>When you set it</th><th>What happens</th></tr></thead>
+        <tbody>
+          <tr><td>Submission Ready</td><td>When you have reviewed everything and the case is ready for the application to be filed</td><td>Locks the case — no more automatic stage advances</td></tr>
+          <tr><td>Submitted</td><td>After the application has been submitted to immigration authorities</td><td>Locks all automation — chasing, SLA, health, and escalation all stop</td></tr>
+          <tr><td>Approved / Refused / Closed / Withdrawn / Cancelled / Archived</td><td>When the case outcome is known or the case ends</td><td>Locks all automation</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn">
+      <p>Setting any terminal stage (Submitted, Approved, Refused, Closed, Withdrawn, Cancelled, Archived) automatically:</p>
+      <ul>
+        <li>Sets Automation Lock to Yes — all daily engines skip this case</li>
+        <li>Sets Chasing Stage to Resolved — stops all client reminder emails</li>
+        <li>Clears Escalation Required</li>
+        <li>Posts an audit comment on the item</li>
+      </ul>
+    </div>
+
+    <div class="subhead">Stage Start Date</div>
+    <p>This column is reset automatically every time the case advances to a new stage. It is used by the SLA engine to calculate how long the case has been in the current stage.</p>
+  </div>
+
+
+  <!-- ══ Section 9 ════════════════════════════════════ -->
+  <div class="section" id="s9">
+    <div class="section-header">
+      <div class="section-num">9</div>
+      <div class="section-title">SLA, Health &amp; Escalation</div>
+    </div>
+
+    <div class="subhead">SLA columns (updated daily)</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>What it means</th></tr></thead>
+        <tbody>
+          <tr><td>Days Elapsed</td><td>Days since the current Stage Start Date</td></tr>
+          <tr><td>SLA Total Days</td><td>Total expected days for this case type (from SLA Config)</td></tr>
+          <tr><td>Stage Expected Duration</td><td>How long this specific stage should take</td></tr>
+          <tr><td>SLA Risk Band</td><td>Green / Orange / Red — overall time risk</td></tr>
+          <tr><td>Hard Deadline / Soft Deadline</td><td>Calculated target dates</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">Case Health Status</div>
+    <p>Separate from SLA. Reflects the overall health of the case based on multiple signals: SLA risk, client responsiveness, inactivity, and blocking items.</p>
+    <ul>
+      <li>Green — on track</li>
+      <li>Orange — requires attention</li>
+      <li>Red — critical, case manager notified immediately</li>
+    </ul>
+    <p>When Case Health turns Red, you receive a Monday.com notification automatically.</p>
+
+    <div class="subhead">Chasing Stage (client follow-up)</div>
+    <p>The chasing loop sends emails automatically. You can monitor where it is:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Chasing Stage value</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>(blank) or Pending</td><td>Not started — client has not been chased yet</td></tr>
+          <tr><td>Reminder 1 Sent</td><td>First reminder sent</td></tr>
+          <tr><td>Reminder 2 Sent</td><td>Second reminder sent</td></tr>
+          <tr><td>Final Notice Sent</td><td>Final warning sent</td></tr>
+          <tr><td>Client Blocked</td><td>Client has not responded after all reminders — escalation triggered</td></tr>
+          <tr><td>Resolved</td><td>Client has responded or the case has moved forward — chasing stopped</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">Escalation Required column</div>
+    <p>When this is set to Yes (either automatically or by you):</p>
+    <ul>
+      <li>The ops supervisor is notified</li>
+      <li>An escalation reason is recorded</li>
+    </ul>
+    <p>When set back to No, the escalation reason is cleared automatically.</p>
+
+    <div class="subhead">Manual Override column</div>
+    <p>Set this to Yes if a client has a valid reason for delay and you want to pause the chasing loop for that case. This stops reminder emails without locking the whole case. The SLA and health engines still run.</p>
+    <div class="note">
+      <p>Use this for situations like: client is travelling, client is waiting on third-party documents, or client has spoken to you directly.</p>
+    </div>
+  </div>
+
+
+  <!-- ══ Section 10 ═══════════════════════════════════ -->
+  <div class="section" id="s10">
+    <div class="section-header">
+      <div class="section-num">10</div>
+      <div class="section-title">Notifications You Will Receive</div>
+    </div>
+    <p>All notifications are sent via Monday.com's notification system (bell icon, top right).</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Trigger</th><th>Who is notified</th></tr></thead>
+        <tbody>
+          <tr><td>You are assigned as Case Manager</td><td>You</td></tr>
+          <tr><td>You are assigned as Ops Supervisor</td><td>You</td></tr>
+          <tr><td>A document is marked Received on the Execution Board</td><td>Case Manager</td></tr>
+          <tr><td>A document is marked Rework Required</td><td>Case Manager</td></tr>
+          <tr><td>A questionnaire response is Answered</td><td>Case Manager</td></tr>
+          <tr><td>Case Health turns Red</td><td>Case Manager</td></tr>
+          <tr><td>Expiry date approaching (passport, IELTS, medical)</td><td>Case Manager and Ops Supervisor</td></tr>
+          <tr><td>Escalation Required is set to Yes</td><td>Ops Supervisor and Case Manager</td></tr>
+          <tr><td>Client is Blocked (chasing exhausted)</td><td>Ops Supervisor</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+
+  <!-- ══ Section 11 ═══════════════════════════════════ -->
+  <div class="section" id="s11">
+    <div class="section-header">
+      <div class="section-num">11</div>
+      <div class="section-title">Special Situations &amp; Manual Controls</div>
+    </div>
+
+    <div class="subhead">Client gives you a corrected email address</div>
+    <p>Update the Client Email column. The intake email is automatically re-sent to the new address. No other action needed.</p>
+
+    <div class="subhead">Client has not received their links</div>
+    <p>Check that the Client Email column is correct and the Access Token column is not empty. If the token is missing, the links will show "Access Denied" for the client. Contact your system admin to trigger a manual resend.</p>
+
+    <div class="subhead">Case should not advance automatically</div>
+    <p>Set Automation Lock to Yes. This stops all daily engines from processing the case. Remember to set it back to No when you want automation to resume.</p>
+
+    <div class="subhead">Client says their form is empty when they open it</div>
+    <p>The client must use the same link from the original intake email — it contains their security token. Sharing the plain URL without the <code>?t=...</code> token will show Access Denied.</p>
+
+    <div class="subhead">You need to re-send the questionnaire or documents link</div>
+    <p>The links are always:</p>
+    <ul>
+      <li>Documents: <code>https://tdot-automations.onrender.com/documents/{CASE-REF}</code></li>
+      <li>Questionnaire: <code>https://tdot-automations.onrender.com/q/{CASE-REF}?t={ACCESS-TOKEN}</code></li>
+    </ul>
+    <p>The access token is visible in the Access Token column on the Client Master Board. Copy it and append it to the questionnaire URL as <code>?t=</code> before sending.</p>
+
+    <div class="subhead">Case type has no questionnaire form yet</div>
+    <p>Some case types are marked "TO BE FINALIZED." Clients will see a placeholder page instead of a form. The document upload page still works normally.</p>
+  </div>
+
+
+  <!-- ══ Section 12 ═══════════════════════════════════ -->
+  <div class="section" id="s12">
+    <div class="section-header">
+      <div class="section-num">12</div>
+      <div class="section-title">Quick Reference Card</div>
+    </div>
+
+    <div class="subhead">Key Monday.com boards</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Board</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td>Client Master Board</td><td>All cases — your main workspace</td></tr>
+          <tr><td>Document Checklist Execution Board</td><td>Review uploaded documents per case</td></tr>
+          <tr><td>Questionnaire Execution Board</td><td>Legacy Q items (older cases only)</td></tr>
+          <tr><td>SLA Config Board</td><td>Thresholds, chasing intervals, escalation rules (admin use)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">Stage gate conditions</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>From</th><th>To</th><th>Condition</th></tr></thead>
+        <tbody>
+          <tr><td>Document Collection Started</td><td>Internal Review</td><td>Q% at or above threshold AND Doc% at or above threshold AND Blocking Docs = 0</td></tr>
+          <tr><td>Internal Review</td><td>Submission Preparation</td><td>Q% = 100% AND Doc% = 100% AND Blocking Docs = 0</td></tr>
+          <tr><td>Submission Preparation</td><td>Submission Ready</td><td>Manual — set by case manager</td></tr>
+          <tr><td>Submission Ready</td><td>Submitted</td><td>Manual — set after filing</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">Document statuses</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Status</th><th>Colour</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>Missing</td><td>🔴 Red</td><td>Not yet uploaded by client</td></tr>
+          <tr><td>Received</td><td>🔵 Blue</td><td>Uploaded, awaiting your review</td></tr>
+          <tr><td>Reviewed</td><td>🟢 Green</td><td>You have approved this document</td></tr>
+          <tr><td>Rework Required</td><td>🟠 Orange</td><td>You have requested re-upload; client is notified</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">Questionnaire review page URL</div>
+    <pre>https://tdot-automations.onrender.com/q/{CASE-REFERENCE}/review</pre>
+
+    <div class="subhead">When to use Manual Override vs Automation Lock</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Control</th><th>Stops</th><th>Use when</th></tr></thead>
+        <tbody>
+          <tr><td>Manual Override = Yes</td><td>Chasing emails only</td><td>Client has a valid reason for delay — do not want to chase them but the case is still active</td></tr>
+          <tr><td>Automation Lock = Yes</td><td>Everything (SLA, health, chasing, escalation)</td><td>Case is on hold, disputed, or needs manual handling only</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+
+  <!-- ══ Section 13 ═══════════════════════════════════ -->
+  <div class="section" id="s13">
+    <div class="section-header">
+      <div class="section-num">13</div>
+      <div class="section-title">SLA Configuration Board</div>
+    </div>
+    <div class="note board">
+      <p>Board ID: 18402401449</p>
+      <p>Who manages it: Ops Supervisor / System Admin</p>
+      <p>Access level: All team members can view; only supervisors should edit</p>
+    </div>
+
+    <div class="subhead">What this board is</div>
+    <p>The SLA Configuration Board is the control panel for all automation rules. Every automated behaviour that varies by case type — how long a case should take, when to chase the client, when to raise a red flag, what readiness score is needed to advance — is configured here, not hardcoded.</p>
+    <p>Structure: one row per case type. Each row is named exactly after the Case Type as it appears in the Client Master Board dropdown (e.g., Visitor Visa Outside Canada, Express Entry Profile). The automation reads this board every morning to pick up the latest settings before running.</p>
+    <div class="note">
+      <p>Changes take effect the next morning — the engines load the board once at the start of each daily run. No restart or redeploy is needed.</p>
+    </div>
+
+    <div class="subhead">Profile Active</div>
+    <p>Type: Status (Yes / No) &nbsp;—&nbsp; Default if missing: Profile is ignored</p>
+    <p>This is the on/off switch for the entire row. Set to Yes to enable all automation for that case type. Set to No to disable it without deleting the row (useful for case types under review or not yet in use).</p>
+    <div class="note">
+      <p>If a case type has no active profile, it falls back to system defaults: 60-day SLA, 80% readiness threshold, 7/14/21/30-day chasing intervals.</p>
+    </div>
+
+    <div class="subhead">SLA Total Days</div>
+    <p>Type: Number &nbsp;—&nbsp; Example: 60 (Visitor Visa), 90 (Express Entry), 120 (Spousal Sponsorship)</p>
+    <p>The total expected number of days to complete a case from when it enters Document Collection Started to when it is ready for submission. This is the master clock for the entire SLA engine.</p>
+    <p>How it is used:</p>
+    <ul>
+      <li>Days Elapsed ÷ SLA Total Days × 100 = % of time consumed</li>
+      <li>If % consumed reaches the Orange Threshold → SLA Risk Band turns Orange</li>
+      <li>If % consumed reaches the Red Threshold → SLA Risk Band turns Red</li>
+      <li>Hard and Soft deadlines are calculated as: Stage Start Date + (SLA Total Days − offset)</li>
+    </ul>
+
+    <div class="subhead">Min Threshold (Readiness %)</div>
+    <p>Type: Number (percentage, e.g., 80) &nbsp;—&nbsp; Default: 80%</p>
+    <p>The minimum readiness percentage a case must reach on both documents and questionnaire before the stage gate fires. Set this lower (e.g., 70) for case types where some documents are commonly unavailable. Set it at 100 for case types that require a complete file before review.</p>
+
+    <div class="subhead">Orange Threshold</div>
+    <p>Type: Number (percentage of SLA time consumed, e.g., 60) &nbsp;—&nbsp; Default: 60%</p>
+    <p>When the case has consumed 60% or more of its SLA Total Days, the SLA Risk Band column on the Client Master turns Orange. This is the "approaching deadline" warning.</p>
+    <p>Example: A Visitor Visa case with 60 SLA days turns Orange after 36 days in Document Collection Started.</p>
+
+    <div class="subhead">Red Threshold</div>
+    <p>Type: Number (percentage of SLA time consumed, e.g., 80) &nbsp;—&nbsp; Default: 80%</p>
+    <p>When the case has consumed 80% or more of its SLA Total Days, the SLA Risk Band turns Red, the Case Health Status also turns Red, and the case manager is notified.</p>
+    <p>Example: Same 60-day case turns Red after 48 days.</p>
+    <div class="note warn">
+      <p>If an expiry date (passport, IELTS, or medical) is also within the warning window, the risk band is forced up regardless of where the SLA time stands — expiry risk always overrides.</p>
+    </div>
+
+    <div class="subhead">Hard Deadline Offset</div>
+    <p>Type: Number (days, e.g., 5) &nbsp;—&nbsp; Default: 5 days</p>
+    <p>Used to calculate the Hard Deadline date on the Client Master Board:</p>
+    <pre>Hard Deadline = Stage Start Date + (SLA Total Days − Hard Deadline Offset)</pre>
+    <p>A higher offset pushes the Hard Deadline earlier, giving more buffer. The Hard Deadline represents the absolute latest internal date by which the case file must be ready before the SLA window closes.</p>
+    <p>Example: 60-day SLA, offset 5 → Hard Deadline = Day 55.</p>
+
+    <div class="subhead">Soft Deadline Offset</div>
+    <p>Type: Number (days, e.g., 10) &nbsp;—&nbsp; Default: 10 days</p>
+    <p>Used to calculate the Soft Deadline date:</p>
+    <pre>Soft Deadline = Stage Start Date + (SLA Total Days − Soft Deadline Offset)</pre>
+    <p>The Soft Deadline is the "should be done by" target — an internal prompt that the case needs to be wrapping up. It is always earlier than the Hard Deadline. The system also calculates a Submission Prep Deadline = Soft Deadline − 7 days, which is when all documents should be compiled and ready for the application package.</p>
+    <p>Example: 60-day SLA, offset 10 → Soft Deadline = Day 50, Prep Deadline = Day 43.</p>
+
+    <div class="subhead">Reminder 1 Offset (Chasing — First Reminder)</div>
+    <p>Type: Number (days of inactivity, e.g., 7) &nbsp;—&nbsp; Default: 7 days</p>
+    <p>If a client has not uploaded any documents or submitted their questionnaire within this many days of the case opening, the chasing loop sends the first reminder email automatically. The inactivity clock is reset every time the client uploads a document or saves questionnaire answers.</p>
+
+    <div class="subhead">Reminder 2 Offset (Chasing — Second Reminder)</div>
+    <p>Type: Number (days, e.g., 14) &nbsp;—&nbsp; Default: 14 days</p>
+    <p>If the client still has not responded after Reminder 1, a second, firmer reminder is sent after this many total days of inactivity.</p>
+
+    <div class="subhead">Final Notice Offset (Chasing — Final Warning)</div>
+    <p>Type: Number (days, e.g., 21) &nbsp;—&nbsp; Default: 21 days</p>
+    <p>After this many total days of inactivity, the chasing loop sends a final notice — a clear warning that the case will be escalated if there is no response.</p>
+
+    <div class="subhead">Escalation Offset (Chasing — Client Blocked)</div>
+    <p>Type: Number (days, e.g., 30) &nbsp;—&nbsp; Default: 30 days</p>
+    <p>If the client has still not responded after the Final Notice and this many total days of inactivity, the system:</p>
+    <ul>
+      <li>Sets Chasing Stage to Client Blocked</li>
+      <li>Sets Escalation Required to Yes</li>
+      <li>Notifies the Ops Supervisor</li>
+    </ul>
+    <p>This is the automatic escalation trigger for non-responsive clients.</p>
+    <div class="note">
+      <p>The four chasing offsets work as a ladder: Reminder 1 → Reminder 2 → Final Notice → Escalation. Each fires only once per period of inactivity. If the client responds at any point, the chain resets.</p>
+    </div>
+
+    <div class="subhead">Expiry Warning Days</div>
+    <p>Type: Number (days, e.g., 90) &nbsp;—&nbsp; Default: 90 days</p>
+    <p>How many days before a document expiry date (Passport, IELTS, Medical) to start raising the Expiry Risk Flag and notifying the case manager. Set this higher for case types with long processing times. Set it lower for short-turnaround case types.</p>
+    <div class="note warn">
+      <p>The Critical Expiry threshold is hardcoded at 30 days — within 30 days of expiry the risk band is forced to Red regardless of this setting.</p>
+    </div>
+
+    <div class="subhead">Urgency Weight</div>
+    <p>Type: Number (1–10, e.g., 7)</p>
+    <p>A multiplier used by the Escalation Routing engine when calculating the Priority Score for a case. A higher weight means this case type scores higher in the priority queue when multiple escalation rules are being evaluated simultaneously. Use higher values for time-sensitive case types (e.g., work permits with imminent start dates) and lower values for less urgent types.</p>
+
+    <div class="subhead">Expiry Sensitivity</div>
+    <p>Type: Number (1–10, e.g., 5)</p>
+    <p>A second multiplier for the Escalation Routing engine — specifically how much weight to give to upcoming expiry dates when calculating the overall Priority Score for a case. A higher value makes expiry proximity a stronger factor in routing decisions.</p>
+
+    <div class="subhead">Summary — which engine reads which column</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>Read by</th></tr></thead>
+        <tbody>
+          <tr><td>Profile Active</td><td>All 4 engines (readiness, SLA, chasing, expiry)</td></tr>
+          <tr><td>SLA Total Days</td><td>SLA Risk Engine</td></tr>
+          <tr><td>Min Threshold</td><td>Readiness Engine and Stage Gate</td></tr>
+          <tr><td>Orange / Red Threshold</td><td>SLA Risk Engine</td></tr>
+          <tr><td>Hard / Soft Deadline Offset</td><td>SLA Risk Engine</td></tr>
+          <tr><td>Expiry Warning Days</td><td>SLA Risk Engine and Expiry Engine</td></tr>
+          <tr><td>Reminder 1 / 2 / Final / Escalation Offset</td><td>Chasing Loop</td></tr>
+          <tr><td>Urgency Weight</td><td>Escalation Routing Engine</td></tr>
+          <tr><td>Expiry Sensitivity</td><td>Escalation Routing Engine</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subhead">Editing the SLA Config Board</div>
+    <ol>
+      <li>Open the SLA Config Board in Monday.com.</li>
+      <li>Find the row for the case type you want to adjust.</li>
+      <li>Update the relevant column value.</li>
+      <li>Changes are picked up automatically the next morning — no restart needed.</li>
+      <li>To test immediately, ask your system admin to trigger a manual engine run.</li>
+    </ol>
+    <div class="note danger">
+      <p>Never rename a row. The row name must exactly match the Case Type dropdown value on the Client Master Board. If they do not match, the automation falls back to system defaults for that case type and no warning is shown.</p>
+    </div>
+  </div>
+
+  <div class="doc-footer">
+    Last updated: April 2026 &nbsp;—&nbsp; TDOT Immigration Internal Use Only
+  </div>
+
+</div>
+</body>
+</html>
