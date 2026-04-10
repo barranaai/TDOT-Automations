@@ -466,7 +466,8 @@ router.get('/:caseRef/members', async (req, res) => {
     });
   } catch (err) {
     console.error(`[/q/members] Error for ${caseRef}:`, err.message);
-    return res.status(err.message.includes('token') ? 403 : 500).json({ error: err.message });
+    const is403 = err.message.includes('token') || err.message.includes('not found') || err.message.includes('Missing');
+    return res.status(is403 ? 403 : 500).json({ error: err.message });
   }
 });
 
