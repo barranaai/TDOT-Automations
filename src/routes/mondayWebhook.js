@@ -205,12 +205,22 @@ router.post('/', async (req, res) => {
       // → Document Collection Started: create execution rows + send intake email
       if (newStage === DOCUMENT_COLLECTION_STARTED) {
         console.log(`[Webhook] Case Stage → "${DOCUMENT_COLLECTION_STARTED}" for item ${pulseId}`);
-        await Promise.allSettled([
-          checklistService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
-          questionnaireService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
-        ]);
+
+        // Fire the intake email immediately — it only needs the case ref and access token,
+        // both of which are already set before the stage change. Do NOT await the checklist
+        // setup first: that can take 1-2 minutes for large templates and will be killed by
+        // a Render deploy mid-flight, causing the email to never fire.
         emailService.sendIntakeEmail(pulseId).catch(err =>
           console.error('[Email] Failed to send intake email:', err.message)
+        );
+
+        // Run the long-running setup tasks in parallel (fire-and-forget from Express's
+        // perspective). Node.js will keep them alive until the process exits.
+        Promise.allSettled([
+          checklistService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
+          questionnaireService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
+        ]).then(() =>
+          console.log(`[Webhook] Checklist + Q setup complete for item ${pulseId}`)
         );
       }
 

@@ -30,9 +30,8 @@ app.use('/questionnaire',  questionnaireFormRouter);
 app.use('/documents',      documentUploadRouter);
 app.use('/q',              htmlQuestionnaireRouter);
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
+app.get('/', (_req, res) => res.json({ status: 'ok' }));
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 // ─── API key middleware for manual trigger endpoints ─────────────────────────
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
