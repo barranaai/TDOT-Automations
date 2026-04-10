@@ -15,7 +15,11 @@
 
 const jwt = require('jsonwebtoken');
 
-const STAFF_SESSION_SECRET  = process.env.STAFF_SESSION_SECRET  || 'dev-staff-secret-change-me';
+const STAFF_SESSION_SECRET  = process.env.STAFF_SESSION_SECRET;
+if (!STAFF_SESSION_SECRET && process.env.NODE_ENV === 'production') {
+  throw new Error('STAFF_SESSION_SECRET must be set in production — refusing to start with insecure default.');
+}
+const _SECRET = STAFF_SESSION_SECRET || 'dev-staff-secret-ONLY-FOR-LOCAL-DEV';
 const COOKIE_NAME           = 'tdot_staff';
 const MONDAY_AUTH_START_URL = '/q/auth/monday';
 
@@ -31,7 +35,7 @@ function requireStaffAuth(req, res, next) {
   }
 
   try {
-    req.staff = jwt.verify(token, STAFF_SESSION_SECRET);
+    req.staff = jwt.verify(token, _SECRET);
     return next();
   } catch (_err) {
     // Expired or tampered — clear the bad cookie and start fresh
@@ -54,7 +58,7 @@ function redirectToLogin(req, res) {
  * @returns {string} Signed JWT
  */
 function createStaffToken({ id, name, email }) {
-  return jwt.sign({ id, name, email }, STAFF_SESSION_SECRET, { expiresIn: '8h' });
+  return jwt.sign({ id, name, email }, _SECRET, { expiresIn: '8h' });
 }
 
 /**

@@ -7,6 +7,9 @@
  * POST /q/:caseRef/save         Save form data to OneDrive
  * POST /q/:caseRef/submit       Submit form data and update Monday.com
  * GET  /q/:caseRef/flags        Return active correction flags (for inline display)
+ * GET  /q/:caseRef/members      Return member manifest for the case
+ * POST /q/:caseRef/add-member   Add a new member (spouse/child/parent/sibling)
+ * POST /q/:caseRef/remove-member Remove an unsubmitted member
  *
  * ── Staff OAuth routes (MUST be registered before /:caseRef) ──────────────
  * GET  /q/auth/monday           Start Monday OAuth flow
@@ -28,7 +31,7 @@ const router   = express.Router();
 const svc    = require('../services/htmlQuestionnaireService');
 const review = require('../services/htmlQuestionnaireReviewService');
 const { requireStaffAuth, createStaffToken, setStaffCookie } = require('../middleware/staffAuth');
-const { FORMS_DIR } = require('../../config/questionnaireFormMap');
+const { FORMS_DIR, resolveMemberTypes } = require('../../config/questionnaireFormMap');
 
 // ─── Monday OAuth config ──────────────────────────────────────────────────────
 
@@ -436,12 +439,91 @@ router.post('/:caseRef/submit', async (req, res) => {
       : (formFiles?.primary || '').replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
 
     await svc.saveFormData({ clientName, caseRef, itemId, formKey: key, fields, completionPct: completionPct || 0 });
-    await svc.markSubmitted({ itemId, caseRef, caseType, formKey: key, formLabel: formTitle, completionPct: completionPct || 0 });
+    await svc.markSubmitted({ itemId, caseRef, caseType, formKey: key, formLabel: formTitle, completionPct: completionPct || 0, clientName });
 
     return res.json({ ok: true });
   } catch (err) {
     console.error(`[/q] Submit error for ${caseRef}:`, err.message);
     return res.status(err.message.includes('token') ? 403 : 500).json({ error: err.message });
+  }
+});
+
+// ─── Client: GET /q/:caseRef/members — Return member manifest ───────────────
+
+router.get('/:caseRef/members', async (req, res) => {
+  const caseRef = sanitiseCaseRef(req.params.caseRef);
+  const token   = (req.query.t || '').trim();
+
+  try {
+    const { clientName, caseType, caseSubType, formFiles } = await svc.validateAccess(caseRef, token);
+    const members       = await svc.loadMembers({ clientName, caseRef });
+    const memberTypes   = resolveMemberTypes(caseType, caseSubType);
+    const withStatuses  = await svc.getMemberStatuses({ clientName, caseRef, members, formFiles });
+
+    return res.json({
+      members:          withStatuses,
+      allowedMemberTypes: memberTypes,
+    });
+  } catch (err) {
+    console.error(`[/q/members] Error for ${caseRef}:`, err.message);
+    return res.status(err.message.includes('token') ? 403 : 500).json({ error: err.message });
+  }
+});
+
+// ─── Client: POST /q/:caseRef/add-member — Add a new member ────────────────
+
+router.post('/:caseRef/add-member', async (req, res) => {
+  const caseRef    = sanitiseCaseRef(req.params.caseRef);
+  const { token, memberType } = req.body || {};
+
+  if (!memberType) {
+    return res.status(400).json({ error: 'memberType is required' });
+  }
+
+  try {
+    const { clientName, caseType, caseSubType } = await svc.validateAccess(caseRef, token);
+
+    // Validate that this member type is allowed for this case type
+    const allowedTypes = resolveMemberTypes(caseType, caseSubType);
+    if (!allowedTypes.includes(memberType)) {
+      return res.status(400).json({
+        error: `Member type "${memberType}" is not allowed for this case type.`,
+        allowedTypes,
+      });
+    }
+
+    const newMember = await svc.addMember({ clientName, caseRef, memberType });
+    return res.json({ ok: true, member: newMember });
+  } catch (err) {
+    console.error(`[/q/add-member] Error for ${caseRef}:`, err.message);
+    const status = err.message.includes('token') ? 403
+                 : err.message.includes('already been added') ? 409
+                 : 500;
+    return res.status(status).json({ error: err.message });
+  }
+});
+
+// ─── Client: POST /q/:caseRef/remove-member — Remove an unsubmitted member ─
+
+router.post('/:caseRef/remove-member', async (req, res) => {
+  const caseRef    = sanitiseCaseRef(req.params.caseRef);
+  const { token, memberKey } = req.body || {};
+
+  if (!memberKey) {
+    return res.status(400).json({ error: 'memberKey is required' });
+  }
+
+  try {
+    const { clientName } = await svc.validateAccess(caseRef, token);
+    await svc.removeMember({ clientName, caseRef, memberKey });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(`[/q/remove-member] Error for ${caseRef}:`, err.message);
+    const status = err.message.includes('token') ? 403
+                 : err.message.includes('cannot be removed') || err.message.includes('Cannot remove') ? 409
+                 : err.message.includes('not found') ? 404
+                 : 500;
+    return res.status(status).json({ error: err.message });
   }
 });
 
@@ -451,7 +533,8 @@ router.post('/:caseRef/submit', async (req, res) => {
 router.get('/:caseRef', async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
   const token   = (req.query.t || '').trim();
-  const fParam  = (req.query.f || '').trim();
+  const fParam  = (req.query.f || '').trim();      // member key: 'primary', 'spouse', 'child-1', or legacy '1'/'2'
+  const formParam = (req.query.form || '').trim();  // 'primary' or 'additional' (which form file for dual-form cases)
 
   try {
     const { clientName, caseType, caseSubType, formFiles } = await svc.validateAccess(caseRef, token);
@@ -460,39 +543,74 @@ router.get('/:caseRef', async (req, res) => {
       return res.type('html').send(svc.buildPlaceholderPage(caseRef));
     }
 
-    const hasTwo      = Boolean(formFiles.additional);
-    const overviewUrl = hasTwo
+    const hasTwo         = Boolean(formFiles.additional);
+    const memberTypes    = resolveMemberTypes(caseType, caseSubType);
+    const hasMembers     = memberTypes.length > 0;
+    const needsOverview  = hasTwo || hasMembers;
+    const overviewUrl    = needsOverview
       ? `/q/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(token)}`
       : '';
 
-    if (hasTwo) {
-      if (!fParam) {
-        const primaryTitle    = formFiles.primary.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
-        const additionalTitle = formFiles.additional.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
-        return res.type('html').send(
-          svc.buildOverviewPage({ caseRef, token, primaryTitle, additionalTitle })
-        );
-      }
-
-      const isAdditional = (fParam === '2');
-      const formFile     = isAdditional ? formFiles.additional : formFiles.primary;
-      const formKey      = isAdditional ? 'additional' : 'primary';
-      const formTitle    = formFile.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
-
+    // ── No overview needed: single form, single member — serve directly ────
+    if (!needsOverview) {
+      const formTitle = formFiles.primary.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
       return res.type('html').send(svc.buildFormPage({
-        formFile, caseRef, token, formKey, formTitle,
-        hasAdditionalForm: true, overviewUrl,
+        formFile:          formFiles.primary,
+        caseRef, token,
+        formKey:           'primary',
+        formTitle,
+        hasAdditionalForm: false,
+        overviewUrl:       '',
       }));
     }
 
-    const formTitle = formFiles.primary.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
+    // ── No f= param: show the overview page with member cards ──────────────
+    if (!fParam) {
+      const members      = await svc.loadMembers({ clientName, caseRef });
+      const withStatuses = await svc.getMemberStatuses({ clientName, caseRef, members, formFiles });
+
+      return res.type('html').send(
+        svc.buildOverviewPage({
+          caseRef, token,
+          members:            withStatuses,
+          formFiles,
+          allowedMemberTypes: memberTypes,
+        })
+      );
+    }
+
+    // ── f= param present: serve the specific form for the member ───────────
+
+    // Legacy support: f=1 → primary, f=2 → additional (old dual-form URLs)
+    let memberKey = fParam;
+    let whichForm = formParam || 'primary';
+
+    if (fParam === '1') { memberKey = 'primary'; whichForm = 'primary'; }
+    if (fParam === '2') { memberKey = 'primary'; whichForm = 'additional'; }
+
+    // Determine which HTML form file to serve
+    const isAdditional = (whichForm === 'additional') && hasTwo;
+    const formFile     = isAdditional ? formFiles.additional : formFiles.primary;
+
+    // Build the formKey for data storage: combine member key + form type
+    // e.g., primary form for spouse → formKey = 'spouse'
+    // e.g., additional form for spouse → formKey = 'spouse-additional'
+    const formKey = isAdditional ? `${memberKey}-additional` : memberKey;
+
+    const formTitle = formFile.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
+
+    // Load member manifest to get the member's label for display
+    const members    = await svc.loadMembers({ clientName, caseRef });
+    const member     = members.find(m => m.key === memberKey);
+    const memberLabel = member ? member.label : 'Primary Applicant';
+
     return res.type('html').send(svc.buildFormPage({
-      formFile:          formFiles.primary,
-      caseRef, token,
-      formKey:           'primary',
-      formTitle,
-      hasAdditionalForm: false,
-      overviewUrl:       '',
+      formFile, caseRef, token,
+      formKey,
+      formTitle:          `${formTitle} — ${memberLabel}`,
+      hasAdditionalForm:  hasTwo,
+      overviewUrl,
+      memberLabel,
     }));
 
   } catch (err) {

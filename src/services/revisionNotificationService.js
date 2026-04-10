@@ -1,3 +1,5 @@
+const fs   = require('fs');
+const path = require('path');
 const { sendEmail } = require('./microsoftMailService');
 const mondayApi     = require('./mondayApi');
 const { clientMasterBoardId } = require('../../config/monday');
@@ -8,8 +10,58 @@ const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
 // Batch window — wait this many ms after the last change before sending
 const BATCH_DELAY_MS = 2 * 60 * 1000; // 2 minutes
 
+// Queue persisted to disk so pending emails survive server restarts
+const QUEUE_DIR  = path.join(__dirname, '../../.queue');
+const QUEUE_FILE = path.join(QUEUE_DIR, 'revision-queue.json');
+
 // In-memory queue: caseRef → { questionnaire: [...], documents: [...], timer }
 const queue = new Map();
+
+// ─── Queue persistence ──────────────────────────────────────────────────────
+
+function persistQueue() {
+  try {
+    const serializable = {};
+    for (const [key, entry] of queue) {
+      serializable[key] = { questionnaire: entry.questionnaire, documents: entry.documents };
+    }
+    if (!fs.existsSync(QUEUE_DIR)) fs.mkdirSync(QUEUE_DIR, { recursive: true });
+    fs.writeFileSync(QUEUE_FILE, JSON.stringify(serializable, null, 2));
+  } catch (err) {
+    console.warn(`[RevisionNotify] Could not persist queue: ${err.message}`);
+  }
+}
+
+function restoreQueue() {
+  try {
+    if (!fs.existsSync(QUEUE_FILE)) return;
+    const saved = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
+    let restored = 0;
+    for (const [caseRef, entry] of Object.entries(saved)) {
+      if (!entry.questionnaire?.length && !entry.documents?.length) continue;
+      queue.set(caseRef, {
+        questionnaire: entry.questionnaire || [],
+        documents:     entry.documents || [],
+        timer: setTimeout(() => {
+          flushQueue(caseRef).catch((err) =>
+            console.error(`[RevisionNotify] Failed to send restored item for case ${caseRef}:`, err.message)
+          );
+        }, 5000), // fire quickly after restart — items already waited before restart
+      });
+      restored++;
+    }
+    if (restored > 0) {
+      console.log(`[RevisionNotify] Restored ${restored} pending notification(s) from disk`);
+    }
+    // Clean up the file after restoring
+    fs.unlinkSync(QUEUE_FILE);
+  } catch (err) {
+    console.warn(`[RevisionNotify] Could not restore queue: ${err.message}`);
+  }
+}
+
+// Restore any pending items from a previous server instance
+restoreQueue();
 
 // ─── Client lookup ──────────────────────────────────────────────────────────
 
@@ -25,7 +77,8 @@ async function getClientByCaseRef(caseRef) {
            name
            column_values(ids: [
              "text_mm0xw6bp",
-             "text_mm142s49"
+             "text_mm142s49",
+             "text_mm0x6haq"
            ]) { id text }
          }
        }
@@ -38,17 +91,19 @@ async function getClientByCaseRef(caseRef) {
 
   const col = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
   return {
-    clientName:  (item.name || '').trim() || 'Valued Client',
-    clientEmail: col('text_mm0xw6bp'),
-    caseRef:     col('text_mm142s49'),
+    clientName:   (item.name || '').trim() || 'Valued Client',
+    clientEmail:  col('text_mm0xw6bp'),
+    caseRef:      col('text_mm142s49'),
+    accessToken:  col('text_mm0x6haq'),
   };
 }
 
 // ─── Email builder ───────────────────────────────────────────────────────────
 
-function buildRevisionEmailHtml({ clientName, caseRef, questionnaire, documents }) {
+function buildRevisionEmailHtml({ clientName, caseRef, accessToken, questionnaire, documents }) {
   const encodedRef        = encodeURIComponent(caseRef);
-  const questionnaireUrl  = `${BASE_URL}/questionnaire/${encodedRef}`;
+  const tokenParam        = accessToken ? `?t=${encodeURIComponent(accessToken)}` : '';
+  const questionnaireUrl  = `${BASE_URL}/q/${encodedRef}${tokenParam}`;
   const documentsUrl      = `${BASE_URL}/documents/${encodedRef}`;
 
   const qRows = questionnaire.map(({ name, notes }) => `
@@ -122,6 +177,7 @@ async function flushQueue(caseRef) {
   const entry = queue.get(caseRef);
   if (!entry) return;
   queue.delete(caseRef);
+  persistQueue();
 
   const { questionnaire, documents } = entry;
   if (!questionnaire.length && !documents.length) return;
@@ -177,6 +233,7 @@ function queueItem(caseRef, itemName, reviewNotes, type) {
   }, BATCH_DELAY_MS);
 
   queue.set(caseRef, entry);
+  persistQueue();
   console.log(`[RevisionNotify] Queued ${type} item "${itemName}" for case ${caseRef} (batch fires in 2 min)`);
 }
 

@@ -86,14 +86,80 @@ function formatInstructions(raw) {
   if (!raw || !raw.trim()) return '';
   const text = raw.trim();
 
-  // Render a text fragment safely, converting bare URLs to clickable links
+  // Render a text fragment safely, converting bare URLs to clickable links.
+  // Before splitting, reassemble URLs that were broken by spaces during PDF import
+  // (e.g. "https://example.com/path- segment/file.html" → single URL).
   function renderFrag(str) {
-    const parts = str.split(/(https?:\/\/\S+)/);
-    return parts.map((part, i) =>
-      i % 2 === 1
-        ? `<a href="${esc(part)}" target="_blank" rel="noopener noreferrer">${esc(part)}</a>`
-        : esc(part)
-    ).join('');
+    const repaired = reassembleUrls(str);
+    const parts = repaired.split(/(https?:\/\/[^\s)<>"]+)/);
+    return parts.map((part, i) => {
+      if (i % 2 === 0) return esc(part);
+      // Strip trailing punctuation from the URL (period, comma, etc.)
+      const clean = part.replace(/[.,;:!?)\]}>]+$/, '');
+      const trail = part.slice(clean.length);
+      return `<a href="${esc(clean)}" target="_blank" rel="noopener noreferrer">${esc(clean)}</a>${esc(trail)}`;
+    }).join('');
+  }
+
+  /**
+   * Reassemble URLs that were split by spaces during PDF line-wrap import.
+   *
+   * Iterates through the string, finds URLs, then greedily absorbs subsequent
+   * space-separated fragments that look like URL path continuations rather than
+   * normal English words.
+   */
+  function reassembleUrls(str) {
+    if (!str || !/https?:\/\//.test(str)) return str;
+
+    const nonUrlWords = new Set([
+      'the','a','an','and','or','but','for','to','of','in','on','at','by',
+      'is','are','was','were','be','been','have','has','do','does','did',
+      'will','would','could','should','may','might','this','that','these',
+      'those','it','its','they','them','their','we','us','our','you','your',
+      'he','she','him','her','his','if','then','else','when','where','which',
+      'who','what','how','not','no','yes','all','each','every','any','some',
+      'most','please','provide','include','submit','ensure','must','note',
+      'can','also','only','with','from','about','into','more','such','as',
+    ]);
+
+    function isUrlContinuation(urlSoFar, frag) {
+      if (!frag) return false;
+      const lower = frag.replace(/[.,;:!?)]+$/, '').toLowerCase();
+      if (nonUrlWords.has(lower)) return false;
+      if (/^[A-Z][a-z]/.test(frag) && !frag.includes('/') && !frag.includes('.')) return false;
+      if (frag.includes('/')) return true;
+      if (/\.(html?|php|aspx?|pdf|xml|json|jsp|do)\b/i.test(frag)) return true;
+      if (/[-/]$/.test(urlSoFar)) return true;
+      if (/[a-z]$/.test(urlSoFar) && /^[a-z]/.test(frag) && frag.length > 3) return true;
+      return false;
+    }
+
+    let result = str;
+    const urlRe = /https?:\/\/\S+/g;
+    let m;
+
+    while ((m = urlRe.exec(result)) !== null) {
+      let end = m.index + m[0].length;
+      let changed = false;
+
+      while (end < result.length && result[end] === ' ') {
+        const rest = result.substring(end + 1);
+        const fm = rest.match(/^(\S+)/);
+        if (!fm) break;
+        const url = result.substring(m.index, end);
+        if (isUrlContinuation(url, fm[1])) {
+          result = result.substring(0, end) + result.substring(end + 1);
+          end += fm[1].length;
+          changed = true;
+        } else {
+          break;
+        }
+      }
+
+      urlRe.lastIndex = end;
+    }
+
+    return result;
   }
 
   function wrapItems(arr) {
@@ -194,6 +260,41 @@ function groupByMemberAndCategory(items) {
   }));
 
   return { isMultiMember, members };
+}
+
+// Phase ordering — Profile Creation always first
+const PHASE_ORDER = ['Profile Creation', 'Submission'];
+
+/**
+ * Split items by Checklist Phase → then delegate each phase's items
+ * to groupByMemberAndCategory for the existing member + category grouping.
+ *
+ * Returns { hasDualPhase: bool, phases: [{ phase, isMultiMember, members }] }
+ */
+function groupByPhase(items) {
+  const hasProfileCreation = items.some(i => i.checklistPhase === 'Profile Creation');
+
+  if (!hasProfileCreation) {
+    // No dual-phase — return single phase with all items (backward compatible)
+    const { isMultiMember, members } = groupByMemberAndCategory(items);
+    return { hasDualPhase: false, phases: [{ phase: '', isMultiMember, members }] };
+  }
+
+  // Split items into Profile Creation vs Submission (default for blank phase)
+  const phaseMap = { 'Profile Creation': [], 'Submission': [] };
+  items.forEach(item => {
+    const p = item.checklistPhase === 'Profile Creation' ? 'Profile Creation' : 'Submission';
+    phaseMap[p].push(item);
+  });
+
+  const phases = PHASE_ORDER
+    .filter(p => phaseMap[p] && phaseMap[p].length > 0)
+    .map(p => {
+      const { isMultiMember, members } = groupByMemberAndCategory(phaseMap[p]);
+      return { phase: p, isMultiMember, members };
+    });
+
+  return { hasDualPhase: phases.length > 1, phases };
 }
 
 // ─── Landing page ─────────────────────────────────────────────────────────────
@@ -298,39 +399,59 @@ function docRowHtml(doc, caseRef) {
 // ─── Main upload form ──────────────────────────────────────────────────────────
 
 /**
- * @param {string}   caseRef
- * @param {string}   clientName
- * @param {Array}    members       - [{ memberType, sections: [{ category, items }] }]
- * @param {boolean}  isMultiMember - show member tabs when true
- * @param {string[]} disclaimer    - case-specific disclaimer bullets from PDF
+ * @param {string}       caseRef
+ * @param {string}       clientName
+ * @param {Array}        members       - [{ memberType, sections: [{ category, items }] }]
+ * @param {boolean}      isMultiMember - show member tabs when true
+ * @param {string[]}     disclaimer    - case-specific disclaimer bullets from PDF
+ * @param {Array|null}   phases        - if dual-phase, array of { phase, isMultiMember, members }
  */
-function formPage(caseRef, clientName, members, isMultiMember, disclaimer = []) {
-  // Flatten all items for global counts
-  const allItems     = members.flatMap((m) => m.sections.flatMap((s) => s.items));
+function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], phases = null) {
+  // Flatten all items for global counts (across all phases)
+  const allPhaseMembers = phases ? phases.flatMap(p => p.members) : members;
+  const allItems     = allPhaseMembers.flatMap((m) => m.sections.flatMap((s) => s.items));
   const totalDocs    = allItems.length;
   const uploadedDocs = allItems.filter((i) => i.status !== 'Missing').length;
   const pct          = totalDocs ? Math.round((uploadedDocs / totalDocs) * 100) : 0;
 
-  // Build flat step list: if single member → steps = categories;
-  // if multi-member → steps = members (each member is one step containing all its category sections)
+  // Build flat step list.
+  // When dual-phase, each phase's items produce their own steps, tagged with phase name.
+  // Phase dividers are inserted into the pill bar for visual separation.
+
+  function buildStepsForPhase(phaseMembers, phaseIsMultiMember, phaseName) {
+    let phaseSteps;
+    if (phaseIsMultiMember) {
+      phaseSteps = phaseMembers.map((m) => ({
+        label:     m.memberType,
+        icon:      memberIcon(m.memberType),
+        items:     m.sections.flatMap((s) => s.items),
+        sections:  m.sections,
+        isMember:  true,
+        phase:     phaseName,
+      }));
+    } else {
+      phaseSteps = phaseMembers[0].sections.map((sec) => ({
+        label:    sec.category,
+        icon:     CATEGORY_ICONS[sec.category] || '📋',
+        items:    sec.items,
+        sections: [sec],
+        isMember: false,
+        phase:    phaseName,
+      }));
+    }
+    return phaseSteps;
+  }
+
   let steps;
-  if (isMultiMember) {
-    steps = members.map((m) => ({
-      label:     m.memberType,
-      icon:      memberIcon(m.memberType),
-      items:     m.sections.flatMap((s) => s.items),
-      sections:  m.sections,
-      isMember:  true,
-    }));
+  let phaseBoundaries = []; // indices where a new phase starts (for dividers in pill bar)
+  if (phases && phases.length > 1) {
+    steps = [];
+    for (const p of phases) {
+      phaseBoundaries.push({ idx: steps.length, phase: p.phase });
+      steps.push(...buildStepsForPhase(p.members, p.isMultiMember, p.phase));
+    }
   } else {
-    // Single member: use flat category steps (original behaviour)
-    steps = members[0].sections.map((sec) => ({
-      label:    sec.category,
-      icon:     CATEGORY_ICONS[sec.category] || '📋',
-      items:    sec.items,
-      sections: [sec],
-      isMember: false,
-    }));
+    steps = buildStepsForPhase(members, isMultiMember, '');
   }
 
   const total = steps.length;
@@ -343,10 +464,21 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = []) 
     if (firstFlaggedStep === -1 && flagged.length > 0) firstFlaggedStep = idx;
   });
 
+  // Build a Set of phase boundary indices for quick lookup
+  const phaseBoundaryMap = {};
+  phaseBoundaries.forEach(b => { phaseBoundaryMap[b.idx] = b.phase; });
+
   const stepPills = steps
     .map((step, idx) => {
       const hasFlagged = step.items.some((i) => i.status === 'Rework Required');
-      return `<button class="step-pill${hasFlagged ? ' flagged' : ''}" id="pill_${idx}" onclick="goToStep(${idx})" title="${esc(step.label)}">
+
+      // Insert a phase divider before the first step of each phase
+      const phaseLabel = phaseBoundaryMap[idx];
+      const divider = phaseLabel
+        ? `<div class="phase-divider"><span class="phase-divider-label">${phaseLabel === 'Profile Creation' ? '📋' : '📁'} ${esc(phaseLabel)}</span></div>`
+        : '';
+
+      return `${divider}<button class="step-pill${hasFlagged ? ' flagged' : ''}" id="pill_${idx}" onclick="goToStep(${idx})" title="${esc(step.label)}">
         <span class="pill-num">${idx + 1}</span>
         <span class="pill-label">${step.icon} ${esc(step.label)}${hasFlagged ? ' ⚠️' : ''}</span>
       </button>`;
@@ -378,10 +510,14 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = []) 
         bodyHtml = step.items.map((doc) => docRowHtml(doc, caseRef)).join('');
       }
 
+      const phaseTag = step.phase
+        ? `<span class="phase-tag" style="font-size:.7rem;font-weight:700;color:${step.phase === 'Profile Creation' ? '#2563eb' : '#7c3aed'};background:${step.phase === 'Profile Creation' ? '#eff6ff' : '#f5f3ff'};padding:2px 8px;border-radius:4px;margin-left:8px">${esc(step.phase)}</span>`
+        : '';
+
       return `
     <div class="panel" id="panel_${idx}" style="display:none">
       <div class="panel-header">
-        <div class="panel-title">${step.icon} ${esc(step.label)}</div>
+        <div class="panel-title">${step.icon} ${esc(step.label)}${phaseTag}</div>
         <div class="panel-meta" id="pmeta_${idx}">${uploaded} of ${step.items.length} uploaded</div>
       </div>
       <div class="panel-body">${bodyHtml}</div>
@@ -437,6 +573,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .steps-wrap{background:#fff;border-bottom:1px solid var(--gray-200);position:sticky;top:96px;z-index:198;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
 .steps-wrap::-webkit-scrollbar{display:none}
 .steps-inner{display:flex;min-width:max-content;padding:0 .5rem}
+.phase-divider{display:flex;align-items:center;padding:.5rem 1rem;width:100%}
+.phase-divider-label{font-size:.72rem;font-weight:700;color:var(--brand);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;border-bottom:2px solid var(--brand);padding-bottom:4px}
 .step-pill{display:flex;align-items:center;gap:.45rem;padding:.68rem 1rem;border:none;background:transparent;cursor:pointer;font-size:.76rem;color:var(--gray-400);border-bottom:2.5px solid transparent;transition:all .18s;white-space:nowrap;font-family:inherit;font-weight:500}
 .step-pill:hover{color:var(--gray-700);background:var(--gray-50)}
 .step-pill.active{color:var(--brand);border-bottom-color:var(--brand);font-weight:700;background:var(--brand-faint)}
@@ -884,8 +1022,10 @@ router.get('/:caseRef', async (req, res) => {
         )}`
       );
     }
-    const { isMultiMember, members } = groupByMemberAndCategory(items);
-    res.send(formPage(caseRef, clientName, members, isMultiMember, disclaimer));
+    const { hasDualPhase, phases } = groupByPhase(items);
+    // For backward compat: single-phase cases pass members/isMultiMember directly
+    const { isMultiMember, members } = phases[0];
+    res.send(formPage(caseRef, clientName, members, isMultiMember, disclaimer, hasDualPhase ? phases : null));
   } catch (err) {
     console.error('[DocForm] Error loading form:', err.message);
     res.redirect(

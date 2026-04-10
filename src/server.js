@@ -34,6 +34,23 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// ─── API key middleware for manual trigger endpoints ─────────────────────────
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
+
+function requireApiKey(req, res, next) {
+  const key = req.headers['x-api-key'] || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!ADMIN_API_KEY) {
+    console.warn('[Auth] ADMIN_API_KEY not set — all /api/* requests are blocked');
+    return res.status(503).json({ error: 'API key not configured on server' });
+  }
+  if (!key || key !== ADMIN_API_KEY) {
+    return res.status(401).json({ error: 'Invalid or missing API key' });
+  }
+  next();
+}
+
+app.use('/api', requireApiKey);
+
 // Manual trigger — resend intake email for a specific Client Master item ID
 // Usage: POST /api/resend-intake/<itemId>
 // Useful when a token was missing or an email was sent with a broken link.

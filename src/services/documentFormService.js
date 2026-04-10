@@ -42,6 +42,7 @@ const TMPL_DESC_COL           = 'long_text_mm0zmb7j'; // Description
 const TMPL_INSTRUCTIONS_COL   = 'long_text_mm0z10mg'; // Client-Facing Instructions
 const TMPL_CATEGORY_COL       = 'dropdown_mm0x41zm';  // Document Category
 const TMPL_APPLICANT_TYPE_COL = 'dropdown_mm261bn6';  // Applicant Type (which member)
+const TMPL_PHASE_COL          = 'dropdown_mm297t2e';  // Checklist Phase ("Profile Creation" / "Submission")
 
 // Client Master Board columns
 const CM_CASE_REF_COL  = 'text_mm142s49';    // Case Reference Number
@@ -193,7 +194,8 @@ async function getCaseDocuments(caseRef) {
              "${TMPL_DESC_COL}",
              "${TMPL_INSTRUCTIONS_COL}",
              "${TMPL_CATEGORY_COL}",
-             "${TMPL_APPLICANT_TYPE_COL}"
+             "${TMPL_APPLICANT_TYPE_COL}",
+             "${TMPL_PHASE_COL}"
            ]) { id text }
          }
        }`,
@@ -207,6 +209,7 @@ async function getCaseDocuments(caseRef) {
         clientInstructions: tc(TMPL_INSTRUCTIONS_COL),
         category:           tc(TMPL_CATEGORY_COL),
         applicantType:      tc(TMPL_APPLICANT_TYPE_COL) || 'Principal Applicant',
+        checklistPhase:     tc(TMPL_PHASE_COL) || '',
       };
     }
   }
@@ -231,6 +234,7 @@ async function getCaseDocuments(caseRef) {
         lastUpload:         c(UPLOAD_DATE_COL),
         description:        tmpl.description        || '',
         clientInstructions: tmpl.clientInstructions || '',
+        checklistPhase:     tmpl.checklistPhase     || '',
         reviewNotes:        c(REVIEW_NOTES_COL)     || '',
         intakeId,
       };

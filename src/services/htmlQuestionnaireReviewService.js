@@ -163,16 +163,36 @@ async function sendCorrectionEmail({ caseRef, formKey, caseDetails, flags, formF
 
   const encodedRef  = encodeURIComponent(caseRef);
   const tokenParam  = accessToken ? `?t=${encodeURIComponent(accessToken)}` : '';
-  const formParam   = formKey === 'additional' ? '&f=2' : (accessToken ? '&f=1' : '?f=1');
-  const formUrl     = `${BASE_URL}/q/${encodedRef}${tokenParam}${tokenParam ? formParam : '?f=1'}`;
+
+  // Build the form URL — use member key directly in the f= parameter
+  // Legacy: 'additional' → f=2. Member keys: 'spouse' → f=spouse, 'child-1' → f=child-1
+  let formParam;
+  if (formKey === 'additional') {
+    formParam = '&f=2'; // legacy dual-form
+  } else if (formKey === 'primary') {
+    formParam = tokenParam ? '&f=primary' : '?f=primary';
+  } else {
+    // Member key (e.g., 'spouse', 'child-1', 'spouse-additional')
+    const memberKey = formKey.replace(/-additional$/, '');
+    const formType  = formKey.endsWith('-additional') ? '&form=additional' : '';
+    formParam = `${tokenParam ? '&' : '?'}f=${encodeURIComponent(memberKey)}${formType}`;
+  }
+  const formUrl = `${BASE_URL}/q/${encodedRef}${tokenParam}${formParam}`;
+
+  // Derive member label from the formKey for the email subject
+  const memberKey   = formKey.replace(/-additional$/, '');
+  const memberLabel = memberKey !== 'primary'
+    ? memberKey.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) // 'child-1' → 'Child 1'
+    : '';
+  const memberNote  = memberLabel ? ` (${memberLabel})` : '';
 
   const html = buildCorrectionEmailHtml({
-    clientName, caseRef, caseType, flaggedItems, sections, formUrl, staffName,
+    clientName, caseRef, caseType, flaggedItems, sections, formUrl, staffName, memberLabel,
   });
 
   await sendEmail({
     to:      clientEmail,
-    subject: `Action Required — Please Update Your Questionnaire (${caseRef})`,
+    subject: `Action Required — Please Update Your Questionnaire${memberNote} (${caseRef})`,
     html,
     replyTo: EMAIL_REPLY_TO || undefined,
   });
@@ -186,16 +206,17 @@ async function sendCorrectionEmail({ caseRef, formKey, caseDetails, flags, formF
     `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
     {
       itemId: String(itemId),
-      body:   `📋 Correction Request Sent\n\nCase: ${caseRef}\nReviewed by: ${staffName}\nFlagged items (${flaggedKeys.length}):\n${itemLines}\n\nClient notified by email at ${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true })} (Toronto).`,
+      body:   `📋 Correction Request Sent${memberNote}\n\nCase: ${caseRef}\nReviewed by: ${staffName}\nFlagged items (${flaggedKeys.length}):\n${itemLines}\n\nClient notified by email at ${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true })} (Toronto).`,
     }
   );
 
-  console.log(`[HtmlQReview] Correction email sent for ${caseRef} — ${flaggedKeys.length} flag(s). Reviewed by ${staffName}.`);
+  console.log(`[HtmlQReview] Correction email sent for ${caseRef}/${formKey} — ${flaggedKeys.length} flag(s). Reviewed by ${staffName}.`);
 }
 
-function buildCorrectionEmailHtml({ clientName, caseRef, caseType, flaggedItems, sections, formUrl, staffName }) {
-  const firstName = (clientName || '').split(' ')[0] || 'Client';
-  const count     = flaggedItems.length;
+function buildCorrectionEmailHtml({ clientName, caseRef, caseType, flaggedItems, sections, formUrl, staffName, memberLabel }) {
+  const firstName   = (clientName || '').split(' ')[0] || 'Client';
+  const count       = flaggedItems.length;
+  const memberNote  = memberLabel ? ` for <strong>${memberLabel}</strong>` : '';
 
   const sectionHtml = Object.entries(sections).map(([section, items]) => {
     const itemsHtml = items.map(item => `
@@ -233,7 +254,7 @@ function buildCorrectionEmailHtml({ clientName, caseRef, caseType, flaggedItems,
       <tr><td style="background:#fff;padding:36px 32px;">
         <p style="font-size:18px;font-weight:700;color:#1e293b;margin:0 0 8px;">Hi ${firstName},</p>
         <p style="font-size:15px;color:#475569;line-height:1.65;margin:0 0 24px;">
-          Your consultant has reviewed your questionnaire and needs clarification on
+          Your consultant has reviewed your questionnaire${memberNote} and needs clarification on
           <strong>${count} item${count > 1 ? 's' : ''}</strong>.
           Please log back in and update the highlighted fields.
         </p>

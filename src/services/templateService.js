@@ -7,6 +7,7 @@ const TEMPLATE_COLS = {
   caseSubType:      'dropdown_mm204y6w',  // dropdown written by rebuildTemplateBoards.js
   documentCategory: 'dropdown_mm0x41zm',
   applicantType:    'dropdown_mm261bn6',  // which member this document belongs to
+  checklistPhase:   'dropdown_mm297t2e',  // "Profile Creation" or "Submission" (blank = Submission)
 };
 
 // Template Board group titles → group IDs (sourced from rebuilt Document Checklist Template Board)
@@ -94,7 +95,7 @@ async function getTemplateItemsByCaseType(primaryCaseType, caseSubType = null) {
             items {
               id
               name
-              column_values(ids: ["${TEMPLATE_COLS.documentCode}", "${TEMPLATE_COLS.caseSubType}", "${TEMPLATE_COLS.documentCategory}", "${TEMPLATE_COLS.applicantType}"]) {
+              column_values(ids: ["${TEMPLATE_COLS.documentCode}", "${TEMPLATE_COLS.caseSubType}", "${TEMPLATE_COLS.documentCategory}", "${TEMPLATE_COLS.applicantType}", "${TEMPLATE_COLS.checklistPhase}"]) {
                 id
                 text
               }
@@ -120,6 +121,7 @@ async function getTemplateItemsByCaseType(primaryCaseType, caseSubType = null) {
       caseSubType:      colMap[TEMPLATE_COLS.caseSubType]      || '',
       documentCategory: colMap[TEMPLATE_COLS.documentCategory] || '',
       applicantType:    colMap[TEMPLATE_COLS.applicantType]    || 'Principal Applicant',
+      checklistPhase:   colMap[TEMPLATE_COLS.checklistPhase]   || '',
     };
   });
 

@@ -221,6 +221,236 @@ async function saveFormData({ clientName, caseRef, itemId, formKey, fields, comp
   console.log(`[HtmlQ] Saved ${fields.length} fields (${filled} non-empty) as JSON for ${caseRef}/${formKey} (${completionPct}%)`);
 }
 
+// ─── Member manifest operations ──────────────────────────────────────────────
+// Stores the list of members (PA + spouse/child/parent/sibling) for a case.
+// File: questionnaire-{caseRef}-members.json in the Questionnaire subfolder.
+//
+// The manifest is created lazily — if it doesn't exist, the system assumes
+// a single "primary" member (the Principal Applicant). When a client adds
+// a member via the overview page, the manifest is created/updated.
+
+const MEMBERS_FILENAME_PREFIX = 'questionnaire-members-';
+
+function membersFilename(caseRef) {
+  return `${MEMBERS_FILENAME_PREFIX}${caseRef}.json`;
+}
+
+/** Default member list when no manifest exists — just the primary applicant. */
+function defaultMembers() {
+  return [
+    { key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', addedAt: new Date().toISOString() },
+  ];
+}
+
+/**
+ * Human-friendly label for a member type + index.
+ * E.g., ('Dependent Child', 2) → 'Child 2', ('Parent', 1) → 'Parent 1'
+ */
+function memberLabel(memberType, index) {
+  const LABEL_MAP = {
+    'Spouse / Common-Law Partner': 'Spouse',
+    'Dependent Child':             'Child',
+    'Sponsor':                     'Sponsor',
+    'Worker Spouse':               'Worker Spouse',
+    'Parent':                      'Parent',
+    'Sibling':                     'Sibling',
+  };
+  const base = LABEL_MAP[memberType] || memberType;
+  return index > 1 ? `${base} ${index}` : base;
+}
+
+/**
+ * Generate a unique member key from the type + count of existing members of that type.
+ * E.g., first child → 'child-1', second child → 'child-2', spouse → 'spouse'
+ */
+function generateMemberKey(memberType, existingMembers) {
+  const KEY_BASE = {
+    'Spouse / Common-Law Partner': 'spouse',
+    'Dependent Child':             'child',
+    'Sponsor':                     'sponsor',
+    'Worker Spouse':               'worker-spouse',
+    'Parent':                      'parent',
+    'Sibling':                     'sibling',
+  };
+  const base = KEY_BASE[memberType] || memberType.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
+  // Count how many of this type already exist
+  const sameType = existingMembers.filter(m => m.type === memberType);
+  const index = sameType.length + 1;
+
+  // For types that typically have only one (spouse, worker-spouse, sponsor), use plain key for the first
+  const singletonTypes = ['Spouse / Common-Law Partner', 'Worker Spouse', 'Sponsor'];
+  if (singletonTypes.includes(memberType) && index === 1) {
+    return base;
+  }
+
+  return `${base}-${index}`;
+}
+
+/**
+ * Load the member manifest for a case.
+ * Returns an array of { key, type, label, addedAt, submittedAt? } objects.
+ * If no manifest exists, returns the default single-member list.
+ */
+async function loadMembers({ clientName, caseRef }) {
+  try {
+    const buf = await oneDrive.readFile({
+      clientName,
+      caseRef,
+      subfolder: QUESTIONNAIRE_SUBFOLDER,
+      filename:  membersFilename(caseRef),
+    });
+    if (buf) {
+      const data = JSON.parse(buf.toString('utf8'));
+      if (Array.isArray(data.members) && data.members.length > 0) {
+        return data.members;
+      }
+    }
+  } catch (err) {
+    console.warn(`[HtmlQ] loadMembers failed for ${caseRef}: ${err.message}`);
+  }
+  return defaultMembers();
+}
+
+/**
+ * Save the member manifest to OneDrive.
+ */
+async function saveMembers({ clientName, caseRef, members }) {
+  const content = JSON.stringify({ members, updatedAt: new Date().toISOString() }, null, 2);
+  const buffer  = Buffer.from(content, 'utf8');
+
+  await oneDrive.ensureClientFolder({ clientName, caseRef });
+  await oneDrive.uploadFile({
+    clientName,
+    caseRef,
+    category: QUESTIONNAIRE_SUBFOLDER,
+    filename: membersFilename(caseRef),
+    buffer,
+    mimeType: 'application/json',
+  });
+
+  console.log(`[HtmlQ] Saved member manifest for ${caseRef} — ${members.length} members`);
+}
+
+/**
+ * Add a new member to the case manifest.
+ *
+ * @param {{ clientName, caseRef, memberType }} params
+ *   memberType: one of the MEMBER_TYPE constants from questionnaireFormMap
+ * @returns {{ key, type, label }} The newly added member
+ */
+async function addMember({ clientName, caseRef, memberType }) {
+  const members = await loadMembers({ clientName, caseRef });
+
+  // Validate: don't allow duplicate singletons (spouse, worker-spouse, sponsor)
+  const singletonTypes = ['Spouse / Common-Law Partner', 'Worker Spouse', 'Sponsor'];
+  if (singletonTypes.includes(memberType)) {
+    const existing = members.find(m => m.type === memberType);
+    if (existing) {
+      throw new Error(`A ${memberType.split(' / ')[0]} has already been added to this case.`);
+    }
+  }
+
+  const key   = generateMemberKey(memberType, members);
+  const count = members.filter(m => m.type === memberType).length + 1;
+  const label = memberLabel(memberType, count);
+
+  const newMember = {
+    key,
+    type:    memberType,
+    label,
+    addedAt: new Date().toISOString(),
+  };
+
+  members.push(newMember);
+  await saveMembers({ clientName, caseRef, members });
+
+  console.log(`[HtmlQ] Added member "${label}" (${key}) for ${caseRef}`);
+  return newMember;
+}
+
+/**
+ * Remove a member from the case manifest.
+ * Only allowed if the member hasn't submitted their questionnaire yet.
+ *
+ * @param {{ clientName, caseRef, memberKey }} params
+ * @returns {boolean} true if removed, false if not found
+ */
+async function removeMember({ clientName, caseRef, memberKey }) {
+  if (memberKey === 'primary') {
+    throw new Error('The Primary Applicant cannot be removed.');
+  }
+
+  const members = await loadMembers({ clientName, caseRef });
+  const idx     = members.findIndex(m => m.key === memberKey);
+
+  if (idx === -1) {
+    throw new Error('Member not found.');
+  }
+
+  const member = members[idx];
+
+  // Check if the member has already submitted (check if form data file exists with submission flag)
+  if (member.submittedAt) {
+    throw new Error(`Cannot remove "${member.label}" — their questionnaire has already been submitted.`);
+  }
+
+  members.splice(idx, 1);
+  await saveMembers({ clientName, caseRef, members });
+
+  console.log(`[HtmlQ] Removed member "${member.label}" (${memberKey}) from ${caseRef}`);
+  return true;
+}
+
+/**
+ * Get the completion status for each member by checking if their form data files exist.
+ * Returns the members array with added `status` and `completionPct` fields.
+ *
+ * @param {{ clientName, caseRef, members, formFiles }} params
+ *   formFiles: { primary, additional? } from resolveForm()
+ * @returns {Array} members with status info
+ */
+async function getMemberStatuses({ clientName, caseRef, members, formFiles }) {
+  const result = [];
+  for (const member of members) {
+    // Check primary form data
+    const primaryData = await loadFormData({ clientName, caseRef, formKey: member.key });
+    const hasData     = primaryData.length > 0 && primaryData.some(f => f.value && f.value.trim());
+
+    // Check additional form data (if dual-form case)
+    let hasAdditionalData = false;
+    if (formFiles?.additional) {
+      const addKey = `${member.key}-additional`;
+      const additionalData = await loadFormData({ clientName, caseRef, formKey: addKey });
+      hasAdditionalData = additionalData.length > 0 && additionalData.some(f => f.value && f.value.trim());
+    }
+
+    let status = 'Not Started';
+    if (member.submittedAt) status = 'Submitted';
+    else if (hasData || hasAdditionalData) status = 'In Progress';
+
+    result.push({
+      ...member,
+      status,
+      hasData,
+      hasAdditionalData,
+    });
+  }
+  return result;
+}
+
+/**
+ * Mark a member as submitted in the manifest (sets submittedAt timestamp).
+ */
+async function markMemberSubmitted({ clientName, caseRef, memberKey }) {
+  const members = await loadMembers({ clientName, caseRef });
+  const member  = members.find(m => m.key === memberKey);
+  if (member) {
+    member.submittedAt = new Date().toISOString();
+    await saveMembers({ clientName, caseRef, members });
+  }
+}
+
 /**
  * Mark a questionnaire form as submitted.
  * Updates Q readiness on Monday.com, posts an audit comment, and
@@ -229,10 +459,62 @@ async function saveFormData({ clientName, caseRef, itemId, formKey, fields, comp
  * @param {{ itemId, caseRef, caseType, formKey, formLabel, completionPct }} params
  *   caseType is required for threshold lookup and stage gate calls.
  */
-async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, completionPct }) {
+async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, completionPct, clientName }) {
   const pct = Math.round(completionPct);
 
-  // ── Step 1: Update Q Readiness and Q Completion Status ────────────────────
+  // ── Step 0: Extract member key from formKey ───────────────────────────────
+  // formKey can be 'primary', 'spouse', 'child-1', 'spouse-additional', etc.
+  // The member key is the part before '-additional' (if present).
+  const memberKey = formKey.replace(/-additional$/, '');
+
+  // ── Step 1: Mark member as submitted in manifest (if multi-member) ────────
+  let members = null;
+  let memberLabel = '';
+  if (clientName) {
+    try {
+      await markMemberSubmitted({ clientName, caseRef, memberKey });
+      members = await loadMembers({ clientName, caseRef });
+      const member = members.find(m => m.key === memberKey);
+      memberLabel = member?.label || '';
+    } catch (err) {
+      console.warn(`[HtmlQ] Could not update member manifest for ${caseRef}/${memberKey}: ${err.message}`);
+    }
+  }
+
+  // ── Step 2: Calculate aggregate Q readiness across all members ─────────────
+  // If there are multiple members, aggregate = average of all members' pct.
+  // Each member's pct comes from their most recent submission.
+  // For single-member cases, aggregate = this submission's pct (backward compatible).
+  let aggregatePct = pct;
+  let totalMembers = 1;
+  let submittedCount = 1;
+  let allDone = pct >= 100;
+
+  if (members && members.length > 1) {
+    // Count submitted members and average their completion
+    let totalPct = 0;
+    submittedCount = 0;
+    totalMembers = members.length;
+
+    for (const m of members) {
+      if (m.submittedAt) {
+        submittedCount++;
+        // For the member we just submitted, use the current pct
+        if (m.key === memberKey) {
+          totalPct += pct;
+        } else {
+          // For other submitted members, assume 100% (they were submitted previously)
+          totalPct += 100;
+        }
+      }
+      // Non-submitted members contribute 0%
+    }
+
+    aggregatePct = totalMembers > 0 ? Math.round(totalPct / totalMembers) : pct;
+    allDone = submittedCount >= totalMembers && pct >= 100;
+  }
+
+  // ── Step 3: Update Q Readiness and Q Completion Status on Monday.com ──────
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
        change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
@@ -241,17 +523,25 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
       boardId: String(clientMasterBoardId),
       itemId:  String(itemId),
       cols:    JSON.stringify({
-        [CM.qReadiness]:        pct,
-        [CM.qCompletionStatus]: { label: pct >= 100 ? 'Done' : 'Working on it' },
+        [CM.qReadiness]:        aggregatePct,
+        [CM.qCompletionStatus]: { label: allDone ? 'Done' : 'Working on it' },
       }),
     }
   );
 
-  // ── Step 2: Audit comment with staff review link ───────────────────────────
+  // ── Step 4: Audit comment with staff review link ───────────────────────────
   const label       = formLabel ? `"${formLabel}"` : `(${formKey})`;
   const submittedAt = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
   const reviewUrl   = `${BASE_URL}/q/${encodeURIComponent(caseRef)}/review?formKey=${encodeURIComponent(formKey)}`;
-  const comment     = `📋 Questionnaire Submitted\n\nForm: ${label}\nCase: ${caseRef}\nCompletion: ${pct}%\nSubmitted: ${submittedAt} (Toronto)\n\nData saved to client OneDrive folder.\n\n🔍 Staff Review Link:\n${reviewUrl}`;
+
+  const memberNote  = memberLabel && memberLabel !== 'Primary Applicant'
+    ? `\nMember: ${memberLabel}`
+    : '';
+  const progressNote = totalMembers > 1
+    ? `\nProgress: ${submittedCount} of ${totalMembers} members submitted (aggregate Q readiness: ${aggregatePct}%)`
+    : '';
+
+  const comment = `📋 Questionnaire Submitted\n\nForm: ${label}${memberNote}\nCase: ${caseRef}\nCompletion: ${pct}%${progressNote}\nSubmitted: ${submittedAt} (Toronto)\n\nData saved to client OneDrive folder.\n\n🔍 Staff Review Link:\n${reviewUrl}`;
 
   await mondayApi.query(
     `mutation($itemId: ID!, $body: String!) {
@@ -260,11 +550,11 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
     { itemId: String(itemId), body: comment }
   );
 
-  console.log(`[HtmlQ] Marked submitted — ${caseRef}/${formKey} at ${pct}%`);
+  console.log(`[HtmlQ] Marked submitted — ${caseRef}/${formKey} at ${pct}% (aggregate: ${aggregatePct}%, ${submittedCount}/${totalMembers} members)`);
 
-  // ── Step 3: Stage gate check ───────────────────────────────────────────────
+  // ── Step 5: Stage gate check ───────────────────────────────────────────────
   // Fire-and-forget: errors here must not block the submit response to the client.
-  checkStageGate({ itemId, caseRef, caseType, qPct: pct }).catch((err) =>
+  checkStageGate({ itemId, caseRef, caseType, qPct: aggregatePct }).catch((err) =>
     console.error(`[HtmlQ] Stage gate check failed for ${caseRef}:`, err.message)
   );
 }
@@ -346,7 +636,7 @@ async function checkStageGate({ itemId, caseRef, caseType, qPct }) {
  * @param {{ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl }} params
  * @returns {string}  HTML string ready to splice into the form HTML
  */
-function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl }) {
+function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel }) {
   return `
 <!-- TDOT Dynamic Questionnaire — injected by server -->
 <style>
@@ -395,6 +685,7 @@ ${hasAdditionalForm ? `
   var TOKEN          = ${JSON.stringify(String(token))};
   var FORM_KEY       = ${JSON.stringify(String(formKey))};
   var OVERVIEW_URL   = ${JSON.stringify(overviewUrl || '')};
+  var MEMBER_LABEL   = ${JSON.stringify(memberLabel || '')};
 
   /* ── Utilities ── */
 
@@ -903,9 +1194,13 @@ ${hasAdditionalForm ? `
   function createToolbar() {
     var bar = document.createElement('div');
     bar.id  = 'tdot-toolbar';
+    var memberBadge = MEMBER_LABEL && MEMBER_LABEL !== 'Primary Applicant'
+      ? '<span style="display:inline-block;background:rgba(255,255,255,0.15);padding:2px 10px;border-radius:4px;font-size:11px;font-weight:700;margin-right:10px;letter-spacing:.03em">' + MEMBER_LABEL.replace(/</g,'&lt;') + '</span>'
+      : '';
     bar.innerHTML =
       '<div>' +
-        '<div id="tdot-progress">Loading saved data…</div>' +
+        memberBadge +
+        '<div id="tdot-progress" style="display:inline">Loading saved data…</div>' +
       '</div>' +
       '<div id="tdot-actions">' +
         '<span id="tdot-saved-msg"></span>' +
@@ -920,7 +1215,10 @@ ${hasAdditionalForm ? `
   function createNavTab() {
     var nav = document.createElement('div');
     nav.className = 'tdot-nav-bar';
-    nav.innerHTML = '<a href="' + OVERVIEW_URL + '" class="tdot-nav-tab">← All Forms</a>';
+    var memberNote = MEMBER_LABEL && MEMBER_LABEL !== 'Primary Applicant'
+      ? '<span style="margin-left:auto;font-size:13px;font-weight:600;color:#1e3a5f;padding:8px 16px">' + MEMBER_LABEL.replace(/</g,'&lt;') + '</span>'
+      : '';
+    nav.innerHTML = '<a href="' + OVERVIEW_URL + '" class="tdot-nav-tab">← All Forms</a>' + memberNote;
     document.body.insertBefore(nav, document.body.firstChild);
   }
   ` : '/* single-form case — no nav tab */'}
@@ -972,7 +1270,7 @@ ${hasAdditionalForm ? `
  * @param {{ formFile, caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl }} params
  * @returns {string} Complete HTML ready to send to the browser
  */
-function buildFormPage({ formFile, caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl }) {
+function buildFormPage({ formFile, caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel }) {
   const filePath = path.join(FORMS_DIR, formFile);
 
   if (!fs.existsSync(filePath)) {
@@ -980,7 +1278,7 @@ function buildFormPage({ formFile, caseRef, token, formKey, formTitle, hasAdditi
   }
 
   const html   = fs.readFileSync(filePath, 'utf8');
-  const script = buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl });
+  const script = buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel });
 
   // Inject immediately before </body>
   if (html.includes('</body>')) {
@@ -997,15 +1295,109 @@ function buildFormPage({ formFile, caseRef, token, formKey, formTitle, hasAdditi
  * @param {{ caseRef, token, primaryTitle, additionalTitle }} params
  * @returns {string} HTML string
  */
-function buildOverviewPage({ caseRef, token, primaryTitle, additionalTitle }) {
-  const base = `/q/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(token)}`;
+/**
+ * Build the overview page showing all members and their forms.
+ *
+ * @param {{ caseRef, token, members, formFiles, allowedMemberTypes }} params
+ *   members: array from getMemberStatuses() with status info
+ *   formFiles: { primary, additional? } from resolveForm()
+ *   allowedMemberTypes: string[] of member types the client can add
+ */
+function buildOverviewPage({ caseRef, token, members, formFiles, allowedMemberTypes }) {
+  const base     = `/q/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(token)}`;
+  const hasTwo   = Boolean(formFiles?.additional);
+  const escHtml  = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  // Extract clean form titles
+  const titleClean = (f) => (f || '').replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
+  const primaryTitle    = titleClean(formFiles?.primary);
+  const additionalTitle = hasTwo ? titleClean(formFiles.additional) : '';
+
+  // Status badge colors
+  const statusStyle = (status) => {
+    if (status === 'Submitted')   return 'background:#dcfce7;color:#166534;border:1px solid #bbf7d0';
+    if (status === 'In Progress') return 'background:#fef9c3;color:#854d0e;border:1px solid #fde68a';
+    return 'background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb'; // Not Started
+  };
+
+  const statusIcon = (status) => {
+    if (status === 'Submitted')   return '✅';
+    if (status === 'In Progress') return '📝';
+    return '⬜';
+  };
+
+  // Member type display icons
+  const memberIcon = (type) => {
+    const icons = {
+      'Principal Applicant':        '👤',
+      'Spouse / Common-Law Partner': '💑',
+      'Dependent Child':            '👶',
+      'Sponsor':                    '🏠',
+      'Worker Spouse':              '👷',
+      'Parent':                     '👨‍👩‍👧',
+      'Sibling':                    '👫',
+    };
+    return icons[type] || '👤';
+  };
+
+  // Build member cards
+  const memberCards = members.map((member) => {
+    const icon    = memberIcon(member.type);
+    const badge   = `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;${statusStyle(member.status)}">${statusIcon(member.status)} ${escHtml(member.status)}</span>`;
+    const isPrimary = member.key === 'primary';
+
+    // Form buttons — one per form file
+    let formButtons = '';
+    if (hasTwo) {
+      formButtons = `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <a href="${base}&f=${encodeURIComponent(member.key)}&form=primary" class="form-btn">${escHtml(primaryTitle)}</a>
+          <a href="${base}&f=${encodeURIComponent(member.key)}&form=additional" class="form-btn form-btn-secondary">${escHtml(additionalTitle)}</a>
+        </div>`;
+    } else {
+      formButtons = `
+        <a href="${base}&f=${encodeURIComponent(member.key)}" class="form-btn" style="margin-top:8px">${escHtml(primaryTitle)} →</a>`;
+    }
+
+    // Remove button (only for non-primary, non-submitted members)
+    const removeBtn = (!isPrimary && member.status !== 'Submitted')
+      ? `<button class="remove-btn" onclick="removeMember('${escHtml(member.key)}', '${escHtml(member.label)}')" title="Remove ${escHtml(member.label)}">✕</button>`
+      : '';
+
+    return `
+    <div class="member-card${member.status === 'Submitted' ? ' submitted' : ''}">
+      ${removeBtn}
+      <div class="member-header">
+        <span class="member-icon">${icon}</span>
+        <div>
+          <div class="member-label">${escHtml(member.label)}</div>
+          <div class="member-type">${escHtml(member.type)}</div>
+        </div>
+      </div>
+      <div style="margin:8px 0">${badge}</div>
+      ${formButtons}
+    </div>`;
+  }).join('');
+
+  // Add Member button (only if there are allowed types)
+  const addMemberSection = allowedMemberTypes.length > 0 ? `
+    <div class="add-member-section" id="addMemberSection">
+      <button class="add-member-btn" onclick="toggleAddMenu()">+ Add Family Member</button>
+      <div class="add-menu" id="addMenu" style="display:none">
+        ${allowedMemberTypes.map(type => `
+          <button class="add-option" onclick="addMember('${escHtml(type)}')">
+            ${memberIcon(type)} ${escHtml(type.split(' / ')[0])}
+          </button>
+        `).join('')}
+      </div>
+    </div>` : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Questionnaire — ${caseRef}</title>
+  <title>Questionnaire — ${escHtml(caseRef)}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -1015,55 +1407,162 @@ function buildOverviewPage({ caseRef, token, primaryTitle, additionalTitle }) {
       display: flex; flex-direction: column; align-items: center;
       padding: 40px 20px;
     }
-    .header {
-      text-align: center; margin-bottom: 36px;
-    }
+    .header { text-align: center; margin-bottom: 32px; }
     .header h1 { font-size: 24px; color: #1e3a5f; font-weight: 700; }
     .header p  { color: #6b7280; font-size: 14px; margin-top: 6px; }
-    .cards {
-      display: flex; flex-wrap: wrap; gap: 20px;
-      justify-content: center; width: 100%; max-width: 860px;
+    .members-grid {
+      display: flex; flex-wrap: wrap; gap: 16px;
+      justify-content: center; width: 100%; max-width: 920px;
     }
-    .card {
-      background: #fff; border-radius: 12px; padding: 28px 28px 24px;
-      box-shadow: 0 2px 16px rgba(0,0,0,0.08);
-      flex: 1 1 340px; min-width: 280px; max-width: 420px;
-      display: flex; flex-direction: column; gap: 12px;
+    .member-card {
+      background: #fff; border-radius: 12px; padding: 24px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+      flex: 1 1 280px; min-width: 260px; max-width: 420px;
+      display: flex; flex-direction: column;
+      position: relative;
+      border: 2px solid transparent;
+      transition: border-color 0.2s;
     }
-    .card-num  { font-size: 11px; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: .06em; }
-    .card h2   { font-size: 17px; font-weight: 700; color: #1e3a5f; }
-    .card p    { font-size: 13px; color: #6b7280; flex: 1; }
-    .card a {
-      display: block; text-align: center; margin-top: 8px;
-      padding: 10px 20px; background: #1e3a5f; color: #fff;
-      border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;
+    .member-card:hover { border-color: #dbeafe; }
+    .member-card.submitted { border-color: #bbf7d0; background: #fafffe; }
+    .member-header {
+      display: flex; align-items: center; gap: 12px; margin-bottom: 4px;
     }
-    .card a:hover { background: #2d5186; }
-    @media (max-width: 600px) { .cards { flex-direction: column; } }
+    .member-icon { font-size: 28px; }
+    .member-label { font-size: 16px; font-weight: 700; color: #1e3a5f; }
+    .member-type  { font-size: 12px; color: #9ca3af; }
+    .form-btn {
+      display: block; text-align: center;
+      padding: 9px 16px; background: #1e3a5f; color: #fff;
+      border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;
+      transition: background 0.15s;
+    }
+    .form-btn:hover { background: #2d5186; }
+    .form-btn-secondary { background: #475569; }
+    .form-btn-secondary:hover { background: #64748b; }
+    .remove-btn {
+      position: absolute; top: 10px; right: 10px;
+      background: none; border: 1px solid #e5e7eb; border-radius: 6px;
+      width: 28px; height: 28px; cursor: pointer; font-size: 14px; color: #9ca3af;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s;
+    }
+    .remove-btn:hover { background: #fef2f2; border-color: #fca5a5; color: #dc2626; }
+    .add-member-section {
+      margin-top: 24px; text-align: center; width: 100%; max-width: 920px;
+    }
+    .add-member-btn {
+      padding: 12px 28px; background: #fff; border: 2px dashed #cbd5e1;
+      border-radius: 10px; font-size: 14px; font-weight: 600; color: #475569;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .add-member-btn:hover { border-color: #1e3a5f; color: #1e3a5f; background: #f0f4f8; }
+    .add-menu {
+      margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px;
+      justify-content: center;
+    }
+    .add-option {
+      padding: 10px 18px; background: #fff; border: 1px solid #e2e8f0;
+      border-radius: 8px; font-size: 13px; font-weight: 500; color: #334155;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .add-option:hover { background: #eff6ff; border-color: #93c5fd; color: #1e3a5f; }
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: #1e3a5f; color: #fff; padding: 12px 24px; border-radius: 8px;
+      font-size: 14px; font-weight: 500; z-index: 999; display: none;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    }
+    @media (max-width: 600px) {
+      .members-grid { flex-direction: column; }
+      .member-card { max-width: 100%; }
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>Your Questionnaire</h1>
-    <p>Case Reference: <strong>${caseRef}</strong></p>
+    <p>Case Reference: <strong>${escHtml(caseRef)}</strong></p>
     <p style="margin-top:8px;font-size:13px;color:#6b7280">
-      This case requires two questionnaire forms. Please complete both.
+      ${members.length > 1
+        ? 'Complete the questionnaire for each family member listed below.'
+        : hasTwo
+          ? 'This case requires two questionnaire forms. Please complete both.'
+          : 'Please complete the questionnaire below.'}
     </p>
   </div>
-  <div class="cards">
-    <div class="card">
-      <div class="card-num">Form 1 of 2</div>
-      <h2>${primaryTitle}</h2>
-      <p>Start here — complete this form first.</p>
-      <a href="${base}&f=1">Open Form 1</a>
-    </div>
-    <div class="card">
-      <div class="card-num">Form 2 of 2</div>
-      <h2>${additionalTitle}</h2>
-      <p>Complete this after finishing Form 1.</p>
-      <a href="${base}&f=2">Open Form 2</a>
-    </div>
+
+  <div class="members-grid" id="membersGrid">
+    ${memberCards}
   </div>
+
+  ${addMemberSection}
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+  (function() {
+    var CASE_REF = ${JSON.stringify(caseRef)};
+    var TOKEN    = ${JSON.stringify(token)};
+    var BASE     = ${JSON.stringify(base)};
+
+    function showToast(msg, duration) {
+      var el = document.getElementById('toast');
+      el.textContent = msg;
+      el.style.display = 'block';
+      setTimeout(function() { el.style.display = 'none'; }, duration || 3000);
+    }
+
+    function toggleAddMenu() {
+      var menu = document.getElementById('addMenu');
+      menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
+    }
+
+    function addMember(memberType) {
+      showToast('Adding ' + memberType.split(' / ')[0] + '...');
+      fetch('/q/' + encodeURIComponent(CASE_REF) + '/add-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, memberType: memberType }),
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          showToast(data.member.label + ' added successfully!');
+          setTimeout(function() { window.location.reload(); }, 800);
+        } else {
+          showToast('Error: ' + (data.error || 'Could not add member'), 4000);
+        }
+      })
+      .catch(function() { showToast('Network error — please try again', 4000); });
+    }
+
+    function removeMember(memberKey, memberLabel) {
+      if (!confirm('Remove ' + memberLabel + '? Any unsaved answers will be lost.')) return;
+      showToast('Removing ' + memberLabel + '...');
+      fetch('/q/' + encodeURIComponent(CASE_REF) + '/remove-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, memberKey: memberKey }),
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          showToast(memberLabel + ' removed.');
+          setTimeout(function() { window.location.reload(); }, 800);
+        } else {
+          showToast('Error: ' + (data.error || 'Could not remove member'), 4000);
+        }
+      })
+      .catch(function() { showToast('Network error — please try again', 4000); });
+    }
+
+    // Expose to onclick handlers
+    window.toggleAddMenu = toggleAddMenu;
+    window.addMember     = addMember;
+    window.removeMember  = removeMember;
+  })();
+  </script>
 </body>
 </html>`;
 }
@@ -1998,6 +2497,13 @@ module.exports = {
   loadFormData,
   saveFormData,
   markSubmitted,
+  // Member manifest management
+  loadMembers,
+  addMember,
+  removeMember,
+  getMemberStatuses,
+  markMemberSubmitted,
+  // Page builders
   buildFormPage,
   buildReviewFormPage,
   buildPrintPage,
