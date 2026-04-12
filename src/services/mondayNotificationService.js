@@ -80,8 +80,10 @@ async function sendNotification(userId, text, targetItemId) {
 
 async function notifyAll(userIds, text, targetItemId) {
   const unique = [...new Set(userIds.map(String))].filter(Boolean);
-  for (const uid of unique) {
-    await sendNotification(uid, text, targetItemId);
+  const results = await Promise.allSettled(unique.map(uid => sendNotification(uid, text, targetItemId)));
+  const failed = results.filter(r => r.status === 'rejected').length;
+  if (failed > 0) {
+    console.error(`[Notify] ${failed}/${unique.length} notification(s) failed for item ${targetItemId}`);
   }
 }
 

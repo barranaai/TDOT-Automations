@@ -161,8 +161,9 @@ async function onReviewNotesSet({ itemId }) {
     revisionNotificationService.queueItem(caseRef, item.name, reviewNotes, 'document');
     console.log(`[DocReview] Review notes set for item ${itemId} — queued client email for case ${caseRef}`);
 
-    // Also escalate so status + Client Master are updated
-    await onReworkRequired({ itemId });
+    // Escalate to Client Master directly (don't call onReworkRequired to avoid
+    // double escalation and duplicate rework count increment)
+    await escalateToClientMaster(caseRef, item.name);
   } catch (err) {
     console.error(`[DocReview] Failed to handle review notes for item ${itemId}:`, err.message);
   }

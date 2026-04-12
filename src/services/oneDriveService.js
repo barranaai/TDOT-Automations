@@ -158,7 +158,7 @@ async function createClientFolders({ clientName, caseRef, categories }) {
  * }} params
  * @returns {Promise<string>} webUrl of the uploaded file
  */
-async function uploadFile({ clientName, caseRef, category, filename, buffer, mimeType }) {
+async function uploadFile({ clientName, caseRef, category, filename, buffer, mimeType, _retried = false }) {
   const token    = await getCachedToken();
   const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
   const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim() || 'document';
@@ -180,11 +180,11 @@ async function uploadFile({ clientName, caseRef, category, filename, buffer, mim
     return res.data.webUrl;
   } catch (err) {
     // If token expired mid-operation, invalidate cache and retry once
-    if (err.response?.status === 401) {
+    if (err.response?.status === 401 && !_retried) {
       console.warn('[OneDrive] 401 on upload — invalidating token cache and retrying');
       _cachedToken = null;
       _tokenExpiry = 0;
-      return uploadFile({ clientName, caseRef, category, filename, buffer, mimeType });
+      return uploadFile({ clientName, caseRef, category, filename, buffer, mimeType, _retried: true });
     }
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
     console.error(`[OneDrive] Upload failed (${err.response?.status}): ${detail}`);

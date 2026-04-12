@@ -166,6 +166,14 @@ app.get('/api/boards/client-master', async (req, res) => {
   }
 });
 
+// ─── Global error handler — catch unhandled route errors gracefully ──────────
+app.use((err, _req, res, _next) => {
+  console.error('[Server] Unhandled error:', err.stack || err.message || err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   webhookManager.ensureWebhookRegistered();

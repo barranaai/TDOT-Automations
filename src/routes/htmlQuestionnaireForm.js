@@ -617,18 +617,27 @@ router.post('/:caseRef/submit-all', async (req, res) => {
 
     const formTitle = (formFiles?.primary || '').replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
 
-    // Save each member's form data first
+    // Save each member's form data first — all must succeed before marking submitted
+    const saveErrors = [];
     for (const sub of memberSubmissions) {
       if (!Array.isArray(sub.fields)) continue;
-      await svc.saveFormData({
-        clientName, caseRef, itemId,
-        formKey:       sub.formKey,
-        fields:        sub.fields,
-        completionPct: sub.completionPct || 0,
-      });
+      try {
+        await svc.saveFormData({
+          clientName, caseRef, itemId,
+          formKey:       sub.formKey,
+          fields:        sub.fields,
+          completionPct: sub.completionPct || 0,
+        });
+      } catch (saveErr) {
+        console.error(`[/q] Failed to save member ${sub.formKey}:`, saveErr.message);
+        saveErrors.push(sub.formKey);
+      }
+    }
+    if (saveErrors.length) {
+      return res.status(500).json({ error: `Failed to save data for: ${saveErrors.join(', ')}. Submission aborted.` });
     }
 
-    // Then do the batch submit (single Monday update + single audit comment)
+    // All saves succeeded — do the batch submit (single Monday update + single audit comment)
     await svc.markAllSubmitted({
       itemId, caseRef, caseType, formLabel: formTitle, clientName,
       memberSubmissions,

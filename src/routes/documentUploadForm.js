@@ -22,6 +22,19 @@ const ALLOWED_EXTENSIONS = new Set([
   '.zip',
 ]);
 
+// ─── Input validation helpers ────────────────────────────────────────────────
+
+const CASE_REF_PATTERN = /^[A-Za-z0-9\- ]+$/;
+const MAX_REPLY_LENGTH = 5000;
+
+function validateCaseRef(caseRef) {
+  return caseRef && caseRef.length <= 50 && CASE_REF_PATTERN.test(caseRef);
+}
+
+function validateItemId(itemId) {
+  return itemId && /^\d+$/.test(itemId);
+}
+
 // ─── Display config ───────────────────────────────────────────────────────────
 
 const CATEGORY_ORDER = [
@@ -1134,6 +1147,12 @@ router.post('/:caseRef/upload/:itemId', upload.single('file'), async (req, res) 
   const itemId  = req.params.itemId;
   const file    = req.file;
 
+  if (!validateCaseRef(caseRef)) {
+    return res.status(400).json({ success: false, error: 'Invalid case reference format.' });
+  }
+  if (!validateItemId(itemId)) {
+    return res.status(400).json({ success: false, error: 'Invalid item ID.' });
+  }
   if (!file) {
     return res.status(400).json({ success: false, error: 'No file provided.' });
   }
@@ -1171,8 +1190,17 @@ router.post('/:caseRef/reply-note', async (req, res) => {
   const caseRef = decodeURIComponent(req.params.caseRef).trim();
   const { itemId, reply } = req.body || {};
 
-  if (!itemId || !reply || !reply.trim()) {
-    return res.status(400).json({ success: false, error: 'itemId and reply are required.' });
+  if (!validateCaseRef(caseRef)) {
+    return res.status(400).json({ success: false, error: 'Invalid case reference format.' });
+  }
+  if (!validateItemId(itemId)) {
+    return res.status(400).json({ success: false, error: 'Invalid item ID.' });
+  }
+  if (!reply || !reply.trim()) {
+    return res.status(400).json({ success: false, error: 'Reply text is required.' });
+  }
+  if (reply.length > MAX_REPLY_LENGTH) {
+    return res.status(400).json({ success: false, error: `Reply must be under ${MAX_REPLY_LENGTH} characters.` });
   }
 
   try {
