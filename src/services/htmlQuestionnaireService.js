@@ -2693,10 +2693,40 @@ input[disabled], select[disabled], textarea[disabled] {
         el.style.display = 'block';
       }
     });
-    // Conditional sections (both .conditional and .conditional-section)
-    document.querySelectorAll('.conditional, .conditional-section').forEach(function (el) {
-      el.style.display = 'block';
+    // NOTE: Do NOT force-show .conditional / .conditional-section here.
+    // After prefill, we dispatch change events on selects so the template's
+    // own toggleConditional() handlers show/hide them based on saved values.
+  }
+
+  /**
+   * After prefill, fire change events on selects and checked radios so
+   * that the HTML template's inline onchange="toggleConditional(…)"
+   * handlers run and show/hide conditional sub-fields based on saved values.
+   * For un-prefilled selects/radios (still at default), toggleConditional
+   * sees value="" / nothing checked and hides the conditional — which is correct.
+   */
+  function fireConditionalToggles() {
+    /* Selects with an onchange attribute (most templates: F6, F1, F8 …) */
+    document.querySelectorAll('select[onchange]').forEach(function (sel) {
+      try { sel.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
     });
+    /* Radio buttons — fire on checked one per group, or first if none checked
+       (TRV, Spousal, USA Visa templates). */
+    var radioGroups = {};
+    document.querySelectorAll('input[type="radio"][onchange]').forEach(function (r) {
+      var name = r.getAttribute('name') || '';
+      if (!radioGroups[name]) radioGroups[name] = [];
+      radioGroups[name].push(r);
+    });
+    for (var gName in radioGroups) {
+      if (!radioGroups.hasOwnProperty(gName)) continue;
+      var radios = radioGroups[gName];
+      var checked = radios.find(function(r) { return r.checked; });
+      var target = checked || radios[0];
+      if (target) {
+        try { target.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+      }
+    }
   }
 
   /* ── Collapse accordions and attach toggle handlers (review mode) ── */
@@ -3282,6 +3312,7 @@ input[disabled], select[disabled], textarea[disabled] {
       prefill(fields);
     }
 
+    fireConditionalToggles();
     makeReadOnly();
     fields.forEach(attachFlagUI);
     createReviewBar();
