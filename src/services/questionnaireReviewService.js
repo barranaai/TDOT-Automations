@@ -161,8 +161,11 @@ async function onReviewNotesSet({ itemId }) {
     revisionNotificationService.queueItem(caseRef, item.name, reviewNotes, 'questionnaire');
     console.log(`[QReview] Review notes set for item ${itemId} — queued client email for case ${caseRef}`);
 
-    // Also escalate so status + Client Master are updated
-    await onNeedsClarification({ itemId });
+    // Escalate directly to Client Master — do NOT call onNeedsClarification()
+    // because the reviewer may also change the status column to "Needs Clarification",
+    // which would fire onNeedsClarification via a separate webhook.
+    // Calling it here too would double-increment the clarification count.
+    await escalateToClientMaster(caseRef, item.name);
   } catch (err) {
     console.error(`[QReview] Failed to handle review notes for item ${itemId}:`, err.message);
   }

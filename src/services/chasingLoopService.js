@@ -19,6 +19,7 @@ const CM = {
   automationLock:     'color_mm0x3x1x',
   manualOverride:     'color_mm0x975e',
   escalationRequired: 'color_mm0x7bje',
+  escalationReason:   'text_mm0xvpr9',
   qReadiness:         'numeric_mm0x9dea',
   docReadiness:       'numeric_mm0x5g9x',
   chasingStage:       'color_mm1abve4',
@@ -319,10 +320,11 @@ async function processCase(item, offsets) {
   }
 
   if ((chasingStage === 'Final Notice Sent') && daysElapsed >= profile.escalation) {
-    // Escalate — set Escalation Required + Client Blocked, no client email
+    // Escalate — set Escalation Required + Client Blocked + Reason, no client email
     await updateCase(item.id, {
       [CM.chasingStage]:       { label: 'Client Blocked' },
       [CM.escalationRequired]: { label: 'Yes' },
+      [CM.escalationReason]:   `Client unresponsive for ${daysElapsed} days — case blocked (${caseRef})`,
     });
     console.log(`[ChasingLoop] 🚨 ${caseRef} (${item.name}) → Client Blocked + Escalation after ${daysElapsed}d`);
     return 'escalated';
