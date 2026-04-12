@@ -410,6 +410,70 @@ router.post('/:caseRef/notify', requireStaffAuth, async (req, res) => {
   }
 });
 
+// ─── Send consolidated correction notification — POST /q/:caseRef/notify-all ─
+// Sends a SINGLE email with sections for each family member instead of
+// separate emails per member.
+
+router.post('/:caseRef/notify-all', requireStaffAuth, async (req, res) => {
+  const caseRef = sanitiseCaseRef(req.params.caseRef);
+  const { memberKeys, formKeySuffix } = req.body || {};
+
+  if (!Array.isArray(memberKeys) || !memberKeys.length) {
+    return res.status(400).json({ error: 'memberKeys must be a non-empty array' });
+  }
+
+  try {
+    const caseDetails = await review.getCaseDetails(caseRef);
+    if (!caseDetails) return res.status(404).json({ error: 'Case not found' });
+
+    const { clientName } = caseDetails;
+    const suffix = formKeySuffix || '';
+
+    // Load members manifest for labels/types
+    const members = await svc.loadMembers({ clientName, caseRef });
+    const memberMap = {};
+    for (const m of members) memberMap[m.key] = m;
+
+    // Load flags + form data for each member in parallel
+    const memberEntries = await Promise.all(
+      memberKeys.map(async (mk) => {
+        const fk = mk + suffix;
+        const [flags, formFields] = await Promise.all([
+          review.loadFlags({ clientName, caseRef, formKey: fk }),
+          svc.loadFormData({ clientName, caseRef, formKey: fk }),
+        ]);
+        const member = memberMap[mk] || { key: mk, label: mk, type: 'Principal Applicant' };
+        return {
+          memberKey: mk,
+          formKey:   fk,
+          label:     member.label || mk,
+          type:      member.type  || 'Principal Applicant',
+          flags,
+          formFields,
+        };
+      })
+    );
+
+    // Filter to only members with flags
+    const withFlags = memberEntries.filter(m => Object.keys(m.flags).length > 0);
+    if (!withFlags.length) {
+      return res.status(400).json({ error: 'No flags to send — flag at least one field first.' });
+    }
+
+    await review.sendConsolidatedCorrectionEmail({
+      caseRef,
+      memberEntries: withFlags,
+      caseDetails,
+      staffName: req.staff.name,
+    });
+
+    return res.json({ ok: true, memberCount: withFlags.length });
+  } catch (err) {
+    console.error(`[/q/notify-all] Error for ${caseRef}:`, err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Client flags endpoint — GET /q/:caseRef/flags ───────────────────────────
 // Used by the injected client-side script to show inline flag notes.
 

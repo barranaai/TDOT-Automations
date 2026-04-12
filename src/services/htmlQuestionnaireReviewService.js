@@ -213,6 +213,214 @@ async function sendCorrectionEmail({ caseRef, formKey, caseDetails, flags, formF
   console.log(`[HtmlQReview] Correction email sent for ${caseRef}/${formKey} — ${flaggedKeys.length} flag(s). Reviewed by ${staffName}.`);
 }
 
+/**
+ * Send a SINGLE consolidated correction email covering multiple family members.
+ *
+ * @param {{ caseRef, memberEntries, caseDetails, staffName }} params
+ *   memberEntries: [{ memberKey, formKey, label, type, flags, formFields }]
+ */
+async function sendConsolidatedCorrectionEmail({ caseRef, memberEntries, caseDetails, staffName }) {
+  const { itemId, clientEmail, clientName, caseType, accessToken } = caseDetails;
+
+  if (!clientEmail) {
+    throw new Error('No client email address on record for this case.');
+  }
+
+  // Filter to only members that have flags
+  const withFlags = memberEntries.filter(m => Object.keys(m.flags).length > 0);
+  if (!withFlags.length) {
+    throw new Error('No flags to send — flag at least one field first.');
+  }
+
+  const encodedRef = encodeURIComponent(caseRef);
+  const tokenParam = accessToken ? `?t=${encodeURIComponent(accessToken)}` : '';
+
+  // Build per-member sections
+  let totalFlags = 0;
+  const memberSections = withFlags.map(entry => {
+    const labelMap = {};
+    for (const f of (entry.formFields || [])) {
+      labelMap[f.key] = { label: f.label, section: f.section };
+    }
+
+    const flaggedItems = Object.keys(entry.flags).map(key => {
+      const flag = entry.flags[key];
+      const meta = labelMap[key] || { label: flag.label || key, section: flag.section || '' };
+      return { section: meta.section, label: meta.label, comment: flag.comment };
+    });
+
+    totalFlags += flaggedItems.length;
+
+    // Group by section
+    const sections = {};
+    for (const item of flaggedItems) {
+      if (!sections[item.section]) sections[item.section] = [];
+      sections[item.section].push(item);
+    }
+
+    // Build form URL for this member
+    const memberKey = entry.memberKey;
+    let formParam;
+    if (memberKey === 'primary') {
+      formParam = tokenParam ? '&f=primary' : '?f=primary';
+    } else {
+      const formType = entry.formKey.endsWith('-additional') ? '&form=additional' : '';
+      formParam = `${tokenParam ? '&' : '?'}f=${encodeURIComponent(memberKey)}${formType}`;
+    }
+    const formUrl = `${BASE_URL}/q/${encodedRef}${tokenParam}${formParam}`;
+
+    return {
+      label:       entry.label || memberKey.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      type:        entry.type  || 'Principal Applicant',
+      flagCount:   flaggedItems.length,
+      sections,
+      formUrl,
+    };
+  });
+
+  const html = buildConsolidatedCorrectionEmailHtml({
+    clientName, caseRef, caseType, memberSections, totalFlags, staffName,
+  });
+
+  await sendEmail({
+    to:      clientEmail,
+    subject: `Action Required — Please Update Your Questionnaire (${caseRef})`,
+    html,
+    replyTo: EMAIL_REPLY_TO || undefined,
+  });
+
+  // Post a single audit comment listing all members
+  const auditLines = memberSections.map(m => {
+    const items = Object.values(m.sections).flat();
+    const lines = items.map(f => `    • ${f.section ? f.section + ' › ' : ''}${f.label}: "${f.comment}"`).join('\n');
+    return `  ${m.label} (${m.flagCount} flag${m.flagCount !== 1 ? 's' : ''}):\n${lines}`;
+  }).join('\n\n');
+
+  await mondayApi.query(
+    `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+    {
+      itemId: String(itemId),
+      body:   `📋 Correction Request Sent (${totalFlags} flags across ${memberSections.length} member${memberSections.length > 1 ? 's' : ''})\n\nCase: ${caseRef}\nReviewed by: ${staffName}\n\n${auditLines}\n\nClient notified by email at ${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true })} (Toronto).`,
+    }
+  );
+
+  console.log(`[HtmlQReview] Consolidated correction email sent for ${caseRef} — ${totalFlags} flag(s) across ${memberSections.length} member(s). Reviewed by ${staffName}.`);
+}
+
+function buildConsolidatedCorrectionEmailHtml({ clientName, caseRef, caseType, memberSections, totalFlags, staffName }) {
+  const firstName = (clientName || '').split(' ')[0] || 'Client';
+
+  const memberBlocksHtml = memberSections.map(member => {
+    const sectionHtml = Object.entries(member.sections).map(([section, items]) => {
+      const itemsHtml = items.map(item => `
+        <tr>
+          <td style="padding:10px 0 10px 20px;border-bottom:1px solid #f1f5f9;vertical-align:top;">
+            <div style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:4px;">${item.label}</div>
+            <div style="font-size:13px;color:#dc2626;line-height:1.5;">\u{1F4AC} ${item.comment}</div>
+          </td>
+        </tr>`).join('');
+      return `
+        <div style="margin-bottom:12px;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-bottom:6px;">${section || 'General'}</div>
+          <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;border:1px solid #e2e8f0;">
+            ${itemsHtml}
+          </table>
+        </div>`;
+    }).join('');
+
+    return `
+      <div style="margin-bottom:24px;">
+        <div style="font-size:15px;font-weight:700;color:#1e3a5f;margin-bottom:4px;padding-bottom:8px;border-bottom:2px solid #1e3a5f;">
+          ${member.label} <span style="font-size:12px;font-weight:400;color:#64748b;">\u2014 ${member.flagCount} item${member.flagCount > 1 ? 's' : ''}</span>
+        </div>
+        ${sectionHtml}
+        <table cellpadding="0" cellspacing="0" style="margin-top:8px;">
+          <tr><td style="border-radius:6px;background:#2563eb;">
+            <a href="${member.formUrl}" style="display:inline-block;padding:10px 20px;color:#fff;font-size:13px;font-weight:600;text-decoration:none;">
+              Update ${member.label}'s Questionnaire \u2192
+            </a>
+          </td></tr>
+        </table>
+      </div>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+</head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 16px;">
+  <tr><td align="center">
+    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
+
+      <tr><td style="background:#1e3a5f;border-radius:12px 12px 0 0;padding:28px 32px;text-align:center;">
+        <div style="font-size:24px;color:#fff;font-weight:700;">TDOT Immigration</div>
+        <div style="font-size:13px;color:rgba(255,255,255,.65);margin-top:4px;">Client Portal</div>
+      </td></tr>
+
+      <tr><td style="background:#fff;padding:36px 32px;">
+        <p style="font-size:18px;font-weight:700;color:#1e293b;margin:0 0 8px;">Hi ${firstName},</p>
+        <p style="font-size:15px;color:#475569;line-height:1.65;margin:0 0 24px;">
+          Your consultant has reviewed your questionnaire and needs clarification on
+          <strong>${totalFlags} item${totalFlags > 1 ? 's' : ''}</strong> across
+          <strong>${memberSections.length} member${memberSections.length > 1 ? 's' : ''}</strong>.
+          Please log back in and update the highlighted fields for each member listed below.
+        </p>
+
+        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:20px 24px;margin-bottom:24px;">
+          <div style="font-size:13px;font-weight:700;color:#c2410c;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px;">
+            Items Requiring Your Attention
+          </div>
+          ${memberBlocksHtml}
+        </div>
+
+        <p style="font-size:14px;color:#475569;line-height:1.6;margin:0 0 24px;">
+          Your original answers are preserved — you only need to update the flagged fields.
+          Use the buttons above to open each member's questionnaire directly.
+        </p>
+
+        <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f9ff;border-radius:10px;border:1px solid #bae6fd;margin-bottom:24px;">
+          <tr><td style="padding:16px 20px;">
+            <div style="font-size:12px;font-weight:700;color:#0369a1;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;">Case Details</div>
+            <table cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="font-size:13px;color:#64748b;padding:3px 16px 3px 0;white-space:nowrap;">Case Reference</td>
+                <td style="font-size:13px;font-weight:700;color:#1e293b;">${caseRef}</td>
+              </tr>
+              <tr>
+                <td style="font-size:13px;color:#64748b;padding:3px 16px 3px 0;white-space:nowrap;">Case Type</td>
+                <td style="font-size:13px;font-weight:600;color:#1e293b;">${caseType}</td>
+              </tr>
+              <tr>
+                <td style="font-size:13px;color:#64748b;padding:3px 16px 3px 0;white-space:nowrap;">Reviewed by</td>
+                <td style="font-size:13px;color:#1e293b;">${staffName}</td>
+              </tr>
+            </table>
+          </td></tr>
+        </table>
+
+        <p style="font-size:13px;color:#94a3b8;line-height:1.6;margin:0;">
+          If you have questions, please reply to this email or contact your consultant directly.
+          Please include your Case Reference Number in any correspondence.
+        </p>
+      </td></tr>
+
+      <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;border-radius:0 0 12px 12px;padding:20px 32px;text-align:center;">
+        <p style="font-size:12px;color:#94a3b8;margin:0;line-height:1.6;">
+          TDOT Immigration Services<br>
+          Please do not forward this email — the questionnaire link is specific to your case.
+        </p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`;
+}
+
 function buildCorrectionEmailHtml({ clientName, caseRef, caseType, flaggedItems, sections, formUrl, staffName, memberLabel }) {
   const firstName   = (clientName || '').split(' ')[0] || 'Client';
   const count       = flaggedItems.length;
@@ -717,5 +925,6 @@ module.exports = {
   saveFlags,
   getCaseDetails,
   sendCorrectionEmail,
+  sendConsolidatedCorrectionEmail,
   buildReviewPage,
 };

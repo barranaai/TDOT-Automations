@@ -2772,7 +2772,7 @@ input[disabled], select[disabled], textarea[disabled] {
       btn.disabled = true;
       try {
         if (IS_MULTI_REVIEW) {
-          /* Multi-member: collect unique member keys from flags and send for each */
+          /* Multi-member: collect unique member keys and send ONE consolidated email */
           var memberKeys = {};
           for (var fk in flags) {
             if (!flags.hasOwnProperty(fk)) continue;
@@ -2781,15 +2781,13 @@ input[disabled], select[disabled], textarea[disabled] {
             memberKeys[mk] = true;
           }
           var keys = Object.keys(memberKeys);
-          for (var ki = 0; ki < keys.length; ki++) {
-            var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/notify', {
-              method:  'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body:    JSON.stringify({ formKey: keys[ki] + REVIEW_KEY_SUFFIX }),
-              credentials: 'same-origin',
-            });
-            if (!res.ok) throw new Error('Server error ' + res.status + ' for member ' + keys[ki]);
-          }
+          var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/notify-all', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ memberKeys: keys, formKeySuffix: REVIEW_KEY_SUFFIX }),
+            credentials: 'same-origin',
+          });
+          if (!res.ok) throw new Error('Server error ' + res.status);
         } else {
           var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/notify', {
             method:  'POST',
