@@ -561,6 +561,47 @@ router.post('/:caseRef/submit', async (req, res) => {
   }
 });
 
+// ─── Client: POST /q/:caseRef/submit-all  — Batch submit all members ────────
+// Saves each member's data and posts ONE audit comment so the case officer
+// gets a single notification instead of one per family member.
+
+router.post('/:caseRef/submit-all', async (req, res) => {
+  const caseRef = sanitiseCaseRef(req.params.caseRef);
+  const { token, members: memberSubmissions } = req.body || {};
+
+  if (!Array.isArray(memberSubmissions) || !memberSubmissions.length) {
+    return res.status(400).json({ error: 'members must be a non-empty array of { formKey, fields, completionPct }' });
+  }
+
+  try {
+    const { itemId, clientName, caseType, formFiles } = await svc.validateAccess(caseRef, token);
+
+    const formTitle = (formFiles?.primary || '').replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
+
+    // Save each member's form data first
+    for (const sub of memberSubmissions) {
+      if (!Array.isArray(sub.fields)) continue;
+      await svc.saveFormData({
+        clientName, caseRef, itemId,
+        formKey:       sub.formKey,
+        fields:        sub.fields,
+        completionPct: sub.completionPct || 0,
+      });
+    }
+
+    // Then do the batch submit (single Monday update + single audit comment)
+    await svc.markAllSubmitted({
+      itemId, caseRef, caseType, formLabel: formTitle, clientName,
+      memberSubmissions,
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(`[/q] Submit-all error for ${caseRef}:`, err.message);
+    return res.status(err.message.includes('token') ? 403 : 500).json({ error: err.message });
+  }
+});
+
 // ─── Client: GET /q/:caseRef/members — Return member manifest ───────────────
 
 router.get('/:caseRef/members', async (req, res) => {

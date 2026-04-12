@@ -560,6 +560,98 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
 }
 
 /**
+ * Batch-submit multiple members at once.
+ * Saves each member's data, marks all submitted in the manifest, then posts
+ * a SINGLE audit comment covering all members — so the case officer gets one
+ * notification instead of N separate ones.
+ *
+ * @param {{ itemId, caseRef, caseType, formLabel, clientName, memberSubmissions }} params
+ *   memberSubmissions: [{ formKey, fields, completionPct }]
+ */
+async function markAllSubmitted({ itemId, caseRef, caseType, formLabel, clientName, memberSubmissions }) {
+  // ── Step 1: Mark all members submitted in the manifest ────────────────────
+  const perMember = [];
+  for (const sub of memberSubmissions) {
+    const memberKey = sub.formKey.replace(/-additional$/, '');
+    const pct = Math.round(sub.completionPct);
+    try {
+      await markMemberSubmitted({ clientName, caseRef, memberKey });
+    } catch (err) {
+      console.warn(`[HtmlQ] Could not mark member ${memberKey} submitted: ${err.message}`);
+    }
+    perMember.push({ memberKey, formKey: sub.formKey, pct });
+  }
+
+  // ── Step 2: Re-load manifest and calculate aggregate readiness ────────────
+  let members = [];
+  try {
+    members = await loadMembers({ clientName, caseRef });
+  } catch (err) {
+    console.warn(`[HtmlQ] Could not load members for ${caseRef}: ${err.message}`);
+  }
+
+  const totalMembers = members.length || perMember.length;
+  let submittedCount = 0;
+  let totalPct = 0;
+
+  // Build a pct lookup from current submissions
+  const pctMap = {};
+  for (const pm of perMember) pctMap[pm.memberKey] = pm.pct;
+
+  for (const m of members) {
+    if (m.submittedAt) {
+      submittedCount++;
+      totalPct += pctMap[m.key] !== undefined ? pctMap[m.key] : 100;
+    }
+  }
+
+  const aggregatePct = totalMembers > 0 ? Math.round(totalPct / totalMembers) : 0;
+  const allDone = submittedCount >= totalMembers && perMember.every(pm => pm.pct >= 100);
+
+  // ── Step 3: Update Monday.com Q readiness (one write) ─────────────────────
+  await mondayApi.query(
+    `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+     }`,
+    {
+      boardId: String(clientMasterBoardId),
+      itemId:  String(itemId),
+      cols:    JSON.stringify({
+        [CM.qReadiness]:        aggregatePct,
+        [CM.qCompletionStatus]: { label: allDone ? 'Done' : 'Working on it' },
+      }),
+    }
+  );
+
+  // ── Step 4: Post ONE audit comment covering all members ───────────────────
+  const submittedAt = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
+  const label       = formLabel ? `"${formLabel}"` : 'Questionnaire';
+  const reviewUrl   = `${BASE_URL}/q/${encodeURIComponent(caseRef)}/review?formKey=primary`;
+
+  const memberLines = perMember.map(pm => {
+    const member = members.find(m => m.key === pm.memberKey);
+    const memberLabel = member?.label || pm.memberKey;
+    return `  • ${memberLabel}: ${pm.pct}%`;
+  }).join('\n');
+
+  const comment = `📋 Questionnaire Submitted (${perMember.length} member${perMember.length > 1 ? 's' : ''})\n\nForm: ${label}\nCase: ${caseRef}\n\nMembers submitted:\n${memberLines}\n\nAggregate Q readiness: ${aggregatePct}% (${submittedCount} of ${totalMembers} members)\nSubmitted: ${submittedAt} (Toronto)\n\nData saved to client OneDrive folder.\n\n🔍 Staff Review Link:\n${reviewUrl}`;
+
+  await mondayApi.query(
+    `mutation($itemId: ID!, $body: String!) {
+       create_update(item_id: $itemId, body: $body) { id }
+     }`,
+    { itemId: String(itemId), body: comment }
+  );
+
+  console.log(`[HtmlQ] Batch submitted — ${caseRef} — ${perMember.length} member(s) (aggregate: ${aggregatePct}%, ${submittedCount}/${totalMembers})`);
+
+  // ── Step 5: Stage gate check ──────────────────────────────────────────────
+  checkStageGate({ itemId, caseRef, caseType, qPct: aggregatePct }).catch((err) =>
+    console.error(`[HtmlQ] Stage gate check failed for ${caseRef}:`, err.message)
+  );
+}
+
+/**
  * Check whether the form submission has crossed the readiness threshold
  * and fire the appropriate stage gate if so.
  *
@@ -1085,19 +1177,23 @@ ${hasAdditionalForm ? `
 
     try {
       if (IS_MULTI) {
-        /* ── Multi-member submit: submit each member ── */
+        /* ── Multi-member submit: batch all members in one request ── */
         var memberKeys = getActiveMemberKeys();
+        var memberSubs = [];
         for (var mi = 0; mi < memberKeys.length; mi++) {
           var mk = memberKeys[mi];
-          var mFields = getSerializableFieldsForMember(mk);
-          var mProg   = getProgressForMember(mk);
-          var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/submit', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ token: TOKEN, formKey: mk + FORM_KEY_SUFFIX, fields: mFields, completionPct: mProg.pct }),
+          memberSubs.push({
+            formKey:       mk + FORM_KEY_SUFFIX,
+            fields:        getSerializableFieldsForMember(mk),
+            completionPct: getProgressForMember(mk).pct,
           });
-          if (!res.ok) throw new Error('Submit failed for ' + mk + ' (' + res.status + ')');
         }
+        var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/submit-all', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ token: TOKEN, members: memberSubs }),
+        });
+        if (!res.ok) throw new Error('Submit failed (' + res.status + ')');
       } else {
         /* ── Single-member submit ── */
         var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/submit', {
@@ -3311,6 +3407,7 @@ module.exports = {
   loadFormData,
   saveFormData,
   markSubmitted,
+  markAllSubmitted,
   // Member manifest management
   loadMembers,
   addMember,
