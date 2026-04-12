@@ -2895,38 +2895,47 @@ input[disabled], select[disabled], textarea[disabled] {
   /* ── Persist flags to server ── */
 
   async function persistFlags() {
-    if (IS_MULTI_REVIEW) {
-      /* Persist flags per member — split global flags map by member prefix */
-      var perMember = {};
-      for (var fk in flags) {
-        if (!flags.hasOwnProperty(fk)) continue;
-        var match = fk.match(/^__([^_]+(?:-[^_]+)*)__(.+)$/);
-        if (match) {
-          var mk = match[1], realKey = match[2];
-          if (!perMember[mk]) perMember[mk] = {};
-          perMember[mk][realKey] = flags[fk];
-        } else {
-          /* Primary applicant flags (no prefix) */
-          if (!perMember['primary']) perMember['primary'] = {};
-          perMember['primary'][fk] = flags[fk];
+    try {
+      if (IS_MULTI_REVIEW) {
+        /* Persist flags per member — split global flags map by member prefix */
+        var perMember = {};
+        for (var fk in flags) {
+          if (!flags.hasOwnProperty(fk)) continue;
+          var match = fk.match(/^__([^_]+(?:-[^_]+)*)__(.+)$/);
+          if (match) {
+            var mk = match[1], realKey = match[2];
+            if (!perMember[mk]) perMember[mk] = {};
+            perMember[mk][realKey] = flags[fk];
+          } else {
+            /* Primary applicant flags (no prefix) */
+            if (!perMember['primary']) perMember['primary'] = {};
+            perMember['primary'][fk] = flags[fk];
+          }
         }
+        for (var memberKey in perMember) {
+          var r = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/flag', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ formKey: memberKey + REVIEW_KEY_SUFFIX, flags: perMember[memberKey] }),
+            credentials: 'same-origin',
+          });
+          if (!r.ok) throw new Error('Server returned ' + r.status);
+        }
+        return;
       }
-      for (var memberKey in perMember) {
-        await fetch('/q/' + encodeURIComponent(CASE_REF) + '/flag', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ formKey: memberKey + REVIEW_KEY_SUFFIX, flags: perMember[memberKey] }),
-          credentials: 'same-origin',
-        });
-      }
-      return;
+      var r = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/flag', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ formKey: FORM_KEY, flags: flags }),
+        credentials: 'same-origin',
+      });
+      if (!r.ok) throw new Error('Server returned ' + r.status);
+    } catch (err) {
+      console.error('[TDOT Review] Flag save failed:', err);
+      var msg = document.getElementById('tdot-notify-msg');
+      if (msg) { msg.textContent = '\u26a0 Flag save failed — please re-login and try again'; msg.style.color = '#fca5a5'; }
+      alert('Could not save flag to server: ' + err.message + '\\n\\nPlease refresh the page and re-login if needed.');
     }
-    await fetch('/q/' + encodeURIComponent(CASE_REF) + '/flag', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ formKey: FORM_KEY, flags: flags }),
-      credentials: 'same-origin',
-    });
   }
 
   /* ── Build flag button + inline editor for one field ── */
@@ -3089,7 +3098,10 @@ input[disabled], select[disabled], textarea[disabled] {
             body:    JSON.stringify({ memberKeys: keys, formKeySuffix: REVIEW_KEY_SUFFIX }),
             credentials: 'same-origin',
           });
-          if (!res.ok) throw new Error('Server error ' + res.status);
+          if (!res.ok) {
+            var errBody = await res.json().catch(function() { return {}; });
+            throw new Error(errBody.error || 'Server error ' + res.status);
+          }
         } else {
           var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/notify', {
             method:  'POST',
@@ -3097,7 +3109,10 @@ input[disabled], select[disabled], textarea[disabled] {
             body:    JSON.stringify({ formKey: FORM_KEY }),
             credentials: 'same-origin',
           });
-          if (!res.ok) throw new Error('Server error ' + res.status);
+          if (!res.ok) {
+            var errBody = await res.json().catch(function() { return {}; });
+            throw new Error(errBody.error || 'Server error ' + res.status);
+          }
         }
         if (msg) { msg.textContent = '\u2713 Email sent'; msg.style.color = '#86efac'; }
       } catch (err) {
