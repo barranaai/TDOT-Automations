@@ -6,6 +6,7 @@ const mondayWebhookRouter       = require('./routes/mondayWebhook');
 const questionnaireFormRouter    = require('./routes/questionnaireForm');
 const documentUploadRouter       = require('./routes/documentUploadForm');
 const htmlQuestionnaireRouter    = require('./routes/htmlQuestionnaireForm');
+const adminPanelRouter           = require('./routes/adminPanel');
 const mondayApi = require('./services/mondayApi');
 const clientMasterService = require('./services/clientMasterService');
 const boardService = require('./services/boardService');
@@ -30,6 +31,7 @@ app.use('/webhook/monday', mondayWebhookRouter);
 app.use('/questionnaire',  questionnaireFormRouter);
 app.use('/documents',      documentUploadRouter);
 app.use('/q',              htmlQuestionnaireRouter);
+app.use('/admin',          adminPanelRouter);
 
 app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
 

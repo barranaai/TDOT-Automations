@@ -1,7 +1,8 @@
 Monday.com Dashboard & View Setup Guide
 
-Prepared for TDOT Immigration — Case Officer and Ops Supervisor Dashboards
-Estimated setup time: 30–40 minutes
+Prepared for TDOT Immigration — All Role Dashboards
+Roles covered: Case Officer · Case Manager · Case Supervisor · Business Ops Manager · Owner
+Estimated setup time: 45–60 minutes
 
 
 What Has Already Been Done
@@ -96,6 +97,14 @@ View: Case Health Overview
     No filter — shows all active cases
     Sort by: Case Health Status (Red first)
 
+View: Approaching Deadlines
+    Filter 1: Days to Hard Deadline is between 0 and 14
+    Sort by: Days to Hard Deadline (ascending)
+
+View: Escalations Open
+    Filter 1: Escalation Required = Yes
+    Sort by: Case Health Status (Red first)
+
 
 PART 1B — Create Two Formula Columns on the Client Master Board
 
@@ -178,6 +187,20 @@ Boards to connect:
     Client Master Board
     Document Checklist Execution Board
     Questionnaire Execution Board
+
+
+Dashboard 4 — Case Supervisor: Team Performance & SLA Compliance
+
+Boards to connect:
+    Client Master Board
+    Document Checklist Execution Board
+    Questionnaire Execution Board
+
+
+Dashboard 5 — Business Ops Manager / Owner: Portfolio Intelligence
+
+Boards to connect:
+    Client Master Board
 
 
 PART 3 — Add Widgets to Each Dashboard
@@ -305,6 +328,151 @@ Widget 3 — Overall Readiness Progress
         Widget B: Board: Client Master, Filter: Case Manager = Me, Column: Questionnaire Readiness %, Aggregation: Average, Title: Avg Q Readiness
 
 
+Dashboard 4 — Case Supervisor: Team Performance & SLA Compliance
+
+Widget 1 — Full Team Case Load
+    Widget type: Table
+    Board: Client Master Board
+    Filter: none (shows all active cases)
+    Columns to show: Case Reference Number, Client Full Name, Case Type, Case Stage, Assigned Case Manager, SLA Risk Band, Case Health Status, Days to Hard Deadline, Client-Blocked Status, Escalation Required
+    Sort by: Case Health Status (Red first), then Days to Hard Deadline (ascending)
+    Title: All Active Cases — Team Overview
+
+Widget 2 — Workload by Case Manager
+    Widget type: Chart (Bar chart)
+    Board: Client Master Board
+    Group by: Assigned Case Manager
+    Count: Items
+    Title: Caseload Distribution by Case Manager
+    Note: Helps the supervisor spot overloaded team members and rebalance cases.
+
+Widget 3 — SLA Compliance Snapshot
+    Widget type: Chart (Pie chart)
+    Board: Client Master Board
+    Group by: SLA Risk Band
+    Title: SLA Risk Band Distribution — Whole Team
+    Note: Red and Orange slices require immediate supervisor attention.
+
+Widget 4 — Cases Approaching Hard Deadline (14 days)
+    Widget type: Table
+    Board: Client Master Board
+    Filter: Days to Hard Deadline is between 0 and 14
+    Columns to show: Case Reference Number, Client Full Name, Case Type, Hard Deadline, Days to Hard Deadline, Assigned Case Manager, SLA Risk Band
+    Sort by: Days to Hard Deadline (ascending)
+    Title: Deadlines in the Next 14 Days
+
+Widget 5 — Open Escalations Requiring Supervisor Action
+    Widget type: Table
+    Board: Client Master Board
+    Filter: Escalation Required = Yes
+    Columns to show: Case Reference Number, Client Full Name, Case Type, Escalation Reason, Case Stage, Case Health Status, Assigned Case Manager, Days to Hard Deadline
+    Sort by: Case Health Status (Red first)
+    Title: Escalations Awaiting Supervisor Review
+
+Widget 6 — Team Review Queue (Documents)
+    Widget type: Numbers
+    Board: Document Checklist Execution Board
+    Filter: Review Required = Yes
+    What to count: Items
+    Title: Doc Items Awaiting Team Review
+    Note: Add next to Widget 7 in a row.
+
+Widget 7 — Team Review Queue (Questionnaire)
+    Widget type: Numbers
+    Board: Questionnaire Execution Board
+    Filter: Review Required = Yes
+    What to count: Items
+    Title: Q Items Awaiting Team Review
+
+Widget 8 — Cases Moved to Submission This Month
+    Widget type: Numbers
+    Board: Client Master Board
+    Filter: Case Stage = Submitted, Last Updated = This Month
+    What to count: Items
+    Title: Submissions This Month
+
+
+Dashboard 5 — Business Ops Manager / Owner: Portfolio Intelligence
+
+Note: This dashboard is read-only — it gives ownership-level visibility into portfolio health, throughput,
+and risk without requiring the user to take action on individual cases.
+
+Widget 1 — Portfolio Health Scorecard (four numbers in a row)
+    Widget A — Total Active Cases
+        Widget type: Numbers
+        Board: Client Master Board
+        Filter: none (all items)
+        What to count: Items
+        Title: Total Active Cases
+
+    Widget B — Red Cases
+        Widget type: Numbers
+        Board: Client Master Board
+        Filter: Case Health Status = Red
+        What to count: Items
+        Title: Red Cases
+
+    Widget C — Client Blocked
+        Widget type: Numbers
+        Board: Client Master Board
+        Filter: Client-Blocked Status = Yes
+        What to count: Items
+        Title: Client Blocked
+
+    Widget D — Expiry Flagged
+        Widget type: Numbers
+        Board: Client Master Board
+        Filter: Expiry Risk Flag = Flagged
+        What to count: Items
+        Title: Expiry Risk
+
+Widget 2 — Portfolio Health Breakdown
+    Widget type: Chart (Pie chart)
+    Board: Client Master Board
+    Group by: Case Health Status
+    Title: Portfolio Health — Green / Orange / Red
+    Note: The ideal state is a mostly green pie. Red and Orange slices indicate cases at risk.
+
+Widget 3 — Cases by Stage (Pipeline View)
+    Widget type: Chart (Bar chart)
+    Board: Client Master Board
+    Group by: Case Stage
+    Count: Items
+    Title: Cases by Stage — Full Pipeline
+    Note: Shows where the pipeline is concentrated (e.g. Document Collection vs Submission Prep).
+
+Widget 4 — Cases by Case Type
+    Widget type: Chart (Pie or Bar chart)
+    Board: Client Master Board
+    Group by: Case Type
+    Count: Items
+    Title: Active Cases by Immigration Type
+
+Widget 5 — Top At-Risk Cases (Red + Orange)
+    Widget type: Table
+    Board: Client Master Board
+    Filter: Case Health Status = Red OR SLA Risk Band = Orange
+    Columns to show: Case Reference Number, Client Full Name, Case Type, Case Stage, SLA Risk Band, Case Health Status, Expiry Risk Flag, Days to Hard Deadline, Assigned Case Manager, Escalation Required
+    Sort by: Case Health Status (Red first)
+    Title: Cases Requiring Attention
+
+Widget 6 — Average Readiness Across Portfolio
+    Widget type: Numbers (two side by side)
+    Widget A: Board: Client Master, Column: Questionnaire Readiness %, Aggregation: Average, Title: Avg Questionnaire Readiness
+    Widget B: Board: Client Master, Column: Documents Readiness %, Aggregation: Average, Title: Avg Document Readiness
+    Note: These numbers reflect the overall progress of all clients in the system.
+
+Widget 7 — Monthly Submission Throughput
+    Widget type: Numbers
+    Board: Client Master Board
+    Filter: Case Stage = Submitted
+    What to count: Items
+    Title: Cases Submitted (All Time)
+    Note: Monday.com does not natively filter by creation/update month across all plan types.
+    If your plan supports timeline or date filtering, add: Last Updated = This Month for a monthly view.
+    Otherwise this widget shows cumulative submissions — track month-over-month manually.
+
+
 PART 4 — Notifications
 
 No manual setup required here. All notification automations listed below are handled automatically by the TDOT automation server (Render). When any of these events occur, the server detects the change via webhook and immediately posts a Monday.com notification to the right person. The notification appears in their Monday.com notification bell and also in their Monday.com notification email.
@@ -333,13 +501,44 @@ On Questionnaire Execution Board:
 
 On Client Master Board:
     Right-click Case Health Overview → Pin to top
+    Right-click Approaching Deadlines → Pin to top (for Case Supervisors)
+    Right-click Escalations Open → Pin to top (for Ops Supervisors)
 
 
 Once complete, each role will have:
 
-    Case Officer — opens their dashboard, sees their review queues and case health at a glance, clicks a board view to take action
-    Ops Supervisor — opens their dashboard, sees all red cases, escalations, and expiry risks immediately
-    Case Manager — opens their dashboard, tracks submission readiness across their portfolio
+    Case Officer        — opens their dashboard, sees their personal review queues and case health at a glance,
+                          clicks a board view to take action on the next item
+
+    Case Manager        — tracks submission readiness across their case portfolio, identifies cases stuck in
+                          Internal Review or Submission Prep, monitors readiness progress
+
+    Ops Supervisor      — immediate visibility into all Red cases, escalations, expiry alerts, and
+                          client-blocked situations; the escalation engine notifies them automatically
+
+    Case Supervisor     — full team workload view, SLA compliance snapshot, upcoming deadline list,
+                          open escalations, and throughput metrics for the whole team
+
+    Business Ops Manager / Owner — executive portfolio health scorecard, pipeline stage distribution,
+                          caseload by immigration type, average readiness, and top at-risk cases
 
 
-Document version 1.0 — March 2026
+ADMIN CONTROL PANEL
+
+In addition to the Monday.com dashboards, the TDOT automation server includes a built-in
+Admin Control Panel accessible at:
+
+    https://your-server-url.onrender.com/admin
+
+The Admin Panel allows authorised staff to:
+    - Trigger any of the 6 automation engines immediately (without waiting for the 07:00 daily run)
+    - Run the full daily sequence in order with a single click
+    - Test the Monday.com API connection and confirm the authenticated account
+    - Resend intake questionnaire emails for specific cases
+    - View a live activity log of all manual triggers
+
+Access requires the ADMIN_API_KEY configured on the server. Enter the key at the login screen.
+The key is never stored beyond the current browser session.
+
+
+Document version 2.0 — April 2026
