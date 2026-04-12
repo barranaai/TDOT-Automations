@@ -258,16 +258,12 @@ async function sendConsolidatedCorrectionEmail({ caseRef, memberEntries, caseDet
       sections[item.section].push(item);
     }
 
-    // Build form URL for this member
-    const memberKey = entry.memberKey;
-    let formParam;
-    if (memberKey === 'primary') {
-      formParam = tokenParam ? '&f=primary' : '?f=primary';
-    } else {
-      const formType = entry.formKey.endsWith('-additional') ? '&form=additional' : '';
-      formParam = `${tokenParam ? '&' : '?'}f=${encodeURIComponent(memberKey)}${formType}`;
-    }
-    const formUrl = `${BASE_URL}/q/${encodedRef}${tokenParam}${formParam}`;
+    // Build form URL — link to combined multi-member form (no f= param)
+    // so all members display together with flags highlighted.
+    // For additional-form cases, add form=additional to select the right form file.
+    const isAdditionalForm = entry.formKey.endsWith('-additional');
+    const additionalParam = isAdditionalForm ? `${tokenParam ? '&' : '?'}form=additional` : '';
+    const formUrl = `${BASE_URL}/q/${encodedRef}${tokenParam}${additionalParam}`;
 
     return {
       label:       entry.label || memberKey.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
