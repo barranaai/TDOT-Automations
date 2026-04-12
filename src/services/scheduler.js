@@ -42,8 +42,15 @@ function withTimeout(label, fn, timeout = ENGINE_TIMEOUT_MS) {
  *                              notifies supervisors/directors, applies stage/SLA actions
  *   6. Chasing Loop          — sends timed reminder emails based on SLA offsets
  */
+let _running = false;
+
 function startScheduler() {
   cron.schedule('0 7 * * *', async () => {
+    if (_running) {
+      console.warn('[Scheduler] Previous daily run still in progress — skipping this cycle');
+      return;
+    }
+    _running = true;
     console.log('[Scheduler] ── Daily jobs starting ──');
     const start = Date.now();
 
@@ -91,6 +98,7 @@ function startScheduler() {
 
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
     console.log(`[Scheduler] ── Daily jobs complete (${elapsed}s) ──`);
+    _running = false;
   });
 
   console.log('[Scheduler] Jobs registered — Readiness → SLA → Expiry → Health → Escalation → Chasing at 07:00');

@@ -66,7 +66,12 @@ async function loadReminderOffsets() {
   );
 
   const offsets = {};
-  for (const item of data.boards[0].items_page.items) {
+  const boardItems = data?.boards?.[0]?.items_page?.items;
+  if (!boardItems) {
+    console.error('[ChasingLoop] SLA Config board query returned no data — using defaults for all case types');
+    return offsets;
+  }
+  for (const item of boardItems) {
     const col = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
     if (col(SLA_COLS.profileActive) !== 'Yes') continue;
     offsets[item.name] = {
@@ -132,10 +137,13 @@ async function fetchChasableCases() {
 
 function daysBetween(dateStr) {
   if (!dateStr) return 0;
+  // Use UTC throughout to avoid server-timezone drift.
+  // Monday.com date columns are YYYY-MM-DD strings; new Date() parses these as UTC midnight.
   const start = new Date(dateStr);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.max(0, Math.floor((today - start) / 86400000));
+  const now   = new Date();
+  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const startUTC = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+  return Math.max(0, Math.floor((todayUTC - startUTC) / 86400000));
 }
 
 function hoursSince(dateStr) {
@@ -230,10 +238,14 @@ function buildChasingEmail(type, { clientName, caseRef, token, qLink }) {
 
 // ─── Send one chasing email ───────────────────────────────────────────────────
 
+/**
+ * Send a chasing email. Returns true if sent successfully, false if skipped
+ * (missing email). Throws on send failure so the caller does NOT advance stage.
+ */
 async function sendChasingEmail(type, { clientEmail, clientName, caseRef, token, qLink }) {
   if (!clientEmail) {
-    console.warn(`[ChasingLoop] No email for case ${caseRef} — skipping send`);
-    return;
+    console.warn(`[ChasingLoop] No client email for case ${caseRef} — cannot send ${type}, skipping stage advance`);
+    return false;
   }
 
   const { subject, html } = buildChasingEmail(type, { clientName, caseRef, token, qLink });
@@ -245,6 +257,7 @@ async function sendChasingEmail(type, { clientEmail, clientName, caseRef, token,
     replyTo: EMAIL_REPLY_TO || undefined,
   });
   console.log(`[ChasingLoop] ✉ ${type} email sent to ${clientEmail} for case ${caseRef}`);
+  return true;
 }
 
 // ─── Update columns on one case ───────────────────────────────────────────────
@@ -298,6 +311,9 @@ async function processCase(item, offsets) {
   }
 
   const profile = offsets[caseType] || { r1: 7, r2: 14, final: 21, escalation: 30 };
+  if (!offsets[caseType]) {
+    console.warn(`[ChasingLoop] No SLA config for case type "${caseType}" (${caseRef}) — using defaults: R1=${profile.r1}d, R2=${profile.r2}d, Final=${profile.final}d, Escalation=${profile.escalation}d`);
+  }
   const daysElapsed   = daysBetween(startDate);
   const chasingStage  = col(CM.chasingStage);
   const reminderCount = parseInt(col(CM.reminderCount), 10) || 0;
@@ -331,7 +347,8 @@ async function processCase(item, offsets) {
   }
 
   if ((chasingStage === 'Reminder 2 Sent') && daysElapsed >= profile.final) {
-    await sendChasingEmail('FINAL', emailCtx);
+    const sent = await sendChasingEmail('FINAL', emailCtx);
+    if (!sent) return 'no-email';
     await updateCase(item.id, {
       [CM.chasingStage]:  { label: 'Final Notice Sent' },
       [CM.reminderCount]: reminderCount + 1,
@@ -341,7 +358,8 @@ async function processCase(item, offsets) {
   }
 
   if ((chasingStage === 'Reminder 1 Sent') && daysElapsed >= profile.r2) {
-    await sendChasingEmail('R2', emailCtx);
+    const sent = await sendChasingEmail('R2', emailCtx);
+    if (!sent) return 'no-email';
     await updateCase(item.id, {
       [CM.chasingStage]:  { label: 'Reminder 2 Sent' },
       [CM.reminderCount]: reminderCount + 1,
@@ -351,7 +369,8 @@ async function processCase(item, offsets) {
   }
 
   if ((chasingStage === '' || chasingStage === 'Pending') && daysElapsed >= profile.r1) {
-    await sendChasingEmail('R1', emailCtx);
+    const sent = await sendChasingEmail('R1', emailCtx);
+    if (!sent) return 'no-email';
     await updateCase(item.id, {
       [CM.chasingStage]:  { label: 'Reminder 1 Sent' },
       [CM.reminderCount]: reminderCount + 1,
@@ -382,7 +401,7 @@ async function runChasingLoop() {
       await new Promise((r) => setTimeout(r, 150));
     } catch (err) {
       tally['error'] = (tally['error'] || 0) + 1;
-      console.error(`[ChasingLoop] ✗ Item ${item.id} (${item.name}):`, err.message);
+      console.error(`[ChasingLoop] ✗ Item ${item.id} (${item.name}):`, err.stack || err.message);
     }
   }
 
