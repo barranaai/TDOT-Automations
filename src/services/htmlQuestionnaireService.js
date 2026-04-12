@@ -1239,10 +1239,11 @@ ${hasAdditionalForm ? `
 
   /* ── Build a flag note + reply UI for one field ── */
 
-  function buildFlagNote(flagKey, flag, parentEl) {
+  function buildFlagNote(flagKey, flag, parentEl, memberFormKey) {
     var container = document.createElement('div');
     container.setAttribute('data-tdot-flag', flagKey);
     container.setAttribute('data-tdot-comment', flag.comment || '');
+    if (memberFormKey) container.setAttribute('data-tdot-formkey', memberFormKey);
     container.style.cssText =
       'margin-top:6px;border-radius:8px;overflow:hidden;border:1px solid #fed7aa;font-family:Segoe UI,sans-serif;';
 
@@ -1351,7 +1352,7 @@ ${hasAdditionalForm ? `
       sendBtn.textContent = 'Sending...';
 
       try {
-        var formKey = FORM_KEY;
+        var formKey = container.getAttribute('data-tdot-formkey') || FORM_KEY;
         var fieldKey = flagKey;
         /* For multi-member, extract the real formKey from the flag key prefix */
         if (IS_MULTI) {
@@ -1372,8 +1373,9 @@ ${hasAdditionalForm ? `
         /* Rebuild the flag note to show the saved reply */
         var parentEl = container.parentElement;
         var flag = { comment: container.getAttribute('data-tdot-comment') || '', clientReply: reply, clientRepliedAt: new Date().toISOString() };
+        var memberFk = container.getAttribute('data-tdot-formkey') || '';
         container.remove();
-        buildFlagNote(flagKey, flag, parentEl);
+        buildFlagNote(flagKey, flag, parentEl, memberFk || undefined);
       } catch (err) {
         alert('Could not send reply: ' + err.message);
         sendBtn.disabled = false;
@@ -1464,7 +1466,7 @@ ${hasAdditionalForm ? `
         f.el.style.outline     = '2px solid #fed7aa';
 
         var parent = f.el.parentElement;
-        if (parent) buildFlagNote(f.key, flag, parent);
+        if (parent) buildFlagNote(f.key, flag, parent, memberKey + FORM_KEY_SUFFIX);
       }
 
       if (flagCount > 0) {
