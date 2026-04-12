@@ -7,6 +7,7 @@
 
 const express = require('express');
 const router  = express.Router();
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS } = require('./adminShared');
 
 function buildDashboardHTML() {
   return `<!DOCTYPE html>
@@ -17,89 +18,8 @@ function buildDashboardHTML() {
   <title>TDOT — Owner Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --navy:       #1e3a5f;
-      --navy-dark:  #152b47;
-      --navy-light: #2d5282;
-      --orange:     #e65100;
-      --green:      #16a34a;
-      --green-bg:   #f0fdf4;
-      --red:        #dc2626;
-      --red-bg:     #fef2f2;
-      --amber:      #d97706;
-      --amber-bg:   #fffbeb;
-      --blue:       #2563eb;
-      --bg:         #f0f4f8;
-      --card:       #ffffff;
-      --border:     #e2e8f0;
-      --text:       #1a202c;
-      --muted:      #718096;
-      --light:      #a0aec0;
-      --shadow-sm:  0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.04);
-      --shadow-md:  0 4px 8px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.05);
-      --r:          12px;
-      --r-sm:       8px;
-    }
-
-    body {
-      font-family: 'Inter', system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      font-size: 14px;
-      line-height: 1.5;
-    }
-
-    /* ── Header ─────────────────────────────────────────────────── */
-    .hdr {
-      background: linear-gradient(90deg, var(--navy-dark) 0%, var(--navy) 100%);
-      height: 64px;
-      padding: 0 32px;
-      display: flex; align-items: center; justify-content: space-between;
-      position: sticky; top: 0; z-index: 200;
-      box-shadow: 0 2px 12px rgba(0,0,0,.2);
-    }
-
-    .hdr-left { display: flex; align-items: center; gap: 14px; }
-
-    .hdr-logo {
-      width: 38px; height: 38px;
-      background: rgba(255,255,255,.15);
-      border-radius: 9px;
-      border: 1px solid rgba(255,255,255,.2);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 18px;
-    }
-
-    .hdr-title  { font-size: 16px; font-weight: 800; color: white; letter-spacing: -.3px; }
-    .hdr-sub    { font-size: 10px; color: rgba(255,255,255,.55); text-transform: uppercase; letter-spacing: 1.2px; margin-top: 1px; }
-
-    .hdr-right { display: flex; align-items: center; gap: 12px; }
-
-    .hdr-btn {
-      padding: 6px 15px;
-      border-radius: 7px;
-      font-size: 12px; font-weight: 600;
-      font-family: inherit;
-      cursor: pointer;
-      border: 1px solid rgba(255,255,255,.25);
-      background: rgba(255,255,255,.1);
-      color: white;
-      transition: background .15s;
-      text-decoration: none;
-      display: inline-flex; align-items: center; gap: 5px;
-    }
-    .hdr-btn:hover { background: rgba(255,255,255,.2); }
-    .hdr-btn.orange { background: var(--orange); border-color: transparent; }
-    .hdr-btn.orange:hover { background: #ff6d00; }
-
-    .hdr-updated {
-      font-size: 11px;
-      color: rgba(255,255,255,.5);
-    }
+    ${SHARED_CSS_VARS}
+    ${NAV_CSS}
 
     /* ── Main ───────────────────────────────────────────────────── */
     .wrap {
@@ -481,7 +401,6 @@ function buildDashboardHTML() {
     @media (max-width: 760px) {
       .chart-row-3, .chart-row-2 { grid-template-columns: 1fr; }
       .kpi-strip { grid-template-columns: repeat(2, 1fr); }
-      .hdr { padding: 0 16px; }
       .wrap { padding: 16px 12px 48px; }
     }
 
@@ -498,21 +417,13 @@ function buildDashboardHTML() {
 </head>
 <body>
 
-<!-- ── HEADER ─────────────────────────────────────────────────────── -->
-<header class="hdr">
-  <div class="hdr-left">
-    <div class="hdr-logo">🏢</div>
-    <div>
-      <div class="hdr-title">TDOT Immigration</div>
-      <div class="hdr-sub">Owner &amp; Management Dashboard</div>
-    </div>
-  </div>
-  <div class="hdr-right">
-    <span class="hdr-updated" id="hdr-updated"></span>
-    <button class="hdr-btn orange" id="refresh-btn" onclick="loadData()">↻ Refresh</button>
-    <a class="hdr-btn" href="/admin">← Engine Controls</a>
-  </div>
-</header>
+${buildNavHeader('dashboard')}
+
+<!-- ── Refresh bar ──────────────────────────────────────────────── -->
+<div style="background:var(--navy-dark);padding:6px 28px;display:flex;align-items:center;justify-content:flex-end;gap:14px;border-bottom:1px solid rgba(255,255,255,.08)">
+  <span id="hdr-updated" style="font-size:11px;color:rgba(255,255,255,.45)"></span>
+  <button id="refresh-btn" onclick="loadData()" style="padding:5px 16px;background:var(--orange);color:white;border:none;border-radius:6px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#ff6d00'" onmouseout="this.style.background='var(--orange)'">↻ Refresh</button>
+</div>
 
 <!-- ── MAIN ───────────────────────────────────────────────────────── -->
 <main class="wrap">
@@ -694,12 +605,8 @@ var PAGE_SIZE = 25;
 
 var HEALTH_ORDER = { Red: 0, Orange: 1, Green: 2 };
 
-/* ── Auth check ──────────────────────────────────────────────────── */
-function getKey() {
-  var k = sessionStorage.getItem('tdot_admin_key');
-  if (!k) { window.location.href = '/admin'; }
-  return k;
-}
+/* ── Shared auth + clock ────────────────────────────────────────── */
+${SHARED_AUTH_JS}
 
 /* ── Load data ───────────────────────────────────────────────────── */
 function loadData() {
@@ -1183,7 +1090,9 @@ function shortType(t) {
 
 /* ── Boot ─────────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', function() {
-  getKey();
+  if (!getKey()) return;
+  startClock();
+  checkApiStatus();
   loadData();
 });
 </script>

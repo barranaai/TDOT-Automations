@@ -6,8 +6,9 @@ const mondayWebhookRouter       = require('./routes/mondayWebhook');
 const questionnaireFormRouter    = require('./routes/questionnaireForm');
 const documentUploadRouter       = require('./routes/documentUploadForm');
 const htmlQuestionnaireRouter    = require('./routes/htmlQuestionnaireForm');
-const adminPanelRouter           = require('./routes/adminPanel');
+const adminLoginRouter           = require('./routes/adminLogin');
 const adminDashboardRouter       = require('./routes/adminDashboard');
+const adminEnginesRouter         = require('./routes/adminEngines');
 const mondayApi = require('./services/mondayApi');
 const dashboardService           = require('./services/dashboardService');
 const clientMasterService = require('./services/clientMasterService');
@@ -33,8 +34,10 @@ app.use('/webhook/monday', mondayWebhookRouter);
 app.use('/questionnaire',  questionnaireFormRouter);
 app.use('/documents',      documentUploadRouter);
 app.use('/q',              htmlQuestionnaireRouter);
-app.use('/admin/dashboard', adminDashboardRouter);  // must be before /admin
-app.use('/admin',          adminPanelRouter);
+// Admin routes — order matters (most specific first)
+app.use('/admin/dashboard', adminDashboardRouter);  // landing page after login
+app.use('/admin/engines',   adminEnginesRouter);    // engine control panel
+app.use('/admin',           adminLoginRouter);       // TDOT-branded login + auto-redirect
 
 app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
 
