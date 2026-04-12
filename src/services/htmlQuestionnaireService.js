@@ -2579,6 +2579,12 @@ input[disabled], select[disabled], textarea[disabled] {
 
   /* ── Utilities (identical to client script so keys match) ── */
 
+  function escHtml(s) {
+    return String(s || '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
   function slugify(s) {
     return String(s || '').toLowerCase()
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/, '').slice(0, 90);
