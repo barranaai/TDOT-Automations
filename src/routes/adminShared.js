@@ -3,26 +3,11 @@
  * Used by adminLogin, adminDashboard, and adminEngines.
  */
 
-// ─── TDOT Logo SVG (inline, adapts to context via fill param) ────────────────
-const TDOT_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 52" height="40" role="img" aria-label="TDOT Immigration">
-  <!-- Icon box -->
-  <rect width="52" height="52" rx="11" fill="#e65100"/>
-  <!-- "T" lettermark -->
-  <rect x="14" y="14" width="24" height="5" rx="2.5" fill="white"/>
-  <rect x="23" y="14" width="6" height="24" rx="2.5" fill="white"/>
-  <!-- Wordmark -->
-  <text x="66" y="23" font-family="'Inter','Helvetica Neue',Arial,sans-serif" font-size="17" font-weight="800" fill="white" letter-spacing="-0.5">TDOT</text>
-  <text x="66" y="39" font-family="'Inter','Helvetica Neue',Arial,sans-serif" font-size="9.5" font-weight="600" fill="rgba(255,255,255,0.55)" letter-spacing="2.5">IMMIGRATION</text>
-</svg>`;
+// ─── TDOT Logo — actual logo image (inverted/white, for dark backgrounds) ─────
+const TDOT_LOGO_SVG = `<img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration" style="height:36px;object-fit:contain;display:block">`;
 
-// ─── Dark variant for login page (coloured background) ───────────────────────
-const TDOT_LOGO_SVG_LARGE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" height="80" role="img" aria-label="TDOT Immigration">
-  <!-- Icon box -->
-  <rect width="80" height="80" rx="18" fill="#e65100"/>
-  <!-- "T" lettermark -->
-  <rect x="18" y="20" width="44" height="9" rx="4.5" fill="white"/>
-  <rect x="35.5" y="20" width="9" height="40" rx="4.5" fill="white"/>
-</svg>`;
+// ─── Larger variant used on the login page dark header ────────────────────────
+const TDOT_LOGO_SVG_LARGE = `<img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=192&q=75" alt="TDOT Immigration" style="height:44px;object-fit:contain;display:block">`;
 
 // ─── Shared CSS variables + reset ────────────────────────────────────────────
 const SHARED_CSS_VARS = `

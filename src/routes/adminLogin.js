@@ -8,7 +8,7 @@
 
 const express = require('express');
 const router  = express.Router();
-const { TDOT_LOGO_SVG_LARGE, SHARED_CSS_VARS } = require('./adminShared');
+const { TDOT_LOGO_SVG_LARGE, SHARED_CSS_VARS } = require('./adminShared'); // TDOT_LOGO_SVG_LARGE = actual logo img
 
 function buildLoginHTML() {
   return `<!DOCTYPE html>
@@ -89,58 +89,28 @@ function buildLoginHTML() {
       overflow: hidden;
     }
 
-    /* Orange top stripe */
-    .card-stripe {
-      height: 5px;
-      background: linear-gradient(90deg, var(--orange) 0%, var(--orange-light) 100%);
+    /* Dark logo header (matches document upload form branding) */
+    .card-logo-hdr {
+      background: #1a1a1a;
+      padding: 22px 40px 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 2px solid var(--orange);
+    }
+
+    .card-logo-hdr .portal-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,.38);
     }
 
     .card-body {
-      padding: 40px 40px 36px;
+      padding: 32px 40px 36px;
       text-align: center;
-    }
-
-    /* Logo */
-    .logo-wrap {
-      margin-bottom: 28px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 16px;
-    }
-
-    .logo-icon {
-      filter: drop-shadow(0 8px 20px rgba(230,81,0,.35));
-    }
-
-    .logo-wordmark {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-    }
-
-    .logo-name {
-      font-size: 26px;
-      font-weight: 900;
-      color: var(--navy);
-      letter-spacing: -1px;
-      line-height: 1;
-    }
-
-    .logo-sub {
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--muted);
-      letter-spacing: 3px;
-      text-transform: uppercase;
-    }
-
-    /* Divider */
-    .card-divider {
-      height: 1px;
-      background: var(--border);
-      margin: 0 0 28px;
     }
 
     /* Heading */
@@ -253,23 +223,17 @@ function buildLoginHTML() {
 
 <div class="login-wrap">
   <div class="login-card">
-    <div class="card-stripe"></div>
+
+    <!-- Dark logo header — matching document upload form branding -->
+    <div class="card-logo-hdr">
+      ${TDOT_LOGO_SVG_LARGE}
+      <span class="portal-label">Admin Portal</span>
+    </div>
 
     <div class="card-body">
 
-      <!-- Logo -->
-      <div class="logo-wrap">
-        <div class="logo-icon">${TDOT_LOGO_SVG_LARGE}</div>
-        <div class="logo-wordmark">
-          <div class="logo-name">TDOT</div>
-          <div class="logo-sub">Immigration</div>
-        </div>
-      </div>
-
-      <div class="card-divider"></div>
-
-      <div class="login-heading">Admin Portal</div>
-      <div class="login-sub">Sign in with your admin key to access<br>the management dashboard</div>
+      <div class="login-heading">Welcome back</div>
+      <div class="login-sub">Enter your admin key to access the management dashboard</div>
 
       <!-- Form -->
       <div class="field-wrap">

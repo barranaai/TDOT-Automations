@@ -14,7 +14,7 @@
 
 const mondayApi      = require('./mondayApi');
 const stageGateService = require('./stageGateService');
-const { clientMasterBoardId } = require('../../config/monday');
+const { clientMasterBoardId, templateBoardId } = require('../../config/monday');
 
 const Q_BOARD_ID  = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
 const D_BOARD_ID  = process.env.MONDAY_EXECUTION_BOARD_ID               || '18401875593';
@@ -31,10 +31,29 @@ const Q_COLS = {
 // ─── Column IDs — Document Execution Board ────────────────────────────────────
 const D_COLS = {
   caseRef:            'text_mm0z2cck',
-  countsTowardReady:  'lookup_mm0zhkkd',   // mirror → "Yes" / "No"
+  countsTowardReady:  'lookup_mm0zhkkd',   // mirror → "Yes" / "No"  (broken — see T_COLS fallback)
   documentStatus:     'color_mm0zwgvr',    // text: Reviewed / Received / Missing / etc.
-  blockingDoc:        'lookup_mm0zb0p6',   // mirror → "Yes" / "No"
-  requiredType:       'lookup_mm0z1chx',   // mirror → "Mandatory" / "Conditional" / "Optional"
+  blockingDoc:        'lookup_mm0zb0p6',   // mirror → "Yes" / "No"  (broken — see T_COLS fallback)
+  requiredType:       'lookup_mm0z1chx',   // mirror → "Mandatory" / "Conditional" / "Optional"  (broken)
+  intakeItemId:       'text_mm0zfsp1',     // stores the template item ID (used for direct lookup)
+};
+
+// ─── Column IDs — Document Checklist Template Board (source of truth) ────────
+// The mirror columns on the Execution Board depend on a board_relation that the
+// Monday.com API cannot reliably set.  As a workaround, the readiness engine
+// fetches these values directly from the Template Board using the intakeItemId
+// stored on each execution item.
+const T_COLS = {
+  countsTowardReady:  'color_mm0x78rc',    // status: "Yes" / "No"
+  blockingFlag:       'color_mm0xmrw',     // status: "Yes" / "No"
+  requiredType:       'dropdown_mm0x9v5q', // dropdown: "Mandatory" / "Conditional" / "Optional"
+};
+
+// Map: template column ID → execution mirror column ID (for enrichment)
+const TMPL_TO_EXEC_MAP = {
+  [T_COLS.countsTowardReady]: D_COLS.countsTowardReady,
+  [T_COLS.blockingFlag]:      D_COLS.blockingDoc,
+  [T_COLS.requiredType]:      D_COLS.requiredType,
 };
 
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
@@ -119,6 +138,74 @@ async function fetchExecutionItems(boardId, caseRefColId, fetchColIds, caseRef) 
   return data?.items_page_by_column_values?.items || [];
 }
 
+// ─── Enrich doc execution items with template data (bypasses broken mirrors) ─
+
+/**
+ * The mirror columns on the Document Execution Board depend on a board_relation
+ * link to the Template Board.  The Monday.com API cannot reliably write that
+ * relation (the mutation returns success but nothing persists), so the mirrors
+ * always return null.
+ *
+ * This function fetches the source values directly from the Template Board items
+ * (using the intakeItemId stored on each execution item) and injects them into
+ * the execution item's column_values array so calcDocMetrics works correctly.
+ */
+async function enrichDocItemsWithTemplateData(dItems) {
+  // Collect template item IDs from execution items
+  const templateIds = new Set();
+  for (const item of dItems) {
+    const intakeId = item.column_values.find((c) => c.id === D_COLS.intakeItemId)?.text?.trim();
+    if (intakeId && /^\d+$/.test(intakeId)) templateIds.add(intakeId);
+  }
+  if (!templateIds.size) return;
+
+  // Batch-fetch template items (Monday API accepts up to ~100 IDs at once)
+  const allIds    = [...templateIds];
+  const tmplMap   = {};  // templateItemId → { colId: textValue, ... }
+  const fetchCols = Object.values(T_COLS);
+  const BATCH     = 100;
+
+  for (let i = 0; i < allIds.length; i += BATCH) {
+    const batch = allIds.slice(i, i + BATCH);
+    const data  = await mondayApi.query(
+      `query($ids: [ID!]!) {
+         items(ids: $ids) {
+           id
+           column_values(ids: ${JSON.stringify(fetchCols)}) { id text }
+         }
+       }`,
+      { ids: batch }
+    );
+    for (const tmplItem of (data?.items || [])) {
+      const vals = {};
+      for (const cv of tmplItem.column_values) {
+        vals[cv.id] = cv.text?.trim() || '';
+      }
+      tmplMap[tmplItem.id] = vals;
+    }
+  }
+
+  // Inject template values where execution mirrors are null / empty
+  let enriched = 0;
+  for (const item of dItems) {
+    const intakeId = item.column_values.find((c) => c.id === D_COLS.intakeItemId)?.text?.trim();
+    const tmplVals = tmplMap[intakeId];
+    if (!tmplVals) continue;
+
+    for (const [tmplCol, execCol] of Object.entries(TMPL_TO_EXEC_MAP)) {
+      const execCv = item.column_values.find((c) => c.id === execCol);
+      if (execCv && (!execCv.text || execCv.text === 'null' || execCv.text.trim() === '')) {
+        execCv.text = tmplVals[tmplCol] || '';
+        enriched++;
+      }
+    }
+  }
+
+  if (enriched > 0) {
+    console.log(`[Readiness] Enriched ${enriched} mirror values from template board (${templateIds.size} template items)`);
+  }
+}
+
 // ─── Calculate questionnaire readiness metrics ────────────────────────────────
 
 function calcQMetrics(items) {
@@ -169,7 +256,10 @@ function calcDocMetrics(items) {
       if (status === 'Reviewed') reviewed++;
     }
     if (isBlocking && status !== 'Reviewed') blocking++;
-    if (required === 'Mandatory' && status === 'Missing') missingRequired++;
+    // A Mandatory document is "missing" if it hasn't been received or reviewed.
+    // New execution items have null/blank status, which also means not yet received.
+    const receivedStatuses = new Set(['Reviewed', 'Received', 'Under Review']);
+    if (required === 'Mandatory' && !receivedStatuses.has(status)) missingRequired++;
   }
 
   const readinessPct = countable > 0 ? Math.round((reviewed / countable) * 100) : 0;
@@ -271,10 +361,15 @@ async function calculateForCase({ masterItemId, caseRef, caseType, caseStage, ch
     fetchExecutionItems(Q_BOARD_ID, Q_COLS.caseRef,
       [Q_COLS.countsTowardReady, Q_COLS.responseStatus, Q_COLS.blockingQuestion], caseRef),
     fetchExecutionItems(D_BOARD_ID, D_COLS.caseRef,
-      [D_COLS.countsTowardReady, D_COLS.documentStatus, D_COLS.blockingDoc, D_COLS.requiredType], caseRef),
+      [D_COLS.countsTowardReady, D_COLS.documentStatus, D_COLS.blockingDoc, D_COLS.requiredType, D_COLS.intakeItemId], caseRef),
   ]);
 
   if (qItems.length === 0 && dItems.length === 0) return null;
+
+  // Enrich doc items with template data (mirrors are broken due to unfixable board_relation)
+  if (dItems.length > 0) {
+    await enrichDocItemsWithTemplateData(dItems);
+  }
 
   const minThreshold = thresholds[caseType] || 80;
   const qMetrics     = calcQMetrics(qItems);
