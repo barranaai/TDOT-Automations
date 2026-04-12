@@ -3125,6 +3125,7 @@ input[disabled], select[disabled], textarea[disabled] {
         if (msg) { msg.textContent = '\u2713 Email sent'; msg.style.color = '#86efac'; }
       } catch (err) {
         alert('Failed to send: ' + err.message);
+      } finally {
         btn.disabled = false;
       }
     };

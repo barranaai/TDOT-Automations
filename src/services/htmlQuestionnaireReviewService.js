@@ -266,7 +266,7 @@ async function sendConsolidatedCorrectionEmail({ caseRef, memberEntries, caseDet
     const formUrl = `${BASE_URL}/q/${encodedRef}${tokenParam}${additionalParam}`;
 
     return {
-      label:       entry.label || memberKey.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      label:       entry.label || entry.memberKey.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
       type:        entry.type  || 'Principal Applicant',
       flagCount:   flaggedItems.length,
       sections,
