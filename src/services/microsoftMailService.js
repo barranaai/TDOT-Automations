@@ -99,7 +99,7 @@ async function sendEmail({ to, subject, html, replyTo }) {
   try {
     await axios.post(
       `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromEmail)}/sendMail`,
-      { message, saveToSentItems: true },
+      { message, saveToSentItems: false },
       {
         headers: {
           Authorization: `Bearer ${token}`,
