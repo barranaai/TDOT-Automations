@@ -36,6 +36,7 @@ const REVIEW_REQ_COL      = 'color_mm0z796e';  // Review Required
 const REVIEW_NOTES_COL    = 'long_text_mm0zbpr'; // Review Notes
 const INTAKE_ID_COL       = 'text_mm0zfsp1';   // Template Board item ID (stored at checklist creation)
 const CATEGORY_MIRROR_COL = 'lookup_mm0zqbvt'; // Document Category (mirror — often null)
+const CATEGORY_TEXT_COL   = 'text_mm261tka';   // Document Category (direct text — set at checklist creation)
 
 // Template Board columns
 const TMPL_DESC_COL           = 'long_text_mm0zmb7j'; // Description
@@ -57,6 +58,7 @@ const FETCH_COLS = [
   REVIEW_NOTES_COL,
   INTAKE_ID_COL,
   CATEGORY_MIRROR_COL,
+  CATEGORY_TEXT_COL,
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -221,8 +223,8 @@ async function getCaseDocuments(caseRef) {
       const intakeId = c(INTAKE_ID_COL);
       const tmpl     = (intakeId && templateMap[intakeId]) || {};
 
-      // Category: template lookup preferred over mirror (mirror is often null)
-      const category = tmpl.category || c(CATEGORY_MIRROR_COL) || 'General';
+      // Category: template dropdown → execution text column → mirror → fallback
+      const category = tmpl.category || c(CATEGORY_TEXT_COL) || c(CATEGORY_MIRROR_COL) || 'General';
 
       return {
         id:                 item.id,
@@ -285,7 +287,7 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, m
   const execData = await mondayApi.query(
     `query($itemId: ID!) {
        items(ids: [$itemId]) {
-         column_values(ids: ["${INTAKE_ID_COL}", "${CATEGORY_MIRROR_COL}"]) { id text }
+         column_values(ids: ["${INTAKE_ID_COL}", "${CATEGORY_MIRROR_COL}", "${CATEGORY_TEXT_COL}"]) { id text }
        }
      }`,
     { itemId: String(itemId) }
@@ -294,12 +296,13 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, m
   const cols     = execData?.items?.[0]?.column_values || [];
   const intakeId = cols.find((c) => c.id === INTAKE_ID_COL)?.text?.trim()       || '';
   const mirror   = cols.find((c) => c.id === CATEGORY_MIRROR_COL)?.text?.trim() || '';
+  const catText  = cols.find((c) => c.id === CATEGORY_TEXT_COL)?.text?.trim()    || '';
 
   // Parallel: resolve category + get client name
   const [category, clientName] = await Promise.all([
     intakeId
       ? getCategoryFromTemplate(intakeId)   // preferred: direct template lookup
-      : Promise.resolve(mirror || 'General'), // fallback: mirror or default
+      : Promise.resolve(catText || mirror || 'General'), // fallback: text col → mirror → default
     getClientName(caseRef),
   ]);
 
