@@ -925,7 +925,7 @@ function openDocReply(itemId) {
       const sent = document.createElement('div');
       sent.className = 'doc-reply-sent';
       sent.innerHTML = '<strong>\u2709\ufe0f Your reply:</strong> ' +
-        reply.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') +
+        reply.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;') +
         '<div style="font-size:.65rem;color:#6b7280;margin-top:4px;">Sent just now</div>';
       area.appendChild(sent);
 

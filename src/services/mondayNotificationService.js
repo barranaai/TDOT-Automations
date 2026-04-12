@@ -183,11 +183,16 @@ async function onDocumentReceived(itemId, itemName) {
     return;
   }
 
-  // Fetch case ref, category, and folder link from execution item
-  const docMeta = await getDocumentMeta(itemId);
+  // Fetch metadata — wrapped in try/catch so notification still fires on failure
+  let docMeta = { caseRef: '', category: '', folderUrl: '' };
   let clientName = '';
-  if (docMeta.caseRef) {
-    clientName = await getClientName(docMeta.caseRef);
+  try {
+    docMeta = await getDocumentMeta(itemId);
+    if (docMeta.caseRef) {
+      clientName = await getClientName(docMeta.caseRef);
+    }
+  } catch (err) {
+    console.warn(`[Notify] onDocumentReceived: metadata lookup failed for item ${itemId}:`, err.message);
   }
 
   // Build rich notification text

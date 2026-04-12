@@ -1242,6 +1242,7 @@ ${hasAdditionalForm ? `
   function buildFlagNote(flagKey, flag, parentEl) {
     var container = document.createElement('div');
     container.setAttribute('data-tdot-flag', flagKey);
+    container.setAttribute('data-tdot-comment', flag.comment || '');
     container.style.cssText =
       'margin-top:6px;border-radius:8px;overflow:hidden;border:1px solid #fed7aa;font-family:Segoe UI,sans-serif;';
 
@@ -1370,8 +1371,7 @@ ${hasAdditionalForm ? `
 
         /* Rebuild the flag note to show the saved reply */
         var parentEl = container.parentElement;
-        var flag = { comment: container.querySelector('div').textContent.replace(/^💬 Consultant note:\s*/, ''), clientReply: reply, clientRepliedAt: new Date().toISOString() };
-        /* Re-read the comment from the original flag data */
+        var flag = { comment: container.getAttribute('data-tdot-comment') || '', clientReply: reply, clientRepliedAt: new Date().toISOString() };
         container.remove();
         buildFlagNote(flagKey, flag, parentEl);
       } catch (err) {
