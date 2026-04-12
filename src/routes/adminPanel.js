@@ -640,6 +640,7 @@ function buildAdminHTML() {
         <span id="sys-text">Checking…</span>
       </div>
       <span class="header-time" id="hdr-time"></span>
+      <a class="logout-btn" href="/admin/dashboard" style="text-decoration:none">📊 Owner Dashboard</a>
       <button class="logout-btn" onclick="logout()">Sign Out</button>
     </div>
   </header>

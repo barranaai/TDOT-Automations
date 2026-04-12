@@ -7,7 +7,9 @@ const questionnaireFormRouter    = require('./routes/questionnaireForm');
 const documentUploadRouter       = require('./routes/documentUploadForm');
 const htmlQuestionnaireRouter    = require('./routes/htmlQuestionnaireForm');
 const adminPanelRouter           = require('./routes/adminPanel');
+const adminDashboardRouter       = require('./routes/adminDashboard');
 const mondayApi = require('./services/mondayApi');
+const dashboardService           = require('./services/dashboardService');
 const clientMasterService = require('./services/clientMasterService');
 const boardService = require('./services/boardService');
 const webhookManager  = require('./services/webhookManager');
@@ -31,6 +33,7 @@ app.use('/webhook/monday', mondayWebhookRouter);
 app.use('/questionnaire',  questionnaireFormRouter);
 app.use('/documents',      documentUploadRouter);
 app.use('/q',              htmlQuestionnaireRouter);
+app.use('/admin/dashboard', adminDashboardRouter);  // must be before /admin
 app.use('/admin',          adminPanelRouter);
 
 app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
@@ -164,6 +167,17 @@ app.get('/api/boards/client-master', async (req, res) => {
     const board = await boardService.getBoardStructure(clientMasterBoardId);
     res.json(board);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Owner dashboard stats — fetches and aggregates all Client Master cases
+app.get('/api/dashboard/stats', async (req, res) => {
+  try {
+    const stats = await dashboardService.getDashboardStats();
+    res.json(stats);
+  } catch (err) {
+    console.error('[Dashboard] Stats failed:', err.stack || err.message);
     res.status(500).json({ error: err.message });
   }
 });
