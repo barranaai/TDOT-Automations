@@ -34,6 +34,8 @@ const Q_BOARD   = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '184021
 const DOC_COLS = {
   caseRef:          'text_mm0z2cck',
   assignedReviewer: 'multiple_person_mm0zsa92',
+  documentCategory: 'text_mm261tka',
+  documentFolder:   'link_mm1yrnz1',
 };
 
 const Q_COLS = {
@@ -132,6 +134,46 @@ async function getCaseRefFromItem(itemId, caseRefColId) {
   return data?.items?.[0]?.column_values?.[0]?.text?.trim() || '';
 }
 
+// Fetch document metadata (case ref, category, folder link) from execution item
+async function getDocumentMeta(itemId) {
+  const cols = [DOC_COLS.caseRef, DOC_COLS.documentCategory, DOC_COLS.documentFolder];
+  const data = await mondayApi.query(
+    `query($itemId: ID!) {
+       items(ids: [$itemId]) { column_values(ids: ${JSON.stringify(cols)}) { id text value } }
+     }`,
+    { itemId: String(itemId) }
+  );
+  const colVals = data?.items?.[0]?.column_values || [];
+  const col = (id) => colVals.find((c) => c.id === id);
+
+  const caseRef  = col(DOC_COLS.caseRef)?.text?.trim() || '';
+  const category = col(DOC_COLS.documentCategory)?.text?.trim() || '';
+
+  // Link column stores URL in JSON value: {"url":"...","text":"..."}
+  let folderUrl = '';
+  try {
+    const linkVal = JSON.parse(col(DOC_COLS.documentFolder)?.value || '{}');
+    folderUrl = linkVal.url || '';
+  } catch { /* ignore */ }
+
+  return { caseRef, category, folderUrl };
+}
+
+// Look up client name from Client Master Board by case reference
+async function getClientName(caseRef) {
+  if (!caseRef) return '';
+  const data = await mondayApi.query(
+    `query($boardId: ID!, $caseRef: String!) {
+       items_page_by_column_values(
+         board_id: $boardId, limit: 1,
+         columns: [{ column_id: "${CM_COLS.caseRef}", column_values: [$caseRef] }]
+       ) { items { name } }
+     }`,
+    { boardId: String(clientMasterBoardId), caseRef }
+  );
+  return data?.items_page_by_column_values?.items?.[0]?.name || '';
+}
+
 // ─── Document Execution triggers ─────────────────────────────────────────────
 
 async function onDocumentReceived(itemId, itemName) {
@@ -140,7 +182,29 @@ async function onDocumentReceived(itemId, itemName) {
     console.log(`[Notify] onDocumentReceived: no reviewer assigned for item ${itemId}`);
     return;
   }
-  const text = `A new document has been uploaded and is ready for your review: "${itemName}"`;
+
+  // Fetch case ref, category, and folder link from execution item
+  const docMeta = await getDocumentMeta(itemId);
+  let clientName = '';
+  if (docMeta.caseRef) {
+    clientName = await getClientName(docMeta.caseRef);
+  }
+
+  // Build rich notification text
+  const parts = [`📄 Document received: "${itemName}"`];
+  if (clientName && docMeta.caseRef) {
+    parts.push(`Client: ${clientName} (${docMeta.caseRef})`);
+  } else if (docMeta.caseRef) {
+    parts.push(`Case: ${docMeta.caseRef}`);
+  }
+  if (docMeta.category) {
+    parts.push(`Category: ${docMeta.category}`);
+  }
+  if (docMeta.folderUrl) {
+    parts.push(`Folder: ${docMeta.folderUrl}`);
+  }
+  const text = parts.join(' | ');
+
   await notifyAll(reviewerIds, text, itemId);
   console.log(`[Notify] Document received — notified ${reviewerIds.length} reviewer(s) for item ${itemId}`);
 }
