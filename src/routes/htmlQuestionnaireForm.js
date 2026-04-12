@@ -47,6 +47,10 @@ function sanitiseCaseRef(raw) {
   return String(raw || '').replace(/[^a-zA-Z0-9\-_]/g, '').slice(0, 40);
 }
 
+function sanitiseFormKey(raw) {
+  return String(raw || '').replace(/[^a-zA-Z0-9\-_]/g, '').slice(0, 60);
+}
+
 function buildOAuthNotConfiguredPage() {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Setup Required</title>
 <style>body{font-family:'Segoe UI',sans-serif;background:#f0f4f8;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
@@ -192,7 +196,7 @@ router.get('/auth/monday/callback', async (req, res) => {
 
 router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
-  const formKey = (req.query.formKey || 'primary').trim();
+  const formKey = sanitiseFormKey(req.query.formKey || 'primary');
 
   try {
     const caseDetails = await review.getCaseDetails(caseRef);
@@ -299,7 +303,7 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
 
 router.get('/:caseRef/export-pdf', requireStaffAuth, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
-  const formKey = (req.query.formKey || 'primary').trim();
+  const formKey = sanitiseFormKey(req.query.formKey || 'primary');
 
   try {
     const caseDetails = await review.getCaseDetails(caseRef);
@@ -364,7 +368,7 @@ router.post('/:caseRef/flag', requireStaffAuth, async (req, res) => {
       };
     }
 
-    await review.saveFlags({ clientName, caseRef, formKey: formKey || 'primary', flags: enrichedFlags });
+    await review.saveFlags({ clientName, caseRef, formKey: sanitiseFormKey(formKey || 'primary'), flags: enrichedFlags });
     return res.json({ ok: true, count: Object.keys(enrichedFlags).length });
   } catch (err) {
     console.error(`[/q/flag] Error for ${caseRef}:`, err.message);
@@ -383,7 +387,7 @@ router.post('/:caseRef/notify', requireStaffAuth, async (req, res) => {
     if (!caseDetails) return res.status(404).json({ error: 'Case not found' });
 
     const { clientName } = caseDetails;
-    const key = formKey || 'primary';
+    const key = sanitiseFormKey(formKey || 'primary');
 
     const [flags, formFields] = await Promise.all([
       review.loadFlags({ clientName, caseRef, formKey: key }),
@@ -427,7 +431,7 @@ router.post('/:caseRef/notify-all', requireStaffAuth, async (req, res) => {
     if (!caseDetails) return res.status(404).json({ error: 'Case not found' });
 
     const { clientName } = caseDetails;
-    const suffix = formKeySuffix || '';
+    const suffix = sanitiseFormKey(formKeySuffix || '');
 
     // Load members manifest for labels/types
     const members = await svc.loadMembers({ clientName, caseRef });
@@ -437,7 +441,7 @@ router.post('/:caseRef/notify-all', requireStaffAuth, async (req, res) => {
     // Load flags + form data for each member in parallel
     const memberEntries = await Promise.all(
       memberKeys.map(async (mk) => {
-        const fk = mk + suffix;
+        const fk = sanitiseFormKey(mk) + suffix;
         const [flags, formFields] = await Promise.all([
           review.loadFlags({ clientName, caseRef, formKey: fk }),
           svc.loadFormData({ clientName, caseRef, formKey: fk }),
@@ -480,7 +484,7 @@ router.post('/:caseRef/notify-all', requireStaffAuth, async (req, res) => {
 router.get('/:caseRef/flags', async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
   const token   = (req.query.t       || '').trim();
-  const formKey = (req.query.formKey || 'primary').trim();
+  const formKey = sanitiseFormKey(req.query.formKey || 'primary');
 
   try {
     const { clientName } = await svc.validateAccess(caseRef, token);
@@ -513,7 +517,7 @@ router.post('/:caseRef/reply-flag', async (req, res) => {
 
   try {
     const { clientName } = await svc.validateAccess(caseRef, token);
-    const key = formKey || 'primary';
+    const key = sanitiseFormKey(formKey || 'primary');
 
     // Load existing flags, add the reply, save back
     const flags = await review.loadFlags({ clientName, caseRef, formKey: key });
@@ -540,7 +544,7 @@ router.post('/:caseRef/reply-flag', async (req, res) => {
 router.get('/:caseRef/data', async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
   const token   = (req.query.t       || '').trim();
-  const formKey = (req.query.formKey || 'primary').trim();
+  const formKey = sanitiseFormKey(req.query.formKey || 'primary');
 
   try {
     const { clientName } = await svc.validateAccess(caseRef, token);
@@ -564,7 +568,7 @@ router.post('/:caseRef/save', async (req, res) => {
 
   try {
     const { itemId, clientName } = await svc.validateAccess(caseRef, token);
-    await svc.saveFormData({ clientName, caseRef, itemId, formKey: formKey || 'primary', fields, completionPct: completionPct || 0 });
+    await svc.saveFormData({ clientName, caseRef, itemId, formKey: sanitiseFormKey(formKey || 'primary'), fields, completionPct: completionPct || 0 });
     return res.json({ ok: true });
   } catch (err) {
     console.error(`[/q] Save error for ${caseRef}:`, err.message);
@@ -585,7 +589,7 @@ router.post('/:caseRef/submit', async (req, res) => {
   try {
     const { itemId, clientName, caseType, formFiles } = await svc.validateAccess(caseRef, token);
 
-    const key       = formKey || 'primary';
+    const key       = sanitiseFormKey(formKey || 'primary');
     const formTitle = key === 'additional' && formFiles?.additional
       ? formFiles.additional.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim()
       : (formFiles?.primary || '').replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
@@ -624,7 +628,7 @@ router.post('/:caseRef/submit-all', async (req, res) => {
       try {
         await svc.saveFormData({
           clientName, caseRef, itemId,
-          formKey:       sub.formKey,
+          formKey:       sanitiseFormKey(sub.formKey),
           fields:        sub.fields,
           completionPct: sub.completionPct || 0,
         });

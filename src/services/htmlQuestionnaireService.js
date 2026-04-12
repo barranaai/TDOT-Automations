@@ -965,7 +965,7 @@ ${hasAdditionalForm ? `
     }
 
     /* 1 — Standard form-group inputs */
-    var groups = document.querySelectorAll('.form-group');
+    var groups = document.querySelectorAll('.form-group, .field-group');
     for (var gi = 0; gi < groups.length; gi++) {
       var group = groups[gi];
       var lbl   = group.querySelector('label');
@@ -1217,7 +1217,7 @@ ${hasAdditionalForm ? `
       if (IS_MULTI) {
         var mKeys = getActiveMemberKeys();
         for (var k = 0; k < mKeys.length; k++) {
-          try { localStorage.removeItem('tdot_form_' + CASE_REF + '_' + mKeys[k]); } catch (e) {}
+          try { localStorage.removeItem('tdot_form_' + CASE_REF + '_' + mKeys[k] + FORM_KEY_SUFFIX); } catch (e) {}
         }
       }
 
@@ -2637,7 +2637,7 @@ input[disabled], select[disabled], textarea[disabled] {
       keyMap[counterKey]++; return base + '-' + keyMap[counterKey];
     }
 
-    var groups = document.querySelectorAll('.form-group');
+    var groups = document.querySelectorAll('.form-group, .field-group');
     for (var gi = 0; gi < groups.length; gi++) {
       var group = groups[gi];
       var lbl   = group.querySelector('label');

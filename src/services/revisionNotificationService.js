@@ -176,15 +176,19 @@ function buildRevisionEmailHtml({ clientName, caseRef, accessToken, questionnair
 async function flushQueue(caseRef) {
   const entry = queue.get(caseRef);
   if (!entry) return;
-  queue.delete(caseRef);
-  persistQueue();
 
   const { questionnaire, documents } = entry;
-  if (!questionnaire.length && !documents.length) return;
+  if (!questionnaire.length && !documents.length) {
+    queue.delete(caseRef);
+    persistQueue();
+    return;
+  }
 
   const client = await getClientByCaseRef(caseRef);
   if (!client?.clientEmail) {
     console.warn(`[RevisionNotify] No client email found for case ${caseRef} — skipping`);
+    queue.delete(caseRef);
+    persistQueue();
     return;
   }
 
@@ -197,6 +201,10 @@ async function flushQueue(caseRef) {
     html:    buildRevisionEmailHtml({ ...client, questionnaire, documents }),
     replyTo: EMAIL_REPLY_TO || undefined,
   });
+
+  // Only remove from queue AFTER successful send — prevents data loss on failure
+  queue.delete(caseRef);
+  persistQueue();
 
   console.log(
     `[RevisionNotify] Sent to ${client.clientEmail} for case ${caseRef} — ` +

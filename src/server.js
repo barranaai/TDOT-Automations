@@ -174,8 +174,19 @@ app.use((err, _req, res, _next) => {
   }
 });
 
+// ─── Catch unhandled promise rejections — prevent silent crashes ──────────────
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Server] Unhandled promise rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Server] Uncaught exception:', err);
+  process.exit(1);
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  webhookManager.ensureWebhookRegistered();
+  webhookManager.ensureWebhookRegistered().catch(err =>
+    console.error('[Server] Webhook registration failed:', err.message)
+  );
   startScheduler();
 });
