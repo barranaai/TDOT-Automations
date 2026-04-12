@@ -975,7 +975,15 @@ ${hasAdditionalForm ? `
       seen.push(inp);
       var labelText = lbl.textContent.trim();
       var section   = getSectionContext(group);
-      fields.push({ section: section, label: labelText, key: makeKey(section, labelText, inp), el: inp });
+      var entry = { section: section, label: labelText, key: makeKey(section, labelText, inp), el: inp };
+      /* For radio buttons, store the group name so we can read/write the checked value */
+      if (inp.type === 'radio' && inp.name) {
+        entry._radioName = inp.name;
+        /* Mark all radios in this group as seen so they aren't collected again */
+        var allRadios = group.querySelectorAll('input[type="radio"][name="' + inp.name + '"]');
+        for (var ri = 0; ri < allRadios.length; ri++) { if (seen.indexOf(allRadios[ri]) === -1) seen.push(allRadios[ri]); }
+      }
+      fields.push(entry);
     }
 
     /* 2 — Dynamic table rows */
@@ -1014,6 +1022,34 @@ ${hasAdditionalForm ? `
     return fields;
   }
 
+  /** Read the current value of a collected field (handles radio groups). */
+  function getFieldValue(f) {
+    if (f._radioName) {
+      var checked = document.querySelector('input[type="radio"][name="' + f._radioName + '"]:checked');
+      return checked ? checked.value : '';
+    }
+    return f.el.value || '';
+  }
+
+  /** Set the value on a collected field (handles radio groups). */
+  function setFieldValue(f, val) {
+    if (f._radioName) {
+      var radios = document.querySelectorAll('input[type="radio"][name="' + f._radioName + '"]');
+      for (var i = 0; i < radios.length; i++) {
+        radios[i].checked = (radios[i].value === val);
+      }
+      return;
+    }
+    if (f.el.tagName === 'SELECT') {
+      var opts = Array.prototype.slice.call(f.el.options);
+      var opt  = opts.find(function(o){ return o.value === val; }) ||
+                 opts.find(function(o){ return o.value.toLowerCase() === val.toLowerCase(); });
+      if (opt) f.el.value = opt.value;
+    } else {
+      f.el.value = val;
+    }
+  }
+
   /* ── Progress ── */
 
   function getProgress() {
@@ -1035,12 +1071,12 @@ ${hasAdditionalForm ? `
     var filled = 0;
     for (var i = 0; i < fields.length; i++) {
       var f   = fields[i];
-      var val = (f.el.value || '').trim();
+      var val = getFieldValue(f).trim();
       var inConditional = false;
       var node = f.el.parentElement;
       while (node && node !== document.body) {
-        if ((node.classList.contains('conditional') || node.classList.contains('refusal-details')) &&
-            node.style.display === 'none' && !node.classList.contains('visible')) {
+        if ((node.classList.contains('conditional') || node.classList.contains('conditional-block') || node.classList.contains('refusal-details')) &&
+            node.style.display === 'none' && !node.classList.contains('visible') && !node.classList.contains('open')) {
           inConditional = true;
           break;
         }
@@ -1062,7 +1098,7 @@ ${hasAdditionalForm ? `
     var result = [];
     for (var i = 0; i < fields.length; i++) {
       var f = fields[i];
-      result.push({ section: f.section, label: f.label, key: f.key, value: f.el.value || '' });
+      result.push({ section: f.section, label: f.label, key: f.key, value: getFieldValue(f) });
     }
     return result;
   }
@@ -1598,16 +1634,17 @@ ${hasAdditionalForm ? `
         if (byLabel[fLbl] && byLabel[fLbl][occ]) val = byLabel[fLbl][occ];
       }
       if (val) {
-        if (f.el.tagName === 'SELECT') {
-          var opts = Array.prototype.slice.call(f.el.options);
-          var opt  = opts.find(function(o){ return o.value === val; }) ||
-                     opts.find(function(o){ return o.value.toLowerCase() === val.toLowerCase(); });
-          if (opt) f.el.value = opt.value;
-        } else {
-          f.el.value = val;
-        }
+        setFieldValue(f, val);
         matched++;
-        try { f.el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+        try {
+          /* Dispatch change to trigger toggleConditional on the element that has the onchange handler */
+          if (f._radioName) {
+            var checkedR = document.querySelector('input[type="radio"][name="' + f._radioName + '"]:checked');
+            if (checkedR) checkedR.dispatchEvent(new Event('change', { bubbles: true }));
+          } else {
+            f.el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        } catch (e) {}
       }
     }
     console.log('[TDOT] Pre-fill ' + memberKey + ': ' + matched + ' fields matched.');
@@ -1950,7 +1987,7 @@ ${hasAdditionalForm ? `
     for (var i = 0; i < fields.length; i++) {
       var f = fields[i];
       if (getMemberKeyForEl(f.el) === memberKey) {
-        result.push({ section: f.section, label: f.label, key: f.key, value: f.el.value || '' });
+        result.push({ section: f.section, label: f.label, key: f.key, value: getFieldValue(f) });
       }
     }
     return result;
@@ -1962,12 +1999,12 @@ ${hasAdditionalForm ? `
     for (var i = 0; i < fields.length; i++) {
       var f = fields[i];
       if (getMemberKeyForEl(f.el) !== memberKey) continue;
-      var val = (f.el.value || '').trim();
+      var val = getFieldValue(f).trim();
       var inConditional = false;
       var node = f.el.parentElement;
       while (node && node !== document.body) {
-        if ((node.classList.contains('conditional') || node.classList.contains('refusal-details')) &&
-            node.style.display === 'none' && !node.classList.contains('visible')) {
+        if ((node.classList.contains('conditional') || node.classList.contains('conditional-block') || node.classList.contains('refusal-details')) &&
+            node.style.display === 'none' && !node.classList.contains('visible') && !node.classList.contains('open')) {
           inConditional = true; break;
         }
         /* Don't count fields in mm-hidden sub-sections */
@@ -2646,7 +2683,13 @@ input[disabled], select[disabled], textarea[disabled] {
       seen.push(inp);
       var labelText = lbl.textContent.trim();
       var section   = getSectionContext(group);
-      fields.push({ section: section, label: labelText, key: makeKey(section, labelText, inp), el: inp, group: group });
+      var entry = { section: section, label: labelText, key: makeKey(section, labelText, inp), el: inp, group: group };
+      if (inp.type === 'radio' && inp.name) {
+        entry._radioName = inp.name;
+        var allRadios = group.querySelectorAll('input[type="radio"][name="' + inp.name + '"]');
+        for (var ri = 0; ri < allRadios.length; ri++) { if (seen.indexOf(allRadios[ri]) === -1) seen.push(allRadios[ri]); }
+      }
+      fields.push(entry);
     }
 
     var tables = document.querySelectorAll('.dynamic-table');
@@ -2676,6 +2719,14 @@ input[disabled], select[disabled], textarea[disabled] {
       }
     }
     return fields;
+  }
+
+  function getFieldValue(f) {
+    if (f._radioName) {
+      var checked = document.querySelector('input[type="radio"][name="' + f._radioName + '"]:checked');
+      return checked ? checked.value : '';
+    }
+    return f.el.value || '';
   }
 
   /* ── Expand all accordions and conditional sections ── */
@@ -2791,8 +2842,11 @@ input[disabled], select[disabled], textarea[disabled] {
 
   function setValue(el, val) {
     if (!el || val === undefined || val === null) return;
-    if (el.tagName === 'SELECT') {
-      // Try exact match first, then case-insensitive
+    if (el.type === 'radio' && el.name) {
+      /* Check the matching radio in the group */
+      var radios = document.querySelectorAll('input[type="radio"][name="' + el.name + '"]');
+      for (var i = 0; i < radios.length; i++) { radios[i].checked = (radios[i].value === val); }
+    } else if (el.tagName === 'SELECT') {
       var opts = Array.prototype.slice.call(el.options);
       var match = opts.find(function(o) { return o.value === val; }) ||
                   opts.find(function(o) { return o.value.toLowerCase() === String(val).toLowerCase(); }) ||
