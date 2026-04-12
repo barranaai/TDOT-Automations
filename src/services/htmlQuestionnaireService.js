@@ -2809,6 +2809,10 @@ input[disabled], select[disabled], textarea[disabled] {
       /* pointer-events might be blocked by makeReadOnly — override for headers */
       header.style.pointerEvents = 'auto';
 
+      /* Remove the template's existing chevron before adding ours */
+      var oldChev = header.querySelector('.chevron');
+      if (oldChev) oldChev.remove();
+
       /* Add a chevron indicator */
       var chev = document.createElement('span');
       chev.className = 'tdot-chevron';
