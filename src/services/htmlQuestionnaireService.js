@@ -2558,6 +2558,64 @@ input[disabled], select[disabled], textarea[disabled] {
     });
   }
 
+  /* ── Collapse accordions and attach toggle handlers (review mode) ── */
+
+  function setupAccordionToggles() {
+    var HEADER_SEL = '.top-accordion-header, .applicant-header, .sub-accordion-header, .accordion-header';
+    var BODY_SEL   = '.top-accordion-body, .applicant-body, .sub-accordion-body, .accordion-body';
+
+    /* Collapse all accordion bodies first */
+    document.querySelectorAll(BODY_SEL).forEach(function (body) {
+      body.style.display = 'none';
+    });
+
+    /* Open just the first top-level accordion so the page is not blank */
+    var firstBody = document.querySelector('.top-accordion-body, .applicant-body');
+    if (firstBody) firstBody.style.display = 'block';
+
+    /* Chevron indicator styles */
+    var chevStyle = document.createElement('style');
+    chevStyle.textContent =
+      '.tdot-chevron { display: inline-block; margin-left: 8px; transition: transform .2s; font-size: .7em; }' +
+      '.tdot-chevron.open { transform: rotate(90deg); }';
+    document.head.appendChild(chevStyle);
+
+    /* Attach click handlers to all accordion headers */
+    document.querySelectorAll(HEADER_SEL).forEach(function (header) {
+      header.style.cursor = 'pointer';
+      header.style.userSelect = 'none';
+      /* pointer-events might be blocked by makeReadOnly — override for headers */
+      header.style.pointerEvents = 'auto';
+
+      /* Add a chevron indicator */
+      var chev = document.createElement('span');
+      chev.className = 'tdot-chevron';
+      chev.textContent = '\u25B6';
+      header.appendChild(chev);
+
+      /* Determine initial state from the body's display */
+      var body = header.nextElementSibling;
+      if (!body) return;
+      var isBody = false;
+      BODY_SEL.split(', ').forEach(function (sel) { if (body.matches(sel)) isBody = true; });
+      if (!isBody) return;
+
+      if (body.style.display !== 'none') chev.classList.add('open');
+
+      /* Remove any existing inline onclick to avoid double-firing */
+      header.removeAttribute('onclick');
+
+      header.addEventListener('click', function (e) {
+        /* Don't toggle if clicking a button inside the header (e.g. flag button) */
+        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+
+        var open = body.style.display !== 'none';
+        body.style.display = open ? 'none' : 'block';
+        chev.classList.toggle('open', !open);
+      });
+    });
+  }
+
   /* ── Pre-fill from saved data ── */
 
   function setValue(el, val) {
@@ -3056,6 +3114,7 @@ input[disabled], select[disabled], textarea[disabled] {
     fields.forEach(attachFlagUI);
     createReviewBar();
     updateFlagCount();
+    setupAccordionToggles();
   }
 
   if (document.readyState === 'loading') {
