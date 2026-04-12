@@ -1237,6 +1237,157 @@ ${hasAdditionalForm ? `
 
   /* ── Flags (correction notes from consultant) ── */
 
+  /* ── Build a flag note + reply UI for one field ── */
+
+  function buildFlagNote(flagKey, flag, parentEl) {
+    var container = document.createElement('div');
+    container.setAttribute('data-tdot-flag', flagKey);
+    container.style.cssText =
+      'margin-top:6px;border-radius:8px;overflow:hidden;border:1px solid #fed7aa;font-family:Segoe UI,sans-serif;';
+
+    /* Officer comment */
+    var commentDiv = document.createElement('div');
+    commentDiv.style.cssText =
+      'padding:10px 14px;background:#fff7ed;font-size:13px;color:#92400e;line-height:1.5;';
+    commentDiv.innerHTML = '<strong>\ud83d\udcac Consultant note:</strong> ' + escHtml(flag.comment);
+    container.appendChild(commentDiv);
+
+    /* Existing client reply (if any) */
+    if (flag.clientReply) {
+      var replyDiv = document.createElement('div');
+      replyDiv.style.cssText =
+        'padding:10px 14px;background:#eff6ff;border-top:1px solid #bfdbfe;font-size:13px;color:#1e40af;line-height:1.5;';
+      replyDiv.innerHTML =
+        '<strong>\u2709\ufe0f Your reply:</strong> ' + escHtml(flag.clientReply) +
+        (flag.clientRepliedAt ? '<div style="font-size:11px;color:#6b7280;margin-top:4px;">' +
+          new Date(flag.clientRepliedAt).toLocaleString('en-CA', { timeZone: 'America/Toronto', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) +
+        '</div>' : '');
+      container.appendChild(replyDiv);
+    }
+
+    /* Reply action area */
+    var replyArea = document.createElement('div');
+    replyArea.style.cssText =
+      'padding:8px 14px;background:#fafafa;border-top:1px solid #f0f0f0;';
+
+    if (flag.clientReply) {
+      /* Already replied — show edit link */
+      var editLink = document.createElement('button');
+      editLink.type = 'button';
+      editLink.style.cssText =
+        'background:none;border:none;color:#2563eb;font-size:12px;font-weight:600;cursor:pointer;padding:0;font-family:inherit;';
+      editLink.textContent = '\u270f\ufe0f Edit reply';
+      editLink.onclick = function () { showReplyEditor(container, flagKey, flag.clientReply || ''); };
+      replyArea.appendChild(editLink);
+    } else {
+      /* No reply yet — show reply button */
+      var replyBtn = document.createElement('button');
+      replyBtn.type = 'button';
+      replyBtn.style.cssText =
+        'display:inline-flex;align-items:center;gap:5px;padding:6px 14px;background:#2563eb;color:#fff;' +
+        'border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s;';
+      replyBtn.innerHTML = '\u21a9\ufe0f Reply to consultant';
+      replyBtn.onmouseover = function () { this.style.background = '#1d4ed8'; };
+      replyBtn.onmouseout  = function () { this.style.background = '#2563eb'; };
+      replyBtn.onclick = function () { showReplyEditor(container, flagKey, ''); };
+      replyArea.appendChild(replyBtn);
+    }
+    container.appendChild(replyArea);
+
+    /* Remove old flag note if exists */
+    if (parentEl) {
+      var existing = parentEl.querySelector('[data-tdot-flag="' + flagKey + '"]');
+      if (existing) existing.remove();
+      parentEl.appendChild(container);
+    }
+    return container;
+  }
+
+  function showReplyEditor(container, flagKey, existingReply) {
+    /* Remove any existing editor in this container */
+    var old = container.querySelector('.tdot-reply-editor');
+    if (old) old.remove();
+
+    var editor = document.createElement('div');
+    editor.className = 'tdot-reply-editor';
+    editor.style.cssText =
+      'padding:12px 14px;background:#f0f7ff;border-top:1px solid #bfdbfe;';
+
+    var ta = document.createElement('textarea');
+    ta.placeholder = 'Type your reply or question for your consultant...';
+    ta.value = existingReply;
+    ta.style.cssText =
+      'width:100%;min-height:70px;border:1px solid #93c5fd;border-radius:6px;padding:8px 10px;' +
+      'font-size:13px;font-family:inherit;line-height:1.5;resize:vertical;box-sizing:border-box;' +
+      'color:#1e293b;background:#fff;';
+    editor.appendChild(ta);
+
+    var actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:8px;margin-top:8px;justify-content:flex-end;';
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText =
+      'padding:6px 16px;background:#e5e7eb;color:#374151;border:none;border-radius:6px;' +
+      'font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;';
+    cancelBtn.onclick = function () { editor.remove(); };
+
+    var sendBtn = document.createElement('button');
+    sendBtn.type = 'button';
+    sendBtn.textContent = 'Send Reply';
+    sendBtn.style.cssText =
+      'padding:6px 16px;background:#2563eb;color:#fff;border:none;border-radius:6px;' +
+      'font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:background .15s;';
+    sendBtn.onmouseover = function () { this.style.background = '#1d4ed8'; };
+    sendBtn.onmouseout  = function () { this.style.background = '#2563eb'; };
+
+    sendBtn.onclick = async function () {
+      var reply = ta.value.trim();
+      if (!reply) { alert('Please type a reply before sending.'); return; }
+
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Sending...';
+
+      try {
+        var formKey = FORM_KEY;
+        var fieldKey = flagKey;
+        /* For multi-member, extract the real formKey from the flag key prefix */
+        if (IS_MULTI) {
+          var match = flagKey.match(/^__([^_]+(?:-[^_]+)*)__(.+)$/);
+          if (match) {
+            formKey = match[1] + FORM_KEY_SUFFIX;
+            fieldKey = match[2];
+          }
+        }
+
+        var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/reply-flag', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ token: TOKEN, formKey: formKey, fieldKey: fieldKey, reply: reply }),
+        });
+        if (!res.ok) throw new Error('Server error ' + res.status);
+
+        /* Rebuild the flag note to show the saved reply */
+        var parentEl = container.parentElement;
+        var flag = { comment: container.querySelector('div').textContent.replace(/^💬 Consultant note:\s*/, ''), clientReply: reply, clientRepliedAt: new Date().toISOString() };
+        /* Re-read the comment from the original flag data */
+        container.remove();
+        buildFlagNote(flagKey, flag, parentEl);
+      } catch (err) {
+        alert('Could not send reply: ' + err.message);
+        sendBtn.disabled = false;
+        sendBtn.textContent = 'Send Reply';
+      }
+    };
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(sendBtn);
+    editor.appendChild(actions);
+    container.appendChild(editor);
+    ta.focus();
+  }
+
   async function loadAndApplyFlags() {
     try {
       var res = await fetch(
@@ -1258,21 +1409,9 @@ ${hasAdditionalForm ? `
         f.el.style.borderColor = '#f97316';
         f.el.style.outline     = '2px solid #fed7aa';
 
-        /* Insert a note below the input */
-        var note = document.createElement('div');
-        note.setAttribute('data-tdot-flag', f.key);
-        note.style.cssText =
-          'margin-top:6px;padding:8px 12px;background:#fff7ed;border:1px solid #fed7aa;' +
-          'border-radius:6px;font-size:13px;color:#92400e;line-height:1.5;';
-        note.innerHTML = '<strong>💬 Consultant note:</strong> ' +
-          escHtml(flag.comment);
-
+        /* Insert flag note + reply UI below the input */
         var parent = f.el.parentElement;
-        if (parent) {
-          var existing = parent.querySelector('[data-tdot-flag="' + f.key + '"]');
-          if (existing) existing.remove();
-          parent.appendChild(note);
-        }
+        if (parent) buildFlagNote(f.key, flag, parent);
       }
 
       /* Banner at top of page */
@@ -1283,7 +1422,7 @@ ${hasAdditionalForm ? `
         'padding:10px 24px;font-family:Segoe UI,sans-serif;font-size:14px;color:#92400e;' +
         'display:flex;align-items:center;gap:10px;';
       banner.innerHTML =
-        '<span style="font-size:18px">🚩</span>' +
+        '<span style="font-size:18px">\ud83d\udea9</span>' +
         '<strong>Your consultant has flagged ' + flagCount + ' item' + (flagCount !== 1 ? 's' : '') +
         ' for correction.</strong> Scroll down to see the highlighted fields, update your answers, then click Save.';
       document.body.insertBefore(banner, document.body.firstChild);
@@ -1324,14 +1463,8 @@ ${hasAdditionalForm ? `
         f.el.style.borderColor = '#f97316';
         f.el.style.outline     = '2px solid #fed7aa';
 
-        var note = document.createElement('div');
-        note.style.cssText =
-          'margin-top:6px;padding:8px 12px;background:#fff7ed;border:1px solid #fed7aa;' +
-          'border-radius:6px;font-size:13px;color:#92400e;line-height:1.5;';
-        note.innerHTML = '<strong>\ud83d\udcac Consultant note:</strong> ' + escHtml(flag.comment);
-
         var parent = f.el.parentElement;
-        if (parent) parent.appendChild(note);
+        if (parent) buildFlagNote(f.key, flag, parent);
       }
 
       if (flagCount > 0) {
@@ -2839,7 +2972,22 @@ input[disabled], select[disabled], textarea[disabled] {
       if (!flags[flagKey]) return;
       note = document.createElement('div');
       note.className = 'tdot-flag-note';
-      note.textContent = '\ud83d\udcac ' + flags[flagKey].comment;
+      note.innerHTML = '\ud83d\udcac ' + escHtml(flags[flagKey].comment);
+      /* Show client reply if present */
+      if (flags[flagKey].clientReply) {
+        var replyEl = document.createElement('div');
+        replyEl.style.cssText =
+          'margin-top:8px;padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;' +
+          'border-radius:6px;font-size:12px;color:#1e40af;line-height:1.5;';
+        replyEl.innerHTML =
+          '<strong>\u2709\ufe0f Client reply:</strong> ' + escHtml(flags[flagKey].clientReply) +
+          (flags[flagKey].clientRepliedAt
+            ? '<div style="font-size:10px;color:#6b7280;margin-top:3px;">' +
+              new Date(flags[flagKey].clientRepliedAt).toLocaleString('en-CA', { timeZone: 'America/Toronto', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) +
+              '</div>'
+            : '');
+        note.appendChild(replyEl);
+      }
       group.appendChild(note);
       group.classList.add('tdot-flagged');
     }

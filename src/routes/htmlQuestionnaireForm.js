@@ -485,14 +485,53 @@ router.get('/:caseRef/flags', async (req, res) => {
   try {
     const { clientName } = await svc.validateAccess(caseRef, token);
     const flags = await review.loadFlags({ clientName, caseRef, formKey });
-    // Return only the comment per key — don't expose officer email/name to client
+    // Return comment + client reply per key — don't expose officer email/name to client
     const clientFlags = {};
     for (const [key, flag] of Object.entries(flags)) {
       clientFlags[key] = { comment: flag.comment };
+      if (flag.clientReply)    clientFlags[key].clientReply    = flag.clientReply;
+      if (flag.clientRepliedAt) clientFlags[key].clientRepliedAt = flag.clientRepliedAt;
     }
     return res.json({ flags: clientFlags });
   } catch (err) {
     return res.status(403).json({ error: err.message });
+  }
+});
+
+// ─── Client: POST /q/:caseRef/reply-flag  — Reply to a flagged field ────────
+
+router.post('/:caseRef/reply-flag', async (req, res) => {
+  const caseRef = sanitiseCaseRef(req.params.caseRef);
+  const { token, formKey, fieldKey, reply } = req.body || {};
+
+  if (!reply || !reply.trim()) {
+    return res.status(400).json({ error: 'Reply cannot be empty.' });
+  }
+  if (!fieldKey) {
+    return res.status(400).json({ error: 'fieldKey is required.' });
+  }
+
+  try {
+    const { clientName } = await svc.validateAccess(caseRef, token);
+    const key = formKey || 'primary';
+
+    // Load existing flags, add the reply, save back
+    const flags = await review.loadFlags({ clientName, caseRef, formKey: key });
+    const flag = flags[fieldKey];
+    if (!flag) {
+      return res.status(404).json({ error: 'Flag not found for this field.' });
+    }
+
+    flag.clientReply     = reply.trim();
+    flag.clientRepliedAt = new Date().toISOString();
+    await review.saveFlags({ clientName, caseRef, formKey: key, flags });
+
+    console.log(`[/q/reply-flag] Client replied to flag ${fieldKey} for ${caseRef}/${key}`);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(`[/q/reply-flag] Error for ${caseRef}:`, err.message);
+    const is403 = err.message.includes('token') || err.message.includes('not found');
+    return res.status(is403 ? 403 : 500).json({ error: err.message });
   }
 });
 

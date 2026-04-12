@@ -556,6 +556,11 @@ function buildReviewPage({ caseRef, formKey, formTitle, fields, flags, staffName
       const escapedSection = escHtml(f.section || '');
       const escapedValue   = escHtml(f.value || '');
       const flagComment    = isFlagged ? escHtml(flag.comment) : '';
+      const hasReply       = isFlagged && flag.clientReply;
+      const replyText      = hasReply ? escHtml(flag.clientReply) : '';
+      const replyDate      = hasReply && flag.clientRepliedAt
+        ? new Date(flag.clientRepliedAt).toLocaleString('en-CA', { timeZone: 'America/Toronto', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '';
 
       return `
         <div class="field-row${isFlagged ? ' flagged' : ''}" data-key="${escapedKey}">
@@ -567,6 +572,13 @@ function buildReviewPage({ caseRef, formKey, formTitle, fields, flags, staffName
             ${isFlagged
               ? `<div class="flag-badge">🚩 Flagged</div>
                  <div class="flag-comment-text">${flagComment}</div>
+                 ${hasReply
+                   ? `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:6px 10px;max-width:260px;text-align:left;margin-top:4px;">
+                        <div style="font-size:11px;font-weight:700;color:#2563eb;margin-bottom:2px;">✉️ Client reply</div>
+                        <div style="font-size:12px;color:#1e40af;line-height:1.5;">${replyText}</div>
+                        ${replyDate ? `<div style="font-size:10px;color:#6b7280;margin-top:3px;">${replyDate}</div>` : ''}
+                      </div>`
+                   : ''}
                  <button class="btn-edit-flag" onclick="openFlagForm('${escapedKey}', '${escapedLabel}', '${escapedSection}', \`${flagComment}\`)">✏️ Edit</button>
                  <button class="btn-remove-flag" onclick="removeFlag('${escapedKey}')">✕ Remove</button>`
               : `<button class="btn-flag" onclick="openFlagForm('${escapedKey}', '${escapedLabel}', '${escapedSection}', '')">🚩 Flag</button>`

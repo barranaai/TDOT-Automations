@@ -6,6 +6,7 @@ const router  = express.Router();
 const { getCaseSummary, uploadFileToOneDrive, markDocumentReceived } = require('../services/documentFormService');
 const { updateLastActivityDate } = require('../services/clientMasterService');
 const { calculateForCaseRef }   = require('../services/caseReadinessService');
+const mondayApi = require('../services/mondayApi');
 
 // ─── File upload config ───────────────────────────────────────────────────────
 
@@ -367,9 +368,14 @@ function docRowHtml(doc, caseRef) {
             </div>
             <div class="doc-name">${esc(doc.name)}</div>
             ${doc.status === 'Rework Required' ? `
-            <div class="doc-review-note">
-              <div class="doc-review-note-header">💬 Feedback from your case officer</div>
+            <div class="doc-review-note" id="note_${doc.id}">
+              <div class="doc-review-note-header">\ud83d\udcac Feedback from your case officer</div>
               <div class="doc-review-note-body">${doc.reviewNotes ? esc(doc.reviewNotes) : 'Please re-upload this document with the necessary corrections.'}</div>
+              <div class="doc-reply-area" id="reply-area_${doc.id}">
+                <button class="doc-reply-btn" onclick="openDocReply('${esc(doc.id)}')">
+                  \u21a9\ufe0f Reply to case officer
+                </button>
+              </div>
             </div>` : ''}
             ${doc.clientInstructions ? `<div class="doc-instructions">💡 ${formatInstructions(doc.clientInstructions)}</div>` : ''}
             ${doc.lastUpload ? `<div class="doc-meta">Last uploaded: ${esc(doc.lastUpload)}</div>` : ''}
@@ -622,6 +628,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .doc-review-note{background:var(--orange-bg);border:1px solid var(--orange-border);border-left:4px solid var(--orange);border-radius:var(--radius-sm);margin-top:.55rem;overflow:hidden}
 .doc-review-note-header{font-size:.71rem;font-weight:700;color:#c2410c;padding:.35rem .75rem;background:#ffedd5;border-bottom:1px solid var(--orange-border);letter-spacing:.03em;text-transform:uppercase}
 .doc-review-note-body{font-size:.82rem;color:#7c2d12;padding:.45rem .75rem;line-height:1.55}
+.doc-reply-area{padding:.5rem .75rem;background:#fafafa;border-top:1px solid #f0f0f0}
+.doc-reply-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 14px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:.72rem;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s}
+.doc-reply-btn:hover{background:#1d4ed8}
+.doc-reply-editor{padding:.6rem .75rem;background:#f0f7ff;border-top:1px solid #bfdbfe}
+.doc-reply-editor textarea{width:100%;min-height:60px;border:1px solid #93c5fd;border-radius:6px;padding:8px 10px;font-size:.8rem;font-family:inherit;line-height:1.5;resize:vertical;box-sizing:border-box;color:#1e293b;background:#fff}
+.doc-reply-editor textarea:focus{outline:none;border-color:#2563eb}
+.doc-reply-actions{display:flex;gap:8px;margin-top:8px;justify-content:flex-end}
+.doc-reply-cancel{padding:6px 16px;background:#e5e7eb;color:#374151;border:none;border-radius:6px;font-size:.72rem;font-weight:600;cursor:pointer;font-family:inherit}
+.doc-reply-send{padding:6px 16px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:.72rem;font-weight:700;cursor:pointer;font-family:inherit;transition:background .15s}
+.doc-reply-send:hover{background:#1d4ed8}
+.doc-reply-sent{padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:.78rem;color:#1e40af;line-height:1.5}
+.doc-reply-sent strong{color:#2563eb}
 .doc-meta{font-size:.7rem;color:var(--gray-300);margin-top:.25rem}
 
 /* ── Actions column ── */
@@ -850,6 +868,82 @@ if (FIRST_FLAGGED !== -1) {
   goToStep(0);
 }
 
+// ── Document reply to case officer note ──────────────────────────────────────
+
+function openDocReply(itemId) {
+  const area = document.getElementById('reply-area_' + itemId);
+  if (!area) return;
+  // Check if editor already open
+  if (area.querySelector('.doc-reply-editor')) return;
+
+  // Hide the reply button
+  const btn = area.querySelector('.doc-reply-btn');
+  if (btn) btn.style.display = 'none';
+
+  const editor = document.createElement('div');
+  editor.className = 'doc-reply-editor';
+
+  const ta = document.createElement('textarea');
+  ta.placeholder = 'Type your reply or question for your case officer...';
+  editor.appendChild(ta);
+
+  const actions = document.createElement('div');
+  actions.className = 'doc-reply-actions';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'doc-reply-cancel';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = function () {
+    editor.remove();
+    if (btn) btn.style.display = '';
+  };
+
+  const sendBtn = document.createElement('button');
+  sendBtn.type = 'button';
+  sendBtn.className = 'doc-reply-send';
+  sendBtn.textContent = 'Send Reply';
+  sendBtn.onclick = async function () {
+    const reply = ta.value.trim();
+    if (!reply) { alert('Please type a reply before sending.'); return; }
+
+    sendBtn.disabled = true;
+    sendBtn.textContent = 'Sending...';
+
+    try {
+      const res = await fetch('/documents/' + encodeURIComponent(CASE_REF) + '/reply-note', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ itemId: itemId, reply: reply }),
+      });
+      if (!res.ok) throw new Error('Server error ' + res.status);
+
+      // Replace editor with sent confirmation
+      editor.remove();
+      if (btn) btn.remove();
+
+      const sent = document.createElement('div');
+      sent.className = 'doc-reply-sent';
+      sent.innerHTML = '<strong>\u2709\ufe0f Your reply:</strong> ' +
+        reply.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') +
+        '<div style="font-size:.65rem;color:#6b7280;margin-top:4px;">Sent just now</div>';
+      area.appendChild(sent);
+
+      showToast('Reply sent to case officer', 'success');
+    } catch (err) {
+      alert('Could not send reply: ' + err.message);
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send Reply';
+    }
+  };
+
+  actions.appendChild(cancelBtn);
+  actions.appendChild(sendBtn);
+  editor.appendChild(actions);
+  area.appendChild(editor);
+  ta.focus();
+}
+
 function updateProgress() {
   const pct = totalCount ? Math.round((uploadedCount / totalCount) * 100) : 0;
   document.getElementById('progressLabel').textContent =
@@ -1068,6 +1162,34 @@ router.post('/:caseRef/upload/:itemId', upload.single('file'), async (req, res) 
   } catch (err) {
     console.error('[DocForm] Upload error for item', itemId, ':', err.message);
     res.status(500).json({ success: false, error: 'Upload failed. Please try again.' });
+  }
+});
+
+// ─── Client reply to document review note ───────────────────────────────────
+
+router.post('/:caseRef/reply-note', async (req, res) => {
+  const caseRef = decodeURIComponent(req.params.caseRef).trim();
+  const { itemId, reply } = req.body || {};
+
+  if (!itemId || !reply || !reply.trim()) {
+    return res.status(400).json({ success: false, error: 'itemId and reply are required.' });
+  }
+
+  try {
+    // Post the client's reply as a Monday.com comment on the document execution item
+    await mondayApi.query(
+      `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+      {
+        itemId: String(itemId),
+        body:   `\u2709\ufe0f Client Reply\n\nCase: ${caseRef}\n\n"${reply.trim()}"\n\nPosted from the Document Upload Portal at ${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true })} (Toronto).`,
+      }
+    );
+
+    console.log(`[DocForm] Client reply posted for item ${itemId} on case ${caseRef}`);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error(`[DocForm] Reply error for item ${itemId}:`, err.message);
+    return res.status(500).json({ success: false, error: 'Could not post reply.' });
   }
 });
 
