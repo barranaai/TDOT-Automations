@@ -280,10 +280,13 @@ async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshol
   const htmlFormMode = qMetrics.htmlFormMode;
 
   // Always update document-related columns.
+  // blockingQCount defaults to 0 here; the Q-board path below overwrites it with
+  // the real count.  HTML-form cases have no blocking questions so 0 is correct.
   const colValues = {
     [CM.docReadiness]:     docReady,
     [CM.blockingDocCount]: docMetrics.blockingCount,
     [CM.missingRequired]:  docMetrics.missingRequired,
+    [CM.blockingQCount]:   0,
   };
 
   let thresholdMet  = false;
