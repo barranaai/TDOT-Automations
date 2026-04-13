@@ -22,6 +22,7 @@ const caseHealthEngine     = require('./services/caseHealthEngine');
 const chasingLoopService          = require('./services/chasingLoopService');
 const escalationRoutingService    = require('./services/escalationRoutingService');
 const emailService                = require('./services/emailService');
+const docCodeGenerator            = require('./scripts/generateDocumentCodes');
 const { templateBoardId, executionBoardId, clientMasterBoardId } = require('../config/monday');
 
 const app = express();
@@ -162,6 +163,25 @@ app.post('/api/chasing/run', async (req, res) => {
   res.json({ status: 'triggered', message: 'Client Chasing Loop running in background…' });
   chasingLoopService.runChasingLoop().catch((err) =>
     console.error('[ChasingLoop] Manual run failed:', err.message)
+  );
+});
+
+// Document Code Generator — preview (dry run, returns counts + sample)
+app.get('/api/utils/doc-codes/preview', async (req, res) => {
+  try {
+    const result = await docCodeGenerator.previewCodes();
+    res.json(result);
+  } catch (err) {
+    console.error('[DocCodes] Preview failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Document Code Generator — write (fire-and-forget, generates missing codes)
+app.post('/api/utils/doc-codes/generate', async (req, res) => {
+  res.json({ status: 'triggered', message: 'Document Code Generator running in background…' });
+  docCodeGenerator.generateCodes().catch((err) =>
+    console.error('[DocCodes] Generate failed:', err.message)
   );
 });
 

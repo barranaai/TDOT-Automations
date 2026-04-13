@@ -227,6 +227,153 @@ function buildEnginesHTML() {
       margin-bottom: 28px;
     }
 
+    /* ── Board Utilities ──────────────────────────── */
+    .board-utils-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .butil-card {
+      background: var(--card);
+      border-radius: var(--r);
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .butil-hd {
+      padding: 16px 22px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 14px;
+    }
+
+    .butil-icon {
+      width: 42px; height: 42px;
+      border-radius: 10px;
+      background: #eff6ff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; flex-shrink: 0;
+    }
+
+    .butil-title {
+      font-size: 14px; font-weight: 700;
+      color: var(--navy); margin-bottom: 2px;
+    }
+
+    .butil-sub {
+      font-size: 11px; color: var(--muted); line-height: 1.5;
+    }
+
+    .butil-body { padding: 16px 22px 18px; }
+
+    .butil-desc {
+      font-size: 12px; color: var(--muted);
+      line-height: 1.65; margin-bottom: 16px;
+    }
+
+    .butil-actions {
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    }
+
+    .butil-btn {
+      padding: 9px 20px;
+      border: none; border-radius: 7px;
+      font-size: 13px; font-weight: 700;
+      font-family: inherit; cursor: pointer;
+      transition: background .15s, opacity .15s;
+      display: inline-flex; align-items: center; gap: 6px;
+      white-space: nowrap;
+    }
+
+    .butil-btn.preview {
+      background: #f1f5f9; color: var(--navy);
+      border: 1.5px solid var(--border);
+    }
+    .butil-btn.preview:hover:not(:disabled) { background: #e2e8f0; }
+
+    .butil-btn.write {
+      background: var(--navy); color: white;
+    }
+    .butil-btn.write:hover:not(:disabled) { background: var(--navy-light); }
+
+    .butil-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .butil-btn.success  { background: var(--green) !important; color: white; }
+    .butil-btn.error    { background: var(--red)   !important; color: white; }
+
+    .butil-result {
+      margin-top: 14px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      font-size: 12px; color: var(--text);
+      display: none;
+    }
+
+    .butil-result.visible { display: block; }
+
+    .butil-result .res-row {
+      display: flex; gap: 20px; flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    .butil-result .res-stat {
+      display: flex; flex-direction: column; gap: 2px;
+    }
+
+    .butil-result .res-num {
+      font-size: 18px; font-weight: 800;
+      color: var(--navy); line-height: 1;
+    }
+
+    .butil-result .res-num.green  { color: var(--green); }
+    .butil-result .res-num.amber  { color: var(--amber); }
+    .butil-result .res-num.muted  { color: var(--muted); }
+
+    .butil-result .res-lbl {
+      font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .7px;
+      color: var(--light);
+    }
+
+    .butil-result .res-preview {
+      margin-top: 8px;
+      border-top: 1px solid var(--border);
+      padding-top: 8px;
+    }
+
+    .butil-result .res-preview-title {
+      font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .7px;
+      color: var(--light); margin-bottom: 6px;
+    }
+
+    .butil-result .res-item {
+      display: flex; justify-content: space-between; gap: 12px;
+      padding: 3px 0;
+      font-size: 11px; border-bottom: 1px solid #f1f5f9;
+    }
+
+    .butil-result .res-item:last-child { border-bottom: none; }
+
+    .butil-result .res-item-name {
+      color: var(--muted); overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+      flex: 1;
+    }
+
+    .butil-result .res-item-code {
+      font-family: 'Menlo', 'Monaco', monospace;
+      font-size: 10px; color: var(--navy);
+      font-weight: 600; white-space: nowrap;
+    }
+
+    .butil-result .res-warn {
+      color: var(--amber); font-size: 10px;
+    }
+
     .util-card {
       background: var(--card);
       border-radius: var(--r);
@@ -562,6 +709,43 @@ ${buildNavHeader('engines')}
 
   </div>
 
+  <!-- Board Utilities -->
+  <div class="sec-hd">
+    <h2 class="sec-title">Board Utilities</h2>
+    <span class="sec-hint">One-off data operations for the Template and Execution boards</span>
+  </div>
+
+  <div class="board-utils-grid">
+
+    <div class="butil-card">
+      <div class="butil-hd">
+        <div class="butil-icon">🏷️</div>
+        <div>
+          <div class="butil-title">Document Code Generator</div>
+          <div class="butil-sub">Template Board &nbsp;·&nbsp; Document Checklist</div>
+        </div>
+      </div>
+      <div class="butil-body">
+        <p class="butil-desc">
+          Generates missing Document Codes on the Template Board using the deterministic formula
+          <strong>DOC_INITIALS_CASETYPE_CATEGORY_NUM</strong> (e.g. <code style="font-size:11px;background:#f1f5f9;padding:1px 5px;border-radius:4px">POEL_SP_EMP_001</code>).
+          Replaces Monday.com's AI Autofill which was consuming AI credits.
+          Items that already have a code are never modified.
+        </p>
+        <div class="butil-actions">
+          <button class="butil-btn preview" id="btn-doccode-preview" onclick="docCodePreview()">
+            🔍 Preview
+          </button>
+          <button class="butil-btn write" id="btn-doccode-generate" onclick="docCodeGenerate()">
+            ▶ Generate Missing Codes
+          </button>
+        </div>
+        <div class="butil-result" id="doccode-result"></div>
+      </div>
+    </div>
+
+  </div><!-- /board-utils-grid -->
+
   <!-- Activity Log -->
   <div class="sec-hd">
     <h2 class="sec-title">Activity Log</h2>
@@ -761,6 +945,115 @@ ${buildNavHeader('engines')}
         setTimeout(function() {
           btn.classList.remove('success', 'error'); btn.disabled = false; btn.textContent = 'Send';
         }, 4000);
+      });
+  }
+
+  /* ── Board Utilities ───────────────────────────────────────────── */
+  function docCodePreview() {
+    var btn = document.getElementById('btn-doccode-preview');
+    var res = document.getElementById('doccode-result');
+    var key = getKey(); if (!key) return;
+
+    btn.disabled = true;
+    btn.textContent = '\u27f3 Loading\u2026';
+    res.classList.remove('visible');
+
+    fetch('/api/utils/doc-codes/preview', { headers: { 'X-Api-Key': key } })
+      .then(function(r) {
+        return r.json().then(function(d) {
+          if (!r.ok) throw new Error(d.error || 'Failed (' + r.status + ')');
+          return d;
+        });
+      })
+      .then(function(d) {
+        var html = '<div class="res-row">';
+        html += '<div class="res-stat"><div class="res-num">' + d.totalItems + '</div><div class="res-lbl">Total Items</div></div>';
+        html += '<div class="res-stat"><div class="res-num muted">' + d.alreadyHas + '</div><div class="res-lbl">Already Have Code</div></div>';
+        html += '<div class="res-stat"><div class="res-num ' + (d.missing > 0 ? 'amber' : 'green') + '">' + d.missing + '</div><div class="res-lbl">Missing Code</div></div>';
+        if (d.warnings) html += '<div class="res-stat"><div class="res-num amber">' + d.warnings + '</div><div class="res-lbl">Warnings</div></div>';
+        html += '</div>';
+
+        if (d.missing === 0) {
+          html += '<div style="color:var(--green);font-weight:700;font-size:12px">\u2713 All items already have a Document Code \u2014 nothing to generate.</div>';
+        } else if (d.preview && d.preview.length) {
+          html += '<div class="res-preview">';
+          html += '<div class="res-preview-title">Sample of codes to be generated</div>';
+          d.preview.forEach(function(item) {
+            var warn = item.warn && item.warn.length ? ' <span class="res-warn">\u26a0 ' + item.warn.join(', ') + '</span>' : '';
+            var name = item.name.length > 52 ? item.name.slice(0, 51) + '\u2026' : item.name;
+            html += '<div class="res-item"><span class="res-item-name">' + name + warn + '</span><span class="res-item-code">' + item.code + '</span></div>';
+          });
+          if (d.missing > 20) html += '<div style="color:var(--light);font-size:11px;margin-top:4px">\u2026 and ' + (d.missing - 20) + ' more</div>';
+          html += '</div>';
+        }
+
+        res.innerHTML = html;
+        res.classList.add('visible');
+        addLog('info', 'Doc Code Preview \u2014 ' + d.missing + ' missing codes found out of ' + d.totalItems + ' items.');
+      })
+      .catch(function(e) {
+        res.innerHTML = '<span style="color:var(--red)">\u2717 Preview failed: ' + e.message + '</span>';
+        res.classList.add('visible');
+        addLog('error', 'Doc Code Preview failed \u2014 ' + e.message);
+      })
+      .finally(function() {
+        btn.disabled = false;
+        btn.textContent = '\ud83d\udd0d Preview';
+      });
+  }
+
+  function docCodeGenerate() {
+    var btn    = document.getElementById('btn-doccode-generate');
+    var btnPre = document.getElementById('btn-doccode-preview');
+    var res    = document.getElementById('doccode-result');
+    var key    = getKey(); if (!key) return;
+
+    if (!confirm('This will write new Document Codes to the Template Board. Items that already have a code will not be changed. Continue?')) return;
+
+    btn.disabled = true;
+    btnPre.disabled = true;
+    btn.classList.add('running');
+    btn.textContent = '\u27f3 Running\u2026';
+    res.innerHTML = '<span style="color:var(--amber)">\u27f3 Generating codes in background \u2014 this may take a few minutes. Check the server logs for progress.</span>';
+    res.classList.add('visible');
+    addLog('running', 'Document Code Generator \u2014 triggered write mode\u2026');
+
+    fetch('/api/utils/doc-codes/generate', {
+      method: 'POST',
+      headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' }
+    })
+      .then(function(r) {
+        return r.json().then(function(d) {
+          if (!r.ok) throw new Error(d.error || 'Failed (' + r.status + ')');
+          return d;
+        });
+      })
+      .then(function() {
+        btn.classList.remove('running');
+        btn.classList.add('success');
+        btn.textContent = '\u2713 Triggered';
+        addLog('success', 'Document Code Generator \u2014 running in background. Re-run Preview to see updated counts when complete.');
+        document.getElementById('stat-last').textContent =
+          new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        setTimeout(function() {
+          btn.classList.remove('success');
+          btn.disabled = false;
+          btnPre.disabled = false;
+          btn.textContent = '\u25b6 Generate Missing Codes';
+        }, 5000);
+      })
+      .catch(function(e) {
+        btn.classList.remove('running');
+        btn.classList.add('error');
+        btn.textContent = '\u2717 Failed';
+        res.innerHTML = '<span style="color:var(--red)">\u2717 ' + e.message + '</span>';
+        addLog('error', 'Document Code Generator failed \u2014 ' + e.message);
+        setTimeout(function() {
+          btn.classList.remove('error');
+          btn.disabled = false;
+          btnPre.disabled = false;
+          btn.textContent = '\u25b6 Generate Missing Codes';
+        }, 5000);
       });
   }
 

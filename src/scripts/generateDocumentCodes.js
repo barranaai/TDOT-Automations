@@ -260,9 +260,105 @@ async function writeDocCode(itemId, code) {
   );
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Core logic (exported for server API use) ─────────────────────────────────
 
-async function main() {
+/**
+ * Build the generation plan from the current board state.
+ * Returns { totalItems, alreadyHas, plan: [{ id, name, code, warn }] }
+ */
+async function buildPlan() {
+  const allItems = await fetchAllTemplateItems();
+
+  const takenCodes = new Set();
+  const toProcess  = [];
+  let   alreadyHas = 0;
+
+  for (const item of allItems) {
+    const cv       = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
+    const code     = cv(COL_DOC_CODE);
+    const category = cv(COL_CATEGORY);
+    const caseType = cv(COL_CASE_TYPE);
+
+    if (code) {
+      takenCodes.add(code);
+      alreadyHas++;
+    } else {
+      toProcess.push({ id: item.id, name: item.name, category, caseType });
+    }
+  }
+
+  const plan = [];
+  for (const item of toProcess) {
+    const { id, name, category, caseType } = item;
+    const warn = [];
+    if (!caseType) warn.push('no case type');
+    if (!category) warn.push('no category');
+    const code = buildCode(name, caseType, category, takenCodes);
+    takenCodes.add(code);
+    plan.push({ id, name, code, warn });
+  }
+
+  return { totalItems: allItems.length, alreadyHas, plan };
+}
+
+/**
+ * Preview only — returns counts and sample items. No writes.
+ * Used by the admin dashboard API.
+ *
+ * @returns {{ totalItems, alreadyHas, missing, warnings, preview: [{name,code,warn}] }}
+ */
+async function previewCodes() {
+  const { totalItems, alreadyHas, plan } = await buildPlan();
+  const warnings = plan.filter((p) => p.warn.length > 0).length;
+  return {
+    totalItems,
+    alreadyHas,
+    missing:  plan.length,
+    warnings,
+    preview:  plan.slice(0, 20).map(({ name, code, warn }) => ({ name, code, warn })),
+  };
+}
+
+/**
+ * Write mode — generates and writes all missing codes to Monday.com.
+ * Designed to run in the background (fire-and-forget from the API endpoint).
+ *
+ * @returns {{ totalItems, alreadyHas, written, failed }}
+ */
+async function generateCodes() {
+  const { totalItems, alreadyHas, plan } = await buildPlan();
+
+  if (!plan.length) {
+    console.log('[DocCodes] Nothing to do — all items already have a Document Code.');
+    return { totalItems, alreadyHas, written: 0, failed: 0 };
+  }
+
+  console.log(`[DocCodes] Generating ${plan.length} missing codes…`);
+  let written = 0;
+  let failed  = 0;
+
+  for (const { id, name, code } of plan) {
+    try {
+      await writeDocCode(id, code);
+      written++;
+      console.log(`[DocCodes]   ✓  "${code}"  ←  ${name}`);
+    } catch (err) {
+      failed++;
+      console.error(`[DocCodes]   ✗  FAILED for "${name}" (id:${id}): ${err.message}`);
+    }
+    await sleep(DELAY_MS);
+  }
+
+  console.log(`[DocCodes] Done — written: ${written}  failed: ${failed}`);
+  return { totalItems, alreadyHas, written, failed };
+}
+
+module.exports = { previewCodes, generateCodes };
+
+// ─── CLI entry point ──────────────────────────────────────────────────────────
+// Only runs when called directly: node src/scripts/generateDocumentCodes.js [--write]
+
+if (require.main === module) {
   const DRY_RUN = !process.argv.includes('--write');
 
   console.log('');
@@ -272,99 +368,35 @@ async function main() {
   console.log(`  Mode: ${DRY_RUN ? '🔍 DRY RUN (preview only — pass --write to apply)' : '✏️  WRITE MODE'}`);
   console.log('');
 
-  // ── 1. Fetch all template items ──────────────────────────────────────────────
-  console.log('▶  Fetching template board items…');
-  const allItems = await fetchAllTemplateItems();
-  console.log(`   ${allItems.length} items loaded\n`);
+  const run = DRY_RUN
+    ? () => previewCodes().then(({ totalItems, alreadyHas, missing, warnings, preview }) => {
+        console.log(`▶  ${totalItems} items loaded`);
+        console.log(`   ${alreadyHas} already have a code — will not be modified`);
+        console.log(`   ${missing} items are missing a Document Code\n`);
+        if (!missing) { console.log('✅ Nothing to do.'); return; }
+        console.log('─'.repeat(67));
+        console.log('  Item Name                                        Generated Code');
+        console.log('─'.repeat(67));
+        preview.forEach(({ name, code, warn }) => {
+          const label    = name.length > 44 ? name.slice(0, 43) + '…' : name;
+          const warnStr  = warn.length ? `  ⚠ ${warn.join(', ')}` : '';
+          console.log(`  ${label.padEnd(46)}  ${code}${warnStr}`);
+        });
+        if (missing > 20) console.log(`  … and ${missing - 20} more`);
+        console.log('─'.repeat(67));
+        console.log(`\n  Total to generate: ${missing}`);
+        if (warnings) console.log(`  Warnings (partial info): ${warnings}`);
+        console.log('\nℹ️  Dry run complete. Run with --write to apply.\n');
+      })
+    : () => generateCodes().then(({ written, failed }) => {
+        console.log('');
+        console.log('═══════════════════════════════════════════════════════════════');
+        console.log(`  ✅ Done — written: ${written}  failed: ${failed}`);
+        console.log('═══════════════════════════════════════════════════════════════\n');
+      });
 
-  // ── 2. Build set of all existing codes ──────────────────────────────────────
-  const takenCodes  = new Set();
-  const toProcess   = [];
-  let   alreadyHas  = 0;
-
-  for (const item of allItems) {
-    const cv       = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
-    const code     = cv(COL_DOC_CODE);
-    const category = cv(COL_CATEGORY);
-    const caseType = cv(COL_CASE_TYPE);
-
-    if (code) {
-      takenCodes.add(code);    // register existing codes so we don't duplicate
-      alreadyHas++;
-    } else {
-      toProcess.push({ id: item.id, name: item.name, category, caseType });
-    }
-  }
-
-  console.log(`   ${alreadyHas} items already have a Document Code — will not be modified`);
-  console.log(`   ${toProcess.length} items are missing a Document Code\n`);
-
-  if (!toProcess.length) {
-    console.log('✅ Nothing to do — all items already have a Document Code.');
-    return;
-  }
-
-  // ── 3. Generate codes & preview ──────────────────────────────────────────────
-  console.log('─'.repeat(67));
-  console.log('  Item Name                                        Generated Code');
-  console.log('─'.repeat(67));
-
-  const plan = [];    // [{ id, name, code }]
-  let warnings = 0;
-
-  for (const item of toProcess) {
-    const { id, name, category, caseType } = item;
-
-    const warn = [];
-    if (!caseType)  warn.push('no case type');
-    if (!category)  warn.push('no category');
-
-    const code = buildCode(name, caseType, category, takenCodes);
-    takenCodes.add(code);   // reserve immediately so next item won't collide
-    plan.push({ id, name, code, warn });
-
-    const label = name.length > 44 ? name.slice(0, 43) + '…' : name;
-    const warnStr = warn.length ? `  ⚠ ${warn.join(', ')}` : '';
-    console.log(`  ${label.padEnd(46)}  ${code}${warnStr}`);
-    if (warn.length) warnings++;
-  }
-
-  console.log('─'.repeat(67));
-  console.log(`\n  Total to generate: ${plan.length}`);
-  if (warnings) console.log(`  Warnings (partial info): ${warnings}`);
-  console.log('');
-
-  if (DRY_RUN) {
-    console.log('ℹ️  Dry run complete. No changes made.');
-    console.log('   Run with --write to apply these codes to the board.\n');
-    return;
-  }
-
-  // ── 4. Write codes to the board ──────────────────────────────────────────────
-  console.log('▶  Writing codes to Monday.com…\n');
-
-  let written = 0;
-  let failed  = 0;
-
-  for (const { id, name, code } of plan) {
-    try {
-      await writeDocCode(id, code);
-      written++;
-      console.log(`  ✓  "${code}"  ←  ${name}`);
-    } catch (err) {
-      failed++;
-      console.error(`  ✗  FAILED for "${name}" (id:${id}): ${err.message}`);
-    }
-    await sleep(DELAY_MS);
-  }
-
-  console.log('');
-  console.log('═══════════════════════════════════════════════════════════════');
-  console.log(`  ✅ Done — written: ${written}  failed: ${failed}`);
-  console.log('═══════════════════════════════════════════════════════════════\n');
+  run().catch((err) => {
+    console.error('\n❌ Fatal error:', err.message);
+    process.exit(1);
+  });
 }
-
-main().catch((err) => {
-  console.error('\n❌ Fatal error:', err.message);
-  process.exit(1);
-});
