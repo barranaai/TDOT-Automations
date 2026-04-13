@@ -256,10 +256,12 @@ function calcDocMetrics(items) {
       if (status === 'Reviewed') reviewed++;
     }
     if (isBlocking && status !== 'Reviewed') blocking++;
-    // A Mandatory document is "missing" if it hasn't been received or reviewed.
-    // New execution items have null/blank status, which also means not yet received.
-    const receivedStatuses = new Set(['Reviewed', 'Received', 'Under Review']);
-    if (required === 'Mandatory' && !receivedStatuses.has(status)) missingRequired++;
+
+    // "Missing Required Documents" = Mandatory docs that count toward readiness
+    // AND haven't entered the pipeline at all (no upload from the client yet).
+    // "Rework Required" is excluded: the client did upload, it's in review cycle.
+    const inPipeline = new Set(['Reviewed', 'Received', 'Under Review', 'Rework Required']);
+    if (required === 'Mandatory' && counts === 'yes' && !inPipeline.has(status)) missingRequired++;
   }
 
   const readinessPct = countable > 0 ? Math.round((reviewed / countable) * 100) : 0;
