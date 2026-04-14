@@ -206,6 +206,7 @@ function formPage(caseRef, sections) {
   --green:#059669;--green-bg:#ecfdf5;
   --amber:#b45309;--amber-bg:#fffbeb;--amber-border:#fde68a;
   --orange:#ea580c;--orange-bg:#fff7ed;--orange-border:#fed7aa;
+  --red:#dc2626;--red-bg:#fef2f2;--red-border:#fecaca;
   --gray-50:#f9fafb;--gray-100:#f3f4f6;--gray-200:#e5e7eb;--gray-300:#d1d5db;
   --gray-400:#9ca3af;--gray-500:#6b7280;--gray-600:#4b5563;--gray-700:#374151;--gray-900:#111827;
   --shadow-md:0 4px 20px rgba(0,0,0,.08),0 2px 8px rgba(0,0,0,.04);
@@ -262,11 +263,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .badge.action-required{background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange-border)}
 .q-label{display:block;font-size:.92rem;font-weight:600;color:var(--gray-800, #1f2937);margin-bottom:.4rem;line-height:1.55}
 .q-help{font-size:.79rem;color:#92400e;background:var(--amber-bg);border:1px solid var(--amber-border);border-left:3px solid #f59e0b;padding:.45rem .7rem;border-radius:var(--radius-sm);margin-bottom:.5rem;line-height:1.55;white-space:pre-line}
-.needs-action{border:2px solid #fb923c!important;background:#fffbf5!important;border-radius:12px;padding:.9rem 1.1rem!important;box-shadow:0 2px 12px rgba(249,115,22,.12)}
-.needs-action .q-label{color:#c2410c;font-weight:700}
-.q-review-note{background:var(--orange-bg);border:1px solid var(--orange-border);border-left:4px solid var(--orange);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:.65rem;margin-top:.15rem}
-.q-review-note-header{font-size:.71rem;font-weight:700;color:#c2410c;padding:.35rem .75rem;background:#ffedd5;border-bottom:1px solid var(--orange-border);letter-spacing:.03em;text-transform:uppercase}
-.q-review-note-body{font-size:.84rem;color:#7c2d12;padding:.45rem .75rem;line-height:1.55;white-space:pre-wrap}
+.needs-action{border:2px solid #f87171!important;background:#fef2f2!important;border-radius:12px;padding:.9rem 1.1rem!important;box-shadow:0 2px 12px rgba(220,38,38,.12)}
+.needs-action .q-label{color:#dc2626;font-weight:700}
+.q-review-note{background:var(--red-bg);border:1px solid var(--red-border);border-left:4px solid var(--red);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:.65rem;margin-top:.15rem}
+.q-review-note-header{font-size:.71rem;font-weight:700;color:#991b1b;padding:.35rem .75rem;background:#fee2e2;border-bottom:1px solid var(--red-border);letter-spacing:.03em;text-transform:uppercase}
+.q-review-note-body{font-size:.84rem;color:#7f1d1d;padding:.45rem .75rem;line-height:1.55;white-space:pre-wrap}
 .form-input{width:100%;padding:.65rem .95rem;border:1.5px solid var(--gray-200);border-radius:var(--radius-sm);font-size:.9rem;font-family:inherit;outline:none;transition:border-color .18s,box-shadow .18s;background:#fff;color:var(--gray-900)}
 .form-input:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-faint)}
 .textarea{resize:vertical;min-height:88px;line-height:1.6}

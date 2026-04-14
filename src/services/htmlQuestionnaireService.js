@@ -1281,12 +1281,12 @@ ${hasAdditionalForm ? `
     container.setAttribute('data-tdot-comment', flag.comment || '');
     if (memberFormKey) container.setAttribute('data-tdot-formkey', memberFormKey);
     container.style.cssText =
-      'margin-top:6px;border-radius:8px;overflow:hidden;border:1px solid #fed7aa;font-family:Segoe UI,sans-serif;';
+      'margin-top:6px;border-radius:8px;overflow:hidden;border:1px solid #fca5a5;border-left:4px solid #dc2626;font-family:Segoe UI,sans-serif;';
 
     /* Officer comment */
     var commentDiv = document.createElement('div');
     commentDiv.style.cssText =
-      'padding:10px 14px;background:#fff7ed;font-size:13px;color:#92400e;line-height:1.5;';
+      'padding:10px 14px;background:#fef2f2;font-size:13px;color:#991b1b;line-height:1.5;';
     commentDiv.innerHTML = '<strong>\ud83d\udcac Consultant note:</strong> ' + escHtml(flag.comment);
     container.appendChild(commentDiv);
 

@@ -566,6 +566,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
   --blue:#2563eb;--blue-bg:#eff6ff;--blue-text:#1e40af;
   --amber:#b45309;--amber-bg:#fffbeb;--amber-border:#fde68a;
   --orange:#ea580c;--orange-bg:#fff7ed;--orange-border:#fed7aa;
+  --red:#dc2626;--red-bg:#fef2f2;--red-border:#fecaca;
   --gray-50:#f9fafb;--gray-100:#f3f4f6;--gray-200:#e5e7eb;--gray-300:#d1d5db;
   --gray-400:#9ca3af;--gray-500:#6b7280;--gray-600:#4b5563;--gray-700:#374151;--gray-900:#111827;
   --shadow-sm:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
@@ -638,9 +639,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .doc-instructions li{display:flex;align-items:flex-start;gap:.5rem}
 .doc-instructions li::before{content:'';display:block;width:5px;height:5px;border-radius:50%;background:#f59e0b;margin-top:.52em;flex-shrink:0}
 .doc-instructions a{color:#92400e;text-decoration:underline;word-break:break-all}
-.doc-review-note{background:var(--orange-bg);border:1px solid var(--orange-border);border-left:4px solid var(--orange);border-radius:var(--radius-sm);margin-top:.55rem;overflow:hidden}
-.doc-review-note-header{font-size:.71rem;font-weight:700;color:#c2410c;padding:.35rem .75rem;background:#ffedd5;border-bottom:1px solid var(--orange-border);letter-spacing:.03em;text-transform:uppercase}
-.doc-review-note-body{font-size:.82rem;color:#7c2d12;padding:.45rem .75rem;line-height:1.55}
+.doc-review-note{background:var(--red-bg);border:1px solid var(--red-border);border-left:4px solid var(--red);border-radius:var(--radius-sm);margin-top:.55rem;overflow:hidden}
+.doc-review-note-header{font-size:.71rem;font-weight:700;color:#991b1b;padding:.35rem .75rem;background:#fee2e2;border-bottom:1px solid var(--red-border);letter-spacing:.03em;text-transform:uppercase}
+.doc-review-note-body{font-size:.82rem;color:#7f1d1d;padding:.45rem .75rem;line-height:1.55}
 .doc-reply-area{padding:.5rem .75rem;background:#fafafa;border-top:1px solid #f0f0f0}
 .doc-reply-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 14px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:.72rem;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s}
 .doc-reply-btn:hover{background:#1d4ed8}

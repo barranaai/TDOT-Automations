@@ -365,8 +365,8 @@ function buildConsolidatedCorrectionEmailHtml({ clientName, caseRef, caseType, m
           Please log back in and update the highlighted fields for each member listed below.
         </p>
 
-        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:20px 24px;margin-bottom:24px;">
-          <div style="font-size:13px;font-weight:700;color:#c2410c;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px;">
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:20px 24px;margin-bottom:24px;">
+          <div style="font-size:13px;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px;">
             Items Requiring Your Attention
           </div>
           ${memberBlocksHtml}
@@ -463,8 +463,8 @@ function buildCorrectionEmailHtml({ clientName, caseRef, caseType, flaggedItems,
           Please log back in and update the highlighted fields.
         </p>
 
-        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:20px 24px;margin-bottom:24px;">
-          <div style="font-size:13px;font-weight:700;color:#c2410c;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px;">
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:20px 24px;margin-bottom:24px;">
+          <div style="font-size:13px;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px;">
             Items Requiring Your Attention
           </div>
           ${sectionHtml}
@@ -659,13 +659,13 @@ function buildReviewPage({ caseRef, formKey, formTitle, fields, flags, staffName
       transition: background .1s;
     }
     .field-row:last-child { border-bottom: none; }
-    .field-row.flagged    { background: #fff7ed; }
+    .field-row.flagged    { background: #fef2f2; }
     .field-meta   { flex: 1; min-width: 0; }
     .field-label  { font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 3px; }
     .field-answer { font-size: 14px; color: #1e293b; word-break: break-word; line-height: 1.5; }
     .flag-area    { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; min-width: 120px; }
-    .flag-badge   { font-size: 12px; font-weight: 700; color: #ea580c; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 20px; padding: 3px 10px; }
-    .flag-comment-text { font-size: 12px; color: #92400e; background: #fef3c7; border-radius: 6px; padding: 6px 10px; max-width: 260px; text-align: left; line-height: 1.5; }
+    .flag-badge   { font-size: 12px; font-weight: 700; color: #dc2626; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 20px; padding: 3px 10px; }
+    .flag-comment-text { font-size: 12px; color: #991b1b; background: #fee2e2; border-radius: 6px; padding: 6px 10px; max-width: 260px; text-align: left; line-height: 1.5; }
 
     .btn-flag, .btn-edit-flag, .btn-remove-flag {
       border: none; border-radius: 6px; font-size: 12px; font-weight: 600;
