@@ -27,9 +27,6 @@
 const mondayApi = require('./mondayApi');
 const { clientMasterBoardId } = require('../../config/monday');
 
-const DOC_BOARD = process.env.MONDAY_EXECUTION_BOARD_ID               || '18401875593';
-const Q_BOARD   = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
-
 // ─── Column IDs ───────────────────────────────────────────────────────────────
 
 const DOC_COLS = {

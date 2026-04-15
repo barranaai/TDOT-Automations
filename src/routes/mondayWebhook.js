@@ -114,6 +114,9 @@ router.post('/', async (req, res) => {
 
     if (type !== 'update_column_value') return;
 
+    // All remaining handlers are Client Master Board only
+    if (boardIdStr !== CLIENT_MASTER_BOARD_ID) return;
+
     // ── Client Master notification triggers ───────────────────────────────
     // Fetch case ref once if this event is for any of the notification columns.
     const isCMNotificationCol = (
@@ -216,45 +219,38 @@ router.post('/', async (req, res) => {
         );
       }
 
-      // → Submission Ready (set manually by supervisor): lock the case
-      if (newStage === SUBMISSION_READY) {
-        console.log(`[Webhook] Case Stage → "${SUBMISSION_READY}" for item ${pulseId} — locking`);
-        // Fetch case ref for logging
-        const itemData = await mondayApi.query(
-          `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
-          { id: String(pulseId) }
-        ).catch(() => null);
-        const caseRef = itemData?.items?.[0]?.column_values?.[0]?.text?.trim() || String(pulseId);
-        stageGateService.onSubmissionReady({ masterItemId: pulseId, caseRef }).catch(err =>
-          console.error('[StageGate] Submission Ready lock failed:', err.message)
-        );
-      }
-
-      // → Internal Review or Submission Preparation: reset Stage Start Date
-      // Covers both manual changes and automated gate advances (harmless duplicate in the latter case).
-      if (newStage === 'Internal Review' || newStage === 'Submission Preparation') {
+      // Fetch case ref once for all stage actions that need it (not Document Collection Started)
+      if (newStage !== DOCUMENT_COLLECTION_STARTED) {
         const refData = await mondayApi.query(
           `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
           { id: String(pulseId) }
         ).catch(() => null);
         const caseRef = refData?.items?.[0]?.column_values?.[0]?.text?.trim() || String(pulseId);
-        console.log(`[Webhook] Case Stage → "${newStage}" for ${caseRef} — resetting Stage Start Date`);
-        onStageAdvanced({ masterItemId: pulseId, newStage, caseRef }).catch(err =>
-          console.error('[StageGate] Stage Start Date reset failed:', err.message)
-        );
-      }
 
-      // → Terminal stage (Closed / Withdrawn / Cancelled): lock case + clear chasing/escalation
-      if (TERMINAL_STAGES.has(newStage)) {
-        const refData = await mondayApi.query(
-          `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
-          { id: String(pulseId) }
-        ).catch(() => null);
-        const caseRef = refData?.items?.[0]?.column_values?.[0]?.text?.trim() || String(pulseId);
-        console.log(`[Webhook] Case Stage → "${newStage}" for ${caseRef} — locking case`);
-        onCaseClosed({ masterItemId: pulseId, newStage, caseRef }).catch(err =>
-          console.error('[StageGate] Case closure lock failed:', err.message)
-        );
+        // → Submission Ready (set manually by supervisor): lock the case
+        if (newStage === SUBMISSION_READY) {
+          console.log(`[Webhook] Case Stage → "${SUBMISSION_READY}" for ${caseRef} — locking`);
+          stageGateService.onSubmissionReady({ masterItemId: pulseId, caseRef }).catch(err =>
+            console.error('[StageGate] Submission Ready lock failed:', err.message)
+          );
+        }
+
+        // → Internal Review or Submission Preparation: reset Stage Start Date
+        // Covers both manual changes and automated gate advances (harmless duplicate in the latter case).
+        if (newStage === 'Internal Review' || newStage === 'Submission Preparation') {
+          console.log(`[Webhook] Case Stage → "${newStage}" for ${caseRef} — resetting Stage Start Date`);
+          onStageAdvanced({ masterItemId: pulseId, newStage, caseRef }).catch(err =>
+            console.error('[StageGate] Stage Start Date reset failed:', err.message)
+          );
+        }
+
+        // → Terminal stage (Closed / Withdrawn / Cancelled): lock case + clear chasing/escalation
+        if (TERMINAL_STAGES.has(newStage)) {
+          console.log(`[Webhook] Case Stage → "${newStage}" for ${caseRef} — locking case`);
+          onCaseClosed({ masterItemId: pulseId, newStage, caseRef }).catch(err =>
+            console.error('[StageGate] Case closure lock failed:', err.message)
+          );
+        }
       }
     }
   } catch (err) {
