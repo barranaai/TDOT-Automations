@@ -122,6 +122,25 @@ function buildDashboardHTML() {
       color: var(--light);
     }
 
+    /* ── Action Cards ───────────────────────────────────────────── */
+    .action-card { background:var(--card); border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid var(--border); border-left:4px solid var(--border); overflow:hidden; display:flex; flex-direction:column; }
+    .action-card.border-red    { border-left-color: var(--red); }
+    .action-card.border-indigo { border-left-color: #4f46e5; }
+    .action-card.border-slate  { border-left-color: #64748b; }
+    .action-card-hd { display:flex; align-items:center; justify-content:space-between; padding:14px 16px 10px; font-size:12px; font-weight:700; color:var(--navy); border-bottom:1px solid var(--border); }
+    .action-badge { font-size:11px; font-weight:800; padding:2px 9px; border-radius:10px; min-width:22px; text-align:center; }
+    .action-badge.red    { background:var(--red-bg);  color:var(--red);   }
+    .action-badge.indigo { background:#ede9fe;         color:#4f46e5;      }
+    .action-badge.slate  { background:#f1f5f9;         color:#64748b;      }
+    .action-list { flex:1; overflow-y:auto; max-height:260px; }
+    .action-item { padding:8px 16px; border-bottom:1px solid #f7f8fa; display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; }
+    .action-item:last-child { border-bottom:none; }
+    .action-item:hover { background:#f8faff; }
+    .action-name { font-weight:600; color:var(--navy); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0; }
+    .action-meta { flex-shrink:0; font-size:10px; font-weight:600; white-space:nowrap; }
+    .action-empty { padding:32px 16px; text-align:center; color:var(--light); font-size:12px; }
+    .action-more { padding:7px 16px; font-size:11px; color:var(--muted); text-align:center; border-top:1px solid var(--border); font-style:italic; background:#fafbfc; }
+
     /* ── Section header ──────────────────────────────────────────── */
     .sec-hd {
       font-size: 16px; font-weight: 800;
@@ -514,6 +533,36 @@ ${buildNavHeader('dashboard')}
       </div>
     </div>
 
+    <!-- ── Action Required ── -->
+    <div class="sec-hd">⚡ Action Required</div>
+    <div class="chart-row chart-row-3" style="margin-bottom:28px">
+
+      <div class="action-card border-red">
+        <div class="action-card-hd">
+          <span>🗓 Deadline ≤7 Days</span>
+          <span class="action-badge red" id="act-count-deadline">0</span>
+        </div>
+        <div class="action-list" id="act-list-deadline"></div>
+      </div>
+
+      <div class="action-card border-indigo">
+        <div class="action-card-hd">
+          <span>📉 Behind Schedule</span>
+          <span class="action-badge indigo" id="act-count-behind">0</span>
+        </div>
+        <div class="action-list" id="act-list-behind"></div>
+      </div>
+
+      <div class="action-card border-slate">
+        <div class="action-card-hd">
+          <span>🔕 No Activity 14d+</span>
+          <span class="action-badge slate" id="act-count-stale">0</span>
+        </div>
+        <div class="action-list" id="act-list-stale"></div>
+      </div>
+
+    </div>
+
     <!-- ── Charts Row 1 ── -->
     <div class="sec-hd">📊 Portfolio Overview</div>
     <div class="chart-row chart-row-3" style="margin-bottom:28px">
@@ -553,26 +602,39 @@ ${buildNavHeader('dashboard')}
 
       <div class="chart-card">
         <div class="chart-title">📈 Case Readiness Breakdown</div>
-        <div style="display:flex;align-items:stretch;justify-content:center;height:200px;gap:0">
+        <div style="display:flex;align-items:stretch;justify-content:center;height:190px;gap:0">
 
-          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-right:1px solid var(--border);padding:0 24px">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-right:1px solid var(--border);padding:0 16px">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Questionnaire</div>
-            <div style="font-size:52px;font-weight:800;letter-spacing:-2px" id="readiness-q">—</div>
+            <div style="font-size:46px;font-weight:800;letter-spacing:-2px" id="readiness-q">—</div>
             <div style="width:90%;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
               <div id="readiness-q-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#2563eb,#60a5fa);transition:width .8s ease;width:0%"></div>
             </div>
-            <div style="font-size:11px;color:var(--light)">avg across all cases</div>
+            <div style="font-size:11px;color:var(--light)">avg questionnaire</div>
           </div>
 
-          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:0 24px">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-right:1px solid var(--border);padding:0 16px;background:#f9fbff">
+            <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.08em">Overall</div>
+            <div style="font-size:46px;font-weight:800;letter-spacing:-2px" id="readiness-overall">—</div>
+            <div style="width:90%;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+              <div id="readiness-overall-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#7c3aed,#a78bfa);transition:width .8s ease;width:0%"></div>
+            </div>
+            <div style="font-size:11px;color:var(--light)">avg overall</div>
+          </div>
+
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:0 16px">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Documents</div>
-            <div style="font-size:52px;font-weight:800;letter-spacing:-2px" id="readiness-doc">—</div>
+            <div style="font-size:46px;font-weight:800;letter-spacing:-2px" id="readiness-doc">—</div>
             <div style="width:90%;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
               <div id="readiness-doc-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#059669,#34d399);transition:width .8s ease;width:0%"></div>
             </div>
-            <div style="font-size:11px;color:var(--light)">avg across all cases</div>
+            <div style="font-size:11px;color:var(--light)">avg documents</div>
           </div>
 
+        </div>
+        <div style="border-top:1px solid var(--border);padding:9px 20px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;color:var(--muted);background:#fafbfc">
+          <span>⚠️ Missing required documents across all active cases:</span>
+          <span style="font-weight:800;color:var(--red)" id="readiness-missing">0</span>
         </div>
       </div>
 
@@ -737,6 +799,7 @@ function loadData() {
 /* ── Render all ──────────────────────────────────────────────────── */
 function render(data) {
   renderKPIs(data.summary);
+  renderActionCards(data.cases);
   renderHealthChart(data.byHealth);
   renderSlaChart(data.bySlaRisk);
   renderStageChart(data.byStage);
@@ -770,23 +833,33 @@ function renderKPIs(s) {
 
 /* ── Readiness meter ──────────────────────────────────────────────── */
 function renderReadiness(s) {
-  var qPct   = s.avgQReadiness   || 0;
-  var docPct = s.avgDocReadiness || 0;
+  var qPct       = s.avgQReadiness   || 0;
+  var docPct     = s.avgDocReadiness || 0;
+  var overallPct = s.avgReadiness    || 0;
 
-  var qEl   = document.getElementById('readiness-q');
-  var docEl = document.getElementById('readiness-doc');
-  if (qEl)   qEl.textContent   = qPct + '%';
-  if (docEl) docEl.textContent = docPct + '%';
+  var qEl       = document.getElementById('readiness-q');
+  var docEl     = document.getElementById('readiness-doc');
+  var overallEl = document.getElementById('readiness-overall');
+  if (qEl)       qEl.textContent       = qPct + '%';
+  if (docEl)     docEl.textContent     = docPct + '%';
+  if (overallEl) overallEl.textContent = overallPct + '%';
 
-  var qColor   = qPct   >= 80 ? 'var(--green)' : qPct   >= 50 ? 'var(--amber)' : 'var(--red)';
-  var docColor = docPct >= 80 ? 'var(--green)' : docPct >= 50 ? 'var(--amber)' : 'var(--red)';
-  if (qEl)   qEl.style.color   = qColor;
-  if (docEl) docEl.style.color = docColor;
+  var qColor       = qPct       >= 80 ? 'var(--green)' : qPct       >= 50 ? 'var(--amber)' : 'var(--red)';
+  var docColor     = docPct     >= 80 ? 'var(--green)' : docPct     >= 50 ? 'var(--amber)' : 'var(--red)';
+  var overallColor = overallPct >= 80 ? 'var(--green)' : overallPct >= 50 ? 'var(--amber)' : 'var(--red)';
+  if (qEl)       qEl.style.color       = qColor;
+  if (docEl)     docEl.style.color     = docColor;
+  if (overallEl) overallEl.style.color = overallColor;
 
-  var qBar   = document.getElementById('readiness-q-bar');
-  var docBar = document.getElementById('readiness-doc-bar');
-  if (qBar)   qBar.style.width   = qPct  + '%';
-  if (docBar) docBar.style.width = docPct + '%';
+  var qBar       = document.getElementById('readiness-q-bar');
+  var docBar     = document.getElementById('readiness-doc-bar');
+  var overallBar = document.getElementById('readiness-overall-bar');
+  if (qBar)       qBar.style.width       = qPct       + '%';
+  if (docBar)     docBar.style.width     = docPct     + '%';
+  if (overallBar) overallBar.style.width = overallPct + '%';
+
+  var missingEl = document.getElementById('readiness-missing');
+  if (missingEl) missingEl.textContent = (s.totalMissingDocs || 0);
 }
 
 /* ── Chart helpers ────────────────────────────────────────────────── */
@@ -1039,6 +1112,86 @@ function renderReadinessVsTargetChart(readinessByStage) {
       },
     },
   });
+}
+
+/* ── Action Required Cards ────────────────────────────────────────── */
+function renderActionCards(cases) {
+  // ── Deadline ≤7 days (or overdue) ───────────────────────────────
+  var deadlineCases = cases.filter(function(c) {
+    if (!c.hardDeadline) return false;
+    var d = new Date(c.hardDeadline);
+    if (isNaN(d)) return false;
+    return Math.floor((d.getTime() - Date.now()) / 86400000) <= 7;
+  }).sort(function(a, b) { return new Date(a.hardDeadline) - new Date(b.hardDeadline); });
+  document.getElementById('act-count-deadline').textContent = deadlineCases.length;
+  _fillActionList('act-list-deadline', deadlineCases, function(c) {
+    var daysUntil = Math.floor((new Date(c.hardDeadline) - Date.now()) / 86400000);
+    var label = daysUntil < 0 ? 'Overdue ' + Math.abs(daysUntil) + 'd'
+              : daysUntil === 0 ? 'Due today' : 'In ' + daysUntil + 'd';
+    var style = daysUntil < 0 ? 'color:#dc2626;font-weight:700'
+              : daysUntil <= 3 ? 'color:#ea580c;font-weight:700' : 'color:#b45309;font-weight:600';
+    return { name: c.clientName || c.caseRef || '—', meta: label, metaStyle: style };
+  });
+
+  // ── Behind schedule ──────────────────────────────────────────────
+  var behindCases = cases.filter(function(c) { return c.behindSchedule; })
+    .sort(function(a, b) {
+      return (b.expectedReadiness - b.overallReadiness) - (a.expectedReadiness - a.overallReadiness);
+    });
+  document.getElementById('act-count-behind').textContent = behindCases.length;
+  _fillActionList('act-list-behind', behindCases, function(c) {
+    var gap = c.expectedReadiness - c.overallReadiness;
+    return {
+      name:      c.clientName || c.caseRef || '—',
+      meta:      c.overallReadiness + '% / ' + c.expectedReadiness + '% (−' + gap + ')',
+      metaStyle: 'color:#4f46e5;font-weight:600',
+    };
+  });
+
+  // ── No activity 14d+ ─────────────────────────────────────────────
+  var staleCases = cases.filter(function(c) {
+    if (!c.lastActivity) return true;
+    var d = new Date(c.lastActivity);
+    if (isNaN(d)) return true;
+    return Math.floor((Date.now() - d.getTime()) / 86400000) >= 14;
+  }).sort(function(a, b) {
+    var da = a.lastActivity ? new Date(a.lastActivity).getTime() : 0;
+    var db = b.lastActivity ? new Date(b.lastActivity).getTime() : 0;
+    return da - db;   // oldest first
+  });
+  document.getElementById('act-count-stale').textContent = staleCases.length;
+  _fillActionList('act-list-stale', staleCases, function(c) {
+    return {
+      name:      c.clientName || c.caseRef || '—',
+      meta:      c.lastActivity ? daysAgoLabel(c.lastActivity) : 'Never',
+      metaStyle: 'color:#64748b',
+    };
+  });
+}
+
+function _fillActionList(listId, cases, rowFn) {
+  var el = document.getElementById(listId);
+  if (!el) return;
+  el.innerHTML = '';
+  if (!cases.length) {
+    el.innerHTML = '<div class="action-empty">All clear ✓</div>';
+    return;
+  }
+  cases.slice(0, 8).forEach(function(c) {
+    var row = rowFn(c);
+    var div = document.createElement('div');
+    div.className = 'action-item';
+    div.innerHTML =
+      '<span class="action-name" title="' + escHtml(row.name) + '">' + escHtml(row.name) + '</span>' +
+      '<span class="action-meta" style="' + (row.metaStyle || '') + '">' + escHtml(row.meta) + '</span>';
+    el.appendChild(div);
+  });
+  if (cases.length > 8) {
+    var more = document.createElement('div');
+    more.className = 'action-more';
+    more.textContent = '+ ' + (cases.length - 8) + ' more — see table below';
+    el.appendChild(more);
+  }
 }
 
 /* ── Manager Cards ────────────────────────────────────────────────── */
