@@ -1222,7 +1222,7 @@ function renderManagerCards(byManager) {
     card.className = 'mgr-card';
     card.innerHTML =
       '<div class="mgr-head">' +
-        '<div class="mgr-avatar">' + initials + '</div>' +
+        '<div class="mgr-avatar">' + escHtml(initials) + '</div>' +
         '<div>' +
           '<div class="mgr-name">' + escHtml(name) + rankBadge + '</div>' +
           '<div class="mgr-cases">' + m.total + ' active case' + (m.total !== 1 ? 's' : '') + '</div>' +
