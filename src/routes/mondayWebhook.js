@@ -14,9 +14,10 @@ const { onStageAdvanced, onCaseClosed, onEscalationCleared, TERMINAL_STAGES } = 
 const notify                      = require('../services/mondayNotificationService');
 const { ASSIGNMENT_COL_IDS }      = notify;
 
-const CLIENT_MASTER_BOARD_ID               = String(process.env.MONDAY_CLIENT_MASTER_BOARD_ID || '');
-const QUESTIONNAIRE_EXECUTION_BOARD_ID     = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
-const DOCUMENT_EXECUTION_BOARD_ID         = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
+const { clientMasterBoardId, executionBoardId, questionnaireExecutionBoardId } = require('../../config/monday');
+const CLIENT_MASTER_BOARD_ID           = String(clientMasterBoardId);
+const QUESTIONNAIRE_EXECUTION_BOARD_ID = String(questionnaireExecutionBoardId);
+const DOCUMENT_EXECUTION_BOARD_ID      = String(executionBoardId);
 
 // Column IDs — Document Execution Board
 const DOC_STATUS_COL     = 'color_mm0zwgvr';
@@ -114,52 +115,43 @@ router.post('/', async (req, res) => {
     if (type !== 'update_column_value') return;
 
     // ── Client Master notification triggers ───────────────────────────────
+    // Fetch case ref once if this event is for any of the notification columns.
+    const isCMNotificationCol = (
+      columnId === CASE_HEALTH_COL    ||
+      columnId === EXPIRY_FLAG_COL    ||
+      columnId === CLIENT_BLOCKED_COL ||
+      columnId === ESCALATION_CM_COL
+    );
 
-    // Case Health → Red
-    if (columnId === CASE_HEALTH_COL && value?.label?.text === 'Red') {
+    if (isCMNotificationCol) {
       const caseRef = await mondayApi.query(
         `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
         { id: String(pulseId) }
       ).then(d => d?.items?.[0]?.column_values?.[0]?.text?.trim() || '').catch(() => '');
-      notify.onCaseHealthRed(pulseId, itemName, caseRef).catch(() => {});
-    }
 
-    // Expiry Risk Flag → Flagged
-    if (columnId === EXPIRY_FLAG_COL && value?.label?.text === 'Flagged') {
-      const caseRef = await mondayApi.query(
-        `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
-        { id: String(pulseId) }
-      ).then(d => d?.items?.[0]?.column_values?.[0]?.text?.trim() || '').catch(() => '');
-      notify.onExpiryFlagged(pulseId, itemName, caseRef).catch(() => {});
-    }
+      const colLabel = value?.label?.text || '';
 
-    // Client-Blocked Status → Yes
-    if (columnId === CLIENT_BLOCKED_COL && value?.label?.text === 'Yes') {
-      const caseRef = await mondayApi.query(
-        `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
-        { id: String(pulseId) }
-      ).then(d => d?.items?.[0]?.column_values?.[0]?.text?.trim() || '').catch(() => '');
-      notify.onClientBlocked(pulseId, itemName, caseRef).catch(() => {});
-    }
+      // Case Health → Red
+      if (columnId === CASE_HEALTH_COL && colLabel === 'Red')
+        notify.onCaseHealthRed(pulseId, itemName, caseRef).catch(() => {});
 
-    // Escalation Required → Yes (Client Master only)
-    if (columnId === ESCALATION_CM_COL && value?.label?.text === 'Yes') {
-      const caseRef = await mondayApi.query(
-        `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
-        { id: String(pulseId) }
-      ).then(d => d?.items?.[0]?.column_values?.[0]?.text?.trim() || '').catch(() => '');
-      notify.onEscalationRequired(pulseId, itemName, caseRef).catch(() => {});
-    }
+      // Expiry Risk Flag → Flagged
+      if (columnId === EXPIRY_FLAG_COL && colLabel === 'Flagged')
+        notify.onExpiryFlagged(pulseId, itemName, caseRef).catch(() => {});
 
-    // Escalation Required → No: clear stale Escalation Reason
-    if (columnId === ESCALATION_CM_COL && value?.label?.text === 'No') {
-      const caseRef = await mondayApi.query(
-        `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL_ID}"]) { text } } }`,
-        { id: String(pulseId) }
-      ).then(d => d?.items?.[0]?.column_values?.[0]?.text?.trim() || '').catch(() => '');
-      onEscalationCleared({ masterItemId: pulseId, caseRef }).catch(err =>
-        console.error('[StageGate] Escalation clear failed:', err.message)
-      );
+      // Client-Blocked Status → Yes
+      if (columnId === CLIENT_BLOCKED_COL && colLabel === 'Yes')
+        notify.onClientBlocked(pulseId, itemName, caseRef).catch(() => {});
+
+      // Escalation Required → Yes
+      if (columnId === ESCALATION_CM_COL && colLabel === 'Yes')
+        notify.onEscalationRequired(pulseId, itemName, caseRef).catch(() => {});
+
+      // Escalation Required → No: clear stale Escalation Reason
+      if (columnId === ESCALATION_CM_COL && colLabel === 'No')
+        onEscalationCleared({ masterItemId: pulseId, caseRef }).catch(err =>
+          console.error('[StageGate] Escalation clear failed:', err.message)
+        );
     }
 
     // Retainer Payment Status → Paid
@@ -183,7 +175,7 @@ router.post('/', async (req, res) => {
         masterItemId: pulseId,
         itemName,
         columnId,
-        newValue: JSON.stringify(value),
+        newValue: JSON.stringify(value || {}),
       }).catch(() => {});
     }
 

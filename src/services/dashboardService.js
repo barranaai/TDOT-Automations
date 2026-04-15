@@ -178,7 +178,7 @@ async function getDashboardStats() {
 
     // ── Inactive ────────────────────────────────────────────────────────────
     const lastAct = c.lastActivity ? new Date(c.lastActivity) : null;
-    const daysSinceActivity = lastAct
+    const daysSinceActivity = (lastAct && !isNaN(lastAct.getTime()))
       ? Math.floor((Date.now() - lastAct.getTime()) / 86400000)
       : 999;
     if (daysSinceActivity >= 14) summary.inactiveCount++;
@@ -186,8 +186,10 @@ async function getDashboardStats() {
     // ── Deadline soon ───────────────────────────────────────────────────────
     if (c.hardDeadline) {
       const dl = new Date(c.hardDeadline);
-      const daysUntil = Math.floor((dl.getTime() - Date.now()) / 86400000);
-      if (daysUntil >= 0 && daysUntil <= 30) summary.deadlineSoonCount++;
+      if (!isNaN(dl.getTime())) {
+        const daysUntil = Math.floor((dl.getTime() - Date.now()) / 86400000);
+        if (daysUntil >= 0 && daysUntil <= 30) summary.deadlineSoonCount++;
+      }
     }
 
     // ── Breakdowns ──────────────────────────────────────────────────────────
@@ -217,8 +219,9 @@ async function getDashboardStats() {
     readinessByStage[stage].expectedSum += c.expectedReadiness;
 
     // ── By manager ──────────────────────────────────────────────────────────
-    const managers = c.manager.split(',').map((m) => m.trim()).filter(Boolean);
+    const managers = c.manager.split(/,\s*/).map((m) => m.trim()).filter(Boolean);
     for (const mgr of managers) {
+      if (mgr === 'Unassigned') continue;
       if (!byManager[mgr]) {
         byManager[mgr] = {
           total: 0, red: 0, orange: 0, green: 0,

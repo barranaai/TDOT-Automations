@@ -31,7 +31,8 @@ async function query(gql, variables = {}, retries = MAX_RETRIES) {
 
       if (response.data.errors) {
         // Check if it's a rate-limit or transient error worth retrying
-        const errMsg = JSON.stringify(response.data.errors);
+        // Extract only the message field — avoids leaking query paths / extensions into logs
+        const errMsg = response.data.errors.map(e => e.message || 'Unknown error').join('; ');
         const isRateLimit = response.data.errors.some(e =>
           e.message?.toLowerCase().includes('rate') || e.extensions?.code === 'RATE_LIMIT'
         );

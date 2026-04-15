@@ -479,8 +479,9 @@ function buildDashboardHTML() {
 
     /* ── Responsive ───────────────────────────────────────────────── */
     @media (max-width: 1100px) {
-      .chart-row-3 { grid-template-columns: 1fr 1fr; }
-      .kpi-strip   { grid-template-columns: repeat(3, 1fr); }
+      .chart-row-3  { grid-template-columns: 1fr 1fr; }
+      .chart-row-dl { grid-template-columns: 1fr; }
+      .kpi-strip    { grid-template-columns: repeat(3, 1fr); }
     }
 
     @media (max-width: 760px) {
@@ -822,6 +823,7 @@ var HEALTH_ORDER = { Red: 0, Orange: 1, Green: 2 };
 function countUp(id, target) {
   var el = document.getElementById(id);
   if (!el) return;
+  if (isNaN(target) || target < 0) target = 0;
   var duration = 650;
   var startTime = null;
   function step(ts) {
@@ -944,7 +946,9 @@ var _charts = {};
 
 function makeDonut(canvasId, labels, values, colors) {
   if (_charts[canvasId]) { _charts[canvasId].destroy(); }
-  var ctx = document.getElementById(canvasId).getContext('2d');
+  var canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
   _charts[canvasId] = new Chart(ctx, {
     type: 'doughnut',
     data: { labels: labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 2, borderColor: '#fff', hoverOffset: 4 }] },
@@ -961,7 +965,9 @@ function makeDonut(canvasId, labels, values, colors) {
 
 function makeHBar(canvasId, labels, values, color, maxVal) {
   if (_charts[canvasId]) { _charts[canvasId].destroy(); }
-  var ctx = document.getElementById(canvasId).getContext('2d');
+  var canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
   _charts[canvasId] = new Chart(ctx, {
     type: 'bar',
     data: { labels: labels, datasets: [{ data: values, backgroundColor: color, borderRadius: 4 }] },
@@ -980,7 +986,9 @@ function makeHBar(canvasId, labels, values, color, maxVal) {
 
 function makeVBar(canvasId, labels, values, colors) {
   if (_charts[canvasId]) { _charts[canvasId].destroy(); }
-  var ctx = document.getElementById(canvasId).getContext('2d');
+  var canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
   _charts[canvasId] = new Chart(ctx, {
     type: 'bar',
     data: { labels: labels, datasets: [{ data: values, backgroundColor: colors, borderRadius: 4 }] },
@@ -1276,6 +1284,7 @@ function _fillActionList(listId, cases, rowFn) {
 /* ── Manager Cards ────────────────────────────────────────────────── */
 function renderManagerCards(byManager) {
   var grid = document.getElementById('mgr-grid');
+  if (!grid) return;
   grid.innerHTML = '';
 
   var managers = Object.keys(byManager).sort(function(a, b) {
@@ -1289,7 +1298,7 @@ function renderManagerCards(byManager) {
 
   managers.forEach(function(name, idx) {
     var m  = byManager[name];
-    var initials = name.split(' ').map(function(p) { return p[0] || ''; }).join('').slice(0, 2).toUpperCase();
+    var initials = name.split(' ').map(function(p) { return p[0] || ''; }).join('').slice(0, 2).toUpperCase() || '?';
     var score = m.score || 0;
     var scoreColor = score >= 70 ? '' : (score >= 40 ? ' amber' : ' red');
 
@@ -1301,7 +1310,7 @@ function renderManagerCards(byManager) {
       '<div class="mgr-head">' +
         '<div class="mgr-avatar">' + escHtml(initials) + '</div>' +
         '<div>' +
-          '<div class="mgr-name">' + escHtml(name) + rankBadge + '</div>' +
+          '<div class="mgr-name">' + escHtml(name) + escHtml(rankBadge) + '</div>' +
           '<div class="mgr-cases">' + m.total + ' active case' + (m.total !== 1 ? 's' : '') + '</div>' +
         '</div>' +
       '</div>' +
@@ -1433,7 +1442,7 @@ function filterTable() {
 function sortTable(col, silent) {
   if (!silent) {
     if (_sortCol === col) { _sortDir *= -1; }
-    else                  { _sortCol = col; _sortDir = col === 'health' || col === 'slaRisk' ? 1 : -1; }
+    else                  { _sortCol = col; var numericDesc = { overallReadiness: true, daysElapsed: true }; _sortDir = (col === 'health' || col === 'slaRisk') ? 1 : (numericDesc[col] ? -1 : 1); }
   }
 
   document.querySelectorAll('[data-col]').forEach(function(th) {
@@ -1582,7 +1591,7 @@ function formatDeadline(dateStr) {
   var d = new Date(dateStr);
   if (isNaN(d)) return '—';
   var daysUntil = Math.floor((d.getTime() - Date.now()) / 86400000);
-  var label = d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+  var label = escHtml(d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }));
   if (daysUntil < 0)   return '<span style="color:#dc2626;font-weight:700">' + label + ' \u26a0</span>';
   if (daysUntil <= 7)  return '<span style="color:#ea580c;font-weight:700">' + label + '</span>';
   if (daysUntil <= 30) return '<span style="color:#b45309">' + label + '</span>';

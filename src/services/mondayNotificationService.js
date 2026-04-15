@@ -21,6 +21,7 @@
  *     onExpiryFlagged            → notify Ops Supervisor + Case Manager
  *     onClientBlocked            → notify Ops Supervisor + Case Manager
  *     onEscalationRequired       → notify Ops Supervisor
+ *     onCaseAssigned             → notify newly assigned person (role-aware)
  */
 
 const mondayApi = require('./mondayApi');
@@ -103,7 +104,7 @@ async function getItemPeople(itemId, colId) {
 
 // Look up Ops Supervisor + Case Manager from Client Master by case reference
 async function getCaseOwners(caseRef) {
-  if (!caseRef) return { supervisorIds: [], managerIds: [], supportOfficerIds: [], stageOwnerIds: [] };
+  if (!caseRef) return { supervisorIds: [], managerIds: [], supportOfficerIds: [], stageOwnerIds: [], masterItemId: null };
   const personCols = [
     CM_COLS.opsSupervisor,
     CM_COLS.caseManager,
@@ -190,7 +191,12 @@ async function getClientName(caseRef) {
 
 async function onDocumentReceived(itemId, itemName) {
   // 1. Document-level assigned reviewer
-  const reviewerIds = await getItemPeople(itemId, DOC_COLS.assignedReviewer);
+  let reviewerIds = [];
+  try {
+    reviewerIds = await getItemPeople(itemId, DOC_COLS.assignedReviewer);
+  } catch (err) {
+    console.warn(`[Notify] onDocumentReceived: reviewer lookup failed for item ${itemId}:`, err.message);
+  }
 
   // 2. Fetch metadata (case ref, category, folder link)
   let docMeta = { caseRef: '', category: '', folderUrl: '' };
@@ -247,8 +253,14 @@ async function onDocumentReceived(itemId, itemName) {
 }
 
 async function onDocumentReworkRequired(itemId, itemName) {
-  const caseRef = await getCaseRefFromItem(itemId, DOC_COLS.caseRef);
-  const { managerIds, supervisorIds, masterItemId } = await getCaseOwners(caseRef);
+  const caseRef = await getCaseRefFromItem(itemId, DOC_COLS.caseRef).catch(() => '');
+  let managerIds = [], supervisorIds = [], masterItemId = null;
+  try {
+    ({ managerIds, supervisorIds, masterItemId } = await getCaseOwners(caseRef));
+  } catch (err) {
+    console.warn(`[Notify] onDocumentReworkRequired: case owners lookup failed for ${caseRef}:`, err.message);
+    return;
+  }
   const ids = [...new Set([...managerIds, ...supervisorIds])];
   if (!ids.length) return;
   const text = `Document flagged for rework: "${itemName}" (Case: ${caseRef})`;
