@@ -709,7 +709,7 @@ function loadData() {
 
   fetch('/api/dashboard/stats', { headers: { 'X-Api-Key': key } })
     .then(function(r) {
-      if (r.status === 401 || r.status === 403) { window.location.href = '/admin'; }
+      if (r.status === 401 || r.status === 403) { window.location.href = '/admin'; throw new Error('Unauthorized'); }
       return r.json();
     })
     .then(function(data) {
@@ -848,22 +848,22 @@ function makeVBar(canvasId, labels, values, colors) {
 /* ── Individual charts ────────────────────────────────────────────── */
 function renderHealthChart(byHealth) {
   var order  = ['Green', 'Orange', 'Red'];
-  var cols   = ['#22c55e', '#f97316', '#ef4444'];
-  var labels = [], vals = [];
+  var COLS   = { Green: '#22c55e', Orange: '#f97316', Red: '#ef4444' };
+  var labels = [], vals = [], colors = [];
   order.forEach(function(k) {
-    if (byHealth[k]) { labels.push(k); vals.push(byHealth[k]); }
+    if (byHealth[k]) { labels.push(k); vals.push(byHealth[k]); colors.push(COLS[k]); }
   });
-  makeDonut('chart-health', labels, vals, cols.slice(0, labels.length));
+  makeDonut('chart-health', labels, vals, colors);
 }
 
 function renderSlaChart(bySla) {
-  var order = ['Green', 'Orange', 'Red'];
-  var cols  = ['#22c55e', '#f97316', '#ef4444'];
-  var labels = [], vals = [];
+  var order  = ['Green', 'Orange', 'Red'];
+  var COLS   = { Green: '#22c55e', Orange: '#f97316', Red: '#ef4444' };
+  var labels = [], vals = [], colors = [];
   order.forEach(function(k) {
-    if (bySla[k]) { labels.push(k); vals.push(bySla[k]); }
+    if (bySla[k]) { labels.push(k); vals.push(bySla[k]); colors.push(COLS[k]); }
   });
-  makeDonut('chart-sla', labels, vals, cols.slice(0, labels.length));
+  makeDonut('chart-sla', labels, vals, colors);
 }
 
 function renderStageChart(byStage) {
@@ -970,7 +970,11 @@ function renderDelayChart(byDelayLevel) {
   var labels = keys.concat(extra);
   var vals   = labels.map(function(k) { return byDelayLevel[k] || 0; });
   var colors = labels.map(function(k) { return COLORS[k] || '#94a3b8'; });
-  if (!labels.length) return; // nothing meaningful to show
+  if (!labels.length) {
+    // No actionable delay data — destroy any previous chart so canvas is blank
+    if (_charts['chart-delay']) { _charts['chart-delay'].destroy(); delete _charts['chart-delay']; }
+    return;
+  }
   makeDonut('chart-delay', labels, vals, colors);
 }
 
@@ -1053,10 +1057,6 @@ function renderManagerCards(byManager) {
     var score = m.score || 0;
     var scoreColor = score >= 70 ? '' : (score >= 40 ? ' amber' : ' red');
 
-    var greenPct  = m.total > 0 ? Math.round(m.green / m.total * 100)  : 0;
-    var orangePct = m.total > 0 ? Math.round(m.orange / m.total * 100) : 0;
-    var redPct    = m.total > 0 ? Math.round(m.red / m.total * 100)    : 0;
-
     var rankBadge = idx === 0 ? ' 🥇' : (idx === 1 ? ' 🥈' : (idx === 2 ? ' 🥉' : ''));
 
     var card = document.createElement('div');
@@ -1099,7 +1099,9 @@ function renderAtRisk(cases) {
   var atRisk = cases.filter(function(c) {
     return c.health === 'Red' || c.slaRisk === 'Red' || c.health === 'Orange';
   }).sort(function(a, b) {
-    return (HEALTH_ORDER[a.health] || 2) - (HEALTH_ORDER[b.health] || 2);
+    var ao = HEALTH_ORDER[a.health] !== undefined ? HEALTH_ORDER[a.health] : 2;
+    var bo = HEALTH_ORDER[b.health] !== undefined ? HEALTH_ORDER[b.health] : 2;
+    return ao - bo;
   });
 
   var tbody = document.getElementById('atrisk-body');
@@ -1250,7 +1252,7 @@ function renderTablePage() {
   }
 
   page.forEach(function(c) {
-    var r = c.overallReadiness;
+    var r = c.overallReadiness || 0;
     var barCls = r >= 70 ? '' : (r >= 40 ? ' mid' : ' low');
     var tr = document.createElement('tr');
     tr.className = c.health === 'Red' ? 'row-red' : (c.health === 'Orange' ? 'row-orange' : '');
