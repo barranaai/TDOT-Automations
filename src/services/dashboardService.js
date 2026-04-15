@@ -115,13 +115,19 @@ async function getDashboardStats() {
     avgReadiness:   0,
   };
 
-  const byStage   = {};
-  const byHealth  = {};
-  const bySlaRisk = {};
-  const byType    = {};
-  const byManager = {}; // { name: { total, red, orange, green, totalReadiness } }
+  const byStage      = {};
+  const byHealth     = {};
+  const bySlaRisk    = {};
+  const byType       = {};
+  const byManager    = {}; // { name: { total, red, orange, green, totalReadiness } }
+  const byChasingStage = {};
 
-  let readinessSum = 0;
+  let readinessSum    = 0;
+  let qReadinessSum   = 0;
+  let docReadinessSum = 0;
+  let readinessCaseCount = 0;
+  let inactiveCount   = 0;
+  let deadlineSoonCount = 0;
 
   for (const c of cases) {
     const h = (c.health || 'Green');
@@ -134,6 +140,27 @@ async function getDashboardStats() {
     if (c.escalationRequired) summary.escalationOpen++;
     if (c.expiryFlagged)      summary.expiryFlagged++;
     readinessSum += c.overallReadiness;
+
+    // Separate Q vs Doc readiness
+    qReadinessSum   += c.qReadiness;
+    docReadinessSum += c.docReadiness;
+    if (c.qReadiness > 0 || c.docReadiness > 0) readinessCaseCount++;
+
+    // Chasing stage breakdown
+    const cs = c.chasingStage || 'Pending';
+    byChasingStage[cs] = (byChasingStage[cs] || 0) + 1;
+
+    // Inactive cases (no activity in 14+ days)
+    const lastAct = c.lastActivity ? new Date(c.lastActivity) : null;
+    const daysSinceActivity = lastAct ? Math.floor((Date.now() - lastAct.getTime()) / 86400000) : 999;
+    if (daysSinceActivity >= 14) inactiveCount++;
+
+    // Deadline-soon cases (hardDeadline within next 30 days)
+    if (c.hardDeadline) {
+      const dl = new Date(c.hardDeadline);
+      const daysUntil = Math.floor((dl.getTime() - Date.now()) / 86400000);
+      if (daysUntil >= 0 && daysUntil <= 30) deadlineSoonCount++;
+    }
 
     // By stage
     const stage = c.caseStage || 'Unknown';
@@ -177,6 +204,11 @@ async function getDashboardStats() {
     ? Math.round(readinessSum / cases.length)
     : 0;
 
+  summary.avgQReadiness   = readinessCaseCount > 0 ? Math.round(qReadinessSum   / cases.length) : 0;
+  summary.avgDocReadiness = readinessCaseCount > 0 ? Math.round(docReadinessSum / cases.length) : 0;
+  summary.inactiveCount      = inactiveCount;
+  summary.deadlineSoonCount  = deadlineSoonCount;
+
   return {
     summary,
     byStage,
@@ -184,6 +216,7 @@ async function getDashboardStats() {
     bySlaRisk,
     byType,
     byManager,
+    byChasingStage,
     cases,
     generatedAt: new Date().toISOString(),
   };

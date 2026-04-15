@@ -65,7 +65,7 @@ function buildDashboardHTML() {
     /* ── KPI Strip ───────────────────────────────────────────────── */
     .kpi-strip {
       display: grid;
-      grid-template-columns: repeat(7, 1fr);
+      grid-template-columns: repeat(9, 1fr);
       gap: 14px;
       margin-bottom: 28px;
     }
@@ -87,6 +87,8 @@ function buildDashboardHTML() {
     .kpi.orange { border-top-color: var(--orange); }
     .kpi.blue   { border-top-color: var(--blue); }
     .kpi.purple { border-top-color: #7c3aed; }
+    .kpi.slate  { border-top-color: #64748b; }
+    .kpi.teal   { border-top-color: #0891b2; }
 
     .kpi-num {
       font-size: 30px; font-weight: 800;
@@ -101,6 +103,8 @@ function buildDashboardHTML() {
     .kpi.orange .kpi-num { color: var(--orange); }
     .kpi.blue   .kpi-num { color: var(--blue); }
     .kpi.purple .kpi-num { color: #7c3aed; }
+    .kpi.slate  .kpi-num { color: #64748b; }
+    .kpi.teal   .kpi-num { color: #0891b2; }
 
     .kpi-label {
       font-size: 10px; font-weight: 700;
@@ -126,6 +130,7 @@ function buildDashboardHTML() {
       margin-bottom: 28px;
     }
 
+    .chart-row-1 { grid-template-columns: 1fr; }
     .chart-row-3 { grid-template-columns: 1fr 1fr 1fr; }
     .chart-row-2 { grid-template-columns: 3fr 2fr; }
 
@@ -395,12 +400,12 @@ function buildDashboardHTML() {
     /* ── Responsive ───────────────────────────────────────────────── */
     @media (max-width: 1100px) {
       .chart-row-3 { grid-template-columns: 1fr 1fr; }
-      .kpi-strip   { grid-template-columns: repeat(4, 1fr); }
+      .kpi-strip   { grid-template-columns: repeat(5, 1fr); }
     }
 
     @media (max-width: 760px) {
       .chart-row-3, .chart-row-2 { grid-template-columns: 1fr; }
-      .kpi-strip { grid-template-columns: repeat(2, 1fr); }
+      .kpi-strip { grid-template-columns: repeat(3, 1fr); }
       .wrap { padding: 16px 12px 48px; }
     }
 
@@ -470,6 +475,14 @@ ${buildNavHeader('dashboard')}
         <div class="kpi-num" id="kpi-expiry">—</div>
         <div class="kpi-label">Expiry Flagged</div>
       </div>
+      <div class="kpi slate">
+        <div class="kpi-num" id="kpi-inactive">—</div>
+        <div class="kpi-label">Inactive 14d+</div>
+      </div>
+      <div class="kpi teal">
+        <div class="kpi-num" id="kpi-deadline">—</div>
+        <div class="kpi-label">Due This Month</div>
+      </div>
     </div>
 
     <!-- ── Charts Row 1 ── -->
@@ -509,18 +522,41 @@ ${buildNavHeader('dashboard')}
         </div>
       </div>
 
-      <div class="chart-card">
-        <div class="chart-title">📈 Avg Readiness</div>
-        <div style="display:flex;align-items:center;justify-content:center;height:200px;flex-direction:column;gap:8px">
-          <div style="font-size:64px;font-weight:800;color:var(--navy);letter-spacing:-2px" id="readiness-big">—</div>
-          <div style="font-size:13px;color:var(--muted)">Average overall case readiness</div>
-          <div style="width:80%;height:8px;background:var(--border);border-radius:4px;overflow:hidden;margin-top:8px">
-            <div id="readiness-bar-fill" style="height:100%;border-radius:4px;background:linear-gradient(90deg,var(--green),#4ade80);transition:width .8s ease;width:0%"></div>
+      <div class="chart-card" id="readiness-big">
+        <div class="chart-title">📈 Case Readiness Breakdown</div>
+        <div style="display:flex;align-items:stretch;justify-content:center;height:200px;gap:0">
+
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-right:1px solid var(--border);padding:0 24px">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Questionnaire</div>
+            <div style="font-size:52px;font-weight:800;letter-spacing:-2px" id="readiness-q">—</div>
+            <div style="width:90%;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+              <div id="readiness-q-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#2563eb,#60a5fa);transition:width .8s ease;width:0%"></div>
+            </div>
+            <div style="font-size:11px;color:var(--light)">avg across all cases</div>
           </div>
-          <div style="font-size:11px;color:var(--light);margin-top:4px">Questionnaire + Document readiness combined</div>
+
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:0 24px">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Documents</div>
+            <div style="font-size:52px;font-weight:800;letter-spacing:-2px" id="readiness-doc">—</div>
+            <div style="width:90%;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+              <div id="readiness-doc-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#059669,#34d399);transition:width .8s ease;width:0%"></div>
+            </div>
+            <div style="font-size:11px;color:var(--light)">avg across all cases</div>
+          </div>
+
         </div>
       </div>
 
+    </div>
+
+    <!-- ── Chasing Stage Row ── -->
+    <div class="chart-row chart-row-1" style="margin-bottom:28px">
+      <div class="chart-card" style="grid-column:1/-1">
+        <div class="chart-title">📬 Client Engagement — Chasing Stage Breakdown</div>
+        <div class="chart-wrap" style="height:180px">
+          <canvas id="chart-chasing"></canvas>
+        </div>
+      </div>
     </div>
 
     <!-- ── Team Workload ── -->
@@ -542,6 +578,8 @@ ${buildNavHeader('dashboard')}
             <th>Manager</th>
             <th>Days Elapsed</th>
             <th>Escalation</th>
+            <th>Last Active</th>
+            <th>Deadline</th>
           </tr>
         </thead>
         <tbody id="atrisk-body"></tbody>
@@ -652,7 +690,8 @@ function render(data) {
   renderSlaChart(data.bySlaRisk);
   renderStageChart(data.byStage);
   renderTypeChart(data.byType);
-  renderReadiness(data.summary.avgReadiness);
+  renderReadiness(data.summary);
+  renderChasingChart(data.byChasingStage);
   renderManagerCards(data.byManager);
   renderAtRisk(data.cases);
   initAllCasesTable(data);
@@ -667,16 +706,29 @@ function renderKPIs(s) {
   document.getElementById('kpi-blocked').textContent    = s.clientBlocked;
   document.getElementById('kpi-escalation').textContent = s.escalationOpen;
   document.getElementById('kpi-expiry').textContent     = s.expiryFlagged;
+  document.getElementById('kpi-inactive').textContent   = s.inactiveCount  || 0;
+  document.getElementById('kpi-deadline').textContent   = s.deadlineSoonCount || 0;
 }
 
 /* ── Readiness meter ──────────────────────────────────────────────── */
-function renderReadiness(pct) {
-  document.getElementById('readiness-big').textContent = pct + '%';
-  document.getElementById('readiness-bar-fill').style.width = pct + '%';
-  var fill = document.getElementById('readiness-bar-fill');
-  if (pct < 40)      fill.style.background = 'linear-gradient(90deg,var(--red),#f87171)';
-  else if (pct < 70) fill.style.background = 'linear-gradient(90deg,var(--amber),#fbbf24)';
-  else               fill.style.background = 'linear-gradient(90deg,var(--green),#4ade80)';
+function renderReadiness(s) {
+  var qPct   = s.avgQReadiness   || 0;
+  var docPct = s.avgDocReadiness || 0;
+
+  var qEl   = document.getElementById('readiness-q');
+  var docEl = document.getElementById('readiness-doc');
+  if (qEl)   qEl.textContent   = qPct + '%';
+  if (docEl) docEl.textContent = docPct + '%';
+
+  var qColor   = qPct   >= 80 ? 'var(--green)' : qPct   >= 50 ? 'var(--amber)' : 'var(--red)';
+  var docColor = docPct >= 80 ? 'var(--green)' : docPct >= 50 ? 'var(--amber)' : 'var(--red)';
+  if (qEl)   qEl.style.color   = qColor;
+  if (docEl) docEl.style.color = docColor;
+
+  var qBar   = document.getElementById('readiness-q-bar');
+  var docBar = document.getElementById('readiness-doc-bar');
+  if (qBar)   qBar.style.width   = qPct  + '%';
+  if (docBar) docBar.style.width = docPct + '%';
 }
 
 /* ── Chart helpers ────────────────────────────────────────────────── */
@@ -799,6 +851,56 @@ function renderTypeChart(byType) {
   makeVBar('chart-type', labels, vals, colors);
 }
 
+/* ── Chasing Stage Chart ──────────────────────────────────────────── */
+function renderChasingChart(byChasingStage) {
+  var CHASING_ORDER = ['Pending', 'R1 Sent', 'R2 Sent', 'Final Notice Sent', 'Client Blocked', 'Resolved', 'Cleared'];
+  var CHASING_COLORS = {
+    'Pending':           '#94a3b8',
+    'R1 Sent':           '#fb923c',
+    'R2 Sent':           '#f97316',
+    'Final Notice Sent': '#dc2626',
+    'Client Blocked':    '#7f1d1d',
+    'Resolved':          '#059669',
+    'Cleared':           '#10b981',
+  };
+
+  var allKeys = Object.keys(byChasingStage || {});
+  var ordered = CHASING_ORDER.filter(function(k) { return allKeys.indexOf(k) !== -1; });
+  var extra   = allKeys.filter(function(k) { return CHASING_ORDER.indexOf(k) === -1; });
+  var labels  = ordered.concat(extra);
+  var values  = labels.map(function(k) { return byChasingStage[k] || 0; });
+  var colors  = labels.map(function(k) { return CHASING_COLORS[k] || '#64748b'; });
+
+  var ctx = document.getElementById('chart-chasing');
+  if (!ctx) return;
+  if (ctx._chartInstance) ctx._chartInstance.destroy();
+  ctx._chartInstance = new Chart(ctx.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: values,
+        backgroundColor: colors,
+        borderRadius: 5,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: function(ctx) { return ' ' + ctx.parsed.x + ' cases'; } } }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { precision: 0 } },
+        y: { grid: { display: false } }
+      }
+    }
+  });
+}
+
 /* ── Manager Cards ────────────────────────────────────────────────── */
 function renderManagerCards(byManager) {
   var grid = document.getElementById('mgr-grid');
@@ -867,7 +969,7 @@ function renderAtRisk(cases) {
 
   if (atRisk.length === 0) {
     var tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="9" style="text-align:center;color:var(--muted);padding:32px">No cases are currently at risk 🎉</td>';
+    tr.innerHTML = '<td colspan="11" style="text-align:center;color:var(--muted);padding:32px">No cases are currently at risk 🎉</td>';
     tbody.appendChild(tr);
     return;
   }
@@ -884,7 +986,9 @@ function renderAtRisk(cases) {
       '<td>' + healthBadge(c.slaRisk) + '</td>' +
       '<td style="color:var(--muted)">' + escHtml(c.manager) + '</td>' +
       '<td style="text-align:center;font-weight:600">' + (c.daysElapsed || 0) + '</td>' +
-      '<td>' + (c.escalationRequired ? '<span class="badge red">Yes</span>' : '<span class="badge grey">No</span>') + '</td>';
+      '<td>' + (c.escalationRequired ? '<span class="badge red">Yes</span>' : '<span class="badge grey">No</span>') + '</td>' +
+      '<td style="font-size:11px;color:var(--muted)">' + daysAgoLabel(c.lastActivity) + '</td>' +
+      '<td style="font-size:11px">' + formatDeadline(c.hardDeadline) + '</td>';
     tbody.appendChild(tr);
   });
 }
@@ -1069,6 +1173,28 @@ function escHtml(s) {
 function healthBadge(h) {
   var cls = h === 'Red' ? 'red' : (h === 'Orange' ? 'orange' : 'green');
   return '<span class="badge ' + cls + '">' + escHtml(h || 'Green') + '</span>';
+}
+
+function daysAgoLabel(dateStr) {
+  if (!dateStr) return '—';
+  var d = new Date(dateStr);
+  if (isNaN(d)) return '—';
+  var days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (days === 0) return 'Today';
+  if (days === 1) return '1d ago';
+  return days + 'd ago';
+}
+
+function formatDeadline(dateStr) {
+  if (!dateStr) return '—';
+  var d = new Date(dateStr);
+  if (isNaN(d)) return '—';
+  var daysUntil = Math.floor((d.getTime() - Date.now()) / 86400000);
+  var label = d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+  if (daysUntil < 0)   return '<span style="color:#dc2626;font-weight:700">' + label + ' \u26a0</span>';
+  if (daysUntil <= 7)  return '<span style="color:#ea580c;font-weight:700">' + label + '</span>';
+  if (daysUntil <= 30) return '<span style="color:#b45309">' + label + '</span>';
+  return label;
 }
 
 function shortType(t) {
