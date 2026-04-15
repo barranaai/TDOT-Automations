@@ -133,8 +133,8 @@ function buildDashboardHTML() {
     .action-badge.indigo { background:#ede9fe;         color:#4f46e5;      }
     .action-badge.slate  { background:#f1f5f9;         color:#64748b;      }
     .action-list { flex:1; overflow-y:auto; max-height:260px; }
-    .action-item { padding:8px 16px; border-bottom:1px solid #f7f8fa; display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; }
-    .action-item:last-child { border-bottom:none; }
+    .action-item { padding:8px 16px; border-top:1px solid #f7f8fa; display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; }
+    .action-item:first-child { border-top:none; }
     .action-item:hover { background:#f8faff; }
     .action-name { font-weight:600; color:var(--navy); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0; }
     .action-meta { flex-shrink:0; font-size:10px; font-weight:600; white-space:nowrap; }
@@ -1155,9 +1155,11 @@ function renderActionCards(cases) {
     if (isNaN(d)) return true;
     return Math.floor((Date.now() - d.getTime()) / 86400000) >= 14;
   }).sort(function(a, b) {
-    var da = a.lastActivity ? new Date(a.lastActivity).getTime() : 0;
-    var db = b.lastActivity ? new Date(b.lastActivity).getTime() : 0;
-    return da - db;   // oldest first
+    var ta = a.lastActivity ? new Date(a.lastActivity).getTime() : 0;
+    var tb = b.lastActivity ? new Date(b.lastActivity).getTime() : 0;
+    if (isNaN(ta)) ta = 0;   // guard: invalid date string → treat as never
+    if (isNaN(tb)) tb = 0;
+    return ta - tb;   // oldest first
   });
   document.getElementById('act-count-stale').textContent = staleCases.length;
   _fillActionList('act-list-stale', staleCases, function(c) {
@@ -1343,7 +1345,7 @@ function filterTable() {
     )) return false;
     if (stage  && c.caseStage !== stage)  return false;
     if (health && c.health    !== health) return false;
-    if (mgr    && !c.manager.includes(mgr)) return false;
+    if (mgr    && !(c.manager || '').includes(mgr)) return false;
     return true;
   });
 
@@ -1524,7 +1526,9 @@ function shortType(t) {
     'Citizenship':               'Citizenship',
   };
   for (var k in map) { if (t.startsWith(k)) return map[k]; }
-  return t.length > 22 ? t.slice(0, 20) + '…' : t;
+  // Fallback: truncate then HTML-escape so raw case type can't inject markup
+  var s = t.length > 22 ? t.slice(0, 20) + '…' : t;
+  return escHtml(s);
 }
 
 /* ── Boot ─────────────────────────────────────────────────────────── */
