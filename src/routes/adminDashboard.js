@@ -687,7 +687,7 @@ ${buildNavHeader('dashboard')}
 var _data     = null;
 var _filtered = [];
 var _sortCol  = 'health';
-var _sortDir  = -1;
+var _sortDir  = 1;   // ascending on health = Red(0) first by default
 var _page     = 1;
 var PAGE_SIZE = 25;
 
@@ -722,6 +722,7 @@ function loadData() {
         'Updated: ' + gen.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     })
     .catch(function(e) {
+      if (e.message === 'Unauthorized') return; // page is navigating away — suppress error flash
       document.getElementById('loading').style.display = 'none';
       var el = document.getElementById('error-msg');
       el.textContent = 'Failed to load data: ' + e.message + '. Make sure you are logged in.';
@@ -763,7 +764,7 @@ function renderKPIs(s) {
   document.getElementById('kpi-behind').textContent     = s.behindScheduleCount || 0;
   document.getElementById('kpi-blocking').textContent   = s.casesWithBlocking  || 0;
   document.getElementById('kpi-inactive').textContent   = s.inactiveCount      || 0;
-  document.getElementById('kpi-expiry').textContent     = s.expiryFlagged;
+  document.getElementById('kpi-expiry').textContent     = s.expiryFlagged    || 0;
   document.getElementById('kpi-deadline').textContent   = s.deadlineSoonCount  || 0;
 }
 
@@ -989,7 +990,10 @@ function renderReadinessVsTargetChart(readinessByStage) {
   var extra   = all.filter(function(s) { return STAGE_ORDER.indexOf(s) === -1; });
   var stages  = ordered.concat(extra);
 
-  if (!stages.length) return;
+  if (!stages.length) {
+    if (_charts['chart-readiness-target']) { _charts['chart-readiness-target'].destroy(); delete _charts['chart-readiness-target']; }
+    return;
+  }
 
   var labels   = stages.map(function(s) {
     return s.replace('Document Collection Started', 'Doc Collection')
