@@ -143,6 +143,7 @@ function buildDashboardHTML() {
     .chart-row-1 { grid-template-columns: 1fr; }
     .chart-row-3 { grid-template-columns: 1fr 1fr 1fr; }
     .chart-row-2 { grid-template-columns: 3fr 2fr; }
+    .chart-row-dl { grid-template-columns: 1fr 2fr; }
 
     .chart-card {
       background: var(--card);
@@ -414,7 +415,7 @@ function buildDashboardHTML() {
     }
 
     @media (max-width: 760px) {
-      .chart-row-3, .chart-row-2 { grid-template-columns: 1fr; }
+      .chart-row-3, .chart-row-2, .chart-row-dl { grid-template-columns: 1fr; }
       .kpi-strip { grid-template-columns: repeat(2, 1fr); }
       .wrap { padding: 16px 12px 48px; }
     }
@@ -550,7 +551,7 @@ ${buildNavHeader('dashboard')}
         </div>
       </div>
 
-      <div class="chart-card" id="readiness-big">
+      <div class="chart-card">
         <div class="chart-title">📈 Case Readiness Breakdown</div>
         <div style="display:flex;align-items:stretch;justify-content:center;height:200px;gap:0">
 
@@ -588,7 +589,7 @@ ${buildNavHeader('dashboard')}
     </div>
 
     <!-- ── Delay Level + Readiness vs Target Row ── -->
-    <div class="chart-row" style="grid-template-columns:1fr 2fr;margin-bottom:28px">
+    <div class="chart-row chart-row-dl" style="margin-bottom:28px">
 
       <div class="chart-card">
         <div class="chart-title">⏳ Client Delay Level</div>
@@ -929,8 +930,8 @@ function renderChasingChart(byChasingStage) {
 
   var ctx = document.getElementById('chart-chasing');
   if (!ctx) return;
-  if (ctx._chartInstance) ctx._chartInstance.destroy();
-  ctx._chartInstance = new Chart(ctx.getContext('2d'), {
+  if (_charts['chart-chasing']) { _charts['chart-chasing'].destroy(); }
+  _charts['chart-chasing'] = new Chart(ctx.getContext('2d'), {
     type: 'bar',
     data: {
       labels: labels,
@@ -959,13 +960,17 @@ function renderChasingChart(byChasingStage) {
 
 /* ── Client Delay Level Chart ─────────────────────────────────────── */
 function renderDelayChart(byDelayLevel) {
-  var ORDER  = ['Low', 'Medium', 'High', 'None'];
-  var COLORS = { Low: '#22c55e', Medium: '#f97316', High: '#ef4444', None: '#cbd5e1' };
+  var ORDER  = ['Low', 'Medium', 'High'];
+  var COLORS = { Low: '#22c55e', Medium: '#f97316', High: '#ef4444' };
+  // Exclude 'None' / empty entries — they add no actionable signal
   var keys   = ORDER.filter(function(k) { return byDelayLevel[k]; });
-  var extra  = Object.keys(byDelayLevel).filter(function(k) { return ORDER.indexOf(k) === -1 && byDelayLevel[k]; });
+  var extra  = Object.keys(byDelayLevel).filter(function(k) {
+    return ORDER.indexOf(k) === -1 && k && k !== 'None' && byDelayLevel[k];
+  });
   var labels = keys.concat(extra);
   var vals   = labels.map(function(k) { return byDelayLevel[k] || 0; });
   var colors = labels.map(function(k) { return COLORS[k] || '#94a3b8'; });
+  if (!labels.length) return; // nothing meaningful to show
   makeDonut('chart-delay', labels, vals, colors);
 }
 
@@ -1146,6 +1151,7 @@ function initAllCasesTable(data) {
   var managers = Object.keys(data.byManager).sort();
 
   var stageEl = document.getElementById('filter-stage');
+  stageEl.innerHTML = '<option value="">All Stages</option>';
   stages.forEach(function(s) {
     var opt = document.createElement('option');
     opt.value = s; opt.textContent = s;
@@ -1153,6 +1159,7 @@ function initAllCasesTable(data) {
   });
 
   var mgrEl = document.getElementById('filter-manager');
+  mgrEl.innerHTML = '<option value="">All Managers</option>';
   managers.forEach(function(m) {
     var opt = document.createElement('option');
     opt.value = m; opt.textContent = m;
@@ -1188,7 +1195,7 @@ function filterTable() {
 function sortTable(col, silent) {
   if (!silent) {
     if (_sortCol === col) { _sortDir *= -1; }
-    else                  { _sortCol = col; _sortDir = col === 'health' || col === 'slaRisk' ? 1 : 1; }
+    else                  { _sortCol = col; _sortDir = col === 'health' || col === 'slaRisk' ? 1 : -1; }
   }
 
   document.querySelectorAll('[data-col]').forEach(function(th) {
