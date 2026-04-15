@@ -63,12 +63,18 @@ function buildDashboardHTML() {
     #content { display: none; }
 
     /* ── KPI Strip ───────────────────────────────────────────────── */
+    .kpi-group { margin-bottom: 28px; }
+    .kpi-group-label {
+      font-size: 10px; font-weight: 800; text-transform: uppercase;
+      letter-spacing: .9px; color: var(--light);
+      margin-bottom: 8px; padding-left: 2px;
+    }
     .kpi-strip {
       display: grid;
-      grid-template-columns: repeat(9, 1fr);
+      grid-template-columns: repeat(6, 1fr);
       gap: 14px;
-      margin-bottom: 28px;
     }
+    .kpi-strip + .kpi-strip { margin-top: 10px; }
 
     .kpi {
       background: var(--card);
@@ -89,6 +95,8 @@ function buildDashboardHTML() {
     .kpi.purple { border-top-color: #7c3aed; }
     .kpi.slate  { border-top-color: #64748b; }
     .kpi.teal   { border-top-color: #0891b2; }
+    .kpi.rose   { border-top-color: #e11d48; }
+    .kpi.indigo { border-top-color: #4f46e5; }
 
     .kpi-num {
       font-size: 30px; font-weight: 800;
@@ -105,6 +113,8 @@ function buildDashboardHTML() {
     .kpi.purple .kpi-num { color: #7c3aed; }
     .kpi.slate  .kpi-num { color: #64748b; }
     .kpi.teal   .kpi-num { color: #0891b2; }
+    .kpi.rose   .kpi-num { color: #e11d48; }
+    .kpi.indigo .kpi-num { color: #4f46e5; }
 
     .kpi-label {
       font-size: 10px; font-weight: 700;
@@ -400,12 +410,12 @@ function buildDashboardHTML() {
     /* ── Responsive ───────────────────────────────────────────────── */
     @media (max-width: 1100px) {
       .chart-row-3 { grid-template-columns: 1fr 1fr; }
-      .kpi-strip   { grid-template-columns: repeat(5, 1fr); }
+      .kpi-strip   { grid-template-columns: repeat(3, 1fr); }
     }
 
     @media (max-width: 760px) {
       .chart-row-3, .chart-row-2 { grid-template-columns: 1fr; }
-      .kpi-strip { grid-template-columns: repeat(3, 1fr); }
+      .kpi-strip { grid-template-columns: repeat(2, 1fr); }
       .wrap { padding: 16px 12px 48px; }
     }
 
@@ -445,43 +455,61 @@ ${buildNavHeader('dashboard')}
   <!-- Content -->
   <div id="content">
 
-    <!-- ── KPI Strip ── -->
-    <div class="kpi-strip">
-      <div class="kpi navy">
-        <div class="kpi-num" id="kpi-total">—</div>
-        <div class="kpi-label">Total Cases</div>
+    <!-- ── KPI Groups ── -->
+    <div class="kpi-group">
+      <div class="kpi-group-label">Case Health</div>
+      <div class="kpi-strip">
+        <div class="kpi navy">
+          <div class="kpi-num" id="kpi-total">—</div>
+          <div class="kpi-label">Total Cases</div>
+        </div>
+        <div class="kpi green">
+          <div class="kpi-num" id="kpi-green">—</div>
+          <div class="kpi-label">Healthy</div>
+        </div>
+        <div class="kpi amber">
+          <div class="kpi-num" id="kpi-orange">—</div>
+          <div class="kpi-label">At Risk</div>
+        </div>
+        <div class="kpi red">
+          <div class="kpi-num" id="kpi-red">—</div>
+          <div class="kpi-label">Critical</div>
+        </div>
+        <div class="kpi orange">
+          <div class="kpi-num" id="kpi-blocked">—</div>
+          <div class="kpi-label">Client Blocked</div>
+        </div>
+        <div class="kpi purple">
+          <div class="kpi-num" id="kpi-escalation">—</div>
+          <div class="kpi-label">Escalations Open</div>
+        </div>
       </div>
-      <div class="kpi green">
-        <div class="kpi-num" id="kpi-green">—</div>
-        <div class="kpi-label">Healthy</div>
-      </div>
-      <div class="kpi amber">
-        <div class="kpi-num" id="kpi-orange">—</div>
-        <div class="kpi-label">At Risk</div>
-      </div>
-      <div class="kpi red">
-        <div class="kpi-num" id="kpi-red">—</div>
-        <div class="kpi-label">Critical</div>
-      </div>
-      <div class="kpi orange">
-        <div class="kpi-num" id="kpi-blocked">—</div>
-        <div class="kpi-label">Client Blocked</div>
-      </div>
-      <div class="kpi purple">
-        <div class="kpi-num" id="kpi-escalation">—</div>
-        <div class="kpi-label">Escalations Open</div>
-      </div>
-      <div class="kpi blue">
-        <div class="kpi-num" id="kpi-expiry">—</div>
-        <div class="kpi-label">Expiry Flagged</div>
-      </div>
-      <div class="kpi slate">
-        <div class="kpi-num" id="kpi-inactive">—</div>
-        <div class="kpi-label">Inactive 14d+</div>
-      </div>
-      <div class="kpi teal">
-        <div class="kpi-num" id="kpi-deadline">—</div>
-        <div class="kpi-label">Due This Month</div>
+      <div class="kpi-group-label" style="margin-top:18px">Operations</div>
+      <div class="kpi-strip">
+        <div class="kpi rose">
+          <div class="kpi-num" id="kpi-unassigned">—</div>
+          <div class="kpi-label">Unassigned Cases</div>
+        </div>
+        <div class="kpi indigo">
+          <div class="kpi-num" id="kpi-behind">—</div>
+          <div class="kpi-label">Behind Schedule</div>
+        </div>
+        <div class="kpi red">
+          <div class="kpi-num" id="kpi-blocking">—</div>
+          <div class="kpi-label">Cases w/ Blockers</div>
+        </div>
+        <div class="kpi slate">
+          <div class="kpi-num" id="kpi-inactive">—</div>
+          <div class="kpi-label">Inactive 14d+</div>
+        </div>
+        <div class="kpi blue">
+          <div class="kpi-num" id="kpi-expiry">—</div>
+          <div class="kpi-label">Expiry Flagged</div>
+        </div>
+        <div class="kpi teal">
+          <div class="kpi-num" id="kpi-deadline">—</div>
+          <div class="kpi-label">Due This Month</div>
+        </div>
       </div>
     </div>
 
@@ -559,6 +587,25 @@ ${buildNavHeader('dashboard')}
       </div>
     </div>
 
+    <!-- ── Delay Level + Readiness vs Target Row ── -->
+    <div class="chart-row" style="grid-template-columns:1fr 2fr;margin-bottom:28px">
+
+      <div class="chart-card">
+        <div class="chart-title">⏳ Client Delay Level</div>
+        <div class="chart-wrap donut">
+          <canvas id="chart-delay"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title">🎯 Readiness vs Expected — by Stage</div>
+        <div class="chart-wrap" style="height:220px">
+          <canvas id="chart-readiness-target"></canvas>
+        </div>
+      </div>
+
+    </div>
+
     <!-- ── Team Workload ── -->
     <div class="sec-hd">👥 Team Workload &amp; Performance</div>
     <div class="mgr-grid" id="mgr-grid"></div>
@@ -576,8 +623,10 @@ ${buildNavHeader('dashboard')}
             <th>Health</th>
             <th>SLA Risk</th>
             <th>Manager</th>
-            <th>Days Elapsed</th>
-            <th>Escalation</th>
+            <th>Readiness</th>
+            <th>Days</th>
+            <th>Blocking Q</th>
+            <th>Blocking Doc</th>
             <th>Last Active</th>
             <th>Deadline</th>
           </tr>
@@ -692,6 +741,8 @@ function render(data) {
   renderTypeChart(data.byType);
   renderReadiness(data.summary);
   renderChasingChart(data.byChasingStage);
+  renderDelayChart(data.byDelayLevel);
+  renderReadinessVsTargetChart(data.readinessByStage);
   renderManagerCards(data.byManager);
   renderAtRisk(data.cases);
   initAllCasesTable(data);
@@ -699,15 +750,20 @@ function render(data) {
 
 /* ── KPIs ─────────────────────────────────────────────────────────── */
 function renderKPIs(s) {
+  // Case Health row
   document.getElementById('kpi-total').textContent      = s.total;
   document.getElementById('kpi-green').textContent      = s.green;
   document.getElementById('kpi-orange').textContent     = s.orange;
   document.getElementById('kpi-red').textContent        = s.red;
   document.getElementById('kpi-blocked').textContent    = s.clientBlocked;
   document.getElementById('kpi-escalation').textContent = s.escalationOpen;
+  // Operations row
+  document.getElementById('kpi-unassigned').textContent = s.unassignedCount    || 0;
+  document.getElementById('kpi-behind').textContent     = s.behindScheduleCount || 0;
+  document.getElementById('kpi-blocking').textContent   = s.casesWithBlocking  || 0;
+  document.getElementById('kpi-inactive').textContent   = s.inactiveCount      || 0;
   document.getElementById('kpi-expiry').textContent     = s.expiryFlagged;
-  document.getElementById('kpi-inactive').textContent   = s.inactiveCount  || 0;
-  document.getElementById('kpi-deadline').textContent   = s.deadlineSoonCount || 0;
+  document.getElementById('kpi-deadline').textContent   = s.deadlineSoonCount  || 0;
 }
 
 /* ── Readiness meter ──────────────────────────────────────────────── */
@@ -901,6 +957,77 @@ function renderChasingChart(byChasingStage) {
   });
 }
 
+/* ── Client Delay Level Chart ─────────────────────────────────────── */
+function renderDelayChart(byDelayLevel) {
+  var ORDER  = ['Low', 'Medium', 'High', 'None'];
+  var COLORS = { Low: '#22c55e', Medium: '#f97316', High: '#ef4444', None: '#cbd5e1' };
+  var keys   = ORDER.filter(function(k) { return byDelayLevel[k]; });
+  var extra  = Object.keys(byDelayLevel).filter(function(k) { return ORDER.indexOf(k) === -1 && byDelayLevel[k]; });
+  var labels = keys.concat(extra);
+  var vals   = labels.map(function(k) { return byDelayLevel[k] || 0; });
+  var colors = labels.map(function(k) { return COLORS[k] || '#94a3b8'; });
+  makeDonut('chart-delay', labels, vals, colors);
+}
+
+/* ── Readiness vs Expected by Stage Chart ─────────────────────────── */
+function renderReadinessVsTargetChart(readinessByStage) {
+  var STAGE_ORDER = [
+    'Document Collection Started', 'Internal Review',
+    'Submission Preparation', 'Submitted', 'Stuck',
+  ];
+  var all     = Object.keys(readinessByStage || {});
+  var ordered = STAGE_ORDER.filter(function(s) { return all.indexOf(s) !== -1; });
+  var extra   = all.filter(function(s) { return STAGE_ORDER.indexOf(s) === -1; });
+  var stages  = ordered.concat(extra);
+
+  if (!stages.length) return;
+
+  var labels   = stages.map(function(s) {
+    return s.replace('Document Collection Started', 'Doc Collection')
+             .replace('Submission Preparation', 'Sub Prep');
+  });
+  var actuals   = stages.map(function(s) { return readinessByStage[s].avgActual; });
+  var expected  = stages.map(function(s) { return readinessByStage[s].avgExpected; });
+
+  if (_charts['chart-readiness-target']) _charts['chart-readiness-target'].destroy();
+  var ctx = document.getElementById('chart-readiness-target');
+  if (!ctx) return;
+  _charts['chart-readiness-target'] = new Chart(ctx.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Actual Readiness %',
+          data:  actuals,
+          backgroundColor: 'rgba(59,130,246,0.8)',
+          borderRadius: 4,
+          borderSkipped: false,
+        },
+        {
+          label: 'Expected Readiness %',
+          data:  expected,
+          backgroundColor: 'rgba(16,185,129,0.5)',
+          borderRadius: 4,
+          borderSkipped: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 12, usePointStyle: true, pointStyleWidth: 8 } },
+        tooltip: { callbacks: { label: function(ctx) { return ' ' + ctx.dataset.label + ': ' + ctx.raw + '%'; } } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+        y: { beginAtZero: true, max: 100, grid: { color: '#f0f4f8' }, ticks: { callback: function(v) { return v + '%'; }, font: { size: 10 } } },
+      },
+    },
+  });
+}
+
 /* ── Manager Cards ────────────────────────────────────────────────── */
 function renderManagerCards(byManager) {
   var grid = document.getElementById('mgr-grid');
@@ -950,7 +1077,13 @@ function renderManagerCards(byManager) {
       '<div class="mgr-readiness-row">' +
         '<span class="mgr-readiness-label">Avg Readiness</span>' +
         '<span class="mgr-readiness-val">' + m.avgReadiness + '%</span>' +
-      '</div>';
+      '</div>' +
+      ((m.behindCount > 0 || m.blockingCount > 0) ?
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;padding-top:4px;border-top:1px solid var(--border)">' +
+          (m.behindCount  > 0 ? '<span style="font-size:10px;font-weight:700;background:#ede9fe;color:#4f46e5;border-radius:5px;padding:2px 8px">' + m.behindCount  + ' behind schedule</span>' : '') +
+          (m.blockingCount > 0 ? '<span style="font-size:10px;font-weight:700;background:#fee2e2;color:#dc2626;border-radius:5px;padding:2px 8px">' + m.blockingCount + ' w/ blockers</span>'    : '') +
+        '</div>'
+      : '');
 
     grid.appendChild(card);
   });
@@ -969,12 +1102,24 @@ function renderAtRisk(cases) {
 
   if (atRisk.length === 0) {
     var tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="11" style="text-align:center;color:var(--muted);padding:32px">No cases are currently at risk 🎉</td>';
+    tr.innerHTML = '<td colspan="13" style="text-align:center;color:var(--muted);padding:32px">No cases are currently at risk 🎉</td>';
     tbody.appendChild(tr);
     return;
   }
 
   atRisk.forEach(function(c) {
+    var r       = c.overallReadiness || 0;
+    var exp     = c.expectedReadiness || 0;
+    var rColor  = (exp > 0 && r < exp - 15) ? 'color:#dc2626;font-weight:700' : (r >= 70 ? 'color:var(--green)' : r >= 40 ? 'color:var(--amber)' : 'color:var(--red)');
+    var rLabel  = r + '%' + (exp > 0 ? ' / ' + exp + '%' : '');
+
+    var bqCell  = c.blockingQ  > 0
+      ? '<span class="badge red">' + c.blockingQ  + '</span>'
+      : '<span style="color:var(--light);font-size:11px">—</span>';
+    var bdCell  = c.blockingDoc > 0
+      ? '<span class="badge red">' + c.blockingDoc + '</span>'
+      : '<span style="color:var(--light);font-size:11px">—</span>';
+
     var tr = document.createElement('tr');
     tr.className = c.health === 'Red' ? 'row-red' : (c.health === 'Orange' ? 'row-orange' : '');
     tr.innerHTML =
@@ -985,8 +1130,10 @@ function renderAtRisk(cases) {
       '<td>' + healthBadge(c.health) + '</td>' +
       '<td>' + healthBadge(c.slaRisk) + '</td>' +
       '<td style="color:var(--muted)">' + escHtml(c.manager) + '</td>' +
+      '<td style="font-size:11px;' + rColor + '">' + rLabel + '</td>' +
       '<td style="text-align:center;font-weight:600">' + (c.daysElapsed || 0) + '</td>' +
-      '<td>' + (c.escalationRequired ? '<span class="badge red">Yes</span>' : '<span class="badge grey">No</span>') + '</td>' +
+      '<td style="text-align:center">' + bqCell + '</td>' +
+      '<td style="text-align:center">' + bdCell + '</td>' +
       '<td style="font-size:11px;color:var(--muted)">' + daysAgoLabel(c.lastActivity) + '</td>' +
       '<td style="font-size:11px">' + formatDeadline(c.hardDeadline) + '</td>';
     tbody.appendChild(tr);
