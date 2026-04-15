@@ -9,8 +9,8 @@
  * Triggers handled (called from mondayWebhook.js):
  *
  *   Document Execution Board:
- *     onDocumentReceived         → notify Assigned Reviewer
- *     onDocumentReworkRequired   → notify Case Manager (via Client Master lookup)
+ *     onDocumentReceived         → notify Assigned Reviewer + Case Manager + Ops Supervisor + Case Support Officer + Stage Owner
+ *     onDocumentReworkRequired   → notify Case Manager + Ops Supervisor (via Client Master lookup)
  *
  *   Questionnaire Execution Board:
  *     onResponseAnswered         → notify Assigned Reviewer
@@ -44,9 +44,11 @@ const Q_COLS = {
 };
 
 const CM_COLS = {
-  caseRef:      'text_mm142s49',
-  opsSupervisor:'multiple_person_mm0xp0sq',
-  caseManager:  'multiple_person_mm0xhmgk',
+  caseRef:            'text_mm142s49',
+  opsSupervisor:      'multiple_person_mm0xp0sq',
+  caseManager:        'multiple_person_mm0xhmgk',
+  caseSupportOfficer: 'multiple_person_mm0xm710',
+  stageOwner:         'multiple_person_mm0xgpt',
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -101,7 +103,13 @@ async function getItemPeople(itemId, colId) {
 
 // Look up Ops Supervisor + Case Manager from Client Master by case reference
 async function getCaseOwners(caseRef) {
-  if (!caseRef) return { supervisorIds: [], managerIds: [] };
+  if (!caseRef) return { supervisorIds: [], managerIds: [], supportOfficerIds: [], stageOwnerIds: [] };
+  const personCols = [
+    CM_COLS.opsSupervisor,
+    CM_COLS.caseManager,
+    CM_COLS.caseSupportOfficer,
+    CM_COLS.stageOwner,
+  ];
   const data = await mondayApi.query(
     `query($boardId: ID!, $caseRef: String!) {
        items_page_by_column_values(
@@ -110,19 +118,21 @@ async function getCaseOwners(caseRef) {
        ) {
          items {
            id
-           column_values(ids: ["${CM_COLS.opsSupervisor}", "${CM_COLS.caseManager}"]) { id value }
+           column_values(ids: ${JSON.stringify(personCols)}) { id value }
          }
        }
      }`,
     { boardId: String(clientMasterBoardId), caseRef }
   );
   const item = data?.items_page_by_column_values?.items?.[0];
-  if (!item) return { supervisorIds: [], managerIds: [], masterItemId: null };
+  if (!item) return { supervisorIds: [], managerIds: [], supportOfficerIds: [], stageOwnerIds: [], masterItemId: null };
   const col = (id) => item.column_values.find((c) => c.id === id)?.value;
   return {
-    masterItemId:  item.id,
-    supervisorIds: extractPersonIds(col(CM_COLS.opsSupervisor)),
-    managerIds:    extractPersonIds(col(CM_COLS.caseManager)),
+    masterItemId:      item.id,
+    supervisorIds:     extractPersonIds(col(CM_COLS.opsSupervisor)),
+    managerIds:        extractPersonIds(col(CM_COLS.caseManager)),
+    supportOfficerIds: extractPersonIds(col(CM_COLS.caseSupportOfficer)),
+    stageOwnerIds:     extractPersonIds(col(CM_COLS.stageOwner)),
   };
 }
 
@@ -179,13 +189,10 @@ async function getClientName(caseRef) {
 // ─── Document Execution triggers ─────────────────────────────────────────────
 
 async function onDocumentReceived(itemId, itemName) {
+  // 1. Document-level assigned reviewer
   const reviewerIds = await getItemPeople(itemId, DOC_COLS.assignedReviewer);
-  if (!reviewerIds.length) {
-    console.log(`[Notify] onDocumentReceived: no reviewer assigned for item ${itemId}`);
-    return;
-  }
 
-  // Fetch metadata — wrapped in try/catch so notification still fires on failure
+  // 2. Fetch metadata (case ref, category, folder link)
   let docMeta = { caseRef: '', category: '', folderUrl: '' };
   let clientName = '';
   try {
@@ -197,7 +204,30 @@ async function onDocumentReceived(itemId, itemName) {
     console.warn(`[Notify] onDocumentReceived: metadata lookup failed for item ${itemId}:`, err.message);
   }
 
-  // Build rich notification text
+  // 3. Case-level team: Case Manager, Ops Supervisor, Case Support Officer, Stage Owner
+  let caseTeamIds = [];
+  if (docMeta.caseRef) {
+    try {
+      const owners = await getCaseOwners(docMeta.caseRef);
+      caseTeamIds = [
+        ...owners.managerIds,
+        ...owners.supervisorIds,
+        ...owners.supportOfficerIds,
+        ...owners.stageOwnerIds,
+      ];
+    } catch (err) {
+      console.warn(`[Notify] onDocumentReceived: case owners lookup failed for ${docMeta.caseRef}:`, err.message);
+    }
+  }
+
+  // 4. Merge all recipient IDs (notifyAll deduplicates)
+  const allIds = [...reviewerIds, ...caseTeamIds];
+  if (!allIds.length) {
+    console.log(`[Notify] onDocumentReceived: no recipients found for item ${itemId} (no reviewer assigned, no case team on master board)`);
+    return;
+  }
+
+  // 5. Build rich notification text
   const parts = [`📄 Document received: "${itemName}"`];
   if (clientName && docMeta.caseRef) {
     parts.push(`Client: ${clientName} (${docMeta.caseRef})`);
@@ -212,8 +242,8 @@ async function onDocumentReceived(itemId, itemName) {
   }
   const text = parts.join(' | ');
 
-  await notifyAll(reviewerIds, text, itemId);
-  console.log(`[Notify] Document received — notified ${reviewerIds.length} reviewer(s) for item ${itemId}`);
+  await notifyAll(allIds, text, itemId);
+  console.log(`[Notify] Document received — notified ${new Set(allIds.map(String)).size} person(s) for item ${itemId} (${reviewerIds.length} reviewer + ${caseTeamIds.length} case team)`);
 }
 
 async function onDocumentReworkRequired(itemId, itemName) {
