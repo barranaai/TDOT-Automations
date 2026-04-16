@@ -1,7 +1,7 @@
 const path      = require('path');
 const fs        = require('fs');
 const mondayApi = require('./mondayApi');
-const { uploadFile: uploadToOneDrive } = require('./oneDriveService');
+const { uploadFile: uploadToOneDrive, ensureCategoryFolderLink } = require('./oneDriveService');
 const { clientMasterBoardId } = require('../../config/monday');
 
 // ─── Disclaimer map (keyed by "caseType|subType") ────────────────────────────
@@ -49,6 +49,8 @@ const TMPL_PHASE_COL          = 'dropdown_mm297t2e';  // Checklist Phase ("Profi
 const CM_CASE_REF_COL  = 'text_mm142s49';    // Case Reference Number
 const CM_CASE_TYPE_COL = 'dropdown_mm0xd1qn'; // Primary Case Type
 const CM_SUB_TYPE_COL  = 'dropdown_mm0x4t91'; // Case Sub Type
+
+const DOC_FOLDER_COL      = 'link_mm1yrnz1';   // Document Folder (OneDrive sharing link)
 
 // Columns to fetch per execution item
 const FETCH_COLS = [
@@ -283,20 +285,21 @@ async function getCaseSummary(caseRef) {
  * Client name is fetched from the Client Master Board in parallel with (1).
  */
 async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, mimeType) {
-  // Fetch the execution item to get intakeId and mirror category
+  // Fetch the execution item — include documentFolder to check if it needs backfilling
   const execData = await mondayApi.query(
     `query($itemId: ID!) {
        items(ids: [$itemId]) {
-         column_values(ids: ["${INTAKE_ID_COL}", "${CATEGORY_MIRROR_COL}", "${CATEGORY_TEXT_COL}"]) { id text }
+         column_values(ids: ["${INTAKE_ID_COL}", "${CATEGORY_MIRROR_COL}", "${CATEGORY_TEXT_COL}", "${DOC_FOLDER_COL}"]) { id text }
        }
      }`,
     { itemId: String(itemId) }
   );
 
-  const cols     = execData?.items?.[0]?.column_values || [];
-  const intakeId = cols.find((c) => c.id === INTAKE_ID_COL)?.text?.trim()       || '';
-  const mirror   = cols.find((c) => c.id === CATEGORY_MIRROR_COL)?.text?.trim() || '';
-  const catText  = cols.find((c) => c.id === CATEGORY_TEXT_COL)?.text?.trim()    || '';
+  const cols       = execData?.items?.[0]?.column_values || [];
+  const intakeId   = cols.find((c) => c.id === INTAKE_ID_COL)?.text?.trim()       || '';
+  const mirror     = cols.find((c) => c.id === CATEGORY_MIRROR_COL)?.text?.trim() || '';
+  const catText    = cols.find((c) => c.id === CATEGORY_TEXT_COL)?.text?.trim()    || '';
+  const folderText = cols.find((c) => c.id === DOC_FOLDER_COL)?.text?.trim()      || '';
 
   // Parallel: resolve category + get client name
   const [category, clientName] = await Promise.all([
@@ -310,7 +313,7 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, m
     `[DocForm] Uploading "${originalName}" | case ${caseRef} | client "${clientName}" | category "${category}"`
   );
 
-  return uploadToOneDrive({
+  const webUrl = await uploadToOneDrive({
     clientName,
     caseRef,
     category,
@@ -318,6 +321,32 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, m
     buffer:   fileBuffer,
     mimeType,
   });
+
+  // ── Backfill folder link if the Document Folder column is empty ───────────
+  // This covers items created when OneDrive was unavailable at checklist time.
+  if (!folderText && category) {
+    try {
+      const folderUrl = await ensureCategoryFolderLink({ clientName, caseRef, category });
+      await mondayApi.query(
+        `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
+           change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues) { id }
+         }`,
+        {
+          boardId: EXEC_BOARD_ID,
+          itemId:  String(itemId),
+          colValues: JSON.stringify({
+            [DOC_FOLDER_COL]: { url: folderUrl, text: `${category} Folder` },
+          }),
+        }
+      );
+      console.log(`[DocForm] Backfilled folder link for "${category}" on item ${itemId}`);
+    } catch (err) {
+      // Best-effort — upload already succeeded so don't fail the whole request
+      console.warn(`[DocForm] Folder link backfill failed for item ${itemId}:`, err.message);
+    }
+  }
+
+  return webUrl;
 }
 
 /**

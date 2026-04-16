@@ -241,4 +241,23 @@ async function ensureClientFolder({ clientName, caseRef }) {
   console.log(`[OneDrive] Client folder ensured: ${ROOT_FOLDER}/${safeName}`);
 }
 
-module.exports = { createClientFolders, uploadFile, readFile, ensureClientFolder };
+/**
+ * Ensure a single category subfolder exists under the client root and return
+ * an organisation-scoped sharing link.  Used to backfill the Document Folder
+ * column on execution items that were created before OneDrive folders existed.
+ *
+ * @param {{ clientName: string, caseRef: string, category: string }} params
+ * @returns {Promise<string>} sharing URL for the category folder
+ */
+async function ensureCategoryFolderLink({ clientName, caseRef, category }) {
+  const token      = await getCachedToken();
+  const safeName   = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+  const clientPath = `${ROOT_FOLDER}/${safeName}`;
+
+  await ensureFolder(token, null, ROOT_FOLDER);
+  await ensureFolder(token, ROOT_FOLDER, safeName);
+  const { id } = await ensureFolder(token, clientPath, category);
+  return createOrgLink(token, id);
+}
+
+module.exports = { createClientFolders, uploadFile, readFile, ensureClientFolder, ensureCategoryFolderLink };
