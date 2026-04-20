@@ -16,6 +16,7 @@ const path             = require('path');
 const mondayApi        = require('./mondayApi');
 const oneDrive         = require('./oneDriveService');
 const stageGateService = require('./stageGateService');
+const { generateAndSaveSubmissionPdf } = require('./questionnairePdfService');
 const { loadThresholds } = require('./caseReadinessService');
 const { clientMasterBoardId } = require('../../config/monday');
 const { FORMS_DIR, resolveForm } = require('../../config/questionnaireFormMap');
@@ -557,6 +558,22 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
   checkStageGate({ itemId, caseRef, caseType, qPct: aggregatePct }).catch((err) =>
     console.error(`[HtmlQ] Stage gate check failed for ${caseRef}:`, err.message)
   );
+
+  // ── Step 6: Generate submission PDF ───────────────────────────────────────
+  // Fire-and-forget: PDF is a byproduct — JSON is the source of truth.
+  if (clientName) {
+    generateAndSaveSubmissionPdf({
+      clientName,
+      caseRef,
+      formKey,
+      formLabel,
+      memberLabel,
+      completionPct: pct,
+      submittedAt:   new Date().toISOString(),
+    }).catch((err) =>
+      console.warn(`[HtmlQ] PDF generation failed for ${caseRef}/${formKey}: ${err.message}`)
+    );
+  }
 }
 
 /**
@@ -649,6 +666,26 @@ async function markAllSubmitted({ itemId, caseRef, caseType, formLabel, clientNa
   checkStageGate({ itemId, caseRef, caseType, qPct: aggregatePct }).catch((err) =>
     console.error(`[HtmlQ] Stage gate check failed for ${caseRef}:`, err.message)
   );
+
+  // ── Step 6: Generate one PDF per submitted member (fire-and-forget) ───────
+  // Each member has its own JSON file → one PDF per member. Failures are
+  // isolated so one member's PDF trouble doesn't affect the others.
+  const submittedAtIso = new Date().toISOString();
+  for (const pm of perMember) {
+    const member       = members.find(m => m.key === pm.memberKey);
+    const memberLabel2 = member?.label || pm.memberKey;
+    generateAndSaveSubmissionPdf({
+      clientName,
+      caseRef,
+      formKey:       pm.formKey,
+      formLabel,
+      memberLabel:   memberLabel2,
+      completionPct: pm.pct,
+      submittedAt:   submittedAtIso,
+    }).catch((err) =>
+      console.warn(`[HtmlQ] PDF generation failed for ${caseRef}/${pm.formKey}: ${err.message}`)
+    );
+  }
 }
 
 /**
