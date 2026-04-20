@@ -289,17 +289,21 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, m
   const execData = await mondayApi.query(
     `query($itemId: ID!) {
        items(ids: [$itemId]) {
+         id
+         name
          column_values(ids: ["${INTAKE_ID_COL}", "${CATEGORY_MIRROR_COL}", "${CATEGORY_TEXT_COL}", "${DOC_FOLDER_COL}"]) { id text }
        }
      }`,
     { itemId: String(itemId) }
   );
 
-  const cols       = execData?.items?.[0]?.column_values || [];
+  const execItem   = execData?.items?.[0] || {};
+  const docName    = execItem.name || 'Document';
+  const cols       = execItem.column_values || [];
   const intakeId   = cols.find((c) => c.id === INTAKE_ID_COL)?.text?.trim()       || '';
   const mirror     = cols.find((c) => c.id === CATEGORY_MIRROR_COL)?.text?.trim() || '';
   const catText    = cols.find((c) => c.id === CATEGORY_TEXT_COL)?.text?.trim()    || '';
-  const folderText = cols.find((c) => c.id === DOC_FOLDER_COL)?.text?.trim()      || '';
+  let folderText   = cols.find((c) => c.id === DOC_FOLDER_COL)?.text?.trim()      || '';
 
   // Parallel: resolve category + get client name
   const [category, clientName] = await Promise.all([
@@ -339,6 +343,7 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, m
           }),
         }
       );
+      folderText = folderUrl;   // so the update comment links to the folder
       console.log(`[DocForm] Backfilled folder link for "${category}" on item ${itemId}`);
     } catch (err) {
       // Best-effort — upload already succeeded so don't fail the whole request
@@ -346,7 +351,83 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, m
     }
   }
 
+  // ── Post Monday Updates so the case team is notified ──────────────────────
+  // Fire-and-forget: updates are nice-to-have, must not fail the upload response.
+  postUploadUpdates({
+    itemId,
+    caseRef,
+    clientName,
+    category,
+    docName,
+    filename:  originalName,
+    folderUrl: folderText,
+  }).catch((err) =>
+    console.warn(`[DocForm] Upload update post failed for item ${itemId}:`, err.message)
+  );
+
   return webUrl;
+}
+
+/**
+ * Post "document uploaded" updates to Monday.com so the case team is notified
+ * via Monday's native update subscription (bell + email).
+ *
+ *  • Update on the Document Execution item → notifies Assigned Reviewer
+ *  • Update on the Client Master item      → notifies Case Manager, Ops Supervisor,
+ *                                             Case Support Officer, Stage Owner
+ */
+async function postUploadUpdates({ itemId, caseRef, clientName, category, docName, filename, folderUrl }) {
+  const uploadedAt = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
+  const clientLine = clientName ? ` (${clientName})` : '';
+  const folderLine = folderUrl  ? `\n\n📁 Folder: ${folderUrl}` : '';
+
+  // 1. Document Execution item — reviewer gets notified
+  const docBody =
+    `📄 Document Uploaded by Client\n\n` +
+    `Document: ${docName}\n` +
+    `File: ${filename}\n` +
+    `Category: ${category}\n` +
+    `Case: ${caseRef}${clientLine}\n` +
+    `Uploaded: ${uploadedAt} (Toronto)${folderLine}\n\n` +
+    `Status set to Received — please review.`;
+
+  await mondayApi.query(
+    `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+    { itemId: String(itemId), body: docBody }
+  );
+
+  // 2. Client Master item — case team gets notified
+  try {
+    const masterData = await mondayApi.query(
+      `query($boardId: ID!, $caseRef: String!) {
+         items_page_by_column_values(
+           board_id: $boardId, limit: 1,
+           columns: [{ column_id: "${CM_CASE_REF_COL}", column_values: [$caseRef] }]
+         ) { items { id } }
+       }`,
+      { boardId: String(CM_BOARD_ID), caseRef }
+    );
+    const masterItemId = masterData?.items_page_by_column_values?.items?.[0]?.id;
+    if (!masterItemId) {
+      console.warn(`[DocForm] No Client Master item found for case ${caseRef} — skipping master update`);
+      return;
+    }
+
+    const masterBody =
+      `📄 Client Uploaded Document\n\n` +
+      `Document: ${docName}\n` +
+      `File: ${filename}\n` +
+      `Category: ${category}\n` +
+      `Case: ${caseRef}\n` +
+      `Uploaded: ${uploadedAt} (Toronto)${folderLine}`;
+
+    await mondayApi.query(
+      `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+      { itemId: String(masterItemId), body: masterBody }
+    );
+  } catch (err) {
+    console.warn(`[DocForm] Client Master update failed for case ${caseRef}:`, err.message);
+  }
 }
 
 /**
