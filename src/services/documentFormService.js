@@ -365,6 +365,15 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, m
     console.warn(`[DocForm] Upload update post failed for item ${itemId}:`, err.message)
   );
 
+  // Fire-and-forget: refresh Documents Uploaded % and Documents Readiness %
+  // on Client Master immediately so supervisors see live progress instead of
+  // waiting for the 7 AM cron. Failure must not affect the upload response.
+  require('./caseReadinessService')
+    .calculateForCaseRef(caseRef)
+    .catch((err) =>
+      console.warn(`[DocForm] Live readiness recalc failed for ${caseRef}:`, err.message)
+    );
+
   return webUrl;
 }
 

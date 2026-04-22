@@ -64,6 +64,7 @@ const CM = {
   automationLock:      'color_mm0x3x1x',
   qReadiness:          'numeric_mm0x9dea',
   docReadiness:        'numeric_mm0x5g9x',
+  docUploaded:         'numeric_mm2njqk1',   // % of countable docs the client has uploaded (in pipeline)
   blockingQCount:      'numeric_mm0xbpn1',
   blockingDocCount:    'numeric_mm0xje6p',
   missingRequired:     'numeric_mm0x6qy4',
@@ -241,8 +242,15 @@ function calcQMetrics(items) {
 function calcDocMetrics(items) {
   let countable       = 0;
   let reviewed        = 0;
+  let inPipelineCount = 0;
   let blocking        = 0;
   let missingRequired = 0;
+
+  // "In pipeline" = client has uploaded at least once (any of these statuses).
+  // Used for the Documents Uploaded % column — the supervisor-facing
+  // "how much has the client done" metric, distinct from "how much has been
+  // reviewed" which is what readinessPct measures.
+  const inPipeline = new Set(['Reviewed', 'Received', 'Under Review', 'Rework Required']);
 
   for (const item of items) {
     const col        = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
@@ -254,18 +262,19 @@ function calcDocMetrics(items) {
     if (counts === 'yes') {
       countable++;
       if (status === 'Reviewed') reviewed++;
+      if (inPipeline.has(status)) inPipelineCount++;
     }
     if (isBlocking && status !== 'Reviewed') blocking++;
 
     // "Missing Required Documents" = Mandatory docs that count toward readiness
     // AND haven't entered the pipeline at all (no upload from the client yet).
     // "Rework Required" is excluded: the client did upload, it's in review cycle.
-    const inPipeline = new Set(['Reviewed', 'Received', 'Under Review', 'Rework Required']);
     if (required === 'Mandatory' && counts === 'yes' && !inPipeline.has(status)) missingRequired++;
   }
 
   const readinessPct = countable > 0 ? Math.round((reviewed / countable) * 100) : 0;
-  return { readinessPct, blockingCount: blocking, missingRequired, totalCountable: countable };
+  const uploadedPct  = countable > 0 ? Math.round((inPipelineCount / countable) * 100) : 0;
+  return { readinessPct, uploadedPct, blockingCount: blocking, missingRequired, totalCountable: countable };
 }
 
 // ─── Write calculated metrics to Client Master Board ─────────────────────────
@@ -284,6 +293,7 @@ async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshol
   // the real count.  HTML-form cases have no blocking questions so 0 is correct.
   const colValues = {
     [CM.docReadiness]:     docReady,
+    [CM.docUploaded]:      docMetrics.uploadedPct,
     [CM.blockingDocCount]: docMetrics.blockingCount,
     [CM.missingRequired]:  docMetrics.missingRequired,
     [CM.blockingQCount]:   0,

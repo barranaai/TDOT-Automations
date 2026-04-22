@@ -192,6 +192,29 @@ async function onColumnChange({ itemId, columnId, value }) {
   } else if (label === 'Rework Required') {
     await onReworkRequired({ itemId });
   }
+
+  // Any document-status change (Received → Reviewed, Reviewed → Rework, etc.)
+  // affects both Documents Readiness % and Documents Uploaded % on the master.
+  // Fire-and-forget so a recalc failure can't block the webhook handler.
+  triggerLiveRecalc(itemId).catch((err) =>
+    console.warn(`[DocReview] Live readiness recalc failed for item ${itemId}:`, err.message)
+  );
+}
+
+/**
+ * Look up the case reference for an execution item and trigger a live
+ * readiness recalculation on the Client Master Board.
+ */
+async function triggerLiveRecalc(itemId) {
+  const data = await mondayApi.query(
+    `query($id: ID!) {
+       items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL}"]) { text } }
+     }`,
+    { id: String(itemId) }
+  );
+  const caseRef = data?.items?.[0]?.column_values?.[0]?.text?.trim();
+  if (!caseRef) return;
+  await require('./caseReadinessService').calculateForCaseRef(caseRef);
 }
 
 module.exports = { onColumnChange };
