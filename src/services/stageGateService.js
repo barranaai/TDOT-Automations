@@ -33,6 +33,7 @@ const CM = {
   docThresholdMet:     'color_mm0xvxq2',
   caseManager:         'multiple_person_mm0xhmgk',
   opsSupervisor:       'multiple_person_mm0xp0sq',
+  submissionTeam:      'multiple_person_mm2nhsx1',
   caseRef:             'text_mm142s49',
   caseType:            'dropdown_mm0xd1qn',
   qReadiness:          'numeric_mm0x9dea',
@@ -67,7 +68,8 @@ async function fetchUserEmails(userIds) {
 async function fetchCaseDetails(masterItemId) {
   const FETCH_IDS = [
     CM.caseRef, CM.caseType, CM.caseStage, CM.automationLock,
-    CM.caseManager, CM.opsSupervisor, CM.qReadiness, CM.docReadiness,
+    CM.caseManager, CM.opsSupervisor, CM.submissionTeam,
+    CM.qReadiness, CM.docReadiness,
   ];
   const data = await mondayApi.query(
     `query($itemId: ID!) {
@@ -170,16 +172,17 @@ async function onThresholdMet({ masterItemId, caseRef, caseType }) {
   });
   console.log(`[StageGate] ✓ ${caseRef} → Internal Review (Q:${qPct}% Doc:${docPct}%)`);
 
-  // Post Monday.com comment
+  // Post Monday.com comment — explicit ask for supervisor to assign reviewer
   await postMondayComment(
     masterItemId,
     `📋 *Case Ready for Internal Review*\n\n` +
     `${caseRef} (${clientName || 'client'}) has met the readiness threshold.\n` +
     `Q: ${qPct}% | Docs: ${docPct}% | No blocking items.\n\n` +
-    `The case has been moved to **Internal Review**. Please review the client submissions.`
+    `**Action required (Ops Supervisor):** assign the Case Manager / reviewer who will handle internal review for this case.`
   );
 
   // Notify Ops Supervisor + Case Manager
+  // The supervisor is the primary actor here — they need to assign the reviewer.
   try {
     const ids   = [...new Set([
       ...extractPersonIds(colValue(CM.opsSupervisor)),
@@ -189,13 +192,13 @@ async function onThresholdMet({ masterItemId, caseRef, caseType }) {
     const to    = users.map((u) => u.email).filter(Boolean);
     await sendEmail(
       to,
-      `Internal Review Required — ${caseRef}`,
+      `Internal Review — Please Assign Reviewer — ${caseRef}`,
       teamEmailHtml({
         badge: 'Internal Review', badgeColour: '#2563eb',
         heading: '📋 Case ready for Internal Review',
-        body: `<p>A client case has reached the readiness threshold and is now ready for your internal review.</p>
+        body: `<p>A client case has reached the readiness threshold and is now ready for internal review.</p>
                <p>Questionnaire: <strong>${qPct}%</strong> | Documents: <strong>${docPct}%</strong> | No blocking items.</p>
-               <p>Please log in to Monday.com and begin your review at your earliest convenience.</p>`,
+               <p><strong>Action required (Ops Supervisor):</strong> please open the case in Monday.com and assign the Case Manager / reviewer who will handle this case.</p>`,
         caseRef, clientName, caseType,
       })
     );
@@ -238,22 +241,29 @@ async function onFullyComplete({ masterItemId, caseRef, caseType }) {
     masterItemId,
     `✅ *Case Ready for Submission Preparation*\n\n` +
     `${caseRef} (${clientName || 'client'}) has reached 100% readiness with no blocking items.\n\n` +
-    `The case has been moved to **Submission Preparation**. Please complete your review and mark the case as Submission Ready when ready.`
+    `**Action required (Ops Supervisor):** assign the **Submission Team** who will prepare the filing for this case. ` +
+    `Once assigned, the team will be notified and can begin submission preparation.`
   );
 
-  // Notify Case Manager
+  // Notify Ops Supervisor (must assign Submission Team) + Case Manager (handing off)
+  // Submission Team itself is NOT notified yet — they are notified when assigned
+  // (the assignment-change webhook handler picks that up automatically).
   try {
-    const ids   = extractPersonIds(colValue(CM.caseManager));
+    const ids   = [...new Set([
+      ...extractPersonIds(colValue(CM.opsSupervisor)),
+      ...extractPersonIds(colValue(CM.caseManager)),
+    ])];
     const users = await fetchUserEmails(ids);
     const to    = users.map((u) => u.email).filter(Boolean);
     await sendEmail(
       to,
-      `Submission Preparation — ${caseRef}`,
+      `Submission Prep — Please Assign Submission Team — ${caseRef}`,
       teamEmailHtml({
         badge: 'Submission Prep', badgeColour: '#059669',
         heading: '✅ Case ready for Submission Preparation',
         body: `<p>A client case has reached <strong>100% completion</strong> with no blocking items and is now ready for submission preparation.</p>
-               <p>Please complete your review and mark the case as <strong>Submission Ready</strong> in Monday.com when you are satisfied with all submissions.</p>`,
+               <p><strong>Action required (Ops Supervisor):</strong> please open the case in Monday.com and assign the <strong>Submission Team</strong> who will prepare the filing.</p>
+               <p>Once you mark the case as <strong>Submission Ready</strong>, the case will be locked and the Submission Team will be notified to begin filing.</p>`,
         caseRef, clientName, caseType,
       })
     );
@@ -280,8 +290,45 @@ async function onSubmissionReady({ masterItemId, caseRef }) {
     masterItemId,
     `🔒 *Case Locked — Submission Ready*\n\n` +
     `${caseRef} has been marked as Submission Ready by the case supervisor.\n` +
-    `The case is now locked. No further automated changes will be made.`
+    `The case is now locked. The Submission Team has been notified to begin filing.`
   );
+
+  // Notify Submission Team + Case Manager — filing handoff.
+  // Best-effort: lock has already been applied, so any email failure here doesn't
+  // affect the lock state. Caller doesn't need to await this.
+  try {
+    const item = await fetchCaseDetails(masterItemId);
+    if (!item) return;
+    const colValue   = (id) => item.column_values.find((c) => c.id === id)?.value || '';
+    const col        = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
+    const clientName = (item.name || '').trim() || 'Client';
+    const caseType   = col(CM.caseType);
+
+    const ids   = [...new Set([
+      ...extractPersonIds(colValue(CM.submissionTeam)),
+      ...extractPersonIds(colValue(CM.caseManager)),
+    ])];
+    if (!ids.length) {
+      console.warn(`[StageGate] ${caseRef} marked Submission Ready but no Submission Team or Case Manager assigned — no notification sent`);
+    } else {
+      const users = await fetchUserEmails(ids);
+      const to    = users.map((u) => u.email).filter(Boolean);
+      await sendEmail(
+        to,
+        `Submission Ready — Filing Can Begin — ${caseRef}`,
+        teamEmailHtml({
+          badge: 'Submission Ready', badgeColour: '#7c3aed',
+          heading: '🔒 Case ready for filing',
+          body: `<p>The case supervisor has marked this case as <strong>Submission Ready</strong>. The case is now locked — no further automated changes will be made.</p>
+                 <p><strong>Action required (Submission Team):</strong> please proceed with filing this case to IRCC.</p>
+                 <p>All required documents and questionnaire responses have been collected and reviewed. Once the application has been filed, please update the Case Stage in Monday.com to <strong>Submitted</strong>.</p>`,
+          caseRef, clientName, caseType,
+        })
+      );
+    }
+  } catch (err) {
+    console.warn(`[StageGate] Submission Ready notification failed for ${caseRef}:`, err.message);
+  }
 
   console.log(`[StageGate] ✅ ${caseRef} locked at Submission Ready`);
 }

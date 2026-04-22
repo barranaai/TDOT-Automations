@@ -9,7 +9,7 @@
  * Triggers handled (called from mondayWebhook.js):
  *
  *   Document Execution Board:
- *     onDocumentReceived         → notify Assigned Reviewer + Case Manager + Ops Supervisor + Case Support Officer + Stage Owner
+ *     onDocumentReceived         → notify Assigned Reviewer + Case Manager + Ops Supervisor + Case Support Officer + Stage Owner + Submission Team
  *     onDocumentReworkRequired   → notify Case Manager + Ops Supervisor (via Client Master lookup)
  *
  *   Questionnaire Execution Board:
@@ -47,6 +47,7 @@ const CM_COLS = {
   caseManager:        'multiple_person_mm0xhmgk',
   caseSupportOfficer: 'multiple_person_mm0xm710',
   stageOwner:         'multiple_person_mm0xgpt',
+  submissionTeam:     'multiple_person_mm2nhsx1',
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -101,12 +102,13 @@ async function getItemPeople(itemId, colId) {
 
 // Look up Ops Supervisor + Case Manager from Client Master by case reference
 async function getCaseOwners(caseRef) {
-  if (!caseRef) return { supervisorIds: [], managerIds: [], supportOfficerIds: [], stageOwnerIds: [], masterItemId: null };
+  if (!caseRef) return { supervisorIds: [], managerIds: [], supportOfficerIds: [], stageOwnerIds: [], submissionTeamIds: [], masterItemId: null };
   const personCols = [
     CM_COLS.opsSupervisor,
     CM_COLS.caseManager,
     CM_COLS.caseSupportOfficer,
     CM_COLS.stageOwner,
+    CM_COLS.submissionTeam,
   ];
   const data = await mondayApi.query(
     `query($boardId: ID!, $caseRef: String!) {
@@ -123,7 +125,7 @@ async function getCaseOwners(caseRef) {
     { boardId: String(clientMasterBoardId), caseRef }
   );
   const item = data?.items_page_by_column_values?.items?.[0];
-  if (!item) return { supervisorIds: [], managerIds: [], supportOfficerIds: [], stageOwnerIds: [], masterItemId: null };
+  if (!item) return { supervisorIds: [], managerIds: [], supportOfficerIds: [], stageOwnerIds: [], submissionTeamIds: [], masterItemId: null };
   const col = (id) => item.column_values.find((c) => c.id === id)?.value;
   return {
     masterItemId:      item.id,
@@ -131,6 +133,7 @@ async function getCaseOwners(caseRef) {
     managerIds:        extractPersonIds(col(CM_COLS.caseManager)),
     supportOfficerIds: extractPersonIds(col(CM_COLS.caseSupportOfficer)),
     stageOwnerIds:     extractPersonIds(col(CM_COLS.stageOwner)),
+    submissionTeamIds: extractPersonIds(col(CM_COLS.submissionTeam)),
   };
 }
 
@@ -217,6 +220,7 @@ async function onDocumentReceived(itemId, itemName) {
         ...owners.supervisorIds,
         ...owners.supportOfficerIds,
         ...owners.stageOwnerIds,
+        ...owners.submissionTeamIds,
       ];
     } catch (err) {
       console.warn(`[Notify] onDocumentReceived: case owners lookup failed for ${docMeta.caseRef}:`, err.message);
@@ -329,6 +333,7 @@ const ROLE_LABELS = {
   'multiple_person_mm0xm710': 'Case Support Officer',
   'multiple_person_mm0xp0sq': 'Ops Supervisor',
   'multiple_person_mm0xgpt':  'Stage Owner',
+  'multiple_person_mm2nhsx1': 'Submission Team',
 };
 
 /**
