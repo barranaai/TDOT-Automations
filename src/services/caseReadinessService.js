@@ -1,32 +1,26 @@
 /**
  * Case Readiness Calculation Service
  *
- * Queries both execution boards for a given case, calculates readiness
- * percentages and blocking counts, then writes the results back to the
- * Client Master Board.  Also fires the Automation Lock Engine when the
- * case crosses the "fully complete" threshold.
+ * Calculates document readiness percentages and blocking counts for a case,
+ * then writes the results back to the Client Master Board. Also fires stage
+ * gates when the case crosses the readiness threshold.
+ *
+ * Q Readiness is managed exclusively by htmlQuestionnaireService.markSubmitted()
+ * (HTML form path). This service preserves that stored value — never overwrites it.
  *
  * Called from:
- *  - questionnaireFormService (after client saves answers)
- *  - documentFormService     (after client uploads a file)
- *  - scheduler               (daily, before SLA & Risk Engine runs)
+ *  - htmlQuestionnaireService (after client submits form)
+ *  - documentFormService      (after client uploads a file)
+ *  - documentReviewService    (after staff marks reviewed / requests rework)
+ *  - scheduler                (daily, before SLA & Risk Engine runs)
  */
 
-const mondayApi      = require('./mondayApi');
+const mondayApi        = require('./mondayApi');
 const stageGateService = require('./stageGateService');
 const { clientMasterBoardId, templateBoardId } = require('../../config/monday');
 
-const Q_BOARD_ID  = process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488';
-const D_BOARD_ID  = process.env.MONDAY_EXECUTION_BOARD_ID               || '18401875593';
-const SLA_BOARD_ID = process.env.MONDAY_SLA_CONFIG_BOARD_ID             || '18402401449';
-
-// ─── Column IDs — Questionnaire Execution Board ───────────────────────────────
-const Q_COLS = {
-  caseRef:            'text_mm12dgy9',
-  countsTowardReady:  'lookup_mm13866r',   // mirror → "Yes" / "No"
-  responseStatus:     'color_mm135pm1',    // text: Reviewed / Answered / Missing / etc.
-  blockingQuestion:   'lookup_mm13p6f4',   // mirror → "Yes" / "No"
-};
+const D_BOARD_ID   = process.env.MONDAY_EXECUTION_BOARD_ID   || '18401875593';
+const SLA_BOARD_ID = process.env.MONDAY_SLA_CONFIG_BOARD_ID  || '18402401449';
 
 // ─── Column IDs — Document Execution Board ────────────────────────────────────
 const D_COLS = {
@@ -209,12 +203,10 @@ async function enrichDocItemsWithTemplateData(dItems) {
 
 // ─── Calculate questionnaire readiness metrics ────────────────────────────────
 
-function calcQMetrics(_items) {
-  // All questionnaires are now HTML-form based — answers live in OneDrive JSON
-  // and Q Readiness is written directly by htmlQuestionnaireService.markSubmitted().
-  // The Q execution board is retired; we always return htmlFormMode=true so the
-  // stored value on the Client Master is preserved and never overwritten.
-  return { readinessPct: null, blockingCount: 0, totalCountable: 0, htmlFormMode: true };
+function calcQMetrics() {
+  // Q Readiness is owned by htmlQuestionnaireService.markSubmitted().
+  // This service never recalculates or overwrites it.
+  return { blockingCount: 0, totalCountable: 0, htmlFormMode: true };
 }
 
 // ─── Calculate document readiness metrics ────────────────────────────────────
@@ -265,12 +257,9 @@ function calcDocMetrics(items) {
  *   if unknown — gates will be skipped safely for that run.
  */
 async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshold, storedQReadiness = null) {
-  const docReady     = docMetrics.readinessPct;
-  const htmlFormMode = qMetrics.htmlFormMode;
+  const docReady = docMetrics.readinessPct;
 
-  // Always update document-related columns.
-  // blockingQCount defaults to 0 here; the Q-board path below overwrites it with
-  // the real count.  HTML-form cases have no blocking questions so 0 is correct.
+  // blockingQCount is always 0 — no blocking questions in the HTML-form workflow.
   const colValues = {
     [CM.docReadiness]:     docReady,
     [CM.docUploaded]:      docMetrics.uploadedPct,
@@ -283,26 +272,10 @@ async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshol
   let fullyComplete = false;
   let qReady        = 0;
 
-  if (!htmlFormMode) {
-    // ── Legacy Q-board path ────────────────────────────────────────────────
-    qReady = qMetrics.readinessPct;
-    const totalBlocking = qMetrics.blockingCount + docMetrics.blockingCount;
-    thresholdMet  = qReady >= minThreshold && docReady >= minThreshold && totalBlocking === 0;
-    fullyComplete = qReady >= FULL_LOCK_THRESHOLD && docReady >= FULL_LOCK_THRESHOLD && totalBlocking === 0;
-
-    colValues[CM.qReadiness]        = qReady;
-    colValues[CM.blockingQCount]    = qMetrics.blockingCount;
-    colValues[CM.qCompletionStatus] = { label: qReady >= FULL_LOCK_THRESHOLD ? 'Done' : 'Working on it' };
-    colValues[CM.docThresholdMet]   = { label: thresholdMet ? 'Yes' : 'No' };
-    colValues[CM.readyForReview]    = { label: thresholdMet ? 'Done' : 'Working on it' };
-
-  } else if (storedQReadiness !== null) {
-    // ── HTML-form path — Q readiness already set by form submission ────────
-    // Never overwrite qReadiness or qCompletionStatus (preserve submitted values).
-    // Do update the threshold visibility columns so officers see the correct state,
-    // and compute thresholdMet/fullyComplete so stage gates can fire from the daily scan.
+  if (storedQReadiness !== null) {
+    // Q readiness is set by htmlQuestionnaireService.markSubmitted() — never overwrite it.
+    // Use the stored value only for threshold/gate logic and visibility columns.
     qReady = storedQReadiness;
-    // Q board has no blocking items; only doc-side blocking counts here.
     const totalBlocking = docMetrics.blockingCount;
     thresholdMet  = qReady >= minThreshold && docReady >= minThreshold && totalBlocking === 0;
     fullyComplete = qReady >= FULL_LOCK_THRESHOLD && docReady >= FULL_LOCK_THRESHOLD && totalBlocking === 0;
@@ -310,8 +283,7 @@ async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshol
     colValues[CM.docThresholdMet] = { label: thresholdMet ? 'Yes' : 'No' };
     colValues[CM.readyForReview]  = { label: thresholdMet ? 'Done' : 'Working on it' };
   }
-  // If htmlFormMode=true AND storedQReadiness is null (caller didn't fetch it),
-  // we write only the doc columns and return thresholdMet=false — safe fallback.
+  // storedQReadiness === null: write only doc columns, gates skip safely this run.
 
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
@@ -356,7 +328,6 @@ async function calculateForCase({ masterItemId, caseRef, caseType, caseStage, ch
     fetchExecutionItems(D_BOARD_ID, D_COLS.caseRef,
       [D_COLS.countsTowardReady, D_COLS.documentStatus, D_COLS.blockingDoc, D_COLS.requiredType, D_COLS.intakeItemId], caseRef),
   ]);
-  const qItems = []; // Q execution board retired — HTML form is sole source of truth
 
   if (dItems.length === 0) return null;
 
@@ -366,26 +337,20 @@ async function calculateForCase({ masterItemId, caseRef, caseType, caseStage, ch
   }
 
   const minThreshold = thresholds[caseType] || 80;
-  const qMetrics     = calcQMetrics(qItems);
+  const qMetrics     = calcQMetrics();
   const docMetrics   = calcDocMetrics(dItems);
   const result       = await writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshold, storedQReadiness);
 
-  const htmlFormMode = qMetrics.htmlFormMode;
   console.log(
-    `[Readiness] ${caseRef} | ` +
-    (htmlFormMode
-      ? `Q:(html-form, stored=${storedQReadiness ?? 'unknown'}%)`
-      : `Q:${result.qReady}%`) +
-    ` Doc:${result.docReady}% Blocking:${result.totalBlocking} Threshold:${minThreshold}% ` +
-    (result.fullyComplete ? '→ FULLY COMPLETE' : result.thresholdMet ? '→ threshold met' : '')
+    `[Readiness] ${caseRef} | Q:(html-form, stored=${storedQReadiness ?? 'unknown'}%)` +
+    ` Doc:${result.docReady}% Blocking:${result.totalBlocking} Threshold:${minThreshold}%` +
+    (result.fullyComplete ? ' → FULLY COMPLETE' : result.thresholdMet ? ' → threshold met' : '')
   );
 
   if (!checkLock) return result;
 
-  // For HTML-form cases where storedQReadiness was not fetched by the caller,
-  // we cannot determine thresholdMet accurately — skip gates safely this run.
-  // When storedQReadiness IS provided (daily scan / doc upload path), gates fire normally.
-  if (htmlFormMode && storedQReadiness === null) return result;
+  // storedQReadiness not fetched — cannot evaluate gates accurately, skip safely.
+  if (storedQReadiness === null) return result;
 
   // Gate 1: threshold met → Internal Review (from Document Collection Started only)
   if (result.thresholdMet && !result.fullyComplete && caseStage === 'Document Collection Started') {
