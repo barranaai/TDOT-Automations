@@ -6,6 +6,7 @@ const mondayWebhookRouter       = require('./routes/mondayWebhook');
 const questionnaireFormRouter    = require('./routes/questionnaireForm');
 const documentUploadRouter       = require('./routes/documentUploadForm');
 const htmlQuestionnaireRouter    = require('./routes/htmlQuestionnaireForm');
+const documentReviewRouter       = require('./routes/documentReviewForm');
 const adminLoginRouter           = require('./routes/adminLogin');
 const adminDashboardRouter       = require('./routes/adminDashboard');
 const adminEnginesRouter         = require('./routes/adminEngines');
@@ -35,6 +36,7 @@ app.use('/webhook/monday', mondayWebhookRouter);
 app.use('/questionnaire',  questionnaireFormRouter);
 app.use('/documents',      documentUploadRouter);
 app.use('/q',              htmlQuestionnaireRouter);
+app.use('/d',              documentReviewRouter);   // staff document review page
 // Admin routes — order matters (most specific first)
 app.use('/admin/dashboard', adminDashboardRouter);  // landing page after login
 app.use('/admin/engines',   adminEnginesRouter);    // engine control panel
