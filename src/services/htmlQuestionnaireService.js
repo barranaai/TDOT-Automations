@@ -2934,6 +2934,58 @@ input[disabled], select[disabled], textarea[disabled] {
     }
   }
 
+  /**
+   * For each dynamic table that has saved rows beyond the static HTML's default,
+   * click its "Add Row" button the required number of times so the extra rows
+   * exist in the DOM before prefill() runs. Without this, saved r2/r3 data has
+   * no matching DOM field and gets silently dropped from the review display.
+   */
+  function expandTableRows(savedFields, scopeEl) {
+    var tableMaxRow = {};
+    for (var i = 0; i < savedFields.length; i++) {
+      var key = savedFields[i].key;
+      var match = key.match(/-tbl-(.+?)-r(\\d+)-/);
+      if (match) {
+        var tblSlug = match[1];
+        var rowNum = parseInt(match[2], 10);
+        if (!tableMaxRow[tblSlug] || tableMaxRow[tblSlug] < rowNum) {
+          tableMaxRow[tblSlug] = rowNum;
+        }
+      }
+    }
+    var root = scopeEl || document;
+    var tables = root.querySelectorAll('.dynamic-table');
+    for (var ti = 0; ti < tables.length; ti++) {
+      var table = tables[ti];
+      var tblSlug = slugify(table.id || ('table-' + ti));
+      /* For cloned member sections, the table ID is prefixed (e.g. "spouse-ma-employment")
+         but saved keys reference the original slug (e.g. "ma-employment"). Strip any
+         leading "memberkey-" prefix before lookup. */
+      var maxRow = tableMaxRow[tblSlug];
+      if (!maxRow) {
+        var stripped = tblSlug.replace(/^[a-z0-9]+-/, '');
+        if (stripped !== tblSlug) maxRow = tableMaxRow[stripped];
+      }
+      if (!maxRow) continue;
+      var currentRows = table.querySelectorAll('tbody tr').length;
+      var needed = maxRow - currentRows;
+      if (needed <= 0) continue;
+      var container = table.closest('.sub-accordion-body') || table.parentElement;
+      var addBtn = null;
+      if (container) {
+        var btns = container.querySelectorAll('button, .btn-add');
+        for (var bi = 0; bi < btns.length; bi++) {
+          var onclick = btns[bi].getAttribute('onclick') || '';
+          if (onclick.indexOf(table.id) !== -1 || onclick.indexOf('addRow') !== -1) {
+            addBtn = btns[bi]; break;
+          }
+        }
+      }
+      if (!addBtn) continue;
+      for (var ri = 0; ri < needed; ri++) { addBtn.click(); }
+    }
+  }
+
   function prefill(fields) {
     console.log('[TDOT Review] SAVED_DATA entries:', SAVED_DATA.length, '  DOM fields:', fields.length);
 
@@ -3391,6 +3443,20 @@ input[disabled], select[disabled], textarea[disabled] {
               "toggleConditional(this,'" + m.key + "-$1')"));
         }
       }
+      /* Rewrite addRow('originalTableId', ...) → addRow('memberKey-originalTableId', ...)
+         so cloned sections' "+ Add Row" buttons target their own (renamed) tables. */
+      var clickEls = section.querySelectorAll('[onclick]');
+      var ADDROW_RE = /\\b(addRow|addChild)\\(\\s*'([^']+)'/g;
+      for (var ci2 = 0; ci2 < clickEls.length; ci2++) {
+        var ocClick = clickEls[ci2].getAttribute('onclick') || '';
+        if (ADDROW_RE.test(ocClick)) {
+          ADDROW_RE.lastIndex = 0;
+          clickEls[ci2].setAttribute('onclick',
+            ocClick.replace(ADDROW_RE, function(_m, fn, id) {
+              return fn + "('" + m.key + "-" + id + "'";
+            }));
+        }
+      }
 
       insertRef.parentNode.insertBefore(section, insertRef.nextSibling);
       insertRef = section;
@@ -3450,6 +3516,19 @@ input[disabled], select[disabled], textarea[disabled] {
       setupMultiMemberReview();
     }
     expandAll();
+
+    /* Expand dynamic tables to match saved row counts BEFORE collectFields,
+       otherwise saved r2/r3 values have no matching DOM input and are dropped. */
+    if (IS_MULTI_REVIEW) {
+      for (var mri = 0; mri < REVIEW_MEMBERS.length; mri++) {
+        var mm = REVIEW_MEMBERS[mri];
+        var sec = document.querySelector('[data-member-key="' + mm.key + '"]');
+        if (sec && mm.fields) expandTableRows(mm.fields, sec);
+      }
+    } else {
+      expandTableRows(SAVED_DATA, null);
+    }
+
     var fields = collectFields();
 
     if (IS_MULTI_REVIEW) {
