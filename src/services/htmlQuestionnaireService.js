@@ -2777,15 +2777,16 @@ input[disabled], select[disabled], textarea[disabled] {
       for (var ri = 0; ri < rows.length; ri++) {
         var row = rows[ri], rowInputs = row.querySelectorAll('input, select');
         var section2 = getSectionContext(table);
-        /* Row-level flag key — shared across all cells in this row so only one
-           flag button is ever rendered for the entire row (not one per column). */
-        var rowKey = slugify(section2 + '--tbl-' + slugify(tableId) + '--r' + (ri + 1));
+        /* rowKey is set to the FIRST column's cell key (backward-compatible: existing
+           flags were stored under that key when the first Flag button was clicked). */
+        var rowKey = null;
         for (var ci = 0; ci < headers.length; ci++) {
           var cell = rowInputs[ci];
           if (!cell || seen.indexOf(cell) !== -1) continue;
           seen.push(cell);
           var labelText2 = headers[ci] + ' \u2014 Row ' + (ri + 1);
           var key2       = slugify(section2 + '--tbl-' + slugify(tableId) + '--r' + (ri + 1) + '--' + headers[ci]);
+          if (rowKey === null) rowKey = key2; /* first valid cell → becomes the row flag key */
           fields.push({ section: section2 + ' \u203a Table', label: labelText2, key: key2, el: cell, group: row, _rowKey: rowKey });
         }
       }
