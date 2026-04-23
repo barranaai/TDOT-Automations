@@ -1574,7 +1574,7 @@ ${hasAdditionalForm ? `
     var tableMaxRow = {};
     for (var i = 0; i < savedFields.length; i++) {
       var key   = savedFields[i].key;
-      var match = key.match(/-tbl-(.+?)-r(\d+)-/);
+      var match = key.match(/-tbl-(.+?)-r(\\d+)-/);
       if (match) {
         var tblSlug = match[1];
         var rowNum  = parseInt(match[2], 10);
@@ -1886,7 +1886,7 @@ ${hasAdditionalForm ? `
       if (oc.indexOf('toggleConditional') !== -1) {
         /* Replace the ID reference inside toggleConditional(this, 'id') */
         onchangeEls[j].setAttribute('onchange',
-          oc.replace(/toggleConditional\(this,\s*'([^']+)'\)/,
+          oc.replace(/toggleConditional\\(this,\\s*'([^']+)'\\)/,
             "toggleConditional(this,'" + memberKey + "-$1')"));
       }
     }
@@ -1895,7 +1895,7 @@ ${hasAdditionalForm ? `
      * ID as their first argument; without rewriting, "+ Add Row" / "+ Add Child"
      * buttons in cloned member sections click into the primary member's tables. */
     var onclickEls = section.querySelectorAll('[onclick]');
-    var REWRITE_FNS = /\b(addRow|addChild)\(\s*'([^']+)'/g;
+    var REWRITE_FNS = /\\b(addRow|addChild)\\(\\s*'([^']+)'/g;
     for (var k = 0; k < onclickEls.length; k++) {
       var ocClick = onclickEls[k].getAttribute('onclick') || '';
       if (REWRITE_FNS.test(ocClick)) {
