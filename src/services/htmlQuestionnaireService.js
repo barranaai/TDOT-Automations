@@ -2767,14 +2767,17 @@ input[disabled], select[disabled], textarea[disabled] {
       var rows = tbody.querySelectorAll('tr');
       for (var ri = 0; ri < rows.length; ri++) {
         var row = rows[ri], rowInputs = row.querySelectorAll('input, select');
+        var section2 = getSectionContext(table);
+        /* Row-level flag key — shared across all cells in this row so only one
+           flag button is ever rendered for the entire row (not one per column). */
+        var rowKey = slugify(section2 + '--tbl-' + slugify(tableId) + '--r' + (ri + 1));
         for (var ci = 0; ci < headers.length; ci++) {
           var cell = rowInputs[ci];
           if (!cell || seen.indexOf(cell) !== -1) continue;
           seen.push(cell);
-          var section2   = getSectionContext(table);
           var labelText2 = headers[ci] + ' \u2014 Row ' + (ri + 1);
           var key2       = slugify(section2 + '--tbl-' + slugify(tableId) + '--r' + (ri + 1) + '--' + headers[ci]);
-          fields.push({ section: section2 + ' \u203a Table', label: labelText2, key: key2, el: cell, group: row });
+          fields.push({ section: section2 + ' \u203a Table', label: labelText2, key: key2, el: cell, group: row, _rowKey: rowKey });
         }
       }
     }
@@ -3100,11 +3103,19 @@ input[disabled], select[disabled], textarea[disabled] {
     var group = field.group;
     if (!group) return;
 
+    var isTableRow = group.tagName && group.tagName.toUpperCase() === 'TR';
+
+    /* Table rows: one flag button per row — skip if this row already has one */
+    if (isTableRow && group.querySelector('.tdot-flag-btn')) return;
+
+    /* For table rows use the shared row-level key so all columns map to one flag */
+    var baseKey = (isTableRow && field._rowKey) ? field._rowKey : field.key;
+
     /* In multi-member review, prefix the flag key with __memberKey__ */
-    var flagKey = field.key;
+    var flagKey = baseKey;
     if (IS_MULTI_REVIEW) {
       var mk = getMemberKeyForEl(field.el);
-      flagKey = '__' + mk + '__' + field.key;
+      flagKey = '__' + mk + '__' + baseKey;
     }
 
     var btn = document.createElement('button');
@@ -3121,7 +3132,7 @@ input[disabled], select[disabled], textarea[disabled] {
       row.appendChild(lbl);
       row.appendChild(btn);
     } else {
-      /* Table row or labelless group — prepend the button */
+      /* Table row: prepend the button before the first cell */
       group.insertBefore(btn, group.firstChild);
     }
 
