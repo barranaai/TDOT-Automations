@@ -2764,6 +2764,15 @@ input[disabled], select[disabled], textarea[disabled] {
       }
       var tbody = table.querySelector('tbody');
       if (!tbody) continue;
+      /* Add a dedicated Flag column header so data columns stay aligned */
+      var theadRow = table.querySelector('thead tr');
+      if (theadRow && !theadRow.querySelector('.tdot-flag-th')) {
+        var flagTh = document.createElement('th');
+        flagTh.className = 'tdot-flag-th';
+        flagTh.style.cssText = 'width:70px;min-width:70px;';
+        theadRow.insertBefore(flagTh, theadRow.firstChild);
+      }
+
       var rows = tbody.querySelectorAll('tr');
       for (var ri = 0; ri < rows.length; ri++) {
         var row = rows[ri], rowInputs = row.querySelectorAll('input, select');
@@ -3131,8 +3140,15 @@ input[disabled], select[disabled], textarea[disabled] {
       lbl.parentNode.insertBefore(row, lbl);
       row.appendChild(lbl);
       row.appendChild(btn);
+    } else if (isTableRow) {
+      /* Table row: place button inside a dedicated <td> so columns stay aligned */
+      var flagTd = document.createElement('td');
+      flagTd.className = 'tdot-flag-cell';
+      flagTd.style.cssText = 'width:70px;min-width:70px;text-align:center;vertical-align:middle;padding:4px 6px;';
+      flagTd.appendChild(btn);
+      group.insertBefore(flagTd, group.firstChild);
     } else {
-      /* Table row: prepend the button before the first cell */
+      /* Labelless non-table group — prepend the button directly */
       group.insertBefore(btn, group.firstChild);
     }
 
@@ -3597,8 +3613,11 @@ function buildPrintPage({ caseRef, clientName, caseType, caseSubType, savedField
 
     /* ── Page wrapper ──────────────────────────────────────────────────────── */
     .page-wrapper {
-      max-width: 820px; margin: 70px auto 40px; padding: 0 20px;
+      max-width: 1140px; margin: 70px auto 40px; padding: 0 24px;
     }
+    /* Tables can be wide — allow horizontal scroll rather than overflow clipping */
+    .dynamic-table { min-width: 100%; }
+    .dynamic-table-wrapper, .sub-accordion-body { overflow-x: auto; }
 
     /* ── Report header ─────────────────────────────────────────────────────── */
     .report-header {
