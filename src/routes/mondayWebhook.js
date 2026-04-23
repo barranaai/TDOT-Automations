@@ -59,22 +59,8 @@ router.post('/', async (req, res) => {
 
     const itemName = event.pulseName || event.itemName || String(pulseId);
 
-    // ── Questionnaire Execution Board events ─────────────────────────────
-    if (boardIdStr === QUESTIONNAIRE_EXECUTION_BOARD_ID && type === 'update_column_value') {
-      questionnaireReviewService.onColumnChange({ itemId: pulseId, columnId, value }).catch(err =>
-        console.error('[QReview] Error:', err.message)
-      );
-
-      // Notify reviewer when a response is answered
-      if (columnId === Q_RESPONSE_COL) {
-        const label = value?.label?.text || '';
-        if (label === 'Answered') {
-          notify.onResponseAnswered(pulseId, itemName).catch(() => {});
-        }
-        if (label === 'Needs Clarification') {
-          notify.onNeedsClarificationNotify(pulseId, itemName).catch(() => {});
-        }
-      }
+    // ── Questionnaire Execution Board — RETIRED (HTML form is source of truth) ──
+    if (boardIdStr === QUESTIONNAIRE_EXECUTION_BOARD_ID) {
       return;
     }
 
@@ -211,12 +197,10 @@ router.post('/', async (req, res) => {
 
         // Run the long-running setup tasks in parallel (fire-and-forget from Express's
         // perspective). Node.js will keep them alive until the process exits.
-        Promise.allSettled([
-          checklistService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
-          questionnaireService.onDocumentCollectionStarted({ itemId: pulseId, boardId }),
-        ]).then(() =>
-          console.log(`[Webhook] Checklist + Q setup complete for item ${pulseId}`)
-        );
+        // Q execution board retired — questionnaires are HTML-form based (see htmlQuestionnaireService).
+        checklistService.onDocumentCollectionStarted({ itemId: pulseId, boardId })
+          .then(() => console.log(`[Webhook] Checklist setup complete for item ${pulseId}`))
+          .catch(err => console.error(`[Webhook] Checklist setup failed for ${pulseId}:`, err.message));
       }
 
       // Fetch case ref once for all stage actions that need it (not Document Collection Started)

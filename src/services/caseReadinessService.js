@@ -209,32 +209,12 @@ async function enrichDocItemsWithTemplateData(dItems) {
 
 // ─── Calculate questionnaire readiness metrics ────────────────────────────────
 
-function calcQMetrics(items) {
-  // If there are no Q board items the case uses the HTML questionnaire form.
-  // Return a sentinel so callers know not to overwrite the form-submitted value.
-  if (!items.length) {
-    return { readinessPct: null, blockingCount: 0, totalCountable: 0, htmlFormMode: true };
-  }
-
-  let countable   = 0;
-  let reviewed    = 0;
-  let blocking    = 0;
-
-  for (const item of items) {
-    const col    = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
-    const counts = col(Q_COLS.countsTowardReady).toLowerCase();
-    const status = col(Q_COLS.responseStatus);
-    const isBlocking = col(Q_COLS.blockingQuestion).toLowerCase() === 'yes';
-
-    if (counts === 'yes') {
-      countable++;
-      if (status === 'Reviewed') reviewed++;
-    }
-    if (isBlocking && status !== 'Reviewed') blocking++;
-  }
-
-  const readinessPct = countable > 0 ? Math.round((reviewed / countable) * 100) : 0;
-  return { readinessPct, blockingCount: blocking, totalCountable: countable, htmlFormMode: false };
+function calcQMetrics(_items) {
+  // All questionnaires are now HTML-form based — answers live in OneDrive JSON
+  // and Q Readiness is written directly by htmlQuestionnaireService.markSubmitted().
+  // The Q execution board is retired; we always return htmlFormMode=true so the
+  // stored value on the Client Master is preserved and never overwritten.
+  return { readinessPct: null, blockingCount: 0, totalCountable: 0, htmlFormMode: true };
 }
 
 // ─── Calculate document readiness metrics ────────────────────────────────────
@@ -371,15 +351,14 @@ async function calculateForCase({ masterItemId, caseRef, caseType, caseStage, ch
   ]);
   if (caseStage && !eligibleStages.has(caseStage)) return null;
 
-  const [thresholds, qItems, dItems] = await Promise.all([
+  const [thresholds, dItems] = await Promise.all([
     loadThresholds(),
-    fetchExecutionItems(Q_BOARD_ID, Q_COLS.caseRef,
-      [Q_COLS.countsTowardReady, Q_COLS.responseStatus, Q_COLS.blockingQuestion], caseRef),
     fetchExecutionItems(D_BOARD_ID, D_COLS.caseRef,
       [D_COLS.countsTowardReady, D_COLS.documentStatus, D_COLS.blockingDoc, D_COLS.requiredType, D_COLS.intakeItemId], caseRef),
   ]);
+  const qItems = []; // Q execution board retired — HTML form is sole source of truth
 
-  if (qItems.length === 0 && dItems.length === 0) return null;
+  if (dItems.length === 0) return null;
 
   // Enrich doc items with template data (mirrors are broken due to unfixable board_relation)
   if (dItems.length > 0) {

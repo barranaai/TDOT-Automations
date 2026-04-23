@@ -15,11 +15,7 @@ const BOARD_CONFIGS = [
       'create_item',         // New item → generate Access Token
     ],
   },
-  {
-    name:    'Questionnaire Execution Board',
-    boardId: process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID || '18402117488',
-    events: ['change_column_value'], // Response Status changes
-  },
+  // Questionnaire Execution Board — RETIRED (HTML-form questionnaires are the sole source of truth).
   {
     name:    'Document Checklist Execution Board',
     boardId: process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593',
