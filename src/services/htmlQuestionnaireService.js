@@ -1563,11 +1563,18 @@ ${hasAdditionalForm ? `
   /* ── Pre-fill ── */
 
   async function expandTableRows(savedFields, scopeEl) {
-    /* Build a map: tableId slug → max row index found in saved data */
+    /* Build a map: tableId slug → max row index found in saved data.
+     *
+     * Keys are produced by slugify() of "section--tbl-{tableid}--r{N}--{header}".
+     * slugify collapses every run of non-alphanumeric chars to a SINGLE dash,
+     * so the actual stored key looks like "...-tbl-{tableid}-r{N}-{header}".
+     * The match below uses single-dash separators with a non-greedy capture so
+     * a multi-dash table id (e.g. "ma-flagged") is captured correctly up to the
+     * "-r{N}-" boundary. */
     var tableMaxRow = {};
     for (var i = 0; i < savedFields.length; i++) {
       var key   = savedFields[i].key;
-      var match = key.match(/--tbl-([a-z0-9-]+)--r(\d+)--/);
+      var match = key.match(/-tbl-(.+?)-r(\d+)-/);
       if (match) {
         var tblSlug = match[1];
         var rowNum  = parseInt(match[2], 10);
@@ -1872,15 +1879,31 @@ ${hasAdditionalForm ? `
     for (var i = 0; i < els.length; i++) {
       els[i].id = memberKey + '-' + els[i].id;
     }
-    /* Update onclick handlers that reference IDs (toggleConditional calls) */
-    var onclickEls = section.querySelectorAll('[onchange]');
-    for (var j = 0; j < onclickEls.length; j++) {
-      var oc = onclickEls[j].getAttribute('onchange') || '';
+    /* Update onchange handlers that reference IDs (toggleConditional calls) */
+    var onchangeEls = section.querySelectorAll('[onchange]');
+    for (var j = 0; j < onchangeEls.length; j++) {
+      var oc = onchangeEls[j].getAttribute('onchange') || '';
       if (oc.indexOf('toggleConditional') !== -1) {
         /* Replace the ID reference inside toggleConditional(this, 'id') */
-        onclickEls[j].setAttribute('onchange',
+        onchangeEls[j].setAttribute('onchange',
           oc.replace(/toggleConditional\(this,\s*'([^']+)'\)/,
             "toggleConditional(this,'" + memberKey + "-$1')"));
+      }
+    }
+    /* Update onclick handlers that reference table IDs by string literal.
+     * addRow('tableId', [...]) and addChild('containerId', ...) take the target
+     * ID as their first argument; without rewriting, "+ Add Row" / "+ Add Child"
+     * buttons in cloned member sections click into the primary member's tables. */
+    var onclickEls = section.querySelectorAll('[onclick]');
+    var REWRITE_FNS = /\b(addRow|addChild)\(\s*'([^']+)'/g;
+    for (var k = 0; k < onclickEls.length; k++) {
+      var ocClick = onclickEls[k].getAttribute('onclick') || '';
+      if (REWRITE_FNS.test(ocClick)) {
+        REWRITE_FNS.lastIndex = 0; // reset stateful regex before replace
+        onclickEls[k].setAttribute('onclick',
+          ocClick.replace(REWRITE_FNS, function(_m, fn, id) {
+            return fn + "('" + memberKey + "-" + id + "'";
+          }));
       }
     }
   }
