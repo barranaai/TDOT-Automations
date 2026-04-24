@@ -94,6 +94,59 @@ async function getFolderLinks(itemIds) {
   return map;
 }
 
+// ─── Client Replies (Monday Updates) — batched fetch ───────────────────────
+/**
+ * Fetch client replies (posted via the upload form) as Monday Updates, batched
+ * across all execution items in a single GraphQL query.
+ *
+ * Returns a map: itemId → [{ body, createdAt, author }] (most recent first).
+ * Only entries whose text_body begins with "✉️ Client Reply" are included,
+ * so we filter out our own auto-posted "Document Uploaded" updates.
+ */
+async function getClientReplies(itemIds, limitPerItem = 25) {
+  const map = {};
+  const ids = (itemIds || []).map(String).filter(Boolean);
+  if (!ids.length) return map;
+
+  const data = await mondayApi.query(
+    `query($ids: [ID!]!, $limit: Int!) {
+       items(ids: $ids) {
+         id
+         updates(limit: $limit) {
+           id
+           text_body
+           created_at
+           creator { id name }
+         }
+       }
+     }`,
+    { ids, limit: limitPerItem }
+  );
+
+  const REPLY_PREFIX = '\u2709\ufe0f Client Reply';
+  for (const it of (data?.items || [])) {
+    const replies = (it.updates || [])
+      .filter(u => {
+        const t = (u.text_body || '').trim();
+        return t.startsWith(REPLY_PREFIX) || t.startsWith('Client Reply');
+      })
+      .map(u => {
+        // Extract the quoted reply body — format: ... "<reply>" ...
+        const raw = (u.text_body || '').trim();
+        const m = raw.match(/"([\s\S]+?)"/);
+        return {
+          id:        u.id,
+          body:      (m ? m[1] : raw).trim(),
+          createdAt: u.created_at || '',
+          author:    u.creator?.name || 'Client',
+        };
+      })
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    map[it.id] = replies;
+  }
+  return map;
+}
+
 // ─── Server actions called from the page (POST handlers in routes file) ─────
 
 /**
@@ -302,6 +355,44 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
       background: #eff6ff; border-left: 3px solid #93c5fd;
       border-radius: 4px; font-size: 12px; color: #1e3a8a; line-height: 1.5;
     }
+    .doc-meta .client-reply + .client-reply { margin-top: 4px; }
+    .doc-meta .client-reply .reply-meta {
+      display: block; font-size: 10px; color: #64748b;
+      margin-bottom: 4px; font-weight: 600;
+    }
+    .doc-meta .replies-placeholder {
+      margin-top: 6px; padding: 8px 10px;
+      background: #f8fafc; border-left: 3px solid #cbd5e1;
+      border-radius: 4px; font-size: 11px; color: #94a3b8;
+      font-style: italic;
+    }
+    .doc-meta .replies-placeholder::before {
+      content: ''; display: inline-block; width: 10px; height: 10px;
+      border: 2px solid #cbd5e1; border-top-color: #64748b;
+      border-radius: 50%; margin-right: 6px; vertical-align: middle;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Replies status pill at top */
+    .replies-status {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 14px; margin-bottom: 14px;
+      background: #eff6ff; color: #1e3a8a;
+      border: 1px solid #bfdbfe; border-radius: 999px;
+      font-size: 12px; font-weight: 600;
+    }
+    .replies-status.error { background: #fef2f2; color: #991b1b; border-color: #fca5a5; }
+    .replies-status.error .replies-spinner { display: none; }
+    .replies-status .replies-retry {
+      margin-left: 6px; color: #991b1b; text-decoration: underline; cursor: pointer;
+      background: none; border: none; font: inherit; padding: 0;
+    }
+    .replies-spinner {
+      width: 12px; height: 12px;
+      border: 2px solid #bfdbfe; border-top-color: #1e3a8a;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
 
     .status-cell {
       text-align: center;
@@ -402,6 +493,11 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
       <button class="filter-btn" data-filter="Reviewed">Reviewed (${counts.reviewed})</button>
       <button class="filter-btn" data-filter="Rework Required">Rework (${counts.rework})</button>
       <button class="filter-btn" data-filter="Missing">Missing (${counts.missing})</button>
+    </div>
+
+    <div id="replies-status" class="replies-status" style="display:none;">
+      <span class="replies-spinner"></span>
+      <span id="replies-status-text">💬 Loading client replies…</span>
     </div>
 
     ${memberBlocks || '<p style="text-align:center;color:#94a3b8;padding:60px;">No documents found for this case.</p>'}
@@ -564,6 +660,97 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') closeModal();
     });
+
+    /* ── Client replies (progressive enrichment) ────────────────────────── */
+    function escText(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function fmtWhen(iso) {
+      if (!iso) return '';
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      var diffMs = Date.now() - d.getTime();
+      var mins = Math.floor(diffMs / 60000);
+      if (mins < 1)  return 'just now';
+      if (mins < 60) return mins + 'm ago';
+      var hrs = Math.floor(mins / 60);
+      if (hrs < 24)  return hrs + 'h ago';
+      var days = Math.floor(hrs / 24);
+      if (days < 7)  return days + 'd ago';
+      return d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function showReplyPlaceholders() {
+      document.querySelectorAll('.replies-slot').forEach(function (slot) {
+        slot.innerHTML = '<div class="replies-placeholder">Checking for client replies…</div>';
+      });
+    }
+
+    function clearReplyPlaceholders() {
+      document.querySelectorAll('.replies-slot .replies-placeholder').forEach(function (p) { p.remove(); });
+    }
+
+    function renderReplies(repliesByItem) {
+      document.querySelectorAll('.replies-slot').forEach(function (slot) {
+        slot.innerHTML = '';
+        var id = slot.getAttribute('data-item-id');
+        var list = (repliesByItem && repliesByItem[id]) || [];
+        if (!list.length) return;
+        list.forEach(function (r) {
+          var div = document.createElement('div');
+          div.className = 'client-reply';
+          div.innerHTML =
+            '<span class="reply-meta">💬 ' + escText(r.author || 'Client') +
+            (r.createdAt ? ' · ' + escText(fmtWhen(r.createdAt)) : '') + '</span>' +
+            escText(r.body || '');
+          slot.appendChild(div);
+        });
+      });
+    }
+
+    function showRepliesError(msg) {
+      var bar = document.getElementById('replies-status');
+      var txt = document.getElementById('replies-status-text');
+      if (!bar || !txt) return;
+      bar.classList.add('error');
+      txt.innerHTML = '⚠️ ' + escText(msg || 'Could not load replies.') +
+        ' <button class="replies-retry" onclick="loadClientReplies()">Retry</button>';
+      bar.style.display = 'inline-flex';
+      // Also clear per-row placeholders so they don't spin forever
+      clearReplyPlaceholders();
+    }
+
+    async function loadClientReplies() {
+      var bar = document.getElementById('replies-status');
+      var txt = document.getElementById('replies-status-text');
+      if (bar) {
+        bar.classList.remove('error');
+        bar.style.display = 'inline-flex';
+      }
+      if (txt) txt.textContent = '💬 Loading client replies…';
+      showReplyPlaceholders();
+      try {
+        var res = await fetch('/d/' + encodeURIComponent(CASE_REF) + '/review/updates', {
+          headers: { 'Accept': 'application/json' },
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        renderReplies(data.replies || {});
+        if (bar) bar.style.display = 'none';
+      } catch (err) {
+        showRepliesError(err && err.message ? err.message : 'Fetch failed');
+      }
+    }
+
+    // Kick off on load — page stays fully interactive while this runs
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', loadClientReplies);
+    } else {
+      loadClientReplies();
+    }
   </script>
 
 </body>
@@ -606,6 +793,7 @@ function rowHtml(it, folderUrl) {
         ${descBlock}
         ${dateBlock}
         ${noteBlock}
+        <div class="replies-slot" data-item-id="${escHtml(it.id)}"></div>
       </div>
       <div class="status-cell">
         ${statusBadge(status)}
@@ -623,6 +811,7 @@ function rowHtml(it, folderUrl) {
 module.exports = {
   buildReviewPage,
   getFolderLinks,
+  getClientReplies,
   markReviewed,
   requestRework,
 };

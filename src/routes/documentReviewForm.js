@@ -72,6 +72,25 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
   }
 });
 
+// ─── GET /d/:caseRef/review/updates — Client replies (async enrichment) ─────
+
+router.get('/:caseRef/review/updates', requireStaffAuth, async (req, res) => {
+  const caseRef = sanitiseCaseRef(req.params.caseRef);
+
+  try {
+    const summary = await docFormSvc.getCaseSummary(caseRef);
+    const items   = summary?.items || [];
+    if (!items.length) return res.json({ ok: true, replies: {} });
+
+    const itemIds = items.map(it => it.id);
+    const replies = await reviewFormSvc.getClientReplies(itemIds);
+    return res.json({ ok: true, replies });
+  } catch (err) {
+    console.error(`[/d/review/updates] Error for ${caseRef}:`, err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ─── POST /d/:caseRef/review/:itemId/status — Mark Reviewed / Request Rework ─
 
 router.post('/:caseRef/review/:itemId/status', requireStaffAuth, async (req, res) => {

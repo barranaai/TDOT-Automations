@@ -26,6 +26,7 @@ const DEFAULT_DISCLAIMER = [
 const EXEC_BOARD_ID       = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
 const TEMPLATE_BOARD_ID   = process.env.MONDAY_TEMPLATE_BOARD_ID  || '18401624183';
 const CM_BOARD_ID         = clientMasterBoardId || process.env.MONDAY_CLIENT_MASTER_BOARD_ID || '18401523447';
+const BASE_URL            = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
 
 // Execution Board columns
 const CASE_REF_COL        = 'text_mm0z2cck';   // Case Reference Number
@@ -389,6 +390,8 @@ async function postUploadUpdates({ itemId, caseRef, clientName, category, docNam
   const uploadedAt = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
   const clientLine = clientName ? ` (${clientName})` : '';
   const folderLine = folderUrl  ? `\n\n📁 Folder: ${folderUrl}` : '';
+  const reviewUrl  = `${BASE_URL}/d/${encodeURIComponent(caseRef)}/review`;
+  const reviewLine = `\n\n🔎 Review all documents for this case: ${reviewUrl}`;
 
   // 1. Document Execution item — reviewer gets notified
   const docBody =
@@ -398,7 +401,7 @@ async function postUploadUpdates({ itemId, caseRef, clientName, category, docNam
     `Category: ${category}\n` +
     `Case: ${caseRef}${clientLine}\n` +
     `Uploaded: ${uploadedAt} (Toronto)${folderLine}\n\n` +
-    `Status set to Received — please review.`;
+    `Status set to Received — please review.${reviewLine}`;
 
   await mondayApi.query(
     `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
@@ -428,7 +431,7 @@ async function postUploadUpdates({ itemId, caseRef, clientName, category, docNam
       `File: ${filename}\n` +
       `Category: ${category}\n` +
       `Case: ${caseRef}\n` +
-      `Uploaded: ${uploadedAt} (Toronto)${folderLine}`;
+      `Uploaded: ${uploadedAt} (Toronto)${folderLine}${reviewLine}`;
 
     await mondayApi.query(
       `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
