@@ -50,7 +50,7 @@ async function getClientDetails(itemId) {
   };
 }
 
-function buildEmailHtml({ clientName, caseRef, caseType, accessToken, questionnaireUrl, documentsUrl }) {
+function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl, questionnaireUrl, documentsUrl }) {
   const firstName = clientName.split(' ')[0] || 'Client';
 
   return `<!DOCTYPE html>
@@ -77,40 +77,22 @@ function buildEmailHtml({ clientName, caseRef, caseType, accessToken, questionna
 
         <p style="font-size:18px;font-weight:700;color:#1e293b;margin:0 0 8px;">Hi ${firstName},</p>
         <p style="font-size:15px;color:#475569;line-height:1.65;margin:0 0 24px;">
-          Your case has been set up and is ready for the next step. To keep things moving smoothly,
-          we need you to complete two things:
+          Your case has been set up. We've created a single Client Portal where you can complete your
+          questionnaire, upload documents, and track everything related to your case in one place.
         </p>
 
-        <!-- Step 1 -->
-        <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;margin-bottom:16px;">
-          <tr><td style="padding:20px 24px;">
-            <div style="display:flex;align-items:flex-start;gap:12px;">
-              <div style="font-size:22px;margin-bottom:8px;">📋</div>
-              <div>
-                <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:4px;">Step 1 — Complete Your Questionnaire</div>
-                <p style="font-size:14px;color:#64748b;margin:0 0 16px;line-height:1.6;">
-                  Answer all the questions about your background, travel history, employment, and personal details.
-                  You can save your progress and return at any time.
-                </p>
-                <a href="${questionnaireUrl}" style="display:inline-block;background:#2563eb;color:#fff;font-size:14px;font-weight:600;padding:11px 24px;border-radius:8px;text-decoration:none;">
-                  Open Questionnaire →
-                </a>
-              </div>
-            </div>
-          </td></tr>
-        </table>
-
-        <!-- Step 2 -->
+        <!-- Single portal CTA -->
         <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;margin-bottom:28px;">
-          <tr><td style="padding:20px 24px;">
-            <div style="font-size:22px;margin-bottom:8px;">📁</div>
-            <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:4px;">Step 2 — Upload Your Documents</div>
-            <p style="font-size:14px;color:#64748b;margin:0 0 16px;line-height:1.6;">
-              Upload the required documents for your case. Each document shows what is needed and whether it is mandatory.
-              You can upload files one at a time and re-upload if needed.
+          <tr><td style="padding:24px;text-align:center;">
+            <div style="font-size:32px;margin-bottom:8px;">🏠</div>
+            <div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:6px;">Your Client Portal</div>
+            <p style="font-size:14px;color:#64748b;margin:0 0 18px;line-height:1.6;">
+              From the portal you can complete your questionnaire, upload requested documents,
+              and check what still needs your attention. Save your progress at any time and
+              return whenever you're ready.
             </p>
-            <a href="${documentsUrl}" style="display:inline-block;background:#1e3a5f;color:#fff;font-size:14px;font-weight:600;padding:11px 24px;border-radius:8px;text-decoration:none;">
-              Upload Documents →
+            <a href="${portalUrl}" style="display:inline-block;background:#1e3a5f;color:#fff;font-size:15px;font-weight:700;padding:13px 28px;border-radius:8px;text-decoration:none;">
+              Open Your Portal →
             </a>
           </td></tr>
         </table>
@@ -255,13 +237,14 @@ async function sendIntakeEmail(itemId) {
     return;
   }
 
+  const portalUrl        = `${BASE_URL}/client/${encodedRef}?t=${encodeURIComponent(accessToken)}`;
   const questionnaireUrl = `${BASE_URL}/q/${encodedRef}?t=${encodeURIComponent(accessToken)}`;
   const documentsUrl     = `${BASE_URL}/documents/${encodedRef}`;
 
   await sendEmail({
     to:      client.clientEmail,
     subject: `Action Required — Your ${client.caseType || 'Immigration'} Case Is Ready (${client.caseRef})`,
-    html:    buildEmailHtml({ ...client, questionnaireUrl, documentsUrl }),
+    html:    buildEmailHtml({ ...client, portalUrl, questionnaireUrl, documentsUrl }),
     replyTo: EMAIL_REPLY_TO || undefined,
   });
 
