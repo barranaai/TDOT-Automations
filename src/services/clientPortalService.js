@@ -173,65 +173,90 @@ function buildPortalPage(snap) {
   <title>Client Portal — ${escHtml(snap.caseRef)}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f4f8; color: #1e293b; }
-    .top { background:#1e3a5f; color:#fff; padding:22px 28px; box-shadow:0 2px 8px rgba(0,0,0,.15); }
-    .top h1 { font-size:18px; font-weight:700; }
-    .top p  { font-size:12px; color:rgba(255,255,255,.7); margin-top:4px; }
-    .stage-pill { display:inline-block; background:rgba(255,255,255,.15); color:#fff;
-                  font-size:11px; font-weight:700; padding:3px 10px; border-radius:999px;
-                  letter-spacing:.04em; margin-left:8px; vertical-align:middle; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #FAF8F4; color: #1F2937; }
+
+    /* Dark brand header */
+    .top {
+      background:#0B1D32; color:#fff; padding:18px 28px;
+      box-shadow:0 2px 8px rgba(0,0,0,.18);
+      border-bottom:3px solid #C9A84C;        /* gold accent stripe */
+      display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap;
+    }
+    .top-brand { display:flex; align-items:center; gap:14px; min-width:0; }
+    .top-brand img { height:38px; object-fit:contain; }
+    .top h1 { font-size:18px; font-weight:700; line-height:1.25; }
+    .top p  { font-size:12px; color:rgba(255,255,255,.65); margin-top:3px; }
+    .stage-pill {
+      display:inline-block; background:rgba(201,168,76,.18); color:#C9A84C;
+      border:1px solid rgba(201,168,76,.35);
+      font-size:11px; font-weight:700; padding:3px 10px; border-radius:999px;
+      letter-spacing:.04em; margin-left:8px; vertical-align:middle;
+    }
+
     .content { max-width: 760px; margin: 24px auto; padding: 0 18px 60px; }
 
     .pending {
-      background:#fffbeb; border:1px solid #fde68a; border-radius:10px;
+      background:#FFF8E6; border:1px solid #F0D98A; border-radius:10px;
       padding:14px 18px; margin-bottom:20px;
+      border-left:4px solid #C9A84C;
     }
-    .pending h2 { font-size:13px; font-weight:700; color:#92400e; margin-bottom:6px;
+    .pending h2 { font-size:13px; font-weight:700; color:#7A5F1F; margin-bottom:6px;
                   text-transform:uppercase; letter-spacing:.06em; }
-    .pending ul { list-style:none; padding-left:0; font-size:14px; color:#78350f; line-height:1.6; }
+    .pending ul { list-style:none; padding-left:0; font-size:14px; color:#5C4716; line-height:1.6; }
 
     .card {
-      background:#fff; border-radius:12px; padding:22px 26px;
-      box-shadow:0 1px 8px rgba(0,0,0,.06); margin-bottom:18px;
+      background:#FFFFFF; border-radius:12px; padding:22px 26px;
+      box-shadow:0 1px 8px rgba(11,29,50,.06);
+      border:1px solid #E7E2D6; margin-bottom:18px;
     }
     .card-head { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; }
-    .card h3 { font-size:16px; color:#1e3a5f; margin-bottom:4px; }
-    .card .sub { font-size:12px; color:#64748b; }
+    .card h3 { font-size:16px; color:#0B1D32; margin-bottom:4px; }
+    .card .sub { font-size:12px; color:#6B7280; }
     .badge { display:inline-block; padding:3px 10px; border-radius:999px;
              font-size:11px; font-weight:700; letter-spacing:.03em; }
     .badge-ok      { background:#f0fdf4; color:#166534; border:1px solid #bbf7d0; }
-    .badge-prog    { background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; }
-    .badge-todo    { background:#f8fafc; color:#475569; border:1px solid #e2e8f0; }
+    .badge-prog    { background:#FFF8E6; color:#7A5F1F; border:1px solid #F0D98A; }
+    .badge-todo    { background:#F4F0E6; color:#6B7280; border:1px solid #E7E2D6; }
     .badge-warn    { background:#fef2f2; color:#991b1b; border:1px solid #fca5a5; }
 
     .progress-row { margin-top:14px; }
-    .progress-bar { height:8px; background:#e2e8f0; border-radius:999px; overflow:hidden; }
-    .progress-fill { height:100%; background:#1e3a5f; border-radius:999px; transition:width .3s; }
-    .progress-meta { font-size:12px; color:#64748b; margin-top:6px; display:flex; justify-content:space-between; }
+    .progress-bar { height:8px; background:#E7E2D6; border-radius:999px; overflow:hidden; }
+    .progress-fill { height:100%; background:#8B0000; border-radius:999px; transition:width .3s; }
+    .progress-meta { font-size:12px; color:#6B7280; margin-top:6px; display:flex; justify-content:space-between; }
 
     .btn {
       display:inline-block; margin-top:14px;
-      background:#1e3a5f; color:#fff; padding:10px 20px;
+      background:#8B0000; color:#fff; padding:10px 20px;
       border-radius:8px; font-size:14px; font-weight:700; text-decoration:none;
+      transition: background .15s;
     }
-    .btn:hover { background:#142b4a; }
-    .btn-light { background:#fff; color:#1e3a5f; border:1px solid #cbd5e1; }
-    .btn-light:hover { background:#f1f5f9; }
+    .btn:hover { background:#6B0000; }
+    .btn-light { background:#FFFFFF; color:#8B0000; border:1px solid #8B0000; }
+    .btn-light:hover { background:#FAF1F1; }
 
     .case-meta {
-      background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px;
+      background:#FFFFFF; border:1px solid #E7E2D6; border-radius:10px;
       padding:12px 18px; margin-bottom:18px;
-      display:flex; flex-wrap:wrap; gap:18px 24px; font-size:13px; color:#475569;
+      display:flex; flex-wrap:wrap; gap:18px 24px; font-size:13px; color:#6B7280;
     }
-    .case-meta strong { color:#1e293b; }
+    .case-meta strong { color:#0B1D32; }
 
-    .footer { margin-top:24px; text-align:center; font-size:12px; color:#94a3b8; line-height:1.6; }
+    .footer {
+      margin-top:24px; text-align:center; font-size:12px; color:#6B7280; line-height:1.6;
+      padding-top:18px; border-top:1px solid #E7E2D6;
+    }
+    .footer-brand { color:#8B0000; font-weight:700; letter-spacing:.04em; }
   </style>
 </head>
 <body>
   <header class="top">
-    <h1>🏠 ${escHtml(snap.clientName)}<span class="stage-pill">${escHtml(snap.caseStage)}</span></h1>
-    <p>Case ${escHtml(snap.caseRef)} · ${escHtml(snap.caseType || '')}${snap.caseSubType ? ' / ' + escHtml(snap.caseSubType) : ''}</p>
+    <div class="top-brand">
+      <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration">
+      <div>
+        <h1>${escHtml(snap.clientName)}<span class="stage-pill">${escHtml(snap.caseStage)}</span></h1>
+        <p>Case ${escHtml(snap.caseRef)} · ${escHtml(snap.caseType || '')}${snap.caseSubType ? ' / ' + escHtml(snap.caseSubType) : ''}</p>
+      </div>
+    </div>
   </header>
 
   <main class="content">
@@ -276,7 +301,7 @@ function buildPortalPage(snap) {
         <span class="badge ${snap.docCounts.rework > 0 ? 'badge-warn' : (docPct === 100 ? 'badge-ok' : (docDone > 0 ? 'badge-prog' : 'badge-todo'))}">${docPct}% uploaded</span>
       </div>
       <div class="progress-row">
-        <div class="progress-bar"><div class="progress-fill" style="width:${docPct}%;background:${snap.docCounts.rework > 0 ? '#dc2626' : '#1e3a5f'};"></div></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${docPct}%;background:${snap.docCounts.rework > 0 ? '#8B0000' : '#0B1D32'};"></div></div>
         <div class="progress-meta">
           <span>${docDone} of ${docTotal} ready</span>
           ${snap.docCounts.rework > 0 ? `<span style="color:#991b1b;font-weight:700;">${snap.docCounts.rework} need re-upload</span>` : ''}
@@ -288,7 +313,8 @@ function buildPortalPage(snap) {
 
     <p class="footer">
       If you have questions, simply reply to the email your case officer sent you.<br>
-      Please include your <strong>Case Reference Number</strong> in any correspondence.
+      Please include your <strong>Case Reference Number</strong> in any correspondence.<br>
+      <span class="footer-brand">TDOT IMMIGRATION SERVICES</span>
     </p>
 
   </main>

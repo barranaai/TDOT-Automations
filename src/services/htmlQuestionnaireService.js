@@ -772,27 +772,28 @@ function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditiona
 <style>
 #tdot-toolbar {
   position: fixed; bottom: 0; left: 0; right: 0;
-  background: #1e3a5f; color: #fff;
+  background: #0B1D32; color: #fff;
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 24px; z-index: 9999;
   box-shadow: 0 -3px 16px rgba(0,0,0,0.25);
+  border-top: 3px solid #C9A84C;
   font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px;
   gap: 12px;
 }
 #tdot-progress { color: rgba(255,255,255,0.75); white-space: nowrap; }
 #tdot-actions  { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
-#tdot-saved-msg { font-size: 12px; color: #86efac; min-width: 100px; text-align: right; }
+#tdot-saved-msg { font-size: 12px; color: #C9A84C; min-width: 100px; text-align: right; }
 .tdot-btn {
   padding: 7px 16px; border: none; border-radius: 6px;
   font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
   transition: background 0.15s;
 }
-.tdot-btn-save   { background: #374151; color: #fff; }
-.tdot-btn-save:hover   { background: #4b5563; }
-.tdot-btn-submit { background: #059669; color: #fff; }
-.tdot-btn-submit:hover { background: #047857; }
+.tdot-btn-save   { background: #FFFFFF; color: #0B1D32; border: 1px solid rgba(255,255,255,0.3); }
+.tdot-btn-save:hover   { background: #F4F0E6; }
+.tdot-btn-submit { background: #8B0000; color: #fff; }
+.tdot-btn-submit:hover { background: #6B0000; }
 .tdot-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-body { padding-bottom: 68px !important; }
+body { padding-bottom: 68px !important; background: #FAF8F4 !important; }
 ${isMultiMember ? `
 /* ── Multi-member mode ── */
 .mm-section-badge {
@@ -818,7 +819,7 @@ ${isMultiMember ? `
   border-radius: 12px; font-size: 15px; font-weight: 600; color: #475569;
   cursor: pointer; transition: all 0.15s;
 }
-.mm-add-btn:hover { border-color: #1e3a5f; color: #1e3a5f; background: #f0f4f8; }
+.mm-add-btn:hover { border-color: #8B0000; color: #8B0000; background: #FAF1F1; }
 .mm-add-menu {
   margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px;
   justify-content: center;
@@ -828,12 +829,13 @@ ${isMultiMember ? `
   border-radius: 8px; font-size: 13px; font-weight: 500; color: #334155;
   cursor: pointer; transition: all 0.15s;
 }
-.mm-add-option:hover { background: #eff6ff; border-color: #93c5fd; color: #1e3a5f; }
+.mm-add-option:hover { background: #FAF1F1; border-color: #8B0000; color: #8B0000; }
 .mm-toast {
   position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
-  background: #1e3a5f; color: #fff; padding: 12px 24px; border-radius: 8px;
+  background: #0B1D32; color: #fff; padding: 12px 24px; border-radius: 8px;
   font-size: 14px; font-weight: 500; z-index: 10000; display: none;
   box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  border-left: 3px solid #C9A84C;
 }
 .mm-member-status {
   display: inline-block; padding: 2px 8px; border-radius: 4px;
@@ -844,15 +846,16 @@ ${isMultiMember ? `
 ` : ''}
 ${hasAdditionalForm ? `
 .tdot-nav-bar {
-  display: flex; background: #f8fafc; border-bottom: 2px solid #dde3ea;
+  display: flex; background: #0B1D32; border-bottom: 3px solid #C9A84C;
   padding: 0 20px; position: sticky; top: 0; z-index: 90;
 }
 .tdot-nav-tab {
   padding: 11px 22px; font-size: 14px; font-weight: 600;
   cursor: pointer; border-bottom: 3px solid transparent;
-  color: #6b7280; text-decoration: none; display: block;
+  color: rgba(255,255,255,0.65); text-decoration: none; display: block;
 }
-.tdot-nav-tab.active { color: #1e3a5f; border-bottom-color: #1e3a5f; }
+.tdot-nav-tab:hover { color: #C9A84C; }
+.tdot-nav-tab.active { color: #C9A84C; border-bottom-color: #C9A84C; }
 ` : ''}
 </style>
 <script>
@@ -1340,7 +1343,7 @@ ${hasAdditionalForm ? `
       document.body.innerHTML =
         '<div style="font-family:Segoe UI,sans-serif;max-width:600px;margin:80px auto;text-align:center;padding:40px 24px">' +
         '<div style="font-size:56px;margin-bottom:20px">✅</div>' +
-        '<h2 style="color:#1e3a5f;margin-bottom:12px">Questionnaire Submitted</h2>' +
+        '<h2 style="color:#0B1D32;margin-bottom:12px">Questionnaire Submitted</h2>' +
         '<p style="color:#6b7280;font-size:15px">Thank you! Your answers have been saved and your consultant has been notified.</p>' +
         '</div>';
     } catch (err) {
@@ -1392,7 +1395,7 @@ ${hasAdditionalForm ? `
       var editLink = document.createElement('button');
       editLink.type = 'button';
       editLink.style.cssText =
-        'background:none;border:none;color:#2563eb;font-size:12px;font-weight:600;cursor:pointer;padding:0;font-family:inherit;';
+        'background:none;border:none;color:#8B0000;font-size:12px;font-weight:600;cursor:pointer;padding:0;font-family:inherit;';
       editLink.textContent = '\u270f\ufe0f Edit reply';
       editLink.onclick = function () { showReplyEditor(container, flagKey, flag.clientReply || ''); };
       replyArea.appendChild(editLink);
@@ -1401,11 +1404,11 @@ ${hasAdditionalForm ? `
       var replyBtn = document.createElement('button');
       replyBtn.type = 'button';
       replyBtn.style.cssText =
-        'display:inline-flex;align-items:center;gap:5px;padding:6px 14px;background:#2563eb;color:#fff;' +
+        'display:inline-flex;align-items:center;gap:5px;padding:6px 14px;background:#8B0000;color:#fff;' +
         'border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s;';
       replyBtn.innerHTML = '\u21a9\ufe0f Reply to consultant';
-      replyBtn.onmouseover = function () { this.style.background = '#1d4ed8'; };
-      replyBtn.onmouseout  = function () { this.style.background = '#2563eb'; };
+      replyBtn.onmouseover = function () { this.style.background = '#6B0000'; };
+      replyBtn.onmouseout  = function () { this.style.background = '#8B0000'; };
       replyBtn.onclick = function () { showReplyEditor(container, flagKey, ''); };
       replyArea.appendChild(replyBtn);
     }
@@ -1454,10 +1457,10 @@ ${hasAdditionalForm ? `
     sendBtn.type = 'button';
     sendBtn.textContent = 'Send Reply';
     sendBtn.style.cssText =
-      'padding:6px 16px;background:#2563eb;color:#fff;border:none;border-radius:6px;' +
+      'padding:6px 16px;background:#8B0000;color:#fff;border:none;border-radius:6px;' +
       'font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:background .15s;';
-    sendBtn.onmouseover = function () { this.style.background = '#1d4ed8'; };
-    sendBtn.onmouseout  = function () { this.style.background = '#2563eb'; };
+    sendBtn.onmouseover = function () { this.style.background = '#6B0000'; };
+    sendBtn.onmouseout  = function () { this.style.background = '#8B0000'; };
 
     sendBtn.onclick = async function () {
       var reply = ta.value.trim();
@@ -2412,44 +2415,53 @@ function buildOverviewPage({ caseRef, token, members, formFiles, allowedMemberTy
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Segoe UI', Arial, sans-serif;
-      background: #f0f4f8;
+      background: #FAF8F4;
       min-height: 100vh;
       display: flex; flex-direction: column; align-items: center;
-      padding: 40px 20px;
+      padding: 0;
     }
+    .overview-hdr {
+      background: #0B1D32; color: #fff;
+      padding: 20px 28px; width: 100%;
+      display: flex; align-items: center; gap: 16px;
+      border-bottom: 3px solid #C9A84C;
+      box-shadow: 0 2px 12px rgba(0,0,0,.18);
+    }
+    .overview-hdr img { height: 40px; object-fit: contain; }
+    .overview-wrap { padding: 32px 20px 60px; width: 100%; display: flex; flex-direction: column; align-items: center; }
     .header { text-align: center; margin-bottom: 32px; }
-    .header h1 { font-size: 24px; color: #1e3a5f; font-weight: 700; }
+    .header h1 { font-size: 24px; color: #0B1D32; font-weight: 700; }
     .header p  { color: #6b7280; font-size: 14px; margin-top: 6px; }
     .members-grid {
       display: flex; flex-wrap: wrap; gap: 16px;
       justify-content: center; width: 100%; max-width: 920px;
     }
     .member-card {
-      background: #fff; border-radius: 12px; padding: 24px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+      background: #FFFFFF; border-radius: 12px; padding: 24px;
+      box-shadow: 0 2px 12px rgba(11,29,50,0.06);
       flex: 1 1 280px; min-width: 260px; max-width: 420px;
       display: flex; flex-direction: column;
       position: relative;
-      border: 2px solid transparent;
+      border: 1px solid #E7E2D6;
       transition: border-color 0.2s;
     }
-    .member-card:hover { border-color: #dbeafe; }
+    .member-card:hover { border-color: #C9A84C; }
     .member-card.submitted { border-color: #bbf7d0; background: #fafffe; }
     .member-header {
       display: flex; align-items: center; gap: 12px; margin-bottom: 4px;
     }
     .member-icon { font-size: 28px; }
-    .member-label { font-size: 16px; font-weight: 700; color: #1e3a5f; }
-    .member-type  { font-size: 12px; color: #9ca3af; }
+    .member-label { font-size: 16px; font-weight: 700; color: #0B1D32; }
+    .member-type  { font-size: 12px; color: #6B7280; }
     .form-btn {
       display: block; text-align: center;
-      padding: 9px 16px; background: #1e3a5f; color: #fff;
+      padding: 9px 16px; background: #8B0000; color: #fff;
       border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;
       transition: background 0.15s;
     }
-    .form-btn:hover { background: #2d5186; }
-    .form-btn-secondary { background: #475569; }
-    .form-btn-secondary:hover { background: #64748b; }
+    .form-btn:hover { background: #6B0000; }
+    .form-btn-secondary { background: #FFFFFF; color: #8B0000; border: 1px solid #8B0000; }
+    .form-btn-secondary:hover { background: #FAF1F1; }
     .remove-btn {
       position: absolute; top: 10px; right: 10px;
       background: none; border: 1px solid #e5e7eb; border-radius: 6px;
@@ -2466,7 +2478,7 @@ function buildOverviewPage({ caseRef, token, members, formFiles, allowedMemberTy
       border-radius: 10px; font-size: 14px; font-weight: 600; color: #475569;
       cursor: pointer; transition: all 0.15s;
     }
-    .add-member-btn:hover { border-color: #1e3a5f; color: #1e3a5f; background: #f0f4f8; }
+    .add-member-btn:hover { border-color: #8B0000; color: #8B0000; background: #FAF1F1; }
     .add-menu {
       margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px;
       justify-content: center;
@@ -2476,12 +2488,13 @@ function buildOverviewPage({ caseRef, token, members, formFiles, allowedMemberTy
       border-radius: 8px; font-size: 13px; font-weight: 500; color: #334155;
       cursor: pointer; transition: all 0.15s;
     }
-    .add-option:hover { background: #eff6ff; border-color: #93c5fd; color: #1e3a5f; }
+    .add-option:hover { background: #FAF1F1; border-color: #8B0000; color: #8B0000; }
     .toast {
       position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-      background: #1e3a5f; color: #fff; padding: 12px 24px; border-radius: 8px;
+      background: #0B1D32; color: #fff; padding: 12px 24px; border-radius: 8px;
       font-size: 14px; font-weight: 500; z-index: 999; display: none;
       box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+      border-left: 3px solid #C9A84C;
     }
     @media (max-width: 600px) {
       .members-grid { flex-direction: column; }
@@ -2490,10 +2503,18 @@ function buildOverviewPage({ caseRef, token, members, formFiles, allowedMemberTy
   </style>
 </head>
 <body>
+  <header class="overview-hdr">
+    <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration">
+    <div>
+      <div style="font-size:16px;font-weight:700;letter-spacing:.02em;">TDOT Immigration — Client Questionnaire</div>
+      <div style="font-size:12px;color:rgba(255,255,255,.65);margin-top:3px;">Case ${escHtml(caseRef)}</div>
+    </div>
+  </header>
+  <div class="overview-wrap">
   <div class="header">
     <h1>Your Questionnaire</h1>
     <p>Case Reference: <strong>${escHtml(caseRef)}</strong></p>
-    <p style="margin-top:8px;font-size:13px;color:#6b7280">
+    <p style="margin-top:8px;font-size:13px;color:#6B7280">
       ${members.length > 1
         ? 'Complete the questionnaire for each family member listed below.'
         : hasTwo
@@ -2509,6 +2530,7 @@ function buildOverviewPage({ caseRef, token, members, formFiles, allowedMemberTy
   ${addMemberSection}
 
   <div class="toast" id="toast"></div>
+  </div>
 
   <script>
   (function() {
@@ -2591,19 +2613,20 @@ function buildPlaceholderPage(caseRef) {
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: 'Segoe UI', Arial, sans-serif; background: #f0f4f8;
+      font-family: 'Segoe UI', Arial, sans-serif; background: #FAF8F4;
       min-height: 100vh; display: flex; align-items: center; justify-content: center;
       padding: 40px 20px;
     }
     .box {
-      background: #fff; border-radius: 14px; padding: 48px 40px;
-      box-shadow: 0 2px 20px rgba(0,0,0,0.09); text-align: center;
+      background: #FFFFFF; border-radius: 14px; padding: 48px 40px;
+      box-shadow: 0 2px 20px rgba(11,29,50,0.07); text-align: center;
       max-width: 520px; width: 100%;
+      border-top: 4px solid #C9A84C;
     }
     .icon  { font-size: 52px; margin-bottom: 20px; }
-    h1     { font-size: 22px; color: #1e3a5f; font-weight: 700; margin-bottom: 14px; }
-    p      { font-size: 14px; color: #6b7280; line-height: 1.6; }
-    .ref   { margin-top: 20px; font-size: 12px; color: #9ca3af; }
+    h1     { font-size: 22px; color: #0B1D32; font-weight: 700; margin-bottom: 14px; }
+    p      { font-size: 14px; color: #6B7280; line-height: 1.6; }
+    .ref   { margin-top: 20px; font-size: 12px; color: #8B0000; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -2631,12 +2654,13 @@ function buildErrorPage(message) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Access Error</title>
   <style>
-    body { font-family:'Segoe UI',sans-serif; background:#f0f4f8; display:flex;
+    body { font-family:'Segoe UI',sans-serif; background:#FAF8F4; display:flex;
            align-items:center; justify-content:center; min-height:100vh; padding:40px 20px; }
-    .box { background:#fff; border-radius:14px; padding:48px 40px; text-align:center;
-           box-shadow:0 2px 20px rgba(0,0,0,.09); max-width:480px; width:100%; }
-    h1   { color:#dc2626; font-size:20px; margin-bottom:12px; }
-    p    { color:#6b7280; font-size:14px; line-height:1.6; }
+    .box { background:#FFFFFF; border-radius:14px; padding:48px 40px; text-align:center;
+           box-shadow:0 2px 20px rgba(11,29,50,.07); max-width:480px; width:100%;
+           border-top:4px solid #C9A84C; }
+    h1   { color:#8B0000; font-size:20px; margin-bottom:12px; }
+    p    { color:#6B7280; font-size:14px; line-height:1.6; }
   </style>
 </head>
 <body>
@@ -2670,16 +2694,17 @@ ${isMultiMember ? `
   margin-left: 6px;
 }
 .mm-review-member-divider {
-  border: none; border-top: 3px solid #1e3a5f; margin: 32px 0 8px;
+  border: none; border-top: 3px solid #C9A84C; margin: 32px 0 8px;
   position: relative;
 }
 ` : ''}
 #tdot-review-bar {
   position: fixed; top: 0; left: 0; right: 0;
-  background: #1e3a5f; color: #fff;
+  background: #0B1D32; color: #fff;
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 20px; height: 54px; z-index: 9999;
   box-shadow: 0 3px 16px rgba(0,0,0,0.22);
+  border-bottom: 3px solid #C9A84C;
   font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; gap: 16px;
 }
 #tdot-review-bar .rb-left  { display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
@@ -3753,19 +3778,20 @@ function buildPrintPage({ caseRef, clientName, caseType, caseSubType, savedField
     body {
       font-family: 'Segoe UI', Arial, sans-serif;
       font-size: 13px;
-      color: #1f2937;
-      background: #f8fafc;
+      color: #1F2937;
+      background: #FAF8F4;
       margin: 0;
       padding: 0;
     }
-    a { color: #1e40af; }
+    a { color: #8B0000; }
 
     /* ── Screen-only toolbar ───────────────────────────────────────────────── */
     #print-toolbar {
       position: fixed; top: 0; left: 0; right: 0; height: 50px;
-      background: #1e3a5f; color: #fff;
+      background: #0B1D32; color: #fff;
       display: flex; align-items: center; justify-content: space-between;
       padding: 0 24px; z-index: 9999;
+      border-bottom: 3px solid #C9A84C;
       font-size: 13px; gap: 16px;
     }
     #print-toolbar .tb-title { font-weight: 700; }
@@ -3794,8 +3820,9 @@ function buildPrintPage({ caseRef, clientName, caseType, caseSubType, savedField
 
     /* ── Report header ─────────────────────────────────────────────────────── */
     .report-header {
-      background: #1e3a5f; color: #fff;
+      background: #0B1D32; color: #fff;
       border-radius: 12px; padding: 28px 32px; margin-bottom: 24px;
+      border-left: 4px solid #C9A84C;
     }
     .report-header .org-name {
       font-size: 11px; font-weight: 600; letter-spacing: 1.2px;
@@ -3820,8 +3847,8 @@ function buildPrintPage({ caseRef, clientName, caseType, caseSubType, savedField
       background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
       padding: 14px 18px; text-align: center;
     }
-    .summary-card .sc-value { font-size: 26px; font-weight: 700; color: #1e3a5f; }
-    .summary-card .sc-label { font-size: 11px; color: #6b7280; margin-top: 2px; }
+    .summary-card .sc-value { font-size: 26px; font-weight: 700; color: #0B1D32; }
+    .summary-card .sc-label { font-size: 11px; color: #6B7280; margin-top: 2px; }
     .pill {
       display: inline-block; padding: 3px 10px; border-radius: 20px;
       font-size: 11px; font-weight: 700;
@@ -3838,10 +3865,11 @@ function buildPrintPage({ caseRef, clientName, caseType, caseSubType, savedField
     /* ── Sections ──────────────────────────────────────────────────────────── */
     .section { margin-bottom: 24px; }
     .section-header {
-      background: #1e3a5f; color: #fff;
+      background: #0B1D32; color: #fff;
       font-size: 12px; font-weight: 700; letter-spacing: .5px;
       padding: 8px 16px; border-radius: 8px 8px 0 0;
       text-transform: uppercase;
+      border-left: 3px solid #C9A84C;
     }
     .field-table {
       width: 100%; border-collapse: collapse;

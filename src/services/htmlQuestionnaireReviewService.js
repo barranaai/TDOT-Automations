@@ -326,12 +326,12 @@ function buildConsolidatedCorrectionEmailHtml({ clientName, caseRef, caseType, m
 
     return `
       <div style="margin-bottom:24px;">
-        <div style="font-size:15px;font-weight:700;color:#1e3a5f;margin-bottom:4px;padding-bottom:8px;border-bottom:2px solid #1e3a5f;">
+        <div style="font-size:15px;font-weight:700;color:#0B1D32;margin-bottom:4px;padding-bottom:8px;border-bottom:2px solid #0B1D32;">
           ${member.label} <span style="font-size:12px;font-weight:400;color:#64748b;">\u2014 ${member.flagCount} item${member.flagCount > 1 ? 's' : ''}</span>
         </div>
         ${sectionHtml}
         <table cellpadding="0" cellspacing="0" style="margin-top:8px;">
-          <tr><td style="border-radius:6px;background:#2563eb;">
+          <tr><td style="border-radius:6px;background:#8B0000;">
             <a href="${member.formUrl}" style="display:inline-block;padding:10px 20px;color:#fff;font-size:13px;font-weight:600;text-decoration:none;">
               Update ${member.label}'s Questionnaire \u2192
             </a>
@@ -346,12 +346,12 @@ function buildConsolidatedCorrectionEmailHtml({ clientName, caseRef, caseType, m
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 </head>
-<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 16px;">
+<body style="margin:0;padding:0;background:#FAF8F4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#FAF8F4;padding:32px 16px;">
   <tr><td align="center">
     <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
 
-      <tr><td style="background:#1e3a5f;border-radius:12px 12px 0 0;padding:28px 32px;text-align:center;">
+      <tr><td style="background:#0B1D32;border-radius:12px 12px 0 0;padding:28px 32px;text-align:center;">
         <div style="font-size:24px;color:#fff;font-weight:700;">TDOT Immigration</div>
         <div style="font-size:13px;color:rgba(255,255,255,.65);margin-top:4px;">Client Portal</div>
       </td></tr>
@@ -445,12 +445,12 @@ function buildCorrectionEmailHtml({ clientName, caseRef, caseType, flaggedItems,
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 </head>
-<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 16px;">
+<body style="margin:0;padding:0;background:#FAF8F4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#FAF8F4;padding:32px 16px;">
   <tr><td align="center">
     <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
 
-      <tr><td style="background:#1e3a5f;border-radius:12px 12px 0 0;padding:28px 32px;text-align:center;">
+      <tr><td style="background:#0B1D32;border-radius:12px 12px 0 0;padding:28px 32px;text-align:center;">
         <div style="font-size:24px;color:#fff;font-weight:700;">TDOT Immigration</div>
         <div style="font-size:13px;color:rgba(255,255,255,.65);margin-top:4px;">Client Portal</div>
       </td></tr>
@@ -476,7 +476,7 @@ function buildCorrectionEmailHtml({ clientName, caseRef, caseType, flaggedItems,
         </p>
 
         <table cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-          <tr><td style="border-radius:8px;background:#2563eb;">
+          <tr><td style="border-radius:8px;background:#8B0000;">
             <a href="${formUrl}" style="display:inline-block;padding:13px 28px;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">
               Update My Questionnaire →
             </a>
@@ -570,7 +570,7 @@ function buildReviewPage({ caseRef, formKey, formTitle, fields, flags, staffName
                  <div class="flag-comment-text">${flagComment}</div>
                  ${hasReply
                    ? `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:6px 10px;max-width:260px;text-align:left;margin-top:4px;">
-                        <div style="font-size:11px;font-weight:700;color:#2563eb;margin-bottom:2px;">✉️ Client reply</div>
+                        <div style="font-size:11px;font-weight:700;color:#8B0000;margin-bottom:2px;">✉️ Client reply</div>
                         <div style="font-size:12px;color:#1e40af;line-height:1.5;">${replyText}</div>
                         ${replyDate ? `<div style="font-size:10px;color:#6b7280;margin-top:3px;">${replyDate}</div>` : ''}
                       </div>`
@@ -603,19 +603,26 @@ function buildReviewPage({ caseRef, formKey, formTitle, fields, flags, staffName
   <title>Review — ${escHtml(caseRef)}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f4f8; color: #1e293b; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #FAF8F4; color: #1e293b; }
 
     /* ── Top bar ── */
     .top-bar {
       position: sticky; top: 0; z-index: 100;
-      background: #1e3a5f; color: #fff;
+      background: #0B1D32; color: #fff;
       display: flex; align-items: center; justify-content: space-between;
-      padding: 14px 28px; gap: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.2);
+      padding: 14px 28px; gap: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.25);
+      border-bottom: 3px solid #C9A84C;
     }
+    .top-bar-brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .top-bar-brand img { height: 34px; object-fit: contain; }
     .top-bar-left h1  { font-size: 16px; font-weight: 700; }
     .top-bar-left p   { font-size: 12px; color: rgba(255,255,255,.65); margin-top: 2px; }
     .top-bar-right    { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-    .staff-badge      { font-size: 12px; color: rgba(255,255,255,.7); }
+    .staff-badge      {
+      font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 999px;
+      background: rgba(201,168,76,.18); color: #C9A84C; border: 1px solid rgba(201,168,76,.35);
+      letter-spacing: .04em;
+    }
     #flag-counter     { font-size: 13px; font-weight: 700; color: #fbbf24; white-space: nowrap; }
 
     /* ── Notify button ── */
@@ -638,7 +645,7 @@ function buildReviewPage({ caseRef, formKey, formTitle, fields, flags, staffName
       display: flex; align-items: center; gap: 28px; flex-wrap: wrap;
     }
     .summary-stat { text-align: center; }
-    .summary-stat .num { font-size: 28px; font-weight: 800; color: #1e3a5f; }
+    .summary-stat .num { font-size: 28px; font-weight: 800; color: #0B1D32; }
     .summary-stat .lbl { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .06em; }
     .summary-divider    { width: 1px; height: 40px; background: #e5e7eb; }
 
@@ -688,27 +695,30 @@ function buildReviewPage({ caseRef, formKey, formTitle, fields, flags, staffName
       background: #fff; border-radius: 14px; padding: 28px; width: 100%;
       max-width: 480px; box-shadow: 0 8px 40px rgba(0,0,0,.2);
     }
-    .modal-box h2   { font-size: 16px; margin-bottom: 6px; color: #1e3a5f; }
+    .modal-box h2   { font-size: 16px; margin-bottom: 6px; color: #0B1D32; }
     .modal-box p    { font-size: 13px; color: #6b7280; margin-bottom: 16px; }
     .modal-box textarea {
       width: 100%; border: 1px solid #d1d5db; border-radius: 8px;
       padding: 10px 12px; font-size: 14px; resize: vertical; min-height: 90px;
       font-family: inherit; line-height: 1.5;
     }
-    .modal-box textarea:focus { outline: none; border-color: #2563eb; }
+    .modal-box textarea:focus { outline: none; border-color: #8B0000; }
     .modal-actions { display: flex; gap: 10px; margin-top: 14px; justify-content: flex-end; }
     .btn-modal-cancel { background: #f1f5f9; color: #374151; border: none; border-radius: 8px; padding: 9px 18px; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .btn-modal-save   { background: #1e3a5f; color: #fff; border: none; border-radius: 8px; padding: 9px 18px; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .btn-modal-save:hover { background: #2d5186; }
+    .btn-modal-save   { background: #8B0000; color: #fff; border: none; border-radius: 8px; padding: 9px 18px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-modal-save:hover { background: #6B0000; }
   </style>
 </head>
 <body>
 
   <!-- Top bar -->
   <div class="top-bar">
-    <div class="top-bar-left">
-      <h1>📋 Questionnaire Review — ${escHtml(clientName)}</h1>
-      <p>${escHtml(caseRef)} · ${escHtml(caseType)} · ${escHtml(formTitle)}</p>
+    <div class="top-bar-brand">
+      <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration">
+      <div class="top-bar-left">
+        <h1>📋 Questionnaire Review — ${escHtml(clientName)}</h1>
+        <p>${escHtml(caseRef)} · ${escHtml(caseType)} · ${escHtml(formTitle)}</p>
+      </div>
     </div>
     <div class="top-bar-right">
       <span class="staff-badge">Reviewing as ${escHtml(staffName)}</span>

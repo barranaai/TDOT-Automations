@@ -60,16 +60,16 @@ function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl,
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Your Case Is Ready — Action Required</title>
 </head>
-<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<body style="margin:0;padding:0;background:#FAF8F4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
 
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 16px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#FAF8F4;padding:32px 16px;">
   <tr><td align="center">
     <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
 
       <!-- Header -->
-      <tr><td style="background:#1e3a5f;border-radius:12px 12px 0 0;padding:28px 32px;text-align:center;">
-        <div style="font-size:24px;color:#fff;font-weight:700;letter-spacing:-.3px;">TDOT Immigration</div>
-        <div style="font-size:13px;color:rgba(255,255,255,.65);margin-top:4px;">Client Portal</div>
+      <tr><td style="background:#0B1D32;border-radius:12px 12px 0 0;padding:28px 32px 26px;text-align:center;border-bottom:3px solid #C9A84C;">
+        <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=192&q=75" alt="TDOT Immigration" style="height:42px;object-fit:contain;display:inline-block;margin-bottom:10px;">
+        <div style="font-size:11px;letter-spacing:.18em;color:#C9A84C;text-transform:uppercase;font-weight:700;">Client Portal</div>
       </td></tr>
 
       <!-- Body -->
@@ -91,7 +91,7 @@ function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl,
               and check what still needs your attention. Save your progress at any time and
               return whenever you're ready.
             </p>
-            <a href="${portalUrl}" style="display:inline-block;background:#1e3a5f;color:#fff;font-size:15px;font-weight:700;padding:13px 28px;border-radius:8px;text-decoration:none;">
+            <a href="${portalUrl}" style="display:inline-block;background:#8B0000;color:#fff;font-size:15px;font-weight:700;padding:13px 28px;border-radius:8px;text-decoration:none;">
               Open Your Portal →
             </a>
           </td></tr>

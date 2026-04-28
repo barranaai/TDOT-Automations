@@ -260,67 +260,75 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
   <title>Document Review — ${escHtml(caseRef)}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f4f8; color: #1e293b; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #FAF8F4; color: #1F2937; }
 
-    /* Top bar */
+    /* Top bar — TDOT brand */
     .top-bar {
       position: sticky; top: 0; z-index: 100;
-      background: #1e3a5f; color: #fff;
+      background: #0B1D32; color: #fff;
       display: flex; align-items: center; justify-content: space-between;
-      padding: 14px 28px; gap: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.2);
+      padding: 14px 28px; gap: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.25);
+      border-bottom: 3px solid #C9A84C;
     }
+    .top-bar-brand { display: flex; align-items: center; gap: 14px; }
+    .top-bar-brand img { height: 34px; object-fit: contain; }
     .top-bar-left h1 { font-size: 16px; font-weight: 700; }
     .top-bar-left p  { font-size: 12px; color: rgba(255,255,255,.65); margin-top: 2px; }
-    .staff-badge     { font-size: 12px; color: rgba(255,255,255,.7); }
+    .staff-badge     {
+      font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 999px;
+      background: rgba(201,168,76,.18); color: #C9A84C; border: 1px solid rgba(201,168,76,.35);
+      letter-spacing: .04em;
+    }
 
     /* Content */
     .content { max-width: 1100px; margin: 28px auto; padding: 0 20px 80px; }
 
     .summary-card {
-      background: #fff; border-radius: 12px; padding: 18px 24px;
-      box-shadow: 0 1px 8px rgba(0,0,0,.07); margin-bottom: 24px;
+      background: #FFFFFF; border-radius: 12px; padding: 18px 24px;
+      box-shadow: 0 1px 8px rgba(11,29,50,.06); margin-bottom: 24px;
+      border: 1px solid #E7E2D6;
       display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
     }
     .summary-stat { text-align: center; min-width: 80px; }
-    .summary-stat .num { font-size: 26px; font-weight: 800; color: #1e3a5f; line-height: 1.1; }
-    .summary-stat .lbl { font-size: 10px; color: #6b7280; text-transform: uppercase; letter-spacing: .06em; margin-top: 4px; }
+    .summary-stat .num { font-size: 26px; font-weight: 800; color: #0B1D32; line-height: 1.1; }
+    .summary-stat .lbl { font-size: 10px; color: #6B7280; text-transform: uppercase; letter-spacing: .06em; margin-top: 4px; }
     .summary-stat.received .num { color: #92400e; }
     .summary-stat.reviewed .num { color: #166534; }
-    .summary-stat.rework   .num { color: #991b1b; }
-    .summary-stat.missing  .num { color: #6b7280; }
-    .summary-divider { width: 1px; height: 36px; background: #e5e7eb; }
+    .summary-stat.rework   .num { color: #8B0000; }
+    .summary-stat.missing  .num { color: #6B7280; }
+    .summary-divider { width: 1px; height: 36px; background: #E7E2D6; }
 
     /* Filter strip */
     .filter-strip {
       display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px;
     }
     .filter-btn {
-      padding: 6px 14px; font-size: 12px; font-weight: 600; border: 1px solid #cbd5e1;
-      background: #fff; color: #475569; border-radius: 999px; cursor: pointer;
+      padding: 6px 14px; font-size: 12px; font-weight: 600; border: 1px solid #E7E2D6;
+      background: #FFFFFF; color: #6B7280; border-radius: 999px; cursor: pointer;
       transition: all .12s;
     }
-    .filter-btn:hover { background: #f1f5f9; }
-    .filter-btn.active { background: #1e3a5f; color: #fff; border-color: #1e3a5f; }
+    .filter-btn:hover { background: #F4F0E6; }
+    .filter-btn.active { background: #8B0000; color: #fff; border-color: #8B0000; }
 
     /* Member + category blocks */
     .member-block { margin-bottom: 28px; }
     .member-heading {
-      font-size: 17px; font-weight: 700; color: #1e3a5f;
+      font-size: 17px; font-weight: 700; color: #0B1D32;
       padding-bottom: 8px; margin-bottom: 14px;
-      border-bottom: 2px solid #1e3a5f;
+      border-bottom: 2px solid #C9A84C;
     }
     .category-block {
-      background: #fff; border-radius: 12px; margin-bottom: 16px;
-      box-shadow: 0 1px 8px rgba(0,0,0,.07); overflow: hidden;
+      background: #FFFFFF; border-radius: 12px; margin-bottom: 16px;
+      box-shadow: 0 1px 8px rgba(11,29,50,.06); border: 1px solid #E7E2D6; overflow: hidden;
     }
     .category-heading {
       font-size: 12px; font-weight: 700; text-transform: uppercase;
-      letter-spacing: .08em; color: #475569;
-      background: #f8fafc; border-bottom: 1px solid #e5e7eb;
+      letter-spacing: .08em; color: #6B7280;
+      background: #F4F0E6; border-bottom: 1px solid #E7E2D6;
       padding: 10px 18px; display: flex; align-items: center; justify-content: space-between;
     }
     .cat-count {
-      font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: none; letter-spacing: 0;
+      font-size: 11px; font-weight: 600; color: #8B0000; text-transform: none; letter-spacing: 0;
     }
 
     /* Document row */
@@ -421,9 +429,9 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
     }
     .btn-reviewed:hover:not(:disabled) { background: #047857; }
     .btn-rework {
-      background: #fff; color: #dc2626; border-color: #dc2626;
+      background: #fff; color: #8B0000; border-color: #8B0000;
     }
-    .btn-rework:hover:not(:disabled) { background: #fef2f2; }
+    .btn-rework:hover:not(:disabled) { background: #FAF1F1; }
 
     /* Rework modal */
     .modal-bg {
@@ -436,29 +444,29 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
       max-width: 520px; width: calc(100% - 32px);
       box-shadow: 0 20px 50px rgba(0,0,0,.3);
     }
-    .modal h3 { font-size: 16px; color: #1e3a5f; margin-bottom: 4px; }
-    .modal .sub { font-size: 12px; color: #64748b; margin-bottom: 14px; }
+    .modal h3 { font-size: 16px; color: #0B1D32; margin-bottom: 4px; }
+    .modal .sub { font-size: 12px; color: #6B7280; margin-bottom: 14px; }
     .modal textarea {
       width: 100%; min-height: 110px; resize: vertical;
-      border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px;
+      border: 1px solid #E7E2D6; border-radius: 6px; padding: 10px;
       font-family: inherit; font-size: 13px; line-height: 1.5;
     }
-    .modal textarea:focus { outline: none; border-color: #1e3a5f; }
+    .modal textarea:focus { outline: none; border-color: #8B0000; }
     .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-    .btn-cancel { background: #fff; color: #475569; border-color: #cbd5e1; padding: 8px 16px; }
-    .btn-confirm { background: #dc2626; color: #fff; border-color: #dc2626; padding: 8px 16px; }
+    .btn-cancel { background: #fff; color: #6B7280; border-color: #E7E2D6; padding: 8px 16px; }
+    .btn-confirm { background: #8B0000; color: #fff; border-color: #8B0000; padding: 8px 16px; }
 
     /* Toast */
     #toast {
       position: fixed; bottom: 24px; right: 24px; z-index: 300;
       padding: 12px 18px; border-radius: 8px;
-      background: #1e3a5f; color: #fff; font-size: 13px;
+      background: #0B1D32; color: #fff; font-size: 13px;
       box-shadow: 0 10px 30px rgba(0,0,0,.3);
       transform: translateY(100px); opacity: 0; transition: all .25s;
       max-width: 360px;
     }
     #toast.show { transform: translateY(0); opacity: 1; }
-    #toast.error { background: #991b1b; }
+    #toast.error { background: #8B0000; }
 
     @media (max-width: 800px) {
       .doc-row { grid-template-columns: 1fr; gap: 10px; }
@@ -469,9 +477,12 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
 <body>
 
   <header class="top-bar">
-    <div class="top-bar-left">
-      <h1>📂 Document Review — ${escHtml(caseRef)}</h1>
-      <p>${escHtml(clientName || 'Unknown Client')}</p>
+    <div class="top-bar-brand">
+      <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration">
+      <div class="top-bar-left">
+        <h1>📂 Document Review — ${escHtml(caseRef)}</h1>
+        <p>${escHtml(clientName || 'Unknown Client')}</p>
+      </div>
     </div>
     <div class="staff-badge">Reviewing as ${escHtml(staffName || 'Staff')}</div>
   </header>

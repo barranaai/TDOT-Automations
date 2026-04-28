@@ -118,7 +118,7 @@ function buildEmailHtml({ clientName, caseRef, formUrl, missingByMember, totalMi
   const memberBlocks = missingByMember.map(m => {
     const sections = (m.sections || []).map(s => `
       <div style="margin-top:14px;">
-        <div style="font-size:13px; font-weight:700; color:#1e3a5f; margin-bottom:4px;">
+        <div style="font-size:13px; font-weight:700; color:#0B1D32; margin-bottom:4px;">
           ${escHtml(s.section)}
         </div>
         <ul style="margin:0; padding-left:20px; color:#475569; font-size:13px; line-height:1.6;">
@@ -126,8 +126,8 @@ function buildEmailHtml({ clientName, caseRef, formUrl, missingByMember, totalMi
         </ul>
       </div>`).join('');
     return `
-      <div style="margin-top:20px; padding:16px 20px; background:#f8fafc; border-left:3px solid #1e3a5f; border-radius:4px;">
-        <div style="font-size:14px; font-weight:700; color:#1e3a5f; margin-bottom:4px;">
+      <div style="margin-top:20px; padding:16px 20px; background:#FAF8F4; border-left:3px solid #C9A84C; border-radius:4px;">
+        <div style="font-size:14px; font-weight:700; color:#0B1D32; margin-bottom:4px;">
           👤 ${escHtml(m.memberLabel || 'Applicant')}
         </div>
         ${sections}
@@ -135,9 +135,13 @@ function buildEmailHtml({ clientName, caseRef, formUrl, missingByMember, totalMi
   }).join('');
 
   return `<!DOCTYPE html>
-<html><body style="font-family:'Segoe UI',Arial,sans-serif; background:#f0f4f8; margin:0; padding:24px; color:#1e293b;">
-  <div style="max-width:640px; margin:0 auto; background:#fff; border-radius:12px; padding:28px 32px; box-shadow:0 2px 12px rgba(0,0,0,.06);">
-    <h2 style="color:#1e3a5f; margin:0 0 12px;">Hello ${escHtml(clientName || 'there')},</h2>
+<html><body style="font-family:'Segoe UI',Arial,sans-serif; background:#FAF8F4; margin:0; padding:24px; color:#1F2937;">
+  <div style="max-width:640px; margin:0 auto; background:#FFFFFF; border-radius:12px; padding:0; box-shadow:0 2px 12px rgba(11,29,50,.06); overflow:hidden;">
+    <div style="background:#0B1D32; padding:20px 32px 18px; border-bottom:3px solid #C9A84C; text-align:center;">
+      <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=160&q=75" alt="TDOT Immigration" style="height:36px;object-fit:contain;display:inline-block;">
+    </div>
+    <div style="padding:28px 32px;">
+    <h2 style="color:#0B1D32; margin:0 0 12px;">Hello ${escHtml(clientName || 'there')},</h2>
 
     <p style="font-size:14px; line-height:1.6; color:#334155;">
       Thank you for working on your questionnaire for case <strong>${escHtml(caseRef)}</strong>.
@@ -159,15 +163,16 @@ function buildEmailHtml({ clientName, caseRef, formUrl, missingByMember, totalMi
 
     <div style="margin-top:24px; text-align:center;">
       <a href="${escHtml(formUrl)}"
-         style="display:inline-block; background:#1e3a5f; color:#fff; text-decoration:none;
+         style="display:inline-block; background:#8B0000; color:#fff; text-decoration:none;
                 padding:11px 22px; border-radius:6px; font-weight:700; font-size:14px;">
         📝 Continue Filling Your Questionnaire
       </a>
     </div>
 
-    <p style="font-size:12px; color:#94a3b8; margin-top:22px; line-height:1.5;">
+    <p style="font-size:12px; color:#6B7280; margin-top:22px; line-height:1.5;">
       If you have any questions, simply reply to this email and your case officer will get back to you.
     </p>
+    </div>
   </div>
 </body></html>`;
 }
