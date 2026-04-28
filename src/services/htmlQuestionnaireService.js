@@ -1165,16 +1165,46 @@ ${hasAdditionalForm ? `
       /* ── Multi-member save: save each member separately ── */
       var memberKeys = getActiveMemberKeys();
       var anyFailed = false;
+      var memberLabelMap = {};
+      for (var mlmi = 0; mlmi < MEMBERS.length; mlmi++) memberLabelMap[MEMBERS[mlmi].key] = MEMBERS[mlmi].label || MEMBERS[mlmi].key;
+
+      /* Aggregate missing fields across ALL members; attach only to the first
+         /save request so the server emails once (avoids racing the throttle). */
+      var aggregatedMissing = [];
+      for (var aki = 0; aki < memberKeys.length; aki++) {
+        var akMissing = collectMissingFieldsForMember(memberKeys[aki]);
+        if (akMissing.sections.length) {
+          aggregatedMissing.push({
+            memberLabel: memberLabelMap[memberKeys[aki]] || memberKeys[aki],
+            sections:    akMissing.sections,
+          });
+        }
+      }
+      var emailAttached = false;
+
       for (var mi = 0; mi < memberKeys.length; mi++) {
         var mk = memberKeys[mi];
         var mFields = getSerializableFieldsForMember(mk);
         var mProg   = getProgressForMember(mk);
         if (mProg.pct === 0 && silent) continue; /* skip empty members on auto-save */
+
+        /* Only the FIRST non-skipped save in this loop carries the missing-fields payload. */
+        var attach = !emailAttached;
+        if (attach) emailAttached = true;
+
         try {
+          var body = {
+            token: TOKEN, formKey: mk + FORM_KEY_SUFFIX, fields: mFields, completionPct: mProg.pct,
+            manual: !silent,
+            memberLabel: memberLabelMap[mk] || mk,
+          };
+          if (attach && aggregatedMissing.length) {
+            body.missingByMember = aggregatedMissing;   /* full breakdown across members */
+          }
           var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/save', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ token: TOKEN, formKey: mk + FORM_KEY_SUFFIX, fields: mFields, completionPct: mProg.pct }),
+            body:    JSON.stringify(body),
           });
           if (!res.ok) throw new Error('Save failed for ' + mk);
         } catch (err) {
@@ -1207,15 +1237,20 @@ ${hasAdditionalForm ? `
       return;
     }
 
+    var sMissing = collectMissingFieldsForMember('primary');
+
     try {
       var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/save', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          token:         TOKEN,
-          formKey:       FORM_KEY,
-          fields:        currentFields,
-          completionPct: p.pct,
+          token:           TOKEN,
+          formKey:         FORM_KEY,
+          fields:          currentFields,
+          completionPct:   p.pct,
+          manual:          !silent,
+          memberLabel:     'Primary Applicant',
+          missingSections: sMissing.sections,
         }),
       });
       if (!res.ok) throw new Error('Save failed (' + res.status + ')');
@@ -1253,12 +1288,16 @@ ${hasAdditionalForm ? `
         /* ── Multi-member submit: batch all members in one request ── */
         var memberKeys = getActiveMemberKeys();
         var memberSubs = [];
+        var memLabels = {};
+        for (var ml = 0; ml < MEMBERS.length; ml++) memLabels[MEMBERS[ml].key] = MEMBERS[ml].label || MEMBERS[ml].key;
         for (var mi = 0; mi < memberKeys.length; mi++) {
           var mk = memberKeys[mi];
           memberSubs.push({
-            formKey:       mk + FORM_KEY_SUFFIX,
-            fields:        getSerializableFieldsForMember(mk),
-            completionPct: getProgressForMember(mk).pct,
+            formKey:         mk + FORM_KEY_SUFFIX,
+            fields:          getSerializableFieldsForMember(mk),
+            completionPct:   getProgressForMember(mk).pct,
+            memberLabel:     memLabels[mk] || mk,
+            missingSections: collectMissingFieldsForMember(mk).sections,
           });
         }
         var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/submit-all', {
@@ -1269,14 +1308,17 @@ ${hasAdditionalForm ? `
         if (!res.ok) throw new Error('Submit failed (' + res.status + ')');
       } else {
         /* ── Single-member submit ── */
+        var sMissing = collectMissingFieldsForMember('primary');
         var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/submit', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({
-            token:         TOKEN,
-            formKey:       FORM_KEY,
-            fields:        getSerializableFields(),
-            completionPct: p.pct,
+            token:           TOKEN,
+            formKey:         FORM_KEY,
+            fields:          getSerializableFields(),
+            completionPct:   p.pct,
+            memberLabel:     'Primary Applicant',
+            missingSections: sMissing.sections,
           }),
         });
         if (!res.ok) throw new Error('Submit failed (' + res.status + ')');
@@ -2079,6 +2121,57 @@ ${hasAdditionalForm ? `
     }
     var pct = total > 0 ? Math.round(filled / total * 100) : 0;
     return { total: total, filled: filled, pct: pct };
+  }
+
+  /**
+   * Collect missing (unfilled) fields for a single member, grouped by section.
+   * Mirrors the same conditional/hidden-field exclusions as getProgressForMember
+   * so the email only lists fields the client can actually fill in.
+   *
+   * Returns: { sections: [{ section, fields: [label] }], total }
+   */
+  function collectMissingFieldsForMember(memberKey) {
+    var fields = collectFields();
+    var bySection = {}; /* section → array of labels (deduped) */
+    var order = [];     /* section insertion order */
+    var totalMissing = 0;
+
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      if (getMemberKeyForEl(f.el) !== memberKey) continue;
+
+      /* Same conditional / mm-hidden exclusion as the progress calc */
+      var inConditional = false;
+      var node = f.el.parentElement;
+      while (node && node !== document.body) {
+        if ((node.classList.contains('conditional') || node.classList.contains('conditional-block') || node.classList.contains('refusal-details')) &&
+            node.style.display === 'none' && !node.classList.contains('visible') && !node.classList.contains('open')) {
+          inConditional = true; break;
+        }
+        if (node.getAttribute('data-mm-hidden') === 'true') { inConditional = true; break; }
+        node = node.parentElement;
+      }
+      if (inConditional) continue;
+
+      var val = getFieldValue(f).trim();
+      if (val && val !== '-- Select --' && val !== 'Select...') continue; /* filled */
+
+      var sec = (f.section || 'General').replace(/\s*›\s*Table\s*$/, ''); /* drop noisy " › Table" suffix */
+      var lbl = (f.label || '').replace(/\s*—\s*Row\s+\d+\s*$/, '');       /* drop "— Row N" — group rows */
+      if (!lbl) continue;
+
+      if (!bySection[sec]) { bySection[sec] = []; order.push(sec); }
+      if (bySection[sec].indexOf(lbl) === -1) {
+        bySection[sec].push(lbl);
+        totalMissing++;
+      }
+    }
+
+    var sections = [];
+    for (var oi = 0; oi < order.length; oi++) {
+      sections.push({ section: order[oi], fields: bySection[order[oi]] });
+    }
+    return { sections: sections, total: totalMissing };
   }
 
   /* ── Toolbar ── */

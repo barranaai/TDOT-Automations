@@ -30,6 +30,7 @@ const router   = express.Router();
 
 const svc    = require('../services/htmlQuestionnaireService');
 const review = require('../services/htmlQuestionnaireReviewService');
+const { sendMissingFieldsEmail } = require('../services/missingFieldsEmailService');
 const { requireStaffAuth, createStaffToken, setStaffCookie } = require('../middleware/staffAuth');
 const { FORMS_DIR, resolveMemberTypes } = require('../../config/questionnaireFormMap');
 
@@ -560,7 +561,7 @@ router.get('/:caseRef/data', async (req, res) => {
 
 router.post('/:caseRef/save', async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
-  const { token, formKey, fields, completionPct } = req.body || {};
+  const { token, formKey, fields, completionPct, manual, memberLabel, missingSections, missingByMember } = req.body || {};
 
   if (!Array.isArray(fields)) {
     return res.status(400).json({ error: 'fields must be an array' });
@@ -569,6 +570,25 @@ router.post('/:caseRef/save', async (req, res) => {
   try {
     const { itemId, clientName } = await svc.validateAccess(caseRef, token);
     await svc.saveFormData({ clientName, caseRef, itemId, formKey: sanitiseFormKey(formKey || 'primary'), fields, completionPct: completionPct || 0 });
+
+    // Fire-and-forget: missing-fields email (only on manual save, throttled 24h server-side).
+    // Multi-member uses `missingByMember` (aggregated, attached to first save call only);
+    // single-member uses `missingSections` for the current member.
+    let aggregated = null;
+    if (Array.isArray(missingByMember) && missingByMember.length) {
+      aggregated = missingByMember;
+    } else if (Array.isArray(missingSections) && missingSections.length) {
+      aggregated = [{ memberLabel: memberLabel || 'Primary Applicant', sections: missingSections }];
+    }
+    if (aggregated) {
+      sendMissingFieldsEmail({
+        caseRef,
+        isSubmit: false,
+        manual:   manual === true,
+        missingByMember: aggregated,
+      }).catch(err => console.warn(`[/q] Missing-fields email (save) failed for ${caseRef}:`, err.message));
+    }
+
     return res.json({ ok: true });
   } catch (err) {
     console.error(`[/q] Save error for ${caseRef}:`, err.message);
@@ -580,7 +600,7 @@ router.post('/:caseRef/save', async (req, res) => {
 
 router.post('/:caseRef/submit', async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
-  const { token, formKey, fields, completionPct } = req.body || {};
+  const { token, formKey, fields, completionPct, memberLabel, missingSections } = req.body || {};
 
   if (!Array.isArray(fields)) {
     return res.status(400).json({ error: 'fields must be an array' });
@@ -596,6 +616,16 @@ router.post('/:caseRef/submit', async (req, res) => {
 
     await svc.saveFormData({ clientName, caseRef, itemId, formKey: key, fields, completionPct: completionPct || 0 });
     await svc.markSubmitted({ itemId, caseRef, caseType, formKey: key, formLabel: formTitle, completionPct: completionPct || 0, clientName });
+
+    // Fire-and-forget: on submit, always email if there are missing fields (no throttle)
+    if (Array.isArray(missingSections) && missingSections.length) {
+      sendMissingFieldsEmail({
+        caseRef,
+        isSubmit: true,
+        manual:   true,
+        missingByMember: [{ memberLabel: memberLabel || 'Primary Applicant', sections: missingSections }],
+      }).catch(err => console.warn(`[/q] Missing-fields email (submit) failed for ${caseRef}:`, err.message));
+    }
 
     return res.json({ ok: true });
   } catch (err) {
@@ -646,6 +676,19 @@ router.post('/:caseRef/submit-all', async (req, res) => {
       itemId, caseRef, caseType, formLabel: formTitle, clientName,
       memberSubmissions,
     });
+
+    // Fire-and-forget: aggregate missing fields across members → ONE consolidated email (no throttle on submit)
+    const missingByMember = memberSubmissions
+      .filter(s => Array.isArray(s.missingSections) && s.missingSections.length)
+      .map(s => ({ memberLabel: s.memberLabel || s.formKey, sections: s.missingSections }));
+    if (missingByMember.length) {
+      sendMissingFieldsEmail({
+        caseRef,
+        isSubmit: true,
+        manual:   true,
+        missingByMember,
+      }).catch(err => console.warn(`[/q] Missing-fields email (submit-all) failed for ${caseRef}:`, err.message));
+    }
 
     return res.json({ ok: true });
   } catch (err) {
