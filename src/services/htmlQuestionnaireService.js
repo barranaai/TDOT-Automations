@@ -2156,8 +2156,8 @@ ${hasAdditionalForm ? `
       var val = getFieldValue(f).trim();
       if (val && val !== '-- Select --' && val !== 'Select...') continue; /* filled */
 
-      var sec = (f.section || 'General').replace(/\s*›\s*Table\s*$/, ''); /* drop noisy " › Table" suffix */
-      var lbl = (f.label || '').replace(/\s*—\s*Row\s+\d+\s*$/, '');       /* drop "— Row N" — group rows */
+      var sec = (f.section || 'General').replace(/\\s*›\\s*Table\\s*$/, ''); /* drop noisy " › Table" suffix */
+      var lbl = (f.label || '').replace(/\\s*—\\s*Row\\s+\\d+\\s*$/, '');       /* drop "— Row N" — group rows */
       if (!lbl) continue;
 
       if (!bySection[sec]) { bySection[sec] = []; order.push(sec); }
