@@ -1,10 +1,13 @@
 const mondayApi = require('./mondayApi');
-const { clientMasterBoardId } = require('../../config/monday');
+const { clientMasterBoardId, cmColumns } = require('../../config/monday');
 const { SUB_TYPES_BY_CASE } = require('../../config/caseTypes');
+const { ensureAccessToken } = require('./accessTokenService');
+const portalSvc = require('./clientPortalService');
 
 const CASE_REF_COL      = 'text_mm142s49';
 const CASE_TYPE_COL     = 'dropdown_mm0xd1qn';
 const SUB_TYPE_HINT_COL = 'text_mm21gw44';
+const PORTAL_LINK_COL   = (cmColumns && cmColumns.portalLink) || 'link_mm2vta5';
 
 const CASE_TYPE_ABBR = {
   'AAIP':                                                          'AAIP',
@@ -196,6 +199,42 @@ async function onCaseTypeSet({ itemId, caseType }) {
   );
 
   console.log(`[CaseRef] Assigned ${caseRef} to item ${itemId}`);
+
+  // Fire-and-forget: write the unified Client Portal link column.
+  // Failures here MUST NOT break the case-ref assignment flow — the case can
+  // still be served correctly without the link column populated; it can be
+  // backfilled with scripts/backfill-portal-links.js.
+  writePortalLinkForItem({ itemId, caseRef }).catch(err =>
+    console.warn(`[CaseRef] Could not write portal link for ${caseRef}: ${err.message}`)
+  );
 }
 
-module.exports = { onCaseTypeSet, generateCaseRef };
+/**
+ * Write the Client Portal Link column on the Client Master row.
+ * Pulls (or generates) the access token first so the URL is fully usable.
+ * Idempotent — safe to run multiple times for the same item.
+ */
+async function writePortalLinkForItem({ itemId, caseRef }) {
+  const accessToken = await ensureAccessToken(itemId).catch(() => '');
+  if (!accessToken) {
+    console.warn(`[CaseRef] No access token available for item ${itemId} — portal link will be missing token`);
+  }
+  const url = portalSvc.buildPortalUrl({ caseRef, accessToken });
+
+  await mondayApi.query(
+    `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+     }`,
+    {
+      boardId: String(clientMasterBoardId),
+      itemId:  String(itemId),
+      cols:    JSON.stringify({
+        [PORTAL_LINK_COL]: { url, text: 'Open Client Portal' },
+      }),
+    }
+  );
+
+  console.log(`[CaseRef] Wrote Client Portal link for ${caseRef}`);
+}
+
+module.exports = { onCaseTypeSet, generateCaseRef, writePortalLinkForItem };
