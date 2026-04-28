@@ -48,4 +48,10 @@ module.exports = {
   questionnaireExecutionBoardId: process.env.MONDAY_QUESTIONNAIRE_EXECUTION_BOARD_ID,
   slaConfigBoardId:              process.env.MONDAY_SLA_CONFIG_BOARD_ID,
   escalationMatrixBoardId:       process.env.MONDAY_ESCALATION_MATRIX_BOARD_ID,
+
+  // Client Master Board column IDs (referenced across services).
+  // Stored here so a column-ID drift only needs one update.
+  cmColumns: {
+    portalLink: 'link_mm2vta5',  // 🏠 Client Portal — created 2026-04-24, populated by caseRefService
+  },
 };
