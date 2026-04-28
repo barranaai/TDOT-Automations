@@ -76,4 +76,23 @@ function setStaffCookie(res, token) {
   });
 }
 
-module.exports = { requireStaffAuth, createStaffToken, setStaffCookie };
+/**
+ * Non-redirecting staff auth probe.
+ * Returns the decoded JWT payload if a valid staff cookie is present,
+ * or null otherwise. Use this on routes that serve BOTH staff and clients
+ * and need to branch on role without forcing a login redirect.
+ *
+ * @param {import('express').Request} req
+ * @returns {{ id, name, email } | null}
+ */
+function tryStaffAuth(req) {
+  const token = req.cookies?.[COOKIE_NAME];
+  if (!token) return null;
+  try {
+    return jwt.verify(token, _SECRET);
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { requireStaffAuth, tryStaffAuth, createStaffToken, setStaffCookie };

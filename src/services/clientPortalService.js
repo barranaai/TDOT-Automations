@@ -118,38 +118,73 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
 
 // ─── Page builder ───────────────────────────────────────────────────────────
 
-function buildPortalPage(snap) {
-  const tokenParam   = snap.accessToken ? `?t=${encodeURIComponent(snap.accessToken)}` : '';
-  const encodedRef   = encodeURIComponent(snap.caseRef);
-  const qUrl         = `${BASE_URL}/q/${encodedRef}${tokenParam}`;
-  const docUrl       = `${BASE_URL}/documents/${encodedRef}`;
+/**
+ * @param {object} snap     — output of getPortalSnapshot()
+ * @param {object} [opts]
+ * @param {'client'|'staff'} [opts.mode='client']  — which role the page is for
+ * @param {string} [opts.staffName]                — shown in the staff badge when mode=staff
+ */
+function buildPortalPage(snap, opts) {
+  const mode      = (opts && opts.mode === 'staff') ? 'staff' : 'client';
+  const staffName = (opts && opts.staffName) || '';
+  const isStaff   = mode === 'staff';
+
+  const tokenParam = snap.accessToken ? `?t=${encodeURIComponent(snap.accessToken)}` : '';
+  const encodedRef = encodeURIComponent(snap.caseRef);
+
+  // URL targets differ by role:
+  //   client → goes to the client-facing form/upload pages
+  //   staff  → goes to the staff review pages (auth-gated themselves)
+  const qUrl   = isStaff
+    ? `${BASE_URL}/q/${encodedRef}/review`
+    : `${BASE_URL}/q/${encodedRef}${tokenParam}`;
+  const docUrl = isStaff
+    ? `${BASE_URL}/d/${encodedRef}/review`
+    : `${BASE_URL}/documents/${encodedRef}`;
 
   // Q card colour cue based on readiness
   const qPct      = snap.qReadinessPct;
   const qDone     = snap.submittedMembers === snap.totalMembers && qPct >= 100;
   const qLabel    = qDone ? 'Submitted' : (qPct > 0 ? 'In Progress' : 'Not Started');
-  const qBtnText  = qDone ? 'Review Your Answers →' : (qPct > 0 ? 'Continue Filling →' : 'Start Questionnaire →');
+
+  // Button copy is role-aware
+  const qBtnText = isStaff
+    ? 'Open Review Form →'
+    : (qDone ? 'Review Your Answers →' : (qPct > 0 ? 'Continue Filling →' : 'Start Questionnaire →'));
 
   // Doc card status
   const docTotal      = snap.docCounts.total;
   const docDone       = docTotal > 0 ? (snap.docCounts.received + snap.docCounts.reviewed) : 0;
   const docPct        = docTotal > 0 ? Math.round(docDone / docTotal * 100) : 0;
-  const docBtnText    = docTotal === 0 ? 'View Your Documents →' : (docPct === 100 ? 'Review Documents →' : 'Continue Uploading →');
+  const docBtnText    = isStaff
+    ? 'Open Document Review →'
+    : (docTotal === 0 ? 'View Your Documents →' : (docPct === 100 ? 'Review Documents →' : 'Continue Uploading →'));
 
-  // Pending actions list
+  // Pending actions list — role-aware copy
   const pending = [];
   if (snap.docCounts.rework > 0) {
-    pending.push(`📂 ${snap.docCounts.rework} document${snap.docCounts.rework === 1 ? '' : 's'} need re-upload (rework requested)`);
+    pending.push(isStaff
+      ? `📂 ${snap.docCounts.rework} document${snap.docCounts.rework === 1 ? '' : 's'} flagged for rework — awaiting client re-upload`
+      : `📂 ${snap.docCounts.rework} document${snap.docCounts.rework === 1 ? '' : 's'} need re-upload (rework requested)`);
   }
   if (!qDone && qPct < 100) {
-    pending.push(`📝 Questionnaire is ${qPct}% complete — please finish remaining fields`);
+    pending.push(isStaff
+      ? `📝 Questionnaire is ${qPct}% complete — client still has fields to finish`
+      : `📝 Questionnaire is ${qPct}% complete — please finish remaining fields`);
   }
   if (snap.totalMembers > 1 && snap.submittedMembers < snap.totalMembers) {
     const remaining = snap.totalMembers - snap.submittedMembers;
-    pending.push(`👥 ${remaining} family member${remaining === 1 ? '' : 's'} still need${remaining === 1 ? 's' : ''} their questionnaire submitted`);
+    pending.push(isStaff
+      ? `👥 ${remaining} of ${snap.totalMembers} family member${snap.totalMembers === 1 ? '' : 's'} have not submitted yet`
+      : `👥 ${remaining} family member${remaining === 1 ? '' : 's'} still need${remaining === 1 ? 's' : ''} their questionnaire submitted`);
+  }
+  if (snap.docCounts.received > 0) {
+    if (isStaff) pending.push(`🟡 ${snap.docCounts.received} document${snap.docCounts.received === 1 ? '' : 's'} awaiting your review`);
   }
   if (!pending.length) {
-    pending.push('✅ Nothing pending right now — your case officer will be in touch.');
+    pending.push(isStaff
+      ? '✅ Nothing pending — case is on track.'
+      : '✅ Nothing pending right now — your case officer will be in touch.');
   }
 
   const pendingHtml = pending.map(p => `<li style="margin:6px 0;">${escHtml(p)}</li>`).join('');
@@ -170,7 +205,7 @@ function buildPortalPage(snap) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Client Portal — ${escHtml(snap.caseRef)}</title>
+  <title>${isStaff ? 'Case Review' : 'Client Portal'} — ${escHtml(snap.caseRef)}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Segoe UI', Arial, sans-serif; background: #FAF8F4; color: #1F2937; }
@@ -257,6 +292,7 @@ function buildPortalPage(snap) {
         <p>Case ${escHtml(snap.caseRef)} · ${escHtml(snap.caseType || '')}${snap.caseSubType ? ' / ' + escHtml(snap.caseSubType) : ''}</p>
       </div>
     </div>
+    ${isStaff ? `<div style="font-size:11px;font-weight:700;padding:5px 14px;border-radius:999px;background:rgba(201,168,76,.18);color:#C9A84C;border:1px solid rgba(201,168,76,.35);letter-spacing:.04em;">Reviewing as ${escHtml(staffName || 'Staff')}</div>` : ''}
   </header>
 
   <main class="content">
@@ -268,7 +304,7 @@ function buildPortalPage(snap) {
     </div>
 
     <section class="pending">
-      <h2>📌 What's pending</h2>
+      <h2>📌 ${isStaff ? 'Case status' : "What's pending"}</h2>
       <ul>${pendingHtml}</ul>
     </section>
 
@@ -277,7 +313,9 @@ function buildPortalPage(snap) {
       <div class="card-head">
         <div>
           <h3>📝 Questionnaire</h3>
-          <div class="sub">Tell us about your background, history, and details for your case.</div>
+          <div class="sub">${isStaff
+            ? 'Open the staff review form to flag fields, leave feedback, or request corrections.'
+            : 'Tell us about your background, history, and details for your case.'}</div>
         </div>
         <span class="badge ${qDone ? 'badge-ok' : (qPct > 0 ? 'badge-prog' : 'badge-todo')}">${escHtml(qLabel)}</span>
       </div>
@@ -296,7 +334,9 @@ function buildPortalPage(snap) {
       <div class="card-head">
         <div>
           <h3>📂 Documents</h3>
-          <div class="sub">${docTotal} document${docTotal === 1 ? '' : 's'} requested for this case.</div>
+          <div class="sub">${isStaff
+            ? `${docTotal} document${docTotal === 1 ? '' : 's'} on this case — open the review page to mark them as reviewed or request rework.`
+            : `${docTotal} document${docTotal === 1 ? '' : 's'} requested for this case.`}</div>
         </div>
         <span class="badge ${snap.docCounts.rework > 0 ? 'badge-warn' : (docPct === 100 ? 'badge-ok' : (docDone > 0 ? 'badge-prog' : 'badge-todo'))}">${docPct}% uploaded</span>
       </div>
@@ -312,8 +352,9 @@ function buildPortalPage(snap) {
     </section>
 
     <p class="footer">
-      If you have questions, simply reply to the email your case officer sent you.<br>
-      Please include your <strong>Case Reference Number</strong> in any correspondence.<br>
+      ${isStaff
+        ? `Linked from the Client Master Board · ${escHtml(snap.caseRef)}<br>This portal mirrors the live state — every load queries Monday + OneDrive.`
+        : `If you have questions, simply reply to the email your case officer sent you.<br>Please include your <strong>Case Reference Number</strong> in any correspondence.`}<br>
       <span class="footer-brand">TDOT IMMIGRATION SERVICES</span>
     </p>
 

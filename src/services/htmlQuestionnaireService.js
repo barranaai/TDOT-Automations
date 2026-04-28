@@ -144,6 +144,21 @@ async function validateAccess(caseRef, token) {
   return { ...entry, formFiles };
 }
 
+/**
+ * Same shape as validateAccess but resolves the case by caseRef alone — used
+ * by routes already gated by staff auth (e.g. the staff portal view), where
+ * the access token is irrelevant. Returns the same shape (itemId, clientName,
+ * caseType, caseSubType, accessToken, formFiles) so call sites are
+ * interchangeable.
+ */
+async function validateAccessForStaff(caseRef) {
+  if (!caseRef) throw new Error('Missing case reference.');
+  const entry = await lookupCase(caseRef);
+  if (!entry) throw new Error('Case not found.');
+  const formFiles = resolveForm(entry.caseType, entry.caseSubType);
+  return { ...entry, formFiles };
+}
+
 // ─── OneDrive data operations ─────────────────────────────────────────────────
 
 function dataFilename(caseRef, formKey) {
@@ -4014,6 +4029,7 @@ function escHtml(str) {
 
 module.exports = {
   validateAccess,
+  validateAccessForStaff,
   resolveForm,
   loadFormData,
   saveFormData,
