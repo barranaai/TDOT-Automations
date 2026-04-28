@@ -117,18 +117,20 @@ function isWithinThrottleWindow(iso) {
 function buildEmailHtml({ clientName, caseRef, formUrl, missingByMember, totalMissing }) {
   const memberBlocks = missingByMember.map(m => {
     const sections = (m.sections || []).map(s => `
-      <li style="margin-top:10px;">
-        <strong style="color:#1e3a5f;">${escHtml(s.section)}</strong>
-        <ul style="margin:4px 0 0 18px; padding:0; color:#475569;">
-          ${(s.fields || []).map(f => `<li style="margin:2px 0;">${escHtml(f)}</li>`).join('')}
+      <div style="margin-top:14px;">
+        <div style="font-size:13px; font-weight:700; color:#1e3a5f; margin-bottom:4px;">
+          ${escHtml(s.section)}
+        </div>
+        <ul style="margin:0; padding-left:20px; color:#475569; font-size:13px; line-height:1.6;">
+          ${(s.fields || []).map(f => `<li>${escHtml(f)}</li>`).join('')}
         </ul>
-      </li>`).join('');
+      </div>`).join('');
     return `
-      <div style="margin-top:18px; padding:14px 18px; background:#f8fafc; border-left:3px solid #1e3a5f; border-radius:4px;">
-        <div style="font-size:14px; font-weight:700; color:#1e3a5f; margin-bottom:6px;">
+      <div style="margin-top:20px; padding:16px 20px; background:#f8fafc; border-left:3px solid #1e3a5f; border-radius:4px;">
+        <div style="font-size:14px; font-weight:700; color:#1e3a5f; margin-bottom:4px;">
           👤 ${escHtml(m.memberLabel || 'Applicant')}
         </div>
-        <ul style="margin:0; padding-left:18px;">${sections}</ul>
+        ${sections}
       </div>`;
   }).join('');
 
