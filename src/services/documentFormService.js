@@ -269,7 +269,20 @@ async function getCaseDocuments(caseRef) {
  * Returns:
  *   • An array of allowed applicantType strings (always includes
  *     'Principal Applicant'), e.g. ['Principal Applicant', 'Dependent Child']
- *   • null  → manifest could not be read; caller should fail-open (no filter).
+ *   • null  → only on truly unexpected errors (e.g. require() failure);
+ *            caller should treat null as "skip filter".
+ *
+ * Behavior contract (matches loadMembers' internal error swallowing):
+ *   • Manifest exists with members  → return all member types + Principal
+ *   • Manifest absent or empty       → loadMembers returns defaultMembers()
+ *                                      → result is ['Principal Applicant'] only
+ *   • OneDrive transient read error → loadMembers catches internally and
+ *                                      returns defaultMembers() → result is
+ *                                      ['Principal Applicant'] only
+ *
+ * The "OneDrive error" case is therefore fail-closed-to-Principal. Multi-
+ * member cases would have non-Principal docs hidden temporarily during an
+ * outage; the data itself is preserved on Monday, only the display narrows.
  *
  * Member.type values match Template Board applicantType strings exactly
  * (`Spouse / Common-Law Partner`, `Dependent Child`, etc.) — see
@@ -290,8 +303,8 @@ async function getAllowedApplicantTypesFromManifest({ caseRef, clientName }) {
     }
     return Array.from(allowed);
   } catch (err) {
-    console.warn(`[DocForm] Could not read member manifest for ${caseRef}: ${err.message} — falling back to no filter`);
-    return null; // fail-open
+    console.warn(`[DocForm] Could not resolve member manifest for ${caseRef}: ${err.message} — skipping applicant-type filter`);
+    return null;
   }
 }
 
@@ -303,8 +316,11 @@ async function getAllowedApplicantTypesFromManifest({ caseRef, clientName }) {
  * in the questionnaire member manifest. This hides phantom Spouse/Dependent
  * Child documents on cases where the client is genuinely a single applicant,
  * AND auto-shows them the moment a family member is added in the
- * questionnaire. Filter is fail-open — if the manifest can't be read, every
- * document is shown (better a phantom doc than a missing one).
+ * questionnaire (the manifest update is reflected on the next page load).
+ *
+ * The filter is display-only: documents are not deleted from the Execution
+ * Board, only omitted from the rendered list. Removing the filter restores
+ * the previous behaviour with no data loss.
  */
 async function getCaseSummary(caseRef) {
   const [items, clientName, disclaimer] = await Promise.all([
