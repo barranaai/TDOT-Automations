@@ -880,6 +880,14 @@ ${hasAdditionalForm ? `
   font-size: 10px; font-weight: 400; line-height: 1.3; opacity: 0.72;
 }
 ` : ''}
+/* ── TDOT brand override: neutralise the form's built-in orange/red palette ── */
+.header {
+  background: #0B1D32 !important;
+  border-bottom: 4px solid #C9A84C !important;
+}
+.header h1, .header .subtitle { color: #FFFFFF !important; }
+.top-accordion-header          { background: #8B0000 !important; }
+.top-accordion-header:hover    { background: #6B0000 !important; }
 </style>
 <script>
 (function () {
@@ -2810,6 +2818,15 @@ input[disabled], select[disabled], textarea[disabled] {
 
 /* Highlight flagged form-groups */
 .form-group.tdot-flagged { background: #fffbeb !important; border-radius: 8px; padding: 8px !important; margin: -8px !important; }
+
+/* ── TDOT brand override: neutralise the form's built-in orange/red palette ── */
+.header {
+  background: #0B1D32 !important;
+  border-bottom: 4px solid #C9A84C !important;
+}
+.header h1, .header .subtitle { color: #FFFFFF !important; }
+.top-accordion-header          { background: #8B0000 !important; }
+.top-accordion-header:hover    { background: #6B0000 !important; }
 </style>
 <script>
 (function () {
