@@ -365,9 +365,29 @@ function buildPortalPage(snap, opts) {
 
 // ─── Helper used by caseRefService and backfill script ──────────────────────
 
-function buildPortalUrl({ caseRef, accessToken }) {
-  const tokenParam = accessToken ? `?t=${encodeURIComponent(accessToken)}` : '';
-  return `${BASE_URL}/client/${encodeURIComponent(caseRef)}${tokenParam}`;
+/**
+ * Build the URL for the unified portal page.
+ *
+ * @param {object}  opts
+ * @param {string}  opts.caseRef
+ * @param {string?} opts.accessToken Client access token (omit for staff-only links)
+ * @param {boolean} [opts.staff]     If true, append ?staff=1 to indicate the
+ *                                   link is intended for staff. The route
+ *                                   uses this flag to redirect to Monday OAuth
+ *                                   when no staff cookie is present, so a
+ *                                   staff member clicking the link from
+ *                                   Monday lands on the staff view rather
+ *                                   than the client view. Email links should
+ *                                   NOT set this flag — clients without a
+ *                                   Monday account would otherwise hit a
+ *                                   broken OAuth flow.
+ */
+function buildPortalUrl({ caseRef, accessToken, staff = false }) {
+  const params = [];
+  if (accessToken) params.push(`t=${encodeURIComponent(accessToken)}`);
+  if (staff)       params.push('staff=1');
+  const query = params.length ? `?${params.join('&')}` : '';
+  return `${BASE_URL}/client/${encodeURIComponent(caseRef)}${query}`;
 }
 
 module.exports = {

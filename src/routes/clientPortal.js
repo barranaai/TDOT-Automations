@@ -37,9 +37,21 @@ function sanitiseCaseRef(s) {
  * the case is resolved by caseRef alone (token bypassed for the staff path).
  */
 router.get('/:caseRef', async (req, res) => {
-  const caseRef = sanitiseCaseRef(req.params.caseRef);
-  const token   = (req.query.t || '').trim();
-  const staff   = tryStaffAuth(req);
+  const caseRef    = sanitiseCaseRef(req.params.caseRef);
+  const token      = (req.query.t || '').trim();
+  const wantsStaff = req.query.staff === '1';
+  const staff      = tryStaffAuth(req);
+
+  // If the URL declares staff intent (?staff=1, used by the Monday Client
+  // Portal link column) but the user has no valid staff cookie, route them
+  // through the Monday OAuth flow first. After OAuth, the callback redirects
+  // back to this URL with the cookie in place, and tryStaffAuth will succeed.
+  // Email links never include ?staff=1, so clients without Monday accounts
+  // are unaffected.
+  if (wantsStaff && !staff) {
+    const returnTo = encodeURIComponent(req.originalUrl || `/client/${caseRef}`);
+    return res.redirect(`/q/auth/monday?returnTo=${returnTo}`);
+  }
 
   try {
     let validatedCase;

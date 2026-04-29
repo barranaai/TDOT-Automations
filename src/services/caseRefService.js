@@ -219,7 +219,11 @@ async function writePortalLinkForItem({ itemId, caseRef }) {
   if (!accessToken) {
     console.warn(`[CaseRef] No access token available for item ${itemId} — portal link will be missing token`);
   }
-  const url = portalSvc.buildPortalUrl({ caseRef, accessToken });
+  // staff:true → URL includes ?staff=1 so the route knows to trigger Monday
+  // OAuth when a staff member opens the link without an active cookie.
+  // This column is only ever rendered inside Monday (staff-facing); clients
+  // never see it — they get the email link instead, which has no staff flag.
+  const url = portalSvc.buildPortalUrl({ caseRef, accessToken, staff: true });
 
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {

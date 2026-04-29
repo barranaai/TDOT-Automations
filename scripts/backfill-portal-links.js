@@ -93,7 +93,10 @@ async function* iterateClientMaster() {
       failed++; continue;
     }
 
-    const url = portalSvc.buildPortalUrl({ caseRef, accessToken: token });
+    // staff:true → ?staff=1 in the URL so the route triggers Monday OAuth
+    // when a staff member opens this link without a fresh cookie. The Monday
+    // column is only seen by staff, never by clients.
+    const url = portalSvc.buildPortalUrl({ caseRef, accessToken: token, staff: true });
     if (existingUrl === url) {
       console.log(`  [ok  ] ${caseRef} already has correct link`);
       skipped++;
