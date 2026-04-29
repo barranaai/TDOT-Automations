@@ -3677,6 +3677,30 @@ input[disabled], select[disabled], textarea[disabled] {
     }
   }
 
+  /* ── Hide top-level accordion sections that have no client data ── */
+  /* Runs after prefill so DOM values are already set.              */
+  /* Prevents empty sections (e.g. "Dependent (If Accompany)"      */
+  /* in F6) from cluttering the review for single-applicant cases. */
+  function hideEmptySections() {
+    var topSections = document.querySelectorAll('.top-accordion, .applicant-accordion');
+    topSections.forEach(function (section) {
+      var inputs = section.querySelectorAll('input, select, textarea');
+      var hasData = false;
+      for (var i = 0; i < inputs.length; i++) {
+        var el = inputs[i];
+        if (el.type === 'checkbox' || el.type === 'radio') {
+          if (el.checked) { hasData = true; break; }
+        } else if ((el.value || '').trim() !== '') {
+          hasData = true;
+          break;
+        }
+      }
+      if (!hasData) {
+        section.style.display = 'none';
+      }
+    });
+  }
+
   function init() {
     if (IS_MULTI_REVIEW) {
       setupMultiMemberReview();
@@ -3705,6 +3729,7 @@ input[disabled], select[disabled], textarea[disabled] {
 
     fireConditionalToggles();
     makeReadOnly();
+    hideEmptySections();
     fields.forEach(attachFlagUI);
     createReviewBar();
     updateFlagCount();
