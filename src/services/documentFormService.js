@@ -261,8 +261,50 @@ async function getCaseDocuments(caseRef) {
 }
 
 /**
+ * Compute which applicantType labels are valid for this case based on the
+ * QUESTIONNAIRE MEMBER MANIFEST in OneDrive. The manifest is the single
+ * source of truth for "who's actually on this case" — it changes whenever
+ * the client adds or removes a family member from the questionnaire.
+ *
+ * Returns:
+ *   • An array of allowed applicantType strings (always includes
+ *     'Principal Applicant'), e.g. ['Principal Applicant', 'Dependent Child']
+ *   • null  → manifest could not be read; caller should fail-open (no filter).
+ *
+ * Member.type values match Template Board applicantType strings exactly
+ * (`Spouse / Common-Law Partner`, `Dependent Child`, etc.) — see
+ * config/questionnaireFormMap.js MEMBER_TYPE constants.
+ */
+async function getAllowedApplicantTypesFromManifest({ caseRef, clientName }) {
+  if (!caseRef || !clientName) return null;
+  try {
+    // Lazy require avoids hard coupling at module load
+    const htmlQ = require('./htmlQuestionnaireService');
+    const members = await htmlQ.loadMembers({ clientName, caseRef });
+
+    const allowed = new Set(['Principal Applicant']);
+    for (const m of (members || [])) {
+      // The primary member is always Principal Applicant — already in the set
+      if (m.key === 'primary') continue;
+      if (m.type) allowed.add(m.type);
+    }
+    return Array.from(allowed);
+  } catch (err) {
+    console.warn(`[DocForm] Could not read member manifest for ${caseRef}: ${err.message} — falling back to no filter`);
+    return null; // fail-open
+  }
+}
+
+/**
  * Load both the document items and the client's full name in parallel.
  * Used by the form route to populate both the document list and the top bar.
+ *
+ * As of 2026-04-29: filters out documents whose applicantType is not present
+ * in the questionnaire member manifest. This hides phantom Spouse/Dependent
+ * Child documents on cases where the client is genuinely a single applicant,
+ * AND auto-shows them the moment a family member is added in the
+ * questionnaire. Filter is fail-open — if the manifest can't be read, every
+ * document is shown (better a phantom doc than a missing one).
  */
 async function getCaseSummary(caseRef) {
   const [items, clientName, disclaimer] = await Promise.all([
@@ -270,7 +312,22 @@ async function getCaseSummary(caseRef) {
     getClientName(caseRef),
     getDisclaimerForCase(caseRef),
   ]);
-  return { items, clientName, disclaimer };
+
+  let filteredItems = items;
+  if (clientName) {
+    const allowed = await getAllowedApplicantTypesFromManifest({ caseRef, clientName });
+    if (allowed) {
+      filteredItems = items.filter(it =>
+        allowed.includes(it.applicantType || 'Principal Applicant')
+      );
+      const hidden = items.length - filteredItems.length;
+      if (hidden > 0) {
+        console.log(`[DocForm] ${caseRef}: hid ${hidden} of ${items.length} document${items.length === 1 ? '' : 's'} (applicantType not in manifest: ${allowed.join(', ')})`);
+      }
+    }
+  }
+
+  return { items: filteredItems, clientName, disclaimer };
 }
 
 // ─── Public: post-upload actions ─────────────────────────────────────────────
