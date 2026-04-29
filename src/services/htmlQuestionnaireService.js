@@ -25,6 +25,10 @@ const { FORMS_DIR, resolveForm } = require('../../config/questionnaireFormMap');
 
 const BASE_URL = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
 
+// Help-text shown beneath the form title on nav tabs and overview buttons (two-form cases only)
+const PRIMARY_FORM_HELP_TEXT    = 'If you have not received the invitation to apply.';
+const ADDITIONAL_FORM_HELP_TEXT = 'If you have received your invitation to apply.';
+
 const CM = {
   caseRef:           'text_mm142s49',
   caseType:          'dropdown_mm0xd1qn',
@@ -867,10 +871,14 @@ ${hasAdditionalForm ? `
 .tdot-nav-tab {
   padding: 11px 22px; font-size: 14px; font-weight: 600;
   cursor: pointer; border-bottom: 3px solid transparent;
-  color: rgba(255,255,255,0.65); text-decoration: none; display: block;
+  color: rgba(255,255,255,0.65); text-decoration: none;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
 }
 .tdot-nav-tab:hover { color: #C9A84C; }
 .tdot-nav-tab.active { color: #C9A84C; border-bottom-color: #C9A84C; }
+.tdot-nav-help {
+  font-size: 10px; font-weight: 400; line-height: 1.3; opacity: 0.72;
+}
 ` : ''}
 </style>
 <script>
@@ -2222,13 +2230,15 @@ ${hasAdditionalForm ? `
     var additionalTitle = IS_ADDITIONAL ? ${JSON.stringify(formTitle || '')} : OTHER_FORM_TITLE;
     var primaryUrl = IS_ADDITIONAL ? OTHER_FORM_URL : '';
     var additionalUrl = IS_ADDITIONAL ? '' : OTHER_FORM_URL;
+    var pHelp = '<span class="tdot-nav-help">${PRIMARY_FORM_HELP_TEXT}</span>';
+    var aHelp = '<span class="tdot-nav-help">${ADDITIONAL_FORM_HELP_TEXT}</span>';
     nav.innerHTML =
       (primaryUrl
-        ? '<a href="' + primaryUrl + '" class="tdot-nav-tab">📝 ' + primaryTitle + '</a>'
-        : '<span class="tdot-nav-tab active" style="cursor:default">📝 ' + primaryTitle + '</span>') +
+        ? '<a href="' + primaryUrl + '" class="tdot-nav-tab"><span>📝 ' + primaryTitle + '</span>' + pHelp + '</a>'
+        : '<span class="tdot-nav-tab active" style="cursor:default"><span>📝 ' + primaryTitle + '</span>' + pHelp + '</span>') +
       (additionalUrl
-        ? '<a href="' + additionalUrl + '" class="tdot-nav-tab">📋 ' + additionalTitle + '</a>'
-        : '<span class="tdot-nav-tab active" style="cursor:default">📋 ' + additionalTitle + '</span>');
+        ? '<a href="' + additionalUrl + '" class="tdot-nav-tab"><span>📋 ' + additionalTitle + '</span>' + aHelp + '</a>'
+        : '<span class="tdot-nav-tab active" style="cursor:default"><span>📋 ' + additionalTitle + '</span>' + aHelp + '</span>');
     document.body.insertBefore(nav, document.body.firstChild);
   }
   ` : overviewUrl ? `
@@ -2379,8 +2389,14 @@ function buildOverviewPage({ caseRef, token, members, formFiles, allowedMemberTy
     if (hasTwo) {
       formButtons = `
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-          <a href="${base}&f=${encodeURIComponent(member.key)}&form=primary" class="form-btn">${escHtml(primaryTitle)}</a>
-          <a href="${base}&f=${encodeURIComponent(member.key)}&form=additional" class="form-btn form-btn-secondary">${escHtml(additionalTitle)}</a>
+          <a href="${base}&f=${encodeURIComponent(member.key)}&form=primary" class="form-btn">
+            <span style="display:block">${escHtml(primaryTitle)}</span>
+            <span style="display:block;font-size:11px;font-weight:400;opacity:0.82;margin-top:3px">${escHtml(PRIMARY_FORM_HELP_TEXT)}</span>
+          </a>
+          <a href="${base}&f=${encodeURIComponent(member.key)}&form=additional" class="form-btn form-btn-secondary">
+            <span style="display:block">${escHtml(additionalTitle)}</span>
+            <span style="display:block;font-size:11px;font-weight:400;opacity:0.82;margin-top:3px">${escHtml(ADDITIONAL_FORM_HELP_TEXT)}</span>
+          </a>
         </div>`;
     } else {
       formButtons = `
