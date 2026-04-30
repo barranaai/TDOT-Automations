@@ -1379,10 +1379,18 @@ ${hasAdditionalForm ? `
         for (var ml = 0; ml < MEMBERS.length; ml++) memLabels[MEMBERS[ml].key] = MEMBERS[ml].label || MEMBERS[ml].key;
         for (var mi = 0; mi < memberKeys.length; mi++) {
           var mk = memberKeys[mi];
+          /* Compute progress once and send filled+total alongside the rounded
+             percentage. The server then re-derives the aggregate as
+             sum(filled)/sum(total), which matches the client-side
+             getProgress() and avoids the precision loss of averaging
+             rounded per-member percentages. */
+          var mProg = getProgressForMember(mk);
           memberSubs.push({
             formKey:         mk + FORM_KEY_SUFFIX,
             fields:          getSerializableFieldsForMember(mk),
-            completionPct:   getProgressForMember(mk).pct,
+            completionPct:   mProg.pct,
+            filled:          mProg.filled,
+            total:           mProg.total,
             memberLabel:     memLabels[mk] || mk,
             missingSections: collectMissingFieldsForMember(mk).sections,
           });

@@ -662,7 +662,24 @@ router.post('/:caseRef/submit-all', async (req, res) => {
   // Same threshold as the single-member /submit route. The client computes
   // the same aggregate before allowing the button click; this is a
   // defense-in-depth check for crafted requests.
+  //
+  // Math: aggregate = sum(filled) / sum(total). This is field-weighted —
+  // a Spouse with 200 fields and a Dependent with 50 fields contribute
+  // proportionally rather than counting equally. This is the same formula
+  // the client uses in getProgress(), so the client gate and the server
+  // gate always agree.
+  //
+  // Falls back to averaging per-member rounded percentages if the client
+  // didn't send raw counts (older clients or unusual payloads). The
+  // fallback is mathematically less accurate but keeps the gate
+  // functional rather than rejecting the request outright.
   const aggregatePct = (() => {
+    const totalFields  = memberSubmissions.reduce((s, sub) => s + (Number(sub.total)  || 0), 0);
+    const filledFields = memberSubmissions.reduce((s, sub) => s + (Number(sub.filled) || 0), 0);
+    if (totalFields > 0) {
+      return Math.round((filledFields / totalFields) * 100);
+    }
+    // Fallback path — raw counts missing
     const pcts = memberSubmissions
       .map(s => Number(s.completionPct))
       .filter(n => Number.isFinite(n));
