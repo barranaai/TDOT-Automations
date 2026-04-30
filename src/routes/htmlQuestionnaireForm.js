@@ -606,6 +606,18 @@ router.post('/:caseRef/submit', async (req, res) => {
     return res.status(400).json({ error: 'fields must be an array' });
   }
 
+  // Server-side submission gate — defense in depth. The client also gates
+  // the submit button at the same threshold; this enforces it for any
+  // request that bypassed the UI (devtools, scripted calls, stale cache).
+  const pct = Number(completionPct) || 0;
+  if (pct < svc.SUBMIT_THRESHOLD_PCT) {
+    return res.status(400).json({
+      error:     `Submission requires at least ${svc.SUBMIT_THRESHOLD_PCT}% completion (received ${pct}%). Please complete more fields and try again.`,
+      threshold: svc.SUBMIT_THRESHOLD_PCT,
+      received:  pct,
+    });
+  }
+
   try {
     const { itemId, clientName, caseType, formFiles } = await svc.validateAccess(caseRef, token);
 
@@ -644,6 +656,25 @@ router.post('/:caseRef/submit-all', async (req, res) => {
 
   if (!Array.isArray(memberSubmissions) || !memberSubmissions.length) {
     return res.status(400).json({ error: 'members must be a non-empty array of { formKey, fields, completionPct }' });
+  }
+
+  // Server-side submission gate — aggregate completion across all members.
+  // Same threshold as the single-member /submit route. The client computes
+  // the same aggregate before allowing the button click; this is a
+  // defense-in-depth check for crafted requests.
+  const aggregatePct = (() => {
+    const pcts = memberSubmissions
+      .map(s => Number(s.completionPct))
+      .filter(n => Number.isFinite(n));
+    if (!pcts.length) return 0;
+    return Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length);
+  })();
+  if (aggregatePct < svc.SUBMIT_THRESHOLD_PCT) {
+    return res.status(400).json({
+      error:     `Submission requires at least ${svc.SUBMIT_THRESHOLD_PCT}% average completion across all family members (received ${aggregatePct}%). Please complete more fields and try again.`,
+      threshold: svc.SUBMIT_THRESHOLD_PCT,
+      received:  aggregatePct,
+    });
   }
 
   try {

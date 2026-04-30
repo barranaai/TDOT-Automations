@@ -29,6 +29,20 @@ const BASE_URL = process.env.RENDER_URL || 'https://tdot-automations.onrender.co
 const PRIMARY_FORM_HELP_TEXT    = 'If you have not received the invitation to apply.';
 const ADDITIONAL_FORM_HELP_TEXT = 'If you have received your invitation to apply.';
 
+// ── Submission gate ─────────────────────────────────────────────────────────
+// Clients can save progress at any percentage (no gate on save). Submission
+// requires this minimum aggregate completion across ALL family members on the
+// case. Set to 80 — high enough that the submitted package is workable for
+// the case officer, low enough that clients aren't blocked on a handful of
+// optional/conditional fields they legitimately can't fill.
+//
+// NOTE: keep this constant in sync between the server (this module) and the
+// client (injected into the questionnaire script) — the latter pulls the
+// value at template-build time via JSON.stringify below. Defense in depth:
+// the server-side /submit and /submit-all routes also enforce the gate so a
+// crafted request can't bypass the client check.
+const SUBMIT_THRESHOLD_PCT = 80;
+
 const CM = {
   caseRef:           'text_mm142s49',
   caseType:          'dropdown_mm0xd1qn',
@@ -802,6 +816,7 @@ function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditiona
 #tdot-progress { color: rgba(255,255,255,0.75); white-space: nowrap; }
 #tdot-actions  { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
 #tdot-saved-msg { font-size: 12px; color: #C9A84C; min-width: 100px; text-align: right; }
+.tdot-gate-hint { font-size: 11px; color: #FCD34D; font-weight: 500; white-space: nowrap; padding-right: 4px; letter-spacing: 0.01em; }
 .tdot-btn {
   padding: 7px 16px; border: none; border-radius: 6px;
   font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
@@ -906,6 +921,7 @@ ${hasAdditionalForm ? `
   var OTHER_FORM_TITLE = ${JSON.stringify(otherFormTitle || '')};
   var IS_ADDITIONAL    = ${JSON.stringify(Boolean(isAdditionalForm))};
   var FORM_KEY_SUFFIX  = ${JSON.stringify(formKeySuffix || '')};
+  var SUBMIT_THRESHOLD_PCT = ${SUBMIT_THRESHOLD_PCT};
 
   /* ── Utilities ── */
 
@@ -1181,6 +1197,29 @@ ${hasAdditionalForm ? `
     bar.textContent = p.filled + ' / ' + p.total + ' fields completed (' + p.pct + '%)';
     var pctBar = document.getElementById('tdot-pct-fill');
     if (pctBar) pctBar.style.width = p.pct + '%';
+    updateSubmitGate(p.pct);
+  }
+
+  /* ── Submit gate ──
+     Submission stays locked until the aggregate completion across all
+     family members hits SUBMIT_THRESHOLD_PCT. Save Progress is always
+     available regardless of progress — clients can stop and resume. */
+
+  function updateSubmitGate(pct) {
+    var btn  = document.getElementById('tdot-submit-btn');
+    var hint = document.getElementById('tdot-gate-hint');
+    if (!btn) return;
+    if (pct >= SUBMIT_THRESHOLD_PCT) {
+      btn.disabled  = false;
+      btn.removeAttribute('title');
+      if (hint) hint.textContent = '';
+    } else {
+      btn.disabled  = true;
+      btn.title     = 'You need at least ' + SUBMIT_THRESHOLD_PCT + '% completion to submit. Click Save Progress to come back later.';
+      if (hint) {
+        hint.textContent = '🔒 Submit unlocks at ' + SUBMIT_THRESHOLD_PCT + '% (currently ' + pct + '%)';
+      }
+    }
   }
 
   /* ── Save ── */
@@ -1306,6 +1345,20 @@ ${hasAdditionalForm ? `
 
   async function doSubmit() {
     var p = getProgress();
+
+    /* Defense-in-depth gate. The submit button is disabled below the
+       threshold via updateSubmitGate(), but if the button is somehow
+       activated (dev tools, race condition, stale DOM), refuse here too. */
+    if (p.pct < SUBMIT_THRESHOLD_PCT) {
+      alert(
+        'Almost there — but not quite ready to submit.\\n\\n' +
+        'Your questionnaire is ' + p.pct + '% complete (' + p.filled + ' of ' + p.total + ' fields). ' +
+        'You need at least ' + SUBMIT_THRESHOLD_PCT + '% to submit.\\n\\n' +
+        'Use Save Progress at any time — your work is preserved and you can come back to finish.'
+      );
+      return;
+    }
+
     var confirmed = confirm(
       'Submit your questionnaire?\\n\\n' +
       'Completion: ' + p.pct + '% (' + p.filled + ' of ' + p.total + ' fields)\\n\\n' +
@@ -2223,8 +2276,12 @@ ${hasAdditionalForm ? `
       '</div>' +
       '<div id="tdot-actions">' +
         '<span id="tdot-saved-msg"></span>' +
+        '<span id="tdot-gate-hint" class="tdot-gate-hint"></span>' +
         '<button class="tdot-btn tdot-btn-save"   id="tdot-save-btn"   onclick="tdotSave()">💾 Save Progress</button>' +
-        '<button class="tdot-btn tdot-btn-submit" id="tdot-submit-btn" onclick="tdotSubmit()">✅ Submit Questionnaire</button>' +
+        /* Start disabled — updateSubmitGate() will enable once progress
+           reaches SUBMIT_THRESHOLD_PCT. Prevents a flash where the button
+           appears clickable before initial getProgress() has run. */
+        '<button class="tdot-btn tdot-btn-submit" id="tdot-submit-btn" onclick="tdotSubmit()" disabled>✅ Submit Questionnaire</button>' +
       '</div>';
     document.body.appendChild(bar);
   }
@@ -4086,6 +4143,9 @@ function escHtml(str) {
 }
 
 module.exports = {
+  // Submission gate threshold — exposed so route handlers can enforce
+  // the same percentage server-side as the client-injected check.
+  SUBMIT_THRESHOLD_PCT,
   validateAccess,
   validateAccessForStaff,
   resolveForm,
