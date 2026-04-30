@@ -280,6 +280,36 @@ function groupByMemberAndCategory(items) {
 const PHASE_ORDER = ['Profile Creation', 'Submission'];
 
 /**
+ * Combine the member arrays from every phase into a single de-duplicated
+ * list, where each entry holds all of that member's sections grouped by
+ * the phase they belong to.
+ *
+ * Used by the upload-form layout to switch from the legacy phase-first
+ * pill structure (`[Profile Creation][P1][P2]   [Submission][P1][P2][P3]`)
+ * to a member-first layout (`[P1][P2][P3]`) where each member's panel
+ * internally renders Profile Creation and Submission as sub-sections.
+ *
+ * Returns: [{ memberType, phaseSections: { phaseName: [{category, items}] } }]
+ * sorted in MEMBER_ORDER.
+ */
+function aggregateMembersAcrossPhases(phases) {
+  const memberMap = {};
+  for (const p of phases) {
+    const phaseKey = p.phase || '';
+    for (const m of p.members || []) {
+      if (!memberMap[m.memberType]) {
+        memberMap[m.memberType] = { memberType: m.memberType, phaseSections: {} };
+      }
+      memberMap[m.memberType].phaseSections[phaseKey] = m.sections || [];
+    }
+  }
+  const ordered = MEMBER_ORDER
+    .filter((m) => memberMap[m])
+    .concat(Object.keys(memberMap).filter((m) => !MEMBER_ORDER.includes(m)));
+  return ordered.map((mt) => memberMap[mt]);
+}
+
+/**
  * Split items by Checklist Phase → then delegate each phase's items
  * to groupByMemberAndCategory for the existing member + category grouping.
  *
@@ -433,44 +463,75 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
   const uploadedDocs = allItems.filter((i) => i.status !== 'Missing').length;
   const pct          = totalDocs ? Math.round((uploadedDocs / totalDocs) * 100) : 0;
 
-  // Build flat step list.
-  // When dual-phase, each phase's items produce their own steps, tagged with phase name.
-  // Phase dividers are inserted into the pill bar for visual separation.
+  // ── Build the step list ──
+  // The form supports four cases:
+  //   A. Single applicant, single phase → category pills (legacy path)
+  //   B. Single applicant, dual  phase → category pills with phase dividers
+  //   C. Multi  applicant, single phase → MEMBER pills, categories inside
+  //   D. Multi  applicant, dual  phase → MEMBER pills, phase headers + categories inside
+  //
+  // For C & D the new layout puts each member at the TOP level so the client
+  // navigates by person first ("which family member am I uploading for?")
+  // rather than by phase first. Phase separation, when present, lives inside
+  // the member's own panel as section headers.
 
-  function buildStepsForPhase(phaseMembers, phaseIsMultiMember, phaseName) {
-    let phaseSteps;
-    if (phaseIsMultiMember) {
-      phaseSteps = phaseMembers.map((m) => ({
-        label:     m.memberType,
-        icon:      memberIcon(m.memberType),
-        items:     m.sections.flatMap((s) => s.items),
-        sections:  m.sections,
-        isMember:  true,
-        phase:     phaseName,
-      }));
-    } else {
-      phaseSteps = phaseMembers[0].sections.map((sec) => ({
-        label:    sec.category,
-        icon:     CATEGORY_ICONS[sec.category] || '📋',
-        items:    sec.items,
-        sections: [sec],
-        isMember: false,
-        phase:    phaseName,
-      }));
-    }
-    return phaseSteps;
+  function buildCategorySteps(memberSections, phaseName) {
+    return memberSections.map((sec) => ({
+      label:    sec.category,
+      icon:     CATEGORY_ICONS[sec.category] || '📋',
+      items:    sec.items,
+      sections: [sec],
+      isMember: false,
+      phase:    phaseName,
+    }));
   }
 
+  // Aggregate members across all phases — gives us the canonical multi-member set.
+  const phasesIn        = phases && phases.length > 0 ? phases : [{ phase: '', members }];
+  const aggregated      = aggregateMembersAcrossPhases(phasesIn);
+  const overallMulti    = aggregated.length > 1;
+  const hasDualPhase    = phasesIn.length > 1;
+
   let steps;
-  let phaseBoundaries = []; // indices where a new phase starts (for dividers in pill bar)
-  if (phases && phases.length > 1) {
+  let phaseBoundaries = []; // only used in case B (single member, dual phase)
+
+  if (overallMulti) {
+    // Cases C & D — one pill per member; phase grouping happens inside the panel.
+    steps = aggregated.map((md) => {
+      // Sections grouped by phase (preserving PHASE_ORDER).
+      const orderedPhaseSections = {};
+      for (const ph of PHASE_ORDER.concat([''])) {
+        if (md.phaseSections[ph] && md.phaseSections[ph].length) {
+          orderedPhaseSections[ph] = md.phaseSections[ph];
+        }
+      }
+      const allSections = Object.values(orderedPhaseSections).flat();
+      const allItems    = allSections.flatMap((s) => s.items);
+      const phaseKeys   = Object.keys(orderedPhaseSections);
+
+      return {
+        label:        md.memberType,
+        icon:         memberIcon(md.memberType),
+        items:        allItems,
+        sections:     allSections,            // legacy fallback
+        phaseGroups:  orderedPhaseSections,   // new — { phaseName: [sections] }
+        showPhaseSubheaders: phaseKeys.length > 1 && phaseKeys.some((k) => k !== ''),
+        isMember:     true,
+        phase:        '',                     // member step covers all phases
+      };
+    });
+  } else if (hasDualPhase) {
+    // Case B — single member, two phases → category pills with phase dividers.
     steps = [];
-    for (const p of phases) {
+    for (const p of phasesIn) {
       phaseBoundaries.push({ idx: steps.length, phase: p.phase });
-      steps.push(...buildStepsForPhase(p.members, p.isMultiMember, p.phase));
+      const m = (p.members && p.members[0]) || { sections: [] };
+      steps.push(...buildCategorySteps(m.sections, p.phase));
     }
   } else {
-    steps = buildStepsForPhase(members, isMultiMember, '');
+    // Case A — single member, single phase → category pills.
+    const m = (phasesIn[0].members && phasesIn[0].members[0]) || { sections: [] };
+    steps = buildCategorySteps(m.sections, '');
   }
 
   const total = steps.length;
@@ -490,6 +551,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
   const stepPills = steps
     .map((step, idx) => {
       const hasFlagged = step.items.some((i) => i.status === 'Rework Required');
+      const uploaded   = step.items.filter((i) => i.status !== 'Missing').length;
 
       // Insert a phase divider before the first step of each phase
       const phaseLabel = phaseBoundaryMap[idx];
@@ -497,26 +559,29 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
         ? `<div class="phase-divider"><span class="phase-divider-label">${phaseLabel === 'Profile Creation' ? '📋' : '📁'} ${esc(phaseLabel)}</span></div>`
         : '';
 
-      return `${divider}<button class="step-pill${hasFlagged ? ' flagged' : ''}" id="pill_${idx}" onclick="goToStep(${idx})" title="${esc(step.label)}">
+      // For member-level pills we also show their progress (uploaded/total)
+      // in a small pill-count badge, so the client sees at a glance who is
+      // ahead and who is still missing documents without having to click
+      // through every tab.
+      const countBadge = step.isMember
+        ? `<span class="pill-count" id="pcount_${idx}">${uploaded}/${step.items.length}</span>`
+        : '';
+
+      const pillClass = step.isMember ? 'step-pill member-pill' : 'step-pill';
+
+      return `${divider}<button class="${pillClass}${hasFlagged ? ' flagged' : ''}" id="pill_${idx}" onclick="goToStep(${idx})" title="${esc(step.label)}">
         <span class="pill-num">${idx + 1}</span>
-        <span class="pill-label">${step.icon} ${esc(step.label)}${hasFlagged ? ' ⚠️' : ''}</span>
+        <span class="pill-label">${step.icon} ${esc(step.label)}${hasFlagged ? ' ⚠️' : ''}</span>${countBadge}
       </button>`;
     })
     .join('');
 
-  const panels = steps
-    .map((step, idx) => {
-      const isLast   = idx === total - 1;
-      const uploaded = step.items.filter((i) => i.status !== 'Missing').length;
-
-      // Build body: if isMember, render category sub-headers within the panel;
-      // otherwise just render doc rows directly
-      let bodyHtml;
-      if (step.isMember) {
-        bodyHtml = step.sections.map((sec) => {
-          const catIcon  = CATEGORY_ICONS[sec.category] || '📋';
-          const catUpl   = sec.items.filter((i) => i.status !== 'Missing').length;
-          return `
+  // Helper — render a list of category sections (cat-group blocks).
+  function renderCategorySections(sections) {
+    return sections.map((sec) => {
+      const catIcon = CATEGORY_ICONS[sec.category] || '📋';
+      const catUpl  = sec.items.filter((i) => i.status !== 'Missing').length;
+      return `
       <div class="cat-group">
         <div class="cat-header">
           <span class="cat-title">${catIcon} ${esc(sec.category)}</span>
@@ -524,11 +589,47 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
         </div>
         ${sec.items.map((doc) => docRowHtml(doc, caseRef)).join('')}
       </div>`;
+    }).join('');
+  }
+
+  const panels = steps
+    .map((step, idx) => {
+      const isLast   = idx === total - 1;
+      const uploaded = step.items.filter((i) => i.status !== 'Missing').length;
+
+      // Body construction depends on the step kind:
+      //   • Member step with multiple phases → render Profile Creation +
+      //     Submission as in-panel sub-sections, each with a phase header.
+      //   • Member step with a single phase  → just render category groups.
+      //   • Category step                    → render document rows directly.
+      let bodyHtml;
+      if (step.isMember && step.phaseGroups && step.showPhaseSubheaders) {
+        const phaseKeys = Object.keys(step.phaseGroups);
+        bodyHtml = phaseKeys.map((phaseName) => {
+          const sections = step.phaseGroups[phaseName];
+          if (!sections || !sections.length) return '';
+          const phaseIcon  = phaseName === 'Profile Creation' ? '📋' : '📁';
+          const phaseLabel = phaseName || 'Submission';
+          const phaseColor = phaseName === 'Profile Creation' ? '#2563eb' : '#7c3aed';
+          const phaseBg    = phaseName === 'Profile Creation' ? '#eff6ff' : '#f5f3ff';
+          const phaseUpl   = sections.flatMap(s => s.items).filter(i => i.status !== 'Missing').length;
+          const phaseTotal = sections.flatMap(s => s.items).length;
+          const headerHtml = `
+        <div class="phase-section-header" style="background:${phaseBg};border-left:3px solid ${phaseColor};color:${phaseColor}">
+          <span class="phase-section-title">${phaseIcon} ${esc(phaseLabel)} Phase</span>
+          <span class="phase-section-count">${phaseUpl} / ${phaseTotal}</span>
+        </div>`;
+          return headerHtml + renderCategorySections(sections);
         }).join('');
+      } else if (step.isMember) {
+        bodyHtml = renderCategorySections(step.sections);
       } else {
         bodyHtml = step.items.map((doc) => docRowHtml(doc, caseRef)).join('');
       }
 
+      // Phase tag in the panel title is only relevant for case B (single
+      // member, dual phase, category-pill layout). For member-first pills
+      // the phase information is already shown by the in-panel headers.
       const phaseTag = step.phase
         ? `<span class="phase-tag" style="font-size:.7rem;font-weight:700;color:${step.phase === 'Profile Creation' ? '#2563eb' : '#7c3aed'};background:${step.phase === 'Profile Creation' ? '#eff6ff' : '#f5f3ff'};padding:2px 8px;border-radius:4px;margin-left:8px">${esc(step.phase)}</span>`
         : '';
@@ -605,6 +706,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .step-pill.flagged .pill-num{background:var(--orange-bg);color:var(--orange);border:1.5px solid var(--orange-border)}
 .pill-num{width:20px;height:20px;border-radius:50%;background:var(--gray-200);color:var(--gray-500);font-size:.66rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .18s}
 .step-pill.active .pill-num{background:var(--brand);color:#fff}
+
+/* ── Member pills (multi-applicant cases) — slightly heavier weight + a small
+   progress badge so the staff/client see who's behind without clicking through
+   every tab. */
+.step-pill.member-pill{padding:.78rem 1.1rem;font-size:.81rem;font-weight:600}
+.step-pill.member-pill .pill-label{font-weight:600}
+.pill-count{font-size:.65rem;font-weight:700;color:var(--gray-500);background:var(--gray-100);padding:.12rem .5rem;border-radius:99px;margin-left:.4rem;letter-spacing:.02em;flex-shrink:0}
+.step-pill.member-pill.active .pill-count{background:var(--brand-faint);color:var(--brand)}
+.step-pill.member-pill.done .pill-count{background:var(--green-bg);color:var(--green-text)}
+
+/* ── Phase sub-section header (inside a member panel for dual-phase cases) ── */
+.phase-section-header{display:flex;align-items:center;justify-content:space-between;padding:.6rem 1.6rem;font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border-top:1px solid var(--gray-100);border-bottom:1px solid var(--gray-100)}
+.phase-section-header:first-child{border-top:none}
+.phase-section-title{display:flex;align-items:center;gap:.4rem}
+.phase-section-count{font-size:.66rem;font-weight:600;background:rgba(255,255,255,.65);padding:.12rem .55rem;border-radius:99px;letter-spacing:.02em;text-transform:none}
 
 /* ── Main layout ── */
 .main{max-width:820px;margin:1.5rem auto;padding:0 1.1rem 5rem}
@@ -1074,6 +1190,30 @@ function updatePanelMeta(idx) {
   });
   const meta = document.getElementById('pmeta_' + idx);
   if (meta) meta.textContent = uploaded + ' of ' + rows.length + ' uploaded';
+
+  // Member-pill progress badge (only present on member-level pills)
+  const pillCount = document.getElementById('pcount_' + idx);
+  if (pillCount) pillCount.textContent = uploaded + '/' + rows.length;
+
+  // Phase sub-section count badges (member panel with dual-phase content)
+  panel.querySelectorAll('.phase-section-header').forEach((hdr) => {
+    // The next siblings until the next phase-section-header are the
+    // category groups that belong to this phase.
+    let n = hdr.nextElementSibling;
+    let phUpl = 0, phTotal = 0;
+    while (n && !n.classList.contains('phase-section-header')) {
+      if (n.classList.contains('cat-group')) {
+        n.querySelectorAll('.doc-row').forEach((r) => {
+          phTotal++;
+          if (r.dataset.status && r.dataset.status !== 'Missing') phUpl++;
+        });
+      }
+      n = n.nextElementSibling;
+    }
+    const cnt = hdr.querySelector('.phase-section-count');
+    if (cnt) cnt.textContent = phUpl + ' / ' + phTotal;
+  });
+
   // Also update cat-count badges inside member panels
   panel.querySelectorAll('.cat-group').forEach((grp) => {
     const grpRows = grp.querySelectorAll('.doc-row');
