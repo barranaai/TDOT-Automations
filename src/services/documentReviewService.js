@@ -2,6 +2,7 @@ const mondayApi                  = require('./mondayApi');
 const revisionNotificationService = require('./revisionNotificationService');
 const { clientMasterBoardId }    = require('../../config/monday');
 
+const BASE_URL            = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
 const BOARD_ID            = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
 const DOC_STATUS_COL      = 'color_mm0zwgvr';
 const REVIEW_REQUIRED_COL = 'color_mm0z796e';
@@ -90,6 +91,79 @@ async function onDocumentReviewed({ itemId }) {
 }
 
 /**
+ * Post a Monday Update (comment) on both the EXEC item and the Client Master
+ * item announcing that staff has flagged a document for rework. Mirrors the
+ * pattern used by documentFormService.postUploadUpdates() — same "two-sided"
+ * notification so the case officer's Updates feed shows the action and the
+ * document item itself shows the action in its history.
+ *
+ * Wired into onReworkRequired (status change). Not called from
+ * onReviewNotesSet to avoid double-posting when the review form changes
+ * both columns in a single mutation (Monday fires two webhook events).
+ *
+ * Failure here is non-fatal — the column writes and the email queue have
+ * already happened by the time we get here. We log and move on.
+ */
+async function postReworkUpdates({ itemId, docName, reviewNotes, reworkCount, caseRef }) {
+  try {
+    const flaggedAt = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
+    const reviewUrl = caseRef ? `${BASE_URL}/d/${encodeURIComponent(caseRef)}/review` : '';
+    const reviewLine = reviewUrl ? `\n\n🔎 Open document review: ${reviewUrl}` : '';
+    const notesLine  = reviewNotes ? `\n\n📝 Notes for client:\n${reviewNotes}` : '';
+    const countLine  = reworkCount ? `\n\nRework count: ${reworkCount}` : '';
+
+    // 1. Post on the EXEC item itself (so the document's update feed shows it)
+    const docBody =
+      `🔄 Rework Requested by Staff\n\n` +
+      `Document: ${docName}\n` +
+      `Case: ${caseRef || '(unknown)'}\n` +
+      `Flagged: ${flaggedAt} (Toronto)` +
+      countLine +
+      notesLine +
+      `\n\nStatus set to Rework Required — client will be emailed.${reviewLine}`;
+
+    await mondayApi.query(
+      `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+      { itemId: String(itemId), body: docBody }
+    );
+
+    // 2. Post on the Client Master item (so the case team sees it in the case feed)
+    if (!caseRef) return;
+    const masterData = await mondayApi.query(
+      `query($boardId: ID!, $caseRef: String!) {
+         items_page_by_column_values(
+           board_id: $boardId, limit: 1,
+           columns: [{ column_id: "${CM_CASE_REF_COL}", column_values: [$caseRef] }]
+         ) { items { id } }
+       }`,
+      { boardId: String(clientMasterBoardId), caseRef }
+    );
+    const masterItemId = masterData?.items_page_by_column_values?.items?.[0]?.id;
+    if (!masterItemId) {
+      console.warn(`[DocReview] No Client Master item found for case ${caseRef} — skipping master rework update`);
+      return;
+    }
+
+    const masterBody =
+      `🔄 Document Flagged for Client Rework\n\n` +
+      `Document: ${docName}\n` +
+      `Case: ${caseRef}\n` +
+      `Flagged: ${flaggedAt} (Toronto)` +
+      countLine +
+      notesLine +
+      `\n\nClient will be emailed in the next batch (≈2 min).${reviewLine}`;
+
+    await mondayApi.query(
+      `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+      { itemId: String(masterItemId), body: masterBody }
+    );
+    console.log(`[DocReview] Posted rework Monday Updates for "${docName}" (case ${caseRef})`);
+  } catch (err) {
+    console.warn(`[DocReview] Could not post rework Monday Updates for item ${itemId}:`, err.message);
+  }
+}
+
+/**
  * Document Status → Rework Required
  * Increment Rework Count, set Escalation Required,
  * and queue revision notification email to client.
@@ -131,6 +205,17 @@ async function onReworkRequired({ itemId }) {
       // Escalate to Client Master — webhook will fire onEscalationRequired notification
       await escalateToClientMaster(caseRef, item.name);
     }
+
+    // Post a Monday Update (comment) on both the EXEC row and the Client
+    // Master row so the case team sees the rework in the Updates feed.
+    // Best-effort — non-fatal if it fails.
+    await postReworkUpdates({
+      itemId,
+      docName:     item.name,
+      reviewNotes,
+      reworkCount: currentCount + 1,
+      caseRef,
+    });
   } catch (err) {
     console.error(`[DocReview] Failed to handle rework for item ${itemId}:`, err.message);
   }
