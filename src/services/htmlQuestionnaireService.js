@@ -799,7 +799,21 @@ async function checkStageGate({ itemId, caseRef, caseType, qPct }) {
  * @returns {string}  HTML string ready to splice into the form HTML
  */
 function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes, otherFormUrl, otherFormTitle, isAdditionalForm, formKeySuffix }) {
-  const isMultiMember = Array.isArray(members) && members.length > 0;
+  // "isMultiMember" means the case ACTUALLY has 2+ members in the manifest,
+  // not merely that the case-type supports adding family members. The
+  // previous `length > 0` definition treated every member-capable case
+  // (which is most case types) as multi-member, causing setupMultiMemberDOM
+  // to run on every single-applicant case and destructively remove top-level
+  // accordion sections that weren't actually family-member templates — the
+  // VRE / F12 bug where sections 2–4 disappeared from the client form.
+  const isMultiMember = Array.isArray(members) && members.length > 1;
+
+  // Whether this case-type supports adding family members at all. Used to
+  // (1) include the multi-member CSS bundle for the "+ Add Family Member"
+  // button styles, and (2) render the standalone button on single-applicant
+  // pages where setupMultiMemberDOM does NOT run but the client may still
+  // want to upgrade the case to multi-applicant.
+  const canHaveMembers = Array.isArray(allowedMemberTypes) && allowedMemberTypes.length > 0;
   return `
 <!-- TDOT Dynamic Questionnaire — injected by server -->
 <style>
@@ -828,8 +842,8 @@ function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditiona
 .tdot-btn-submit:hover { background: #6B0000; }
 .tdot-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 body { padding-bottom: 68px !important; background: #FAF8F4 !important; }
-${isMultiMember ? `
-/* ── Multi-member mode ── */
+${(isMultiMember || canHaveMembers) ? `
+/* ── Multi-member mode (and add-member button on single-applicant pages) ── */
 .mm-section-badge {
   display: inline-flex; align-items: center; gap: 6px;
   background: rgba(255,255,255,0.18); padding: 4px 14px;
@@ -914,9 +928,17 @@ ${hasAdditionalForm ? `
   var FORM_KEY       = ${JSON.stringify(String(formKey))};
   var OVERVIEW_URL   = ${JSON.stringify(overviewUrl || '')};
   var MEMBER_LABEL   = ${JSON.stringify(memberLabel || '')};
-  var MEMBERS        = ${JSON.stringify(isMultiMember ? members : [])};
-  var ALLOWED_TYPES  = ${JSON.stringify(isMultiMember ? (allowedMemberTypes || []) : [])};
-  var IS_MULTI       = MEMBERS.length > 0;
+  // MEMBERS and ALLOWED_TYPES are passed independently of IS_MULTI so a
+  // single-applicant case on a member-capable type can still render the
+  // "+ Add Family Member" button (via setupAddMemberButtonOnly) and turn
+  // itself into a multi-applicant case via the manifest + page-reload flow.
+  var MEMBERS        = ${JSON.stringify(Array.isArray(members) ? members : [])};
+  var ALLOWED_TYPES  = ${JSON.stringify(Array.isArray(allowedMemberTypes) ? allowedMemberTypes : [])};
+  // IS_MULTI must match the server's isMultiMember (members.length > 1).
+  // It controls whether setupMultiMemberDOM runs (destructive) and whether
+  // save/submit/progress flows take their per-member or single-applicant
+  // code paths.
+  var IS_MULTI       = MEMBERS.length > 1;
   var OTHER_FORM_URL   = ${JSON.stringify(otherFormUrl || '')};
   var OTHER_FORM_TITLE = ${JSON.stringify(otherFormTitle || '')};
   var IS_ADDITIONAL    = ${JSON.stringify(Boolean(isAdditionalForm))};
@@ -2109,6 +2131,40 @@ ${hasAdditionalForm ? `
     return area;
   }
 
+  /**
+   * Lightweight alternative to setupMultiMemberDOM, used for single-applicant
+   * cases on member-capable case types. Adds only the "+ Add Family Member"
+   * UI (button + menu + toast container). Does NOT touch the form's section
+   * structure — so multi-section forms like F12 (Visitor Visa Extension)
+   * keep all their top-level sections, fixing the bug where Sections 2+
+   * were being wrongly removed as if they were dependent-section templates.
+   *
+   * If the client clicks "+ Add Family Member", the existing addMemberAction
+   * flow saves the new member to the manifest and reloads the page. On the
+   * reloaded page, MEMBERS.length is now > 1, IS_MULTI flips to true, and
+   * setupMultiMemberDOM takes over from there.
+   */
+  function setupAddMemberButtonOnly() {
+    if (!ALLOWED_TYPES.length) return;
+    var topSections = findTopSections();
+    if (topSections.length === 0) return;
+
+    // Insert the add-member UI after the LAST top-level section so it
+    // appears at the bottom of the form rather than between Section 1
+    // and Section 2.
+    var lastSection = topSections[topSections.length - 1];
+    var area = createAddMemberArea();
+    lastSection.parentNode.insertBefore(area, lastSection.nextSibling);
+
+    // Toast container for the add-member action's success/error messages.
+    if (!document.getElementById('mm-toast')) {
+      var toast = document.createElement('div');
+      toast.className = 'mm-toast';
+      toast.id = 'mm-toast';
+      document.body.appendChild(toast);
+    }
+  }
+
   function mmToast(msg, duration) {
     var el = document.getElementById('mm-toast');
     if (!el) return;
@@ -2340,7 +2396,18 @@ ${hasAdditionalForm ? `
 
   async function init() {
     /* Set up multi-member DOM before anything else */
-    if (IS_MULTI) setupMultiMemberDOM();
+    if (IS_MULTI) {
+      // True multi-applicant: clone the form per member, hide irrelevant
+      // sub-sections, etc. This is destructive on the section structure
+      // and only safe to run when there are 2+ members in the manifest.
+      setupMultiMemberDOM();
+    } else if (ALLOWED_TYPES.length > 0) {
+      // Single applicant on a member-capable case type: keep the form
+      // exactly as the form file defines it (no destructive changes) but
+      // still expose the "+ Add Family Member" button so the client can
+      // upgrade the case to multi-applicant.
+      setupAddMemberButtonOnly();
+    }
 
     createToolbar();
     ${(overviewUrl || otherFormUrl) ? 'createNavTab();' : ''}
