@@ -3809,11 +3809,20 @@ input[disabled], select[disabled], textarea[disabled] {
     }
   }
 
-  /* ── Hide top-level accordion sections that have no client data ── */
-  /* Runs after prefill so DOM values are already set.              */
-  /* Prevents empty sections (e.g. "Dependent (If Accompany)"      */
-  /* in F6) from cluttering the review for single-applicant cases. */
-  function hideEmptySections() {
+  /* ── Mark empty top-level sections with a visible badge ──
+     Runs after prefill so DOM values are already set. The previous
+     implementation HID empty sections entirely (display:none) to declutter
+     the F6 "Dependent (If Accompany)" section on single-applicant cases.
+     But that caused staff to miss missing data on multi-section forms like
+     F12 (Visitor Visa Extension) where Sections 2/3/4 were legitimately
+     empty because the client either skipped them or — before the recent
+     setupMultiMemberDOM fix — couldn't see them at all.
+
+     New behaviour: every section stays visible; sections that contain no
+     filled-in field get a "(no data submitted)" badge appended to their
+     header. Staff can still collapse the section for cleanliness, but
+     can never miss the fact that the client left it blank. */
+  function markEmptySections() {
     var topSections = document.querySelectorAll('.top-accordion, .applicant-accordion');
     topSections.forEach(function (section) {
       var inputs = section.querySelectorAll('input, select, textarea');
@@ -3828,7 +3837,18 @@ input[disabled], select[disabled], textarea[disabled] {
         }
       }
       if (!hasData) {
-        section.style.display = 'none';
+        var header = section.querySelector('.top-accordion-header, .applicant-header');
+        if (header && !header.querySelector('.tdot-empty-badge')) {
+          var badge = document.createElement('span');
+          badge.className = 'tdot-empty-badge';
+          badge.textContent = '(no data submitted)';
+          badge.style.cssText =
+            'display:inline-block;margin-left:12px;font-size:0.72em;' +
+            'font-weight:600;color:#ffffff;background:rgba(0,0,0,0.28);' +
+            'padding:2px 9px;border-radius:11px;letter-spacing:0.02em;' +
+            'text-transform:none;vertical-align:middle;';
+          header.appendChild(badge);
+        }
       }
     });
   }
@@ -3861,7 +3881,7 @@ input[disabled], select[disabled], textarea[disabled] {
 
     fireConditionalToggles();
     makeReadOnly();
-    hideEmptySections();
+    markEmptySections();
     fields.forEach(attachFlagUI);
     createReviewBar();
     updateFlagCount();
