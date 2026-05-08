@@ -3395,6 +3395,20 @@ input[disabled], select[disabled], textarea[disabled] {
         'color: #374151 !important;' +
         'border-color: #e5e7eb !important;' +
         'cursor: text !important;' +
+        /* Show the blinking text caret so staff can see exactly where
+           their cursor is positioned within a long value. Some browsers
+           suppress the caret on readonly inputs by default; this forces
+           it to render in the brand red so it stands out against the
+           grey background. */
+        'caret-color: #8B0000 !important;' +
+      '}' +
+      /* Add a clear focus ring on read-only fields so staff knows which
+         field they have focused and can navigate predictably with Tab /
+         Shift-Tab between fields. */
+      'input[readonly]:focus, textarea[readonly]:focus {' +
+        'outline: 2px solid #8B0000 !important;' +
+        'outline-offset: 1px !important;' +
+        'border-color: #8B0000 !important;' +
       '}' +
       /* Disabled selects: keep value VISIBLE (opacity:1) and the dropdown
          arrow hidden so it doesn't look interactive. The value text is
