@@ -3367,38 +3367,105 @@ input[disabled], select[disabled], textarea[disabled] {
     }
   }
 
-  /* ── Make form read-only via CSS (not disabled attribute) ── */
-  /* Using pointer-events:none keeps values visible without browser quirks   */
-  /* that sometimes prevent disabled inputs from displaying assigned values. */
+  /* ── Make form read-only via native HTML attributes ──────────────────────
+     Earlier this used CSS pointer-events:none + user-select:none on every
+     input/select/textarea. That blocked editing — but it also blocked
+     EVERYTHING ELSE: staff couldn't place a cursor inside a field, couldn't
+     scroll horizontally to see a long value, couldn't drag-select a partial
+     string. They had to copy the whole field every time and trim manually.
+     For a workflow where staff copy values into IRCC forms dozens of times
+     a day, that was a real productivity tax.
+
+     New approach uses HTML's native readonly attribute on text inputs and
+     textareas (allows click, focus, scroll, select, copy -- blocks edit) and
+     the disabled attribute on selects, checkboxes and radios (no readonly
+     equivalent for those). CSS only handles visual styling now; no
+     pointer-events blocking. */
 
   function makeReadOnly() {
+    // 1. Inject visual styling (no pointer-events, no user-select blocking).
     var style = document.createElement('style');
     style.textContent =
-      /* Lock ALL form inputs — flag editor overrides these below */
-      'input, select, textarea {' +
-        'pointer-events: none !important;' +
-        'user-select: none !important;' +
-        '-webkit-user-select: none !important;' +
-        'cursor: default !important;' +
+      /* Read-only text inputs + textareas: greyed background, but cursor
+         stays "text" to signal that selection is allowed. Native readonly
+         attribute already prevents typing, so the field is non-editable
+         but fully navigable. */
+      'input[readonly], textarea[readonly] {' +
         'background: #f9fafb !important;' +
         'color: #374151 !important;' +
         'border-color: #e5e7eb !important;' +
-      '}' +
-      'select { -webkit-appearance: none !important; appearance: none !important; }' +
-      /* Higher specificity overrides unlock the flag editor and review bar */
-      '.tdot-flag-editor textarea {' +
-        'pointer-events: auto !important;' +
         'cursor: text !important;' +
-        'user-select: text !important;' +
-        'background: white !important;' +
-        'color: #111 !important;' +
-        '-webkit-appearance: auto !important; appearance: auto !important;' +
+      '}' +
+      /* Disabled selects: keep value VISIBLE (opacity:1) and the dropdown
+         arrow hidden so it doesn't look interactive. The value text is
+         still selectable via the selected-option label, which is what
+         most browsers show. */
+      'select[disabled] {' +
+        'background: #f9fafb !important;' +
+        'color: #374151 !important;' +
+        'border-color: #e5e7eb !important;' +
+        'cursor: default !important;' +
+        'opacity: 1 !important;' +
+        '-webkit-appearance: none !important;' +
+        'appearance: none !important;' +
+      '}' +
+      /* Disabled checkboxes / radios: state stays visible at full opacity. */
+      'input[type="checkbox"][disabled], input[type="radio"][disabled] {' +
+        'opacity: 1 !important;' +
+        'cursor: default !important;' +
+      '}' +
+      /* Flag editor stays fully editable. We also explicitly skip flag-
+         editor fields when applying the readonly attribute below, but this
+         CSS provides a visual fallback in case any field slips through. */
+      '.tdot-flag-editor input, .tdot-flag-editor textarea {' +
+        'background: #ffffff !important;' +
+        'color: #111111 !important;' +
+        'cursor: text !important;' +
+        'border-color: #fcd34d !important;' +
       '}' +
       '.tdot-flag-editor button, .tdot-flag-btn, #tdot-review-bar button {' +
-        'pointer-events: auto !important;' +
         'cursor: pointer !important;' +
       '}';
     document.head.appendChild(style);
+
+    // 2. Apply read-only attributes to every existing field. Skip anything
+    //    inside the flag editor or the review bar — those must remain
+    //    fully interactive. A field added LATER (e.g. when staff opens
+    //    a new flag editor) won't have readonly because it's not in the
+    //    DOM at this moment, which is exactly what we want.
+    var fields = document.querySelectorAll('input, select, textarea');
+    for (var i = 0; i < fields.length; i++) {
+      var el = fields[i];
+
+      // Defensive — skip flag-editor and review-bar elements so future
+      // edits to their structure can't accidentally lock them down.
+      if (typeof el.closest === 'function' && el.closest('.tdot-flag-editor, #tdot-review-bar')) {
+        continue;
+      }
+
+      var tag  = (el.tagName || '').toLowerCase();
+      var type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+
+      if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
+        // Checkboxes and radios: readonly doesn't prevent toggling, so we
+        // use disabled. Their state is still visually clear (the box / dot).
+        el.disabled = true;
+      } else if (tag === 'select') {
+        // <select> doesn't support readonly. The selected value text stays
+        // visible because of the opacity:1 + appearance:none CSS above.
+        el.disabled = true;
+      } else if (tag === 'input' || tag === 'textarea') {
+        // Text inputs (text, email, number, date, tel, url, etc.) and
+        // textareas. Native readonly preserves all read-side interactions:
+        //   • click to focus
+        //   • drag / shift-click to select a range
+        //   • arrow keys / Home / End to scroll within the field
+        //   • Cmd/Ctrl-C to copy any selected portion
+        //   • Cmd/Ctrl-A to select-all
+        // Just no typing or pasting will modify the value.
+        el.readOnly = true;
+      }
+    }
   }
 
   /* ── Flag counter UI ── */
