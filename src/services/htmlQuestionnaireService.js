@@ -1137,6 +1137,56 @@ ${hasAdditionalForm ? `
       }
     }
 
+    /* 3 — Static label-value tables (e.g., .part-table, .edu-level-table on
+       Spousal Sponsorship). Pattern: each row has its label in the first
+       <td> and one or more inputs in later <td> cells, with no name/id/
+       <label> association. Passes 1 + 2 don't capture these, so they were
+       silently dropped on save/submit and never displayed in the review.
+       Skip .dynamic-table (handled above) and any thead rows. */
+    var staticTables = document.querySelectorAll('table');
+    for (var sti = 0; sti < staticTables.length; sti++) {
+      var stbl = staticTables[sti];
+      if (stbl.classList && stbl.classList.contains('dynamic-table')) continue;
+      if (IS_MULTI && isInHiddenMmSection(stbl)) continue;
+      var stHeaders = [];
+      var stThs = stbl.querySelectorAll('thead th');
+      for (var sthi = 0; sthi < stThs.length; sthi++) stHeaders.push((stThs[sthi].textContent || '').trim());
+      var stTbody = stbl.querySelector('tbody');
+      var stRows  = stTbody ? stTbody.querySelectorAll('tr') : stbl.querySelectorAll('tr');
+      for (var sri = 0; sri < stRows.length; sri++) {
+        var stRow = stRows[sri];
+        var stCells = stRow.children;
+        if (stCells.length < 2) continue;
+        var firstCell = stCells[0];
+        /* Skip rows where the first cell is <th> (header row in tbody-less tables) */
+        if (firstCell.tagName === 'TH') continue;
+        var rowLabel = (firstCell.textContent || '').trim();
+        if (!rowLabel) continue;
+        for (var stci = 1; stci < stCells.length; stci++) {
+          var stInputs = stCells[stci].querySelectorAll('input, select, textarea');
+          for (var stii = 0; stii < stInputs.length; stii++) {
+            var stInput = stInputs[stii];
+            if (seen.indexOf(stInput) !== -1) continue;
+            seen.push(stInput);
+            var stSection   = getSectionContext(stbl);
+            var stColHeader = stHeaders[stci] || '';
+            /* Append column header only when the row genuinely has multiple
+               data columns AND the header text is meaningful. For 2-column
+               tables ("Person", "Yes/No") the row label alone is clearer. */
+            var stLabel = (stColHeader && stCells.length > 2)
+              ? rowLabel + ' — ' + stColHeader
+              : rowLabel;
+            fields.push({
+              section: stSection,
+              label:   stLabel,
+              key:     makeKey(stSection, stLabel, stInput),
+              el:      stInput,
+            });
+          }
+        }
+      }
+    }
+
     _fieldCache = fields;
     _cacheStale = false;
     return fields;
@@ -3097,6 +3147,52 @@ input[disabled], select[disabled], textarea[disabled] {
           var key2       = slugify(section2 + '--tbl-' + slugify(tableId) + '--r' + (ri + 1) + '--' + headers[ci]);
           if (rowKey === null) rowKey = key2; /* first valid cell → becomes the row flag key */
           fields.push({ section: section2 + ' \u203a Table', label: labelText2, key: key2, el: cell, group: row, _rowKey: rowKey });
+        }
+      }
+    }
+
+    /* Static label-value tables (e.g., .part-table, .edu-level-table on the
+       Spousal Sponsorship form). Same pattern as the client-side third
+       pass: row label in the first <td>, inputs in later <td>s, no native
+       <label> association. The review needs to collect these so staff
+       sees the values the client filled (and so saved data pre-fills
+       correctly in the rendered form). */
+    var staticTables = document.querySelectorAll('table');
+    for (var sti = 0; sti < staticTables.length; sti++) {
+      var stbl = staticTables[sti];
+      if (stbl.classList && stbl.classList.contains('dynamic-table')) continue;
+      var stHeaders = [];
+      var stThs = stbl.querySelectorAll('thead th');
+      for (var sthi = 0; sthi < stThs.length; sthi++) stHeaders.push((stThs[sthi].textContent || '').trim());
+      var stTbody = stbl.querySelector('tbody');
+      var stRows  = stTbody ? stTbody.querySelectorAll('tr') : stbl.querySelectorAll('tr');
+      for (var sri = 0; sri < stRows.length; sri++) {
+        var stRow = stRows[sri];
+        var stCells = stRow.children;
+        if (stCells.length < 2) continue;
+        var firstCell = stCells[0];
+        if (firstCell.tagName === 'TH') continue;
+        var rowLabel = (firstCell.textContent || '').trim();
+        if (!rowLabel) continue;
+        for (var stci = 1; stci < stCells.length; stci++) {
+          var stInputs = stCells[stci].querySelectorAll('input, select, textarea');
+          for (var stii = 0; stii < stInputs.length; stii++) {
+            var stInput = stInputs[stii];
+            if (seen.indexOf(stInput) !== -1) continue;
+            seen.push(stInput);
+            var stSection   = getSectionContext(stbl);
+            var stColHeader = stHeaders[stci] || '';
+            var stLabel = (stColHeader && stCells.length > 2)
+              ? rowLabel + ' — ' + stColHeader
+              : rowLabel;
+            fields.push({
+              section: stSection,
+              label:   stLabel,
+              key:     makeKey(stSection, stLabel, stInput),
+              el:      stInput,
+              group:   stRow,
+            });
+          }
         }
       }
     }
