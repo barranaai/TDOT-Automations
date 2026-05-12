@@ -545,7 +545,14 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
     }
 
     aggregatePct = totalMembers > 0 ? Math.round(totalPct / totalMembers) : pct;
-    allDone = submittedCount >= totalMembers && pct >= 100;
+    // Q Completion Status flips to "Done" once every member has submitted.
+    // We do NOT require 100% completion — the 80% submission gate is the
+    // authoritative threshold. If a client passed the gate and clicked
+    // Submit, they're done from their side; staff sees the actual % in the
+    // Q Readiness column for further context. Previously this required
+    // pct >= 100, which left cases stuck at "Working on it" even after
+    // a legitimate partial submission (e.g. 2026-OSS-003 at 86%).
+    allDone = submittedCount >= totalMembers;
   }
 
   // ── Step 3: Update Q Readiness and Q Completion Status on Monday.com ──────
@@ -656,7 +663,11 @@ async function markAllSubmitted({ itemId, caseRef, caseType, formLabel, clientNa
   }
 
   const aggregatePct = totalMembers > 0 ? Math.round(totalPct / totalMembers) : 0;
-  const allDone = submittedCount >= totalMembers && perMember.every(pm => pm.pct >= 100);
+  // Q Completion Status flips to "Done" when every member has submitted.
+  // We don't require pm.pct >= 100 -- the 80% gate is the authoritative
+  // submission threshold; once they've cleared it and clicked Submit,
+  // they're done. The Q Readiness column still shows the actual %.
+  const allDone = submittedCount >= totalMembers;
 
   // ── Step 3: Update Monday.com Q readiness (one write) ─────────────────────
   await mondayApi.query(
