@@ -1,0 +1,4908 @@
+{
+  "generatedAt": "2026-05-12T11:43:13.383Z",
+  "findings": [
+    {
+      "caseType": "Canadian Experience Class (Profile Recreation+ITA+Submission)",
+      "subType": "CEC Single Applicant",
+      "pdfRelative": "CEC/Document Checklist- CEC- Single applicant.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 12,
+          "templateCount": 20,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLIC-CEC-O-001"
+            }
+          ],
+          "matches": 12
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 6,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "Digital photo as per specifications Permanent Residents",
+            "Medical Exam",
+            "Police clearance certificates (PCC)",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEhIC-CEC-ID-1"
+            }
+          ],
+          "matches": 4
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-CEC-ID-001"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-CEC-O-001"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPS_PR_CEC_ID_001"
+            },
+            {
+              "name": "Medical Exam",
+              "code": "ME-CEC-MED-1"
+            },
+            {
+              "name": "Police clearance certificates (PCC)",
+              "code": "PCC-CECPRIS-L-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINS-CEC-O-001"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Canadian Experience Class (Profile Recreation+ITA+Submission)",
+      "subType": "CEC Accompanying Spouse & Child",
+      "pdfRelative": "CEC/Document Checklist- CEC- Accompanying spouse and child.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 11,
+          "templateCount": 20,
+          "missingInTemplate": [
+            "Foreign E"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Canadian Education Documents",
+              "code": "CED_EDU_001"
+            },
+            {
+              "name": "Foreign Education Documents along with Educational Credential Assessment",
+              "code": "FEDaECEA-E-001"
+            },
+            {
+              "name": "Canadian Education Documents",
+              "code": "CED-CEC-EDU-001"
+            },
+            {
+              "name": "Foreign Education Documents along with Educational Credential Assessment",
+              "code": "FEDaECEA-CEC-EDU-1"
+            }
+          ],
+          "matches": 10
+        },
+        "Dependent Child": {
+          "pdfCount": 5,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 5
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR-ID-001"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLPIGCPCTC-O-1"
+            },
+            {
+              "name": "Medical Exam",
+              "code": "ME_Med_001"
+            },
+            {
+              "name": "Police clearance certificates (PCC)",
+              "code": "PCC-LEG-001"
+            },
+            {
+              "name": "Canadian Education Documents",
+              "code": "CEDE1"
+            },
+            {
+              "name": "Foreign Education Documents along with Educational Credential Assessment",
+              "code": "FEDaECE_EDU_001"
+            },
+            {
+              "name": "Sibling- Proof of living in Canada- if applicable",
+              "code": "SPOLICA-O-1"
+            },
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "PoweftcpIaOC_O_001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICD-ID-001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNANAO1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Canadian Experience Class (Profile+ITA+Submission)",
+      "subType": "CEC Single Applicant",
+      "pdfRelative": "CEC/Document Checklist- CEC- Single applicant.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 12,
+          "templateCount": 20,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPOLICIA-CEC-O-001"
+            }
+          ],
+          "matches": 12
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 6,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "Digital photo as per specifications Permanent Residents",
+            "Medical Exam",
+            "Police clearance certificates (PCC)",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-CEC-ID-1"
+            }
+          ],
+          "matches": 4
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-CEC-ID-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-CEC-O-1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPS-PR-CEC-ID-1"
+            },
+            {
+              "name": "Medical Exam",
+              "code": "ME-CEC-MED-1"
+            },
+            {
+              "name": "Police clearance certificates (PCC)",
+              "code": "PCC-CEC-L-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINS-CEC-O-1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Canadian Experience Class (Profile+ITA+Submission)",
+      "subType": "CEC Accompanying Spouse & Child",
+      "pdfRelative": "CEC/Document Checklist- CEC- Accompanying spouse and child.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 11,
+          "templateCount": 20,
+          "missingInTemplate": [
+            "Foreign E"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Canadian Education Documents",
+              "code": "CEDE1"
+            },
+            {
+              "name": "Foreign Education Documents along with Educational Credential Assessment",
+              "code": "FEDAW ECA-EDU-001"
+            },
+            {
+              "name": "Canadian Education Documents",
+              "code": "CED-CEC-EDU-1"
+            },
+            {
+              "name": "Foreign Education Documents along with Educational Credential Assessment",
+              "code": "FEDaECEA-CEC-EDU-1"
+            }
+          ],
+          "matches": 10
+        },
+        "Dependent Child": {
+          "pdfCount": 5,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 5
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-ID-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-O-1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPS-ID-001"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLPIGCPCTC-O-1"
+            },
+            {
+              "name": "Medical Exam",
+              "code": "ME-Med-1"
+            },
+            {
+              "name": "Police clearance certificates (PCC)",
+              "code": "PCCL001"
+            },
+            {
+              "name": "Canadian Education Documents",
+              "code": "CEDEDU001"
+            },
+            {
+              "name": "Foreign Education Documents along with Educational Credential Assessment",
+              "code": "FEDAW ECA-EDU-1"
+            },
+            {
+              "name": "Sibling- Proof of living in Canada- if applicable",
+              "code": "SPOLICA-O-1"
+            },
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "PoweftcpIaOCO1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAON1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Canadian Experience Class (EE after ITA)",
+      "subType": "CEC Single Applicant",
+      "pdfRelative": "CEC/Document Checklist- CEC- Single applicant.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 12,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 12
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 6,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "Digital photo as per specifications Permanent Residents",
+            "Medical Exam",
+            "Police clearance certificates (PCC)",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 4,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 4
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "Pwasp-CEC-ID-001"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICEEO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPS-PR-CEC-ID-1"
+            },
+            {
+              "name": "Medical Exam",
+              "code": "ME-CEC-MED-1"
+            },
+            {
+              "name": "Police clearance certificates (PCC)",
+              "code": "PCC_EE_L_1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINS-CEC-O-1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Canadian Experience Class (EE after ITA)",
+      "subType": "CEC Accompanying Spouse & Child",
+      "pdfRelative": "CEC/Document Checklist- CEC- Accompanying spouse and child.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 11,
+          "templateCount": 12,
+          "missingInTemplate": [
+            "Foreign E"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Canadian Education Documents",
+              "code": "CED_EDU_001"
+            },
+            {
+              "name": "Foreign Education Documents along with Educational Credential Assessment",
+              "code": "FEDAWCEA_EDU_001"
+            }
+          ],
+          "matches": 10
+        },
+        "Dependent Child": {
+          "pdfCount": 5,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 5
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DpappsPR_ID_001"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLPIGCPTCCO1"
+            },
+            {
+              "name": "Medical Exam",
+              "code": "ME-Med-001"
+            },
+            {
+              "name": "Police clearance certificates (PCC)",
+              "code": "PCC-LEG-001"
+            },
+            {
+              "name": "Canadian Education Documents",
+              "code": "CEDEDU1"
+            },
+            {
+              "name": "Foreign Education Documents along with Educational Credential Assessment",
+              "code": "FEDaECEA-E-001"
+            },
+            {
+              "name": "Sibling- Proof of living in Canada- if applicable",
+              "code": "SPOLICA-O-1"
+            },
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "P O W E F T C P I A O C O 1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACDI1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINSC_O_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Citizenship",
+      "subType": "",
+      "pdfRelative": "Citizenship/Document Checklist- Citizenship- Accompanying spouse or child.pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 7,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 7
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 4,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 4
+        },
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all pages. (that covers 5-year eligibility period)",
+              "code": "PWAPTC5EP-CIT-ID-1"
+            },
+            {
+              "name": "Personal Identification- Any 2 from the following",
+              "code": "PIACITOTH001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-CIT-ID-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINS-CIT-OTH-001"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR-CIT-ID-001"
+            },
+            {
+              "name": "Language Test Report (if you are 18 to 54 years of age)",
+              "code": "LTRIYTA54CITOTH1"
+            },
+            {
+              "name": "Police certificates (PCC)",
+              "code": "PCC-CIT-LEG-001"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Federal PR",
+      "subType": "Non Express Entry - Accompanying Spouse & Child",
+      "pdfRelative": "Non-Express Entry/Document Checklist- Non-Express Entry- Accompanying spouse and child.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 14,
+          "templateCount": 22,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-FPR-O-001"
+            }
+          ],
+          "matches": 14
+        },
+        "Dependent Child": {
+          "pdfCount": 5,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 5
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 14,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWAS_ID_1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO001"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPS_ID_001"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLPIGCPCTC-O-1"
+            },
+            {
+              "name": "Medical Exam",
+              "code": "ME_Med_001"
+            },
+            {
+              "name": "Police clearance certificates (PCC)",
+              "code": "PCCL001"
+            },
+            {
+              "name": "Canadian Education Documents",
+              "code": "CEDE1"
+            },
+            {
+              "name": "Foreign Education Documents along with Educational Credential Assessment",
+              "code": "FEDaECEA-E-001"
+            },
+            {
+              "name": "Sibling- Proof of living in Canada",
+              "code": "SPOLIC_O_1"
+            },
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWEFTCPIAOC_O_1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD_ID_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            },
+            {
+              "name": "Proof of living in Canada",
+              "code": "POLIC-O-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAA_OTH_001"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Federal PR",
+      "subType": "Non Express Entry - Non Accompanying Spouse",
+      "pdfRelative": "Non-Express Entry/Document Checklist- Non-Express Entry- Non accompanying spouse.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 14,
+          "templateCount": 22,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-FPR-O-001"
+            }
+          ],
+          "matches": 14
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 6,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "Digital photo as per specifications Permanent Residents",
+            "Medical Exam",
+            "Police clearance certificates (PCC)",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PwaspI1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DpappsPR_ID_001"
+            },
+            {
+              "name": "Medical Exam",
+              "code": "MEMed001"
+            },
+            {
+              "name": "Police clearance certificates (PCC)",
+              "code": "PCC-LEG-001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAA_N_OTH_1"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 3,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-FPR-ID-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-FPR-ID-001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC-FPR-LEG-1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "PR Card Renewal",
+      "subType": "",
+      "pdfRelative": "PR Card/Document Checklist- PR Card Renewal-Accompanying spouse or child.pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 7,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 7
+        },
+        "Dependent Child": {
+          "pdfCount": 3,
+          "templateCount": 3,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 3
+        },
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all pages- (in the last 5 years)",
+              "code": "Pwapl5y-PRCR-ID-1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-PRCR-ID-001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINC-PRCR-OTH-1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR-PRCR-ID-001"
+            },
+            {
+              "name": "Urgent Travel Proof (if applicable)",
+              "code": "UTP-PR-TR-001"
+            },
+            {
+              "name": "Status Identification",
+              "code": "SIPRCRO1"
+            },
+            {
+              "name": "Proof of Residency in Canada (Any 4) - For the last 5 years or since becoming a PR",
+              "code": "PORICA4FTL5YOSBAPRPRO1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "PRTD",
+      "subType": "",
+      "pdfRelative": "PR Card/Document Checklist- PRTD- Accompanying spouse or child.pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 7,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 7
+        },
+        "Dependent Child": {
+          "pdfCount": 3,
+          "templateCount": 3,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 3
+        },
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all pages- (in the last 5 years)",
+              "code": "PWAPITL5Y-PRTD-ID-1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-PRTD-IDENTITY-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASN AINS-PRTD-OTH-1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR-PRTD-IDENTITY-001"
+            },
+            {
+              "name": "Proof of Residency in Canada (Any 4) - For the last 5 years or since becoming a PR",
+              "code": "PORICAFTLYOSBAP-PRTD-OTHER-001"
+            },
+            {
+              "name": "Urgent Travel Proof (if applicable)",
+              "code": "UTP-PRTD-Travel-1"
+            },
+            {
+              "name": "Status Identification",
+              "code": "SIPRTDOther001"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Renunciation of PR",
+      "subType": "",
+      "pdfRelative": "PR Card/Document Checklist-Voluntary Renunciation of PR- Accompanying spouse or child.pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 5,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 5
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Status Identification",
+              "code": "SIID1"
+            }
+          ],
+          "matches": 4
+        },
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all pages",
+              "code": "PWAP-RPR-ID-001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-RPR-ID-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINS_RPR_O_1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR-RPR-ID-1"
+            },
+            {
+              "name": "Status Identification",
+              "code": "SIRPRO1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Parents/Grandparents Sponsorship",
+      "subType": "",
+      "pdfRelative": "Parents and Grandparents/Document Checklist- Parents & Grandparents Sponsorship.pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 9,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all pages",
+            "Identity and Civil Documents",
+            "One and same name affidavit if name /surname changed",
+            "Government issued Identity documents",
+            "Digital photo as per specifications Permanent Residents",
+            "Resume/Curriculum Vitae (CV)",
+            "Details of government employment, police service, military experience",
+            "Police certificates (PCC)- Highly recommended",
+            "Medical exam for permanent residence applicants"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Sponsor": {
+          "pdfCount": 5,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 5
+        },
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 9,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all pages",
+              "code": "Pwap-PGS-ID-1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACDPGSI1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINSNC_PGS_O_1"
+            },
+            {
+              "name": "Government issued Identity documents",
+              "code": "GID_PGS_ID_001"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_PGS_ID_1"
+            },
+            {
+              "name": "Resume/Curriculum Vitae (CV)",
+              "code": "RCV_PGS_O_1"
+            },
+            {
+              "name": "Details of government employment, police service, military experience",
+              "code": "DOGEPSME_PGS_EMP_001"
+            },
+            {
+              "name": "Police certificates (PCC)- Highly recommended",
+              "code": "PCCHR_PGS_L_001"
+            },
+            {
+              "name": "Medical exam for permanent residence applicants",
+              "code": "Mefpra_PGS_Med_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "AAIP",
+      "subType": "Express Entry Stream",
+      "pdfRelative": "Provincial Nominee Programs/Alberta/Document Checklist- AAIP- Express Entry Stream.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 13,
+          "templateCount": 9,
+          "missingInTemplate": [
+            "One and same name affidavit if name /surname changed",
+            "Resume",
+            "Licensing, Registration and Certificate",
+            "Employer Declaration and Authorization Form",
+            "Proof of work experience for your qualifying work experience. Please Note: Your current employment in Alberta and",
+            "Job Offer Letter"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWETFIC-AAIP-EMP-1"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-AAIP-O-1"
+            }
+          ],
+          "matches": 7
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 13,
+          "templateCount": 6,
+          "missingInTemplate": [
+            "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+            "Canadian Education Documents",
+            "Foreign Education Documents along with Educational Credential Assessment",
+            "Resume",
+            "Licensing, Registration and Certificate",
+            "Employer Declaration and Authorization Form",
+            "Relative in Alberta- Parents/ Siblings/ Children (applicable only if you were drawn based on having a family",
+            "Proof of work experience for your qualifying work experience. Please Note: Your current employment in Alberta and",
+            "Job Offer Letter"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_ID_001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            }
+          ],
+          "matches": 4
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 8,
+          "missingInTemplate": [
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACDID001"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPRID001"
+            }
+          ],
+          "matches": 3
+        }
+      }
+    },
+    {
+      "caseType": "AAIP",
+      "subType": "Opportunity Stream",
+      "pdfRelative": "Provincial Nominee Programs/Alberta/Document Checklist- AAIP- Opportunity Stream.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 12,
+          "templateCount": 9,
+          "missingInTemplate": [
+            "One and same name affidavit if name /surname changed",
+            "Resume",
+            "Labour Market Impact Assessment (if applicable)",
+            "Employer Declaration and Authorization Form",
+            "Job Offer Letter"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWETFIC-AAIP-EMP-1"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-AAIP-O-1"
+            }
+          ],
+          "matches": 7
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 3,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASPI1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IAD-I-1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPS_ID_001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASN AINS_O_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCI1"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACDI1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_ID_001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-AAIP-Identity-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICA-AAIP-IDENTITY-1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCAAIPLegal1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "AAIP",
+      "subType": "Tourism & Hospitality Stream",
+      "pdfRelative": "Provincial Nominee Programs/Alberta/Document Checklist- AAIP- Tourism & Hospitality Stream.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 14,
+          "templateCount": 22,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWETFIC-AAIP-EMP-1"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-AAIP-O-1"
+            }
+          ],
+          "matches": 14
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 3,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-ID-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-001"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_ID_001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNANON1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLPIGCPCTCO1"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PwaspI1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD_ID_1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DpapsPR-ID-001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCI1"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-AAIP-Identity-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICA-AAIP-IDENTITY-1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCAAIPLegal1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "AAIP",
+      "subType": "Rural Renewal Stream",
+      "pdfRelative": "Provincial Nominee Programs/Alberta/Document Checklist- AAIP-Rural Renewal Stream.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 15,
+          "templateCount": 12,
+          "missingInTemplate": [
+            "One and same name affidavit if name /surname changed",
+            "Resume",
+            "Labour Market Impact Assessment (if applicable)",
+            "Employer Declaration and Authorization Form",
+            "Proof of work experience for your qualifying work experience. Please Note: Your current employment in Alberta and",
+            "Job Offer Letter"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Birth Certificate",
+              "code": "BCAAIPIDENTITY1"
+            },
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWETFIC-AAIP-EMP-1"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-AAIP-O-1"
+            }
+          ],
+          "matches": 9
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 15,
+          "templateCount": 6,
+          "missingInTemplate": [
+            "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+            "Canadian Education Documents",
+            "Foreign Education Documents along with Educational Credential Assessment",
+            "Resume",
+            "Labour Market Impact Assessment (if applicable)",
+            "Endorsement of Candidate letter",
+            "Settlement Funds (Please confirm with us in advance)",
+            "Licensing, Registration and Certificate",
+            "Employer Declaration and Authorization Form",
+            "Proof of work experience for your qualifying work experience. Please Note: Your current employment in Alberta and",
+            "Job Offer Letter"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR I 1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            }
+          ],
+          "matches": 4
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 8,
+          "missingInTemplate": [
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPRID001"
+            }
+          ],
+          "matches": 3
+        }
+      }
+    },
+    {
+      "caseType": "BCPNP",
+      "subType": "BC PNP+ Company Info",
+      "pdfRelative": "Provincial Nominee Programs/British Columbia/Document Checklist-BC PNP.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 13,
+          "templateCount": 21,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWFTCP(IaOC)-BCPNP-EMP-001"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICIA-BCPNP-OTH-1"
+            }
+          ],
+          "matches": 13
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 4,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACDI1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_I_001"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLPIGO"
+            }
+          ],
+          "matches": 4
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-ID-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICD-ID-1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_ID_001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-BCPNP-IDENTITY-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-BCPNP-ID-001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC-BCPNP-LEGAL-1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "NSNP",
+      "subType": "",
+      "pdfRelative": "Provincial Nominee Programs/Nova Scotia/Document Checklist-NSNP.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 15,
+          "templateCount": 23,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWFTCP(I&OC)-NSNP-EMP-1"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-NSNP-O-1"
+            }
+          ],
+          "matches": 15
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 4,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPS_ID_001"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLPIGCPCTC-O1"
+            }
+          ],
+          "matches": 4
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP_I_1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICD-ID-001"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSID001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCI1"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-NSNP-ID-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-NSNP-ID-001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC-NSNP-LEGAL-1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "OINP",
+      "subType": "Foreign Worker Stream",
+      "pdfRelative": "Provincial Nominee Programs/Ontario/Document Checklist- OINP- Foreign Worker Stream.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 16,
+          "templateCount": 24,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWEFTCPIAOC_OINP_EMP_001"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-OINP-O-001"
+            }
+          ],
+          "matches": 16
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 3,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP_I_1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_ID_001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD_ID_1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASN AINSC O001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLPIGCPCTC-O-1"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASPI1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-O-1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_I_1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-OINP-IDENTITY-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC_OINP_ID_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC_OINP_LEGAL_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "OINP",
+      "subType": "Human Capital Priorities Stream",
+      "pdfRelative": "Provincial Nominee Programs/Ontario/Document Checklist- OINP- Human Capital Priorities Stream.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 16,
+          "templateCount": 25,
+          "missingInTemplate": [
+            "Documents for relatives in Canada"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "If you or your spouse or common-law partner has a relative who is a Canadian citizen or a permanent resident of Canada",
+              "code": "IoysoclwacpocrOOINPOther1"
+            },
+            {
+              "name": "Proof of work experience (Inside Canada)",
+              "code": "POWEIC_OINP_OTHER_1"
+            },
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWEFTCPIAOC_OINP_EMP_001"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-OINP-O-001"
+            }
+          ],
+          "matches": 15
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 6,
+          "templateCount": 7,
+          "missingInTemplate": [
+            "Canadian Education Documents",
+            "Proof of work experience (Inside Canada)"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DpappsPR_ID_001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            }
+          ],
+          "matches": 4
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PwaspI1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_ID_1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-OINP-IDENTITY-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC_OINP_ID_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC_OINP_LEGAL_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "OINP",
+      "subType": "In-demand Skills Stream",
+      "pdfRelative": "Provincial Nominee Programs/Ontario/Document Checklist- OINP- In-Demand Skills Stream.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 16,
+          "templateCount": 24,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWEFTCPIAOC_OINP_EMP_001"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-OINP-O-001"
+            }
+          ],
+          "matches": 16
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 3,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP_I_1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR-ID-001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNANIO1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLP-O-001"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_ID_001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACDI1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-OINP-IDENTITY-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC_OINP_ID_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC_OINP_LEGAL_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "OINP",
+      "subType": "International Student Stream",
+      "pdfRelative": "Provincial Nominee Programs/Ontario/Document Checklist- OINP- International Student Stream.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 15,
+          "templateCount": 23,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWEFTCPIAOC_OINP_EMP_001"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-OINP-O-001"
+            }
+          ],
+          "matches": 15
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 3,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PwaspI1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR-ID-001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDIdentity1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAON1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCI1"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLPIGCOTC-O-1"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPRI1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-OINP-IDENTITY-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC_OINP_ID_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC_OINP_LEGAL_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "OINP",
+      "subType": "Masters Graduate Stream",
+      "pdfRelative": "Provincial Nominee Programs/Ontario/Document Checklist- OINP- Masters Graduate Stream.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 13,
+          "templateCount": 21,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWEFTCPIAOC_OINP_EMP_001"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-OINP-O-001"
+            }
+          ],
+          "matches": 13
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 3,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASPI1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_ID_001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINC_O_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLPIGCPCTCO1"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPRID1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD_ID_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-OINP-IDENTITY-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC_OINP_ID_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC_OINP_LEGAL_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "OINP",
+      "subType": "PhD Graduate Stream",
+      "pdfRelative": "Provincial Nominee Programs/Ontario/Document Checklist- OINP- PhD Graduate Stream.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 13,
+          "templateCount": 21,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWEFTCPIAOC_OINP_EMP_001"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-OINP-O-001"
+            }
+          ],
+          "matches": 13
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 3,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP_I_1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPRI1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAON1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLP-O-1"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO001"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSI1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-OINP-IDENTITY-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC_OINP_ID_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC_OINP_LEGAL_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "OINP",
+      "subType": "Skilled Trades Stream",
+      "pdfRelative": "Provincial Nominee Programs/Ontario/Document Checklist- OINP- Skilled Trades Stream.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 15,
+          "templateCount": 23,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+              "code": "POWEFTCPIAOC_OINP_EMP_001"
+            },
+            {
+              "name": "Sibling - Proof of living in Canada (if applicable)",
+              "code": "SPLICA-OINP-O-001"
+            }
+          ],
+          "matches": 15
+        },
+        "Non-Accompanying Spouse": {
+          "pdfCount": 3,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "One and same name affidavit if name /surname changed"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-ID-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DPAPSPR_ID_001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAON1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+              "code": "POLP-OC1"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications Permanent Residents",
+              "code": "DpappsPR_Id_1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-OINP-IDENTITY-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC_OINP_ID_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC_OINP_LEGAL_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Inland Spousal Sponsorship",
+      "subType": "Marriage",
+      "pdfRelative": "Spousal Sponsorship/Document Checklist- Spousal Sponsorship - Inland.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 8,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 8
+        },
+        "Sponsor": {
+          "pdfCount": 5,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "T4",
+              "code": "T-ISS-EMP-1"
+            }
+          ],
+          "matches": 5
+        }
+      }
+    },
+    {
+      "caseType": "Inland Spousal Sponsorship",
+      "subType": "Common Law Partner",
+      "pdfRelative": "Spousal Sponsorship/Document Checklist- Common Law Partner- Inland.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 8,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 8
+        },
+        "Sponsor": {
+          "pdfCount": 5,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "T4",
+              "code": "T-ISS-EMP-1"
+            }
+          ],
+          "matches": 5
+        }
+      }
+    },
+    {
+      "caseType": "Outland Spousal Sponsorship",
+      "subType": "Marriage",
+      "pdfRelative": "Spousal Sponsorship/Document Checklist- Spousal Sponsorship - Outland.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 8,
+          "templateCount": 8,
+          "missingInTemplate": [
+            "Letters, Printed text messages, emails, social media conversations and phone records showing regular"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Letters, Printed text messages, emails, social media conversations and phone records showing regular contact",
+              "code": "LPTESMACPR_OSS_O_001"
+            }
+          ],
+          "matches": 7
+        },
+        "Sponsor": {
+          "pdfCount": 5,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "T4",
+              "code": "T-OSS-EMP-1"
+            }
+          ],
+          "matches": 5
+        }
+      }
+    },
+    {
+      "caseType": "Study Permit",
+      "subType": "",
+      "pdfRelative": "Study Permit/Document Checklist- Study Permit - Single Applicant.pdf",
+      "perApplicant": {}
+    },
+    {
+      "caseType": "Study Permit",
+      "subType": "Non SDS Stream - Single Applicant",
+      "pdfRelative": "Study Permit/Document Checklist- Study Permit - Non SDS Stream- Single Applicant.pdf",
+      "perApplicant": {}
+    },
+    {
+      "caseType": "Study Permit",
+      "subType": "Non SDS Stream - Accompanying Spouse/Child",
+      "pdfRelative": "Study Permit/Document Checklist- Study Permit- Non SDS Stream- Accompanying spouse or child.pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 10,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Proof/source of Income - Mandatory",
+            "One and same name affidavit if name /surname changed",
+            "Digital photo as per specifications of Temporary Residents",
+            "Government issued Identity documents",
+            "Upfront Medical exams",
+            "Police certificates (PCC)- Highly recommend",
+            "Proof/source of Income Higher the funds, higher the chances of approval. We can provide a template upon request",
+            "Additional proof of Funds/investments/assets",
+            "Letters, Printed text messages, emails, social media conversations and phone records showing regular"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Digital photo as per specifications of Temporary Residents",
+            "Upfront Medical exams",
+            "Birth Certificate"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Study Permit",
+      "subType": "SDS Stream - Accompanying Spouse/Child",
+      "pdfRelative": "Study Permit/Document Checklist- Study Permit- SDS Stream- Accompanying spouse or child.pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 10,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "One and same name affidavit if name /surname changed",
+            "Digital photo as per specifications of Temporary Residents",
+            "Proof/source of Income - Mandatory",
+            "Government issued Identity documents",
+            "Upfront Medical exams",
+            "Police certificates (PCC)- Highly recommend",
+            "Proof/source of Income Higher the funds, higher the chances of approval. We can provide a template upon request",
+            "Additional proof of Funds/investments/assets",
+            "Letters, Printed text messages, emails, social media conversations and phone records showing regular"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Digital photo as per specifications of Temporary Residents",
+            "Upfront Medical exams",
+            "Birth Certificate"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Study Permit",
+      "subType": "Dependent Child - Outland",
+      "pdfRelative": "Study Permit/Document Checklist- Study Permit for dependent child- Outland.pdf",
+      "perApplicant": {
+        "Parent": {
+          "pdfCount": 4,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "Identity and Civil Documents",
+            "Proof/source of Income - Mandatory for Worker Parent"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Study Permit",
+      "subType": "Change of Status (Visitor to Student)",
+      "pdfRelative": "Study Permit/Document Checklist- Study Permit-Change of status (Visitor to Student) Single Applicant.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 1,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Police certificates (PCC)- Highly Recommended",
+              "code": "PCC-HR_SP_L_001"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Study Permit Extension",
+      "subType": "Single Applicant",
+      "pdfRelative": "Study Permit/Document Checklist- Study Permit  Extension- Single applicant.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-SPE-ID-001"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-SPE-O-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINS_SPE_O_001"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR-SPE-ID-1"
+            },
+            {
+              "name": "Proof of Admission",
+              "code": "PA-SPE-O-1"
+            },
+            {
+              "name": "Proof of financial support while you study in Canada",
+              "code": "Pofswysic_SPE_F_001"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Study Permit Extension",
+      "subType": "Accompanying Spouse/Child",
+      "pdfRelative": "Study Permit/Document Checklist- Study Permit  Extension- Accompanying spouse or child.pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "One and same name affidavit if name /surname changed",
+            "Digital photo as per specifications of Temporary Residents",
+            "Proof of Admission",
+            "Proof of financial support while you study in Canada",
+            "Proof of cohabitation"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "All Permits ever held in Canada",
+            "Passport with all stamped pages",
+            "Digital photo as per specifications of Temporary Residents",
+            "Birth Certificate"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Supervisa",
+      "subType": "Parents",
+      "pdfRelative": "Supervisa/Document Checklist- Supervisa- Parents.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 10,
+          "templateCount": 14,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Current Status in the country",
+              "code": "CSITC-SUP-OTH-1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCSUPID1"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLIC_SUP_OTH_1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIA_S_F_1"
+            }
+          ],
+          "matches": 10
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 10,
+          "templateCount": 14,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCI1"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLICAO1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APFIA_FIN_1"
+            }
+          ],
+          "matches": 10
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Birth Certificate",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Supervisa",
+      "subType": "Grandparents",
+      "pdfRelative": "Supervisa/Document Checklist- Supervisa- GrandParents.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 11,
+          "templateCount": 1,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "One and same name affidavit if name /surname changed",
+            "Digital photo as per specifications of Temporary Residents",
+            "Upfront Medical",
+            "Identity and Civil Documents",
+            "Government issued Identity documents",
+            "Proof/source of Income",
+            "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request",
+            "Health Insurance",
+            "Details of government employment, police service, military experience"
+          ],
+          "extraInTemplate": [],
+          "matches": 1
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 11,
+          "templateCount": 1,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "One and same name affidavit if name /surname changed",
+            "Digital photo as per specifications of Temporary Residents",
+            "Upfront Medical",
+            "Identity and Civil Documents",
+            "Government issued Identity documents",
+            "Proof/source of Income",
+            "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request",
+            "Health Insurance",
+            "Details of government employment, police service, military experience"
+          ],
+          "extraInTemplate": [],
+          "matches": 1
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Birth Certificate",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "TRV",
+      "subType": "",
+      "pdfRelative": "Visitor/Document Checklist- TRV.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 3,
+          "templateCount": 3,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 3
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 3,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I-1"
+            },
+            {
+              "name": "All permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "Dpapsotr-ID-001"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 3,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PwaspI1"
+            },
+            {
+              "name": "All permits ever held in Canada",
+              "code": "APEHCO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR_I_001"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Visitor Record / Extension",
+      "subType": "Visitor Record + Restoration",
+      "pdfRelative": "Visitor/Document Checklist- Visitor Record (extension).pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 8,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of relationship",
+              "code": "PoR-VRE-O-001"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLIC-VRE-O-1"
+            },
+            {
+              "name": "Proof/source of Income (If you will support the applicant)",
+              "code": "PSOIWSTA-VRE-F-001"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIA_VR_E_F_1"
+            }
+          ],
+          "matches": 8
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Proof of relationship",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income (If you will support the applicant)",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP_I_1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINS_O_001"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSORTR-ID-001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI1"
+            },
+            {
+              "name": "Proof/source of Income (Back Home)",
+              "code": "PSOIBH-F-1"
+            },
+            {
+              "name": "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request.",
+              "code": "FDHTFCHTCAWPTU_RF_001"
+            },
+            {
+              "name": "Additional documents (Optional)",
+              "code": "ADO_O_001"
+            },
+            {
+              "name": "Proof of relationship",
+              "code": "PoR_O_1"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLICO1"
+            },
+            {
+              "name": "Proof/source of Income (If you will support the applicant)",
+              "code": "PSOIWST-F-001"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APFIAF1"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I-1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR_I_001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI1"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Visitor Record / Extension",
+      "subType": "Visitor Record",
+      "pdfRelative": "Visitor/Document Checklist- Visitor Record (extension).pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 8,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of relationship",
+              "code": "PoR-VRE-O-001"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLICA_VRE_O_001"
+            },
+            {
+              "name": "Proof/source of Income (If you will support the applicant)",
+              "code": "PSOIWSTA_VR_E_F_1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIA_VR/E_F_1"
+            }
+          ],
+          "matches": 8
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Proof of relationship",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income (If you will support the applicant)",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-ID-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAON1"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR-ID-001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICD-ID-001"
+            },
+            {
+              "name": "Proof/source of Income (Back Home)",
+              "code": "PSOIBH_FIN_1"
+            },
+            {
+              "name": "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request.",
+              "code": "FDHTFHTCOAWCPATF1"
+            },
+            {
+              "name": "Additional documents (Optional)",
+              "code": "ADO1"
+            },
+            {
+              "name": "Proof of relationship",
+              "code": "PoR_O_1"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLICAO1"
+            },
+            {
+              "name": "Proof/source of Income (If you will support the applicant)",
+              "code": "PSOIWST-F-1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIAF001"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP_I_1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR-ID-001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-001"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Visitor Record / Extension",
+      "subType": "Visitor Extension",
+      "pdfRelative": "Visitor/Document Checklist- Visitor Record (extension).pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 8,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof of relationship",
+              "code": "PoR-VRE-O-001"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLICAA-VRE-O-001"
+            },
+            {
+              "name": "Proof/source of Income (If you will support the applicant)",
+              "code": "PSOIWSTA-VRE-F-1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APFIA-VRE-FIN-1"
+            }
+          ],
+          "matches": 8
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Proof of relationship",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income (If you will support the applicant)",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-ID-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAON1"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR-ID-1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICD-ID-1"
+            },
+            {
+              "name": "Proof/source of Income (Back Home)",
+              "code": "PSOIBH_FIN_001"
+            },
+            {
+              "name": "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request.",
+              "code": "FDHTFHTCOAWCPATUR_F_1"
+            },
+            {
+              "name": "Additional documents (Optional)",
+              "code": "ADO_O_1"
+            },
+            {
+              "name": "Proof of relationship",
+              "code": "PoR_O_001"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLICO1"
+            },
+            {
+              "name": "Proof/source of Income (If you will support the applicant)",
+              "code": "PSOIWST-F-1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIAF1"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP_ID_1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DpaspotrID001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IAD-I-001"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Visitor Visa",
+      "subType": "Both Parents",
+      "pdfRelative": "Visitor/Document Checklist- Visitor Visa- Both Parents.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 7,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Current Status in the country",
+              "code": "CSITC-VV-O-1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCVVID1"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLICA_VV_O_001"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIA_VV_F_1"
+            }
+          ],
+          "matches": 7
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Birth Certificate",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-ID-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINS_O_1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "Dpapsotr-ID-001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI1"
+            },
+            {
+              "name": "Government issued Identity documents",
+              "code": "GID-I-1"
+            },
+            {
+              "name": "Proof/source of Income",
+              "code": "PSIF1"
+            },
+            {
+              "name": "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request.",
+              "code": "FDHTFHTCOAWCPATFR1"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCOTH1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLIC-O-1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "ApofiaF1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Visitor Visa",
+      "subType": "Single Parent",
+      "pdfRelative": "Visitor/Document Checklist- Visitor Visa-  Single Parent.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 7,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Current Status in the country",
+              "code": "CSITC_VV_O_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC_VV_ID_001"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLIC_VV_O_001"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "ApofiaVVF1"
+            }
+          ],
+          "matches": 7
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Birth Certificate",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Visitor Visa",
+      "subType": "1-3 Members",
+      "pdfRelative": "Visitor/Document Checklist- Visitor Visa-  1,2 or 3 members.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 7,
+          "templateCount": 14,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "If student",
+              "code": "ISVVO1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC-VV-ID-1"
+            },
+            {
+              "name": "Support Affidavit",
+              "code": "SAVVO001"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCVVO001"
+            },
+            {
+              "name": "Proof of Relationship",
+              "code": "PRVV01"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLIC_VV_O_1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APFIA_VV_FIN_001"
+            }
+          ],
+          "matches": 7
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 7,
+          "templateCount": 14,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "If student",
+              "code": "ISO1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            },
+            {
+              "name": "Support Affidavit",
+              "code": "SAO1"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            },
+            {
+              "name": "Proof of Relationship",
+              "code": "PRO001"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLICO1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIAF1"
+            }
+          ],
+          "matches": 7
+        },
+        "Dependent Child": {
+          "pdfCount": 5,
+          "templateCount": 5,
+          "missingInTemplate": [
+            "Government issued Identity documents",
+            "Support Affidavit"
+          ],
+          "extraInTemplate": [
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-1"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            }
+          ],
+          "matches": 3
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Proof of Relationship",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Visitor Visa",
+      "subType": "1-2 Members",
+      "pdfRelative": "Visitor/Document Checklist- Visitor Visa- 1 or 2 members.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 7,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Current Status in the country",
+              "code": "CSITC-VV-O-001"
+            },
+            {
+              "name": "Proof of Relationship with the applicants",
+              "code": "PRWTA_VV_O_001"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLIC_VV_O_1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIA_VV_F_001"
+            }
+          ],
+          "matches": 7
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 7,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            },
+            {
+              "name": "Proof of Relationship with the applicants",
+              "code": "PORWAO001"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLICO1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIAF1"
+            }
+          ],
+          "matches": 7
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Proof of Relationship with the applicants",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Visitor Visa",
+      "subType": "Parents & Siblings",
+      "pdfRelative": "Visitor/Document Checklist- Visitor Visa-  Parents and siblings.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 7,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Birth Certificate",
+              "code": "BCVVID1"
+            },
+            {
+              "name": "Support Affidavit",
+              "code": "SAVVO1"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCVVO1"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLICA_VV_O_1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIA_VV_F_1"
+            }
+          ],
+          "matches": 7
+        },
+        "Sibling": {
+          "pdfCount": 8,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "One and same name affidavit if name /surname changed",
+            "Digital photo as per specifications of Temporary Residents",
+            "Identity and Civil Documents",
+            "Government issued Identity documents",
+            "Proof/source of Income",
+            "Birth Certificate",
+            "Support Affidavit"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Birth Certificate",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASPI1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAON1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DpapsotrID001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI1"
+            },
+            {
+              "name": "Government issued Identity documents",
+              "code": "GIDID1"
+            },
+            {
+              "name": "Proof/source of Income",
+              "code": "PSIF1"
+            },
+            {
+              "name": "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request.",
+              "code": "FDHTFHCOWCPATRF1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID1"
+            },
+            {
+              "name": "Support Affidavit",
+              "code": "SAO1"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLICO1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIA_FIN_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Visitor Visa",
+      "subType": "Spouse",
+      "pdfRelative": "Visitor/Document Checklist- Visitor Visa- Spouse.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 7,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Current Status in the country",
+              "code": "CSITC_VV_O_1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC-VV-ID-1"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLIC_VV_O_001"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIAVVF1"
+            }
+          ],
+          "matches": 7
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Birth Certificate",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP_I_1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINSC_O_1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR-ID-001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICD-ID-1"
+            },
+            {
+              "name": "Government issued Identity documents",
+              "code": "GIDID1"
+            },
+            {
+              "name": "Proof/source of Income",
+              "code": "PSIFIN1"
+            },
+            {
+              "name": "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request.",
+              "code": "FDHTFHTCOAWCPATUR-F-001"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLIC-O-1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "ApofiaF1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Visitor Visa",
+      "subType": "Spousal Sponsorship in Process",
+      "pdfRelative": "Visitor/Document Checklist- Visitor Visa- Spouse  (Spousal Sponsorship in process).pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 7,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCVVO1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BC-VV-ID-1"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLIC_VV_O_1"
+            },
+            {
+              "name": "Proof/source of Income",
+              "code": "PSI_VV_FIN_1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIA_VV_F_001"
+            }
+          ],
+          "matches": 7
+        },
+        "Sponsor": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "Current Status in the country",
+            "Birth Certificate",
+            "Identity and Civil Documents",
+            "Proof of living in Canada (any 1)",
+            "Proof/source of Income",
+            "Additional proof of Funds/investments/assets"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 12,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP_I_1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAON1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR_ID_001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI001"
+            },
+            {
+              "name": "Government issued Identity documents",
+              "code": "GID-I-1"
+            },
+            {
+              "name": "Proof/source of Income- Highly recommended",
+              "code": "PSOIHR_F_001"
+            },
+            {
+              "name": "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request.",
+              "code": "FDHTFHTCOAPRTFATU_F_1"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCI1"
+            },
+            {
+              "name": "Proof of living in Canada (any 1)",
+              "code": "POLIC-O-1"
+            },
+            {
+              "name": "Proof/source of Income",
+              "code": "PSIF1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "ApofiaF001"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Visitor Visa",
+      "subType": "Change of Status (Student/Worker to Visitor)",
+      "pdfRelative": "Visitor/Document Checklist- Visitor Visa- Change of Status (from student or worker).pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 8,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 8
+        }
+      }
+    },
+    {
+      "caseType": "BOWP",
+      "subType": "",
+      "pdfRelative": "Work Permits/Document Checklist- BOWP- Single ,accompanying spouse or child.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 7,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 7
+        },
+        "Dependent Child": {
+          "pdfCount": 3,
+          "templateCount": 3,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 3
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP_I_1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DpapsotrID001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNANIO1"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "PCO1"
+            },
+            {
+              "name": "Invitation to Apply and Submission Confirmation of PR",
+              "code": "ITAASCPR_O_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "Concurrent WP",
+      "subType": "",
+      "pdfRelative": "Work Permits/Document Checklist- Concurrent Work permit- Single or accompanying spouse.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 11,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 11
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PwaspI1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC_O_1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DpapsotrID1"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "POC-O-1"
+            },
+            {
+              "name": "All Marksheet and certificates",
+              "code": "AMAC-CWP-EDU-001"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "LMIA Exempt WP",
+      "subType": "",
+      "pdfRelative": "Work Permits/Document Checklist- LMIA exempt Work permit- Single or accompanying spouse.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 16,
+          "templateCount": 16,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 16
+        },
+        "Dependent Child": {
+          "pdfCount": 5,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Recommendation Letters",
+              "code": "RL-LEW-O-1"
+            }
+          ],
+          "matches": 5
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 16,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DpapsoTR-ID-1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDI1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAON1"
+            },
+            {
+              "name": "Government issued Identity documents",
+              "code": "GIDID1"
+            },
+            {
+              "name": "Upfront Medical exams",
+              "code": "UME-M-1"
+            },
+            {
+              "name": "Police certificates (PCC)- We highly recommend it",
+              "code": "PCCWHRI-LEGAL-001"
+            },
+            {
+              "name": "International English Language Testing System (IELTS) Test Report Form /CELPIP",
+              "code": "IELTSTRF_C_001"
+            },
+            {
+              "name": "Updated Resume",
+              "code": "URO1"
+            },
+            {
+              "name": "All Marksheet and certificates",
+              "code": "AMACO1"
+            },
+            {
+              "name": "Educational Credential Assessment – Service Providers",
+              "code": "ECASPE1"
+            },
+            {
+              "name": "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request.",
+              "code": "FDHTFHTCOAWCPATU_RF_1"
+            },
+            {
+              "name": "Proof of work experience (for Principal Applicant)",
+              "code": "Powe(fPA)O1"
+            },
+            {
+              "name": "Proof/source of Income (for Dependent Applicant)",
+              "code": "PSOID-FIN-001"
+            },
+            {
+              "name": "Recommendation Letters (only for Principal Applicant)",
+              "code": "RLO1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "LMIA Based WP",
+      "subType": "Inside Canada",
+      "pdfRelative": "Work Permits/Document Checklist- LMIA Based Work permit- Single or accompanying spouse- Inside Canada.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 11,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 11
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 4,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 4
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 4,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "Pwasp-ID-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "Dpapsotr-Id-001"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "PCO1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "LMIA Based WP",
+      "subType": "Outside Canada",
+      "pdfRelative": "Work Permits/Document Checklist- LMIA Based Work permit- Single or accompanying spouse- Outside Canada.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 16,
+          "templateCount": 16,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 16
+        },
+        "Dependent Child": {
+          "pdfCount": 5,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Recommendation Letters",
+              "code": "RL-LMIAWP-O-1"
+            }
+          ],
+          "matches": 5
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 16,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-ID-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO001"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DpapsoftRID001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAON_OTH_001"
+            },
+            {
+              "name": "Government issued Identity documents",
+              "code": "GIDI1"
+            },
+            {
+              "name": "Upfront Medical exams",
+              "code": "UME-MED-1"
+            },
+            {
+              "name": "Police certificates (PCC)- We highly recommend it",
+              "code": "PCWHRIL1"
+            },
+            {
+              "name": "International English Language Testing System (IELTS) Test Report Form /CELPIP",
+              "code": "IELTSTRF_O_001"
+            },
+            {
+              "name": "Updated Resume",
+              "code": "URO001"
+            },
+            {
+              "name": "All Marksheet and certificates",
+              "code": "AMAC_O_001"
+            },
+            {
+              "name": "Educational Credential Assessment – Service Providers",
+              "code": "ECASPEDU001"
+            },
+            {
+              "name": "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request.",
+              "code": "FDHTFHTCOAWCPATUR-F-1"
+            },
+            {
+              "name": "Proof of work experience (for Principal Applicant)",
+              "code": "POWEFP_O_1"
+            },
+            {
+              "name": "Proof/source of Income (for Dependent Applicant)",
+              "code": "PSOID-F-1"
+            },
+            {
+              "name": "Recommendation Letters (only for Principal Applicant)- at least 3",
+              "code": "RLofPAalt3_O_1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "LMIA Based WP",
+      "subType": "Extension (Inside Canada)",
+      "pdfRelative": "Work Permits/Document Checklist- LMIA Based Work permit Extension- Single or accompanying spouse- Inside Canada.pdf",
+      "perApplicant": {
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 4,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 4
+        },
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP_ID_1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO001"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DpapsotrID001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-1"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "PCO1"
+            },
+            {
+              "name": "Employment Proof (Mandatory documents)- for Principal Applicant",
+              "code": "EPMfPA_EMP_1"
+            }
+          ],
+          "matches": 0
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-I-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "Dpaspotr-ID-1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-001"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "PCO1"
+            },
+            {
+              "name": "Employment Proof (Mandatory documents)- for Principal Applicant",
+              "code": "EPMDFA_EMP_001"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "SCLPC WP",
+      "subType": "",
+      "pdfRelative": "Work Permits/Document Checklist- Open work permit (Worker Parent)- for child above 18 years of age.pdf",
+      "perApplicant": {
+        "Parent": {
+          "pdfCount": 3,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "Proof/source of Income"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-SCLPCWP-IDENTITY-001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINSC_SCLPCWP_O_001"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICSCLPCWPO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR-SCLPCWP-IDENTITY-001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACDSCLPCWPIdentity1"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "POC-SCLPC WP-O-1"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITC-SCLPCWP-O-001"
+            },
+            {
+              "name": "Proof/source of Income",
+              "code": "PSI-SCLPC WP-FIN-1"
+            }
+          ],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 0,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASPI1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR-ID-1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-ID-001"
+            },
+            {
+              "name": "Birth Certificate",
+              "code": "BCID001"
+            },
+            {
+              "name": "Current Status in the country",
+              "code": "CSITCO1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "PGWP",
+      "subType": "",
+      "pdfRelative": "Work Permits/Document Checklist- PGWP (Single Applicant).pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 7,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "Digital photo as per specifications of Temporary Residents",
+            "Canadian Education Documents- (For each program)",
+            "Identity and Civil Documents",
+            "One and same name affidavit if name /surname changed",
+            "Language Test Report"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "PGWP",
+      "subType": "Extension - Single Applicant",
+      "pdfRelative": "Work Permits/Document Checklist- PGWP Extension (Single Applicant)- Passport Validity.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 8,
+          "templateCount": 8,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 8
+        }
+      }
+    },
+    {
+      "caseType": "PGWP",
+      "subType": "Extension - Accompanying Spouse/Child",
+      "pdfRelative": "Work Permits/Document Checklist- PGWP Extension - Accompanying spouse established relationship or child- Passport Validity.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 11,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 11
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 4,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 4
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 0,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-ID-001"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICO1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTRI001"
+            },
+            {
+              "name": "Canadian Education Documents- (For each program)",
+              "code": "CEDFFP_EDU_001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD_ID_001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAON_O_1"
+            },
+            {
+              "name": "Proof/source of Income- Mandatory for the Principal Applicant",
+              "code": "PSOIMF_Fin_1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIAF1"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "POC-O-1"
+            },
+            {
+              "name": "Previous application Forms",
+              "code": "PAF-O-1"
+            },
+            {
+              "name": "Language Test Report",
+              "code": "LTRO1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "PGWP",
+      "subType": "Inside Canada - Accompanying Spouse/Child",
+      "pdfRelative": "Work Permits/Document Checklist- PGWP- Accompanying spouse established relationship or child- Inside Canada.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 10,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "Digital photo as per specifications of Temporary Residents",
+            "Canadian Education Documents- (For each program)",
+            "Identity and Civil Documents",
+            "One and same name affidavit if name /surname changed",
+            "Proof/source of Income- Mandatory for the Principal Applicant",
+            "Additional proof of Funds/investments/assets",
+            "Proof of cohabitation",
+            "Language Test Report"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "All Permits ever held in Canada",
+            "Passport with all stamped pages",
+            "Digital photo as per specifications of Temporary Residents",
+            "Birth Certificate"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "SOWP",
+      "subType": "Spousal Sponsorship in Process",
+      "pdfRelative": "Work Permits/Document Checklist- SOWP (Spousal Sponsorship in process).pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 4,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "One and same name affidavit if name /surname changed",
+            "Current Status in the country",
+            "Proof/source of Income"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "SOWP",
+      "subType": "Inland - Established Relationship",
+      "pdfRelative": "Work Permits/Document Checklist- SOWP (Worker Spouse)- Established Relationship-Inland.pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 5,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "One and same name affidavit if name /surname changed",
+            "All Permits ever held in Canada",
+            "Canadian Education Documents- (For each program if studied here)",
+            "Proof/source of Income- Mandatory for Worker Spouse"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASPSOWPID1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINS_SOWP_OT_1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICSOWPOTHER1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR-SOWP-IDENTITY-1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACDSOWPIdentity1"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "POC-SOWP-OTH-1"
+            }
+          ],
+          "matches": 0
+        },
+        "Worker Spouse": {
+          "pdfCount": 0,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Canadian Education Documents- (For each program if studied here)",
+              "code": "CEDFEPISH_SOWP_EDU_1"
+            },
+            {
+              "name": "Proof/source of Income- Mandatory for Worker Spouse",
+              "code": "PSOIMFWSp-SOWP-FIN-001"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-SOWP-Identity-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINS-SOWP-OTH-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICSOWPOTHER1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "SOWP",
+      "subType": "Inland - Non Established Relationship",
+      "pdfRelative": "Work Permits/Document Checklist- SOWP (Worker Spouse)- Non established Relationship-Inland.pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 5,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "Canadian Education Documents- (For each program if studied here)",
+            "Proof/source of Income- Mandatory for Worker Spouse",
+            "Letters, Printed text messages, emails, social media conversations and phone records showing regular"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-SOWP-IDENTITY-1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINC_SOWP_OTHER_1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-SOWP-OTH-1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "Dpapsotr-SOWP-Identity-1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACDSOWPIdentity1"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "POCSOWPOTHER1"
+            },
+            {
+              "name": "Letters, Printed text messages, emails, social media conversations and phone records showing regular",
+              "code": "LPTMESMACPRSOWPOTHER1"
+            }
+          ],
+          "matches": 0
+        },
+        "Worker Spouse": {
+          "pdfCount": 0,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Canadian Education Documents- (For each program if studied here)",
+              "code": "CEDFEPIISH-SOWP-EDU-1"
+            },
+            {
+              "name": "Proof/source of Income- Mandatory for Worker Spouse",
+              "code": "PSOIMFW-SOWP-F-1"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-SOWP-Identity-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICSOWPO1"
+            },
+            {
+              "name": "Letters, Printed text messages, emails, social media conversations and phone records showing regular contact",
+              "code": "LPTESMCAPRSSRC-SOWP-OTH-1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "SOWP",
+      "subType": "Outland (Spouse or Child)",
+      "pdfRelative": "Work Permits/Document Checklist- SOWP (Worker Spouse)- spouse or child- Outland.pdf",
+      "perApplicant": {
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "If student",
+              "code": "ISSOWPOTH1"
+            }
+          ],
+          "matches": 4
+        },
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 5,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "Canadian Education Documents- (For each program if studied here)",
+            "Proof/source of Income- Mandatory for Worker Spouse",
+            "Letters, Printed text messages, emails, social media conversations and phone records showing regular"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 5,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-SOWP-IDENTITY-001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINSNC-SOWP-OTH-1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR-SOWP-IDENTITY-1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "ICDSOWPIdentity1"
+            },
+            {
+              "name": "Upfront Medical exams",
+              "code": "UME-SOWP-Medical-001"
+            }
+          ],
+          "matches": 0
+        },
+        "Worker Spouse": {
+          "pdfCount": 0,
+          "templateCount": 11,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Government issued Identity documents",
+              "code": "GIIDSOWPID1"
+            },
+            {
+              "name": "All Marksheet and certificates",
+              "code": "AMaP-SOWP-OTH-001"
+            },
+            {
+              "name": "Police certificates (PCC)- Highly recommend",
+              "code": "PCHR-SOWP-Legal-001"
+            },
+            {
+              "name": "Proof/source of Income Higher the funds, higher the chances of approval. We can provide a template upon request.",
+              "code": "PsoIHtFhTcoAWcpATU_SOWP_F_1"
+            },
+            {
+              "name": "Financial Documents- Higher the funds, higher the chances of approval. We can provide a template upon request.",
+              "code": "FDHTFHTCOAWCPR_SOWP_FIN_1"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIA-SOWP-FIN-001"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHICSOWPO1"
+            },
+            {
+              "name": "Canadian Education Documents- (For each program if studied here)",
+              "code": "CEDFEPIH-SOWP-EDU-1"
+            },
+            {
+              "name": "Proof/source of Income- Mandatory for Worker Spouse",
+              "code": "PSOIMFWSp-SOWP-F-1"
+            },
+            {
+              "name": "Letters, Printed text messages, emails, social media conversations and phone records showing regular",
+              "code": "LPTESMACPR-SOWP-Other-1"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "Pwasp-SOWP-Identity-1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "SOWP",
+      "subType": "Extension (Spouse or Child)",
+      "pdfRelative": "Work Permits/Document Checklist- SOWP Extension (Worker Spouse)- spouse or child.pdf",
+      "perApplicant": {
+        "Spouse / Common-Law Partner": {
+          "pdfCount": 9,
+          "templateCount": 0,
+          "missingInTemplate": [
+            "Passport with all stamped pages",
+            "All Permits ever held in Canada",
+            "Digital photo as per specifications of Temporary Residents",
+            "Canadian Education Documents- (For each program if studied here)",
+            "Identity and Civil Documents",
+            "One and same name affidavit if name /surname changed",
+            "Proof/source of Income- Mandatory for Worker Spouse",
+            "Additional proof of Funds/investments/assets",
+            "Proof of cohabitation"
+          ],
+          "extraInTemplate": [],
+          "matches": 0
+        },
+        "Dependent Child": {
+          "pdfCount": 4,
+          "templateCount": 4,
+          "missingInTemplate": [],
+          "extraInTemplate": [],
+          "matches": 4
+        },
+        "Principal Applicant": {
+          "pdfCount": 0,
+          "templateCount": 7,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-SOWP-Identity-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-SOWP-O-1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "DPAPSOTR-SOWP-IDENTITY-001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACDSOWPIdentity1"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINSNC-SOWP-OTH-001"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APOFIA-SOWP-FIN-1"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "POCSOWPOTHER1"
+            }
+          ],
+          "matches": 0
+        },
+        "Worker Spouse": {
+          "pdfCount": 0,
+          "templateCount": 9,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Canadian Education Documents- (For each program if studied here)",
+              "code": "CEDFEPISH-SOWP-EDU-1"
+            },
+            {
+              "name": "Proof/source of Income- Mandatory for Worker Spouse",
+              "code": "PSOIMFWS-SOWP-FIN-001"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-SOWP-Identity-1"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-SOWP-O-1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "Dpapsotr-SOWP-Identity-001"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD-SOWP-Identity-001"
+            },
+            {
+              "name": "One and same name affidavit if name /surname changed",
+              "code": "OASNAAINSNC-SOWP-OTH-001"
+            },
+            {
+              "name": "Additional proof of Funds/investments/assets",
+              "code": "APFIA-SOWP-FIN-1"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "POCSOWPOTHER1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    },
+    {
+      "caseType": "NB WP Extension",
+      "subType": "",
+      "pdfRelative": "Work Permits/Document Checklist- Work Permit Extension (NB) - Single or accompanying spouse.pdf",
+      "perApplicant": {
+        "Principal Applicant": {
+          "pdfCount": 6,
+          "templateCount": 5,
+          "missingInTemplate": [
+            "Proof/source of Income- Mandatory for Worker Spouse"
+          ],
+          "extraInTemplate": [],
+          "matches": 5
+        },
+        "Worker Spouse": {
+          "pdfCount": 0,
+          "templateCount": 6,
+          "missingInTemplate": [],
+          "extraInTemplate": [
+            {
+              "name": "Proof/source of Income- Mandatory for Worker Spouse",
+              "code": "PSOIMFWS-NBWPE-F-1"
+            },
+            {
+              "name": "Passport with all stamped pages",
+              "code": "PWASP-NBWP-ID-001"
+            },
+            {
+              "name": "All Permits ever held in Canada",
+              "code": "APEHIC-NBWP-OTH-1"
+            },
+            {
+              "name": "Digital photo as per specifications of Temporary Residents",
+              "code": "Dpapsotr-NBWP-Identity-1"
+            },
+            {
+              "name": "Identity and Civil Documents",
+              "code": "IACD_NBWP_ID_1"
+            },
+            {
+              "name": "Proof of cohabitation",
+              "code": "POC-NBWPE-O-1"
+            }
+          ],
+          "matches": 0
+        }
+      }
+    }
+  ]
+}
