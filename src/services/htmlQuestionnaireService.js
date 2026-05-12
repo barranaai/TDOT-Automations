@@ -1816,18 +1816,28 @@ ${hasAdditionalForm ? `
       var needed      = maxRow - currentRows;
       if (needed <= 0) continue;
 
-      /* Find the "Add Row" / "Add Entry" button associated with this table */
-      var container = table.closest('.sub-accordion-body') || table.parentElement;
+      /* Find the "Add Row" / "Add Entry" button associated with this table.
+       *
+       * The button is identified by its onclick referencing this table's id,
+       * e.g. onclick="addRow('tbl-ma-travel', [...])". The button often lives
+       * OUTSIDE the table's immediate parent (typically as a sibling .table-actions
+       * div), so we widen the search to the nearest accordion ancestor and fall
+       * back to a document-scoped match by table.id substring. */
+      var container = table.closest('.sub-accordion-body, .accordion-body, .top-accordion-body, .applicant-body') || table.parentElement;
       var addBtn    = null;
-      if (container) {
-        var btns = container.querySelectorAll('button, .btn-add');
+      function findAddBtnIn(scope) {
+        if (!scope) return null;
+        var btns = scope.querySelectorAll('button, .btn-add');
         for (var bi = 0; bi < btns.length; bi++) {
           var onclick = btns[bi].getAttribute('onclick') || '';
-          if (onclick.indexOf(table.id) !== -1 || onclick.indexOf('addRow') !== -1) {
-            addBtn = btns[bi]; break;
-          }
+          /* Must reference THIS table's id — matching just "addRow" would
+             grab the first add-row button in the container, which is wrong
+             when multiple dynamic tables share one accordion body. */
+          if (onclick.indexOf("'" + table.id + "'") !== -1) return btns[bi];
         }
+        return null;
       }
+      addBtn = findAddBtnIn(container) || findAddBtnIn(root) || findAddBtnIn(document);
       if (!addBtn) continue;
       for (var ri = 0; ri < needed; ri++) { addBtn.click(); }
     }
@@ -3375,17 +3385,23 @@ input[disabled], select[disabled], textarea[disabled] {
       var currentRows = table.querySelectorAll('tbody tr').length;
       var needed = maxRow - currentRows;
       if (needed <= 0) continue;
-      var container = table.closest('.sub-accordion-body') || table.parentElement;
+      /* Find the "Add Row" button. Many forms place the button OUTSIDE the
+         table's immediate parent (in a sibling .table-actions div), so we
+         widen the search to the nearest accordion ancestor and fall back to
+         a root/document scan that matches the button's onclick to this
+         table's quoted id. */
+      var container = table.closest('.sub-accordion-body, .accordion-body, .top-accordion-body, .applicant-body') || table.parentElement;
       var addBtn = null;
-      if (container) {
-        var btns = container.querySelectorAll('button, .btn-add');
+      function findAddBtnIn(scope) {
+        if (!scope) return null;
+        var btns = scope.querySelectorAll('button, .btn-add');
         for (var bi = 0; bi < btns.length; bi++) {
           var onclick = btns[bi].getAttribute('onclick') || '';
-          if (onclick.indexOf(table.id) !== -1 || onclick.indexOf('addRow') !== -1) {
-            addBtn = btns[bi]; break;
-          }
+          if (onclick.indexOf("'" + table.id + "'") !== -1) return btns[bi];
         }
+        return null;
       }
+      addBtn = findAddBtnIn(container) || findAddBtnIn(root) || findAddBtnIn(document);
       if (!addBtn) continue;
       for (var ri = 0; ri < needed; ri++) { addBtn.click(); }
     }
