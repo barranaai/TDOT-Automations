@@ -267,8 +267,11 @@ async function getCaseDocuments(caseRef) {
  * the client adds or removes a family member from the questionnaire.
  *
  * Returns:
- *   • An array of allowed applicantType strings (always includes
- *     'Principal Applicant'), e.g. ['Principal Applicant', 'Dependent Child']
+ *   • An array of allowed applicantType strings. Always includes both
+ *     'Principal Applicant' AND 'Sponsor' (these are built-in roles, not
+ *     family members added by the client). Any family-member types from
+ *     the manifest (e.g. 'Spouse / Common-Law Partner', 'Dependent Child')
+ *     are appended.
  *   • null  → only on truly unexpected errors (e.g. require() failure);
  *            caller should treat null as "skip filter".
  *
@@ -295,7 +298,19 @@ async function getAllowedApplicantTypesFromManifest({ caseRef, clientName }) {
     const htmlQ = require('./htmlQuestionnaireService');
     const members = await htmlQ.loadMembers({ clientName, caseRef });
 
-    const allowed = new Set(['Principal Applicant']);
+    // Always-allowed applicant types — these aren't added via the
+    // questionnaire's "+ Add Family Member" flow (which only handles
+    // spouse / dependent child / etc.), but they ARE legitimate
+    // applicants on the case by virtue of the case type itself:
+    //
+    //   • Principal Applicant — on every case
+    //   • Sponsor — on Inland/Outland Spousal Sponsorship, Child
+    //     Sponsorship, Parents/Grandparents Sponsorship. The Sponsor
+    //     is a built-in role of the case type, not a family member
+    //     the client picks. Including it here unconditionally is safe
+    //     because non-sponsorship case types simply have no Sponsor
+    //     rows on the Execution Board, so the filter has no effect.
+    const allowed = new Set(['Principal Applicant', 'Sponsor']);
     for (const m of (members || [])) {
       // The primary member is always Principal Applicant — already in the set
       if (m.key === 'primary') continue;
