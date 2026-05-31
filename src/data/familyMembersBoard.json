@@ -1,0 +1,31 @@
+{
+  "boardId": "18415615177",
+  "clientMasterBoardId": "18401523447",
+  "columns": {
+    "caseReference": "text_mm3wy0fr",
+    "case": "board_relation_mm3wsnrg",
+    "memberType": "color_mm3wpz0j",
+    "dateOfBirth": "date_mm3ws5z4",
+    "countryOfResidence": "text_mm3wnks9",
+    "currentStatus": "text_mm3w4sm4",
+    "flags": "dropdown_mm3wf05n",
+    "memberKey": "text_mm3wh8yc"
+  },
+  "memberTypeLabels": [
+    "Principal Applicant",
+    "Spouse",
+    "Dependent Child",
+    "Sponsor",
+    "Worker Spouse",
+    "Parent",
+    "Sibling"
+  ],
+  "flagLabels": [
+    "Name Changed",
+    "Married More Than Once",
+    "Common-Law",
+    "Previously Sponsored",
+    "Former Spouse Deceased"
+  ],
+  "createdAt": "2026-05-31T11:50:34.013Z"
+}
