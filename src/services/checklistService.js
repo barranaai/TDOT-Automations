@@ -4,6 +4,13 @@ const { getTemplateItemsByCaseType } = require('./templateService');
 const { createMissingExecutionItems } = require('./executionService');
 const { createClientFolders } = require('./oneDriveService');
 
+// Schema-driven seeding (the new spine). Consulted only when enabled; otherwise
+// the Template Board flow below runs exactly as before.
+const caseSchemaService     = require('./caseSchemaService');
+const compositionAdapter    = require('./compositionAdapter');
+const { seedPlan }          = require('./seedPlanner');
+const { reconcileExecutionRows } = require('./executionSeederService');
+
 // Client Master column IDs
 const CM_COLS = {
   caseReferenceNumber:     'text_mm142s49',
@@ -11,6 +18,78 @@ const CM_COLS = {
   caseSubType:             'dropdown_mm0x4t91',
   checklistTemplateApplied:'color_mm0xs7kp',
 };
+
+/**
+ * Is schema-driven seeding enabled for this (caseType, subType)?
+ *
+ *   SCHEMA_DRIVEN_SEEDING   — master switch. Unless "true"/"1", schema-driven
+ *                             seeding is OFF and everything uses the Template
+ *                             Board (deploy = zero behaviour change).
+ *   SCHEMA_DRIVEN_ALLOWLIST — optional comma-separated "CaseType:SubType" pairs.
+ *                             When set, ONLY those pairs go schema-driven (even
+ *                             if other schemas are registered). When unset, any
+ *                             registered schema is eligible once the master
+ *                             switch is on.
+ */
+function isSchemaDrivenEnabled(caseType, subType) {
+  const master = String(process.env.SCHEMA_DRIVEN_SEEDING || '').toLowerCase();
+  if (master !== 'true' && master !== '1') return false;
+
+  const allowlist = (process.env.SCHEMA_DRIVEN_ALLOWLIST || '').trim();
+  if (!allowlist) return true;
+
+  const wanted = `${String(caseType).trim().toLowerCase()}:${String(subType).trim().toLowerCase()}`;
+  return allowlist.split(',').map((s) => s.trim().toLowerCase()).includes(wanted);
+}
+
+async function markChecklistApplied(itemId) {
+  await mondayApi.query(
+    `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
+       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues) { id }
+     }`,
+    {
+      boardId:   String(clientMasterBoardId),
+      itemId:    String(itemId),
+      colValues: JSON.stringify({ [CM_COLS.checklistTemplateApplied]: { label: 'Yes' } }),
+    }
+  );
+}
+
+/**
+ * Schema-driven seed path. Reads family composition from the Family Members
+ * board, computes the exact doc list from the schema, creates OneDrive folders,
+ * and reconciles the Execution Board (idempotent — adds missing rows only).
+ */
+async function seedFromSchema({ schema, caseRef, clientName, clientMasterItemId }) {
+  const composition = await compositionAdapter.readForCase(caseRef);
+  console.log(
+    `[ChecklistService] SCHEMA path for ${caseRef} (${schema.caseType}/${schema.subType}) — ` +
+    `${composition.members.length} member(s): ${composition.members.map((m) => m.role).join(', ') || 'none on board'}`
+  );
+
+  const plan = seedPlan({ schema, composition });
+
+  // OneDrive folders per category (same as the Template Board path).
+  const categories = [...new Set(plan.map((r) => r.category).filter(Boolean))];
+  let categoryLinks = {};
+  if (categories.length) {
+    try {
+      categoryLinks = await createClientFolders({ clientName, caseRef, categories });
+    } catch (err) {
+      console.warn(`[ChecklistService] OneDrive folder creation failed (schema path) — continuing: ${err.message}`);
+    }
+  }
+
+  const result = await reconcileExecutionRows({
+    caseRef,
+    caseSubType:        schema.subType,
+    clientMasterItemId: String(clientMasterItemId),
+    plan,
+    categoryLinks,
+  });
+  console.log(`[ChecklistService] SCHEMA seed done for ${caseRef} — created ${result.created}, skipped ${result.skipped}, failed ${result.failed}`);
+  return result;
+}
 
 /**
  * Triggered automatically when an item's Case Stage changes to
@@ -76,6 +155,27 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
     return;
   }
 
+  // ── Schema-driven seeding (gated) ──
+  // If enabled AND a code schema is registered for this (caseType, subType),
+  // seed from the schema + Family Members composition instead of the Template
+  // Board, then stop. Otherwise fall through to the Template Board flow below,
+  // which is byte-for-byte the original behaviour.
+  if (isSchemaDrivenEnabled(caseType, caseSubType)) {
+    const schema = caseSchemaService.lookup(caseType, caseSubType);
+    if (schema) {
+      try {
+        await seedFromSchema({ schema, caseRef, clientName: item.name, clientMasterItemId: itemId });
+        await markChecklistApplied(itemId);
+        console.log(`[ChecklistService] Checklist Template Applied → Yes for ${caseRef} (schema path)`);
+        return;
+      } catch (err) {
+        console.error(`[ChecklistService] Schema seeding failed for ${caseRef}: ${err.message}. NOT falling back to Template Board to avoid mixed sources — please investigate.`);
+        return;
+      }
+    }
+    console.log(`[ChecklistService] Schema-driven enabled but no schema for "${caseType}/${caseSubType}" — using Template Board.`);
+  }
+
   // 3. Fetch matching template items
   let templateItems;
   try {
@@ -134,4 +234,4 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
   console.log(`[ChecklistService] Checklist Template Applied → Yes for ${caseRef}`);
 }
 
-module.exports = { onDocumentCollectionStarted };
+module.exports = { onDocumentCollectionStarted, _internal: { isSchemaDrivenEnabled } };
