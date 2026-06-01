@@ -24,6 +24,7 @@ const caseHealthEngine     = require('./services/caseHealthEngine');
 const chasingLoopService          = require('./services/chasingLoopService');
 const escalationRoutingService    = require('./services/escalationRoutingService');
 const emailService                = require('./services/emailService');
+const checklistService            = require('./services/checklistService');
 const docCodeGenerator            = require('./scripts/generateDocumentCodes');
 const { templateBoardId, executionBoardId, clientMasterBoardId } = require('../config/monday');
 
@@ -78,6 +79,24 @@ app.post('/api/resend-intake/:itemId', async (req, res) => {
   emailService.sendIntakeEmail(itemId).catch((err) =>
     console.error(`[ResendIntake] Failed for item ${itemId}:`, err.message)
   );
+});
+
+// Manual re-seed — schema-driven checklist seeding for one case, with NO intake
+// email and NO stage change. Use after populating/correcting the Family Members
+// board, or to safely verify schema seeding without the webhook cascade.
+// Idempotent (only adds missing rows). Schema-driven case types only.
+// Usage: POST /api/checklist/reseed/<caseRef>
+app.post('/api/checklist/reseed/:caseRef', async (req, res) => {
+  const { caseRef } = req.params;
+  try {
+    const result = await checklistService.reseedByCaseRef(caseRef);
+    res.json({ status: 'ok', ...result });
+  } catch (err) {
+    const map = { BAD_REQUEST: 400, NOT_FOUND: 404, NO_SCHEMA: 422 };
+    const status = map[err.code] || 500;
+    console.error(`[Reseed] ${caseRef}: ${err.message}`);
+    res.status(status).json({ status: 'error', code: err.code || 'ERROR', error: err.message });
+  }
 });
 
 app.get('/api/monday-test', async (req, res) => {

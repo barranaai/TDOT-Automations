@@ -234,4 +234,61 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
   console.log(`[ChecklistService] Checklist Template Applied → Yes for ${caseRef}`);
 }
 
-module.exports = { onDocumentCollectionStarted, _internal: { isSchemaDrivenEnabled } };
+/**
+ * Manual re-seed for a single case — schema path only, NO intake email and NO
+ * stage change. Used by the admin re-seed endpoint to:
+ *   - add rows after the Family Members board is populated/corrected late, and
+ *   - safely verify schema seeding on Render without the webhook cascade.
+ *
+ * Idempotent (the reconciler only adds missing rows). Independent of the
+ * SCHEMA_DRIVEN_SEEDING flag because it is a deliberate, explicit admin action;
+ * it only requires that a schema is registered for the case's (type, subType).
+ *
+ * @returns {Promise<{ ok, caseRef, caseType, subType, members, created, skipped, failed }>}
+ * @throws  {Error} with .code 'NOT_FOUND' | 'NO_SCHEMA' for clean HTTP mapping.
+ */
+async function reseedByCaseRef(caseRef) {
+  const ref = String(caseRef || '').trim();
+  if (!ref) { const e = new Error('caseRef required'); e.code = 'BAD_REQUEST'; throw e; }
+
+  const data = await mondayApi.query(
+    `query($boardId: ID!, $colId: String!, $val: String!) {
+       items_page_by_column_values(limit: 1, board_id: $boardId,
+         columns: [{ column_id: $colId, column_values: [$val] }]) {
+         items {
+           id name
+           column_values(ids: ["${CM_COLS.primaryCaseType}", "${CM_COLS.caseSubType}"]) { id text }
+         }
+       }
+     }`,
+    { boardId: String(clientMasterBoardId), colId: CM_COLS.caseReferenceNumber, val: ref }
+  );
+  const item = data?.items_page_by_column_values?.items?.[0];
+  if (!item) { const e = new Error(`No Client Master case found for "${ref}"`); e.code = 'NOT_FOUND'; throw e; }
+
+  const cv = {};
+  for (const c of item.column_values) cv[c.id] = c.text;
+  const caseType = (cv[CM_COLS.primaryCaseType] || '').trim();
+  const subType  = (cv[CM_COLS.caseSubType] || '').trim() || null;
+
+  const schema = caseSchemaService.lookup(caseType, subType);
+  if (!schema) {
+    const e = new Error(`No code schema registered for "${caseType} / ${subType}" — re-seed only supports schema-driven case types`);
+    e.code = 'NO_SCHEMA';
+    throw e;
+  }
+
+  const composition = await compositionAdapter.readForCase(ref);
+  const result = await seedFromSchema({ schema, caseRef: ref, clientName: item.name, clientMasterItemId: item.id });
+  await markChecklistApplied(item.id);
+
+  return {
+    ok: true,
+    caseRef: ref,
+    caseType, subType,
+    members: composition.members.map((m) => m.role),
+    created: result.created, skipped: result.skipped, failed: result.failed,
+  };
+}
+
+module.exports = { onDocumentCollectionStarted, reseedByCaseRef, _internal: { isSchemaDrivenEnabled } };
