@@ -30,6 +30,7 @@ const visitorVisaSpouse      = require('../data/caseSchemas/visitor-visa-spouse.
 const visitorVisaSpousalInProcess = require('../data/caseSchemas/visitor-visa-spousal-sponsorship-in-process.js');
 const visitorVisaChangeOfStatus = require('../data/caseSchemas/visitor-visa-change-of-status.js');
 const studyPermit            = require('../data/caseSchemas/study-permit.js');
+const studyPermitNonSdsSingle = require('../data/caseSchemas/study-permit-non-sds-single.js');
 
 const REGISTRY = new Map();
 
@@ -66,6 +67,7 @@ register(visitorVisaSpouse);
 register(visitorVisaSpousalInProcess);
 register(visitorVisaChangeOfStatus);
 register(studyPermit);
+register(studyPermitNonSdsSingle);
 
 /**
  * Return the registered schema for (caseType, subType), or null.
