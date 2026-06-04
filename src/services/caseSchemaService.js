@@ -26,6 +26,9 @@ const visitorVisa13Members   = require('../data/caseSchemas/visitor-visa-1-3-mem
 const visitorVisaBothParents = require('../data/caseSchemas/visitor-visa-both-parents.js');
 const visitorVisaSingleParent = require('../data/caseSchemas/visitor-visa-single-parent.js');
 const visitorVisaParentsSiblings = require('../data/caseSchemas/visitor-visa-parents-siblings.js');
+const visitorVisaSpouse      = require('../data/caseSchemas/visitor-visa-spouse.js');
+const visitorVisaSpousalInProcess = require('../data/caseSchemas/visitor-visa-spousal-sponsorship-in-process.js');
+const visitorVisaChangeOfStatus = require('../data/caseSchemas/visitor-visa-change-of-status.js');
 
 const REGISTRY = new Map();
 
@@ -58,6 +61,9 @@ register(visitorVisa13Members);
 register(visitorVisaBothParents);
 register(visitorVisaSingleParent);
 register(visitorVisaParentsSiblings);
+register(visitorVisaSpouse);
+register(visitorVisaSpousalInProcess);
+register(visitorVisaChangeOfStatus);
 
 /**
  * Return the registered schema for (caseType, subType), or null.
