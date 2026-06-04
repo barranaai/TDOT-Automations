@@ -15,7 +15,9 @@
 
 'use strict';
 
-const supervisaParents = require('../data/caseSchemas/supervisa-parents.js');
+const supervisaParents      = require('../data/caseSchemas/supervisa-parents.js');
+const supervisaGrandparents = require('../data/caseSchemas/supervisa-grandparents.js');
+const outlandSpousalMarriage = require('../data/caseSchemas/outland-spousal-sponsorship-marriage.js');
 
 const REGISTRY = new Map();
 
@@ -36,6 +38,8 @@ function register(schema) {
 
 // ── Registered schemas ───────────────────────────────────────────────────────
 register(supervisaParents);
+register(supervisaGrandparents);
+register(outlandSpousalMarriage);
 
 /** Return the registered schema for (caseType, subType), or null. */
 function lookup(caseType, subType) {
