@@ -18,6 +18,7 @@
 const supervisaParents      = require('../data/caseSchemas/supervisa-parents.js');
 const supervisaGrandparents = require('../data/caseSchemas/supervisa-grandparents.js');
 const outlandSpousalMarriage = require('../data/caseSchemas/outland-spousal-sponsorship-marriage.js');
+const inlandSpousalMarriage  = require('../data/caseSchemas/inland-spousal-sponsorship-marriage.js');
 
 const REGISTRY = new Map();
 
@@ -40,6 +41,7 @@ function register(schema) {
 register(supervisaParents);
 register(supervisaGrandparents);
 register(outlandSpousalMarriage);
+register(inlandSpousalMarriage);
 
 /** Return the registered schema for (caseType, subType), or null. */
 function lookup(caseType, subType) {
