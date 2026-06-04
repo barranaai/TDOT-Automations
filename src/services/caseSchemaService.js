@@ -15,33 +15,24 @@
 
 'use strict';
 
-const supervisaParents      = require('../data/caseSchemas/supervisa-parents.js');
-const supervisaGrandparents = require('../data/caseSchemas/supervisa-grandparents.js');
-const outlandSpousalMarriage = require('../data/caseSchemas/outland-spousal-sponsorship-marriage.js');
-const inlandSpousalMarriage  = require('../data/caseSchemas/inland-spousal-sponsorship-marriage.js');
-const inlandSpousalCommonLaw = require('../data/caseSchemas/inland-spousal-sponsorship-common-law.js');
-const parentsGrandparentsSponsorship = require('../data/caseSchemas/parents-grandparents-sponsorship.js');
-const visitorVisa12Members   = require('../data/caseSchemas/visitor-visa-1-2-members.js');
-const visitorVisa13Members   = require('../data/caseSchemas/visitor-visa-1-3-members.js');
-const visitorVisaBothParents = require('../data/caseSchemas/visitor-visa-both-parents.js');
-const visitorVisaSingleParent = require('../data/caseSchemas/visitor-visa-single-parent.js');
-const visitorVisaParentsSiblings = require('../data/caseSchemas/visitor-visa-parents-siblings.js');
-const visitorVisaSpouse      = require('../data/caseSchemas/visitor-visa-spouse.js');
-const visitorVisaSpousalInProcess = require('../data/caseSchemas/visitor-visa-spousal-sponsorship-in-process.js');
-const visitorVisaChangeOfStatus = require('../data/caseSchemas/visitor-visa-change-of-status.js');
-const studyPermit            = require('../data/caseSchemas/study-permit.js');
-const studyPermitNonSdsSingle = require('../data/caseSchemas/study-permit-non-sds-single.js');
+const fs   = require('fs');
+const path = require('path');
 
+const SCHEMA_DIR = path.join(__dirname, '..', 'data', 'caseSchemas');
 const REGISTRY = new Map();
 
 function keyOf(caseType, subType) {
   return `${String(caseType || '').trim().toLowerCase()}::${String(subType || '').trim().toLowerCase()}`;
 }
 
+function isValidSchema(schema) {
+  return schema && schema.caseType && typeof schema.subType === 'string' && Array.isArray(schema.roles);
+}
+
 function register(schema) {
   // subType may legitimately be '' for case types that have no sub-type
   // (PGP, Citizenship, TRV, …). Only caseType and roles[] are mandatory.
-  if (!schema || !schema.caseType || typeof schema.subType !== 'string' || !Array.isArray(schema.roles)) {
+  if (!isValidSchema(schema)) {
     throw new Error('Invalid schema — must export caseType, subType (string, may be ""), roles[]');
   }
   const k = keyOf(schema.caseType, schema.subType);
@@ -51,23 +42,41 @@ function register(schema) {
   REGISTRY.set(k, schema);
 }
 
-// ── Registered schemas ───────────────────────────────────────────────────────
-register(supervisaParents);
-register(supervisaGrandparents);
-register(outlandSpousalMarriage);
-register(inlandSpousalMarriage);
-register(inlandSpousalCommonLaw);
-register(parentsGrandparentsSponsorship);
-register(visitorVisa12Members);
-register(visitorVisa13Members);
-register(visitorVisaBothParents);
-register(visitorVisaSingleParent);
-register(visitorVisaParentsSiblings);
-register(visitorVisaSpouse);
-register(visitorVisaSpousalInProcess);
-register(visitorVisaChangeOfStatus);
-register(studyPermit);
-register(studyPermitNonSdsSingle);
+/**
+ * Auto-load every *.js schema in src/data/caseSchemas/ (top level only — the
+ * drafts/ subfolder is ignored). Each file is loaded in its own try/catch so a
+ * single malformed or invalid schema logs a warning and is skipped rather than
+ * crashing the whole registry (and therefore the server). This is the safety
+ * property that lets us add many schemas at once without risk.
+ */
+function loadAll() {
+  let files;
+  try {
+    files = fs.readdirSync(SCHEMA_DIR).filter((f) => f.endsWith('.js'));
+  } catch (err) {
+    console.error(`[caseSchemaService] Could not read schema dir ${SCHEMA_DIR}: ${err.message}`);
+    return;
+  }
+  let ok = 0, skipped = 0;
+  for (const file of files) {
+    const full = path.join(SCHEMA_DIR, file);
+    try {
+      const schema = require(full);
+      if (!isValidSchema(schema)) {
+        console.warn(`[caseSchemaService] Skipping ${file} — not a valid schema shape`);
+        skipped++; continue;
+      }
+      register(schema);
+      ok++;
+    } catch (err) {
+      console.warn(`[caseSchemaService] Skipping ${file} — load error: ${err.message}`);
+      skipped++;
+    }
+  }
+  console.log(`[caseSchemaService] Loaded ${ok} schema(s)${skipped ? `, skipped ${skipped}` : ''}.`);
+}
+
+loadAll();
 
 /**
  * Return the registered schema for (caseType, subType), or null.
