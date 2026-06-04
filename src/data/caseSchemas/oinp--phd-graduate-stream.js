@@ -6,7 +6,10 @@ module.exports = {
   source: "Document Checklist Items/Provincial Nominee Programs/Ontario/Document Checklist- OINP- PhD Graduate Stream.pdf",
   reviewedBy: 'Workflow review (Claude)',
   reviewedAt: '2026-05-13',
-  caseFlags: {},
+  caseFlags: {
+    spouseIncluded: { label: 'Applicant has a non-accompanying spouse' },
+    childrenIncluded: { label: 'Applicant has one or more non-accompanying children' },
+  },
   memberFlags: { nameChanged: { label: 'Applicant name/surname differs across official documents' } },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant', required: true, documents: [
@@ -25,7 +28,12 @@ module.exports = {
       { code: 'SETTLEMENT', name: 'Settlement Funds (Please confirm with us in advance)', category: 'Financial' },
       { code: 'INTENTRESIDE', name: 'Intention to Reside in Ontario', category: 'Other' }
     ] },
-    { role: 'NonAccompanyingSpouse', label: 'Non-Accompanying Spouse and Child', required: true, documents: [
+    { role: 'NonAccompanyingSpouse', label: 'Non-Accompanying Spouse', includeWhen: { caseFlag: 'spouseIncluded' }, documents: [
+      { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity' },
+      { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity' },
+      { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' } }
+    ] },
+    { role: 'NonAccompanyingChild', label: 'Non-Accompanying Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity' },
       { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' } }

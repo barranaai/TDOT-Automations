@@ -7,6 +7,7 @@ module.exports = {
   reviewedBy: 'Workflow review (Claude)',
   reviewedAt: '2026-05-13',
   caseFlags: {
+    spouseIncluded: { label: 'A non-accompanying spouse/partner is included' },
     childrenIncluded: { label: 'One or more dependent (non-accompanying) children are included' },
   },
   memberFlags: {
@@ -31,7 +32,7 @@ module.exports = {
       ],
     },
     {
-      role: 'NonAccompanyingSpouse', label: 'Non-Accompanying Spouse', required: true, documents: [
+      role: 'NonAccompanyingSpouse', label: 'Non-Accompanying Spouse', includeWhen: { caseFlag: 'spouseIncluded' }, documents: [
         { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms' },
         { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity' },
         { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity' },

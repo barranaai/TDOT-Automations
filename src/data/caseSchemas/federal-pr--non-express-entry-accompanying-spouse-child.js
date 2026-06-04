@@ -41,6 +41,7 @@ module.exports = {
       { code: 'PCC', name: 'Police clearance certificates (PCC)', category: 'Background' },
       { code: 'CANEDU', name: 'Canadian Education Documents', category: 'Academic' },
       { code: 'FOREIGNEDU', name: 'Foreign Education Documents along with Educational Credential Assessment', category: 'Academic' },
+      { code: 'SIBLINGPROOF', name: 'Sibling- Proof of living in Canada', category: 'Relationship' },
       { code: 'WORKEXP', name: 'Proof of work experience for the claiming period (Inside and Outside Canada)', category: 'Financial' },
       { code: 'CIVILDOCS', name: 'Identity and Civil Documents', category: 'Identity' },
       { code: 'BIRTHCERT', name: 'Birth Certificate', category: 'Identity' },

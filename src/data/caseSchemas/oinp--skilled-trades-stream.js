@@ -6,7 +6,10 @@ module.exports = {
   source: "Document Checklist Items/Provincial Nominee Programs/Ontario/Document Checklist- OINP- Skilled Trades Stream.pdf",
   reviewedBy: 'Workflow review (Claude)',
   reviewedAt: '2026-05-13',
-  caseFlags: {},
+  caseFlags: {
+    spouseIncluded: { label: 'Application includes a non-accompanying spouse/common-law partner' },
+    childrenIncluded: { label: 'Application includes non-accompanying dependent children' }
+  },
   memberFlags: { nameChanged: { label: 'Applicant name/surname differs across official documents' } },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant', required: true, documents: [
@@ -27,7 +30,12 @@ module.exports = {
       { code: 'TRADECERT', name: 'Trade Certificate', category: 'Other' },
       { code: 'SETTLEMENTFUNDS', name: 'Settlement Funds (Please confirm with us in advance)', category: 'Financial' }
     ] },
-    { role: 'NonAccompanyingSpouse', label: 'Non-Accompanying Spouse', required: true, documents: [
+    { role: 'NonAccompanyingSpouse', label: 'Non-Accompanying Spouse', required: false, includeWhen: { caseFlag: 'spouseIncluded' }, documents: [
+      { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity' },
+      { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity' },
+      { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' } }
+    ] },
+    { role: 'NonAccompanyingChild', label: 'Non-Accompanying Dependent Child', required: false, includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity' },
       { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' } }

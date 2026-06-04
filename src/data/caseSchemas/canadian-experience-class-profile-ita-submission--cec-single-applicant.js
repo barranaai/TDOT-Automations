@@ -29,7 +29,7 @@ module.exports = {
       { code: 'CIVILDOCS', name: 'Identity and Civil Documents', category: 'Identity' },
       { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' } },
     ] },
-    { role: 'NonAccompanyingSpouse', label: 'Non-Accompanying Spouse', required: true, includeWhen: { caseFlag: 'spouseIncluded' }, documents: [
+    { role: 'NonAccompanyingSpouse', label: 'Non-Accompanying Spouse', includeWhen: { caseFlag: 'spouseIncluded' }, documents: [
       { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity' },
@@ -38,7 +38,7 @@ module.exports = {
       { code: 'PCC', name: 'Police clearance certificates (PCC)', category: 'Background' },
       { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' } },
     ] },
-    { role: 'DependentChild', label: 'Dependent Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
+    { role: 'NonAccompanyingChild', label: 'Non-Accompanying Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity' },
       { code: 'BIRTHCERT', name: 'Birth Certificate', category: 'Identity' },
       { code: 'PHOTO', name: 'Digital photo as per specifications Permanent Residents', category: 'Identity' },

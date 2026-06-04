@@ -6,7 +6,10 @@ module.exports = {
   source: "Document Checklist Items/Provincial Nominee Programs/Alberta/Document Checklist- AAIP- Tourism & Hospitality Stream.pdf",
   reviewedBy: 'Workflow review (Claude)',
   reviewedAt: '2026-05-13',
-  caseFlags: {},
+  caseFlags: {
+    spouseIncluded: { label: 'A non-accompanying spouse is included in this application' },
+    childrenIncluded: { label: 'One or more non-accompanying children are included in this application' }
+  },
   memberFlags: { nameChanged: { label: 'Applicant name/surname differs across official documents' } },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant', required: true, documents: [
@@ -26,7 +29,12 @@ module.exports = {
       { code: 'JOBOFFER', name: 'Job Offer Letter', category: 'Financial' },
       { code: 'SECTORMEMB', name: 'Sector association membership or Experience Provider status', category: 'Background' }
     ] },
-    { role: 'NonAccompanyingSpouse', label: 'Non-Accompanying Spouse', required: true, documents: [
+    { role: 'NonAccompanyingSpouse', label: 'Non-Accompanying Spouse', includeWhen: { caseFlag: 'spouseIncluded' }, documents: [
+      { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity' },
+      { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity' },
+      { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' } }
+    ] },
+    { role: 'NonAccompanyingChild', label: 'Non-Accompanying Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity' },
       { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' } }
