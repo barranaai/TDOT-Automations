@@ -19,6 +19,8 @@ const supervisaParents      = require('../data/caseSchemas/supervisa-parents.js'
 const supervisaGrandparents = require('../data/caseSchemas/supervisa-grandparents.js');
 const outlandSpousalMarriage = require('../data/caseSchemas/outland-spousal-sponsorship-marriage.js');
 const inlandSpousalMarriage  = require('../data/caseSchemas/inland-spousal-sponsorship-marriage.js');
+const inlandSpousalCommonLaw = require('../data/caseSchemas/inland-spousal-sponsorship-common-law.js');
+const parentsGrandparentsSponsorship = require('../data/caseSchemas/parents-grandparents-sponsorship.js');
 
 const REGISTRY = new Map();
 
@@ -27,8 +29,10 @@ function keyOf(caseType, subType) {
 }
 
 function register(schema) {
-  if (!schema || !schema.caseType || !schema.subType || !Array.isArray(schema.roles)) {
-    throw new Error('Invalid schema — must export caseType, subType, roles[]');
+  // subType may legitimately be '' for case types that have no sub-type
+  // (PGP, Citizenship, TRV, …). Only caseType and roles[] are mandatory.
+  if (!schema || !schema.caseType || typeof schema.subType !== 'string' || !Array.isArray(schema.roles)) {
+    throw new Error('Invalid schema — must export caseType, subType (string, may be ""), roles[]');
   }
   const k = keyOf(schema.caseType, schema.subType);
   if (REGISTRY.has(k)) {
@@ -42,10 +46,16 @@ register(supervisaParents);
 register(supervisaGrandparents);
 register(outlandSpousalMarriage);
 register(inlandSpousalMarriage);
+register(inlandSpousalCommonLaw);
+register(parentsGrandparentsSponsorship);
 
-/** Return the registered schema for (caseType, subType), or null. */
+/**
+ * Return the registered schema for (caseType, subType), or null.
+ * A null/'' subType is normalised by keyOf, so case types with no sub-type
+ * resolve to their '' schema.
+ */
 function lookup(caseType, subType) {
-  if (!caseType || !subType) return null;
+  if (!caseType) return null;
   return REGISTRY.get(keyOf(caseType, subType)) || null;
 }
 
