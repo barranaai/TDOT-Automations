@@ -23,6 +23,7 @@ const inlandSpousalCommonLaw = require('../data/caseSchemas/inland-spousal-spons
 const parentsGrandparentsSponsorship = require('../data/caseSchemas/parents-grandparents-sponsorship.js');
 const visitorVisa12Members   = require('../data/caseSchemas/visitor-visa-1-2-members.js');
 const visitorVisa13Members   = require('../data/caseSchemas/visitor-visa-1-3-members.js');
+const visitorVisaBothParents = require('../data/caseSchemas/visitor-visa-both-parents.js');
 
 const REGISTRY = new Map();
 
@@ -52,6 +53,7 @@ register(inlandSpousalCommonLaw);
 register(parentsGrandparentsSponsorship);
 register(visitorVisa12Members);
 register(visitorVisa13Members);
+register(visitorVisaBothParents);
 
 /**
  * Return the registered schema for (caseType, subType), or null.
