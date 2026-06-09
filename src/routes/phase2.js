@@ -14,9 +14,11 @@
 
 'use strict';
 
-const express     = require('express');
-const router      = express.Router();
-const leadService = require('../services/leadService');
+const express          = require('express');
+const router           = express.Router();
+const leadService      = require('../services/leadService');
+const leadTokenService = require('../services/leadTokenService');
+const bookingService   = require('../services/bookingService');
 const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
 
 // WS1 — health check for Phase 2 wiring
@@ -136,6 +138,117 @@ function buildErrorHtml(message) {
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title></head>
   <body style="font-family:-apple-system,sans-serif;padding:48px;color:${BRAND.textOnLight};">
   <h1>Something went wrong</h1><p>Please try again, or email us at info@tdotimm.com.</p></body></html>`;
+}
+
+// ─── WS3 — Booking ────────────────────────────────────────────────────────────
+
+// GET /book/:leadId — show tier-filtered slots (token-protected)
+router.get('/book/:leadId', async (req, res) => {
+  const { leadId } = req.params;
+  if (!await leadTokenService.validateToken(leadId, req.query.t)) {
+    return res.status(403).type('html').send('Invalid or expired link.');
+  }
+  try {
+    const lead  = await leadService.getLead(leadId);
+    const slots = await bookingService.getAvailableSlots(lead.tier || 'T2', 4);
+    res.type('html').send(buildBookingPageHtml(lead, slots, req.query.t));
+  } catch (err) {
+    console.error('[Book] GET failed:', err.message);
+    res.status(500).type('html').send(buildErrorHtml(err.message));
+  }
+});
+
+// POST /book/:leadId — hold the slot, create Square checkout, redirect to pay
+router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req, res) => {
+  const { leadId } = req.params;
+  if (!await leadTokenService.validateToken(leadId, req.query.t)) {
+    return res.status(403).type('html').send('Invalid token');
+  }
+  try {
+    const { slotDate, slotTime } = req.body;
+    if (!slotDate || !slotTime) return res.status(400).type('html').send('Please choose a slot.');
+
+    const lead = await leadService.getLead(leadId);
+    await bookingService.holdSlot(leadId, slotDate, slotTime);
+
+    const fee = (lead.tier === 'T0') ? 0 : bookingService.CONSULT_FEE_CENTS;
+    if (fee === 0) {
+      // Free (emergency) — confirm immediately, no payment.
+      await bookingService.confirmSlot(leadId, 'free-t0');
+      return res.type('html').send(buildBookingDoneHtml(lead, slotDate, slotTime));
+    }
+
+    const checkoutUrl = await bookingService.createCheckout({
+      leadId, amount: fee,
+      description: `Consultation with TDOT Immigration — ${slotDate} ${slotTime}`,
+    });
+    res.redirect(checkoutUrl);
+  } catch (err) {
+    console.error('[Book] POST failed:', err.message);
+    res.status(500).type('html').send(buildErrorHtml(err.message));
+  }
+});
+
+// POST /webhook/square — Square payment webhook (raw body for signature check)
+router.post('/webhook/square', express.raw({ type: '*/*' }), async (req, res) => {
+  res.status(200).send('OK'); // acknowledge immediately
+  try {
+    const raw = req.body.toString();
+    const sig = req.headers['x-square-hmacsha256-signature'];
+    const url = `${process.env.RENDER_URL || ''}/webhook/square`;
+    if (!bookingService.verifySquareSignature(raw, sig, url)) {
+      console.warn('[Square Webhook] Bad signature — ignoring');
+      return;
+    }
+    await bookingService.handleSquarePaymentWebhook(JSON.parse(raw));
+  } catch (err) {
+    console.error('[Square Webhook] Error:', err.message);
+  }
+});
+
+function buildBookingPageHtml(lead, slots, token) {
+  const byDate = {};
+  for (const s of slots) (byDate[s.date] = byDate[s.date] || []).push(s);
+  const dateBlocks = Object.keys(byDate).sort().map((date) => {
+    const d = new Date(`${date}T12:00:00`);
+    const label = d.toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' });
+    const btns = byDate[date].map((s) =>
+      `<button type="submit" name="pick" value="${s.date}|${s.time}" class="slot">${s.time}</button>`).join('');
+    return `<div class="day"><div class="day-label">${label}</div><div class="slots">${btns}</div></div>`;
+  }).join('');
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><title>Book Your Consultation — TDOT Immigration</title>
+  <style>
+    body{background:${BRAND.lightBg};font-family:-apple-system,sans-serif;margin:0;color:${BRAND.textOnLight};}
+    .container{max-width:640px;margin:0 auto;padding:32px 24px;}
+    .header{background:${BRAND.darkPanel};color:${BRAND.textOnDark};padding:28px;border-radius:12px 12px 0 0;text-align:center;}
+    .card{background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;box-shadow:0 4px 12px rgba(0,0,0,0.08);}
+    .day{margin-bottom:20px;} .day-label{font-weight:700;margin-bottom:8px;}
+    .slots{display:flex;flex-wrap:wrap;gap:8px;}
+    .slot{background:#fff;border:1.5px solid ${BRAND.border};border-radius:8px;padding:10px 16px;font-size:15px;cursor:pointer;}
+    .slot:hover{border-color:${BRAND.primary};background:${BRAND.primary};color:#fff;}
+    .empty{color:${BRAND.mutedOnLight};padding:24px 0;text-align:center;}
+  </style></head><body><div class="container">
+    <div class="header">${TDOT_LOGO_LIGHT_HTML}<h1 style="margin:12px 0 4px;">Book Your Consultation</h1>
+    <p style="margin:0;opacity:0.85;font-size:14px;">Choose a time that works for you.</p></div>
+    <form class="card" method="POST" action="/book/${lead.id}?t=${encodeURIComponent(token)}" onsubmit="return prep(event)">
+      <input type="hidden" name="slotDate" id="slotDate"><input type="hidden" name="slotTime" id="slotTime">
+      ${dateBlocks || '<div class="empty">No open times in the next few weeks — we will reach out to schedule.</div>'}
+    </form>
+    <script>
+      function prep(e){const b=e.submitter;if(!b||!b.value){e.preventDefault();return false;}
+        const [d,t]=b.value.split('|');document.getElementById('slotDate').value=d;document.getElementById('slotTime').value=t;return true;}
+    </script>
+  </div></body></html>`;
+}
+
+function buildBookingDoneHtml(lead, date, time) {
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Booked</title>
+  <style>body{font-family:-apple-system,sans-serif;background:${BRAND.lightBg};padding:48px;text-align:center;color:${BRAND.textOnLight};}
+  .box{background:#fff;padding:48px;border-radius:12px;max-width:500px;margin:0 auto;box-shadow:0 4px 12px rgba(0,0,0,0.08);}</style></head>
+  <body><div class="box"><h1 style="color:${BRAND.primary}">You're booked.</h1>
+  <p>${escapeHtml(date)} at ${escapeHtml(time)}. We'll email your meeting details shortly.</p></div></body></html>`;
 }
 
 module.exports = router;

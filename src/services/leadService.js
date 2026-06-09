@@ -27,7 +27,7 @@ const COL_TYPE = {
   situationDescription: 'long_text', howHeard: 'text',
   tier: 'status', aiScore: 'numbers', aiTalkingPoints: 'long_text', aiComplianceFlags: 'long_text',
   bookingStatus: 'status', preConsultSubmitted: 'status', outcome: 'status', conversionStatus: 'status',
-  slotHeldUntil: 'date', bookedSlot: 'date', consultationHeld: 'date',
+  slotHeldUntil: 'text', bookedSlot: 'text', consultationHeld: 'date',
   retainerSent: 'date', retainerSigned: 'date', retainerPaid: 'date',
   squareConsultTxnId: 'text', squareConsultOrderId: 'text', zoomMeetingId: 'text',
   adobeSignAgreementId: 'text', squareRetainerTxnId: 'text', squareRetainerOrderId: 'text',
@@ -43,7 +43,7 @@ function formatValue(type, value) {
     case 'dropdown':  return { labels: Array.isArray(value) ? value : [String(value)] };
     case 'status':    return { label: String(value) };
     case 'long_text': return { text: String(value) };
-    case 'date':      return { date: String(value) };
+    case 'date':      return (value && typeof value === 'object') ? value : { date: String(value) };
     case 'numbers':   return String(value);
     default:          return String(value); // text
   }
@@ -122,6 +122,26 @@ async function updateLead(leadId, fields) {
      }`,
     { boardId: String(leadBoardId), itemId: String(leadId), cols: JSON.stringify(cols) }
   );
+}
+
+/**
+ * Find a lead by the value of one of its columns (e.g. a Square order id).
+ * @param {string} key  camelCase column key (must exist in COLS)
+ * @returns {Promise<object|null>} the lead (camelCase), or null
+ */
+async function findByColumnValue(key, value) {
+  const colId = COLS[key];
+  if (!colId || !value) return null;
+  const data = await mondayApi.query(
+    `query($boardId: ID!, $colId: String!, $val: String!) {
+       items_page_by_column_values(limit: 1, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) {
+         items { id }
+       }
+     }`,
+    { boardId: String(leadBoardId), colId, val: String(value) }
+  );
+  const id = data?.items_page_by_column_values?.items?.[0]?.id;
+  return id ? getLead(id) : null;
 }
 
 /** Read a lead back from the Lead Board as a camelCase object. */
@@ -214,4 +234,4 @@ Source: ${lead.sourceChannel || 'Website'}`;
   return result;
 }
 
-module.exports = { createLead, qualifyLead, getLead, updateLead };
+module.exports = { createLead, qualifyLead, getLead, updateLead, findByColumnValue };

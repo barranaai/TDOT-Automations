@@ -102,6 +102,16 @@ function startScheduler() {
   });
 
   console.log('[Scheduler] Jobs registered — Readiness → SLA → Expiry → Health → Escalation → Chasing at 07:00');
+
+  // ── Phase 2 — release expired consultation slot holds every 5 minutes ──
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      await require('./bookingService').releaseExpiredSlots();
+    } catch (err) {
+      console.error('[Scheduler] Phase 2 slot expiration failed:', err.message);
+    }
+  });
+  console.log('[Scheduler] Phase 2 job registered — slot expiration every 5 min');
 }
 
 module.exports = { startScheduler };
