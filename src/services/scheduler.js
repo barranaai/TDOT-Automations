@@ -112,6 +112,18 @@ function startScheduler() {
     }
   });
   console.log('[Scheduler] Phase 2 job registered — slot expiration every 5 min');
+
+  // ── Phase 2 — consultation reminders ──
+  cron.schedule('0 * * * *', () =>            // 24h reminder — hourly, catches 23-25h out
+    require('./consultationService').send24hReminders().catch((err) =>
+      console.error('[Scheduler] Phase 2 24h reminder failed:', err.message)));
+  cron.schedule('*/15 * * * *', () =>         // 1h reminder — every 15 min
+    require('./consultationService').send1hReminders().catch((err) =>
+      console.error('[Scheduler] Phase 2 1h reminder failed:', err.message)));
+  cron.schedule('0 */2 * * *', () =>          // pre-consult chase — every 2h
+    require('./consultationService').sendPreConsultReminders().catch((err) =>
+      console.error('[Scheduler] Phase 2 pre-consult chase failed:', err.message)));
+  console.log('[Scheduler] Phase 2 jobs registered — 24h / 1h / pre-consult reminders');
 }
 
 module.exports = { startScheduler };

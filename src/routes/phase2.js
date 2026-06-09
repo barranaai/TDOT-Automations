@@ -19,6 +19,7 @@ const router           = express.Router();
 const leadService      = require('../services/leadService');
 const leadTokenService = require('../services/leadTokenService');
 const bookingService   = require('../services/bookingService');
+const consultationService = require('../services/consultationService');
 const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
 
 // WS1 — health check for Phase 2 wiring
@@ -250,5 +251,44 @@ function buildBookingDoneHtml(lead, date, time) {
   <body><div class="box"><h1 style="color:${BRAND.primary}">You're booked.</h1>
   <p>${escapeHtml(date)} at ${escapeHtml(time)}. We'll email your meeting details shortly.</p></div></body></html>`;
 }
+
+// ─── WS4 — Pre-consult form ───────────────────────────────────────────────────
+
+// GET /consult/:leadId — render the pre-consult form (token-protected)
+router.get('/consult/:leadId', async (req, res) => {
+  const { leadId } = req.params;
+  if (!await leadTokenService.validateToken(leadId, req.query.t)) {
+    return res.status(403).type('html').send('Invalid or expired link.');
+  }
+  try {
+    const lead = await leadService.getLead(leadId);
+    res.type('html').send(consultationService.buildPreConsultFormHtml(lead));
+  } catch (err) {
+    console.error('[Consult] GET failed:', err.message);
+    res.status(500).type('html').send(buildErrorHtml(err.message));
+  }
+});
+
+// POST /consult/:leadId — save pre-consult answers
+router.post('/consult/:leadId', express.urlencoded({ extended: true }), async (req, res) => {
+  const { leadId } = req.params;
+  if (!await leadTokenService.validateToken(leadId, req.query.t)) {
+    return res.status(403).type('html').send('Invalid token');
+  }
+  try {
+    await consultationService.savePreConsultData(leadId, req.body);
+    res.redirect(`/consult/${leadId}/thanks`);
+  } catch (err) {
+    console.error('[Consult] POST failed:', err.message);
+    res.status(500).type('html').send(buildErrorHtml(err.message));
+  }
+});
+
+router.get('/consult/:leadId/thanks', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Thank You</title>
+  <style>body{font-family:-apple-system,sans-serif;background:${BRAND.lightBg};padding:48px;text-align:center;color:${BRAND.textOnLight};}
+  .box{background:#fff;padding:48px;border-radius:12px;max-width:500px;margin:0 auto;box-shadow:0 4px 12px rgba(0,0,0,0.08);}</style></head>
+  <body><div class="box"><h1 style="color:${BRAND.primary}">Thank you.</h1><p>We have your information. See you on the call!</p></div></body></html>`);
+});
 
 module.exports = router;
