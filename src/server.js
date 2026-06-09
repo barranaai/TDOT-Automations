@@ -47,6 +47,10 @@ app.use('/admin',           adminLoginRouter);       // TDOT-branded login + aut
 
 app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
 
+// Phase 2 routes — all in one router (lead capture, booking, consult, retainer, webhooks)
+const phase2Router = require('./routes/phase2');
+app.use('/', phase2Router);
+
 app.get('/', (_req, res) => res.json({ status: 'ok' }));
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
