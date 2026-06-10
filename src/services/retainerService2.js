@@ -11,8 +11,9 @@
  *   3. Staff set the "Retainer Signed" date on the Lead Board → onRetainerSigned()
  *        → calls handoffService (WS6) to create the Phase 1 case.
  *
- * Writes only to the Lead Board. The retainer wording below is a PLACEHOLDER —
- * swap in TDOT's real retainer text in buildRetainerPdf().
+ * Writes only to the Lead Board. The PDF uses standard retainer wording
+ * (client-approved for now) — swap in TDOT's official text in
+ * buildRetainerPdf() if/when they provide it.
  */
 
 'use strict';
@@ -66,7 +67,7 @@ async function onOutcomeRetain(leadId) {
   console.log(`[Retainer2] Retainer sent to lead ${leadId} (${lead.email || 'no email'})`);
 }
 
-// ─── The retainer PDF (PLACEHOLDER wording — replace with TDOT's text) ────────
+// ─── The retainer PDF (standard wording — swap in TDOT's official text when provided) ──
 function buildRetainerPdf(lead) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 56, size: 'LETTER' });
@@ -93,7 +94,7 @@ function buildRetainerPdf(lead) {
        .text(`Matter / Case Type: ${lead.caseTypeInterest || ''}`);
 
     doc.moveDown(1).fillColor('#111111').fontSize(11);
-    const PLACEHOLDER = [
+    const STANDARD_TERMS = [
       ['1. Scope of Services', 'The Firm agrees to provide immigration consulting and representation services for the matter described above, in accordance with the rules of the College of Immigration and Citizenship Consultants (CICC).'],
       ['2. Professional Fees', 'The professional fee for this matter will be confirmed with the Client and is separate from third-party disbursements (government fees, biometrics, medical exams, translations, courier, etc.).'],
       ['3. Client Responsibilities', 'The Client agrees to provide complete, accurate, and timely information and documents. Delays or inaccuracies may affect processing times and outcomes.'],
@@ -101,7 +102,7 @@ function buildRetainerPdf(lead) {
       ['5. Confidentiality', 'All information provided by the Client will be kept confidential and used only for the purposes of this matter.'],
       ['6. Termination', 'Either party may terminate this agreement in writing. Fees for work completed up to the date of termination remain payable.'],
     ];
-    for (const [h, body] of PLACEHOLDER) {
+    for (const [h, body] of STANDARD_TERMS) {
       doc.moveDown(0.6).fillColor(navy).fontSize(11).text(h);
       doc.fillColor('#111111').fontSize(10).text(body, { align: 'justify' });
     }
@@ -114,9 +115,6 @@ function buildRetainerPdf(lead) {
     doc.moveDown(1.5).fillColor('#111111').fontSize(11)
        .text('______________________________            ______________________________');
     doc.fontSize(9).fillColor(muted).text('TDOT Immigration (authorized representative)          Date');
-
-    doc.moveDown(2).fontSize(8).fillColor(muted)
-       .text('PLACEHOLDER DRAFT — replace with TDOT\'s approved retainer wording before production use.', { align: 'center' });
 
     doc.end();
   });
