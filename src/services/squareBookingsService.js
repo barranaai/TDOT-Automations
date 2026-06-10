@@ -39,6 +39,9 @@ function headers() {
     Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
     'Square-Version': SQUARE_VERSION,
     'Content-Type': 'application/json',
+    // Square's Bookings endpoints reject axios's default Accept ("*/*") with a
+    // 406 — they require an explicit application/json. Must be set on every call.
+    Accept: 'application/json',
   };
 }
 function locationId() { return process.env.SQUARE_LOCATION_ID; }
