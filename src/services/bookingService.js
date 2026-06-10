@@ -12,7 +12,7 @@
  *   confirmSlot(leadId, txnId)          → mark Booked after payment
  *
  * BUSINESS VALUES TO CONFIRM (safe defaults from the Build Brief):
- *   - Consultation fee: env SQUARE_CONSULT_FEE_CENTS (default 17500 = $175 CAD)
+ *   - Consultation fee: env SQUARE_CONSULT_FEE_CENTS (default 20000 = $200 CAD)
  *   - Slot schedule: SLOT_TEMPLATE below (Shafoli's pattern)
  */
 
@@ -26,7 +26,7 @@ const SQUARE_API_BASE = process.env.SQUARE_ENVIRONMENT === 'production'
   ? 'https://connect.squareup.com'
   : 'https://connect.squareupsandbox.com';
 const SQUARE_VERSION = '2025-01-23';
-const CONSULT_FEE_CENTS = parseInt(process.env.SQUARE_CONSULT_FEE_CENTS, 10) || 17500; // $175 CAD
+const CONSULT_FEE_CENTS = parseInt(process.env.SQUARE_CONSULT_FEE_CENTS, 10) || 20000; // $200 CAD
 
 // Weekly availability (times are Toronto local). Empty day = no slots.
 const SLOT_TEMPLATE = {
