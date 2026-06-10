@@ -35,14 +35,22 @@ async function getZoomAccessToken() {
 
 /** Create a Zoom meeting for a slot string "YYYY-MM-DD HH:MM" (Toronto local). */
 async function createZoomMeeting(lead, slotStr, duration = 30) {
-  const [date, time] = String(slotStr).split(' ');
+  // Send the start time as an explicit GMT instant ("...Z"). Sending local
+  // time + a timezone field proved unreliable: Zoom ignored the timezone and
+  // applied the host account's profile timezone (observed: a 14:30 Toronto
+  // slot created as 14:30 Asia/Tashkent = 5:30 AM Toronto). UTC is unambiguous;
+  // the timezone field below is then only used for display in Zoom's portal.
+  const startUtcMs = torontoSlotToUTC(slotStr);
+  if (!Number.isFinite(startUtcMs)) throw new Error(`Invalid slot "${slotStr}" — cannot schedule Zoom meeting`);
+  const startTimeGmt = new Date(startUtcMs).toISOString().replace(/\.\d{3}Z$/, 'Z');
+
   const token = await getZoomAccessToken();
   const res = await axios.post(
     'https://api.zoom.us/v2/users/me/meetings',
     {
       topic: `Consultation: ${lead.fullName || 'Client'}`,
       type: 2,
-      start_time: `${date}T${time}:00`,
+      start_time: startTimeGmt,
       duration,
       timezone: TZ,
       settings: { join_before_host: false, waiting_room: true, auto_recording: ZOOM_RECORDING },

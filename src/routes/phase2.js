@@ -197,9 +197,13 @@ router.post('/webhook/square', express.raw({ type: '*/*' }), async (req, res) =>
   try {
     const raw = req.body.toString();
     const sig = req.headers['x-square-hmacsha256-signature'];
-    const url = `${process.env.RENDER_URL || ''}/webhook/square`;
+    // Square signs (notificationUrl + rawBody) with the EXACT URL configured
+    // on the subscription — normalize trailing slashes so an env-var quirk
+    // (RENDER_URL ending in "/") can't break every signature.
+    const base = String(process.env.RENDER_URL || '').replace(/\/+$/, '');
+    const url = `${base}/webhook/square`;
     if (!bookingService.verifySquareSignature(raw, sig, url)) {
-      console.warn('[Square Webhook] Bad signature — ignoring');
+      console.warn(`[Square Webhook] Bad signature — ignoring (url used: "${url}", sig present: ${!!sig}, secret set: ${!!process.env.SQUARE_WEBHOOK_SECRET})`);
       return;
     }
     await bookingService.handleSquarePaymentWebhook(JSON.parse(raw));
