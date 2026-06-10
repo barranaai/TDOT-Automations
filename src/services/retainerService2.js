@@ -123,8 +123,12 @@ function buildRetainerPdf(lead) {
 // ─── Step 3: staff marked Retainer Signed → hand off + auto-send payment link ──
 //
 // 1. Hand off to Phase 1 (creates the Client Master case as "Signed (Unpaid)").
-// 2. Auto-generate the standard-fee Square retainer payment link and email it.
-//    The client pays on Square; the payment webhook (WS7) then flips Phase 1 on.
+// 2. Auto-generate the Square retainer payment link for THIS client's fee
+//    (the "Retainer Fee (CAD)" column on the lead — fees vary per client) and
+//    email it. The client pays on Square; the payment webhook (WS7) then flips
+//    Phase 1 on. If the fee isn't set yet, staff get a note on the lead, and
+//    the link goes out automatically the moment they fill the fee in (the
+//    Retainer Fee column webhook calls maybeSendRetainerPaymentLink too).
 //
 // Both steps are idempotent — handoff dedups internally, and the payment link is
 // only sent if one hasn't been generated yet (no Square Retainer Order Id).
@@ -144,19 +148,81 @@ async function onRetainerSigned(leadId) {
     console.log(`[Retainer2] Retainer signed for lead ${leadId} — handoffService (WS6) not built yet`);
   }
 
-  // 2. Auto-send the standard retainer payment link (WS7). Idempotent.
+  // 2. Auto-send the payment link (WS7) for this client's fee.
   try {
-    const fresh = await leadService.getLead(leadId);
-    if (fresh && fresh.squareRetainerOrderId) {
-      console.log(`[Retainer2] Retainer payment link already sent for lead ${leadId} — skipping`);
-    } else if (parseInt(process.env.SQUARE_RETAINER_FEE_CENTS, 10) > 0) {
-      await require('./paymentService').sendRetainerPaymentLink(leadId);
-    } else {
-      console.log(`[Retainer2] SQUARE_RETAINER_FEE_CENTS not set — retainer payment link NOT sent for lead ${leadId}`);
-    }
+    await maybeSendRetainerPaymentLink(leadId, { notifyIfMissing: true });
   } catch (err) {
     console.warn(`[Retainer2] Retainer payment link send failed for lead ${leadId} (handoff still done): ${err.message}`);
   }
 }
 
-module.exports = { onOutcomeRetain, buildRetainerPdf, onRetainerSigned };
+/** Parse a Monday "Retainer Fee (CAD)" value (dollars) into cents, or null. */
+function feeToCents(value) {
+  const n = parseFloat(String(value == null ? '' : value).replace(/[$,\s]/g, ''));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100);
+}
+
+const _sendInFlight = new Map(); // leadId → Promise (collapses concurrent webhook calls)
+
+/** Best-effort Monday update on the lead item (staff-facing note). */
+async function postLeadNote(leadId, body) {
+  try {
+    const mondayApi = require('./mondayApi');
+    await mondayApi.query(
+      `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
+      { itemId: String(leadId), body }
+    );
+  } catch (_) { /* note is best-effort */ }
+}
+
+/**
+ * Send the retainer payment link if (and only if) the lead is ready:
+ * retainer signed, no link sent yet, and a per-client Retainer Fee is set.
+ * Called from onRetainerSigned AND from the Retainer Fee column webhook, so
+ * staff can fill the fee in before or after marking signed — either order
+ * works. Concurrent calls (fee + signed set seconds apart) collapse to one
+ * send so the client never gets two payment links.
+ *
+ * opts.notifyIfMissing — post a staff note when the fee is missing. Only the
+ *   signing path sets this (one note per signing); fee-column edits don't, so
+ *   clearing/retyping the fee can't spam notes.
+ * opts.warnIfSent — post a staff note when a fee EDIT lands after the link
+ *   already went out (the edit does NOT change the sent link).
+ */
+async function maybeSendRetainerPaymentLink(leadId, opts = {}) {
+  const key = String(leadId);
+  if (_sendInFlight.has(key)) return _sendInFlight.get(key);
+  const p = _doMaybeSendRetainerPaymentLink(leadId, opts);
+  _sendInFlight.set(key, p);
+  try { return await p; } finally { _sendInFlight.delete(key); }
+}
+
+async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false, warnIfSent = false } = {}) {
+  const lead = await leadService.getLead(leadId);
+  if (!lead) return;
+  if (!lead.retainerSigned) return; // fee set early — wait for signing
+  if (lead.squareRetainerOrderId) {
+    console.log(`[Retainer2] Retainer payment link already sent for lead ${leadId} — skipping`);
+    if (warnIfSent) {
+      await postLeadNote(leadId,
+        'ℹ A retainer payment link was already emailed to this client — changing the Retainer Fee does not update it. ' +
+        'If the amount must change, contact the administrator to reissue the link.');
+    }
+    return;
+  }
+
+  const amountCents = feeToCents(lead.retainerFee);
+  if (!amountCents) {
+    console.log(`[Retainer2] No Retainer Fee set for lead ${leadId} — payment link NOT sent`);
+    if (notifyIfMissing) {
+      await postLeadNote(leadId,
+        '⚠ Retainer signed, but no Retainer Fee is set. Enter the "Retainer Fee (CAD)" on this lead and the Square payment link will be emailed to the client automatically.');
+    }
+    return;
+  }
+
+  await require('./paymentService').sendRetainerPaymentLink(leadId, { amountCents });
+}
+
+module.exports = { onOutcomeRetain, buildRetainerPdf, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents };

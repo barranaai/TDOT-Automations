@@ -17,9 +17,10 @@
  * forwards the event here, so this function only runs for retainer payments.
  *
  * sendRetainerPaymentLink(leadId, {amountCents}) creates the Square checkout
- * and emails the client the link. It is NOT auto-wired yet — the retainer fee
- * is case-specific, so the amount and the moment the link is sent are business
- * decisions pending sign-off. Until then call it explicitly with an amount.
+ * and emails the client the link. Auto-wired: retainerService2 calls it with
+ * the per-client "Retainer Fee (CAD)" from the Lead Board once the retainer
+ * is signed and the fee is set. The amount is always explicit — there is no
+ * default, so a missing fee can never silently charge the wrong amount.
  */
 
 'use strict';
@@ -54,15 +55,18 @@ function extractCompletedPayment(event) {
  * Retainer payment received → record on the Lead Board and flip the Client
  * Master Payment Status to "Paid" (the Phase 1 onboarding trigger). Idempotent:
  * a redelivered webhook for an already-paid lead is a no-op.
+ * opts.fallbackLeadId — lead to credit when the order-id lookup misses (the
+ * caller recovered it from the Square payment note).
  */
-async function onSquareRetainerPaymentReceived(event) {
+async function onSquareRetainerPaymentReceived(event, { fallbackLeadId } = {}) {
   const payment = extractCompletedPayment(event);
   if (!payment) return;
   const orderId = payment.order_id;
   const txnId   = payment.id;
   if (!orderId) { console.warn(`[Payment] Retainer payment ${txnId} has no order_id`); return; }
 
-  const lead = await leadService.findByColumnValue('squareRetainerOrderId', orderId);
+  const lead = await leadService.findByColumnValue('squareRetainerOrderId', orderId)
+            || (fallbackLeadId ? await leadService.getLead(fallbackLeadId) : null);
   if (!lead) { console.warn(`[Payment] Retainer order ${orderId} (txn ${txnId}) matched no lead`); return; }
 
   if (lead.retainerPaid) {
@@ -99,13 +103,13 @@ async function onSquareRetainerPaymentReceived(event) {
  * Create a Square retainer checkout and email the client the link.
  * @param {string} leadId
  * @param {object} opts
- * @param {number} opts.amountCents  retainer fee in cents CAD (case-specific —
- *        defaults to env SQUARE_RETAINER_FEE_CENTS; throws if neither is set).
+ * @param {number} opts.amountCents  retainer fee in cents CAD (required —
+ *        per-client, from the Lead Board's "Retainer Fee (CAD)" column).
  */
 async function sendRetainerPaymentLink(leadId, { amountCents } = {}) {
   const bookingService = require('./bookingService');
-  const amount = amountCents || parseInt(process.env.SQUARE_RETAINER_FEE_CENTS, 10) || 0;
-  if (!amount) throw new Error('Retainer fee amount required (pass amountCents or set SQUARE_RETAINER_FEE_CENTS)');
+  const amount = Number.isFinite(amountCents) ? Math.round(amountCents) : 0;
+  if (amount <= 0) throw new Error('Retainer fee amount required (pass a positive amountCents)');
 
   const lead = await leadService.getLead(leadId);
   if (!lead) throw new Error(`Lead ${leadId} not found`);

@@ -331,8 +331,25 @@ router.post('/webhook/lead', express.json(), async (req, res) => {
         console.log(`[Lead Webhook] Outcome '${outcome}' for lead ${event.pulseId} — no Phase 2 v1 action`);
       }
     } else if (event.columnId === C.retainerSigned) {
-      retainerService2.onRetainerSigned(String(event.pulseId)).catch((e) =>
-        console.error('[Lead Webhook] onRetainerSigned:', e.message));
+      // Monday also fires this event when the date is CLEARED (value null/empty).
+      // Acting on a clear would re-set the date and re-run the signed flow —
+      // staff could never un-sign a lead. Only act when a real date is present.
+      if (!event.value || !event.value.date) {
+        console.log(`[Lead Webhook] Retainer Signed cleared for lead ${event.pulseId} — no action`);
+      } else {
+        retainerService2.onRetainerSigned(String(event.pulseId)).catch((e) =>
+          console.error('[Lead Webhook] onRetainerSigned:', e.message));
+      }
+    } else if (event.columnId === C.retainerFee) {
+      // Staff filled in the per-client fee — send the payment link if the
+      // retainer is already signed (no-op otherwise; signing will send it).
+      // Skip clears (value null) so erasing/retyping the fee can't misfire.
+      if (!event.value) {
+        console.log(`[Lead Webhook] Retainer Fee cleared for lead ${event.pulseId} — no action`);
+      } else {
+        retainerService2.maybeSendRetainerPaymentLink(String(event.pulseId), { warnIfSent: true }).catch((e) =>
+          console.error('[Lead Webhook] maybeSendRetainerPaymentLink:', e.message));
+      }
     }
   } catch (err) {
     console.error('[Lead Webhook] Error:', err.message);

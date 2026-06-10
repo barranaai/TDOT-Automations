@@ -261,6 +261,17 @@ async function handleSquarePaymentWebhook(event) {
   const retainerLead = await leadService.findByColumnValue('squareRetainerOrderId', orderId);
   if (retainerLead) return require('./paymentService').onSquareRetainerPaymentReceived(event);
 
+  // Fallback: the stored order id can be lost/overwritten (e.g. two links
+  // issued by racing instances during a deploy). Our checkout sets the Square
+  // payment note to the reference id ("lead-<id>" / "retainer-<id>") — route
+  // by it so a real payment is never dropped.
+  const ref = String(payment.note || '').match(/^(lead|retainer)-(\d+)$/);
+  if (ref) {
+    console.warn(`[Square] Order ${orderId} not matched by order id — routing via payment note "${payment.note}"`);
+    if (ref[1] === 'lead') return confirmSlot(ref[2], txnId);
+    return require('./paymentService').onSquareRetainerPaymentReceived(event, { fallbackLeadId: ref[2] });
+  }
+
   console.warn(`[Square] Order ${orderId} (txn ${txnId}) not matched to any lead`);
 }
 
