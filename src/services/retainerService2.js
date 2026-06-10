@@ -122,24 +122,42 @@ function buildRetainerPdf(lead) {
   });
 }
 
-// ─── Step 3: staff marked Retainer Signed → hand off to Phase 1 ──────────────
+// ─── Step 3: staff marked Retainer Signed → hand off + auto-send payment link ──
+//
+// 1. Hand off to Phase 1 (creates the Client Master case as "Signed (Unpaid)").
+// 2. Auto-generate the standard-fee Square retainer payment link and email it.
+//    The client pays on Square; the payment webhook (WS7) then flips Phase 1 on.
+//
+// Both steps are idempotent — handoff dedups internally, and the payment link is
+// only sent if one hasn't been generated yet (no Square Retainer Order Id).
 async function onRetainerSigned(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) return;
-  if (lead.clientMasterItemId) {
-    console.log(`[Retainer2] Lead ${leadId} already handed off — skipping`);
-    return;
-  }
   if (!lead.retainerSigned) {
     await leadService.updateLead(leadId, { retainerSigned: todayISO() });
   }
-  // Hand off to Phase 1 (WS6). Safe no-op until handoffService exists.
+
+  // 1. Hand off to Phase 1 (WS6). Safe no-op until handoffService exists.
   let handoff;
   try { handoff = require('./handoffService'); } catch (_) { handoff = null; }
   if (handoff && handoff.onRetainerSigned) {
     await handoff.onRetainerSigned({ leadId });
   } else {
     console.log(`[Retainer2] Retainer signed for lead ${leadId} — handoffService (WS6) not built yet`);
+  }
+
+  // 2. Auto-send the standard retainer payment link (WS7). Idempotent.
+  try {
+    const fresh = await leadService.getLead(leadId);
+    if (fresh && fresh.squareRetainerOrderId) {
+      console.log(`[Retainer2] Retainer payment link already sent for lead ${leadId} — skipping`);
+    } else if (parseInt(process.env.SQUARE_RETAINER_FEE_CENTS, 10) > 0) {
+      await require('./paymentService').sendRetainerPaymentLink(leadId);
+    } else {
+      console.log(`[Retainer2] SQUARE_RETAINER_FEE_CENTS not set — retainer payment link NOT sent for lead ${leadId}`);
+    }
+  } catch (err) {
+    console.warn(`[Retainer2] Retainer payment link send failed for lead ${leadId} (handoff still done): ${err.message}`);
   }
 }
 
