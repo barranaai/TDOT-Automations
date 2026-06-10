@@ -20,6 +20,7 @@ const leadService      = require('../services/leadService');
 const leadTokenService = require('../services/leadTokenService');
 const bookingService   = require('../services/bookingService');
 const consultationService = require('../services/consultationService');
+const retainerService2 = require('../services/retainerService2');
 const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
 
 // WS1 — health check for Phase 2 wiring
@@ -289,6 +290,53 @@ router.get('/consult/:leadId/thanks', (req, res) => {
   <style>body{font-family:-apple-system,sans-serif;background:${BRAND.lightBg};padding:48px;text-align:center;color:${BRAND.textOnLight};}
   .box{background:#fff;padding:48px;border-radius:12px;max-width:500px;margin:0 auto;box-shadow:0 4px 12px rgba(0,0,0,0.08);}</style></head>
   <body><div class="box"><h1 style="color:${BRAND.primary}">Thank you.</h1><p>We have your information. See you on the call!</p></div></body></html>`);
+});
+
+// ─── WS5 — Retainer ───────────────────────────────────────────────────────────
+
+// GET /retainer/:leadId — stream the filled retainer PDF (token-protected)
+router.get('/retainer/:leadId', async (req, res) => {
+  const { leadId } = req.params;
+  if (!await leadTokenService.validateToken(leadId, req.query.t)) {
+    return res.status(403).type('html').send('Invalid or expired link.');
+  }
+  try {
+    const lead = await leadService.getLead(leadId);
+    const pdf  = await retainerService2.buildRetainerPdf(lead);
+    res.type('application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="TDOT-Retainer.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('[Retainer] GET failed:', err.message);
+    res.status(500).type('html').send(buildErrorHtml(err.message));
+  }
+});
+
+// POST /webhook/lead — Monday webhook on the Lead Board (Outcome + Retainer Signed)
+router.post('/webhook/lead', express.json(), async (req, res) => {
+  if (req.body && req.body.challenge) return res.json({ challenge: req.body.challenge });
+  res.json({ status: 'received' });
+
+  try {
+    const event = req.body.event;
+    if (!event) return;
+    const C = require('../data/newLeadsBoard.json').columns;
+
+    if (event.columnId === C.outcome) {
+      const outcome = event.value?.label?.text || '';
+      if (outcome === 'Retain') {
+        retainerService2.onOutcomeRetain(String(event.pulseId)).catch((e) =>
+          console.error('[Lead Webhook] onOutcomeRetain:', e.message));
+      } else {
+        console.log(`[Lead Webhook] Outcome '${outcome}' for lead ${event.pulseId} — no Phase 2 v1 action`);
+      }
+    } else if (event.columnId === C.retainerSigned) {
+      retainerService2.onRetainerSigned(String(event.pulseId)).catch((e) =>
+        console.error('[Lead Webhook] onRetainerSigned:', e.message));
+    }
+  } catch (err) {
+    console.error('[Lead Webhook] Error:', err.message);
+  }
 });
 
 module.exports = router;
