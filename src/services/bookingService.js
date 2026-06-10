@@ -57,11 +57,59 @@ function ymd(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/** Level 1 is active when the flag is on AND a consult service variation is configured. */
+function squareCalendarEnabled() {
+  return (process.env.USE_SQUARE_CALENDAR === '1' || process.env.USE_SQUARE_CALENDAR === 'true')
+    && !!process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID;
+}
+
 /**
- * Generate open slots for the next `weeksAhead` weeks, filtered to the lead's
- * tier pools, excluding slots already held (unexpired) or booked by any lead.
+ * Generate open consult slots. When the live-calendar flag is on, slots come
+ * straight from the seller's real Square Appointments availability (Level 1);
+ * otherwise from the static SLOT_TEMPLATE. Any Square error falls back to the
+ * template so the booking page never goes dark.
  */
 async function getAvailableSlots(tier, weeksAhead = 4) {
+  if (squareCalendarEnabled()) {
+    try {
+      return await getSquareAvailableSlots(weeksAhead);
+    } catch (err) {
+      console.warn(`[Booking] Square availability failed — falling back to static template: ${err.message}`);
+    }
+  }
+  return getStaticAvailableSlots(tier, weeksAhead);
+}
+
+/**
+ * Level 1: pull real open times from Square for the configured consult service.
+ * Square already excludes conflicts on the real calendar; we additionally
+ * subtract OUR own in-flight holds/bookings so two leads can't grab the same
+ * time during the pay window (which Level 1 doesn't yet write back to Square).
+ */
+async function getSquareAvailableSlots(weeksAhead = 4) {
+  const squareBookings = require('./squareBookingsService');
+  const startAt = new Date(Date.now() + 25 * 3600 * 1000);                 // Square requires ≥24h
+  const maxDays = Math.min(weeksAhead * 7, 31);                            // Square max window is 32 days
+  const endAt = new Date(Date.now() + maxDays * 24 * 3600 * 1000);
+
+  const slots = await squareBookings.searchAvailability({
+    serviceVariationId: process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID,
+    teamMemberId: process.env.SQUARE_CONSULT_TEAM_MEMBER_ID || undefined,  // optional; service is staff-scoped
+    startAtIso: startAt.toISOString(),
+    endAtIso: endAt.toISOString(),
+    pool: 'consult',
+  });
+
+  const taken = await getTakenSlots();
+  return slots.filter((s) => !taken.has(`${s.date} ${s.time}`));
+}
+
+/**
+ * Static fallback: open slots from SLOT_TEMPLATE for the next `weeksAhead`
+ * weeks, filtered to the lead's tier pools, excluding slots already held
+ * (unexpired) or booked by any lead.
+ */
+async function getStaticAvailableSlots(tier, weeksAhead = 4) {
   const pools = TIER_TO_POOLS[tier] || ['newClient'];
   const taken = await getTakenSlots();
 
@@ -238,7 +286,8 @@ async function confirmSlot(leadId, txnId) {
 }
 
 module.exports = {
-  getAvailableSlots, holdSlot, releaseExpiredSlots, createCheckout,
+  getAvailableSlots, getSquareAvailableSlots, getStaticAvailableSlots, squareCalendarEnabled,
+  holdSlot, releaseExpiredSlots, createCheckout,
   handleSquarePaymentWebhook, confirmSlot, verifySquareSignature,
   CONSULT_FEE_CENTS,
 };
