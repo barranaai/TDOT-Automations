@@ -34,7 +34,8 @@
     "leadToken": "text_mm44pche",
     "aiScore": "numeric_mm44j3f7",
     "situationDescription": "long_text_mm459n4z",
-    "howHeard": "text_mm452c2r"
+    "howHeard": "text_mm452c2r",
+    "confirmedCaseType": "dropdown_mm46xv2y"
   },
   "createdAt": "2026-06-08T18:00:45.756Z"
 }

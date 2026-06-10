@@ -22,7 +22,7 @@ const COLS = boardCfg.columns; // camelCase key → Monday column ID
 // Per-column write format. (Status = { label }, Dropdown = { labels: [] }, etc.)
 const COL_TYPE = {
   fullName: 'text', email: 'email', phone: 'phone', country: 'text',
-  preferredContact: 'dropdown', sourceChannel: 'dropdown', caseTypeInterest: 'dropdown',
+  preferredContact: 'dropdown', sourceChannel: 'dropdown', caseTypeInterest: 'dropdown', confirmedCaseType: 'dropdown',
   utmSource: 'text', utmMedium: 'text', utmCampaign: 'text',
   situationDescription: 'long_text', howHeard: 'text',
   tier: 'status', aiScore: 'numbers', aiTalkingPoints: 'long_text', aiComplianceFlags: 'long_text',
