@@ -118,6 +118,22 @@ async function sendRetainerPaymentLink(leadId, { amountCents } = {}) {
     leadId, amount, description: 'TDOT Immigration — Retainer Fee', type: 'retainer',
   });
 
+  // Staff-visible backup of the link on the lead BEFORE the email attempt —
+  // a spammed/failed email must never leave the link existing only in Square.
+  try {
+    const dollars = (amount / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+    await mondayApi.query(
+      `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
+      { itemId: String(leadId),
+        body: `💳 <b>Retainer payment link generated</b> (${esc(dollars)})<br>` +
+              `<a href="${esc(url)}">${esc(url)}</a><br>` +
+              `Emailed to ${esc(lead.email || '(no email on lead)')} automatically. ` +
+              `If the client didn't receive it, this link can be re-shared — it stays valid until paid.` }
+    );
+  } catch (err) {
+    console.warn(`[Payment] Payment-link backup note failed for ${leadId}: ${err.message}`);
+  }
+
   if (lead.email) {
     const dollars = (amount / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
     const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
