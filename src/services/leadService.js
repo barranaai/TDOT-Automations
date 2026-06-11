@@ -46,6 +46,7 @@ const COL_TYPE = {
   priority: 'status', priorityReasons: 'long_text', aiTierOpinion: 'text', aiDisagrees: 'status',
   bookingInvite: 'status', // "Send" (staff trigger / auto) → system emails the booking link → "Sent"
   preConsultPdf: 'link',   // org-share link to the generated pre-consultation PDF in OneDrive
+  recordingLink: 'link',   // Zoom cloud-recording share link (written by the Zoom webhook)
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));

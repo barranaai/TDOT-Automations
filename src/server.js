@@ -31,7 +31,11 @@ const { templateBoardId, executionBoardId, clientMasterBoardId } = require('../c
 const app = express();
 const PORT = process.env.PORT || 5050;
 
-app.use(express.json());
+// Capture the RAW request bytes alongside JSON parsing: webhook signature
+// verification (Square, Zoom) must HMAC the exact bytes Square/Zoom sent.
+// Route-level express.raw() never runs once this global parser has consumed
+// the body — without this hook, handlers end up hashing "[object Object]".
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(cookieParser());
 
 app.use('/webhook/monday', mondayWebhookRouter);

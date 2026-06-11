@@ -166,7 +166,9 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
 router.post('/webhook/square', express.raw({ type: '*/*' }), async (req, res) => {
   res.status(200).send('OK'); // acknowledge immediately
   try {
-    const raw = req.body.toString();
+    // req.rawBody = exact bytes captured by the global JSON parser (server.js);
+    // req.body is only a Buffer here when that parser skipped (non-JSON CT).
+    const raw = (req.rawBody || req.body).toString();
     const sig = req.headers['x-square-hmacsha256-signature'];
     // Square signs (notificationUrl + rawBody) with the EXACT URL configured
     // on the subscription — normalize trailing slashes so an env-var quirk
@@ -306,6 +308,37 @@ router.get('/retainer/:leadId', async (req, res) => {
   } catch (err) {
     console.error('[Retainer] GET failed:', err.message);
     res.status(500).type('html').send(buildErrorHtml(err.message));
+  }
+});
+
+// POST /webhook/zoom — Zoom event subscription (meeting.ended, recording.completed).
+// Raw body: Zoom's x-zm-signature is an HMAC over the exact bytes. The URL-
+// validation handshake must be answered synchronously; real events are 200'd
+// fast and processed async (Zoom retries on slow/non-200 responses).
+router.post('/webhook/zoom', express.raw({ type: '*/*' }), (req, res) => {
+  const zoomWebhookService = require('../services/zoomWebhookService');
+  try {
+    const raw = (req.rawBody || req.body).toString();
+    const check = zoomWebhookService.verifyZoomSignature(
+      raw, req.headers['x-zm-signature'], req.headers['x-zm-request-timestamp']);
+    if (!check.ok) {
+      console.warn(`[Zoom Webhook] Rejected (${check.reason})${check.reason === 'no-secret'
+        ? ' — set ZOOM_WEBHOOK_SECRET_TOKEN on the server, then click Validate in the Zoom app' : ''}`);
+      return res.status(401).json({ error: 'signature verification failed' });
+    }
+    const event = JSON.parse(raw);
+
+    // Zoom's endpoint validation handshake — must answer with the token math.
+    if (event.event === 'endpoint.url_validation') {
+      return res.json(zoomWebhookService.buildValidationResponse(event.payload?.plainToken));
+    }
+
+    res.json({ status: 'received' }); // ack fast, then process
+    zoomWebhookService.handleZoomEvent(event).catch((err) =>
+      console.error('[Zoom Webhook] Handler error:', err.message));
+  } catch (err) {
+    console.error('[Zoom Webhook] Error:', err.message);
+    if (!res.headersSent) res.status(400).json({ error: 'bad request' });
   }
 });
 
