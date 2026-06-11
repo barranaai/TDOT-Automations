@@ -260,4 +260,59 @@ async function ensureCategoryFolderLink({ clientName, caseRef, category }) {
   return createOrgLink(token, id);
 }
 
-module.exports = { createClientFolders, uploadFile, readFile, ensureClientFolder, ensureCategoryFolderLink };
+/**
+ * Create the client folder at LEAD-INTAKE time, before a case reference exists:
+ *   Client Documents/{Full Name} - LEAD-{leadId}
+ *
+ * The returned driveItem id is persisted on the Lead Board (and carried to the
+ * Client Master at handoff) so caseRefService can RENAME this same folder to
+ * "{Client Name} - {Case Ref}" the moment the reference is generated — after
+ * which every existing path-based lookup in this service resolves to it.
+ *
+ * @param {{ fullName: string, leadId: string|number }} params
+ * @returns {Promise<{ id: string, url: string }>} folder id + staff sharing link
+ */
+async function ensureLeadFolder({ fullName, leadId }) {
+  const token    = await getCachedToken();
+  const safeName = `${fullName} - LEAD-${leadId}`.replace(/[*:"<>?/\\|]/g, '').trim();
+
+  await ensureFolder(token, null, ROOT_FOLDER);
+  const { id, webUrl } = await ensureFolder(token, ROOT_FOLDER, safeName);
+  console.log(`[OneDrive] Lead folder ready: ${ROOT_FOLDER}/${safeName}`);
+
+  let url = webUrl;
+  try {
+    url = await createOrgLink(token, id);
+  } catch (err) {
+    console.warn(`[OneDrive] Sharing link failed for lead folder (using webUrl): ${err.message}`);
+  }
+  return { id, url };
+}
+
+/**
+ * Rename a drive item by id. Used to rename the intake-stage lead folder to
+ * its final "{Client Name} - {Case Ref}" name once the reference is assigned.
+ * Throws on failure (callers treat it as non-fatal); a 409 means a folder with
+ * the target name already exists — callers log and continue, since the
+ * path-based flow will then simply use that existing folder.
+ *
+ * @param {string} itemId   driveItem id
+ * @param {string} newName  desired folder name (will be sanitized)
+ * @returns {Promise<{ id: string, name: string, webUrl: string }>}
+ */
+async function renameDriveItem(itemId, newName) {
+  const token    = await getCachedToken();
+  const safeName = String(newName).replace(/[*:"<>?/\\|]/g, '').trim();
+  const res = await axios.patch(
+    `${userBase()}/items/${itemId}`,
+    { name: safeName },
+    { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+  );
+  console.log(`[OneDrive] Renamed item ${itemId} → "${safeName}"`);
+  return { id: res.data.id, name: res.data.name, webUrl: res.data.webUrl };
+}
+
+module.exports = {
+  createClientFolders, uploadFile, readFile, ensureClientFolder, ensureCategoryFolderLink,
+  ensureLeadFolder, renameDriveItem,
+};

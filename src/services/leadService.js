@@ -32,6 +32,7 @@ const COL_TYPE = {
   squareConsultTxnId: 'text', squareConsultOrderId: 'text', zoomMeetingId: 'text',
   adobeSignAgreementId: 'text', squareRetainerTxnId: 'text', squareRetainerOrderId: 'text',
   clientMasterItemId: 'text', leadToken: 'text',
+  oneDriveFolderId: 'text', oneDriveFolderLink: 'link',
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));
@@ -44,6 +45,7 @@ function formatValue(type, value) {
     case 'status':    return { label: String(value) };
     case 'long_text': return { text: String(value) };
     case 'date':      return (value && typeof value === 'object') ? value : { date: String(value) };
+    case 'link':      return (value && typeof value === 'object') ? { url: String(value.url), text: String(value.text || value.url) } : { url: String(value), text: String(value) };
     case 'numbers':   return String(value);
     default:          return String(value); // text
   }
@@ -108,6 +110,23 @@ async function createLead(formData) {
     console.warn(`[Lead] Token assignment failed for ${id}: ${err.message}`);
   }
 
+  // Create the client's OneDrive folder now (named "{Name} - LEAD-{id}") so
+  // intake uploads have a home; it gets renamed to "{Name} - {CaseRef}" when
+  // the case reference is generated. Fire-and-forget: an OneDrive outage must
+  // never block lead creation.
+  try {
+    const oneDrive = require('./oneDriveService');
+    oneDrive.ensureLeadFolder({ fullName: name, leadId: id })
+      .then((folder) => updateLead(id, {
+        oneDriveFolderId:   folder.id,
+        oneDriveFolderLink: { url: folder.url, text: 'Open client folder' },
+      }))
+      .then(() => console.log(`[Lead] OneDrive folder linked for lead ${id}`))
+      .catch((err) => console.warn(`[Lead] OneDrive folder creation failed for ${id} (non-fatal): ${err.message}`));
+  } catch (err) {
+    console.warn(`[Lead] OneDrive service unavailable (non-fatal): ${err.message}`);
+  }
+
   console.log(`[Lead] Created lead ${id} (${name})`);
   return { id, ...formData };
 }
@@ -148,7 +167,7 @@ async function findByColumnValue(key, value) {
 async function getLead(leadId) {
   const data = await mondayApi.query(
     `query($itemId: ID!) {
-       items(ids: [$itemId]) { id name column_values { id text } }
+       items(ids: [$itemId]) { id name column_values { id text value } }
      }`,
     { itemId: String(leadId) }
   );
@@ -158,8 +177,21 @@ async function getLead(leadId) {
   const lead = { id: item.id, name: item.name, fullName: item.name };
   for (const cv of item.column_values) {
     const key = ID_TO_KEY[cv.id];
-    if (key) lead[key] = cv.text || '';
+    if (!key) continue;
+    if (COL_TYPE[key] === 'link') {
+      // Link columns: .text is "display text - url" mashed together — read the
+      // bare URL from the JSON value instead.
+      let url = '';
+      try { url = JSON.parse(cv.value || '{}').url || ''; } catch (_) { /* leave empty */ }
+      lead[key] = url;
+    } else {
+      lead[key] = cv.text || '';
+    }
   }
+  // Column may be empty on staff-created rows — fall back to the item name,
+  // but never to the "Unnamed Lead" placeholder (handoff should fail loudly
+  // for those rather than create a junk-named case + folder).
+  if (!lead.fullName && item.name !== 'Unnamed Lead') lead.fullName = item.name;
   return lead;
 }
 

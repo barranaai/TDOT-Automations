@@ -28,13 +28,15 @@
 
 const mondayApi   = require('./mondayApi');
 const leadService = require('./leadService');
-const { clientMasterBoardId } = require('../../config/monday');
+const { clientMasterBoardId, cmColumns } = require('../../config/monday');
 
 const CM = {
   clientEmail:   'text_mm0xw6bp',
   caseType:      'dropdown_mm0xd1qn', // setting this (separately) triggers caseRefService
   paymentStatus: 'color_mm0x9fnn',    // titled "Payment Status" on the board
   caseStage:     'color_mm0x8faa',
+  oneDriveFolderId:   cmColumns.oneDriveFolderId,
+  oneDriveFolderLink: cmColumns.oneDriveFolderLink,
 };
 
 // The 3 high-level lead-form values that map unambiguously to a canonical
@@ -101,23 +103,44 @@ async function _doHandoff(leadId) {
   if (existing) {
     console.log(`[Handoff] Reusing existing Client Master ${existing} for lead ${leadId} (matched by email)`);
     await leadService.updateLead(leadId, { clientMasterItemId: existing, conversionStatus: 'Retained — Awaiting Payment' });
+    // Carry the intake OneDrive folder onto the reused case too (best-effort),
+    // so the rename hook can find it when the case ref is assigned.
+    if (lead.oneDriveFolderId) {
+      const reuseCols = { [CM.oneDriveFolderId]: lead.oneDriveFolderId };
+      if (lead.oneDriveFolderLink) reuseCols[CM.oneDriveFolderLink] = { url: lead.oneDriveFolderLink, text: 'Open client folder' };
+      await mondayApi.query(
+        `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+           change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+         }`,
+        { boardId: String(clientMasterBoardId), itemId: String(existing), cols: JSON.stringify(reuseCols) }
+      ).catch((err) => console.warn(`[Handoff] Folder carry to reused CM ${existing} failed: ${err.message}`));
+    }
     return existing;
   }
 
   const groupId = await getHandoffGroupId();
 
   // Create WITHOUT Case Type (Case Type is set separately below so the webhook fires).
+  const createCols = {
+    [CM.clientEmail]:   lead.email,
+    [CM.paymentStatus]: { label: 'Signed (Unpaid)' },
+    [CM.caseStage]:     { label: 'Pre-Onboarding' },
+  };
+  // Carry the intake-stage OneDrive folder across (caseRefService renames it
+  // to "{name} - {caseRef}" when the reference is generated).
+  if (lead.oneDriveFolderId) {
+    createCols[CM.oneDriveFolderId] = lead.oneDriveFolderId;
+    if (lead.oneDriveFolderLink) {
+      createCols[CM.oneDriveFolderLink] = { url: lead.oneDriveFolderLink, text: 'Open client folder' };
+    }
+  }
   const result = await mondayApi.query(
     `mutation($boardId: ID!, $groupId: String!, $name: String!, $cols: JSON!) {
        create_item(board_id: $boardId, group_id: $groupId, item_name: $name, column_values: $cols, create_labels_if_missing: true) { id }
      }`,
     {
       boardId: String(clientMasterBoardId), groupId, name: lead.fullName,
-      cols: JSON.stringify({
-        [CM.clientEmail]:   lead.email,
-        [CM.paymentStatus]: { label: 'Signed (Unpaid)' },
-        [CM.caseStage]:     { label: 'Pre-Onboarding' },
-      }),
+      cols: JSON.stringify(createCols),
     }
   );
   const newId = result?.create_item?.id;

@@ -8,6 +8,9 @@ const CASE_REF_COL      = 'text_mm142s49';
 const CASE_TYPE_COL     = 'dropdown_mm0xd1qn';
 const SUB_TYPE_HINT_COL = 'text_mm21gw44';
 const PORTAL_LINK_COL   = (cmColumns && cmColumns.portalLink) || 'link_mm2vta5';
+const ONEDRIVE_ID_COL   = (cmColumns && cmColumns.oneDriveFolderId) || 'text_mm47y540';
+const CASE_STAGE_COL        = 'color_mm0x8faa';
+const CHECKLIST_APPLIED_COL = 'color_mm0xs7kp';
 
 const CASE_TYPE_ABBR = {
   'AAIP':                                                          'AAIP',
@@ -207,6 +210,98 @@ async function onCaseTypeSet({ itemId, caseType }) {
   writePortalLinkForItem({ itemId, caseRef }).catch(err =>
     console.warn(`[CaseRef] Could not write portal link for ${caseRef}: ${err.message}`)
   );
+
+  // Fire-and-forget, but SEQUENCED: first rename the intake-stage OneDrive
+  // folder ("{name} - LEAD-{id}" → "{name} - {caseRef}"), THEN resume any
+  // stuck onboarding — so a resumed checklist setup resolves to the renamed
+  // folder instead of racing it into a duplicate.
+  renameClientFolderForItem({ itemId, caseRef })
+    .catch(err => console.warn(`[CaseRef] OneDrive folder rename skipped for ${caseRef}: ${err.message}`))
+    .then(() => resumeOnboardingIfStuck({ itemId, caseRef }))
+    .catch(err => console.warn(`[CaseRef] Stuck-onboarding check failed for ${caseRef}: ${err.message}`));
+}
+
+/**
+ * Rename the client's intake-stage OneDrive folder to its final name.
+ * The folder id was stored on the Client Master at handoff (Phase 2 leads).
+ * No-op for clients without one (legacy/manually created cases) — Phase 1
+ * then creates the folder path-based at Document Collection Started, as ever.
+ */
+async function renameClientFolderForItem({ itemId, caseRef }) {
+  const data = await mondayApi.query(
+    `query($id: ID!) { items(ids: [$id]) { name column_values(ids: ["${ONEDRIVE_ID_COL}"]) { text } } }`,
+    { id: String(itemId) }
+  );
+  const item = data.items?.[0];
+  const folderId = (item?.column_values?.[0]?.text || '').trim();
+  if (!folderId) return;
+
+  const oneDrive = require('./oneDriveService');
+  try {
+    await oneDrive.renameDriveItem(folderId, `${item.name} - ${caseRef}`);
+    console.log(`[CaseRef] OneDrive folder renamed for ${caseRef}`);
+  } catch (err) {
+    // If the rename fails (OneDrive down, or a folder with the target name
+    // already exists), the path-based flow will create/use a folder under the
+    // NEW name — anything uploaded before this point stays in the old
+    // "{name} - LEAD-…" folder. Tell staff so files get merged, not lost.
+    console.warn(`[CaseRef] OneDrive folder rename FAILED for ${caseRef}: ${err.message}`);
+    await mondayApi.query(
+      `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
+      { itemId: String(itemId),
+        body: `⚠ Could not rename this client's OneDrive intake folder to "${item.name} - ${caseRef}". ` +
+              `Documents uploaded before today may still be in a folder named "${item.name} - LEAD-…" under Client Documents — please merge them manually.` }
+    ).catch(() => {});
+  }
+}
+
+/**
+ * Un-stick onboarding for cases paid BEFORE their Case Type was set.
+ * In that order of events, retainerService moves Case Stage to
+ * "Document Collection Started", but the stage webhook's checklist/intake-email
+ * work bails out for lack of a case ref — and setting the Case Type later does
+ * not re-fire the stage webhook. So when the ref is finally assigned, this
+ * checks for that exact state and resumes what was skipped (mirroring the
+ * Document Collection Started handler in mondayWebhook.js).
+ */
+const _resumeInFlight = new Set(); // itemId — collapses near-simultaneous duplicate webhook deliveries
+
+async function resumeOnboardingIfStuck({ itemId, caseRef }) {
+  const key = String(itemId);
+  if (_resumeInFlight.has(key)) return;
+  _resumeInFlight.add(key);
+  try {
+    const data = await mondayApi.query(
+      `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_STAGE_COL}", "${CHECKLIST_APPLIED_COL}"]) { id text } } }`,
+      { id: String(itemId) }
+    );
+    const cv = {};
+    (data.items?.[0]?.column_values || []).forEach(c => { cv[c.id] = (c.text || '').trim(); });
+    if (cv[CASE_STAGE_COL] !== 'Document Collection Started') return;
+    // Require the EXPLICIT 'No' that retainerService writes on first payment.
+    // An empty/legacy value means a manually-managed case that never went
+    // through the payment flow — resuming would cold-email a real client.
+    if ((cv[CHECKLIST_APPLIED_COL] || '').toLowerCase() !== 'no') return;
+
+    // Residual micro-race (documented): if payment lands in the seconds
+    // between the case-ref write and this read, the stage webhook handles
+    // onboarding and this duplicates the intake email once. The window is a
+    // single Monday query wide and requires payment + case-type-set in the
+    // same instant; checklist seeding itself stays deduped by its own guard
+    // and per-row unique keys.
+    console.log(`[CaseRef] ${caseRef} was Paid before its Case Type was set — resuming onboarding (intake email + checklist)`);
+    const emailService     = require('./emailService');     // lazy: avoid require cycles
+    const checklistService = require('./checklistService');
+
+    emailService.sendIntakeEmail(itemId).catch(err =>
+      console.error(`[CaseRef] Resume: intake email failed for ${caseRef}:`, err.message)
+    );
+    await checklistService.onDocumentCollectionStarted({ itemId, boardId: clientMasterBoardId })
+      .then(() => console.log(`[CaseRef] Resume: checklist setup complete for ${caseRef}`))
+      .catch(err => console.error(`[CaseRef] Resume: checklist setup failed for ${caseRef}:`, err.message));
+  } finally {
+    _resumeInFlight.delete(key);
+  }
 }
 
 /**
