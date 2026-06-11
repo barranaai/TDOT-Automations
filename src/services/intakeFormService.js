@@ -400,6 +400,9 @@ function buildIntakeFormHtml() {
   .cond.show{display:block}
   button{background:${BRAND.primary};color:#fff;padding:15px 28px;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;margin-top:22px;width:100%}
   button:hover{background:${BRAND.primaryHover}}
+  button:disabled{background:${BRAND.primaryHover};opacity:.75;cursor:not-allowed}
+  .spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;vertical-align:-2px;margin-right:8px;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
   .filehint{font-size:12.5px;color:${BRAND.mutedOnLight}}
 </style></head><body><div class="container">
   <div class="header">${TDOT_LOGO_LIGHT_HTML}
@@ -557,7 +560,7 @@ function buildIntakeFormHtml() {
       <label class="check"><input type="checkbox" name="consentStorage" required> I consent to TDOT Immigration storing this information for intake, follow-up, and service assessment purposes. *</label>
     </div>
 
-    <button type="submit">Submit my information</button>
+    <button type="submit" id="submitBtn">Submit my information</button>
   </form>
 </div>
 <script>
@@ -624,6 +627,20 @@ function buildIntakeFormHtml() {
   // G1 → referral name
   var hh = document.getElementsByName('howHeard')[0];
   hh.addEventListener('change', function(){ show('c-referral', hh.value === 'Referral'); });
+
+  // Submit feedback: the browser fires the form's submit event only AFTER
+  // native validation passes, so disabling here can never trap an invalid
+  // form. pageshow re-enables it when the user comes back (e.g. via the
+  // "go back" link on the server-side error page, restored from bfcache).
+  var form = document.querySelector('form');
+  var btn = document.getElementById('submitBtn');
+  form.addEventListener('submit', function(){
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span>Submitting — please wait…';
+  });
+  window.addEventListener('pageshow', function(){
+    if (btn.disabled) { btn.disabled = false; btn.innerHTML = 'Submit my information'; }
+  });
 
   // Hidden/optional radios must never block submit ("invalid form control is
   // not focusable"): F-block radios are optional, and restorationPeriod is
