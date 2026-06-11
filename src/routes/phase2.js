@@ -24,7 +24,12 @@ const retainerService2 = require('../services/retainerService2');
 const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
 
 // WS1 — health check for Phase 2 wiring
-router.get('/phase2/health', (req, res) => res.json({ status: 'phase2 ok' }));
+// rev = deployed commit (Render sets RENDER_GIT_COMMIT) — lets us verify
+// which build is actually serving instead of guessing at deploy timing.
+router.get('/phase2/health', (req, res) => res.json({
+  status: 'phase2 ok',
+  rev: String(process.env.RENDER_GIT_COMMIT || 'local').slice(0, 7),
+}));
 
 // ─── WS2 — Lead capture (V2 intake form, TDOT brief sections A–G) ────────────
 
