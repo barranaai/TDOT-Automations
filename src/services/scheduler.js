@@ -124,6 +124,14 @@ function startScheduler() {
     require('./consultationService').sendPreConsultReminders().catch((err) =>
       console.error('[Scheduler] Phase 2 pre-consult chase failed:', err.message)));
   console.log('[Scheduler] Phase 2 jobs registered — 24h / 1h / pre-consult reminders');
+
+  // ── Phase 2 — payment reconciler: safety net under the Square webhook ──
+  // Recovers COMPLETED payments the webhook missed (signature misconfig,
+  // outage, lost delivery). Idempotent — harmless alongside healthy webhooks.
+  cron.schedule('*/5 * * * *', () =>
+    require('./paymentReconciler').reconcilePayments().catch((err) =>
+      console.error('[Scheduler] Phase 2 payment reconciler failed:', err.message)));
+  console.log('[Scheduler] Phase 2 job registered — payment reconciler every 5 min');
 }
 
 module.exports = { startScheduler };
