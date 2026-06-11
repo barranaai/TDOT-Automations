@@ -59,7 +59,11 @@
     "itaDeadline": "date_mm47brz0",
     "referredBy": "text_mm47dtvq",
     "existingFileType": "text_mm47kwzx",
-    "consentsAt": "text_mm47weke"
+    "consentsAt": "text_mm47weke",
+    "priority": "color_mm47xjaz",
+    "priorityReasons": "long_text_mm47qydq",
+    "aiTierOpinion": "text_mm47kbn4",
+    "aiDisagrees": "color_mm47jfqq"
   },
   "createdAt": "2026-06-08T18:00:45.756Z"
 }

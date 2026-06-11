@@ -136,10 +136,15 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
     const lead = await leadService.getLead(leadId);
     await bookingService.holdSlot(leadId, slotDate, slotTime);
 
-    const fee = (lead.tier === 'T0') ? 0 : bookingService.CONSULT_FEE_CENTS;
+    // Everyone pays the consult fee — per the intake brief, even Critical (T0)
+    // leads are "recommend paid consultation" (T0 only widens the SLOT pools).
+    // The rules engine sets T0 from public form answers, so a free-T0 branch
+    // would let anyone mint a free consult by ticking "removal order".
+    // Escape hatch: setting SQUARE_CONSULT_FEE_CENTS=0 makes consults free for
+    // everyone (deliberate config, not reachable from the form).
+    const fee = bookingService.CONSULT_FEE_CENTS;
     if (fee === 0) {
-      // Free (emergency) — confirm immediately, no payment.
-      await bookingService.confirmSlot(leadId, 'free-t0');
+      await bookingService.confirmSlot(leadId, 'free-config');
       return res.type('html').send(buildBookingDoneHtml(lead, slotDate, slotTime));
     }
 

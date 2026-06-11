@@ -233,6 +233,15 @@ async function processIntakeSubmission(f, files = {}) {
     console.error(`[Intake] V2 column write failed for ${leadId} (lead kept): ${err.message}`);
   }
 
+  // 2b. RULES decide the priority/tier (deterministic, per the TDOT brief);
+  //     Critical leads fire an internal alert. The AI below is opinion only.
+  let rulesResult = null;
+  try {
+    rulesResult = await require('./leadPriorityService').applyPriority(leadId, { ...v2Fields, fullName, email: f.email, phone: f.phone, urgentDeadline: f.urgentDeadline });
+  } catch (err) {
+    console.error(`[Intake] Priority evaluation failed for ${leadId}: ${err.message}`);
+  }
+
   // 3. Upload letters + the full JSON archive to the intake OneDrive folder.
   //    Path-addressed PUTs auto-create the folder, so this never races the
   //    fire-and-forget ensureLeadFolder in createLead.
@@ -275,8 +284,10 @@ async function processIntakeSubmission(f, files = {}) {
 
   // 5. AI second opinion — skip for existing clients (they are not sales leads).
   if (!isExistingClient) {
-    leadService.qualifyLead(leadId, { ...lead, ...v2Fields, serviceRequired: f.serviceRequired }).catch((err) =>
-      console.error(`[Intake] Qualification failed for ${leadId}:`, err.message));
+    leadService.qualifyLead(leadId, {
+      ...lead, ...v2Fields, serviceRequired: f.serviceRequired,
+      rulesPriority: rulesResult ? rulesResult.priority : '',
+    }).catch((err) => console.error(`[Intake] Qualification failed for ${leadId}:`, err.message));
   }
 
   return { ok: true, leadId, html: buildThanksHtml(f, isExistingClient) };

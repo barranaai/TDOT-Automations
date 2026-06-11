@@ -26,7 +26,10 @@ const SQUARE_API_BASE = process.env.SQUARE_ENVIRONMENT === 'production'
   ? 'https://connect.squareup.com'
   : 'https://connect.squareupsandbox.com';
 const SQUARE_VERSION = '2025-01-23';
-const CONSULT_FEE_CENTS = parseInt(process.env.SQUARE_CONSULT_FEE_CENTS, 10) || 20000; // $200 CAD
+// $200 CAD default. An EXPLICIT 0 is honored (free consults for everyone —
+// deliberate config escape hatch); unset/invalid falls back to the default.
+const _feeEnv = parseInt(process.env.SQUARE_CONSULT_FEE_CENTS, 10);
+const CONSULT_FEE_CENTS = (Number.isFinite(_feeEnv) && _feeEnv >= 0) ? _feeEnv : 20000;
 
 // Weekly availability (times are Toronto local). Empty day = no slots.
 const SLOT_TEMPLATE = {

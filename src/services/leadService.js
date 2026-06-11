@@ -42,6 +42,8 @@ const COL_TYPE = {
   recentRefusal: 'status', refusalType: 'dropdown', refusalDate: 'date',
   crsScore: 'numbers', itaDeadline: 'date',
   referredBy: 'text', existingFileType: 'text', consentsAt: 'text',
+  // V2 priority engine (rules own tier/priority; AI is second opinion)
+  priority: 'status', priorityReasons: 'long_text', aiTierOpinion: 'text', aiDisagrees: 'status',
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));
@@ -280,15 +282,42 @@ Source: ${lead.sourceChannel || 'Website'}`
   const text = response.content?.[0]?.text || '';
   const result = parseJsonLoose(text);
 
-  await updateLead(leadId, {
-    tier:              result.tier,
+  // The AI is a SECOND OPINION: the deterministic rules engine
+  // (leadPriorityService) owns the Tier/Priority columns. The AI writes its
+  // own view to "AI Tier Opinion" and we flag when it is MORE alarmed than
+  // the rules (or thinks the lead is no fit at all) so staff take a look.
+  const update = {
+    aiTierOpinion:     result.tier,
     aiScore:           result.score,
     aiTalkingPoints:   Array.isArray(result.talkingPoints) ? result.talkingPoints.join('\n') : (result.talkingPoints || ''),
     aiComplianceFlags: Array.isArray(result.complianceFlags) ? result.complianceFlags.join('\n') : (result.complianceFlags || ''),
     conversionStatus:  'Qualified',
-  });
+  };
+  let disagrees = false;
+  const rulesPriority = lead.rulesPriority || lead.priority || '';
+  if (rulesPriority) {
+    const { aiDisagreement } = require('./leadPriorityService');
+    disagrees = aiDisagreement(rulesPriority, result.tier);
+    update.aiDisagrees = disagrees ? 'Yes' : 'No';
+  }
+  // Legacy fallback: if no rules priority exists (lead created outside the V2
+  // intake flow), the AI tier remains the only signal — keep writing it.
+  if (!rulesPriority) update.tier = result.tier;
 
-  console.log(`[Lead] Qualified ${leadId} as Tier ${result.tier} (score ${result.score})`);
+  await updateLead(leadId, update);
+
+  if (disagrees) {
+    try {
+      await mondayApi.query(
+        `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
+        { itemId: String(leadId),
+          body: `🤖 AI second opinion DISAGREES with the rules engine: rules say "${rulesPriority}", AI suggests "${result.tier}". ` +
+                `The AI may have picked something up from the free-text situation — please review before actioning.` }
+      );
+    } catch (_) { /* note is best-effort */ }
+  }
+
+  console.log(`[Lead] AI opinion for ${leadId}: ${result.tier} (score ${result.score})${rulesPriority ? ` · rules=${rulesPriority} · disagrees=${disagrees}` : ' · legacy tier write'}`);
   return result;
 }
 
