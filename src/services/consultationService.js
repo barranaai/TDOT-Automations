@@ -315,9 +315,21 @@ function buildDossierSections(lead, a, f, fBlock) {
 
   if (fBlock) {
     add = sec(`Service-Specific Answers (intake, ${fBlock})`);
+    const F_LABELS = {
+      hasProfile: 'Has a valid Express Entry profile', crsScore: 'CRS score', hasIta: 'Has received an ITA',
+      itaDeadline: 'ITA deadline', program: 'Program or draw', hasNomination: 'Has NOI/nomination',
+      province: 'Province', employerSupport: 'Applying with employer support', permitType: 'Work permit held',
+      prSubmitted: 'PR submitted / AOR received', employerDocs: 'Has employer documents', intake: 'Target intake',
+      admission: 'Admission received', need: 'What they need', deadline: 'Deadline', purpose: 'Purpose',
+      priorRefusal: 'Had a refusal before', whoSponsors: 'Who is sponsoring whom', sponsorStatus: 'Sponsor status',
+      applicantLocation: 'Applicant location', concerns: 'Refusal/marriage-history concerns',
+      prDate: 'Became PR on', role: 'Employer or employee', jobTitle: 'Job title',
+      refusalType: 'What was refused', refusalDate: 'Refusal date',
+    };
+    const pretty = (k) => F_LABELS[k] || (k.charAt(0).toUpperCase() + k.slice(1).replace(/([A-Z])/g, ' $1').toLowerCase());
     for (const [key, val] of Object.entries(a)) {
       if (key.startsWith(fBlock.toLowerCase() + '_') && String(val || '').trim()) {
-        add(key.replace(/^f\d+_/, ''), val);
+        add(pretty(key.replace(/^f\d+_/, '')), val);
       }
     }
   }
@@ -338,36 +350,73 @@ function buildDossierSections(lead, a, f, fBlock) {
   return sections.filter((s) => s.rows.length);
 }
 
-/** Branded full-dossier PDF: titled sections, Q&A rows, clean page breaks. */
+/**
+ * Branded full-dossier PDF styled like the FORM itself: section header bars,
+ * each question as a label with the answer rendered inside a bordered field
+ * box (like a filled-in input) — easy to scan, clean page breaks.
+ */
 function buildPreConsultPdf(lead, sections) {
   const PDFDocument = require('pdfkit');
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 56, size: 'LETTER' });
+    const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
     const chunks = [];
     doc.on('data', (c) => chunks.push(c));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
     const navy = BRAND.darkPanel, red = BRAND.primary, muted = BRAND.mutedOnLight;
-    doc.fillColor(red).fontSize(20).text('TDOT Immigration');
-    doc.fillColor(navy).fontSize(14).text('Client Dossier — Intake & Pre-Consultation');
-    doc.moveDown(0.4).fillColor(muted).fontSize(10)
-       .text(`Lead ${lead.id || ''} · generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`);
-    doc.moveDown(0.8).strokeColor('#DDDDDD').moveTo(56, doc.y).lineTo(556, doc.y).stroke();
+    const X = 50, W = 512;          // content box
+    const PAD = 8;                  // field box padding
+    const BOTTOM = 742;             // page break threshold
 
+    const ensureRoom = (needed) => { if (doc.y + needed > BOTTOM) doc.addPage(); };
+
+    // Document header (mirrors the form's dark header card)
+    doc.roundedRect(X, 50, W, 64, 8).fill(navy);
+    doc.fillColor('#FFFFFF').fontSize(17).text('TDOT Immigration', X + 18, 62);
+    doc.fillColor('#E8E2D8').fontSize(11).text('Client Dossier — Intake & Pre-Consultation Form', X + 18, 84);
+    doc.fillColor(muted).fontSize(8.5)
+       .text(`Lead ${lead.id || ''} · generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`, X, 122, { width: W, align: 'right' });
+    doc.y = 138;
+
+    let sectionNo = 0;
     for (const section of sections) {
-      if (doc.y > 660) doc.addPage();
-      doc.moveDown(1.1).fillColor(red).fontSize(13).text(section.title);
-      doc.moveDown(0.1).strokeColor('#EEEEEE').moveTo(56, doc.y).lineTo(556, doc.y).stroke();
+      sectionNo++;
+      ensureRoom(70); // section bar + at least one field
+
+      // Section header bar (like the form's numbered section titles)
+      doc.moveDown(0.6);
+      const barY = doc.y;
+      doc.roundedRect(X, barY, W, 24, 5).fill('#EFEAE2');
+      doc.fillColor(red).fontSize(11.5).text(`${sectionNo} · ${section.title}`, X + 12, barY + 6, { width: W - 24 });
+      doc.y = barY + 32;
+
       for (const [q, a] of section.rows) {
-        if (doc.y > 700) doc.addPage();
-        doc.moveDown(0.55).fillColor(navy).fontSize(10.5).text(q);
-        doc.moveDown(0.1).fillColor('#111111').fontSize(10).text(a, { align: 'left' });
+        const answer = String(a);
+        doc.fontSize(9.5);
+        const labelH = doc.heightOfString(q, { width: W });
+        doc.fontSize(10);
+        const textH = doc.heightOfString(answer, { width: W - 2 * PAD });
+        const boxH = textH + 2 * PAD;
+        ensureRoom(labelH + boxH + 14);
+
+        // Label (bold navy, like the form labels)
+        doc.fillColor(navy).fontSize(9.5).text(q, X, doc.y, { width: W });
+        doc.y += 3;
+
+        // Field box with the answer inside (like a filled input)
+        const boxY = doc.y;
+        doc.roundedRect(X, boxY, W, boxH, 5).fillAndStroke('#FFFFFF', '#D9D2C7');
+        doc.fillColor('#1A1A1A').fontSize(10).text(answer, X + PAD, boxY + PAD, { width: W - 2 * PAD });
+        doc.y = boxY + boxH + 12;
       }
+      doc.y += 4;
     }
 
-    doc.moveDown(2).fontSize(8.5).fillColor(muted)
-       .text('Prepared automatically from the client\'s intake and pre-consultation submissions.', { align: 'center' });
+    doc.moveDown(1);
+    ensureRoom(20);
+    doc.fontSize(8.5).fillColor(muted)
+       .text('Prepared automatically from the client\'s intake and pre-consultation submissions.', X, doc.y, { width: W, align: 'center' });
     doc.end();
   });
 }
