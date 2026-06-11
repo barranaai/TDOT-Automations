@@ -16,6 +16,7 @@ const CASE_TYPES = [
   { caseType: 'Appeal',                                                         subTypes: [], tbf: true },
   { caseType: 'BCPNP',                                                          subTypes: ['BC PNP+ Company Info'] },
   { caseType: 'BOWP',                                                           subTypes: [] },
+  { caseType: 'CEC',                                                            subTypes: [] }, // CM-board shorthand label (approved canon)
   { caseType: 'Canadian Experience Class (EE after ITA)',                       subTypes: ['CEC Accompanying Spouse & Child', 'CEC Single Applicant'] },
   { caseType: 'Canadian Experience Class (Profile Recreation+ITA+Submission)',  subTypes: ['CEC Accompanying Spouse & Child', 'CEC Single Applicant'] },
   { caseType: 'Canadian Experience Class (Profile+ITA+Submission)',             subTypes: ['CEC Accompanying Spouse & Child', 'CEC Single Applicant'] },
@@ -34,6 +35,7 @@ const CASE_TYPES = [
   { caseType: 'LMIA',                                                           subTypes: [], tbf: true },
   { caseType: 'LMIA Based WP',                                                  subTypes: ['Extension (Inside Canada)', 'Inside Canada', 'Outside Canada'] },
   { caseType: 'LMIA Exempt WP',                                                 subTypes: [] },
+  { caseType: 'MPNP',                                                           subTypes: [] }, // CM-board shorthand label (approved canon)
   { caseType: 'Manitoba PNP',                                                   subTypes: [], tbf: true },
   { caseType: 'Miscellaneous',                                                  subTypes: [] },
   { caseType: 'NB WP Extension',                                                subTypes: [] },

@@ -19,6 +19,7 @@ const CASE_TYPE_ABBR = {
   'Appeal':                                                        'APPL',
   'BCPNP':                                                         'BCPNP',
   'BOWP':                                                          'BOWP',
+  'CEC':                                                           'CEC',
   'Canadian Experience Class (EE after ITA)':                      'CEC-EE',
   'Canadian Experience Class (Profile Recreation+ITA+Submission)': 'CEC-PR',
   'Canadian Experience Class (Profile+ITA+Submission)':            'CEC-PS',
@@ -38,6 +39,7 @@ const CASE_TYPE_ABBR = {
   'LMIA Based WP':                                                 'LBW',
   'LMIA Exempt WP':                                                'LEW',
   'Manitoba PNP':                                                  'MPNP',
+  'MPNP':                                                          'MPNP',
   'Miscellaneous':                                                 'MISC',
   'NB WP Extension':                                               'NBWP',
   'NSNP':                                                          'NSNP',
@@ -336,4 +338,4 @@ async function writePortalLinkForItem({ itemId, caseRef }) {
   console.log(`[CaseRef] Wrote Client Portal link for ${caseRef}`);
 }
 
-module.exports = { onCaseTypeSet, generateCaseRef, writePortalLinkForItem };
+module.exports = { onCaseTypeSet, generateCaseRef, writePortalLinkForItem, CASE_TYPE_ABBR };

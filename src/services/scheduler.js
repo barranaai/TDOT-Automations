@@ -132,6 +132,15 @@ function startScheduler() {
     require('./paymentReconciler').reconcilePayments().catch((err) =>
       console.error('[Scheduler] Phase 2 payment reconciler failed:', err.message)));
   console.log('[Scheduler] Phase 2 job registered — payment reconciler every 5 min');
+
+  // ── Case-type canon guard: the Client Master board's Primary Case Type list
+  // is the approved standard. Daily, sync followers (Lead Board dropdown) and
+  // alert staff about anything needing a human (e.g. a new type with no
+  // case-reference abbreviation). Runs at 06:45, before the daily engine.
+  cron.schedule('45 6 * * *', () =>
+    require('./caseTypeRegistryService').dailyDriftCheck().catch((err) =>
+      console.error('[Scheduler] Case-type drift check failed:', err.message)));
+  console.log('[Scheduler] Job registered — case-type canon drift check daily 06:45');
 }
 
 module.exports = { startScheduler };

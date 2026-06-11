@@ -86,6 +86,28 @@ function resolveCaseType(lead) {
   return LEAD_TO_CANONICAL[(lead.caseTypeInterest || '').trim()] || null;
 }
 
+/**
+ * Resolve AND validate against the live canon — the Client Master board's
+ * Primary Case Type labels are the approved standard, so a value that isn't
+ * on that list (stale dropdown option, renamed type) is never written; the
+ * case defers to staff instead, with the rejected value named in the note.
+ */
+async function resolveValidatedCaseType(lead) {
+  const candidate = resolveCaseType(lead);
+  if (!candidate) return { caseType: null, rejected: null };
+  try {
+    const registry = require('./caseTypeRegistryService');
+    if (await registry.isCanonicalCaseType(candidate)) return { caseType: candidate, rejected: null };
+    console.warn(`[Handoff] "${candidate}" is not an approved Client Master case type — deferring to staff`);
+    return { caseType: null, rejected: candidate };
+  } catch (err) {
+    // Registry unreachable — fall back to optimistic write; the Monday write
+    // itself still rejects unknown labels (create_labels_if_missing is off).
+    console.warn(`[Handoff] Case-type registry unavailable (${err.message}) — proceeding unvalidated`);
+    return { caseType: candidate, rejected: null };
+  }
+}
+
 async function _doHandoff(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) throw new Error(`Lead ${leadId} not found`);
@@ -157,10 +179,10 @@ async function _doHandoff(leadId) {
   await leadService.updateLead(leadId, { clientMasterItemId: newId, conversionStatus: 'Retained — Awaiting Payment' });
 
   // Set the specific Case Type separately → triggers Phase 1 caseRefService.
-  // create_labels_if_missing is OFF on purpose: only a real canonical label is
-  // accepted, so a junk/typo value can't pollute the Client Master dropdown.
-  // If the label isn't recognised, we degrade to the staff-deferred path.
-  const caseType = resolveCaseType(lead);
+  // The value is validated against the LIVE Client Master canon first (the
+  // approved standard); create_labels_if_missing stays OFF as a second wall,
+  // so a junk/typo value can never pollute the Client Master dropdown.
+  const { caseType, rejected } = await resolveValidatedCaseType(lead);
   let caseTypeSet = false;
   if (caseType) {
     try {
@@ -182,6 +204,7 @@ async function _doHandoff(leadId) {
     const interest = lead.confirmedCaseType || lead.caseTypeInterest || '(none)';
     const note = `⚠ Case officer: please set the Primary Case Type to generate the case reference.\n\n` +
       `This client retained via the Phase 2 lead funnel. Their stated interest was: "${interest}".\n` +
+      (rejected ? `The value "${rejected}" on the lead is NOT one of the approved Client Master case types, so it was not applied.\n` : '') +
       `The exact case type wasn't auto-confirmed at handoff, so no reference has been assigned yet. ` +
       `Selecting the Primary Case Type will automatically generate it.`;
     try {
@@ -203,4 +226,4 @@ async function onRetainerSigned({ leadId }) {
   try { return await p; } finally { _inFlight.delete(key); }
 }
 
-module.exports = { onRetainerSigned, resolveCaseType };
+module.exports = { onRetainerSigned, resolveCaseType, resolveValidatedCaseType };
