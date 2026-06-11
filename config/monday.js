@@ -70,5 +70,6 @@ module.exports = {
     portalLink:         'link_mm2vta5',  // 🏠 Client Portal — created 2026-04-24, populated by caseRefService
     oneDriveFolderLink: 'link_mm47dng8', // OneDrive Folder — staff-clickable client folder link (carried from Lead Board at handoff)
     oneDriveFolderId:   'text_mm47y540', // OneDrive Folder Id — driveItem id; lets caseRefService rename the intake folder to "{name} - {caseRef}"
+    reseedChecklist:    'color_mm47h11c', // Re-seed Checklist button: staff set "Run" → additive re-seed → "Done ✓"/"Failed ⚠"
   },
 };

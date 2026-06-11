@@ -168,6 +168,16 @@ router.post('/', async (req, res) => {
       }).catch(() => {});
     }
 
+    // Re-seed Checklist button: staff set "Run" → additive re-seed → Done ✓/Failed ⚠.
+    // Only the exact "Run" label acts — our own result writes and clears are ignored.
+    {
+      const reseedButtonService = require('../services/reseedButtonService');
+      if (columnId === reseedButtonService.RESEED_COL && value?.label?.text === reseedButtonService.LABEL_RUN) {
+        reseedButtonService.onReseedButton(pulseId).catch(err =>
+          console.error('[Reseed] Button handler error:', err.message));
+      }
+    }
+
     // Primary Case Type set → generate Case Reference Number
     if (columnId === CASE_TYPE_COL_ID) {
       const caseType = value?.chosenValues?.[0]?.name || '';
