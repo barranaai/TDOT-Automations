@@ -391,26 +391,46 @@ function buildPreConsultPdf(lead, sections) {
       doc.fillColor(red).fontSize(11.5).text(`${sectionNo} · ${section.title}`, X + 12, barY + 6, { width: W - 24 });
       doc.y = barY + 32;
 
-      for (const [q, a] of section.rows) {
-        const answer = String(a);
+      // Compact layout: short answers pack 2-3 per row; long text gets full width.
+      const cls = ([q, a]) => {
+        if (String(a).length <= 18 && String(q).length <= 30) return 3;  // third-width ok
+        if (String(a).length <= 42 && String(q).length <= 46) return 2;  // half-width ok
+        return 1;                                                        // full width
+      };
+      const rows = section.rows.slice();
+      let i = 0;
+      while (i < rows.length) {
+        let group;
+        if (cls(rows[i]) === 3 && i + 2 < rows.length && cls(rows[i + 1]) === 3 && cls(rows[i + 2]) === 3) {
+          group = rows.slice(i, i + 3);
+        } else if (cls(rows[i]) >= 2 && i + 1 < rows.length && cls(rows[i + 1]) >= 2) {
+          group = rows.slice(i, i + 2);
+        } else {
+          group = [rows[i]];
+        }
+        i += group.length;
+
+        const n = group.length, GAP = 10;
+        const colW = (W - GAP * (n - 1)) / n;
+        // Uniform heights across the row: tallest label + tallest answer win.
         doc.fontSize(9.5);
-        const labelH = doc.heightOfString(q, { width: W });
+        const labelH = Math.max(...group.map(([q]) => doc.heightOfString(q, { width: colW })));
         doc.fontSize(10);
-        const textH = doc.heightOfString(answer, { width: W - 2 * PAD });
+        const textH = Math.max(...group.map(([, a]) => doc.heightOfString(String(a), { width: colW - 2 * PAD })));
         const boxH = textH + 2 * PAD;
-        ensureRoom(labelH + boxH + 14);
+        ensureRoom(labelH + boxH + 13);
 
-        // Label (bold navy, like the form labels)
-        doc.fillColor(navy).fontSize(9.5).text(q, X, doc.y, { width: W });
-        doc.y += 3;
-
-        // Field box with the answer inside (like a filled input)
-        const boxY = doc.y;
-        doc.roundedRect(X, boxY, W, boxH, 5).fillAndStroke('#FFFFFF', '#D9D2C7');
-        doc.fillColor('#1A1A1A').fontSize(10).text(answer, X + PAD, boxY + PAD, { width: W - 2 * PAD });
-        doc.y = boxY + boxH + 12;
+        const rowY = doc.y;
+        group.forEach(([q, a], idx) => {
+          const cx = X + idx * (colW + GAP);
+          doc.fillColor(navy).fontSize(9.5).text(q, cx, rowY, { width: colW });
+          const boxY = rowY + labelH + 3;
+          doc.roundedRect(cx, boxY, colW, boxH, 5).fillAndStroke('#FFFFFF', '#D9D2C7');
+          doc.fillColor('#1A1A1A').fontSize(10).text(String(a), cx + PAD, boxY + PAD, { width: colW - 2 * PAD });
+        });
+        doc.y = rowY + labelH + 3 + boxH + 10;
       }
-      doc.y += 4;
+      doc.y += 2;
     }
 
     doc.moveDown(1);
