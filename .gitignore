@@ -4,3 +4,4 @@ node_modules/
 *.log
 .DS_Store
 render-phase2-env.txt
+.claude/launch.json

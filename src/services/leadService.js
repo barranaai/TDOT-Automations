@@ -33,6 +33,15 @@ const COL_TYPE = {
   adobeSignAgreementId: 'text', squareRetainerTxnId: 'text', squareRetainerOrderId: 'text',
   clientMasterItemId: 'text', leadToken: 'text',
   oneDriveFolderId: 'text', oneDriveFolderLink: 'link',
+  // V2 intake form (TDOT brief sections A–G)
+  relationshipWithTdot: 'status', serviceRequired: 'dropdown', whatDoYouWant: 'dropdown',
+  insideCanada: 'status', residentialAddress: 'long_text', currentStatus: 'dropdown',
+  statusExpiry: 'date', deadlineDate: 'date', deadlineReason: 'dropdown',
+  removalOrder: 'status', enforcementLetter: 'status',
+  restorationPeriod: 'status', restorationDeadline: 'date',
+  recentRefusal: 'status', refusalType: 'dropdown', refusalDate: 'date',
+  crsScore: 'numbers', itaDeadline: 'date',
+  referredBy: 'text', existingFileType: 'text', consentsAt: 'text',
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));
@@ -131,13 +140,19 @@ async function createLead(formData) {
   return { id, ...formData };
 }
 
-/** Update a lead with a {camelCaseKey: value} map of fields. */
+/**
+ * Update a lead with a {camelCaseKey: value} map of fields.
+ * create_labels_if_missing lets status/dropdown labels auto-create on first
+ * use — REQUIRED for the V2 intake columns (created empty). All public-form
+ * values are whitelist-validated in intakeFormService before reaching here,
+ * so the public cannot mint junk labels.
+ */
 async function updateLead(leadId, fields) {
   const cols = buildCols(fields);
   if (!Object.keys(cols).length) return;
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
-       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols, create_labels_if_missing: true) { id }
      }`,
     { boardId: String(leadBoardId), itemId: String(leadId), cols: JSON.stringify(cols) }
   );
@@ -237,12 +252,23 @@ async function qualifyLead(leadId, data) {
   }
   const lead = data || (await getLead(leadId)) || {};
 
+  const opt = (label, v) => (String(v || '').trim() ? `\n${label}: ${v}` : '');
   const userPrompt = `Lead details:
 Name: ${lead.fullName || ''}
 Country: ${lead.country || ''}
 Case Type Interest: ${lead.caseTypeInterest || ''}
 Situation: ${lead.situationDescription || 'Not provided'}
-Source: ${lead.sourceChannel || 'Website'}`;
+Source: ${lead.sourceChannel || 'Website'}`
+    + opt('Specific service requested', lead.serviceRequired)
+    + opt('Inside Canada', lead.insideCanada)
+    + opt('Current status', lead.currentStatus)
+    + opt('Status expiry', lead.statusExpiry)
+    + opt('Urgent deadline', lead.deadlineDate ? `${lead.deadlineDate} (${lead.deadlineReason || 'reason not given'})` : '')
+    + opt('Removal/enforcement order', lead.removalOrder)
+    + opt('CBSA/IRCC letter received', lead.enforcementLetter)
+    + opt('In restoration period', lead.restorationPeriod)
+    + opt('Recent refusal', lead.recentRefusal === 'Yes' ? `${lead.refusalType || ''} ${lead.refusalDate || ''}`.trim() : '')
+    + opt('CRS score', lead.crsScore);
 
   const response = await getAnthropic().messages.create({
     model: ANTHROPIC_MODEL,
