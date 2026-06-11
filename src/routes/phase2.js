@@ -204,18 +204,40 @@ function buildBookingPageHtml(lead, slots, token) {
     .day{margin-bottom:20px;} .day-label{font-weight:700;margin-bottom:8px;}
     .slots{display:flex;flex-wrap:wrap;gap:8px;}
     .slot{background:#fff;border:1.5px solid ${BRAND.border};border-radius:8px;padding:10px 16px;font-size:15px;cursor:pointer;}
-    .slot:hover{border-color:${BRAND.primary};background:${BRAND.primary};color:#fff;}
+    .slot:hover:not(:disabled){border-color:${BRAND.primary};background:${BRAND.primary};color:#fff;}
+    .slot:disabled{opacity:.45;cursor:not-allowed;}
+    .slot.picked{border-color:${BRAND.primary};background:${BRAND.primary};color:#fff;opacity:1;}
     .empty{color:${BRAND.mutedOnLight};padding:24px 0;text-align:center;}
+    #redirecting{display:none;margin-top:18px;padding:14px;border-radius:8px;background:${BRAND.darkPanel};color:${BRAND.textOnDark};text-align:center;font-size:15px;}
+    .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;vertical-align:-2px;margin-right:8px;animation:spin .8s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg)}}
   </style></head><body><div class="container">
     <div class="header">${TDOT_LOGO_LIGHT_HTML}<h1 style="margin:12px 0 4px;">Book Your Consultation</h1>
     <p style="margin:0;opacity:0.85;font-size:14px;">Choose a time that works for you.</p></div>
     <form class="card" method="POST" action="/book/${lead.id}?t=${encodeURIComponent(token)}" onsubmit="return prep(event)">
       <input type="hidden" name="slotDate" id="slotDate"><input type="hidden" name="slotTime" id="slotTime">
       ${dateBlocks || '<div class="empty">No open times in the next few weeks — we will reach out to schedule.</div>'}
+      <div id="redirecting"><span class="spin"></span>Reserving your time — taking you to secure payment…</div>
     </form>
     <script>
+      function lockSlots(picked){
+        var btns = document.querySelectorAll('.slot');
+        for (var i = 0; i < btns.length; i++) { btns[i].disabled = true; }
+        if (picked) picked.classList.add('picked');
+        document.getElementById('redirecting').style.display = 'block';
+      }
       function prep(e){const b=e.submitter;if(!b||!b.value){e.preventDefault();return false;}
-        const [d,t]=b.value.split('|');document.getElementById('slotDate').value=d;document.getElementById('slotTime').value=t;return true;}
+        if (document.getElementById('slotDate').value) { e.preventDefault(); return false; } // double-submit guard
+        const [d,t]=b.value.split('|');document.getElementById('slotDate').value=d;document.getElementById('slotTime').value=t;
+        lockSlots(b);
+        return true;}
+      // Coming back (e.g. cancelled on the payment page) must re-enable everything.
+      window.addEventListener('pageshow', function(){
+        var btns = document.querySelectorAll('.slot');
+        for (var i = 0; i < btns.length; i++) { btns[i].disabled = false; btns[i].classList.remove('picked'); }
+        document.getElementById('slotDate').value = ''; document.getElementById('slotTime').value = '';
+        document.getElementById('redirecting').style.display = 'none';
+      });
     </script>
   </div></body></html>`;
 }
