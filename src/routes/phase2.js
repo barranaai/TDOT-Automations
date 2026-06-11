@@ -34,7 +34,7 @@ const intakeUpload = multer({
   storage: multer.memoryStorage(),
   // Tight limits — this is a public unauthenticated endpoint. fields/fieldSize/
   // parts caps prevent memory-exhaustion via flooded multipart bodies.
-  limits: { fileSize: 15 * 1024 * 1024, files: 2, fields: 120, fieldSize: 64 * 1024, parts: 140 },
+  limits: { fileSize: 15 * 1024 * 1024, files: 4, fields: 120, fieldSize: 64 * 1024, parts: 140 },
   fileFilter: (req, file, cb) => {
     const ok = /\.(pdf|jpe?g|png)$/i.test(file.originalname || '');
     if (!ok) { // dropped files are surfaced to staff in the digest, not lost silently
@@ -68,7 +68,10 @@ router.get('/lead/new', (req, res) => {
 });
 
 // POST /lead/new — validate, create the lead, archive to OneDrive, AI second opinion
-const intakeUploadFields = intakeUpload.fields([{ name: 'enforcementLetterFile', maxCount: 1 }, { name: 'refusalLetterFile', maxCount: 1 }]);
+const intakeUploadFields = intakeUpload.fields([
+  { name: 'enforcementLetterFile', maxCount: 1 }, { name: 'refusalLetterFile', maxCount: 1 },
+  { name: 'f9LetterFile', maxCount: 1 }, { name: 'f10LetterFile', maxCount: 1 },
+]);
 router.post('/lead/new', intakeRateLimit,
   (req, res, next) => intakeUploadFields(req, res, (err) => {
     if (!err) return next();

@@ -135,6 +135,7 @@ function validateIntake(f) {
   inEnum('whatDoYouWant', INTENTS, 'What you would like to do', true);
   inEnum('currentStatus', STATUSES, 'Current immigration status', true);
   isDate('statusExpiry', 'Status expiry date', ['Visitor', 'Student', 'Worker'].includes(f.currentStatus));
+  if (f.insideCanada === 'Yes') inEnum('maintainedStatus', YN, 'Maintained or implied status question', true);
   inEnum('urgentDeadline', YN, 'Urgent deadline question', true);
   isDate('deadlineDate', 'Deadline date', f.urgentDeadline === 'Yes');
   inEnum('deadlineReason', DEADLINE_REASONS, 'Deadline reason', f.urgentDeadline === 'Yes');
@@ -146,9 +147,10 @@ function validateIntake(f) {
   inEnum('refusalType', REFUSAL_TYPES, 'What was refused', f.recentRefusal === 'Yes');
   isDate('refusalDate', 'Refusal date', f.recentRefusal === 'Yes');
   inEnum('howHeard', HOW_HEARD, 'How you heard about TDOT', true);
-  for (const k of ['f1_itaDeadline', 'f2_deadline', 'f4_deadline', 'f7_prDate', 'f9_deadline', 'f10_deadline']) {
+  for (const k of ['f1_itaDeadline', 'f2_deadline', 'f4_deadline', 'f7_prDate', 'f9_deadline', 'f9_refusalDate', 'f10_deadline']) {
     isDate(k, 'Date field', false);
   }
+  inEnum('f9_refusalType', REFUSAL_TYPES, 'Refused application type', false);
   if (String(f.f1_crsScore || '').trim()) {
     const n = Number(f.f1_crsScore);
     if (!Number.isInteger(n) || n < 0 || n > 1200) errors.push('CRS score must be a whole number between 0 and 1200.');
@@ -205,8 +207,10 @@ async function processIntakeSubmission(f, files = {}) {
     removalOrder:         f.removalOrder,
     enforcementLetter:    f.enforcementLetter,
     recentRefusal:        f.recentRefusal,
-    refusalType:          f.recentRefusal === 'Yes' ? f.refusalType : '',
-    refusalDate:          f.recentRefusal === 'Yes' ? f.refusalDate : '',
+    // E-section refusal answers win; a Refusal-review client reviewing an OLD
+    // refusal (E9=No) still gets their F9 answers onto the triage columns.
+    refusalType:          f.recentRefusal === 'Yes' ? f.refusalType : (activeBlock === 'F9' ? f.f9_refusalType || '' : ''),
+    refusalDate:          f.recentRefusal === 'Yes' ? f.refusalDate : (activeBlock === 'F9' ? f.f9_refusalDate || '' : ''),
     restorationPeriod:    f.insideCanada === 'Yes' ? f.restorationPeriod : '',
     restorationDeadline:  (f.insideCanada === 'Yes' && f.restorationPeriod === 'Yes') ? f.restorationDeadline : '',
     referredBy:           f.howHeard === 'Referral' ? f.referredBy : '',
@@ -255,7 +259,8 @@ async function processIntakeSubmission(f, files = {}) {
     // Stored content-type derived from the validated extension — never trust
     // the client-supplied mimetype.
     const MIME = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
-    for (const [field, base] of [['enforcementLetterFile', 'enforcement-letter'], ['refusalLetterFile', 'refusal-letter']]) {
+    for (const [field, base] of [['enforcementLetterFile', 'enforcement-letter'], ['refusalLetterFile', 'refusal-letter'],
+                                 ['f9LetterFile', 'refusal-review-letter'], ['f10LetterFile', 'reference-letter']]) {
       const file = files[field] && files[field][0];
       if (!file) continue;
       const ext = (file.originalname.match(/\.(pdf|jpe?g|png)$/i) || ['', 'pdf'])[1].toLowerCase();
@@ -317,6 +322,8 @@ function buildDigest(f, uploaded = [], rejectedUploads = []) {
   add('Status', f.currentStatus);
   add('Status expiry', f.statusExpiry);
   add('Maintained/implied status', f.maintainedStatus);
+  add('Recent extension/status application', f.recentExtension);
+  add('Extension details', f.recentExtensionDetails);
   add('Urgent deadline', f.urgentDeadline === 'Yes' ? `${f.deadlineDate} (${f.deadlineReason})` : f.urgentDeadline);
   add('Removal/enforcement order', f.removalOrder);
   add('CBSA/IRCC letter', f.enforcementLetter);
@@ -399,7 +406,8 @@ function buildIntakeFormHtml() {
     <h1 style="margin:12px 0 4px;font-size:22px">Tell Us About Your Case</h1>
     <p style="margin:0;opacity:.85;font-size:14px">Complete this short intake so we can guide you to the right next step.</p>
   </div>
-  <div class="intro">This form is for preliminary information collection only. Completing it does not confirm eligibility, does not create a client relationship, and does not guarantee any immigration outcome. Our team may recommend a paid consultation or request additional documents before providing case-specific advice.</div>
+  <div class="intro">Thank you for contacting TDOT Immigration Services Inc. To help our team understand your inquiry and guide you to the right next step, please complete this intake form with accurate information.<br><br>
+  This form is for preliminary information collection only. Completing this form does not confirm eligibility, does not create a client relationship, and does not guarantee any immigration outcome. Our team may recommend a paid consultation or request additional documents before providing case-specific advice.</div>
   <form class="card" method="POST" action="/lead/new" enctype="multipart/form-data">
 
     <div class="section"><h2>1 · Basic Information</h2>
@@ -442,8 +450,8 @@ function buildIntakeFormHtml() {
       <label>Have you applied for an extension or change of status recently? <span class="opt">(optional)</span></label>
       <div><label class="radio"><input type="radio" name="recentExtension" value="Yes"> Yes</label>
       <label class="radio"><input type="radio" name="recentExtension" value="No"> No</label></div>
-      <div class="cond" id="c-extension"><label>Application type and submission date <span class="opt">(e.g. visitor record submitted May 1, 2026)</span></label>
-      <input type="text" name="recentExtensionDetails"></div>
+      <div class="cond" id="c-extension"><label>Application type and submission date <span class="opt">(e.g. visitor record submitted on May 1, 2026)</span></label>
+      <textarea name="recentExtensionDetails" rows="2"></textarea></div>
     </div>
 
     <div class="section"><h2>5 · Urgency Screening</h2>
@@ -458,9 +466,9 @@ function buildIntakeFormHtml() {
       <label>Have you received any letter, notice, call, or communication from CBSA, IRCC, or law enforcement asking you to attend, leave, or respond? *</label>
       <div>${yesNo('enforcementLetter', ['Not sure'])}</div>
       <div class="cond" id="c-letter">
-        <label>Please upload the letter <span class="opt">(PDF, JPG, PNG)</span> and/or describe it</label>
+        <label>Please upload the letter <span class="opt">(PDF, JPG, PNG)</span> and/or provide details</label>
         <input type="file" name="enforcementLetterFile" accept=".pdf,.jpg,.jpeg,.png">
-        <input type="text" name="enforcementDetails" placeholder="Brief details" style="margin-top:8px">
+        <textarea name="enforcementDetails" rows="3" placeholder="Details — what the letter says, who it is from, any dates" style="margin-top:8px"></textarea>
       </div>
       <div class="cond" id="c-restoration">
         <label>Are you currently within a restoration period? *</label><div>${yesNo('restorationPeriod')}</div>
@@ -505,6 +513,7 @@ function buildIntakeFormHtml() {
       </div>
       <div class="fb" id="F5">
         <label>What is the purpose of travel or stay extension?</label><textarea name="f5_purpose" rows="2"></textarea>
+        <label>Have you had a refusal before? <span class="opt">(any refusal, even years ago)</span></label><div>${yesNo('f5_priorRefusal')}</div>
       </div>
       <div class="fb" id="F6">
         <label>Who is sponsoring whom?</label><input type="text" name="f6_whoSponsors" placeholder="e.g. I am sponsoring my spouse">
@@ -523,11 +532,18 @@ function buildIntakeFormHtml() {
         <label>What is the job title?</label><input type="text" name="f8_jobTitle">
       </div>
       <div class="fb" id="F9">
+        <label>What application was refused?</label>
+        <select name="f9_refusalType"><option value="">Choose...</option>${REFUSAL_TYPES.map((v) => opt(v)).join('')}</select>
+        <label>Date of the refusal <span class="opt">(even if it was a long time ago)</span></label><input type="date" name="f9_refusalDate">
+        <label>Upload the refusal letter if available <span class="opt">(PDF, JPG, PNG)</span></label>
+        <input type="file" name="f9LetterFile" accept=".pdf,.jpg,.jpeg,.png">
         <label>Any upcoming deadline to reapply or respond?</label><input type="date" name="f9_deadline">
       </div>
       <div class="fb" id="F10">
         <label>What document or update do you need?</label><input type="text" name="f10_need">
         <label>Is there a deadline?</label><input type="date" name="f10_deadline">
+        <label>Upload the relevant letter or screenshot <span class="opt">(PDF, JPG, PNG)</span></label>
+        <input type="file" name="f10LetterFile" accept=".pdf,.jpg,.jpeg,.png">
       </div>
     </div>
 
@@ -551,16 +567,13 @@ function buildIntakeFormHtml() {
   function show(id, on){ var el = document.getElementById(id); if (el) el.classList[on ? 'add' : 'remove']('show'); }
   function onRadio(name, fn){ radios(name).forEach(function(r){ r.addEventListener('change', fn); }); }
 
-  // D3 (maintained status) depends on BOTH "inside Canada" and the status —
-  // recomputed from either trigger so answer order never hides it wrongly.
-  function updMaintained(){ var stEl = document.getElementById('currentStatus');
-    show('c-maintained', radioVal('insideCanada') === 'Yes' && ['Visitor','Student','Worker'].indexOf(stEl.value) >= 0); }
-
-  // A5 → A6 (+ E7 restoration block only when inside Canada)
-  function updCanada(){ var v = radioVal('insideCanada'); show('c-outside', v === 'No'); show('c-restoration', v === 'Yes');
+  // A5 → A6 (+ D3 maintained status and E7 restoration: per the brief, both
+  // are asked of EVERYONE inside Canada and required there)
+  function updCanada(){ var v = radioVal('insideCanada'); show('c-outside', v === 'No');
+    show('c-maintained', v === 'Yes'); show('c-restoration', v === 'Yes');
     document.getElementsByName('currentCountry')[0].required = (v === 'No');
     radios('restorationPeriod').forEach(function(r){ r.required = (v === 'Yes'); });
-    updMaintained(); }
+    radios('maintainedStatus').forEach(function(r){ r.required = (v === 'Yes'); }); }
   onRadio('insideCanada', updCanada);
 
   // B1 → B2
@@ -577,13 +590,12 @@ function buildIntakeFormHtml() {
   });
   Array.prototype.slice.call(document.querySelectorAll('.fb')).forEach(function(b){ b.style.display = 'none'; });
 
-  // D1 → D2 (expiry required for Visitor/Student/Worker), D3 via updMaintained
+  // D1 → D2 (expiry required for Visitor/Student/Worker)
   var st = document.getElementById('currentStatus');
   st.addEventListener('change', function(){
     var needs = ['Visitor','Student','Worker'].indexOf(st.value) >= 0;
     show('c-expiry', needs);
     document.getElementsByName('statusExpiry')[0].required = needs;
-    updMaintained();
   });
 
   // D4 → details
@@ -616,7 +628,7 @@ function buildIntakeFormHtml() {
   // Hidden/optional radios must never block submit ("invalid form control is
   // not focusable"): F-block radios are optional, and restorationPeriod is
   // re-required by updCanada only once "inside Canada = Yes" reveals it.
-  ['f1_hasProfile','f1_hasIta','f2_hasNomination','f2_employerSupport','f3_prSubmitted','f3_employerDocs','f4_admission','maintainedStatus','restorationPeriod']
+  ['f1_hasProfile','f1_hasIta','f2_hasNomination','f2_employerSupport','f3_prSubmitted','f3_employerDocs','f4_admission','f5_priorRefusal','maintainedStatus','restorationPeriod']
     .forEach(function(n){ radios(n).forEach(function(r){ r.required = false; }); });
 })();
 </script>
