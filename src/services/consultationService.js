@@ -202,10 +202,14 @@ async function buildPreConsultFormHtml(lead) {
 }
 
 /**
- * Save pre-consult answers: complete Monday update on the lead, status = Yes,
- * and a formatted PDF of every question & answer into the client's OneDrive
- * folder with a staff link in the "Pre-Consult PDF" column. The Monday update
- * is the core operation; PDF/link are best-effort.
+ * Save pre-consult answers:
+ *   1. Complete Monday update on the lead (core op) + status = Yes.
+ *   2. Raw answers archived as pre-consult-submission.json in the client's
+ *      OneDrive Intake folder (next to intake-submission.json).
+ *   3. A FULL-DOSSIER PDF — every intake answer (from the archive + lead
+ *      columns) plus every pre-consult answer, in sections — saved to the
+ *      same folder, staff link in the "Pre-Consult PDF" column.
+ * OneDrive steps are best-effort; a Graph outage never loses the answers.
  */
 async function savePreConsultData(leadId, formData) {
   const lead = await leadService.getLead(leadId);
@@ -214,7 +218,7 @@ async function savePreConsultData(leadId, formData) {
   const fBlock = serviceToFBlock(lead?.serviceRequired || '');
   const qa = buildPreConsultQA(lead || {}, formData, fBlock);
 
-  // 1. Complete, formatted Monday update (the staff-visible record).
+  // 1. Formatted Monday update (the staff-visible record of THIS submission).
   const body = ['📝 <b>Pre-Consultation Form submitted</b><br>']
     .concat(qa.map(([q, a]) => `<b>${e(q)}:</b> ${e(a || '—')}`))
     .join('<br>');
@@ -225,22 +229,31 @@ async function savePreConsultData(leadId, formData) {
   await leadService.updateLead(leadId, { preConsultSubmitted: 'Yes' });
   console.log(`[Consult] Pre-consult saved for lead ${leadId}`);
 
-  // 2. PDF into the client's OneDrive folder + link column (best-effort).
+  // 2+3. OneDrive: raw JSON archive + full-dossier PDF + board link (best-effort).
   try {
-    const pdf = await buildPreConsultPdf(lead || { id: leadId }, qa);
     const oneDrive = require('./oneDriveService');
+    const put = (filename, buffer, mimeType) => oneDrive.uploadFile({
+      clientName: lead?.fullName || 'Client', caseRef: `LEAD-${leadId}`, category: 'Intake', filename, buffer, mimeType,
+    });
+    await put('pre-consult-submission.json',
+      Buffer.from(JSON.stringify({ submittedAt: new Date().toISOString(), leadId, answers: { ...formData } }, null, 2)),
+      'application/json');
+
+    const archive = await loadIntakeArchive({ ...lead, id: leadId }) || {};
+    const sections = buildDossierSections(lead || { id: leadId }, archive, formData, fBlock);
+    const pdf = await buildPreConsultPdf(lead || { id: leadId }, sections);
     const { url } = await oneDrive.uploadFileAndLink({
       clientName: lead?.fullName || 'Client', caseRef: `LEAD-${leadId}`, category: 'Intake',
       filename: 'pre-consultation-summary.pdf', buffer: pdf, mimeType: 'application/pdf',
     });
     await leadService.updateLead(leadId, { preConsultPdf: { url, text: 'Pre-Consult PDF' } });
-    console.log(`[Consult] Pre-consult PDF saved + linked for lead ${leadId}`);
+    console.log(`[Consult] Pre-consult JSON + dossier PDF saved + linked for lead ${leadId}`);
   } catch (err) {
-    console.warn(`[Consult] Pre-consult PDF failed for ${leadId} (answers safe in Monday update): ${err.message}`);
+    console.warn(`[Consult] Pre-consult OneDrive save failed for ${leadId} (answers safe in Monday update): ${err.message}`);
   }
 }
 
-/** Ordered [question, answer] pairs across intake snapshot + pre-consult answers. */
+/** Ordered [question, answer] pairs of the PRE-CONSULT answers (Monday update). */
 function buildPreConsultQA(lead, f, fBlock) {
   const qa = [];
   const add = (q, a) => { if (String(a || '').trim()) qa.push([q, String(a).trim()]); };
@@ -256,8 +269,77 @@ function buildPreConsultQA(lead, f, fBlock) {
   return qa;
 }
 
-/** Branded, properly formatted Q&A PDF (same visual language as the retainer). */
-function buildPreConsultPdf(lead, qa) {
+/**
+ * The COMPLETE dossier: every intake answer (archive-first, lead columns as
+ * fallback) + every pre-consult answer, grouped into titled sections.
+ * @returns {Array<{ title: string, rows: Array<[string, string]> }>}
+ */
+function buildDossierSections(lead, a, f, fBlock) {
+  const sections = [];
+  const sec = (title) => { const s = { title, rows: [] }; sections.push(s); return (q, v) => { if (String(v || '').trim()) s.rows.push([q, String(v).trim()]); }; };
+  const pick = (k) => a[k] || lead[k] || '';
+
+  let add = sec('Client & Contact');
+  add('Full legal name', pick('fullName') || lead.name);
+  add('Email', pick('email'));
+  add('Phone', pick('phone'));
+  add('Residential address', pick('residentialAddress'));
+  add('Inside Canada', pick('insideCanada'));
+  add('Country', pick('insideCanada') === 'Yes' ? 'Canada' : (a.currentCountry || lead.country));
+
+  add = sec('Inquiry (from intake form)');
+  add('Relationship with TDOT', pick('relationshipWithTdot'));
+  add('Existing file type', pick('existingFileType'));
+  add('Service required', pick('serviceRequired') || lead.caseTypeInterest);
+  add('Inquiry / goal', pick('situationDescription'));
+  add('Wants to', pick('whatDoYouWant'));
+  add('How they heard of TDOT', pick('howHeard'));
+  add('Referred by', pick('referredBy'));
+
+  add = sec('Immigration Status (from intake form)');
+  add('Current status', pick('currentStatus'));
+  add('Status expiry', pick('statusExpiry'));
+  add('Maintained/implied status', pick('maintainedStatus'));
+  add('Recent extension/status application', a.recentExtension);
+  add('Extension details', a.recentExtensionDetails);
+
+  add = sec('Urgency Screening (from intake form)');
+  add('Urgent deadline', pick('urgentDeadline') === 'Yes' || lead.deadlineDate
+    ? `${pick('deadlineDate')} (${pick('deadlineReason')})` : pick('urgentDeadline') || 'No');
+  add('Removal/enforcement order', pick('removalOrder'));
+  add('CBSA/IRCC letter', pick('enforcementLetter'));
+  add('Enforcement details', a.enforcementDetails);
+  add('Restoration period', pick('restorationPeriod'));
+  add('Restoration deadline', pick('restorationDeadline'));
+  add('Recent refusal', pick('recentRefusal') === 'Yes' ? `${pick('refusalType')} (${pick('refusalDate')})` : pick('recentRefusal'));
+
+  if (fBlock) {
+    add = sec(`Service-Specific Answers (intake, ${fBlock})`);
+    for (const [key, val] of Object.entries(a)) {
+      if (key.startsWith(fBlock.toLowerCase() + '_') && String(val || '').trim()) {
+        add(key.replace(/^f\d+_/, ''), val);
+      }
+    }
+  }
+
+  add = sec('Pre-Consultation Answers');
+  add('Has anything changed since the intake form?', f.changes);
+  add('Deadline or target date', f.deadline);
+  for (const [name, label] of (PRECONSULT_FQ[fBlock] || [])) add(label, f[name]);
+  add('Progress so far & documents in hand', f.progress);
+  add('Top questions for the consultant', f.questions);
+
+  add = sec('Booking & Triage');
+  add('Consultation slot (Toronto)', lead.bookedSlot);
+  add('Priority (rules engine)', lead.priority);
+  add('Priority reasons', lead.priorityReasons);
+  add('Consents given at', pick('consentsAt') || (a.consents && a.consents.at));
+
+  return sections.filter((s) => s.rows.length);
+}
+
+/** Branded full-dossier PDF: titled sections, Q&A rows, clean page breaks. */
+function buildPreConsultPdf(lead, sections) {
   const PDFDocument = require('pdfkit');
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 56, size: 'LETTER' });
@@ -268,20 +350,24 @@ function buildPreConsultPdf(lead, qa) {
 
     const navy = BRAND.darkPanel, red = BRAND.primary, muted = BRAND.mutedOnLight;
     doc.fillColor(red).fontSize(20).text('TDOT Immigration');
-    doc.fillColor(navy).fontSize(14).text('Pre-Consultation Summary');
+    doc.fillColor(navy).fontSize(14).text('Client Dossier — Intake & Pre-Consultation');
     doc.moveDown(0.4).fillColor(muted).fontSize(10)
-       .text(`Lead ${lead.id || ''} · submitted ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`);
+       .text(`Lead ${lead.id || ''} · generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`);
     doc.moveDown(0.8).strokeColor('#DDDDDD').moveTo(56, doc.y).lineTo(556, doc.y).stroke();
 
-    for (const [q, a] of qa) {
-      doc.moveDown(0.9);
-      if (doc.y > 700) doc.addPage();
-      doc.fillColor(navy).fontSize(11).text(q);
-      doc.moveDown(0.15).fillColor('#111111').fontSize(10.5).text(a, { align: 'left' });
+    for (const section of sections) {
+      if (doc.y > 660) doc.addPage();
+      doc.moveDown(1.1).fillColor(red).fontSize(13).text(section.title);
+      doc.moveDown(0.1).strokeColor('#EEEEEE').moveTo(56, doc.y).lineTo(556, doc.y).stroke();
+      for (const [q, a] of section.rows) {
+        if (doc.y > 700) doc.addPage();
+        doc.moveDown(0.55).fillColor(navy).fontSize(10.5).text(q);
+        doc.moveDown(0.1).fillColor('#111111').fontSize(10).text(a, { align: 'left' });
+      }
     }
 
     doc.moveDown(2).fontSize(8.5).fillColor(muted)
-       .text('Prepared automatically from the client\'s intake and pre-consultation answers.', { align: 'center' });
+       .text('Prepared automatically from the client\'s intake and pre-consultation submissions.', { align: 'center' });
     doc.end();
   });
 }
@@ -383,5 +469,5 @@ module.exports = {
   buildPreConsultFormHtml, savePreConsultData,
   send24hReminders, send1hReminders, sendPreConsultReminders,
   // exported for tests
-  buildPreConsultQA, buildPreConsultPdf,
+  buildPreConsultQA, buildPreConsultPdf, buildDossierSections,
 };
