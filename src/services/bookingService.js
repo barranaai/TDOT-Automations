@@ -299,9 +299,65 @@ async function confirmSlot(leadId, txnId) {
   } catch (_) { /* WS4 not built yet */ }
 }
 
+/**
+ * Email the client their personal booking link. Triggered two ways:
+ *   - staff flip the "Booking Invite" status to "Send" on the Lead Board
+ *   - auto-send right after intake triage for eligible leads
+ * The column is set to "Sent" BEFORE the email goes out, so a redelivered
+ * Monday webhook (same "Send" event) reads "Sent" and skips — no duplicate
+ * emails. Staff can deliberately resend by flipping Sent → Send again.
+ *
+ * @param {string} leadId
+ * @param {{ force?: boolean }} [opts]  force skips the already-Sent guard
+ *        (used by the staff webhook path, where the flip IS the intent).
+ */
+async function sendBookingInvite(leadId, { force = false } = {}) {
+  const lead = await leadService.getLead(leadId);
+  if (!lead) return;
+  if (!lead.email) { console.warn(`[Booking] Invite skipped for ${leadId}: no email`); return; }
+  if (lead.bookingStatus === 'Booked') {
+    console.log(`[Booking] Invite skipped for ${leadId}: already booked`);
+    return;
+  }
+  if (!force && lead.bookingInvite === 'Sent') {
+    console.log(`[Booking] Invite skipped for ${leadId}: already sent`);
+    return;
+  }
+
+  // Mark Sent FIRST (webhook-redelivery dedup), then send.
+  await leadService.updateLead(leadId, { bookingInvite: 'Sent' });
+
+  const leadTokenService = require('./leadTokenService');
+  const token = lead.leadToken || await leadTokenService.ensureToken(leadId);
+  const base = String(process.env.RENDER_URL || 'https://tdot-automations.onrender.com').replace(/\/+$/, '');
+  const url = `${base}/book/${leadId}?t=${encodeURIComponent(token)}`;
+
+  const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
+  const microsoftMail = require('./microsoftMailService');
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const first = esc(String(lead.fullName || 'there').split(' ')[0]);
+  const fee = (CONSULT_FEE_CENTS / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+
+  await microsoftMail.sendEmail({
+    to: lead.email,
+    subject: 'Book your consultation with TDOT Immigration',
+    html: `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
+      <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
+        <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Book your consultation</h1></div>
+      <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
+        <p>Hi ${first},</p>
+        <p>Thank you for reaching out to TDOT Immigration. Our team has reviewed your inquiry — the next step is a consultation where we can give you case-specific advice.</p>
+        <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Choose your consultation time</a></p>
+        <p>You'll see our real-time availability and can pick whatever works for you. ${CONSULT_FEE_CENTS > 0 ? `The consultation fee is <b>${fee}</b>, payable securely online when you book.` : ''}</p>
+        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it. Questions? Just reply to this email.</p>
+      </div></div>`,
+  });
+  console.log(`[Booking] Invite emailed to ${lead.email} for lead ${leadId}`);
+}
+
 module.exports = {
   getAvailableSlots, getSquareAvailableSlots, getStaticAvailableSlots, squareCalendarEnabled,
   holdSlot, releaseExpiredSlots, createCheckout,
-  handleSquarePaymentWebhook, confirmSlot, verifySquareSignature,
+  handleSquarePaymentWebhook, confirmSlot, verifySquareSignature, sendBookingInvite,
   CONSULT_FEE_CENTS,
 };

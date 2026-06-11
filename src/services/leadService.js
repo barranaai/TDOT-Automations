@@ -44,6 +44,7 @@ const COL_TYPE = {
   referredBy: 'text', existingFileType: 'text', consentsAt: 'text',
   // V2 priority engine (rules own tier/priority; AI is second opinion)
   priority: 'status', priorityReasons: 'long_text', aiTierOpinion: 'text', aiDisagrees: 'status',
+  bookingInvite: 'status', // "Send" (staff trigger / auto) → system emails the booking link → "Sent"
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));

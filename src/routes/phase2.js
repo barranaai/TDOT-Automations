@@ -325,6 +325,15 @@ router.post('/webhook/lead', express.json(), async (req, res) => {
         retainerService2.maybeSendRetainerPaymentLink(String(event.pulseId), { warnIfSent: true }).catch((e) =>
           console.error('[Lead Webhook] maybeSendRetainerPaymentLink:', e.message));
       }
+    } else if (event.columnId === C.bookingInvite) {
+      // The board "button": staff flip Booking Invite → "Send" and the client
+      // is emailed their personal booking link (column flips to "Sent").
+      // Only the explicit "Send" label acts — "Sent" (our own write), clears,
+      // and anything else are ignored, so no loops and no misfires.
+      if (event.value?.label?.text === 'Send') {
+        bookingService.sendBookingInvite(String(event.pulseId), { force: true }).catch((e) =>
+          console.error('[Lead Webhook] sendBookingInvite:', e.message));
+      }
     }
   } catch (err) {
     console.error('[Lead Webhook] Error:', err.message);

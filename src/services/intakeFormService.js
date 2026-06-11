@@ -246,6 +246,18 @@ async function processIntakeSubmission(f, files = {}) {
     console.error(`[Intake] Priority evaluation failed for ${leadId}: ${err.message}`);
   }
 
+  // 2c. Auto-send the booking link to leads who asked to book and triaged
+  //     Critical/High/Medium. Low (general info / newsletter) and existing
+  //     clients stay manual — per the brief, those get a standard response;
+  //     staff can always send via the Booking Invite column on the board.
+  const autoInvite = !isExistingClient
+    && rulesResult && ['Critical', 'High', 'Medium'].includes(rulesResult.priority)
+    && f.whatDoYouWant === 'Book consultation';
+  if (autoInvite) {
+    require('./bookingService').sendBookingInvite(leadId).catch((err) =>
+      console.error(`[Intake] Auto booking invite failed for ${leadId}: ${err.message}`));
+  }
+
   // 3. Upload letters + the full JSON archive to the intake OneDrive folder.
   //    Path-addressed PUTs auto-create the folder, so this never races the
   //    fire-and-forget ensureLeadFolder in createLead.
@@ -299,31 +311,48 @@ async function processIntakeSubmission(f, files = {}) {
 }
 
 /**
- * Readable digest for staff, posted as a Monday update. Monday renders update
- * bodies as HTML, and every value here is attacker-controlled (public form) —
- * so EVERYTHING interpolated, including F-block field names, goes through esc().
+ * COMPLETE intake digest for staff, posted as a Monday update — every answer
+ * the client gave, in the form's own section order, so the Updates tab is a
+ * full read of the submission. Monday renders update bodies as HTML, and
+ * every value here is attacker-controlled (public form) — so EVERYTHING
+ * interpolated, including F-block field names, goes through esc().
  */
 function buildDigest(f, uploaded = [], rejectedUploads = []) {
   const lines = [];
-  const add = (label, v) => { if (String(v || '').trim()) lines.push(`${label}: ${esc(v)}`); };
+  const add = (label, v) => { if (String(v || '').trim()) lines.push(`<b>${label}:</b> ${esc(v)}`); };
+  const section = (title) => lines.push(`<br><b><u>${title}</u></b>`);
   const alert = [];
   if (f.removalOrder === 'Yes') alert.push('REMOVAL/ENFORCEMENT ORDER');
   if (f.enforcementLetter === 'Yes') alert.push('CBSA/IRCC LETTER RECEIVED');
-  if (alert.length) lines.push(`🚨 ${alert.join(' · ')} — review urgently\n`);
+  if (alert.length) lines.push(`🚨 <b>${alert.join(' · ')} — review urgently</b><br>`);
 
-  lines.push('— V2 Intake Submission —');
-  add('Relationship', f.relationshipWithTdot);
-  add('Existing file type', f.existingFileType);
-  add('Service', f.serviceRequired);
-  add('Wants to', f.whatDoYouWant);
+  lines.push('<b>— Intake Form Submission (complete) —</b>');
+
+  section('1 · Basic Information');
+  add('Full legal name', f.fullName);
+  add('Email', f.email);
+  add('Phone', f.phone);
+  add('Residential address', f.residentialAddress);
   add('Inside Canada', f.insideCanada);
   add('Country', f.insideCanada === 'Yes' ? 'Canada' : f.currentCountry);
-  add('Address', f.residentialAddress);
+
+  section('2 · Relationship With TDOT');
+  add('Relationship', f.relationshipWithTdot);
+  add('Existing file type', f.existingFileType);
+
+  section('3 · Service Required');
+  add('Service', f.serviceRequired);
+  add('Inquiry / goal', f.situationDescription);
+  add('Wants to', f.whatDoYouWant);
+
+  section('4 · Current Immigration Status');
   add('Status', f.currentStatus);
   add('Status expiry', f.statusExpiry);
   add('Maintained/implied status', f.maintainedStatus);
   add('Recent extension/status application', f.recentExtension);
   add('Extension details', f.recentExtensionDetails);
+
+  section('5 · Urgency Screening');
   add('Urgent deadline', f.urgentDeadline === 'Yes' ? `${f.deadlineDate} (${f.deadlineReason})` : f.urgentDeadline);
   add('Removal/enforcement order', f.removalOrder);
   add('CBSA/IRCC letter', f.enforcementLetter);
@@ -331,18 +360,26 @@ function buildDigest(f, uploaded = [], rejectedUploads = []) {
   add('Restoration period', f.restorationPeriod);
   add('Restoration deadline', f.restorationDeadline);
   add('Recent refusal', f.recentRefusal === 'Yes' ? `${f.refusalType} (${f.refusalDate})` : f.recentRefusal);
-  add('How heard', f.howHeard);
-  add('Referred by', f.referredBy);
+
   const fBlock = serviceToFBlock(f.serviceRequired);
   if (fBlock) {
     const fAnswers = Object.entries(f).filter(([k, v]) => k.startsWith(fBlock.toLowerCase() + '_') && String(v || '').trim())
-      .map(([k, v]) => `  ${esc(k.replace(/^f\d+_/, ''))}: ${esc(v)}`);
-    if (fAnswers.length) lines.push(`${fBlock} answers:\n${fAnswers.join('\n')}`);
+      .map(([k, v]) => `<b>${esc(k.replace(/^f\d+_/, ''))}:</b> ${esc(v)}`);
+    if (fAnswers.length) { section(`6 · Service-Specific (${fBlock})`); lines.push(...fAnswers); }
   }
-  if (uploaded.length) lines.push(`Uploaded to OneDrive/Intake: ${uploaded.map(esc).join(', ')}`);
-  if (rejectedUploads.length) lines.push(`⚠ Upload rejected (type/size not allowed): ${rejectedUploads.map(esc).join(', ')} — ask the client to email the document.`);
-  lines.push('Full submission: intake-submission.json in the client OneDrive folder (link on this item).');
-  return lines.join('\n');
+
+  section('7 · Source & Consent');
+  add('How heard', f.howHeard);
+  add('Referred by', f.referredBy);
+  lines.push('<b>Consents:</b> contact ✓ · accuracy ✓ · disclaimer ✓ · storage ✓ (all required to submit)');
+
+  if (uploaded.length || rejectedUploads.length) {
+    section('Attachments');
+    if (uploaded.length) lines.push(`<b>Uploaded to OneDrive/Intake:</b> ${uploaded.map(esc).join(', ')}`);
+    if (rejectedUploads.length) lines.push(`⚠ <b>Upload rejected</b> (type/size not allowed): ${rejectedUploads.map(esc).join(', ')} — ask the client to email the document.`);
+  }
+  lines.push('<br>Full raw submission: intake-submission.json in the client OneDrive folder (link on this item).');
+  return lines.join('<br>');
 }
 
 // ─── HTML ─────────────────────────────────────────────────────────────────────
