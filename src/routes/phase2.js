@@ -260,7 +260,7 @@ router.get('/consult/:leadId', async (req, res) => {
   }
   try {
     const lead = await leadService.getLead(leadId);
-    res.type('html').send(consultationService.buildPreConsultFormHtml(lead));
+    res.type('html').send(await consultationService.buildPreConsultFormHtml(lead));
   } catch (err) {
     console.error('[Consult] GET failed:', err.message);
     res.status(500).type('html').send(buildErrorHtml(err.message));

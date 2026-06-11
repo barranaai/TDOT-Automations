@@ -312,7 +312,36 @@ async function renameDriveItem(itemId, newName) {
   return { id: res.data.id, name: res.data.name, webUrl: res.data.webUrl };
 }
 
+/**
+ * Upload a file and return an organisation-scoped sharing link to it (plus the
+ * raw webUrl/id). Same path semantics as uploadFile; use this when the link
+ * goes into a Monday column staff will click — bare webUrls in the noreply
+ * drive aren't accessible to other staff accounts, org links are.
+ *
+ * @returns {Promise<{ url: string, webUrl: string, id: string }>}
+ */
+async function uploadFileAndLink({ clientName, caseRef, category, filename, buffer, mimeType }) {
+  const token    = await getCachedToken();
+  const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+  const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim() || 'document';
+  const filePath = `${ROOT_FOLDER}/${safeName}/${category}/${safeFile}`;
+  const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
+
+  const res = await axios.put(`${userBase()}/root:/${encoded}:/content`, buffer, {
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeType || 'application/octet-stream' },
+    maxContentLength: Infinity, maxBodyLength: Infinity,
+  });
+  let url = res.data.webUrl;
+  try {
+    url = await createOrgLink(token, res.data.id);
+  } catch (err) {
+    console.warn(`[OneDrive] Org link failed for ${safeFile} (using webUrl): ${err.message}`);
+  }
+  console.log(`[OneDrive] Uploaded + linked → ${filePath}`);
+  return { url, webUrl: res.data.webUrl, id: res.data.id };
+}
+
 module.exports = {
   createClientFolders, uploadFile, readFile, ensureClientFolder, ensureCategoryFolderLink,
-  ensureLeadFolder, renameDriveItem,
+  ensureLeadFolder, renameDriveItem, uploadFileAndLink,
 };

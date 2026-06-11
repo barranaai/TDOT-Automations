@@ -64,7 +64,8 @@
     "priorityReasons": "long_text_mm47qydq",
     "aiTierOpinion": "text_mm47kbn4",
     "aiDisagrees": "color_mm47jfqq",
-    "bookingInvite": "color_mm47xn2h"
+    "bookingInvite": "color_mm47xn2h",
+    "preConsultPdf": "link_mm47qa34"
   },
   "createdAt": "2026-06-08T18:00:45.756Z"
 }

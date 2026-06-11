@@ -103,55 +103,187 @@ async function sendBookingConfirmation(lead, meeting, slotStr) {
 }
 
 // ─── Pre-consult form ────────────────────────────────────────────────────────
-function buildPreConsultFormHtml(lead) {
+
+// Service-specific deep-dive questions (mirrors the intake brief's F-sets).
+// Prefilled from the intake archive when the client answered them already.
+const PRECONSULT_FQ = {
+  F1:  [['f1_crsScore', 'Your CRS score', 'number'], ['f1_itaDeadline', 'ITA deadline', 'date'], ['f1_program', 'Program or draw that invited you', 'text']],
+  F2:  [['f2_deadline', 'Nomination/NOI deadline', 'date'], ['f2_province', 'Province', 'text']],
+  F3:  [['f3_permitType', 'Work permit you currently hold', 'text'], ['f3_prSubmitted', 'Have you submitted PR / received AOR?', 'text']],
+  F4:  [['f4_intake', 'Intake you are targeting', 'text'], ['f4_deadline', 'School deadline', 'date']],
+  F5:  [['f5_purpose', 'Purpose of travel or stay extension', 'textarea']],
+  F6:  [['f6_whoSponsors', 'Who is sponsoring whom', 'text'], ['f6_concerns', 'Any refusal or marriage-history concerns', 'text']],
+  F7:  [['f7_prDate', 'When you became a permanent resident', 'date']],
+  F8:  [['f8_role', 'Are you the employer or the employee?', 'text'], ['f8_jobTitle', 'Job title', 'text']],
+  F9:  [['f9_refusalDate', 'Date of the refusal', 'date'], ['f9_deadline', 'Deadline to reapply or respond', 'date']],
+  F10: [['f10_need', 'Document or update you need', 'text'], ['f10_deadline', 'Deadline', 'date']],
+};
+
+/** Best-effort load of the full intake archive from the client's OneDrive folder. */
+async function loadIntakeArchive(lead) {
+  try {
+    const oneDrive = require('./oneDriveService');
+    const buf = await oneDrive.readFile({
+      clientName: lead.fullName, caseRef: `LEAD-${lead.id}`, subfolder: 'Intake', filename: 'intake-submission.json',
+    });
+    return buf ? (JSON.parse(buf.toString()).fields || null) : null;
+  } catch (err) {
+    console.warn(`[Consult] Intake archive unavailable for ${lead.id} (form still works): ${err.message}`);
+    return null;
+  }
+}
+
+async function buildPreConsultFormHtml(lead) {
+  const { serviceToFBlock } = require('./intakeFormService');
+  const archive = await loadIntakeArchive(lead) || {};
   const tok = encodeURIComponent(lead.leadToken || '');
+  const e = escapeHtml;
+
+  // "What we already know" — read-only snapshot from the intake.
+  const known = [];
+  const k = (label, v) => { if (String(v || '').trim()) known.push(`<div><b>${label}:</b> ${e(v)}</div>`); };
+  k('Name', lead.fullName); k('Service', lead.serviceRequired || lead.caseTypeInterest);
+  k('Inside Canada', lead.insideCanada); k('Current status', lead.currentStatus);
+  k('Status expiry', lead.statusExpiry);
+  k('Urgent deadline', lead.deadlineDate ? `${lead.deadlineDate} (${lead.deadlineReason || ''})` : '');
+  k('Your inquiry', archive.situationDescription || lead.situationDescription);
+
+  // Service-specific deep-dive, prefilled from the archive.
+  const fBlock = serviceToFBlock(lead.serviceRequired || '');
+  const fq = (PRECONSULT_FQ[fBlock] || []).map(([name, label, type]) => {
+    const val = e(archive[name] || '');
+    if (type === 'textarea') return `<label>${label}</label><textarea name="${name}" rows="3">${val}</textarea>`;
+    return `<label>${label}</label><input type="${type}" name="${name}" value="${val}">`;
+  }).join('');
+
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pre-Consultation — TDOT Immigration</title><style>
     body{background:${BRAND.lightBg};font-family:-apple-system,sans-serif;margin:0;color:${BRAND.textOnLight}}
-    .container{max-width:600px;margin:0 auto;padding:32px 24px}
+    .container{max-width:620px;margin:0 auto;padding:32px 24px}
     .header{background:${BRAND.darkPanel};color:${BRAND.textOnDark};padding:24px;border-radius:12px 12px 0 0;text-align:center}
     .card{background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;box-shadow:0 4px 12px rgba(0,0,0,0.08)}
-    label{display:block;font-weight:600;margin:16px 0 6px}
-    input,select,textarea{width:100%;padding:12px;border:1px solid ${BRAND.border};border-radius:8px;font-size:15px;box-sizing:border-box}
+    .known{background:#fff;border:1px solid ${BRAND.border};border-radius:10px;padding:16px 18px;font-size:14px;line-height:1.7}
+    .known .note{color:${BRAND.mutedOnLight};font-size:12.5px;margin-top:8px}
+    h2{font-size:16px;color:${BRAND.darkPanel};margin:24px 0 4px}
+    label{display:block;font-weight:600;margin:16px 0 6px;font-size:14.5px}
+    input,select,textarea{width:100%;padding:12px;border:1px solid ${BRAND.border};border-radius:8px;font-size:15px;box-sizing:border-box;background:#fff}
     button{background:${BRAND.primary};color:#fff;padding:14px;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;margin-top:24px;width:100%}
+    button:disabled{opacity:.75;cursor:not-allowed}
+    .spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;vertical-align:-2px;margin-right:8px;animation:spin .8s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
   </style></head><body><div class="container">
     <div class="header">${TDOT_LOGO_LIGHT_HTML}<h1 style="margin:12px 0 4px">Before Your Consultation</h1>
-    <p style="margin:0;opacity:.85;font-size:14px">A few details so we can prepare.</p></div>
+    <p style="margin:0;opacity:.85;font-size:14px">A few details so we can make the most of your time.</p></div>
     <form class="card" method="POST" action="/consult/${lead.id}?t=${tok}">
-      <label>Case type</label>
-      <input name="caseType" value="${escapeHtml(lead.caseTypeInterest||'')}">
+      ${known.length ? `<h2 style="margin-top:0">What you've told us</h2><div class="known">${known.join('')}
+        <div class="note">Spot something wrong or outdated? Correct it in the questions below.</div></div>` : ''}
+
+      <h2>Your case details</h2>
+      <label>Has anything changed since you filled in our intake form?</label>
+      <textarea name="changes" rows="3" placeholder="New documents, new deadlines, a decision arrived — or 'nothing changed'"></textarea>
       <label>Do you have a deadline or target date?</label>
-      <input name="deadline" placeholder="e.g. program starts September, or none">
-      <label>Where are you now / current status?</label>
-      <input name="currentStatus" placeholder="e.g. in Canada on a study permit / outside Canada">
+      <input name="deadline" value="${e(lead.deadlineDate ? `${lead.deadlineDate} (${lead.deadlineReason || ''})` : '')}" placeholder="e.g. program starts September, or none">
+      ${fq ? `<h2>About your ${e(lead.serviceRequired || 'case')}</h2>${fq}` : ''}
+
+      <h2>Help us prepare</h2>
       <label>What have you done so far, and which documents do you already have?</label>
-      <textarea name="progress" rows="4"></textarea>
+      <textarea name="progress" rows="4">${e(archive.recentExtensionDetails || '')}</textarea>
       <label>Your top questions for the consultant</label>
       <textarea name="questions" rows="4"></textarea>
-      <button type="submit">Submit</button>
-    </form></div></body></html>`;
+      <button type="submit" id="pcBtn">Submit</button>
+    </form></div>
+  <script>
+    (function(){
+      var form = document.querySelector('form'), btn = document.getElementById('pcBtn');
+      form.addEventListener('submit', function(){ btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Saving your answers…'; });
+      window.addEventListener('pageshow', function(){ if (btn.disabled) { btn.disabled = false; btn.innerHTML = 'Submit'; } });
+    })();
+  </script></body></html>`;
 }
 
-/** Save pre-consult answers as a Monday Update on the lead, set status = Yes. */
+/**
+ * Save pre-consult answers: complete Monday update on the lead, status = Yes,
+ * and a formatted PDF of every question & answer into the client's OneDrive
+ * folder with a staff link in the "Pre-Consult PDF" column. The Monday update
+ * is the core operation; PDF/link are best-effort.
+ */
 async function savePreConsultData(leadId, formData) {
-  const lines = [
-    '📝 Pre-Consultation Form submitted',
-    '',
-    `Case type: ${formData.caseType || '—'}`,
-    `Deadline: ${formData.deadline || '—'}`,
-    `Current status: ${formData.currentStatus || '—'}`,
-    '',
-    `Progress / documents:\n${formData.progress || '—'}`,
-    '',
-    `Questions for consultant:\n${formData.questions || '—'}`,
-  ].join('\n');
+  const lead = await leadService.getLead(leadId);
+  const e = escapeHtml;
+  const { serviceToFBlock } = require('./intakeFormService');
+  const fBlock = serviceToFBlock(lead?.serviceRequired || '');
+  const qa = buildPreConsultQA(lead || {}, formData, fBlock);
 
+  // 1. Complete, formatted Monday update (the staff-visible record).
+  const body = ['📝 <b>Pre-Consultation Form submitted</b><br>']
+    .concat(qa.map(([q, a]) => `<b>${e(q)}:</b> ${e(a || '—')}`))
+    .join('<br>');
   await mondayApi.query(
     `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
-    { itemId: String(leadId), body: lines }
+    { itemId: String(leadId), body }
   );
   await leadService.updateLead(leadId, { preConsultSubmitted: 'Yes' });
   console.log(`[Consult] Pre-consult saved for lead ${leadId}`);
+
+  // 2. PDF into the client's OneDrive folder + link column (best-effort).
+  try {
+    const pdf = await buildPreConsultPdf(lead || { id: leadId }, qa);
+    const oneDrive = require('./oneDriveService');
+    const { url } = await oneDrive.uploadFileAndLink({
+      clientName: lead?.fullName || 'Client', caseRef: `LEAD-${leadId}`, category: 'Intake',
+      filename: 'pre-consultation-summary.pdf', buffer: pdf, mimeType: 'application/pdf',
+    });
+    await leadService.updateLead(leadId, { preConsultPdf: { url, text: 'Pre-Consult PDF' } });
+    console.log(`[Consult] Pre-consult PDF saved + linked for lead ${leadId}`);
+  } catch (err) {
+    console.warn(`[Consult] Pre-consult PDF failed for ${leadId} (answers safe in Monday update): ${err.message}`);
+  }
+}
+
+/** Ordered [question, answer] pairs across intake snapshot + pre-consult answers. */
+function buildPreConsultQA(lead, f, fBlock) {
+  const qa = [];
+  const add = (q, a) => { if (String(a || '').trim()) qa.push([q, String(a).trim()]); };
+  add('Client', lead.fullName);
+  add('Email', lead.email);
+  add('Service', lead.serviceRequired || lead.caseTypeInterest);
+  add('Consultation slot (Toronto)', lead.bookedSlot);
+  add('Has anything changed since the intake form?', f.changes);
+  add('Deadline or target date', f.deadline);
+  for (const [name, label] of (PRECONSULT_FQ[fBlock] || [])) add(label, f[name]);
+  add('Progress so far & documents in hand', f.progress);
+  add('Top questions for the consultant', f.questions);
+  return qa;
+}
+
+/** Branded, properly formatted Q&A PDF (same visual language as the retainer). */
+function buildPreConsultPdf(lead, qa) {
+  const PDFDocument = require('pdfkit');
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 56, size: 'LETTER' });
+    const chunks = [];
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const navy = BRAND.darkPanel, red = BRAND.primary, muted = BRAND.mutedOnLight;
+    doc.fillColor(red).fontSize(20).text('TDOT Immigration');
+    doc.fillColor(navy).fontSize(14).text('Pre-Consultation Summary');
+    doc.moveDown(0.4).fillColor(muted).fontSize(10)
+       .text(`Lead ${lead.id || ''} · submitted ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`);
+    doc.moveDown(0.8).strokeColor('#DDDDDD').moveTo(56, doc.y).lineTo(556, doc.y).stroke();
+
+    for (const [q, a] of qa) {
+      doc.moveDown(0.9);
+      if (doc.y > 700) doc.addPage();
+      doc.fillColor(navy).fontSize(11).text(q);
+      doc.moveDown(0.15).fillColor('#111111').fontSize(10.5).text(a, { align: 'left' });
+    }
+
+    doc.moveDown(2).fontSize(8.5).fillColor(muted)
+       .text('Prepared automatically from the client\'s intake and pre-consultation answers.', { align: 'center' });
+    doc.end();
+  });
 }
 
 // ─── Reminders (crons) ───────────────────────────────────────────────────────
@@ -250,4 +382,6 @@ module.exports = {
   onSlotConfirmed, createZoomMeeting, getZoomAccessToken,
   buildPreConsultFormHtml, savePreConsultData,
   send24hReminders, send1hReminders, sendPreConsultReminders,
+  // exported for tests
+  buildPreConsultQA, buildPreConsultPdf,
 };
