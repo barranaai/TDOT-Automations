@@ -213,12 +213,15 @@ async function onCaseTypeSet({ itemId, caseType }) {
     console.warn(`[CaseRef] Could not write portal link for ${caseRef}: ${err.message}`)
   );
 
-  // Fire-and-forget, but SEQUENCED: first rename the intake-stage OneDrive
-  // folder ("{name} - LEAD-{id}" → "{name} - {caseRef}"), THEN resume any
-  // stuck onboarding — so a resumed checklist setup resolves to the renamed
-  // folder instead of racing it into a duplicate.
+  // Fire-and-forget, but SEQUENCED: rename the intake-stage OneDrive folder,
+  // THEN materialise the lead's family answers as Family Members rows (the
+  // rows key on the case ref, and must exist BEFORE any checklist seeding so
+  // family document sets are included), THEN resume any stuck onboarding —
+  // so a resumed seeding sees both the renamed folder and the family rows.
   renameClientFolderForItem({ itemId, caseRef })
     .catch(err => console.warn(`[CaseRef] OneDrive folder rename skipped for ${caseRef}: ${err.message}`))
+    .then(() => require('./familyCompositionService').createFamilyRowsForItem({ itemId, caseRef }))
+    .catch(err => console.warn(`[CaseRef] Family rows skipped for ${caseRef}: ${err.message}`))
     .then(() => resumeOnboardingIfStuck({ itemId, caseRef }))
     .catch(err => console.warn(`[CaseRef] Stuck-onboarding check failed for ${caseRef}: ${err.message}`));
 }

@@ -296,6 +296,12 @@ function buildDossierSections(lead, a, f, fBlock) {
   add('How they heard of TDOT', pick('howHeard'));
   add('Referred by', pick('referredBy'));
 
+  add = sec('Family Members (from intake form)');
+  add('Spouse/common-law partner', pick('hasSpouse'));
+  add('Spouse accompanying', pick('spouseAccompanying'));
+  add('Dependent children', pick('childrenCount'));
+  add('Children accompanying', pick('childrenAccompanying'));
+
   add = sec('Immigration Status (from intake form)');
   add('Current status', pick('currentStatus'));
   add('Status expiry', pick('statusExpiry'));

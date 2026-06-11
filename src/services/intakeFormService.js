@@ -146,6 +146,13 @@ function validateIntake(f) {
   inEnum('recentRefusal', YN, 'Recent refusal question', true);
   inEnum('refusalType', REFUSAL_TYPES, 'What was refused', f.recentRefusal === 'Yes');
   isDate('refusalDate', 'Refusal date', f.recentRefusal === 'Yes');
+  inEnum('hasSpouse', YN, 'Spouse/partner question', true);
+  inEnum('spouseAccompanying', YNS, 'Spouse accompanying question', f.hasSpouse === 'Yes');
+  {
+    const n = Number(String(f.childrenCount ?? '').trim());
+    if (!Number.isInteger(n) || n < 0 || n > 12) errors.push('Dependent children must be a whole number between 0 and 12.');
+    else inEnum('childrenAccompanying', ['All', 'Some', 'None', 'Not sure'], 'Children accompanying question', n > 0);
+  }
   inEnum('howHeard', HOW_HEARD, 'How you heard about TDOT', true);
   for (const k of ['f1_itaDeadline', 'f2_deadline', 'f4_deadline', 'f7_prDate', 'f9_deadline', 'f9_refusalDate', 'f10_deadline']) {
     isDate(k, 'Date field', false);
@@ -215,6 +222,10 @@ async function processIntakeSubmission(f, files = {}) {
     restorationDeadline:  (f.insideCanada === 'Yes' && f.restorationPeriod === 'Yes') ? f.restorationDeadline : '',
     referredBy:           f.howHeard === 'Referral' ? f.referredBy : '',
     existingFileType:     f.relationshipWithTdot === 'New inquiry' ? '' : f.existingFileType,
+    hasSpouse:            f.hasSpouse,
+    spouseAccompanying:   f.hasSpouse === 'Yes' ? f.spouseAccompanying : '',
+    childrenCount:        f.childrenCount,
+    childrenAccompanying: Number(f.childrenCount) > 0 ? f.childrenAccompanying : '',
     consentsAt:           new Date().toISOString(),
     crsScore:             activeBlock === 'F1' ? f.f1_crsScore : '',
     itaDeadline:          activeBlock === 'F1' ? f.f1_itaDeadline : '',
@@ -351,6 +362,12 @@ function buildDigest(f, uploaded = [], rejectedUploads = []) {
   add('Maintained/implied status', f.maintainedStatus);
   add('Recent extension/status application', f.recentExtension);
   add('Extension details', f.recentExtensionDetails);
+
+  section('Family Members');
+  add('Spouse/common-law partner', f.hasSpouse);
+  add('Spouse accompanying', f.hasSpouse === 'Yes' ? f.spouseAccompanying : '');
+  add('Dependent children', f.childrenCount);
+  add('Children accompanying', Number(f.childrenCount) > 0 ? f.childrenAccompanying : '');
 
   section('5 · Urgency Screening');
   add('Urgent deadline', f.urgentDeadline === 'Yes' ? `${f.deadlineDate} (${f.deadlineReason})` : f.urgentDeadline);
@@ -525,7 +542,24 @@ function buildIntakeFormHtml() {
       </div>
     </div>
 
-    <div class="section" id="fblocks" style="display:none"><h2>6 · A Few Service-Specific Questions</h2>
+    <div class="section"><h2>6 · Family Members</h2>
+      <p class="hint">If family members may be part of your application, this helps us prepare their document checklists too.</p>
+      <label>Do you have a spouse or common-law partner? *</label><div>${yesNo('hasSpouse')}</div>
+      <div class="cond" id="c-spouseAcc">
+        <label>Would they accompany you / be included in the application? *</label>
+        <div>${yesNo('spouseAccompanying', ['Not sure'])}</div>
+      </div>
+      <label>How many dependent children do you have? *</label>
+      <input type="number" name="childrenCount" id="childrenCount" min="0" max="12" value="0" required>
+      <div class="cond" id="c-childAcc">
+        <label>Would the children accompany you / be included? *</label>
+        <select name="childrenAccompanying"><option value="">Choose...</option>
+          ${['All', 'Some', 'None', 'Not sure'].map((v) => opt(v)).join('')}
+        </select>
+      </div>
+    </div>
+
+    <div class="section" id="fblocks" style="display:none"><h2>7 · A Few Service-Specific Questions</h2>
       <div class="fb" id="F1">
         <label>Do you have a valid Express Entry profile?</label><div>${yesNo('f1_hasProfile')}</div>
         <label>What is your CRS score?</label><input type="number" name="f1_crsScore" min="0" max="1200">
@@ -587,7 +621,7 @@ function buildIntakeFormHtml() {
       </div>
     </div>
 
-    <div class="section"><h2>7 · How You Found Us &amp; Consent</h2>
+    <div class="section"><h2>8 · How You Found Us &amp; Consent</h2>
       <label>How did you hear about TDOT Immigration? *</label>
       <select name="howHeard" required><option value="">Choose...</option>${HOW_HEARD.map((v) => opt(v)).join('')}</select>
       <div class="cond" id="c-referral"><label>Who referred you?</label><input type="text" name="referredBy"></div>
@@ -661,6 +695,13 @@ function buildIntakeFormHtml() {
   // F1 ITA → deadline
   onRadio('f1_hasIta', function(){ show('c-ita', radioVal('f1_hasIta') === 'Yes'); });
 
+  // Family: spouse → accompanying question; children count > 0 → accompanying question
+  onRadio('hasSpouse', function(){ var on = radioVal('hasSpouse') === 'Yes'; show('c-spouseAcc', on);
+    radios('spouseAccompanying').forEach(function(r){ r.required = on; }); });
+  var cc = document.getElementById('childrenCount');
+  cc.addEventListener('input', function(){ var on = parseInt(cc.value, 10) > 0; show('c-childAcc', on);
+    document.getElementsByName('childrenAccompanying')[0].required = on; });
+
   // G1 → referral name
   var hh = document.getElementsByName('howHeard')[0];
   hh.addEventListener('change', function(){ show('c-referral', hh.value === 'Referral'); });
@@ -682,7 +723,7 @@ function buildIntakeFormHtml() {
   // Hidden/optional radios must never block submit ("invalid form control is
   // not focusable"): F-block radios are optional, and restorationPeriod is
   // re-required by updCanada only once "inside Canada = Yes" reveals it.
-  ['f1_hasProfile','f1_hasIta','f2_hasNomination','f2_employerSupport','f3_prSubmitted','f3_employerDocs','f4_admission','f5_priorRefusal','maintainedStatus','restorationPeriod']
+  ['f1_hasProfile','f1_hasIta','f2_hasNomination','f2_employerSupport','f3_prSubmitted','f3_employerDocs','f4_admission','f5_priorRefusal','maintainedStatus','restorationPeriod','spouseAccompanying']
     .forEach(function(n){ radios(n).forEach(function(r){ r.required = false; }); });
 })();
 </script>

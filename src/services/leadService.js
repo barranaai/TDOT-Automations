@@ -47,6 +47,8 @@ const COL_TYPE = {
   bookingInvite: 'status', // "Send" (staff trigger / auto) → system emails the booking link → "Sent"
   preConsultPdf: 'link',   // org-share link to the generated pre-consultation PDF in OneDrive
   recordingLink: 'link',   // Zoom cloud-recording share link (written by the Zoom webhook)
+  // V2 family composition (intake) — auto-creates Family Members rows at case-ref time
+  hasSpouse: 'status', spouseAccompanying: 'status', childrenCount: 'numbers', childrenAccompanying: 'status',
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));
