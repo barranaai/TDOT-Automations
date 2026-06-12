@@ -9,7 +9,6 @@
 
 'use strict';
 
-const axios              = require('axios');
 const leadService        = require('./leadService');
 const microsoftMail      = require('./microsoftMailService');
 const mondayApi          = require('./mondayApi');
@@ -17,48 +16,14 @@ const { leadBoardId }    = require('../../config/monday');
 const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
 
 const RENDER_URL      = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
-const ZOOM_RECORDING  = process.env.ZOOM_AUTO_RECORDING || 'none'; // 'cloud' when transcript feature ships
 const TZ              = 'America/Toronto';
 
-// ─── Zoom auth (server-to-server OAuth, cached) ──────────────────────────────
-let _zoomToken = { token: null, expiresAt: 0 };
+// Meeting creation is provider-agnostic (Zoom today, Teams behind
+// MEETING_PROVIDER=teams) — all platform specifics live in meetingService.
+const meetingService = require('./meetingService');
+const { getZoomAccessToken, createZoomMeeting } = meetingService; // re-exported for back-compat
 
-async function getZoomAccessToken() {
-  if (_zoomToken.token && Date.now() < _zoomToken.expiresAt - 60000) return _zoomToken.token;
-  const res = await axios.post('https://zoom.us/oauth/token', null, {
-    params: { grant_type: 'account_credentials', account_id: process.env.ZOOM_ACCOUNT_ID },
-    auth: { username: process.env.ZOOM_CLIENT_ID, password: process.env.ZOOM_CLIENT_SECRET },
-  });
-  _zoomToken = { token: res.data.access_token, expiresAt: Date.now() + res.data.expires_in * 1000 };
-  return _zoomToken.token;
-}
-
-/** Create a Zoom meeting for a slot string "YYYY-MM-DD HH:MM" (Toronto local). */
-async function createZoomMeeting(lead, slotStr, duration = 30) {
-  // Send the start time as an explicit GMT instant ("...Z"). Sending local
-  // time + a timezone field proved unreliable: Zoom ignored the timezone and
-  // applied the host account's profile timezone (observed: a 14:30 Toronto
-  // slot created as 14:30 Asia/Tashkent = 5:30 AM Toronto). UTC is unambiguous;
-  // the timezone field below is then only used for display in Zoom's portal.
-  const startUtcMs = torontoSlotToUTC(slotStr);
-  if (!Number.isFinite(startUtcMs)) throw new Error(`Invalid slot "${slotStr}" — cannot schedule Zoom meeting`);
-  const startTimeGmt = new Date(startUtcMs).toISOString().replace(/\.\d{3}Z$/, 'Z');
-
-  const token = await getZoomAccessToken();
-  const res = await axios.post(
-    'https://api.zoom.us/v2/users/me/meetings',
-    {
-      topic: `Consultation: ${lead.fullName || 'Client'}`,
-      type: 2,
-      start_time: startTimeGmt,
-      duration,
-      timezone: TZ,
-      settings: { join_before_host: false, waiting_room: true, auto_recording: ZOOM_RECORDING },
-    },
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  return { meetingId: String(res.data.id), joinUrl: res.data.join_url, password: res.data.password };
-}
+const PROVIDER_LABEL = { zoom: 'Zoom', teams: 'Microsoft Teams' };
 
 // ─── Entry point: called by bookingService after payment ─────────────────────
 async function onSlotConfirmed(leadId) {
@@ -66,19 +31,20 @@ async function onSlotConfirmed(leadId) {
     const lead = await leadService.getLead(leadId);
     if (!lead) return;
     if (lead.zoomMeetingId) {
-      console.log(`[Consult] Lead ${leadId} already has Zoom meeting — skipping`);
+      console.log(`[Consult] Lead ${leadId} already has a meeting — skipping`);
       return;
     }
     const slotStr = (lead.bookedSlot || '').trim();
-    const meeting = await createZoomMeeting(lead, slotStr);
+    const meeting = await meetingService.createMeeting(lead, slotStr);
 
     await leadService.updateLead(leadId, {
-      zoomMeetingId:   meeting.meetingId,
+      zoomMeetingId:   meeting.meetingId,                                   // column titled "Meeting Id" (provider-agnostic)
+      meetingLink:     { url: meeting.joinUrl, text: `Join (${PROVIDER_LABEL[meeting.provider] || meeting.provider})` },
       consultationHeld: slotStr.split(' ')[0], // date of the consult
     });
 
     await sendBookingConfirmation(lead, meeting, slotStr);
-    console.log(`[Consult] Zoom + confirmation sent for lead ${leadId} (meeting ${meeting.meetingId})`);
+    console.log(`[Consult] ${meeting.provider} meeting + confirmation sent for lead ${leadId} (meeting ${meeting.meetingId})`);
   } catch (err) {
     console.error(`[Consult] onSlotConfirmed failed for lead ${leadId}:`, err.message);
   }
@@ -94,7 +60,8 @@ async function sendBookingConfirmation(lead, meeting, slotStr) {
     <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
       <p>Hi ${escapeHtml((lead.fullName||'there').split(' ')[0])},</p>
       <p><b>When:</b> ${escapeHtml(slotStr)} (Toronto time)</p>
-      <p><b>Join the Zoom call:</b><br><a href="${meeting.joinUrl}" style="color:${BRAND.primary}">${meeting.joinUrl}</a></p>
+      <p><b>Join the ${PROVIDER_LABEL[meeting.provider] || 'video'} call:</b><br><a href="${meeting.joinUrl}" style="color:${BRAND.primary}">${meeting.joinUrl}</a></p>
+      ${meeting.provider === 'teams' ? `<p style="font-size:13px;color:${BRAND.mutedOnLight}">A calendar invite has also been sent to your email — accept it and the meeting appears in your calendar.</p>` : ''}
       <p style="margin-top:24px">Please complete this short form before your call so we can make the most of your time:</p>
       <p><a href="${preUrl}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Complete pre-consultation form</a></p>
       <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">See you on the call.</p>
@@ -496,10 +463,14 @@ async function sendReminderWindow(label, minH, maxH, markerTag) {
     try {
       const lead = await leadService.getLead(L.id);
       if (lead.email) {
+        // meetingLink stores the join URL (Zoom or Teams) for meetings created
+        // since the provider abstraction — older bookings just omit the line.
+        const joinLine = lead.meetingLink
+          ? `<p><b>Join link:</b> <a href="${escapeHtml(lead.meetingLink)}">${escapeHtml(lead.meetingLink)}</a></p>` : '';
         await microsoftMail.sendEmail({
           to: lead.email,
           subject: `Reminder: your TDOT consultation (${L.bookedSlot} Toronto)`,
-          html: `<p>Hi ${escapeHtml((lead.name || 'there').split(' ')[0])}, this is a reminder of your consultation on <b>${escapeHtml(L.bookedSlot)}</b> (Toronto time).</p>`,
+          html: `<p>Hi ${escapeHtml((lead.name || 'there').split(' ')[0])}, this is a reminder of your consultation on <b>${escapeHtml(L.bookedSlot)}</b> (Toronto time).</p>${joinLine}`,
         });
       }
       await mondayApi.query(`mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
