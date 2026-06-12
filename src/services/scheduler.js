@@ -141,6 +141,15 @@ function startScheduler() {
     require('./caseTypeRegistryService').dailyDriftCheck().catch((err) =>
       console.error('[Scheduler] Case-type drift check failed:', err.message)));
   console.log('[Scheduler] Job registered — case-type canon drift check daily 06:45');
+
+  // ── Post-consultation (provider-agnostic; replaces Zoom-webhook reliance for Teams) ──
+  cron.schedule('*/15 * * * *', () =>      // "set the Outcome" nudge once the slot has passed
+    require('./postConsultService').sendPostConsultNudges().catch((err) =>
+      console.error('[Scheduler] Post-consult nudge failed:', err.message)));
+  cron.schedule('*/30 * * * *', () =>      // Teams recording discovery in the recorder's OneDrive
+    require('./postConsultService').findTeamsRecordings().catch((err) =>
+      console.error('[Scheduler] Teams recording discovery failed:', err.message)));
+  console.log('[Scheduler] Post-consult jobs registered — nudge (15 min) + Teams recordings (30 min)');
 }
 
 module.exports = { startScheduler };
