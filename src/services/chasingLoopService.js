@@ -10,6 +10,7 @@ const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
 const CM = {
   caseStage:          'color_mm0x8faa',
+  paymentStatus:      'color_mm0x9fnn',
   stageStartDate:     'date_mm0xjm1z',
   caseType:           'dropdown_mm0xd1qn',
   caseSubType:        'dropdown_mm0x4t91',
@@ -89,7 +90,7 @@ async function loadReminderOffsets() {
 
 async function fetchChasableCases() {
   const FETCH_IDS = [
-    CM.caseStage, CM.stageStartDate, CM.caseType, CM.caseSubType,
+    CM.caseStage, CM.paymentStatus, CM.stageStartDate, CM.caseType, CM.caseSubType,
     CM.caseRef, CM.clientEmail, CM.accessToken,
     CM.automationLock, CM.manualOverride, CM.escalationRequired,
     CM.qReadiness, CM.docReadiness,
@@ -282,6 +283,12 @@ async function processCase(item, offsets) {
 
   // Only chase cases in Document Collection Started stage
   if (col(CM.caseStage) !== CHASING_STAGE) return 'skipped';
+
+  // HARD GATE: never chase a client who hasn't paid. Cases can land in the
+  // chasing stage via manual staff moves (observed live: 17 "Alreaday Sent"
+  // unpaid cases receiving reminders) — payment, not stage, is the licence
+  // to chase. Chasing resumes automatically the moment the case is Paid.
+  if (col(CM.paymentStatus) !== 'Paid') return 'unpaid';
 
   // Respect governance flags
   if (col(CM.automationLock) === 'Yes')   return 'locked';

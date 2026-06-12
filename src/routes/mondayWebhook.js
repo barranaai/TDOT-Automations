@@ -195,7 +195,48 @@ router.post('/', async (req, res) => {
 
       // → Document Collection Started: create execution rows + send intake email
       if (newStage === DOCUMENT_COLLECTION_STARTED) {
+        // No-change guard: Monday DOES fire change_column_value for same-label
+        // writes (documented by the historical re-payment double-seed bug in
+        // retainerService). A DCS→DCS "change" must never re-run onboarding.
+        if (event.previousValue?.label?.text === DOCUMENT_COLLECTION_STARTED) {
+          console.log(`[Webhook] Item ${pulseId}: stage re-saved as "${DOCUMENT_COLLECTION_STARTED}" (no change) — ignoring`);
+          return;
+        }
         console.log(`[Webhook] Case Stage → "${DOCUMENT_COLLECTION_STARTED}" for item ${pulseId}`);
+
+        // HARD GATE: onboarding (intake email + checklist + the chasing that
+        // follows) requires Payment Status = Paid. Staff can move the stage
+        // manually on unpaid cases — that must NOT start emailing the client.
+        // When the case is later marked Paid, retainerService.onRetainerPaid
+        // starts onboarding directly (the stage won't re-fire this webhook).
+        // FAIL CLOSED on read errors: a wrongly-deferred paid client is a
+        // visible staff note fixed in minutes; a wrongly-emailed unpaid client
+        // cannot be un-emailed.
+        let isPaid = false;
+        let readFailed = false;
+        try {
+          const payData = await mondayApi.query(
+            `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${RETAINER_STATUS_COL_ID}"]) { text } } }`,
+            { id: String(pulseId) }
+          );
+          isPaid = (payData?.items?.[0]?.column_values?.[0]?.text || '').trim() === 'Paid';
+        } catch (err) {
+          readFailed = true;
+          console.warn(`[Webhook] Payment status read failed for ${pulseId} (${err.message}) — deferring (fail-closed)`);
+        }
+        if (!isPaid) {
+          console.log(`[Webhook] Item ${pulseId} moved to "${DOCUMENT_COLLECTION_STARTED}" but Payment Status ≠ Paid — onboarding DEFERRED`);
+          mondayApi.query(
+            `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
+            { itemId: String(pulseId),
+              body: readFailed
+                ? '⏸ <b>Onboarding NOT started:</b> the payment status could not be verified just now. ' +
+                  'Once you confirm the payment is marked Paid, retry by switching the Case Stage away and back to Document Collection Started.'
+                : '⏸ <b>Onboarding deferred:</b> this case was moved to Document Collection Started, but Payment Status is not "Paid". ' +
+                  'The client intake email, document checklist, and reminders will start automatically the moment the payment is marked Paid.' }
+          ).catch(() => {});
+          return;
+        }
 
         // Fire the intake email immediately — it only needs the case ref and access token,
         // both of which are already set before the stage change. Do NOT await the checklist

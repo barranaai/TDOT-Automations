@@ -277,7 +277,7 @@ async function resumeOnboardingIfStuck({ itemId, caseRef }) {
   _resumeInFlight.add(key);
   try {
     const data = await mondayApi.query(
-      `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_STAGE_COL}", "${CHECKLIST_APPLIED_COL}"]) { id text } } }`,
+      `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_STAGE_COL}", "${CHECKLIST_APPLIED_COL}", "color_mm0x9fnn"]) { id text } } }`,
       { id: String(itemId) }
     );
     const cv = {};
@@ -287,6 +287,13 @@ async function resumeOnboardingIfStuck({ itemId, caseRef }) {
     // An empty/legacy value means a manually-managed case that never went
     // through the payment flow — resuming would cold-email a real client.
     if ((cv[CHECKLIST_APPLIED_COL] || '').toLowerCase() !== 'no') return;
+    // Payment gate (same invariant as everywhere): a payment that was marked
+    // Paid by mistake and reverted leaves applied='No' behind — never resume
+    // onboarding for a case that isn't currently Paid.
+    if (cv['color_mm0x9fnn'] !== 'Paid') {
+      console.log(`[CaseRef] ${caseRef}: onboarding-resume conditions met but Payment Status ≠ Paid — not resuming`);
+      return;
+    }
 
     // Residual micro-race (documented): if payment lands in the seconds
     // between the case-ref write and this read, the stage webhook handles

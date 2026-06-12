@@ -8,6 +8,8 @@ const COLS = {
   checklistTemplateApplied: 'color_mm0xs7kp',
   questionnaireApplied:     'color_mm0x3tpw',
   automationLock:           'color_mm0x3x1x',
+  chasingStage:             'color_mm1abve4',
+  reminderCount:            'numeric_mm1a4e8r',
 };
 
 async function onRetainerPaid({ itemId }) {
@@ -28,39 +30,56 @@ async function onRetainerPaid({ itemId }) {
   // setup before, so only refresh the paymentDate and leave everything else
   // untouched. First-time payments still get the full setup as before.
   let isFirstTimePayment = true;
+  let stageAlreadyStarted = false;
   try {
     const data = await mondayApi.query(
       `query($itemId: ID!) {
          items(ids: [$itemId]) {
-           column_values(ids: ["${COLS.checklistTemplateApplied}"]) { id text }
+           column_values(ids: ["${COLS.checklistTemplateApplied}", "${COLS.caseStage}"]) { id text }
          }
        }`,
       { itemId: String(itemId) }
     );
-    const currentApplied = (data?.items?.[0]?.column_values?.[0]?.text || '').trim().toLowerCase();
-    if (currentApplied === 'yes') {
+    const cv = {};
+    for (const c of (data?.items?.[0]?.column_values || [])) cv[c.id] = (c.text || '').trim();
+    if ((cv[COLS.checklistTemplateApplied] || '').toLowerCase() === 'yes') {
       isFirstTimePayment = false;
     }
+    stageAlreadyStarted = cv[COLS.caseStage] === 'Document Collection Started';
   } catch (err) {
     // Fail-open: if the read fails, fall back to original behaviour (full
     // reset) so we don't accidentally block a legitimate first-time payment.
     console.warn(`[Retainer] Could not read state for item ${itemId} (${err.message}) — falling back to full reset`);
   }
 
-  const colValues = isFirstTimePayment
-    ? JSON.stringify({
-        [COLS.paymentDate]:              { date: today },
-        [COLS.caseStage]:                { label: 'Document Collection Started' },
-        [COLS.stageStartDate]:           { date: today },
-        [COLS.checklistTemplateApplied]: { label: 'No' },
-        [COLS.questionnaireApplied]:     { label: 'No' },
-        [COLS.automationLock]:           { label: 'No' },
-      })
-    : JSON.stringify({
-        // Re-payment: only refresh the payment date. Do NOT clobber case state
-        // or the checklist guard — the case is already in flight.
-        [COLS.paymentDate]: { date: today },
-      });
+  let cols;
+  if (isFirstTimePayment) {
+    cols = {
+      [COLS.paymentDate]:              { date: today },
+      [COLS.stageStartDate]:           { date: today },
+      [COLS.checklistTemplateApplied]: { label: 'No' },
+      [COLS.questionnaireApplied]:     { label: 'No' },
+      [COLS.automationLock]:           { label: 'No' },
+    };
+    // Only write the stage when it actually CHANGES. Monday fires
+    // change_column_value even for same-label writes (the historical
+    // re-payment double-seed bug) — a no-op DCS write here would race the
+    // direct deferred-onboarding call below against the stage webhook.
+    if (!stageAlreadyStarted) cols[COLS.caseStage] = { label: 'Document Collection Started' };
+  } else {
+    // Re-payment: refresh the payment date; do NOT clobber the checklist guard.
+    cols = { [COLS.paymentDate]: { date: today } };
+  }
+  // Pre-staged cases sat in the chasing stage UNPAID with the clock running
+  // (gate paused the emails, not the timer). On payment, restart the chasing
+  // ladder cleanly — otherwise a client who just paid resumes at "Final
+  // Notice"/escalation because stageStartDate is months old.
+  if (stageAlreadyStarted) {
+    cols[COLS.stageStartDate] = { date: today };
+    cols[COLS.chasingStage]   = null;       // clear → ladder starts fresh
+    cols[COLS.reminderCount]  = '0';
+  }
+  const colValues = JSON.stringify(cols);
 
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
@@ -81,6 +100,23 @@ async function onRetainerPaid({ itemId }) {
     console.log(`[Retainer] Payment confirmed for item ${itemId} — stage set to Document Collection Started`);
   } else {
     console.log(`[Retainer] Re-payment detected for item ${itemId} (checklist already applied) — refreshed payment date only`);
+  }
+
+  // Deferred-onboarding resume: if staff had ALREADY moved the case to
+  // "Document Collection Started" before payment, the payment-gated stage
+  // webhook deferred onboarding — and our stage write above is a no-change
+  // (same label), so Monday fires no new stage event. Start onboarding
+  // directly here, mirroring the webhook handler (email first, then the
+  // long-running checklist setup, both fire-and-forget).
+  if (isFirstTimePayment && stageAlreadyStarted) {
+    console.log(`[Retainer] Item ${itemId} was pre-staged before payment — starting deferred onboarding now`);
+    const emailService     = require('./emailService');     // lazy: avoid require cycles
+    const checklistService = require('./checklistService');
+    emailService.sendIntakeEmail(itemId).catch(err =>
+      console.error(`[Retainer] Deferred intake email failed for ${itemId}:`, err.message));
+    checklistService.onDocumentCollectionStarted({ itemId, boardId: clientMasterBoardId })
+      .then(() => console.log(`[Retainer] Deferred checklist setup complete for item ${itemId}`))
+      .catch(err => console.error(`[Retainer] Deferred checklist setup failed for ${itemId}:`, err.message));
   }
 }
 

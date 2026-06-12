@@ -4,11 +4,12 @@ const { ensureAccessToken } = require('./accessTokenService');
 const { clientMasterBoardId } = require('../../config/monday');
 
 const CM_COLS = {
-  clientEmail: 'text_mm0xw6bp',
-  caseRef:     'text_mm142s49',
-  caseType:    'dropdown_mm0xd1qn',
-  accessToken: 'text_mm0x6haq',
-  caseStage:   'color_mm0x8faa',
+  clientEmail:   'text_mm0xw6bp',
+  caseRef:       'text_mm142s49',
+  caseType:      'dropdown_mm0xd1qn',
+  accessToken:   'text_mm0x6haq',
+  caseStage:     'color_mm0x8faa',
+  paymentStatus: 'color_mm0x9fnn',
 };
 
 // Stages that indicate the intake email has already been sent.
@@ -163,7 +164,8 @@ async function onClientEmailChanged(itemId) {
          column_values(ids: [
            "${CM_COLS.caseStage}",
            "${CM_COLS.clientEmail}",
-           "${CM_COLS.caseRef}"
+           "${CM_COLS.caseRef}",
+           "${CM_COLS.paymentStatus}"
          ]) { id text }
        }
      }`,
@@ -185,6 +187,14 @@ async function onClientEmailChanged(itemId) {
 
   if (!STAGES_REQUIRING_RESEND.has(caseStage)) {
     console.log(`[Email] Client email updated for ${label}, stage "${caseStage || 'unknown'}" — intake email not yet sent, no resend needed`);
+    return;
+  }
+
+  // Payment gate: a deferred unpaid case can sit in a resend-eligible stage
+  // WITHOUT the intake email ever having been sent — correcting its email
+  // address must not cold-send onboarding to an unpaid client.
+  if (col(CM_COLS.paymentStatus) !== 'Paid') {
+    console.log(`[Email] Client email updated for ${label} but Payment Status ≠ Paid — no resend (onboarding gated on payment)`);
     return;
   }
 
