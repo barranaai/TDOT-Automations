@@ -321,10 +321,89 @@ function generateMemberKey(memberType, existingMembers) {
   return `${base}-${index}`;
 }
 
+// Family Members board role → portal member type (inverse of the adapter's
+// MEMBER_TYPE_TO_ROLE). PrincipalApplicant is intentionally absent — the
+// manifest always carries its own 'primary' entry.
+const ROLE_TO_PORTAL_TYPE = {
+  Spouse:         'Spouse / Common-Law Partner',
+  DependentChild: 'Dependent Child',
+  Sponsor:        'Sponsor',
+  WorkerSpouse:   'Worker Spouse',
+  Parent:         'Parent',
+  Sibling:        'Sibling',
+};
+
+// Short-lived cache around board seeding so a single page load (loadMembers +
+// getMemberStatuses + per-member reads, all before the manifest write is
+// readable back) doesn't hit Monday once per call. Entries: caseRef → { members|null, exp }.
+const seedCache = new Map();
+const SEED_CACHE_TTL_MS = 60 * 1000;
+
+/**
+ * Seed the member manifest from the Family Members board (one-shot).
+ *
+ * Runs only when a case has NO manifest yet. Intake/staff record the family on
+ * the Family Members board (which already drives checklist seeding); this
+ * carries that composition over so the client's first questionnaire visit
+ * shows every member — not just the Principal Applicant. Board memberKeys
+ * ('spouse', 'child-1', …) follow the same convention as generateMemberKey,
+ * so keys are reused verbatim when valid. The client can still add/remove
+ * members afterwards; the saved manifest remains the working copy.
+ *
+ * The board outranks resolveMemberTypes here: that list only gates the
+ * client-facing "+ Add" menu, while board rows are staff-curated truth.
+ *
+ * Returns the seeded member list, or null when the board has no extra members
+ * (or the read/save failed) — callers then fall back to primary-only.
+ */
+async function seedMembersFromBoard({ clientName, caseRef }) {
+  const cached = seedCache.get(caseRef);
+  if (cached && cached.exp > Date.now()) return cached.members;
+
+  let result = null;
+  try {
+    const compositionAdapter = require('./compositionAdapter'); // lazy: avoid require cycles
+    const { members: boardMembers } = await compositionAdapter.readForCase(caseRef);
+
+    const extras = (boardMembers || []).filter((m) => ROLE_TO_PORTAL_TYPE[m.role]);
+    if (extras.length > 0) {
+      const members = defaultMembers();
+      for (const bm of extras) {
+        const type  = ROLE_TO_PORTAL_TYPE[bm.role];
+        const count = members.filter((m) => m.type === type).length + 1;
+
+        // Reuse the board's memberKey when it's well-formed and free — it
+        // matches generateMemberKey's convention by construction at intake.
+        const boardKey = (bm.memberKey || '').trim();
+        const keyOk    = /^[a-z][a-z0-9-]{0,40}$/.test(boardKey)
+                         && boardKey !== 'primary'
+                         && !members.some((m) => m.key === boardKey);
+        const key = keyOk ? boardKey : generateMemberKey(type, members);
+
+        // Placeholder row names ("Spouse (from intake)") stay out of labels.
+        const name  = (bm.name || '').trim();
+        const label = name && !/\(from intake\)/i.test(name) ? name : memberLabel(type, count);
+
+        members.push({ key, type, label, addedAt: new Date().toISOString(), source: 'family-board' });
+      }
+
+      await saveMembers({ clientName, caseRef, members });
+      console.log(`[HtmlQ] Seeded member manifest for ${caseRef} from Family Members board — ${members.length} members (${members.map((m) => m.key).join(', ')})`);
+      result = members;
+    }
+  } catch (err) {
+    console.warn(`[HtmlQ] Board seed failed for ${caseRef} (continuing primary-only): ${err.message}`);
+  }
+
+  seedCache.set(caseRef, { members: result, exp: Date.now() + SEED_CACHE_TTL_MS });
+  return result;
+}
+
 /**
  * Load the member manifest for a case.
  * Returns an array of { key, type, label, addedAt, submittedAt? } objects.
- * If no manifest exists, returns the default single-member list.
+ * If no manifest exists, it is seeded from the Family Members board; when the
+ * board has no family rows either, returns the default single-member list.
  */
 async function loadMembers({ clientName, caseRef }) {
   try {
@@ -343,6 +422,10 @@ async function loadMembers({ clientName, caseRef }) {
   } catch (err) {
     console.warn(`[HtmlQ] loadMembers failed for ${caseRef}: ${err.message}`);
   }
+
+  const seeded = await seedMembersFromBoard({ clientName, caseRef });
+  if (seeded) return seeded;
+
   return defaultMembers();
 }
 
@@ -350,6 +433,7 @@ async function loadMembers({ clientName, caseRef }) {
  * Save the member manifest to OneDrive.
  */
 async function saveMembers({ clientName, caseRef, members }) {
+  seedCache.delete(caseRef); // manifest is changing — drop any cached seed result
   const content = JSON.stringify({ members, updatedAt: new Date().toISOString() }, null, 2);
   const buffer  = Buffer.from(content, 'utf8');
 
@@ -4454,6 +4538,7 @@ module.exports = {
   markAllSubmitted,
   // Member manifest management
   loadMembers,
+  seedMembersFromBoard,
   addMember,
   removeMember,
   getMemberStatuses,
