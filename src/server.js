@@ -107,6 +107,19 @@ app.post('/api/checklist/reseed/:caseRef', async (req, res) => {
   }
 });
 
+// Teams migration preflight — proves organizer + Calendars.ReadWrite + Teams
+// license in one shot with zero client impact (throwaway event, no attendees,
+// auto-deleted). Run BEFORE flipping MEETING_PROVIDER=teams.
+// Usage: POST /api/meeting-preflight
+app.post('/api/meeting-preflight', async (req, res) => {
+  try {
+    const result = await require('./services/meetingService').preflightTeams();
+    res.status(result.ok ? 200 : 422).json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.get('/api/monday-test', async (req, res) => {
   try {
     const data = await mondayApi.query('query { me { id name email } }');

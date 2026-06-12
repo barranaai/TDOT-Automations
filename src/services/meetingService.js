@@ -97,7 +97,7 @@ function slotToGraphTimes(slotStr, durationMinutes) {
 }
 
 /** PURE: the Graph event payload (exported for tests). */
-function buildTeamsEventPayload(lead, slotStr, durationMinutes) {
+function buildTeamsEventPayload(lead, slotStr, durationMinutes, { includeAttendees = true } = {}) {
   const { start, end } = slotToGraphTimes(slotStr, durationMinutes);
   const payload = {
     subject: `Consultation: ${lead.fullName || 'Client'} — TDOT Immigration`,
@@ -110,12 +110,25 @@ function buildTeamsEventPayload(lead, slotStr, durationMinutes) {
     onlineMeetingProvider: 'teamsForBusiness',
     allowNewTimeProposals: false,
   };
+  payload.attendees = [];
+  if (!includeAttendees) { delete payload.attendees; return payload; }
   if (lead.email) {
-    payload.attendees = [{
+    payload.attendees.push({
       emailAddress: { address: lead.email, name: lead.fullName || 'Client' },
       type: 'required',
-    }];
+    });
   }
+  // The consultant is invited too: the organizer (noreply automation account)
+  // never joins, so the staff attendee is who actually runs the meeting,
+  // receives the invite + join link, and admits the client from the lobby.
+  const staff = String(process.env.STAFF_ATTENDEE_EMAIL || '').trim();
+  if (staff) {
+    payload.attendees.push({
+      emailAddress: { address: staff, name: 'TDOT Immigration Consultant' },
+      type: 'required',
+    });
+  }
+  if (!payload.attendees.length) delete payload.attendees;
   return payload;
 }
 
@@ -141,6 +154,55 @@ async function createTeamsMeeting(lead, slotStr, duration = 30) {
   return { meetingId: String(res.data.id), joinUrl, password: '', provider: 'teams' };
 }
 
+/**
+ * PREFLIGHT: prove the Teams setup end-to-end with ZERO client impact —
+ * creates a throwaway Teams event on the organizer's calendar (NO attendees,
+ * so nobody receives an invite), confirms a join URL comes back (= organizer
+ * exists + Calendars.ReadWrite granted + Teams license active), then deletes
+ * the event. Run via POST /api/meeting-preflight before flipping the provider.
+ */
+async function preflightTeams() {
+  const organizer = process.env.MEETING_ORGANIZER_EMAIL;
+  if (!organizer) return { ok: false, error: 'MEETING_ORGANIZER_EMAIL not set' };
+
+  const { getAccessToken } = require('./microsoftMailService');
+  const token = await getAccessToken();
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  // a slot ~10 minutes from now, Toronto wall time
+  const soon = new Date(Date.now() + 10 * 60000);
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(soon);
+  const f = {}; for (const x of p) f[x.type] = x.value;
+  const slotStr = `${f.year}-${f.month}-${f.day} ${f.hour === '24' ? '00' : f.hour}:${f.minute}`;
+
+  const payload = buildTeamsEventPayload({ fullName: 'TDOT Preflight (safe to ignore)' }, slotStr, 15, { includeAttendees: false });
+  payload.subject = 'TDOT preflight check — auto-deleted';
+
+  let event;
+  try {
+    const res = await axios.post(
+      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(organizer)}/events`, payload, { headers });
+    event = res.data;
+  } catch (err) {
+    const detail = err.response?.data?.error;
+    return { ok: false, step: 'create-event', status: err.response?.status,
+      error: detail ? `${detail.code}: ${detail.message}` : err.message,
+      hint: err.response?.status === 403 ? 'Calendars.ReadWrite (Application) likely missing or admin consent not granted'
+          : err.response?.status === 404 ? 'Organizer mailbox not found — check MEETING_ORGANIZER_EMAIL' : undefined };
+  }
+
+  const joinUrl = event.onlineMeeting?.joinUrl || event.onlineMeetingUrl || '';
+  // Clean up regardless of join-URL outcome.
+  await axios.delete(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(organizer)}/events/${event.id}`, { headers })
+    .catch((err) => console.warn(`[Meeting] Preflight cleanup failed (delete event ${event.id} manually): ${err.message}`));
+
+  if (!joinUrl) {
+    return { ok: false, step: 'join-url', error: 'Event created but no Teams join URL — the organizer mailbox likely has no Teams license', organizer };
+  }
+  return { ok: true, organizer, joinUrlSample: joinUrl.slice(0, 60) + '…',
+    staffAttendee: process.env.STAFF_ATTENDEE_EMAIL || '(not set — recommended!)' };
+}
+
 // ─── The provider-agnostic entry point ────────────────────────────────────────
 
 /**
@@ -154,7 +216,7 @@ async function createMeeting(lead, slotStr, duration = 30) {
 }
 
 module.exports = {
-  createMeeting, provider,
+  createMeeting, provider, preflightTeams,
   // exported for tests / direct use
   createZoomMeeting, createTeamsMeeting, buildTeamsEventPayload, slotToGraphTimes, getZoomAccessToken,
 };
