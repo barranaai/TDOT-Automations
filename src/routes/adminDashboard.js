@@ -1501,6 +1501,11 @@ function renderTablePage() {
     var barCls = r >= 70 ? '' : (r >= 40 ? ' mid' : ' low');
     var tr = document.createElement('tr');
     tr.className = c.health === 'Red' ? 'row-red' : (c.health === 'Orange' ? 'row-orange' : '');
+    if (c.caseRef) {
+      tr.style.cursor = 'pointer';
+      tr.title = 'Open case cockpit';
+      tr.onclick = function() { window.location.href = '/admin/case/' + encodeURIComponent(c.caseRef); };
+    }
     tr.innerHTML =
       '<td style="font-weight:600;color:var(--navy);white-space:nowrap">' + escHtml(c.caseRef || '—') + '</td>' +
       '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(c.clientName) + '</td>' +

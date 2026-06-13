@@ -11,8 +11,10 @@ const clientPortalRouter         = require('./routes/clientPortal');
 const adminLoginRouter           = require('./routes/adminLogin');
 const adminDashboardRouter       = require('./routes/adminDashboard');
 const adminEnginesRouter         = require('./routes/adminEngines');
+const adminCaseRouter            = require('./routes/adminCase');
 const mondayApi = require('./services/mondayApi');
 const dashboardService           = require('./services/dashboardService');
+const caseCockpitService         = require('./services/caseCockpitService');
 const clientMasterService = require('./services/clientMasterService');
 const boardService = require('./services/boardService');
 const webhookManager  = require('./services/webhookManager');
@@ -47,6 +49,7 @@ app.use('/client',         clientPortalRouter);     // unified client landing pa
 // Admin routes — order matters (most specific first)
 app.use('/admin/dashboard', adminDashboardRouter);  // landing page after login
 app.use('/admin/engines',   adminEnginesRouter);    // engine control panel
+app.use('/admin/case',      adminCaseRouter);        // per-case staff cockpit
 app.use('/admin',           adminLoginRouter);       // TDOT-branded login + auto-redirect
 
 app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
@@ -246,6 +249,18 @@ app.get('/api/dashboard/stats', async (req, res) => {
   } catch (err) {
     console.error('[Dashboard] Stats failed:', err.stack || err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Staff case cockpit — unified single-case snapshot for /admin/case/:caseRef
+app.get('/api/case/:caseRef', async (req, res) => {
+  try {
+    const overview = await caseCockpitService.getCaseOverview((req.params.caseRef || '').trim());
+    res.json(overview);
+  } catch (err) {
+    const notFound = /not found/i.test(err.message || '');
+    if (!notFound) console.error('[Cockpit] Overview failed:', err.stack || err.message);
+    res.status(notFound ? 404 : 500).json({ error: err.message });
   }
 });
 
