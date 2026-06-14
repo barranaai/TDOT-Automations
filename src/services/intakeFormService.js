@@ -94,7 +94,7 @@ const DEADLINE_REASONS = ['ITA deadline', 'Passport request deadline', 'Restorat
   'CBSA or removal matter', 'Hearing or appointment', 'PNP deadline', 'Employer deadline', 'School deadline', 'Other'];
 const REFUSAL_TYPES = ['Visitor visa', 'Study permit', 'Work permit', 'Spousal sponsorship', 'PR application',
   'Express Entry', 'PNP', 'Refugee or H and C', 'Other'];
-const HOW_HEARD = ['Instagram', 'TikTok', 'Google', 'Website', 'WhatsApp', 'Referral', 'Existing client', 'Walk in', 'Event', 'Other'];
+const HOW_HEARD = ['Existing client', 'Referral', 'Social media', 'Google', 'Website', 'Walk in', 'Event'];
 const RELATIONSHIPS = ['New inquiry', 'Existing client with active application', 'Previous client with completed or inactive application'];
 const INTENTS  = ['Book consultation', 'Start new application', 'Request quote', 'Existing file update', 'General information'];
 const STATUSES = ['Visitor', 'Student', 'Worker', 'Permanent resident', 'Citizen', 'No valid status', 'Outside Canada', 'Other'];
@@ -347,36 +347,27 @@ function buildDigest(f, uploaded = [], rejectedUploads = []) {
   add('Inside Canada', f.insideCanada);
   add('Country', f.insideCanada === 'Yes' ? 'Canada' : f.currentCountry);
 
-  section('2 · Relationship With TDOT');
-  add('Relationship', f.relationshipWithTdot);
-  add('Existing file type', f.existingFileType);
+  section('2 · Family Members');
+  add('Spouse/common-law partner', f.hasSpouse);
+  add('Spouse accompanying', f.hasSpouse === 'Yes' ? f.spouseAccompanying : '');
+  add('Dependent children', f.childrenCount);
+  add('Children accompanying', Number(f.childrenCount) > 0 ? f.childrenAccompanying : '');
 
-  section('3 · Service Required');
-  add('Service', f.serviceRequired);
-  add('Inquiry / goal', f.situationDescription);
-  add('Wants to', f.whatDoYouWant);
-
-  section('4 · Current Immigration Status');
+  section('3 · Current Immigration Status');
   add('Status', f.currentStatus);
   add('Status expiry', f.statusExpiry);
   add('Maintained/implied status', f.maintainedStatus);
   add('Recent extension/status application', f.recentExtension);
   add('Extension details', f.recentExtensionDetails);
 
-  section('Family Members');
-  add('Spouse/common-law partner', f.hasSpouse);
-  add('Spouse accompanying', f.hasSpouse === 'Yes' ? f.spouseAccompanying : '');
-  add('Dependent children', f.childrenCount);
-  add('Children accompanying', Number(f.childrenCount) > 0 ? f.childrenAccompanying : '');
+  section('4 · Relationship With TDOT');
+  add('Relationship', f.relationshipWithTdot);
+  add('Existing file type', f.existingFileType);
 
-  section('5 · Urgency Screening');
-  add('Urgent deadline', f.urgentDeadline === 'Yes' ? `${f.deadlineDate} (${f.deadlineReason})` : f.urgentDeadline);
-  add('Removal/enforcement order', f.removalOrder);
-  add('CBSA/IRCC letter', f.enforcementLetter);
-  add('Enforcement details', f.enforcementDetails);
-  add('Restoration period', f.restorationPeriod);
-  add('Restoration deadline', f.restorationDeadline);
-  add('Recent refusal', f.recentRefusal === 'Yes' ? `${f.refusalType} (${f.refusalDate})` : f.recentRefusal);
+  section('5 · Service Required');
+  add('Service', f.serviceRequired);
+  add('Inquiry / goal', f.situationDescription);
+  add('Wants to', f.whatDoYouWant);
 
   const fBlock = serviceToFBlock(f.serviceRequired);
   if (fBlock) {
@@ -385,7 +376,16 @@ function buildDigest(f, uploaded = [], rejectedUploads = []) {
     if (fAnswers.length) { section(`6 · Service-Specific (${fBlock})`); lines.push(...fAnswers); }
   }
 
-  section('7 · Source & Consent');
+  section('7 · Urgency Screening');
+  add('Urgent deadline', f.urgentDeadline === 'Yes' ? `${f.deadlineDate} (${f.deadlineReason})` : f.urgentDeadline);
+  add('Removal/enforcement order', f.removalOrder);
+  add('CBSA/IRCC letter', f.enforcementLetter);
+  add('Enforcement details', f.enforcementDetails);
+  add('Restoration period', f.restorationPeriod);
+  add('Restoration deadline', f.restorationDeadline);
+  add('Recent refusal', f.recentRefusal === 'Yes' ? `${f.refusalType} (${f.refusalDate})` : f.recentRefusal);
+
+  section('8 · Source & Consent');
   add('How heard', f.howHeard);
   add('Referred by', f.referredBy);
   lines.push('<b>Consents:</b> contact ✓ · accuracy ✓ · disclaimer ✓ · storage ✓ (all required to submit)');
@@ -476,73 +476,7 @@ function buildIntakeFormHtml() {
       <div class="cond" id="c-outside"><label>Which country are you currently in? *</label><input type="text" name="currentCountry"></div>
     </div>
 
-    <div class="section"><h2>2 · Your Relationship With TDOT</h2>
-      <label>Have you contacted or worked with TDOT Immigration before? *</label>
-      <select name="relationshipWithTdot" required><option value="">Choose...</option>
-        ${opt('New inquiry')}${opt('Existing client with active application')}${opt('Previous client with completed or inactive application')}
-      </select>
-      <div class="cond" id="c-existing"><label>Which service or file type, if known? <span class="opt">(e.g. PGWP, Spousal Sponsorship, PR Card, Express Entry)</span></label>
-      <input type="text" name="existingFileType"></div>
-    </div>
-
-    <div class="section"><h2>3 · Service Required</h2>
-      <label>What service or support are you looking for? *</label>
-      <select name="serviceRequired" id="serviceRequired" required><option value="">Choose...</option>${serviceOptions}</select>
-      <label>Please briefly explain your inquiry or goal *</label>
-      <textarea name="situationDescription" rows="4" required placeholder="Example: I received an ITA, I need to extend my work permit, I need help after a refusal..."></textarea>
-      <label>What would you like to do? *</label>
-      <select name="whatDoYouWant" required><option value="">Choose...</option>
-        ${opt('Book consultation')}${opt('Start new application')}${opt('Request quote')}${opt('Existing file update')}${opt('General information')}
-      </select>
-    </div>
-
-    <div class="section"><h2>4 · Current Immigration Status</h2>
-      <label>Your current status in the country where you are presently located *</label>
-      <select name="currentStatus" id="currentStatus" required><option value="">Choose...</option>
-        ${['Visitor', 'Student', 'Worker', 'Permanent resident', 'Citizen', 'No valid status', 'Outside Canada', 'Other'].map((v) => opt(v)).join('')}
-      </select>
-      <div class="cond" id="c-expiry"><label>When does your current status expire? * <span class="opt">(exact date, not an estimate)</span></label>
-      <input type="date" name="statusExpiry"></div>
-      <div class="cond" id="c-maintained"><label>Are you currently on maintained or implied status? *</label><div>${yesNo('maintainedStatus')}</div></div>
-      <label>Have you applied for an extension or change of status recently? <span class="opt">(optional)</span></label>
-      <div><label class="radio"><input type="radio" name="recentExtension" value="Yes"> Yes</label>
-      <label class="radio"><input type="radio" name="recentExtension" value="No"> No</label></div>
-      <div class="cond" id="c-extension"><label>Application type and submission date <span class="opt">(e.g. visitor record submitted on May 1, 2026)</span></label>
-      <textarea name="recentExtensionDetails" rows="2"></textarea></div>
-    </div>
-
-    <div class="section"><h2>5 · Urgency Screening</h2>
-      <label>Do you have any urgent deadline connected to your inquiry? *</label><div>${yesNo('urgentDeadline')}</div>
-      <div class="cond" id="c-deadline">
-        <label>Deadline date *</label><input type="date" name="deadlineDate">
-        <label>Reason for the deadline *</label>
-        <select name="deadlineReason"><option value="">Choose...</option>${DEADLINE_REASONS.map((v) => opt(v)).join('')}</select>
-      </div>
-      <label>Are you currently subject to a removal, departure, exclusion, or deportation order, or any enforcement action? *</label>
-      <div>${yesNo('removalOrder', ['Not sure'])}</div>
-      <label>Have you received any letter, notice, call, or communication from CBSA, IRCC, or law enforcement asking you to attend, leave, or respond? *</label>
-      <div>${yesNo('enforcementLetter', ['Not sure'])}</div>
-      <div class="cond" id="c-letter">
-        <label>Please upload the letter <span class="opt">(PDF, JPG, PNG)</span> and/or provide details</label>
-        <input type="file" name="enforcementLetterFile" accept=".pdf,.jpg,.jpeg,.png">
-        <textarea name="enforcementDetails" rows="3" placeholder="Details — what the letter says, who it is from, any dates" style="margin-top:8px"></textarea>
-      </div>
-      <div class="cond" id="c-restoration">
-        <label>Are you currently within a restoration period? *</label><div>${yesNo('restorationPeriod')}</div>
-        <div class="cond" id="c-restorationDate"><label>Restoration deadline <span class="opt">(exact date if known)</span></label>
-        <input type="date" name="restorationDeadline"></div>
-      </div>
-      <label>Do you have any recent refusal? *</label><div>${yesNo('recentRefusal')}</div>
-      <div class="cond" id="c-refusal">
-        <label>What was refused? *</label>
-        <select name="refusalType"><option value="">Choose...</option>${REFUSAL_TYPES.map((v) => opt(v)).join('')}</select>
-        <label>Date of most recent refusal *</label><input type="date" name="refusalDate">
-        <label>Upload refusal letter if available <span class="opt">(PDF, JPG, PNG)</span></label>
-        <input type="file" name="refusalLetterFile" accept=".pdf,.jpg,.jpeg,.png">
-      </div>
-    </div>
-
-    <div class="section"><h2>6 · Family Members</h2>
+    <div class="section"><h2>2 · Family Members</h2>
       <p class="hint">If family members may be part of your application, this helps us prepare their document checklists too.</p>
       <label>Do you have a spouse or common-law partner? *</label><div>${yesNo('hasSpouse')}</div>
       <div class="cond" id="c-spouseAcc">
@@ -559,7 +493,42 @@ function buildIntakeFormHtml() {
       </div>
     </div>
 
-    <div class="section" id="fblocks" style="display:none"><h2>7 · A Few Service-Specific Questions</h2>
+    <div class="section"><h2>3 · Current Immigration Status</h2>
+      <label>Your current status in the country where you are presently located *</label>
+      <select name="currentStatus" id="currentStatus" required><option value="">Choose...</option>
+        ${['Visitor', 'Student', 'Worker', 'Permanent resident', 'Citizen', 'No valid status', 'Outside Canada', 'Other'].map((v) => opt(v)).join('')}
+      </select>
+      <div class="cond" id="c-expiry"><label>When does your current status expire? * <span class="opt">(exact date, not an estimate)</span></label>
+      <input type="date" name="statusExpiry"></div>
+      <div class="cond" id="c-maintained"><label>Are you currently on maintained or implied status? *</label><div>${yesNo('maintainedStatus')}</div></div>
+      <label>Have you applied for an extension or change of status recently? <span class="opt">(optional)</span></label>
+      <div><label class="radio"><input type="radio" name="recentExtension" value="Yes"> Yes</label>
+      <label class="radio"><input type="radio" name="recentExtension" value="No"> No</label></div>
+      <div class="cond" id="c-extension"><label>Application type and submission date <span class="opt">(e.g. visitor record submitted on May 1, 2026)</span></label>
+      <textarea name="recentExtensionDetails" rows="2"></textarea></div>
+    </div>
+
+    <div class="section"><h2>4 · Your Relationship With TDOT</h2>
+      <label>Have you contacted or worked with TDOT Immigration before? *</label>
+      <select name="relationshipWithTdot" required><option value="">Choose...</option>
+        ${opt('New inquiry')}${opt('Existing client with active application')}${opt('Previous client with completed or inactive application')}
+      </select>
+      <div class="cond" id="c-existing"><label>Which service or file type, if known? <span class="opt">(e.g. PGWP, Spousal Sponsorship, PR Card, Express Entry)</span></label>
+      <input type="text" name="existingFileType"></div>
+    </div>
+
+    <div class="section"><h2>5 · Service Required</h2>
+      <label>What service or support are you looking for? *</label>
+      <select name="serviceRequired" id="serviceRequired" required><option value="">Choose...</option>${serviceOptions}</select>
+      <label>Please briefly explain your inquiry or goal *</label>
+      <textarea name="situationDescription" rows="4" required placeholder="Example: I received an ITA, I need to extend my work permit, I need help after a refusal..."></textarea>
+      <label>What would you like to do? *</label>
+      <select name="whatDoYouWant" required><option value="">Choose...</option>
+        ${opt('Book consultation')}${opt('Start new application')}${opt('Request quote')}${opt('Existing file update')}${opt('General information')}
+      </select>
+    </div>
+
+    <div class="section" id="fblocks" style="display:none"><h2>6 · A Few Service-Specific Questions</h2>
       <div class="fb" id="F1">
         <label>Do you have a valid Express Entry profile?</label><div>${yesNo('f1_hasProfile')}</div>
         <label>What is your CRS score?</label><input type="number" name="f1_crsScore" min="0" max="1200">
@@ -618,6 +587,37 @@ function buildIntakeFormHtml() {
         <label>Is there a deadline?</label><input type="date" name="f10_deadline">
         <label>Upload the relevant letter or screenshot <span class="opt">(PDF, JPG, PNG)</span></label>
         <input type="file" name="f10LetterFile" accept=".pdf,.jpg,.jpeg,.png">
+      </div>
+    </div>
+
+    <div class="section"><h2>7 · Urgency Screening</h2>
+      <label>Do you have any urgent deadline connected to your inquiry? *</label><div>${yesNo('urgentDeadline')}</div>
+      <div class="cond" id="c-deadline">
+        <label>Deadline date *</label><input type="date" name="deadlineDate">
+        <label>Reason for the deadline *</label>
+        <select name="deadlineReason"><option value="">Choose...</option>${DEADLINE_REASONS.map((v) => opt(v)).join('')}</select>
+      </div>
+      <label>Are you currently subject to a removal, departure, exclusion, or deportation order, or any enforcement action? *</label>
+      <div>${yesNo('removalOrder', ['Not sure'])}</div>
+      <label>Have you received any letter, notice, call, or communication from CBSA, IRCC, or law enforcement asking you to attend, leave, or respond? *</label>
+      <div>${yesNo('enforcementLetter', ['Not sure'])}</div>
+      <div class="cond" id="c-letter">
+        <label>Please upload the letter <span class="opt">(PDF, JPG, PNG)</span> and/or provide details</label>
+        <input type="file" name="enforcementLetterFile" accept=".pdf,.jpg,.jpeg,.png">
+        <textarea name="enforcementDetails" rows="3" placeholder="Details — what the letter says, who it is from, any dates" style="margin-top:8px"></textarea>
+      </div>
+      <div class="cond" id="c-restoration">
+        <label>Are you currently within a restoration period? *</label><div>${yesNo('restorationPeriod')}</div>
+        <div class="cond" id="c-restorationDate"><label>Restoration deadline <span class="opt">(exact date if known)</span></label>
+        <input type="date" name="restorationDeadline"></div>
+      </div>
+      <label>Do you have any recent refusal? *</label><div>${yesNo('recentRefusal')}</div>
+      <div class="cond" id="c-refusal">
+        <label>What was refused? *</label>
+        <select name="refusalType"><option value="">Choose...</option>${REFUSAL_TYPES.map((v) => opt(v)).join('')}</select>
+        <label>Date of most recent refusal *</label><input type="date" name="refusalDate">
+        <label>Upload refusal letter if available <span class="opt">(PDF, JPG, PNG)</span></label>
+        <input type="file" name="refusalLetterFile" accept=".pdf,.jpg,.jpeg,.png">
       </div>
     </div>
 
