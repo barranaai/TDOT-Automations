@@ -544,6 +544,7 @@ function buildIntakeFormHtml() {
       </div>
       <div class="fb" id="F3">
         <label>What type of work permit do you currently hold?</label><input type="text" name="f3_permitType">
+        <label>What is the expiry date?</label><input type="date" name="f3_expiry">
         <label>Have you submitted a PR application or received an AOR?</label><div>${yesNo('f3_prSubmitted')}</div>
         <label>Do you have employer documents?</label><div>${yesNo('f3_employerDocs')}</div>
       </div>
@@ -555,6 +556,8 @@ function buildIntakeFormHtml() {
         <label>School deadline, if any</label><input type="date" name="f4_deadline">
       </div>
       <div class="fb" id="F5">
+        <label>Are you inside or outside Canada?</label>
+        <select name="f5_location"><option value="">Choose...</option>${opt('Inside Canada')}${opt('Outside Canada')}</select>
         <label>What is the purpose of travel or stay extension?</label><textarea name="f5_purpose" rows="2"></textarea>
         <label>Have you had a refusal before? <span class="opt">(any refusal, even years ago)</span></label><div>${yesNo('f5_priorRefusal')}</div>
       </div>
@@ -567,12 +570,18 @@ function buildIntakeFormHtml() {
         <label>Any previous refusal or marriage-history concern?</label><input type="text" name="f6_concerns">
       </div>
       <div class="fb" id="F7">
+        <label>Do you need PR card renewal, PRTD, citizenship, or residency obligation review?</label>
+        <select name="f7_serviceNeeded"><option value="">Choose...</option>${opt('PR card renewal')}${opt('PR travel document (PRTD)')}${opt('Citizenship')}${opt('Residency obligation review')}</select>
         <label>When did you become a permanent resident?</label><input type="date" name="f7_prDate">
+        <label>Are you inside Canada?</label>
+        <select name="f7_insideCanada"><option value="">Choose...</option>${opt('Inside Canada')}${opt('Outside Canada')}</select>
       </div>
       <div class="fb" id="F8">
         <label>Are you the employer or the employee?</label>
         <select name="f8_role"><option value="">Choose...</option>${opt('Employer')}${opt('Employee')}</select>
         <label>What is the job title?</label><input type="text" name="f8_jobTitle">
+        <label>Is this LMIA, employer portal, OINP employer, or compliance support?</label>
+        <select name="f8_supportType"><option value="">Choose...</option>${opt('LMIA')}${opt('Employer portal')}${opt('OINP employer')}${opt('Compliance support')}</select>
       </div>
       <div class="fb" id="F9">
         <label>What application was refused?</label>
