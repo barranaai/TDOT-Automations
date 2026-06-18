@@ -24,6 +24,7 @@
 
 const leadService = require('./leadService');
 const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
+const { CURRENT_STATUS, STATUS_WITH_EXPIRY } = require('../../config/optionLists');
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -97,7 +98,7 @@ const REFUSAL_TYPES = ['Visitor visa', 'Study permit', 'Work permit', 'Spousal s
 const HOW_HEARD = ['Existing client', 'Referral', 'Social media', 'Google', 'Website', 'Walk in', 'Event'];
 const RELATIONSHIPS = ['New inquiry', 'Existing client with active application', 'Previous client with completed or inactive application'];
 const INTENTS  = ['Book consultation', 'Start new application', 'Request quote', 'Existing file update', 'General information'];
-const STATUSES = ['Visitor', 'Student', 'Worker', 'Permanent resident', 'Citizen', 'No valid status', 'Outside Canada', 'Other'];
+const STATUSES = CURRENT_STATUS;   // canonical list shared with the pre-consult form
 const YN  = ['Yes', 'No'];
 const YNS = ['Yes', 'No', 'Not sure'];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -134,8 +135,7 @@ function validateIntake(f) {
   req('situationDescription', 'A brief explanation of your inquiry');
   inEnum('whatDoYouWant', INTENTS, 'What you would like to do', true);
   inEnum('currentStatus', STATUSES, 'Current immigration status', true);
-  isDate('statusExpiry', 'Status expiry date', ['Visitor', 'Student', 'Worker'].includes(f.currentStatus));
-  if (f.insideCanada === 'Yes') inEnum('maintainedStatus', YN, 'Maintained or implied status question', true);
+  isDate('statusExpiry', 'Status expiry date', STATUS_WITH_EXPIRY.includes(f.currentStatus));
   inEnum('urgentDeadline', YN, 'Urgent deadline question', true);
   isDate('deadlineDate', 'Deadline date', f.urgentDeadline === 'Yes');
   inEnum('deadlineReason', DEADLINE_REASONS, 'Deadline reason', f.urgentDeadline === 'Yes');
@@ -190,7 +190,7 @@ async function processIntakeSubmission(f, files = {}) {
   // Only the ACTIVE service's F-block answers count — hidden blocks keep
   // stale values in the browser, which must not become triage data.
   const activeBlock = serviceToFBlock(f.serviceRequired);
-  const inVSW = ['Visitor', 'Student', 'Worker'].includes(f.currentStatus);
+  const inVSW = STATUS_WITH_EXPIRY.includes(f.currentStatus);
 
   // 1. Create the lead with the fields the existing funnel already understands.
   const lead = await leadService.createLead({
@@ -356,7 +356,6 @@ function buildDigest(f, uploaded = [], rejectedUploads = []) {
   section('3 · Current Immigration Status');
   add('Status', f.currentStatus);
   add('Status expiry', f.statusExpiry);
-  add('Maintained/implied status', f.maintainedStatus);
   add('Recent extension/status application', f.recentExtension);
   add('Extension details', f.recentExtensionDetails);
 
@@ -496,11 +495,10 @@ function buildIntakeFormHtml() {
     <div class="section"><h2>3 · Current Immigration Status</h2>
       <label>Your current status in the country where you are presently located *</label>
       <select name="currentStatus" id="currentStatus" required><option value="">Choose...</option>
-        ${['Visitor', 'Student', 'Worker', 'Permanent resident', 'Citizen', 'No valid status', 'Outside Canada', 'Other'].map((v) => opt(v)).join('')}
+        ${CURRENT_STATUS.map((v) => opt(v)).join('')}
       </select>
       <div class="cond" id="c-expiry"><label>When does your current status expire? * <span class="opt">(exact date, not an estimate)</span></label>
       <input type="date" name="statusExpiry"></div>
-      <div class="cond" id="c-maintained"><label>Are you currently on maintained or implied status? *</label><div>${yesNo('maintainedStatus')}</div></div>
       <label>Have you applied for an extension or change of status recently? <span class="opt">(optional)</span></label>
       <div><label class="radio"><input type="radio" name="recentExtension" value="Yes"> Yes</label>
       <label class="radio"><input type="radio" name="recentExtension" value="No"> No</label></div>
@@ -650,13 +648,13 @@ function buildIntakeFormHtml() {
   function show(id, on){ var el = document.getElementById(id); if (el) el.classList[on ? 'add' : 'remove']('show'); }
   function onRadio(name, fn){ radios(name).forEach(function(r){ r.addEventListener('change', fn); }); }
 
-  // A5 → A6 (+ D3 maintained status and E7 restoration: per the brief, both
-  // are asked of EVERYONE inside Canada and required there)
+  // A5 → A6 (+ E7 restoration: per the brief, asked of EVERYONE inside Canada
+  // and required there). Maintained status is now a Current-Status option,
+  // not a separate question.
   function updCanada(){ var v = radioVal('insideCanada'); show('c-outside', v === 'No');
-    show('c-maintained', v === 'Yes'); show('c-restoration', v === 'Yes');
+    show('c-restoration', v === 'Yes');
     document.getElementsByName('currentCountry')[0].required = (v === 'No');
-    radios('restorationPeriod').forEach(function(r){ r.required = (v === 'Yes'); });
-    radios('maintainedStatus').forEach(function(r){ r.required = (v === 'Yes'); }); }
+    radios('restorationPeriod').forEach(function(r){ r.required = (v === 'Yes'); }); }
   onRadio('insideCanada', updCanada);
 
   // B1 → B2
@@ -673,10 +671,11 @@ function buildIntakeFormHtml() {
   });
   Array.prototype.slice.call(document.querySelectorAll('.fb')).forEach(function(b){ b.style.display = 'none'; });
 
-  // D1 → D2 (expiry required for Visitor/Student/Worker)
+  // D1 → D2 (expiry required only for a valid temporary permit)
+  var STATUS_WITH_EXPIRY = ${JSON.stringify(STATUS_WITH_EXPIRY)};
   var st = document.getElementById('currentStatus');
   st.addEventListener('change', function(){
-    var needs = ['Visitor','Student','Worker'].indexOf(st.value) >= 0;
+    var needs = STATUS_WITH_EXPIRY.indexOf(st.value) >= 0;
     show('c-expiry', needs);
     document.getElementsByName('statusExpiry')[0].required = needs;
   });
@@ -732,7 +731,7 @@ function buildIntakeFormHtml() {
   // Hidden/optional radios must never block submit ("invalid form control is
   // not focusable"): F-block radios are optional, and restorationPeriod is
   // re-required by updCanada only once "inside Canada = Yes" reveals it.
-  ['f1_hasProfile','f1_hasIta','f2_hasNomination','f2_employerSupport','f3_prSubmitted','f3_employerDocs','f4_admission','f5_priorRefusal','maintainedStatus','restorationPeriod','spouseAccompanying']
+  ['f1_hasProfile','f1_hasIta','f2_hasNomination','f2_employerSupport','f3_prSubmitted','f3_employerDocs','f4_admission','f5_priorRefusal','restorationPeriod','spouseAccompanying']
     .forEach(function(n){ radios(n).forEach(function(r){ r.required = false; }); });
 })();
 </script>
