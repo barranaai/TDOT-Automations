@@ -14,6 +14,19 @@ const microsoftMail      = require('./microsoftMailService');
 const mondayApi          = require('./mondayApi');
 const { leadBoardId }    = require('../../config/monday');
 const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
+const { CURRENT_STATUS } = require('../../config/optionLists');
+
+// ─── Pre-consultation form option lists (eligibility profile, per TDOT spec) ──
+const PC_ENTRY_VISA   = ['Visitor visa', 'Study permit', 'Work permit', 'eTA', 'Other', 'Not applicable'];
+const PC_MARITAL      = ['Single', 'Married', 'Common-law', 'Separated / Divorced'];
+const PC_RELATIVE_REL = ['Parent', 'Sibling', 'Aunt / Uncle', 'Cousin', 'Child', 'Other'];
+const PC_HIGHEST_EDU  = ['High school', 'Diploma / Certificate', "Bachelor's degree", 'Post-graduate diploma / certificate', "Master's degree", 'PhD', 'Trade certificate', 'Other'];
+const PC_COMPLETED    = ['Yes', 'No, currently studying', 'No, not completed'];
+const PC_FT_PT        = ['Full-time', 'Part-time'];
+const PC_ENG_TEST     = ['IELTS General', 'CELPIP General', 'PTE Core', 'Other'];
+const PC_TEST_RESULT  = ['Yes', 'No', 'Booked but not completed yet'];
+const PC_YNNS         = ['Yes', 'No', 'Not sure'];
+const PC_YNNA         = ['Yes', 'No', 'Not sure', 'Not applicable'];
 
 const RENDER_URL      = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
 const TZ              = 'America/Toronto';
@@ -101,69 +114,188 @@ async function loadIntakeArchive(lead) {
 }
 
 async function buildPreConsultFormHtml(lead) {
-  const { serviceToFBlock } = require('./intakeFormService');
   const archive = await loadIntakeArchive(lead) || {};
   const tok = encodeURIComponent(lead.leadToken || '');
   const e = escapeHtml;
 
-  // "What we already know" — read-only snapshot from the intake.
-  const known = [];
-  const k = (label, v) => { if (String(v || '').trim()) known.push(`<div><b>${label}:</b> ${e(v)}</div>`); };
-  k('Name', lead.fullName); k('Service', lead.serviceRequired || lead.caseTypeInterest);
-  k('Inside Canada', lead.insideCanada); k('Current status', lead.currentStatus);
-  k('Status expiry', lead.statusExpiry);
-  k('Urgent deadline', lead.deadlineDate ? `${lead.deadlineDate} (${lead.deadlineReason || ''})` : '');
-  k('Your inquiry', archive.situationDescription || lead.situationDescription);
+  // Prefill: intake archive first (full submission), then the lead columns.
+  const A = (k, leadKey) => {
+    const v = archive[k];
+    if (v != null && String(v).trim()) return String(v);
+    const lv = leadKey ? lead[leadKey] : lead[k];
+    return lv != null ? String(lv) : '';
+  };
+  const childCount = A('childrenCount');
+  const hasChildrenDefault = Number(childCount) > 0 ? 'Yes' : '';
 
-  // Service-specific deep-dive, prefilled from the archive.
-  const fBlock = serviceToFBlock(lead.serviceRequired || '');
-  const fq = (PRECONSULT_FQ[fBlock] || []).map(([name, label, type]) => {
-    const val = e(archive[name] || '');
-    if (type === 'textarea') return `<label>${label}</label><textarea name="${name}" rows="3">${val}</textarea>`;
-    return `<label>${label}</label><input type="${type}" name="${name}" value="${val}">`;
-  }).join('');
+  // ── field builders ──────────────────────────────────────────────────────────
+  const sel = (name, opts, cur, attrs = '') => {
+    const o = opts.map((v) => `<option${cur === v ? ' selected' : ''}>${e(v)}</option>`).join('');
+    return `<select name="${name}" ${attrs}><option value="">Choose…</option>${o}</select>`;
+  };
+  const radio = (name, cur, opts = ['Yes', 'No'], attrs = '') =>
+    `<div class="radios" ${attrs}>` + opts.map((v) =>
+      `<label class="radio"><input type="radio" name="${name}" value="${e(v)}"${cur === v ? ' checked' : ''}> ${e(v)}</label>`).join('') + `</div>`;
+  const txt = (name, cur = '', type = 'text', ph = '') =>
+    `<input type="${type}" name="${name}" value="${e(cur)}" placeholder="${e(ph)}">`;
+
+  // ── repeatable rows (rendered as index 0; JS clones for more) ────────────────
+  const eduRow = `<div class="rrow">
+      <label>School / college / university name</label>${txt('education[0][school]')}
+      <label>Program / field name</label>${txt('education[0][program]')}
+      <label>City and country of study</label>${txt('education[0][location]')}
+      <div class="two"><div><label>Start (MM/YYYY)</label>${txt('education[0][start]', '', 'text', 'MM/YYYY')}</div>
+        <div><label>End (MM/YYYY)</label>${txt('education[0][end]', '', 'text', 'MM/YYYY')}</div></div>
+      <label>Completed?</label>${sel('education[0][completed]', PC_COMPLETED, '')}
+    </div>`;
+  const jobRow = `<div class="rrow">
+      <label>Job title</label>${txt('employment[0][title]')}
+      <label>Company name</label>${txt('employment[0][company]')}
+      <label>Country of employment</label>${txt('employment[0][country]')}
+      <div class="two"><div><label>Start (MM/YYYY)</label>${txt('employment[0][start]', '', 'text', 'MM/YYYY')}</div>
+        <div><label>End (MM/YYYY)</label>${txt('employment[0][end]', '', 'text', 'MM/YYYY')}</div></div>
+      <div class="two"><div><label>Full-time / part-time</label>${sel('employment[0][type]', PC_FT_PT, '')}</div>
+        <div><label>Approx. hours / week</label>${txt('employment[0][hours]', '', 'number')}</div></div>
+      <label>Briefly describe your main duties <span class="opt">(plain words — helps us find your NOC code)</span></label>
+      <textarea name="employment[0][duties]" rows="2"></textarea>
+    </div>`;
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pre-Consultation — TDOT Immigration</title><style>
-    body{background:${BRAND.lightBg};font-family:-apple-system,sans-serif;margin:0;color:${BRAND.textOnLight}}
-    .container{max-width:620px;margin:0 auto;padding:32px 24px}
-    .header{background:${BRAND.darkPanel};color:${BRAND.textOnDark};padding:24px;border-radius:12px 12px 0 0;text-align:center}
-    .card{background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;box-shadow:0 4px 12px rgba(0,0,0,0.08)}
-    .known{background:#fff;border:1px solid ${BRAND.border};border-radius:10px;padding:16px 18px;font-size:14px;line-height:1.7}
-    .known .note{color:${BRAND.mutedOnLight};font-size:12.5px;margin-top:8px}
-    h2{font-size:16px;color:${BRAND.darkPanel};margin:24px 0 4px}
-    label{display:block;font-weight:600;margin:16px 0 6px;font-size:14.5px}
-    input,select,textarea{width:100%;padding:12px;border:1px solid ${BRAND.border};border-radius:8px;font-size:15px;box-sizing:border-box;background:#fff}
-    button{background:${BRAND.primary};color:#fff;padding:14px;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;margin-top:24px;width:100%}
+    body{background:${BRAND.lightBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;color:${BRAND.textOnLight}}
+    .container{max-width:680px;margin:0 auto;padding:32px 20px}
+    .header{background:${BRAND.darkPanel};color:${BRAND.textOnDark};padding:26px;border-radius:12px 12px 0 0;text-align:center}
+    .intro{background:${BRAND.lightCard};padding:18px 28px;border-bottom:1px solid ${BRAND.border};font-size:13.5px;color:${BRAND.mutedOnLight}}
+    .card{background:${BRAND.lightCard};padding:24px 28px;border-radius:0 0 12px 12px;box-shadow:0 4px 12px rgba(0,0,0,0.08)}
+    .section{border:1px solid ${BRAND.border};border-radius:10px;padding:18px 20px;margin-top:18px}
+    .section h2{margin:0 0 4px;font-size:16px;color:${BRAND.darkPanel}}
+    .section .hint{margin:0 0 6px;font-size:13px;color:${BRAND.mutedOnLight}}
+    label{display:block;font-weight:600;margin:14px 0 6px;font-size:14px}
+    label .opt{font-weight:400;color:${BRAND.mutedOnLight}}
+    input,select,textarea{width:100%;padding:11px;border:1px solid ${BRAND.border};border-radius:8px;font-size:15px;box-sizing:border-box;background:#fff}
+    .radios{display:flex;gap:18px;flex-wrap:wrap}
+    .radio{display:inline-flex;align-items:center;font-weight:400;margin:4px 0}
+    .radio input{width:auto;margin-right:7px}
+    .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .cond{display:none;margin-top:4px;padding-left:14px;border-left:3px solid ${BRAND.border}}
+    .cond.show{display:block}
+    .rrow{border:1px dashed ${BRAND.border};border-radius:8px;padding:12px 14px;margin-top:12px;position:relative}
+    .rrow .rm{position:absolute;top:8px;right:10px;width:auto;background:none;border:none;color:${BRAND.mutedOnLight};font-size:18px;cursor:pointer;padding:0;margin:0}
+    .addbtn{background:none;color:${BRAND.primary};border:1px dashed ${BRAND.primary};padding:9px;margin-top:12px;font-size:14px;font-weight:600}
+    .prefill{font-size:11.5px;color:${BRAND.mutedOnLight};font-weight:400;margin-left:6px}
+    button[type=submit]{background:${BRAND.primary};color:#fff;padding:15px;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;margin-top:24px;width:100%}
     button:disabled{opacity:.75;cursor:not-allowed}
     .spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;vertical-align:-2px;margin-right:8px;animation:spin .8s linear infinite}
     @keyframes spin{to{transform:rotate(360deg)}}
+    .disc{font-size:12px;color:${BRAND.mutedOnLight};margin-top:18px;line-height:1.6}
   </style></head><body><div class="container">
-    <div class="header">${TDOT_LOGO_LIGHT_HTML}<h1 style="margin:12px 0 4px">Before Your Consultation</h1>
-    <p style="margin:0;opacity:.85;font-size:14px">A few details so we can make the most of your time.</p></div>
+    <div class="header">${TDOT_LOGO_LIGHT_HTML}<h1 style="margin:12px 0 4px;font-size:21px">Pre-Consultation Form</h1>
+    <p style="margin:0;opacity:.85;font-size:14px">A few details so we can make the most of your consultation.</p></div>
+    <div class="intro">Please complete this short form before your consultation so we can understand your situation in advance. Answer only what applies to you. Some answers are pre-filled from your intake — please review and correct anything that has changed.</div>
     <form class="card" method="POST" action="/consult/${lead.id}?t=${tok}">
-      ${known.length ? `<h2 style="margin-top:0">What you've told us</h2><div class="known">${known.join('')}
-        <div class="note">Spot something wrong or outdated? Correct it in the questions below.</div></div>` : ''}
 
-      <h2>Your case details</h2>
-      <label>Has anything changed since you filled in our intake form?</label>
-      <textarea name="changes" rows="3" placeholder="New documents, new deadlines, a decision arrived — or 'nothing changed'"></textarea>
-      <label>Do you have a deadline or target date?</label>
-      <input name="deadline" value="${e(lead.deadlineDate ? `${lead.deadlineDate} (${lead.deadlineReason || ''})` : '')}" placeholder="e.g. program starts September, or none">
-      ${fq ? `<h2>About your ${e(lead.serviceRequired || 'case')}</h2>${fq}` : ''}
+      <div class="section"><h2>1 · Personal Information</h2>
+        <label>Full name</label>${txt('pc_fullName', A('fullName', 'fullName'))}
+        <label>Age</label>${txt('pc_age', '', 'number')}
+        <label>Complete address</label><textarea name="pc_address" rows="2">${e(A('residentialAddress'))}</textarea>
+        <label>Are you currently in Canada?</label>${radio('pc_inCanada', A('insideCanada', 'insideCanada'))}
+        <div class="cond" id="c-incanada">
+          <label>When did you enter Canada?</label>${txt('pc_entryDate', '', 'date')}
+          <label>What type of visa / permit did you use to enter Canada?</label>${sel('pc_entryVisa', PC_ENTRY_VISA, '')}
+        </div>
+        <label>What is your current status in Canada?</label>${sel('pc_currentStatus', CURRENT_STATUS, A('currentStatus', 'currentStatus'))}
+        <label>If you have a current permit / visa, when does it expire?</label>${txt('pc_permitExpiry', A('statusExpiry', 'statusExpiry'), 'date')}
+        <label>Marital status</label>${sel('pc_marital', PC_MARITAL, '')}
+        <label>Do you have children?</label>${radio('pc_hasChildren', hasChildrenDefault)}
+        <div class="cond" id="c-children"><label>If yes, how many?</label>${txt('pc_childrenCount', childCount, 'number')}</div>
+        <label>Do you have any relatives in Canada who are PR or Canadian citizens?</label>${radio('pc_relatives', '')}
+        <div class="cond" id="c-relatives"><label>If yes, please mention your relationship</label>${sel('pc_relativeRel', PC_RELATIVE_REL, '')}</div>
+      </div>
 
-      <h2>Help us prepare</h2>
-      <label>What have you done so far, and which documents do you already have?</label>
-      <textarea name="progress" rows="4">${e(archive.recentExtensionDetails || '')}</textarea>
-      <label>Your top questions for the consultant</label>
-      <textarea name="questions" rows="4"></textarea>
+      <div class="section"><h2>2 · Education Information</h2>
+        <label>What is your highest completed education after Grade 10?</label>${sel('pc_highestEducation', PC_HIGHEST_EDU, '')}
+        <p class="hint" style="margin-top:14px">Please provide details of your education after Grade 10 and onwards:</p>
+        <div id="edu-list">${eduRow}</div>
+        <button type="button" class="addbtn" data-add="edu-list">+ Add another education</button>
+      </div>
+
+      <div class="section"><h2>3 · Employment Information</h2>
+        <label>Do you have paid work experience in TEER 0, 1, 2, or 3 in the last 5 years?</label>${radio('pc_teer', '', PC_YNNS)}
+        <div class="cond" id="c-teer">
+          <p class="hint" style="margin-top:8px">Please provide details of your TEER 0–3 jobs in the last 5 years:</p>
+          <div id="job-list">${jobRow}</div>
+          <button type="button" class="addbtn" data-add="job-list">+ Add another job</button>
+        </div>
+        <label>If you are looking for PNP options — did your employer earn more than $1 million in the past year?</label>${sel('pc_employerRevenue', PC_YNNA, '')}
+      </div>
+
+      <div class="section"><h2>4 · Language Proficiency</h2>
+        <label>Do you have an English language test result?</label>${sel('pc_englishTest', PC_TEST_RESULT, '', 'id="pc_englishTest"')}
+        <div class="cond" id="c-english">
+          <label>Which test?</label>${sel('pc_englishTestType', PC_ENG_TEST, '')}
+          <label>Your English scores, if available</label>
+          <div class="two"><div>${txt('pc_engListening', '', 'text', 'Listening')}</div><div>${txt('pc_engReading', '', 'text', 'Reading')}</div></div>
+          <div class="two" style="margin-top:10px"><div>${txt('pc_engWriting', '', 'text', 'Writing')}</div><div>${txt('pc_engSpeaking', '', 'text', 'Speaking')}</div></div>
+        </div>
+        <label>Do you have a French language test result?</label>${sel('pc_frenchTest', PC_TEST_RESULT, '', 'id="pc_frenchTest"')}
+        <div class="cond" id="c-french">
+          <label>Your French scores, if available</label>
+          <div class="two"><div>${txt('pc_frListening', '', 'text', 'Listening')}</div><div>${txt('pc_frReading', '', 'text', 'Reading')}</div></div>
+          <div class="two" style="margin-top:10px"><div>${txt('pc_frWriting', '', 'text', 'Writing')}</div><div>${txt('pc_frSpeaking', '', 'text', 'Speaking')}</div></div>
+        </div>
+      </div>
+
+      <div class="section"><h2>5 · Spouse / Common-law Partner / Adult Child</h2>
+        <label>Do you have a spouse or common-law partner?</label>${radio('pc_hasSpouse', A('hasSpouse', 'hasSpouse'))}
+        <div class="cond" id="c-spouse"><label>Should their profile also be considered during the consultation?</label>${radio('pc_spouseConsider', '', PC_YNNS)}</div>
+        <label>Do you have any child over 18 years of age who should be considered?</label>${radio('pc_adultChild', '')}
+        <p class="hint" style="margin-top:14px">Note: if your spouse/partner or a child over 18 needs to be assessed, they may also be asked to complete this form.</p>
+      </div>
+
+      <div class="section"><h2>6 · Final Question</h2>
+        <label>Is there anything important you want the consultant to know before the consultation? <span class="opt">(optional)</span></label>
+        <textarea name="pc_finalNote" rows="3"></textarea>
+      </div>
+
+      <p class="disc">This form is only for consultation preparation. Final eligibility and legal advice can only be provided after reviewing complete information and documents.</p>
       <button type="submit" id="pcBtn">Submit</button>
     </form></div>
   <script>
     (function(){
-      var form = document.querySelector('form'), btn = document.getElementById('pcBtn');
-      form.addEventListener('submit', function(){ btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Saving your answers…'; });
-      window.addEventListener('pageshow', function(){ if (btn.disabled) { btn.disabled = false; btn.innerHTML = 'Submit'; } });
+      function radioVal(name){ var r=document.querySelector('input[name="'+name+'"]:checked'); return r?r.value:''; }
+      function show(id,on){ var el=document.getElementById(id); if(el) el.classList[on?'add':'remove']('show'); }
+      function onChange(name,fn){ Array.prototype.forEach.call(document.querySelectorAll('[name="'+name+'"]'),function(el){ el.addEventListener('change',fn); }); fn(); }
+
+      onChange('pc_inCanada', function(){ show('c-incanada', radioVal('pc_inCanada')==='Yes'); });
+      onChange('pc_hasChildren', function(){ show('c-children', radioVal('pc_hasChildren')==='Yes'); });
+      onChange('pc_relatives', function(){ show('c-relatives', radioVal('pc_relatives')==='Yes'); });
+      onChange('pc_teer', function(){ show('c-teer', radioVal('pc_teer')==='Yes'); });
+      onChange('pc_hasSpouse', function(){ show('c-spouse', radioVal('pc_hasSpouse')==='Yes'); });
+      var et=document.getElementById('pc_englishTest'); et.addEventListener('change',function(){ show('c-english', et.value==='Yes'); }); show('c-english', et.value==='Yes');
+      var ft=document.getElementById('pc_frenchTest'); ft.addEventListener('change',function(){ show('c-french', ft.value==='Yes'); }); show('c-french', ft.value==='Yes');
+
+      // Repeatable rows: clone the first .rrow, bump the [index], clear values.
+      Array.prototype.forEach.call(document.querySelectorAll('.addbtn'), function(btn){
+        btn.addEventListener('click', function(){
+          var list=document.getElementById(btn.getAttribute('data-add'));
+          var rows=list.querySelectorAll('.rrow');
+          var idx=rows.length;
+          var clone=rows[0].cloneNode(true);
+          Array.prototype.forEach.call(clone.querySelectorAll('input,select,textarea'), function(f){
+            if(f.name) f.name=f.name.replace(/\\[\\d+\\]/, '['+idx+']');
+            if(f.tagName==='SELECT') f.selectedIndex=0; else f.value='';
+          });
+          if(!clone.querySelector('.rm')){
+            var x=document.createElement('button'); x.type='button'; x.className='rm'; x.innerHTML='&times;';
+            x.onclick=function(){ clone.remove(); }; clone.appendChild(x);
+          }
+          list.appendChild(clone);
+        });
+      });
+
+      var form=document.querySelector('form'), btn=document.getElementById('pcBtn');
+      form.addEventListener('submit', function(){ btn.disabled=true; btn.innerHTML='<span class="spin"></span>Saving your answers…'; });
+      window.addEventListener('pageshow', function(){ if(btn.disabled){ btn.disabled=false; btn.innerHTML='Submit'; } });
     })();
   </script></body></html>`;
 }
@@ -220,19 +352,63 @@ async function savePreConsultData(leadId, formData) {
   }
 }
 
+// ── Helpers for the new eligibility fields (repeatable rows + language) ───────
+/** Normalise a repeatable field (qs gives an array or an index-keyed object) to non-empty rows. */
+function pcRows(x) {
+  if (!x) return [];
+  const arr = Array.isArray(x) ? x : Object.values(x);
+  return arr.filter((r) => r && typeof r === 'object' && Object.values(r).some((v) => String(v || '').trim()));
+}
+function pcEduLine(r) {
+  const span = (r.start || r.end) ? `${r.start || '?'}–${r.end || '?'}` : '';
+  return [r.program, r.school, r.location, span, r.completed].map((v) => String(v || '').trim()).filter(Boolean).join(' · ');
+}
+function pcJobLine(r) {
+  const span = (r.start || r.end) ? `${r.start || '?'}–${r.end || '?'}` : '';
+  const hrs = String(r.hours || '').trim() ? `${r.hours}h/wk` : '';
+  return [r.title, r.company, r.country, span, r.type, hrs, r.duties].map((v) => String(v || '').trim()).filter(Boolean).join(' · ');
+}
+function pcLangLine(l, rd, w, s) {
+  const parts = [l, rd, w, s].map((v) => String(v || '').trim());
+  return parts.some(Boolean) ? parts.map((v) => v || '—').join(' / ') : '';
+}
+
 /** Ordered [question, answer] pairs of the PRE-CONSULT answers (Monday update). */
-function buildPreConsultQA(lead, f, fBlock) {
+function buildPreConsultQA(lead, f) {
   const qa = [];
   const add = (q, a) => { if (String(a || '').trim()) qa.push([q, String(a).trim()]); };
   add('Client', lead.fullName);
   add('Email', lead.email);
-  add('Service', lead.serviceRequired || lead.caseTypeInterest);
   add('Consultation slot (Toronto)', lead.bookedSlot);
-  add('Has anything changed since the intake form?', f.changes);
-  add('Deadline or target date', f.deadline);
-  for (const [name, label] of (PRECONSULT_FQ[fBlock] || [])) add(label, f[name]);
-  add('Progress so far & documents in hand', f.progress);
-  add('Top questions for the consultant', f.questions);
+
+  add('Age', f.pc_age);
+  add('Currently in Canada', f.pc_inCanada);
+  add('Entered Canada on', f.pc_entryDate);
+  add('Entry visa / permit', f.pc_entryVisa);
+  add('Current status', f.pc_currentStatus);
+  add('Permit / visa expiry', f.pc_permitExpiry);
+  add('Marital status', f.pc_marital);
+  add('Children', f.pc_hasChildren === 'Yes' ? (f.pc_childrenCount || 'Yes') : f.pc_hasChildren);
+  add('Relatives in Canada (PR/citizen)', f.pc_relatives === 'Yes' ? (f.pc_relativeRel || 'Yes') : f.pc_relatives);
+
+  add('Highest education', f.pc_highestEducation);
+  pcRows(f.education).forEach((r, i) => add(`Education ${i + 1}`, pcEduLine(r)));
+
+  add('Paid TEER 0–3 work (last 5y)', f.pc_teer);
+  pcRows(f.employment).forEach((r, i) => add(`Job ${i + 1}`, pcJobLine(r)));
+  add('Employer earned > $1M (PNP)', f.pc_employerRevenue);
+
+  add('English test', f.pc_englishTest);
+  add('English test type', f.pc_englishTestType);
+  add('English scores (L/R/W/S)', pcLangLine(f.pc_engListening, f.pc_engReading, f.pc_engWriting, f.pc_engSpeaking));
+  add('French test', f.pc_frenchTest);
+  add('French scores (L/R/W/S)', pcLangLine(f.pc_frListening, f.pc_frReading, f.pc_frWriting, f.pc_frSpeaking));
+
+  add('Spouse / common-law partner', f.pc_hasSpouse);
+  add('Consider spouse profile', f.pc_spouseConsider);
+  add('Adult child (18+) to consider', f.pc_adultChild);
+
+  add('Anything else for the consultant', f.pc_finalNote);
   return qa;
 }
 
@@ -272,7 +448,6 @@ function buildDossierSections(lead, a, f, fBlock) {
   add = sec('Immigration Status (from intake form)');
   add('Current status', pick('currentStatus'));
   add('Status expiry', pick('statusExpiry'));
-  add('Maintained/implied status', pick('maintainedStatus'));
   add('Recent extension/status application', a.recentExtension);
   add('Extension details', a.recentExtensionDetails);
 
@@ -307,12 +482,40 @@ function buildDossierSections(lead, a, f, fBlock) {
     }
   }
 
-  add = sec('Pre-Consultation Answers');
-  add('Has anything changed since the intake form?', f.changes);
-  add('Deadline or target date', f.deadline);
-  for (const [name, label] of (PRECONSULT_FQ[fBlock] || [])) add(label, f[name]);
-  add('Progress so far & documents in hand', f.progress);
-  add('Top questions for the consultant', f.questions);
+  add = sec('Pre-Consultation — Personal');
+  add('Age', f.pc_age);
+  add('Currently in Canada', f.pc_inCanada);
+  add('Entered Canada on', f.pc_entryDate);
+  add('Entry visa / permit', f.pc_entryVisa);
+  add('Current status (confirmed)', f.pc_currentStatus);
+  add('Permit / visa expiry', f.pc_permitExpiry);
+  add('Marital status', f.pc_marital);
+  add('Children', f.pc_hasChildren === 'Yes' ? (f.pc_childrenCount || 'Yes') : f.pc_hasChildren);
+  add('Relatives in Canada (PR/citizen)', f.pc_relatives === 'Yes' ? (f.pc_relativeRel || 'Yes') : f.pc_relatives);
+
+  add = sec('Pre-Consultation — Education');
+  add('Highest education', f.pc_highestEducation);
+  pcRows(f.education).forEach((r, i) => add(`Education ${i + 1}`, pcEduLine(r)));
+
+  add = sec('Pre-Consultation — Employment');
+  add('Paid TEER 0–3 work (last 5y)', f.pc_teer);
+  pcRows(f.employment).forEach((r, i) => add(`Job ${i + 1}`, pcJobLine(r)));
+  add('Employer earned > $1M (PNP)', f.pc_employerRevenue);
+
+  add = sec('Pre-Consultation — Language');
+  add('English test', f.pc_englishTest);
+  add('English test type', f.pc_englishTestType);
+  add('English scores (L/R/W/S)', pcLangLine(f.pc_engListening, f.pc_engReading, f.pc_engWriting, f.pc_engSpeaking));
+  add('French test', f.pc_frenchTest);
+  add('French scores (L/R/W/S)', pcLangLine(f.pc_frListening, f.pc_frReading, f.pc_frWriting, f.pc_frSpeaking));
+
+  add = sec('Pre-Consultation — Family for assessment');
+  add('Spouse / common-law partner', f.pc_hasSpouse);
+  add('Consider spouse profile', f.pc_spouseConsider);
+  add('Adult child (18+) to consider', f.pc_adultChild);
+
+  add = sec('Pre-Consultation — Notes');
+  add('Anything else for the consultant', f.pc_finalNote);
 
   add = sec('Booking & Triage');
   add('Consultation slot (Toronto)', lead.bookedSlot);
