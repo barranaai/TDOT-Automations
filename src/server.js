@@ -12,9 +12,11 @@ const adminLoginRouter           = require('./routes/adminLogin');
 const adminDashboardRouter       = require('./routes/adminDashboard');
 const adminEnginesRouter         = require('./routes/adminEngines');
 const adminCaseRouter            = require('./routes/adminCase');
+const adminConsultationRouter    = require('./routes/adminConsultation');
 const mondayApi = require('./services/mondayApi');
 const dashboardService           = require('./services/dashboardService');
 const caseCockpitService         = require('./services/caseCockpitService');
+const consultantPortalService    = require('./services/consultantPortalService');
 const clientMasterService = require('./services/clientMasterService');
 const boardService = require('./services/boardService');
 const webhookManager  = require('./services/webhookManager');
@@ -50,6 +52,7 @@ app.use('/client',         clientPortalRouter);     // unified client landing pa
 app.use('/admin/dashboard', adminDashboardRouter);  // landing page after login
 app.use('/admin/engines',   adminEnginesRouter);    // engine control panel
 app.use('/admin/case',      adminCaseRouter);        // per-case staff cockpit
+app.use('/admin',           adminConsultationRouter); // consultant portal (/admin/consultations, /admin/consultation/:id)
 app.use('/admin',           adminLoginRouter);       // TDOT-branded login + auto-redirect
 
 app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
@@ -261,6 +264,29 @@ app.get('/api/case/:caseRef', async (req, res) => {
     const notFound = /not found/i.test(err.message || '');
     if (!notFound) console.error('[Cockpit] Overview failed:', err.stack || err.message);
     res.status(notFound ? 404 : 500).json({ error: err.message });
+  }
+});
+
+// Consultant portal — booked-consultation queue
+app.get('/api/consultations', async (_req, res) => {
+  try {
+    const consultations = await consultantPortalService.getConsultationQueue();
+    res.json({ consultations });
+  } catch (err) {
+    console.error('[Consultant] Queue failed:', err.stack || err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Consultant portal — one consultation, fully assembled
+app.get('/api/consultation/:leadId', async (req, res) => {
+  try {
+    const detail = await consultantPortalService.getConsultationDetail((req.params.leadId || '').trim());
+    res.json(detail);
+  } catch (err) {
+    if (err.notFound) return res.status(404).json({ error: err.message });
+    console.error('[Consultant] Detail failed:', err.stack || err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
