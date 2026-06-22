@@ -2,8 +2,8 @@
  * TDOT Admin — Login page
  * Served at GET /admin
  * If the user is already authenticated (key in sessionStorage),
- * the page immediately redirects to /admin/dashboard.
- * On successful login, stores key and redirects to /admin/dashboard.
+ * the page immediately redirects to /admin/consultations.
+ * On successful login, stores key and redirects to /admin/consultations.
  */
 
 const express = require('express');
@@ -263,10 +263,12 @@ function buildLoginHTML() {
 </div><!-- /login-wrap -->
 
 <script>
-  /* If already authenticated, skip straight to dashboard */
+  /* If already authenticated, skip straight to the consultations queue —
+     the day-to-day landing for consultants. Owners reach the dashboard via
+     the "Dashboard" nav link (shared key, so this is the default for all). */
   (function() {
     var k = sessionStorage.getItem('tdot_admin_key');
-    if (k) { window.location.replace('/admin/dashboard'); }
+    if (k) { window.location.replace('/admin/consultations'); }
   })();
 
   function handleLogin() {
@@ -298,7 +300,7 @@ function buildLoginHTML() {
         if (!d.connected) throw new Error('Monday.com API is not reachable. Try again shortly.');
         sessionStorage.setItem('tdot_admin_key', key);
         btn.textContent = '\u2713 Success! Redirecting\u2026';
-        window.location.replace('/admin/dashboard');
+        window.location.replace('/admin/consultations');
       })
       .catch(function(e) {
         errEl.textContent = e.message;
