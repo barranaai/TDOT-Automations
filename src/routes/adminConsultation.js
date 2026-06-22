@@ -301,8 +301,16 @@ function initActions(){
   var obtns=document.getElementById('obtns');
   OUTCOMES.forEach(function(label){
     var b=document.createElement('button'); b.type='button'; b.className='obtn'; b.textContent=label; b.setAttribute('data-outcome',label);
-    b.onclick=function(){ doAction('outcome',label, label==='Retain'
-      ? 'Record the outcome as RETAIN? This emails the retainer agreement to the client.' : ''); };
+    b.onclick=function(){
+      var msg='';
+      if(label==='Retain'){
+        var hasFee=Number(String(document.getElementById('fee').value||'').replace(/[^0-9.]/g,''))>0;
+        msg = hasFee
+          ? 'Record the outcome as RETAIN? This emails the retainer agreement (stating the fee) to the client.'
+          : 'Record the outcome as RETAIN?\\n\\nNo retainer fee is set yet — the agreement states the fee, so it will NOT be emailed until you set the fee. You can set the fee now or after. Continue?';
+      }
+      doAction('outcome',label,msg);
+    };
     obtns.appendChild(b);
   });
   document.getElementById('btn-fee').onclick=function(){

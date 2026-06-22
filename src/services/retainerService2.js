@@ -31,12 +31,54 @@ function esc(s) {
   return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// ─── Step 1: Outcome → Retain ────────────────────────────────────────────────
+// ─── Step 1: Outcome → Retain (GATED on the per-client fee being set) ────────
+//
+// The retainer agreement STATES the professional fee, so it must never be
+// emailed before the "Retainer Fee (CAD)" is set on the lead. Like the payment
+// link, the agreement send is therefore guarded and driven by TWO triggers —
+// the Outcome=Retain change AND the Retainer Fee change — so staff/consultants
+// can set them in either order; the agreement emails the moment BOTH are true.
+// Concurrent calls (fee + outcome set seconds apart) collapse to one send so
+// the client never receives two agreement emails.
+
+const _agreementInFlight = new Map(); // leadId → Promise
+
+/** Public entry from the Outcome=Retain webhook — notifies if the fee is missing. */
 async function onOutcomeRetain(leadId) {
+  return maybeSendRetainerAgreement(leadId, { notifyIfMissing: true });
+}
+
+/**
+ * Send the retainer agreement if (and only if) the lead is ready: Outcome is
+ * "Retain", a per-client fee is set, and it hasn't been sent yet. Called from
+ * BOTH the Outcome webhook and the Retainer Fee webhook.
+ * opts.notifyIfMissing — post a staff note when the fee is missing (the Outcome
+ *   path sets this; fee-column edits don't, so retyping the fee can't spam notes).
+ */
+async function maybeSendRetainerAgreement(leadId, opts = {}) {
+  const key = String(leadId);
+  if (_agreementInFlight.has(key)) return _agreementInFlight.get(key);
+  const p = _doMaybeSendRetainerAgreement(leadId, opts);
+  _agreementInFlight.set(key, p);
+  try { return await p; } finally { _agreementInFlight.delete(key); }
+}
+
+async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) return;
   if (lead.retainerSent) {
     console.log(`[Retainer2] Retainer already sent for lead ${leadId} — skipping`);
+    return;
+  }
+  if (lead.outcome !== 'Retain') {
+    return; // fee set on a not-yet-retained lead — nothing to send
+  }
+  if (!feeToCents(lead.retainerFee)) {
+    console.log(`[Retainer2] Outcome is Retain but no Retainer Fee set for lead ${leadId} — agreement HELD`);
+    if (notifyIfMissing) {
+      await postLeadNote(leadId,
+        '⚠ Outcome is set to "Retain", but no Retainer Fee is set. The retainer agreement states the fee, so it has NOT been emailed yet — enter the "Retainer Fee (CAD)" on this lead and the agreement is emailed to the client automatically.');
+    }
     return;
   }
 
@@ -48,7 +90,7 @@ async function onOutcomeRetain(leadId) {
         <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your retainer agreement</h1></div>
       <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
         <p>Hi ${esc((lead.fullName || 'there').split(' ')[0])},</p>
-        <p>Thank you for choosing TDOT Immigration. Please review your retainer agreement:</p>
+        <p>Thank you for choosing TDOT Immigration. Please review your retainer agreement, which sets out the professional fee for your matter:</p>
         <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">View &amp; download your retainer (PDF)</a></p>
         <p style="margin-top:20px">To proceed: sign the agreement and email the signed copy back to us. Once we receive it, we'll send your secure payment link.</p>
         <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Questions about the fee? Just reply to this email.</p>
@@ -64,7 +106,7 @@ async function onOutcomeRetain(leadId) {
     retainerSent:     todayISO(),
     conversionStatus: 'Consulted',
   });
-  console.log(`[Retainer2] Retainer sent to lead ${leadId} (${lead.email || 'no email'})`);
+  console.log(`[Retainer2] Retainer agreement sent to lead ${leadId} (${lead.email || 'no email'}) — fee included`);
 }
 
 // ─── The retainer PDF (standard wording — swap in TDOT's official text when provided) ──
@@ -93,10 +135,19 @@ function buildRetainerPdf(lead) {
        .text(`Email: ${lead.email || ''}`)
        .text(`Matter / Case Type: ${lead.caseTypeInterest || ''}`);
 
+    // The professional fee is stated explicitly when the per-client Retainer
+    // Fee is set (the agreement is only ever emailed once it is — see
+    // maybeSendRetainerAgreement). Defensive fallback keeps the generic clause
+    // if the PDF is ever rendered before a fee exists.
+    const feeC = feeToCents(lead.retainerFee);
+    const feeClause = feeC
+      ? `The professional fee for this matter is $${(feeC / 100).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CAD. This fee is separate from third-party disbursements (government fees, biometrics, medical exams, translations, courier, etc.) and any applicable taxes.`
+      : 'The professional fee for this matter will be confirmed with the Client and is separate from third-party disbursements (government fees, biometrics, medical exams, translations, courier, etc.).';
+
     doc.moveDown(1).fillColor('#111111').fontSize(11);
     const STANDARD_TERMS = [
       ['1. Scope of Services', 'The Firm agrees to provide immigration consulting and representation services for the matter described above, in accordance with the rules of the College of Immigration and Citizenship Consultants (CICC).'],
-      ['2. Professional Fees', 'The professional fee for this matter will be confirmed with the Client and is separate from third-party disbursements (government fees, biometrics, medical exams, translations, courier, etc.).'],
+      ['2. Professional Fees', feeClause],
       ['3. Client Responsibilities', 'The Client agrees to provide complete, accurate, and timely information and documents. Delays or inaccuracies may affect processing times and outcomes.'],
       ['4. No Guarantee of Outcome', 'The Firm does not and cannot guarantee any particular outcome. Immigration decisions are made solely by the relevant government authorities.'],
       ['5. Confidentiality', 'All information provided by the Client will be kept confidential and used only for the purposes of this matter.'],
@@ -225,4 +276,4 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
   await require('./paymentService').sendRetainerPaymentLink(leadId, { amountCents });
 }
 
-module.exports = { onOutcomeRetain, buildRetainerPdf, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents };
+module.exports = { onOutcomeRetain, maybeSendRetainerAgreement, buildRetainerPdf, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents };

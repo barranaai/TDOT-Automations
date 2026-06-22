@@ -237,18 +237,23 @@ async function applyAction({ leadId, action, value }) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
 
+  const feeSet = require('./retainerService2').feeToCents(lead.retainerFee);
+
   switch (action) {
     case 'outcome':
       await leadService.updateLead(leadId, { outcome: v.normalized });
       await postPortalNote(leadId, `Outcome set to “${v.normalized}”.`);
-      return { ok: true, message: v.normalized === 'Retain'
-        ? 'Outcome recorded as Retain — the retainer agreement is being emailed to the client.'
-        : `Outcome recorded: ${v.normalized}.` };
+      if (v.normalized === 'Retain') {
+        return { ok: true, message: feeSet
+          ? 'Outcome recorded as Retain — the retainer agreement (stating the fee) is being emailed to the client.'
+          : 'Outcome recorded as Retain. The agreement states the fee, so it will be emailed automatically once you set the retainer fee below — no agreement goes out without a fee.' };
+      }
+      return { ok: true, message: `Outcome recorded: ${v.normalized}.` };
 
     case 'retainerFee':
       await leadService.updateLead(leadId, { retainerFee: v.normalized });
       await postPortalNote(leadId, `Retainer fee set to $${v.normalized} CAD.`);
-      return { ok: true, message: `Retainer fee set to $${v.normalized}. If the retainer is already signed, the payment link is being emailed.` };
+      return { ok: true, message: `Retainer fee set to $${v.normalized}. The retainer agreement (once Outcome is Retain) and the payment link (once signed) are emailed automatically.` };
 
     case 'retainerSigned':
       await leadService.updateLead(leadId, { retainerSigned: v.normalized });

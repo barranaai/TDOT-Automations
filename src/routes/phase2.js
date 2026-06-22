@@ -376,12 +376,17 @@ router.post('/webhook/lead', express.json(), async (req, res) => {
           console.error('[Lead Webhook] onRetainerSigned:', e.message));
       }
     } else if (event.columnId === C.retainerFee) {
-      // Staff filled in the per-client fee — send the payment link if the
-      // retainer is already signed (no-op otherwise; signing will send it).
+      // Staff filled in the per-client fee. Two things may now be unblocked:
+      //  • the retainer AGREEMENT (held until the fee exists, since it states
+      //    the fee) — sent if the lead is already Outcome=Retain;
+      //  • the PAYMENT LINK — sent if the retainer is already signed.
+      // Both are guarded/idempotent, so only the appropriate one fires.
       // Skip clears (value null) so erasing/retyping the fee can't misfire.
       if (!event.value) {
         console.log(`[Lead Webhook] Retainer Fee cleared for lead ${event.pulseId} — no action`);
       } else {
+        retainerService2.maybeSendRetainerAgreement(String(event.pulseId)).catch((e) =>
+          console.error('[Lead Webhook] maybeSendRetainerAgreement:', e.message));
         retainerService2.maybeSendRetainerPaymentLink(String(event.pulseId), { warnIfSent: true }).catch((e) =>
           console.error('[Lead Webhook] maybeSendRetainerPaymentLink:', e.message));
       }
