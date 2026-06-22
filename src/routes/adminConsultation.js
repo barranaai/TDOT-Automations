@@ -46,7 +46,7 @@ function buildQueueHTML() {
   .tier { font-weight:700; color:var(--navy); }
   .empty { padding:40px; text-align:center; color:#94a3b8; }
 </style></head><body>
-${buildNavHeader('dashboard')}
+${buildNavHeader('consultations')}
 <main class="wrap">
   <div id="loading"><div class="spinner"></div><div class="muted">Loading consultations…</div></div>
   <div id="error-msg"></div>
@@ -140,7 +140,7 @@ function buildDetailHTML(leadId) {
   .notyet { color:#94a3b8; font-size:13px; font-style:italic; padding:8px 0; }
   .actbar { background:#fffef5; border:1px solid #fde68a; border-radius:var(--r); padding:14px 18px; margin-bottom:16px; font-size:12.5px; color:#92400e; }
 </style></head><body>
-${buildNavHeader('dashboard')}
+${buildNavHeader('consultations')}
 <main class="wrap">
   <a href="/admin/consultations" class="back-lnk">← All consultations</a>
   <div id="loading"><div class="spinner"></div><div class="muted">Loading consultation…</div></div>

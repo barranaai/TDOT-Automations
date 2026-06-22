@@ -56,8 +56,9 @@ const SHARED_CSS_VARS = `
 // ─── Shared top navigation bar ────────────────────────────────────────────────
 //  activePage: 'dashboard' | 'engines'
 function buildNavHeader(activePage) {
-  const isDash = activePage === 'dashboard';
-  const isEng  = activePage === 'engines';
+  const isDash    = activePage === 'dashboard';
+  const isEng     = activePage === 'engines';
+  const isConsult = activePage === 'consultations';
 
   return `<header class="admin-hdr">
   <div class="admin-hdr-left">
@@ -68,6 +69,9 @@ function buildNavHeader(activePage) {
     <nav class="admin-nav">
       <a href="/admin/dashboard" class="nav-lnk${isDash ? ' active' : ''}">
         <span class="nav-icon">📊</span> Dashboard
+      </a>
+      <a href="/admin/consultations" class="nav-lnk${isConsult ? ' active' : ''}">
+        <span class="nav-icon">🗓️</span> Consultations
       </a>
       <a href="/admin/engines" class="nav-lnk${isEng ? ' active' : ''}">
         <span class="nav-icon">⚙️</span> Engine Controls
