@@ -82,6 +82,35 @@ async function sendBookingConfirmation(lead, meeting, slotStr) {
   await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation is booked', html });
 }
 
+/**
+ * Re-send the client their consultation links (meeting join URL + pre-consult
+ * form) — used by the consultant portal when a client lost the original email.
+ * Rebuilds from the lead's stored meetingLink; no new meeting is created.
+ */
+async function resendConsultationLinks(leadId) {
+  const lead = await leadService.getLead(leadId);
+  if (!lead) throw new Error('Lead not found.');
+  if (!lead.email) throw new Error('No client email on file.');
+  const token   = lead.leadToken || '';
+  const preUrl  = `${RENDER_URL}/consult/${lead.id}?t=${encodeURIComponent(token)}`;
+  const joinUrl = (lead.meetingLink || '').trim();
+  const e = escapeHtml;
+  const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
+    <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
+      <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your consultation details</h1></div>
+    <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
+      <p>Hi ${e((lead.fullName || 'there').split(' ')[0])},</p>
+      <p>Here are your consultation links again for easy reference:</p>
+      ${lead.bookedSlot ? `<p><b>When:</b> ${e(lead.bookedSlot)} (Toronto time)</p>` : ''}
+      ${joinUrl ? `<p><b>Join the call:</b><br><a href="${e(joinUrl)}" style="color:${BRAND.primary}">${e(joinUrl)}</a></p>` : ''}
+      <p style="margin-top:20px">Please complete this short form before your call so we can make the most of your time:</p>
+      <p><a href="${e(preUrl)}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Complete pre-consultation form</a></p>
+      <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">See you on the call.</p>
+    </div></div>`;
+  await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation links', html });
+  console.log(`[Consult] Re-sent consultation links to ${lead.email} for lead ${leadId}`);
+}
+
 // ─── Pre-consult form ────────────────────────────────────────────────────────
 
 // Service-specific deep-dive questions (mirrors the intake brief's F-sets).
@@ -715,7 +744,7 @@ function escapeHtml(s) {
 
 module.exports = {
   onSlotConfirmed, createZoomMeeting, getZoomAccessToken,
-  buildPreConsultFormHtml, savePreConsultData,
+  buildPreConsultFormHtml, savePreConsultData, resendConsultationLinks,
   send24hReminders, send1hReminders, sendPreConsultReminders,
   // exported for tests
   buildPreConsultQA, buildPreConsultPdf, buildDossierSections,

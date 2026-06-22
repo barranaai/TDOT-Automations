@@ -171,4 +171,104 @@ function normaliseRows(x) {
   return arr.filter((r) => r && typeof r === 'object' && Object.values(r).some((v) => String(v || '').trim()));
 }
 
-module.exports = { getConsultationQueue, getConsultationDetail };
+// ─── Phase B: consultant write actions ───────────────────────────────────────
+//
+// The portal mirrors a manual Monday edit: it writes a lead column via
+// leadService.updateLead, and Monday's existing /webhook/lead automation fires
+// exactly once (Retain → retainer email; signed → handoff + payment link; fee →
+// payment link; bookingInvite 'Send' → booking email). The portal NEVER calls
+// those service functions directly, so there is no double-fire. 'resendLinks'
+// is the only direct call (no column triggers it).
+//
+// Outcome labels are the EXACT strings on the board (curly apostrophe + em
+// dash) — writing a near-match would mint a junk label via
+// create_labels_if_missing, so they must match byte-for-byte.
+const OUTCOME_LABELS = ['Retain', 'Don’t Retain — Ineligible', 'Don’t Retain — Not Wanted', 'Newsletter', 'Follow-Up'];
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const FEE_MAX_CAD = 100000;
+
+/** PURE validation of a consultant action. @returns {{ ok, error?, normalized? }} */
+function validateAction(action, value) {
+  switch (action) {
+    case 'outcome':
+      return OUTCOME_LABELS.includes(value)
+        ? { ok: true, normalized: value }
+        : { ok: false, error: 'Invalid outcome value.' };
+    case 'retainerFee': {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0 || n > FEE_MAX_CAD) {
+        return { ok: false, error: `Fee must be a positive amount in CAD dollars (max ${FEE_MAX_CAD}).` };
+      }
+      return { ok: true, normalized: Math.round(n) };
+    }
+    case 'retainerSigned': {
+      const d = (value && String(value).trim()) || new Date().toISOString().split('T')[0];
+      return DATE_RE.test(d) ? { ok: true, normalized: d } : { ok: false, error: 'Date must be YYYY-MM-DD.' };
+    }
+    case 'bookingInvite':
+    case 'resendLinks':
+      return { ok: true, normalized: null };
+    default:
+      return { ok: false, error: 'Unknown action.' };
+  }
+}
+
+/** Post a portal-origin audit note on the lead (best-effort; never blocks the action). */
+async function postPortalNote(leadId, text) {
+  try {
+    await mondayApi.query(
+      `mutation($id: ID!, $b: String!) { create_update(item_id: $id, body: $b) { id } }`,
+      { id: String(leadId), b: `🧑‍💼 <b>[Consultant portal]</b> ${text}` }
+    );
+  } catch (err) {
+    console.warn(`[Consultant] audit note failed for lead ${leadId}: ${err.message}`);
+  }
+}
+
+/**
+ * Apply a consultant action to a lead. Validates, writes the column (or sends),
+ * posts an audit note, and returns a human-facing result message.
+ * @throws {Error} with .badRequest=true on validation failure, .notFound on missing lead
+ */
+async function applyAction({ leadId, action, value }) {
+  const v = validateAction(action, value);
+  if (!v.ok) { const e = new Error(v.error); e.badRequest = true; throw e; }
+
+  const lead = await leadService.getLead(leadId);
+  if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
+
+  switch (action) {
+    case 'outcome':
+      await leadService.updateLead(leadId, { outcome: v.normalized });
+      await postPortalNote(leadId, `Outcome set to “${v.normalized}”.`);
+      return { ok: true, message: v.normalized === 'Retain'
+        ? 'Outcome recorded as Retain — the retainer agreement is being emailed to the client.'
+        : `Outcome recorded: ${v.normalized}.` };
+
+    case 'retainerFee':
+      await leadService.updateLead(leadId, { retainerFee: v.normalized });
+      await postPortalNote(leadId, `Retainer fee set to $${v.normalized} CAD.`);
+      return { ok: true, message: `Retainer fee set to $${v.normalized}. If the retainer is already signed, the payment link is being emailed.` };
+
+    case 'retainerSigned':
+      await leadService.updateLead(leadId, { retainerSigned: v.normalized });
+      await postPortalNote(leadId, `Retainer marked signed (${v.normalized}).`);
+      return { ok: true, message: 'Retainer marked signed — the case is being created and the payment link emailed to the client.' };
+
+    case 'bookingInvite':
+      await leadService.updateLead(leadId, { bookingInvite: 'Send' });
+      await postPortalNote(leadId, 'Booking invite re-sent to the client.');
+      return { ok: true, message: 'The booking invite is being emailed to the client.' };
+
+    case 'resendLinks':
+      await require('./consultationService').resendConsultationLinks(leadId);
+      await postPortalNote(leadId, 'Meeting + pre-consultation links re-sent to the client.');
+      return { ok: true, message: 'The meeting and pre-consultation links have been re-sent to the client.' };
+
+    default: {
+      const e = new Error('Unknown action.'); e.badRequest = true; throw e;
+    }
+  }
+}
+
+module.exports = { getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS };

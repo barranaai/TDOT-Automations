@@ -12,6 +12,7 @@
 const express = require('express');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS } = require('./adminShared');
+const { OUTCOME_LABELS } = require('../services/consultantPortalService');
 
 function escAttr(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -138,7 +139,18 @@ function buildDetailHTML(leadId) {
   .subhead { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#64748b; margin:14px 0 4px; }
   .rrow { border:1px dashed var(--border); border-radius:8px; padding:9px 12px; margin-top:8px; font-size:12.5px; color:var(--navy); line-height:1.55; }
   .notyet { color:#94a3b8; font-size:13px; font-style:italic; padding:8px 0; }
-  .actbar { background:#fffef5; border:1px solid #fde68a; border-radius:var(--r); padding:14px 18px; margin-bottom:16px; font-size:12.5px; color:#92400e; }
+  .actions { margin-bottom:16px; }
+  .obtns { display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; }
+  .obtn { padding:8px 13px; border:1px solid var(--border); border-radius:8px; background:white; font-size:12.5px; font-weight:600; cursor:pointer; color:var(--navy); font-family:inherit; }
+  .obtn:hover:not(:disabled) { border-color:var(--navy); background:#f0f4f8; }
+  .obtn.active { background:var(--navy); color:white; border-color:var(--navy); }
+  .frow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px; }
+  .frow input { width:150px; padding:9px 11px; border:1px solid var(--border); border-radius:8px; font-size:14px; }
+  .act-msg { display:none; padding:9px 12px; border-radius:8px; font-size:12.5px; margin-bottom:12px; font-weight:600; }
+  .act-msg.info { background:#eff6ff; color:#2563eb; display:block; }
+  .act-msg.ok { background:#f0fdf4; color:#16a34a; display:block; }
+  .act-msg.err { background:#fef2f2; color:#dc2626; display:block; }
+  button:disabled { opacity:.55; cursor:not-allowed; }
 </style></head><body>
 ${buildNavHeader('consultations')}
 <main class="wrap">
@@ -154,7 +166,23 @@ ${buildNavHeader('consultations')}
       <div class="pill-row" id="c-pills"></div>
     </div>
 
-    <div class="actbar">⚙️ Outcome &amp; retainer actions arrive in the next step — for now this view is read-only. Today the consultant records the outcome and retainer on the Monday board.</div>
+    <div class="card actions">
+      <div class="card-t">⚡ Actions</div>
+      <div id="act-msg" class="act-msg"></div>
+      <div class="subhead">Record outcome</div>
+      <div class="obtns" id="obtns"></div>
+      <div class="subhead">Retainer</div>
+      <div class="frow">
+        <input id="fee" type="number" min="1" step="1" placeholder="Fee (CAD $)">
+        <button class="btn" id="btn-fee">Set fee</button>
+        <button class="btn" id="btn-signed">Mark retainer signed</button>
+      </div>
+      <div class="subhead">Client communications</div>
+      <div class="frow">
+        <button class="btn" id="btn-invite">Send booking invite</button>
+        <button class="btn" id="btn-resend">Resend meeting + pre-consult links</button>
+      </div>
+    </div>
 
     <div class="grid">
       <div class="card"><div class="card-t">🧭 Consultation status</div><div id="c-status"></div></div>
@@ -168,6 +196,7 @@ ${buildNavHeader('consultations')}
 </main>
 <script>
 var LEAD_ID=${JSON.stringify(leadId)};
+var OUTCOMES=${JSON.stringify(OUTCOME_LABELS)};
 ${SHARED_AUTH_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function kv(k,v){ return v&&String(v).trim()?'<div class="kv"><span class="k">'+escHtml(k)+'</span><span class="v">'+escHtml(v)+'</span></div>':''; }
@@ -190,6 +219,8 @@ function render(d){
   pills+='<span class="pill '+(d.outcome?'blue':'grey')+'"><span class="pk">Outcome</span> '+escHtml(d.outcome||'Not set')+'</span>';
   if(d.retainerFee) pills+='<span class="pill grey"><span class="pk">Fee</span> $'+escHtml(d.retainerFee)+'</span>';
   document.getElementById('c-pills').innerHTML=pills;
+  highlightOutcome(d.outcome||'');
+  var fee=document.getElementById('fee'); if(fee && !fee.value && d.retainerFee) fee.value=d.retainerFee;
 
   document.getElementById('c-status').innerHTML=
     kv('Booking status',d.bookingStatus)+kv('Consultation held',d.consultationHeld)+
@@ -242,6 +273,55 @@ function load(){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
+
+// ── Phase B: write actions ────────────────────────────────────────────────
+function setMsg(text,kind){ var el=document.getElementById('act-msg'); el.className='act-msg '+kind; el.textContent=text; }
+function actButtons(){ return Array.prototype.slice.call(document.querySelectorAll('.actions button')); }
+function disableActions(on){ actButtons().forEach(function(b){ b.disabled=on; }); }
+function highlightOutcome(cur){ Array.prototype.forEach.call(document.querySelectorAll('.obtn'),function(b){ b.classList.toggle('active', b.getAttribute('data-outcome')===cur); }); }
+
+function doAction(action,value,confirmMsg){
+  if(confirmMsg && !window.confirm(confirmMsg)) return;
+  var key=getKey(); if(!key) return;
+  setMsg('Working…','info'); disableActions(true);
+  fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{
+    method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'},
+    body: JSON.stringify({ action:action, value:value })
+  }).then(function(r){ return r.json().then(function(j){ return {status:r.status,j:j}; }); })
+   .then(function(res){
+     disableActions(false);
+     if(res.status===401||res.status===403){ window.location.href='/admin'; return; }
+     if(res.status!==200) throw new Error((res.j&&res.j.error)||('HTTP '+res.status));
+     setMsg(res.j.message||'Done.','ok');
+     load(); // refresh consultation state (pills, status, outcome highlight)
+   }).catch(function(e){ disableActions(false); setMsg('Failed: '+e.message,'err'); });
+}
+
+function initActions(){
+  var obtns=document.getElementById('obtns');
+  OUTCOMES.forEach(function(label){
+    var b=document.createElement('button'); b.type='button'; b.className='obtn'; b.textContent=label; b.setAttribute('data-outcome',label);
+    b.onclick=function(){ doAction('outcome',label, label==='Retain'
+      ? 'Record the outcome as RETAIN? This emails the retainer agreement to the client.' : ''); };
+    obtns.appendChild(b);
+  });
+  document.getElementById('btn-fee').onclick=function(){
+    var fee=document.getElementById('fee').value;
+    if(!fee||Number(fee)<=0){ setMsg('Enter a fee amount in CAD dollars first.','err'); return; }
+    doAction('retainerFee', fee, 'Set the retainer fee to $'+fee+'? If the retainer is already signed, this emails the payment link to the client.');
+  };
+  document.getElementById('btn-signed').onclick=function(){
+    doAction('retainerSigned','', 'Mark the retainer SIGNED? This creates the client case and emails the payment link to the client.');
+  };
+  document.getElementById('btn-invite').onclick=function(){
+    doAction('bookingInvite',null,'Email the client their booking invite now?');
+  };
+  document.getElementById('btn-resend').onclick=function(){
+    doAction('resendLinks',null,'Re-send the meeting and pre-consultation links to the client now?');
+  };
+}
+
+initActions();
 startClock(); checkApiStatus(); load();
 </script></body></html>`;
 }

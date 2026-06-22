@@ -290,6 +290,24 @@ app.get('/api/consultation/:leadId', async (req, res) => {
   }
 });
 
+// Consultant portal — write actions (outcome / fee / signed / invite / resend).
+// Writes the lead column so Monday's existing webhook automation fires once —
+// the consultant never touches the Monday frontend.
+app.post('/api/consultation/:leadId/action', express.json(), async (req, res) => {
+  try {
+    const { action, value } = req.body || {};
+    const result = await consultantPortalService.applyAction({
+      leadId: (req.params.leadId || '').trim(), action, value,
+    });
+    res.json(result);
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    if (err.notFound)   return res.status(404).json({ error: err.message });
+    console.error('[Consultant] Action failed:', err.stack || err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Global error handler — catch unhandled route errors gracefully ──────────
 app.use((err, _req, res, _next) => {
   console.error('[Server] Unhandled error:', err.stack || err.message || err);
