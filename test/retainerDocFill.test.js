@@ -63,6 +63,49 @@ test('still a valid docx zip (has the core parts)', () => {
   assert.ok(zip.file('[Content_Types].xml'), 'content types present');
 });
 
+const INVITER_DATA = {
+  ...DATA,
+  inviterName:    'Inviter Holdings Ltd',
+  inviterAddress: '9 King St W, Toronto, ON',
+  inviterPhone:   '+1 905 555 0001',
+  inviterEmail:   'inviter@example.com',
+};
+
+const EMPLOYER_DATA = {
+  agreementDate:     '2026-06-24',
+  empRepName:        'Jane Rep',
+  empCompanyName:    'Acme Manufacturing Inc',
+  empCompanyAddress: '1 Bay St, Toronto, ON M5J 2T3',
+  empCompanyPhone:   '+1 416 555 0200',
+  empRepPhone:       '+1 416 555 0201',
+  empRepEmail:       'jane@acme.example.com',
+  paymentAnnexNo:    'A-2',
+  serviceFees:       '5,000.00',
+  hst:               '650.00',
+  total:             '5,650.00',
+  govFee:            '1,000.00',
+};
+
+const LEFTOVER_TAG = /\{[a-z][a-zA-Z]+\}/; // any unfilled {camelCase} merge tag
+
+test('pa-inviter: fills both PA and Inviter blocks, no leftover tags', () => {
+  const xml = documentXml(fillMaster('pa-inviter', INVITER_DATA));
+  for (const v of ['Barrana Test', '123 Main St, Toronto, ON', 'Inviter Holdings Ltd',
+                   '9 King St W, Toronto, ON', '+1 905 555 0001', 'inviter@example.com']) {
+    assert.ok(xml.includes(v), `pa-inviter output should contain "${v}"`);
+  }
+  assert.ok(!LEFTOVER_TAG.test(xml), 'no merge tag should survive');
+});
+
+test('employer (LMIA): fills rep + company blocks, no leftover tags', () => {
+  const xml = documentXml(fillMaster('employer', EMPLOYER_DATA));
+  for (const v of ['Jane Rep', 'Acme Manufacturing Inc', '1 Bay St, Toronto, ON M5J 2T3',
+                   '+1 416 555 0200', '+1 416 555 0201', 'jane@acme.example.com', '5,650.00']) {
+    assert.ok(xml.includes(v), `employer output should contain "${v}"`);
+  }
+  assert.ok(!LEFTOVER_TAG.test(xml), 'no merge tag should survive');
+});
+
 test('appendPdf concatenates master + annex pages', async () => {
   const out = await appendPdf(await makePdf(2), await makePdf(3));
   assert.equal((await PDFDocument.load(out)).getPageCount(), 5);
