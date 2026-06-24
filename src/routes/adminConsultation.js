@@ -151,6 +151,24 @@ function buildDetailHTML(leadId) {
   .act-msg.ok { background:#f0fdf4; color:#16a34a; display:block; }
   .act-msg.err { background:#fef2f2; color:#dc2626; display:block; }
   button:disabled { opacity:.55; cursor:not-allowed; }
+  .rp-field { margin-top:4px; }
+  .rp-field select, .rp-field input { width:100%; max-width:380px; padding:9px 11px; border:1px solid var(--border); border-radius:8px; font-size:13px; font-family:inherit; }
+  .rp-grid2 { display:flex; gap:10px; flex-wrap:wrap; }
+  .rp-grid2 .rp-field { flex:1; min-width:170px; }
+  .rp-check { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--navy); margin-top:8px; }
+  .rp-sugg { font-size:12px; color:#475569; background:#f8fafc; border-radius:8px; padding:9px 12px; line-height:1.55; }
+  .rp-flag { display:inline-block; font-size:9.5px; font-weight:800; padding:1px 7px; border-radius:10px; margin-left:6px; text-transform:uppercase; letter-spacing:.4px; }
+  .rp-flag.high { background:#f0fdf4; color:#16a34a; } .rp-flag.verify { background:#fffbeb; color:#d97706; }
+  .rp-warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; padding:9px 12px; border-radius:8px; font-size:12px; margin:10px 0; line-height:1.5; }
+  .rp-warn ul { margin:5px 0 0; padding-left:18px; }
+  .dynamic-table { width:100%; border-collapse:collapse; margin-top:6px; font-size:12.5px; }
+  .dynamic-table th { background:#f8fafc; text-align:left; padding:7px 9px; font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; }
+  .dynamic-table td { padding:5px 6px; border-bottom:1px solid #f5f7fa; vertical-align:middle; }
+  .dynamic-table input { width:100%; padding:7px 9px; border:1px solid var(--border); border-radius:7px; font-size:12.5px; font-family:inherit; }
+  .dynamic-table input:disabled { background:#f8fafc; color:#64748b; }
+  .rm-btn { padding:5px 9px; border:1px solid var(--border); border-radius:7px; background:white; cursor:pointer; color:#dc2626; font-size:12px; font-family:inherit; }
+  .rp-sum { font-weight:700; font-size:12px; }
+  .rp-sum.ok { color:#16a34a; } .rp-sum.bad { color:#dc2626; }
 </style></head><body>
 ${buildNavHeader('consultations')}
 <main class="wrap">
@@ -181,6 +199,76 @@ ${buildNavHeader('consultations')}
       <div class="frow">
         <button class="btn" id="btn-invite">Send booking invite</button>
         <button class="btn" id="btn-resend">Resend meeting + pre-consult links</button>
+      </div>
+    </div>
+
+    <div class="card retainer actions" style="margin-bottom:16px">
+      <div class="card-t">📄 Retainer plan</div>
+      <div id="rp-msg" class="act-msg"></div>
+      <div id="rp-suggestion"></div>
+      <div id="rp-warnings"></div>
+
+      <div class="rp-grid2" style="margin-top:12px">
+        <div class="rp-field">
+          <div class="subhead">Signatory template</div>
+          <select id="rp-template"></select>
+        </div>
+        <div class="rp-field">
+          <div class="subhead">Scope annex</div>
+          <select id="rp-annex"></select>
+        </div>
+      </div>
+
+      <div class="rp-grid2" style="margin-top:10px">
+        <div class="rp-field">
+          <div class="subhead">Sub-type <span class="muted">(optional — drives extension/restoration)</span></div>
+          <input id="rp-subtype" type="text" placeholder="e.g. Extension (Inside Canada)">
+        </div>
+        <div class="rp-field">
+          <div class="subhead">Government fee (CAD, default — editable)</div>
+          <input id="rp-govfee" type="number" min="0" step="0.01" placeholder="0.00">
+          <label class="rp-check"><input id="rp-rprf" type="checkbox"> Include RPRF</label>
+        </div>
+      </div>
+
+      <div id="rp-inviter" style="display:none;margin-top:8px">
+        <div class="subhead">Inviter / sponsor</div>
+        <div class="rp-grid2">
+          <div class="rp-field"><input id="rp-inviterName" type="text" placeholder="Name"></div>
+          <div class="rp-field"><input id="rp-inviterEmail" type="text" placeholder="Email"></div>
+        </div>
+        <div class="rp-grid2" style="margin-top:6px">
+          <div class="rp-field"><input id="rp-inviterPhone" type="text" placeholder="Phone"></div>
+          <div class="rp-field"><input id="rp-inviterAddress" type="text" placeholder="Address"></div>
+        </div>
+      </div>
+
+      <div id="rp-employer" style="display:none;margin-top:8px">
+        <div class="subhead">Employer / legal representative</div>
+        <div class="rp-grid2">
+          <div class="rp-field"><input id="rp-empRepName" type="text" placeholder="Legal rep name"></div>
+          <div class="rp-field"><input id="rp-empRepEmail" type="text" placeholder="Rep email"></div>
+        </div>
+        <div class="rp-grid2" style="margin-top:6px">
+          <div class="rp-field"><input id="rp-empRepPhone" type="text" placeholder="Rep phone"></div>
+          <div class="rp-field"><input id="rp-empCompanyName" type="text" placeholder="Company / legal entity"></div>
+        </div>
+        <div class="rp-grid2" style="margin-top:6px">
+          <div class="rp-field"><input id="rp-empCompanyPhone" type="text" placeholder="Company phone"></div>
+          <div class="rp-field"><input id="rp-empCompanyAddress" type="text" placeholder="Company address"></div>
+        </div>
+      </div>
+
+      <div class="subhead" style="margin-top:12px">Milestone schedule <span id="rp-mile-sum" class="rp-sum"></span></div>
+      <table class="dynamic-table" id="milestone-table">
+        <thead><tr><th style="width:42%">Label</th><th style="width:22%">Amount (CAD)</th><th style="width:28%">Trigger</th><th></th></tr></thead>
+        <tbody id="milestone-body"></tbody>
+      </table>
+      <button class="btn" id="rp-add-mile" type="button" style="margin-top:8px">+ Add milestone</button>
+
+      <div class="frow" style="margin-top:14px">
+        <button class="btn" id="btn-retainer-preview" type="button">👁 Preview PDF</button>
+        <button class="btn primary" id="btn-retainer-save" type="button">💾 Save retainer plan</button>
       </div>
     </div>
 
@@ -221,6 +309,7 @@ function render(d){
   document.getElementById('c-pills').innerHTML=pills;
   highlightOutcome(d.outcome||'');
   var fee=document.getElementById('fee'); if(fee && !fee.value && d.retainerFee) fee.value=d.retainerFee;
+  if(typeof updateMileSum==='function') updateMileSum();
 
   document.getElementById('c-status').innerHTML=
     kv('Booking status',d.bookingStatus)+kv('Consultation held',d.consultationHeld)+
@@ -297,6 +386,100 @@ function doAction(action,value,confirmMsg){
    }).catch(function(e){ disableActions(false); setMsg('Failed: '+e.message,'err'); });
 }
 
+// ── Retainer plan panel ──────────────────────────────────────────────────
+var RP_TPL_LABELS={ 'pa':'Principal Applicant only', 'pa-inviter':'PA + Inviter / Sponsor', 'employer':'Employer / Legal Rep' };
+var RP_BLOCK_FIELDS=['inviterName','inviterAddress','inviterPhone','inviterEmail','empRepName','empCompanyName','empCompanyAddress','empCompanyPhone','empRepPhone','empRepEmail'];
+function rpEl(id){ return document.getElementById(id); }
+function escA(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function rpMsg(t,k){ var el=rpEl('rp-msg'); el.className='act-msg '+k; el.textContent=t; }
+
+function loadRetainerPlan(){
+  var key=getKey(); if(!key) return;
+  fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/retainer-plan',{headers:{'X-Api-Key':key}})
+   .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+   .then(function(d){ hydrateRetainer(d); })
+   .catch(function(e){ if(e.message==='x')return; rpEl('rp-suggestion').innerHTML='<div class="rp-sugg">Could not load retainer plan: '+escHtml(e.message)+'</div>'; });
+}
+
+function hydrateRetainer(d){
+  var plan=d.plan||{}, annex=plan.annex||{};
+  var tsel=rpEl('rp-template');
+  tsel.innerHTML=(d.templateOptions||['pa','pa-inviter','employer']).map(function(t){ return '<option value="'+t+'">'+escHtml(RP_TPL_LABELS[t]||t)+'</option>'; }).join('');
+  tsel.value=plan.template||'pa';
+  var groups={};
+  (d.annexOptions||[]).forEach(function(a){ if(!groups[a.group])groups[a.group]=[]; groups[a.group].push(a); });
+  var html='<option value="">— select scope annex —</option>';
+  [['permanent','Permanent'],['temporary','Temporary']].forEach(function(g){ var list=groups[g[0]]; if(list&&list.length){ html+='<optgroup label="'+g[1]+'">'+list.map(function(a){ return '<option value="'+a.code+'">['+a.code+'] '+escHtml(a.label)+'</option>'; }).join('')+'</optgroup>'; } });
+  var asel=rpEl('rp-annex'); asel.innerHTML=html; asel.value=annex.code||'';
+  rpEl('rp-subtype').value=plan.subType||'';
+  var gov=plan.govFee||{}; rpEl('rp-govfee').value=(gov.dollars!=null)?gov.dollars:'';
+  rpEl('rp-rprf').checked=(gov.withRprf!==false);
+  var m=plan.mergeData||{};
+  RP_BLOCK_FIELDS.forEach(function(k){ var el=rpEl('rp-'+k); if(el) el.value=m[k]||''; });
+  rebuildMilestones(plan.milestones||[]);
+  var flag=annex.code?(annex.needsVerify?'<span class="rp-flag verify">verify</span>':'<span class="rp-flag high">high</span>'):'';
+  rpEl('rp-suggestion').innerHTML='<div class="rp-sugg"><b>Suggested:</b> '+escHtml(RP_TPL_LABELS[plan.template]||plan.template||'—')+' · '+(annex.code?('['+annex.code+'] '+escHtml(annex.label||'')):'no annex auto-selected')+flag+(annex.basis?('<br><span class="muted">'+escHtml(annex.basis)+'</span>'):'')+(d.saved?' <span class="muted">· saved plan loaded</span>':'')+'</div>';
+  renderRpWarnings(plan.warnings||[]);
+  toggleTemplateBlocks();
+  updateMileSum();
+}
+
+function renderRpWarnings(ws){
+  var el=rpEl('rp-warnings');
+  if(!ws||!ws.length){ el.innerHTML=''; return; }
+  el.innerHTML='<div class="rp-warn"><b>Before sending, please check:</b><ul>'+ws.map(function(w){ return '<li>'+escHtml(w)+'</li>'; }).join('')+'</ul></div>';
+}
+function toggleTemplateBlocks(){
+  var t=rpEl('rp-template').value;
+  rpEl('rp-inviter').style.display=(t==='pa-inviter')?'block':'none';
+  rpEl('rp-employer').style.display=(t==='employer')?'block':'none';
+}
+function mileRowHtml(m,locked){
+  return '<td><input class="m-label" type="text" value="'+escA(m.label||'')+'"'+(locked?' disabled':'')+'></td>'+
+    '<td><input class="m-amount" type="number" min="0" step="0.01" value="'+(m.amountCents!=null?(m.amountCents/100):'')+'"></td>'+
+    '<td><input class="m-trigger" type="text" value="'+escA(m.trigger||'')+'"></td>'+
+    '<td>'+(locked?'<span class="muted">locked</span>':'<button type="button" class="rm-btn" data-rm="1">✕</button>')+'</td>';
+}
+function rebuildMilestones(rows){
+  var tb=rpEl('milestone-body'); tb.innerHTML='';
+  if(!rows||!rows.length) rows=[{label:'Non-refundable administrative fee',amountCents:0,locked:true}];
+  rows.forEach(function(m,i){ var tr=document.createElement('tr'); tr.innerHTML=mileRowHtml(m,i===0); tb.appendChild(tr); });
+  bindMile();
+}
+function addMile(){ var tr=document.createElement('tr'); tr.innerHTML=mileRowHtml({label:'',amountCents:null,trigger:''},false); rpEl('milestone-body').appendChild(tr); bindMile(); }
+function bindMile(){
+  Array.prototype.forEach.call(document.querySelectorAll('#milestone-body .m-amount'),function(i){ i.oninput=updateMileSum; });
+  Array.prototype.forEach.call(document.querySelectorAll('#milestone-body [data-rm]'),function(b){ b.onclick=function(){ var tb=rpEl('milestone-body'); if(tb.rows.length>1){ b.closest('tr').remove(); updateMileSum(); } }; });
+}
+function feeCentsNow(){ var fe=rpEl('fee'); var f=Number(String((fe&&fe.value)||'').replace(/[^0-9.]/g,'')); return f>0?Math.round(f*100):0; }
+function collectMilestones(){
+  return Array.prototype.map.call(document.querySelectorAll('#milestone-body tr'),function(tr,i){
+    return { label:(tr.querySelector('.m-label').value||'').trim(), amountCents:Math.round((Number(tr.querySelector('.m-amount').value)||0)*100), trigger:(tr.querySelector('.m-trigger').value||'').trim(), locked:i===0 };
+  });
+}
+function updateMileSum(){
+  var el=rpEl('rp-mile-sum'); if(!el) return;
+  var sum=collectMilestones().reduce(function(s,m){return s+m.amountCents;},0);
+  var fee=feeCentsNow(); var ok=(fee>0 && sum===fee); el.className='rp-sum '+(ok?'ok':'bad');
+  el.textContent='— total $'+(sum/100).toFixed(2)+(fee>0?(' / fee $'+(fee/100).toFixed(2)+(ok?' ✓':(' (off by $'+Math.abs((sum-fee)/100).toFixed(2)+')'))):' (set the fee above first)');
+}
+function collectSelections(){
+  var sel={ template:rpEl('rp-template').value, annexCode:rpEl('rp-annex').value, subType:(rpEl('rp-subtype').value||'').trim(),
+    feeCents:feeCentsNow(), govFeeDollars: rpEl('rp-govfee').value!==''?Number(rpEl('rp-govfee').value):undefined,
+    withRprf: rpEl('rp-rprf').checked, milestones:collectMilestones() };
+  RP_BLOCK_FIELDS.forEach(function(k){ var el=rpEl('rp-'+k); if(el) sel[k]=(el.value||'').trim(); });
+  return sel;
+}
+function previewRetainer(){
+  var key=getKey(); if(!key) return;
+  rpMsg('Rendering preview… (a few seconds)','info'); disableActions(true);
+  fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/retainer-preview',{ method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'}, body:JSON.stringify({value:collectSelections()}) })
+   .then(function(r){ disableActions(false); if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().then(function(j){ throw new Error((j&&j.error)||('HTTP '+r.status)); }); } return r.blob(); })
+   .then(function(blob){ window.open(URL.createObjectURL(blob),'_blank'); rpMsg('Preview opened in a new tab.','ok'); })
+   .catch(function(e){ disableActions(false); if(e.message==='x')return; rpMsg('Preview failed: '+e.message,'err'); });
+}
+function saveRetainer(){ doAction('saveRetainerSelections', JSON.stringify(collectSelections()), 'Save this retainer plan (template, scope annex, fees, milestones)? This does not send anything to the client.'); }
+
 function initActions(){
   var obtns=document.getElementById('obtns');
   OUTCOMES.forEach(function(label){
@@ -327,10 +510,16 @@ function initActions(){
   document.getElementById('btn-resend').onclick=function(){
     doAction('resendLinks',null,'Re-send the meeting and pre-consultation links to the client now?');
   };
+  // Retainer panel
+  rpEl('rp-template').onchange=toggleTemplateBlocks;
+  rpEl('rp-add-mile').onclick=addMile;
+  rpEl('btn-retainer-preview').onclick=previewRetainer;
+  rpEl('btn-retainer-save').onclick=saveRetainer;
+  var feeInput=document.getElementById('fee'); if(feeInput) feeInput.addEventListener('input', updateMileSum);
 }
 
 initActions();
-startClock(); checkApiStatus(); load();
+startClock(); checkApiStatus(); load(); loadRetainerPlan();
 </script></body></html>`;
 }
 

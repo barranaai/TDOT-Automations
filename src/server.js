@@ -308,6 +308,35 @@ app.post('/api/consultation/:leadId/action', express.json(), async (req, res) =>
   }
 });
 
+// Consultant portal — retainer plan (read): system suggestion merged with saved
+// selections + the option lists, for the retainer panel to hydrate.
+app.get('/api/consultation/:leadId/retainer-plan', async (req, res) => {
+  try {
+    const r = await consultantPortalService.getRetainerPlan((req.params.leadId || '').trim());
+    res.json(r);
+  } catch (err) {
+    if (err.notFound) return res.status(404).json({ error: err.message });
+    console.error('[Consultant] Retainer plan failed:', err.stack || err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Consultant portal — retainer PDF preview (read-only, non-mutating): renders the
+// assembled retainer from the consultant's current selections. One CloudConvert
+// conversion per call. Returns binary PDF (NOT json).
+app.post('/api/consultation/:leadId/retainer-preview', express.json(), async (req, res) => {
+  try {
+    const value = (req.body && req.body.value !== undefined) ? req.body.value : req.body;
+    const { buffer, filename } = await consultantPortalService.previewRetainerPdf((req.params.leadId || '').trim(), value);
+    res.type('application/pdf').set('Content-Disposition', `inline; filename="${filename}"`).send(buffer);
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    if (err.notFound)   return res.status(404).json({ error: err.message });
+    console.error('[Consultant] Retainer preview failed:', err.stack || err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Global error handler — catch unhandled route errors gracefully ──────────
 app.use((err, _req, res, _next) => {
   console.error('[Server] Unhandled error:', err.stack || err.message || err);
