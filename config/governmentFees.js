@@ -49,7 +49,7 @@ const GOV_FEES = {
   'pr-card':          { label: 'PR Card', principal: 50 },
   'prtd':             { label: 'PR Travel Document (PRTD)', principal: 50 },
   'citizenship':      { label: 'Canadian Citizenship', principal: 653, child: 100, note: 'Adult (18+) grant $653 incl. RoC $123; minor $100.' },
-  'biometrics':       { label: 'Biometrics', principal: 85, familyMax: 170 },
+  'biometrics':       { label: 'Biometrics', principal: 85, spouse: 85, child: 85, familyMax: 170, note: '$85 per person, $170 family max (2+).' },
 };
 
 module.exports = { HST_RATE, GOV_FEES };

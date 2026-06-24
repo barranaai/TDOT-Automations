@@ -61,6 +61,9 @@ function pickAnnex(caseType, subType) {
   } else if (e.restoration && /restoration/i.test(subType)) {
     code = e.restoration; confidence = 'medium';
     basis = `Case type "${caseType}" + sub-type "${subType}" → restoration scope.`;
+  } else if (e.changeOfStatus && /change of status/i.test(subType)) {
+    code = e.changeOfStatus; confidence = 'medium';
+    basis = `Case type "${caseType}" + sub-type "${subType}" → in-Canada change-of-status scope.`;
   }
   return annexResult(code, confidence, basis);
 }

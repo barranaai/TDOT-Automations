@@ -14,6 +14,8 @@ test('feeToCents parses dollar strings → cents, rejects non-positive', () => {
   assert.equal(feeToCents(null), null);
   assert.equal(feeToCents('-5'), null);
   assert.equal(feeToCents('abc'), null);
+  assert.equal(feeToCents('0.004'), null); // positive sub-cent rounds to 0 → reject, not a $0 agreement
+  assert.equal(feeToCents(0.004), null);
 });
 
 test('centsToMoney groups thousands, 2 decimals', () => {

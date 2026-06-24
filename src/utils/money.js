@@ -10,7 +10,8 @@
 function feeToCents(value) {
   const n = parseFloat(String(value == null ? '' : value).replace(/[$,\s]/g, ''));
   if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.round(n * 100);
+  const cents = Math.round(n * 100);
+  return cents > 0 ? cents : null; // a positive sub-cent fee rounds to 0 — reject, don't emit a $0 agreement
 }
 
 function group(intStr) {

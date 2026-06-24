@@ -86,7 +86,7 @@ const ANNEX_BY_CASE_TYPE = {
   'Study Permit':                       { code: 'T1', confidence: 'high' },
   'Study Permit Extension':             { code: 'T2', confidence: 'high' },
   'TRV':                                { code: 'T14', confidence: 'high' },
-  'Visitor Visa':                       { code: 'T13', confidence: 'medium', note: 'Assumes outside Canada; if applicant is inside Canada, reconsider vs T15.' },
+  'Visitor Visa':                       { code: 'T13', confidence: 'medium', changeOfStatus: 'T15', note: 'Assumes outside Canada (T13); an in-Canada "Change of Status" sub-type → Visitor Record (T15).' },
   'Visitor Record / Extension':         { code: 'T15', confidence: 'medium', restoration: 'T12', note: 'Base T15; a Restoration sub-type → T12.' },
   'Supervisa':                          { code: 'T16', confidence: 'high' },
   'Citizenship':                        { code: 'T19', confidence: 'high' },

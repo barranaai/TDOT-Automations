@@ -35,6 +35,8 @@ test('sub-type selects base vs extension', () => {
   assert.equal(pickAnnex('SOWP', 'Inland - Established Relationship').code, 'T10');
   assert.equal(pickAnnex('SOWP', 'Extension (Spouse or Child)').code, 'T11');
   assert.equal(pickAnnex('Visitor Record / Extension', 'Visitor Record + Restoration').code, 'T12');
+  assert.equal(pickAnnex('Visitor Visa', '').code, 'T13');
+  assert.equal(pickAnnex('Visitor Visa', 'Change of Status (Student/Worker to Visitor)').code, 'T15');
 });
 
 test('Federal PR is flagged for P3-vs-P4 verification', () => {
@@ -94,6 +96,13 @@ test('visitor family max caps the total', () => {
   const r = computeGovFee('visitor', { adults: 2, children: 5 }); // 7 * 100 = 700 → cap 500
   assert.equal(r.totalDollars, 500);
   assert.equal(r.breakdown.capped, true);
+});
+
+test('biometrics scales per person up to the family max', () => {
+  assert.equal(computeGovFee('biometrics', { adults: 1, children: 0 }).totalDollars, 85);
+  const fam = computeGovFee('biometrics', { adults: 2, children: 3 }); // 5*85=425 → cap 170
+  assert.equal(fam.totalDollars, 170);
+  assert.equal(fam.breakdown.capped, true);
 });
 
 // ---- milestones (§10) ----
