@@ -203,7 +203,7 @@ ${buildNavHeader('consultations')}
       <div class="subhead">Initial consultation agreement <span class="muted" id="ca-sent"></span></div>
       <div id="ca-warn"></div>
       <div class="frow">
-        <button class="btn" id="btn-consult-preview">👁 Preview agreement</button>
+        <button class="btn" id="btn-consult-preview">👁 Preview consultation agreement</button>
         <button class="btn" id="btn-consult-send">📄 Send consultation agreement</button>
       </div>
     </div>
@@ -273,7 +273,7 @@ ${buildNavHeader('consultations')}
       <button class="btn" id="rp-add-mile" type="button" style="margin-top:8px">+ Add milestone</button>
 
       <div class="frow" style="margin-top:14px">
-        <button class="btn" id="btn-retainer-preview" type="button">👁 Preview PDF</button>
+        <button class="btn" id="btn-retainer-preview" type="button">👁 Preview retainer agreement</button>
         <button class="btn primary" id="btn-retainer-save" type="button">💾 Save retainer plan</button>
       </div>
     </div>
