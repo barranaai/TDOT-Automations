@@ -265,12 +265,16 @@ ${buildNavHeader('consultations')}
         </div>
       </div>
 
+      <div class="subhead" style="margin-top:12px">Fees (auto-calculated)</div>
+      <div id="rp-fee-breakdown" class="rp-sugg" style="margin-top:4px"></div>
+
       <div class="subhead" style="margin-top:12px">Milestone schedule <span id="rp-mile-sum" class="rp-sum"></span></div>
       <table class="dynamic-table" id="milestone-table">
         <thead><tr><th style="width:42%">Label</th><th style="width:22%">Amount (CAD)</th><th style="width:28%">Trigger</th><th></th></tr></thead>
         <tbody id="milestone-body"></tbody>
       </table>
       <button class="btn" id="rp-add-mile" type="button" style="margin-top:8px">+ Add milestone</button>
+      <button class="btn" id="rp-split-mile" type="button" style="margin-top:8px;margin-left:6px">↻ Split fee evenly</button>
 
       <div class="frow" style="margin-top:14px">
         <button class="btn" id="btn-retainer-preview" type="button">👁 Preview retainer agreement</button>
@@ -482,11 +486,30 @@ function collectMilestones(){
     return { label:(tr.querySelector('.m-label').value||'').trim(), amountCents:Math.round((Number(tr.querySelector('.m-amount').value)||0)*100), trigger:(tr.querySelector('.m-trigger').value||'').trim(), locked:i===0 };
   });
 }
+function fmtC(c){ return '$'+(c/100).toFixed(2); }
 function updateMileSum(){
+  var fee=feeCentsNow();
+  // Auto-calculated fee breakdown — same as the agreement: professional fee + 13% HST = total.
+  var fb=rpEl('rp-fee-breakdown');
+  if(fb){ var hst=Math.round(fee*0.13);
+    fb.innerHTML = fee>0
+      ? ('Professional fee <b>'+fmtC(fee)+'</b> &nbsp;·&nbsp; HST (13%) <b>'+fmtC(hst)+'</b> &nbsp;·&nbsp; <b>Total (incl. HST) '+fmtC(fee+hst)+'</b>')
+      : '<span class="muted">Set the retainer fee (in ⚡ Actions, above) — the HST and total calculate automatically.</span>';
+  }
   var el=rpEl('rp-mile-sum'); if(!el) return;
   var sum=collectMilestones().reduce(function(s,m){return s+m.amountCents;},0);
-  var fee=feeCentsNow(); var ok=(fee>0 && sum===fee); el.className='rp-sum '+(ok?'ok':'bad');
-  el.textContent='— total $'+(sum/100).toFixed(2)+(fee>0?(' / fee $'+(fee/100).toFixed(2)+(ok?' ✓':(' (off by $'+Math.abs((sum-fee)/100).toFixed(2)+')'))):' (set the fee above first)');
+  var ok=(fee>0 && sum===fee); el.className='rp-sum '+(ok?'ok':'bad');
+  el.textContent='— milestones total '+fmtC(sum)+(fee>0?(' / fee '+fmtC(fee)+(ok?' ✓':(' (off by '+fmtC(Math.abs(sum-fee))+')'))):' (set the fee first)');
+}
+// Distribute the professional fee evenly across the current milestone rows
+// (remainder on the last) so the schedule auto-sums to the fee.
+function splitMilestones(){
+  var rows=document.querySelectorAll('#milestone-body .m-amount');
+  var n=rows.length, fee=feeCentsNow();
+  if(n && fee>0){ var base=Math.floor(fee/n);
+    Array.prototype.forEach.call(rows,function(inp,i){ var cents=base+(i===n-1?(fee-base*n):0); inp.value=(cents/100).toFixed(2); });
+  }
+  updateMileSum();
 }
 function collectSelections(){
   var sel={ template:rpEl('rp-template').value, annexCode:rpEl('rp-annex').value, subType:(rpEl('rp-subtype').value||'').trim(),
@@ -547,6 +570,7 @@ function initActions(){
   // Retainer panel
   rpEl('rp-template').onchange=toggleTemplateBlocks;
   rpEl('rp-add-mile').onclick=addMile;
+  rpEl('rp-split-mile').onclick=splitMilestones;
   rpEl('btn-retainer-preview').onclick=previewRetainer;
   rpEl('btn-retainer-save').onclick=saveRetainer;
   var feeInput=document.getElementById('fee'); if(feeInput) feeInput.addEventListener('input', updateMileSum);
