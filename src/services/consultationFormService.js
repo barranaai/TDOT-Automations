@@ -90,24 +90,48 @@ function groupHtml(g, showIf) {
       <template id="tpl-${g.group}">${groupRowHtml(g, '__I__')}</template></div>`;
 }
 
+const SECTION_ICONS = {
+  'Personal & Contact': '👤', 'Family': '👨‍👩‍👧', 'Immigration Status': '🛂', 'Education': '🎓',
+  'Employment': '💼', 'Language': '🗣️', 'Your Relationship With TDOT': '🤝', 'Service Needed': '🧭',
+  'Service-Specific Questions': '📋', 'Urgency': '⏰', 'Final Notes': '📝', 'How You Found Us & Consent': '✅',
+};
+const SECTION_HINTS = {
+  'Personal & Contact': 'Who you are and how to reach you.',
+  'Family': 'Your spouse or partner and any dependants.',
+  'Immigration Status': 'Your current status and any deadlines.',
+  'Education': 'Your qualifications after Grade 10.',
+  'Employment': 'Your skilled work experience.',
+  'Language': 'English / French test results, if you have them.',
+  'Your Relationship With TDOT': 'Are you a new or returning client?',
+  'Service Needed': "What you'd like help with.",
+  'Service-Specific Questions': 'A few questions specific to your selected service.',
+  'Urgency': 'Any time-sensitive deadlines or issues.',
+  'Final Notes': "Anything else you'd like us to know.",
+  'How You Found Us & Consent': 'Almost done — a few quick confirmations.',
+};
+
 function sectionHtml(section, num) {
   const fields = FIELDS_BY_SECTION[section] || [];
   let body;
   if (section === 'Service-Specific Questions') {
-    // group fields by F-block; each block shows for its services
     const byBlock = {};
     for (const f of fields) (byBlock[f.block] = byBlock[f.block] || []).push(f);
-    body = `<p class="hint">These appear once you choose a service above.</p>` +
-      Object.keys(byBlock).map((b) =>
-        `<div class="fblock" data-block="${b}" data-services='${esc(JSON.stringify(FBLOCK_SERVICES[b] || []))}'>
-          <div class="grid">${byBlock[b].map(fieldHtml).join('')}</div></div>`).join('');
+    body = Object.keys(byBlock).map((b) =>
+      `<div class="fblock" data-block="${b}" data-services='${esc(JSON.stringify(FBLOCK_SERVICES[b] || []))}'>
+        <div class="grid">${byBlock[b].map(fieldHtml).join('')}</div></div>`).join('');
   } else {
     const inner = `<div class="grid">${fields.map(fieldHtml).join('')}</div>`;
     const g = GROUP_BY_SECTION[section];
     const grp = g ? groupHtml(g, g.group === 'employment' ? { field: 'hasTeerExperience', in: ['Yes'] } : null) : '';
     body = inner + grp;
   }
-  return `<section class="card"><h2><span class="num">${num}</span>${esc(section)}</h2>${body}</section>`;
+  const hint = SECTION_HINTS[section] ? `<p class="sec-sub">${esc(SECTION_HINTS[section])}</p>` : '';
+  return `<div class="step" data-step="${num - 1}" data-name="${esc(section)}"${num > 1 ? ' hidden' : ''}>
+    <section class="card">
+      <div class="sec-head"><span class="sec-ico">${SECTION_ICONS[section] || '•'}</span>
+        <div><h2>${esc(section)}</h2>${hint}</div></div>
+      ${body}
+    </section></div>`;
 }
 
 // ─── The full page ──────────────────────────────────────────────────────────
@@ -122,73 +146,113 @@ function buildFormHtml() {
     --border:${BRAND.border}; --text:${BRAND.textOnLight}; --muted:${BRAND.mutedOnLight}; }
   *{ box-sizing:border-box; }
   body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:var(--bg); color:var(--text); }
-  .hero{ background:var(--navy); color:#fff; padding:30px 24px; text-align:center; }
+  /* Hero */
+  .hero{ background:linear-gradient(160deg,#0e2440 0%,var(--navy) 70%); color:#fff; padding:34px 24px 28px; text-align:center; }
   .hero .logo{ display:inline-block; margin-bottom:14px; }
-  .hero h1{ margin:0; font-size:27px; font-weight:800; letter-spacing:-.5px; }
-  .hero p{ margin:8px auto 0; max-width:640px; font-size:14px; color:#cbd5e1; line-height:1.6; }
-  .wrap{ max-width:1080px; margin:0 auto; padding:28px 22px 60px; }
-  form{ display:flex; flex-direction:column; gap:20px; }
-  .card{ background:var(--card); border:1px solid var(--border); border-radius:16px; padding:24px 26px;
-    box-shadow:0 2px 14px rgba(15,29,50,.05); }
-  .card h2{ margin:0 0 18px; font-size:16px; font-weight:800; color:var(--navy); display:flex; align-items:center; gap:11px;
-    padding-bottom:13px; border-bottom:1px solid var(--border); }
-  .num{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%;
-    background:var(--primary); color:#fff; font-size:13px; font-weight:700; flex-shrink:0; }
-  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px 20px; }
+  .hero h1{ margin:0; font-size:28px; font-weight:800; letter-spacing:-.6px; }
+  .hero p{ margin:9px auto 0; max-width:600px; font-size:14px; color:#cbd5e1; line-height:1.6; }
+  .hero .meta{ margin-top:14px; display:flex; gap:18px; justify-content:center; flex-wrap:wrap; font-size:12.5px; color:#9fb3cc; }
+  .hero .meta span{ display:inline-flex; align-items:center; gap:6px; }
+  /* Sticky progress */
+  .pbar-wrap{ position:sticky; top:0; z-index:20; background:rgba(250,248,244,.92); backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--border); padding:12px 22px; }
+  .pbar-inner{ max-width:1080px; margin:0 auto; }
+  .pbar-meta{ display:flex; justify-content:space-between; align-items:center; font-size:12px; font-weight:700;
+    color:var(--navy); margin-bottom:8px; letter-spacing:.2px; }
+  .pbar-meta .pct{ color:var(--primary); }
+  .pbar{ height:7px; background:#e9e3d6; border-radius:99px; overflow:hidden; }
+  .pfill{ height:100%; width:8%; background:linear-gradient(90deg,var(--primary),#b33); border-radius:99px; transition:width .4s cubic-bezier(.4,0,.2,1); }
+  /* Layout */
+  .wrap{ max-width:1080px; margin:0 auto; padding:26px 22px 48px; }
+  .step{ } .step.anim{ animation:fade .32s ease; }
+  @keyframes fade{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:none; } }
+  .card{ background:var(--card); border:1px solid var(--border); border-radius:18px; padding:26px 28px;
+    box-shadow:0 4px 22px rgba(15,29,50,.06); }
+  .sec-head{ display:flex; align-items:center; gap:14px; margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid var(--border); }
+  .sec-ico{ width:44px; height:44px; border-radius:13px; background:#fff5f5; display:inline-flex; align-items:center;
+    justify-content:center; font-size:22px; flex-shrink:0; border:1px solid #f3dada; }
+  .sec-head h2{ margin:0; font-size:19px; font-weight:800; color:var(--navy); letter-spacing:-.3px; }
+  .sec-sub{ margin:2px 0 0; font-size:13px; color:var(--muted); }
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:18px 22px; }
   @media(max-width:680px){ .grid{ grid-template-columns:1fr; } }
-  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field{ display:flex; flex-direction:column; gap:7px; }
   .field-wide{ grid-column:1 / -1; }
   .field label{ font-size:13px; font-weight:600; color:var(--text); }
   .req{ color:var(--primary); font-weight:700; }
-  .field input, .field select, .field textarea{ width:100%; padding:11px 13px; border:1px solid var(--border);
-    border-radius:10px; font-size:14.5px; font-family:inherit; background:#fff; color:var(--text); transition:border .15s,box-shadow .15s; }
+  .field input, .field select, .field textarea{ width:100%; padding:12px 14px; border:1px solid var(--border);
+    border-radius:11px; font-size:14.5px; font-family:inherit; background:#fff; color:var(--text); transition:border .15s,box-shadow .15s; }
+  .field input:hover, .field select:hover, .field textarea:hover{ border-color:#cbd2c0; }
   .field input:focus, .field select:focus, .field textarea:focus{ outline:none; border-color:var(--navy);
-    box-shadow:0 0 0 3px rgba(11,29,50,.08); }
-  .field textarea{ resize:vertical; min-height:74px; }
-  .radios{ display:flex; flex-wrap:wrap; gap:8px; }
-  .radio{ display:inline-flex; align-items:center; gap:7px; padding:9px 15px; border:1px solid var(--border);
-    border-radius:10px; font-size:13.5px; cursor:pointer; background:#fff; transition:.15s; }
-  .radio:hover{ border-color:var(--navy); }
+    box-shadow:0 0 0 3px rgba(11,29,50,.09); }
+  .field textarea{ resize:vertical; min-height:80px; }
+  .radios{ display:flex; flex-wrap:wrap; gap:9px; }
+  .radio{ display:inline-flex; align-items:center; gap:8px; padding:10px 16px; border:1px solid var(--border);
+    border-radius:11px; font-size:13.5px; cursor:pointer; background:#fff; transition:.15s; user-select:none; }
+  .radio:hover{ border-color:var(--navy); background:#f8fafc; }
   .radio input{ accent-color:var(--primary); margin:0; }
-  .radio:has(input:checked){ border-color:var(--navy); background:#f0f4f8; font-weight:600; }
-  .check{ display:flex; align-items:flex-start; gap:10px; font-size:13.5px; line-height:1.5; cursor:pointer; }
-  .check input{ margin-top:2px; accent-color:var(--primary); width:17px; height:17px; flex-shrink:0; }
-  .hint{ font-size:13px; color:var(--muted); margin:0 0 14px; font-style:italic; }
-  .fblock, .grp[data-showif]{ }
-  .grp{ grid-column:1/-1; margin-top:6px; }
-  .grp-h{ font-size:13px; font-weight:700; color:var(--navy); margin-bottom:10px; }
-  .grp-row{ border:1px dashed var(--border); border-radius:12px; padding:16px; margin-bottom:12px; position:relative; }
-  .add-row{ background:#fff; border:1px solid var(--navy); color:var(--navy); padding:9px 16px; border-radius:9px;
-    font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .radio:has(input:checked){ border-color:var(--primary); background:#fff5f5; font-weight:600; box-shadow:0 0 0 2px rgba(139,0,0,.08); }
+  .check{ display:flex; align-items:flex-start; gap:11px; font-size:13.5px; line-height:1.55; cursor:pointer;
+    padding:12px 14px; border:1px solid var(--border); border-radius:11px; background:#fff; transition:.15s; }
+  .check:hover{ border-color:var(--navy); }
+  .check:has(input:checked){ border-color:var(--primary); background:#fff5f5; }
+  .check input{ margin-top:2px; accent-color:var(--primary); width:18px; height:18px; flex-shrink:0; }
+  .grp{ grid-column:1/-1; margin-top:4px; }
+  .grp-h{ font-size:13px; font-weight:700; color:var(--navy); margin-bottom:11px; }
+  .grp-row{ border:1px dashed var(--border); border-radius:13px; padding:18px; margin-bottom:13px; background:#fcfbf8; }
+  .add-row{ background:#fff; border:1px solid var(--navy); color:var(--navy); padding:10px 17px; border-radius:10px;
+    font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; transition:.15s; }
   .add-row:hover{ background:#f0f4f8; }
-  .rm-row{ background:none; border:none; color:var(--primary); font-size:12px; cursor:pointer; margin-top:6px; font-family:inherit; padding:0; }
-  .actions{ display:flex; justify-content:center; padding:10px 0; }
-  .submit{ background:var(--primary); color:#fff; border:none; padding:15px 48px; border-radius:12px; font-size:16px;
-    font-weight:700; cursor:pointer; font-family:inherit; box-shadow:0 4px 16px rgba(139,0,0,.25); transition:.15s; }
+  .rm-row{ background:none; border:none; color:var(--primary); font-size:12px; cursor:pointer; margin-top:8px; font-family:inherit; padding:0; }
+  /* Wizard nav */
+  .err-banner{ display:none; background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; padding:13px 16px;
+    border-radius:12px; font-size:13.5px; margin-top:18px; }
+  .wnav{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:22px; }
+  .btn-ghost{ background:#fff; border:1px solid var(--border); color:var(--navy); padding:13px 24px; border-radius:11px;
+    font-size:14.5px; font-weight:600; cursor:pointer; font-family:inherit; transition:.15s; }
+  .btn-ghost:hover{ border-color:var(--navy); background:#f8fafc; }
+  .btn-next{ background:var(--navy); color:#fff; border:none; padding:13px 30px; border-radius:11px; font-size:14.5px;
+    font-weight:700; cursor:pointer; font-family:inherit; margin-left:auto; transition:.15s; }
+  .btn-next:hover{ filter:brightness(1.12); transform:translateY(-1px); }
+  .submit{ background:var(--primary); color:#fff; border:none; padding:14px 36px; border-radius:12px; font-size:15.5px;
+    font-weight:700; cursor:pointer; font-family:inherit; margin-left:auto; box-shadow:0 4px 16px rgba(139,0,0,.25); transition:.15s; }
   .submit:hover{ filter:brightness(1.08); transform:translateY(-1px); }
   .submit:disabled{ opacity:.6; cursor:not-allowed; transform:none; }
-  .err-banner{ display:none; background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; padding:13px 16px;
-    border-radius:12px; font-size:13.5px; }
-  .field.invalid input, .field.invalid select, .field.invalid textarea, .field.invalid .radios{ border-color:#dc2626; }
-  .foot{ text-align:center; font-size:12px; color:var(--muted); margin-top:24px; }
+  .field.invalid input, .field.invalid select, .field.invalid textarea, .field.invalid .radios .radio{ border-color:#dc2626; }
+  .foot{ text-align:center; font-size:12px; color:var(--muted); margin-top:26px; }
+  @media(max-width:560px){ .wnav .btn-ghost, .wnav .btn-next, .wnav .submit{ padding:13px 18px; } .sec-head h2{ font-size:17px; } .hero h1{ font-size:23px; } }
   [hidden]{ display:none !important; }
 </style></head><body>
   <div class="hero"><div class="logo">${TDOT_LOGO_LIGHT_HTML_LARGE}</div>
     <h1>Book Your Immigration Consultation</h1>
-    <p>Tell us about your situation so your RCIC can prepare. The more you share, the more tailored your consultation will be. Fields marked <span style="color:#fff;font-weight:700">*</span> are required.</p>
+    <p>Tell us about your situation so your RCIC can prepare — the more you share, the better tailored your consultation will be.</p>
+    <div class="meta"><span>🕐 About 8–10 minutes</span><span>🔒 Kept strictly confidential</span><span>✱ Required fields are marked</span></div>
   </div>
+  <div class="pbar-wrap"><div class="pbar-inner">
+    <div class="pbar-meta"><span id="pmeta">Step 1 of ${SECTION_ORDER.length}</span><span class="pct" id="ppct">8%</span></div>
+    <div class="pbar"><div class="pfill" id="pfill"></div></div>
+  </div></div>
   <div class="wrap">
-    <div id="err-banner" class="err-banner"></div>
     <form id="cform" method="POST" action="/consultation/submit" novalidate>
       <input type="text" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
 ${sections}
-      <div class="actions"><button type="submit" class="submit" id="submit-btn">Submit consultation request</button></div>
+      <div id="err-banner" class="err-banner"></div>
+      <div class="wnav">
+        <button type="button" class="btn-ghost" id="btn-back" style="display:none">‹ Back</button>
+        <button type="button" class="btn-next" id="btn-next">Next ›</button>
+        <button type="submit" class="submit" id="btn-submit" style="display:none">Submit consultation request ✓</button>
+      </div>
       <div class="foot">TDOT Immigration · Your information is kept confidential and used only to prepare your consultation.</div>
     </form>
   </div>
 <script>
 (function(){
   var form=document.getElementById('cform');
+  var steps=[].slice.call(form.querySelectorAll('.step'));
+  var cur=0;
+  var pmeta=document.getElementById('pmeta'), ppct=document.getElementById('ppct'), pfill=document.getElementById('pfill');
+  var back=document.getElementById('btn-back'), next=document.getElementById('btn-next'), submitBtn=document.getElementById('btn-submit');
+  var banner=document.getElementById('err-banner');
+
   function val(name){
     var els=form.querySelectorAll('[name="'+CSS.escape(name)+'"]');
     if(!els.length) return '';
@@ -204,23 +268,19 @@ ${sections}
     if(c.gt!=null) return Number(v||0)>c.gt;
     return false;
   }
-  function setEnabled(container,on){
-    container.querySelectorAll('input,select,textarea').forEach(function(el){ el.disabled=!on; });
-  }
+  function setEnabled(c,on){ c.querySelectorAll('input,select,textarea').forEach(function(el){ el.disabled=!on; }); }
   function apply(){
     var svc=val('serviceRequired');
     form.querySelectorAll('[data-block]').forEach(function(b){
-      var on=(JSON.parse(b.getAttribute('data-services'))||[]).indexOf(svc)>=0;
-      b.hidden=!on; setEnabled(b,on);
+      var on=(JSON.parse(b.getAttribute('data-services'))||[]).indexOf(svc)>=0; b.hidden=!on; setEnabled(b,on);
     });
     form.querySelectorAll('[data-showif]').forEach(function(el){
       var on=cmp(JSON.parse(el.getAttribute('data-showif')));
-      // a field inside a hidden block stays hidden regardless
       var blk=el.closest('[data-block]'); if(blk&&blk.hidden) on=false;
       el.hidden=!on; setEnabled(el,on);
     });
   }
-  form.addEventListener('input',apply); form.addEventListener('change',apply); apply();
+  form.addEventListener('input',apply); form.addEventListener('change',apply);
 
   // repeatable groups
   window.addGrpRow=function(g){
@@ -230,25 +290,58 @@ ${sections}
   };
   window.rmGrpRow=function(btn){ var box=btn.closest('.grp-rows'); if(box.querySelectorAll('.grp-row').length>1) btn.closest('.grp-row').remove(); };
 
-  // validation: only VISIBLE, enabled, required fields
-  form.addEventListener('submit',function(e){
-    var bad=[]; form.querySelectorAll('.invalid').forEach(function(x){x.classList.remove('invalid');});
-    var seen={};
-    form.querySelectorAll('[data-req="1"]').forEach(function(el){
-      if(el.disabled) return;
-      var f=el.closest('.field'); if(f&&f.hidden) return;
-      var name=el.name; if(seen[name]) return; seen[name]=1;
-      var v=val(name);
-      if(el.type==='checkbox'){ if(!el.checked){ bad.push(f); } }
-      else if(!v){ bad.push(f); }
+  // ── wizard ──
+  function stepEmpty(st){
+    var fs=st.querySelectorAll('.field'); if(!fs.length) return false;
+    for(var i=0;i<fs.length;i++){ if(!fs[i].hidden){ var blk=fs[i].closest('[data-block]'); if(!(blk&&blk.hidden)) return false; } }
+    return true;
+  }
+  function nextStep(from){ for(var i=from+1;i<steps.length;i++) if(!stepEmpty(steps[i])) return i; return -1; }
+  function prevStep(from){ for(var i=from-1;i>=0;i--) if(!stepEmpty(steps[i])) return i; return -1; }
+  function show(i){
+    steps.forEach(function(s,idx){ s.hidden=idx!==i; });
+    cur=i; apply();
+    var st=steps[i];
+    back.style.display = prevStep(i)===-1 ? 'none' : '';
+    var last = nextStep(i)===-1;
+    next.style.display = last?'none':''; submitBtn.style.display = last?'':'none';
+    var nonEmpty=steps.filter(function(s){ return !stepEmpty(s); });
+    var pos=nonEmpty.indexOf(st)+1, total=nonEmpty.length||1, pct=Math.round((pos/total)*100);
+    pfill.style.width=pct+'%'; ppct.textContent=pct+'%';
+    pmeta.textContent='Step '+pos+' of '+total+' · '+st.getAttribute('data-name');
+    banner.style.display='none';
+    st.classList.remove('anim'); void st.offsetWidth; st.classList.add('anim');
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  function badIn(scope){
+    var bad=[], seen={};
+    scope.querySelectorAll('[data-req="1"]').forEach(function(el){
+      if(el.disabled) return; var f=el.closest('.field'); if(f&&f.hidden) return;
+      if(seen[el.name]) return; seen[el.name]=1;
+      if(el.type==='checkbox'){ if(!el.checked) bad.push(f); } else if(!val(el.name)) bad.push(f);
     });
+    return bad;
+  }
+  function flag(bad){
+    form.querySelectorAll('.invalid').forEach(function(x){x.classList.remove('invalid');});
+    bad.forEach(function(f){ if(f) f.classList.add('invalid'); });
+    banner.textContent='Please complete the '+bad.length+' highlighted field'+(bad.length>1?'s':'')+' to continue.';
+    banner.style.display='block';
+    if(bad[0]) bad[0].scrollIntoView({behavior:'smooth',block:'center'});
+  }
+  next.addEventListener('click',function(){ var bad=badIn(steps[cur]); if(bad.length){ flag(bad); return; } var n=nextStep(cur); if(n!==-1) show(n); });
+  back.addEventListener('click',function(){ var p=prevStep(cur); if(p!==-1) show(p); });
+  form.addEventListener('submit',function(e){
+    apply();
+    var bad=badIn(form);
     if(bad.length){ e.preventDefault();
-      bad.forEach(function(f){ if(f) f.classList.add('invalid'); });
-      var b=document.getElementById('err-banner');
-      b.textContent='Please complete the '+bad.length+' highlighted required field'+(bad.length>1?'s':'')+'.'; b.style.display='block';
-      (bad[0]||{scrollIntoView:function(){}}).scrollIntoView({behavior:'smooth',block:'center'});
-    } else { document.getElementById('submit-btn').disabled=true; document.getElementById('submit-btn').textContent='Submitting…'; }
+      var st=bad[0]&&bad[0].closest('.step'), idx=st?steps.indexOf(st):-1;
+      if(idx!==-1&&idx!==cur) show(idx);
+      flag(bad);
+    } else { submitBtn.disabled=true; submitBtn.textContent='Submitting…'; }
   });
+
+  apply(); show(0);
 })();
 </script></body></html>`;
 }
