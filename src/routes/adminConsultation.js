@@ -200,6 +200,12 @@ ${buildNavHeader('consultations')}
         <button class="btn" id="btn-invite">Send booking invite</button>
         <button class="btn" id="btn-resend">Resend meeting + pre-consult links</button>
       </div>
+      <div class="subhead">Initial consultation agreement <span class="muted" id="ca-sent"></span></div>
+      <div id="ca-warn"></div>
+      <div class="frow">
+        <button class="btn" id="btn-consult-preview">👁 Preview agreement</button>
+        <button class="btn" id="btn-consult-send">📄 Send consultation agreement</button>
+      </div>
     </div>
 
     <div class="card retainer actions" style="margin-bottom:16px">
@@ -310,6 +316,12 @@ function render(d){
   highlightOutcome(d.outcome||'');
   var fee=document.getElementById('fee'); if(fee && !fee.value && d.retainerFee) fee.value=d.retainerFee;
   if(typeof updateMileSum==='function') updateMileSum();
+
+  var ca=d.consultAgreement||{};
+  document.getElementById('ca-sent').textContent=ca.sent?('· sent '+ca.sent):'';
+  var caw=document.getElementById('ca-warn');
+  caw.innerHTML=(ca.warnings&&ca.warnings.length)
+    ? '<div class="rp-warn"><b>Before sending:</b><ul>'+ca.warnings.map(function(w){return '<li>'+escHtml(w)+'</li>';}).join('')+'</ul></div>' : '';
 
   document.getElementById('c-status').innerHTML=
     kv('Booking status',d.bookingStatus)+kv('Consultation held',d.consultationHeld)+
@@ -480,6 +492,15 @@ function previewRetainer(){
 }
 function saveRetainer(){ doAction('saveRetainerSelections', JSON.stringify(collectSelections()), 'Save this retainer plan (template, scope annex, fees, milestones)? This does not send anything to the client.'); }
 
+function previewConsult(){
+  var key=getKey(); if(!key) return;
+  setMsg('Rendering consultation agreement…','info'); disableActions(true);
+  fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/consult-agreement-preview',{ method:'POST', headers:{'X-Api-Key':key} })
+   .then(function(r){ disableActions(false); if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().then(function(j){ throw new Error((j&&j.error)||('HTTP '+r.status)); }); } return r.blob(); })
+   .then(function(blob){ window.open(URL.createObjectURL(blob),'_blank'); setMsg('Consultation agreement preview opened in a new tab.','ok'); })
+   .catch(function(e){ disableActions(false); if(e.message==='x')return; setMsg('Preview failed: '+e.message,'err'); });
+}
+
 function initActions(){
   var obtns=document.getElementById('obtns');
   OUTCOMES.forEach(function(label){
@@ -516,6 +537,10 @@ function initActions(){
   rpEl('btn-retainer-preview').onclick=previewRetainer;
   rpEl('btn-retainer-save').onclick=saveRetainer;
   var feeInput=document.getElementById('fee'); if(feeInput) feeInput.addEventListener('input', updateMileSum);
+  document.getElementById('btn-consult-preview').onclick=previewConsult;
+  document.getElementById('btn-consult-send').onclick=function(){
+    doAction('sendConsultAgreement', null, 'Email the initial consultation agreement to the client now? It states the consultation fee, 30-minute duration, and the booked date. Make sure the client\\'s address is filled in first.');
+  };
 }
 
 initActions();

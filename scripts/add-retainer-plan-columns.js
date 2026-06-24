@@ -42,6 +42,8 @@ const NEW_COLUMNS = [
   { key: 'empCompanyPhone',    title: 'Employer Company Phone',     type: 'text' },
   { key: 'empRepPhone',        title: 'Employer Rep Phone',         type: 'text' },
   { key: 'empRepEmail',        title: 'Employer Rep Email',         type: 'text' },
+  // Initial Consultation agreement (consultant-sent marker)
+  { key: 'consultAgreementSent', title: 'Consult Agreement Sent',   type: 'date' },
 ];
 
 async function createColumn(col) {

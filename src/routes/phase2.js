@@ -316,6 +316,25 @@ router.get('/retainer/:leadId', async (req, res) => {
   }
 });
 
+// GET /consult-agreement/:leadId — stream the Initial Consultation agreement PDF
+// (token-protected, mirrors /retainer/:leadId).
+router.get('/consult-agreement/:leadId', async (req, res) => {
+  const { leadId } = req.params;
+  if (!await leadTokenService.validateToken(leadId, req.query.t)) {
+    return res.status(403).type('html').send('Invalid or expired link.');
+  }
+  try {
+    const lead = await leadService.getLead(leadId);
+    const pdf  = await require('../services/consultAgreementService').getConsultAgreementDocument(lead);
+    res.type('application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="TDOT-Initial-Consultation.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('[ConsultAgreement] GET failed:', err.message);
+    res.status(500).type('html').send(buildErrorHtml(err.message));
+  }
+});
+
 // POST /webhook/zoom — Zoom event subscription (meeting.ended, recording.completed).
 // Raw body: Zoom's x-zm-signature is an HMAC over the exact bytes. The URL-
 // validation handshake must be answered synchronously; real events are 200'd

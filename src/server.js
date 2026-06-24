@@ -337,6 +337,19 @@ app.post('/api/consultation/:leadId/retainer-preview', express.json(), async (re
   }
 });
 
+// Consultant portal — Initial Consultation agreement PDF preview (read-only).
+app.post('/api/consultation/:leadId/consult-agreement-preview', async (req, res) => {
+  try {
+    const { buffer, filename } = await consultantPortalService.previewConsultAgreement((req.params.leadId || '').trim());
+    res.type('application/pdf').set('Content-Disposition', `inline; filename="${filename}"`).send(buffer);
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    if (err.notFound)   return res.status(404).json({ error: err.message });
+    console.error('[Consultant] Consult-agreement preview failed:', err.stack || err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Global error handler — catch unhandled route errors gracefully ──────────
 app.use((err, _req, res, _next) => {
   console.error('[Server] Unhandled error:', err.stack || err.message || err);

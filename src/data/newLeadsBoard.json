@@ -87,7 +87,8 @@
     "empCompanyPhone": "text_mm4m7jc7",
     "empRepPhone": "text_mm4mtwjs",
     "empRepEmail": "text_mm4m6w9v",
-    "govFee": "numeric_mm4mt156"
+    "govFee": "numeric_mm4mt156",
+    "consultAgreementSent": "date_mm4mw3r1"
   },
   "createdAt": "2026-06-08T18:00:45.756Z"
 }

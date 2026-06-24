@@ -56,6 +56,7 @@ const COL_TYPE = {
   inviterName: 'text', inviterAddress: 'text', inviterPhone: 'text', inviterEmail: 'text',
   empRepName: 'text', empCompanyName: 'text', empCompanyAddress: 'text',
   empCompanyPhone: 'text', empRepPhone: 'text', empRepEmail: 'text',
+  consultAgreementSent: 'date',
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));

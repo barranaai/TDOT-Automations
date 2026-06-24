@@ -161,6 +161,12 @@ async function getConsultationDetail(leadId) {
     retainerPaid:   lead.retainerPaid || '',
     clientMasterItemId: lead.clientMasterItemId || '',
 
+    // Initial Consultation agreement (consultant-sent)
+    consultAgreement: {
+      sent:     lead.consultAgreementSent || '',
+      warnings: require('./consultAgreementService').buildConsultAgreementData(lead).warnings,
+    },
+
     eligibility,
   };
 }
@@ -252,6 +258,7 @@ function validateAction(action, value) {
     }
     case 'bookingInvite':
     case 'resendLinks':
+    case 'sendConsultAgreement':
       return { ok: true, normalized: null };
     default:
       return { ok: false, error: 'Unknown action.' };
@@ -314,6 +321,12 @@ async function applyAction({ leadId, action, value }) {
       await require('./consultationService').resendConsultationLinks(leadId);
       await postPortalNote(leadId, 'Meeting + pre-consultation links re-sent to the client.');
       return { ok: true, message: 'The meeting and pre-consultation links have been re-sent to the client.' };
+
+    case 'sendConsultAgreement': {
+      const r = await require('./consultAgreementService').sendConsultAgreement(leadId);
+      await postPortalNote(leadId, 'Initial consultation agreement emailed to the client.');
+      return { ok: true, message: 'The initial consultation agreement has been emailed to the client.', url: r.url };
+    }
 
     case 'saveRetainerSelections': {
       const s = v.normalized;
@@ -383,7 +396,18 @@ async function previewRetainerPdf(leadId, value) {
   return { buffer, filename: `retainer-${leadId}-preview.pdf` };
 }
 
+/**
+ * Render a preview PDF of the Initial Consultation agreement (read-only).
+ * @throws {Error} .notFound on missing lead
+ */
+async function previewConsultAgreement(leadId) {
+  const lead = await leadService.getLead(leadId);
+  if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
+  const buffer = await require('./consultAgreementService').generateConsultAgreementPdf(lead);
+  return { buffer, filename: `consult-agreement-${leadId}.pdf` };
+}
+
 module.exports = {
   getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS,
-  parseSelections, getRetainerPlan, previewRetainerPdf,
+  parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement,
 };
