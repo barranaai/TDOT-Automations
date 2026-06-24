@@ -148,11 +148,21 @@ async function sendRetainerPaymentLink(leadId, { amountCents } = {}) {
     try {
       await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration retainer payment link', html });
     } catch (err) {
-      console.warn(`[Payment] Retainer payment email failed for lead ${leadId} (link still valid): ${err.message}`);
+      // The link is preserved (Square + the backup note above), so no lock — but
+      // make the failed delivery VISIBLE so staff re-share, not just a log line.
+      console.warn(`[Payment] Retainer payment email FAILED for lead ${leadId}: ${err.message}`);
+      try {
+        await mondayApi.query(
+          `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
+          { itemId: String(leadId),
+            body: `⚠ <b>Payment-link email FAILED to send</b> — the client has NOT received it. Please ` +
+                  `re-share the link above with the client. (error: ${esc(err.message)})` }
+        );
+      } catch (_) { /* note is best-effort */ }
     }
   }
 
-  console.log(`[Payment] Retainer payment link sent to lead ${leadId} (${(amount / 100)} CAD)`);
+  console.log(`[Payment] Retainer payment link processed for lead ${leadId} (${(amount / 100)} CAD)`);
   return url;
 }
 

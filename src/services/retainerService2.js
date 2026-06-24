@@ -84,8 +84,20 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
 
   const token = lead.leadToken || '';
   const url = `${RENDER_URL}/retainer/${leadId}?t=${encodeURIComponent(token)}`;
-  if (lead.email) {
-    const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
+
+  // Invariant: mark retainerSent (the idempotency lock) ONLY when the agreement
+  // was actually DELIVERED. A no-email lead or a failed send must NOT lock the
+  // lead — otherwise the guard above blocks every retry and the client silently
+  // never gets the agreement. Both non-delivery paths post a VISIBLE staff note.
+  if (!lead.email) {
+    console.warn(`[Retainer2] No email on file for lead ${leadId} — agreement NOT sent`);
+    await postLeadNote(leadId,
+      `⚠ <b>Retainer agreement not sent — no client email on file.</b> Add the client's email and re-set ` +
+      `the Outcome to "Retain" to send. The agreement link: <a href="${esc(url)}">${esc(url)}</a>`);
+    return;
+  }
+
+  const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
       <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
         <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your retainer agreement</h1></div>
       <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
@@ -95,18 +107,23 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
         <p style="margin-top:20px">To proceed: sign the agreement and email the signed copy back to us. Once we receive it, we'll send your secure payment link.</p>
         <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Questions about the fee? Just reply to this email.</p>
       </div></div>`;
-    try {
-      await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration retainer agreement', html });
-    } catch (err) {
-      console.warn(`[Retainer2] Retainer email failed for lead ${leadId} (link still valid): ${err.message}`);
-    }
+  try {
+    await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration retainer agreement', html });
+  } catch (err) {
+    // Do NOT mark sent — leave the lead un-locked so the next trigger retries.
+    console.warn(`[Retainer2] Retainer email FAILED for lead ${leadId}: ${err.message}`);
+    await postLeadNote(leadId,
+      `⚠ <b>Retainer agreement email FAILED to send</b> — the client has NOT received it. The lead was left ` +
+      `un-sent so it retries automatically; to resend now, switch the Outcome away from "Retain" and back. ` +
+      `The agreement link is valid: <a href="${esc(url)}">${esc(url)}</a><br>(error: ${esc(err.message)})`);
+    return;
   }
 
   await leadService.updateLead(leadId, {
     retainerSent:     todayISO(),
     conversionStatus: 'Consulted',
   });
-  console.log(`[Retainer2] Retainer agreement sent to lead ${leadId} (${lead.email || 'no email'}) — fee included`);
+  console.log(`[Retainer2] Retainer agreement sent to lead ${leadId} (${lead.email}) — fee included`);
 }
 
 // ─── The retainer PDF (standard wording — swap in TDOT's official text when provided) ──

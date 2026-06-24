@@ -358,7 +358,7 @@ router.post('/webhook/lead', express.json(), async (req, res) => {
     const C = require('../data/newLeadsBoard.json').columns;
 
     if (event.columnId === C.outcome) {
-      const outcome = event.value?.label?.text || '';
+      const outcome = (event.value?.label?.text || '').trim();
       if (outcome === 'Retain') {
         retainerService2.onOutcomeRetain(String(event.pulseId)).catch((e) =>
           console.error('[Lead Webhook] onOutcomeRetain:', e.message));

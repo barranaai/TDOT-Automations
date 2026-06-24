@@ -205,7 +205,8 @@ async function getLead(leadId) {
       // Link columns: .text is "display text - url" mashed together — read the
       // bare URL from the JSON value instead.
       let url = '';
-      try { url = JSON.parse(cv.value || '{}').url || ''; } catch (_) { /* leave empty */ }
+      try { url = JSON.parse(cv.value || '{}').url || ''; }
+      catch (err) { console.warn(`[Lead] Link column parse failed for item ${item.id} col ${cv.id}: ${err.message}`); }
       lead[key] = url;
     } else {
       lead[key] = cv.text || '';
