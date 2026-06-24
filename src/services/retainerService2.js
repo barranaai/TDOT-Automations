@@ -32,6 +32,48 @@ function esc(s) {
   return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// ─── Retainer engine: v1 (generic pdfkit) | v2 (TDOT's real templates) ───────
+// v2 is OFF by default and opt-in via RETAINER_ENGINE=v2. When on, the agreement
+// is built from the consultant's saved plan (template + scope annex + fees +
+// milestones) using retainerDocService; the send is gated on the plan being
+// READY and the PDF is pre-generated + cached at send-time so the client's view
+// never depends on CloudConvert being up.
+function isV2() { return String(process.env.RETAINER_ENGINE || 'v1').toLowerCase() === 'v2'; }
+
+const _pdfCache = new Map(); // leadId → PDF Buffer (warmed at send-time, served by the /retainer route)
+function cacheRetainerPdf(leadId, buf) {
+  const key = String(leadId);
+  _pdfCache.set(key, buf);
+  if (_pdfCache.size > 50) _pdfCache.delete(_pdfCache.keys().next().value); // evict oldest
+}
+
+/** Build the plan from the lead's saved columns and render the combined PDF (v2). */
+async function generateV2Pdf(lead) {
+  const { buildRetainerPlan, overridesFromLead } = require('./retainerPlanBuilder');
+  const plan = buildRetainerPlan(lead, overridesFromLead(lead));
+  if (!plan.ready) {
+    const e = new Error(plan.warnings.join(' · ') || 'The retainer plan is not complete.');
+    e.notReady = true; e.warnings = plan.warnings;
+    throw e;
+  }
+  return require('./retainerDocService').generate({
+    template: plan.template, data: plan.mergeData, annexId: plan.annex.id,
+  });
+}
+
+/**
+ * The PDF the /retainer/:leadId route streams. v1 → the generic pdfkit doc;
+ * v2 → the cached (or freshly generated) real-template PDF.
+ */
+async function getRetainerDocument(lead) {
+  if (!isV2()) return buildRetainerPdf(lead);
+  const key = String(lead.id);
+  if (_pdfCache.has(key)) return _pdfCache.get(key);
+  const pdf = await generateV2Pdf(lead);
+  cacheRetainerPdf(key, pdf);
+  return pdf;
+}
+
 // ─── Step 1: Outcome → Retain (GATED on the per-client fee being set) ────────
 //
 // The retainer agreement STATES the professional fee, so it must never be
@@ -81,6 +123,32 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
         '⚠ Outcome is set to "Retain", but no Retainer Fee is set. The retainer agreement states the fee, so it has NOT been emailed yet — enter the "Retainer Fee (CAD)" on this lead and the agreement is emailed to the client automatically.');
     }
     return;
+  }
+
+  // v2: the agreement is the real-template PDF built from the consultant's saved
+  // plan. Hold the send until the plan is READY, and pre-generate + cache the PDF
+  // now so the client's view is instant and CloudConvert-independent. Either gate
+  // failure leaves the lead un-sent (retries) and posts a visible staff note.
+  if (isV2()) {
+    try {
+      const pdf = await generateV2Pdf(lead);
+      cacheRetainerPdf(leadId, pdf);
+    } catch (err) {
+      if (err.notReady) {
+        console.log(`[Retainer2] v2 plan not ready for lead ${leadId} — agreement HELD`);
+        if (notifyIfMissing) {
+          await postLeadNote(leadId,
+            `⚠ <b>Retainer agreement HELD — the retainer plan isn't complete.</b> Open the consultant portal → ` +
+            `"Retainer plan" for this client and resolve: ${esc(err.warnings ? err.warnings.join(' · ') : err.message)}`);
+        }
+      } else {
+        console.warn(`[Retainer2] v2 generation FAILED for lead ${leadId}: ${err.message}`);
+        await postLeadNote(leadId,
+          `⚠ <b>Retainer agreement generation FAILED</b> — NOT sent; the lead was left un-sent so it retries. ` +
+          `Check the scope annex is available and CloudConvert credits.<br>(error: ${esc(err.message)})`);
+      }
+      return;
+    }
   }
 
   const token = lead.leadToken || '';
@@ -287,4 +355,4 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
   await require('./paymentService').sendRetainerPaymentLink(leadId, { amountCents });
 }
 
-module.exports = { onOutcomeRetain, maybeSendRetainerAgreement, buildRetainerPdf, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents };
+module.exports = { onOutcomeRetain, maybeSendRetainerAgreement, buildRetainerPdf, getRetainerDocument, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents };

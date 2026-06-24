@@ -306,7 +306,7 @@ router.get('/retainer/:leadId', async (req, res) => {
   }
   try {
     const lead = await leadService.getLead(leadId);
-    const pdf  = await retainerService2.buildRetainerPdf(lead);
+    const pdf  = await retainerService2.getRetainerDocument(lead);
     res.type('application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="TDOT-Retainer.pdf"');
     res.send(pdf);

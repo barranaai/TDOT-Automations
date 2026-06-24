@@ -349,30 +349,10 @@ async function getRetainerPlan(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
 
-  const { buildRetainerPlan } = require('./retainerPlanBuilder');
+  const { buildRetainerPlan, overridesFromLead } = require('./retainerPlanBuilder');
   const { ANNEXES } = require('../../config/annexCatalogue');
 
-  let savedMilestones;
-  if (lead.retainerMilestones) {
-    try { savedMilestones = JSON.parse(lead.retainerMilestones); } catch (_) { savedMilestones = undefined; }
-  }
-
-  // Reconstruct the consultant's saved overrides from the persisted columns.
-  const overrides = {
-    subType:       lead.selectedSubType || '',
-    annexCode:     lead.selectedScopeAnnex || undefined,
-    template:      lead.selectedTemplate || undefined,
-    govFeeDollars: lead.govFee ? Number(lead.govFee) : undefined,
-    withRprf:      lead.retainerWithRprf ? (lead.retainerWithRprf !== 'No') : undefined,
-    milestones:    Array.isArray(savedMilestones) ? savedMilestones : undefined,
-    inviterName: lead.inviterName || undefined, inviterAddress: lead.inviterAddress || undefined,
-    inviterPhone: lead.inviterPhone || undefined, inviterEmail: lead.inviterEmail || undefined,
-    empRepName: lead.empRepName || undefined, empCompanyName: lead.empCompanyName || undefined,
-    empCompanyAddress: lead.empCompanyAddress || undefined, empCompanyPhone: lead.empCompanyPhone || undefined,
-    empRepPhone: lead.empRepPhone || undefined, empRepEmail: lead.empRepEmail || undefined,
-  };
-
-  const plan = buildRetainerPlan(lead, overrides);
+  const plan = buildRetainerPlan(lead, overridesFromLead(lead));
   const feeSet = require('./retainerService2').feeToCents(lead.retainerFee) != null;
 
   return {

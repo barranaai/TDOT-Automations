@@ -166,4 +166,28 @@ function buildRetainerPlan(lead = {}, overrides = {}) {
   };
 }
 
-module.exports = { buildRetainerPlan, TEMPLATE_NEEDS, formatAgreementDate };
+/**
+ * Reconstruct the consultant's saved plan overrides from a lead's persisted
+ * retainer columns (the inverse of what the portal save writes). Pure.
+ */
+function overridesFromLead(lead = {}) {
+  let milestones;
+  if (lead.retainerMilestones) {
+    try { const a = JSON.parse(lead.retainerMilestones); if (Array.isArray(a)) milestones = a; } catch (_) { /* garbage → default */ }
+  }
+  const o = {
+    subType:       lead.selectedSubType || '',
+    annexCode:     lead.selectedScopeAnnex || undefined,
+    template:      lead.selectedTemplate || undefined,
+    govFeeDollars: lead.govFee ? Number(lead.govFee) : undefined,
+    withRprf:      lead.retainerWithRprf ? (lead.retainerWithRprf !== 'No') : undefined,
+    milestones,
+  };
+  for (const k of ['inviterName', 'inviterAddress', 'inviterPhone', 'inviterEmail',
+                   'empRepName', 'empCompanyName', 'empCompanyAddress', 'empCompanyPhone', 'empRepPhone', 'empRepEmail']) {
+    if (lead[k]) o[k] = lead[k];
+  }
+  return o;
+}
+
+module.exports = { buildRetainerPlan, overridesFromLead, TEMPLATE_NEEDS, formatAgreementDate };
