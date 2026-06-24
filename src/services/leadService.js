@@ -75,14 +75,22 @@ function formatValue(type, value) {
   }
 }
 
-/** Build a column_values object from a {camelCaseKey: value} map. */
-function buildCols(fields) {
+/**
+ * Build a column_values object from a {camelCaseKey: value} map.
+ * Empty values (undefined/null/'') are skipped — a partial update never blanks a
+ * column — UNLESS the key is listed in `clearKeys`, in which case an explicit
+ * empty value is written so the column is actually cleared (used by the portal
+ * to erase a deselected sub-type / government fee).
+ */
+function buildCols(fields, clearKeys = []) {
+  const clear = new Set(clearKeys);
   const cols = {};
   for (const [key, value] of Object.entries(fields)) {
-    if (value === undefined || value === null || value === '') continue;
+    const isEmpty = (value === undefined || value === null || value === '');
+    if (isEmpty && !clear.has(key)) continue;
     const colId = COLS[key];
     if (!colId) continue; // unknown field — skip safely
-    cols[colId] = formatValue(COL_TYPE[key] || 'text', value);
+    cols[colId] = formatValue(COL_TYPE[key] || 'text', isEmpty ? '' : value);
   }
   return cols;
 }
@@ -162,8 +170,8 @@ async function createLead(formData) {
  * values are whitelist-validated in intakeFormService before reaching here,
  * so the public cannot mint junk labels.
  */
-async function updateLead(leadId, fields) {
-  const cols = buildCols(fields);
+async function updateLead(leadId, fields, opts = {}) {
+  const cols = buildCols(fields, opts.clearKeys || []);
   if (!Object.keys(cols).length) return;
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {

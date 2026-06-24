@@ -293,6 +293,8 @@ var LEAD_ID=${JSON.stringify(leadId)};
 var OUTCOMES=${JSON.stringify(OUTCOME_LABELS)};
 ${SHARED_AUTH_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function safeUrl(u){ u=String(u==null?'':u).trim(); return /^(https?:|mailto:)/i.test(u)?u:'#'; } // block javascript:/data: in href
+var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload only once (don't clobber edits)
 function kv(k,v){ return v&&String(v).trim()?'<div class="kv"><span class="k">'+escHtml(k)+'</span><span class="v">'+escHtml(v)+'</span></div>':''; }
 function scores(arr){ var p=(arr||[]).map(function(v){return String(v||'').trim();}); return p.some(Boolean)?p.map(function(v){return v||'—';}).join(' / '):''; }
 
@@ -301,10 +303,10 @@ function render(d){
   document.getElementById('c-sub').textContent=(d.serviceRequired||'—')+'  ·  '+(d.tier?('Tier '+d.tier):'')+'  ·  lead '+d.leadId;
 
   var acts='';
-  if(d.meetingLink) acts+='<a class="btn primary" href="'+escHtml(d.meetingLink)+'" target="_blank" rel="noopener">🎥 Join meeting</a>';
-  if(d.preConsultPdf) acts+='<a class="btn" href="'+escHtml(d.preConsultPdf)+'" target="_blank" rel="noopener">📄 Dossier PDF</a>';
-  if(d.recordingLink) acts+='<a class="btn" href="'+escHtml(d.recordingLink)+'" target="_blank" rel="noopener">⏺ Recording</a>';
-  if(d.email) acts+='<a class="btn" href="mailto:'+escHtml(d.email)+'">✉ Email</a>';
+  if(d.meetingLink) acts+='<a class="btn primary" href="'+escHtml(safeUrl(d.meetingLink))+'" target="_blank" rel="noopener">🎥 Join meeting</a>';
+  if(d.preConsultPdf) acts+='<a class="btn" href="'+escHtml(safeUrl(d.preConsultPdf))+'" target="_blank" rel="noopener">📄 Dossier PDF</a>';
+  if(d.recordingLink) acts+='<a class="btn" href="'+escHtml(safeUrl(d.recordingLink))+'" target="_blank" rel="noopener">⏺ Recording</a>';
+  if(d.email) acts+='<a class="btn" href="'+escHtml(safeUrl('mailto:'+d.email))+'">✉ Email</a>';
   document.getElementById('c-acts').innerHTML=acts;
 
   var pills='';
@@ -315,7 +317,12 @@ function render(d){
   document.getElementById('c-pills').innerHTML=pills;
   highlightOutcome(d.outcome||'');
   var fee=document.getElementById('fee'); if(fee && !fee.value && d.retainerFee) fee.value=d.retainerFee;
-  if(typeof updateMileSum==='function') updateMileSum();
+  // Hydrate the retainer panel from the detail payload ONCE (saves a second
+  // getLead round-trip); later renders (after an action) keep in-progress edits.
+  if(!RP_HYDRATED){
+    if(d.retainerPlan){ hydrateRetainer(d.retainerPlan); RP_HYDRATED=true; }
+    else { loadRetainerPlan(); } // fallback: separate fetch (older payload)
+  } else { updateMileSum(); } // keep the milestone sum in step with the fee
 
   var ca=d.consultAgreement||{};
   document.getElementById('ca-sent').textContent=ca.sent?('· sent '+ca.sent):'';
@@ -381,11 +388,16 @@ function actButtons(){ return Array.prototype.slice.call(document.querySelectorA
 function disableActions(on){ actButtons().forEach(function(b){ b.disabled=on; }); }
 function highlightOutcome(cur){ Array.prototype.forEach.call(document.querySelectorAll('.obtn'),function(b){ b.classList.toggle('active', b.getAttribute('data-outcome')===cur); }); }
 
+// fetch with a hard timeout so a hung request (e.g. a stalled CloudConvert
+// render) can't leave the action buttons disabled forever.
+function fetchT(url,opts,ms){ var ac=new AbortController(); var to=setTimeout(function(){ac.abort();},ms||60000); opts=opts||{}; opts.signal=ac.signal; return fetch(url,opts).finally(function(){clearTimeout(to);}); }
+function netErr(e){ return e&&e.name==='AbortError' ? 'Timed out — please try again.' : ('Failed: '+(e&&e.message||e)); }
+
 function doAction(action,value,confirmMsg){
   if(confirmMsg && !window.confirm(confirmMsg)) return;
   var key=getKey(); if(!key) return;
   setMsg('Working…','info'); disableActions(true);
-  fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{
+  fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{
     method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'},
     body: JSON.stringify({ action:action, value:value })
   }).then(function(r){ return r.json().then(function(j){ return {status:r.status,j:j}; }); })
@@ -394,8 +406,9 @@ function doAction(action,value,confirmMsg){
      if(res.status===401||res.status===403){ window.location.href='/admin'; return; }
      if(res.status!==200) throw new Error((res.j&&res.j.error)||('HTTP '+res.status));
      setMsg(res.j.message||'Done.','ok');
+     if(action==='saveRetainerSelections') RP_HYDRATED=false; // re-hydrate the panel from the freshly-saved plan
      load(); // refresh consultation state (pills, status, outcome highlight)
-   }).catch(function(e){ disableActions(false); setMsg('Failed: '+e.message,'err'); });
+   }).catch(function(e){ disableActions(false); setMsg(netErr(e),'err'); });
 }
 
 // ── Retainer plan panel ──────────────────────────────────────────────────
@@ -409,19 +422,19 @@ function loadRetainerPlan(){
   var key=getKey(); if(!key) return;
   fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/retainer-plan',{headers:{'X-Api-Key':key}})
    .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-   .then(function(d){ hydrateRetainer(d); })
+   .then(function(d){ hydrateRetainer(d); RP_HYDRATED=true; })
    .catch(function(e){ if(e.message==='x')return; rpEl('rp-suggestion').innerHTML='<div class="rp-sugg">Could not load retainer plan: '+escHtml(e.message)+'</div>'; });
 }
 
 function hydrateRetainer(d){
   var plan=d.plan||{}, annex=plan.annex||{};
   var tsel=rpEl('rp-template');
-  tsel.innerHTML=(d.templateOptions||['pa','pa-inviter','employer']).map(function(t){ return '<option value="'+t+'">'+escHtml(RP_TPL_LABELS[t]||t)+'</option>'; }).join('');
+  tsel.innerHTML=(d.templateOptions||['pa','pa-inviter','employer']).map(function(t){ return '<option value="'+escA(t)+'">'+escHtml(RP_TPL_LABELS[t]||t)+'</option>'; }).join('');
   tsel.value=plan.template||'pa';
   var groups={};
   (d.annexOptions||[]).forEach(function(a){ if(!groups[a.group])groups[a.group]=[]; groups[a.group].push(a); });
   var html='<option value="">— select scope annex —</option>';
-  [['permanent','Permanent'],['temporary','Temporary']].forEach(function(g){ var list=groups[g[0]]; if(list&&list.length){ html+='<optgroup label="'+g[1]+'">'+list.map(function(a){ return '<option value="'+a.code+'">['+a.code+'] '+escHtml(a.label)+'</option>'; }).join('')+'</optgroup>'; } });
+  [['permanent','Permanent'],['temporary','Temporary']].forEach(function(g){ var list=groups[g[0]]; if(list&&list.length){ html+='<optgroup label="'+g[1]+'">'+list.map(function(a){ return '<option value="'+escA(a.code)+'">['+escHtml(a.code)+'] '+escHtml(a.label)+'</option>'; }).join('')+'</optgroup>'; } });
   var asel=rpEl('rp-annex'); asel.innerHTML=html; asel.value=annex.code||'';
   rpEl('rp-subtype').value=plan.subType||'';
   var gov=plan.govFee||{}; rpEl('rp-govfee').value=(gov.dollars!=null)?gov.dollars:'';
@@ -485,20 +498,20 @@ function collectSelections(){
 function previewRetainer(){
   var key=getKey(); if(!key) return;
   rpMsg('Rendering preview… (a few seconds)','info'); disableActions(true);
-  fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/retainer-preview',{ method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'}, body:JSON.stringify({value:collectSelections()}) })
+  fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/retainer-preview',{ method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'}, body:JSON.stringify({value:collectSelections()}) })
    .then(function(r){ disableActions(false); if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().then(function(j){ throw new Error((j&&j.error)||('HTTP '+r.status)); }); } return r.blob(); })
    .then(function(blob){ window.open(URL.createObjectURL(blob),'_blank'); rpMsg('Preview opened in a new tab.','ok'); })
-   .catch(function(e){ disableActions(false); if(e.message==='x')return; rpMsg('Preview failed: '+e.message,'err'); });
+   .catch(function(e){ disableActions(false); if(e.message==='x')return; rpMsg(netErr(e),'err'); });
 }
 function saveRetainer(){ doAction('saveRetainerSelections', JSON.stringify(collectSelections()), 'Save this retainer plan (template, scope annex, fees, milestones)? This does not send anything to the client.'); }
 
 function previewConsult(){
   var key=getKey(); if(!key) return;
   setMsg('Rendering consultation agreement…','info'); disableActions(true);
-  fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/consult-agreement-preview',{ method:'POST', headers:{'X-Api-Key':key} })
+  fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/consult-agreement-preview',{ method:'POST', headers:{'X-Api-Key':key} })
    .then(function(r){ disableActions(false); if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().then(function(j){ throw new Error((j&&j.error)||('HTTP '+r.status)); }); } return r.blob(); })
    .then(function(blob){ window.open(URL.createObjectURL(blob),'_blank'); setMsg('Consultation agreement preview opened in a new tab.','ok'); })
-   .catch(function(e){ disableActions(false); if(e.message==='x')return; setMsg('Preview failed: '+e.message,'err'); });
+   .catch(function(e){ disableActions(false); if(e.message==='x')return; setMsg(netErr(e),'err'); });
 }
 
 function initActions(){
@@ -544,7 +557,7 @@ function initActions(){
 }
 
 initActions();
-startClock(); checkApiStatus(); load(); loadRetainerPlan();
+startClock(); checkApiStatus(); load(); // render() hydrates the retainer panel from the detail payload
 </script></body></html>`;
 }
 

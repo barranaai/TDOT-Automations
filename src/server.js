@@ -155,7 +155,7 @@ app.get('/api/boards/template', async (req, res) => {
     const board = await boardService.getBoardStructure(templateBoardId);
     res.json(board);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -164,7 +164,7 @@ app.get('/api/boards/execution', async (req, res) => {
     const board = await boardService.getBoardStructure(executionBoardId);
     res.json(board);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -223,7 +223,7 @@ app.get('/api/utils/doc-codes/preview', async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('[DocCodes] Preview failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -240,7 +240,7 @@ app.get('/api/boards/client-master', async (req, res) => {
     const board = await boardService.getBoardStructure(clientMasterBoardId);
     res.json(board);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -251,7 +251,7 @@ app.get('/api/dashboard/stats', async (req, res) => {
     res.json(stats);
   } catch (err) {
     console.error('[Dashboard] Stats failed:', err.stack || err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -274,7 +274,7 @@ app.get('/api/consultations', async (_req, res) => {
     res.json({ consultations });
   } catch (err) {
     console.error('[Consultant] Queue failed:', err.stack || err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -286,7 +286,7 @@ app.get('/api/consultation/:leadId', async (req, res) => {
   } catch (err) {
     if (err.notFound) return res.status(404).json({ error: err.message });
     console.error('[Consultant] Detail failed:', err.stack || err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -304,7 +304,7 @@ app.post('/api/consultation/:leadId/action', express.json(), async (req, res) =>
     if (err.badRequest) return res.status(400).json({ error: err.message });
     if (err.notFound)   return res.status(404).json({ error: err.message });
     console.error('[Consultant] Action failed:', err.stack || err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -317,7 +317,7 @@ app.get('/api/consultation/:leadId/retainer-plan', async (req, res) => {
   } catch (err) {
     if (err.notFound) return res.status(404).json({ error: err.message });
     console.error('[Consultant] Retainer plan failed:', err.stack || err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -333,7 +333,7 @@ app.post('/api/consultation/:leadId/retainer-preview', express.json(), async (re
     if (err.badRequest) return res.status(400).json({ error: err.message });
     if (err.notFound)   return res.status(404).json({ error: err.message });
     console.error('[Consultant] Retainer preview failed:', err.stack || err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -346,7 +346,7 @@ app.post('/api/consultation/:leadId/consult-agreement-preview', async (req, res)
     if (err.badRequest) return res.status(400).json({ error: err.message });
     if (err.notFound)   return res.status(404).json({ error: err.message });
     console.error('[Consultant] Consult-agreement preview failed:', err.stack || err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

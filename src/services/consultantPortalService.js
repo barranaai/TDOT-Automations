@@ -22,6 +22,24 @@ const leadService = require('./leadService');
 const oneDrive    = require('./oneDriveService');
 const { leadBoardId } = require('../../config/monday');
 const { validateMilestones } = require('./retainerPlanService');
+const { buildRetainerPlan, overridesFromLead } = require('./retainerPlanBuilder');
+const { ANNEXES } = require('../../config/annexCatalogue');
+const { feeToCents, centsToMoney } = require('../utils/money');
+const consultAgreementService = require('./consultAgreementService');
+
+/** The retainer-plan payload the portal panel hydrates from — built from a lead
+ *  we already hold (so the detail page and the /retainer-plan endpoint share it
+ *  instead of each doing its own getLead). */
+function buildRetainerPlanResponse(lead) {
+  return {
+    plan:            buildRetainerPlan(lead, overridesFromLead(lead)),
+    saved:           !!lead.selectedTemplate,
+    feeSet:          feeToCents(lead.retainerFee) != null,
+    retainerFee:     lead.retainerFee || '',
+    annexOptions:    ANNEXES.map((a) => ({ code: a.code, label: a.label, group: a.group })),
+    templateOptions: ['pa', 'pa-inviter', 'employer'],
+  };
+}
 
 const C = require('../data/newLeadsBoard.json').columns;
 
@@ -164,8 +182,12 @@ async function getConsultationDetail(leadId) {
     // Initial Consultation agreement (consultant-sent)
     consultAgreement: {
       sent:     lead.consultAgreementSent || '',
-      warnings: require('./consultAgreementService').buildConsultAgreementData(lead).warnings,
+      warnings: consultAgreementService.buildConsultAgreementData(lead).warnings,
     },
+
+    // Retainer plan — folded in so the detail page hydrates the panel without a
+    // second getLead round-trip (built from the lead already in hand).
+    retainerPlan: buildRetainerPlanResponse(lead),
 
     eligibility,
   };
@@ -332,18 +354,24 @@ async function applyAction({ leadId, action, value }) {
       const s = v.normalized;
       // Writes ONLY the new inert columns — NOT retainerFee/outcome/retainerSigned,
       // so saving the plan never re-fires the retainer-agreement / payment automations.
+      // clearKeys = the fields a consultant may blank/deselect, so clearing them in
+      // the UI actually erases the stored value instead of leaving it stale.
       await leadService.updateLead(leadId, {
         selectedTemplate:   s.template,
         selectedScopeAnnex: s.annexCode,
         selectedSubType:    s.subType || '',
-        govFee:             (s.govFeeDollars != null) ? s.govFeeDollars : undefined,
+        govFee:             (s.govFeeDollars != null) ? s.govFeeDollars : '',
         retainerWithRprf:   s.withRprf ? 'Yes' : 'No',
         retainerMilestones: JSON.stringify(s.milestones || []),
-        inviterName: s.inviterName, inviterAddress: s.inviterAddress, inviterPhone: s.inviterPhone, inviterEmail: s.inviterEmail,
-        empRepName: s.empRepName, empCompanyName: s.empCompanyName, empCompanyAddress: s.empCompanyAddress,
-        empCompanyPhone: s.empCompanyPhone, empRepPhone: s.empRepPhone, empRepEmail: s.empRepEmail,
-      });
-      await postPortalNote(leadId, `Retainer plan saved — template ${s.template}, scope annex ${s.annexCode}, fee $${Math.round(s.feeCents / 100)}.`);
+        inviterName: s.inviterName || '', inviterAddress: s.inviterAddress || '', inviterPhone: s.inviterPhone || '', inviterEmail: s.inviterEmail || '',
+        empRepName: s.empRepName || '', empCompanyName: s.empCompanyName || '', empCompanyAddress: s.empCompanyAddress || '',
+        empCompanyPhone: s.empCompanyPhone || '', empRepPhone: s.empRepPhone || '', empRepEmail: s.empRepEmail || '',
+      }, { clearKeys: [
+        'selectedSubType', 'govFee',
+        'inviterName', 'inviterAddress', 'inviterPhone', 'inviterEmail',
+        'empRepName', 'empCompanyName', 'empCompanyAddress', 'empCompanyPhone', 'empRepPhone', 'empRepEmail',
+      ] });
+      await postPortalNote(leadId, `Retainer plan saved — template ${s.template}, scope annex ${s.annexCode}, fee $${centsToMoney(s.feeCents)}.`);
       return { ok: true, message: 'Retainer plan saved.' };
     }
 
@@ -361,21 +389,7 @@ async function applyAction({ leadId, action, value }) {
 async function getRetainerPlan(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
-
-  const { buildRetainerPlan, overridesFromLead } = require('./retainerPlanBuilder');
-  const { ANNEXES } = require('../../config/annexCatalogue');
-
-  const plan = buildRetainerPlan(lead, overridesFromLead(lead));
-  const feeSet = require('./retainerService2').feeToCents(lead.retainerFee) != null;
-
-  return {
-    plan,
-    saved: !!lead.selectedTemplate, // a plan was saved before
-    feeSet,
-    retainerFee: lead.retainerFee || '',
-    annexOptions: ANNEXES.map((a) => ({ code: a.code, label: a.label, group: a.group })),
-    templateOptions: PLAN_TEMPLATES.slice(),
-  };
+  return buildRetainerPlanResponse(lead);
 }
 
 /**
@@ -389,7 +403,11 @@ async function previewRetainerPdf(leadId, value) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
 
-  const plan = require('./retainerPlanBuilder').buildRetainerPlan(lead, sel);
+  const plan = buildRetainerPlan(lead, sel);
+  if (!plan.ready) {
+    const e = new Error(plan.warnings.join(' · ') || 'The retainer plan is incomplete — fill it in before previewing.');
+    e.badRequest = true; throw e;
+  }
   const buffer = await require('./retainerDocService').generate({
     template: plan.template, data: plan.mergeData, annexId: plan.annex.id,
   });
