@@ -36,6 +36,6 @@ const BRAND = Object.freeze({
 
 // Inverted (white) logo for dark headers
 const TDOT_LOGO_LIGHT_HTML = `<img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration" style="height:36px;object-fit:contain;display:block">`;
-const TDOT_LOGO_LIGHT_HTML_LARGE = `<img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=192&q=75" alt="TDOT Immigration" style="height:46px;object-fit:contain;display:block">`;
+const TDOT_LOGO_LIGHT_HTML_LARGE = `<img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=256&q=75" alt="TDOT Immigration" style="height:46px;object-fit:contain;display:block">`;
 
 module.exports = { BRAND, TDOT_LOGO_LIGHT_HTML, TDOT_LOGO_LIGHT_HTML_LARGE };
