@@ -38,7 +38,7 @@ function esc(s) {
 // milestones) using retainerDocService; the send is gated on the plan being
 // READY and the PDF is pre-generated + cached at send-time so the client's view
 // never depends on CloudConvert being up.
-function isV2() { return String(process.env.RETAINER_ENGINE || 'v1').toLowerCase() === 'v2'; }
+function isV2() { return String(process.env.RETAINER_ENGINE || 'v1').trim().toLowerCase() === 'v2'; }
 
 const _pdfCache = new Map(); // leadId → PDF Buffer (warmed at send-time, served by the /retainer route)
 function cacheRetainerPdf(leadId, buf) {
