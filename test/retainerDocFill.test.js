@@ -7,7 +7,14 @@
 const test   = require('node:test');
 const assert = require('node:assert/strict');
 const PizZip = require('pizzip');
-const { fillMaster } = require('../src/services/retainerDocService');
+const { PDFDocument } = require('pdf-lib');
+const { fillMaster, appendPdf } = require('../src/services/retainerDocService');
+
+async function makePdf(pages) {
+  const d = await PDFDocument.create();
+  for (let i = 0; i < pages; i++) d.addPage();
+  return Buffer.from(await d.save());
+}
 
 const DATA = {
   agreementDate:   '2026-06-24',
@@ -54,4 +61,14 @@ test('still a valid docx zip (has the core parts)', () => {
   const zip = new PizZip(fillMaster('pa', DATA));
   assert.ok(zip.file('word/document.xml'), 'word/document.xml present');
   assert.ok(zip.file('[Content_Types].xml'), 'content types present');
+});
+
+test('appendPdf concatenates master + annex pages', async () => {
+  const out = await appendPdf(await makePdf(2), await makePdf(3));
+  assert.equal((await PDFDocument.load(out)).getPageCount(), 5);
+});
+
+test('appendPdf with no annex returns the master unchanged', async () => {
+  const out = await appendPdf(await makePdf(2), null);
+  assert.equal((await PDFDocument.load(out)).getPageCount(), 2);
 });

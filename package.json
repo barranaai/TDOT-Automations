@@ -11,6 +11,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",
     "axios": "^1.6.0",
+    "cloudconvert": "^3.0.0",
     "cookie-parser": "^1.4.7",
     "docxtemplater": "^3.69.0",
     "dotenv": "^16.3.1",

@@ -16,8 +16,10 @@ const fs   = require('fs');
 const path = require('path');
 const PizZip        = require('pizzip');
 const Docxtemplater = require('docxtemplater');
+const { PDFDocument } = require('pdf-lib');
 
 const TEMPLATES_DIR = path.join(__dirname, '..', 'templates', 'retainer');
+const ANNEX_DIR     = path.join(TEMPLATES_DIR, 'annexes'); // pre-rendered annex PDFs
 
 /**
  * Fill a tagged master retainer template with per-case data.
@@ -38,4 +40,39 @@ function fillMaster(templateName, data) {
   return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
-module.exports = { fillMaster, TEMPLATES_DIR };
+/**
+ * Append annex PDF pages onto a master PDF.
+ * @param {Buffer} masterPdf
+ * @param {Buffer|null} annexPdf  null/absent → returns the master unchanged
+ * @returns {Promise<Buffer>} combined PDF
+ */
+async function appendPdf(masterPdf, annexPdf) {
+  const out = await PDFDocument.load(masterPdf);
+  if (annexPdf) {
+    const annex = await PDFDocument.load(annexPdf);
+    const pages = await out.copyPages(annex, annex.getPageIndices());
+    pages.forEach((p) => out.addPage(p));
+  }
+  return Buffer.from(await out.save());
+}
+
+/** Load a pre-rendered annex PDF by id (e.g. 'cec'), or null if not present. */
+function loadAnnexPdf(annexId) {
+  if (!annexId) return null;
+  const file = path.join(ANNEX_DIR, `${annexId}.pdf`);
+  return fs.existsSync(file) ? fs.readFileSync(file) : null;
+}
+
+/**
+ * Full retainer pipeline: fill master → convert to PDF → append the scope annex.
+ * @param {{ template: string, data: object, annexId?: string }} params
+ * @returns {Promise<Buffer>} the combined retainer PDF
+ */
+async function generate({ template, data, annexId }) {
+  const { docxToPdf } = require('./pdfConvertService'); // lazy: only needed at generation time
+  const filledDocx = fillMaster(template, data);
+  const masterPdf  = await docxToPdf(filledDocx, `retainer-${template}.docx`);
+  return appendPdf(masterPdf, loadAnnexPdf(annexId));
+}
+
+module.exports = { fillMaster, appendPdf, loadAnnexPdf, generate, TEMPLATES_DIR, ANNEX_DIR };
