@@ -21,6 +21,7 @@ const mondayApi   = require('./mondayApi');
 const leadService = require('./leadService');
 const oneDrive    = require('./oneDriveService');
 const { leadBoardId } = require('../../config/monday');
+const { validateMilestones } = require('./retainerPlanService');
 
 const C = require('../data/newLeadsBoard.json').columns;
 
@@ -187,9 +188,53 @@ const OUTCOME_LABELS = ['Retain', 'Don’t Retain — Ineligible', 'Don’t Reta
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FEE_MAX_CAD = 100000;
 
+const PLAN_TEMPLATES = ['pa', 'pa-inviter', 'employer'];
+const SELECTION_STR_FIELDS = [
+  'caseType', 'subType', 'annexCode', 'template', 'agreementDate', 'applicationType', 'paymentAnnexNo',
+  'inviterName', 'inviterAddress', 'inviterPhone', 'inviterEmail',
+  'empRepName', 'empCompanyName', 'empCompanyAddress', 'empCompanyPhone', 'empRepPhone', 'empRepEmail',
+];
+
+/**
+ * PURE — whitelist + normalise a retainer-selections payload (JSON string or
+ * object) into the override shape buildRetainerPlan consumes. Returns null on
+ * malformed/empty input or an unknown template. Shared by the save validation
+ * AND the preview so the saved plan and the previewed PDF can never diverge.
+ */
+function parseSelections(value) {
+  let raw = value;
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch (_) { return null; } }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+
+  const sel = {};
+  for (const k of SELECTION_STR_FIELDS) if (raw[k] != null) sel[k] = String(raw[k]).trim();
+  if (raw.feeCents != null) { const c = Math.round(Number(raw.feeCents)); if (Number.isFinite(c)) sel.feeCents = c; }
+  if (raw.govFeeDollars != null) { const d = Number(raw.govFeeDollars); if (Number.isFinite(d)) sel.govFeeDollars = d; }
+  if (raw.withRprf != null) sel.withRprf = (raw.withRprf === true || raw.withRprf === 'Yes' || raw.withRprf === 'true');
+  if (Array.isArray(raw.milestones)) {
+    sel.milestones = raw.milestones.map((m, i) => ({
+      label: String((m && m.label) || '').trim(),
+      amountCents: Math.round(Number(m && m.amountCents) || 0),
+      trigger: String((m && m.trigger) || '').trim(),
+      locked: i === 0,
+    }));
+  }
+  if (sel.template && !PLAN_TEMPLATES.includes(sel.template)) return null;
+  return Object.keys(sel).length ? sel : null;
+}
+
 /** PURE validation of a consultant action. @returns {{ ok, error?, normalized? }} */
 function validateAction(action, value) {
   switch (action) {
+    case 'saveRetainerSelections': {
+      const sel = parseSelections(value);
+      if (!sel) return { ok: false, error: 'Provide valid retainer selections.' };
+      if (!sel.template || !sel.annexCode) return { ok: false, error: 'Choose a signatory template and a scope annex.' };
+      if (sel.feeCents == null || sel.feeCents <= 0) return { ok: false, error: 'Set the retainer fee before saving the plan.' };
+      const mc = validateMilestones(sel.milestones || [], sel.feeCents);
+      if (!mc.ok) return { ok: false, error: mc.errors[0] };
+      return { ok: true, normalized: sel };
+    }
     case 'outcome':
       return OUTCOME_LABELS.includes(value)
         ? { ok: true, normalized: value }
@@ -270,10 +315,95 @@ async function applyAction({ leadId, action, value }) {
       await postPortalNote(leadId, 'Meeting + pre-consultation links re-sent to the client.');
       return { ok: true, message: 'The meeting and pre-consultation links have been re-sent to the client.' };
 
+    case 'saveRetainerSelections': {
+      const s = v.normalized;
+      // Writes ONLY the new inert columns — NOT retainerFee/outcome/retainerSigned,
+      // so saving the plan never re-fires the retainer-agreement / payment automations.
+      await leadService.updateLead(leadId, {
+        selectedTemplate:   s.template,
+        selectedScopeAnnex: s.annexCode,
+        selectedSubType:    s.subType || '',
+        govFee:             (s.govFeeDollars != null) ? s.govFeeDollars : undefined,
+        retainerWithRprf:   s.withRprf ? 'Yes' : 'No',
+        retainerMilestones: JSON.stringify(s.milestones || []),
+        inviterName: s.inviterName, inviterAddress: s.inviterAddress, inviterPhone: s.inviterPhone, inviterEmail: s.inviterEmail,
+        empRepName: s.empRepName, empCompanyName: s.empCompanyName, empCompanyAddress: s.empCompanyAddress,
+        empCompanyPhone: s.empCompanyPhone, empRepPhone: s.empRepPhone, empRepEmail: s.empRepEmail,
+      });
+      await postPortalNote(leadId, `Retainer plan saved — template ${s.template}, scope annex ${s.annexCode}, fee $${Math.round(s.feeCents / 100)}.`);
+      return { ok: true, message: 'Retainer plan saved.' };
+    }
+
     default: {
       const e = new Error('Unknown action.'); e.badRequest = true; throw e;
     }
   }
 }
 
-module.exports = { getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS };
+/**
+ * Assemble the retainer plan for the portal panel: the system's suggestion
+ * merged with any saved selections, plus the option lists the UI needs.
+ * @throws {Error} .notFound if the lead is missing
+ */
+async function getRetainerPlan(leadId) {
+  const lead = await leadService.getLead(leadId);
+  if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
+
+  const { buildRetainerPlan } = require('./retainerPlanBuilder');
+  const { ANNEXES } = require('../../config/annexCatalogue');
+
+  let savedMilestones;
+  if (lead.retainerMilestones) {
+    try { savedMilestones = JSON.parse(lead.retainerMilestones); } catch (_) { savedMilestones = undefined; }
+  }
+
+  // Reconstruct the consultant's saved overrides from the persisted columns.
+  const overrides = {
+    subType:       lead.selectedSubType || '',
+    annexCode:     lead.selectedScopeAnnex || undefined,
+    template:      lead.selectedTemplate || undefined,
+    govFeeDollars: lead.govFee ? Number(lead.govFee) : undefined,
+    withRprf:      lead.retainerWithRprf ? (lead.retainerWithRprf !== 'No') : undefined,
+    milestones:    Array.isArray(savedMilestones) ? savedMilestones : undefined,
+    inviterName: lead.inviterName || undefined, inviterAddress: lead.inviterAddress || undefined,
+    inviterPhone: lead.inviterPhone || undefined, inviterEmail: lead.inviterEmail || undefined,
+    empRepName: lead.empRepName || undefined, empCompanyName: lead.empCompanyName || undefined,
+    empCompanyAddress: lead.empCompanyAddress || undefined, empCompanyPhone: lead.empCompanyPhone || undefined,
+    empRepPhone: lead.empRepPhone || undefined, empRepEmail: lead.empRepEmail || undefined,
+  };
+
+  const plan = buildRetainerPlan(lead, overrides);
+  const feeSet = require('./retainerService2').feeToCents(lead.retainerFee) != null;
+
+  return {
+    plan,
+    saved: !!lead.selectedTemplate, // a plan was saved before
+    feeSet,
+    retainerFee: lead.retainerFee || '',
+    annexOptions: ANNEXES.map((a) => ({ code: a.code, label: a.label, group: a.group })),
+    templateOptions: PLAN_TEMPLATES.slice(),
+  };
+}
+
+/**
+ * Render a preview PDF from the consultant's current (unsaved) selections.
+ * Costs one CloudConvert conversion. @returns {Promise<{buffer:Buffer, filename:string}>}
+ * @throws {Error} .badRequest on malformed selections, .notFound on missing lead
+ */
+async function previewRetainerPdf(leadId, value) {
+  const sel = parseSelections(value);
+  if (!sel) { const e = new Error('Provide valid retainer selections.'); e.badRequest = true; throw e; }
+  const lead = await leadService.getLead(leadId);
+  if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
+
+  const plan = require('./retainerPlanBuilder').buildRetainerPlan(lead, sel);
+  const buffer = await require('./retainerDocService').generate({
+    template: plan.template, data: plan.mergeData, annexId: plan.annex.id,
+  });
+  return { buffer, filename: `retainer-${leadId}-preview.pdf` };
+}
+
+module.exports = {
+  getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS,
+  parseSelections, getRetainerPlan, previewRetainerPdf,
+};

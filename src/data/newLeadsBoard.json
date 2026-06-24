@@ -71,7 +71,23 @@
     "spouseAccompanying": "color_mm47c82h",
     "childrenCount": "numeric_mm471h07",
     "childrenAccompanying": "color_mm47p3qb",
-    "meetingLink": "link_mm48sfr7"
+    "meetingLink": "link_mm48sfr7",
+    "selectedTemplate": "text_mm4mcsae",
+    "selectedScopeAnnex": "text_mm4mkf8w",
+    "selectedSubType": "text_mm4mqrhf",
+    "retainerWithRprf": "text_mm4mq839",
+    "retainerMilestones": "long_text_mm4mzsgh",
+    "inviterName": "text_mm4mv2gh",
+    "inviterAddress": "text_mm4mwab2",
+    "inviterPhone": "text_mm4mckfg",
+    "inviterEmail": "text_mm4me5me",
+    "empRepName": "text_mm4m2gy5",
+    "empCompanyName": "text_mm4m5e4",
+    "empCompanyAddress": "text_mm4mzje0",
+    "empCompanyPhone": "text_mm4m7jc7",
+    "empRepPhone": "text_mm4mtwjs",
+    "empRepEmail": "text_mm4m6w9v",
+    "govFee": "numeric_mm4mt156"
   },
   "createdAt": "2026-06-08T18:00:45.756Z"
 }

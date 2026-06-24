@@ -50,6 +50,12 @@ const COL_TYPE = {
   meetingLink: 'link',     // consultation join URL (Zoom or Teams — provider-agnostic)
   // V2 family composition (intake) — auto-creates Family Members rows at case-ref time
   hasSpouse: 'status', spouseAccompanying: 'status', childrenCount: 'numbers', childrenAccompanying: 'status',
+  // Retainer plan (consultant portal P2) — all INERT (no webhook branches on these)
+  selectedTemplate: 'text', selectedScopeAnnex: 'text', selectedSubType: 'text',
+  govFee: 'numbers', retainerWithRprf: 'text', retainerMilestones: 'long_text',
+  inviterName: 'text', inviterAddress: 'text', inviterPhone: 'text', inviterEmail: 'text',
+  empRepName: 'text', empCompanyName: 'text', empCompanyAddress: 'text',
+  empCompanyPhone: 'text', empRepPhone: 'text', empRepEmail: 'text',
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));
