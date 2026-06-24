@@ -225,7 +225,7 @@ function buildFormHtml() {
   <div class="hero"><div class="logo">${TDOT_LOGO_LIGHT_HTML_LARGE}</div>
     <h1>Book Your Immigration Consultation</h1>
     <p>Tell us about your situation so your RCIC can prepare — the more you share, the better tailored your consultation will be.</p>
-    <div class="meta"><span>🕐 About 8–10 minutes</span><span>🔒 Kept strictly confidential</span><span>✱ Required fields are marked</span></div>
+    <div class="meta"><span>🔒 Kept strictly confidential</span><span>✱ Required fields are marked</span></div>
   </div>
   <div class="pbar-wrap"><div class="pbar-inner">
     <div class="pbar-meta"><span id="pmeta">Step 1 of ${SECTION_ORDER.length}</span><span class="pct" id="ppct">8%</span></div>
