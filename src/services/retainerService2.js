@@ -22,6 +22,7 @@ const PDFDocument   = require('pdfkit');
 const leadService   = require('./leadService');
 const microsoftMail = require('./microsoftMailService');
 const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
+const { feeToCents } = require('../utils/money');
 
 const RENDER_URL = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
 
@@ -222,13 +223,6 @@ async function onRetainerSigned(leadId) {
   } catch (err) {
     console.warn(`[Retainer2] Retainer payment link send failed for lead ${leadId} (handoff still done): ${err.message}`);
   }
-}
-
-/** Parse a Monday "Retainer Fee (CAD)" value (dollars) into cents, or null. */
-function feeToCents(value) {
-  const n = parseFloat(String(value == null ? '' : value).replace(/[$,\s]/g, ''));
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.round(n * 100);
 }
 
 const _sendInFlight = new Map(); // leadId → Promise (collapses concurrent webhook calls)
