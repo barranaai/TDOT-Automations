@@ -17,6 +17,7 @@ const mondayApi = require('./services/mondayApi');
 const dashboardService           = require('./services/dashboardService');
 const caseCockpitService         = require('./services/caseCockpitService');
 const consultantPortalService    = require('./services/consultantPortalService');
+const consultationFormService    = require('./services/consultationFormService');
 const clientMasterService = require('./services/clientMasterService');
 const boardService = require('./services/boardService');
 const webhookManager  = require('./services/webhookManager');
@@ -63,6 +64,19 @@ app.use('/', phase2Router);
 
 app.get('/', (_req, res) => res.json({ status: 'ok' }));
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+
+// Standalone public consultation form (independent of the lead/intake pipeline).
+app.get('/consultation', (_req, res) => res.type('html').send(consultationFormService.buildFormHtml()));
+app.post('/consultation/submit', express.urlencoded({ extended: true, limit: '256kb' }), async (req, res) => {
+  try {
+    await consultationFormService.processSubmission(req.body || {});
+    res.type('html').send(consultationFormService.buildThanksHtml());
+  } catch (err) {
+    if (err.badRequest) return res.status(400).type('html').send(consultationFormService.buildErrorHtml(err.errors || [err.message]));
+    console.error('[ConsultForm] submit failed:', err.stack || err.message);
+    res.status(500).type('html').send(consultationFormService.buildErrorHtml(['Something went wrong on our end — please try again shortly.']));
+  }
+});
 
 // ─── API key middleware for manual trigger endpoints ─────────────────────────
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
