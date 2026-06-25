@@ -29,6 +29,7 @@ const NEW_COLUMNS = [
   { key: 'selectedSubType',    title: 'Selected Sub Type',          type: 'text' },
   { key: 'govFee',             title: 'Government Fee',              type: 'numbers' },
   { key: 'retainerWithRprf',   title: 'Retainer With RPRF',         type: 'text' },
+  { key: 'retainerHstRate',    title: 'Retainer HST Rate (%)',      type: 'text' },
   { key: 'retainerMilestones', title: 'Retainer Milestones (JSON)', type: 'long_text' },
   // pa-inviter block
   { key: 'inviterName',        title: 'Inviter Name',               type: 'text' },

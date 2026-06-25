@@ -64,15 +64,22 @@ function loadAnnexPdf(annexId) {
 }
 
 /**
- * Full retainer pipeline: fill master → convert to PDF → append the scope annex.
- * @param {{ template: string, data: object, annexId?: string }} params
+ * Full retainer pipeline: fill master → convert to PDF → append the scope annex
+ * → append the dynamic milestone payment-schedule annex (if provided).
+ * @param {{ template:string, data:object, annexId?:string, milestoneAnnex?:object }} params
+ *   milestoneAnnex: { schedule, hstRate, govFeeDollars, govFeeEmployerPaid, paName, applicationType }
  * @returns {Promise<Buffer>} the combined retainer PDF
  */
-async function generate({ template, data, annexId }) {
+async function generate({ template, data, annexId, milestoneAnnex }) {
   const { docxToPdf } = require('./pdfConvertService'); // lazy: only needed at generation time
   const filledDocx = fillMaster(template, data);
   const masterPdf  = await docxToPdf(filledDocx, `retainer-${template}.docx`);
-  return appendPdf(masterPdf, loadAnnexPdf(annexId));
+  let pdf = await appendPdf(masterPdf, loadAnnexPdf(annexId));
+  if (milestoneAnnex && milestoneAnnex.schedule && milestoneAnnex.schedule.rows && milestoneAnnex.schedule.rows.length) {
+    const annexPdf = await require('./milestoneAnnexService').buildMilestoneAnnexPdf(milestoneAnnex);
+    pdf = await appendPdf(pdf, annexPdf);
+  }
+  return pdf;
 }
 
 module.exports = { fillMaster, appendPdf, loadAnnexPdf, generate, TEMPLATES_DIR, ANNEX_DIR };

@@ -24,9 +24,18 @@
 const { feeToCents, centsToMoney, dollarsToMoney } = require('../utils/money');
 const { byCode } = require('../../config/annexCatalogue');
 const {
-  pickAnnex, suggestTemplate, applicantCount, computeFees, computeGovFee,
+  pickAnnex, suggestTemplate, applicantCount, computeFees, computeGovFee, computeMilestoneSchedule,
   defaultMilestones, validateMilestones,
 } = require('./retainerPlanService');
+
+/** Parse a stored/over-ridden HST rate ("13", 13, 0.13, "") → fraction; default 0.13. */
+function parseHstRate(v) {
+  if (v == null || String(v).trim() === '') return 0.13;
+  let n = Number(String(v).replace('%', '').trim());
+  if (!Number.isFinite(n) || n < 0) return 0.13;
+  if (n > 1) n = n / 100; // "13" → 0.13
+  return n;
+}
 
 function todayISO() { return new Date().toISOString().split('T')[0]; }
 
@@ -73,9 +82,10 @@ function buildRetainerPlan(lead = {}, overrides = {}) {
   // --- signatory template ---
   const template = o.template || suggestTemplate({ annexCode, hasInviter: o.hasInviter, isEmployer: o.isEmployer });
 
-  // --- fee → service / HST / total ---
+  // --- fee → service / HST / total (per-case HST rate; default 13%, can be 0) ---
+  const hstRate = parseHstRate(o.hstRate != null ? o.hstRate : lead.retainerHstRate);
   const feeCents = (o.feeCents != null) ? o.feeCents : feeToCents(lead.retainerFee);
-  const fees = (feeCents != null) ? computeFees(feeCents) : null;
+  const fees = (feeCents != null) ? computeFees(feeCents, hstRate) : null;
   if (feeCents == null) warnings.push('Retainer fee is not set — the agreement states the fee, so it cannot be generated yet.');
 
   // --- applicants + government fee (a default the consultant overrides) ---
@@ -93,6 +103,7 @@ function buildRetainerPlan(lead = {}, overrides = {}) {
     ? validateMilestones(milestones, feeCents)
     : { ok: false, sumCents: 0, feeCents: 0, diffCents: 0, errors: ['Set the retainer fee before building milestones.'] };
   if (!milestoneCheck.ok) milestoneCheck.errors.forEach((e) => warnings.push(`Milestones: ${e}`));
+  const schedule = computeMilestoneSchedule(milestones, hstRate); // per-milestone HST + totals (for the annex)
 
   // --- merge data for the .docx ---
   const applicationType = String(o.applicationType || (annex ? annex.label : caseType) || '');
@@ -151,6 +162,8 @@ function buildRetainerPlan(lead = {}, overrides = {}) {
     caseType,
     subType,
     applicants,
+    hstRate,
+    schedule,
     fees: fees ? { ...fees, feeCents } : null,
     govFee: {
       dollars: govFeeDollars,
@@ -181,6 +194,7 @@ function overridesFromLead(lead = {}) {
     template:      lead.selectedTemplate || undefined,
     govFeeDollars: lead.govFee ? Number(lead.govFee) : undefined,
     withRprf:      lead.retainerWithRprf ? (lead.retainerWithRprf !== 'No') : undefined,
+    hstRate:       lead.retainerHstRate || undefined,
     milestones,
   };
   for (const k of ['inviterName', 'inviterAddress', 'inviterPhone', 'inviterEmail',
@@ -190,4 +204,16 @@ function overridesFromLead(lead = {}) {
   return o;
 }
 
-module.exports = { buildRetainerPlan, overridesFromLead, TEMPLATE_NEEDS, formatAgreementDate };
+/** The milestone-annex payload for retainerDocService.generate, from a plan. */
+function milestoneAnnexFromPlan(plan) {
+  return {
+    schedule:          plan.schedule,
+    hstRate:           plan.hstRate,
+    govFeeDollars:     plan.govFee ? plan.govFee.dollars : null,
+    govFeeEmployerPaid: plan.govFee ? plan.govFee.employerPaid : false,
+    paName:            plan.mergeData.paName,
+    applicationType:   plan.mergeData.applicationType,
+  };
+}
+
+module.exports = { buildRetainerPlan, overridesFromLead, milestoneAnnexFromPlan, TEMPLATE_NEEDS, formatAgreementDate };

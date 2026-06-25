@@ -3,7 +3,7 @@
 const test   = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  pickAnnex, suggestTemplate, applicantCount, computeFees, computeGovFee,
+  pickAnnex, suggestTemplate, applicantCount, computeFees, computeGovFee, computeMilestoneSchedule,
   defaultMilestones, validateMilestones,
 } = require('../src/services/retainerPlanService');
 
@@ -110,9 +110,25 @@ test('biometrics scales per person up to the family max', () => {
 test('defaultMilestones: 4 rows summing exactly to the fee, row 1 locked admin', () => {
   const rows = defaultMilestones(250003); // odd cents → remainder lands on last row
   assert.equal(rows.length, 4);
-  assert.equal(rows[0].label, 'Non-refundable administrative fee');
+  assert.equal(rows[0].label, 'Milestone 1 – Non-Refundable Admin Fee');
   assert.equal(rows[0].locked, true);
   assert.equal(rows.reduce((s, r) => s + r.amountCents, 0), 250003);
+});
+
+test('computeFees honours a per-case HST rate (default 13%, can be 0)', () => {
+  assert.equal(computeFees(250000).hstCents, 32500);          // default 13%
+  assert.equal(computeFees(250000, 0).hstCents, 0);           // HST-exempt
+  assert.equal(computeFees(250000, 0).totalCents, 250000);
+  assert.equal(computeFees(250000, 0.05).hstCents, 12500);    // custom 5%
+});
+
+test('computeMilestoneSchedule: per-milestone HST + totals', () => {
+  const sch = computeMilestoneSchedule([
+    { label: 'M1', amountCents: 100000 }, { label: 'M2', amountCents: 100000 },
+  ], 0.13);
+  assert.equal(sch.rows[0].hstCents, 13000);
+  assert.equal(sch.rows[0].totalCents, 113000);
+  assert.deepEqual(sch.totals, { amountCents: 200000, hstCents: 26000, totalCents: 226000 });
 });
 
 test('validateMilestones flags wrong sum and missing admin row', () => {

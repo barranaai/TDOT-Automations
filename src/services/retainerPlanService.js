@@ -90,10 +90,37 @@ function applicantCount({ hasSpouse = false, childrenCount = 0 } = {}) {
 
 // ---- Professional fee → HST + total ----
 
-function computeFees(serviceFeeCents) {
+/**
+ * Professional fee → HST + total. The HST rate is per-case (default 13%; the
+ * consultant can change it or set 0 for HST-exempt clients).
+ * @param {number} serviceFeeCents
+ * @param {number} [hstRate] fraction, e.g. 0.13; defaults to HST_RATE
+ */
+function computeFees(serviceFeeCents, hstRate) {
   const fee = Math.max(0, Math.round(Number(serviceFeeCents) || 0));
-  const hstCents = Math.round(fee * HST_RATE);
-  return { serviceFeeCents: fee, hstCents, totalCents: fee + hstCents, hstRate: HST_RATE };
+  const rate = (hstRate == null || !Number.isFinite(Number(hstRate))) ? HST_RATE : Math.max(0, Number(hstRate));
+  const hstCents = Math.round(fee * rate);
+  return { serviceFeeCents: fee, hstCents, totalCents: fee + hstCents, hstRate: rate };
+}
+
+/**
+ * Build the milestone payment schedule: each row gets its own HST + total, plus
+ * grand totals. The government fee is separate (no HST) and handled by the caller.
+ * @param {Array<{label,amountCents,trigger?,locked?}>} milestones
+ * @param {number} [hstRate]
+ * @returns {{ rows:Array, totals:{amountCents,hstCents,totalCents}, hstRate:number }}
+ */
+function computeMilestoneSchedule(milestones, hstRate) {
+  const rate = (hstRate == null || !Number.isFinite(Number(hstRate))) ? HST_RATE : Math.max(0, Number(hstRate));
+  let aSum = 0, hSum = 0, tSum = 0;
+  const rows = (Array.isArray(milestones) ? milestones : []).map((m) => {
+    const amountCents = Math.max(0, Math.round(Number(m && m.amountCents) || 0));
+    const hstCents = Math.round(amountCents * rate);
+    const totalCents = amountCents + hstCents;
+    aSum += amountCents; hSum += hstCents; tSum += totalCents;
+    return { label: (m && m.label) || '', trigger: (m && m.trigger) || '', amountCents, hstCents, totalCents };
+  });
+  return { rows, totals: { amountCents: aSum, hstCents: hSum, totalCents: tSum }, hstRate: rate };
 }
 
 // ---- Government fee default (§11) ----
@@ -129,7 +156,7 @@ function computeGovFee(govFeeKey, applicants = {}, { withRprf = true } = {}) {
 
 // ---- Milestones (§10) ----
 
-const ADMIN_LABEL = 'Non-refundable administrative fee';
+const ADMIN_LABEL = 'Milestone 1 – Non-Refundable Admin Fee';
 
 /** Pre-fill 4 milestone rows summing exactly to the professional fee; row 1 locked. */
 function defaultMilestones(serviceFeeCents, n = 4) {
@@ -170,6 +197,6 @@ function validateMilestones(rows, serviceFeeCents) {
 }
 
 module.exports = {
-  pickAnnex, suggestTemplate, applicantCount, computeFees, computeGovFee,
+  pickAnnex, suggestTemplate, applicantCount, computeFees, computeGovFee, computeMilestoneSchedule,
   defaultMilestones, validateMilestones, ADMIN_LABEL,
 };

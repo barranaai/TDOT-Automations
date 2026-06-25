@@ -49,7 +49,7 @@ function cacheRetainerPdf(leadId, buf) {
 
 /** Build the plan from the lead's saved columns and render the combined PDF (v2). */
 async function generateV2Pdf(lead) {
-  const { buildRetainerPlan, overridesFromLead } = require('./retainerPlanBuilder');
+  const { buildRetainerPlan, overridesFromLead, milestoneAnnexFromPlan } = require('./retainerPlanBuilder');
   const plan = buildRetainerPlan(lead, overridesFromLead(lead));
   if (!plan.ready) {
     const e = new Error(plan.warnings.join(' · ') || 'The retainer plan is not complete.');
@@ -58,6 +58,7 @@ async function generateV2Pdf(lead) {
   }
   return require('./retainerDocService').generate({
     template: plan.template, data: plan.mergeData, annexId: plan.annex.id,
+    milestoneAnnex: milestoneAnnexFromPlan(plan),
   });
 }
 

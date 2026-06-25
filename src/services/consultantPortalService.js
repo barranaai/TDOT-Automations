@@ -238,6 +238,7 @@ function parseSelections(value) {
   for (const k of SELECTION_STR_FIELDS) if (raw[k] != null) sel[k] = String(raw[k]).trim();
   if (raw.feeCents != null) { const c = Math.round(Number(raw.feeCents)); if (Number.isFinite(c)) sel.feeCents = c; }
   if (raw.govFeeDollars != null) { const d = Number(raw.govFeeDollars); if (Number.isFinite(d)) sel.govFeeDollars = d; }
+  if (raw.hstRate != null) { const r = Number(String(raw.hstRate).replace('%', '')); if (Number.isFinite(r) && r >= 0) sel.hstRate = r; }
   if (raw.withRprf != null) sel.withRprf = (raw.withRprf === true || raw.withRprf === 'Yes' || raw.withRprf === 'true');
   if (Array.isArray(raw.milestones)) {
     sel.milestones = raw.milestones.map((m, i) => ({
@@ -361,6 +362,7 @@ async function applyAction({ leadId, action, value }) {
         selectedScopeAnnex: s.annexCode,
         selectedSubType:    s.subType || '',
         govFee:             (s.govFeeDollars != null) ? s.govFeeDollars : '',
+        retainerHstRate:    (s.hstRate != null) ? String(s.hstRate) : '13',
         retainerWithRprf:   s.withRprf ? 'Yes' : 'No',
         retainerMilestones: JSON.stringify(s.milestones || []),
         inviterName: s.inviterName || '', inviterAddress: s.inviterAddress || '', inviterPhone: s.inviterPhone || '', inviterEmail: s.inviterEmail || '',
@@ -408,8 +410,10 @@ async function previewRetainerPdf(leadId, value) {
     const e = new Error(plan.warnings.join(' · ') || 'The retainer plan is incomplete — fill it in before previewing.');
     e.badRequest = true; throw e;
   }
+  const { milestoneAnnexFromPlan } = require('./retainerPlanBuilder');
   const buffer = await require('./retainerDocService').generate({
     template: plan.template, data: plan.mergeData, annexId: plan.annex.id,
+    milestoneAnnex: milestoneAnnexFromPlan(plan),
   });
   return { buffer, filename: `retainer-${leadId}-preview.pdf` };
 }

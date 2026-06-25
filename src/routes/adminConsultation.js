@@ -236,6 +236,13 @@ ${buildNavHeader('consultations')}
           <label class="rp-check"><input id="rp-rprf" type="checkbox"> Include RPRF</label>
         </div>
       </div>
+      <div class="rp-grid2" style="margin-top:10px">
+        <div class="rp-field">
+          <div class="subhead">HST rate (%) <span class="muted">(13% default · 0 for HST-exempt)</span></div>
+          <input id="rp-hst" type="number" min="0" step="0.5" value="13">
+        </div>
+        <div class="rp-field"></div>
+      </div>
 
       <div id="rp-inviter" style="display:none;margin-top:8px">
         <div class="subhead">Inviter / sponsor</div>
@@ -270,7 +277,7 @@ ${buildNavHeader('consultations')}
 
       <div class="subhead" style="margin-top:12px">Milestone schedule <span id="rp-mile-sum" class="rp-sum"></span></div>
       <table class="dynamic-table" id="milestone-table">
-        <thead><tr><th style="width:42%">Label</th><th style="width:22%">Amount (CAD)</th><th style="width:28%">Trigger</th><th></th></tr></thead>
+        <thead><tr><th style="width:32%">Label</th><th style="width:16%">Amount (CAD)</th><th style="width:13%">HST</th><th style="width:13%">Total</th><th style="width:18%">Trigger</th><th></th></tr></thead>
         <tbody id="milestone-body"></tbody>
       </table>
       <button class="btn" id="rp-add-mile" type="button" style="margin-top:8px">+ Add milestone</button>
@@ -443,6 +450,7 @@ function hydrateRetainer(d){
   rpEl('rp-subtype').value=plan.subType||'';
   var gov=plan.govFee||{}; rpEl('rp-govfee').value=(gov.dollars!=null)?gov.dollars:'';
   rpEl('rp-rprf').checked=(gov.withRprf!==false);
+  if(rpEl('rp-hst')) rpEl('rp-hst').value=(plan.hstRate!=null)?(Math.round(plan.hstRate*1000)/10):13;
   var m=plan.mergeData||{};
   RP_BLOCK_FIELDS.forEach(function(k){ var el=rpEl('rp-'+k); if(el) el.value=m[k]||''; });
   rebuildMilestones(plan.milestones||[]);
@@ -466,12 +474,14 @@ function toggleTemplateBlocks(){
 function mileRowHtml(m,locked){
   return '<td><input class="m-label" type="text" value="'+escA(m.label||'')+'"'+(locked?' disabled':'')+'></td>'+
     '<td><input class="m-amount" type="number" min="0" step="0.01" value="'+(m.amountCents!=null?(m.amountCents/100):'')+'"></td>'+
+    '<td class="m-hst muted" style="text-align:right;white-space:nowrap"></td>'+
+    '<td class="m-total" style="text-align:right;white-space:nowrap;font-weight:600;color:var(--navy)"></td>'+
     '<td><input class="m-trigger" type="text" value="'+escA(m.trigger||'')+'"></td>'+
     '<td>'+(locked?'<span class="muted">locked</span>':'<button type="button" class="rm-btn" data-rm="1">✕</button>')+'</td>';
 }
 function rebuildMilestones(rows){
   var tb=rpEl('milestone-body'); tb.innerHTML='';
-  if(!rows||!rows.length) rows=[{label:'Non-refundable administrative fee',amountCents:0,locked:true}];
+  if(!rows||!rows.length) rows=[{label:'Milestone 1 – Non-Refundable Admin Fee',amountCents:0,locked:true}];
   rows.forEach(function(m,i){ var tr=document.createElement('tr'); tr.innerHTML=mileRowHtml(m,i===0); tb.appendChild(tr); });
   bindMile();
 }
@@ -487,17 +497,25 @@ function collectMilestones(){
   });
 }
 function fmtC(c){ return '$'+(c/100).toFixed(2); }
+function hstRateNow(){ var el=rpEl('rp-hst'); var v=Number((el&&el.value)||'13'); return (Number.isFinite(v)&&v>=0)?v/100:0.13; }
 function updateMileSum(){
-  var fee=feeCentsNow();
-  // Auto-calculated fee breakdown — same as the agreement: professional fee + 13% HST = total.
+  var fee=feeCentsNow(), rate=hstRateNow(), rpct=Math.round(rate*1000)/10;
+  // Per-milestone HST + total (auto), and running sums.
+  var sum=0, hstSum=0;
+  Array.prototype.forEach.call(document.querySelectorAll('#milestone-body tr'),function(tr){
+    var amt=Math.round((Number(tr.querySelector('.m-amount').value)||0)*100);
+    var h=Math.round(amt*rate); sum+=amt; hstSum+=h;
+    var hc=tr.querySelector('.m-hst'), tc=tr.querySelector('.m-total');
+    if(hc) hc.textContent=fmtC(h); if(tc) tc.textContent=fmtC(amt+h);
+  });
   var fb=rpEl('rp-fee-breakdown');
-  if(fb){ var hst=Math.round(fee*0.13);
+  if(fb){
     fb.innerHTML = fee>0
-      ? ('Professional fee <b>'+fmtC(fee)+'</b> &nbsp;·&nbsp; HST (13%) <b>'+fmtC(hst)+'</b> &nbsp;·&nbsp; <b>Total (incl. HST) '+fmtC(fee+hst)+'</b>')
-      : '<span class="muted">Set the retainer fee (in ⚡ Actions, above) — the HST and total calculate automatically.</span>';
+      ? ('Professional fee <b>'+fmtC(sum)+'</b> &nbsp;·&nbsp; HST ('+rpct+'%) <b>'+fmtC(hstSum)+'</b> &nbsp;·&nbsp; <b>Total (incl. HST) '+fmtC(sum+hstSum)+'</b>'
+         + (rate===0?' &nbsp;<span class="muted">(HST-exempt)</span>':''))
+      : '<span class="muted">Set the retainer fee (in ⚡ Actions, above) — HST &amp; totals calculate automatically per milestone.</span>';
   }
   var el=rpEl('rp-mile-sum'); if(!el) return;
-  var sum=collectMilestones().reduce(function(s,m){return s+m.amountCents;},0);
   var ok=(fee>0 && sum===fee); el.className='rp-sum '+(ok?'ok':'bad');
   el.textContent='— milestones total '+fmtC(sum)+(fee>0?(' / fee '+fmtC(fee)+(ok?' ✓':(' (off by '+fmtC(Math.abs(sum-fee))+')'))):' (set the fee first)');
 }
@@ -514,7 +532,7 @@ function splitMilestones(){
 function collectSelections(){
   var sel={ template:rpEl('rp-template').value, annexCode:rpEl('rp-annex').value, subType:(rpEl('rp-subtype').value||'').trim(),
     feeCents:feeCentsNow(), govFeeDollars: rpEl('rp-govfee').value!==''?Number(rpEl('rp-govfee').value):undefined,
-    withRprf: rpEl('rp-rprf').checked, milestones:collectMilestones() };
+    hstRate: Math.round(hstRateNow()*1000)/10, withRprf: rpEl('rp-rprf').checked, milestones:collectMilestones() };
   RP_BLOCK_FIELDS.forEach(function(k){ var el=rpEl('rp-'+k); if(el) sel[k]=(el.value||'').trim(); });
   return sel;
 }
@@ -571,6 +589,7 @@ function initActions(){
   rpEl('rp-template').onchange=toggleTemplateBlocks;
   rpEl('rp-add-mile').onclick=addMile;
   rpEl('rp-split-mile').onclick=splitMilestones;
+  rpEl('rp-hst').oninput=updateMileSum;
   rpEl('btn-retainer-preview').onclick=previewRetainer;
   rpEl('btn-retainer-save').onclick=saveRetainer;
   var feeInput=document.getElementById('fee'); if(feeInput) feeInput.addEventListener('input', updateMileSum);
