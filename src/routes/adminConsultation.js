@@ -341,7 +341,9 @@ function render(d){
   caw.innerHTML=(ca.warnings&&ca.warnings.length)
     ? '<div class="rp-warn"><b>Before sending:</b><ul>'+ca.warnings.map(function(w){return '<li>'+escHtml(w)+'</li>';}).join('')+'</ul></div>' : '';
 
+  var ac=d.assignedConsultant||{};
   document.getElementById('c-status').innerHTML=
+    (ac.name?'<div class="kv"><span class="k">Assigned consultant</span><span class="v">'+escHtml(ac.name)+(ac.needsVerify?' <span class="rp-flag verify">verify</span>':'')+'<div class="muted" style="font-weight:400">'+escHtml(ac.reason||'')+'</div></span></div>':'')+
     kv('Booking status',d.bookingStatus)+kv('Consultation held',d.consultationHeld)+
     kv('Outcome',d.outcome||'Not set')+kv('Retainer fee',d.retainerFee?('$'+d.retainerFee):'')+
     kv('Retainer sent',d.retainerSent)+kv('Retainer signed',d.retainerSigned)+kv('Retainer paid',d.retainerPaid)+

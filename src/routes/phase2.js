@@ -123,8 +123,9 @@ router.get('/book/:leadId', async (req, res) => {
   }
   try {
     const lead  = await leadService.getLead(leadId);
-    const slots = await bookingService.getAvailableSlots(lead.tier || 'T2', 4);
-    res.type('html').send(buildBookingPageHtml(lead, slots, req.query.t));
+    const consultant = require('../../config/consultantRouting').routeConsultant(lead);
+    const slots = await bookingService.getAvailableSlots(lead.tier || 'T2', 4, consultant.teamMemberId);
+    res.type('html').send(buildBookingPageHtml(lead, slots, req.query.t, consultant));
   } catch (err) {
     console.error('[Book] GET failed:', err.message);
     res.status(500).type('html').send(buildErrorHtml(err.message));
@@ -190,7 +191,7 @@ router.post('/webhook/square', express.raw({ type: '*/*' }), async (req, res) =>
   }
 });
 
-function buildBookingPageHtml(lead, slots, token) {
+function buildBookingPageHtml(lead, slots, token, consultant) {
   const byDate = {};
   for (const s of slots) (byDate[s.date] = byDate[s.date] || []).push(s);
   const dateBlocks = Object.keys(byDate).sort().map((date) => {
@@ -220,7 +221,7 @@ function buildBookingPageHtml(lead, slots, token) {
     @keyframes spin{to{transform:rotate(360deg)}}
   </style></head><body><div class="container">
     <div class="header">${TDOT_LOGO_LIGHT_HTML}<h1 style="margin:12px 0 4px;">Book Your Consultation</h1>
-    <p style="margin:0;opacity:0.85;font-size:14px;">Choose a time that works for you.</p></div>
+    <p style="margin:0;opacity:0.85;font-size:14px;">${consultant && consultant.name ? `Your consultation will be with <b>${consultant.name}</b>. ` : ''}Choose a time that works for you.</p></div>
     <form class="card" method="POST" action="/book/${lead.id}?t=${encodeURIComponent(token)}" onsubmit="return prep(event)">
       <input type="hidden" name="slotDate" id="slotDate"><input type="hidden" name="slotTime" id="slotTime">
       ${dateBlocks || '<div class="empty">No open times in the next few weeks — we will reach out to schedule.</div>'}

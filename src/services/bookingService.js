@@ -72,10 +72,10 @@ function squareCalendarEnabled() {
  * otherwise from the static SLOT_TEMPLATE. Any Square error falls back to the
  * template so the booking page never goes dark.
  */
-async function getAvailableSlots(tier, weeksAhead = 4) {
+async function getAvailableSlots(tier, weeksAhead = 4, teamMemberId) {
   if (squareCalendarEnabled()) {
     try {
-      return await getSquareAvailableSlots(weeksAhead);
+      return await getSquareAvailableSlots(weeksAhead, teamMemberId);
     } catch (err) {
       console.warn(`[Booking] Square availability failed — falling back to static template: ${err.message}`);
     }
@@ -89,7 +89,7 @@ async function getAvailableSlots(tier, weeksAhead = 4) {
  * subtract OUR own in-flight holds/bookings so two leads can't grab the same
  * time during the pay window (which Level 1 doesn't yet write back to Square).
  */
-async function getSquareAvailableSlots(weeksAhead = 4) {
+async function getSquareAvailableSlots(weeksAhead = 4, teamMemberId) {
   const squareBookings = require('./squareBookingsService');
   const startAt = new Date(Date.now() + 25 * 3600 * 1000);                 // Square requires ≥24h
   const maxDays = Math.min(weeksAhead * 7, 31);                            // Square max window is 32 days
@@ -97,7 +97,9 @@ async function getSquareAvailableSlots(weeksAhead = 4) {
 
   const slots = await squareBookings.searchAvailability({
     serviceVariationId: process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID,
-    teamMemberId: process.env.SQUARE_CONSULT_TEAM_MEMBER_ID || undefined,  // optional; service is staff-scoped
+    // The assigned consultant (from routing) scopes the calendar; falls back to
+    // the env default, then to any bookable staff on the service.
+    teamMemberId: teamMemberId || process.env.SQUARE_CONSULT_TEAM_MEMBER_ID || undefined,
     startAtIso: startAt.toISOString(),
     endAtIso: endAt.toISOString(),
     pool: 'consult',

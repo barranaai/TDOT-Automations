@@ -185,6 +185,9 @@ async function getConsultationDetail(leadId) {
       warnings: consultAgreementService.buildConsultAgreementData(lead).warnings,
     },
 
+    // Auto-assigned consultant (routing: case type + CRS score → Shafoli/Shermin).
+    assignedConsultant: require('../../config/consultantRouting').routeConsultant(lead),
+
     // Retainer plan — folded in so the detail page hydrates the panel without a
     // second getLead round-trip (built from the lead already in hand).
     retainerPlan: buildRetainerPlanResponse(lead),
