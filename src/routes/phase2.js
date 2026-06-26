@@ -29,6 +29,10 @@ const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
 router.get('/phase2/health', (req, res) => res.json({
   status: 'phase2 ok',
   rev: String(process.env.RENDER_GIT_COMMIT || 'local').slice(0, 7),
+  // Ops diagnostics (no secrets): is the live Square calendar engaged, and which
+  // consult service variation is configured (last 6 chars only, to eyeball it).
+  squareCalendar: bookingService.squareCalendarEnabled(),
+  consultVariation: String(process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID || '').slice(-6) || null,
 }));
 
 // ─── WS2 — Lead capture (V2 intake form, TDOT brief sections A–G) ────────────
