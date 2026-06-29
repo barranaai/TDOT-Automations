@@ -27,7 +27,7 @@ const COL_TYPE = {
   situationDescription: 'long_text', howHeard: 'text',
   tier: 'status', aiScore: 'numbers', aiTalkingPoints: 'long_text', aiComplianceFlags: 'long_text',
   bookingStatus: 'status', preConsultSubmitted: 'status', outcome: 'status', conversionStatus: 'status',
-  slotHeldUntil: 'text', bookedSlot: 'text', consultationHeld: 'date',
+  slotHeldUntil: 'text', bookedSlot: 'text', assignedConsultant: 'text', consultationHeld: 'date',
   retainerSent: 'date', retainerSigned: 'date', retainerPaid: 'date', retainerFee: 'numbers',
   squareConsultTxnId: 'text', squareConsultOrderId: 'text', zoomMeetingId: 'text',
   adobeSignAgreementId: 'text', squareRetainerTxnId: 'text', squareRetainerOrderId: 'text',

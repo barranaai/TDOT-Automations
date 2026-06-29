@@ -183,6 +183,15 @@ async function _doHandoff(leadId) {
 
   await leadService.updateLead(leadId, { clientMasterItemId: newId, conversionStatus: 'Retained — Awaiting Payment' });
 
+  // Record the consultation's assigned RCIC on the new case (best-effort note),
+  // so the routed consultant carries across the handoff instead of being lost.
+  if (lead.assignedConsultant) {
+    try {
+      await mondayApi.query(`mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
+        { itemId: String(newId), body: `👤 Consultation handled by: ${lead.assignedConsultant}` });
+    } catch (_) {}
+  }
+
   // Set the specific Case Type separately → triggers Phase 1 caseRefService.
   // The value is validated against the LIVE Client Master canon first (the
   // approved standard); create_labels_if_missing stays OFF as a second wall,

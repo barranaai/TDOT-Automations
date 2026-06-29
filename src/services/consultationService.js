@@ -73,6 +73,7 @@ async function sendBookingConfirmation(lead, meeting, slotStr) {
     <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
       <p>Hi ${escapeHtml((lead.fullName||'there').split(' ')[0])},</p>
       <p><b>When:</b> ${escapeHtml(slotStr)} (Toronto time)</p>
+      ${lead.assignedConsultant ? `<p><b>With:</b> ${escapeHtml(lead.assignedConsultant)}, RCIC</p>` : ''}
       <p><b>Join the ${PROVIDER_LABEL[meeting.provider] || 'video'} call:</b><br><a href="${meeting.joinUrl}" style="color:${BRAND.primary}">${meeting.joinUrl}</a></p>
       ${meeting.provider === 'teams' ? `<p style="font-size:13px;color:${BRAND.mutedOnLight}">A calendar invite has also been sent to your email — accept it and the meeting appears in your calendar.</p>` : ''}
       <p style="margin-top:24px">Please complete this short form before your call so we can make the most of your time:</p>

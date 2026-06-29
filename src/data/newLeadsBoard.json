@@ -89,7 +89,8 @@
     "empRepEmail": "text_mm4m6w9v",
     "govFee": "numeric_mm4mt156",
     "consultAgreementSent": "date_mm4mw3r1",
-    "retainerHstRate": "text_mm4nex78"
+    "retainerHstRate": "text_mm4nex78",
+    "assignedConsultant": "text_mm4ss76e"
   },
   "createdAt": "2026-06-08T18:00:45.756Z"
 }

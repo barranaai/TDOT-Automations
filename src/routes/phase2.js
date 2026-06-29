@@ -160,6 +160,15 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
       return res.type('html').send(buildBookingDoneHtml(lead, bd || slotDate, bt || slotTime));
     }
     await bookingService.holdSlot(leadId, slotDate, slotTime);
+    // Persist the routed consultant so the assignment is durable — shown in the
+    // panel, named in the meeting invite, and recorded on the case — instead of
+    // being recomputed cosmetically on every render. Best-effort.
+    try {
+      const consultant = require('../../config/consultantRouting').routeConsultant(lead);
+      if (consultant && consultant.name && lead.assignedConsultant !== consultant.name) {
+        await leadService.updateLead(leadId, { assignedConsultant: consultant.name });
+      }
+    } catch (err) { console.warn(`[Book] consultant persist failed for lead ${leadId}: ${err.message}`); }
 
     // Everyone pays the consult fee — per the intake brief, even Critical (T0)
     // leads are "recommend paid consultation" (T0 only widens the SLOT pools).

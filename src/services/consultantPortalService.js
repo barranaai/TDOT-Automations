@@ -185,8 +185,18 @@ async function getConsultationDetail(leadId) {
       warnings: consultAgreementService.buildConsultAgreementData(lead).warnings,
     },
 
-    // Auto-assigned consultant (routing: case type + CRS score → Shafoli/Shermin).
-    assignedConsultant: require('../../config/consultantRouting').routeConsultant(lead),
+    // Assigned consultant. Routing (case type + CRS → Shafoli/Shermin) is the
+    // default, but once a booking persists `assignedConsultant`, that stored name
+    // is authoritative — the routing inputs can change afterward, so we show who
+    // was actually assigned and flag for verification if live routing now differs.
+    assignedConsultant: (() => {
+      const routed = require('../../config/consultantRouting').routeConsultant(lead);
+      const pinned = (lead.assignedConsultant || '').trim();
+      if (!pinned) return routed;
+      if (pinned === routed.name) return { ...routed, persisted: true };
+      return { ...routed, name: pinned, persisted: true, needsVerify: true,
+        reason: `Assigned at booking · live routing now suggests ${routed.name}` };
+    })(),
 
     // Retainer plan — folded in so the detail page hydrates the panel without a
     // second getLead round-trip (built from the lead already in hand).
