@@ -240,12 +240,22 @@ async function createCheckout({ leadId, amount, description, type = 'lead' }) {
   return link.url;
 }
 
-/** Verify Square webhook HMAC signature. */
+/** Verify Square webhook HMAC signature (fail-closed, constant-time). */
 function verifySquareSignature(rawBody, signature, notificationUrl) {
   const secret = process.env.SQUARE_WEBHOOK_SECRET;
-  if (!secret) return true; // not configured yet (pre-deploy) — allow
-  const hmac = crypto.createHmac('sha256', secret).update(notificationUrl + rawBody).digest('base64');
-  return hmac === signature;
+  if (!secret) {
+    // Fail CLOSED: an unset secret used to accept everything, turning this into
+    // an unauthenticated "confirm any lead as Booked" endpoint. Reject instead;
+    // the paymentReconciler poll is the backstop if the secret is ever missing.
+    console.error('[Square] SQUARE_WEBHOOK_SECRET is not set — rejecting webhook (fail closed). Set it to accept Square payment webhooks.');
+    return false;
+  }
+  if (!signature) return false;
+  const expected = crypto.createHmac('sha256', secret).update(notificationUrl + rawBody).digest('base64');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(String(signature));
+  // Constant-time compare; unequal lengths can't match (and would throw).
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 /** Entry point for POST /webhook/square. */
