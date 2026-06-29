@@ -18,6 +18,37 @@ function escAttr(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ─── Inline icon set (stroke, currentColor — inherits size/colour) ───────────────
+// Replaces emoji as structural icons. `${I.name}` bakes the SVG markup into the
+// page at render time; for icons needed inside client-side string-building, the
+// same markup is shipped as a JSON ICONS object (see buildDetailHTML).
+const _svg = (p) => `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex:none;vertical-align:-.15em">${p}</svg>`;
+const I = {
+  back:      _svg('<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>'),
+  video:     _svg('<path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2"/>'),
+  file:      _svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/>'),
+  dollar:    _svg('<circle cx="12" cy="12" r="10"/><path d="M12 6v12"/><path d="M15 9.5a2.5 2.5 0 0 0-2.5-1.7h-1A2 2 0 0 0 9.5 10c0 1.1.9 1.8 2 2h1a2 2 0 0 1 0 4h-1a2.5 2.5 0 0 1-2.5-1.7"/>'),
+  mail:      _svg('<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>'),
+  disc:      _svg('<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>'),
+  clip:      _svg('<rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>'),
+  cap:       _svg('<path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c3 2.5 9 2.5 12 0v-5"/>'),
+  cpu:       _svg('<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/>'),
+  bolt:      _svg('<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/>'),
+  flag:      _svg('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1Z"/><line x1="4" x2="4" y1="22" y2="15"/>'),
+  userCheck: _svg('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/>'),
+  check:     _svg('<polyline points="20 6 9 17 4 12"/>'),
+  send:      _svg('<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>'),
+  refresh:   _svg('<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>'),
+  eye:       _svg('<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>'),
+  save:      _svg('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>'),
+  plus:      _svg('<path d="M5 12h14"/><path d="M12 5v14"/>'),
+  cols:      _svg('<rect width="7" height="18" x="3" y="3" rx="1"/><rect width="7" height="18" x="14" y="3" rx="1"/>'),
+  clock:     _svg('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
+};
+// Serialise leadId / labels / icons into a <script> safely: JSON.stringify does
+// NOT escape `</script>`, so neutralise every `<` to its < escape.
+const jsLit = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
+
 // ─── Queue page ────────────────────────────────────────────────────────────────
 function buildQueueHTML() {
   return `<!DOCTYPE html>
@@ -99,64 +130,90 @@ startClock(); checkApiStatus(); load();
 
 // ─── Detail page ────────────────────────────────────────────────────────────────
 function buildDetailHTML(leadId) {
-  const safe = escAttr(leadId);
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TDOT — Consultation</title><style>
   ${SHARED_CSS_VARS}
   ${NAV_CSS}
-  body { background:#f1f5f9; }
-  .wrap { max-width:1000px; margin:0 auto; padding:24px 22px 80px; }
+  body { background:var(--bg); }
+  .wrap { max-width:1120px; margin:0 auto; padding:20px 22px 90px; }
   #loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:50vh; gap:16px; }
   .spinner { width:42px; height:42px; border:3px solid #e2e8f0; border-top-color:var(--navy); border-radius:50%; animation:spin .7s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
   .muted { color:var(--light); font-size:12px; }
   #error-msg { display:none; background:#fff1f2; border:1px solid #fda4af; color:#dc2626; padding:14px 18px; border-radius:12px; margin:24px auto; max-width:520px; text-align:center; }
   #content { display:none; }
-  .back-lnk { display:inline-flex; gap:6px; font-size:12px; font-weight:600; color:var(--muted); text-decoration:none; margin-bottom:14px; }
+  .back-lnk { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--muted); text-decoration:none; margin-bottom:12px; }
   .back-lnk:hover { color:var(--navy); }
-  .hd { background:white; border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; padding:20px 22px; margin-bottom:16px; }
-  .hd-top { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; flex-wrap:wrap; }
-  .cname { font-size:22px; font-weight:800; color:var(--navy); letter-spacing:-.5px; margin:0; }
-  .csub { font-size:12px; color:var(--light); margin-top:3px; font-weight:600; }
-  .acts { display:flex; gap:8px; flex-wrap:wrap; }
-  .btn { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:8px; font-size:12px; font-weight:700; text-decoration:none; border:1px solid var(--border); color:var(--navy); background:white; cursor:pointer; font-family:inherit; }
-  .btn:hover { border-color:var(--navy); background:#f0f4f8; }
-  .btn.primary { background:var(--navy); color:white; border-color:var(--navy); } .btn.primary:hover { background:var(--navy-light); }
-  .pill-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
-  .pill { display:inline-flex; gap:5px; padding:5px 12px; border-radius:20px; font-size:11px; font-weight:700; }
-  .pill.grey { background:#f1f5f9; color:#475569; } .pill.green { background:#f0fdf4; color:#16a34a; }
-  .pill.amber { background:#fffbeb; color:#d97706; } .pill.blue { background:#eff6ff; color:#2563eb; } .pill.red { background:#fef2f2; color:#dc2626; }
-  .pill .pk { font-weight:600; opacity:.7; }
-  .grid { display:grid; gap:16px; grid-template-columns:1fr 1fr; }
-  @media (max-width:820px){ .grid{ grid-template-columns:1fr; } }
-  .card { background:white; border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; padding:18px 20px; }
-  .card-t { font-size:13px; font-weight:800; color:var(--navy); margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #f1f5f9; }
+
+  /* sticky context header */
+  .ctx { position:sticky; top:var(--header-h); z-index:20; background:var(--card); border:1px solid #eef2f7; border-radius:var(--r); box-shadow:var(--shadow-sm); padding:16px 20px; margin-bottom:14px; }
+  .ctx-top { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; flex-wrap:wrap; }
+  .ctx-id { display:flex; gap:13px; align-items:center; min-width:0; }
+  .avatar { width:46px; height:46px; border-radius:50%; background:var(--navy); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:15px; letter-spacing:.5px; flex:none; }
+  .cname { font-size:21px; font-weight:800; color:var(--navy); letter-spacing:-.4px; margin:0; line-height:1.2; }
+  .csub { font-size:12.5px; color:var(--muted); margin-top:2px; font-weight:500; }
+  .ctx-acts { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+  .iconbtn { width:36px; height:36px; border-radius:var(--r-sm); border:1px solid var(--border); background:#fff; color:var(--muted); display:inline-flex; align-items:center; justify-content:center; font-size:17px; cursor:pointer; text-decoration:none; transition:all .15s; }
+  .iconbtn:hover { border-color:var(--navy); color:var(--navy); background:#f5f8fc; }
+  .ctx-meta { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:14px; }
+  .chip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; padding:5px 11px; border-radius:20px; background:#f1f5f9; color:#475569; }
+  .chip svg { font-size:13px; }
+  .chip.blue { background:#eff6ff; color:#2563eb; } .chip.green { background:#f0fdf4; color:#16a34a; }
+  .chip.amber { background:#fffbeb; color:#d97706; } .chip.grey { background:#f1f5f9; color:#64748b; }
+  .chip .pk { font-weight:600; opacity:.65; }
+  .chip-reason { font-size:11px; color:var(--light); font-weight:500; }
+
+  /* lifecycle stepper */
+  .stepper { display:flex; gap:4px; background:var(--card); border:1px solid #eef2f7; border-radius:var(--r); box-shadow:var(--shadow-sm); padding:14px 12px; margin-bottom:14px; overflow-x:auto; }
+  .step { display:flex; flex-direction:column; align-items:center; gap:6px; flex:1; min-width:62px; }
+  .step .dot { width:24px; height:24px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; border:1.5px solid var(--border); color:var(--light); background:#fff; }
+  .step .dot svg { font-size:13px; }
+  .step.done .dot { background:var(--green); border-color:var(--green); color:#fff; }
+  .step.cur .dot { background:var(--navy); border-color:var(--navy); color:#fff; box-shadow:0 0 0 4px rgba(26,53,88,.12); }
+  .step .lbl { font-size:10.5px; font-weight:600; color:var(--light); text-align:center; white-space:nowrap; }
+  .step.done .lbl { color:var(--muted); } .step.cur .lbl { color:var(--navy); font-weight:700; }
+
+  /* two-column working area */
+  .cols { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(0,1fr); gap:14px; align-items:start; }
+  @media (max-width:900px){ .cols{ grid-template-columns:1fr; } .ctx{ position:static; } }
+  .col { display:flex; flex-direction:column; gap:14px; }
+  .card { background:var(--card); border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; padding:16px 18px; }
+  .card-t { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:800; color:var(--navy); margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #f1f5f9; }
+  .card-t svg { font-size:15px; color:var(--navy); }
+  .card-t .when { margin-left:auto; font-weight:500; font-size:11px; color:var(--light); }
   .kv { display:flex; padding:6px 0; font-size:13px; border-top:1px solid #f8fafc; gap:10px; }
   .kv:first-child { border-top:none; }
   .kv .k { color:var(--muted); min-width:150px; flex-shrink:0; }
   .kv .v { color:var(--navy); font-weight:600; }
-  .subhead { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#64748b; margin:14px 0 4px; }
+  .subhead { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#64748b; margin:0 0 6px; }
   .rrow { border:1px dashed var(--border); border-radius:8px; padding:9px 12px; margin-top:8px; font-size:12.5px; color:var(--navy); line-height:1.55; }
   .notyet { color:#94a3b8; font-size:13px; font-style:italic; padding:8px 0; }
-  .actions { margin-bottom:16px; }
-  .obtns { display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; }
-  .obtn { padding:8px 13px; border:1px solid var(--border); border-radius:8px; background:white; font-size:12.5px; font-weight:600; cursor:pointer; color:var(--navy); font-family:inherit; }
+
+  /* action groups */
+  .agroup { padding-top:13px; margin-top:13px; border-top:1px solid #f1f5f9; }
+  .obtns { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:2px; }
+  .obtn { padding:9px 10px; border:1px solid var(--border); border-radius:8px; background:white; font-size:12.5px; font-weight:600; cursor:pointer; color:var(--navy); font-family:inherit; text-align:center; transition:all .12s; }
   .obtn:hover:not(:disabled) { border-color:var(--navy); background:#f0f4f8; }
-  .obtn.active { background:var(--navy); color:white; border-color:var(--navy); }
-  .frow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px; }
-  .frow input { width:150px; padding:9px 11px; border:1px solid var(--border); border-radius:8px; font-size:14px; }
-  .act-msg { display:none; padding:9px 12px; border-radius:8px; font-size:12.5px; margin-bottom:12px; font-weight:600; }
+  .obtn.active { background:var(--navy); color:white; border-color:var(--navy); box-shadow:var(--shadow-sm); }
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:9px 13px; border-radius:8px; font-size:12.5px; font-weight:700; text-decoration:none; border:1px solid var(--border); color:var(--navy); background:white; cursor:pointer; font-family:inherit; transition:all .12s; }
+  .btn:hover:not(:disabled) { border-color:var(--navy); background:#f0f4f8; }
+  .btn.primary { background:var(--navy); color:white; border-color:var(--navy); } .btn.primary:hover:not(:disabled) { background:var(--navy-light); }
+  .frow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .frow input { width:150px; padding:9px 11px; border:1px solid var(--border); border-radius:8px; font-size:14px; font-family:inherit; }
+  .act-msg { display:none; padding:9px 12px; border-radius:8px; font-size:12.5px; margin:10px 0 0; font-weight:600; }
   .act-msg.info { background:#eff6ff; color:#2563eb; display:block; }
   .act-msg.ok { background:#f0fdf4; color:#16a34a; display:block; }
   .act-msg.err { background:#fef2f2; color:#dc2626; display:block; }
   button:disabled { opacity:.55; cursor:not-allowed; }
+
+  /* retainer plan */
   .rp-field { margin-top:4px; }
-  .rp-field select, .rp-field input { width:100%; max-width:380px; padding:9px 11px; border:1px solid var(--border); border-radius:8px; font-size:13px; font-family:inherit; }
+  .rp-field select, .rp-field input { width:100%; max-width:420px; padding:9px 11px; border:1px solid var(--border); border-radius:8px; font-size:13px; font-family:inherit; }
   .rp-grid2 { display:flex; gap:10px; flex-wrap:wrap; }
-  .rp-grid2 .rp-field { flex:1; min-width:170px; }
+  .rp-grid2 .rp-field { flex:1; min-width:200px; }
   .rp-check { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--navy); margin-top:8px; }
-  .rp-sugg { font-size:12px; color:#475569; background:#f8fafc; border-radius:8px; padding:9px 12px; line-height:1.55; }
+  .rp-sugg { font-size:12px; color:#475569; background:#f8fafc; border:1px solid #eef2f7; border-radius:8px; padding:9px 12px; line-height:1.55; }
   .rp-flag { display:inline-block; font-size:9.5px; font-weight:800; padding:1px 7px; border-radius:10px; margin-left:6px; text-transform:uppercase; letter-spacing:.4px; }
   .rp-flag.high { background:#f0fdf4; color:#16a34a; } .rp-flag.verify { background:#fffbeb; color:#d97706; }
   .rp-warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; padding:9px 12px; border-radius:8px; font-size:12px; margin:10px 0; line-height:1.5; }
@@ -169,49 +226,72 @@ function buildDetailHTML(leadId) {
   .rm-btn { padding:5px 9px; border:1px solid var(--border); border-radius:7px; background:white; cursor:pointer; color:#dc2626; font-size:12px; font-family:inherit; }
   .rp-sum { font-weight:700; font-size:12px; }
   .rp-sum.ok { color:#16a34a; } .rp-sum.bad { color:#dc2626; }
+
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }
 </style></head><body>
 ${buildNavHeader('consultations')}
 <main class="wrap">
-  <a href="/admin/consultations" class="back-lnk">← All consultations</a>
+  <a href="/admin/consultations" class="back-lnk">${I.back} All consultations</a>
   <div id="loading"><div class="spinner"></div><div class="muted">Loading consultation…</div></div>
   <div id="error-msg"></div>
   <div id="content">
-    <div class="hd">
-      <div class="hd-top">
-        <div><h1 class="cname" id="c-name">—</h1><div class="csub" id="c-sub">—</div></div>
-        <div class="acts" id="c-acts"></div>
+
+    <div class="ctx">
+      <div class="ctx-top">
+        <div class="ctx-id">
+          <div class="avatar" id="c-avatar">—</div>
+          <div><h1 class="cname" id="c-name">—</h1><div class="csub" id="c-sub">—</div></div>
+        </div>
+        <div class="ctx-acts" id="c-acts"></div>
       </div>
-      <div class="pill-row" id="c-pills"></div>
+      <div class="ctx-meta">
+        <span id="c-pills" style="display:contents"></span>
+        <span id="c-consultant" style="display:contents"></span>
+      </div>
     </div>
 
-    <div class="card actions">
-      <div class="card-t">⚡ Actions</div>
-      <div id="act-msg" class="act-msg"></div>
-      <div class="subhead">Record outcome</div>
-      <div class="obtns" id="obtns"></div>
-      <div class="subhead">Retainer</div>
+    <div class="stepper" id="c-stepper"></div>
+
+    <div class="cols">
+      <div class="col">
+        <div class="card"><div class="card-t">${I.clip} Intake context</div><div id="c-intake"></div></div>
+        <div class="card"><div class="card-t">${I.cap} Eligibility profile <span class="when" id="c-elig-when"></span></div><div id="c-elig"></div></div>
+        <div class="card"><div class="card-t">${I.cpu} AI triage notes</div><div id="c-ai"></div></div>
+      </div>
+
+      <div class="col">
+        <div class="card actions">
+          <div class="card-t">${I.bolt} Actions</div>
+          <div class="subhead">Record outcome</div>
+          <div class="obtns" id="obtns"></div>
+          <div id="act-msg" class="act-msg"></div>
+          <div class="agroup">
+            <div class="subhead">Client communications</div>
+            <div class="frow"><button class="btn" id="btn-invite">${I.send} Send booking invite</button></div>
+            <div class="frow" style="margin-top:7px"><button class="btn" id="btn-resend">${I.refresh} Resend meeting + pre-consult links</button></div>
+          </div>
+          <div class="agroup">
+            <div class="subhead">Initial consultation agreement <span class="muted" id="ca-sent"></span></div>
+            <div id="ca-warn"></div>
+            <div class="frow"><button class="btn" id="btn-consult-preview">${I.eye} Preview</button><button class="btn" id="btn-consult-send">${I.send} Send</button></div>
+          </div>
+        </div>
+        <div class="card"><div class="card-t">${I.flag} Case status</div><div id="c-status"></div></div>
+      </div>
+    </div>
+
+    <div class="card retainer actions" style="margin-top:14px">
+      <div class="card-t">${I.dollar} Retainer plan</div>
+      <div id="rp-msg" class="act-msg" style="margin-top:0;margin-bottom:10px"></div>
+
+      <div class="subhead">Retainer fee</div>
       <div class="frow">
         <input id="fee" type="number" min="1" step="1" placeholder="Fee (CAD $)">
-        <button class="btn" id="btn-fee">Set fee</button>
-        <button class="btn" id="btn-signed">Mark retainer signed</button>
+        <button class="btn" id="btn-fee">${I.check} Set fee</button>
+        <button class="btn" id="btn-signed">${I.userCheck} Mark retainer signed</button>
       </div>
-      <div class="subhead">Client communications</div>
-      <div class="frow">
-        <button class="btn" id="btn-invite">Send booking invite</button>
-        <button class="btn" id="btn-resend">Resend meeting + pre-consult links</button>
-      </div>
-      <div class="subhead">Initial consultation agreement <span class="muted" id="ca-sent"></span></div>
-      <div id="ca-warn"></div>
-      <div class="frow">
-        <button class="btn" id="btn-consult-preview">👁 Preview consultation agreement</button>
-        <button class="btn" id="btn-consult-send">📄 Send consultation agreement</button>
-      </div>
-    </div>
 
-    <div class="card retainer actions" style="margin-bottom:16px">
-      <div class="card-t">📄 Retainer plan</div>
-      <div id="rp-msg" class="act-msg"></div>
-      <div id="rp-suggestion"></div>
+      <div id="rp-suggestion" style="margin-top:13px"></div>
       <div id="rp-warnings"></div>
 
       <div class="rp-grid2" style="margin-top:12px">
@@ -280,52 +360,73 @@ ${buildNavHeader('consultations')}
         <thead><tr><th style="width:32%">Label</th><th style="width:16%">Amount (CAD)</th><th style="width:13%">HST</th><th style="width:13%">Total</th><th style="width:18%">Trigger</th><th></th></tr></thead>
         <tbody id="milestone-body"></tbody>
       </table>
-      <button class="btn" id="rp-add-mile" type="button" style="margin-top:8px">+ Add milestone</button>
-      <button class="btn" id="rp-split-mile" type="button" style="margin-top:8px;margin-left:6px">↻ Split fee evenly</button>
+      <button class="btn" id="rp-add-mile" type="button" style="margin-top:8px">${I.plus} Add milestone</button>
+      <button class="btn" id="rp-split-mile" type="button" style="margin-top:8px;margin-left:6px">${I.cols} Split fee evenly</button>
 
       <div class="frow" style="margin-top:14px">
-        <button class="btn" id="btn-retainer-preview" type="button">👁 Preview retainer agreement</button>
-        <button class="btn primary" id="btn-retainer-save" type="button">💾 Save retainer plan</button>
+        <button class="btn" id="btn-retainer-preview" type="button">${I.eye} Preview retainer agreement</button>
+        <button class="btn primary" id="btn-retainer-save" type="button">${I.save} Save retainer plan</button>
       </div>
     </div>
-
-    <div class="grid">
-      <div class="card"><div class="card-t">🧭 Consultation status</div><div id="c-status"></div></div>
-      <div class="card"><div class="card-t">📋 Intake context</div><div id="c-intake"></div></div>
-    </div>
-
-    <div class="card" style="margin-top:16px"><div class="card-t">🎓 Eligibility profile <span class="muted" id="c-elig-when"></span></div><div id="c-elig"></div></div>
-
-    <div class="card" style="margin-top:16px"><div class="card-t">🤖 AI triage notes</div><div id="c-ai"></div></div>
   </div>
 </main>
 <script>
-var LEAD_ID=${JSON.stringify(leadId)};
-var OUTCOMES=${JSON.stringify(OUTCOME_LABELS)};
+var LEAD_ID=${jsLit(leadId)};
+var OUTCOMES=${jsLit(OUTCOME_LABELS)};
+var ICONS=${jsLit({ video: I.video, file: I.file, disc: I.disc, mail: I.mail, userCheck: I.userCheck, clock: I.clock, check: I.check })};
 ${SHARED_AUTH_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function safeUrl(u){ u=String(u==null?'':u).trim(); return /^(https?:|mailto:)/i.test(u)?u:'#'; } // block javascript:/data: in href
 var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload only once (don't clobber edits)
 function kv(k,v){ return v&&String(v).trim()?'<div class="kv"><span class="k">'+escHtml(k)+'</span><span class="v">'+escHtml(v)+'</span></div>':''; }
 function scores(arr){ var p=(arr||[]).map(function(v){return String(v||'').trim();}); return p.some(Boolean)?p.map(function(v){return v||'—';}).join(' / '):''; }
+function initials(n){ var p=String(n||'').trim().split(/\\s+/).filter(Boolean); return (p.length?(p[0][0]+(p.length>1?p[p.length-1][0]:'')):'?').toUpperCase(); }
+
+// Read-only lifecycle stepper, derived from the consultation's current columns.
+function buildStepper(d){
+  var steps=[
+    { k:'Booked',   done:!!(d.bookedSlot||d.bookingStatus==='Booked'||d.bookingStatus==='Slot Held') },
+    { k:'Consult',  done:!!(d.consultationHeld||d.outcome) },
+    { k:'Outcome',  done:!!d.outcome },
+    { k:'Retainer', done:!!d.retainerSent },
+    { k:'Signed',   done:!!d.retainerSigned },
+    { k:'Paid',     done:!!d.retainerPaid },
+    { k:'Case',     done:!!d.clientMasterItemId }
+  ];
+  var cur=-1; for(var i=0;i<steps.length;i++){ if(!steps[i].done){ cur=i; break; } } if(cur<0) cur=steps.length-1;
+  return steps.map(function(s,i){
+    var cls=s.done?'done':(i===cur?'cur':'');
+    var dot=s.done?ICONS.check:String(i+1);
+    return '<div class="step '+cls+'"><span class="dot">'+dot+'</span><span class="lbl">'+s.k+'</span></div>';
+  }).join('');
+}
 
 function render(d){
+  document.getElementById('c-avatar').textContent=initials(d.name||d.leadId);
   document.getElementById('c-name').textContent=d.name||d.leadId;
   document.getElementById('c-sub').textContent=(d.serviceRequired||'—')+'  ·  '+(d.tier?('Tier '+d.tier):'')+'  ·  lead '+d.leadId;
 
   var acts='';
-  if(d.meetingLink) acts+='<a class="btn primary" href="'+escHtml(safeUrl(d.meetingLink))+'" target="_blank" rel="noopener">🎥 Join meeting</a>';
-  if(d.preConsultPdf) acts+='<a class="btn" href="'+escHtml(safeUrl(d.preConsultPdf))+'" target="_blank" rel="noopener">📄 Dossier PDF</a>';
-  if(d.recordingLink) acts+='<a class="btn" href="'+escHtml(safeUrl(d.recordingLink))+'" target="_blank" rel="noopener">⏺ Recording</a>';
-  if(d.email) acts+='<a class="btn" href="'+escHtml(safeUrl('mailto:'+d.email))+'">✉ Email</a>';
+  if(d.meetingLink) acts+='<a class="btn primary" href="'+escHtml(safeUrl(d.meetingLink))+'" target="_blank" rel="noopener">'+ICONS.video+' Join meeting</a>';
+  if(d.preConsultPdf) acts+='<a class="iconbtn" title="Dossier PDF" aria-label="Dossier PDF" href="'+escHtml(safeUrl(d.preConsultPdf))+'" target="_blank" rel="noopener">'+ICONS.file+'</a>';
+  if(d.recordingLink) acts+='<a class="iconbtn" title="Recording" aria-label="Recording" href="'+escHtml(safeUrl(d.recordingLink))+'" target="_blank" rel="noopener">'+ICONS.disc+'</a>';
+  if(d.email) acts+='<a class="iconbtn" title="Email client" aria-label="Email client" href="'+escHtml(safeUrl('mailto:'+d.email))+'">'+ICONS.mail+'</a>';
   document.getElementById('c-acts').innerHTML=acts;
 
   var pills='';
-  pills+='<span class="pill blue"><span class="pk">Slot</span> '+escHtml(d.bookedSlot||'—')+'</span>';
-  pills+='<span class="pill '+(d.preConsultSubmitted?'green':'amber')+'"><span class="pk">Pre-consult</span> '+(d.preConsultSubmitted?'Submitted':'Pending')+'</span>';
-  pills+='<span class="pill '+(d.outcome?'blue':'grey')+'"><span class="pk">Outcome</span> '+escHtml(d.outcome||'Not set')+'</span>';
-  if(d.retainerFee) pills+='<span class="pill grey"><span class="pk">Fee</span> $'+escHtml(d.retainerFee)+'</span>';
+  pills+='<span class="chip blue">'+ICONS.clock+'<span class="pk">Slot</span> '+escHtml(d.bookedSlot||'—')+'</span>';
+  pills+='<span class="chip '+(d.preConsultSubmitted?'green':'amber')+'"><span class="pk">Pre-consult</span> '+(d.preConsultSubmitted?'Submitted':'Pending')+'</span>';
+  pills+='<span class="chip '+(d.outcome?'blue':'grey')+'"><span class="pk">Outcome</span> '+escHtml(d.outcome||'Not set')+'</span>';
+  if(d.retainerFee) pills+='<span class="chip grey"><span class="pk">Fee</span> $'+escHtml(d.retainerFee)+'</span>';
   document.getElementById('c-pills').innerHTML=pills;
+
+  var ac=d.assignedConsultant||{};
+  document.getElementById('c-consultant').innerHTML = ac.name
+    ? '<span class="chip green">'+ICONS.userCheck+escHtml(ac.name)+(ac.needsVerify?' <span class="rp-flag verify">verify</span>':'')+'</span>'+(ac.reason?'<span class="chip-reason">routed: '+escHtml(ac.reason)+'</span>':'')
+    : '';
+
+  document.getElementById('c-stepper').innerHTML=buildStepper(d);
+
   highlightOutcome(d.outcome||'');
   var fee=document.getElementById('fee'); if(fee && !fee.value && d.retainerFee) fee.value=d.retainerFee;
   // Hydrate the retainer panel from the detail payload ONCE (saves a second
@@ -341,9 +442,7 @@ function render(d){
   caw.innerHTML=(ca.warnings&&ca.warnings.length)
     ? '<div class="rp-warn"><b>Before sending:</b><ul>'+ca.warnings.map(function(w){return '<li>'+escHtml(w)+'</li>';}).join('')+'</ul></div>' : '';
 
-  var ac=d.assignedConsultant||{};
   document.getElementById('c-status').innerHTML=
-    (ac.name?'<div class="kv"><span class="k">Assigned consultant</span><span class="v">'+escHtml(ac.name)+(ac.needsVerify?' <span class="rp-flag verify">verify</span>':'')+'<div class="muted" style="font-weight:400">'+escHtml(ac.reason||'')+'</div></span></div>':'')+
     kv('Booking status',d.bookingStatus)+kv('Consultation held',d.consultationHeld)+
     kv('Outcome',d.outcome||'Not set')+kv('Retainer fee',d.retainerFee?('$'+d.retainerFee):'')+
     kv('Retainer sent',d.retainerSent)+kv('Retainer signed',d.retainerSigned)+kv('Retainer paid',d.retainerPaid)+
@@ -353,7 +452,7 @@ function render(d){
     kv('Email',d.email)+kv('Phone',d.phone)+kv('Country',d.country)+
     kv('Service',d.serviceRequired)+kv('Inside Canada',d.insideCanada)+kv('Current status',d.currentStatus)+
     kv('Spouse',d.hasSpouse)+kv('Children',d.childrenCount)+
-    (d.situationDescription?'<div class="subhead">Their inquiry</div><div style="font-size:13px;color:var(--navy);line-height:1.6">'+escHtml(d.situationDescription)+'</div>':'');
+    (d.situationDescription?'<div class="subhead" style="margin-top:10px">Their inquiry</div><div style="font-size:13px;color:var(--navy);line-height:1.6">'+escHtml(d.situationDescription)+'</div>':'');
 
   // Eligibility profile
   var e=d.eligibility||{};
@@ -366,21 +465,21 @@ function render(d){
       kv('Age',p.age)+kv('In Canada',p.inCanada)+kv('Entered Canada',p.entryDate)+kv('Entry visa',p.entryVisa)+
       kv('Current status',p.currentStatus)+kv('Permit expiry',p.permitExpiry)+kv('Marital status',p.marital)+
       kv('Children',p.children)+kv('Relatives in Canada (PR/citizen)',p.relatives);
-    h+='<div class="subhead">Education</div>'+kv('Highest education',e.highestEducation);
+    h+='<div class="subhead" style="margin-top:10px">Education</div>'+kv('Highest education',e.highestEducation);
     (e.education||[]).forEach(function(r,i){ h+='<div class="rrow"><b>Education '+(i+1)+':</b> '+escHtml([r.program,r.school,r.location,(r.start||r.end)?((r.start||'?')+'–'+(r.end||'?')):'',r.completed].filter(Boolean).join(' · '))+'</div>'; });
-    h+='<div class="subhead">Employment</div>'+kv('Paid TEER 0–3 work (last 5y)',e.teer);
+    h+='<div class="subhead" style="margin-top:10px">Employment</div>'+kv('Paid TEER 0–3 work (last 5y)',e.teer);
     (e.employment||[]).forEach(function(r,i){ h+='<div class="rrow"><b>Job '+(i+1)+':</b> '+escHtml([r.title,r.company,r.country,(r.start||r.end)?((r.start||'?')+'–'+(r.end||'?')):'',r.type,r.hours?(r.hours+'h/wk'):'',r.duties].filter(Boolean).join(' · '))+'</div>'; });
     h+=kv('Employer earned > $1M (PNP)',e.employerRevenue);
-    h+='<div class="subhead">Language</div>'+kv('English test',l.englishTest)+kv('English type',l.englishType)+kv('English (L/R/W/S)',scores(l.english))+kv('French test',l.frenchTest)+kv('French (L/R/W/S)',scores(l.french));
-    h+='<div class="subhead">Family for assessment</div>'+kv('Spouse / common-law',fam.hasSpouse)+kv('Consider spouse profile',fam.spouseConsider)+kv('Adult child (18+) to consider',fam.adultChild);
-    if(e.finalNote) h+='<div class="subhead">Client note</div><div style="font-size:13px;color:var(--navy);line-height:1.6">'+escHtml(e.finalNote)+'</div>';
+    h+='<div class="subhead" style="margin-top:10px">Language</div>'+kv('English test',l.englishTest)+kv('English type',l.englishType)+kv('English (L/R/W/S)',scores(l.english))+kv('French test',l.frenchTest)+kv('French (L/R/W/S)',scores(l.french));
+    h+='<div class="subhead" style="margin-top:10px">Family for assessment</div>'+kv('Spouse / common-law',fam.hasSpouse)+kv('Consider spouse profile',fam.spouseConsider)+kv('Adult child (18+) to consider',fam.adultChild);
+    if(e.finalNote) h+='<div class="subhead" style="margin-top:10px">Client note</div><div style="font-size:13px;color:var(--navy);line-height:1.6">'+escHtml(e.finalNote)+'</div>';
     el.innerHTML=h;
   }
 
   var ai='';
   if(d.aiTalkingPoints) ai+='<div class="subhead">Talking points</div><div style="font-size:13px;color:var(--navy);line-height:1.6;white-space:pre-wrap">'+escHtml(d.aiTalkingPoints)+'</div>';
-  if(d.aiComplianceFlags) ai+='<div class="subhead">Compliance flags</div><div style="font-size:13px;color:#b45309;line-height:1.6;white-space:pre-wrap">'+escHtml(d.aiComplianceFlags)+'</div>';
-  if(d.priorityReasons) ai+='<div class="subhead">Priority reasons</div><div style="font-size:13px;color:var(--navy);line-height:1.6">'+escHtml(d.priorityReasons)+'</div>';
+  if(d.aiComplianceFlags) ai+='<div class="subhead" style="margin-top:10px">Compliance flags</div><div style="font-size:13px;color:#b45309;line-height:1.6;white-space:pre-wrap">'+escHtml(d.aiComplianceFlags)+'</div>';
+  if(d.priorityReasons) ai+='<div class="subhead" style="margin-top:10px">Priority reasons</div><div style="font-size:13px;color:var(--navy);line-height:1.6">'+escHtml(d.priorityReasons)+'</div>';
   document.getElementById('c-ai').innerHTML=ai||'<div class="notyet">No AI notes on this lead.</div>';
 }
 
@@ -515,7 +614,7 @@ function updateMileSum(){
     fb.innerHTML = fee>0
       ? ('Professional fee <b>'+fmtC(sum)+'</b> &nbsp;·&nbsp; HST ('+rpct+'%) <b>'+fmtC(hstSum)+'</b> &nbsp;·&nbsp; <b>Total (incl. HST) '+fmtC(sum+hstSum)+'</b>'
          + (rate===0?' &nbsp;<span class="muted">(HST-exempt)</span>':''))
-      : '<span class="muted">Set the retainer fee (in ⚡ Actions, above) — HST &amp; totals calculate automatically per milestone.</span>';
+      : '<span class="muted">Set the retainer fee (above) — HST &amp; totals calculate automatically per milestone.</span>';
   }
   var el=rpEl('rp-mile-sum'); if(!el) return;
   var ok=(fee>0 && sum===fee); el.className='rp-sum '+(ok?'ok':'bad');
@@ -611,3 +710,5 @@ router.get('/consultation/:leadId', (req, res) =>
   res.type('html').send(buildDetailHTML((req.params.leadId || '').trim())));
 
 module.exports = router;
+module.exports.buildDetailHTML = buildDetailHTML;
+module.exports.buildQueueHTML = buildQueueHTML;
