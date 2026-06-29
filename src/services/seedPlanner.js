@@ -29,6 +29,12 @@ function slugUpper(s) {
   return String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+/** Stable 1-based index from a memberKey's trailing number (child-1 → 1), or null. */
+function memberKeyIndex(key) {
+  const m = String(key || '').match(/(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
+
 /**
  * Is a role included for this composition?
  *  - required roles: always.
@@ -123,9 +129,15 @@ function seedPlan({ schema, composition }) {
     const isMultiple = Boolean(roleDef.multipleAllowed);
 
     if (isMultiple && membersOfRole.length > 0) {
-      // One block of rows per actual member instance.
+      // One block of rows per actual member instance. The index is taken from the
+      // member's STABLE memberKey number (child-1 → 1, child-2 → 2) — NOT the array
+      // position — so reordering the board, or removing a middle member, doesn't
+      // renumber everyone and orphan/duplicate their rows on re-seed. Falls back to
+      // array position when a key carries no number (identical output for a
+      // normally-ordered board, so existing rows are unaffected).
       membersOfRole.forEach((member, i) => {
-        planForMember({ schema, roleDef, member, memberIndex: i + 1, isMultiple, prefix, rows, seenCodes });
+        const keyIdx = memberKeyIndex(member && member.memberKey);
+        planForMember({ schema, roleDef, member, memberIndex: keyIdx != null ? keyIdx : i + 1, isMultiple, prefix, rows, seenCodes });
       });
     } else {
       // Single-member role, OR a required/multiple role with no explicit member

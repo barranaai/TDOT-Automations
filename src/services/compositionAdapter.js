@@ -49,13 +49,22 @@ function mapRowsToComposition(rows) {
   const members = [];
 
   for (const row of rows || []) {
-    const role = MEMBER_TYPE_TO_ROLE[(row.memberType || '').trim()];
-    if (!role) continue; // unmapped / blank Member Type → skip (can't seed without a role)
+    const rawType = (row.memberType || '').trim();
+    const role = MEMBER_TYPE_TO_ROLE[rawType];
+    if (!role) {
+      // Skip but make it visible — a blank/mistyped Member Type silently dropped
+      // a family member (no checklist + no questionnaire) with no signal before.
+      console.warn(`[Composition] Family row "${(row.name || '').trim() || '(unnamed)'}" has an unmapped Member Type "${rawType || '(blank)'}" — skipped (no role to seed).`);
+      continue;
+    }
 
     const flags = {};
     for (const label of String(row.flagsText || '').split(',')) {
-      const key = FLAG_LABEL_TO_KEY[label.trim()];
+      const trimmed = label.trim();
+      if (!trimmed) continue;
+      const key = FLAG_LABEL_TO_KEY[trimmed];
       if (key) flags[key] = true;
+      else console.warn(`[Composition] Family row "${(row.name || '').trim() || '(unnamed)'}" has an unrecognised flag "${trimmed}" — ignored.`);
     }
 
     members.push({
@@ -69,10 +78,15 @@ function mapRowsToComposition(rows) {
   // Case-level flags are DERIVED from member presence — no separate board field.
   const has = (r) => members.some((m) => m.role === r);
   const caseFlags = {
-    spouseIncluded:   has('Spouse'),
-    childrenIncluded: has('DependentChild'),
-    parentsIncluded:  has('Parent'),
-    siblingsIncluded: has('Sibling'),
+    spouseIncluded:    has('Spouse'),
+    childrenIncluded:  has('DependentChild'),
+    parentsIncluded:   has('Parent'),
+    siblingsIncluded:  has('Sibling'),
+    // Was referenced by 5 Study Permit schemas but never derived (dead flag) →
+    // the "Supporting Family Member (funds)" doc set could never seed. Derive it
+    // like its siblings: a Sponsor member (now addable in the consultant family
+    // editor) turns the supporter document set on.
+    supporterIncluded: has('Sponsor'),
   };
 
   return { caseFlags, members };
