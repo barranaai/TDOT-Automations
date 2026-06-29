@@ -2066,6 +2066,15 @@ ${hasAdditionalForm ? `
     return section.querySelector('.top-accordion-body, .applicant-body');
   }
 
+  /* A top section is a per-member "dependent template" if it's explicitly marked,
+     or its header names a dependent. Used to avoid destroying principal-applicant
+     sections on forms that have no dependent template (e.g. Visitor Record/Ext). */
+  function isDependentTemplateSection(section) {
+    if (section.hasAttribute && section.hasAttribute('data-member-template')) return true;
+    var h = findSectionHeader(section);
+    return !!(h && /dependent/i.test(h.textContent || ''));
+  }
+
   function setupMultiMemberDOM() {
     var topSections = findTopSections();
     if (topSections.length === 0) return;
@@ -2074,15 +2083,23 @@ ${hasAdditionalForm ? `
     var primarySection = topSections[0];
     primarySection.setAttribute('data-member-key', 'primary');
 
-    /* Everything after the first section is a "dependent" section — use the first
-       one as the blueprint for cloning, then remove ALL of them from the DOM. */
-    if (topSections.length > 1) {
-      _memberBlueprint = topSections[1].cloneNode(true);
-      for (var i = 1; i < topSections.length; i++) {
-        topSections[i].remove();
-      }
+    /* Identify the per-member "dependent template" section(s). They are authored
+       explicitly — either marked with data-member-template, or a header that names
+       a dependent (e.g. "Dependent Applicant", "Dependent Spouse / Common-Law
+       Partner", "Dependent Children"). We clone the first as the blueprint and
+       remove ONLY those. Forms whose later top sections are all principal-applicant
+       content (e.g. Visitor Record/Extension: Profile, Education, Travel, Statutory)
+       have NO dependent template — those sections must be kept, not destroyed. */
+    var depSections = [];
+    for (var i = 1; i < topSections.length; i++) {
+      if (isDependentTemplateSection(topSections[i])) depSections.push(topSections[i]);
+    }
+    if (depSections.length > 0) {
+      _memberBlueprint = depSections[0].cloneNode(true);
+      for (var di = 0; di < depSections.length; di++) depSections[di].remove();
     } else {
-      /* No dependent section in template — clone primary as a stripped blueprint */
+      /* No dependent template — clone the primary as a stripped blueprint and KEEP
+         every principal-applicant section intact. */
       _memberBlueprint = primarySection.cloneNode(true);
     }
 
@@ -3973,9 +3990,18 @@ input[disabled], select[disabled], textarea[disabled] {
     var primarySection = topSections[0];
     primarySection.setAttribute('data-member-key', 'primary');
 
-    /* Clone the dependent section as blueprint, remove all dependent sections */
-    var blueprint = topSections.length > 1 ? topSections[1].cloneNode(true) : primarySection.cloneNode(true);
-    for (var i = 1; i < topSections.length; i++) topSections[i].remove();
+    /* Clone the dependent-template section(s) as the blueprint and remove ONLY
+       those — keep principal-applicant sections on forms with no dependent template
+       (mirrors the client-side fix). */
+    function isDepTpl(s) {
+      if (s.hasAttribute && s.hasAttribute('data-member-template')) return true;
+      var h = s.querySelector('.top-accordion-header, .applicant-header');
+      return !!(h && /dependent/i.test(h.textContent || ''));
+    }
+    var depSections = [];
+    for (var i = 1; i < topSections.length; i++) if (isDepTpl(topSections[i])) depSections.push(topSections[i]);
+    var blueprint = depSections.length > 0 ? depSections[0].cloneNode(true) : primarySection.cloneNode(true);
+    for (var dj = 0; dj < depSections.length; dj++) depSections[dj].remove();
 
     /* Create sections for each non-primary member */
     var insertRef = primarySection;
