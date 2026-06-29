@@ -242,7 +242,11 @@ const SELECTION_STR_FIELDS = [
 // the Family Members board labels; "Principal Applicant" is implicit, never
 // listed). Only ACCOMPANYING members are later materialised to the board at
 // handoff → per-member document checklist + questionnaire sections.
-const FAMILY_MEMBER_TYPES = ['Spouse', 'Dependent Child', 'Parent', 'Sibling', 'Sponsor', 'Worker Spouse'];
+// Types that map to a real checklist schema role. "Worker Spouse" is deliberately
+// excluded: compositionAdapter maps it to role 'WorkerSpouse', which no case schema
+// defines, so it would render a questionnaire section but seed zero checklist docs.
+// (SOWP schemas model the working partner as a 'Sponsor' role.)
+const FAMILY_MEMBER_TYPES = ['Spouse', 'Dependent Child', 'Parent', 'Sibling', 'Sponsor'];
 
 function normalizeFamilyMember(m) {
   return {
@@ -263,10 +267,13 @@ function resolveFamilyMembers(lead) {
     } catch (_) { /* fall through to the intake prefill */ }
   }
   const out = [];
+  // spouseAccompanying is Yes/No/Not sure → '!== No' is meaningful. childrenAccompanying
+  // is All/Some/None/Not sure → only 'None' means nobody accompanies (default the rest
+  // to accompanying; the consultant confirms per-child in the panel).
   if (lead.hasSpouse === 'Yes') out.push({ type: 'Spouse', name: '', accompanying: lead.spouseAccompanying !== 'No' });
   const n = parseInt(String(lead.childrenCount || '0'), 10);
   for (let i = 1; i <= Math.min(Number.isFinite(n) ? n : 0, 12); i++) {
-    out.push({ type: 'Dependent Child', name: '', accompanying: lead.childrenAccompanying !== 'No' });
+    out.push({ type: 'Dependent Child', name: '', accompanying: lead.childrenAccompanying !== 'None' });
   }
   return out;
 }
@@ -505,4 +512,5 @@ async function previewConsultAgreement(leadId) {
 module.exports = {
   getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS,
   parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement,
+  resolveFamilyMembers, FAMILY_MEMBER_TYPES,
 };

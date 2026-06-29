@@ -532,7 +532,7 @@ function doAction(action,value,confirmMsg){
 
 // ── Retainer plan panel ──────────────────────────────────────────────────
 var RP_TPL_LABELS={ 'pa':'Principal Applicant only', 'pa-inviter':'PA + Inviter / Sponsor', 'employer':'Employer / Legal Rep' };
-var FAMILY_TYPES=['Spouse','Dependent Child','Parent','Sibling','Sponsor','Worker Spouse'];
+var FAMILY_TYPES=['Spouse','Dependent Child','Parent','Sibling','Sponsor'];
 var RP_BLOCK_FIELDS=['inviterName','inviterAddress','inviterPhone','inviterEmail','empRepName','empCompanyName','empCompanyAddress','empCompanyPhone','empRepPhone','empRepEmail'];
 function rpEl(id){ return document.getElementById(id); }
 function escA(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }

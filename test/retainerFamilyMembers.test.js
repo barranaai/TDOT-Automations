@@ -7,8 +7,30 @@
 
 const test   = require('node:test');
 const assert = require('node:assert/strict');
-const { parseSelections } = require('../src/services/consultantPortalService');
+const { parseSelections, resolveFamilyMembers, FAMILY_MEMBER_TYPES } = require('../src/services/consultantPortalService');
 const { planMembersFromConsultant } = require('../src/services/familyCompositionService');
+
+test('Worker Spouse is not a selectable family type (maps to a role no schema defines)', () => {
+  assert.equal(FAMILY_MEMBER_TYPES.includes('Worker Spouse'), false);
+  assert.deepEqual(FAMILY_MEMBER_TYPES, ['Spouse', 'Dependent Child', 'Parent', 'Sibling', 'Sponsor']);
+});
+
+test('children prefill: childrenAccompanying enum is All/Some/None — only None means not accompanying', () => {
+  const kids = (acc) => resolveFamilyMembers({ childrenCount: '2', childrenAccompanying: acc })
+    .filter((m) => m.type === 'Dependent Child').map((m) => m.accompanying);
+  assert.deepEqual(kids('None'), [false, false]);
+  assert.deepEqual(kids('All'),  [true, true]);
+  assert.deepEqual(kids('Some'), [true, true]);
+  // spouse uses the Yes/No/Not-sure enum, so !== 'No' is correct there
+  assert.equal(resolveFamilyMembers({ hasSpouse: 'Yes', spouseAccompanying: 'No' })[0].accompanying, false);
+});
+
+test('planMembersFromConsultant gives duplicate singleton types unique keys', () => {
+  const rows = planMembersFromConsultant({ retainerFamilyMembers: JSON.stringify([
+    { type: 'Spouse', accompanying: true }, { type: 'Spouse', accompanying: true },
+  ]) });
+  assert.deepEqual(rows.map((r) => r.memberKey), ['spouse', 'spouse-1']);
+});
 
 test('parseSelections whitelists family member types and coerces accompanying', () => {
   const sel = parseSelections({

@@ -60,6 +60,7 @@ function planMembersFromConsultant(lead) {
   if (!Array.isArray(arr)) return null;
 
   const counts = {};
+  const used = new Set();
   const rows = [];
   for (const m of arr) {
     const type = String((m && m.type) || '').trim();
@@ -70,6 +71,11 @@ function planMembersFromConsultant(lead) {
     let key;
     if (INDEXED_TYPES.has(type)) { counts[base] = (counts[base] || 0) + 1; key = `${base}-${counts[base]}`; }
     else { key = base; }
+    // Guarantee a unique memberKey even if a singleton type appears twice (e.g. two
+    // Spouses by mistake) — index on collision (spouse, spouse-1, …) so the board
+    // never gets two rows with the same key.
+    while (used.has(key)) { counts[base] = (counts[base] || 0) + 1; key = `${base}-${counts[base]}`; }
+    used.add(key);
     const name = String((m && m.name) || '').trim() || `${type} (consultant-set)`;
     rows.push({ memberType: type, name, memberKey: key });
   }

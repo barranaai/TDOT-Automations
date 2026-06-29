@@ -129,15 +129,25 @@ function seedPlan({ schema, composition }) {
     const isMultiple = Boolean(roleDef.multipleAllowed);
 
     if (isMultiple && membersOfRole.length > 0) {
-      // One block of rows per actual member instance. The index is taken from the
-      // member's STABLE memberKey number (child-1 → 1, child-2 → 2) — NOT the array
-      // position — so reordering the board, or removing a middle member, doesn't
-      // renumber everyone and orphan/duplicate their rows on re-seed. Falls back to
-      // array position when a key carries no number (identical output for a
-      // normally-ordered board, so existing rows are unaffected).
+      // One block of rows per actual member instance. The index is the member's
+      // STABLE memberKey number (child-1 → 1, child-2 → 2) — NOT array position — so
+      // reordering the board, or removing a middle member, doesn't renumber everyone
+      // and orphan/duplicate their rows on re-seed. Uniqueness within the role is
+      // GUARANTEED: a key-derived index is used only when free; a collision or a
+      // numberless key falls back to the lowest unused index — so two members can
+      // never collide into a duplicate documentCode (which would throw + abort the
+      // entire seed). Normally-ordered boards (child-1, child-2, …) are unchanged.
+      const used = new Set();
+      const preferred = membersOfRole.map((member) => {
+        const k = memberKeyIndex(member && member.memberKey);
+        if (k != null && !used.has(k)) { used.add(k); return k; }
+        return null;
+      });
+      let nextFree = 1;
       membersOfRole.forEach((member, i) => {
-        const keyIdx = memberKeyIndex(member && member.memberKey);
-        planForMember({ schema, roleDef, member, memberIndex: keyIdx != null ? keyIdx : i + 1, isMultiple, prefix, rows, seenCodes });
+        let memberIndex = preferred[i];
+        if (memberIndex == null) { while (used.has(nextFree)) nextFree++; memberIndex = nextFree; used.add(nextFree); }
+        planForMember({ schema, roleDef, member, memberIndex, isMultiple, prefix, rows, seenCodes });
       });
     } else {
       // Single-member role, OR a required/multiple role with no explicit member

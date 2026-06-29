@@ -2587,11 +2587,12 @@ ${hasAdditionalForm ? `
       // sub-sections, etc. This is destructive on the section structure
       // and only safe to run when there are 2+ members in the manifest.
       setupMultiMemberDOM();
-    } else if (ALLOWED_TYPES.length > 0) {
+    } else if (!MEMBER_EDITING_LOCKED && ALLOWED_TYPES.length > 0) {
       // Single applicant on a member-capable case type: keep the form
       // exactly as the form file defines it (no destructive changes) but
       // still expose the "+ Add Family Member" button so the client can
-      // upgrade the case to multi-applicant.
+      // upgrade the case to multi-applicant. Suppressed when editing is locked
+      // (family is consultant-set in the retainer panel).
       setupAddMemberButtonOnly();
     }
 

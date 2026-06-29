@@ -44,3 +44,12 @@ test('falls back to array position when a memberKey carries no number', () => {
   const codes = childCodes([{ role: 'DependentChild', memberKey: '' }, { role: 'DependentChild', memberKey: '' }]);
   assert.deepEqual(codes, ['X-Y-DEPENDENTCHILD1-PP-001', 'X-Y-DEPENDENTCHILD2-PP-001']);
 });
+
+test('colliding memberKey numbers produce unique codes instead of throwing', () => {
+  // Two members whose keys both end in 1 — array-position uniqueness is gone, so
+  // the index assignment must de-collide rather than mint a duplicate documentCode.
+  const run = () => childCodes([{ role: 'DependentChild', memberKey: 'child-1' }, { role: 'DependentChild', memberKey: 'kid-1' }]);
+  assert.doesNotThrow(run);
+  const codes = run();
+  assert.equal(new Set(codes).size, codes.length); // unique
+});
