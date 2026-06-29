@@ -216,12 +216,16 @@ async function releaseExpiredSlots() {
 }
 
 /** Create a Square payment link and store its order id on the lead. */
-async function createCheckout({ leadId, amount, description, type = 'lead' }) {
+async function createCheckout({ leadId, amount, description, type = 'lead', idempotencyKey }) {
   const referenceId = `${type}-${leadId}`;
+  // A deterministic key (e.g. per lead+slot) makes Square return the SAME
+  // payment link on a duplicate submit instead of minting a second payable
+  // link; callers that don't pass one get a fresh random key, as before.
+  const idemKey = String(idempotencyKey || `${referenceId}-${crypto.randomBytes(6).toString('hex')}`).slice(0, 45);
   const res = await axios.post(
     `${SQUARE_API_BASE}/v2/online-checkout/payment-links`,
     {
-      idempotency_key: `${referenceId}-${crypto.randomBytes(6).toString('hex')}`,
+      idempotency_key: idemKey,
       quick_pay: {
         name: description,
         price_money: { amount, currency: 'CAD' },

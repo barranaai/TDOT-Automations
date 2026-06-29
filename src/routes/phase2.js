@@ -127,6 +127,12 @@ router.get('/book/:leadId', async (req, res) => {
   }
   try {
     const lead  = await leadService.getLead(leadId);
+    // Already booked → show the confirmation, not the slot picker (avoids a
+    // re-submit / re-charge path entirely).
+    if (lead && lead.bookingStatus === 'Booked') {
+      const [bd, bt] = String(lead.bookedSlot || '').split(' ');
+      return res.type('html').send(buildBookingDoneHtml(lead, bd || '', bt || ''));
+    }
     const consultant = require('../../config/consultantRouting').routeConsultant(lead);
     const slots = await bookingService.getAvailableSlots(lead.tier || 'T2', 4, consultant.teamMemberId);
     res.type('html').send(buildBookingPageHtml(lead, slots, req.query.t, consultant));
@@ -147,6 +153,12 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
     if (!slotDate || !slotTime) return res.status(400).type('html').send('Please choose a slot.');
 
     const lead = await leadService.getLead(leadId);
+    // Double-submit guard: a lead that's already Booked must not be re-held or
+    // re-charged (back button, retry, two tabs). Show their existing booking.
+    if (lead && lead.bookingStatus === 'Booked') {
+      const [bd, bt] = String(lead.bookedSlot || '').split(' ');
+      return res.type('html').send(buildBookingDoneHtml(lead, bd || slotDate, bt || slotTime));
+    }
     await bookingService.holdSlot(leadId, slotDate, slotTime);
 
     // Everyone pays the consult fee — per the intake brief, even Critical (T0)
@@ -164,6 +176,9 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
     const checkoutUrl = await bookingService.createCheckout({
       leadId, amount: fee,
       description: `Consultation with TDOT Immigration — ${slotDate} ${slotTime}`,
+      // Same lead + same slot → same Square link (a re-submit can't mint a
+      // second payable link).
+      idempotencyKey: `lead-${leadId}-${slotDate}-${slotTime}`.replace(/[^A-Za-z0-9_-]/g, ''),
     });
     res.redirect(checkoutUrl);
   } catch (err) {
