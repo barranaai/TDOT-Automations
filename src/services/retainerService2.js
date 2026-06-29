@@ -278,10 +278,19 @@ async function onRetainerSigned(leadId) {
   }
 
   // 1. Hand off to Phase 1 (WS6). Safe no-op until handoffService exists.
+  // The handoff is wrapped so a failure (e.g. a Monday error, or a lead missing
+  // email/name) is logged loudly but does NOT skip step 2 — the retainer is
+  // signed regardless, so the client must still get their payment link. Staff
+  // can re-trigger the handoff once the lead is fixed.
   let handoff;
   try { handoff = require('./handoffService'); } catch (_) { handoff = null; }
   if (handoff && handoff.onRetainerSigned) {
-    await handoff.onRetainerSigned({ leadId });
+    try {
+      await handoff.onRetainerSigned({ leadId });
+    } catch (err) {
+      console.error(`[Retainer2] HANDOFF FAILED for lead ${leadId} — no Client Master case was created; continuing to the payment link. ${err.message}`);
+      await postLeadNote(leadId, `⚠ <b>Handoff failed</b> — no Client Master case was created (${err.message}). Please check this lead's email/name and re-mark the retainer signed, or create the case manually.`).catch(() => {});
+    }
   } else {
     console.log(`[Retainer2] Retainer signed for lead ${leadId} — handoffService (WS6) not built yet`);
   }

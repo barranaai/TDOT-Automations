@@ -343,10 +343,18 @@ async function applyAction({ leadId, action, value }) {
       await postPortalNote(leadId, `Retainer fee set to $${v.normalized} CAD.`);
       return { ok: true, message: `Retainer fee set to $${v.normalized}. The retainer agreement (once Outcome is Retain) and the payment link (once signed) are emailed automatically.` };
 
-    case 'retainerSigned':
+    case 'retainerSigned': {
+      // Precondition: signing implies the consultation was retained. Without
+      // this, a mis-click on an un-retained lead would still flow through to
+      // handoffService and create a spurious Client Master case.
+      if (lead.outcome !== 'Retain') {
+        const e = new Error('Set the outcome to “Retain” before marking the retainer signed.');
+        e.badRequest = true; throw e;
+      }
       await leadService.updateLead(leadId, { retainerSigned: v.normalized });
       await postPortalNote(leadId, `Retainer marked signed (${v.normalized}).`);
       return { ok: true, message: 'Retainer marked signed — the case is being created and the payment link emailed to the client.' };
+    }
 
     case 'bookingInvite':
       await leadService.updateLead(leadId, { bookingInvite: 'Send' });

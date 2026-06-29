@@ -116,7 +116,12 @@ async function _doHandoff(leadId) {
     return lead.clientMasterItemId;
   }
 
-  const missing = ['email', 'caseTypeInterest'].filter((k) => !lead[k]);
+  // Only email + a real name are genuinely required. The case type is NOT —
+  // resolveValidatedCaseType already falls back (confirmedCaseType → canonical
+  // map → defer-to-staff with a note), so requiring caseTypeInterest (which only
+  // the public intake form sets) would wrongly block a staff-created or
+  // confirmedCaseType-only lead from ever getting a Client Master case.
+  const missing = ['email'].filter((k) => !lead[k]);
   if (!lead.fullName || lead.fullName === lead.id) missing.push('fullName');
   if (missing.length) throw new Error(`Lead ${leadId} missing required field(s) for handoff: ${missing.join(', ')}`);
 

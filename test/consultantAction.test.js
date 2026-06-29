@@ -7,7 +7,7 @@
 const test   = require('node:test');
 const assert = require('node:assert/strict');
 
-const { validateAction, OUTCOME_LABELS } = require('../src/services/consultantPortalService');
+const { validateAction, parseSelections, OUTCOME_LABELS } = require('../src/services/consultantPortalService');
 
 test('outcome accepts only the exact board labels', () => {
   for (const label of OUTCOME_LABELS) {
@@ -43,4 +43,26 @@ test('no-arg actions pass; unknown action is rejected', () => {
   assert.equal(validateAction('bookingInvite').ok, true);
   assert.equal(validateAction('resendLinks').ok, true);
   assert.equal(validateAction('deleteEverything').ok, false);
+});
+
+test('retainerFee rejects loosely-typed inputs (boolean / array / hex / exponent)', () => {
+  assert.equal(validateAction('retainerFee', true).ok, false);  // Number(true) === 1
+  assert.equal(validateAction('retainerFee', [5]).ok, false);   // Number([5]) === 5
+  assert.equal(validateAction('retainerFee', '0x10').ok, false); // hex
+  assert.equal(validateAction('retainerFee', '1e9').ok, false);  // exponent
+  assert.deepEqual(validateAction('retainerFee', '3500'), { ok: true, normalized: 3500 });
+});
+
+test('retainerSigned rejects structurally-valid but impossible dates', () => {
+  assert.equal(validateAction('retainerSigned', '2026-13-99').ok, false);
+  assert.equal(validateAction('retainerSigned', '2026-02-30').ok, false);
+  assert.equal(validateAction('retainerSigned', '9999-99-99').ok, false);
+  assert.equal(validateAction('retainerSigned', '2026-06-29').ok, true);
+});
+
+test('parseSelections bounds fee/govFee to non-negative within cap', () => {
+  assert.equal(parseSelections({ template: 'pa', feeCents: -5 }).feeCents, undefined);
+  assert.equal(parseSelections({ template: 'pa', govFeeDollars: -1 }).govFeeDollars, undefined);
+  assert.equal(parseSelections({ template: 'pa', feeCents: 9e12 }).feeCents, undefined);
+  assert.equal(parseSelections({ template: 'pa', feeCents: 350000 }).feeCents, 350000);
 });
