@@ -40,11 +40,47 @@ function esc(s) {
 // never depends on CloudConvert being up.
 function isV2() { return String(process.env.RETAINER_ENGINE || 'v1').trim().toLowerCase() === 'v2'; }
 
-const _pdfCache = new Map(); // leadId → PDF Buffer (warmed at send-time, served by the /retainer route)
+const _pdfCache = new Map(); // leadId → PDF Buffer (fast path; lost on restart)
 function cacheRetainerPdf(leadId, buf) {
   const key = String(leadId);
   _pdfCache.set(key, buf);
   if (_pdfCache.size > 50) _pdfCache.delete(_pdfCache.keys().next().value); // evict oldest
+}
+
+// Durable copy of the SENT agreement. The in-memory cache is a fast path only —
+// it's capped at 50 and wiped on every restart, so without this the /retainer
+// route would regenerate from the lead's CURRENT columns, which can differ from
+// what the client was emailed/signed. We persist the exact sent PDF to the lead's
+// OneDrive folder at send-time and serve THAT. Stored under LEAD-<id> (the
+// agreement is reviewed before handoff, while the folder still has that name);
+// best-effort on both sides — a miss falls back to the in-memory cache, then to a
+// last-resort regenerate.
+const RETAINER_PDF = { subfolder: 'Retainer', filename: 'retainer-agreement.pdf' };
+function leadFolderRef(lead) { return { clientName: lead.fullName || lead.name || '', caseRef: `LEAD-${lead.id}` }; }
+
+async function storeRetainerPdf(lead, buf) {
+  try {
+    const oneDrive = require('./oneDriveService');
+    const ref = leadFolderRef(lead);
+    if (!ref.clientName) return;
+    await oneDrive.ensureClientFolder(ref);
+    await oneDrive.uploadFile({ ...ref, category: RETAINER_PDF.subfolder, filename: RETAINER_PDF.filename, buffer: buf, mimeType: 'application/pdf' });
+    console.log(`[Retainer2] Stored durable retainer PDF for lead ${lead.id}`);
+  } catch (err) {
+    console.warn(`[Retainer2] Durable retainer PDF store failed for lead ${lead.id} (in-memory cache still warm): ${err.message}`);
+  }
+}
+
+async function readStoredRetainerPdf(lead) {
+  try {
+    const oneDrive = require('./oneDriveService');
+    const ref = leadFolderRef(lead);
+    if (!ref.clientName) return null;
+    return await oneDrive.readFile({ ...ref, subfolder: RETAINER_PDF.subfolder, filename: RETAINER_PDF.filename });
+  } catch (err) {
+    console.warn(`[Retainer2] Durable retainer PDF read failed for lead ${lead.id}: ${err.message}`);
+    return null;
+  }
 }
 
 /** Build the plan from the lead's saved columns and render the combined PDF (v2). */
@@ -69,9 +105,14 @@ async function generateV2Pdf(lead) {
 async function getRetainerDocument(lead) {
   if (!isV2()) return buildRetainerPdf(lead);
   const key = String(lead.id);
-  if (_pdfCache.has(key)) return _pdfCache.get(key);
+  if (_pdfCache.has(key)) return _pdfCache.get(key);          // fast path (warm process)
+  const stored = await readStoredRetainerPdf(lead);            // the exact SENT copy
+  if (stored) { _pdfCache.set(key, stored); return stored; }
+  // No durable copy (legacy lead, or the store failed) — regenerate as a last
+  // resort and warm both caches so the next read is stable.
   const pdf = await generateV2Pdf(lead);
   cacheRetainerPdf(key, pdf);
+  await storeRetainerPdf(lead, pdf);
   return pdf;
 }
 
@@ -134,6 +175,7 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
     try {
       const pdf = await generateV2Pdf(lead);
       cacheRetainerPdf(leadId, pdf);
+      await storeRetainerPdf(lead, pdf); // durable copy = the exact PDF the client is emailed
     } catch (err) {
       if (err.notReady) {
         console.log(`[Retainer2] v2 plan not ready for lead ${leadId} — agreement HELD`);
