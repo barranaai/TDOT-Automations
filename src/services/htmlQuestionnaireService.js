@@ -2224,6 +2224,17 @@ ${hasAdditionalForm ? `
     for (var i = 0; i < els.length; i++) {
       els[i].id = memberKey + '-' + els[i].id;
     }
+    /* Radio groups are keyed by the name attribute, which is document-wide:
+       without prefixing, a cloned member's radios share the group name with the
+       primary's (and each other's), so selecting one member's option deselects the
+       same question for another member. Prefix the name per member so each member's
+       radio group is independent. collectFields reads inp.name into _radioName AFTER
+       this runs, so get/setFieldValue resolve the correct per-member group; the
+       storage key is section__label (member-agnostic), so saved data is unaffected. */
+    var radios = section.querySelectorAll('input[type="radio"][name]');
+    for (var r = 0; r < radios.length; r++) {
+      radios[r].name = memberKey + '-' + radios[r].name;
+    }
     /* Update onchange handlers that reference IDs (toggleConditional calls) */
     var onchangeEls = section.querySelectorAll('[onchange]');
     for (var j = 0; j < onchangeEls.length; j++) {
@@ -4067,9 +4078,12 @@ input[disabled], select[disabled], textarea[disabled] {
         }
       }
 
-      /* Deduplicate IDs */
+      /* Deduplicate IDs + radio group names (see the client-side note in
+         deduplicateIds — same cross-member radio collision on the review page). */
       var idEls = section.querySelectorAll('[id]');
       for (var ii = 0; ii < idEls.length; ii++) idEls[ii].id = m.key + '-' + idEls[ii].id;
+      var rEls = section.querySelectorAll('input[type="radio"][name]');
+      for (var rii = 0; rii < rEls.length; rii++) rEls[rii].name = m.key + '-' + rEls[rii].name;
       var ocEls = section.querySelectorAll('[onchange]');
       for (var oi = 0; oi < ocEls.length; oi++) {
         var oc = ocEls[oi].getAttribute('onchange') || '';
