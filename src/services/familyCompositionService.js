@@ -37,18 +37,55 @@ function planMembersFromLead(lead) {
   return rows;
 }
 
-/** PURE: staff-facing note summarising what was created + the sub-type nudge. */
-function buildFamilyNote(lead, planned) {
-  const parts = [];
-  if (lead.hasSpouse === 'Yes') {
-    parts.push(`spouse (accompanying: ${lead.spouseAccompanying || 'not stated'})`);
-  }
-  const n = parseInt(String(lead.childrenCount || '0'), 10) || 0;
-  if (n > 0) parts.push(`${n} dependent child(ren) (accompanying: ${lead.childrenAccompanying || 'not stated'})`);
+// memberKey base per board type (matches the questionnaire convention so the
+// manifest reuses the same keys); multi-allowed types get a 1-based index.
+const KEY_BASE = {
+  'Spouse': 'spouse', 'Dependent Child': 'child', 'Parent': 'parent',
+  'Sibling': 'sibling', 'Sponsor': 'sponsor', 'Worker Spouse': 'worker-spouse',
+};
+const INDEXED_TYPES = new Set(['Dependent Child', 'Parent', 'Sibling']);
 
-  return `👪 <b>Family members created from the intake form</b>: ${parts.join(' · ')}.<br>` +
-    `${planned.length} row(s) added to the Family Members board with placeholder names — ` +
-    `please fill in names, dates of birth, and any flags.<br><br>` +
+/**
+ * PURE: the consultant's retainer-panel family list → the member rows that
+ * should exist. ONLY accompanying members get rows (they drive the per-member
+ * checklist + questionnaire); non-accompanying members are recorded on the lead
+ * but never materialised. Returns null when the consultant never set a list
+ * (so the caller falls back to the intake guesses); returns [] when the
+ * consultant explicitly set no accompanying family.
+ */
+function planMembersFromConsultant(lead) {
+  if (!lead.retainerFamilyMembers) return null;
+  let arr;
+  try { arr = JSON.parse(lead.retainerFamilyMembers); } catch (_) { return null; }
+  if (!Array.isArray(arr)) return null;
+
+  const counts = {};
+  const rows = [];
+  for (const m of arr) {
+    const type = String((m && m.type) || '').trim();
+    const base = KEY_BASE[type];
+    if (!base) continue;
+    const accompanying = !!(m && (m.accompanying === true || m.accompanying === 'Yes' || m.accompanying === 'true' || m.accompanying === 1));
+    if (!accompanying) continue;
+    let key;
+    if (INDEXED_TYPES.has(type)) { counts[base] = (counts[base] || 0) + 1; key = `${base}-${counts[base]}`; }
+    else { key = base; }
+    const name = String((m && m.name) || '').trim() || `${type} (consultant-set)`;
+    rows.push({ memberType: type, name, memberKey: key });
+  }
+  return rows;
+}
+
+/** PURE: staff-facing note summarising what was created. */
+function buildFamilyNote(planned, source) {
+  const summary = planned.map((r) => `${r.name} (${r.memberType})`).join(' · ') || 'none';
+  if (source === 'consultant') {
+    return `👪 <b>Family members set by the consultant</b> (retainer panel): ${summary}.<br>` +
+      `${planned.length} accompanying member(s) added to the Family Members board — they drive the per-member ` +
+      `document checklist and questionnaire sections. Re-seed the checklist if this case was already seeded.`;
+  }
+  return `👪 <b>Family members created from the intake form</b>: ${summary}.<br>` +
+    `${planned.length} row(s) added with placeholder names — please fill in real names, dates of birth, and any flags.<br><br>` +
     `<b>Reminder:</b> set the case's <b>Sub Type</b> (see the Sub Type hint column) — whether family members ` +
     `are accompanying decides which document checklist applies. Re-seed adds their documents without touching existing rows.`;
 }
@@ -61,7 +98,11 @@ function buildFamilyNote(lead, planned) {
  */
 async function createFromLead({ lead, caseRef, cmItemId }) {
   if (!lead || !caseRef) return 0;
-  const planned = planMembersFromLead(lead);
+  // The consultant's retainer-panel list is authoritative when present (even if
+  // it yields zero accompanying members); otherwise fall back to intake guesses.
+  const consultantRows = planMembersFromConsultant(lead);
+  const source  = consultantRows !== null ? 'consultant' : 'intake';
+  const planned = consultantRows !== null ? consultantRows : planMembersFromLead(lead);
   if (!planned.length) return 0;
 
   // Never pollute a board staff already curated for this case.
@@ -96,7 +137,7 @@ async function createFromLead({ lead, caseRef, cmItemId }) {
   if (cmItemId) {
     await mondayApi.query(
       `mutation($i: ID!, $body: String!){ create_update(item_id: $i, body: $body){ id } }`,
-      { i: String(cmItemId), body: buildFamilyNote(lead, planned) }
+      { i: String(cmItemId), body: buildFamilyNote(planned, source) }
     ).catch((err) => console.warn(`[Family] Staff note failed for ${caseRef}: ${err.message}`));
   }
   return created;
@@ -114,4 +155,4 @@ async function createFamilyRowsForItem({ itemId, caseRef }) {
   return createFromLead({ lead, caseRef, cmItemId: itemId });
 }
 
-module.exports = { createFromLead, createFamilyRowsForItem, planMembersFromLead, buildFamilyNote };
+module.exports = { createFromLead, createFamilyRowsForItem, planMembersFromLead, planMembersFromConsultant, buildFamilyNote };

@@ -1029,6 +1029,10 @@ ${hasAdditionalForm ? `
   // itself into a multi-applicant case via the manifest + page-reload flow.
   var MEMBERS        = ${JSON.stringify(Array.isArray(members) ? members : [])};
   var ALLOWED_TYPES  = ${JSON.stringify(Array.isArray(allowedMemberTypes) ? allowedMemberTypes : [])};
+  // Family composition is set by the consultant in the retainer panel — clients
+  // do not add/remove members here, so the add menu + per-member remove buttons
+  // are suppressed. (Flip to false to re-enable client-side editing.)
+  var MEMBER_EDITING_LOCKED = true;
   // IS_MULTI must match the server's isMultiMember (members.length > 1).
   // It controls whether setupMultiMemberDOM runs (destructive) and whether
   // save/submit/progress flows take their per-member or single-applicant
@@ -2113,8 +2117,9 @@ ${hasAdditionalForm ? `
       insertRef = section;
     }
 
-    /* Add the "Add Family Member" button if there are allowed types */
-    if (ALLOWED_TYPES.length > 0) {
+    /* Add the "Add Family Member" button if there are allowed types AND client
+       editing isn't locked (family is consultant-set in the retainer panel). */
+    if (!MEMBER_EDITING_LOCKED && ALLOWED_TYPES.length > 0) {
       var addArea = createAddMemberArea();
       insertRef.parentNode.insertBefore(addArea, insertRef.nextSibling);
     }
@@ -2169,8 +2174,9 @@ ${hasAdditionalForm ? `
     /* Re-attach onclick handlers for accordions inside the clone */
     reattachAccordionHandlers(section);
 
-    /* Add remove button for non-primary, non-submitted members */
-    if (member.key !== 'primary' && member.status !== 'Submitted') {
+    /* Add remove button for non-primary, non-submitted members (unless client
+       editing is locked — family is consultant-set). */
+    if (!MEMBER_EDITING_LOCKED && member.key !== 'primary' && member.status !== 'Submitted') {
       var removeBtn = document.createElement('button');
       removeBtn.className = 'mm-remove-btn';
       removeBtn.title = 'Remove ' + member.label;

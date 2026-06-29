@@ -305,6 +305,13 @@ ${buildNavHeader('consultations')}
         </div>
       </div>
 
+      <div class="subhead" style="margin-top:14px">${I.userCheck} Family members <span class="muted">(consultant-set · only “accompanying” members get a checklist + questionnaire)</span></div>
+      <table class="dynamic-table" id="family-table">
+        <thead><tr><th style="width:34%">Type</th><th style="width:42%">Full name</th><th style="width:18%">Accompanying</th><th></th></tr></thead>
+        <tbody id="family-body"></tbody>
+      </table>
+      <button class="btn" id="rp-add-family" type="button" style="margin-top:8px">${I.plus} Add family member</button>
+
       <div class="rp-grid2" style="margin-top:10px">
         <div class="rp-field">
           <div class="subhead">Sub-type <span class="muted">(optional — drives extension/restoration)</span></div>
@@ -525,6 +532,7 @@ function doAction(action,value,confirmMsg){
 
 // ── Retainer plan panel ──────────────────────────────────────────────────
 var RP_TPL_LABELS={ 'pa':'Principal Applicant only', 'pa-inviter':'PA + Inviter / Sponsor', 'employer':'Employer / Legal Rep' };
+var FAMILY_TYPES=['Spouse','Dependent Child','Parent','Sibling','Sponsor','Worker Spouse'];
 var RP_BLOCK_FIELDS=['inviterName','inviterAddress','inviterPhone','inviterEmail','empRepName','empCompanyName','empCompanyAddress','empCompanyPhone','empRepPhone','empRepEmail'];
 function rpEl(id){ return document.getElementById(id); }
 function escA(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
@@ -555,6 +563,8 @@ function hydrateRetainer(d){
   var m=plan.mergeData||{};
   RP_BLOCK_FIELDS.forEach(function(k){ var el=rpEl('rp-'+k); if(el) el.value=m[k]||''; });
   rebuildMilestones(plan.milestones||[]);
+  if(d.familyMemberTypes&&d.familyMemberTypes.length) FAMILY_TYPES=d.familyMemberTypes;
+  rebuildFamily(d.familyMembers||[]);
   var flag=annex.code?(annex.needsVerify?'<span class="rp-flag verify">verify</span>':'<span class="rp-flag high">high</span>'):'';
   rpEl('rp-suggestion').innerHTML='<div class="rp-sugg"><b>Suggested:</b> '+escHtml(RP_TPL_LABELS[plan.template]||plan.template||'—')+' · '+(annex.code?('['+escHtml(annex.code)+'] '+escHtml(annex.label||'')):'no annex auto-selected')+flag+(annex.basis?('<br><span class="muted">'+escHtml(annex.basis)+'</span>'):'')+(d.saved?' <span class="muted">· saved plan loaded</span>':'')+'</div>';
   renderRpWarnings(plan.warnings||[]);
@@ -590,6 +600,22 @@ function addMile(){ var tr=document.createElement('tr'); tr.innerHTML=mileRowHtm
 function bindMile(){
   Array.prototype.forEach.call(document.querySelectorAll('#milestone-body .m-amount'),function(i){ i.oninput=updateMileSum; });
   Array.prototype.forEach.call(document.querySelectorAll('#milestone-body [data-rm]'),function(b){ b.onclick=function(){ var tb=rpEl('milestone-body'); if(tb.rows.length>1){ b.closest('tr').remove(); updateMileSum(); } }; });
+}
+// ── Family members (consultant-set; materialised to the board at handoff) ──
+function famRowHtml(m){
+  var opts=FAMILY_TYPES.map(function(t){ return '<option value="'+escA(t)+'"'+(m.type===t?' selected':'')+'>'+escHtml(t)+'</option>'; }).join('');
+  return '<td><select class="f-type">'+opts+'</select></td>'+
+    '<td><input class="f-name" type="text" value="'+escA(m.name||'')+'" placeholder="Full name (optional)"></td>'+
+    '<td style="text-align:center"><input class="f-acc" type="checkbox"'+(m.accompanying?' checked':'')+'></td>'+
+    '<td><button type="button" class="rm-btn" data-rmf="1">✕</button></td>';
+}
+function rebuildFamily(rows){ var tb=rpEl('family-body'); if(!tb) return; tb.innerHTML=''; (rows||[]).forEach(function(m){ var tr=document.createElement('tr'); tr.innerHTML=famRowHtml(m); tb.appendChild(tr); }); bindFamily(); }
+function addFamily(){ var tr=document.createElement('tr'); tr.innerHTML=famRowHtml({type:'Spouse',name:'',accompanying:true}); rpEl('family-body').appendChild(tr); bindFamily(); }
+function bindFamily(){ Array.prototype.forEach.call(document.querySelectorAll('#family-body [data-rmf]'),function(b){ b.onclick=function(){ b.closest('tr').remove(); }; }); }
+function collectFamily(){
+  return Array.prototype.map.call(document.querySelectorAll('#family-body tr'),function(tr){
+    return { type:((tr.querySelector('.f-type')||{}).value||'').trim(), name:((tr.querySelector('.f-name')||{}).value||'').trim(), accompanying:!!((tr.querySelector('.f-acc')||{}).checked) };
+  }).filter(function(m){ return m.type; });
 }
 function feeCentsNow(){ var fe=rpEl('fee'); var f=Number(String((fe&&fe.value)||'').replace(/[^0-9.]/g,'')); return f>0?Math.round(f*100):0; }
 function collectMilestones(){
@@ -633,7 +659,7 @@ function splitMilestones(){
 function collectSelections(){
   var sel={ template:rpEl('rp-template').value, annexCode:rpEl('rp-annex').value, subType:(rpEl('rp-subtype').value||'').trim(),
     feeCents:feeCentsNow(), govFeeDollars: rpEl('rp-govfee').value!==''?Number(rpEl('rp-govfee').value):undefined,
-    hstRate: Math.round(hstRateNow()*1000)/10, withRprf: rpEl('rp-rprf').checked, milestones:collectMilestones() };
+    hstRate: Math.round(hstRateNow()*1000)/10, withRprf: rpEl('rp-rprf').checked, milestones:collectMilestones(), familyMembers:collectFamily() };
   RP_BLOCK_FIELDS.forEach(function(k){ var el=rpEl('rp-'+k); if(el) sel[k]=(el.value||'').trim(); });
   return sel;
 }
@@ -689,6 +715,7 @@ function initActions(){
   // Retainer panel
   rpEl('rp-template').onchange=toggleTemplateBlocks;
   rpEl('rp-add-mile').onclick=addMile;
+  rpEl('rp-add-family').onclick=addFamily;
   rpEl('rp-split-mile').onclick=splitMilestones;
   rpEl('rp-hst').oninput=updateMileSum;
   rpEl('btn-retainer-preview').onclick=previewRetainer;

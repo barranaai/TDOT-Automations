@@ -53,6 +53,7 @@ const COL_TYPE = {
   // Retainer plan (consultant portal P2) — all INERT (no webhook branches on these)
   selectedTemplate: 'text', selectedScopeAnnex: 'text', selectedSubType: 'text',
   govFee: 'numbers', retainerWithRprf: 'text', retainerHstRate: 'text', retainerMilestones: 'long_text',
+  retainerFamilyMembers: 'long_text',
   inviterName: 'text', inviterAddress: 'text', inviterPhone: 'text', inviterEmail: 'text',
   empRepName: 'text', empCompanyName: 'text', empCompanyAddress: 'text',
   empCompanyPhone: 'text', empRepPhone: 'text', empRepEmail: 'text',

@@ -38,6 +38,8 @@ function buildRetainerPlanResponse(lead) {
     retainerFee:     lead.retainerFee || '',
     annexOptions:    ANNEXES.map((a) => ({ code: a.code, label: a.label, group: a.group })),
     templateOptions: ['pa', 'pa-inviter', 'employer'],
+    familyMembers:   resolveFamilyMembers(lead),
+    familyMemberTypes: FAMILY_MEMBER_TYPES,
   };
 }
 
@@ -236,6 +238,39 @@ const SELECTION_STR_FIELDS = [
   'empRepName', 'empCompanyName', 'empCompanyAddress', 'empCompanyPhone', 'empRepPhone', 'empRepEmail',
 ];
 
+// Family member types the consultant can set in the retainer panel (these match
+// the Family Members board labels; "Principal Applicant" is implicit, never
+// listed). Only ACCOMPANYING members are later materialised to the board at
+// handoff → per-member document checklist + questionnaire sections.
+const FAMILY_MEMBER_TYPES = ['Spouse', 'Dependent Child', 'Parent', 'Sibling', 'Sponsor', 'Worker Spouse'];
+
+function normalizeFamilyMember(m) {
+  return {
+    type: String((m && m.type) || '').trim(),
+    name: String((m && m.name) || '').trim(),
+    accompanying: !!(m && (m.accompanying === true || m.accompanying === 'Yes' || m.accompanying === 'true' || m.accompanying === 1)),
+  };
+}
+
+// The family list the retainer panel shows: the consultant's saved list wins;
+// otherwise prefill from the intake answers (spouse + N children) so the panel
+// opens with a sensible starting point the consultant just refines.
+function resolveFamilyMembers(lead) {
+  if (lead.retainerFamilyMembers) {
+    try {
+      const arr = JSON.parse(lead.retainerFamilyMembers);
+      if (Array.isArray(arr)) return arr.map(normalizeFamilyMember).filter((m) => FAMILY_MEMBER_TYPES.includes(m.type));
+    } catch (_) { /* fall through to the intake prefill */ }
+  }
+  const out = [];
+  if (lead.hasSpouse === 'Yes') out.push({ type: 'Spouse', name: '', accompanying: lead.spouseAccompanying !== 'No' });
+  const n = parseInt(String(lead.childrenCount || '0'), 10);
+  for (let i = 1; i <= Math.min(Number.isFinite(n) ? n : 0, 12); i++) {
+    out.push({ type: 'Dependent Child', name: '', accompanying: lead.childrenAccompanying !== 'No' });
+  }
+  return out;
+}
+
 /**
  * PURE — whitelist + normalise a retainer-selections payload (JSON string or
  * object) into the override shape buildRetainerPlan consumes. Returns null on
@@ -260,6 +295,12 @@ function parseSelections(value) {
       trigger: String((m && m.trigger) || '').trim(),
       locked: i === 0,
     }));
+  }
+  if (Array.isArray(raw.familyMembers)) {
+    sel.familyMembers = raw.familyMembers
+      .map(normalizeFamilyMember)
+      .filter((m) => FAMILY_MEMBER_TYPES.includes(m.type))
+      .slice(0, 20);
   }
   if (sel.template && !PLAN_TEMPLATES.includes(sel.template)) return null;
   return Object.keys(sel).length ? sel : null;
@@ -396,6 +437,7 @@ async function applyAction({ leadId, action, value }) {
         retainerHstRate:    (s.hstRate != null) ? String(s.hstRate) : '13',
         retainerWithRprf:   s.withRprf ? 'Yes' : 'No',
         retainerMilestones: JSON.stringify(s.milestones || []),
+        retainerFamilyMembers: JSON.stringify(s.familyMembers || []),
         inviterName: s.inviterName || '', inviterAddress: s.inviterAddress || '', inviterPhone: s.inviterPhone || '', inviterEmail: s.inviterEmail || '',
         empRepName: s.empRepName || '', empCompanyName: s.empCompanyName || '', empCompanyAddress: s.empCompanyAddress || '',
         empCompanyPhone: s.empCompanyPhone || '', empRepPhone: s.empRepPhone || '', empRepEmail: s.empRepEmail || '',
