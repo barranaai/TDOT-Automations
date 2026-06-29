@@ -1854,7 +1854,7 @@ ${hasAdditionalForm ? `
         /* Find the member section header and add a flag indicator */
         var section = document.querySelector('[data-member-key="' + memberKey + '"]');
         if (section) {
-          var header = section.querySelector('.top-accordion-header, .applicant-header');
+          var header = section.querySelector('.top-accordion-header, .applicant-header, .accordion-header');
           if (header) {
             var badge = document.createElement('span');
             badge.style.cssText = 'display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#fff7ed;color:#92400e;border:1px solid #fed7aa;margin-left:8px;';
@@ -2057,17 +2057,25 @@ ${hasAdditionalForm ? `
   };
 
   function findTopSections() {
-    /* Find all top-level accordion sections — handles both naming conventions */
-    var sections = document.querySelectorAll('.top-accordion, .applicant-accordion');
-    return Array.prototype.slice.call(sections);
+    /* Preferred: forms authored with explicit top-level wrappers. */
+    var explicit = document.querySelectorAll('.top-accordion, .applicant-accordion');
+    if (explicit.length) return Array.prototype.slice.call(explicit);
+    /* Fallback: forms authored with plain .accordion at the top level (no wrapper,
+       e.g. Study Permit / PR Card / Super Visa). Take only the .accordion sections
+       that are NOT nested inside another accordion (those are sub-sections). */
+    var all = document.querySelectorAll('.accordion');
+    return Array.prototype.filter.call(all, function(a) {
+      return !a.parentElement || !a.parentElement.closest('.accordion, .sub-accordion');
+    });
   }
 
   function findSectionHeader(section) {
-    return section.querySelector('.top-accordion-header, .applicant-header');
+    /* .accordion-header last so explicit wrappers win when both are present. */
+    return section.querySelector('.top-accordion-header, .applicant-header, .accordion-header');
   }
 
   function findSectionBody(section) {
-    return section.querySelector('.top-accordion-body, .applicant-body');
+    return section.querySelector('.top-accordion-body, .applicant-body, .accordion-body');
   }
 
   /* A top section is a per-member "dependent template" if it's explicitly marked,
@@ -3988,9 +3996,18 @@ input[disabled], select[disabled], textarea[disabled] {
     'Sibling':         ['profile', 'personal', 'passport', 'flagged'],
   };
 
+  /* Top-level sections: explicit wrappers if present, else top-level .accordion
+     (forms like Study Permit / PR Card / Super Visa have no wrapper). */
+  function reviewTopSections() {
+    var explicit = document.querySelectorAll('.top-accordion, .applicant-accordion');
+    if (explicit.length) return Array.prototype.slice.call(explicit);
+    return Array.prototype.filter.call(document.querySelectorAll('.accordion'), function(a) {
+      return !a.parentElement || !a.parentElement.closest('.accordion, .sub-accordion');
+    });
+  }
+
   function setupMultiMemberReview() {
-    var topSections = document.querySelectorAll('.top-accordion, .applicant-accordion');
-    topSections = Array.prototype.slice.call(topSections);
+    var topSections = reviewTopSections();
     if (topSections.length === 0) return;
 
     var primarySection = topSections[0];
@@ -4001,7 +4018,7 @@ input[disabled], select[disabled], textarea[disabled] {
        (mirrors the client-side fix). */
     function isDepTpl(s) {
       if (s.hasAttribute && s.hasAttribute('data-member-template')) return true;
-      var h = s.querySelector('.top-accordion-header, .applicant-header');
+      var h = s.querySelector('.top-accordion-header, .applicant-header, .accordion-header');
       return !!(h && /dependent/i.test(h.textContent || ''));
     }
     var depSections = [];
@@ -4020,7 +4037,7 @@ input[disabled], select[disabled], textarea[disabled] {
       section.style.position = 'relative';
 
       /* Update header */
-      var header = section.querySelector('.top-accordion-header, .applicant-header');
+      var header = section.querySelector('.top-accordion-header, .applicant-header, .accordion-header');
       if (header) {
         var chevron = header.querySelector('.chevron');
         var icon = MEMBER_ICONS[m.type] || '👤';
@@ -4143,7 +4160,7 @@ input[disabled], select[disabled], textarea[disabled] {
      header. Staff can still collapse the section for cleanliness, but
      can never miss the fact that the client left it blank. */
   function markEmptySections() {
-    var topSections = document.querySelectorAll('.top-accordion, .applicant-accordion');
+    var topSections = reviewTopSections();
     topSections.forEach(function (section) {
       var inputs = section.querySelectorAll('input, select, textarea');
       var hasData = false;
@@ -4157,7 +4174,7 @@ input[disabled], select[disabled], textarea[disabled] {
         }
       }
       if (!hasData) {
-        var header = section.querySelector('.top-accordion-header, .applicant-header');
+        var header = section.querySelector('.top-accordion-header, .applicant-header, .accordion-header');
         if (header && !header.querySelector('.tdot-empty-badge')) {
           var badge = document.createElement('span');
           badge.className = 'tdot-empty-badge';
