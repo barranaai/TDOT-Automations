@@ -239,8 +239,8 @@ function parseSelections(value) {
 
   const sel = {};
   for (const k of SELECTION_STR_FIELDS) if (raw[k] != null) sel[k] = String(raw[k]).trim();
-  if (raw.feeCents != null) { const c = Math.round(Number(raw.feeCents)); if (Number.isFinite(c)) sel.feeCents = c; }
-  if (raw.govFeeDollars != null) { const d = Number(raw.govFeeDollars); if (Number.isFinite(d)) sel.govFeeDollars = d; }
+  if (raw.feeCents != null) { const c = Math.round(Number(raw.feeCents)); if (Number.isFinite(c) && c >= 0 && c <= FEE_MAX_CAD * 100) sel.feeCents = c; }
+  if (raw.govFeeDollars != null) { const d = Number(raw.govFeeDollars); if (Number.isFinite(d) && d >= 0 && d <= FEE_MAX_CAD) sel.govFeeDollars = d; }
   if (raw.hstRate != null) { const r = Number(String(raw.hstRate).replace('%', '')); if (Number.isFinite(r) && r >= 0) sel.hstRate = r; }
   if (raw.withRprf != null) sel.withRprf = (raw.withRprf === true || raw.withRprf === 'Yes' || raw.withRprf === 'true');
   if (Array.isArray(raw.milestones)) {
@@ -272,7 +272,12 @@ function validateAction(action, value) {
         ? { ok: true, normalized: value }
         : { ok: false, error: 'Invalid outcome value.' };
     case 'retainerFee': {
-      const n = Number(value);
+      // Reject loosely-typed inputs (boolean→1, [5]→5, '0x10'→16, '1e9'): require
+      // a plain decimal number or numeric string before coercion.
+      if (typeof value !== 'number' && typeof value !== 'string') return { ok: false, error: 'Fee must be a number.' };
+      const s = String(value).trim();
+      if (!/^\d+(\.\d+)?$/.test(s)) return { ok: false, error: 'Fee must be a plain CAD dollar amount.' };
+      const n = Number(s);
       if (!Number.isFinite(n) || n <= 0 || n > FEE_MAX_CAD) {
         return { ok: false, error: `Fee must be a positive amount in CAD dollars (max ${FEE_MAX_CAD}).` };
       }
@@ -280,7 +285,12 @@ function validateAction(action, value) {
     }
     case 'retainerSigned': {
       const d = (value && String(value).trim()) || new Date().toISOString().split('T')[0];
-      return DATE_RE.test(d) ? { ok: true, normalized: d } : { ok: false, error: 'Date must be YYYY-MM-DD.' };
+      if (!DATE_RE.test(d)) return { ok: false, error: 'Date must be YYYY-MM-DD.' };
+      // Structural match isn't enough — reject impossible dates (2026-13-99) by
+      // requiring the parsed date to round-trip to the same string.
+      const dt = new Date(d + 'T00:00:00Z');
+      if (Number.isNaN(dt.getTime()) || dt.toISOString().slice(0, 10) !== d) return { ok: false, error: 'That date doesn’t exist.' };
+      return { ok: true, normalized: d };
     }
     case 'bookingInvite':
     case 'resendLinks':
