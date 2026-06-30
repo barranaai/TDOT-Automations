@@ -413,12 +413,23 @@ async function postPortalNote(leadId, text) {
  * posts an audit note, and returns a human-facing result message.
  * @throws {Error} with .badRequest=true on validation failure, .notFound on missing lead
  */
-async function applyAction({ leadId, action, value }) {
+async function applyAction({ leadId, action, value, amend = false }) {
   const v = validateAction(action, value);
   if (!v.ok) { const e = new Error(v.error); e.badRequest = true; throw e; }
 
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
+
+  // Once the retainer agreement has been emailed, its contractual terms — the fee
+  // and the milestone schedule / plan — are locked: the client may already hold an
+  // agreement stating them. Changing them needs a deliberate "Amend" (records a
+  // staff note). The send itself never re-fires (retainerService2 guards on
+  // retainerSent), so this protects data integrity, not duplicate emails.
+  const agreementSent = !!(lead.retainerSent && String(lead.retainerSent).trim());
+  if (agreementSent && !amend && (action === 'retainerFee' || action === 'saveRetainerSelections')) {
+    const e = new Error('The retainer agreement has already been sent, so the fee and milestones are locked. Use “Amend” if you genuinely need to change them.');
+    e.badRequest = true; e.locked = true; throw e;
+  }
 
   const feeSet = require('./retainerService2').feeToCents(lead.retainerFee);
 
@@ -435,8 +446,12 @@ async function applyAction({ leadId, action, value }) {
 
     case 'retainerFee':
       await leadService.updateLead(leadId, { retainerFee: v.normalized });
-      await postPortalNote(leadId, `Retainer fee set to $${v.normalized} CAD.`);
-      return { ok: true, message: `Retainer fee set to $${v.normalized}. The retainer agreement (once Outcome is Retain) and the payment link (once signed) are emailed automatically.` };
+      await postPortalNote(leadId, agreementSent
+        ? `⚠ <b>Retainer fee AMENDED after the agreement was sent</b> — now $${v.normalized} CAD. The client may hold an agreement stating a different fee; re-issue it if the change is material.`
+        : `Retainer fee set to $${v.normalized} CAD.`);
+      return { ok: true, message: agreementSent
+        ? `Retainer fee amended to $${v.normalized}. A staff note was recorded — the agreement was NOT re-sent.`
+        : `Retainer fee set to $${v.normalized}. The retainer agreement (once Outcome is Retain) and the payment link (once signed) are emailed automatically.` };
 
     case 'retainerSigned': {
       // Precondition: signing implies the consultation was retained. Without
@@ -490,8 +505,10 @@ async function applyAction({ leadId, action, value }) {
         'inviterName', 'inviterAddress', 'inviterPhone', 'inviterEmail',
         'empRepName', 'empCompanyName', 'empCompanyAddress', 'empCompanyPhone', 'empRepPhone', 'empRepEmail',
       ] });
-      await postPortalNote(leadId, `Retainer plan saved — template ${s.template}, scope annex ${s.annexCode}, fee $${centsToMoney(s.feeCents)}.`);
-      return { ok: true, message: 'Retainer plan saved.' };
+      await postPortalNote(leadId, agreementSent
+        ? `⚠ <b>Retainer plan AMENDED after the agreement was sent</b> — template ${s.template}, scope annex ${s.annexCode}, fee $${centsToMoney(s.feeCents)}. The sent agreement may state different terms.`
+        : `Retainer plan saved — template ${s.template}, scope annex ${s.annexCode}, fee $${centsToMoney(s.feeCents)}.`);
+      return { ok: true, message: agreementSent ? 'Retainer plan amended — a staff note was recorded.' : 'Retainer plan saved.' };
     }
 
     default: {

@@ -309,9 +309,9 @@ app.get('/api/consultation/:leadId', async (req, res) => {
 // the consultant never touches the Monday frontend.
 app.post('/api/consultation/:leadId/action', express.json(), async (req, res) => {
   try {
-    const { action, value } = req.body || {};
+    const { action, value, amend } = req.body || {};
     const result = await consultantPortalService.applyAction({
-      leadId: (req.params.leadId || '').trim(), action, value,
+      leadId: (req.params.leadId || '').trim(), action, value, amend: amend === true,
     });
     res.json(result);
   } catch (err) {

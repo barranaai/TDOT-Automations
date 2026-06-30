@@ -236,6 +236,11 @@ function buildDetailHTML(leadId) {
   .rp-sum.ok { color:#16a34a; } .rp-sum.bad { color:#dc2626; }
   .m-due { display:inline-block; font-size:9px; font-weight:800; padding:1px 6px; border-radius:9px; background:#fef2f2; color:#dc2626; text-transform:uppercase; letter-spacing:.4px; vertical-align:middle; margin-left:6px; }
   .rp-stage { font-weight:700; color:var(--navy); }
+  .rp-fs { border:0; padding:0; margin:0; min-width:0; }
+  .rp-fs:disabled { opacity:.82; }
+  .rp-lock { display:flex; align-items:center; gap:12px; justify-content:space-between; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:10px 14px; margin-bottom:12px; font-size:13px; color:#92400e; }
+  .rp-lock.amending { background:#eff6ff; border-color:#bfdbfe; color:#1e40af; }
+  .rp-lock #rp-amend { flex:none; }
 
   a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }
 </style></head><body>
@@ -294,11 +299,15 @@ ${buildNavHeader('consultations')}
       <div class="card-t">${I.dollar} Retainer plan</div>
       <div id="rp-msg" class="act-msg" style="margin-top:0;margin-bottom:10px"></div>
 
+      <div id="rp-lock" class="rp-lock" style="display:none">
+        <span id="rp-lock-msg"></span>
+        <button class="btn" id="rp-amend" type="button">✎ Amend</button>
+      </div>
+      <fieldset id="rp-lock-fs" class="rp-fs">
       <div class="subhead">Retainer fee</div>
       <div class="frow">
         <input id="fee" type="number" min="1" step="1" placeholder="Fee (CAD $)">
         <button class="btn" id="btn-fee">${I.check} Set fee</button>
-        <button class="btn" id="btn-signed">${I.userCheck} Mark retainer signed</button>
       </div>
 
       <div id="rp-suggestion" style="margin-top:13px"></div>
@@ -384,6 +393,10 @@ ${buildNavHeader('consultations')}
         <button class="btn" id="btn-retainer-preview" type="button">${I.eye} Preview retainer agreement</button>
         <button class="btn primary" id="btn-retainer-save" type="button">${I.save} Save retainer plan</button>
       </div>
+      </fieldset>
+      <div class="frow" style="margin-top:12px">
+        <button class="btn" id="btn-signed">${I.userCheck} Mark retainer signed</button>
+      </div>
     </div>
   </div>
 </main>
@@ -395,6 +408,8 @@ ${SHARED_AUTH_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function safeUrl(u){ u=String(u==null?'':u).trim(); return /^(https?:|mailto:)/i.test(u)?u:'#'; } // block javascript:/data: in href
 var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload only once (don't clobber edits)
+// Lock state: once the retainer agreement is sent, fee + plan are read-only unless the consultant "Amend"s.
+var RP_LOCKED=false, RP_AMEND=false;
 function kv(k,v){ return v&&String(v).trim()?'<div class="kv"><span class="k">'+escHtml(k)+'</span><span class="v">'+escHtml(v)+'</span></div>':''; }
 function scores(arr){ var p=(arr||[]).map(function(v){return String(v||'').trim();}); return p.some(Boolean)?p.map(function(v){return v||'—';}).join(' / '):''; }
 function initials(n){ var p=String(n||'').trim().split(/\\s+/).filter(Boolean); return (p.length?(p[0][0]+(p.length>1?p[p.length-1][0]:'')):'?').toUpperCase(); }
@@ -405,7 +420,7 @@ function buildStepper(d){
     { k:'Booked',   done:!!(d.bookedSlot||d.bookingStatus==='Booked'||d.bookingStatus==='Slot Held') },
     { k:'Consult',  done:!!(d.consultationHeld||d.outcome) },
     { k:'Outcome',  done:!!d.outcome },
-    { k:'Retainer', done:!!d.retainerSent },
+    { k:'Retainer', done:!!(d.retainerSent && String(d.retainerSent).trim()) },
     { k:'Signed',   done:!!d.retainerSigned },
     { k:'Paid',     done:!!d.retainerPaid },
     { k:'Case',     done:!!d.clientMasterItemId }
@@ -452,6 +467,9 @@ function render(d){
     if(d.retainerPlan){ hydrateRetainer(d.retainerPlan); RP_HYDRATED=true; }
     else { loadRetainerPlan(); } // fallback: separate fetch (older payload)
   } else { updateMileSum(); } // keep the milestone sum in step with the fee
+  // Lock fee+plan once the agreement is sent (trim to match the server guard). Reset
+  // amend on every render so the panel re-locks after any action, not just a committed one.
+  RP_LOCKED = !!(d.retainerSent && String(d.retainerSent).trim()); RP_AMEND = false; applyRetainerLock();
 
   var ca=d.consultAgreement||{};
   document.getElementById('ca-sent').textContent=ca.sent?('· sent '+ca.sent):'';
@@ -528,7 +546,7 @@ function doAction(action,value,confirmMsg){
   setMsg('Working…','info'); disableActions(true);
   fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{
     method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'},
-    body: JSON.stringify({ action:action, value:value })
+    body: JSON.stringify({ action:action, value:value, amend: RP_AMEND })
   }).then(function(r){ return r.json().then(function(j){ return {status:r.status,j:j}; }); })
    .then(function(res){
      disableActions(false);
@@ -536,8 +554,26 @@ function doAction(action,value,confirmMsg){
      if(res.status!==200) throw new Error((res.j&&res.j.error)||('HTTP '+res.status));
      setMsg(res.j.message||'Done.','ok');
      if(action==='saveRetainerSelections') RP_HYDRATED=false; // re-hydrate the panel from the freshly-saved plan
-     load(); // refresh consultation state (pills, status, outcome highlight)
+     load(); // refresh consultation state (pills, status, outcome highlight) — render() re-locks + resets amend
    }).catch(function(e){ disableActions(false); setMsg(netErr(e),'err'); });
+}
+
+// Lock/unlock the retainer fee + plan once the agreement is sent. A disabled
+// <fieldset> also disables dynamically-rebuilt milestone/family rows. "Amend"
+// re-enables it for a deliberate, logged change (the server records a note).
+function applyRetainerLock(){
+  var fs=document.getElementById('rp-lock-fs'), banner=document.getElementById('rp-lock'),
+      msg=document.getElementById('rp-lock-msg'), amendBtn=document.getElementById('rp-amend');
+  if(fs) fs.disabled = RP_LOCKED && !RP_AMEND;
+  if(banner){ banner.style.display = RP_LOCKED ? 'flex' : 'none'; banner.className = 'rp-lock' + (RP_AMEND ? ' amending' : ''); }
+  if(msg) msg.innerHTML = RP_AMEND
+    ? '✎ <b>Amending a sent agreement.</b> Changes are recorded as a note — the client may hold the original terms.'
+    : '🔒 <b>The retainer agreement has been sent.</b> The fee &amp; milestones are locked.';
+  if(amendBtn) amendBtn.style.display = (RP_LOCKED && !RP_AMEND) ? 'inline-flex' : 'none';
+}
+function startAmend(){
+  if(!window.confirm('The retainer agreement has already been emailed to the client.\n\nAmending the fee or milestones will NOT re-send it, and the client may hold an agreement stating the original terms. A staff note will record the change.\n\nContinue?')) return;
+  RP_AMEND=true; applyRetainerLock();
 }
 
 // ── Retainer plan panel ──────────────────────────────────────────────────
@@ -746,6 +782,7 @@ function initActions(){
     doAction('resendLinks',null,'Re-send the meeting and pre-consultation links to the client now?');
   };
   // Retainer panel
+  var amendBtn=document.getElementById('rp-amend'); if(amendBtn) amendBtn.onclick=startAmend;
   rpEl('rp-template').onchange=toggleTemplateBlocks;
   rpEl('rp-add-mile').onclick=addMile;
   rpEl('rp-add-family').onclick=addFamily;
