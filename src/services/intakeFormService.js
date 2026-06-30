@@ -434,212 +434,262 @@ function buildIntakeFormHtml() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Client Intake — TDOT Immigration</title>
 <style>
-  body{background:${BRAND.lightBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;color:${BRAND.textOnLight}}
-  .container{max-width:680px;margin:0 auto;padding:32px 20px}
-  .header{background:${BRAND.darkPanel};color:${BRAND.textOnDark};padding:28px;border-radius:12px 12px 0 0;text-align:center}
-  .intro{background:${BRAND.lightCard};padding:20px 28px;border-bottom:1px solid ${BRAND.border};font-size:13.5px;color:${BRAND.mutedOnLight}}
-  .card{background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;box-shadow:0 4px 12px rgba(0,0,0,0.08)}
-  .section{margin-bottom:8px;border:1px solid ${BRAND.border};border-radius:10px;padding:20px 22px;margin-top:18px}
-  .section h2{margin:0 0 4px;font-size:17px;color:${BRAND.darkPanel}}
-  .section .hint{margin:0 0 8px;font-size:13px;color:${BRAND.mutedOnLight}}
-  label{display:block;font-weight:600;margin:16px 0 6px;font-size:14.5px}
-  label .opt{font-weight:400;color:${BRAND.mutedOnLight}}
-  input[type=text],input[type=email],input[type=tel],input[type=date],input[type=number],select,textarea{width:100%;padding:11px;border:1px solid ${BRAND.border};border-radius:8px;font-size:15px;box-sizing:border-box;background:#fff}
-  .radio{display:inline-block;font-weight:400;margin:4px 18px 4px 0}
-  .radio input{margin-right:6px}
-  .check{display:flex;gap:10px;align-items:flex-start;font-weight:400;font-size:13.5px;margin:12px 0}
-  .check input{margin-top:3px;flex:none}
-  .cond{display:none;margin-left:2px;padding-left:14px;border-left:3px solid ${BRAND.border}}
-  .cond.show{display:block}
-  button{background:${BRAND.primary};color:#fff;padding:15px 28px;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;margin-top:22px;width:100%}
-  button:hover{background:${BRAND.primaryHover}}
-  button:disabled{background:${BRAND.primaryHover};opacity:.75;cursor:not-allowed}
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+  :root{
+    --navy:${BRAND.darkPanel};--primary:${BRAND.primary};--primary-h:${BRAND.primaryHover};
+    --bg:${BRAND.lightBg};--card:${BRAND.lightCard};--border:${BRAND.border};
+    --text:${BRAND.textOnLight};--muted:${BRAND.mutedOnLight};--ink:${BRAND.textOnDark};
+    --accent-soft:#f6f9fc;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;color:var(--text);line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1240px;margin:0 auto;padding:0 24px 90px}
+
+  /* Hero */
+  .hero{background:linear-gradient(120deg,var(--navy) 0%,#16304f 100%);color:var(--ink);border-radius:0 0 18px 18px;padding:30px 38px;display:flex;align-items:center;gap:26px;flex-wrap:wrap;box-shadow:0 10px 30px rgba(16,32,52,.18)}
+  .hero-logo{flex:none}
+  .hero-text h1{margin:0;font-size:25px;font-weight:800;letter-spacing:-.4px}
+  .hero-text p{margin:5px 0 0;opacity:.82;font-size:14.5px;max-width:560px}
+  .disclaimer{background:var(--card);border:1px solid var(--border);border-top:none;margin:0 14px;padding:15px 24px;font-size:12.8px;line-height:1.6;color:var(--muted);border-radius:0 0 12px 12px}
+
+  /* Layout: section rail + form */
+  .layout{display:grid;grid-template-columns:212px minmax(0,1fr);gap:30px;align-items:start;margin-top:26px}
+  .railnav{position:sticky;top:22px;display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+  .railnav a{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;font-size:13px;font-weight:600;color:var(--muted);text-decoration:none;transition:background .15s,color .15s}
+  .railnav a:hover{background:var(--accent-soft);color:var(--navy)}
+  .railnav a.active{background:var(--navy);color:#fff}
+  .railnav a .dot{flex:none;width:21px;height:21px;border-radius:6px;display:grid;place-items:center;font-size:11px;font-weight:700;background:rgba(0,0,0,.06);color:var(--muted)}
+  .railnav a.active .dot{background:rgba(255,255,255,.22);color:#fff}
+
+  /* Section cards */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px 26px;margin-bottom:20px;box-shadow:0 2px 10px rgba(16,32,52,.05);scroll-margin-top:18px}
+  .card-head{display:flex;gap:14px;align-items:center;margin-bottom:18px;padding-bottom:15px;border-bottom:1px solid #eef1f5}
+  .num{flex:none;width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--navy),#16304f);color:#fff;font-weight:800;display:grid;place-items:center;font-size:15px}
+  .card-head h2{margin:0;font-size:17px;font-weight:700;color:var(--navy);letter-spacing:-.2px}
+  .card-head .hint{margin:3px 0 0;font-size:12.8px;color:var(--muted);font-weight:400}
+
+  /* Field grid */
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(248px,1fr));gap:16px 22px}
+  .field{display:flex;flex-direction:column;min-width:0}
+  .field.wide{grid-column:1 / -1}
+  .field > label,.cond > label{display:block;font-weight:600;margin:0 0 6px;font-size:13px;color:#33425a}
+  label .opt{font-weight:400;color:var(--muted)}
+  input[type=text],input[type=email],input[type=tel],input[type=date],input[type=number],select,textarea{width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:9px;font-size:16px;background:#fff;font-family:inherit;color:var(--text);transition:border-color .15s,box-shadow .15s}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(230,81,0,.13)}
+  textarea{resize:vertical;min-height:54px}
+  select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:34px}
+  @media (forced-colors: active){ select{appearance:auto;-webkit-appearance:auto;background-image:none;padding-right:12px} }
+
+  /* Radio pills */
+  .radio-row{display:flex;flex-wrap:wrap;gap:8px}
+  .radio{display:inline-flex;align-items:center;gap:7px;font-weight:500;font-size:14px;padding:9px 14px;border:1px solid var(--border);border-radius:9px;cursor:pointer;background:#fff;transition:border-color .15s,background .15s}
+  .radio:hover{border-color:#c7d2e0;background:#fafcff}
+  .radio input{margin:0;accent-color:var(--primary)}
+
+  /* Conditional reveal */
+  .cond{display:none}
+  .cond.show{display:block;grid-column:1 / -1;background:var(--accent-soft);border-left:3px solid var(--primary);border-radius:0 10px 10px 0;padding:15px 18px;margin-top:2px}
+  .cond .subgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px 20px}
+  /* A conditional nested inside another conditional must not repeat the accent card */
+  .cond .cond.show{background:none;border-left:0;border-radius:0;padding:10px 0 0 0;margin-top:8px}
+
+  /* Consent checkboxes */
+  .checks{display:grid;gap:10px}
+  .check{display:flex;gap:11px;align-items:flex-start;font-weight:500;font-size:13.5px;line-height:1.5;margin:0;padding:13px 15px;border:1px solid var(--border);border-radius:10px;background:#fcfdff;cursor:pointer}
+  .check:hover{border-color:#c7d2e0}
+  .check input{margin-top:2px;flex:none;width:17px;height:17px;accent-color:var(--primary)}
+
+  /* File inputs */
+  input[type=file]{width:100%;font-size:13px;padding:9px 11px;border:1px dashed var(--border);border-radius:9px;background:#fcfdff;cursor:pointer}
+
+  /* Submit */
+  .submitwrap{margin-top:8px;position:sticky;bottom:0;background:linear-gradient(0deg,var(--bg) 72%,transparent);padding:16px 0 4px}
+  button[type=submit]{background:var(--primary);color:#fff;padding:15px 28px;border:none;border-radius:11px;font-size:16px;font-weight:700;cursor:pointer;width:100%;box-shadow:0 6px 18px rgba(230,81,0,.28);transition:background .15s}
+  button[type=submit]:hover{background:var(--primary-h)}
+  button[type=submit]:disabled{background:var(--primary-h);opacity:.75;cursor:not-allowed}
+  .submitnote{text-align:center;font-size:12px;color:var(--muted);margin:9px 0 0}
   .spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;vertical-align:-2px;margin-right:8px;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
-  .filehint{font-size:12.5px;color:${BRAND.mutedOnLight}}
-</style></head><body><div class="container">
-  <div class="header">${TDOT_LOGO_LIGHT_HTML}
-    <h1 style="margin:12px 0 4px;font-size:22px">Tell Us About Your Case</h1>
-    <p style="margin:0;opacity:.85;font-size:14px">Complete this short intake so we can guide you to the right next step.</p>
-  </div>
-  <div class="intro">Thank you for contacting TDOT Immigration Services Inc. To help our team understand your inquiry and guide you to the right next step, please complete this intake form with accurate information.<br><br>
-  This form is for preliminary information collection only. Completing this form does not confirm eligibility, does not create a client relationship, and does not guarantee any immigration outcome. Our team may recommend a paid consultation or request additional documents before providing case-specific advice.</div>
-  <form class="card" method="POST" action="/lead/new" enctype="multipart/form-data">
+  .filehint{font-size:12.5px;color:var(--muted)}
 
-    <div class="section"><h2>1 · Basic Information</h2>
-      <label>Full legal name (as per passport) *</label><input type="text" name="fullName" required>
-      <label>Email address *</label><input type="email" name="email" required>
-      <label>Contact number with country code *</label><input type="tel" name="phone" required placeholder="+1 416 XXX XXXX">
-      <label>Current complete residential address *</label><textarea name="residentialAddress" rows="2" required placeholder="Street address, city, province or state, postal code, country"></textarea>
-      <label>Are you currently inside Canada? *</label><div>${yesNo('insideCanada')}</div>
-      <div class="cond" id="c-outside"><label>Which country are you currently in? *</label><input type="text" name="currentCountry"></div>
+  @media(max-width:920px){
+    .layout{grid-template-columns:1fr;gap:0}
+    .railnav{display:none}
+    .wrap{padding:0 14px 80px}
+    .hero{padding:24px 22px}
+    .disclaimer{margin:0}
+  }
+  @media(max-width:520px){
+    .hero-text h1{font-size:21px}
+  }
+</style></head><body><div class="wrap">
+  <header class="hero">
+    <div class="hero-logo">${TDOT_LOGO_LIGHT_HTML}</div>
+    <div class="hero-text">
+      <h1>Tell Us About Your Case</h1>
+      <p>Complete this short intake so we can guide you to the right next step.</p>
     </div>
+  </header>
+  <div class="disclaimer">Thank you for contacting <b>TDOT Immigration Services Inc.</b> To help our team understand your inquiry and guide you to the right next step, please complete this intake form with accurate information. This form is for preliminary information collection only — completing it does not confirm eligibility, create a client relationship, or guarantee any immigration outcome. Our team may recommend a paid consultation or request additional documents before providing case-specific advice.</div>
 
-    <div class="section"><h2>2 · Family Members</h2>
-      <p class="hint">If family members may be part of your application, this helps us prepare their document checklists too.</p>
-      <label>Do you have a spouse or common-law partner? *</label><div>${yesNo('hasSpouse')}</div>
-      <div class="cond" id="c-spouseAcc">
-        <label>Would they accompany you / be included in the application? *</label>
-        <div>${yesNo('spouseAccompanying', ['Not sure'])}</div>
+  <div class="layout">
+    <nav class="railnav" aria-label="Form sections">
+      <a href="#sec-1"><span class="dot">1</span> Basic info</a>
+      <a href="#sec-2"><span class="dot">2</span> Family</a>
+      <a href="#sec-3"><span class="dot">3</span> Status</a>
+      <a href="#sec-4"><span class="dot">4</span> TDOT history</a>
+      <a href="#sec-5"><span class="dot">5</span> Service</a>
+      <a href="#fblocks"><span class="dot">6</span> Specifics</a>
+      <a href="#sec-7"><span class="dot">7</span> Urgency</a>
+      <a href="#sec-8"><span class="dot">8</span> Consent</a>
+    </nav>
+
+  <form class="formcol" method="POST" action="/lead/new" enctype="multipart/form-data">
+
+    <section class="card" id="sec-1">
+      <div class="card-head"><span class="num">1</span><div><h2>Basic Information</h2></div></div>
+      <div class="grid">
+        <div class="field"><label>Full legal name (as per passport) *</label><input type="text" name="fullName" required></div>
+        <div class="field"><label>Email address *</label><input type="email" name="email" required></div>
+        <div class="field"><label>Contact number with country code *</label><input type="tel" name="phone" required placeholder="+1 416 XXX XXXX"></div>
+        <div class="field"><label>Are you currently inside Canada? *</label><div class="radio-row">${yesNo('insideCanada')}</div></div>
+        <div class="field wide"><label>Current complete residential address *</label><textarea name="residentialAddress" rows="2" required placeholder="Street address, city, province or state, postal code, country"></textarea></div>
+        <div class="cond" id="c-outside"><label>Which country are you currently in? *</label><input type="text" name="currentCountry"></div>
       </div>
-      <label>How many dependent children do you have? *</label>
-      <input type="number" name="childrenCount" id="childrenCount" min="0" max="12" value="0" required>
-      <div class="cond" id="c-childAcc">
-        <label>Would the children accompany you / be included? *</label>
-        <select name="childrenAccompanying"><option value="">Choose...</option>
-          ${['All', 'Some', 'None', 'Not sure'].map((v) => opt(v)).join('')}
-        </select>
+    </section>
+
+    <section class="card" id="sec-2">
+      <div class="card-head"><span class="num">2</span><div><h2>Family Members</h2><p class="hint">If family members may be part of your application, this helps us prepare their document checklists too.</p></div></div>
+      <div class="grid">
+        <div class="field"><label>Do you have a spouse or common-law partner? *</label><div class="radio-row">${yesNo('hasSpouse')}</div></div>
+        <div class="cond" id="c-spouseAcc"><label>Would they accompany you / be included in the application? *</label><div class="radio-row">${yesNo('spouseAccompanying', ['Not sure'])}</div></div>
+        <div class="field"><label>How many dependent children do you have? *</label><input type="number" name="childrenCount" id="childrenCount" min="0" max="12" value="0" required></div>
+        <div class="cond" id="c-childAcc"><label>Would the children accompany you / be included? *</label><select name="childrenAccompanying"><option value="">Choose...</option>${['All', 'Some', 'None', 'Not sure'].map((v) => opt(v)).join('')}</select></div>
       </div>
+    </section>
+
+    <section class="card" id="sec-3">
+      <div class="card-head"><span class="num">3</span><div><h2>Current Immigration Status</h2></div></div>
+      <div class="grid">
+        <div class="field"><label>Your current status in the country where you are presently located *</label><select name="currentStatus" id="currentStatus" required><option value="">Choose...</option>${CURRENT_STATUS.map((v) => opt(v)).join('')}</select></div>
+        <div class="cond" id="c-expiry"><label>When does your current status expire? * <span class="opt">(exact date, not an estimate)</span></label><input type="date" name="statusExpiry"></div>
+        <div class="field"><label>Have you applied for an extension or change of status recently? <span class="opt">(optional)</span></label><div class="radio-row"><label class="radio"><input type="radio" name="recentExtension" value="Yes"> Yes</label><label class="radio"><input type="radio" name="recentExtension" value="No"> No</label></div></div>
+        <div class="cond" id="c-extension"><label>Application type and submission date <span class="opt">(e.g. visitor record submitted on May 1, 2026)</span></label><textarea name="recentExtensionDetails" rows="2"></textarea></div>
+      </div>
+    </section>
+
+    <section class="card" id="sec-4">
+      <div class="card-head"><span class="num">4</span><div><h2>Your Relationship With TDOT</h2></div></div>
+      <div class="grid">
+        <div class="field"><label>Have you contacted or worked with TDOT Immigration before? *</label><select name="relationshipWithTdot" required><option value="">Choose...</option>${opt('New inquiry')}${opt('Existing client with active application')}${opt('Previous client with completed or inactive application')}</select></div>
+        <div class="cond" id="c-existing"><label>Which service or file type, if known? <span class="opt">(e.g. PGWP, Spousal Sponsorship, PR Card, Express Entry)</span></label><input type="text" name="existingFileType"></div>
+      </div>
+    </section>
+
+    <section class="card" id="sec-5">
+      <div class="card-head"><span class="num">5</span><div><h2>Service Required</h2></div></div>
+      <div class="grid">
+        <div class="field"><label>What service or support are you looking for? *</label><select name="serviceRequired" id="serviceRequired" required><option value="">Choose...</option>${serviceOptions}</select></div>
+        <div class="field"><label>What would you like to do? *</label><select name="whatDoYouWant" required><option value="">Choose...</option>${opt('Book consultation')}${opt('Start new application')}${opt('Request quote')}${opt('Existing file update')}${opt('General information')}</select></div>
+        <div class="field wide"><label>Please briefly explain your inquiry or goal *</label><textarea name="situationDescription" rows="4" required placeholder="Example: I received an ITA, I need to extend my work permit, I need help after a refusal..."></textarea></div>
+      </div>
+    </section>
+
+    <section class="card" id="fblocks" style="display:none">
+      <div class="card-head"><span class="num">6</span><div><h2>A Few Service-Specific Questions</h2><p class="hint">Shown based on the service you selected above.</p></div></div>
+      <div class="fb" id="F1"><div class="grid">
+        <div class="field"><label>Do you have a valid Express Entry profile?</label><div class="radio-row">${yesNo('f1_hasProfile')}</div></div>
+        <div class="field"><label>What is your CRS score?</label><input type="number" name="f1_crsScore" min="0" max="1200"></div>
+        <div class="field"><label>Have you received an ITA?</label><div class="radio-row">${yesNo('f1_hasIta')}</div></div>
+        <div class="cond" id="c-ita"><div class="subgrid"><div class="field"><label>ITA deadline</label><input type="date" name="f1_itaDeadline"></div><div class="field"><label>Which program or draw invited you, if known?</label><input type="text" name="f1_program"></div></div></div>
+      </div></div>
+      <div class="fb" id="F2"><div class="grid">
+        <div class="field"><label>Have you received a NOI, nomination, or invitation?</label><div class="radio-row">${yesNo('f2_hasNomination')}</div></div>
+        <div class="field"><label>Deadline, if any</label><input type="date" name="f2_deadline"></div>
+        <div class="field"><label>Which province?</label><input type="text" name="f2_province"></div>
+        <div class="field"><label>Are you applying with employer support?</label><div class="radio-row">${yesNo('f2_employerSupport')}</div></div>
+      </div></div>
+      <div class="fb" id="F3"><div class="grid">
+        <div class="field"><label>What type of work permit do you currently hold?</label><input type="text" name="f3_permitType"></div>
+        <div class="field"><label>What is the expiry date?</label><input type="date" name="f3_expiry"></div>
+        <div class="field"><label>Have you submitted a PR application or received an AOR?</label><div class="radio-row">${yesNo('f3_prSubmitted')}</div></div>
+        <div class="field"><label>Do you have employer documents?</label><div class="radio-row">${yesNo('f3_employerDocs')}</div></div>
+      </div></div>
+      <div class="fb" id="F4"><div class="grid">
+        <div class="field"><label>Which intake are you targeting?</label><input type="text" name="f4_intake" placeholder="e.g. Fall 2026"></div>
+        <div class="field"><label>Have you received admission?</label><div class="radio-row">${yesNo('f4_admission')}</div></div>
+        <div class="field"><label>Do you need application filing or document review?</label><select name="f4_need"><option value="">Choose...</option>${opt('Application filing')}${opt('Document review')}${opt('Both')}</select></div>
+        <div class="field"><label>School deadline, if any</label><input type="date" name="f4_deadline"></div>
+      </div></div>
+      <div class="fb" id="F5"><div class="grid">
+        <div class="field"><label>Are you inside or outside Canada?</label><select name="f5_location"><option value="">Choose...</option>${opt('Inside Canada')}${opt('Outside Canada')}</select></div>
+        <div class="field"><label>Have you had a refusal before? <span class="opt">(any refusal, even years ago)</span></label><div class="radio-row">${yesNo('f5_priorRefusal')}</div></div>
+        <div class="field wide"><label>What is the purpose of travel or stay extension?</label><textarea name="f5_purpose" rows="2"></textarea></div>
+      </div></div>
+      <div class="fb" id="F6"><div class="grid">
+        <div class="field"><label>Who is sponsoring whom?</label><input type="text" name="f6_whoSponsors" placeholder="e.g. I am sponsoring my spouse"></div>
+        <div class="field"><label>Is the sponsor a citizen or permanent resident?</label><select name="f6_sponsorStatus"><option value="">Choose...</option>${opt('Citizen')}${opt('Permanent resident')}${opt('Not sure')}</select></div>
+        <div class="field"><label>Is the applicant inside or outside Canada?</label><select name="f6_applicantLocation"><option value="">Choose...</option>${opt('Inside Canada')}${opt('Outside Canada')}</select></div>
+        <div class="field"><label>Any previous refusal or marriage-history concern?</label><input type="text" name="f6_concerns"></div>
+      </div></div>
+      <div class="fb" id="F7"><div class="grid">
+        <div class="field wide"><label>Do you need PR card renewal, PRTD, citizenship, or residency obligation review?</label><select name="f7_serviceNeeded"><option value="">Choose...</option>${opt('PR card renewal')}${opt('PR travel document (PRTD)')}${opt('Citizenship')}${opt('Residency obligation review')}</select></div>
+        <div class="field"><label>When did you become a permanent resident?</label><input type="date" name="f7_prDate"></div>
+        <div class="field"><label>Are you inside Canada?</label><select name="f7_insideCanada"><option value="">Choose...</option>${opt('Inside Canada')}${opt('Outside Canada')}</select></div>
+      </div></div>
+      <div class="fb" id="F8"><div class="grid">
+        <div class="field"><label>Are you the employer or the employee?</label><select name="f8_role"><option value="">Choose...</option>${opt('Employer')}${opt('Employee')}</select></div>
+        <div class="field"><label>What is the job title?</label><input type="text" name="f8_jobTitle"></div>
+        <div class="field wide"><label>Is this LMIA, employer portal, OINP employer, or compliance support?</label><select name="f8_supportType"><option value="">Choose...</option>${opt('LMIA')}${opt('Employer portal')}${opt('OINP employer')}${opt('Compliance support')}</select></div>
+      </div></div>
+      <div class="fb" id="F9"><div class="grid">
+        <div class="field"><label>What application was refused?</label><select name="f9_refusalType"><option value="">Choose...</option>${REFUSAL_TYPES.map((v) => opt(v)).join('')}</select></div>
+        <div class="field"><label>Date of the refusal <span class="opt">(even if it was a long time ago)</span></label><input type="date" name="f9_refusalDate"></div>
+        <div class="field"><label>Any upcoming deadline to reapply or respond?</label><input type="date" name="f9_deadline"></div>
+        <div class="field wide"><label>Upload the refusal letter if available <span class="opt">(PDF, JPG, PNG)</span></label><input type="file" name="f9LetterFile" accept=".pdf,.jpg,.jpeg,.png"></div>
+      </div></div>
+      <div class="fb" id="F10"><div class="grid">
+        <div class="field"><label>What document or update do you need?</label><input type="text" name="f10_need"></div>
+        <div class="field"><label>Is there a deadline?</label><input type="date" name="f10_deadline"></div>
+        <div class="field wide"><label>Upload the relevant letter or screenshot <span class="opt">(PDF, JPG, PNG)</span></label><input type="file" name="f10LetterFile" accept=".pdf,.jpg,.jpeg,.png"></div>
+      </div></div>
+    </section>
+
+    <section class="card" id="sec-7">
+      <div class="card-head"><span class="num">7</span><div><h2>Urgency Screening</h2></div></div>
+      <div class="grid">
+        <div class="field"><label>Do you have any urgent deadline connected to your inquiry? *</label><div class="radio-row">${yesNo('urgentDeadline')}</div></div>
+        <div class="cond" id="c-deadline"><div class="subgrid"><div class="field"><label>Deadline date *</label><input type="date" name="deadlineDate"></div><div class="field"><label>Reason for the deadline *</label><select name="deadlineReason"><option value="">Choose...</option>${DEADLINE_REASONS.map((v) => opt(v)).join('')}</select></div></div></div>
+        <div class="field wide"><label>Are you currently subject to a removal, departure, exclusion, or deportation order, or any enforcement action? *</label><div class="radio-row">${yesNo('removalOrder', ['Not sure'])}</div></div>
+        <div class="field wide"><label>Have you received any letter, notice, call, or communication from CBSA, IRCC, or law enforcement asking you to attend, leave, or respond? *</label><div class="radio-row">${yesNo('enforcementLetter', ['Not sure'])}</div></div>
+        <div class="cond" id="c-letter"><label>Please upload the letter <span class="opt">(PDF, JPG, PNG)</span> and/or provide details</label><input type="file" name="enforcementLetterFile" accept=".pdf,.jpg,.jpeg,.png"><textarea name="enforcementDetails" rows="3" placeholder="Details — what the letter says, who it is from, any dates" style="margin-top:8px"></textarea></div>
+        <div class="cond" id="c-restoration"><label>Are you currently within a restoration period? *</label><div class="radio-row">${yesNo('restorationPeriod')}</div><div class="cond" id="c-restorationDate"><label>Restoration deadline <span class="opt">(exact date if known)</span></label><input type="date" name="restorationDeadline"></div></div>
+        <div class="field"><label>Do you have any recent refusal? *</label><div class="radio-row">${yesNo('recentRefusal')}</div></div>
+        <div class="cond" id="c-refusal"><div class="subgrid"><div class="field"><label>What was refused? *</label><select name="refusalType"><option value="">Choose...</option>${REFUSAL_TYPES.map((v) => opt(v)).join('')}</select></div><div class="field"><label>Date of most recent refusal *</label><input type="date" name="refusalDate"></div><div class="field"><label>Upload refusal letter if available <span class="opt">(PDF, JPG, PNG)</span></label><input type="file" name="refusalLetterFile" accept=".pdf,.jpg,.jpeg,.png"></div></div></div>
+      </div>
+    </section>
+
+    <section class="card" id="sec-8">
+      <div class="card-head"><span class="num">8</span><div><h2>How You Found Us &amp; Consent</h2></div></div>
+      <div class="grid">
+        <div class="field"><label>How did you hear about TDOT Immigration? *</label><select name="howHeard" required><option value="">Choose...</option>${HOW_HEARD.map((v) => opt(v)).join('')}</select></div>
+        <div class="cond" id="c-referral"><label>Who referred you?</label><input type="text" name="referredBy"></div>
+      </div>
+      <div class="checks">
+        <label class="check"><input type="checkbox" name="consentContact" required> <span>I consent to TDOT Immigration contacting me by phone, WhatsApp, email, or message regarding my inquiry. *</span></label>
+        <label class="check"><input type="checkbox" name="consentAccuracy" required> <span>I confirm that the information provided in this form is true and accurate to the best of my knowledge. *</span></label>
+        <label class="check"><input type="checkbox" name="consentDisclaimer" required> <span>I understand that submitting this form does not guarantee eligibility, approval, or representation by TDOT Immigration, and that case-specific advice may require a paid consultation. *</span></label>
+        <label class="check"><input type="checkbox" name="consentStorage" required> <span>I consent to TDOT Immigration storing this information for intake, follow-up, and service assessment purposes. *</span></label>
+      </div>
+    </section>
+
+    <div class="submitwrap">
+      <button type="submit" id="submitBtn">Submit my information</button>
+      <p class="submitnote">Your details are kept confidential and used only to assess and follow up on your inquiry.</p>
     </div>
-
-    <div class="section"><h2>3 · Current Immigration Status</h2>
-      <label>Your current status in the country where you are presently located *</label>
-      <select name="currentStatus" id="currentStatus" required><option value="">Choose...</option>
-        ${CURRENT_STATUS.map((v) => opt(v)).join('')}
-      </select>
-      <div class="cond" id="c-expiry"><label>When does your current status expire? * <span class="opt">(exact date, not an estimate)</span></label>
-      <input type="date" name="statusExpiry"></div>
-      <label>Have you applied for an extension or change of status recently? <span class="opt">(optional)</span></label>
-      <div><label class="radio"><input type="radio" name="recentExtension" value="Yes"> Yes</label>
-      <label class="radio"><input type="radio" name="recentExtension" value="No"> No</label></div>
-      <div class="cond" id="c-extension"><label>Application type and submission date <span class="opt">(e.g. visitor record submitted on May 1, 2026)</span></label>
-      <textarea name="recentExtensionDetails" rows="2"></textarea></div>
-    </div>
-
-    <div class="section"><h2>4 · Your Relationship With TDOT</h2>
-      <label>Have you contacted or worked with TDOT Immigration before? *</label>
-      <select name="relationshipWithTdot" required><option value="">Choose...</option>
-        ${opt('New inquiry')}${opt('Existing client with active application')}${opt('Previous client with completed or inactive application')}
-      </select>
-      <div class="cond" id="c-existing"><label>Which service or file type, if known? <span class="opt">(e.g. PGWP, Spousal Sponsorship, PR Card, Express Entry)</span></label>
-      <input type="text" name="existingFileType"></div>
-    </div>
-
-    <div class="section"><h2>5 · Service Required</h2>
-      <label>What service or support are you looking for? *</label>
-      <select name="serviceRequired" id="serviceRequired" required><option value="">Choose...</option>${serviceOptions}</select>
-      <label>Please briefly explain your inquiry or goal *</label>
-      <textarea name="situationDescription" rows="4" required placeholder="Example: I received an ITA, I need to extend my work permit, I need help after a refusal..."></textarea>
-      <label>What would you like to do? *</label>
-      <select name="whatDoYouWant" required><option value="">Choose...</option>
-        ${opt('Book consultation')}${opt('Start new application')}${opt('Request quote')}${opt('Existing file update')}${opt('General information')}
-      </select>
-    </div>
-
-    <div class="section" id="fblocks" style="display:none"><h2>6 · A Few Service-Specific Questions</h2>
-      <div class="fb" id="F1">
-        <label>Do you have a valid Express Entry profile?</label><div>${yesNo('f1_hasProfile')}</div>
-        <label>What is your CRS score?</label><input type="number" name="f1_crsScore" min="0" max="1200">
-        <label>Have you received an ITA?</label><div>${yesNo('f1_hasIta')}</div>
-        <div class="cond" id="c-ita"><label>ITA deadline</label><input type="date" name="f1_itaDeadline">
-        <label>Which program or draw invited you, if known?</label><input type="text" name="f1_program"></div>
-      </div>
-      <div class="fb" id="F2">
-        <label>Have you received a NOI, nomination, or invitation?</label><div>${yesNo('f2_hasNomination')}</div>
-        <label>Deadline, if any</label><input type="date" name="f2_deadline">
-        <label>Which province?</label><input type="text" name="f2_province">
-        <label>Are you applying with employer support?</label><div>${yesNo('f2_employerSupport')}</div>
-      </div>
-      <div class="fb" id="F3">
-        <label>What type of work permit do you currently hold?</label><input type="text" name="f3_permitType">
-        <label>What is the expiry date?</label><input type="date" name="f3_expiry">
-        <label>Have you submitted a PR application or received an AOR?</label><div>${yesNo('f3_prSubmitted')}</div>
-        <label>Do you have employer documents?</label><div>${yesNo('f3_employerDocs')}</div>
-      </div>
-      <div class="fb" id="F4">
-        <label>Which intake are you targeting?</label><input type="text" name="f4_intake" placeholder="e.g. Fall 2026">
-        <label>Have you received admission?</label><div>${yesNo('f4_admission')}</div>
-        <label>Do you need application filing or document review?</label>
-        <select name="f4_need"><option value="">Choose...</option>${opt('Application filing')}${opt('Document review')}${opt('Both')}</select>
-        <label>School deadline, if any</label><input type="date" name="f4_deadline">
-      </div>
-      <div class="fb" id="F5">
-        <label>Are you inside or outside Canada?</label>
-        <select name="f5_location"><option value="">Choose...</option>${opt('Inside Canada')}${opt('Outside Canada')}</select>
-        <label>What is the purpose of travel or stay extension?</label><textarea name="f5_purpose" rows="2"></textarea>
-        <label>Have you had a refusal before? <span class="opt">(any refusal, even years ago)</span></label><div>${yesNo('f5_priorRefusal')}</div>
-      </div>
-      <div class="fb" id="F6">
-        <label>Who is sponsoring whom?</label><input type="text" name="f6_whoSponsors" placeholder="e.g. I am sponsoring my spouse">
-        <label>Is the sponsor a citizen or permanent resident?</label>
-        <select name="f6_sponsorStatus"><option value="">Choose...</option>${opt('Citizen')}${opt('Permanent resident')}${opt('Not sure')}</select>
-        <label>Is the applicant inside or outside Canada?</label>
-        <select name="f6_applicantLocation"><option value="">Choose...</option>${opt('Inside Canada')}${opt('Outside Canada')}</select>
-        <label>Any previous refusal or marriage-history concern?</label><input type="text" name="f6_concerns">
-      </div>
-      <div class="fb" id="F7">
-        <label>Do you need PR card renewal, PRTD, citizenship, or residency obligation review?</label>
-        <select name="f7_serviceNeeded"><option value="">Choose...</option>${opt('PR card renewal')}${opt('PR travel document (PRTD)')}${opt('Citizenship')}${opt('Residency obligation review')}</select>
-        <label>When did you become a permanent resident?</label><input type="date" name="f7_prDate">
-        <label>Are you inside Canada?</label>
-        <select name="f7_insideCanada"><option value="">Choose...</option>${opt('Inside Canada')}${opt('Outside Canada')}</select>
-      </div>
-      <div class="fb" id="F8">
-        <label>Are you the employer or the employee?</label>
-        <select name="f8_role"><option value="">Choose...</option>${opt('Employer')}${opt('Employee')}</select>
-        <label>What is the job title?</label><input type="text" name="f8_jobTitle">
-        <label>Is this LMIA, employer portal, OINP employer, or compliance support?</label>
-        <select name="f8_supportType"><option value="">Choose...</option>${opt('LMIA')}${opt('Employer portal')}${opt('OINP employer')}${opt('Compliance support')}</select>
-      </div>
-      <div class="fb" id="F9">
-        <label>What application was refused?</label>
-        <select name="f9_refusalType"><option value="">Choose...</option>${REFUSAL_TYPES.map((v) => opt(v)).join('')}</select>
-        <label>Date of the refusal <span class="opt">(even if it was a long time ago)</span></label><input type="date" name="f9_refusalDate">
-        <label>Upload the refusal letter if available <span class="opt">(PDF, JPG, PNG)</span></label>
-        <input type="file" name="f9LetterFile" accept=".pdf,.jpg,.jpeg,.png">
-        <label>Any upcoming deadline to reapply or respond?</label><input type="date" name="f9_deadline">
-      </div>
-      <div class="fb" id="F10">
-        <label>What document or update do you need?</label><input type="text" name="f10_need">
-        <label>Is there a deadline?</label><input type="date" name="f10_deadline">
-        <label>Upload the relevant letter or screenshot <span class="opt">(PDF, JPG, PNG)</span></label>
-        <input type="file" name="f10LetterFile" accept=".pdf,.jpg,.jpeg,.png">
-      </div>
-    </div>
-
-    <div class="section"><h2>7 · Urgency Screening</h2>
-      <label>Do you have any urgent deadline connected to your inquiry? *</label><div>${yesNo('urgentDeadline')}</div>
-      <div class="cond" id="c-deadline">
-        <label>Deadline date *</label><input type="date" name="deadlineDate">
-        <label>Reason for the deadline *</label>
-        <select name="deadlineReason"><option value="">Choose...</option>${DEADLINE_REASONS.map((v) => opt(v)).join('')}</select>
-      </div>
-      <label>Are you currently subject to a removal, departure, exclusion, or deportation order, or any enforcement action? *</label>
-      <div>${yesNo('removalOrder', ['Not sure'])}</div>
-      <label>Have you received any letter, notice, call, or communication from CBSA, IRCC, or law enforcement asking you to attend, leave, or respond? *</label>
-      <div>${yesNo('enforcementLetter', ['Not sure'])}</div>
-      <div class="cond" id="c-letter">
-        <label>Please upload the letter <span class="opt">(PDF, JPG, PNG)</span> and/or provide details</label>
-        <input type="file" name="enforcementLetterFile" accept=".pdf,.jpg,.jpeg,.png">
-        <textarea name="enforcementDetails" rows="3" placeholder="Details — what the letter says, who it is from, any dates" style="margin-top:8px"></textarea>
-      </div>
-      <div class="cond" id="c-restoration">
-        <label>Are you currently within a restoration period? *</label><div>${yesNo('restorationPeriod')}</div>
-        <div class="cond" id="c-restorationDate"><label>Restoration deadline <span class="opt">(exact date if known)</span></label>
-        <input type="date" name="restorationDeadline"></div>
-      </div>
-      <label>Do you have any recent refusal? *</label><div>${yesNo('recentRefusal')}</div>
-      <div class="cond" id="c-refusal">
-        <label>What was refused? *</label>
-        <select name="refusalType"><option value="">Choose...</option>${REFUSAL_TYPES.map((v) => opt(v)).join('')}</select>
-        <label>Date of most recent refusal *</label><input type="date" name="refusalDate">
-        <label>Upload refusal letter if available <span class="opt">(PDF, JPG, PNG)</span></label>
-        <input type="file" name="refusalLetterFile" accept=".pdf,.jpg,.jpeg,.png">
-      </div>
-    </div>
-
-    <div class="section"><h2>8 · How You Found Us &amp; Consent</h2>
-      <label>How did you hear about TDOT Immigration? *</label>
-      <select name="howHeard" required><option value="">Choose...</option>${HOW_HEARD.map((v) => opt(v)).join('')}</select>
-      <div class="cond" id="c-referral"><label>Who referred you?</label><input type="text" name="referredBy"></div>
-      <label class="check"><input type="checkbox" name="consentContact" required> I consent to TDOT Immigration contacting me by phone, WhatsApp, email, or message regarding my inquiry. *</label>
-      <label class="check"><input type="checkbox" name="consentAccuracy" required> I confirm that the information provided in this form is true and accurate to the best of my knowledge. *</label>
-      <label class="check"><input type="checkbox" name="consentDisclaimer" required> I understand that submitting this form does not guarantee eligibility, approval, or representation by TDOT Immigration, and that case-specific advice may require a paid consultation. *</label>
-      <label class="check"><input type="checkbox" name="consentStorage" required> I consent to TDOT Immigration storing this information for intake, follow-up, and service assessment purposes. *</label>
-    </div>
-
-    <button type="submit" id="submitBtn">Submit my information</button>
   </form>
+  </div>
 </div>
 <script>
 (function(){
@@ -733,6 +783,23 @@ function buildIntakeFormHtml() {
   // re-required by updCanada only once "inside Canada = Yes" reveals it.
   ['f1_hasProfile','f1_hasIta','f2_hasNomination','f2_employerSupport','f3_prSubmitted','f3_employerDocs','f4_admission','f5_priorRefusal','restorationPeriod','spouseAccompanying']
     .forEach(function(n){ radios(n).forEach(function(r){ r.required = false; }); });
+})();
+</script>
+<script>
+(function(){
+  var links = Array.prototype.slice.call(document.querySelectorAll('.railnav a'));
+  if (!links.length || !('IntersectionObserver' in window)) return;
+  var map = {};
+  links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if (e.isIntersecting) {
+        links.forEach(function(a){ a.classList.remove('active'); });
+        var a = map[e.target.id]; if (a) a.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-45% 0px -50% 0px' });
+  Array.prototype.slice.call(document.querySelectorAll('.card[id]')).forEach(function(c){ obs.observe(c); });
 })();
 </script>
 </body></html>`;
