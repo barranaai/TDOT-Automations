@@ -120,7 +120,10 @@ function buildRetainerPlan(lead = {}, overrides = {}) {
     paEmail:  lead.email || '',
     applicationType,
     scopeAnnexNo:   annexCode || '',
-    paymentAnnexNo: o.paymentAnnexNo || '',
+    // The fee structure + milestone schedule is always attached as Annex B (built
+    // by milestoneAnnexService, appended after the scope annex), so the master
+    // agreement's "milestones … detailed in Annex No. ___" reference reads "B".
+    paymentAnnexNo: o.paymentAnnexNo || 'B',
     serviceFees: fees ? centsToMoney(fees.serviceFeeCents) : '',
     hst:         fees ? centsToMoney(fees.hstCents) : '',
     total:       fees ? centsToMoney(fees.totalCents) : '',
