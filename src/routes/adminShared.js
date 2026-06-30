@@ -54,10 +54,12 @@ const SHARED_CSS_VARS = `
 `;
 
 // ─── Shared top navigation bar ────────────────────────────────────────────────
-//  activePage: 'dashboard' | 'engines'
+//  Consultations is the only nav destination — the Dashboard + Engine Controls
+//  links were retired so the portal reads as a consultants-only tool. Those pages
+//  still render this bar and remain reachable by direct URL (/admin/dashboard,
+//  /admin/engines); they just aren't linked from the nav.
+//  activePage: 'consultations' (others render the bar without an active link)
 function buildNavHeader(activePage) {
-  const isDash    = activePage === 'dashboard';
-  const isEng     = activePage === 'engines';
   const isConsult = activePage === 'consultations';
 
   return `<header class="admin-hdr">
@@ -67,14 +69,8 @@ function buildNavHeader(activePage) {
     </div>
     <div class="admin-divider"></div>
     <nav class="admin-nav">
-      <a href="/admin/dashboard" class="nav-lnk${isDash ? ' active' : ''}">
-        <span class="nav-icon">📊</span> Dashboard
-      </a>
       <a href="/admin/consultations" class="nav-lnk${isConsult ? ' active' : ''}">
         <span class="nav-icon">🗓️</span> Consultations
-      </a>
-      <a href="/admin/engines" class="nav-lnk${isEng ? ' active' : ''}">
-        <span class="nav-icon">⚙️</span> Engine Controls
       </a>
     </nav>
   </div>
