@@ -67,16 +67,37 @@ async function getHandoffGroupId() {
   return (_cachedGroupId = match.id);
 }
 
-/** Find an existing Client Master item by Client Email (dedup / lost-link recovery). */
-async function findClientMasterByEmail(email) {
+const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+/**
+ * PURE: from the Client Master items sharing an email, pick the one that is the
+ * SAME PERSON (case-insensitive, whitespace-normalised name match). A shared email
+ * across a couple/family must NOT collapse two separate matters into one case, so
+ * we only reuse on a name match; otherwise return null and a fresh case is created.
+ * @returns {string|null} the matching item id
+ */
+function pickSamePersonMatch(items, fullName) {
+  const wanted = normName(fullName);
+  if (!wanted) return null; // no name to compare → safer to create a new case
+  const match = (items || []).find((it) => normName(it.name) === wanted);
+  return match ? match.id : null;
+}
+
+/**
+ * Find an existing Client Master item for the SAME person (email + name) — dedup /
+ * lost-link recovery. Returns null when the email exists only under a different
+ * name (e.g. a spouse who shares the client's email), so that person gets their
+ * own case instead of merging into the first one's.
+ */
+async function findClientMasterByEmailAndName(email, fullName) {
   if (!email) return null;
   const data = await mondayApi.query(
     `query($boardId: ID!, $colId: String!, $val: String!) {
-       items_page_by_column_values(limit: 1, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) { items { id } }
+       items_page_by_column_values(limit: 25, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) { items { id name } }
      }`,
     { boardId: String(clientMasterBoardId), colId: CM.clientEmail, val: String(email) }
   );
-  return data?.items_page_by_column_values?.items?.[0]?.id || null;
+  return pickSamePersonMatch(data?.items_page_by_column_values?.items || [], fullName);
 }
 
 /** Resolve the specific Client Master case type, or null if it must be set by staff. */
@@ -125,10 +146,11 @@ async function _doHandoff(leadId) {
   if (!lead.fullName || lead.fullName === lead.id) missing.push('fullName');
   if (missing.length) throw new Error(`Lead ${leadId} missing required field(s) for handoff: ${missing.join(', ')}`);
 
-  // Pre-create dedup: an item with this email may already exist (lost Lead link).
-  const existing = await findClientMasterByEmail(lead.email);
+  // Pre-create dedup: the SAME person may already have a case (lost Lead link).
+  // Matched on email AND name so a shared family email never merges two matters.
+  const existing = await findClientMasterByEmailAndName(lead.email, lead.fullName);
   if (existing) {
-    console.log(`[Handoff] Reusing existing Client Master ${existing} for lead ${leadId} (matched by email)`);
+    console.log(`[Handoff] Reusing existing Client Master ${existing} for lead ${leadId} (matched by email + name)`);
     await leadService.updateLead(leadId, { clientMasterItemId: existing, conversionStatus: 'Retained — Awaiting Payment' });
     // Carry the intake OneDrive folder onto the reused case too (best-effort),
     // so the rename hook can find it when the case ref is assigned.
@@ -240,4 +262,4 @@ async function onRetainerSigned({ leadId }) {
   try { return await p; } finally { _inFlight.delete(key); }
 }
 
-module.exports = { onRetainerSigned, resolveCaseType, resolveValidatedCaseType };
+module.exports = { onRetainerSigned, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch };
