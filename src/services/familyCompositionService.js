@@ -137,7 +137,7 @@ async function createFromLead({ lead, caseRef, cmItemId }) {
     );
     created++;
   }
-  console.log(`[Family] Created ${created} Family Members row(s) for ${caseRef} from intake answers`);
+  console.log(`[Family] Created ${created} Family Members row(s) for ${caseRef} from ${source === 'consultant' ? 'the consultant-set list' : 'intake answers'}`);
 
   // Tell staff on the case what exists and what they still decide (sub type).
   if (cmItemId) {
