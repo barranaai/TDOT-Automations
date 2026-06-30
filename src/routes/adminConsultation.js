@@ -136,7 +136,7 @@ function buildDetailHTML(leadId) {
   ${SHARED_CSS_VARS}
   ${NAV_CSS}
   body { background:var(--bg); }
-  .wrap { max-width:1120px; margin:0 auto; padding:20px 22px 90px; }
+  .wrap { max-width:min(1560px, 95vw); margin:0 auto; padding:20px 30px 90px; }
   #loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:50vh; gap:16px; }
   .spinner { width:42px; height:42px; border:3px solid #e2e8f0; border-top-color:var(--navy); border-radius:50%; animation:spin .7s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
@@ -175,7 +175,7 @@ function buildDetailHTML(leadId) {
   .step.done .lbl { color:var(--muted); } .step.cur .lbl { color:var(--navy); font-weight:700; }
 
   /* two-column working area */
-  .cols { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(0,1fr); gap:14px; align-items:start; }
+  .cols { display:grid; grid-template-columns:minmax(0,1.75fr) minmax(0,1fr); gap:16px; align-items:start; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr; } .ctx{ position:static; } }
   .col { display:flex; flex-direction:column; gap:14px; }
   .card { background:var(--card); border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; padding:16px 18px; }
@@ -186,7 +186,15 @@ function buildDetailHTML(leadId) {
   .kv:first-child { border-top:none; }
   .kv .k { color:var(--muted); min-width:150px; flex-shrink:0; }
   .kv .v { color:var(--navy); font-weight:600; }
+  /* Flow dense key/value rows into responsive columns so wide cards use the
+     horizontal space; subheads, free-text and rrows still span the full width. */
+  .kvgrid { display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); column-gap:30px; align-items:start; }
+  .kvgrid > *:not(.kv) { grid-column:1 / -1; }
+  .kvgrid .kv .k { min-width:130px; }
+  .kvgrid .kv { border-top:none; border-bottom:1px solid #f5f8fc; padding:6px 0; }
   .subhead { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#64748b; margin:0 0 6px; }
+  .kvgrid .subhead { margin-top:12px; }
+  .kvgrid > .subhead:first-child { margin-top:0; }
   .rrow { border:1px dashed var(--border); border-radius:8px; padding:9px 12px; margin-top:8px; font-size:12.5px; color:var(--navy); line-height:1.55; }
   .notyet { color:#94a3b8; font-size:13px; font-style:italic; padding:8px 0; }
 
@@ -254,8 +262,8 @@ ${buildNavHeader('consultations')}
 
     <div class="cols">
       <div class="col">
-        <div class="card"><div class="card-t">${I.clip} Intake context</div><div id="c-intake"></div></div>
-        <div class="card"><div class="card-t">${I.cap} Eligibility profile <span class="when" id="c-elig-when"></span></div><div id="c-elig"></div></div>
+        <div class="card"><div class="card-t">${I.clip} Intake context</div><div id="c-intake" class="kvgrid"></div></div>
+        <div class="card"><div class="card-t">${I.cap} Eligibility profile <span class="when" id="c-elig-when"></span></div><div id="c-elig" class="kvgrid"></div></div>
         <div class="card"><div class="card-t">${I.cpu} AI triage notes</div><div id="c-ai"></div></div>
       </div>
 
@@ -276,7 +284,7 @@ ${buildNavHeader('consultations')}
             <div class="frow"><button class="btn" id="btn-consult-preview">${I.eye} Preview</button><button class="btn" id="btn-consult-send">${I.send} Send</button></div>
           </div>
         </div>
-        <div class="card"><div class="card-t">${I.flag} Case status</div><div id="c-status"></div></div>
+        <div class="card"><div class="card-t">${I.flag} Case status</div><div id="c-status" class="kvgrid"></div></div>
       </div>
     </div>
 
