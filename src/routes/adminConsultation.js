@@ -234,6 +234,8 @@ function buildDetailHTML(leadId) {
   .rm-btn { padding:5px 9px; border:1px solid var(--border); border-radius:7px; background:white; cursor:pointer; color:#dc2626; font-size:12px; font-family:inherit; }
   .rp-sum { font-weight:700; font-size:12px; }
   .rp-sum.ok { color:#16a34a; } .rp-sum.bad { color:#dc2626; }
+  .m-due { display:inline-block; font-size:9px; font-weight:800; padding:1px 6px; border-radius:9px; background:#fef2f2; color:#dc2626; text-transform:uppercase; letter-spacing:.4px; vertical-align:middle; margin-left:6px; }
+  .rp-stage { font-weight:700; color:var(--navy); }
 
   a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }
 </style></head><body>
@@ -370,7 +372,7 @@ ${buildNavHeader('consultations')}
       <div class="subhead" style="margin-top:12px">Fees (auto-calculated)</div>
       <div id="rp-fee-breakdown" class="rp-sugg" style="margin-top:4px"></div>
 
-      <div class="subhead" style="margin-top:12px">Milestone schedule <span id="rp-mile-sum" class="rp-sum"></span></div>
+      <div class="subhead" style="margin-top:12px">Milestone schedule <span id="rp-mile-sum" class="rp-sum"></span> <span id="rp-case-stage" class="muted" style="font-weight:500"></span></div>
       <table class="dynamic-table" id="milestone-table">
         <thead><tr><th style="width:32%">Label</th><th style="width:16%">Amount (CAD)</th><th style="width:13%">HST</th><th style="width:13%">Total</th><th style="width:18%">Trigger</th><th></th></tr></thead>
         <tbody id="milestone-body"></tbody>
@@ -541,6 +543,10 @@ function doAction(action,value,confirmMsg){
 // ── Retainer plan panel ──────────────────────────────────────────────────
 var RP_TPL_LABELS={ 'pa':'Principal Applicant only', 'pa-inviter':'PA + Inviter / Sponsor', 'employer':'Employer / Legal Rep' };
 var FAMILY_TYPES=['Spouse','Dependent Child','Parent','Sibling','Sponsor'];
+// Curated case-stage triggers + the case's live stage (both hydrated from the
+// retainer-plan payload). A milestone shows "DUE" when its trigger == CUR_CASE_STAGE.
+var MILE_TRIGGER_STAGES=['Pre-Onboarding','Retainer Confirmed','Document Collection Started','Internal Review','Submission Preparation','Submission Ready','Application Submitted'];
+var CUR_CASE_STAGE='';
 var RP_BLOCK_FIELDS=['inviterName','inviterAddress','inviterPhone','inviterEmail','empRepName','empCompanyName','empCompanyAddress','empCompanyPhone','empRepPhone','empRepEmail'];
 function rpEl(id){ return document.getElementById(id); }
 function escA(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
@@ -570,6 +576,9 @@ function hydrateRetainer(d){
   if(rpEl('rp-hst')) rpEl('rp-hst').value=(plan.hstRate!=null)?(Math.round(plan.hstRate*1000)/10):13;
   var m=plan.mergeData||{};
   RP_BLOCK_FIELDS.forEach(function(k){ var el=rpEl('rp-'+k); if(el) el.value=m[k]||''; });
+  if(d.milestoneTriggerStages&&d.milestoneTriggerStages.length) MILE_TRIGGER_STAGES=d.milestoneTriggerStages;
+  CUR_CASE_STAGE=d.currentCaseStage||'';
+  var cs=rpEl('rp-case-stage'); if(cs) cs.innerHTML=CUR_CASE_STAGE?('· case is at <span class="rp-stage">'+escHtml(CUR_CASE_STAGE)+'</span>'):'';
   rebuildMilestones(plan.milestones||[]);
   if(d.familyMemberTypes&&d.familyMemberTypes.length) FAMILY_TYPES=d.familyMemberTypes;
   rebuildFamily(d.familyMembers||[]);
@@ -590,13 +599,28 @@ function toggleTemplateBlocks(){
   rpEl('rp-inviter').style.display=(t==='pa-inviter')?'block':'none';
   rpEl('rp-employer').style.display=(t==='employer')?'block':'none';
 }
+function mileTriggerCell(m){
+  var trig=m.trigger||'';
+  // Curated case-stage dropdown. Keep any legacy / off-list value as a selectable
+  // option so an older free-text trigger is never silently dropped.
+  var stages=MILE_TRIGGER_STAGES.slice();
+  if(trig&&stages.indexOf(trig)<0) stages.unshift(trig);
+  var opts='<option value="">— when due —</option>'+stages.map(function(s){ return '<option value="'+escA(s)+'"'+(s===trig?' selected':'')+'>'+escHtml(s)+'</option>'; }).join('');
+  return '<td><select class="m-trigger">'+opts+'</select><span class="m-due" style="display:none">Due</span></td>';
+}
 function mileRowHtml(m,locked){
   return '<td><input class="m-label" type="text" value="'+escA(m.label||'')+'"'+(locked?' disabled':'')+'></td>'+
     '<td><input class="m-amount" type="number" min="0" step="0.01" value="'+(m.amountCents!=null?(m.amountCents/100):'')+'"></td>'+
     '<td class="m-hst muted" style="text-align:right;white-space:nowrap"></td>'+
     '<td class="m-total" style="text-align:right;white-space:nowrap;font-weight:600;color:var(--navy)"></td>'+
-    '<td><input class="m-trigger" type="text" value="'+escA(m.trigger||'')+'"></td>'+
+    mileTriggerCell(m)+
     '<td>'+(locked?'<span class="muted">locked</span>':'<button type="button" class="rm-btn" data-rm="1">✕</button>')+'</td>';
+}
+// Show "Due" on the milestone whose trigger stage the case has currently reached.
+function updateDue(tr){
+  var sel=tr.querySelector('.m-trigger'), badge=tr.querySelector('.m-due');
+  if(!sel||!badge) return;
+  badge.style.display=(CUR_CASE_STAGE&&sel.value&&sel.value===CUR_CASE_STAGE)?'inline-block':'none';
 }
 function rebuildMilestones(rows){
   var tb=rpEl('milestone-body'); tb.innerHTML='';
@@ -608,6 +632,7 @@ function addMile(){ var tr=document.createElement('tr'); tr.innerHTML=mileRowHtm
 function bindMile(){
   Array.prototype.forEach.call(document.querySelectorAll('#milestone-body .m-amount'),function(i){ i.oninput=updateMileSum; });
   Array.prototype.forEach.call(document.querySelectorAll('#milestone-body [data-rm]'),function(b){ b.onclick=function(){ var tb=rpEl('milestone-body'); if(tb.rows.length>1){ b.closest('tr').remove(); updateMileSum(); } }; });
+  Array.prototype.forEach.call(document.querySelectorAll('#milestone-body tr'),function(tr){ var s=tr.querySelector('.m-trigger'); if(s) s.onchange=function(){ updateDue(tr); }; updateDue(tr); });
 }
 // ── Family members (consultant-set; materialised to the board at handoff) ──
 function famRowHtml(m){

@@ -27,10 +27,44 @@ const { ANNEXES } = require('../../config/annexCatalogue');
 const { feeToCents, centsToMoney } = require('../utils/money');
 const consultAgreementService = require('./consultAgreementService');
 
+// Curated lifecycle Case Stages offered as milestone payment triggers. These are
+// the payment-relevant progression stages on the Client Master "Case Stage"
+// column (color_mm0x8faa), in lifecycle order. Side-states (Stuck, Cancelled,
+// Ads posted, Task Done, Profile Created/Linked, Reconsideration) are excluded —
+// they aren't points at which a fee milestone falls due.
+const MILESTONE_TRIGGER_STAGES = [
+  'Pre-Onboarding',
+  'Retainer Confirmed',
+  'Document Collection Started',
+  'Internal Review',
+  'Submission Preparation',
+  'Submission Ready',
+  'Application Submitted',
+];
+const CM_CASE_STAGE_COL = 'color_mm0x8faa';
+
+/** Read a case's current Case Stage from the Client Master board. Best-effort:
+ *  returns '' when the lead isn't linked to a case yet, or on any error (a stage
+ *  read must never break the detail page). */
+async function readCaseStage(clientMasterItemId) {
+  if (!clientMasterItemId) return '';
+  try {
+    const d = await mondayApi.query(
+      `query($i:[ID!]){ items(ids:$i){ column_values(ids:["${CM_CASE_STAGE_COL}"]){ text } } }`,
+      { i: [String(clientMasterItemId)] });
+    return (d && d.items && d.items[0] && d.items[0].column_values[0] && d.items[0].column_values[0].text) || '';
+  } catch (err) {
+    console.warn(`[Portal] readCaseStage(${clientMasterItemId}) failed: ${err.message}`);
+    return '';
+  }
+}
+
 /** The retainer-plan payload the portal panel hydrates from — built from a lead
  *  we already hold (so the detail page and the /retainer-plan endpoint share it
- *  instead of each doing its own getLead). */
-function buildRetainerPlanResponse(lead) {
+ *  instead of each doing its own getLead). `extra.currentCaseStage` is the live
+ *  Case Stage (when the lead is already a case) so the panel can flag the
+ *  milestone whose trigger that stage has reached as due. */
+function buildRetainerPlanResponse(lead, extra = {}) {
   return {
     plan:            buildRetainerPlan(lead, overridesFromLead(lead)),
     saved:           !!lead.selectedTemplate,
@@ -40,6 +74,8 @@ function buildRetainerPlanResponse(lead) {
     templateOptions: ['pa', 'pa-inviter', 'employer'],
     familyMembers:   resolveFamilyMembers(lead),
     familyMemberTypes: FAMILY_MEMBER_TYPES,
+    milestoneTriggerStages: MILESTONE_TRIGGER_STAGES,
+    currentCaseStage: extra.currentCaseStage || '',
   };
 }
 
@@ -101,9 +137,10 @@ async function getConsultationDetail(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
 
-  const [preConsult, intake] = await Promise.all([
+  const [preConsult, intake, currentCaseStage] = await Promise.all([
     readLeadJson(lead.fullName, leadId, 'pre-consult-submission.json'),
     readLeadJson(lead.fullName, leadId, 'intake-submission.json'),
+    readCaseStage(lead.clientMasterItemId),
   ]);
 
   const answers = (preConsult && preConsult.answers) || {};
@@ -202,7 +239,7 @@ async function getConsultationDetail(leadId) {
 
     // Retainer plan — folded in so the detail page hydrates the panel without a
     // second getLead round-trip (built from the lead already in hand).
-    retainerPlan: buildRetainerPlanResponse(lead),
+    retainerPlan: buildRetainerPlanResponse(lead, { currentCaseStage }),
 
     eligibility,
   };
@@ -471,7 +508,8 @@ async function applyAction({ leadId, action, value }) {
 async function getRetainerPlan(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
-  return buildRetainerPlanResponse(lead);
+  const currentCaseStage = await readCaseStage(lead.clientMasterItemId);
+  return buildRetainerPlanResponse(lead, { currentCaseStage });
 }
 
 /**
@@ -512,5 +550,5 @@ async function previewConsultAgreement(leadId) {
 module.exports = {
   getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS,
   parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement,
-  resolveFamilyMembers, FAMILY_MEMBER_TYPES,
+  resolveFamilyMembers, FAMILY_MEMBER_TYPES, MILESTONE_TRIGGER_STAGES,
 };
