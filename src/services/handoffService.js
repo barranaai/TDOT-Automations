@@ -129,6 +129,78 @@ async function resolveValidatedCaseType(lead) {
   }
 }
 
+// ─── Conversation-history transfer ────────────────────────────────────────────
+// When a lead becomes a case, its Monday "Updates" thread (staff notes, the
+// previous conversation) is copied onto the Client Master item so the record
+// isn't lost. create_update cannot set the original author/timestamp, so each
+// entry carries them inline; long threads are split across a few notes.
+const IMPORT_MARKER = 'Conversation history imported from the lead record';
+
+function _fmtDate(d) { if (!d) return ''; const t = new Date(d); return isNaN(t.getTime()) ? '' : t.toISOString().slice(0, 10); }
+
+function _formatUpdateBlock(u) {
+  const who = (u && u.creator && u.creator.name) || 'Unknown';
+  const when = _fmtDate(u && u.created_at);
+  let b = `<b>${who}</b>${when ? ' · ' + when : ''}<br>${(u && u.body) || ''}`;
+  for (const r of ((u && u.replies) || [])) {
+    const rwho = (r && r.creator && r.creator.name) || 'Unknown';
+    const rwhen = _fmtDate(r && r.created_at);
+    b += `<br>&nbsp;&nbsp;↳ <b>${rwho}</b>${rwhen ? ' · ' + rwhen : ''}: ${(r && (r.text_body || r.body)) || ''}`;
+  }
+  return b;
+}
+
+function _importHeader(count, part, total) {
+  const base = `📋 <b>${IMPORT_MARKER}</b> (${count} update${count === 1 ? '' : 's'}, chronological — original author &amp; date preserved)`;
+  return (total > 1 ? `${base} · part ${part}/${total}` : base) + '<br><br>';
+}
+
+/** PURE: lead updates (oldest-first) → Client Master update bodies (header + attributed blocks, chunked for length). */
+function buildImportedHistoryChunks(updates, { maxLen = 9000 } = {}) {
+  if (!updates || !updates.length) return [];
+  const blocks = updates.map(_formatUpdateBlock);
+  const chunks = [];
+  let cur = '';
+  for (const blk of blocks) {
+    if (cur && cur.length + blk.length + 8 > maxLen) { chunks.push(cur); cur = ''; }
+    cur += (cur ? '<br><br>' : '') + blk;
+  }
+  if (cur) chunks.push(cur);
+  return chunks.map((c, i) => _importHeader(updates.length, i + 1, chunks.length) + c);
+}
+
+/** Copy the lead's Updates thread onto the Client Master item. Best-effort
+ *  (never blocks handoff) and idempotent (won't import twice onto a case). */
+async function transferLeadUpdates(leadId, cmItemId) {
+  if (!leadId || !cmItemId) return 0;
+  try {
+    const data = await mondayApi.query(
+      `query($id:[ID!]){ items(ids:$id){ updates(limit:100){ body text_body created_at creator{ name } replies{ text_body created_at creator{ name } } } } }`,
+      { id: [String(leadId)] });
+    const raw = (data && data.items && data.items[0] && data.items[0].updates) || [];
+    if (!raw.length) return 0;
+    const updates = raw.slice().reverse(); // Monday returns newest-first → re-post oldest-first
+
+    // Idempotency: never import twice onto the same case.
+    const cmData = await mondayApi.query(
+      `query($id:[ID!]){ items(ids:$id){ updates(limit:50){ body } } }`, { id: [String(cmItemId)] });
+    const already = ((cmData && cmData.items && cmData.items[0] && cmData.items[0].updates) || [])
+      .some((u) => (u.body || '').includes(IMPORT_MARKER));
+    if (already) { console.log(`[Handoff] Lead updates already imported to CM ${cmItemId} — skipping`); return 0; }
+
+    const bodies = buildImportedHistoryChunks(updates);
+    for (const body of bodies) {
+      await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+        { i: String(cmItemId), b: body });
+    }
+    console.log(`[Handoff] Imported ${updates.length} lead update(s) ${leadId} → Client Master ${cmItemId} (${bodies.length} note${bodies.length === 1 ? '' : 's'})`);
+    return updates.length;
+  } catch (err) {
+    console.warn(`[Handoff] Update transfer ${leadId} → ${cmItemId} failed: ${err.message}`);
+    return 0;
+  }
+}
+
 async function _doHandoff(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) throw new Error(`Lead ${leadId} not found`);
@@ -152,6 +224,8 @@ async function _doHandoff(leadId) {
   if (existing) {
     console.log(`[Handoff] Reusing existing Client Master ${existing} for lead ${leadId} (matched by email + name)`);
     await leadService.updateLead(leadId, { clientMasterItemId: existing, conversionStatus: 'Retained — Awaiting Payment' });
+    // Preserve the lead's conversation history on the (reused) case.
+    await transferLeadUpdates(leadId, existing);
     // Carry the intake OneDrive folder onto the reused case too (best-effort),
     // so the rename hook can find it when the case ref is assigned.
     if (lead.oneDriveFolderId) {
@@ -204,6 +278,9 @@ async function _doHandoff(leadId) {
   }
 
   await leadService.updateLead(leadId, { clientMasterItemId: newId, conversionStatus: 'Retained — Awaiting Payment' });
+
+  // Preserve the lead's conversation history (its Updates thread) on the new case.
+  await transferLeadUpdates(leadId, newId);
 
   // Record the consultation's assigned RCIC on the new case (best-effort note),
   // so the routed consultant carries across the handoff instead of being lost.
@@ -262,4 +339,4 @@ async function onRetainerSigned({ leadId }) {
   try { return await p; } finally { _inFlight.delete(key); }
 }
 
-module.exports = { onRetainerSigned, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch };
+module.exports = { onRetainerSigned, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, transferLeadUpdates, buildImportedHistoryChunks };
