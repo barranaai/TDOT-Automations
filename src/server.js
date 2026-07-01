@@ -164,6 +164,25 @@ app.post('/api/square-booking-preflight', async (req, res) => {
   }
 });
 
+// Send a diagnostic email through the SAME Microsoft Graph path the retainer /
+// consultation emails use, to isolate mailbox-delivery vs recipient-filtering.
+// Usage: POST /api/test-email  { "to": "someone@example.com" }
+app.post('/api/test-email', express.json(), async (req, res) => {
+  try {
+    const to = String((req.body && req.body.to) || '').trim();
+    if (!to) return res.status(400).json({ ok: false, error: 'Provide "to" in the JSON body.' });
+    const stamp = new Date().toISOString();
+    await require('./services/microsoftMailService').sendEmail({
+      to,
+      subject: `TDOT mail delivery test — ${stamp}`,
+      html: `<p>This is a delivery test from the TDOT app, sent via Microsoft Graph from <b>${process.env.MS_FROM_EMAIL || '(unset)'}</b>.</p><p>If you received this, the sending mailbox delivers to this address. Sent at ${stamp}.</p>`,
+    });
+    res.json({ ok: true, to, from: process.env.MS_FROM_EMAIL || null, sentAt: stamp, note: 'Graph accepted the message. Check the inbox (and spam).' });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.get('/api/monday-test', async (req, res) => {
   try {
     const data = await mondayApi.query('query { me { id name email } }');
