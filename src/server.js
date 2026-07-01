@@ -152,6 +152,18 @@ app.post('/api/transcript-preflight', async (req, res) => {
   }
 });
 
+// Readiness of the Square appointment WRITE-BACK — shows the seller-level-writes
+// plan flag + the rest of the config. ready=true → bookings create Square
+// appointments automatically. Usage: POST /api/square-booking-preflight
+app.post('/api/square-booking-preflight', async (req, res) => {
+  try {
+    const result = await require('./services/squareBookingsService').preflightSquareBooking();
+    res.status(result.ok ? 200 : 422).json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.get('/api/monday-test', async (req, res) => {
   try {
     const data = await mondayApi.query('query { me { id name email } }');

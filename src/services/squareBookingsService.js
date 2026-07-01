@@ -206,9 +206,54 @@ async function upsertBookingCustomAttribute(bookingId, key, value) {
   return data.data?.custom_attribute;
 }
 
+/**
+ * Readiness check for the appointment WRITE-BACK. Reports the exact Square plan
+ * flag (support_seller_level_writes) so you can see when writes turn on, and
+ * verifies the rest of the config. When ready=true, new paid bookings start
+ * creating Square appointments automatically (createSquareBooking is already
+ * wired). Run: POST /api/square-booking-preflight.
+ */
+async function preflightSquareBooking() {
+  const checks = {};
+  let profile;
+  try { profile = await retrieveBusinessBookingProfile(); }
+  catch (e) {
+    const d = e.response && e.response.data;
+    return { ok: false, step: 'business-booking-profile', error: d ? JSON.stringify(d.errors || d) : e.message };
+  }
+  checks.bookingEnabled     = !!profile.booking_enabled;
+  checks.sellerLevelWrites  = !!profile.support_seller_level_writes; // ← the plan flag that gates writes
+  checks.locationIdSet      = !!process.env.SQUARE_LOCATION_ID;
+
+  const svId = process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID;
+  checks.serviceVariationIdSet = !!svId;
+  if (svId) {
+    try {
+      const v = (await listAppointmentServices()).find((s) => s.variationId === svId);
+      checks.serviceVariationFound    = !!v;
+      checks.serviceVariationBookable = !!(v && v.bookable);
+      if (v) { checks.serviceVariationVersion = v.variationVersion; checks.serviceName = `${v.itemName} / ${v.variationName}`; }
+    } catch (e) { checks.serviceLookupError = e.message; }
+  }
+  try {
+    const tms = await listTeamMemberBookingProfiles();
+    checks.bookableTeamMembers = tms.filter((t) => t.is_bookable !== false).map((t) => t.team_member_id);
+  } catch (e) { checks.teamMemberError = e.message; }
+
+  const ready = checks.bookingEnabled && checks.sellerLevelWrites && checks.serviceVariationIdSet
+    && checks.serviceVariationFound && checks.serviceVariationBookable && checks.locationIdSet;
+  const message = ready
+    ? 'READY — Square appointment write-back is active; new paid bookings will create Square appointments automatically.'
+    : !checks.sellerLevelWrites
+      ? 'Waiting on Square: seller-level writes are NOT enabled on the plan yet. Everything else below shows what is/ isn\'t configured — it activates automatically once the plan supports writes.'
+      : 'Config incomplete — see the checks below (service variation / location / bookable staff).';
+  return { ok: true, ready, message, checks };
+}
+
 module.exports = {
   // pure
   toE164, utcToTorontoSlot, buildAvailabilitySearch, buildCreateBookingBody, mapAvailabilities,
+  preflightSquareBooking,
   // I/O
   retrieveBusinessBookingProfile, listTeamMemberBookingProfiles, listAppointmentServices,
   searchAvailability, ensureCustomer, createBooking, upsertBookingCustomAttribute,
