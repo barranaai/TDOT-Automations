@@ -37,36 +37,112 @@ const meetingService = require('./meetingService');
 const { getZoomAccessToken, createZoomMeeting } = meetingService; // re-exported for back-compat
 
 const PROVIDER_LABEL = { zoom: 'Zoom', teams: 'Microsoft Teams' };
+const OFFICE_ADDRESS = '20 De Boers Dr, Suite 321, North York, ON M3J 0H1';
 
 // ─── Entry point: called by bookingService after payment ─────────────────────
-async function onSlotConfirmed(leadId) {
+async function onSlotConfirmed(leadId, meetingTypeOverride) {
   try {
     const lead = await leadService.getLead(leadId);
     if (!lead) return;
-    if (lead.zoomMeetingId) {
-      console.log(`[Consult] Lead ${leadId} already has a meeting — skipping`);
+    // Idempotent: a virtual booking has a meeting id; either type has the
+    // consultation date once processed. (confirmSlot also guards on Booked.)
+    if (lead.zoomMeetingId || lead.consultationHeld) {
+      console.log(`[Consult] Lead ${leadId} already processed — skipping`);
       return;
     }
     const slotStr = (lead.bookedSlot || '').trim();
-    const meeting = await meetingService.createMeeting(lead, slotStr);
+    // Prefer the value threaded in from the POST (free path) so we don't depend
+    // on the meetingType column having persisted; fall back to the stored value
+    // (paid path, where the webhook fires later with no value in hand).
+    const meetingType = (meetingTypeOverride === 'In-person' || meetingTypeOverride === 'Virtual')
+      ? meetingTypeOverride
+      : (lead.meetingType === 'In-person' ? 'In-person' : 'Virtual');
 
-    await leadService.updateLead(leadId, {
-      zoomMeetingId:   meeting.meetingId,                                   // column titled "Meeting Id" (provider-agnostic)
-      meetingLink:     { url: meeting.joinUrl, text: `Join (${PROVIDER_LABEL[meeting.provider] || meeting.provider})` },
-      consultationHeld: slotStr.split(' ')[0], // date of the consult
-    });
+    let meeting = null;
+    if (meetingType === 'Virtual') {
+      meeting = await meetingService.createMeeting(lead, slotStr);
+      await leadService.updateLead(leadId, {
+        zoomMeetingId:   meeting.meetingId,                                   // column titled "Meeting Id" (provider-agnostic)
+        meetingLink:     { url: meeting.joinUrl, text: `Join (${PROVIDER_LABEL[meeting.provider] || meeting.provider})` },
+        consultationHeld: slotStr.split(' ')[0], // date of the consult
+      });
+    } else {
+      // In-person: no video meeting — the confirmation carries the office address.
+      await leadService.updateLead(leadId, { consultationHeld: slotStr.split(' ')[0] });
+    }
 
-    await sendBookingConfirmation(lead, meeting, slotStr);
-    console.log(`[Consult] ${meeting.provider} meeting + confirmation sent for lead ${leadId} (meeting ${meeting.meetingId})`);
+    // Best-effort: write the paid appointment onto the Square calendar with the
+    // client as the customer + an in-person/virtual seller note.
+    createSquareBooking(lead, slotStr, meetingType).catch((e) =>
+      console.warn(`[Consult] Square booking write failed for lead ${leadId}: ${e.message}`));
+
+    await sendBookingConfirmation(lead, meeting, slotStr, meetingType);
+    console.log(`[Consult] ${meetingType} consultation confirmed for lead ${leadId}${meeting ? ` (${meeting.provider} ${meeting.meetingId})` : ''}`);
   } catch (err) {
     console.error(`[Consult] onSlotConfirmed failed for lead ${leadId}:`, err.message);
   }
 }
 
-async function sendBookingConfirmation(lead, meeting, slotStr) {
+/**
+ * Best-effort: create the Square appointment for a paid consult — puts the client
+ * on the seller's real calendar (customer = the client) with an in-person/virtual
+ * seller note, and stamps our lead id onto the booking. Needs Square Appointments
+ * seller-level writes (plan-gated), a configured service variation, and a valid
+ * client phone; any gap just logs and returns without disturbing the booking flow.
+ */
+async function createSquareBooking(lead, slotStr, meetingType) {
+  if (lead.squareBookingId) return;                                    // already written
+  const serviceVariationId = process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID;
+  if (!serviceVariationId) return;                                     // Appointments not configured
+
+  const sq = require('./squareBookingsService');
+  const { torontoSlotToUTC } = require('./postConsultService');
+  const { routeConsultant } = require('../../config/consultantRouting');
+
+  const startMs = torontoSlotToUTC(slotStr);
+  if (!Number.isFinite(startMs)) { console.warn(`[Consult] Square booking skipped for ${lead.id}: bad slot "${slotStr}"`); return; }
+  const startAtIso = new Date(startMs).toISOString();
+
+  const customerId = await sq.ensureCustomer({ email: lead.email, fullName: lead.fullName, phoneE164: sq.toE164(lead.phone) });
+  if (!customerId) { console.warn(`[Consult] Square booking skipped for ${lead.id}: no customer`); return; }
+
+  // CreateBooking needs the service variation VERSION — resolve it from the catalog.
+  let version;
+  try {
+    const services = await sq.listAppointmentServices();
+    const v = services.find((s) => s.variationId === serviceVariationId);
+    version = v && v.variationVersion;
+  } catch (e) { console.warn(`[Consult] Square service lookup failed for ${lead.id}: ${e.message}`); }
+  if (!version) { console.warn(`[Consult] Square booking skipped for ${lead.id}: no service-variation version`); return; }
+
+  const teamMemberId    = routeConsultant(lead).teamMemberId || process.env.SQUARE_CONSULT_TEAM_MEMBER_ID;
+  const durationMinutes = parseInt(process.env.SQUARE_CONSULT_DURATION_MIN, 10) || 30;
+  const caseNote = lead.confirmedCaseType || lead.caseTypeInterest;
+  const sellerNote = `${meetingType} consultation — ${lead.fullName || 'Client'}${caseNote ? ` (${caseNote})` : ''}`;
+
+  const { bookingId } = await sq.createBooking({
+    customerId, serviceVariationId, serviceVariationVersion: version, teamMemberId,
+    startAtIso, durationMinutes, sellerNote,
+    idempotencyKey: `lead-${lead.id}-${slotStr}`.replace(/[^A-Za-z0-9_-]/g, ''),
+  });
+  if (!bookingId) { console.warn(`[Consult] Square createBooking returned no id for ${lead.id}`); return; }
+
+  await leadService.updateLead(lead.id, { squareBookingId: bookingId });
+  sq.upsertBookingCustomAttribute(bookingId, 'lead_id', String(lead.id)).catch(() => {});
+  console.log(`[Consult] Square appointment created for lead ${lead.id}: ${bookingId} (${meetingType})`);
+}
+
+async function sendBookingConfirmation(lead, meeting, slotStr, meetingType) {
   if (!lead.email) return;
   const token  = lead.leadToken || '';
   const preUrl = `${RENDER_URL}/consult/${lead.id}?t=${encodeURIComponent(token)}`;
+  const isInPerson = meetingType === 'In-person';
+  const whereBlock = isInPerson
+    ? `<p><b>Where:</b> In person at our office<br>${escapeHtml(OFFICE_ADDRESS)}</p>`
+    : (meeting
+        ? `<p><b>Join the ${PROVIDER_LABEL[meeting.provider] || 'video'} call:</b><br><a href="${meeting.joinUrl}" style="color:${BRAND.primary}">${meeting.joinUrl}</a></p>`
+          + (meeting.provider === 'teams' ? `<p style="font-size:13px;color:${BRAND.mutedOnLight}">A calendar invite has also been sent to your email — accept it and the meeting appears in your calendar.</p>` : '')
+        : '');
   const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
     <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
       <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your consultation is booked</h1></div>
@@ -74,11 +150,10 @@ async function sendBookingConfirmation(lead, meeting, slotStr) {
       <p>Hi ${escapeHtml((lead.fullName||'there').split(' ')[0])},</p>
       <p><b>When:</b> ${escapeHtml(slotStr)} (Toronto time)</p>
       ${lead.assignedConsultant ? `<p><b>With:</b> ${escapeHtml(lead.assignedConsultant)}, RCIC</p>` : ''}
-      <p><b>Join the ${PROVIDER_LABEL[meeting.provider] || 'video'} call:</b><br><a href="${meeting.joinUrl}" style="color:${BRAND.primary}">${meeting.joinUrl}</a></p>
-      ${meeting.provider === 'teams' ? `<p style="font-size:13px;color:${BRAND.mutedOnLight}">A calendar invite has also been sent to your email — accept it and the meeting appears in your calendar.</p>` : ''}
+      ${whereBlock}
       <p style="margin-top:24px">Please complete this short form before your call so we can make the most of your time:</p>
       <p><a href="${preUrl}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Complete pre-consultation form</a></p>
-      <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">See you on the call.</p>
+      <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">See you ${isInPerson ? 'soon' : 'on the call'}.</p>
     </div></div>`;
   await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation is booked', html });
 }
@@ -103,7 +178,9 @@ async function resendConsultationLinks(leadId) {
       <p>Hi ${e((lead.fullName || 'there').split(' ')[0])},</p>
       <p>Here are your consultation links again for easy reference:</p>
       ${lead.bookedSlot ? `<p><b>When:</b> ${e(lead.bookedSlot)} (Toronto time)</p>` : ''}
-      ${joinUrl ? `<p><b>Join the call:</b><br><a href="${e(joinUrl)}" style="color:${BRAND.primary}">${e(joinUrl)}</a></p>` : ''}
+      ${lead.meetingType === 'In-person'
+        ? `<p><b>Where:</b> In person at our office<br>${e(OFFICE_ADDRESS)}</p>`
+        : (joinUrl ? `<p><b>Join the call:</b><br><a href="${e(joinUrl)}" style="color:${BRAND.primary}">${e(joinUrl)}</a></p>` : '')}
       <p style="margin-top:20px">Please complete this short form before your call so we can make the most of your time:</p>
       <p><a href="${e(preUrl)}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Complete pre-consultation form</a></p>
       <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">See you on the call.</p>

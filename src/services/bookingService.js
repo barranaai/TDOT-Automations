@@ -295,7 +295,7 @@ async function handleSquarePaymentWebhook(event) {
 }
 
 /** Mark a booking confirmed after the consultation fee is paid. */
-async function confirmSlot(leadId, txnId) {
+async function confirmSlot(leadId, txnId, meetingType) {
   const lead = await leadService.getLead(leadId);
   if (lead && lead.bookingStatus === 'Booked') {
     console.log(`[Booking] Lead ${leadId} already booked — skipping (idempotent)`);
@@ -311,7 +311,7 @@ async function confirmSlot(leadId, txnId) {
   // Hook for WS4 (Zoom + invite). Safe no-op until consultationService exists.
   try {
     const consultationService = require('./consultationService');
-    if (consultationService.onSlotConfirmed) await consultationService.onSlotConfirmed(leadId);
+    if (consultationService.onSlotConfirmed) await consultationService.onSlotConfirmed(leadId, meetingType);
   } catch (_) { /* WS4 not built yet */ }
 }
 

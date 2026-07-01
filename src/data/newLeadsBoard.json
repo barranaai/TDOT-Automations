@@ -92,7 +92,9 @@
     "retainerHstRate": "text_mm4nex78",
     "assignedConsultant": "text_mm4ss76e",
     "retainerFamilyMembers": "long_text_mm4smwgp",
-    "transcriptLink": "link_mm4vr6br"
+    "transcriptLink": "link_mm4vr6br",
+    "meetingType": "text_mm4v4v1p",
+    "squareBookingId": "text_mm4vxmdk"
   },
   "createdAt": "2026-06-08T18:00:45.756Z"
 }

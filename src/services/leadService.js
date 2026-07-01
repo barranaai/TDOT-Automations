@@ -28,6 +28,7 @@ const COL_TYPE = {
   tier: 'status', aiScore: 'numbers', aiTalkingPoints: 'long_text', aiComplianceFlags: 'long_text',
   bookingStatus: 'status', preConsultSubmitted: 'status', outcome: 'status', conversionStatus: 'status',
   slotHeldUntil: 'text', bookedSlot: 'text', assignedConsultant: 'text', consultationHeld: 'date',
+  meetingType: 'text', squareBookingId: 'text', // in-person/virtual choice + the created Square appointment id
   retainerSent: 'date', retainerSigned: 'date', retainerPaid: 'date', retainerFee: 'numbers',
   squareConsultTxnId: 'text', squareConsultOrderId: 'text', zoomMeetingId: 'text',
   adobeSignAgreementId: 'text', squareRetainerTxnId: 'text', squareRetainerOrderId: 'text',

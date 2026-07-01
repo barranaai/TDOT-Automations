@@ -151,6 +151,8 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
   try {
     const { slotDate, slotTime } = req.body;
     if (!slotDate || !slotTime) return res.status(400).type('html').send('Please choose a slot.');
+    // In-person or virtual (defaults to Virtual if the field is missing/invalid).
+    const meetingType = req.body.meetingType === 'In-person' ? 'In-person' : 'Virtual';
 
     const lead = await leadService.getLead(leadId);
     // Double-submit guard: a lead that's already Booked must not be re-held or
@@ -160,6 +162,10 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
       return res.type('html').send(buildBookingDoneHtml(lead, bd || slotDate, bt || slotTime));
     }
     await bookingService.holdSlot(leadId, slotDate, slotTime);
+    // Persist the meeting-type choice — drives the confirmation (Teams link vs
+    // office address) and the Square appointment note.
+    try { await leadService.updateLead(leadId, { meetingType }); }
+    catch (e) { console.warn(`[Book] meetingType persist failed for ${leadId}: ${e.message}`); }
     // Persist the routed consultant so the assignment is durable — shown in the
     // panel, named in the meeting invite, and recorded on the case — instead of
     // being recomputed cosmetically on every render. Best-effort.
@@ -178,7 +184,7 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
     // everyone (deliberate config, not reachable from the form).
     const fee = bookingService.CONSULT_FEE_CENTS;
     if (fee === 0) {
-      await bookingService.confirmSlot(leadId, 'free-config');
+      await bookingService.confirmSlot(leadId, 'free-config', meetingType);
       return res.type('html').send(buildBookingDoneHtml(lead, slotDate, slotTime));
     }
 
@@ -244,6 +250,14 @@ function buildBookingPageHtml(lead, slots, token, consultant) {
     .slot:disabled{opacity:.45;cursor:not-allowed;}
     .slot.picked{border-color:${BRAND.primary};background:${BRAND.primary};color:#fff;opacity:1;}
     .empty{color:${BRAND.mutedOnLight};padding:24px 0;text-align:center;}
+    .mtype{margin-bottom:20px;}
+    .mtype-q{font-weight:700;margin-bottom:10px;}
+    .mtype-opt{display:inline-flex;flex-direction:column;gap:2px;border:1.5px solid ${BRAND.border};border-radius:10px;padding:12px 16px;margin:0 8px 8px 0;cursor:pointer;min-width:160px;user-select:none;}
+    .mtype-opt.sel{border-color:${BRAND.primary};background:${BRAND.primary};color:#fff;}
+    .mtype-opt input{position:absolute;opacity:0;pointer-events:none;}
+    .mtype-t{font-weight:600;font-size:15px;}
+    .mtype-s{font-size:12.5px;opacity:.75;}
+    .pick-hint{font-weight:700;margin:6px 0 10px;}
     #redirecting{display:none;margin-top:18px;padding:14px;border-radius:8px;background:${BRAND.darkPanel};color:${BRAND.textOnDark};text-align:center;font-size:15px;}
     .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;vertical-align:-2px;margin-right:8px;animation:spin .8s linear infinite;}
     @keyframes spin{to{transform:rotate(360deg)}}
@@ -252,6 +266,15 @@ function buildBookingPageHtml(lead, slots, token, consultant) {
     <p style="margin:0;opacity:0.85;font-size:14px;">${consultant && consultant.name ? `Your consultation will be with <b>${consultant.name}</b>. ` : ''}Choose a time that works for you.</p></div>
     <form class="card" method="POST" action="/book/${lead.id}?t=${encodeURIComponent(token)}" onsubmit="return prep(event)">
       <input type="hidden" name="slotDate" id="slotDate"><input type="hidden" name="slotTime" id="slotTime">
+      <input type="hidden" name="meetingType" id="meetingType">
+      <div class="mtype">
+        <div class="mtype-q">How would you like to meet? <span style="color:${BRAND.primary}">*</span></div>
+        <label class="mtype-opt"><input type="radio" name="meetingTypeChoice" value="Virtual" required>
+          <span class="mtype-t">💻 Virtual</span><span class="mtype-s">Online video call</span></label>
+        <label class="mtype-opt"><input type="radio" name="meetingTypeChoice" value="In-person" required>
+          <span class="mtype-t">🏢 In-person</span><span class="mtype-s">At our North York office</span></label>
+      </div>
+      <div class="pick-hint">Then pick a time below:</div>
       ${dateBlocks || '<div class="empty">No open times in the next few weeks — we will reach out to schedule.</div>'}
       <div id="redirecting"><span class="spin"></span>Reserving your time — taking you to secure payment…</div>
     </form>
@@ -264,14 +287,25 @@ function buildBookingPageHtml(lead, slots, token, consultant) {
       }
       function prep(e){const b=e.submitter;if(!b||!b.value){e.preventDefault();return false;}
         if (document.getElementById('slotDate').value) { e.preventDefault(); return false; } // double-submit guard
+        var mt=document.querySelector('input[name="meetingTypeChoice"]:checked');
+        if(!mt){ e.preventDefault(); alert('Please choose In-person or Virtual first.'); return false; }
+        document.getElementById('meetingType').value=mt.value;
         const [d,t]=b.value.split('|');document.getElementById('slotDate').value=d;document.getElementById('slotTime').value=t;
         lockSlots(b);
         return true;}
+      // Highlight the chosen meeting type.
+      Array.prototype.forEach.call(document.querySelectorAll('input[name="meetingTypeChoice"]'), function(r){
+        r.addEventListener('change', function(){
+          Array.prototype.forEach.call(document.querySelectorAll('.mtype-opt'), function(o){ o.classList.remove('sel'); });
+          var opt = r.closest('.mtype-opt'); if (r.checked && opt) opt.classList.add('sel');
+        });
+      });
       // Coming back (e.g. cancelled on the payment page) must re-enable everything.
       window.addEventListener('pageshow', function(){
         var btns = document.querySelectorAll('.slot');
         for (var i = 0; i < btns.length; i++) { btns[i].disabled = false; btns[i].classList.remove('picked'); }
         document.getElementById('slotDate').value = ''; document.getElementById('slotTime').value = '';
+        document.getElementById('meetingType').value = '';
         document.getElementById('redirecting').style.display = 'none';
       });
     </script>
@@ -454,3 +488,4 @@ router.post('/webhook/lead', express.json(), async (req, res) => {
 });
 
 module.exports = router;
+module.exports.buildBookingPageHtml = buildBookingPageHtml; // exported for tests / preview
