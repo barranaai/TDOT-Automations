@@ -23,6 +23,7 @@
 
 const { feeToCents, centsToMoney, dollarsToMoney } = require('../utils/money');
 const { byCode } = require('../../config/annexCatalogue');
+const { consultantMergeFields } = require('../../config/consultantRouting');
 const {
   pickAnnex, suggestTemplate, applicantCount, computeFees, computeGovFee, computeMilestoneSchedule,
   defaultMilestones, validateMilestones,
@@ -140,6 +141,9 @@ function buildRetainerPlan(lead = {}, overrides = {}) {
     empCompanyPhone:   o.empCompanyPhone || '',
     empRepPhone:       o.empRepPhone || '',
     empRepEmail:       o.empRepEmail || '',
+    // signatory (routed RCIC) — the consultant this lead was booked with, so the
+    // agreement is signed by the right person. Resolved from lead.assignedConsultant.
+    ...consultantMergeFields(lead),
   };
 
   // template-specific fields the consultant still owes

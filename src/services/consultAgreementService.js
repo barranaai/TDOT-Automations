@@ -40,6 +40,9 @@ function buildConsultAgreementData(lead = {}) {
     consultationDate:    formatAgreementDate(slotDate) || slotDate || '',
     paPhone:             lead.phone || '',
     paEmail:             lead.email || '',
+    // signatory (routed RCIC) — the consultant this lead was booked with, so the
+    // agreement names the right person. Resolved from lead.assignedConsultant.
+    ...require('../../config/consultantRouting').consultantMergeFields(lead),
   };
   const warnings = [];
   if (!data.paAddress) warnings.push('Client residential address is blank — it appears on the agreement; add it before sending.');

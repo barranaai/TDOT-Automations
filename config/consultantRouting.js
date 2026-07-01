@@ -13,9 +13,30 @@
 
 'use strict';
 
+// The designation that prints before the RCIC number on the agreements. Both
+// consultants are RCIC-IRB today; kept as a field (env-overridable) so a
+// consultant with a different designation can be represented without a code edit.
+const RCIC_DESIGNATION = 'Regulated Canadian Immigration Consultant - Immigration and Refugee Consultant (RCIC-IRB)';
+
+// Signatory identity that merges into the consultation + retainer agreements
+// ({consultantName}, {rcicNumber}, {rcicTitle}). rcicNumber/title are
+// env-overridable so a real credential can be set from Render without a code
+// change. Shafoli's number is the one already printed in the .docx templates;
+// Shermin's is intentionally blank until TDOT provides it (a blank renders blank
+// per the agreed "generate with blank number" behaviour).
 const CONSULTANTS = {
-  shafoli: { key: 'shafoli', name: 'Shafoli Kapur',            teamMemberId: process.env.SQUARE_TM_SHAFOLI || 'TMyC12DauGxiI8x-' },
-  shermin: { key: 'shermin', name: 'Shermin Teymouri Mofrad', teamMemberId: process.env.SQUARE_TM_SHERMIN || 'TMAaDa6-290I5zyi' },
+  shafoli: {
+    key: 'shafoli', name: 'Shafoli Kapur',
+    teamMemberId: process.env.SQUARE_TM_SHAFOLI || 'TMyC12DauGxiI8x-',
+    rcicNumber: (process.env.RCIC_NUMBER_SHAFOLI || 'R518177').trim(),
+    title: (process.env.RCIC_TITLE_SHAFOLI || RCIC_DESIGNATION).trim(),
+  },
+  shermin: {
+    key: 'shermin', name: 'Shermin Teymouri Mofrad',
+    teamMemberId: process.env.SQUARE_TM_SHERMIN || 'TMAaDa6-290I5zyi',
+    rcicNumber: (process.env.RCIC_NUMBER_SHERMIN || '').trim(),
+    title: (process.env.RCIC_TITLE_SHERMIN || RCIC_DESIGNATION).trim(),
+  },
 };
 
 // Intake services (serviceRequired) / case types that map to each rule bucket.
@@ -75,4 +96,37 @@ function routeConsultant(lead = {}) {
   return pick(CONSULTANTS.shermin, svc || caseType ? `${svc || caseType} → general consultation` : 'General consultation');
 }
 
-module.exports = { routeConsultant, CONSULTANTS, EE_SERVICES, PNP_SERVICES, HC_SERVICES, CRS_THRESHOLD };
+/**
+ * The consultant whose identity prints on THIS lead's agreements. The durable
+ * pin is `lead.assignedConsultant` (the consultant's NAME, written at booking in
+ * phase2.js); match it back to a registry record. If the pin is blank (agreement
+ * generated before booking) or doesn't match any record (name drift), fall back
+ * to live routing so we always resolve to a real consultant.
+ * @returns {{ key, name, teamMemberId, rcicNumber, title }}
+ */
+function resolveConsultant(lead = {}) {
+  const pinned = String((lead && lead.assignedConsultant) || '').trim();
+  if (pinned) {
+    const byName = Object.values(CONSULTANTS).find((c) => c.name === pinned);
+    if (byName) return byName;
+    console.warn(`[consultantRouting] assignedConsultant "${pinned}" matches no registry record — falling back to routing`);
+  }
+  const routed = routeConsultant(lead);
+  return CONSULTANTS[routed.key] || CONSULTANTS.shermin;
+}
+
+/**
+ * The signatory merge fields both agreements share. Single source of truth so
+ * the consultation agreement and the retainer agreement always name the same
+ * (correct) RCIC. A blank rcicNumber renders blank (agreed behaviour).
+ * @returns {{ consultantName: string, rcicNumber: string, rcicTitle: string }}
+ */
+function consultantMergeFields(lead = {}) {
+  const c = resolveConsultant(lead);
+  return { consultantName: c.name || '', rcicNumber: c.rcicNumber || '', rcicTitle: c.title || '' };
+}
+
+module.exports = {
+  routeConsultant, resolveConsultant, consultantMergeFields,
+  CONSULTANTS, RCIC_DESIGNATION, EE_SERVICES, PNP_SERVICES, HC_SERVICES, CRS_THRESHOLD,
+};
