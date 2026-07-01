@@ -1,6 +1,7 @@
 /**
  * Consultant routing — which RCIC a lead's consultation is assigned to, from the
  * lead's case type + CRS score. Per TDOT (Gauri, 2026-06-25):
+ *   Removal / enforcement order (removalOrder = Yes) → always Shafoli (overrides all)
  *   Express Entry  → Shafoli if CRS > 470, else Shermin
  *   PNP / H&C / Refugee → always Shafoli (senior RCIC)
  *   everything else     → Shermin
@@ -33,7 +34,7 @@ function pick(c, reason, needsVerify = false) {
 }
 
 /**
- * @param {{ serviceRequired?, caseTypeInterest?, confirmedCaseType?, crsScore? }} lead
+ * @param {{ serviceRequired?, caseTypeInterest?, confirmedCaseType?, crsScore?, removalOrder? }} lead
  * @returns {{ key, name, teamMemberId, reason, needsVerify }}
  */
 function routeConsultant(lead = {}) {
@@ -42,6 +43,13 @@ function routeConsultant(lead = {}) {
   const crsRaw = String(lead.crsScore || '').replace(/[^\d.]/g, '');
   const crs = Number(crsRaw);
   const hasCrs = crsRaw !== '' && Number.isFinite(crs);
+
+  // Highest priority: an active removal / enforcement order goes straight to the
+  // senior RCIC (Shafoli), regardless of case type or CRS — it's an urgent
+  // enforcement matter, so its calendar is what the booking page shows.
+  if (String(lead.removalOrder || '').trim() === 'Yes') {
+    return pick(CONSULTANTS.shafoli, 'Removal / enforcement order → senior RCIC');
+  }
 
   // Express Entry → Shafoli only if CRS > 470
   if (EE_SERVICES.includes(svc)) {

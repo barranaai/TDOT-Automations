@@ -45,6 +45,17 @@ test('falls back to case type when no intake service', () => {
   assert.equal(routeConsultant({ confirmedCaseType: 'LMIA Based WP' }).key, 'shermin');
 });
 
+test('removal / enforcement order → always Shafoli, overriding case type + CRS', () => {
+  // would normally be Shermin (EE low CRS / generic service / no signal) — override wins
+  assert.equal(routeConsultant({ serviceRequired: 'Express Entry profile', crsScore: '400', removalOrder: 'Yes' }).key, 'shafoli');
+  assert.equal(routeConsultant({ serviceRequired: 'Study permit', removalOrder: 'Yes' }).key, 'shafoli');
+  assert.equal(routeConsultant({ removalOrder: 'Yes' }).key, 'shafoli');
+  assert.match(routeConsultant({ removalOrder: 'Yes' }).reason, /removal|enforcement/i);
+  // only an explicit "Yes" triggers it
+  assert.equal(routeConsultant({ serviceRequired: 'Study permit', removalOrder: 'No' }).key, 'shermin');
+  assert.equal(routeConsultant({ serviceRequired: 'Study permit', removalOrder: 'Not sure' }).key, 'shermin');
+});
+
 test('result carries the Square team-member id', () => {
   assert.ok(routeConsultant({ serviceRequired: 'PNP or OINP' }).teamMemberId);
   assert.match(routeConsultant({ serviceRequired: 'Study permit' }).reason, /general/i);
