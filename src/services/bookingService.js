@@ -215,9 +215,15 @@ async function releaseExpiredSlots() {
   if (released) console.log(`[Booking] Released ${released} expired slot hold(s)`);
 }
 
-/** Create a Square payment link and store its order id on the lead. */
-async function createCheckout({ leadId, amount, description, type = 'lead', idempotencyKey }) {
-  const referenceId = `${type}-${leadId}`;
+/**
+ * Create a Square payment link. Returns { url, orderId }.
+ *  - `reference` overrides the payment note (default "<type>-<leadId>"); the
+ *    webhook routes by it. Milestones pass "milestone-<leadId>-<index>".
+ *  - `storeOrderId` (default true) writes the order id to the consult/retainer
+ *    column; milestones pass false and store the id in their own JSON instead.
+ */
+async function createCheckout({ leadId, amount, description, type = 'lead', idempotencyKey, reference, storeOrderId = true }) {
+  const referenceId = reference || `${type}-${leadId}`;
   // A deterministic key (e.g. per lead+slot) makes Square return the SAME
   // payment link on a duplicate submit instead of minting a second payable
   // link; callers that don't pass one get a fresh random key, as before.
@@ -238,10 +244,10 @@ async function createCheckout({ leadId, amount, description, type = 'lead', idem
 
   const link = res.data.payment_link;
   const orderId = link.order_id;
-  if (orderId) {
+  if (orderId && storeOrderId) {
     await leadService.updateLead(leadId, type === 'lead' ? { squareConsultOrderId: orderId } : { squareRetainerOrderId: orderId });
   }
-  return link.url;
+  return { url: link.url, orderId: orderId || null };
 }
 
 /** Verify Square webhook HMAC signature (fail-closed, constant-time). */
@@ -271,6 +277,11 @@ async function handleSquarePaymentWebhook(event) {
   const orderId = payment.order_id;
   const txnId   = payment.id;
   if (!orderId) { console.warn(`[Square] Payment ${txnId} has no order_id`); return; }
+
+  // Milestone payments carry the note "milestone-<leadId>-<index>" and have no
+  // dedicated order-id column — route them by the note first.
+  const msRef = String(payment.note || '').match(/^milestone-(\d+)-(\d+)$/);
+  if (msRef) return require('./milestonePaymentService').markMilestonePaid(msRef[1], Number(msRef[2]), txnId);
 
   // Route by which lead+column holds this order id.
   const C = require('../data/newLeadsBoard.json').columns;

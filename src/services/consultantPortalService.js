@@ -76,6 +76,7 @@ function buildRetainerPlanResponse(lead, extra = {}) {
     familyMemberTypes: FAMILY_MEMBER_TYPES,
     milestoneTriggerStages: MILESTONE_TRIGGER_STAGES,
     currentCaseStage: extra.currentCaseStage || '',
+    milestonePayments: require('./milestonePaymentService').milestoneStates(lead, extra.currentCaseStage || '', MILESTONE_TRIGGER_STAGES),
   };
 }
 
@@ -367,6 +368,11 @@ function validateAction(action, value) {
       return OUTCOME_LABELS.includes(value)
         ? { ok: true, normalized: value }
         : { ok: false, error: 'Invalid outcome value.' };
+    case 'generateMilestoneLink': {
+      const i = parseInt(value, 10);
+      if (!Number.isInteger(i) || i < 0 || i > 20) return { ok: false, error: 'Invalid milestone.' };
+      return { ok: true, normalized: i };
+    }
     case 'retainerFee': {
       // Reject loosely-typed inputs (boolean→1, [5]→5, '0x10'→16, '1e9'): require
       // a plain decimal number or numeric string before coercion.
@@ -453,6 +459,12 @@ async function applyAction({ leadId, action, value, amend = false }) {
       return { ok: true, message: agreementSent
         ? `Retainer fee amended to $${v.normalized}. A staff note was recorded — the agreement was NOT re-sent.`
         : `Retainer fee set to $${v.normalized}. The retainer agreement (once Outcome is Retain) and the payment link (once signed) are emailed automatically.` };
+
+    case 'generateMilestoneLink': {
+      // Not blocked by the plan lock — this collects a payment, it doesn't edit terms.
+      const r = await require('./milestonePaymentService').generateMilestoneLink(leadId, v.normalized);
+      return { ok: true, message: `Payment link for ${r.label} generated and emailed to the client.` };
+    }
 
     case 'retainerSigned': {
       // Precondition: signing implies the consultation was retained. Without

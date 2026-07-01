@@ -188,7 +188,7 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
       return res.type('html').send(buildBookingDoneHtml(lead, slotDate, slotTime));
     }
 
-    const checkoutUrl = await bookingService.createCheckout({
+    const { url: checkoutUrl } = await bookingService.createCheckout({
       leadId, amount: fee,
       description: `Consultation with TDOT Immigration — ${slotDate} ${slotTime}`,
       // Same lead + same slot → same Square link (a re-submit can't mint a

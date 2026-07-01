@@ -394,7 +394,13 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
     return;
   }
 
-  const amountCents = feeToCents(lead.retainerFee);
+  // The first payment is the FIRST milestone's total (amount + HST); milestones
+  // 2..N are collected per-milestone from the panel when they fall due. Falls
+  // back to the whole Retainer Fee for legacy leads with no milestone schedule.
+  const ms = require('./milestonePaymentService');
+  const first = ms.scheduleRows(lead)[0];
+  const amountCents = (first && first.totalCents > 0) ? Math.round(first.totalCents) : feeToCents(lead.retainerFee);
+  const label = first ? first.label : null;
   if (!amountCents) {
     console.log(`[Retainer2] No Retainer Fee set for lead ${leadId} — payment link NOT sent`);
     if (notifyIfMissing) {
@@ -404,7 +410,12 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
     return;
   }
 
-  await require('./paymentService').sendRetainerPaymentLink(leadId, { amountCents });
+  await require('./paymentService').sendRetainerPaymentLink(leadId, { amountCents, label });
+  // Track the first milestone as "sent"; its "paid" state comes from the retainer webhook.
+  if (first) {
+    try { await ms.patchPayment(leadId, 0, { status: 'sent', amountCents, sentAt: new Date().toISOString().split('T')[0] }); }
+    catch (e) { console.warn(`[Retainer2] milestone-1 'sent' mark failed for ${leadId}: ${e.message}`); }
+  }
 }
 
 module.exports = { onOutcomeRetain, maybeSendRetainerAgreement, buildRetainerPdf, getRetainerDocument, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents };

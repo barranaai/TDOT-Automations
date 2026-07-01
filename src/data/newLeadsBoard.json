@@ -94,7 +94,8 @@
     "retainerFamilyMembers": "long_text_mm4smwgp",
     "transcriptLink": "link_mm4vr6br",
     "meetingType": "text_mm4v4v1p",
-    "squareBookingId": "text_mm4vxmdk"
+    "squareBookingId": "text_mm4vxmdk",
+    "milestonePayments": "long_text_mm4vewhk"
   },
   "createdAt": "2026-06-08T18:00:45.756Z"
 }

@@ -82,6 +82,9 @@ async function onSquareRetainerPaymentReceived(event, { fallbackLeadId } = {}) {
   });
   console.log(`[Payment] Lead ${lead.id} retainer paid (txn ${txnId})`);
 
+  // The retainer payment IS the first milestone — record it as paid on the panel.
+  try { await require('./milestonePaymentService').patchPayment(lead.id, 0, { status: 'paid', paidAt: todayISO(), txnId }); } catch (_) {}
+
   // 2. Client Master → Payment Status = "Paid" (Phase 1 trigger).
   if (!lead.clientMasterItemId) {
     console.warn(`[Payment] Lead ${lead.id} paid but has no clientMasterItemId — Phase 1 NOT triggered. ` +
@@ -106,7 +109,7 @@ async function onSquareRetainerPaymentReceived(event, { fallbackLeadId } = {}) {
  * @param {number} opts.amountCents  retainer fee in cents CAD (required —
  *        per-client, from the Lead Board's "Retainer Fee (CAD)" column).
  */
-async function sendRetainerPaymentLink(leadId, { amountCents } = {}) {
+async function sendRetainerPaymentLink(leadId, { amountCents, label } = {}) {
   const bookingService = require('./bookingService');
   const amount = Number.isFinite(amountCents) ? Math.round(amountCents) : 0;
   if (amount <= 0) throw new Error('Retainer fee amount required (pass a positive amountCents)');
@@ -114,8 +117,8 @@ async function sendRetainerPaymentLink(leadId, { amountCents } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) throw new Error(`Lead ${leadId} not found`);
 
-  const url = await bookingService.createCheckout({
-    leadId, amount, description: 'TDOT Immigration — Retainer Fee', type: 'retainer',
+  const { url } = await bookingService.createCheckout({
+    leadId, amount, description: label || 'TDOT Immigration — Retainer Fee', type: 'retainer',
   });
 
   // Staff-visible backup of the link on the lead BEFORE the email attempt —
@@ -141,7 +144,7 @@ async function sendRetainerPaymentLink(leadId, { amountCents } = {}) {
         <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your retainer payment</h1></div>
       <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
         <p>Hi ${esc((lead.fullName || 'there').split(' ')[0])},</p>
-        <p>Thank you for signing your retainer agreement. To begin work on your file, please complete your retainer payment of <strong>${dollars}</strong>:</p>
+        <p>Thank you for signing your retainer agreement. To begin work on your file, please complete your ${label ? `first payment (<b>${esc(label)}</b>)` : 'retainer payment'} of <strong>${dollars}</strong>:</p>
         <p><a href="${esc(url)}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Pay your retainer securely</a></p>
         <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Once your payment is received, we'll begin onboarding right away. Questions about the fee? Just reply to this email.</p>
       </div></div>`;

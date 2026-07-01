@@ -241,6 +241,16 @@ function buildDetailHTML(leadId) {
   .rp-lock { display:flex; align-items:center; gap:12px; justify-content:space-between; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:10px 14px; margin-bottom:12px; font-size:13px; color:#92400e; }
   .rp-lock.amending { background:#eff6ff; border-color:#bfdbfe; color:#1e40af; }
   .rp-lock #rp-amend { flex:none; }
+  .ms-row { display:flex; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid #f1f5f9; flex-wrap:wrap; }
+  .ms-row:last-child { border-bottom:0; }
+  .ms-label { flex:1; min-width:150px; font-size:13px; font-weight:600; color:#33425a; }
+  .ms-amt { font-size:13px; font-weight:700; color:var(--navy); font-variant-numeric:tabular-nums; }
+  .ms-badge { display:inline-block; font-size:9.5px; font-weight:800; padding:2px 8px; border-radius:10px; text-transform:uppercase; letter-spacing:.4px; }
+  .ms-badge.paid { background:#f0fdf4; color:#16a34a; }
+  .ms-badge.sent { background:#eff6ff; color:#2563eb; }
+  .ms-badge.due { background:#fffbeb; color:#d97706; }
+  .ms-badge.pending { background:#f1f5f9; color:#64748b; }
+  .ms-row button { padding:6px 12px; font-size:12px; }
 
   a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }
 </style></head><body>
@@ -397,6 +407,9 @@ ${buildNavHeader('consultations')}
       <div class="frow" style="margin-top:12px">
         <button class="btn" id="btn-signed">${I.userCheck} Mark retainer signed</button>
       </div>
+
+      <div class="subhead" style="margin-top:16px">${I.dollar} Milestone payments</div>
+      <div id="rp-milestone-pay"><span class="muted">Payment status appears here once the retainer plan is set. The first milestone is charged automatically at retain; later milestones show a “Generate payment link” button once they’re due.</span></div>
     </div>
   </div>
 </main>
@@ -554,7 +567,7 @@ function doAction(action,value,confirmMsg){
      if(res.status===401||res.status===403){ window.location.href='/admin'; return; }
      if(res.status!==200) throw new Error((res.j&&res.j.error)||('HTTP '+res.status));
      setMsg(res.j.message||'Done.','ok');
-     if(action==='saveRetainerSelections') RP_HYDRATED=false; // re-hydrate the panel from the freshly-saved plan
+     if(action==='saveRetainerSelections'||action==='generateMilestoneLink') RP_HYDRATED=false; // re-hydrate the panel (fresh plan / milestone-payment status)
      load(); // refresh consultation state (pills, status, outcome highlight) — render() re-locks + resets amend
    }).catch(function(e){ disableActions(false); setMsg(netErr(e),'err'); });
 }
@@ -619,6 +632,7 @@ function hydrateRetainer(d){
   rebuildMilestones(plan.milestones||[]);
   if(d.familyMemberTypes&&d.familyMemberTypes.length) FAMILY_TYPES=d.familyMemberTypes;
   rebuildFamily(d.familyMembers||[]);
+  renderMilestonePayments(d.milestonePayments||[]);
   var flag=annex.code?(annex.needsVerify?'<span class="rp-flag verify">verify</span>':'<span class="rp-flag high">high</span>'):'';
   rpEl('rp-suggestion').innerHTML='<div class="rp-sugg"><b>Suggested:</b> '+escHtml(RP_TPL_LABELS[plan.template]||plan.template||'—')+' · '+(annex.code?('['+escHtml(annex.code)+'] '+escHtml(annex.label||'')):'no annex auto-selected')+flag+(annex.basis?('<br><span class="muted">'+escHtml(annex.basis)+'</span>'):'')+(d.saved?' <span class="muted">· saved plan loaded</span>':'')+'</div>';
   renderRpWarnings(plan.warnings||[]);
@@ -658,6 +672,24 @@ function updateDue(tr){
   var sel=tr.querySelector('.m-trigger'), badge=tr.querySelector('.m-due');
   if(!sel||!badge) return;
   badge.style.display=(CUR_CASE_STAGE&&sel.value&&sel.value===CUR_CASE_STAGE)?'inline-block':'none';
+}
+// Milestone payments panel (outside the locked plan editor — collecting a payment
+// isn't editing the contract). A "Generate payment link" button shows on a
+// pending milestone once it's due; status shows Paid / Link sent otherwise.
+function renderMilestonePayments(list){
+  var el=rpEl('rp-milestone-pay'); if(!el) return;
+  if(!list||!list.length){ el.innerHTML='<span class="muted">No milestones set yet.</span>'; return; }
+  el.innerHTML=list.map(function(m){
+    var badge = m.status==='paid' ? '<span class="ms-badge paid">Paid</span>'
+              : m.status==='sent' ? '<span class="ms-badge sent">Link sent</span>'
+              : (m.due ? '<span class="ms-badge due">Due</span>' : '<span class="ms-badge pending">Pending</span>');
+    var amt='$'+(Number(m.totalCents||0)/100).toFixed(2);
+    var btn=(m.status==='pending'&&m.due)?'<button class="btn primary" type="button" data-msp="'+m.index+'">'+ICONS.check+' Generate payment link</button>':'';
+    return '<div class="ms-row"><span class="ms-label">'+escHtml(m.label||('Milestone '+(m.index+1)))+'</span><span class="ms-amt">'+amt+'</span>'+badge+btn+'</div>';
+  }).join('');
+  Array.prototype.forEach.call(el.querySelectorAll('[data-msp]'),function(b){
+    b.onclick=function(){ doAction('generateMilestoneLink', b.getAttribute('data-msp'), 'Generate and email the payment link for this milestone to the client now?'); };
+  });
 }
 function rebuildMilestones(rows){
   var tb=rpEl('milestone-body'); tb.innerHTML='';
