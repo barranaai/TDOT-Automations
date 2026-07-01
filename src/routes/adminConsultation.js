@@ -572,7 +572,7 @@ function applyRetainerLock(){
   if(amendBtn) amendBtn.style.display = (RP_LOCKED && !RP_AMEND) ? 'inline-flex' : 'none';
 }
 function startAmend(){
-  if(!window.confirm('The retainer agreement has already been emailed to the client.\n\nAmending the fee or milestones will NOT re-send it, and the client may hold an agreement stating the original terms. A staff note will record the change.\n\nContinue?')) return;
+  if(!window.confirm('The retainer agreement has already been emailed to the client. Amending the fee or milestones will NOT re-send it, and the client may hold an agreement stating the original terms — a staff note will record the change. Continue?')) return;
   RP_AMEND=true; applyRetainerLock();
 }
 
