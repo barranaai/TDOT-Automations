@@ -46,7 +46,8 @@ const COL_TYPE = {
   priority: 'status', priorityReasons: 'long_text', aiTierOpinion: 'text', aiDisagrees: 'status',
   bookingInvite: 'status', // "Send" (staff trigger / auto) → system emails the booking link → "Sent"
   preConsultPdf: 'link',   // org-share link to the generated pre-consultation PDF in OneDrive
-  recordingLink: 'link',   // Zoom cloud-recording share link (written by the Zoom webhook)
+  recordingLink: 'link',   // Zoom cloud-recording / Teams recording share link
+  transcriptLink: 'link',  // Teams meeting transcript (Graph → stored in the lead's OneDrive folder)
   meetingLink: 'link',     // consultation join URL (Zoom or Teams — provider-agnostic)
   // V2 family composition (intake) — auto-creates Family Members rows at case-ref time
   hasSpouse: 'status', spouseAccompanying: 'status', childrenCount: 'numbers', childrenAccompanying: 'status',

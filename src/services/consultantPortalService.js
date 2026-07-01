@@ -199,6 +199,7 @@ async function getConsultationDetail(leadId) {
     preConsultSubmitted: (lead.preConsultSubmitted || '') === 'Yes',
     meetingLink:     lead.meetingLink || '',
     recordingLink:   lead.recordingLink || '',
+    transcriptLink:  lead.transcriptLink || '',
     preConsultPdf:   lead.preConsultPdf || '',
     leadToken:       lead.leadToken || '',
 

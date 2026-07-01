@@ -442,6 +442,7 @@ function render(d){
   if(d.meetingLink) acts+='<a class="btn primary" href="'+escHtml(safeUrl(d.meetingLink))+'" target="_blank" rel="noopener">'+ICONS.video+' Join meeting</a>';
   if(d.preConsultPdf) acts+='<a class="iconbtn" title="Dossier PDF" aria-label="Dossier PDF" href="'+escHtml(safeUrl(d.preConsultPdf))+'" target="_blank" rel="noopener">'+ICONS.file+'</a>';
   if(d.recordingLink) acts+='<a class="iconbtn" title="Recording" aria-label="Recording" href="'+escHtml(safeUrl(d.recordingLink))+'" target="_blank" rel="noopener">'+ICONS.disc+'</a>';
+  if(d.transcriptLink) acts+='<a class="iconbtn" title="Transcript" aria-label="Transcript" href="'+escHtml(safeUrl(d.transcriptLink))+'" target="_blank" rel="noopener">'+ICONS.file+'</a>';
   if(d.email) acts+='<a class="iconbtn" title="Email client" aria-label="Email client" href="'+escHtml(safeUrl('mailto:'+d.email))+'">'+ICONS.mail+'</a>';
   document.getElementById('c-acts').innerHTML=acts;
 

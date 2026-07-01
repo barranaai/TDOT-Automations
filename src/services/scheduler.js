@@ -149,7 +149,10 @@ function startScheduler() {
   cron.schedule('*/30 * * * *', () =>      // Teams recording discovery in the recorder's OneDrive
     require('./postConsultService').findTeamsRecordings().catch((err) =>
       console.error('[Scheduler] Teams recording discovery failed:', err.message)));
-  console.log('[Scheduler] Post-consult jobs registered — nudge (15 min) + Teams recordings (30 min)');
+  cron.schedule('10,40 * * * *', () =>     // Teams transcript fetch (Graph onlineMeetings/transcripts)
+    require('./teamsTranscriptService').findTeamsTranscripts().catch((err) =>
+      console.error('[Scheduler] Teams transcript fetch failed:', err.message)));
+  console.log('[Scheduler] Post-consult jobs registered — nudge (15 min) + Teams recordings (30 min) + transcripts (30 min)');
 }
 
 module.exports = { startScheduler };

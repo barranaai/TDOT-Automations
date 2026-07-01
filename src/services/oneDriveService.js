@@ -341,7 +341,36 @@ async function uploadFileAndLink({ clientName, caseRef, category, filename, buff
   return { url, webUrl: res.data.webUrl, id: res.data.id };
 }
 
+/**
+ * Upload a buffer straight into the lead's OneDrive folder (addressed by the
+ * folder's item id, so there's no missing-subfolder 404 the path-based upload
+ * would hit) and return an organisation-scoped sharing link. Used for the Teams
+ * transcript, which we fetch from Graph and store alongside the client's docs.
+ *
+ * @returns {Promise<{ url: string, webUrl: string, id: string }>}
+ */
+async function uploadToLeadFolderAndLink({ fullName, leadId, folderId, filename, buffer, mimeType }) {
+  const token = await getCachedToken();
+  // Prefer the stored folder id — a driveItem keeps its id when the intake folder
+  // is renamed to "{name} - {caseRef}" at handoff, so a post-handoff upload still
+  // lands in the right place. Resolve by name only when no id was passed.
+  let id = String(folderId || '').trim();
+  if (!id) { id = (await ensureLeadFolder({ fullName, leadId })).id; }
+  const safeFile = String(filename).replace(/[*:"<>?/\\|]/g, '').trim() || 'file';
+  const res = await axios.put(
+    `${userBase()}/items/${id}:/${encodeURIComponent(safeFile)}:/content`,
+    buffer,
+    { headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeType || 'application/octet-stream' },
+      maxContentLength: Infinity, maxBodyLength: Infinity }
+  );
+  let url = res.data.webUrl;
+  try { url = await createOrgLink(token, res.data.id); }
+  catch (err) { console.warn(`[OneDrive] Org link failed for ${safeFile} (using webUrl): ${err.message}`); }
+  console.log(`[OneDrive] Uploaded to lead folder → ${safeFile}`);
+  return { url, webUrl: res.data.webUrl, id: res.data.id };
+}
+
 module.exports = {
   createClientFolders, uploadFile, readFile, ensureClientFolder, ensureCategoryFolderLink,
-  ensureLeadFolder, renameDriveItem, uploadFileAndLink,
+  ensureLeadFolder, renameDriveItem, uploadFileAndLink, uploadToLeadFolderAndLink,
 };
