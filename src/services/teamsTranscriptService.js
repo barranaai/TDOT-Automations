@@ -167,8 +167,62 @@ async function findTeamsTranscripts() {
   } finally { _running = false; }
 }
 
+/**
+ * PREFLIGHT — verify the transcript setup WITHOUT needing a real transcribed
+ * meeting. Probes the organizer's online meetings with a no-match filter:
+ *   • 200 (even empty) → OnlineMeetings.Read.All + the Teams application access
+ *     policy are active for the organizer. You're good.
+ *   • 403 → the permission isn't admin-consented, OR the app-access-policy is
+ *     missing / hasn't propagated yet (allow ~30 min).
+ *   • 404 → organizer mailbox not found (MEETING_ORGANIZER_EMAIL wrong).
+ * If a booked Teams meeting exists, it also exercises the real path and reports
+ * whether a transcript is available yet. Run: POST /api/transcript-preflight
+ */
+async function preflightTranscripts() {
+  const org = organizer();
+  if (!org) return { ok: false, error: 'MEETING_ORGANIZER_EMAIL not set' };
+
+  const { getAccessToken } = require('./microsoftMailService');
+  let token;
+  try { token = await getAccessToken(); }
+  catch (err) { return { ok: false, step: 'token', error: err.message }; }
+
+  // Tier 1 — access probe. A no-match filter returns 200 with an empty page when
+  // access is in place; it 403s before evaluating the filter when it isn't.
+  try {
+    await axios.get(meetingLookupUrl(org, 'https://teams.microsoft.com/l/meetup-join/preflight-no-match'),
+      { headers: { Authorization: `Bearer ${token}` } });
+  } catch (err) {
+    const status = err.response && err.response.status;
+    const e = err.response && err.response.data && err.response.data.error;
+    return { ok: false, step: 'onlineMeetings', status, error: e ? `${e.code}: ${e.message}` : err.message,
+      hint: status === 403 ? `Either OnlineMeetings.Read.All isn't admin-consented, or the Teams application access policy isn't granted / hasn't propagated yet for ${org} (allow ~30 min).`
+          : status === 404 ? `Organizer mailbox not found — check MEETING_ORGANIZER_EMAIL (${org}).`
+          : undefined };
+  }
+
+  const result = { ok: true, organizer: org,
+    message: `Access OK — Graph reached ${org}'s online meetings. The app permission + application access policy are active. Transcripts will be captured once a meeting is transcribed.` };
+
+  // Tier 2 (best-effort) — exercise the real path against a booked Teams meeting.
+  try {
+    const lead = (await getTranscriptCandidates()).find((l) => TEAMS_RE.test(l.meetingUrl || ''));
+    if (lead) {
+      result.sampleLead = lead.id;
+      const meetingId = await resolveMeetingId(token, org, lead.meetingUrl);
+      if (!meetingId) result.sample = 'Sample join URL resolved 0 meetings (that meeting may have expired — not a setup problem).';
+      else {
+        const transcripts = await listTranscripts(token, org, meetingId);
+        result.sample = `Sample meeting resolved; ${transcripts.length} transcript(s) available.`;
+      }
+    }
+  } catch (err) { result.sampleError = graphErr(err); }
+
+  return result;
+}
+
 module.exports = {
-  findTeamsTranscripts,
+  findTeamsTranscripts, preflightTranscripts,
   // pure — exported for tests
   isTranscriptCandidate, meetingLookupUrl, transcriptsListUrl, transcriptContentUrl, pickLatestTranscript, graphErr,
 };

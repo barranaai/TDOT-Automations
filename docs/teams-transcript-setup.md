@@ -42,6 +42,11 @@ Then click **“Grant admin consent for <tenant>”**. Both must show *Granted*.
 App-only calls to a user's online meetings must be authorized for that user. The
 organizer is `MEETING_ORGANIZER_EMAIL` (the mailbox that creates the meetings).
 
+> **Turnkey:** run `scripts/setup-teams-transcript-policy.ps1` as a Teams admin —
+> it installs the module, connects, creates + grants the policy, and verifies. It
+> prompts for the two values (AppId = `MS_CLIENT_ID`, Organizer =
+> `MEETING_ORGANIZER_EMAIL`). The manual equivalent is below.
+
 In PowerShell (Teams admin):
 
 ```powershell
@@ -88,6 +93,16 @@ by default — someone must either:
 - No transcript yet? It just tries again next run until the 72h window closes.
 
 ## Verifying
+
+**First, without a real meeting** — once the policy has propagated (~30 min):
+```
+POST https://tdot-automations.onrender.com/api/transcript-preflight
+  header:  X-Api-Key: <ADMIN_API_KEY>
+```
+`ok:true` → the permission + policy are active. `403` in the response → not
+consented / policy not granted / not yet propagated (the `hint` field says which).
+
+**Then, end to end:**
 
 1. Book a Teams consultation, run it, and **turn on transcription** in the call.
 2. End the meeting; within ~30–60 min the lead should get the Consultation

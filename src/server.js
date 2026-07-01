@@ -140,6 +140,18 @@ app.post('/api/meeting-preflight', async (req, res) => {
   }
 });
 
+// Verify the Teams TRANSCRIPT setup (Graph permission + application access
+// policy) without needing a real transcribed meeting.
+// Usage: POST /api/transcript-preflight
+app.post('/api/transcript-preflight', async (req, res) => {
+  try {
+    const result = await require('./services/teamsTranscriptService').preflightTranscripts();
+    res.status(result.ok ? 200 : 422).json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.get('/api/monday-test', async (req, res) => {
   try {
     const data = await mondayApi.query('query { me { id name email } }');
