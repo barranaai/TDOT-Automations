@@ -13,29 +13,27 @@
 
 'use strict';
 
-// The designation that prints before the RCIC number on the agreements. Both
-// consultants are RCIC-IRB today; kept as a field (env-overridable) so a
-// consultant with a different designation can be represented without a code edit.
-const RCIC_DESIGNATION = 'Regulated Canadian Immigration Consultant - Immigration and Refugee Consultant (RCIC-IRB)';
-
-// Signatory identity that merges into the consultation + retainer agreements
-// ({consultantName}, {rcicNumber}, {rcicTitle}). rcicNumber/title are
-// env-overridable so a real credential can be set from Render without a code
-// change. Shafoli's number is the one already printed in the .docx templates;
-// Shermin's is intentionally blank until TDOT provides it (a blank renders blank
-// per the agreed "generate with blank number" behaviour).
+// Signatory identity that merges into the consultation + retainer agreements.
+// The templates carry four tags — {consultantName}, {rcicTitle} (the descriptor
+// before the credential), {rcicRole} (the defined term repeated throughout every
+// clause), and {rcicNumber}. Shafoli is an RCIC-IRB; Shermin is a plain RCIC with
+// a different title, so BOTH the role and the title differ per consultant — hence
+// they are per-consultant fields, not shared constants. All are env-overridable so
+// a credential can be corrected from Render without a code change.
 const CONSULTANTS = {
   shafoli: {
     key: 'shafoli', name: 'Shafoli Kapur',
     teamMemberId: process.env.SQUARE_TM_SHAFOLI || 'TMyC12DauGxiI8x-',
     rcicNumber: (process.env.RCIC_NUMBER_SHAFOLI || 'R518177').trim(),
-    title: (process.env.RCIC_TITLE_SHAFOLI || RCIC_DESIGNATION).trim(),
+    rcicRole:   (process.env.RCIC_ROLE_SHAFOLI  || 'RCIC-IRB').trim(),
+    rcicTitle:  (process.env.RCIC_TITLE_SHAFOLI || 'Regulated Canadian Immigration Consultant - Immigration and Refugee Consultant').trim(),
   },
   shermin: {
     key: 'shermin', name: 'Shermin Teymouri Mofrad',
     teamMemberId: process.env.SQUARE_TM_SHERMIN || 'TMAaDa6-290I5zyi',
-    rcicNumber: (process.env.RCIC_NUMBER_SHERMIN || '').trim(),
-    title: (process.env.RCIC_TITLE_SHERMIN || RCIC_DESIGNATION).trim(),
+    rcicNumber: (process.env.RCIC_NUMBER_SHERMIN || 'R709839').trim(),
+    rcicRole:   (process.env.RCIC_ROLE_SHERMIN  || 'RCIC').trim(),
+    rcicTitle:  (process.env.RCIC_TITLE_SHERMIN || 'Immigration Case Officer').trim(),
   },
 };
 
@@ -123,10 +121,15 @@ function resolveConsultant(lead = {}) {
  */
 function consultantMergeFields(lead = {}) {
   const c = resolveConsultant(lead);
-  return { consultantName: c.name || '', rcicNumber: c.rcicNumber || '', rcicTitle: c.title || '' };
+  return {
+    consultantName: c.name || '',
+    rcicNumber: c.rcicNumber || '',
+    rcicRole:   c.rcicRole || '',
+    rcicTitle:  c.rcicTitle || '',
+  };
 }
 
 module.exports = {
   routeConsultant, resolveConsultant, consultantMergeFields,
-  CONSULTANTS, RCIC_DESIGNATION, EE_SERVICES, PNP_SERVICES, HC_SERVICES, CRS_THRESHOLD,
+  CONSULTANTS, EE_SERVICES, PNP_SERVICES, HC_SERVICES, CRS_THRESHOLD,
 };

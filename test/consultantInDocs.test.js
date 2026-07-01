@@ -33,14 +33,16 @@ test('resolveConsultant: blank or unknown pin falls back to live routing (never 
   assert.equal(resolveConsultant({ removalOrder: 'Yes' }).key, 'shafoli');
 });
 
-test('consultantMergeFields: shared shape; Shafoli carries R518177, Shermin blank by default', () => {
+test('consultantMergeFields: shared shape; per-consultant role/title/number', () => {
   const shafoli = consultantMergeFields({ assignedConsultant: 'Shafoli Kapur' });
-  assert.deepEqual(Object.keys(shafoli).sort(), ['consultantName', 'rcicNumber', 'rcicTitle']);
+  assert.deepEqual(Object.keys(shafoli).sort(), ['consultantName', 'rcicNumber', 'rcicRole', 'rcicTitle']);
   assert.equal(shafoli.consultantName, 'Shafoli Kapur');
-  assert.equal(shafoli.rcicNumber, CONSULTANTS.shafoli.rcicNumber); // 'R518177' unless env-overridden
+  assert.equal(shafoli.rcicRole, CONSULTANTS.shafoli.rcicRole);   // 'RCIC-IRB'
+  assert.equal(shafoli.rcicNumber, CONSULTANTS.shafoli.rcicNumber); // 'R518177'
   const shermin = consultantMergeFields({ assignedConsultant: 'Shermin Teymouri Mofrad' });
   assert.equal(shermin.consultantName, 'Shermin Teymouri Mofrad');
-  assert.equal(shermin.rcicNumber, CONSULTANTS.shermin.rcicNumber); // '' until configured
+  assert.equal(shermin.rcicRole, 'RCIC');                          // plain RCIC, NOT RCIC-IRB
+  assert.equal(shermin.rcicTitle, 'Immigration Case Officer');
 });
 
 test('templates carry the merge tags: each renders the routed consultant, no hardcoded leak', () => {
@@ -52,8 +54,28 @@ test('templates carry the merge tags: each renders the routed consultant, no har
     const t = rendered(tpl, data);
     assert.ok(t.includes('Shermin Teymouri Mofrad'), `${tpl}: routed consultant name missing`);
     assert.ok(!t.includes('Shafoli Kapur'), `${tpl}: hardcoded 'Shafoli Kapur' still leaks for a Shermin lead`);
-    assert.ok(!/\{consultantName\}|\{rcicNumber\}/.test(t), `${tpl}: unresolved merge tag left in the document`);
+    assert.ok(!/\{consultantName\}|\{rcicNumber\}|\{rcicRole\}|\{rcicTitle\}/.test(t), `${tpl}: unresolved merge tag left in the document`);
   }
+});
+
+test('a plain-RCIC consultant is NEVER labelled RCIC-IRB anywhere in the agreement', () => {
+  // The defined term appears in every clause; a single missed occurrence would
+  // wrongly call Shermin an RCIC-IRB. Assert zero "IRB" in any template for her.
+  for (const tpl of ['consult', 'pa', 'pa-inviter', 'employer']) {
+    const data = Object.assign(
+      { agreementDate: 'x', paName: 'Test Client', applicationType: 'Study permit', scopeAnnexNo: 'A', paymentAnnexNo: 'B' },
+      consultantMergeFields({ assignedConsultant: 'Shermin Teymouri Mofrad' }),
+    );
+    const t = rendered(tpl, data);
+    assert.ok(!/IRB/.test(t), `${tpl}: "IRB" still appears for a plain-RCIC consultant`);
+    assert.ok(t.includes('Immigration Case Officer'), `${tpl}: Shermin's title missing`);
+  }
+  // and Shafoli still renders as RCIC-IRB with her full descriptor
+  const s = rendered('pa', Object.assign(
+    { agreementDate: 'x', paName: 'C', applicationType: 'Study permit', scopeAnnexNo: 'A', paymentAnnexNo: 'B' },
+    consultantMergeFields({ assignedConsultant: 'Shafoli Kapur' }),
+  ));
+  assert.ok(s.includes('RCIC-IRB') && s.includes('Regulated Canadian Immigration Consultant - Immigration and Refugee Consultant'));
 });
 
 test('retainer mergeData includes the signatory fields', () => {
