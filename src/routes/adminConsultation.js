@@ -238,6 +238,11 @@ function buildDetailHTML(leadId) {
   .rp-stage { font-weight:700; color:var(--navy); }
   .rp-fs { border:0; padding:0; margin:0; min-width:0; }
   .rp-fs:disabled { opacity:.82; }
+  /* One-line retainer action bar. Tight 8px gap WITHIN a group, wider 18px gap
+     BETWEEN groups — so the three stages (edit · review/save · sign) read as a
+     sequence. Groups wrap as whole units on narrow screens. */
+  .rp-actionbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; margin-top:16px; padding-top:14px; border-top:1px solid var(--border); }
+  .rp-actiongroup { display:inline-flex; align-items:center; gap:8px; }
   .rp-lock { display:flex; align-items:center; gap:12px; justify-content:space-between; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:10px 14px; margin-bottom:12px; font-size:13px; color:#92400e; }
   .rp-lock.amending { background:#eff6ff; border-color:#bfdbfe; color:#1e40af; }
   .rp-lock #rp-amend { flex:none; }
@@ -396,16 +401,24 @@ ${buildNavHeader('consultations')}
         <thead><tr><th style="width:32%">Label</th><th style="width:16%">Amount (CAD)</th><th style="width:13%">HST</th><th style="width:13%">Total</th><th style="width:18%">Trigger</th><th></th></tr></thead>
         <tbody id="milestone-body"></tbody>
       </table>
-      <button class="btn" id="rp-add-mile" type="button" style="margin-top:8px">${I.plus} Add milestone</button>
-      <button class="btn" id="rp-split-mile" type="button" style="margin-top:8px;margin-left:6px">${I.cols} Split fee evenly</button>
-
-      <div class="frow" style="margin-top:14px">
-        <button class="btn" id="btn-retainer-preview" type="button">${I.eye} Preview retainer agreement</button>
-        <button class="btn primary" id="btn-retainer-save" type="button">${I.save} Save retainer plan</button>
-      </div>
       </fieldset>
-      <div class="frow" style="margin-top:12px">
-        <button class="btn" id="btn-signed">${I.userCheck} Mark retainer signed</button>
+
+      <!-- Retainer action bar: one line, left→right in the order the workflow runs
+           (edit milestones → review → save → sign). The plan-editing buttons live
+           OUTSIDE the lock fieldset so "Mark retainer signed" stays clickable after
+           the agreement is sent + locked; applyRetainerLock() disables the rest. -->
+      <div class="rp-actionbar">
+        <span class="rp-actiongroup">
+          <button class="btn" id="rp-add-mile" type="button">${I.plus} Add milestone</button>
+          <button class="btn" id="rp-split-mile" type="button">${I.cols} Split fee evenly</button>
+        </span>
+        <span class="rp-actiongroup">
+          <button class="btn" id="btn-retainer-preview" type="button">${I.eye} Preview retainer agreement</button>
+          <button class="btn primary" id="btn-retainer-save" type="button">${I.save} Save retainer plan</button>
+        </span>
+        <span class="rp-actiongroup">
+          <button class="btn" id="btn-signed" type="button">${I.userCheck} Mark retainer signed</button>
+        </span>
       </div>
 
       <div class="subhead" style="margin-top:16px">${I.dollar} Milestone payments</div>
@@ -578,7 +591,14 @@ function doAction(action,value,confirmMsg){
 function applyRetainerLock(){
   var fs=document.getElementById('rp-lock-fs'), banner=document.getElementById('rp-lock'),
       msg=document.getElementById('rp-lock-msg'), amendBtn=document.getElementById('rp-amend');
-  if(fs) fs.disabled = RP_LOCKED && !RP_AMEND;
+  var locked = RP_LOCKED && !RP_AMEND;
+  if(fs) fs.disabled = locked;
+  // The plan-editing buttons now sit OUTSIDE the fieldset (so "Mark retainer
+  // signed" can stay usable while locked), so the fieldset no longer disables
+  // them — lock them explicitly to keep the sent agreement's terms read-only.
+  ['rp-add-mile','rp-split-mile','btn-retainer-preview','btn-retainer-save'].forEach(function(id){
+    var b=document.getElementById(id); if(b) b.disabled = locked;
+  });
   if(banner){ banner.style.display = RP_LOCKED ? 'flex' : 'none'; banner.className = 'rp-lock' + (RP_AMEND ? ' amending' : ''); }
   if(msg) msg.innerHTML = RP_AMEND
     ? '✎ <b>Amending a sent agreement.</b> Changes are recorded as a note — the client may hold the original terms.'
