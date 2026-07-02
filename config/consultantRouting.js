@@ -23,6 +23,7 @@
 const CONSULTANTS = {
   shafoli: {
     key: 'shafoli', name: 'Shafoli Kapur',
+    email: (process.env.CONSULTANT_EMAIL_SHAFOLI || 'shafoli@tdotimm.com').trim(),
     teamMemberId: process.env.SQUARE_TM_SHAFOLI || 'TMyC12DauGxiI8x-',
     rcicNumber: (process.env.RCIC_NUMBER_SHAFOLI || 'R518177').trim(),
     rcicRole:   (process.env.RCIC_ROLE_SHAFOLI  || 'RCIC-IRB').trim(),
@@ -30,6 +31,7 @@ const CONSULTANTS = {
   },
   shermin: {
     key: 'shermin', name: 'Shermin Teymouri Mofrad',
+    email: (process.env.CONSULTANT_EMAIL_SHERMIN || 'shermin@tdotimm.com').trim(),
     teamMemberId: process.env.SQUARE_TM_SHERMIN || 'TMAaDa6-290I5zyi',
     rcicNumber: (process.env.RCIC_NUMBER_SHERMIN || 'R709839').trim(),
     rcicRole:   (process.env.RCIC_ROLE_SHERMIN  || 'RCIC').trim(),

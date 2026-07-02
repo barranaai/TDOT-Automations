@@ -119,12 +119,17 @@ function buildTeamsEventPayload(lead, slotStr, durationMinutes, { includeAttende
     });
   }
   // The consultant is invited too: the organizer (noreply automation account)
-  // never joins, so the staff attendee is who actually runs the meeting,
-  // receives the invite + join link, and admits the client from the lobby.
-  const staff = String(process.env.STAFF_ATTENDEE_EMAIL || '').trim();
-  if (staff) {
+  // never joins, so the routed consultant is who actually runs the meeting,
+  // receives the invite + join link, and admits the client from the lobby. Invite
+  // the ACTUAL routed consultant (Shafoli/Shermin) — resolved from the lead — so
+  // the right person gets it, not one fixed mailbox. Fall back to STAFF_ATTENDEE_EMAIL
+  // only if the routed consultant has no email configured.
+  const routed = require('../../config/consultantRouting').resolveConsultant(lead);
+  const consultantEmail = String((routed && routed.email) || process.env.STAFF_ATTENDEE_EMAIL || '').trim();
+  const consultantName  = (routed && routed.name) || 'TDOT Immigration Consultant';
+  if (consultantEmail) {
     payload.attendees.push({
-      emailAddress: { address: staff, name: 'TDOT Immigration Consultant' },
+      emailAddress: { address: consultantEmail, name: consultantName },
       type: 'required',
     });
   }
