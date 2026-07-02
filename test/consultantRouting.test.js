@@ -56,6 +56,17 @@ test('removal / enforcement order → always Shafoli, overriding case type + CRS
   assert.equal(routeConsultant({ serviceRequired: 'Study permit', removalOrder: 'Not sure' }).key, 'shermin');
 });
 
+test('urgent deadline → always Shafoli (consultation urgentDeadline OR main-board deadlineDate)', () => {
+  // would normally be Shermin (EE low CRS / generic) — urgency override wins
+  assert.equal(routeConsultant({ serviceRequired: 'Express Entry profile', crsScore: '400', urgentDeadline: 'Yes' }).key, 'shafoli');
+  assert.equal(routeConsultant({ serviceRequired: 'Study permit', urgentDeadline: 'Yes' }).key, 'shafoli');
+  assert.equal(routeConsultant({ serviceRequired: 'Study permit', deadlineDate: '2026-07-15' }).key, 'shafoli'); // main-board proxy
+  assert.match(routeConsultant({ urgentDeadline: 'Yes' }).reason, /urgent deadline/i);
+  // No / unset does not trigger it
+  assert.equal(routeConsultant({ serviceRequired: 'Study permit', urgentDeadline: 'No' }).key, 'shermin');
+  assert.equal(routeConsultant({ serviceRequired: 'Study permit', urgentDeadline: '' }).key, 'shermin');
+});
+
 test('result carries the Square team-member id', () => {
   assert.ok(routeConsultant({ serviceRequired: 'PNP or OINP' }).teamMemberId);
   assert.match(routeConsultant({ serviceRequired: 'Study permit' }).reason, /general/i);

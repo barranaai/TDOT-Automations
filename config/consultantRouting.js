@@ -70,6 +70,14 @@ function routeConsultant(lead = {}) {
     return pick(CONSULTANTS.shafoli, 'Removal / enforcement order → senior RCIC');
   }
 
+  // An urgent deadline is also an urgent matter → senior RCIC (Shafoli), over any
+  // EE/CRS/case-type rule. Signalled by the consultation form's urgentDeadline=Yes
+  // OR (on the main lead board, which has no urgentDeadline column) a deadlineDate
+  // being set — the intake form only captures a deadlineDate when the answer is Yes.
+  if (String(lead.urgentDeadline || '').trim() === 'Yes' || String(lead.deadlineDate || '').trim() !== '') {
+    return pick(CONSULTANTS.shafoli, 'Urgent deadline → senior RCIC');
+  }
+
   // Express Entry → Shafoli only if CRS > 470
   if (EE_SERVICES.includes(svc)) {
     if (hasCrs && crs > CRS_THRESHOLD) return pick(CONSULTANTS.shafoli, `Express Entry · CRS ${crs} (> ${CRS_THRESHOLD})`);
