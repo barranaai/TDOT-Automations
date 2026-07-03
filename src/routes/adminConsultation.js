@@ -307,8 +307,13 @@ function buildDetailHTML(leadId) {
   .step.done .lbl { color:var(--muted); } .step.cur .lbl { color:var(--navy); font-weight:700; }
 
   /* two-column working area */
-  .cols { display:grid; grid-template-columns:minmax(0,1.75fr) minmax(0,1fr); gap:16px; align-items:start; }
+  .cols { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; align-items:start; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr; } .ctx{ position:static; } }
+  /* Retainer config: short inputs flow into an even, aligned grid instead of a long stack. */
+  .rp-config { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px 16px; align-items:start; }
+  .rp-config .rp-field { margin-top:0; }
+  .rp-config .frow { gap:6px; } .rp-config .frow input { width:auto; flex:1 1 90px; min-width:0; }
+  .rp-pay-block { background:#f8fafc; border:1px solid #eef2f7; border-radius:10px; padding:12px 14px; margin-top:8px; }
   .col { display:flex; flex-direction:column; gap:14px; }
   .card { background:var(--card); border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; padding:16px 18px; }
   .card-t { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:800; color:var(--navy); margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #f1f5f9; }
@@ -429,7 +434,7 @@ ${buildNavHeader('consultations')}
 
       <div class="col">
         <div class="card actions">
-          <div class="card-t">${I.bolt} Actions</div>
+          <div class="card-t">${I.bolt} Consultation</div>
           <div class="subhead">Record outcome</div>
           <div class="obtns" id="obtns"></div>
           <div id="act-msg" class="act-msg"></div>
@@ -443,16 +448,16 @@ ${buildNavHeader('consultations')}
             <div id="ca-warn"></div>
             <div class="frow"><button class="btn" id="btn-consult-preview">${I.eye} Preview agreement</button><button class="btn" id="btn-consult-send">${I.send} Review &amp; send</button></div>
           </div>
-          <div class="agroup">
-            <div class="subhead">Attribution &amp; follow-up <span class="muted" id="attr-saved"></span></div>
-            <div class="attr-grid">
-              <label class="attr-f"><span>Follow-up date</span><input id="at-followup" type="date"></label>
-              <label class="attr-f"><span>Lead owner</span><select id="at-owner">${STAFF_OPTS}</select></label>
-              <label class="attr-f"><span>Booked by</span><select id="at-bookedby">${STAFF_OPTS}</select></label>
-              <label class="attr-f"><span>Payment reviewed by</span><select id="at-reviewer">${STAFF_OPTS}</select></label>
-            </div>
-            <div class="frow" style="margin-top:9px"><button class="btn primary" id="btn-attr-save">${I.save} Save attribution</button></div>
+        </div>
+        <div class="card actions">
+          <div class="card-t">${I.userCheck} Attribution &amp; follow-up <span class="muted" id="attr-saved" style="margin-left:auto;font-weight:500"></span></div>
+          <div class="attr-grid">
+            <label class="attr-f"><span>Follow-up date</span><input id="at-followup" type="date"></label>
+            <label class="attr-f"><span>Lead owner</span><select id="at-owner">${STAFF_OPTS}</select></label>
+            <label class="attr-f"><span>Booked by</span><select id="at-bookedby">${STAFF_OPTS}</select></label>
+            <label class="attr-f"><span>Payment reviewed by</span><select id="at-reviewer">${STAFF_OPTS}</select></label>
           </div>
+          <div class="frow" style="margin-top:12px"><button class="btn primary" id="btn-attr-save">${I.save} Save attribution</button></div>
         </div>
         <div class="card"><div class="card-t">${I.flag} Case status</div><div id="c-status" class="kvgrid"></div></div>
       </div>
@@ -467,16 +472,11 @@ ${buildNavHeader('consultations')}
         <button class="btn" id="rp-amend" type="button">✎ Amend</button>
       </div>
       <fieldset id="rp-lock-fs" class="rp-fs">
-      <div class="subhead">Retainer fee</div>
-      <div class="frow">
-        <input id="fee" type="number" min="1" step="1" placeholder="Fee (CAD $)">
-        <button class="btn" id="btn-fee">${I.check} Set fee</button>
-      </div>
-
-      <div id="rp-suggestion" style="margin-top:13px"></div>
-      <div id="rp-warnings"></div>
-
-      <div class="rp-grid2" style="margin-top:12px">
+      <div class="rp-config">
+        <div class="rp-field">
+          <div class="subhead">Retainer fee</div>
+          <div class="frow"><input id="fee" type="number" min="1" step="1" placeholder="Fee (CAD $)"><button class="btn" id="btn-fee">${I.check} Set fee</button></div>
+        </div>
         <div class="rp-field">
           <div class="subhead">Signatory template</div>
           <select id="rp-template"></select>
@@ -485,7 +485,22 @@ ${buildNavHeader('consultations')}
           <div class="subhead">Scope annex</div>
           <select id="rp-annex"></select>
         </div>
+        <div class="rp-field">
+          <div class="subhead">Sub-type <span class="muted">(optional)</span></div>
+          <input id="rp-subtype" type="text" placeholder="e.g. Extension (Inside Canada)">
+        </div>
+        <div class="rp-field">
+          <div class="subhead">Government fee (CAD)</div>
+          <input id="rp-govfee" type="number" min="0" step="0.01" placeholder="0.00">
+          <label class="rp-check"><input id="rp-rprf" type="checkbox"> Include RPRF</label>
+        </div>
+        <div class="rp-field">
+          <div class="subhead">HST rate (%) <span class="muted">(13% default)</span></div>
+          <input id="rp-hst" type="number" min="0" step="0.5" value="13">
+        </div>
       </div>
+      <div id="rp-suggestion" style="margin-top:12px"></div>
+      <div id="rp-warnings"></div>
 
       <div class="subhead" style="margin-top:14px">${I.userCheck} Family members <span class="muted">(consultant-set · only “accompanying” members get a checklist + questionnaire)</span></div>
       <table class="dynamic-table" id="family-table">
@@ -493,25 +508,6 @@ ${buildNavHeader('consultations')}
         <tbody id="family-body"></tbody>
       </table>
       <button class="btn" id="rp-add-family" type="button" style="margin-top:8px">${I.plus} Add family member</button>
-
-      <div class="rp-grid2" style="margin-top:10px">
-        <div class="rp-field">
-          <div class="subhead">Sub-type <span class="muted">(optional — drives extension/restoration)</span></div>
-          <input id="rp-subtype" type="text" placeholder="e.g. Extension (Inside Canada)">
-        </div>
-        <div class="rp-field">
-          <div class="subhead">Government fee (CAD, default — editable)</div>
-          <input id="rp-govfee" type="number" min="0" step="0.01" placeholder="0.00">
-          <label class="rp-check"><input id="rp-rprf" type="checkbox"> Include RPRF</label>
-        </div>
-      </div>
-      <div class="rp-grid2" style="margin-top:10px">
-        <div class="rp-field">
-          <div class="subhead">HST rate (%) <span class="muted">(13% default · 0 for HST-exempt)</span></div>
-          <input id="rp-hst" type="number" min="0" step="0.5" value="13">
-        </div>
-        <div class="rp-field"></div>
-      </div>
 
       <div id="rp-inviter" style="display:none;margin-top:8px">
         <div class="subhead">Inviter / sponsor</div>
@@ -570,8 +566,10 @@ ${buildNavHeader('consultations')}
         </span>
       </div>
 
-      <div class="subhead" style="margin-top:16px">${I.dollar} Milestone payments <span class="muted" style="font-weight:500">(e-transfer)</span></div>
-      <div id="rp-milestone-pay"><span class="muted">Payment status appears here once the retainer plan is set. Collected by <b>e-transfer</b>: at retain the client is emailed the first milestone’s e-transfer request; later milestones show a “Send e-transfer request” button once they’re due. Record each payment with <b>Mark paid</b> when the e-transfer arrives.</span></div>
+      <div class="rp-pay-block">
+        <div class="subhead" style="margin-top:0">${I.dollar} Milestone payments <span class="muted" style="font-weight:500">(e-transfer)</span></div>
+        <div id="rp-milestone-pay"><span class="muted">Payment status appears here once the retainer plan is set. Collected by <b>e-transfer</b>: at retain the client is emailed the first milestone’s e-transfer request; later milestones show a “Send e-transfer request” button once they’re due. Record each payment with <b>Mark paid</b> when the e-transfer arrives.</span></div>
+      </div>
     </div>
   </div>
 </main>
