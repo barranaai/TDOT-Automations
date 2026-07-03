@@ -301,9 +301,9 @@ ${buildNavHeader('consultations')}
             <div class="frow" style="margin-top:7px"><button class="btn" id="btn-resend">${I.refresh} Resend meeting + pre-consult links</button></div>
           </div>
           <div class="agroup">
-            <div class="subhead">Initial consultation agreement <span class="muted" id="ca-sent"></span></div>
+            <div class="subhead">Consultation email — booking + form + agreement <span class="muted" id="ca-sent"></span></div>
             <div id="ca-warn"></div>
-            <div class="frow"><button class="btn" id="btn-consult-preview">${I.eye} Preview</button><button class="btn" id="btn-consult-send">${I.send} Send</button></div>
+            <div class="frow"><button class="btn" id="btn-consult-preview">${I.eye} Preview agreement</button><button class="btn" id="btn-consult-send">${I.send} Review &amp; send</button></div>
           </div>
         </div>
         <div class="card"><div class="card-t">${I.flag} Case status</div><div id="c-status" class="kvgrid"></div></div>
@@ -846,7 +846,7 @@ function initActions(){
   var feeInput=document.getElementById('fee'); if(feeInput) feeInput.addEventListener('input', updateMileSum);
   document.getElementById('btn-consult-preview').onclick=previewConsult;
   document.getElementById('btn-consult-send').onclick=function(){
-    doAction('sendConsultAgreement', null, 'Email the initial consultation agreement to the client now? It states the consultation fee, 30-minute duration, and the booked date. Make sure the client\\'s address is filled in first.');
+    doAction('sendConsultationPackage', null, 'Send the client ONE consultation email now — booking details, meeting link, the pre-consultation form, and the consultation agreement to review — with a note to complete both at least 24 hours before the consultation? Preview the agreement first and make sure the client\\'s address is filled in.');
   };
 }
 

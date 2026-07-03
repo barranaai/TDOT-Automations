@@ -79,19 +79,27 @@ async function getConsultAgreementDocument(lead) {
  * Re-sendable (no hard idempotency block — it's a manual, confirmed action).
  * @throws {Error} .notFound / .badRequest
  */
-async function sendConsultAgreement(leadId) {
+/**
+ * Generate + cache the consultation-agreement PDF and return its token-link, so a
+ * client link is instant and CloudConvert-independent. Sends NOTHING — the caller
+ * decides how to deliver (standalone email, or bundled into the booking package).
+ * @throws {Error} .notFound / .badRequest
+ */
+async function ensureConsultAgreementReady(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
-  if (!lead.email) { const e = new Error('No client email on file — cannot send the agreement.'); e.badRequest = true; throw e; }
-
-  // Pre-generate + cache so the client's link is instant and CloudConvert-independent.
+  if (!lead.email) { const e = new Error('No client email on file — cannot generate the agreement.'); e.badRequest = true; throw e; }
   let pdf;
   try { pdf = await generateConsultAgreementPdf(lead); }
   catch (err) { const e = new Error(`Could not generate the agreement: ${err.message}`); e.badRequest = true; throw e; }
   cachePdf(leadId, pdf);
-
   const token = lead.leadToken || '';
   const url = `${RENDER_URL}/consult-agreement/${leadId}?t=${encodeURIComponent(token)}`;
+  return { lead, url };
+}
+
+async function sendConsultAgreement(leadId) {
+  const { lead, url } = await ensureConsultAgreementReady(leadId);
   const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
       <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
         <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your initial consultation agreement</h1></div>
@@ -111,5 +119,6 @@ async function sendConsultAgreement(leadId) {
 }
 
 module.exports = {
-  buildConsultAgreementData, generateConsultAgreementPdf, getConsultAgreementDocument, sendConsultAgreement,
+  buildConsultAgreementData, generateConsultAgreementPdf, getConsultAgreementDocument,
+  ensureConsultAgreementReady, sendConsultAgreement,
 };

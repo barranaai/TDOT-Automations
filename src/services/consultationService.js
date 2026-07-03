@@ -76,8 +76,12 @@ async function onSlotConfirmed(leadId, meetingTypeOverride) {
     createSquareBooking(lead, slotStr, meetingType).catch((e) =>
       console.warn(`[Consult] Square booking write failed for lead ${leadId}: ${e.message}`));
 
-    await sendBookingConfirmation(lead, meeting, slotStr, meetingType);
-    console.log(`[Consult] ${meetingType} consultation confirmed for lead ${leadId}${meeting ? ` (${meeting.provider} ${meeting.meetingId})` : ''}`);
+    // No auto client email here anymore. The client gets the Teams calendar invite
+    // (virtual) + Square receipt at booking; the branded confirmation is now folded
+    // into the ONE consolidated email the team sends with a click after reviewing the
+    // consultation agreement (sendConsultationPackage). This keeps the client from
+    // receiving several disjointed emails and adds the required completion disclaimer.
+    console.log(`[Consult] ${meetingType} consultation confirmed for lead ${leadId}${meeting ? ` (${meeting.provider} ${meeting.meetingId})` : ''} — awaiting team "Review & send"`);
   } catch (err) {
     console.error(`[Consult] onSlotConfirmed failed for lead ${leadId}:`, err.message);
   }
@@ -187,6 +191,61 @@ async function resendConsultationLinks(leadId) {
     </div></div>`;
   await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation links', html });
   console.log(`[Consult] Re-sent consultation links to ${lead.email} for lead ${leadId}`);
+}
+
+/**
+ * The consolidated "everything in one email" the team sends with ONE click after
+ * reviewing the consultation agreement: booking details + meeting link/office +
+ * the pre-consultation form + the consultation agreement (review-PDF link) + a
+ * clear disclaimer that both must be completed ≥24h before or the consult may be
+ * cancelled. Replaces the old separate booking-confirmation + agreement emails.
+ * (When Adobe Sign is available, the agreement link becomes a real e-sign link.)
+ */
+async function sendConsultationPackage(leadId) {
+  const lead = await leadService.getLead(leadId);
+  if (!lead) throw new Error('Lead not found.');
+  if (!lead.email) throw new Error('No client email on file — cannot send the consultation package.');
+
+  const token = lead.leadToken || '';
+  const preUrl = `${RENDER_URL}/consult/${lead.id}?t=${encodeURIComponent(token)}`;
+  // Generate + cache the agreement PDF so the client's link is instant. Interim:
+  // a review-PDF link; swap for the Adobe e-sign link once that integration lands.
+  const { url: agreementUrl } = await require('./consultAgreementService').ensureConsultAgreementReady(leadId);
+
+  const e = escapeHtml;
+  const when = lead.bookedSlot || (lead.consultationHeld || '');
+  const isInPerson = lead.meetingType === 'In-person';
+  const joinUrl = (lead.meetingLink || '').trim();
+  const whereBlock = isInPerson
+    ? `<p style="margin:6px 0"><b>Where:</b> In person at our office<br>${e(OFFICE_ADDRESS)}</p>`
+    : (joinUrl ? `<p style="margin:6px 0"><b>Join the video call:</b><br><a href="${e(joinUrl)}" style="color:${BRAND.primary}">${e(joinUrl)}</a></p>` : '');
+  const btn = (href, label) => `<a href="${e(href)}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;margin:4px 0">${label}</a>`;
+
+  const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
+    <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
+      <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your consultation is booked</h1></div>
+    <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
+      <p>Hi ${e((lead.fullName || 'there').split(' ')[0])},</p>
+      <p>Your consultation with TDOT Immigration is confirmed. Here are the details and your next steps.</p>
+      ${when ? `<p style="margin:6px 0"><b>When:</b> ${e(when)} (Toronto time)</p>` : ''}
+      ${lead.assignedConsultant ? `<p style="margin:6px 0"><b>With:</b> ${e(lead.assignedConsultant)}, RCIC</p>` : ''}
+      ${whereBlock}
+      <div style="border-top:1px solid ${BRAND.border};margin:20px 0"></div>
+      <p style="margin:0 0 4px"><b>Before your consultation, please complete these two steps:</b></p>
+      <p style="margin:14px 0 2px">1. Complete your pre-consultation form so we can prepare for your case:</p>
+      <p style="margin:2px 0">${btn(preUrl, 'Complete pre-consultation form')}</p>
+      <p style="margin:16px 0 2px">2. Review and sign your initial consultation agreement:</p>
+      <p style="margin:2px 0">${btn(agreementUrl, 'Review consultation agreement')}</p>
+      <div style="background:#fff4e5;border:1px solid #f0c98a;border-radius:8px;padding:12px 14px;margin:22px 0 6px;font-size:13.5px;color:#7a4b00">
+        <b>Please complete both steps at least 24 hours before your scheduled consultation.</b> If they are not completed in time, your consultation may be cancelled.
+      </div>
+      <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:20px">Any questions? Just reply to this email.</p>
+    </div></div>`;
+
+  await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation — details, form & agreement', html });
+  await leadService.updateLead(leadId, { consultAgreementSent: new Date().toISOString().split('T')[0] });
+  console.log(`[Consult] Consultation package sent to ${lead.email} for lead ${leadId}`);
+  return { ok: true, url: agreementUrl };
 }
 
 // ─── Pre-consult form ────────────────────────────────────────────────────────
@@ -822,7 +881,7 @@ function escapeHtml(s) {
 
 module.exports = {
   onSlotConfirmed, createZoomMeeting, getZoomAccessToken,
-  buildPreConsultFormHtml, savePreConsultData, resendConsultationLinks,
+  buildPreConsultFormHtml, savePreConsultData, resendConsultationLinks, sendConsultationPackage,
   send24hReminders, send1hReminders, sendPreConsultReminders,
   // exported for tests
   buildPreConsultQA, buildPreConsultPdf, buildDossierSections,

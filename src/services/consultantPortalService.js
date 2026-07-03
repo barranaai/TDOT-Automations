@@ -397,6 +397,7 @@ function validateAction(action, value) {
     case 'bookingInvite':
     case 'resendLinks':
     case 'sendConsultAgreement':
+    case 'sendConsultationPackage':
       return { ok: true, normalized: null };
     default:
       return { ok: false, error: 'Unknown action.' };
@@ -493,6 +494,12 @@ async function applyAction({ leadId, action, value, amend = false }) {
       const r = await require('./consultAgreementService').sendConsultAgreement(leadId);
       await postPortalNote(leadId, 'Initial consultation agreement emailed to the client.');
       return { ok: true, message: 'The initial consultation agreement has been emailed to the client.', url: r.url };
+    }
+
+    case 'sendConsultationPackage': {
+      const r = await require('./consultationService').sendConsultationPackage(leadId);
+      await postPortalNote(leadId, 'Consultation package emailed to the client (booking details + pre-consult form + agreement + 24h disclaimer).');
+      return { ok: true, message: 'The consolidated consultation email (details, pre-consult form & agreement) has been sent to the client.', url: r.url };
     }
 
     case 'saveRetainerSelections': {
