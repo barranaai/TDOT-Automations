@@ -209,6 +209,7 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
     return { status: 'no-email' };
   }
 
+  const etransferEmail = require('./milestonePaymentService').ETRANSFER_EMAIL || 'admstdot@gmail.com';
   const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
       <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
         <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your retainer agreement</h1></div>
@@ -216,8 +217,13 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
         <p>Hi ${esc((lead.fullName || 'there').split(' ')[0])},</p>
         <p>Thank you for choosing TDOT Immigration. Please review your retainer agreement, which sets out the professional fee for your matter:</p>
         <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">View &amp; download your retainer (PDF)</a></p>
-        <p style="margin-top:20px">To proceed: sign the agreement and email the signed copy back to us. Once we receive it, we'll send your secure payment link.</p>
-        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Questions about the fee? Just reply to this email.</p>
+        <div style="background:#eef3fb;border:1px solid ${BRAND.border};border-radius:8px;padding:14px 16px;margin:20px 0 6px">
+          <p style="margin:0 0 8px"><b>Your next steps</b></p>
+          <p style="margin:6px 0"><b>1. Review &amp; sign</b> your retainer agreement (above).</p>
+          <p style="margin:6px 0"><b>2. Email the signed copy back to us</b> (just reply to this email with it attached).</p>
+          <p style="margin:6px 0"><b>3. Make your payment by Interac e-Transfer</b> to <b>${esc(etransferEmail)}</b>, as set out in the "Method of Payment" section of your agreement. We will email you the exact amount and reference for your first payment.</p>
+        </div>
+        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:20px">Questions about the fee? Just reply to this email.</p>
       </div></div>`;
   try {
     await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration retainer agreement', html });
