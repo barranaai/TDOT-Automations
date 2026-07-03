@@ -205,19 +205,14 @@ async function findByColumnValue(key, value) {
   return id ? getLead(id) : null;
 }
 
-/** Read a lead back from the Lead Board as a camelCase object. */
-async function getLead(leadId) {
-  const data = await mondayApi.query(
-    `query($itemId: ID!) {
-       items(ids: [$itemId]) { id name column_values { id text value } }
-     }`,
-    { itemId: String(leadId) }
-  );
-  const item = data?.items?.[0];
+/** Parse a raw Monday item ({id,name,created_at?,column_values[{id,text,value}]})
+ *  into a camelCase lead object, using the board's column map. Shared by getLead
+ *  (single) and listAllLeads (bulk) so the parsing lives in ONE place. */
+function parseItem(item) {
   if (!item) return null;
-
   const lead = { id: item.id, name: item.name, fullName: item.name };
-  for (const cv of item.column_values) {
+  if (item.created_at) lead.createdAt = item.created_at;
+  for (const cv of item.column_values || []) {
     const key = ID_TO_KEY[cv.id];
     if (!key) continue;
     if (COL_TYPE[key] === 'link') {
@@ -236,6 +231,44 @@ async function getLead(leadId) {
   // for those rather than create a junk-named case + folder).
   if (!lead.fullName && item.name !== 'Unnamed Lead') lead.fullName = item.name;
   return lead;
+}
+
+/** Read a lead back from the Lead Board as a camelCase object. */
+async function getLead(leadId) {
+  const data = await mondayApi.query(
+    `query($itemId: ID!) {
+       items(ids: [$itemId]) { id name column_values { id text value } }
+     }`,
+    { itemId: String(leadId) }
+  );
+  return parseItem(data?.items?.[0]);
+}
+
+/**
+ * Paginate the ENTIRE Lead Board into parsed lead objects (each incl. createdAt) —
+ * for aggregate reporting/KPIs. Cursor-based; capped to avoid a runaway. Heavy, so
+ * callers should cache the result for a short window rather than call it per request.
+ */
+async function listAllLeads({ max = 5000 } = {}) {
+  const out = [];
+  let cursor = null;
+  do {
+    const data = await mondayApi.query(
+      `query($boardId: ID!, $cursor: String) {
+         boards(ids: [$boardId]) {
+           items_page(limit: 100, cursor: $cursor) {
+             cursor
+             items { id name created_at column_values { id text value } }
+           }
+         }
+       }`,
+      { boardId: String(leadBoardId), cursor }
+    );
+    const page = data?.boards?.[0]?.items_page;
+    for (const it of (page?.items || [])) out.push(parseItem(it));
+    cursor = page?.cursor || null;
+  } while (cursor && out.length < max);
+  return out;
 }
 
 // ─── AI qualification ─────────────────────────────────────────────────────────
@@ -347,4 +380,4 @@ Source: ${lead.sourceChannel || 'Website'}`
   return result;
 }
 
-module.exports = { createLead, qualifyLead, getLead, updateLead, findByColumnValue };
+module.exports = { createLead, qualifyLead, getLead, updateLead, findByColumnValue, listAllLeads, parseItem };

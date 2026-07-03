@@ -183,6 +183,17 @@ app.post('/api/test-email', express.json(), async (req, res) => {
   }
 });
 
+// Reporting/KPIs for the consultations dashboard — aggregates the Lead Board for a
+// given month (?month=YYYY-MM; omit for all-time). Admin-gated like the other /api/*.
+app.get('/api/kpis', async (req, res) => {
+  try {
+    const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : '';
+    res.json(await require('./services/kpiService').getKpis(month));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/monday-test', async (req, res) => {
   try {
     const data = await mondayApi.query('query { me { id name email } }');

@@ -77,6 +77,26 @@ function buildQueueHTML() {
   .pill.amber { background:#fffbeb; color:#d97706; } .pill.blue { background:#eff6ff; color:#2563eb; }
   .tier { font-weight:700; color:var(--navy); }
   .empty { padding:40px; text-align:center; color:#94a3b8; }
+  .sec-h { font-size:15px; font-weight:800; color:var(--navy); margin:0; }
+  .kpi-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin:6px 0 12px; }
+  .kpi-head select { padding:7px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; background:#fff; color:var(--navy); font-weight:600; }
+  .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:14px; }
+  .kpi-card { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:13px 15px; box-shadow:var(--shadow-sm); }
+  .kpi-card .k-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; }
+  .kpi-card .k-num { font-size:23px; font-weight:800; color:var(--navy); margin-top:3px; font-variant-numeric:tabular-nums; }
+  .kpi-card .k-sub { font-size:11px; color:#64748b; margin-top:2px; }
+  .kpi-funnel { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:14px 16px; margin-bottom:14px; box-shadow:var(--shadow-sm); display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+  .kpi-funnel .f-step { text-align:center; min-width:64px; }
+  .kpi-funnel .f-n { font-size:19px; font-weight:800; color:var(--navy); font-variant-numeric:tabular-nums; }
+  .kpi-funnel .f-l { font-size:9.5px; text-transform:uppercase; color:#94a3b8; letter-spacing:.5px; }
+  .kpi-funnel .f-arrow { color:#cbd5e1; font-weight:700; font-size:12px; }
+  .kpi-funnel .f-arrow b { display:block; color:#16a34a; font-size:10px; font-weight:800; }
+  .kpi-2col { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px; }
+  @media(max-width:640px){ .kpi-2col{ grid-template-columns:1fr; } }
+  .kpi-mini { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:13px 15px; box-shadow:var(--shadow-sm); }
+  .kpi-mini h4 { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; margin:0 0 8px; }
+  .kpi-mini .r2 { display:flex; justify-content:space-between; font-size:13px; padding:3px 0; color:#33425a; }
+  .kpi-mini .r2 b { color:var(--navy); font-variant-numeric:tabular-nums; }
 </style></head><body>
 ${buildNavHeader('consultations')}
 <main class="wrap">
@@ -84,7 +104,15 @@ ${buildNavHeader('consultations')}
   <div id="error-msg"></div>
   <div id="content">
     <h1 class="page-h">Consultations</h1>
-    <p class="page-sub">Your booked consultations — soonest first. Click one to open.</p>
+    <p class="page-sub">Booked consultations + automatic KPIs from the Lead Board.</p>
+
+    <div class="kpi-head">
+      <h2 class="sec-h">Reporting</h2>
+      <div><label class="muted" style="margin-right:6px">Period</label><select id="kpi-month"></select></div>
+    </div>
+    <div id="kpi-body"><div class="muted">Loading KPIs…</div></div>
+
+    <h2 class="sec-h" style="margin:22px 0 10px">Booked consultations</h2>
     <div class="card">
       <table>
         <thead><tr><th>Client</th><th>Service</th><th>Tier</th><th>Slot (Toronto)</th><th>Pre-consult</th><th>Outcome</th></tr></thead>
@@ -124,7 +152,54 @@ function load(){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
-startClock(); checkApiStatus(); load();
+// ── Reporting / KPIs ──────────────────────────────────────────────────────
+function kpiMoney(n){ return '$'+Number(n||0).toLocaleString('en-CA'); }
+function kpiCard(label,num,sub){ return '<div class="kpi-card"><div class="k-label">'+label+'</div><div class="k-num">'+num+'</div>'+(sub?'<div class="k-sub">'+sub+'</div>':'')+'</div>'; }
+function kpiByList(obj){ var ks=Object.keys(obj||{}); if(!ks.length) return '<div class="muted" style="font-size:12px">None</div>'; return ks.sort(function(a,b){return obj[b]-obj[a];}).map(function(k){ return '<div class="r2"><span>'+escHtml(k)+'</span><b>'+obj[k]+'</b></div>'; }).join(''); }
+function renderKpis(d){
+  var c=d.consultations||{}, r=d.retainers||{}, f=d.funnel||{}, rt=(f.rates||{});
+  var cards = kpiCard('Consultations booked', c.booked||0, (c.virtual||0)+' virtual · '+(c.inPerson||0)+' in-person')
+    + kpiCard('Consultations held', c.held||0, '')
+    + kpiCard('Consultation revenue', kpiMoney(c.revenue||0), 'paid consults')
+    + kpiCard('Retainers signed', r.signed||0, (r.sent||0)+' sent · '+(r.paid||0)+' paid')
+    + kpiCard('Retainer value', kpiMoney(r.feeValue||0), 'signed this period')
+    + kpiCard('New / existing', (c.newClients||0)+' / '+(c.existingClients||0), 'clients booked');
+  var arrow=function(rate){ return '<span class="f-arrow">→'+(rate!=null?'<b>'+rate+'%</b>':'')+'</span>'; };
+  var step=function(n,l){ return '<div class="f-step"><div class="f-n">'+n+'</div><div class="f-l">'+l+'</div></div>'; };
+  var funnel = '<div class="kpi-funnel">'
+    + step(f.leads||0,'Leads') + arrow(rt.bookedFromLeads)
+    + step(f.booked||0,'Booked') + '<span class="f-arrow">→</span>'
+    + step(f.consulted||0,'Consulted') + arrow(rt.retainedFromBooked)
+    + step(f.retained||0,'Retained') + arrow(rt.paidFromRetained)
+    + step(f.paid||0,'Paid') + '</div>';
+  var unclassified=(r.signed||0)-(r.tr||0)-(r.pr||0);
+  var mini = '<div class="kpi-2col">'
+    + '<div class="kpi-mini"><h4>Retainers by type</h4>'
+      + '<div class="r2"><span>Temporary (TR)</span><b>'+(r.tr||0)+'</b></div>'
+      + '<div class="r2"><span>Permanent (PR)</span><b>'+(r.pr||0)+'</b></div>'
+      + (unclassified>0 ? '<div class="muted" style="font-size:11px;margin-top:4px">'+unclassified+' unclassified (case type not mapped)</div>' : '')
+      + '</div>'
+    + '<div class="kpi-mini"><h4>By consultant (booked)</h4>'+kpiByList(c.byConsultant)+'</div>'
+    + '</div>';
+  document.getElementById('kpi-body').innerHTML = '<div class="kpi-grid">'+cards+'</div>' + funnel + mini;
+}
+function fillMonths(months, sel){
+  var el=document.getElementById('kpi-month'); if(el.getAttribute('data-filled')) return; el.setAttribute('data-filled','1');
+  var list=(months||[]).slice(); if(sel && list.indexOf(sel)<0) list.unshift(sel);
+  el.innerHTML='<option value="">All time</option>'+list.map(function(m){ return '<option value="'+m+'">'+m+'</option>'; }).join('');
+  el.value=sel||'';
+  el.onchange=function(){ loadKpis(el.value); };
+}
+function loadKpis(month){
+  var key=getKey(); if(!key) return;
+  var m = (month===undefined) ? (new Date()).toISOString().slice(0,7) : month;
+  document.getElementById('kpi-body').innerHTML='<div class="muted">Loading KPIs…</div>';
+  fetch('/api/kpis'+(m?('?month='+encodeURIComponent(m)):''),{headers:{'X-Api-Key':key}})
+   .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } return r.json(); })
+   .then(function(d){ fillMonths(d.months, m); renderKpis(d); })
+   .catch(function(e){ if(e.message==='x')return; document.getElementById('kpi-body').innerHTML='<div class="muted">KPIs unavailable: '+escHtml(e.message)+'</div>'; });
+}
+startClock(); checkApiStatus(); load(); loadKpis();
 </script></body></html>`;
 }
 
