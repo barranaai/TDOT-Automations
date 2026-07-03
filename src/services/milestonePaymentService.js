@@ -179,15 +179,17 @@ async function markMilestonePaid(leadId, index, { reference = '', paidAt = '', m
   const existing = parsePayments(lead)[index] || {};
   const when = paidAt || todayISO();
   if (existing.status === 'paid') { console.log(`[Milestone] ${leadId}#${index} already paid — skipping`); return { ok: true, already: true }; }
-  await patchPayment(leadId, index, { status: 'paid', paidAt: when, method, reference: reference || existing.reference || '', ...(txnId ? { txnId } : {}) });
+  // Keep the request-time reference when staff mark paid without entering one.
+  const ref = reference || existing.reference || '';
+  await patchPayment(leadId, index, { status: 'paid', paidAt: when, method, reference: ref, ...(txnId ? { txnId } : {}) });
   const label = (scheduleRows(lead)[index] || {}).label || `Milestone ${index + 1}`;
   await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
-    { i: String(leadId), b: `✅ <b>Payment received</b> — ${esc(label)} (${esc(method)}${reference ? `, ref ${esc(reference)}` : ''}).` });
-  console.log(`[Milestone] ${leadId}#${index} marked paid (${method}${reference ? ` ref ${reference}` : ''})`);
+    { i: String(leadId), b: `✅ <b>Payment received</b> — ${esc(label)} (${esc(method)}${ref ? `, ref ${esc(ref)}` : ''}).` });
+  console.log(`[Milestone] ${leadId}#${index} marked paid (${method}${ref ? ` ref ${ref}` : ''})`);
 
   // The first milestone paid = retainer paid → start onboarding (Phase 1).
   if (Number(index) === 0) {
-    try { await require('./paymentService').recordRetainerPaid(leadId, { reference, paidAt: when }); }
+    try { await require('./paymentService').recordRetainerPaid(leadId, { reference: ref, paidAt: when }); }
     catch (e) { console.warn(`[Milestone] retainer-paid onboarding trigger failed for ${leadId}: ${e.message}`); }
   }
   return { ok: true, label };

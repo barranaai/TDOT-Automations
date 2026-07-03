@@ -398,7 +398,11 @@ function validateAction(action, value) {
       let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid payload.' }; }
       o = o || {};
       const fu = String(o.followUpDate || '').trim();
-      if (fu && !/^\d{4}-\d{2}-\d{2}$/.test(fu)) return { ok: false, error: 'Follow-up date must be YYYY-MM-DD.' };
+      if (fu) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(fu)) return { ok: false, error: 'Follow-up date must be YYYY-MM-DD.' };
+        const dt = new Date(`${fu}T00:00:00Z`);
+        if (Number.isNaN(dt.getTime()) || dt.toISOString().slice(0, 10) !== fu) return { ok: false, error: 'That follow-up date doesn’t exist.' };
+      }
       const clean = (s) => String(s || '').trim().slice(0, 80);
       return { ok: true, normalized: { followUpDate: fu, leadOwner: clean(o.leadOwner), bookedBy: clean(o.bookedBy), paymentReviewedBy: clean(o.paymentReviewedBy) } };
     }

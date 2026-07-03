@@ -832,14 +832,15 @@ async function sendReminderWindow(label, minH, maxH, markerTag) {
     try {
       const lead = await leadService.getLead(L.id);
       if (lead.email) {
-        // meetingLink stores the join URL (Zoom or Teams) for meetings created
-        // since the provider abstraction — older bookings just omit the line.
-        const joinLine = lead.meetingLink
-          ? `<p><b>Join link:</b> <a href="${escapeHtml(lead.meetingLink)}">${escapeHtml(lead.meetingLink)}</a></p>` : '';
+        // In-person → the office address; virtual → the join URL (Zoom/Teams).
+        // Older virtual bookings without a stored meetingLink just omit the line.
+        const whereLine = lead.meetingType === 'In-person'
+          ? `<p><b>Where:</b> In person at our office<br>${escapeHtml(OFFICE_ADDRESS)}</p>`
+          : (lead.meetingLink ? `<p><b>Join link:</b> <a href="${escapeHtml(lead.meetingLink)}">${escapeHtml(lead.meetingLink)}</a></p>` : '');
         await microsoftMail.sendEmail({
           to: lead.email,
           subject: `Reminder: your TDOT consultation (${L.bookedSlot} Toronto)`,
-          html: `<p>Hi ${escapeHtml((lead.name || 'there').split(' ')[0])}, this is a reminder of your consultation on <b>${escapeHtml(L.bookedSlot)}</b> (Toronto time).</p>${joinLine}`,
+          html: `<p>Hi ${escapeHtml((lead.name || 'there').split(' ')[0])}, this is a reminder of your consultation on <b>${escapeHtml(L.bookedSlot)}</b> (Toronto time).</p>${whereLine}`,
         });
       }
       await mondayApi.query(`mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,

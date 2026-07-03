@@ -250,7 +250,7 @@ async function getLead(leadId) {
  * for aggregate reporting/KPIs. Cursor-based; capped to avoid a runaway. Heavy, so
  * callers should cache the result for a short window rather than call it per request.
  */
-async function listAllLeads({ max = 5000 } = {}) {
+async function listAllLeads({ max = 100000 } = {}) {
   const out = [];
   let cursor = null;
   do {
@@ -269,6 +269,8 @@ async function listAllLeads({ max = 5000 } = {}) {
     for (const it of (page?.items || [])) out.push(parseItem(it));
     cursor = page?.cursor || null;
   } while (cursor && out.length < max);
+  // Never silently truncate an aggregate (KPIs) — a hit cap means partial data.
+  if (cursor) console.warn(`[Lead] listAllLeads hit the ${max}-item safety cap with more pages remaining — aggregates are PARTIAL. Raise the cap.`);
   return out;
 }
 
