@@ -562,7 +562,8 @@ ${buildNavHeader('consultations')}
         </span>
         <span class="rp-actiongroup">
           <button class="btn" id="btn-retainer-preview" type="button">${I.eye} Preview retainer agreement</button>
-          <button class="btn primary" id="btn-retainer-save" type="button">${I.save} Save retainer plan</button>
+          <button class="btn" id="btn-retainer-save" type="button">${I.save} Save retainer plan</button>
+          <button class="btn primary" id="btn-retain-send" type="button">${I.send} Retain &amp; send agreement</button>
         </span>
         <span class="rp-actiongroup">
           <button class="btn" id="btn-signed" type="button">${I.userCheck} Mark retainer signed</button>
@@ -584,6 +585,9 @@ function safeUrl(u){ u=String(u==null?'':u).trim(); return /^(https?:|mailto:)/i
 var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload only once (don't clobber edits)
 // Lock state: once the retainer agreement is sent, fee + plan are read-only unless the consultant "Amend"s.
 var RP_LOCKED=false, RP_AMEND=false;
+// Progressive-enablement state for the retainer send flow: you must Set fee →
+// Save plan → Retain & send, in order. Each disabled button explains the due step.
+var RP_FEE_SET=false, RP_PLAN_SAVED=false, PERSISTED_FEE='';
 function kv(k,v){ return v&&String(v).trim()?'<div class="kv"><span class="k">'+escHtml(k)+'</span><span class="v">'+escHtml(v)+'</span></div>':''; }
 function scores(arr){ var p=(arr||[]).map(function(v){return String(v||'').trim();}); return p.some(Boolean)?p.map(function(v){return v||'—';}).join(' / '):''; }
 function initials(n){ var p=String(n||'').trim().split(/\\s+/).filter(Boolean); return (p.length?(p[0][0]+(p.length>1?p[p.length-1][0]:'')):'?').toUpperCase(); }
@@ -734,7 +738,9 @@ function doAction(action,value,confirmMsg){
      if(res.status===401||res.status===403){ window.location.href='/admin'; return; }
      if(res.status!==200) throw new Error((res.j&&res.j.error)||('HTTP '+res.status));
      setMsg(res.j.message||'Done.','ok');
-     if(action==='saveRetainerSelections'||action==='sendMilestoneEtransferRequest'||action==='markMilestonePaid') RP_HYDRATED=false; // re-hydrate the panel (fresh plan / milestone-payment status)
+     if(action==='saveRetainerSelections'||action==='sendMilestoneEtransferRequest'||action==='markMilestonePaid'||action==='retainAndSend') RP_HYDRATED=false; // re-hydrate the panel (fresh plan / send state)
+     // Setting the fee doesn't re-hydrate (keeps in-progress plan edits) — flip the gate here.
+     if(action==='retainerFee'){ RP_FEE_SET=true; PERSISTED_FEE=String(value==null?'':value); }
      load(); // refresh consultation state (pills, status, outcome highlight) — render() re-locks + resets amend
    }).catch(function(e){ disableActions(false); setMsg(netErr(e),'err'); });
 }
@@ -747,12 +753,23 @@ function applyRetainerLock(){
       msg=document.getElementById('rp-lock-msg'), amendBtn=document.getElementById('rp-amend');
   var locked = RP_LOCKED && !RP_AMEND;
   if(fs) fs.disabled = locked;
-  // The plan-editing buttons now sit OUTSIDE the fieldset (so "Mark retainer
-  // signed" can stay usable while locked), so the fieldset no longer disables
-  // them — lock them explicitly to keep the sent agreement's terms read-only.
-  ['rp-add-mile','rp-split-mile','btn-retainer-preview','btn-retainer-save'].forEach(function(id){
-    var b=document.getElementById(id); if(b) b.disabled = locked;
-  });
+  // Milestone-editing buttons live OUTSIDE the fieldset, so lock them explicitly.
+  ['rp-add-mile','rp-split-mile'].forEach(function(id){ var b=rpEl(id); if(b) b.disabled = locked; });
+
+  // Progressive gating — Set fee → Save plan → Retain & send, in order. Each
+  // disabled button's tooltip names the step you still owe.
+  function gate(id, disabled, hint){ var b=rpEl(id); if(!b) return; b.disabled=!!disabled; b.title=disabled?(hint||''):''; }
+  var feeEl=rpEl('fee'), feeChanged = feeEl ? (String(feeEl.value)!==String(PERSISTED_FEE)) : false;
+  // Set fee: done (disabled) once a fee is saved and unchanged; re-enables on an edit.
+  gate('btn-fee', locked || (RP_FEE_SET && !feeChanged), '');
+  // Preview + Save: need the fee first.
+  gate('btn-retainer-preview', locked || !RP_FEE_SET, 'Set the retainer fee first');
+  gate('btn-retainer-save',    locked || !RP_FEE_SET, 'Set the retainer fee first');
+  // Retain & send: need fee AND a saved plan; never re-sendable once sent.
+  gate('btn-retain-send',
+       RP_LOCKED || !RP_FEE_SET || !RP_PLAN_SAVED,
+       RP_LOCKED ? 'Agreement already sent' : (!RP_FEE_SET ? 'Set the retainer fee first' : 'Save the retainer plan first'));
+
   if(banner){ banner.style.display = RP_LOCKED ? 'flex' : 'none'; banner.className = 'rp-lock' + (RP_AMEND ? ' amending' : ''); }
   if(msg) msg.innerHTML = RP_AMEND
     ? '✎ <b>Amending a sent agreement.</b> Changes are recorded as a note — the client may hold the original terms.'
@@ -786,6 +803,8 @@ function loadRetainerPlan(){
 
 function hydrateRetainer(d){
   var plan=d.plan||{}, annex=plan.annex||{};
+  // Gating state from the persisted plan: fee set? plan saved?
+  RP_FEE_SET=!!d.feeSet; RP_PLAN_SAVED=!!d.saved; PERSISTED_FEE=String(d.retainerFee||'');
   var tsel=rpEl('rp-template');
   tsel.innerHTML=(d.templateOptions||['pa','pa-inviter','employer']).map(function(t){ return '<option value="'+escA(t)+'">'+escHtml(RP_TPL_LABELS[t]||t)+'</option>'; }).join('');
   tsel.value=plan.template||'pa';
@@ -968,17 +987,11 @@ function previewConsult(){
 function initActions(){
   var obtns=document.getElementById('obtns');
   OUTCOMES.forEach(function(label){
+    // "Retain" is handled by the guided "Retain & send agreement" button in the
+    // retainer panel (set fee → save plan → send), so it's not a quick-outcome here.
+    if(label==='Retain') return;
     var b=document.createElement('button'); b.type='button'; b.className='obtn'; b.textContent=label; b.setAttribute('data-outcome',label);
-    b.onclick=function(){
-      var msg='';
-      if(label==='Retain'){
-        var hasFee=Number(String(document.getElementById('fee').value||'').replace(/[^0-9.]/g,''))>0;
-        msg = hasFee
-          ? 'Record the outcome as RETAIN? This emails the retainer agreement (stating the fee) to the client.'
-          : 'Record the outcome as RETAIN?\\n\\nNo retainer fee is set yet — the agreement states the fee, so it will NOT be emailed until you set the fee. You can set the fee now or after. Continue?';
-      }
-      doAction('outcome',label,msg);
-    };
+    b.onclick=function(){ doAction('outcome',label); };
     obtns.appendChild(b);
   });
   document.getElementById('btn-fee').onclick=function(){
@@ -1004,6 +1017,12 @@ function initActions(){
   rpEl('rp-hst').oninput=updateMileSum;
   rpEl('btn-retainer-preview').onclick=previewRetainer;
   rpEl('btn-retainer-save').onclick=saveRetainer;
+  rpEl('btn-retain-send').onclick=function(){
+    doAction('retainAndSend', null, 'Retain this client and email the retainer agreement (stating the fee) to them now?');
+  };
+  // Any edit in the plan means it must be re-saved before it can be sent — reset the
+  // "saved" gate (and re-evaluate the Set-fee "done" state) on any change in the fieldset.
+  var rpfs=rpEl('rp-lock-fs'); if(rpfs){ ['input','change'].forEach(function(ev){ rpfs.addEventListener(ev,function(){ RP_PLAN_SAVED=false; applyRetainerLock(); }); }); }
   var feeInput=document.getElementById('fee'); if(feeInput) feeInput.addEventListener('input', updateMileSum);
   document.getElementById('btn-consult-preview').onclick=previewConsult;
   document.getElementById('btn-consult-send').onclick=function(){

@@ -431,6 +431,7 @@ function validateAction(action, value) {
     case 'resendLinks':
     case 'sendConsultAgreement':
     case 'sendConsultationPackage':
+    case 'retainAndSend':
       return { ok: true, normalized: null };
     default:
       return { ok: false, error: 'Unknown action.' };
@@ -510,6 +511,27 @@ async function applyAction({ leadId, action, value, amend = false }) {
       await leadService.updateLead(leadId, { followUpDate: n.followUpDate, leadOwner: n.leadOwner, bookedBy: n.bookedBy, paymentReviewedBy: n.paymentReviewedBy });
       await postPortalNote(leadId, `Attribution saved — owner: ${n.leadOwner || '—'}, booked by: ${n.bookedBy || '—'}, payment reviewed by: ${n.paymentReviewedBy || '—'}, follow-up: ${n.followUpDate || '—'}.`);
       return { ok: true, message: 'Attribution saved.' };
+    }
+
+    // ONE-CLICK retain: set Outcome=Retain and email the agreement synchronously,
+    // reporting the real result (sent / held / missing) instead of relying on the
+    // background column-change webhook. The UI gates this button until fee + plan.
+    case 'retainAndSend': {
+      if (agreementSent) { const e = new Error('The retainer agreement has already been sent to this client.'); e.badRequest = true; e.locked = true; throw e; }
+      if (!feeSet) { const e = new Error('Set the retainer fee before sending the agreement.'); e.badRequest = true; throw e; }
+      await leadService.updateLead(leadId, { outcome: 'Retain' });
+      const r = (await require('./retainerService2').maybeSendRetainerAgreement(leadId, { notifyIfMissing: true })) || {};
+      await postPortalNote(leadId, r.status === 'sent'
+        ? 'Outcome set to “Retain” — retainer agreement emailed to the client.'
+        : `“Retain & send” attempted, agreement NOT sent (${r.status}).`);
+      switch (r.status) {
+        case 'sent':     return { ok: true, message: '✓ Retainer agreement emailed to the client.' };
+        case 'held':     return { ok: true, message: `Not sent — the retainer plan isn’t complete: ${(r.warnings || []).join(' · ')}. Fix these, save, and click again.` };
+        case 'no-email': return { ok: true, message: 'Not sent — no client email on file. Add the client’s email, then click again.' };
+        case 'no-fee':   return { ok: true, message: 'Not sent — set the retainer fee first.' };
+        case 'failed':   return { ok: true, message: `Not sent — generation/email failed (${r.reason || 'unknown'}). It will retry; check the note on the lead.` };
+        default:         return { ok: true, message: 'Outcome set to Retain — the agreement will be emailed shortly.' };
+      }
     }
 
     case 'retainerSigned': {

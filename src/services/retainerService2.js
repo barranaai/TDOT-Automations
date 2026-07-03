@@ -153,10 +153,10 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
   if (!lead) return;
   if (lead.retainerSent) {
     console.log(`[Retainer2] Retainer already sent for lead ${leadId} — skipping`);
-    return;
+    return { status: 'already' };
   }
   if (lead.outcome !== 'Retain') {
-    return; // fee set on a not-yet-retained lead — nothing to send
+    return { status: 'not-retain' }; // fee set on a not-yet-retained lead — nothing to send
   }
   if (!feeToCents(lead.retainerFee)) {
     console.log(`[Retainer2] Outcome is Retain but no Retainer Fee set for lead ${leadId} — agreement HELD`);
@@ -164,7 +164,7 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
       await postLeadNote(leadId,
         '⚠ Outcome is set to "Retain", but no Retainer Fee is set. The retainer agreement states the fee, so it has NOT been emailed yet — enter the "Retainer Fee (CAD)" on this lead and the agreement is emailed to the client automatically.');
     }
-    return;
+    return { status: 'no-fee' };
   }
 
   // v2: the agreement is the real-template PDF built from the consultant's saved
@@ -184,13 +184,13 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
             `⚠ <b>Retainer agreement HELD — the retainer plan isn't complete.</b> Open the consultant portal → ` +
             `"Retainer plan" for this client and resolve: ${esc(err.warnings ? err.warnings.join(' · ') : err.message)}`);
         }
-      } else {
-        console.warn(`[Retainer2] v2 generation FAILED for lead ${leadId}: ${err.message}`);
-        await postLeadNote(leadId,
-          `⚠ <b>Retainer agreement generation FAILED</b> — NOT sent; the lead was left un-sent so it retries. ` +
-          `Check the scope annex is available and CloudConvert credits.<br>(error: ${esc(err.message)})`);
+        return { status: 'held', warnings: err.warnings && err.warnings.length ? err.warnings : [err.message] };
       }
-      return;
+      console.warn(`[Retainer2] v2 generation FAILED for lead ${leadId}: ${err.message}`);
+      await postLeadNote(leadId,
+        `⚠ <b>Retainer agreement generation FAILED</b> — NOT sent; the lead was left un-sent so it retries. ` +
+        `Check the scope annex is available and CloudConvert credits.<br>(error: ${esc(err.message)})`);
+      return { status: 'failed', reason: err.message };
     }
   }
 
@@ -206,7 +206,7 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
     await postLeadNote(leadId,
       `⚠ <b>Retainer agreement not sent — no client email on file.</b> Add the client's email and re-set ` +
       `the Outcome to "Retain" to send. The agreement link: <a href="${esc(url)}">${esc(url)}</a>`);
-    return;
+    return { status: 'no-email' };
   }
 
   const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
@@ -228,7 +228,7 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
       `⚠ <b>Retainer agreement email FAILED to send</b> — the client has NOT received it. The lead was left ` +
       `un-sent so it retries automatically; to resend now, switch the Outcome away from "Retain" and back. ` +
       `The agreement link is valid: <a href="${esc(url)}">${esc(url)}</a><br>(error: ${esc(err.message)})`);
-    return;
+    return { status: 'failed', reason: err.message };
   }
 
   await leadService.updateLead(leadId, {
@@ -236,6 +236,7 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
     conversionStatus: 'Consulted',
   });
   console.log(`[Retainer2] Retainer agreement sent to lead ${leadId} (${lead.email}) — fee included`);
+  return { status: 'sent' };
 }
 
 // ─── The retainer PDF (standard wording — swap in TDOT's official text when provided) ──
