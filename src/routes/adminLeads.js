@@ -73,13 +73,13 @@ ${buildNavHeader('leads')}
   <div id="error-msg"></div>
   <div id="content">
     <h1 class="page-h">Leads</h1>
-    <p class="page-sub">Every intake submission on the Lead Board — newest first. Booked leads also appear under Consultations.</p>
+    <p class="page-sub">Intake submissions awaiting a consultation booking — newest first. Once a consultation is booked, the lead moves to Consultations.</p>
 
     <div class="q-head">
-      <h2 class="sec-h">All leads <span id="q-count" class="muted" style="font-weight:500"></span></h2>
+      <h2 class="sec-h">Awaiting booking <span id="q-count" class="muted" style="font-weight:500"></span></h2>
       <div class="q-filters">
         <input id="f-search" type="text" placeholder="Search lead…">
-        <select id="f-status"><option value="">All statuses</option><option>Not Yet</option><option>Slot Held</option><option>Booked</option><option>Abandoned</option></select>
+        <select id="f-status"><option value="">All statuses</option><option>Not Yet</option><option>Slot Held</option><option>Abandoned</option></select>
         <select id="f-service"><option value="">All services</option></select>
         <select id="f-month"><option value="">All months</option></select>
         <select id="f-urgent"><option value="">Urgency: any</option><option value="urgent">Urgent only</option></select>
@@ -87,7 +87,7 @@ ${buildNavHeader('leads')}
     </div>
     <div class="card">
       <table>
-        <thead><tr><th>Lead</th><th>Service</th><th>Created</th><th>Tier</th><th>Booking</th><th>Consultant</th><th>Outcome</th></tr></thead>
+        <thead><tr><th>Lead</th><th>Service</th><th>Created</th><th>Tier</th><th>Priority</th><th>Booking</th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div>
@@ -99,7 +99,6 @@ function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/
 var ALLROWS=[];
 function qpill(cls,txt){ return '<span class="pill '+cls+'">'+escHtml(txt)+'</span>'; }
 function statusPill(s){
-  if(s==='Booked') return qpill('green','Booked');
   if(s==='Slot Held') return qpill('blue','Slot Held');
   if(s==='Abandoned') return qpill('grey','Abandoned');
   return qpill('amber', s||'Not Yet');
@@ -107,18 +106,16 @@ function statusPill(s){
 function createdOf(r){ return String(r.createdAt||'').slice(0,10); }
 function renderRows(rows){
   var tb=document.getElementById('qbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="7" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads yet.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="6" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.')+'</td></tr>'; return; }
   tb.innerHTML=rows.map(function(c){
-    var oc=c.outcome?qpill('blue',c.outcome):'<span class="pill grey">—</span>';
     var urgent=c.urgent?(' '+qpill('red','URGENT')):'';
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
       '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+urgent+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
       '<td>'+escHtml(createdOf(c)||'—')+'</td>'+
       '<td class="tier">'+escHtml(c.tier||'—')+'</td>'+
-      '<td>'+statusPill(c.bookingStatus)+'</td>'+
-      '<td>'+escHtml(c.consultant||'—')+'</td>'+
-      '<td>'+oc+'</td></tr>';
+      '<td>'+(c.priority?qpill(c.priority==='Urgent'?'red':'amber',c.priority):'<span class="pill grey">—</span>')+'</td>'+
+      '<td>'+statusPill(c.bookingStatus)+'</td></tr>';
   }).join('');
   Array.prototype.forEach.call(document.querySelectorAll('tr.row'),function(tr){
     tr.onclick=function(){ window.location.href='/admin/lead/'+encodeURIComponent(tr.getAttribute('data-id')); };

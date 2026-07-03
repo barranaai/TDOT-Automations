@@ -388,10 +388,15 @@ function buildIntakeSections(f, lead) {
   return { sections, flags };
 }
 
-/** The whole Lead Board as lightweight listing rows, newest first. */
+/**
+ * The pre-booking pipeline as lightweight listing rows, newest first.
+ * Booked leads are EXCLUDED — once a consultation is booked the lead "moves"
+ * to the Consultations queue (which filters bookingStatus='Booked'); the two
+ * tabs partition the Lead Board with no overlap.
+ */
 async function getLeadsQueue() {
   const leads = await leadService.listAllLeads();
-  const rows = leads.map((l) => ({
+  const rows = leads.filter((l) => (l.bookingStatus || '').trim() !== 'Booked').map((l) => ({
     id:            l.id,
     name:          l.fullName || l.name,
     createdAt:     l.createdAt || '',
