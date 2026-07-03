@@ -69,8 +69,11 @@ function mapRowsToComposition(rows) {
 
     members.push({
       role,
-      name:      (row.name || '').trim(),
-      memberKey: (row.memberKey || '').trim(),
+      name:               (row.name || '').trim(),
+      memberKey:          (row.memberKey || '').trim(),
+      dateOfBirth:        (row.dateOfBirth || '').trim(),
+      currentStatus:      (row.currentStatus || '').trim(),
+      countryOfResidence: (row.countryOfResidence || '').trim(),
       flags,
     });
   }
@@ -109,7 +112,7 @@ async function readForCase(caseRef) {
        ) {
          items {
            name
-           column_values(ids: ["${C.memberType}", "${C.flags}", "${C.memberKey}"]) { id text }
+           column_values(ids: ["${C.memberType}", "${C.flags}", "${C.memberKey}", "${C.dateOfBirth}", "${C.currentStatus}", "${C.countryOfResidence}"]) { id text }
          }
        }
      }`,
@@ -121,10 +124,13 @@ async function readForCase(caseRef) {
     const cv = {};
     for (const c of it.column_values) cv[c.id] = c.text || '';
     return {
-      name:       it.name,
-      memberType: cv[C.memberType],
-      flagsText:  cv[C.flags],
-      memberKey:  cv[C.memberKey],
+      name:               it.name,
+      memberType:         cv[C.memberType],
+      flagsText:          cv[C.flags],
+      memberKey:          cv[C.memberKey],
+      dateOfBirth:        cv[C.dateOfBirth],
+      currentStatus:      cv[C.currentStatus],
+      countryOfResidence: cv[C.countryOfResidence],
     };
   });
 

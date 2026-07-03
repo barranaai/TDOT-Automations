@@ -305,6 +305,9 @@ function normalizeFamilyMember(m) {
   return {
     type: String((m && m.type) || '').trim(),
     name: String((m && m.name) || '').trim(),
+    dateOfBirth:        String((m && m.dateOfBirth) || '').trim(),
+    currentStatus:      String((m && m.currentStatus) || '').trim(),
+    countryOfResidence: String((m && m.countryOfResidence) || '').trim(),
     accompanying: !!(m && (m.accompanying === true || m.accompanying === 'Yes' || m.accompanying === 'true' || m.accompanying === 1)),
   };
 }

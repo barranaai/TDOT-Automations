@@ -18,6 +18,17 @@ test('maps member types to roles and derives spouseIncluded', () => {
   assert.equal(comp.caseFlags.childrenIncluded, false);
 });
 
+test('passes through per-member DOB / status / residence (for questionnaire pre-fill)', () => {
+  const comp = mapRowsToComposition([
+    { memberType: 'Spouse', flagsText: '', name: 'Sunita', memberKey: 'spouse',
+      dateOfBirth: '1990-05-01', currentStatus: 'Worker', countryOfResidence: 'Canada' },
+  ]);
+  const m = comp.members[0];
+  assert.equal(m.dateOfBirth, '1990-05-01');
+  assert.equal(m.currentStatus, 'Worker');
+  assert.equal(m.countryOfResidence, 'Canada');
+});
+
 test('parses multi-value Flags into memberFlag keys', () => {
   const comp = mapRowsToComposition([
     { memberType: 'Spouse', flagsText: 'Name Changed, Common-Law', name: 'X', memberKey: 'spouse' },

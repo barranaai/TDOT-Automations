@@ -118,11 +118,18 @@ test('buildMemberFields: splits a real member name, skips placeholders', () => {
   assert.deepEqual(map.buildMemberFields({ name: 'Spouse' }), []);
 });
 
-test('buildMemberFields: uses board DOB/status/residence when present (future-proofing)', () => {
+test('buildMemberFields: uses member DOB/status/residence, converting ISO date to DD/MM/YYYY', () => {
   const v = byLabel(map.buildMemberFields({ name: 'A B', dateOfBirth: '1990-05-01', currentStatus: 'Worker', countryOfResidence: 'India' }));
-  assert.equal(v['Date of Birth'], '1990-05-01');
+  assert.equal(v['Date of Birth'], '01/05/1990');   // YYYY-MM-DD → the questionnaire's DD/MM/YYYY
   assert.equal(v['Status in Current Country'], 'Worker');
+  assert.equal(v['Status in Current Country (Visitor, Student, Worker, Citizen)'], 'Worker');
   assert.equal(v['Current Residence Country'], 'India');
+});
+
+test('buildPrimaryFields: embedded spouse date of birth is converted to DD/MM/YYYY', () => {
+  const v = byLabel(map.buildPrimaryFields({ intake: {}, spouse: { name: 'Sunita Sharma', dateOfBirth: '1992-11-30' } }));
+  assert.equal(v["Spouse's Date of Birth"], '30/11/1992');
+  assert.equal(v["Spouse's Family Name"], 'Sharma');
 });
 
 // ─── Seed I/O: the never-overwrite gate + a clean write ───────────────────────

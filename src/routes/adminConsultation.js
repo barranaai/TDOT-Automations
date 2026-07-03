@@ -505,9 +505,9 @@ ${buildNavHeader('consultations')}
       <div id="rp-suggestion" style="margin-top:12px"></div>
       <div id="rp-warnings"></div>
 
-      <div class="subhead" style="margin-top:14px">${I.userCheck} Family members <span class="muted">(consultant-set · only “accompanying” members get a checklist + questionnaire)</span></div>
+      <div class="subhead" style="margin-top:14px">${I.userCheck} Family members <span class="muted">(consultant-set · only “accompanying” members get a checklist + questionnaire · date of birth / status / residence are optional and pre-fill the member’s questionnaire)</span></div>
       <table class="dynamic-table" id="family-table">
-        <thead><tr><th style="width:34%">Type</th><th style="width:42%">Full name</th><th style="width:18%">Accompanying</th><th></th></tr></thead>
+        <thead><tr><th style="width:15%">Type</th><th style="width:19%">Full name</th><th style="width:15%">Date of birth</th><th style="width:16%">Current status</th><th style="width:16%">Residence country</th><th style="width:11%">Accomp.</th><th style="width:4%"></th></tr></thead>
         <tbody id="family-body"></tbody>
       </table>
       <button class="btn" id="rp-add-family" type="button" style="margin-top:8px">${I.plus} Add family member</button>
@@ -909,6 +909,9 @@ function famRowHtml(m){
   var opts=FAMILY_TYPES.map(function(t){ return '<option value="'+escA(t)+'"'+(m.type===t?' selected':'')+'>'+escHtml(t)+'</option>'; }).join('');
   return '<td><select class="f-type">'+opts+'</select></td>'+
     '<td><input class="f-name" type="text" value="'+escA(m.name||'')+'" placeholder="Full name (optional)"></td>'+
+    '<td><input class="f-dob" type="date" value="'+escA(m.dateOfBirth||'')+'"></td>'+
+    '<td><input class="f-status" type="text" value="'+escA(m.currentStatus||'')+'" placeholder="e.g. Visitor"></td>'+
+    '<td><input class="f-residence" type="text" value="'+escA(m.countryOfResidence||'')+'" placeholder="e.g. Canada"></td>'+
     '<td style="text-align:center"><input class="f-acc" type="checkbox"'+(m.accompanying?' checked':'')+'></td>'+
     '<td><button type="button" class="rm-btn" data-rmf="1">✕</button></td>';
 }
@@ -917,7 +920,9 @@ function addFamily(){ var tr=document.createElement('tr'); tr.innerHTML=famRowHt
 function bindFamily(){ Array.prototype.forEach.call(document.querySelectorAll('#family-body [data-rmf]'),function(b){ b.onclick=function(){ b.closest('tr').remove(); }; }); }
 function collectFamily(){
   return Array.prototype.map.call(document.querySelectorAll('#family-body tr'),function(tr){
-    return { type:((tr.querySelector('.f-type')||{}).value||'').trim(), name:((tr.querySelector('.f-name')||{}).value||'').trim(), accompanying:!!((tr.querySelector('.f-acc')||{}).checked) };
+    return { type:((tr.querySelector('.f-type')||{}).value||'').trim(), name:((tr.querySelector('.f-name')||{}).value||'').trim(),
+      dateOfBirth:((tr.querySelector('.f-dob')||{}).value||'').trim(), currentStatus:((tr.querySelector('.f-status')||{}).value||'').trim(),
+      countryOfResidence:((tr.querySelector('.f-residence')||{}).value||'').trim(), accompanying:!!((tr.querySelector('.f-acc')||{}).checked) };
   }).filter(function(m){ return m.type; });
 }
 function feeCentsNow(){ var fe=rpEl('fee'); var f=Number(String((fe&&fe.value)||'').replace(/[^0-9.]/g,'')); return f>0?Math.round(f*100):0; }

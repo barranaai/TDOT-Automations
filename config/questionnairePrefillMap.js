@@ -123,6 +123,16 @@ function normalizeMarital(v) {
 }
 
 /**
+ * Convert a stored ISO date (YYYY-MM-DD, e.g. a Monday date column) to the
+ * questionnaire's DD/MM/YYYY text format. Passes anything else through.
+ */
+function isoToDdmmyyyy(v) {
+  const s = String(v || '').trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+}
+
+/**
  * Only surface refusal detail when a refusal was actually reported.
  *   • recentRefusal = Yes  → surface
  *   • recentRefusal = No   → suppress (even if a stale date lingers)
@@ -159,6 +169,7 @@ const PRIMARY_RULES = [
   { labels: ['Visa Type'],                           value: refusalType },
   { labels: ["Spouse's Family Name"],                value: (c) => (c.spouse && isRealName(c.spouse.name)) ? splitName(c.spouse.name).surname : '' },
   { labels: ["Spouse's Given Name"],                 value: (c) => (c.spouse && isRealName(c.spouse.name)) ? splitName(c.spouse.name).given : '' },
+  { labels: ["Spouse's Date of Birth"],              value: (c) => (c.spouse && c.spouse.dateOfBirth) ? isoToDdmmyyyy(c.spouse.dateOfBirth) : '' },
 ];
 
 // Per-member forms (spouse / child-N). Intake holds almost no per-member
@@ -168,7 +179,7 @@ const PRIMARY_RULES = [
 const MEMBER_RULES = [
   { labels: ['Family Name (Surname)'],               value: (m) => isRealName(m.name) ? splitName(m.name).surname : '' },
   { labels: ['Given Name'],                          value: (m) => isRealName(m.name) ? splitName(m.name).given : '' },
-  { labels: ['Date of Birth'],                       value: (m) => m.dateOfBirth || '' },
+  { labels: ['Date of Birth'],                       value: (m) => isoToDdmmyyyy(m.dateOfBirth || '') },
   { labels: ['Status in Current Country', 'Status in Current Country (Visitor, Student, Worker, Citizen)'], value: (m) => m.currentStatus || '' },
   { labels: ['Current Residence Country'],           value: (m) => m.countryOfResidence || '' },
 ];

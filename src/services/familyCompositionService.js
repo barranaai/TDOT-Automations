@@ -77,7 +77,12 @@ function planMembersFromConsultant(lead) {
     while (used.has(key)) { counts[base] = (counts[base] || 0) + 1; key = `${base}-${counts[base]}`; }
     used.add(key);
     const name = String((m && m.name) || '').trim() || `${type} (consultant-set)`;
-    rows.push({ memberType: type, name, memberKey: key });
+    rows.push({
+      memberType: type, name, memberKey: key,
+      dateOfBirth:        String((m && m.dateOfBirth) || '').trim(),
+      currentStatus:      String((m && m.currentStatus) || '').trim(),
+      countryOfResidence: String((m && m.countryOfResidence) || '').trim(),
+    });
   }
   return rows;
 }
@@ -128,6 +133,11 @@ async function createFromLead({ lead, caseRef, cmItemId }) {
       [C.memberType]:    { label: row.memberType },
       [C.memberKey]:     row.memberKey,
     };
+    // Per-member biographic detail the consultant captured (all optional) — feeds
+    // the questionnaire pre-fill. DOB is a Monday date column; only write a valid ISO date.
+    if (C.dateOfBirth && /^\d{4}-\d{2}-\d{2}$/.test(row.dateOfBirth || '')) cols[C.dateOfBirth] = { date: row.dateOfBirth };
+    if (C.currentStatus && row.currentStatus) cols[C.currentStatus] = row.currentStatus;
+    if (C.countryOfResidence && row.countryOfResidence) cols[C.countryOfResidence] = row.countryOfResidence;
     if (cmItemId && C.case) cols[C.case] = { item_ids: [Number(cmItemId)] };
     await mondayApi.query(
       `mutation($b: ID!, $n: String!, $c: JSON!) {
