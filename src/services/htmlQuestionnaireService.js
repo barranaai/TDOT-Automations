@@ -20,6 +20,7 @@ const { generateAndSaveSubmissionPdf } = require('./questionnairePdfService');
 const { loadThresholds } = require('./caseReadinessService');
 const { clientMasterBoardId } = require('../../config/monday');
 const { FORMS_DIR, resolveForm } = require('../../config/questionnaireFormMap');
+const prefillMap       = require('../../config/questionnairePrefillMap');
 
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
 
@@ -253,6 +254,141 @@ async function saveFormData({ clientName, caseRef, itemId, formKey, fields, comp
 
   const filled = fields.filter(f => f.value && f.value.trim()).length;
   console.log(`[HtmlQ] Saved ${fields.length} fields (${filled} non-empty) as JSON for ${caseRef}/${formKey} (${completionPct}%)`);
+}
+
+// ─── Pre-fill: seed questionnaire answers from intake + pre-consult data ───────
+//
+// Called once per case at Document-Collection-Started (see checklistService),
+// the first point where a caseRef exists. Best-effort and NON-blocking: any
+// failure logs and returns without touching the questionnaire.
+//
+// Safety contract:
+//   • NEVER overwrite — a form file is seeded only when it is currently empty,
+//     so a client who already started (or a re-fired trigger) is never clobbered.
+//   • completionPct stays 0 — pre-filled answers must NOT count toward the
+//     submit threshold; the client reviews and the form recomputes % live.
+//   • Every seeded field carries source:'prefill' so the client shows a
+//     "please review" banner and staff can tell it was auto-filled.
+
+/** Read an Intake-subfolder JSON archive by caseRef (post-handoff renamed path). */
+async function readIntakeSubfolderArchive({ clientName, caseRef, filename }) {
+  try {
+    const buf = await oneDrive.readFile({ clientName, caseRef, subfolder: 'Intake', filename });
+    if (!buf) return null;
+    const obj = JSON.parse(buf.toString('utf8'));
+    return (obj && obj.fields) || obj || null;
+  } catch (err) {
+    console.warn(`[Prefill] archive "${filename}" unavailable for ${caseRef}: ${err.message}`);
+    return null;
+  }
+}
+
+/** Turn a {label,value} pair into a persisted, prefill-tagged field record. */
+function toPrefillField(pair) {
+  const slug = String(pair.label).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return {
+    section: 'Pre-filled from intake',
+    label:   pair.label,
+    key:     'prefill__' + slug,   // synthetic, namespaced — never collides with a real DOM key
+    value:   pair.value,
+    source:  'prefill',
+  };
+}
+
+/** Seed one form file, but ONLY when it has no data yet. Returns fields written. */
+async function seedFormFileIfEmpty({ clientName, caseRef, itemId, formKey, pairs }) {
+  if (!pairs || !pairs.length) return 0;
+  const existing = await loadFormData({ clientName, caseRef, formKey });
+  if (existing && existing.length) {
+    console.log(`[Prefill] ${caseRef}/${formKey} already has data — skipping to avoid overwrite.`);
+    return 0;
+  }
+  const fields = pairs.map(toPrefillField);
+  await saveFormData({ clientName, caseRef, itemId, formKey, fields, completionPct: 0 });
+  return fields.length;
+}
+
+/** Best-effort staff note on the Client Master item's Updates tab. */
+async function postPrefillNote(itemId, count) {
+  try {
+    const body = `${count} questionnaire field${count === 1 ? '' : 's'} were pre-filled from the client's intake & pre-consult answers. The client has been asked to review and confirm them.`;
+    await mondayApi.query(
+      `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+      { itemId: String(itemId), body }
+    );
+  } catch (err) {
+    console.warn(`[Prefill] staff note failed for item ${itemId}: ${err.message}`);
+  }
+}
+
+/**
+ * Seed the questionnaire(s) for a freshly-provisioned case from the client data
+ * we already hold. Idempotent and best-effort.
+ *
+ * @param {{ clientName, caseRef, caseType, caseSubType?, clientMasterItemId? }} p
+ * @returns {Promise<{ ok:boolean, seeded?:number, reason?:string }>}
+ */
+async function seedQuestionnairePrefill({ clientName, caseRef, caseType, caseSubType, clientMasterItemId }) {
+  try {
+    if (!clientName || !caseRef) return { ok: false, reason: 'missing-args' };
+
+    const formFiles = resolveForm(caseType, caseSubType);
+    if (!formFiles) {
+      console.log(`[Prefill] No questionnaire form for "${caseType}/${caseSubType || ''}" — skipping ${caseRef}.`);
+      return { ok: false, reason: 'no-form' };
+    }
+
+    // clientMasterItemId → leadId (one-directional link on the Lead Board), for the lead columns.
+    let lead = null;
+    if (clientMasterItemId) {
+      try { lead = await require('./leadService').findByColumnValue('clientMasterItemId', String(clientMasterItemId)); }
+      catch (err) { console.warn(`[Prefill] lead lookup failed for CM ${clientMasterItemId}: ${err.message}`); }
+    }
+
+    // Source archives — read by the REAL caseRef (the intake folder was renamed at handoff).
+    const intake     = await readIntakeSubfolderArchive({ clientName, caseRef, filename: 'intake-submission.json' });
+    const preConsult = await readIntakeSubfolderArchive({ clientName, caseRef, filename: 'pre-consult-submission.json' });
+
+    if (!intake && !preConsult && !lead) {
+      console.log(`[Prefill] No source data (intake/pre-consult/lead) for ${caseRef} — nothing to seed.`);
+      return { ok: false, reason: 'no-source' };
+    }
+
+    // Family members drive embedded-spouse fields + their own per-member forms.
+    let members = [];
+    try {
+      const comp = await require('./compositionAdapter').readForCase(caseRef);
+      members = (comp && comp.members) || [];
+    } catch (err) {
+      console.warn(`[Prefill] composition read failed for ${caseRef}: ${err.message}`);
+    }
+    const spouse = members.find(m => /spouse/i.test(m.role || '')) || null;
+
+    const ctx = { intake: intake || {}, preConsult: preConsult || {}, lead: lead || {}, spouse };
+
+    let seeded = 0;
+    // Principal applicant form.
+    seeded += await seedFormFileIfEmpty({
+      clientName, caseRef, itemId: clientMasterItemId, formKey: 'primary',
+      pairs: prefillMap.buildPrimaryFields(ctx),
+    });
+    // Each accompanying member's own form (thin today; harmless when empty).
+    for (const m of members) {
+      const key = (m.memberKey || '').trim();
+      if (!key || key === 'primary') continue;
+      seeded += await seedFormFileIfEmpty({
+        clientName, caseRef, itemId: clientMasterItemId, formKey: key,
+        pairs: prefillMap.buildMemberFields(m),
+      });
+    }
+
+    if (seeded > 0 && clientMasterItemId) await postPrefillNote(clientMasterItemId, seeded);
+    console.log(`[Prefill] Seeded ${seeded} field(s) across ${1 + members.length} form(s) for ${caseRef}.`);
+    return { ok: true, seeded };
+  } catch (err) {
+    console.warn(`[Prefill] seed failed for ${caseRef}: ${err.message}`);
+    return { ok: false, reason: 'error' };
+  }
 }
 
 // ─── Member manifest operations ──────────────────────────────────────────────
@@ -1100,11 +1236,17 @@ ${hasAdditionalForm ? `
 
   var _isDirty       = false;
   var _autoSaveTimer = null;
+  /* True while pre-fill / localStorage re-hydration runs. Programmatic field
+     writes fire change/input events; without this guard they would mark the form
+     dirty and the 60s auto-save would overwrite the seeded file — stripping the
+     source:"prefill" tag and computing a real % — before the client ever reviews. */
+  var _hydrating           = false;
+  var _localNewerThanServer = false;
 
   /* localStorage key for local backup */
   var _LS_KEY = 'tdot_form_' + CASE_REF + '_' + FORM_KEY;
 
-  function markDirty() { _isDirty = true; }
+  function markDirty() { if (_hydrating) return; _isDirty = true; }
 
   /* Write current fields to localStorage (cheap, synchronous) */
   function backupToLocal() {
@@ -1931,6 +2073,28 @@ ${hasAdditionalForm ? `
     }
   }
 
+  /* Set when any loaded field was auto-seeded from the client's intake/pre-consult
+     answers (source:"prefill"); drives the review banner shown once per page. */
+  var _prefillSeen = false;
+  function showPrefillBanner() {
+    if (document.getElementById("tdot-prefill-banner")) return;
+    var b = document.createElement("div");
+    b.id = "tdot-prefill-banner";
+    b.style.cssText = "margin:14px auto;max-width:900px;padding:12px 16px;border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a5f;border-radius:10px;font-size:14px;line-height:1.5;display:flex;gap:10px;align-items:flex-start;";
+    var icon = document.createElement("span");
+    icon.textContent = "ℹ️";
+    icon.style.cssText = "font-size:16px;flex-shrink:0;line-height:1.4;";
+    var msg = document.createElement("div");
+    var strong = document.createElement("strong");
+    strong.textContent = "Some answers were pre-filled from your earlier forms.";
+    msg.appendChild(strong);
+    msg.appendChild(document.createTextNode(" Please review each pre-filled answer and correct anything that has changed before you submit."));
+    b.appendChild(icon);
+    b.appendChild(msg);
+    if (document.body && document.body.firstChild) document.body.insertBefore(b, document.body.firstChild);
+    else if (document.body) document.body.appendChild(b);
+  }
+
   async function prefillMemberSection(memberKey, sectionEl) {
     /* Load saved data for this member from the server */
     var serverFields = [];
@@ -1942,7 +2106,10 @@ ${hasAdditionalForm ? `
       );
       if (res.ok) {
         var data = await res.json();
-        if (data.fields && Array.isArray(data.fields)) serverFields = data.fields;
+        if (data.fields && Array.isArray(data.fields)) {
+          serverFields = data.fields;
+          if (serverFields.some(function(f){ return f && f.source === "prefill"; })) _prefillSeen = true;
+        }
       }
     } catch (fetchErr) {
       console.warn('[TDOT] Could not reach server for pre-fill (' + memberKey + ').', fetchErr);
@@ -2010,10 +2177,11 @@ ${hasAdditionalForm ? `
       }
     }
     console.log('[TDOT] Pre-fill ' + memberKey + ': ' + matched + ' fields matched.');
-    if (localFilled > serverFilled) markDirty();
+    if (localFilled > serverFilled) _localNewerThanServer = true;
   }
 
   async function loadAndPrefill() {
+    _hydrating = true;   // programmatic fills below must NOT dirty the form or trigger auto-save
     try {
       if (IS_MULTI) {
         /* ── Multi-member pre-fill: load each member's data ── */
@@ -2023,15 +2191,23 @@ ${hasAdditionalForm ? `
           await prefillMemberSection(mk, memberSections[si]);
         }
         updateProgressUI();
-        return;
+      } else {
+        /* ── Single-member pre-fill (original logic) ── */
+        await prefillMemberSection(FORM_KEY, null);
+        updateProgressUI();
       }
-
-      /* ── Single-member pre-fill (original logic) ── */
-      await prefillMemberSection(FORM_KEY, null);
-      updateProgressUI();
     } catch (err) {
       console.error('[TDOT] Pre-fill error:', err);
+    } finally {
+      _hydrating = false;
     }
+    /* Reveal the review banner once if any answer was auto-filled from intake. */
+    if (_prefillSeen) showPrefillBanner();
+    /* The client's own local backup was ahead of the server — let that sync
+       (now that hydration is done, markDirty takes effect). Pre-filled-only
+       forms stay clean, so the seeded file keeps its source tag until the
+       client actually edits and saves. */
+    if (_localNewerThanServer) markDirty();
   }
 
   /* ── Multi-member DOM setup ── */
@@ -4598,6 +4774,7 @@ module.exports = {
   resolveForm,
   loadFormData,
   saveFormData,
+  seedQuestionnairePrefill,
   markSubmitted,
   markAllSubmitted,
   // Member manifest management

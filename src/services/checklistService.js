@@ -166,6 +166,7 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
       try {
         await seedFromSchema({ schema, caseRef, clientName: item.name, clientMasterItemId: itemId });
         await markChecklistApplied(itemId);
+        await seedQuestionnairePrefillSafe({ caseRef, caseType, caseSubType, clientName: item.name, itemId });
         console.log(`[ChecklistService] Checklist Template Applied → Yes for ${caseRef} (schema path)`);
         return;
       } catch (err) {
@@ -232,6 +233,23 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
     }
   );
   console.log(`[ChecklistService] Checklist Template Applied → Yes for ${caseRef}`);
+
+  await seedQuestionnairePrefillSafe({ caseRef, caseType, caseSubType, clientName: item.name, itemId });
+}
+
+/**
+ * Best-effort questionnaire pre-fill: seed the client's questionnaire answers
+ * from the intake + pre-consult data we already hold. Never throws — a failure
+ * here must not affect checklist seeding.
+ */
+async function seedQuestionnairePrefillSafe({ caseRef, caseType, caseSubType, clientName, itemId }) {
+  try {
+    await require('./htmlQuestionnaireService').seedQuestionnairePrefill({
+      caseRef, caseType, caseSubType, clientName, clientMasterItemId: itemId,
+    });
+  } catch (err) {
+    console.warn(`[ChecklistService] questionnaire pre-fill failed for ${caseRef} (non-fatal): ${err.message}`);
+  }
 }
 
 /**
