@@ -95,7 +95,11 @@
     "transcriptLink": "link_mm4vr6br",
     "meetingType": "text_mm4v4v1p",
     "squareBookingId": "text_mm4vxmdk",
-    "milestonePayments": "long_text_mm4vewhk"
+    "milestonePayments": "long_text_mm4vewhk",
+    "followUpDate": "date_mm4xah42",
+    "leadOwner": "text_mm4xjsdq",
+    "bookedBy": "text_mm4x53rh",
+    "paymentReviewedBy": "text_mm4xgjv5"
   },
   "createdAt": "2026-06-08T18:00:45.756Z"
 }

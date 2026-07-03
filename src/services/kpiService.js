@@ -62,7 +62,7 @@ function computeKpis(leads = [], month = '') {
   const K = {
     month: month || 'all',
     totalLeads: leads.length,
-    consultations: { booked: 0, held: 0, revenue: 0, virtual: 0, inPerson: 0, newClients: 0, existingClients: 0, byConsultant: {} },
+    consultations: { booked: 0, held: 0, revenue: 0, virtual: 0, inPerson: 0, newClients: 0, existingClients: 0, byConsultant: {}, byLeadOwner: {} },
     retainers: { sent: 0, signed: 0, paid: 0, tr: 0, pr: 0, feeValue: 0, byConsultant: {} },
     funnel: { leads: 0, booked: 0, consulted: 0, retained: 0, paid: 0 },
   };
@@ -71,6 +71,7 @@ function computeKpis(leads = [], month = '') {
     if (inM(l.bookedSlot)) {
       K.consultations.booked++; K.funnel.booked++;
       inc(K.consultations.byConsultant, l.assignedConsultant || 'Unassigned');
+      inc(K.consultations.byLeadOwner, l.leadOwner || 'Unattributed');
       if (/person/i.test(l.meetingType || '')) K.consultations.inPerson++;
       else if (String(l.meetingType || '').trim()) K.consultations.virtual++;
       if (isExistingClient(l)) K.consultations.existingClients++; else K.consultations.newClients++;

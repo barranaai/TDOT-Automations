@@ -10,7 +10,7 @@ const { computeKpis, distinctMonths, trPrOf } = require('../src/services/kpiServ
 const CONSULT_FEE = (Number(require('../src/services/bookingService').CONSULT_FEE_CENTS) || 20000) / 100;
 
 const LEADS = [
-  { assignedConsultant: 'Shermin Teymouri Mofrad', bookedSlot: '2026-07-10 16:00', consultationHeld: '2026-07-10', meetingType: 'Virtual',   squareConsultTxnId: 't1', confirmedCaseType: 'Study Permit',                retainerSent: '2026-07-11', retainerSigned: '2026-07-12', retainerPaid: '2026-07-13', retainerFee: '2000', createdAt: '2026-07-01T10:00:00Z' },
+  { assignedConsultant: 'Shermin Teymouri Mofrad', leadOwner: 'Prajwal', bookedSlot: '2026-07-10 16:00', consultationHeld: '2026-07-10', meetingType: 'Virtual',   squareConsultTxnId: 't1', confirmedCaseType: 'Study Permit',                retainerSent: '2026-07-11', retainerSigned: '2026-07-12', retainerPaid: '2026-07-13', retainerFee: '2000', createdAt: '2026-07-01T10:00:00Z' },
   { assignedConsultant: 'Shafoli Kapur',            bookedSlot: '2026-07-15 14:00', consultationHeld: '2026-07-16', meetingType: 'In-person', squareConsultTxnId: 't2', existingFileType: 'PR', confirmedCaseType: 'Inland Spousal Sponsorship', retainerSent: '2026-07-17', retainerSigned: '2026-07-18', retainerFee: '5000', createdAt: '2026-07-05T10:00:00Z' },
   { assignedConsultant: 'Shermin Teymouri Mofrad', bookedSlot: '2026-06-20 10:00', consultationHeld: '2026-06-20', meetingType: 'Virtual',   squareConsultTxnId: 't3', confirmedCaseType: 'Visitor Visa', createdAt: '2026-06-01T10:00:00Z' },
 ];
@@ -31,6 +31,8 @@ test('computeKpis windows by each event date and counts correctly (July)', () =>
   assert.equal(k.consultations.inPerson, 1);
   assert.equal(k.consultations.newClients, 1);
   assert.equal(k.consultations.existingClients, 1); // lead 2 has existingFileType
+  assert.equal(k.consultations.byLeadOwner.Prajwal, 1);        // attribution credit
+  assert.equal(k.consultations.byLeadOwner.Unattributed, 1);   // lead 2 has no owner
   // retainers
   assert.equal(k.retainers.sent, 2);
   assert.equal(k.retainers.signed, 2);

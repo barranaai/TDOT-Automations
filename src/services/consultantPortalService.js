@@ -88,7 +88,7 @@ const C = require('../data/newLeadsBoard.json').columns;
  */
 async function getConsultationQueue() {
   const ids = [C.bookedSlot, C.tier, C.serviceRequired, C.confirmedCaseType, C.preConsultSubmitted, C.outcome, C.meetingLink,
-    C.assignedConsultant, C.meetingType, C.retainerFee, C.retainerSent, C.retainerSigned, C.retainerPaid]
+    C.assignedConsultant, C.meetingType, C.retainerFee, C.retainerSent, C.retainerSigned, C.retainerPaid, C.followUpDate, C.leadOwner]
     .map((c) => `"${c}"`).join(', ');
   const data = await mondayApi.query(
     `query($boardId: ID!, $colId: String!, $val: String!) {
@@ -114,6 +114,8 @@ async function getConsultationQueue() {
       retainerFee:        cv[C.retainerFee] || '',
       // one derived status from the retainer date columns (most-advanced wins)
       retainerStatus:     cv[C.retainerPaid] ? 'Paid' : cv[C.retainerSigned] ? 'Signed' : cv[C.retainerSent] ? 'Sent' : (cv[C.outcome] === 'Retain' ? 'Retain' : ''),
+      followUpDate:       cv[C.followUpDate] || '',
+      leadOwner:          cv[C.leadOwner] || '',
     };
   });
   // Soonest slot first; blanks last.
@@ -225,6 +227,12 @@ async function getConsultationDetail(leadId) {
     retainerSigned: lead.retainerSigned || '',
     retainerPaid:   lead.retainerPaid || '',
     clientMasterItemId: lead.clientMasterItemId || '',
+
+    // KPI attribution (staff-entered on the detail page)
+    followUpDate:      lead.followUpDate || '',
+    leadOwner:         lead.leadOwner || '',
+    bookedBy:          lead.bookedBy || '',
+    paymentReviewedBy: lead.paymentReviewedBy || '',
 
     // Initial Consultation agreement (consultant-sent)
     consultAgreement: {
@@ -386,6 +394,14 @@ function validateAction(action, value) {
       const reference = String((o && o.reference) || '').trim().slice(0, 120);
       return { ok: true, normalized: { index: i, reference } };
     }
+    case 'saveAttribution': {
+      let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid payload.' }; }
+      o = o || {};
+      const fu = String(o.followUpDate || '').trim();
+      if (fu && !/^\d{4}-\d{2}-\d{2}$/.test(fu)) return { ok: false, error: 'Follow-up date must be YYYY-MM-DD.' };
+      const clean = (s) => String(s || '').trim().slice(0, 80);
+      return { ok: true, normalized: { followUpDate: fu, leadOwner: clean(o.leadOwner), bookedBy: clean(o.bookedBy), paymentReviewedBy: clean(o.paymentReviewedBy) } };
+    }
     case 'retainerFee': {
       // Reject loosely-typed inputs (boolean→1, [5]→5, '0x10'→16, '1e9'): require
       // a plain decimal number or numeric string before coercion.
@@ -483,6 +499,13 @@ async function applyAction({ leadId, action, value, amend = false }) {
     case 'markMilestonePaid': {
       const r = await require('./milestonePaymentService').markMilestonePaid(leadId, v.normalized.index, { reference: v.normalized.reference });
       return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked paid by e-transfer.` };
+    }
+
+    case 'saveAttribution': {
+      const n = v.normalized;
+      await leadService.updateLead(leadId, { followUpDate: n.followUpDate, leadOwner: n.leadOwner, bookedBy: n.bookedBy, paymentReviewedBy: n.paymentReviewedBy });
+      await postPortalNote(leadId, `Attribution saved — owner: ${n.leadOwner || '—'}, booked by: ${n.bookedBy || '—'}, payment reviewed by: ${n.paymentReviewedBy || '—'}, follow-up: ${n.followUpDate || '—'}.`);
+      return { ok: true, message: 'Attribution saved.' };
     }
 
     case 'retainerSigned': {

@@ -29,6 +29,7 @@ const COL_TYPE = {
   bookingStatus: 'status', preConsultSubmitted: 'status', outcome: 'status', conversionStatus: 'status',
   slotHeldUntil: 'text', bookedSlot: 'text', assignedConsultant: 'text', consultationHeld: 'date',
   meetingType: 'text', squareBookingId: 'text', // in-person/virtual choice + the created Square appointment id
+  followUpDate: 'date', leadOwner: 'text', bookedBy: 'text', paymentReviewedBy: 'text', // KPI attribution (consultant portal)
   retainerSent: 'date', retainerSigned: 'date', retainerPaid: 'date', retainerFee: 'numbers',
   squareConsultTxnId: 'text', squareConsultOrderId: 'text', zoomMeetingId: 'text',
   adobeSignAgreementId: 'text', squareRetainerTxnId: 'text', squareRetainerOrderId: 'text',

@@ -49,6 +49,13 @@ const I = {
 // NOT escape `</script>`, so neutralise every `<` to its < escape.
 const jsLit = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
 
+// Team roster for the attribution dropdowns (lead owner / booked-by / reviewer).
+// Env-overridable so the list can change without a deploy.
+const PORTAL_STAFF = (process.env.PORTAL_STAFF || 'Gauri,Kamal,Asmita,Prajwal,Melini,Diksha')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+const STAFF_OPTS = '<option value="">—</option>' +
+  PORTAL_STAFF.map((s) => `<option value="${s.replace(/"/g, '&quot;')}">${s.replace(/</g, '&lt;')}</option>`).join('');
+
 // ─── Queue page ────────────────────────────────────────────────────────────────
 function buildQueueHTML() {
   return `<!DOCTYPE html>
@@ -91,8 +98,7 @@ function buildQueueHTML() {
   .kpi-funnel .f-l { font-size:9.5px; text-transform:uppercase; color:#94a3b8; letter-spacing:.5px; }
   .kpi-funnel .f-arrow { color:#cbd5e1; font-weight:700; font-size:12px; }
   .kpi-funnel .f-arrow b { display:block; color:#16a34a; font-size:10px; font-weight:800; }
-  .kpi-2col { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px; }
-  @media(max-width:640px){ .kpi-2col{ grid-template-columns:1fr; } }
+  .kpi-2col { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:20px; }
   .kpi-mini { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:13px 15px; box-shadow:var(--shadow-sm); }
   .kpi-mini h4 { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; margin:0 0 8px; }
   .kpi-mini .r2 { display:flex; justify-content:space-between; font-size:13px; padding:3px 0; color:#33425a; }
@@ -123,11 +129,12 @@ ${buildNavHeader('consultations')}
         <select id="f-consultant"><option value="">All consultants</option></select>
         <select id="f-month"><option value="">All months</option></select>
         <select id="f-outcome"><option value="">All outcomes</option></select>
+        <select id="f-followup"><option value="">Follow-up: any</option><option value="due">Due (≤ today)</option><option value="has">Has follow-up</option></select>
       </div>
     </div>
     <div class="card">
       <table>
-        <thead><tr><th>Client</th><th>Service</th><th>Consultant</th><th>Slot (Toronto)</th><th>Meeting</th><th>Pre-consult</th><th>Retainer</th><th>Outcome</th></tr></thead>
+        <thead><tr><th>Client</th><th>Service</th><th>Consultant</th><th>Slot (Toronto)</th><th>Meeting</th><th>Pre-consult</th><th>Retainer</th><th>Follow-up</th><th>Outcome</th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div>
@@ -138,13 +145,15 @@ ${SHARED_AUTH_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 var ALLROWS=[];
 function qpill(cls,txt){ return '<span class="pill '+cls+'">'+escHtml(txt)+'</span>'; }
+function todayStr(){ return (new Date()).toISOString().slice(0,10); }
 function renderRows(rows){
   var tb=document.getElementById('qbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="8" class="empty">'+(ALLROWS.length?'No consultations match your filters.':'No booked consultations right now.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="9" class="empty">'+(ALLROWS.length?'No consultations match your filters.':'No booked consultations right now.')+'</td></tr>'; return; }
   tb.innerHTML=rows.map(function(c){
     var pc=c.preConsultSubmitted?qpill('green','Submitted'):qpill('amber','Pending');
     var oc=c.outcome?qpill('blue',c.outcome):'<span class="pill grey">—</span>';
     var rs=c.retainerStatus?qpill(c.retainerStatus==='Paid'?'green':'blue',c.retainerStatus):'<span class="pill grey">—</span>';
+    var fu=c.followUpDate?qpill(c.followUpDate<=todayStr()?'amber':'grey',c.followUpDate):'<span class="pill grey">—</span>';
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
       '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
@@ -153,6 +162,7 @@ function renderRows(rows){
       '<td>'+(c.meetingType?escHtml(c.meetingType):'—')+'</td>'+
       '<td>'+pc+'</td>'+
       '<td>'+rs+'</td>'+
+      '<td>'+fu+'</td>'+
       '<td>'+oc+'</td></tr>';
   }).join('');
   Array.prototype.forEach.call(document.querySelectorAll('tr.row'),function(tr){
@@ -169,12 +179,14 @@ function populateFilters(rows){
 }
 function applyFilters(){
   var q=(document.getElementById('f-search').value||'').toLowerCase().trim();
-  var con=document.getElementById('f-consultant').value, mo=document.getElementById('f-month').value, oc=document.getElementById('f-outcome').value;
+  var con=document.getElementById('f-consultant').value, mo=document.getElementById('f-month').value, oc=document.getElementById('f-outcome').value, fu=document.getElementById('f-followup').value;
   var rows=ALLROWS.filter(function(r){
     if(q && String(r.name||'').toLowerCase().indexOf(q)<0) return false;
     if(con && r.consultant!==con) return false;
     if(mo && monthOf(r.bookedSlot)!==mo) return false;
     if(oc && r.outcome!==oc) return false;
+    if(fu==='due' && !(r.followUpDate && r.followUpDate<=todayStr())) return false;
+    if(fu==='has' && !r.followUpDate) return false;
     return true;
   });
   document.getElementById('q-count').textContent='('+rows.length+(rows.length!==ALLROWS.length?(' of '+ALLROWS.length):'')+')';
@@ -195,7 +207,7 @@ function load(){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
-['f-search','f-consultant','f-month','f-outcome'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
+['f-search','f-consultant','f-month','f-outcome','f-followup'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
 // ── Reporting / KPIs ──────────────────────────────────────────────────────
 function kpiMoney(n){ return '$'+Number(n||0).toLocaleString('en-CA'); }
 function kpiCard(label,num,sub){ return '<div class="kpi-card"><div class="k-label">'+label+'</div><div class="k-num">'+num+'</div>'+(sub?'<div class="k-sub">'+sub+'</div>':'')+'</div>'; }
@@ -224,6 +236,7 @@ function renderKpis(d){
       + (unclassified>0 ? '<div class="muted" style="font-size:11px;margin-top:4px">'+unclassified+' unclassified (case type not mapped)</div>' : '')
       + '</div>'
     + '<div class="kpi-mini"><h4>By consultant (booked)</h4>'+kpiByList(c.byConsultant)+'</div>'
+    + '<div class="kpi-mini"><h4>Leads by owner</h4>'+kpiByList(c.byLeadOwner)+'</div>'
     + '</div>';
   document.getElementById('kpi-body').innerHTML = '<div class="kpi-grid">'+cards+'</div>' + funnel + mini;
 }
@@ -316,6 +329,11 @@ function buildDetailHTML(leadId) {
   .kvgrid > .subhead:first-child { margin-top:0; }
   .rrow { border:1px dashed var(--border); border-radius:8px; padding:9px 12px; margin-top:8px; font-size:12.5px; color:var(--navy); line-height:1.55; }
   .notyet { color:#94a3b8; font-size:13px; font-style:italic; padding:8px 0; }
+  .attr-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px 10px; }
+  @media(max-width:520px){ .attr-grid{ grid-template-columns:1fr; } }
+  .attr-f { display:flex; flex-direction:column; gap:3px; }
+  .attr-f span { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:#94a3b8; }
+  .attr-f input, .attr-f select { padding:7px 9px; border:1px solid var(--border); border-radius:8px; font-size:13px; font-family:inherit; color:var(--navy); background:#fff; }
 
   /* action groups */
   .agroup { padding-top:13px; margin-top:13px; border-top:1px solid #f1f5f9; }
@@ -424,6 +442,16 @@ ${buildNavHeader('consultations')}
             <div class="subhead">Consultation email — booking + form + agreement <span class="muted" id="ca-sent"></span></div>
             <div id="ca-warn"></div>
             <div class="frow"><button class="btn" id="btn-consult-preview">${I.eye} Preview agreement</button><button class="btn" id="btn-consult-send">${I.send} Review &amp; send</button></div>
+          </div>
+          <div class="agroup">
+            <div class="subhead">Attribution &amp; follow-up <span class="muted" id="attr-saved"></span></div>
+            <div class="attr-grid">
+              <label class="attr-f"><span>Follow-up date</span><input id="at-followup" type="date"></label>
+              <label class="attr-f"><span>Lead owner</span><select id="at-owner">${STAFF_OPTS}</select></label>
+              <label class="attr-f"><span>Booked by</span><select id="at-bookedby">${STAFF_OPTS}</select></label>
+              <label class="attr-f"><span>Payment reviewed by</span><select id="at-reviewer">${STAFF_OPTS}</select></label>
+            </div>
+            <div class="frow" style="margin-top:9px"><button class="btn primary" id="btn-attr-save">${I.save} Save attribution</button></div>
           </div>
         </div>
         <div class="card"><div class="card-t">${I.flag} Case status</div><div id="c-status" class="kvgrid"></div></div>
@@ -579,6 +607,11 @@ function buildStepper(d){
   }).join('');
 }
 
+function setAttrSel(id,val){ var el=document.getElementById(id); if(!el) return; if(val && ![].some.call(el.options,function(o){return o.value===val;})){ var o=document.createElement('option'); o.value=val; o.textContent=val; el.appendChild(o); } el.value=val||''; }
+function hydrateAttribution(d){
+  var fu=document.getElementById('at-followup'); if(fu) fu.value=d.followUpDate||'';
+  setAttrSel('at-owner', d.leadOwner||''); setAttrSel('at-bookedby', d.bookedBy||''); setAttrSel('at-reviewer', d.paymentReviewedBy||'');
+}
 function render(d){
   document.getElementById('c-avatar').textContent=initials(d.name||d.leadId);
   document.getElementById('c-name').textContent=d.name||d.leadId;
@@ -607,6 +640,7 @@ function render(d){
   document.getElementById('c-stepper').innerHTML=buildStepper(d);
 
   highlightOutcome(d.outcome||'');
+  hydrateAttribution(d);
   var fee=document.getElementById('fee'); if(fee && !fee.value && d.retainerFee) fee.value=d.retainerFee;
   // Hydrate the retainer panel from the detail payload ONCE (saves a second
   // getLead round-trip); later renders (after an action) keep in-progress edits.
@@ -974,6 +1008,9 @@ function initActions(){
   document.getElementById('btn-consult-preview').onclick=previewConsult;
   document.getElementById('btn-consult-send').onclick=function(){
     doAction('sendConsultationPackage', null, 'Send the client ONE consultation email now — booking details, meeting link, the pre-consultation form, and the consultation agreement to review — with a note to complete both at least 24 hours before the consultation? Preview the agreement first and make sure the client\\'s address is filled in.');
+  };
+  document.getElementById('btn-attr-save').onclick=function(){
+    doAction('saveAttribution', JSON.stringify({ followUpDate: document.getElementById('at-followup').value, leadOwner: document.getElementById('at-owner').value, bookedBy: document.getElementById('at-bookedby').value, paymentReviewedBy: document.getElementById('at-reviewer').value }), null);
   };
 }
 
