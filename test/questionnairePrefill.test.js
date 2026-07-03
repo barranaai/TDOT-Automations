@@ -196,6 +196,20 @@ test('seedQuestionnairePrefill: writes prefill fields (completionPct 0, source t
   }
 });
 
+test('client label matcher folds curly apostrophes (spouse labels fill on &rsquo; forms)', () => {
+  // The emitted form page must carry the apostrophe-normalising matcher so a
+  // straight-apostrophe seed ("Spouse's ...") matches a curly-apostrophe DOM label.
+  const page = svc.buildFormPage({
+    formFile: '4. Citizenship - Questionnaires - April 2025.html',
+    caseRef: 'T', token: 't', formKey: 'primary', formTitle: 'x', hasAdditionalForm: false,
+    overviewUrl: '/q', memberLabel: 'PA', members: [{ key: 'primary', type: 'Principal Applicant', label: 'PA' }],
+    allowedMemberTypes: [], otherFormUrl: null, otherFormTitle: null, isAdditionalForm: false, formKeySuffix: '',
+  });
+  assert.ok(page.includes('function normLbl'), 'emitted matcher normalises apostrophes');
+  const norm = (s) => (s || '').replace(/[‘’ʼ]/g, "'").trim().toLowerCase();
+  assert.equal(norm('Spouse’s Date of Birth'), norm("Spouse's Date of Birth"));
+});
+
 test('seedQuestionnairePrefill: unknown case type with no form is a safe no-op', async () => {
   const r = await svc.seedQuestionnairePrefill({ clientName: 'X', caseRef: 'TDOT-3', caseType: 'Totally Unknown Type', clientMasterItemId: null });
   assert.equal(r.ok, false);

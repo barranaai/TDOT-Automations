@@ -2135,13 +2135,16 @@ ${hasAdditionalForm ? `
     await expandTableRows(sourceFields, sectionEl);
     invalidateCache();
 
-    /* Build lookup maps */
+    /* Build lookup maps. Match labels apostrophe-insensitively: our seeded
+       labels use a straight apostrophe, but some forms author them with a
+       curly one (&rsquo;), so "Spouse's Date of Birth" would otherwise miss. */
+    function normLbl(s){ return (s || '').replace(/[‘’ʼ]/g, "'").trim().toLowerCase(); }
     var byKey = {}, byLabel = {};
     for (var i = 0; i < sourceFields.length; i++) {
       var sf = sourceFields[i];
       if (!sf.value || !sf.value.trim()) continue;
       byKey[sf.key] = sf.value;
-      var lbl = (sf.label || '').trim().toLowerCase();
+      var lbl = normLbl(sf.label);
       if (!byLabel[lbl]) byLabel[lbl] = [];
       byLabel[lbl].push(sf.value);
     }
@@ -2157,7 +2160,7 @@ ${hasAdditionalForm ? `
       var f   = memberFields[fi];
       var val = byKey[f.key];
       if (!val) {
-        var fLbl = (f.label || '').trim().toLowerCase();
+        var fLbl = normLbl(f.label);
         var occ  = lblOcc[fLbl] || 0;
         lblOcc[fLbl] = occ + 1;
         if (byLabel[fLbl] && byLabel[fLbl][occ]) val = byLabel[fLbl][occ];
