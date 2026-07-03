@@ -13,6 +13,7 @@ const adminDashboardRouter       = require('./routes/adminDashboard');
 const adminEnginesRouter         = require('./routes/adminEngines');
 const adminCaseRouter            = require('./routes/adminCase');
 const adminConsultationRouter    = require('./routes/adminConsultation');
+const adminLeadsRouter           = require('./routes/adminLeads');
 const mondayApi = require('./services/mondayApi');
 const dashboardService           = require('./services/dashboardService');
 const caseCockpitService         = require('./services/caseCockpitService');
@@ -54,6 +55,7 @@ app.use('/admin/dashboard', adminDashboardRouter);  // landing page after login
 app.use('/admin/engines',   adminEnginesRouter);    // engine control panel
 app.use('/admin/case',      adminCaseRouter);        // per-case staff cockpit
 app.use('/admin',           adminConsultationRouter); // consultant portal (/admin/consultations, /admin/consultation/:id)
+app.use('/admin',           adminLeadsRouter);        // leads tab (/admin/leads, /admin/lead/:id)
 app.use('/admin',           adminLoginRouter);       // TDOT-branded login + auto-redirect
 
 app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
@@ -332,6 +334,29 @@ app.get('/api/case/:caseRef', async (req, res) => {
     const notFound = /not found/i.test(err.message || '');
     if (!notFound) console.error('[Cockpit] Overview failed:', err.stack || err.message);
     res.status(notFound ? 404 : 500).json({ error: err.message });
+  }
+});
+
+// Leads tab — the whole Lead Board, newest first (pre-booking pipeline)
+app.get('/api/leads', async (_req, res) => {
+  try {
+    const leads = await consultantPortalService.getLeadsQueue();
+    res.json({ leads });
+  } catch (err) {
+    console.error('[Leads] Queue failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Leads tab — one lead with the complete intake submission
+app.get('/api/lead/:leadId', async (req, res) => {
+  try {
+    const detail = await consultantPortalService.getLeadDetail((req.params.leadId || '').trim());
+    res.json(detail);
+  } catch (err) {
+    if (err.notFound) return res.status(404).json({ error: err.message });
+    console.error('[Leads] Detail failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -54,13 +54,14 @@ const SHARED_CSS_VARS = `
 `;
 
 // ─── Shared top navigation bar ────────────────────────────────────────────────
-//  Consultations is the only nav destination — the Dashboard + Engine Controls
-//  links were retired so the portal reads as a consultants-only tool. Those pages
-//  still render this bar and remain reachable by direct URL (/admin/dashboard,
-//  /admin/engines); they just aren't linked from the nav.
-//  activePage: 'consultations' (others render the bar without an active link)
+//  Leads (whole Lead Board) + Consultations (booked only) are the nav
+//  destinations — the Dashboard + Engine Controls links were retired so the
+//  portal reads as a consultants-only tool. Those pages still render this bar
+//  and remain reachable by direct URL (/admin/dashboard, /admin/engines).
+//  activePage: 'leads' | 'consultations' (others render the bar without an active link)
 function buildNavHeader(activePage) {
   const isConsult = activePage === 'consultations';
+  const isLeads   = activePage === 'leads';
 
   return `<header class="admin-hdr">
   <div class="admin-hdr-left">
@@ -69,6 +70,9 @@ function buildNavHeader(activePage) {
     </div>
     <div class="admin-divider"></div>
     <nav class="admin-nav">
+      <a href="/admin/leads" class="nav-lnk${isLeads ? ' active' : ''}">
+        <span class="nav-icon">📥</span> Leads
+      </a>
       <a href="/admin/consultations" class="nav-lnk${isConsult ? ' active' : ''}">
         <span class="nav-icon">🗓️</span> Consultations
       </a>

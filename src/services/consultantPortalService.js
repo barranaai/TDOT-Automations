@@ -261,6 +261,199 @@ async function getConsultationDetail(leadId) {
   };
 }
 
+// ─── Leads (pre-booking pipeline) ─────────────────────────────────────────────
+//
+// The Consultations queue shows only bookingStatus='Booked' leads; the Leads
+// tab shows the WHOLE Lead Board so staff see fresh intake submissions the
+// moment they arrive, before any booking exists.
+
+/** Human labels for the intake form's service-specific (F-block) answer keys. */
+const FBLOCK_LABELS = {
+  f1_hasProfile: 'Valid Express Entry profile?', f1_crsScore: 'CRS score', f1_hasIta: 'Received an ITA?',
+  f1_itaDeadline: 'ITA deadline', f1_program: 'Inviting program / draw',
+  f2_hasNomination: 'NOI / nomination / invitation?', f2_deadline: 'Deadline', f2_province: 'Province',
+  f2_employerSupport: 'Employer support?',
+  f3_permitType: 'Current work permit type', f3_expiry: 'Permit expiry', f3_prSubmitted: 'PR application / AOR?',
+  f3_employerDocs: 'Employer documents?',
+  f4_intake: 'Target intake', f4_admission: 'Admission received?', f4_need: 'Filing or document review',
+  f4_deadline: 'School deadline',
+  f5_location: 'Inside / outside Canada', f5_priorRefusal: 'Prior refusal?', f5_purpose: 'Purpose of travel / extension',
+  f6_whoSponsors: 'Who is sponsoring whom', f6_sponsorStatus: 'Sponsor status', f6_applicantLocation: 'Applicant location',
+  f6_concerns: 'Refusal / marriage-history concerns',
+  f7_serviceNeeded: 'Service needed', f7_prDate: 'PR landing date', f7_insideCanada: 'Inside Canada?',
+  f8_role: 'Employer or employee', f8_jobTitle: 'Job title', f8_supportType: 'Support type',
+  f9_refusalType: 'Application refused', f9_refusalDate: 'Refusal date', f9_deadline: 'Deadline to respond',
+  f10_need: 'Document / update needed', f10_deadline: 'Deadline',
+};
+
+/** Fallback: f2_someFieldName → "Some field name". */
+function prettifyFieldKey(k) {
+  const bare = String(k).replace(/^f\d+_/, '');
+  const words = bare.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * PURE: intake archive fields (+ lead-column fallbacks) → labelled sections in
+ * the intake form's own order, plus the urgency flags. Empty rows are dropped;
+ * empty sections are omitted. Mirrors intakeFormService.buildDigest.
+ *
+ * @param {object} f    archive.fields (may be {})
+ * @param {object} lead parsed lead columns (may be {})
+ * @returns {{ sections: Array<{title, rows: Array<{label, value}>}>, flags: string[] }}
+ */
+function buildIntakeSections(f, lead) {
+  f = f || {}; lead = lead || {};
+  // Archive answer first (the full submission), lead column as fallback.
+  const A = (k, leadKey) => {
+    const v = f[k];
+    if (v != null && typeof v !== 'object' && String(v).trim()) return String(v).trim();
+    const lv = lead[leadKey || k];
+    return (lv != null && typeof lv !== 'object') ? String(lv).trim() : '';
+  };
+  const sections = [];
+  const row = (label, value) => ({ label, value: String(value == null ? '' : value).trim() });
+  const push = (title, rows) => { const rs = rows.filter((r) => r.value); if (rs.length) sections.push({ title, rows: rs }); };
+
+  push('Basic information', [
+    row('Full legal name', A('fullName') || lead.fullName || ''),
+    row('Email', A('email')),
+    row('Phone', A('phone')),
+    row('Residential address', A('residentialAddress')),
+    row('Inside Canada', A('insideCanada')),
+    row('Country', A('insideCanada') === 'Yes' ? 'Canada' : A('currentCountry', 'country')),
+  ]);
+
+  const kids = A('childrenCount');
+  push('Family members', [
+    row('Spouse / common-law partner', A('hasSpouse')),
+    row('Spouse accompanying', A('hasSpouse') === 'Yes' ? A('spouseAccompanying') : ''),
+    row('Dependent children', kids),
+    row('Children accompanying', Number(kids) > 0 ? A('childrenAccompanying') : ''),
+  ]);
+
+  push('Current immigration status', [
+    row('Status', A('currentStatus')),
+    row('Status expiry', A('statusExpiry')),
+    row('Recent extension / status application', A('recentExtension')),
+    row('Extension details', A('recentExtensionDetails')),
+  ]);
+
+  push('Relationship with TDOT', [
+    row('Relationship', A('relationshipWithTdot')),
+    row('Existing file type', A('existingFileType')),
+  ]);
+
+  push('Service required', [
+    row('Service', A('serviceRequired')),
+    row('Wants to', A('whatDoYouWant')),
+  ]);
+
+  // Service-specific answers: archive-driven — render whatever f-block keys the
+  // client actually answered (labels from FBLOCK_LABELS, prettified fallback).
+  const fRows = Object.keys(f)
+    .filter((k) => /^f\d+_/.test(k) && f[k] != null && typeof f[k] !== 'object' && String(f[k]).trim())
+    .sort((a, b) => {
+      const ka = Object.keys(FBLOCK_LABELS).indexOf(a), kb = Object.keys(FBLOCK_LABELS).indexOf(b);
+      return (ka < 0 ? 999 : ka) - (kb < 0 ? 999 : kb);
+    })
+    .map((k) => row(FBLOCK_LABELS[k] || prettifyFieldKey(k), f[k]));
+  if (fRows.length) sections.push({ title: 'Service-specific answers', rows: fRows });
+
+  const urgency = [
+    row('Urgent deadline', A('urgentDeadline') === 'Yes'
+      ? [A('deadlineDate'), A('deadlineReason')].filter(Boolean).join(' — ') || 'Yes'
+      : A('urgentDeadline') || (A('deadlineDate', 'deadlineDate') ? A('deadlineDate', 'deadlineDate') : '')),
+    row('Removal / enforcement order', A('removalOrder')),
+    row('CBSA / IRCC letter', A('enforcementLetter')),
+    row('Enforcement details', A('enforcementDetails')),
+    row('Restoration period', A('restorationPeriod')),
+    row('Restoration deadline', A('restorationDeadline')),
+    row('Recent refusal', A('recentRefusal') === 'Yes'
+      ? [A('refusalType'), A('refusalDate')].filter(Boolean).join(' — ') || 'Yes'
+      : A('recentRefusal')),
+  ];
+  push('Urgency screening', urgency);
+
+  push('Source', [
+    row('How they heard about TDOT', A('howHeard')),
+    row('Referred by', A('referredBy')),
+  ]);
+
+  const flags = [];
+  if (A('removalOrder') === 'Yes') flags.push('Removal / enforcement order');
+  if (A('enforcementLetter') === 'Yes') flags.push('CBSA / IRCC letter received');
+  if (A('urgentDeadline') === 'Yes' || A('deadlineDate', 'deadlineDate')) flags.push('Urgent deadline');
+
+  return { sections, flags };
+}
+
+/** The whole Lead Board as lightweight listing rows, newest first. */
+async function getLeadsQueue() {
+  const leads = await leadService.listAllLeads();
+  const rows = leads.map((l) => ({
+    id:            l.id,
+    name:          l.fullName || l.name,
+    createdAt:     l.createdAt || '',
+    service:       l.confirmedCaseType || l.serviceRequired || '',
+    tier:          l.tier || '',
+    priority:      l.priority || '',
+    bookingStatus: l.bookingStatus || 'Not Yet',
+    bookedSlot:    l.bookedSlot || '',
+    consultant:    (l.assignedConsultant || '').trim(),
+    outcome:       l.outcome || '',
+    urgent:        l.removalOrder === 'Yes' || l.enforcementLetter === 'Yes' || Boolean((l.deadlineDate || '').trim()),
+  }));
+  rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || Number(b.id) - Number(a.id));
+  return rows;
+}
+
+/**
+ * Assemble one lead: lead columns + the complete intake archive rendered as
+ * labelled sections. Works for un-booked leads (the Consultations detail only
+ * makes sense once a slot is booked).
+ */
+async function getLeadDetail(leadId) {
+  const lead = await leadService.getLead(leadId);
+  if (!lead) { const e = new Error('Lead not found'); e.notFound = true; throw e; }
+
+  const intake = await readLeadJson(lead.fullName, leadId, 'intake-submission.json');
+  const f = (intake && intake.fields) || {};
+  const { sections, flags } = buildIntakeSections(f, lead);
+
+  return {
+    leadId:   lead.id,
+    name:     lead.fullName || lead.name,
+    email:    lead.email || '',
+    phone:    lead.phone || '',
+    createdAt: lead.createdAt || '',
+    tier:     lead.tier || '',
+    priority: lead.priority || '',
+    service:  lead.confirmedCaseType || lead.serviceRequired || '',
+    situationDescription: lead.situationDescription || (typeof f.situationDescription === 'string' ? f.situationDescription : '') || '',
+
+    bookingStatus: lead.bookingStatus || 'Not Yet',
+    bookedSlot:    lead.bookedSlot || '',
+    outcome:       lead.outcome || '',
+    consultant:    (lead.assignedConsultant || '').trim(),
+    preConsultSubmitted: (lead.preConsultSubmitted || '') === 'Yes',
+    clientMasterItemId:  lead.clientMasterItemId || '',
+
+    hasIntakeArchive: Boolean(intake),
+    intakeSubmittedAt: (intake && intake.submittedAt) || '',
+    attachments: ((intake && intake.uploadedFiles) || [])
+      .map((u) => (typeof u === 'string' ? u : String((u && (u.filename || u.name)) || ''))).filter(Boolean),
+    consentsAt: (intake && intake.consents && intake.consents.at) || '',
+
+    flags,
+    sections,
+
+    aiTalkingPoints:   lead.aiTalkingPoints || '',
+    aiComplianceFlags: lead.aiComplianceFlags || '',
+    priorityReasons:   lead.priorityReasons || '',
+  };
+}
+
 /** A repeatable field from the pre-consult JSON may be an array or index-keyed object. */
 function normaliseRows(x) {
   if (!x) return [];
@@ -656,6 +849,7 @@ async function previewConsultAgreement(leadId) {
 
 module.exports = {
   getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS,
+  getLeadsQueue, getLeadDetail, buildIntakeSections,
   parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement,
   resolveFamilyMembers, FAMILY_MEMBER_TYPES, MILESTONE_TRIGGER_STAGES,
 };
