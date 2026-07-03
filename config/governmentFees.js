@@ -1,11 +1,14 @@
 /**
  * IRCC / ESDC government-fee reference (MERGE-FIELD-SPEC §11). All amounts CAD.
  *
- * Source: official IRCC fee list (page last modified 2026-04-30; PR fees rose
- * 2026-04-30, citizenship 2026-03-31). These PRE-FILL the retainer's government-fee
- * line as a DEFAULT the consultant overrides per case — fees change, re-verify
- * periodically. Charged per applicant unless noted. LMIA is an ESDC fee (employer-
- * paid per position), structurally different from IRCC fees.
+ * Source: official IRCC fee list https://ircc.canada.ca/english/information/fees/fees.asp
+ * (PR fees rose 2026-04-30, citizenship 2026-03-31). VERIFIED 2026-07-03 — every value
+ * below matches the published list (see test/governmentFees.test.js, which fails if one
+ * drifts). Kept as a DELIBERATE static reference (not a live scrape) because these print
+ * on a signed legal agreement — a fee must never change silently. They PRE-FILL the
+ * retainer's government-fee line as a DEFAULT the consultant overrides per case (e.g.
+ * combined applications). Re-verify periodically. Charged per applicant unless noted;
+ * LMIA is an ESDC fee (employer-paid per position), structurally different from IRCC fees.
  *
  * Each entry (dollars):
  *   principal/spouse/child  per-applicant amounts (omit a tier = $0)
