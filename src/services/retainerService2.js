@@ -384,37 +384,34 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
   const lead = await leadService.getLead(leadId);
   if (!lead) return;
   if (!lead.retainerSigned) return; // fee set early — wait for signing
-  if (lead.squareRetainerOrderId) {
-    console.log(`[Retainer2] Retainer payment link already sent for lead ${leadId} — skipping`);
-    if (warnIfSent) {
-      await postLeadNote(leadId,
-        'ℹ A retainer payment link was already emailed to this client — changing the Retainer Fee does not update it. ' +
-        'If the amount must change, contact the administrator to reissue the link.');
-    }
-    return;
-  }
 
-  // The first payment is the FIRST milestone's total (amount + HST); milestones
-  // 2..N are collected per-milestone from the panel when they fall due. Falls
-  // back to the whole Retainer Fee for legacy leads with no milestone schedule.
+  // The retainer is collected by e-transfer, milestone-by-milestone. At signing we
+  // email the client the FIRST milestone's e-transfer request (amount + HST, the
+  // e-transfer address + a reference); milestones 2..N are requested from the panel
+  // when they fall due. The payment itself is reconciled manually ("Mark paid").
   const ms = require('./milestonePaymentService');
   const first = ms.scheduleRows(lead)[0];
-  const amountCents = (first && first.totalCents > 0) ? Math.round(first.totalCents) : feeToCents(lead.retainerFee);
-  const label = first ? first.label : null;
-  if (!amountCents) {
-    console.log(`[Retainer2] No Retainer Fee set for lead ${leadId} — payment link NOT sent`);
+  if (!first || !(first.totalCents > 0)) {
+    console.log(`[Retainer2] No Retainer Fee / milestones set for lead ${leadId} — e-transfer request NOT sent`);
     if (notifyIfMissing) {
       await postLeadNote(leadId,
-        '⚠ Retainer signed, but no Retainer Fee is set. Enter the "Retainer Fee (CAD)" on this lead and the Square payment link will be emailed to the client automatically.');
+        '⚠ Retainer signed, but no Retainer Fee is set. Enter the "Retainer Fee (CAD)" on this lead and the first-milestone e-transfer request will be emailed to the client automatically.');
     }
     return;
   }
 
-  await require('./paymentService').sendRetainerPaymentLink(leadId, { amountCents, label });
-  // Track the first milestone as "sent"; its "paid" state comes from the retainer webhook.
-  if (first) {
-    try { await ms.patchPayment(leadId, 0, { status: 'sent', amountCents, sentAt: new Date().toISOString().split('T')[0] }); }
-    catch (e) { console.warn(`[Retainer2] milestone-1 'sent' mark failed for ${leadId}: ${e.message}`); }
+  // Idempotent: if the first milestone was already requested/paid, the request
+  // service refuses (badRequest) — a re-fire (e.g. re-typing the fee) is a no-op.
+  try {
+    await ms.sendMilestoneEtransferRequest(leadId, 0);
+  } catch (e) {
+    if (e.badRequest) {
+      console.log(`[Retainer2] First-milestone e-transfer request already handled for lead ${leadId}: ${e.message}`);
+      if (warnIfSent) {
+        await postLeadNote(leadId,
+          'ℹ The first-milestone e-transfer request was already emailed to this client — changing the Retainer Fee does not resend it.');
+      }
+    } else { throw e; }
   }
 }
 

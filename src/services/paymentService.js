@@ -58,16 +58,17 @@ function extractCompletedPayment(event) {
  * opts.fallbackLeadId — lead to credit when the order-id lookup misses (the
  * caller recovered it from the Square payment note).
  */
-async function onSquareRetainerPaymentReceived(event, { fallbackLeadId } = {}) {
-  const payment = extractCompletedPayment(event);
-  if (!payment) return;
-  const orderId = payment.order_id;
-  const txnId   = payment.id;
-  if (!orderId) { console.warn(`[Payment] Retainer payment ${txnId} has no order_id`); return; }
-
-  const lead = await leadService.findByColumnValue('squareRetainerOrderId', orderId)
-            || (fallbackLeadId ? await leadService.getLead(fallbackLeadId) : null);
-  if (!lead) { console.warn(`[Payment] Retainer order ${orderId} (txn ${txnId}) matched no lead`); return; }
+/**
+ * Record the retainer as PAID and start onboarding — the shared core used by both
+ * the Square webhook and the manual e-transfer reconciliation (markMilestonePaid
+ * on the first milestone). Sets the Lead Board fields, marks milestone 0 paid, and
+ * flips the Client Master Payment Status to "Paid" (the Phase 1 trigger). Idempotent.
+ * @param {string|object} leadOrId  a leadId or an already-loaded lead
+ */
+async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt = '' } = {}) {
+  const lead = (leadOrId && typeof leadOrId === 'object') ? leadOrId : await leadService.getLead(leadOrId);
+  if (!lead) return null;
+  const when = paidAt || todayISO();
 
   if (lead.retainerPaid) {
     console.log(`[Payment] Lead ${lead.id} retainer already marked paid (${lead.retainerPaid}) — skipping`);
@@ -76,14 +77,14 @@ async function onSquareRetainerPaymentReceived(event, { fallbackLeadId } = {}) {
 
   // 1. Lead Board.
   await leadService.updateLead(lead.id, {
-    retainerPaid:        todayISO(),
-    squareRetainerTxnId: txnId,
-    conversionStatus:    'Retained — Paid',
+    retainerPaid:     when,
+    ...(txnId ? { squareRetainerTxnId: txnId } : {}),
+    conversionStatus: 'Retained — Paid',
   });
-  console.log(`[Payment] Lead ${lead.id} retainer paid (txn ${txnId})`);
+  console.log(`[Payment] Lead ${lead.id} retainer paid${txnId ? ` (txn ${txnId})` : reference ? ` (e-transfer ref ${reference})` : ''}`);
 
   // The retainer payment IS the first milestone — record it as paid on the panel.
-  try { await require('./milestonePaymentService').patchPayment(lead.id, 0, { status: 'paid', paidAt: todayISO(), txnId }); } catch (_) {}
+  try { await require('./milestonePaymentService').patchPayment(lead.id, 0, { status: 'paid', paidAt: when, ...(txnId ? { txnId } : {}), ...(reference ? { reference, method: 'e-transfer' } : {}) }); } catch (_) {}
 
   // 2. Client Master → Payment Status = "Paid" (Phase 1 trigger).
   if (!lead.clientMasterItemId) {
@@ -96,10 +97,25 @@ async function onSquareRetainerPaymentReceived(event, { fallbackLeadId } = {}) {
        change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
      }`,
     { boardId: String(clientMasterBoardId), itemId: String(lead.clientMasterItemId),
-      cols: JSON.stringify({ [CM.paymentStatus]: { label: 'Paid' }, [CM.paymentConfDate]: { date: todayISO() } }) }
+      cols: JSON.stringify({ [CM.paymentStatus]: { label: 'Paid' }, [CM.paymentConfDate]: { date: when } }) }
   );
   console.log(`[Payment] Client Master ${lead.clientMasterItemId} → Payment Status "Paid" (Phase 1 onboarding triggered)`);
   return lead.clientMasterItemId;
+}
+
+// Legacy Square retainer webhook path (retainer is now collected by e-transfer, so
+// this no longer fires for new leads — kept for any in-flight Square retainer order).
+async function onSquareRetainerPaymentReceived(event, { fallbackLeadId } = {}) {
+  const payment = extractCompletedPayment(event);
+  if (!payment) return;
+  const orderId = payment.order_id;
+  const txnId   = payment.id;
+  if (!orderId) { console.warn(`[Payment] Retainer payment ${txnId} has no order_id`); return; }
+
+  const lead = await leadService.findByColumnValue('squareRetainerOrderId', orderId)
+            || (fallbackLeadId ? await leadService.getLead(fallbackLeadId) : null);
+  if (!lead) { console.warn(`[Payment] Retainer order ${orderId} (txn ${txnId}) matched no lead`); return; }
+  return recordRetainerPaid(lead, { txnId });
 }
 
 /**
@@ -169,4 +185,4 @@ async function sendRetainerPaymentLink(leadId, { amountCents, label } = {}) {
   return url;
 }
 
-module.exports = { onSquareRetainerPaymentReceived, sendRetainerPaymentLink, extractCompletedPayment };
+module.exports = { onSquareRetainerPaymentReceived, recordRetainerPaid, sendRetainerPaymentLink, extractCompletedPayment };

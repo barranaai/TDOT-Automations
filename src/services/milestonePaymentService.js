@@ -24,6 +24,15 @@ const mondayApi   = require('./mondayApi');
 function todayISO() { return new Date().toISOString().split('T')[0]; }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
+// The retainer + every milestone are collected by Interac e-transfer (NOT Square —
+// Square keeps its processing fee; e-transfer is free). Clients send to this
+// address; the team reconciles each payment manually with the reference below.
+const ETRANSFER_EMAIL = (process.env.ETRANSFER_EMAIL || 'admstdot@gmail.com').trim();
+/** A short, stable reference the client puts in the e-transfer message so the team
+ *  can match it to the right milestone (e.g. TDOT-13635-M2). */
+function paymentReference(leadId, index) { return `TDOT-${String(leadId).slice(-5)}-M${Number(index) + 1}`; }
+function dollarsCAD(cents) { return (Math.round(cents) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' }); }
+
 /** Parse the milestonePayments JSON column → object keyed by index. */
 function parsePayments(lead) {
   try { const o = JSON.parse((lead && lead.milestonePayments) || '{}'); return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {}; }
@@ -61,7 +70,9 @@ function milestoneStates(lead, currentCaseStage, orderedStages = []) {
     }
     return {
       index: i, label: r.label, amountCents: r.amountCents, totalCents: r.totalCents, trigger,
-      status: p.status || 'pending', sentAt: p.sentAt || '', paidAt: p.paidAt || '', due,
+      status: p.status || 'pending',
+      requestedAt: p.requestedAt || p.sentAt || '', paidAt: p.paidAt || '',
+      reference: p.reference || '', method: p.method || '', due,
     };
   });
 }
@@ -89,87 +100,102 @@ async function _doPatchPayment(leadId, index, patch) {
   return pay;
 }
 
-function paymentEmailHtml(firstName, label, dollars, url) {
+function etransferInstructionsHtml({ firstName, label, dollars, reference }) {
   const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
   return `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
     <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
-      <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your payment for ${esc(label)}</h1></div>
+      <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Payment due — ${esc(label)}</h1></div>
     <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
       <p>Hi ${esc(firstName)},</p>
-      <p>Your next payment on your file — <b>${esc(label)}</b> — is now due: <strong>${esc(dollars)}</strong>.</p>
-      <p><a href="${esc(url)}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Pay securely</a></p>
-      <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Questions about this payment? Just reply to this email.</p>
+      <p>Your payment on your file — <b>${esc(label)}</b> — is now due: <strong>${esc(dollars)}</strong> (incl. HST).</p>
+      <div style="background:#eef3fb;border:1px solid ${BRAND.border};border-radius:8px;padding:14px 16px;margin:16px 0">
+        <p style="margin:0 0 8px"><b>How to pay — Interac e-Transfer</b></p>
+        <p style="margin:4px 0">Send an Interac e-Transfer of <b>${esc(dollars)}</b> to:</p>
+        <p style="margin:4px 0;font-size:16px"><b>${esc(ETRANSFER_EMAIL)}</b></p>
+        <p style="margin:10px 0 0">In the e-transfer <b>message/memo</b>, please include this reference so we can match your payment:</p>
+        <p style="margin:4px 0;font-size:15px"><b>${esc(reference)}</b></p>
+      </div>
+      <p style="font-size:13px;color:${BRAND.mutedOnLight}">Once we receive your e-transfer we'll confirm it and send your receipt. Questions? Just reply to this email.</p>
     </div></div>`;
 }
 
 /**
- * Generate + email the Square payment link for milestone `index` (the one-time
- * "Generate payment link" button). Charges the milestone TOTAL (amount + HST).
- * Refuses if already sent or paid.
+ * Email the client the e-transfer instructions for milestone `index` (the one-time
+ * "Send e-transfer request" button) — amount + HST, the e-transfer address, and a
+ * reference to quote. Marks the milestone 'requested'. Refuses if already
+ * requested or paid. Payment itself is reconciled manually via markMilestonePaid.
  */
-// Serialize concurrent generate calls for the same milestone in this process; the
-// deterministic idempotencyKey (below) covers retries and other instances.
-const _genInFlight = new Set();
-async function generateMilestoneLink(leadId, index) {
+// Serialize concurrent requests for the same milestone in this process so a
+// double-click can't send two emails / two 'requested' patches.
+const _reqInFlight = new Set();
+async function sendMilestoneEtransferRequest(leadId, index) {
   const key = `${leadId}:${index}`;
-  if (_genInFlight.has(key)) { const e = new Error('A payment link for that milestone is already being generated — please wait.'); e.badRequest = true; throw e; }
-  _genInFlight.add(key);
+  if (_reqInFlight.has(key)) { const e = new Error('An e-transfer request for that milestone is already being sent — please wait.'); e.badRequest = true; throw e; }
+  _reqInFlight.add(key);
   try {
-  const lead = await leadService.getLead(leadId);
-  if (!lead) { const e = new Error('Lead not found.'); e.notFound = true; throw e; }
-  const rows = scheduleRows(lead);
-  const row = rows[index];
-  if (!row) { const e = new Error('That milestone does not exist.'); e.badRequest = true; throw e; }
+    const lead = await leadService.getLead(leadId);
+    if (!lead) { const e = new Error('Lead not found.'); e.notFound = true; throw e; }
+    const row = scheduleRows(lead)[index];
+    if (!row) { const e = new Error('That milestone does not exist.'); e.badRequest = true; throw e; }
 
-  const existing = parsePayments(lead)[index] || {};
-  if (existing.status === 'paid') { const e = new Error('That milestone is already paid.'); e.badRequest = true; throw e; }
-  if (existing.status === 'sent') { const e = new Error('A payment link for that milestone was already sent to the client.'); e.badRequest = true; throw e; }
+    const existing = parsePayments(lead)[index] || {};
+    if (existing.status === 'paid') { const e = new Error('That milestone is already paid.'); e.badRequest = true; throw e; }
+    if (existing.status === 'requested') { const e = new Error('An e-transfer request for that milestone was already sent to the client.'); e.badRequest = true; throw e; }
 
-  const amount = Math.round(row.totalCents);
-  if (amount <= 0) { const e = new Error('That milestone has no amount.'); e.badRequest = true; throw e; }
+    const amount = Math.round(row.totalCents);
+    if (amount <= 0) { const e = new Error('That milestone has no amount.'); e.badRequest = true; throw e; }
+    const reference = paymentReference(leadId, index);
+    const dollars = dollarsCAD(amount);
 
-  const bookingService = require('./bookingService');
-  const { url, orderId } = await bookingService.createCheckout({
-    leadId, amount, description: `TDOT Immigration — ${row.label}`,
-    type: 'milestone', reference: `milestone-${leadId}-${index}`, storeOrderId: false,
-    idempotencyKey: `ms-${leadId}-${index}`, // deterministic → Square returns the same link on a retry/double-click
-  });
+    await patchPayment(leadId, index, { status: 'requested', amountCents: amount, reference, method: 'e-transfer', requestedAt: todayISO() });
 
-  await patchPayment(leadId, index, { status: 'sent', amountCents: amount, orderId: orderId || '', url, sentAt: todayISO() });
+    if (lead.email) {
+      try {
+        await require('./microsoftMailService').sendEmail({
+          to: lead.email, subject: `Your TDOT Immigration payment — ${row.label}`,
+          html: etransferInstructionsHtml({ firstName: (lead.fullName || 'there').split(' ')[0], label: row.label, dollars, reference }),
+        });
+      } catch (err) { console.warn(`[Milestone] e-transfer request email failed for ${leadId}#${index}: ${err.message}`); }
+    }
+    await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+      { i: String(leadId),
+        body: `📧 <b>E-transfer request sent</b> — ${esc(row.label)} (${esc(dollars)})<br>` +
+              `Client asked to e-transfer to <b>${esc(ETRANSFER_EMAIL)}</b>, reference <b>${esc(reference)}</b>. ` +
+              `Emailed to ${esc(lead.email || '(no email on lead)')}. Record it as paid here once the e-transfer arrives.` });
 
-  const dollars = (amount / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
-  if (lead.email) {
-    try {
-      await require('./microsoftMailService').sendEmail({
-        to: lead.email, subject: `Your TDOT Immigration payment — ${row.label}`,
-        html: paymentEmailHtml((lead.fullName || 'there').split(' ')[0], row.label, dollars, url),
-      });
-    } catch (err) { console.warn(`[Milestone] email failed for ${leadId}#${index}: ${err.message}`); }
-  }
-  await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
-    { i: String(leadId),
-      body: `💳 <b>Milestone payment link generated</b> — ${esc(row.label)} (${esc(dollars)})<br><a href="${esc(url)}">${esc(url)}</a><br>` +
-            `Emailed to ${esc(lead.email || '(no email on lead)')}. It stays valid until paid.` });
-
-  return { ok: true, url, amount, label: row.label };
-  } finally { _genInFlight.delete(key); }
+    return { ok: true, amount, label: row.label, reference };
+  } finally { _reqInFlight.delete(key); }
 }
 
-/** Webhook: milestone `index` was paid — mark it + note. Idempotent. */
-async function markMilestonePaid(leadId, index, txnId) {
+/**
+ * Manually reconcile milestone `index` as paid by e-transfer (the "Mark paid"
+ * button) — records the reference + date. Idempotent. When it's the FIRST
+ * milestone, this IS the retainer payment, so it also flips the client into
+ * onboarding (Client Master → Paid / Phase 1), the same as the old Square path.
+ */
+async function markMilestonePaid(leadId, index, { reference = '', paidAt = '', method = 'e-transfer', txnId = '' } = {}) {
   const lead = await leadService.getLead(leadId);
-  if (!lead) return;
+  if (!lead) return { ok: false };
   const existing = parsePayments(lead)[index] || {};
-  if (existing.status === 'paid') { console.log(`[Milestone] ${leadId}#${index} already paid — skipping`); return; }
-  await patchPayment(leadId, index, { status: 'paid', paidAt: todayISO(), txnId });
+  const when = paidAt || todayISO();
+  if (existing.status === 'paid') { console.log(`[Milestone] ${leadId}#${index} already paid — skipping`); return { ok: true, already: true }; }
+  await patchPayment(leadId, index, { status: 'paid', paidAt: when, method, reference: reference || existing.reference || '', ...(txnId ? { txnId } : {}) });
   const label = (scheduleRows(lead)[index] || {}).label || `Milestone ${index + 1}`;
   await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
-    { i: String(leadId), b: `✅ <b>Milestone paid</b> — ${esc(label)} (txn ${esc(txnId)}).` });
-  console.log(`[Milestone] ${leadId}#${index} marked paid (txn ${txnId})`);
+    { i: String(leadId), b: `✅ <b>Payment received</b> — ${esc(label)} (${esc(method)}${reference ? `, ref ${esc(reference)}` : ''}).` });
+  console.log(`[Milestone] ${leadId}#${index} marked paid (${method}${reference ? ` ref ${reference}` : ''})`);
+
+  // The first milestone paid = retainer paid → start onboarding (Phase 1).
+  if (Number(index) === 0) {
+    try { await require('./paymentService').recordRetainerPaid(leadId, { reference, paidAt: when }); }
+    catch (e) { console.warn(`[Milestone] retainer-paid onboarding trigger failed for ${leadId}: ${e.message}`); }
+  }
+  return { ok: true, label };
 }
 
 module.exports = {
-  generateMilestoneLink, markMilestonePaid, milestoneStates, patchPayment,
+  sendMilestoneEtransferRequest, markMilestonePaid, milestoneStates, patchPayment,
+  ETRANSFER_EMAIL, paymentReference,
   // pure-ish (exported for tests)
   parsePayments, scheduleRows,
 };

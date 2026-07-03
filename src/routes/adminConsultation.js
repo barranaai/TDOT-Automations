@@ -255,6 +255,7 @@ function buildDetailHTML(leadId) {
   .ms-badge.sent { background:#eff6ff; color:#2563eb; }
   .ms-badge.due { background:#fffbeb; color:#d97706; }
   .ms-badge.pending { background:#f1f5f9; color:#64748b; }
+  .ms-meta { font-size:11px; color:#64748b; font-variant-numeric:tabular-nums; }
   .ms-row button { padding:6px 12px; font-size:12px; }
 
   a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }
@@ -421,8 +422,8 @@ ${buildNavHeader('consultations')}
         </span>
       </div>
 
-      <div class="subhead" style="margin-top:16px">${I.dollar} Milestone payments</div>
-      <div id="rp-milestone-pay"><span class="muted">Payment status appears here once the retainer plan is set. The first milestone is charged automatically at retain; later milestones show a “Generate payment link” button once they’re due.</span></div>
+      <div class="subhead" style="margin-top:16px">${I.dollar} Milestone payments <span class="muted" style="font-weight:500">(e-transfer)</span></div>
+      <div id="rp-milestone-pay"><span class="muted">Payment status appears here once the retainer plan is set. Collected by <b>e-transfer</b>: at retain the client is emailed the first milestone’s e-transfer request; later milestones show a “Send e-transfer request” button once they’re due. Record each payment with <b>Mark paid</b> when the e-transfer arrives.</span></div>
     </div>
   </div>
 </main>
@@ -580,7 +581,7 @@ function doAction(action,value,confirmMsg){
      if(res.status===401||res.status===403){ window.location.href='/admin'; return; }
      if(res.status!==200) throw new Error((res.j&&res.j.error)||('HTTP '+res.status));
      setMsg(res.j.message||'Done.','ok');
-     if(action==='saveRetainerSelections'||action==='generateMilestoneLink') RP_HYDRATED=false; // re-hydrate the panel (fresh plan / milestone-payment status)
+     if(action==='saveRetainerSelections'||action==='sendMilestoneEtransferRequest'||action==='markMilestonePaid') RP_HYDRATED=false; // re-hydrate the panel (fresh plan / milestone-payment status)
      load(); // refresh consultation state (pills, status, outcome highlight) — render() re-locks + resets amend
    }).catch(function(e){ disableActions(false); setMsg(netErr(e),'err'); });
 }
@@ -701,14 +702,21 @@ function renderMilestonePayments(list){
   if(!list||!list.length){ el.innerHTML='<span class="muted">No milestones set yet.</span>'; return; }
   el.innerHTML=list.map(function(m){
     var badge = m.status==='paid' ? '<span class="ms-badge paid">Paid</span>'
-              : m.status==='sent' ? '<span class="ms-badge sent">Link sent</span>'
+              : m.status==='requested' ? '<span class="ms-badge sent">Requested</span>'
               : (m.due ? '<span class="ms-badge due">Due</span>' : '<span class="ms-badge pending">Pending</span>');
     var amt='$'+(Number(m.totalCents||0)/100).toFixed(2);
-    var btn=(m.status==='pending'&&m.due)?'<button class="btn primary" type="button" data-msp="'+m.index+'">'+ICONS.check+' Generate payment link</button>':'';
-    return '<div class="ms-row"><span class="ms-label">'+escHtml(m.label||('Milestone '+(m.index+1)))+'</span><span class="ms-amt">'+amt+'</span>'+badge+btn+'</div>';
+    var meta = m.status==='paid'
+        ? '<span class="ms-meta">paid '+escHtml(m.paidAt||'')+(m.reference?(' · ref '+escHtml(m.reference)):'')+'</span>'
+        : (m.status==='requested'&&m.reference ? '<span class="ms-meta">ref '+escHtml(m.reference)+'</span>' : '');
+    var reqBtn=(m.status==='pending'&&m.due)?'<button class="btn" type="button" data-msp-req="'+m.index+'">'+ICONS.mail+' Send e-transfer request</button>':'';
+    var paidBtn=(m.status!=='paid')?'<button class="btn primary" type="button" data-msp-paid="'+m.index+'">'+ICONS.check+' Mark paid</button>':'';
+    return '<div class="ms-row"><span class="ms-label">'+escHtml(m.label||('Milestone '+(m.index+1)))+'</span><span class="ms-amt">'+amt+'</span>'+badge+meta+reqBtn+paidBtn+'</div>';
   }).join('');
-  Array.prototype.forEach.call(el.querySelectorAll('[data-msp]'),function(b){
-    b.onclick=function(){ doAction('generateMilestoneLink', b.getAttribute('data-msp'), 'Generate and email the payment link for this milestone to the client now?'); };
+  Array.prototype.forEach.call(el.querySelectorAll('[data-msp-req]'),function(b){
+    b.onclick=function(){ doAction('sendMilestoneEtransferRequest', b.getAttribute('data-msp-req'), 'Email the e-transfer payment request for this milestone to the client now?'); };
+  });
+  Array.prototype.forEach.call(el.querySelectorAll('[data-msp-paid]'),function(b){
+    b.onclick=function(){ var ref=window.prompt('Record the e-transfer payment — enter the reference / confirmation number (optional):',''); if(ref===null) return; doAction('markMilestonePaid', JSON.stringify({index:Number(b.getAttribute('data-msp-paid')), reference:ref}), null); };
   });
 }
 function rebuildMilestones(rows){

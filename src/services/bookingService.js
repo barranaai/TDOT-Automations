@@ -278,10 +278,8 @@ async function handleSquarePaymentWebhook(event) {
   const txnId   = payment.id;
   if (!orderId) { console.warn(`[Square] Payment ${txnId} has no order_id`); return; }
 
-  // Milestone payments carry the note "milestone-<leadId>-<index>" and have no
-  // dedicated order-id column — route them by the note first.
-  const msRef = String(payment.note || '').match(/^milestone-(\d+)-(\d+)$/);
-  if (msRef) return require('./milestonePaymentService').markMilestonePaid(msRef[1], Number(msRef[2]), txnId);
+  // (Retainer + milestones are now collected by e-transfer, not Square, so there
+  // is no milestone-note branch here anymore — those are reconciled manually.)
 
   // Route by which lead+column holds this order id.
   const C = require('../data/newLeadsBoard.json').columns;

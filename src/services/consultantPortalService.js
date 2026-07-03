@@ -368,10 +368,17 @@ function validateAction(action, value) {
       return OUTCOME_LABELS.includes(value)
         ? { ok: true, normalized: value }
         : { ok: false, error: 'Invalid outcome value.' };
-    case 'generateMilestoneLink': {
+    case 'sendMilestoneEtransferRequest': {
       const i = parseInt(value, 10);
       if (!Number.isInteger(i) || i < 0 || i > 20) return { ok: false, error: 'Invalid milestone.' };
       return { ok: true, normalized: i };
+    }
+    case 'markMilestonePaid': {
+      let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid payload.' }; }
+      const i = parseInt(o && o.index, 10);
+      if (!Number.isInteger(i) || i < 0 || i > 20) return { ok: false, error: 'Invalid milestone.' };
+      const reference = String((o && o.reference) || '').trim().slice(0, 120);
+      return { ok: true, normalized: { index: i, reference } };
     }
     case 'retainerFee': {
       // Reject loosely-typed inputs (boolean→1, [5]→5, '0x10'→16, '1e9'): require
@@ -461,10 +468,15 @@ async function applyAction({ leadId, action, value, amend = false }) {
         ? `Retainer fee amended to $${v.normalized}. A staff note was recorded — the agreement was NOT re-sent.`
         : `Retainer fee set to $${v.normalized}. The retainer agreement (once Outcome is Retain) and the payment link (once signed) are emailed automatically.` };
 
-    case 'generateMilestoneLink': {
+    case 'sendMilestoneEtransferRequest': {
       // Not blocked by the plan lock — this collects a payment, it doesn't edit terms.
-      const r = await require('./milestonePaymentService').generateMilestoneLink(leadId, v.normalized);
-      return { ok: true, message: `Payment link for ${r.label} generated and emailed to the client.` };
+      const r = await require('./milestonePaymentService').sendMilestoneEtransferRequest(leadId, v.normalized);
+      return { ok: true, message: `E-transfer request for ${r.label} emailed to the client (ref ${r.reference}).` };
+    }
+
+    case 'markMilestonePaid': {
+      const r = await require('./milestonePaymentService').markMilestonePaid(leadId, v.normalized.index, { reference: v.normalized.reference });
+      return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked paid by e-transfer.` };
     }
 
     case 'retainerSigned': {

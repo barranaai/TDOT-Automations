@@ -7,7 +7,7 @@
 const test   = require('node:test');
 const assert = require('node:assert/strict');
 
-const { milestoneStates, parsePayments } = require('../src/services/milestonePaymentService');
+const { milestoneStates, parsePayments, paymentReference } = require('../src/services/milestonePaymentService');
 
 const ORDER = ['Pre-Onboarding', 'Retainer Confirmed', 'Document Collection Started', 'Internal Review', 'Submission Preparation', 'Submission Ready', 'Application Submitted'];
 const lead = {
@@ -53,4 +53,28 @@ test('not due before the trigger stage, or with no case stage', () => {
 test('unknown/side-state stage falls back to exact match', () => {
   // "Stuck" isn't in the lifecycle order → only an exact trigger match counts (neither here)
   assert.equal(milestoneStates(lead, 'Stuck', ORDER).every((m) => !m.due), true);
+});
+
+test('paymentReference: stable per-lead+milestone reference the client quotes', () => {
+  assert.equal(paymentReference('12421713635', 0), 'TDOT-13635-M1');
+  assert.equal(paymentReference('12421713635', 1), 'TDOT-13635-M2');
+});
+
+test('milestoneStates surfaces reference + requested status for the panel', () => {
+  const l = {
+    id: '9', retainerFee: '2000', retainerHstRate: '13',
+    retainerMilestones: JSON.stringify([
+      { label: 'M1', amountCents: 100000, trigger: 'Retainer Confirmed' },
+      { label: 'M2', amountCents: 100000, trigger: 'Internal Review' },
+    ]),
+    milestonePayments: JSON.stringify({
+      '0': { status: 'paid', paidAt: '2026-07-03', reference: 'CA000', method: 'e-transfer' },
+      '1': { status: 'requested', reference: 'TDOT-00009-M2', method: 'e-transfer' },
+    }),
+  };
+  const s = milestoneStates(l, 'Internal Review', ORDER);
+  assert.equal(s[0].status, 'paid');
+  assert.equal(s[0].reference, 'CA000');
+  assert.equal(s[1].status, 'requested');
+  assert.equal(s[1].reference, 'TDOT-00009-M2');
 });
