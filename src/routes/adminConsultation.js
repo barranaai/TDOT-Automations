@@ -343,6 +343,9 @@ function buildDetailHTML(leadId) {
   /* action groups */
   .agroup { padding-top:13px; margin-top:13px; border-top:1px solid #f1f5f9; }
   .obtns { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:2px; }
+  /* Comms + agreement buttons: compact 2-per-row grid instead of a tall stack. */
+  .btn-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:7px; }
+  .btn-grid2 .btn { padding:9px 10px; text-align:center; }
   .obtn { padding:9px 10px; border:1px solid var(--border); border-radius:8px; background:white; font-size:12.5px; font-weight:600; cursor:pointer; color:var(--navy); font-family:inherit; text-align:center; transition:all .12s; }
   .obtn:hover:not(:disabled) { border-color:var(--navy); background:#f0f4f8; }
   .obtn.active { background:var(--navy); color:white; border-color:var(--navy); box-shadow:var(--shadow-sm); }
@@ -439,14 +442,14 @@ ${buildNavHeader('consultations')}
           <div class="obtns" id="obtns"></div>
           <div id="act-msg" class="act-msg"></div>
           <div class="agroup">
-            <div class="subhead">Client communications</div>
-            <div class="frow"><button class="btn" id="btn-invite">${I.send} Send booking invite</button></div>
-            <div class="frow" style="margin-top:7px"><button class="btn" id="btn-resend">${I.refresh} Resend meeting + pre-consult links</button></div>
-          </div>
-          <div class="agroup">
-            <div class="subhead">Consultation email — booking + form + agreement <span class="muted" id="ca-sent"></span></div>
+            <div class="subhead">Communications &amp; agreement <span class="muted" id="ca-sent"></span></div>
             <div id="ca-warn"></div>
-            <div class="frow"><button class="btn" id="btn-consult-preview">${I.eye} Preview agreement</button><button class="btn" id="btn-consult-send">${I.send} Review &amp; send</button></div>
+            <div class="btn-grid2">
+              <button class="btn" id="btn-invite" title="Send booking invite">${I.send} Send booking invite</button>
+              <button class="btn" id="btn-resend" title="Resend meeting + pre-consult links">${I.refresh} Resend links</button>
+              <button class="btn" id="btn-consult-preview" title="Preview the consultation agreement">${I.eye} Preview agreement</button>
+              <button class="btn" id="btn-consult-send" title="Send consultation email: booking + form + agreement">${I.send} Review &amp; send</button>
+            </div>
           </div>
         </div>
         <div class="card actions">
