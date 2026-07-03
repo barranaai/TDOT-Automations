@@ -97,6 +97,10 @@ function buildQueueHTML() {
   .kpi-mini h4 { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; margin:0 0 8px; }
   .kpi-mini .r2 { display:flex; justify-content:space-between; font-size:13px; padding:3px 0; color:#33425a; }
   .kpi-mini .r2 b { color:var(--navy); font-variant-numeric:tabular-nums; }
+  .q-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin:22px 0 10px; }
+  .q-filters { display:flex; gap:8px; flex-wrap:wrap; }
+  .q-filters input, .q-filters select { padding:7px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:12.5px; font-family:inherit; background:#fff; color:var(--navy); }
+  .q-filters input { width:150px; }
 </style></head><body>
 ${buildNavHeader('consultations')}
 <main class="wrap">
@@ -112,10 +116,18 @@ ${buildNavHeader('consultations')}
     </div>
     <div id="kpi-body"><div class="muted">Loading KPIs…</div></div>
 
-    <h2 class="sec-h" style="margin:22px 0 10px">Booked consultations</h2>
+    <div class="q-head">
+      <h2 class="sec-h">Booked consultations <span id="q-count" class="muted" style="font-weight:500"></span></h2>
+      <div class="q-filters">
+        <input id="f-search" type="text" placeholder="Search client…">
+        <select id="f-consultant"><option value="">All consultants</option></select>
+        <select id="f-month"><option value="">All months</option></select>
+        <select id="f-outcome"><option value="">All outcomes</option></select>
+      </div>
+    </div>
     <div class="card">
       <table>
-        <thead><tr><th>Client</th><th>Service</th><th>Tier</th><th>Slot (Toronto)</th><th>Pre-consult</th><th>Outcome</th></tr></thead>
+        <thead><tr><th>Client</th><th>Service</th><th>Consultant</th><th>Slot (Toronto)</th><th>Meeting</th><th>Pre-consult</th><th>Retainer</th><th>Outcome</th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div>
@@ -124,27 +136,58 @@ ${buildNavHeader('consultations')}
 <script>
 ${SHARED_AUTH_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+var ALLROWS=[];
+function qpill(cls,txt){ return '<span class="pill '+cls+'">'+escHtml(txt)+'</span>'; }
+function renderRows(rows){
+  var tb=document.getElementById('qbody');
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="8" class="empty">'+(ALLROWS.length?'No consultations match your filters.':'No booked consultations right now.')+'</td></tr>'; return; }
+  tb.innerHTML=rows.map(function(c){
+    var pc=c.preConsultSubmitted?qpill('green','Submitted'):qpill('amber','Pending');
+    var oc=c.outcome?qpill('blue',c.outcome):'<span class="pill grey">—</span>';
+    var rs=c.retainerStatus?qpill(c.retainerStatus==='Paid'?'green':'blue',c.retainerStatus):'<span class="pill grey">—</span>';
+    return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
+      '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+'</td>'+
+      '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
+      '<td>'+escHtml(c.consultant||'—')+'</td>'+
+      '<td>'+escHtml(c.bookedSlot||'—')+'</td>'+
+      '<td>'+(c.meetingType?escHtml(c.meetingType):'—')+'</td>'+
+      '<td>'+pc+'</td>'+
+      '<td>'+rs+'</td>'+
+      '<td>'+oc+'</td></tr>';
+  }).join('');
+  Array.prototype.forEach.call(document.querySelectorAll('tr.row'),function(tr){
+    tr.onclick=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id')); };
+  });
+}
+function monthOf(slot){ var m=String(slot||'').match(/^(\d{4}-\d{2})/); return m?m[1]:''; }
+function distinctVals(rows,fn){ var s={}; rows.forEach(function(r){ var v=fn(r); if(v) s[v]=1; }); return Object.keys(s).sort(); }
+function fillSel(id,vals,label){ var el=document.getElementById(id); var cur=el.value; el.innerHTML='<option value="">'+label+'</option>'+vals.map(function(v){return '<option value="'+escHtml(v)+'">'+escHtml(v)+'</option>';}).join(''); el.value=cur; }
+function populateFilters(rows){
+  fillSel('f-consultant', distinctVals(rows,function(r){return r.consultant;}), 'All consultants');
+  fillSel('f-month', distinctVals(rows,function(r){return monthOf(r.bookedSlot);}).reverse(), 'All months');
+  fillSel('f-outcome', distinctVals(rows,function(r){return r.outcome;}), 'All outcomes');
+}
+function applyFilters(){
+  var q=(document.getElementById('f-search').value||'').toLowerCase().trim();
+  var con=document.getElementById('f-consultant').value, mo=document.getElementById('f-month').value, oc=document.getElementById('f-outcome').value;
+  var rows=ALLROWS.filter(function(r){
+    if(q && String(r.name||'').toLowerCase().indexOf(q)<0) return false;
+    if(con && r.consultant!==con) return false;
+    if(mo && monthOf(r.bookedSlot)!==mo) return false;
+    if(oc && r.outcome!==oc) return false;
+    return true;
+  });
+  document.getElementById('q-count').textContent='('+rows.length+(rows.length!==ALLROWS.length?(' of '+ALLROWS.length):'')+')';
+  renderRows(rows);
+}
 function load(){
   var key=getKey(); if(!key) return;
   fetch('/api/consultations',{headers:{'X-Api-Key':key}})
    .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } return r.json(); })
    .then(function(d){
-     var rows=(d.consultations||[]);
-     var tb=document.getElementById('qbody');
-     if(!rows.length){ tb.innerHTML='<tr><td colspan="6" class="empty">No booked consultations right now.</td></tr>'; }
-     else tb.innerHTML=rows.map(function(c){
-       var pc=c.preConsultSubmitted?'<span class="pill green">Submitted</span>':'<span class="pill amber">Pending</span>';
-       var oc=c.outcome?('<span class="pill blue">'+escHtml(c.outcome)+'</span>'):'<span class="pill grey">—</span>';
-       return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
-         '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+'</td>'+
-         '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
-         '<td class="tier">'+escHtml(c.tier||'—')+'</td>'+
-         '<td>'+escHtml(c.bookedSlot||'—')+'</td>'+
-         '<td>'+pc+'</td><td>'+oc+'</td></tr>';
-     }).join('');
-     Array.prototype.forEach.call(document.querySelectorAll('tr.row'),function(tr){
-       tr.onclick=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id')); };
-     });
+     ALLROWS=(d.consultations||[]);
+     populateFilters(ALLROWS);
+     applyFilters();
      document.getElementById('loading').style.display='none';
      document.getElementById('content').style.display='block';
    })
@@ -152,6 +195,7 @@ function load(){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
+['f-search','f-consultant','f-month','f-outcome'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
 // ── Reporting / KPIs ──────────────────────────────────────────────────────
 function kpiMoney(n){ return '$'+Number(n||0).toLocaleString('en-CA'); }
 function kpiCard(label,num,sub){ return '<div class="kpi-card"><div class="k-label">'+label+'</div><div class="k-num">'+num+'</div>'+(sub?'<div class="k-sub">'+sub+'</div>':'')+'</div>'; }

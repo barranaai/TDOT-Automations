@@ -87,7 +87,8 @@ const C = require('../data/newLeadsBoard.json').columns;
  * @returns {Promise<Array<{ id, name, bookedSlot, tier, service, preConsultSubmitted, outcome, hasMeeting }>>}
  */
 async function getConsultationQueue() {
-  const ids = [C.bookedSlot, C.tier, C.serviceRequired, C.confirmedCaseType, C.preConsultSubmitted, C.outcome, C.meetingLink]
+  const ids = [C.bookedSlot, C.tier, C.serviceRequired, C.confirmedCaseType, C.preConsultSubmitted, C.outcome, C.meetingLink,
+    C.assignedConsultant, C.meetingType, C.retainerFee, C.retainerSent, C.retainerSigned, C.retainerPaid]
     .map((c) => `"${c}"`).join(', ');
   const data = await mondayApi.query(
     `query($boardId: ID!, $colId: String!, $val: String!) {
@@ -108,6 +109,11 @@ async function getConsultationQueue() {
       preConsultSubmitted: (cv[C.preConsultSubmitted] || '') === 'Yes',
       outcome:            cv[C.outcome] || '',
       hasMeeting:         Boolean((cv[C.meetingLink] || '').trim()),
+      consultant:         cv[C.assignedConsultant] || '',
+      meetingType:        cv[C.meetingType] || '',
+      retainerFee:        cv[C.retainerFee] || '',
+      // one derived status from the retainer date columns (most-advanced wins)
+      retainerStatus:     cv[C.retainerPaid] ? 'Paid' : cv[C.retainerSigned] ? 'Signed' : cv[C.retainerSent] ? 'Sent' : (cv[C.outcome] === 'Retain' ? 'Retain' : ''),
     };
   });
   // Soonest slot first; blanks last.
