@@ -257,17 +257,12 @@ async function processIntakeSubmission(f, files = {}) {
     console.error(`[Intake] Priority evaluation failed for ${leadId}: ${err.message}`);
   }
 
-  // 2c. Auto-send the booking link to leads who asked to book and triaged
-  //     Critical/High/Medium. Low (general info / newsletter) and existing
-  //     clients stay manual — per the brief, those get a standard response;
-  //     staff can always send via the Booking Invite column on the board.
-  const autoInvite = !isExistingClient
-    && rulesResult && ['Critical', 'High', 'Medium'].includes(rulesResult.priority)
-    && f.whatDoYouWant === 'Book consultation';
-  if (autoInvite) {
-    require('./bookingService').sendBookingInvite(leadId).catch((err) =>
-      console.error(`[Intake] Auto booking invite failed for ${leadId}: ${err.message}`));
-  }
+  // 2c. Acknowledge receipt — a simple "we're reviewing your inquiry" email
+  //     with NO booking link. The booking invite is a separate, staff-sent
+  //     email (portal Leads tab / Booking Invite column) whose body the team
+  //     personalizes per lead, so the invite is never auto-fired at intake.
+  sendIntakeAcknowledgement({ fullName, email: f.email }).catch((err) =>
+    console.error(`[Intake] Acknowledgement email failed for ${leadId}: ${err.message}`));
 
   // 3. Upload letters + the full JSON archive to the intake OneDrive folder.
   //    Path-addressed PUTs auto-create the folder, so this never races the
@@ -319,6 +314,31 @@ async function processIntakeSubmission(f, files = {}) {
   }
 
   return { ok: true, leadId, html: buildThanksHtml(f, isExistingClient) };
+}
+
+/**
+ * Receipt email sent to every intake submitter: we received your inquiry and
+ * the team is reviewing it. Deliberately contains NO booking link — the
+ * booking invite is a separate, personalized email staff send from the portal.
+ */
+async function sendIntakeAcknowledgement({ fullName, email }) {
+  if (!String(email || '').trim()) return;
+  const microsoftMail = require('./microsoftMailService');
+  const first = esc(String(fullName || 'there').trim().split(/\s+/)[0]);
+  await microsoftMail.sendEmail({
+    to: email,
+    subject: 'We received your inquiry — TDOT Immigration',
+    html: `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
+      <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
+        <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">We received your inquiry</h1></div>
+      <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
+        <p>Hi ${first},</p>
+        <p>Thank you for contacting TDOT Immigration. Your inquiry has been received and our team is reviewing the details you shared.</p>
+        <p>We will get back to you soon with the next steps for your case.</p>
+        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">If anything changes in the meantime, or you have documents to add, just reply to this email.</p>
+      </div></div>`,
+  });
+  console.log(`[Intake] Acknowledgement emailed to ${email}`);
 }
 
 /**

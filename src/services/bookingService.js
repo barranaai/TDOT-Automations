@@ -325,16 +325,19 @@ async function confirmSlot(leadId, txnId, meetingType) {
 }
 
 /**
- * Email the client their personal booking link. Triggered two ways:
- *   - staff flip the "Booking Invite" status to "Send" on the Lead Board
- *   - auto-send right after intake triage for eligible leads
- * The column is set to "Sent" BEFORE the email goes out, so a redelivered
- * Monday webhook (same "Send" event) reads "Sent" and skips — no duplicate
- * emails. Staff can deliberately resend by flipping Sent → Send again.
+ * Email the client their personal booking link. Staff-triggered only: the
+ * portal (Leads / Consultations detail) or the board's "Booking Invite"
+ * column flips to "Send" → the Monday webhook calls this with force:true
+ * (a deliberate flip IS the intent, so re-sends are allowed). There is no
+ * auto-send at intake — the intake submission gets an acknowledgment email
+ * instead, and staff personalize this invite's body (lead.inviteMessage)
+ * before sending.
+ * The already-Sent guard below only applies to force:false callers (none
+ * today) — a redelivered "Send" webhook still carries force:true, so exact
+ * webhook redelivery can duplicate the email; acceptable for a staff action.
  *
  * @param {string} leadId
- * @param {{ force?: boolean }} [opts]  force skips the already-Sent guard
- *        (used by the staff webhook path, where the flip IS the intent).
+ * @param {{ force?: boolean }} [opts]  force skips the already-Sent guard.
  */
 async function sendBookingInvite(leadId, { force = false } = {}) {
   const lead = await leadService.getLead(leadId);
@@ -363,6 +366,14 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
   const first = esc(String(lead.fullName || 'there').split(' ')[0]);
   const fee = (CONSULT_FEE_CENTS / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
 
+  // Personalized body (AI-drafted from the intake form, staff-edited on the
+  // portal Leads tab) replaces the standard intro when set. Plain text →
+  // escaped paragraphs; a blank line is a paragraph break.
+  const custom = String(lead.inviteMessage || '').trim();
+  const bodyHtml = custom
+    ? custom.split(/\n\s*\n/).map((p) => `<p>${esc(p.trim()).replace(/\n/g, '<br>')}</p>`).join('')
+    : `<p>Thank you for reaching out to TDOT Immigration. Our team has reviewed your inquiry — the next step is a consultation where we can give you case-specific advice.</p>`;
+
   await microsoftMail.sendEmail({
     to: lead.email,
     subject: 'Book your consultation with TDOT Immigration',
@@ -371,7 +382,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
         <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Book your consultation</h1></div>
       <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
         <p>Hi ${first},</p>
-        <p>Thank you for reaching out to TDOT Immigration. Our team has reviewed your inquiry — the next step is a consultation where we can give you case-specific advice.</p>
+        ${bodyHtml}
         <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Choose your consultation time</a></p>
         <p>You'll see our real-time availability and can pick whatever works for you. ${CONSULT_FEE_CENTS > 0 ? `The consultation fee is <b>${fee}</b>, payable securely online when you book.` : ''}</p>
         <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it. Questions? Just reply to this email.</p>

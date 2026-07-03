@@ -46,7 +46,8 @@ const COL_TYPE = {
   referredBy: 'text', existingFileType: 'text', consentsAt: 'text',
   // V2 priority engine (rules own tier/priority; AI is second opinion)
   priority: 'status', priorityReasons: 'long_text', aiTierOpinion: 'text', aiDisagrees: 'status',
-  bookingInvite: 'status', // "Send" (staff trigger / auto) → system emails the booking link → "Sent"
+  bookingInvite: 'status', // "Send" (staff trigger — portal or board) → system emails the booking link → "Sent"
+  inviteMessage: 'long_text', // personalized booking-invite body (AI-drafted, staff-edited in the portal)
   preConsultPdf: 'link',   // org-share link to the generated pre-consultation PDF in OneDrive
   recordingLink: 'link',   // Zoom cloud-recording / Teams recording share link
   transcriptLink: 'link',  // Teams meeting transcript (Graph → stored in the lead's OneDrive folder)
@@ -383,4 +384,51 @@ Source: ${lead.sourceChannel || 'Website'}`
   return result;
 }
 
-module.exports = { createLead, qualifyLead, getLead, updateLead, findByColumnValue, listAllLeads, parseItem };
+const INVITE_SYSTEM_PROMPT = `You write short, warm, professional client emails for TDOT Immigration (a Toronto-based RCIC firm).
+Given a prospective client's intake details, draft the BODY of an email whose one goal is to get them to book a paid consultation to discuss their case in detail.
+
+Rules:
+- 2 short paragraphs, 60-100 words total. No subject line, no greeting line (the template adds "Hi <name>,"), no sign-off (the template adds it).
+- Reference their specific situation (service, goal, urgency) so it reads personally written — but only facts they gave; never invent details, promises, or eligibility opinions.
+- Do NOT include any links, fees, dates, or placeholders — the email template adds the booking button and fee line.
+- Plain text only (no markdown, no HTML). Confident, encouraging, never pushy or alarmist.`;
+
+/**
+ * Draft the personalized booking-invite body from the lead's intake details.
+ * Returns the plain-text message, or null when the AI is unavailable/fails —
+ * callers fall back to the standard template text.
+ */
+async function generateInviteMessage(lead) {
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+  try {
+    const opt = (label, v) => (String(v || '').trim() ? `\n${label}: ${v}` : '');
+    const userPrompt = `Intake details:
+Name: ${lead.fullName || ''}
+Service requested: ${lead.confirmedCaseType || lead.serviceRequired || lead.caseTypeInterest || ''}
+Their goal: ${lead.whatDoYouWant || ''}
+Situation (their own words): ${lead.situationDescription || 'Not provided'}`
+      + opt('Inside Canada', lead.insideCanada)
+      + opt('Current status', lead.currentStatus)
+      + opt('Status expiry', lead.statusExpiry)
+      + opt('Urgent deadline', lead.deadlineDate ? `${lead.deadlineDate} (${lead.deadlineReason || 'reason not given'})` : '')
+      + opt('Recent refusal', lead.recentRefusal === 'Yes' ? `${lead.refusalType || ''} ${lead.refusalDate || ''}`.trim() : '')
+      + opt('CRS score', lead.crsScore);
+
+    // Tight per-request bounds: this runs inline in the lead-detail page load,
+    // so a degraded Anthropic API must fail fast (standard intro is the fallback)
+    // rather than hang the page on the SDK's default multi-minute timeout.
+    const response = await getAnthropic().messages.create({
+      model: ANTHROPIC_MODEL,
+      max_tokens: 400,
+      system: INVITE_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userPrompt }],
+    }, { timeout: 12000, maxRetries: 0 });
+    const text = (response.content?.[0]?.text || '').trim();
+    return text || null;
+  } catch (err) {
+    console.warn(`[Lead] Invite-message generation failed for ${lead.id}: ${err.message}`);
+    return null;
+  }
+}
+
+module.exports = { createLead, qualifyLead, generateInviteMessage, getLead, updateLead, findByColumnValue, listAllLeads, parseItem };

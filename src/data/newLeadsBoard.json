@@ -99,7 +99,8 @@
     "followUpDate": "date_mm4xah42",
     "leadOwner": "text_mm4xjsdq",
     "bookedBy": "text_mm4x53rh",
-    "paymentReviewedBy": "text_mm4xgjv5"
+    "paymentReviewedBy": "text_mm4xgjv5",
+    "inviteMessage": "long_text_mm4xdbm0"
   },
   "createdAt": "2026-06-08T18:00:45.756Z"
 }

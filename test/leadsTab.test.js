@@ -3,7 +3,7 @@
 const test   = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildIntakeSections } = require('../src/services/consultantPortalService');
+const { buildIntakeSections, validateAction } = require('../src/services/consultantPortalService');
 
 function section(out, title) {
   return out.sections.find((s) => s.title === title) || null;
@@ -87,4 +87,81 @@ test('buildIntakeSections: nested objects (education rows etc.) never leak into 
   for (const s of out.sections) {
     for (const r of s.rows) assert.equal(typeof r.value, 'string');
   }
+});
+
+// ─── Invite-message actions ───────────────────────────────────────────────────
+
+test('validateAction bookingInvite: null = leave draft untouched; string = normalized message', () => {
+  assert.deepEqual(validateAction('bookingInvite', undefined), { ok: true, normalized: null });
+  assert.deepEqual(validateAction('bookingInvite', null), { ok: true, normalized: null });
+  assert.deepEqual(validateAction('bookingInvite', '  Hi there  '), { ok: true, normalized: 'Hi there' });
+  assert.deepEqual(validateAction('bookingInvite', ''), { ok: true, normalized: '' }); // explicit clear
+  const long = validateAction('bookingInvite', 'x'.repeat(2001));
+  assert.equal(long.ok, false);
+});
+
+test('validateAction saveInviteMessage: trims, caps at 2000 chars', () => {
+  assert.deepEqual(validateAction('saveInviteMessage', ' A short pitch. '), { ok: true, normalized: 'A short pitch.' });
+  assert.deepEqual(validateAction('saveInviteMessage', undefined), { ok: true, normalized: '' });
+  assert.equal(validateAction('saveInviteMessage', 'y'.repeat(2001)).ok, false);
+});
+
+test('validateAction: non-string invite payloads are rejected (never email "[object Object]")', () => {
+  assert.equal(validateAction('bookingInvite', {}).ok, false);
+  assert.equal(validateAction('bookingInvite', 42).ok, false);
+  assert.equal(validateAction('saveInviteMessage', ['x']).ok, false);
+});
+
+// ─── applyAction wiring (stubbed I/O) — covers the send/save paths end to end ─
+
+const { applyAction } = require('../src/services/consultantPortalService');
+const leadService = require('../src/services/leadService');
+const mondayApi   = require('../src/services/mondayApi');
+
+function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; }
+
+async function withStubs(fn) {
+  const writes = [];
+  const restore = [
+    stub(leadService, 'getLead', async (id) => ({ id, fullName: 'Stub Lead', retainerSent: '' })),
+    stub(leadService, 'updateLead', async (id, fields, opts) => { writes.push({ fields, opts }); }),
+    stub(mondayApi, 'query', async () => ({})), // postPortalNote audit note
+  ];
+  try { return await fn(writes); } finally { restore.forEach((r) => r()); }
+}
+
+test('applyAction saveInviteMessage: saves the draft (clearKeys so an empty save truly clears)', async () => {
+  await withStubs(async (writes) => {
+    const r = await applyAction({ leadId: '1', action: 'saveInviteMessage', value: ' Custom pitch ' });
+    assert.equal(r.ok, true);
+    assert.deepEqual(writes[0].fields, { inviteMessage: 'Custom pitch' });
+    assert.deepEqual(writes[0].opts, { clearKeys: ['inviteMessage'] });
+
+    writes.length = 0;
+    await applyAction({ leadId: '1', action: 'saveInviteMessage', value: '' });
+    assert.deepEqual(writes[0].fields, { inviteMessage: '' }, 'explicit clear reaches Monday');
+    assert.deepEqual(writes[0].opts, { clearKeys: ['inviteMessage'] });
+  });
+});
+
+test('applyAction bookingInvite: message saved FIRST, then the Send trigger; null leaves the draft alone', async () => {
+  await withStubs(async (writes) => {
+    const r = await applyAction({ leadId: '1', action: 'bookingInvite', value: 'Personal pitch' });
+    assert.equal(r.ok, true);
+    assert.deepEqual(writes.map((w) => w.fields), [
+      { inviteMessage: 'Personal pitch' },
+      { bookingInvite: 'Send' },
+    ], 'message write precedes the Send trigger');
+
+    writes.length = 0;
+    await applyAction({ leadId: '1', action: 'bookingInvite' }); // consultations-page button: no value
+    assert.deepEqual(writes.map((w) => w.fields), [{ bookingInvite: 'Send' }], 'no value ⇒ saved draft untouched');
+
+    writes.length = 0;
+    await applyAction({ leadId: '1', action: 'bookingInvite', value: '' }); // explicitly cleared textarea
+    assert.deepEqual(writes.map((w) => w.fields), [
+      { inviteMessage: '' },
+      { bookingInvite: 'Send' },
+    ], 'explicit clear writes through before sending (standard intro will be used)');
+  });
 });

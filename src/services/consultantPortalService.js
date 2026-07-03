@@ -426,6 +426,23 @@ async function getLeadDetail(leadId) {
   const f = (intake && intake.fields) || {};
   const { sections, flags } = buildIntakeSections(f, lead);
 
+  // Personalized booking-invite draft: AI-generate once from the intake data
+  // when nothing is saved yet (un-booked leads only), then persist so the next
+  // load is instant and staff edits stick. The generation call is time-boxed
+  // (see generateInviteMessage); when the AI is unavailable the message stays
+  // '' and the email keeps its standard intro. The persist is AWAITED so the
+  // draft on screen is exactly what any send path will read — a lagging write
+  // must never overwrite a staff edit right before the send webhook re-reads.
+  let inviteMessage = (lead.inviteMessage || '').trim();
+  if (!inviteMessage && (lead.bookingStatus || '').trim() !== 'Booked') {
+    const generated = await leadService.generateInviteMessage(lead);
+    if (generated) {
+      inviteMessage = generated;
+      try { await leadService.updateLead(leadId, { inviteMessage: generated }); }
+      catch (err) { console.warn(`[Leads] Could not persist the AI invite draft for ${leadId}: ${err.message}`); }
+    }
+  }
+
   return {
     leadId:   lead.id,
     name:     lead.fullName || lead.name,
@@ -443,6 +460,8 @@ async function getLeadDetail(leadId) {
     consultant:    (lead.assignedConsultant || '').trim(),
     preConsultSubmitted: (lead.preConsultSubmitted || '') === 'Yes',
     clientMasterItemId:  lead.clientMasterItemId || '',
+    inviteMessage,
+    inviteSent: (lead.bookingInvite || '') === 'Sent',
 
     hasIntakeArchive: Boolean(intake),
     intakeSubmittedAt: (intake && intake.submittedAt) || '',
@@ -628,7 +647,23 @@ function validateAction(action, value) {
       if (Number.isNaN(dt.getTime()) || dt.toISOString().slice(0, 10) !== d) return { ok: false, error: 'That date doesn’t exist.' };
       return { ok: true, normalized: d };
     }
-    case 'bookingInvite':
+    case 'bookingInvite': {
+      // Optional personalized email body — saved to the lead before the send
+      // fires. null = no message provided (leave the saved draft untouched,
+      // e.g. the consultations-page button); '' = explicitly cleared. Reject
+      // non-strings: String({}) would email the client "[object Object]".
+      if (value == null) return { ok: true, normalized: null };
+      if (typeof value !== 'string') return { ok: false, error: 'Invite message must be text.' };
+      const msg = value.trim();
+      if (msg.length > 2000) return { ok: false, error: 'Invite message is too long (max 2000 characters).' };
+      return { ok: true, normalized: msg };
+    }
+    case 'saveInviteMessage': {
+      if (value != null && typeof value !== 'string') return { ok: false, error: 'Invite message must be text.' };
+      const msg = String(value == null ? '' : value).trim();
+      if (msg.length > 2000) return { ok: false, error: 'Invite message is too long (max 2000 characters).' };
+      return { ok: true, normalized: msg };
+    }
     case 'resendLinks':
     case 'sendConsultAgreement':
     case 'sendConsultationPackage':
@@ -749,9 +784,23 @@ async function applyAction({ leadId, action, value, amend = false }) {
     }
 
     case 'bookingInvite':
+      // Persist the personalized body FIRST, so the webhook-fired email (which
+      // re-reads the lead) picks it up. null = no message in the request (the
+      // consultations-page button) — leave any saved draft untouched; '' =
+      // explicitly cleared — clearKeys forces the empty write through (updateLead
+      // otherwise skips empties), so the email falls back to its standard intro.
+      if (v.normalized != null) {
+        await leadService.updateLead(leadId, { inviteMessage: v.normalized }, { clearKeys: ['inviteMessage'] });
+      }
       await leadService.updateLead(leadId, { bookingInvite: 'Send' });
-      await postPortalNote(leadId, 'Booking invite re-sent to the client.');
+      await postPortalNote(leadId, v.normalized
+        ? 'Booking invite sent to the client with a personalized message.'
+        : 'Booking invite sent to the client.');
       return { ok: true, message: 'The booking invite is being emailed to the client.' };
+
+    case 'saveInviteMessage':
+      await leadService.updateLead(leadId, { inviteMessage: v.normalized || '' }, { clearKeys: ['inviteMessage'] });
+      return { ok: true, message: '✓ Invite message saved.' };
 
     case 'resendLinks':
       await require('./consultationService').resendConsultationLinks(leadId);

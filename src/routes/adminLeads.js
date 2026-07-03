@@ -232,6 +232,10 @@ function buildLeadDetailHTML(leadId) {
   .act-msg.ok { background:#f0fdf4; color:#16a34a; display:block; }
   .act-msg.err { background:#fef2f2; color:#dc2626; display:block; }
   .btn-col { display:flex; flex-direction:column; gap:8px; }
+  #invite-msg { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:13px; font-family:inherit; line-height:1.55; color:var(--navy); resize:vertical; }
+  #invite-msg:focus { outline:none; border-color:var(--navy); }
+  .btn-row { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .btn-row .btn { flex:1 1 auto; }
   .file-row { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--navy); font-weight:600; padding:6px 0; border-top:1px solid #f8fafc; }
   .file-row:first-child { border-top:none; }
 </style></head><body>
@@ -267,12 +271,21 @@ ${buildNavHeader('leads')}
           <div class="card-t">${I.flag} Lead status</div>
           <div id="c-status"></div>
         </div>
-        <div class="card">
+        <div class="card" id="invite-card">
+          <div class="card-t">${I.send} Booking invite email <span class="when" id="inv-when"></span></div>
+          <div class="muted" style="margin-bottom:8px;line-height:1.5">This message goes in the invite email in place of the standard intro — drafted automatically from the intake form. Review, edit, then send. The email adds the greeting, booking button and fee details around it.</div>
+          <textarea id="invite-msg" rows="8" placeholder="No AI draft available — the email will use the standard intro unless you write a message here."></textarea>
+          <div class="btn-row">
+            <button class="btn" id="btn-save-msg" title="Save the message without sending">${I.clip} Save draft</button>
+            <button class="btn primary" id="btn-invite" title="Email the client this message with their booking link">${I.send} Send booking invite</button>
+          </div>
+          <div id="inv-msg" class="act-msg"></div>
+        </div>
+        <div class="card" id="qa-card" style="display:none">
           <div class="card-t">${I.bolt} Quick actions</div>
           <div class="btn-col">
-            <button class="btn" id="btn-invite" title="Email the client their booking link">${I.send} Send booking invite</button>
-            <button class="btn" id="btn-resend" title="Resend meeting + pre-consult links" style="display:none">${I.refresh} Resend meeting + pre-consult links</button>
-            <a class="btn primary" id="lnk-consult" style="display:none">${I.video} Open consultation view</a>
+            <button class="btn" id="btn-resend" title="Resend meeting + pre-consult links">${I.refresh} Resend meeting + pre-consult links</button>
+            <a class="btn primary" id="lnk-consult">${I.video} Open consultation view</a>
           </div>
           <div id="act-msg" class="act-msg"></div>
         </div>
@@ -346,32 +359,43 @@ function render(d){
   if(d.aiComplianceFlags) ai+='<div class="subhead">Compliance flags</div><div class="longtext">'+escHtml(d.aiComplianceFlags)+'</div>';
   document.getElementById('c-ai').innerHTML=ai||'<div class="notyet">No AI triage notes yet.</div>';
 
+  // Invite email: pre-fill the (AI-drafted or staff-saved) message. Booked
+  // leads no longer need an invite — swap the card for the quick actions.
+  document.getElementById('invite-msg').value=d.inviteMessage||'';
+  document.getElementById('inv-when').textContent=d.inviteSent?'already sent — sending again re-emails the client':'';
   if(d.bookingStatus==='Booked'){
-    var rs=document.getElementById('btn-resend'); rs.style.display='inline-flex';
-    var lc=document.getElementById('lnk-consult'); lc.style.display='inline-flex';
-    lc.href='/admin/consultation/'+encodeURIComponent(d.leadId);
+    document.getElementById('invite-card').style.display='none';
+    document.getElementById('qa-card').style.display='block';
+    document.getElementById('lnk-consult').href='/admin/consultation/'+encodeURIComponent(d.leadId);
   }
 }
 
-function actMsg(cls,txt){ var el=document.getElementById('act-msg'); el.className='act-msg '+cls; el.textContent=txt; }
-function doAction(btn, action, confirmText){
+function actMsg(elId,cls,txt){ var el=document.getElementById(elId); el.className='act-msg '+cls; el.textContent=txt; }
+function doAction(btn, action, confirmText, value, msgElId){
   if(confirmText && !window.confirm(confirmText)) return;
   var key=getKey(); if(!key) return;
-  btn.disabled=true; actMsg('info','Working…');
+  var mid=msgElId||'act-msg';
+  var payload={action:action};
+  if(value!==undefined) payload.value=value;
+  btn.disabled=true; actMsg(mid,'info','Working…');
   fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{
     method:'POST', headers:{'Content-Type':'application/json','X-Api-Key':key},
-    body:JSON.stringify({action:action})
+    body:JSON.stringify(payload)
   })
   .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
   .then(function(res){
     btn.disabled=false;
-    if(res.ok) actMsg('ok', res.j.message||'Done.');
-    else actMsg('err', res.j.error||'Action failed.');
+    if(res.ok) actMsg(mid,'ok', res.j.message||'Done.');
+    else actMsg(mid,'err', res.j.error||'Action failed.');
   })
-  .catch(function(e){ btn.disabled=false; actMsg('err','Failed: '+e.message); });
+  .catch(function(e){ btn.disabled=false; actMsg(mid,'err','Failed: '+e.message); });
 }
+document.getElementById('btn-save-msg').onclick=function(){
+  doAction(this,'saveInviteMessage',null,document.getElementById('invite-msg').value,'inv-msg');
+};
 document.getElementById('btn-invite').onclick=function(){
-  doAction(this,'bookingInvite','Email this client their consultation booking link?');
+  doAction(this,'bookingInvite','Email this client their consultation booking link with this message?',
+    document.getElementById('invite-msg').value,'inv-msg');
 };
 document.getElementById('btn-resend').onclick=function(){
   doAction(this,'resendLinks','Resend the meeting + pre-consult links to this client?');
