@@ -48,6 +48,7 @@ const COL_TYPE = {
   priority: 'status', priorityReasons: 'long_text', aiTierOpinion: 'text', aiDisagrees: 'status',
   bookingInvite: 'status', // "Send" (staff trigger — portal or board) → system emails the booking link → "Sent"
   inviteMessage: 'long_text', // personalized booking-invite body (AI-drafted, staff-edited in the portal)
+  inviteSentAt: 'date',    // stamped when the booking-invite email actually goes out
   preConsultPdf: 'link',   // org-share link to the generated pre-consultation PDF in OneDrive
   recordingLink: 'link',   // Zoom cloud-recording / Teams recording share link
   transcriptLink: 'link',  // Teams meeting transcript (Graph → stored in the lead's OneDrive folder)

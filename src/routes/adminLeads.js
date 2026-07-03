@@ -83,11 +83,12 @@ ${buildNavHeader('leads')}
         <select id="f-service"><option value="">All services</option></select>
         <select id="f-month"><option value="">All months</option></select>
         <select id="f-urgent"><option value="">Urgency: any</option><option value="urgent">Urgent only</option></select>
+        <select id="f-invite"><option value="">Invite: any</option><option value="sent">Invite sent</option><option value="not">No invite yet</option></select>
       </div>
     </div>
     <div class="card">
       <table>
-        <thead><tr><th>Lead</th><th>Service</th><th>Created</th><th>Tier</th><th>Priority</th><th>Booking</th></tr></thead>
+        <thead><tr><th>Lead</th><th>Service</th><th>Created</th><th>Tier</th><th>Priority</th><th>Booking</th><th>Invite</th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div>
@@ -104,9 +105,13 @@ function statusPill(s){
   return qpill('amber', s||'Not Yet');
 }
 function createdOf(r){ return String(r.createdAt||'').slice(0,10); }
+function invitePill(c){
+  if(!c.inviteSent) return '<span class="pill grey">—</span>';
+  return qpill('green', c.inviteSentAt?('Sent '+String(c.inviteSentAt).slice(0,10)):'Sent');
+}
 function renderRows(rows){
   var tb=document.getElementById('qbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="6" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="7" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.')+'</td></tr>'; return; }
   tb.innerHTML=rows.map(function(c){
     var urgent=c.urgent?(' '+qpill('red','URGENT')):'';
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
@@ -115,7 +120,8 @@ function renderRows(rows){
       '<td>'+escHtml(createdOf(c)||'—')+'</td>'+
       '<td class="tier">'+escHtml(c.tier||'—')+'</td>'+
       '<td>'+(c.priority?qpill(c.priority==='Urgent'?'red':'amber',c.priority):'<span class="pill grey">—</span>')+'</td>'+
-      '<td>'+statusPill(c.bookingStatus)+'</td></tr>';
+      '<td>'+statusPill(c.bookingStatus)+'</td>'+
+      '<td>'+invitePill(c)+'</td></tr>';
   }).join('');
   Array.prototype.forEach.call(document.querySelectorAll('tr.row'),function(tr){
     tr.onclick=function(){ window.location.href='/admin/lead/'+encodeURIComponent(tr.getAttribute('data-id')); };
@@ -132,12 +138,15 @@ function applyFilters(){
   var q=(document.getElementById('f-search').value||'').toLowerCase().trim();
   var st=document.getElementById('f-status').value, sv=document.getElementById('f-service').value;
   var mo=document.getElementById('f-month').value, ur=document.getElementById('f-urgent').value;
+  var inv=document.getElementById('f-invite').value;
   var rows=ALLROWS.filter(function(r){
     if(q && String(r.name||'').toLowerCase().indexOf(q)<0) return false;
     if(st && (r.bookingStatus||'Not Yet')!==st) return false;
     if(sv && r.service!==sv) return false;
     if(mo && monthOf(r)!==mo) return false;
     if(ur==='urgent' && !r.urgent) return false;
+    if(inv==='sent' && !r.inviteSent) return false;
+    if(inv==='not' && r.inviteSent) return false;
     return true;
   });
   document.getElementById('q-count').textContent='('+rows.length+(rows.length!==ALLROWS.length?(' of '+ALLROWS.length):'')+')';
@@ -158,7 +167,7 @@ function load(){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
-['f-search','f-status','f-service','f-month','f-urgent'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
+['f-search','f-status','f-service','f-month','f-urgent','f-invite'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
 startClock(); checkApiStatus(); load();
 </script></body></html>`;
 }
@@ -344,6 +353,7 @@ function render(d){
   var st='';
   st+=kv('Booking status', d.bookingStatus||'Not Yet');
   if(d.bookedSlot) st+=kv('Booked slot', d.bookedSlot);
+  st+=kv('Booking invite', d.inviteSent?('Sent'+(d.inviteSentAt?(' · '+String(d.inviteSentAt).slice(0,10)):'')):'Not sent yet');
   st+=kv('Pre-consult', d.preConsultSubmitted?'Submitted':'Pending');
   if(d.outcome) st+=kv('Outcome', d.outcome);
   if(d.consultant) st+=kv('Consultant', d.consultant);
@@ -362,7 +372,8 @@ function render(d){
   // Invite email: pre-fill the (AI-drafted or staff-saved) message. Booked
   // leads no longer need an invite — swap the card for the quick actions.
   document.getElementById('invite-msg').value=d.inviteMessage||'';
-  document.getElementById('inv-when').textContent=d.inviteSent?'already sent — sending again re-emails the client':'';
+  document.getElementById('inv-when').textContent=d.inviteSent
+    ? ('sent'+(d.inviteSentAt?(' '+String(d.inviteSentAt).slice(0,10)):'')+' — sending again re-emails the client') : '';
   if(d.bookingStatus==='Booked'){
     document.getElementById('invite-card').style.display='none';
     document.getElementById('qa-card').style.display='block';

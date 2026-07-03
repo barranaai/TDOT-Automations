@@ -352,8 +352,10 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
     return;
   }
 
-  // Mark Sent FIRST (webhook-redelivery dedup), then send.
-  await leadService.updateLead(leadId, { bookingInvite: 'Sent' });
+  // Mark Sent FIRST (webhook-redelivery dedup), then send. Stamp WHEN in the
+  // same write — Toronto date, matching how the portal displays lead times.
+  const sentDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
+  await leadService.updateLead(leadId, { bookingInvite: 'Sent', inviteSentAt: sentDate });
 
   const leadTokenService = require('./leadTokenService');
   const token = lead.leadToken || await leadTokenService.ensureToken(leadId);

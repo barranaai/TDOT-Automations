@@ -408,6 +408,8 @@ async function getLeadsQueue() {
     consultant:    (l.assignedConsultant || '').trim(),
     outcome:       l.outcome || '',
     urgent:        l.removalOrder === 'Yes' || l.enforcementLetter === 'Yes' || Boolean((l.deadlineDate || '').trim()),
+    inviteSent:    (l.bookingInvite || '') === 'Sent',
+    inviteSentAt:  l.inviteSentAt || '',  // blank for invites sent before the stamp existed
   }));
   rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || Number(b.id) - Number(a.id));
   return rows;
@@ -462,6 +464,7 @@ async function getLeadDetail(leadId) {
     clientMasterItemId:  lead.clientMasterItemId || '',
     inviteMessage,
     inviteSent: (lead.bookingInvite || '') === 'Sent',
+    inviteSentAt: lead.inviteSentAt || '',
 
     hasIntakeArchive: Boolean(intake),
     intakeSubmittedAt: (intake && intake.submittedAt) || '',
