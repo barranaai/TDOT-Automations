@@ -183,6 +183,33 @@ app.post('/api/test-email', express.json(), async (req, res) => {
   }
 });
 
+// One-time setup: create the attribution columns on the Lead Board (idempotent —
+// skips any that already exist by title) and return their ids. Admin-gated.
+app.post('/api/setup-attribution-columns', async (req, res) => {
+  try {
+    const mondayApi = require('./services/mondayApi');
+    const { leadBoardId } = require('../config/monday');
+    const NEW = [
+      { key: 'followUpDate',      title: 'Follow-Up Date',       type: 'date' },
+      { key: 'leadOwner',         title: 'Lead Owner',            type: 'text' },
+      { key: 'bookedBy',          title: 'Booked By',             type: 'text' },
+      { key: 'paymentReviewedBy', title: 'Payment Reviewed By',   type: 'text' },
+    ];
+    const board = await mondayApi.query(`query($b: ID!){ boards(ids: [$b]){ columns { id title } } }`, { b: String(leadBoardId) });
+    const byTitle = {}; (board?.boards?.[0]?.columns || []).forEach((c) => { byTitle[String(c.title).trim().toLowerCase()] = c.id; });
+    const columns = {};
+    for (const n of NEW) {
+      const found = byTitle[n.title.toLowerCase()];
+      if (found) { columns[n.key] = found; continue; }
+      const d = await mondayApi.query(
+        `mutation($b: ID!, $t: String!, $ct: ColumnType!){ create_column(board_id: $b, title: $t, column_type: $ct){ id } }`,
+        { b: String(leadBoardId), t: n.title, ct: n.type });
+      columns[n.key] = d?.create_column?.id || null;
+    }
+    res.json({ ok: true, columns });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
 // Reporting/KPIs for the consultations dashboard — aggregates the Lead Board for a
 // given month (?month=YYYY-MM; omit for all-time). Admin-gated like the other /api/*.
 app.get('/api/kpis', async (req, res) => {
