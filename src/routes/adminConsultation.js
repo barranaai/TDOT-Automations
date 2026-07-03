@@ -307,7 +307,7 @@ function buildDetailHTML(leadId) {
   .step.done .lbl { color:var(--muted); } .step.cur .lbl { color:var(--navy); font-weight:700; }
 
   /* two-column working area */
-  .cols { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; align-items:start; }
+  .cols { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:16px; align-items:start; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr; } .ctx{ position:static; } }
   /* Retainer config: short inputs flow into an even, aligned grid instead of a long stack. */
   .rp-config { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px 16px; align-items:start; }
