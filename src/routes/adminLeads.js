@@ -119,7 +119,7 @@ function renderRows(rows){
       '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
       '<td>'+escHtml(createdOf(c)||'—')+'</td>'+
       '<td class="tier">'+escHtml(c.tier||'—')+'</td>'+
-      '<td>'+(c.priority?qpill(c.priority==='Urgent'?'red':'amber',c.priority):'<span class="pill grey">—</span>')+'</td>'+
+      '<td>'+(c.priority?qpill(c.priority==='Critical'?'red':c.priority==='High'?'amber':'grey',c.priority):'<span class="pill grey">—</span>')+'</td>'+
       '<td>'+statusPill(c.bookingStatus)+'</td>'+
       '<td>'+invitePill(c)+'</td></tr>';
   }).join('');
@@ -155,7 +155,11 @@ function applyFilters(){
 function load(){
   var key=getKey(); if(!key) return;
   fetch('/api/leads',{headers:{'X-Api-Key':key}})
-   .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } return r.json(); })
+   .then(function(r){
+     if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); }
+     if(!r.ok){ throw new Error('HTTP '+r.status); }
+     return r.json();
+   })
    .then(function(d){
      ALLROWS=(d.leads||[]);
      populateFilters(ALLROWS);
@@ -418,6 +422,7 @@ function load(){
    .then(function(r){
      if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); }
      if(r.status===404){ throw new Error('Lead not found.'); }
+     if(!r.ok){ throw new Error('HTTP '+r.status); }
      return r.json();
    })
    .then(function(d){

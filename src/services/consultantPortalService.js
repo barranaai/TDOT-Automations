@@ -349,21 +349,36 @@ function buildIntakeSections(f, lead) {
     row('Wants to', A('whatDoYouWant')),
   ]);
 
-  // Service-specific answers: archive-driven — render whatever f-block keys the
-  // client actually answered (labels from FBLOCK_LABELS, prettified fallback).
+  // Service-specific answers — scoped to the ACTIVE F-block for the selected
+  // service, like intakeFormService.buildDigest. The raw archive keeps values
+  // typed into F-blocks the client abandoned when switching service (hidden
+  // inputs still submit); rendering those would present wrong-service facts as
+  // triage data. Unknown/unmapped service ⇒ show everything (better than
+  // hiding real answers).
+  let activeBlockPrefix = null;
+  try {
+    const blk = require('./intakeFormService').serviceToFBlock(A('serviceRequired'));
+    if (blk) activeBlockPrefix = blk.toLowerCase() + '_';   // 'F1' → 'f1_' ('f1_' never matches 'f10_…')
+  } catch (_) { /* keep unscoped */ }
+  const labelOrder = Object.keys(FBLOCK_LABELS);
   const fRows = Object.keys(f)
     .filter((k) => /^f\d+_/.test(k) && f[k] != null && typeof f[k] !== 'object' && String(f[k]).trim())
+    .filter((k) => !activeBlockPrefix || k.toLowerCase().startsWith(activeBlockPrefix))
     .sort((a, b) => {
-      const ka = Object.keys(FBLOCK_LABELS).indexOf(a), kb = Object.keys(FBLOCK_LABELS).indexOf(b);
+      const ka = labelOrder.indexOf(a), kb = labelOrder.indexOf(b);
       return (ka < 0 ? 999 : ka) - (kb < 0 ? 999 : kb);
     })
     .map((k) => row(FBLOCK_LABELS[k] || prettifyFieldKey(k), f[k]));
   if (fRows.length) sections.push({ title: 'Service-specific answers', rows: fRows });
 
+  // The raw archive keeps a deadline the client typed then disowned (toggled
+  // urgentDeadline back to "No" — hidden inputs still submit). The lead COLUMN
+  // is the properly-gated write, so it is the only date fallback used here.
+  const gatedDeadline = String((lead && lead.deadlineDate) || '').trim();
   const urgency = [
     row('Urgent deadline', A('urgentDeadline') === 'Yes'
       ? [A('deadlineDate'), A('deadlineReason')].filter(Boolean).join(' — ') || 'Yes'
-      : A('urgentDeadline') || (A('deadlineDate', 'deadlineDate') ? A('deadlineDate', 'deadlineDate') : '')),
+      : A('urgentDeadline') || gatedDeadline),
     row('Removal / enforcement order', A('removalOrder')),
     row('CBSA / IRCC letter', A('enforcementLetter')),
     row('Enforcement details', A('enforcementDetails')),
@@ -383,7 +398,7 @@ function buildIntakeSections(f, lead) {
   const flags = [];
   if (A('removalOrder') === 'Yes') flags.push('Removal / enforcement order');
   if (A('enforcementLetter') === 'Yes') flags.push('CBSA / IRCC letter received');
-  if (A('urgentDeadline') === 'Yes' || A('deadlineDate', 'deadlineDate')) flags.push('Urgent deadline');
+  if (A('urgentDeadline') === 'Yes' || gatedDeadline) flags.push('Urgent deadline');
 
   return { sections, flags };
 }
@@ -393,8 +408,17 @@ function buildIntakeSections(f, lead) {
  * Booked leads are EXCLUDED — once a consultation is booked the lead "moves"
  * to the Consultations queue (which filters bookingStatus='Booked'); the two
  * tabs partition the Lead Board with no overlap.
+ *
+ * listAllLeads paginates the ENTIRE board, so the result is cached briefly
+ * (same pattern as kpiService); invite sends bust it so the pill is fresh.
  */
+const LEADS_QUEUE_CACHE_MS = 20 * 1000;
+let _leadsQueueCache = { at: 0, rows: null };
+
 async function getLeadsQueue() {
+  if (_leadsQueueCache.rows && (Date.now() - _leadsQueueCache.at) < LEADS_QUEUE_CACHE_MS) {
+    return _leadsQueueCache.rows;
+  }
   const leads = await leadService.listAllLeads();
   const rows = leads.filter((l) => (l.bookingStatus || '').trim() !== 'Booked').map((l) => ({
     id:            l.id,
@@ -412,6 +436,7 @@ async function getLeadsQueue() {
     inviteSentAt:  l.inviteSentAt || '',  // blank for invites sent before the stamp existed
   }));
   rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || Number(b.id) - Number(a.id));
+  _leadsQueueCache = { at: Date.now(), rows };
   return rows;
 }
 
@@ -429,19 +454,37 @@ async function getLeadDetail(leadId) {
   const { sections, flags } = buildIntakeSections(f, lead);
 
   // Personalized booking-invite draft: AI-generate once from the intake data
-  // when nothing is saved yet (un-booked leads only), then persist so the next
-  // load is instant and staff edits stick. The generation call is time-boxed
-  // (see generateInviteMessage); when the AI is unavailable the message stays
-  // '' and the email keeps its standard intro. The persist is AWAITED so the
-  // draft on screen is exactly what any send path will read — a lagging write
-  // must never overwrite a staff edit right before the send webhook re-reads.
+  // when nothing is saved yet, then persist so the next load is instant and
+  // staff edits stick. Guards:
+  //   • only for un-booked leads that have NOT been invited yet — after a send,
+  //     a cleared draft stays cleared (no surprise regeneration);
+  //   • generation is time-boxed (see generateInviteMessage); AI unavailable ⇒
+  //     '' and the email keeps its standard intro;
+  //   • before persisting, RE-READ the lead — a draft staff saved during the
+  //     generation window must never be overwritten;
+  //   • the persist is awaited (screen = saved) but time-boxed so a degraded
+  //     Monday API cannot hang the detail page.
   let inviteMessage = (lead.inviteMessage || '').trim();
-  if (!inviteMessage && (lead.bookingStatus || '').trim() !== 'Booked') {
+  const inviteAlreadySent = (lead.bookingInvite || '') === 'Sent';
+  if (!inviteMessage && !inviteAlreadySent && (lead.bookingStatus || '').trim() !== 'Booked') {
     const generated = await leadService.generateInviteMessage(lead);
     if (generated) {
-      inviteMessage = generated;
-      try { await leadService.updateLead(leadId, { inviteMessage: generated }); }
-      catch (err) { console.warn(`[Leads] Could not persist the AI invite draft for ${leadId}: ${err.message}`); }
+      let current = null;
+      try { current = await leadService.getLead(leadId); } catch (_) { /* keep generated */ }
+      const saved = current ? (current.inviteMessage || '').trim() : '';
+      if (saved) {
+        inviteMessage = saved;   // staff won the race — theirs stands
+      } else {
+        inviteMessage = generated;
+        const persist = leadService.updateLead(leadId, { inviteMessage: generated });
+        const timeout = new Promise((resolve) => { const t = setTimeout(() => resolve('timeout'), 5000); if (t.unref) t.unref(); });
+        try {
+          if (await Promise.race([persist.then(() => 'ok'), timeout]) === 'timeout') {
+            console.warn(`[Leads] AI invite draft persist slow for ${leadId} — returning draft without waiting`);
+            persist.catch((err) => console.warn(`[Leads] AI invite draft persist failed for ${leadId}: ${err.message}`));
+          }
+        } catch (err) { console.warn(`[Leads] Could not persist the AI invite draft for ${leadId}: ${err.message}`); }
+      }
     }
   }
 
@@ -787,6 +830,16 @@ async function applyAction({ leadId, action, value, amend = false }) {
     }
 
     case 'bookingInvite':
+      // Fail fast on states where sendBookingInvite would silently skip — the
+      // portal must never report "being emailed" for a send that cannot happen.
+      if ((lead.bookingStatus || '').trim() === 'Booked') {
+        const e = new Error('This lead has already booked a consultation — no booking invite is needed.');
+        e.badRequest = true; throw e;
+      }
+      if (!String(lead.email || '').trim()) {
+        const e = new Error('No client email on file — add an email address to the lead before sending the invite.');
+        e.badRequest = true; throw e;
+      }
       // Persist the personalized body FIRST, so the webhook-fired email (which
       // re-reads the lead) picks it up. null = no message in the request (the
       // consultations-page button) — leave any saved draft untouched; '' =
@@ -796,6 +849,7 @@ async function applyAction({ leadId, action, value, amend = false }) {
         await leadService.updateLead(leadId, { inviteMessage: v.normalized }, { clearKeys: ['inviteMessage'] });
       }
       await leadService.updateLead(leadId, { bookingInvite: 'Send' });
+      _leadsQueueCache.at = 0;   // the queue's Invite pill should reflect this promptly
       await postPortalNote(leadId, v.normalized
         ? 'Booking invite sent to the client with a personalized message.'
         : 'Booking invite sent to the client.');

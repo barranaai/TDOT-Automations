@@ -339,10 +339,25 @@ async function confirmSlot(leadId, txnId, meetingType) {
  * @param {string} leadId
  * @param {{ force?: boolean }} [opts]  force skips the already-Sent guard.
  */
+/** Best-effort staff-visible note on the lead (never blocks the send flow). */
+async function postInviteNote(leadId, body) {
+  try {
+    await require('./mondayApi').query(
+      `mutation($id: ID!, $b: String!) { create_update(item_id: $id, body: $b) { id } }`,
+      { id: String(leadId), b: body }
+    );
+  } catch (err) { console.warn(`[Booking] invite note failed for ${leadId}: ${err.message}`); }
+}
+
 async function sendBookingInvite(leadId, { force = false } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) return;
-  if (!lead.email) { console.warn(`[Booking] Invite skipped for ${leadId}: no email`); return; }
+  if (!lead.email) {
+    console.warn(`[Booking] Invite skipped for ${leadId}: no email`);
+    // The board-column path can reach this with no portal feedback — tell staff.
+    await postInviteNote(leadId, '⚠️ <b>Booking invite NOT sent</b> — this lead has no email address on file. Add one, then flip Booking Invite to "Send" again.');
+    return;
+  }
   if (lead.bookingStatus === 'Booked') {
     console.log(`[Booking] Invite skipped for ${leadId}: already booked`);
     return;
@@ -351,11 +366,6 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
     console.log(`[Booking] Invite skipped for ${leadId}: already sent`);
     return;
   }
-
-  // Mark Sent FIRST (webhook-redelivery dedup), then send. Stamp WHEN in the
-  // same write — Toronto date, matching how the portal displays lead times.
-  const sentDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
-  await leadService.updateLead(leadId, { bookingInvite: 'Sent', inviteSentAt: sentDate });
 
   const leadTokenService = require('./leadTokenService');
   const token = lead.leadToken || await leadTokenService.ensureToken(leadId);
@@ -376,20 +386,34 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
     ? custom.split(/\n\s*\n/).map((p) => `<p>${esc(p.trim()).replace(/\n/g, '<br>')}</p>`).join('')
     : `<p>Thank you for reaching out to TDOT Immigration. Our team has reviewed your inquiry — the next step is a consultation where we can give you case-specific advice.</p>`;
 
-  await microsoftMail.sendEmail({
-    to: lead.email,
-    subject: 'Book your consultation with TDOT Immigration',
-    html: `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
-      <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
-        <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Book your consultation</h1></div>
-      <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
-        <p>Hi ${first},</p>
-        ${bodyHtml}
-        <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Choose your consultation time</a></p>
-        <p>You'll see our real-time availability and can pick whatever works for you. ${CONSULT_FEE_CENTS > 0 ? `The consultation fee is <b>${fee}</b>, payable securely online when you book.` : ''}</p>
-        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it. Questions? Just reply to this email.</p>
-      </div></div>`,
-  });
+  // Send FIRST, stamp after — the Leads UI treats "Sent + date" as authoritative,
+  // so it must never assert a send that failed. (The old mark-Sent-first ordering
+  // existed for a webhook-redelivery dedup that force:true made unreachable.)
+  try {
+    await microsoftMail.sendEmail({
+      to: lead.email,
+      subject: 'Book your consultation with TDOT Immigration',
+      html: `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
+        <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
+          <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Book your consultation</h1></div>
+        <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
+          <p>Hi ${first},</p>
+          ${bodyHtml}
+          <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Choose your consultation time</a></p>
+          <p>You'll see our real-time availability and can pick whatever works for you. ${CONSULT_FEE_CENTS > 0 ? `The consultation fee is <b>${fee}</b>, payable securely online when you book.` : ''}</p>
+          <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it. Questions? Just reply to this email.</p>
+        </div></div>`,
+    });
+  } catch (err) {
+    console.error(`[Booking] Invite email FAILED for ${leadId}: ${err.message}`);
+    // Column stays 'Send' (accurate: pending) — tell staff loudly so it gets retried.
+    await postInviteNote(leadId, `⚠️ <b>Booking invite email FAILED to send</b> — please retry from the portal. Error: ${String(err.message || err).slice(0, 200)}`);
+    return;
+  }
+
+  // Stamp Sent + WHEN (Toronto date, matching how the portal displays lead times).
+  const sentDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
+  await leadService.updateLead(leadId, { bookingInvite: 'Sent', inviteSentAt: sentDate });
   console.log(`[Booking] Invite emailed to ${lead.email} for lead ${leadId}`);
 }
 

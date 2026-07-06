@@ -55,6 +55,33 @@ test('buildIntakeSections: F-block answers use human labels with prettified fall
   assert.equal(rowVal(fb, 'Some new field'), 'x'); // unknown key prettified
 });
 
+test('buildIntakeSections: stale hidden-F-block answers are scoped out by the selected service', () => {
+  // Client typed EE answers (f1_*), then switched to a service that maps to F4
+  // and submitted — hidden inputs still post, but only the active block renders.
+  const out = buildIntakeSections({
+    serviceRequired: 'Express Entry profile',   // maps to F1
+    f1_crsScore: '480',
+    f4_intake: 'Fall 2026',                     // stale — abandoned block
+  }, {});
+  const fb = section(out, 'Service-specific answers');
+  assert.equal(rowVal(fb, 'CRS score'), '480');
+  assert.equal(rowVal(fb, 'Target intake'), undefined, 'abandoned-block answer is not rendered');
+
+  // Unknown/unmapped service ⇒ render everything (never hide real answers).
+  const all = buildIntakeSections({ serviceRequired: 'Totally Unknown', f1_crsScore: '480', f4_intake: 'Fall 2026' }, {});
+  const fbAll = section(all, 'Service-specific answers');
+  assert.equal(rowVal(fbAll, 'CRS score'), '480');
+  assert.equal(rowVal(fbAll, 'Target intake'), 'Fall 2026');
+});
+
+test('buildIntakeSections: urgency flag ignores a disowned archive deadline (urgentDeadline: No)', () => {
+  const out = buildIntakeSections({ urgentDeadline: 'No', deadlineDate: '2026-08-01' }, {});
+  assert.deepEqual(out.flags, [], 'client said No — the lingering typed date must not flag URGENT');
+  // …but the properly-gated lead column still flags.
+  const gated = buildIntakeSections({}, { deadlineDate: '2026-08-01' });
+  assert.deepEqual(gated.flags, ['Urgent deadline']);
+});
+
 test('buildIntakeSections: urgency flags + composed refusal/deadline rows', () => {
   const out = buildIntakeSections({
     removalOrder: 'Yes', enforcementLetter: 'No',
@@ -120,10 +147,13 @@ const mondayApi   = require('../src/services/mondayApi');
 
 function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; }
 
-async function withStubs(fn) {
+async function withStubs(fn, leadOverrides) {
   const writes = [];
   const restore = [
-    stub(leadService, 'getLead', async (id) => ({ id, fullName: 'Stub Lead', retainerSent: '' })),
+    stub(leadService, 'getLead', async (id) => ({
+      id, fullName: 'Stub Lead', retainerSent: '', email: 'client@x.com', bookingStatus: 'Not Yet',
+      ...(leadOverrides || {}),
+    })),
     stub(leadService, 'updateLead', async (id, fields, opts) => { writes.push({ fields, opts }); }),
     stub(mondayApi, 'query', async () => ({})), // postPortalNote audit note
   ];
@@ -142,6 +172,22 @@ test('applyAction saveInviteMessage: saves the draft (clearKeys so an empty save
     assert.deepEqual(writes[0].fields, { inviteMessage: '' }, 'explicit clear reaches Monday');
     assert.deepEqual(writes[0].opts, { clearKeys: ['inviteMessage'] });
   });
+});
+
+test('applyAction bookingInvite: fails fast (no false success) for booked leads and leads without email', async () => {
+  await withStubs(async () => {
+    await assert.rejects(
+      applyAction({ leadId: '1', action: 'bookingInvite', value: 'msg' }),
+      /already booked/i
+    );
+  }, { bookingStatus: 'Booked' });
+  await withStubs(async (writes) => {
+    await assert.rejects(
+      applyAction({ leadId: '1', action: 'bookingInvite', value: 'msg' }),
+      /no client email/i
+    );
+    assert.equal(writes.length, 0, 'nothing written when the send cannot happen');
+  }, { email: '' });
 });
 
 test('applyAction bookingInvite: message saved FIRST, then the Send trigger; null leaves the draft alone', async () => {
@@ -164,4 +210,47 @@ test('applyAction bookingInvite: message saved FIRST, then the Send trigger; nul
       { bookingInvite: 'Send' },
     ], 'explicit clear writes through before sending (standard intro will be used)');
   });
+});
+
+// ─── sendBookingInvite: Sent + date must be stamped only AFTER a real send ────
+
+const bookingService  = require('../src/services/bookingService');
+const microsoftMail   = require('../src/services/microsoftMailService');
+
+async function withSendStubs(fn, { emailFails = false } = {}) {
+  const calls = [];
+  const restore = [
+    stub(leadService, 'getLead', async (id) => ({
+      id, fullName: 'Stub Lead', email: 'client@x.com', bookingStatus: 'Not Yet',
+      bookingInvite: 'Send', leadToken: 'tok', inviteMessage: '',
+    })),
+    stub(leadService, 'updateLead', async (_id, fields) => { calls.push({ type: 'update', fields }); }),
+    stub(microsoftMail, 'sendEmail', async () => {
+      calls.push({ type: 'email' });
+      if (emailFails) throw new Error('SMTP down');
+    }),
+    stub(mondayApi, 'query', async () => { calls.push({ type: 'note' }); return {}; }),
+  ];
+  try { return await fn(calls); } finally { restore.forEach((r) => r()); }
+}
+
+test('sendBookingInvite: stamps Sent + inviteSentAt only AFTER the email succeeds', async () => {
+  await withSendStubs(async (calls) => {
+    await bookingService.sendBookingInvite('1', { force: true });
+    const emailIdx = calls.findIndex((c) => c.type === 'email');
+    const stamp    = calls.find((c) => c.type === 'update' && c.fields.bookingInvite === 'Sent');
+    assert.ok(emailIdx >= 0, 'email attempted');
+    assert.ok(stamp, 'Sent stamp written');
+    assert.match(String(stamp.fields.inviteSentAt), /^\d{4}-\d{2}-\d{2}$/, 'sent date stamped');
+    assert.ok(calls.indexOf(stamp) > emailIdx, 'stamp comes after the send');
+  });
+});
+
+test('sendBookingInvite: a failed email leaves NO Sent stamp and posts a loud failure note', async () => {
+  await withSendStubs(async (calls) => {
+    await bookingService.sendBookingInvite('1', { force: true });
+    assert.ok(!calls.some((c) => c.type === 'update' && c.fields.bookingInvite === 'Sent'),
+      'never claims Sent for an email that failed');
+    assert.ok(calls.some((c) => c.type === 'note'), 'staff failure note posted');
+  }, { emailFails: true });
 });

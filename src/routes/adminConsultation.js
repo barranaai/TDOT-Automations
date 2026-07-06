@@ -642,6 +642,12 @@ function render(d){
     ? '<span class="chip green">'+ICONS.userCheck+escHtml(ac.name)+(ac.needsVerify?' <span class="rp-flag verify">verify</span>':'')+'</span>'+(ac.reason?'<span class="chip-reason">routed: '+escHtml(ac.reason)+'</span>':'')
     : '';
 
+  /* This queue is booked-only, so the booking invite is moot here — sending
+     would be rejected server-side anyway; pre-booking invites live on the
+     Leads page (with the personalized-message editor). */
+  var inviteBtn=document.getElementById('btn-invite');
+  if(inviteBtn && d.bookingStatus==='Booked') inviteBtn.style.display='none';
+
   document.getElementById('c-stepper').innerHTML=buildStepper(d);
 
   highlightOutcome(d.outcome||'');
