@@ -49,6 +49,86 @@ function escHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// ─── Client journey stepper ─────────────────────────────────────────────────
+//
+// Clients shouldn't decode internal ops stages ("Internal Review", "Stuck").
+// Map every Case Stage onto a warm five-step journey. Unrecognised stages are
+// active ops labels, so they read as "we're working on it" (step 3) rather
+// than guessing precisely and being wrong.
+
+const JOURNEY_STEPS = [
+  'Case opened',
+  'Your questionnaire & documents',
+  'We prepare your application',
+  'Application submitted',
+  'Decision',
+];
+
+const STAGE_TO_STEP = {
+  'not started': 0, 'pre-onboarding': 0, 'unknown': 0, '': 0,
+  'document collection started': 1,
+  'internal review': 2, 'submission preparation': 2, 'stuck': 2,
+  'submitted': 3, 'application submitted': 3,
+  'approved': 4, 'refused': 4, 'closed': 4, 'withdrawn': 4, 'cancelled': 4, 'archived': 4,
+};
+
+// Decision-step outcomes get their own client-facing label + tone.
+const DECISION_LABEL = {
+  approved:  { label: 'Approved 🎉', tone: 'good' },
+  refused:   { label: 'Decision received', tone: 'end' },
+  closed:    { label: 'Case closed', tone: 'end' },
+  withdrawn: { label: 'Case withdrawn', tone: 'end' },
+  cancelled: { label: 'Case cancelled', tone: 'end' },
+  archived:  { label: 'Case archived', tone: 'end' },
+};
+
+/**
+ * PURE: internal Case Stage → the client journey position.
+ * @returns {{ step: number, steps: string[], label: string, tone: 'good'|'active'|'end' }}
+ */
+function clientStage(caseStage) {
+  const key = String(caseStage || '').trim().toLowerCase();
+  const step = (key in STAGE_TO_STEP) ? STAGE_TO_STEP[key] : 2; // unrecognised = in progress with TDOT
+  if (step === 4) {
+    const d = DECISION_LABEL[key] || { label: 'Decision', tone: 'end' };
+    return { step, steps: JOURNEY_STEPS, label: d.label, tone: d.tone };
+  }
+  return { step, steps: JOURNEY_STEPS, label: JOURNEY_STEPS[step], tone: step === 3 ? 'good' : 'active' };
+}
+
+// ─── Client timeline ────────────────────────────────────────────────────────
+//
+// The cockpit's buildTimeline speaks staff shorthand. Re-voice each event for
+// the client ("We received your document: Passport"), and drop anything that
+// isn't theirs to see — unknown titles are dropped rather than leaked.
+
+const CLIENT_TITLE_MAP = [
+  [/^Inquiry received$/,                 () => 'We received your inquiry'],
+  [/^Booking invite sent$/,              () => 'Consultation invitation sent to you'],
+  [/^Consultation scheduled$/,           () => 'Your consultation was booked'],
+  [/^Consultation held$/,                () => 'Your consultation took place'],
+  [/^Consultation agreement emailed$/,   () => 'Consultation agreement sent to you'],
+  [/^Retainer agreement sent$/,          () => 'Your retainer agreement was sent'],
+  [/^Retainer signed — case opened$/,    () => 'Retainer signed — your case opened'],
+  [/^First retainer payment recorded$/,  () => 'Your first payment was received — thank you'],
+  [/^e-Transfer requested — (.+)$/,      (m) => `Payment requested — ${m[1]}`],
+  [/^Paid — (.+)$/,                      (m) => `Payment received — ${m[1]} — thank you`],
+  [/^Document received — (.+)$/,         (m) => `We received your document: ${m[1]}`],
+  [/^Questionnaire submitted — (.+)$/,   (m) => `Questionnaire submitted — ${m[1]}`],
+];
+
+/** PURE: staff timeline events → client-voiced events (unknown titles dropped). */
+function toClientTimeline(events) {
+  const out = [];
+  for (const ev of events || []) {
+    for (const [re, fmt] of CLIENT_TITLE_MAP) {
+      const m = re.exec(ev.title || '');
+      if (m) { out.push({ date: ev.date, title: fmt(m), detail: ev.detail || '', kind: ev.kind }); break; }
+    }
+  }
+  return out;
+}
+
 // ─── Live data fetch ────────────────────────────────────────────────────────
 
 /**
@@ -100,6 +180,19 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
   const totalMembers     = members.length || 1;
   const submittedMembers = members.filter(m => m.submittedAt).length;
 
+  // 5. Lead-linked extras (payments + case history) — the SAME helper the
+  //    staff cockpit uses, so both portals read identical shapes. Best-effort:
+  //    legacy cases without a linked lead simply get an empty journey.
+  const cockpit = require('./caseCockpitService');
+  const { lead, payments } = await cockpit.getLeadExtras(itemId, caseRef)
+    .catch(() => ({ lead: null, payments: null }));
+  const timeline = toClientTimeline(cockpit.buildTimeline({
+    lead,
+    milestones: (payments && payments.milestones) || [],
+    qMembers:   members || [],
+    docItems,
+  }));
+
   return {
     clientName: validatedCase.clientName,
     caseRef,
@@ -113,6 +206,9 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
     reworkDocs,
     totalMembers,
     submittedMembers,
+    journey: clientStage(caseStage),
+    timeline,
+    payments,
   };
 }
 
@@ -165,7 +261,7 @@ function buildPortalPage(snap, opts) {
   if (snap.docCounts.rework > 0) {
     pending.push(isStaff
       ? `📂 ${snap.docCounts.rework} document${snap.docCounts.rework === 1 ? '' : 's'} flagged for rework — awaiting client re-upload`
-      : `📂 ${snap.docCounts.rework} document${snap.docCounts.rework === 1 ? '' : 's'} need re-upload (rework requested)`);
+      : `📂 ${snap.docCounts.rework} document${snap.docCounts.rework === 1 ? '' : 's'} need${snap.docCounts.rework === 1 ? 's' : ''} re-upload (rework requested)`);
   }
   if (!qDone && qPct < 100) {
     pending.push(isStaff
@@ -188,6 +284,42 @@ function buildPortalPage(snap, opts) {
   }
 
   const pendingHtml = pending.map(p => `<li style="margin:6px 0;">${escHtml(p)}</li>`).join('');
+
+  // ── Journey stepper (from the pure clientStage mapping) ────────────────────
+  const journey = snap.journey || clientStage(snap.caseStage);
+  const stepperHtml = `<section class="journey" aria-label="Your case progress">
+      <div class="j-steps">
+        ${journey.steps.map((label, i) => {
+          const cls = i < journey.step ? 'done' : (i === journey.step ? 'cur' : 'todo');
+          const tone = (i === journey.step && journey.tone === 'good') ? ' good' : '';
+          const dot = i < journey.step ? '✓' : String(i + 1);
+          const lbl = i === journey.step ? journey.label : label;
+          return `<div class="j-step ${cls}${tone}"><div class="j-dot">${dot}</div><div class="j-lbl">${escHtml(lbl)}</div></div>`;
+        }).join('')}
+      </div>
+    </section>`;
+
+  // ── "Your case journey" timeline (client-voiced, chronological) ───────────
+  const CTL_DOT = { lead: '#0B1D32', meeting: '#0B1D32', retainer: '#C9A84C', payment: '#1F7A4D', doc: '#9AA3AF', questionnaire: '#B7791F' };
+  const tlEvents = snap.timeline || [];
+  const timelineHtml = tlEvents.length ? `<section class="card">
+      <div class="card-head">
+        <div>
+          <h3>🕓 Your case journey</h3>
+          <div class="sub">Everything that has happened on your file so far.</div>
+        </div>
+      </div>
+      <div class="ctl">
+        ${tlEvents.map((e) => {
+          const dt = String(e.date || '').replace('T', ' ').slice(0, 16); // date, plus time when the source recorded one
+          return `<div class="ctl-ev"><span class="ctl-dot" style="background:${CTL_DOT[e.kind] || '#9AA3AF'}"></span>
+            <div class="ctl-date">${escHtml(dt)}</div>
+            <div class="ctl-title">${escHtml(e.title)}</div>
+            ${e.detail ? `<div class="ctl-detail">${escHtml(e.detail)}</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+    </section>` : '';
 
   // Rework doc bullet list (top 5)
   const reworkSnippet = snap.reworkDocs.length
@@ -229,6 +361,33 @@ function buildPortalPage(snap, opts) {
     }
 
     .content { max-width: 760px; margin: 24px auto; padding: 0 18px 60px; }
+
+    /* Journey stepper */
+    .journey { background:#fff; border:1px solid #EAE3D5; border-radius:10px; padding:18px 16px 14px; margin-bottom:20px; }
+    .j-steps { display:flex; align-items:flex-start; }
+    .j-step { flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; position:relative; min-width:0; }
+    .j-step::before { content:""; position:absolute; top:13px; left:-50%; width:100%; height:3px; background:#EAE3D5; z-index:0; }
+    .j-step:first-child::before { display:none; }
+    .j-step.done::before, .j-step.cur::before { background:#C9A84C; }
+    .j-dot { position:relative; z-index:1; width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+             font-size:12px; font-weight:800; background:#fff; border:2.5px solid #EAE3D5; color:#B9AE97; }
+    .j-step.done .j-dot { background:#C9A84C; border-color:#C9A84C; color:#fff; }
+    .j-step.cur  .j-dot { background:#0B1D32; border-color:#0B1D32; color:#fff; box-shadow:0 0 0 4px rgba(11,29,50,.12); }
+    .j-step.cur.good .j-dot, .j-step.done.good .j-dot { background:#1F7A4D; border-color:#1F7A4D; }
+    .j-lbl { font-size:10.5px; font-weight:600; color:#B9AE97; margin-top:7px; line-height:1.3; padding:0 4px; }
+    .j-step.done .j-lbl { color:#7A5F1F; }
+    .j-step.cur  .j-lbl { color:#0B1D32; font-weight:800; }
+    @media (max-width:520px){ .j-lbl { font-size:9px; } }
+
+    /* Case journey timeline */
+    .ctl { position:relative; padding-left:22px; margin-top:4px; }
+    .ctl::before { content:""; position:absolute; left:6px; top:6px; bottom:6px; width:2px; background:#EFE9DC; border-radius:1px; }
+    .ctl-ev { position:relative; padding:0 0 14px 8px; }
+    .ctl-ev:last-child { padding-bottom:2px; }
+    .ctl-dot { position:absolute; left:-22px; top:3px; width:11px; height:11px; border-radius:50%; border:2.5px solid #fff; box-shadow:0 0 0 1.5px #E4DCCB; }
+    .ctl-date { font-size:10px; font-weight:700; color:#B9AE97; text-transform:uppercase; letter-spacing:.05em; }
+    .ctl-title { font-size:13.5px; font-weight:700; color:#0B1D32; margin-top:1px; }
+    .ctl-detail { font-size:12px; color:#6B7280; margin-top:1px; }
 
     .pending {
       background:#FFF8E6; border:1px solid #F0D98A; border-radius:10px;
@@ -288,7 +447,7 @@ function buildPortalPage(snap, opts) {
     <div class="top-brand">
       <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration">
       <div>
-        <h1>${escHtml(snap.clientName)}<span class="stage-pill">${escHtml(snap.caseStage)}</span></h1>
+        <h1>${escHtml(snap.clientName)}<span class="stage-pill">${escHtml(isStaff ? snap.caseStage : journey.label)}</span></h1>
         <p>Case ${escHtml(snap.caseRef)} · ${escHtml(snap.caseType || '')}${snap.caseSubType ? ' / ' + escHtml(snap.caseSubType) : ''}</p>
       </div>
     </div>
@@ -299,9 +458,11 @@ function buildPortalPage(snap, opts) {
 
     <div class="case-meta">
       <div>📋 <strong>Case:</strong> ${escHtml(snap.caseRef)}</div>
-      <div>📌 <strong>Stage:</strong> ${escHtml(snap.caseStage)}</div>
+      <div>📌 <strong>Stage:</strong> ${escHtml(isStaff ? snap.caseStage : journey.label)}</div>
       ${snap.totalMembers > 1 ? `<div>👥 <strong>Applicants:</strong> ${snap.submittedMembers} / ${snap.totalMembers} submitted</div>` : ''}
     </div>
+
+    ${stepperHtml}
 
     <section class="pending">
       <h2>📌 ${isStaff ? 'Case status' : "What's pending"}</h2>
@@ -351,6 +512,8 @@ function buildPortalPage(snap, opts) {
       <a href="${escHtml(docUrl)}" class="btn ${snap.docCounts.rework > 0 ? '' : 'btn-light'}">${escHtml(docBtnText)}</a>
     </section>
 
+    ${timelineHtml}
+
     <p class="footer">
       ${isStaff
         ? `Linked from the Client Master Board · ${escHtml(snap.caseRef)}<br>This portal mirrors the live state — every load queries Monday + OneDrive.`
@@ -394,4 +557,7 @@ module.exports = {
   getPortalSnapshot,
   buildPortalPage,
   buildPortalUrl,
+  // pure — exported for tests
+  clientStage,
+  toClientTimeline,
 };

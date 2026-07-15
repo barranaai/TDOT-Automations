@@ -204,6 +204,43 @@ function buildTimeline({ lead, milestones = [], qMembers = [], docItems = [] } =
 }
 
 /**
+ * Best-effort lead link + payment state for a case. The lead is the
+ * pre-handoff record (it stores clientMasterItemId, so we reverse-resolve);
+ * legacy cases may have none. Shared by the staff cockpit AND the client
+ * portal so both read the same shapes.
+ *
+ * @param {string} itemId  Client Master item id
+ * @param {string} caseRef for log context only
+ * @returns {Promise<{ lead: object|null, payments: object|null }>}
+ */
+async function getLeadExtras(itemId, caseRef) {
+  let lead = null;
+  try {
+    lead = await require('./leadService').findByColumnValue('clientMasterItemId', String(itemId));
+  } catch (e) {
+    console.warn(`[Cockpit] lead lookup failed for ${caseRef}: ${e.message}`);
+  }
+
+  let payments = null;
+  if (lead) {
+    try {
+      const rp = await require('./consultantPortalService').getRetainerPlan(lead.id);
+      payments = {
+        retainerFee:     rp.retainerFee || '',
+        feeSet:          !!rp.feeSet,
+        planSaved:       !!rp.saved,
+        etransferEmail:  require('./milestonePaymentService').ETRANSFER_EMAIL,
+        milestones:      rp.milestonePayments || [],
+        currentCaseStage: rp.currentCaseStage || '',
+      };
+    } catch (e) {
+      console.warn(`[Cockpit] payments read failed for ${caseRef}: ${e.message}`);
+    }
+  }
+  return { lead, payments };
+}
+
+/**
  * Aggregate one case into a single overview snapshot for the staff cockpit.
  * @param {string} caseRef
  * @returns {Promise<object>} the unified snapshot (throws only if the case itself can't be resolved)
@@ -234,29 +271,7 @@ async function getCaseOverview(caseRef) {
   // ── Lead link → meetings, payments, timeline (all best-effort) ────────────
   // The lead is the pre-handoff record; legacy cases may have none, and each
   // section degrades to null/empty rather than failing the page.
-  let lead = null;
-  try {
-    lead = await require('./leadService').findByColumnValue('clientMasterItemId', String(itemId));
-  } catch (e) {
-    console.warn(`[Cockpit] lead lookup failed for ${caseRef}: ${e.message}`);
-  }
-
-  let payments = null;
-  if (lead) {
-    try {
-      const rp = await require('./consultantPortalService').getRetainerPlan(lead.id);
-      payments = {
-        retainerFee:     rp.retainerFee || '',
-        feeSet:          !!rp.feeSet,
-        planSaved:       !!rp.saved,
-        etransferEmail:  require('./milestonePaymentService').ETRANSFER_EMAIL,
-        milestones:      rp.milestonePayments || [],
-        currentCaseStage: rp.currentCaseStage || '',
-      };
-    } catch (e) {
-      console.warn(`[Cockpit] payments read failed for ${caseRef}: ${e.message}`);
-    }
-  }
+  const { lead, payments } = await getLeadExtras(itemId, caseRef);
 
   const timeline = buildTimeline({
     lead,
@@ -301,4 +316,4 @@ async function getCaseOverview(caseRef) {
   };
 }
 
-module.exports = { getCaseOverview, buildTimeline, summariseDocuments, pickLeadFields, _CM: CM };
+module.exports = { getCaseOverview, getLeadExtras, buildTimeline, summariseDocuments, pickLeadFields, _CM: CM };
