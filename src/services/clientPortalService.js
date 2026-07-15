@@ -49,6 +49,13 @@ function escHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Serialise a value into an inline <script> safely: JSON.stringify does NOT
+// escape `</script>`, so neutralise every `<` (same convention as the admin
+// pages' jsLit).
+function jsLit(v) {
+  return JSON.stringify(v).replace(/</g, '\\u003c');
+}
+
 // ─── Client journey stepper ─────────────────────────────────────────────────
 //
 // Clients shouldn't decode internal ops stages ("Internal Review", "Stuck").
@@ -139,17 +146,25 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
   // validatedCase already has: itemId, clientName, caseType, caseSubType, accessToken, formFiles
   const itemId = validatedCase.itemId;
 
-  // 1. Pull stage + Q readiness directly off the CM row
-  const cmData = await mondayApi.query(
-    `query($itemId: ID!) {
-       items(ids: [$itemId]) {
-         column_values(ids: [
-           "${CM.caseStage}", "${CM.qReadiness}", "${CM.qCompletionStatus}"
-         ]) { id text value }
-       }
-     }`,
-    { itemId: String(itemId) }
-  ).catch(() => null);
+  // 1+2. Everything independent runs in ONE parallel wave — the CM row, the
+  //      document summary, the questionnaire manifest, and the lead-linked
+  //      extras (payments/history; the SAME helper the staff cockpit uses).
+  const cockpit = require('./caseCockpitService');
+  const [cmData, docSummary, members, extras] = await Promise.all([
+    mondayApi.query(
+      `query($itemId: ID!) {
+         items(ids: [$itemId]) {
+           column_values(ids: [
+             "${CM.caseStage}", "${CM.qReadiness}", "${CM.qCompletionStatus}"
+           ]) { id text value }
+         }
+       }`,
+      { itemId: String(itemId) }
+    ).catch(() => null),
+    docFormSvc.getCaseSummary(caseRef).catch(() => ({ items: [] })),
+    htmlQ.loadMembers({ clientName: validatedCase.clientName, caseRef }).catch(() => []),
+    cockpit.getLeadExtras(itemId, caseRef).catch(() => ({ lead: null, payments: null })),
+  ]);
   const cmCols = cmData?.items?.[0]?.column_values || [];
   const colTxt = (id) => (cmCols.find(c => c.id === id)?.text || '').trim();
 
@@ -158,22 +173,15 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
   const qReadinessPct     = qReadinessRaw ? Math.max(0, Math.min(100, Math.round(Number(qReadinessRaw)))) : 0;
   const qCompletionStatus = colTxt(CM.qCompletionStatus) || '';
 
-  // 2. Document summary + Q members in parallel
-  const [docSummary, members] = await Promise.all([
-    docFormSvc.getCaseSummary(caseRef).catch(() => ({ items: [] })),
-    htmlQ.loadMembers({ clientName: validatedCase.clientName, caseRef }).catch(() => []),
-  ]);
-
   // 3. Compute document counts
   const docItems = docSummary?.items || [];
   const docCounts = { total: docItems.length, received: 0, reviewed: 0, rework: 0, missing: 0 };
-  const reworkDocs = [];
   for (const it of docItems) {
     const s = it.status || 'Missing';
-    if (s === 'Received')               docCounts.received++;
-    else if (s === 'Reviewed')          docCounts.reviewed++;
-    else if (s === 'Rework Required') { docCounts.rework++; reworkDocs.push(it); }
-    else                                docCounts.missing++;
+    if (s === 'Received')          docCounts.received++;
+    else if (s === 'Reviewed')     docCounts.reviewed++;
+    else if (s === 'Rework Required') docCounts.rework++;
+    else                           docCounts.missing++;
   }
 
   // 3b. Client-shaped checklist rows for the portal's Documents card — the id
@@ -193,12 +201,9 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
   const totalMembers     = members.length || 1;
   const submittedMembers = members.filter(m => m.submittedAt).length;
 
-  // 5. Lead-linked extras (payments + case history) — the SAME helper the
-  //    staff cockpit uses, so both portals read identical shapes. Best-effort:
-  //    legacy cases without a linked lead simply get an empty journey.
-  const cockpit = require('./caseCockpitService');
-  const { lead, payments } = await cockpit.getLeadExtras(itemId, caseRef)
-    .catch(() => ({ lead: null, payments: null }));
+  // 5. Client-voiced history from the lead extras fetched in the parallel wave
+  //    above. Legacy cases without a linked lead simply get an empty journey.
+  const { lead, payments } = extras || { lead: null, payments: null };
   const timeline = toClientTimeline(cockpit.buildTimeline({
     lead,
     milestones: (payments && payments.milestones) || [],
@@ -216,7 +221,6 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
     qReadinessPct,
     qCompletionStatus,
     docCounts,
-    reworkDocs,
     docItems: clientDocs,
     totalMembers,
     submittedMembers,
@@ -248,9 +252,12 @@ function buildPortalPage(snap, opts) {
   const qUrl   = isStaff
     ? `${BASE_URL}/q/${encodedRef}/review`
     : `${BASE_URL}/q/${encodedRef}${tokenParam}`;
+  // Client link carries the token so the standalone page can start honouring
+  // it the moment the hardening pass token-gates /documents (it ignores ?t=
+  // today — harmless, forward-compatible).
   const docUrl = isStaff
     ? `${BASE_URL}/d/${encodedRef}/review`
-    : `${BASE_URL}/documents/${encodedRef}`;
+    : `${BASE_URL}/documents/${encodedRef}${tokenParam}`;
 
   // Q card colour cue based on readiness
   const qPct      = snap.qReadinessPct;
@@ -334,12 +341,18 @@ function buildPortalPage(snap, opts) {
         when = `<span class="pay-when">${escHtml(m.paidAt || '')}${m.reference ? ' · ref ' + escHtml(m.reference) : ''}</span>`;
       } else if (m.status === 'requested') {
         badge = '<span class="pay-badge duenow">Due now</span>';
-        how = `<div class="howpay">Please pay by <b>Interac e-Transfer</b> to <b>${escHtml(pay.etransferEmail || '')}</b> and include the reference
+        how = isStaff
+          ? `<div class="howpay">Requested — awaiting the client's e-Transfer${m.reference ? ` (ref <b>${escHtml(m.reference)}</b>)` : ''}.</div>`
+          : `<div class="howpay">Please pay by <b>Interac e-Transfer</b> to <b>${escHtml(pay.etransferEmail || '')}</b> and include the reference
                <span class="refcode">${escHtml(m.reference || '')}</span> in the message — it links your payment to this milestone.
                We confirm by email once it arrives.</div>`;
       } else if (m.due) {
         badge = '<span class="pay-badge duenow">Due now</span>';
-        how = `<div class="howpay">This milestone is now due — a payment request with the e-Transfer details is on its way to your inbox.</div>`;
+        // No request has been sent yet, so promise nothing automatic — the
+        // team sends the e-Transfer details when they trigger the request.
+        how = isStaff
+          ? `<div class="howpay">Due at this stage — no e-Transfer request sent yet (send it from the consultation page or the case cockpit).</div>`
+          : `<div class="howpay">This milestone is now due — we will email you the e-Transfer details for it shortly.</div>`;
       } else {
         badge = '<span class="pay-badge soon">Not due yet</span>';
       }
@@ -420,6 +433,7 @@ function buildPortalPage(snap, opts) {
   <title>${isStaff ? 'Case Review' : 'Client Portal'} — ${escHtml(snap.caseRef)}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { max-width:100%; overflow-x:hidden; } /* the page must never scroll sideways on a phone */
     body { font-family: 'Segoe UI', Arial, sans-serif; background: #FAF8F4; color: #1F2937; }
 
     /* Dark brand header */
@@ -454,15 +468,21 @@ function buildPortalPage(snap, opts) {
     .j-step.done .j-dot { background:#C9A84C; border-color:#C9A84C; color:#fff; }
     .j-step.cur  .j-dot { background:#0B1D32; border-color:#0B1D32; color:#fff; box-shadow:0 0 0 4px rgba(11,29,50,.12); }
     .j-step.cur.good .j-dot, .j-step.done.good .j-dot { background:#1F7A4D; border-color:#1F7A4D; }
-    .j-lbl { font-size:10.5px; font-weight:600; color:#B9AE97; margin-top:7px; line-height:1.3; padding:0 4px; }
+    .j-lbl { font-size:10.5px; font-weight:600; color:#B9AE97; margin-top:7px; line-height:1.3; padding:0 4px; overflow-wrap:anywhere; }
     .j-step.done .j-lbl { color:#7A5F1F; }
     .j-step.cur  .j-lbl { color:#0B1D32; font-weight:800; }
-    @media (max-width:520px){ .j-lbl { font-size:9px; } }
+    @media (max-width:520px){
+      .j-lbl { font-size:9px; padding:0 2px; }
+      /* On phones only the current step keeps its label — the dots tell the rest. */
+      .j-step:not(.cur) .j-lbl { display:none; }
+    }
 
     /* Documents checklist rows */
     .doc-cat { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:#B9AE97; margin:14px 0 2px; }
-    .doc-row { display:flex; align-items:flex-start; gap:10px; padding:10px 0; border-top:1px solid #F4EFE4; }
-    .doc-row:first-of-type { border-top:none; }
+    .doc-row { display:flex; align-items:flex-start; gap:10px; padding:10px 0; border-top:1px solid #F4EFE4; flex-wrap:wrap; }
+    /* rows always follow a .doc-cat heading, so :first-of-type never matches —
+       drop the border on the row right after each category heading instead */
+    .doc-cat + .doc-row { border-top:none; }
     .doc-dot { width:9px; height:9px; border-radius:50%; flex:none; margin-top:5px; }
     .doc-main { flex:1; min-width:0; }
     .doc-name { font-size:13.5px; font-weight:700; color:#0B1D32; }
@@ -478,7 +498,8 @@ function buildPortalPage(snap, opts) {
 
     /* Payments */
     .pay-row { display:flex; align-items:flex-start; gap:10px; padding:11px 0; border-top:1px solid #F4EFE4; flex-wrap:wrap; }
-    .pay-row:first-of-type { border-top:none; }
+    /* the first row follows the .card-head div, so :first-of-type never matches */
+    .card-head + .pay-row { border-top:none; }
     .pay-name { font-size:13.5px; font-weight:700; color:#0B1D32; flex:1; min-width:180px; }
     .pay-amt { font-size:14px; font-weight:800; color:#0B1D32; font-variant-numeric:tabular-nums; white-space:nowrap; }
     .pay-badge { font-size:10.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; border-radius:999px; padding:3px 10px; white-space:nowrap; }
@@ -544,6 +565,13 @@ function buildPortalPage(snap, opts) {
       background:#FFFFFF; border:1px solid #E7E2D6; border-radius:10px;
       padding:12px 18px; margin-bottom:18px;
       display:flex; flex-wrap:wrap; gap:18px 24px; font-size:13px; color:#6B7280;
+    }
+    .case-meta > div { min-width:0; overflow-wrap:anywhere; }
+    @media (max-width:520px){
+      .top { padding:14px 16px; }
+      .top h1 { font-size:16px; }
+      .stage-pill { display:inline-block; margin:6px 0 0; max-width:100%; white-space:normal; line-height:1.35; }
+      .content { padding:0 12px 50px; }
     }
     .case-meta strong { color:#0B1D32; }
 
@@ -640,8 +668,8 @@ function buildPortalPage(snap, opts) {
   </main>
   ${!isStaff && (snap.docItems || []).some((d) => d.status === 'Missing' || d.status === 'Rework Required') ? `<script>
   (function () {
-    var CASE_REF = ${JSON.stringify(snap.caseRef)};
-    var TOKEN    = ${JSON.stringify(snap.accessToken || '')};
+    var CASE_REF = ${jsLit(snap.caseRef)};
+    var TOKEN    = ${jsLit(snap.accessToken || '')};
     var MAX      = 20 * 1024 * 1024;
     function state(id, msg, isErr) {
       var el = document.querySelector('[data-state="' + id + '"]');

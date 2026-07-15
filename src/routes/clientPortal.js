@@ -36,6 +36,43 @@ const ALLOWED_EXTENSIONS = new Set([
   '.zip',
 ]);
 
+/** Query/body values can arrive as arrays (?t=a&t=b) — never .trim() blind. */
+function oneStr(v) {
+  return String(Array.isArray(v) ? v[0] : (v == null ? '' : v)).trim();
+}
+
+// Per-IP rate limit (same sliding-window pattern as POST /lead/new, JSON
+// flavour). Multer buffers the whole body into memory BEFORE any in-handler
+// auth can run, so this limiter is the practical guard against
+// unauthenticated 20MB spray.
+const _uploadHits = new Map();
+function uploadRateLimit(req, res, next) {
+  const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim() || 'unknown';
+  const now = Date.now();
+  const hits = (_uploadHits.get(ip) || []).filter((t) => now - t < 15 * 60 * 1000);
+  if (hits.length >= 60) { // generous: a real client uploading a whole checklist stays well under
+    return res.status(429).json({ success: false, error: 'Too many uploads from this connection — please wait a few minutes and try again.' });
+  }
+  hits.push(now);
+  _uploadHits.set(ip, hits);
+  if (_uploadHits.size > 5000) _uploadHits.clear(); // bound memory
+  next();
+}
+
+// Multer errors (file too big etc.) must come back as the JSON the portal's
+// upload script expects — not fall through to the global 500 handler.
+function uploadSingle(req, res, next) {
+  upload.single('file')(req, res, (err) => {
+    if (!err) return next();
+    const tooBig = err.code === 'LIMIT_FILE_SIZE';
+    console.warn('[/client upload] multer error:', err.code || err.message);
+    res.status(tooBig ? 413 : 400).json({
+      success: false,
+      error: tooBig ? 'That file is over 20 MB — please compress it or send a smaller scan.' : 'There was a problem with that upload — please try again.',
+    });
+  });
+}
+
 /**
  * GET /client/:caseRef
  *
@@ -50,8 +87,8 @@ const ALLOWED_EXTENSIONS = new Set([
  */
 router.get('/:caseRef', async (req, res) => {
   const caseRef    = sanitiseCaseRef(req.params.caseRef);
-  const token      = (req.query.t || '').trim();
-  const wantsStaff = req.query.staff === '1';
+  const token      = oneStr(req.query.t);
+  const wantsStaff = oneStr(req.query.staff) === '1';
   const staff      = tryStaffAuth(req);
 
   // If the URL declares staff intent (?staff=1, used by the Monday Client
@@ -105,14 +142,22 @@ router.get('/:caseRef', async (req, res) => {
  *   2. the target item must BELONG to this case — a valid token for your own
  *      case can never push files onto another case's checklist row.
  */
-router.post('/:caseRef/document/:itemId/upload', upload.single('file'), async (req, res) => {
+router.post('/:caseRef/document/:itemId/upload', uploadRateLimit, uploadSingle, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
-  const itemId  = String(req.params.itemId || '').trim();
-  const token   = (req.query.t || req.body && req.body.t || '').trim();
+  const itemId  = oneStr(req.params.itemId);
+  const token   = oneStr(req.query.t) || oneStr(req.body && req.body.t);
   const file    = req.file;
 
   if (!/^\d+$/.test(itemId)) return res.status(400).json({ success: false, error: 'Invalid item id.' });
   if (!file)                 return res.status(400).json({ success: false, error: 'No file provided.' });
+
+  try {
+    // Auth FIRST: staff cookie OR the case's client token — same rule as the
+    // page. Nothing (not even the extension check) is answered pre-auth.
+    if (!tryStaffAuth(req)) await htmlQ.validateAccess(caseRef, token);
+  } catch (err) {
+    return res.status(403).json({ success: false, error: 'Access denied — please use the most recent link from your case officer.' });
+  }
 
   const ext = path.extname(file.originalname || '').toLowerCase();
   if (!ALLOWED_EXTENSIONS.has(ext)) {
@@ -120,17 +165,14 @@ router.post('/:caseRef/document/:itemId/upload', upload.single('file'), async (r
   }
 
   try {
-    // Auth: staff cookie OR the case's client token — same rule as the page.
-    if (!tryStaffAuth(req)) await htmlQ.validateAccess(caseRef, token);
-  } catch (err) {
-    return res.status(403).json({ success: false, error: 'Access denied — please use the most recent link from your case officer.' });
-  }
-
-  try {
     const docSvc = require('../services/documentFormService');
-    // Ownership check: the item must be one of THIS case's checklist rows.
-    const summary = await docSvc.getCaseSummary(caseRef);
-    const item = (summary.items || []).find((it) => String(it.id) === itemId);
+    // Ownership check against the UNFILTERED checklist: cross-case isolation
+    // only needs "this item belongs to this case". getCaseSummary's
+    // applicant-type manifest filter is display-only and fails CLOSED on a
+    // transient OneDrive read — using it here would 404 a spouse's legitimate
+    // document whenever the manifest read degrades.
+    const items = await docSvc.getCaseDocuments(caseRef);
+    const item = (items || []).find((it) => String(it.id) === itemId);
     if (!item) return res.status(404).json({ success: false, error: 'That document is not on this case.' });
 
     await docSvc.uploadFileToOneDrive(itemId, caseRef, file.buffer, file.originalname, file.mimetype);

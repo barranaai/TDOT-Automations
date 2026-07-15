@@ -70,7 +70,10 @@ function milestoneStates(lead, currentCaseStage, orderedStages = []) {
     }
     return {
       index: i, label: r.label, amountCents: r.amountCents, totalCents: r.totalCents, trigger,
-      status: p.status || 'pending',
+      // Legacy Square-era rows persisted status 'sent'; consumers (cockpit +
+      // client portal) branch on 'requested', so normalise here — otherwise an
+      // old request renders as "Not due yet" / a false "on its way" promise.
+      status: p.status === 'sent' ? 'requested' : (p.status || 'pending'),
       requestedAt: p.requestedAt || p.sentAt || '', paidAt: p.paidAt || '',
       reference: p.reference || '', method: p.method || '', due,
     };

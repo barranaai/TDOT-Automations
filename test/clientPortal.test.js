@@ -162,8 +162,8 @@ test('payments card: paid / requested / due / pending states render correctly', 
   assert.ok(html.includes('✓ Paid') && html.includes('ref CA123ETRF'), 'paid row shows date + reference');
   assert.ok(html.includes('TDOT-135-M2') && html.includes('Interac e-Transfer') && html.includes('admstdot@gmail.com'),
     'requested row carries the how-to-pay instructions with the reference code');
-  assert.ok(html.includes('a payment request with the e-Transfer details is on its way'),
-    'due-but-not-requested row is announced without instructions');
+  assert.ok(html.includes('we will email you the e-Transfer details for it shortly'),
+    'due-but-not-requested row promises nothing automatic — the team sends the request');
   assert.ok(html.includes('Not due yet'), 'future milestone stays calm');
   assert.ok(html.includes('1 of 4 paid'));
   assert.ok(html.includes('$1130.00 of $4520.00'), 'paid-so-far totals');
@@ -219,7 +219,9 @@ test('upload endpoint: rejects a wrong token with 403 before touching documents'
 test('upload endpoint: rejects an item that belongs to a different case (404)', async () => {
   const restore = [
     stub(htmlQ, 'validateAccess', async () => ({ itemId: '1', clientName: 'X' })),
-    stub(docSvc, 'getCaseSummary', async () => ({ items: [{ id: '999', name: 'Other doc' }] })),
+    // Ownership uses the UNFILTERED checklist — the display-only manifest
+    // filter (getCaseSummary) fails closed and would 404 legit member docs.
+    stub(docSvc, 'getCaseDocuments', async () => [{ id: '999', name: 'Other doc' }]),
     stub(docSvc, 'uploadFileToOneDrive', async () => { throw new Error('must not upload'); }),
   ];
   try {
@@ -230,19 +232,31 @@ test('upload endpoint: rejects an item that belongs to a different case (404)', 
   } finally { restore.forEach((r) => r()); }
 });
 
-test('upload endpoint: rejects disallowed file types (400) with no auth round-trip needed', async () => {
-  const res = fakeRes();
-  await uploadHandler()({ params: { caseRef: '2026-SP-001', itemId: '11' }, query: { t: 'x' }, body: {},
-    file: { originalname: 'virus.exe', mimetype: 'application/octet-stream', buffer: Buffer.from('x') }, cookies: {} }, res);
-  assert.equal(res.statusCode, 400);
-  assert.match(res.body.error, /not allowed/i);
+test('upload endpoint: disallowed file types rejected AFTER auth (no pre-auth probing)', async () => {
+  // Wrong token + bad extension → 403, never the extension error.
+  const restoreAuth = stub(htmlQ, 'validateAccess', async () => { throw new Error('Invalid token'); });
+  try {
+    const res = fakeRes();
+    await uploadHandler()({ params: { caseRef: '2026-SP-001', itemId: '11' }, query: { t: 'wrong' }, body: {},
+      file: { originalname: 'virus.exe', mimetype: 'application/octet-stream', buffer: Buffer.from('x') }, cookies: {} }, res);
+    assert.equal(res.statusCode, 403, 'unauthenticated callers cannot probe the extension allowlist');
+  } finally { restoreAuth(); }
+  // Valid token + bad extension → 400 with the type message.
+  const restoreOk = stub(htmlQ, 'validateAccess', async () => ({ itemId: '1', clientName: 'X' }));
+  try {
+    const res = fakeRes();
+    await uploadHandler()({ params: { caseRef: '2026-SP-001', itemId: '11' }, query: { t: 'good' }, body: {},
+      file: { originalname: 'virus.exe', mimetype: 'application/octet-stream', buffer: Buffer.from('x') }, cookies: {} }, res);
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.error, /not allowed/i);
+  } finally { restoreOk(); }
 });
 
 test('upload endpoint: happy path uploads, marks Received, returns success', async () => {
   const calls = [];
   const restore = [
     stub(htmlQ, 'validateAccess', async () => ({ itemId: '1', clientName: 'X' })),
-    stub(docSvc, 'getCaseSummary', async () => ({ items: [{ id: '11', name: 'Passport' }] })),
+    stub(docSvc, 'getCaseDocuments', async () => [{ id: '11', name: 'Passport' }]),
     stub(docSvc, 'uploadFileToOneDrive', async (...a) => { calls.push(['upload', a[0]]); }),
     stub(docSvc, 'markDocumentReceived', async (id) => { calls.push(['received', id]); }),
   ];
@@ -253,4 +267,28 @@ test('upload endpoint: happy path uploads, marks Received, returns success', asy
     assert.equal(res.body.success, true);
     assert.deepEqual(calls.slice(0, 2), [['upload', '11'], ['received', '11']]);
   } finally { restore.forEach((r) => r()); }
+});
+
+test('upload endpoint: duplicate ?t= array never crashes token parsing', async () => {
+  const restore = stub(htmlQ, 'validateAccess', async (ref, tok) => {
+    assert.equal(tok, 'a', 'first array value used');
+    throw new Error('Invalid token');
+  });
+  try {
+    const res = fakeRes();
+    await uploadHandler()({ params: { caseRef: '2026-SP-001', itemId: '11' }, query: { t: ['a', 'b'] }, body: {}, file: GOOD_FILE, cookies: {} }, res);
+    assert.equal(res.statusCode, 403, 'clean 403, not a TypeError 500');
+  } finally { restore(); }
+});
+
+test('milestoneStates: legacy Square-era "sent" status reads as requested', () => {
+  const { milestoneStates } = require('../src/services/milestonePaymentService');
+  const lead = {
+    retainerFee: '20', retainerHstRate: '13',
+    retainerMilestones: JSON.stringify([{ label: 'M1', amountCents: 2000, trigger: '' }]),
+    milestonePayments: JSON.stringify({ 0: { status: 'sent', sentAt: '2026-05-01', reference: 'OLD-REF' } }),
+  };
+  const rows = milestoneStates(lead, '', []);
+  assert.equal(rows[0].status, 'requested');
+  assert.equal(rows[0].requestedAt, '2026-05-01');
 });
