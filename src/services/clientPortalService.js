@@ -176,6 +176,19 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
     else                                docCounts.missing++;
   }
 
+  // 3b. Client-shaped checklist rows for the portal's Documents card — the id
+  //     powers the token-gated per-document upload endpoint.
+  const clientDocs = docItems.map((it) => ({
+    id:             it.id,
+    name:           it.name,
+    status:         it.status || 'Missing',
+    category:       it.category || 'General',
+    applicantType:  it.applicantType || 'Principal Applicant',
+    reviewNotes:    it.reviewNotes || '',
+    clientInstructions: it.clientInstructions || '',
+    lastUpload:     it.lastUpload || '',
+  }));
+
   // 4. Questionnaire status — submitted member count from manifest
   const totalMembers     = members.length || 1;
   const submittedMembers = members.filter(m => m.submittedAt).length;
@@ -204,6 +217,7 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
     qCompletionStatus,
     docCounts,
     reworkDocs,
+    docItems: clientDocs,
     totalMembers,
     submittedMembers,
     journey: clientStage(caseStage),
@@ -321,16 +335,37 @@ function buildPortalPage(snap, opts) {
       </div>
     </section>` : '';
 
-  // Rework doc bullet list (top 5)
-  const reworkSnippet = snap.reworkDocs.length
-    ? `<div style="margin-top:10px;padding:10px 14px;background:#fef2f2;border-left:3px solid #fca5a5;border-radius:6px;">
-         <strong style="color:#991b1b;font-size:13px;">Documents needing re-upload:</strong>
-         <ul style="margin:6px 0 0 18px;padding:0;color:#7f1d1d;font-size:13px;">
-           ${snap.reworkDocs.slice(0, 5).map(d => `<li>${escHtml(d.name || 'Document')}</li>`).join('')}
-           ${snap.reworkDocs.length > 5 ? `<li style="font-style:italic;">+${snap.reworkDocs.length - 5} more</li>` : ''}
-         </ul>
-       </div>`
-    : '';
+  // ── Documents checklist: per-doc rows with status + inline client upload ──
+  // Missing / Rework rows get an Upload control (token-gated endpoint);
+  // Received / Reviewed rows show their state. Staff mode is read-only here —
+  // staff act on the /d review page (or the case cockpit).
+  const DOC_DOT = { Reviewed: '#1F7A4D', Received: '#0B1D32', 'Rework Required': '#B42318', Missing: '#C9CDD4' };
+  const docsByCat = new Map();
+  for (const it of (snap.docItems || [])) {
+    if (!docsByCat.has(it.category)) docsByCat.set(it.category, []);
+    docsByCat.get(it.category).push(it);
+  }
+  const showTag = snap.totalMembers > 1;
+  const docListHtml = [...docsByCat.entries()].map(([cat, items]) => {
+    const rows = items.map((it) => {
+      const uploadable = !isStaff && (it.status === 'Missing' || it.status === 'Rework Required');
+      const statusLine = it.status === 'Missing'
+        ? 'Not uploaded yet'
+        : `${escHtml(it.status === 'Rework Required' ? 'Needs a new copy' : it.status)}${it.lastUpload ? ` · uploaded ${escHtml(it.lastUpload)}` : ''}`;
+      const note = (it.status === 'Rework Required' && it.reviewNotes)
+        ? `<div class="doc-note"><strong>From your case officer:</strong> ${escHtml(it.reviewNotes)}</div>` : '';
+      const right = uploadable
+        ? `<span class="up-wrap"><label class="up-btn${it.status === 'Rework Required' ? '' : ' re'}">${it.status === 'Rework Required' ? 'Upload new copy' : 'Upload'}<input type="file" data-item="${escHtml(it.id)}" data-name="${escHtml(it.name)}"></label><span class="up-state" data-state="${escHtml(it.id)}"></span></span>`
+        : `<span class="doc-ok">${it.status === 'Reviewed' ? '✓ Reviewed' : (it.status === 'Received' ? '✓ Received' : '')}</span>`;
+      return `<div class="doc-row"><span class="doc-dot" style="background:${DOC_DOT[it.status] || '#C9CDD4'}"></span>
+        <div class="doc-main">
+          <div class="doc-name">${escHtml(it.name)}${showTag ? `<span class="doc-tag">${escHtml(it.applicantType)}</span>` : ''}</div>
+          <div class="doc-meta">${statusLine}</div>
+          ${note}
+        </div>${right}</div>`;
+    }).join('');
+    return `<div class="doc-cat">${escHtml(cat)}</div>${rows}`;
+  }).join('');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -378,6 +413,23 @@ function buildPortalPage(snap, opts) {
     .j-step.done .j-lbl { color:#7A5F1F; }
     .j-step.cur  .j-lbl { color:#0B1D32; font-weight:800; }
     @media (max-width:520px){ .j-lbl { font-size:9px; } }
+
+    /* Documents checklist rows */
+    .doc-cat { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:#B9AE97; margin:14px 0 2px; }
+    .doc-row { display:flex; align-items:flex-start; gap:10px; padding:10px 0; border-top:1px solid #F4EFE4; }
+    .doc-row:first-of-type { border-top:none; }
+    .doc-dot { width:9px; height:9px; border-radius:50%; flex:none; margin-top:5px; }
+    .doc-main { flex:1; min-width:0; }
+    .doc-name { font-size:13.5px; font-weight:700; color:#0B1D32; }
+    .doc-tag { display:inline-block; font-size:10px; font-weight:700; color:#8A7B57; background:#F6F1E4; border-radius:999px; padding:1px 8px; margin-left:6px; vertical-align:middle; }
+    .doc-meta { font-size:11.5px; color:#9AA3AF; margin-top:1px; }
+    .doc-note { font-size:12px; color:#7f1d1d; background:#fef2f2; border-left:3px solid #fca5a5; border-radius:6px; padding:7px 10px; margin-top:6px; }
+    .up-wrap { flex:none; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+    .up-btn { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#fff; background:#8B0000; border-radius:8px; padding:7px 14px; cursor:pointer; }
+    .up-btn.re { background:#0B1D32; }
+    .up-btn input { display:none; }
+    .up-state { font-size:10.5px; color:#9AA3AF; max-width:150px; text-align:right; }
+    .doc-ok { flex:none; font-size:12px; font-weight:700; color:#1F7A4D; padding-top:3px; white-space:nowrap; }
 
     /* Case journey timeline */
     .ctl { position:relative; padding-left:22px; margin-top:4px; }
@@ -508,8 +560,10 @@ function buildPortalPage(snap, opts) {
           ${snap.docCounts.rework > 0 ? `<span style="color:#991b1b;font-weight:700;">${snap.docCounts.rework} need re-upload</span>` : ''}
         </div>
       </div>
-      ${reworkSnippet}
-      <a href="${escHtml(docUrl)}" class="btn ${snap.docCounts.rework > 0 ? '' : 'btn-light'}">${escHtml(docBtnText)}</a>
+      ${docListHtml || '<div class="doc-meta" style="margin-top:8px">No documents have been requested yet — your checklist appears here as soon as your case officer prepares it.</div>'}
+      ${isStaff
+        ? `<a href="${escHtml(docUrl)}" class="btn" style="margin-top:14px">${escHtml(docBtnText)}</a>`
+        : (docListHtml ? `<div style="margin-top:12px;font-size:12px;color:#9AA3AF;">Files upload securely straight from this page. Prefer the full page with detailed instructions? <a href="${escHtml(docUrl)}" style="color:#8B0000;font-weight:700;">Open it here</a>.</div>` : '')}
     </section>
 
     ${timelineHtml}
@@ -522,6 +576,46 @@ function buildPortalPage(snap, opts) {
     </p>
 
   </main>
+  ${!isStaff && (snap.docItems || []).some((d) => d.status === 'Missing' || d.status === 'Rework Required') ? `<script>
+  (function () {
+    var CASE_REF = ${JSON.stringify(snap.caseRef)};
+    var TOKEN    = ${JSON.stringify(snap.accessToken || '')};
+    var MAX      = 20 * 1024 * 1024;
+    function state(id, msg, isErr) {
+      var el = document.querySelector('[data-state="' + id + '"]');
+      if (el) { el.textContent = msg; el.style.color = isErr ? '#B42318' : '#9AA3AF'; }
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('input[type="file"][data-item]'), function (input) {
+      input.addEventListener('change', function () {
+        var file = input.files && input.files[0];
+        if (!file) return;
+        var id = input.getAttribute('data-item');
+        if (file.size > MAX) { state(id, 'File is over 20 MB — please send a smaller copy.', true); input.value = ''; return; }
+        var label = input.closest('label'); if (label) { label.style.opacity = '.55'; label.style.pointerEvents = 'none'; }
+        state(id, 'Uploading ' + file.name + '…');
+        var fd = new FormData();
+        fd.append('file', file, file.name);
+        fetch('/client/' + encodeURIComponent(CASE_REF) + '/document/' + encodeURIComponent(id) + '/upload?t=' + encodeURIComponent(TOKEN), {
+          method: 'POST', body: fd
+        })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok && j.success, j: j }; }); })
+        .then(function (res) {
+          if (res.ok) { state(id, 'Uploaded ✓ — refreshing…'); setTimeout(function () { window.location.reload(); }, 900); }
+          else {
+            state(id, (res.j && res.j.error) || 'Upload failed — please try again.', true);
+            if (label) { label.style.opacity = ''; label.style.pointerEvents = ''; }
+            input.value = '';
+          }
+        })
+        .catch(function () {
+          state(id, 'Upload failed — please check your connection and try again.', true);
+          if (label) { label.style.opacity = ''; label.style.pointerEvents = ''; }
+          input.value = '';
+        });
+      });
+    });
+  })();
+  </script>` : ''}
 </body>
 </html>`;
 }

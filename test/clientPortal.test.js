@@ -111,3 +111,110 @@ test('buildPortalPage: client meta shows the friendly stage, staff mode keeps th
   const staff = buildPortalPage(snap(), { mode: 'staff', staffName: 'Gauri' });
   assert.ok(staff.includes('Document Collection Started'), 'staff still sees the internal stage');
 });
+
+// ─── Documents card: per-doc rows + inline upload (Phase 2) ───────────────────
+
+function docSnap() {
+  return snap({
+    docItems: [
+      { id: '11', name: 'Passport', status: 'Missing', category: 'Identity', applicantType: 'Principal Applicant', reviewNotes: '', clientInstructions: '', lastUpload: '' },
+      { id: '12', name: 'Bank statement', status: 'Rework Required', category: 'Financial', applicantType: 'Principal Applicant', reviewNotes: 'May is missing', clientInstructions: '', lastUpload: '2026-07-13' },
+      { id: '13', name: 'IELTS', status: 'Reviewed', category: 'Language', applicantType: 'Principal Applicant', reviewNotes: '', clientInstructions: '', lastUpload: '2026-07-10' },
+    ],
+  });
+}
+
+test('documents card: upload controls only on Missing/Rework rows; done rows read-only', () => {
+  const html = buildPortalPage(docSnap());
+  assert.equal((html.match(/data-item="/g) || []).length, 2, 'Passport + Bank get upload inputs');
+  assert.ok(html.includes('Upload new copy'), 'rework rows say Upload new copy');
+  assert.ok(html.includes('✓ Reviewed'), 'reviewed rows show their state');
+  assert.ok(html.includes('From your case officer:') && html.includes('May is missing'), 'rework note surfaced');
+  assert.ok(html.includes('<script>'), 'upload script emitted when uploadables exist');
+});
+
+test('documents card: staff mode renders read-only (no upload inputs, review button instead)', () => {
+  const html = buildPortalPage(docSnap(), { mode: 'staff', staffName: 'G' });
+  assert.ok(!html.includes('data-item='), 'no client upload controls for staff');
+  assert.ok(!html.includes('<script>'), 'no upload script in staff mode');
+});
+
+test('documents card: no uploadables → no script emitted', () => {
+  const html = buildPortalPage(snap({ docItems: [
+    { id: '13', name: 'IELTS', status: 'Reviewed', category: 'Language', applicantType: 'Principal Applicant', reviewNotes: '', clientInstructions: '', lastUpload: '' },
+  ] }));
+  assert.ok(!html.includes('<script>'));
+});
+
+// ─── Upload endpoint: auth + ownership guards (stubbed route handler) ─────────
+
+const clientPortalRouter = require('../src/routes/clientPortal');
+const htmlQ  = require('../src/services/htmlQuestionnaireService');
+const docSvc = require('../src/services/documentFormService');
+
+function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; }
+
+function uploadHandler() {
+  const layer = clientPortalRouter.stack.find((l) => l.route && l.route.path === '/:caseRef/document/:itemId/upload');
+  return layer.route.stack[layer.route.stack.length - 1].handle; // final handler (multer skipped; req.file preset)
+}
+
+function fakeRes() {
+  const res = { statusCode: 200, body: null, headersSent: false };
+  res.status = (c) => { res.statusCode = c; return res; };
+  res.json = (b) => { res.body = b; res.headersSent = true; return res; };
+  return res;
+}
+
+const GOOD_FILE = { originalname: 'passport.pdf', mimetype: 'application/pdf', buffer: Buffer.from('x') };
+
+test('upload endpoint: rejects a wrong token with 403 before touching documents', async () => {
+  const restore = [
+    stub(htmlQ, 'validateAccess', async () => { throw new Error('Invalid token'); }),
+    stub(docSvc, 'getCaseSummary', async () => { throw new Error('must not be called'); }),
+  ];
+  try {
+    const res = fakeRes();
+    await uploadHandler()({ params: { caseRef: '2026-SP-001', itemId: '11' }, query: { t: 'wrong' }, body: {}, file: GOOD_FILE, cookies: {} }, res);
+    assert.equal(res.statusCode, 403);
+  } finally { restore.forEach((r) => r()); }
+});
+
+test('upload endpoint: rejects an item that belongs to a different case (404)', async () => {
+  const restore = [
+    stub(htmlQ, 'validateAccess', async () => ({ itemId: '1', clientName: 'X' })),
+    stub(docSvc, 'getCaseSummary', async () => ({ items: [{ id: '999', name: 'Other doc' }] })),
+    stub(docSvc, 'uploadFileToOneDrive', async () => { throw new Error('must not upload'); }),
+  ];
+  try {
+    const res = fakeRes();
+    await uploadHandler()({ params: { caseRef: '2026-SP-001', itemId: '11' }, query: { t: 'good' }, body: {}, file: GOOD_FILE, cookies: {} }, res);
+    assert.equal(res.statusCode, 404);
+    assert.match(res.body.error, /not on this case/i);
+  } finally { restore.forEach((r) => r()); }
+});
+
+test('upload endpoint: rejects disallowed file types (400) with no auth round-trip needed', async () => {
+  const res = fakeRes();
+  await uploadHandler()({ params: { caseRef: '2026-SP-001', itemId: '11' }, query: { t: 'x' }, body: {},
+    file: { originalname: 'virus.exe', mimetype: 'application/octet-stream', buffer: Buffer.from('x') }, cookies: {} }, res);
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /not allowed/i);
+});
+
+test('upload endpoint: happy path uploads, marks Received, returns success', async () => {
+  const calls = [];
+  const restore = [
+    stub(htmlQ, 'validateAccess', async () => ({ itemId: '1', clientName: 'X' })),
+    stub(docSvc, 'getCaseSummary', async () => ({ items: [{ id: '11', name: 'Passport' }] })),
+    stub(docSvc, 'uploadFileToOneDrive', async (...a) => { calls.push(['upload', a[0]]); }),
+    stub(docSvc, 'markDocumentReceived', async (id) => { calls.push(['received', id]); }),
+  ];
+  try {
+    const res = fakeRes();
+    await uploadHandler()({ params: { caseRef: '2026-SP-001', itemId: '11' }, query: { t: 'good' }, body: {}, file: GOOD_FILE, cookies: {} }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.success, true);
+    assert.deepEqual(calls.slice(0, 2), [['upload', '11'], ['received', '11']]);
+  } finally { restore.forEach((r) => r()); }
+});
