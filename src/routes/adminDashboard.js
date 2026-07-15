@@ -1505,9 +1505,23 @@ function renderTablePage() {
       tr.style.cursor = 'pointer';
       tr.title = 'Open case cockpit';
       tr.onclick = function() { window.location.href = '/admin/case/' + encodeURIComponent(c.caseRef); };
+    } else {
+      tr.title = 'No case reference yet — set the Case Type on this item in Monday and the reference (and cockpit) is created automatically.';
+    }
+    // No reference = the cockpit can't open. Say WHY and what unblocks it,
+    // instead of a silent dash: missing Case Type is the usual cause (the
+    // reference is derived from it); if the type IS set, assignment is just
+    // pending (caseRefService runs off the Case Type webhook).
+    var refCell;
+    if (c.caseRef) {
+      refCell = escHtml(c.caseRef);
+    } else if (!c.caseType || c.caseType === 'Unknown') {
+      refCell = '<span class="badge orange">Needs Case Type</span>';
+    } else {
+      refCell = '<span class="badge blue">Ref pending</span>';
     }
     tr.innerHTML =
-      '<td style="font-weight:600;color:var(--navy);white-space:nowrap">' + escHtml(c.caseRef || '—') + '</td>' +
+      '<td style="font-weight:600;color:var(--navy);white-space:nowrap">' + refCell + '</td>' +
       '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(c.clientName) + '</td>' +
       '<td style="color:var(--muted);font-size:11px">' + shortType(c.caseType) + '</td>' +
       '<td style="font-size:11px">' + escHtml(c.caseStage) + '</td>' +
