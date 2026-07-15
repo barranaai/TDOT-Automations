@@ -313,6 +313,51 @@ function buildPortalPage(snap, opts) {
       </div>
     </section>`;
 
+  // ── Payments card (view + how-to-pay; never a processor) ──────────────────
+  // Rendered only when a milestone schedule exists. Paid rows show their date
+  // and reference; a requested milestone gets the e-Transfer instructions with
+  // the reference code the client must include; a due-but-not-yet-requested
+  // milestone is announced honestly without instructions (the request email
+  // carries them). Amounts are the HST-inclusive totals from the schedule.
+  const pay = snap.payments;
+  const payMilestones = (pay && pay.milestones) || [];
+  let paymentsHtml = '';
+  if (payMilestones.length) {
+    const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
+    const paidCents = payMilestones.filter((m) => m.status === 'paid').reduce((s, m) => s + (m.totalCents || 0), 0);
+    const totalCents = payMilestones.reduce((s, m) => s + (m.totalCents || 0), 0);
+    const rows = payMilestones.map((m) => {
+      const label = m.label || `Milestone ${Number(m.index) + 1}`;
+      let badge, when = '', how = '';
+      if (m.status === 'paid') {
+        badge = '<span class="pay-badge paid">✓ Paid</span>';
+        when = `<span class="pay-when">${escHtml(m.paidAt || '')}${m.reference ? ' · ref ' + escHtml(m.reference) : ''}</span>`;
+      } else if (m.status === 'requested') {
+        badge = '<span class="pay-badge duenow">Due now</span>';
+        how = `<div class="howpay">Please pay by <b>Interac e-Transfer</b> to <b>${escHtml(pay.etransferEmail || '')}</b> and include the reference
+               <span class="refcode">${escHtml(m.reference || '')}</span> in the message — it links your payment to this milestone.
+               We confirm by email once it arrives.</div>`;
+      } else if (m.due) {
+        badge = '<span class="pay-badge duenow">Due now</span>';
+        how = `<div class="howpay">This milestone is now due — a payment request with the e-Transfer details is on its way to your inbox.</div>`;
+      } else {
+        badge = '<span class="pay-badge soon">Not due yet</span>';
+      }
+      return `<div class="pay-row"><span class="pay-name">${escHtml(label)}</span>${badge}${when}<span class="pay-amt">${money(m.totalCents)}</span>${how}</div>`;
+    }).join('');
+    paymentsHtml = `<section class="card">
+      <div class="card-head">
+        <div>
+          <h3>💳 Payments</h3>
+          <div class="sub">Your retainer milestones — amounts include HST. We only ever ask for payment by Interac e-Transfer${pay.etransferEmail ? ` to <b>${escHtml(pay.etransferEmail)}</b>` : ''}.</div>
+        </div>
+        <span class="badge ${paidCents >= totalCents ? 'badge-ok' : 'badge-prog'}">${payMilestones.filter((m) => m.status === 'paid').length} of ${payMilestones.length} paid</span>
+      </div>
+      ${rows}
+      <div class="pay-total"><span>Paid so far</span><span>${money(paidCents)} of ${money(totalCents)}</span></div>
+    </section>`;
+  }
+
   // ── "Your case journey" timeline (client-voiced, chronological) ───────────
   const CTL_DOT = { lead: '#0B1D32', meeting: '#0B1D32', retainer: '#C9A84C', payment: '#1F7A4D', doc: '#9AA3AF', questionnaire: '#B7791F' };
   const tlEvents = snap.timeline || [];
@@ -430,6 +475,21 @@ function buildPortalPage(snap, opts) {
     .up-btn input { display:none; }
     .up-state { font-size:10.5px; color:#9AA3AF; max-width:150px; text-align:right; }
     .doc-ok { flex:none; font-size:12px; font-weight:700; color:#1F7A4D; padding-top:3px; white-space:nowrap; }
+
+    /* Payments */
+    .pay-row { display:flex; align-items:flex-start; gap:10px; padding:11px 0; border-top:1px solid #F4EFE4; flex-wrap:wrap; }
+    .pay-row:first-of-type { border-top:none; }
+    .pay-name { font-size:13.5px; font-weight:700; color:#0B1D32; flex:1; min-width:180px; }
+    .pay-amt { font-size:14px; font-weight:800; color:#0B1D32; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .pay-badge { font-size:10.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; border-radius:999px; padding:3px 10px; white-space:nowrap; }
+    .pay-badge.paid { background:#EAF6EF; color:#1F7A4D; }
+    .pay-badge.duenow { background:#FDEBE7; color:#B42318; }
+    .pay-badge.soon { background:#F6F1E4; color:#8A7B57; }
+    .pay-when { font-size:11.5px; color:#9AA3AF; white-space:nowrap; }
+    .howpay { flex-basis:100%; background:#FBF7EC; border:1px solid #EAD9A8; border-left:4px solid #C9A84C; border-radius:8px; padding:11px 14px; margin-top:6px; font-size:13px; color:#5C4716; line-height:1.55; }
+    .howpay b { color:#3F3110; }
+    .howpay .refcode { display:inline-block; font-family:ui-monospace, Menlo, Consolas, monospace; font-weight:700; background:#fff; border:1px dashed #C9A84C; border-radius:6px; padding:2px 9px; color:#7A5F1F; }
+    .pay-total { display:flex; justify-content:space-between; font-size:13px; font-weight:700; color:#0B1D32; border-top:2px solid #EFE9DC; padding-top:10px; margin-top:6px; }
 
     /* Case journey timeline */
     .ctl { position:relative; padding-left:22px; margin-top:4px; }
@@ -565,6 +625,8 @@ function buildPortalPage(snap, opts) {
         ? `<a href="${escHtml(docUrl)}" class="btn" style="margin-top:14px">${escHtml(docBtnText)}</a>`
         : (docListHtml ? `<div style="margin-top:12px;font-size:12px;color:#9AA3AF;">Files upload securely straight from this page. Prefer the full page with detailed instructions? <a href="${escHtml(docUrl)}" style="color:#8B0000;font-weight:700;">Open it here</a>.</div>` : '')}
     </section>
+
+    ${paymentsHtml}
 
     ${timelineHtml}
 

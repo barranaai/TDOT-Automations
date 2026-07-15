@@ -146,6 +146,42 @@ test('documents card: no uploadables → no script emitted', () => {
   assert.ok(!html.includes('<script>'));
 });
 
+// ─── Payments card (Phase 3): view + how-to-pay, never a processor ────────────
+
+function paySnap(milestones) {
+  return snap({ payments: { retainerFee: '2000', etransferEmail: 'admstdot@gmail.com', milestones } });
+}
+
+test('payments card: paid / requested / due / pending states render correctly', () => {
+  const html = buildPortalPage(paySnap([
+    { index: 0, label: 'Milestone 1 – Admin Fee', totalCents: 113000, status: 'paid', paidAt: '2026-07-12', reference: 'CA123ETRF', due: false },
+    { index: 1, label: 'Milestone 2 – Filing', totalCents: 113000, status: 'requested', reference: 'TDOT-135-M2', due: true },
+    { index: 2, label: 'Milestone 3 – Submission', totalCents: 113000, status: 'pending', reference: '', due: true },
+    { index: 3, label: 'Milestone 4 – Decision', totalCents: 113000, status: 'pending', reference: '', due: false },
+  ]));
+  assert.ok(html.includes('✓ Paid') && html.includes('ref CA123ETRF'), 'paid row shows date + reference');
+  assert.ok(html.includes('TDOT-135-M2') && html.includes('Interac e-Transfer') && html.includes('admstdot@gmail.com'),
+    'requested row carries the how-to-pay instructions with the reference code');
+  assert.ok(html.includes('a payment request with the e-Transfer details is on its way'),
+    'due-but-not-requested row is announced without instructions');
+  assert.ok(html.includes('Not due yet'), 'future milestone stays calm');
+  assert.ok(html.includes('1 of 4 paid'));
+  assert.ok(html.includes('$1130.00 of $4520.00'), 'paid-so-far totals');
+});
+
+test('payments card: omitted entirely when there is no milestone schedule', () => {
+  assert.ok(!buildPortalPage(snap({ payments: null })).includes('💳 Payments'));
+  assert.ok(!buildPortalPage(paySnap([])).includes('💳 Payments'));
+});
+
+test('payments card: never renders any card-processing controls', () => {
+  const html = buildPortalPage(paySnap([{ index: 0, label: 'M1', totalCents: 100, status: 'requested', reference: 'R', due: true }]));
+  // Precise processor signals only — "stripe" alone would false-positive on the
+  // CSS "gold accent stripe" comment.
+  assert.ok(!/pay now|card number|cardholder|cvv|checkout|stripe\.com|js\.stripe|square\.link|squareup\.com/i.test(html),
+    'view + instructions only');
+});
+
 // ─── Upload endpoint: auth + ownership guards (stubbed route handler) ─────────
 
 const clientPortalRouter = require('../src/routes/clientPortal');
