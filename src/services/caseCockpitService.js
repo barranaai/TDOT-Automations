@@ -109,14 +109,98 @@ function summariseDocuments(items) {
     const cat = it.category || 'Other';
     if (!catMap.has(cat)) catMap.set(cat, []);
     catMap.get(cat).push({
+      // id + notes + upload date power the Documents tab's INLINE actions
+      // (mark reviewed / request rework) — not just the read-only summary.
+      id:            it.id,
       name:          it.name,
       status:        s,
       applicantType: it.applicantType || 'Principal Applicant',
+      lastUpload:    it.lastUpload || '',
+      reviewNotes:   it.reviewNotes || '',
     });
   }
 
   const byCategory = [...catMap.entries()].map(([category, list]) => ({ category, items: list }));
   return { counts, byCategory, rework: rework.map((r) => ({ name: r.name, applicantType: r.applicantType })) };
+}
+
+// ─── Lead link + derived timeline ────────────────────────────────────────────
+//
+// The case's LEAD record (pre-handoff pipeline) carries the consultation
+// meeting artifacts and the retainer/milestone payment state. The link is
+// one-directional (the lead stores clientMasterItemId), so we reverse-resolve.
+
+/** The lead fields the cockpit tabs consume (null when no lead is linked). */
+function pickLeadFields(lead) {
+  if (!lead) return null;
+  return {
+    leadId:              lead.id,
+    createdAt:           lead.createdAt || '',
+    bookedSlot:          lead.bookedSlot || '',
+    meetingType:         lead.meetingType || '',
+    meetingLink:         lead.meetingLink || '',
+    recordingLink:       lead.recordingLink || '',
+    transcriptLink:      lead.transcriptLink || '',
+    preConsultPdf:       lead.preConsultPdf || '',
+    consultationHeld:    lead.consultationHeld || '',
+    consultAgreementSent: lead.consultAgreementSent || '',
+    inviteSentAt:        lead.inviteSentAt || '',
+    assignedConsultant:  (lead.assignedConsultant || '').trim(),
+    retainerFee:         lead.retainerFee || '',
+    retainerSent:        lead.retainerSent || '',
+    retainerSigned:      lead.retainerSigned || '',
+    retainerPaid:        lead.retainerPaid || '',
+    consultPaid:         Boolean((lead.squareConsultTxnId || '').trim()),
+  };
+}
+
+/**
+ * PURE: derive a chronological case timeline from the timestamps the system
+ * already records — no new capture infrastructure. Events sort ascending;
+ * dates are the raw stored strings (ISO or YYYY-MM-DD), display-truncated
+ * client-side.
+ *
+ * @param {{ lead?: object|null, milestones?: Array, qMembers?: Array, docItems?: Array }} src
+ * @returns {Array<{ date, title, detail, kind }>}
+ */
+function buildTimeline({ lead, milestones = [], qMembers = [], docItems = [] } = {}) {
+  const ev = [];
+  const push = (date, title, detail, kind) => {
+    const d = String(date || '').trim();
+    if (d) ev.push({ date: d, title, detail: detail || '', kind });
+  };
+  const L = lead || {};
+
+  push(L.createdAt,            'Inquiry received',            'Intake form submitted', 'lead');
+  push(L.inviteSentAt,         'Booking invite sent',         '', 'lead');
+  push(L.bookedSlot,           'Consultation scheduled',      L.meetingType ? `${L.meetingType} meeting` : '', 'meeting');
+  push(L.consultationHeld,     'Consultation held',           L.assignedConsultant ? `with ${L.assignedConsultant}` : '', 'meeting');
+  push(L.consultAgreementSent, 'Consultation agreement emailed', '', 'doc');
+  push(L.retainerSent,         'Retainer agreement sent',     '', 'retainer');
+  push(L.retainerSigned,       'Retainer signed — case opened', '', 'retainer');
+  push(L.retainerPaid,         'First retainer payment recorded', '', 'payment');
+
+  for (const m of milestones) {
+    const label = m.label || `Milestone ${Number(m.index) + 1}`;
+    push(m.requestedAt, `e-Transfer requested — ${label}`, m.reference ? `ref ${m.reference}` : '', 'payment');
+    push(m.paidAt,      `Paid — ${label}`,                 m.reference ? `ref ${m.reference}` : '', 'payment');
+  }
+  for (const q of qMembers) {
+    push(q.submittedAt, `Questionnaire submitted — ${q.label || q.key || 'member'}`, '', 'questionnaire');
+  }
+  for (const doc of docItems) {
+    push(doc.lastUpload, `Document received — ${doc.name}`, doc.applicantType || '', 'doc');
+  }
+
+  // Normalise "YYYY-MM-DD HH:mm" vs ISO 'T' separators so same-day events
+  // sort by time regardless of stored format. Date-ONLY events (no time
+  // component) sort at END of day — "by the end of that day this had
+  // happened" — so e.g. "Consultation held" (a date column) never renders
+  // before that same day's 15:00 scheduled slot. Ties keep insertion order
+  // (Array.prototype.sort is stable), which follows the journey sequence.
+  const sortKey = (d) => (/[T ]/.test(d) ? d.replace(' ', 'T') : d + 'T23:59');
+  ev.sort((a, b) => sortKey(a.date).localeCompare(sortKey(b.date)));
+  return ev;
 }
 
 /**
@@ -147,6 +231,40 @@ async function getCaseOverview(caseRef) {
 
   const documents = summariseDocuments(docSummary.items || []);
 
+  // ── Lead link → meetings, payments, timeline (all best-effort) ────────────
+  // The lead is the pre-handoff record; legacy cases may have none, and each
+  // section degrades to null/empty rather than failing the page.
+  let lead = null;
+  try {
+    lead = await require('./leadService').findByColumnValue('clientMasterItemId', String(itemId));
+  } catch (e) {
+    console.warn(`[Cockpit] lead lookup failed for ${caseRef}: ${e.message}`);
+  }
+
+  let payments = null;
+  if (lead) {
+    try {
+      const rp = await require('./consultantPortalService').getRetainerPlan(lead.id);
+      payments = {
+        retainerFee:     rp.retainerFee || '',
+        feeSet:          !!rp.feeSet,
+        planSaved:       !!rp.saved,
+        etransferEmail:  require('./milestonePaymentService').ETRANSFER_EMAIL,
+        milestones:      rp.milestonePayments || [],
+        currentCaseStage: rp.currentCaseStage || '',
+      };
+    } catch (e) {
+      console.warn(`[Cockpit] payments read failed for ${caseRef}: ${e.message}`);
+    }
+  }
+
+  const timeline = buildTimeline({
+    lead,
+    milestones: (payments && payments.milestones) || [],
+    qMembers:   members || [],
+    docItems:   docSummary.items || [],
+  });
+
   return {
     caseRef,
     itemId,
@@ -172,12 +290,15 @@ async function getCaseOverview(caseRef) {
       flags:     Object.keys(m.flags || {}),
     })),
     questionnaire: {
-      members:   qMembers.map((m) => ({ key: m.key, type: m.type, label: m.label, status: m.status, hasData: !!m.hasData })),
+      members:   qMembers.map((m) => ({ key: m.key, type: m.type, label: m.label, status: m.status, hasData: !!m.hasData, submittedAt: m.submittedAt || '' })),
       submitted: qMembers.filter((m) => m.status === 'Submitted').length,
       total:     qMembers.length,
     },
     documents,
+    lead: pickLeadFields(lead),
+    payments,
+    timeline,
   };
 }
 
-module.exports = { getCaseOverview, _CM: CM };
+module.exports = { getCaseOverview, buildTimeline, summariseDocuments, pickLeadFields, _CM: CM };

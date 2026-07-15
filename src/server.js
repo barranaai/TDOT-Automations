@@ -337,6 +337,31 @@ app.get('/api/case/:caseRef', async (req, res) => {
   }
 });
 
+// Cockpit Documents tab — inline mark-reviewed / request-rework. Same service
+// functions the /d/:caseRef/review page uses, but behind the cockpit's
+// ADMIN_API_KEY (the /d page uses the separate Monday-OAuth staff cookie).
+app.post('/api/case/:caseRef/document/:itemId/status', async (req, res) => {
+  const itemId = String(req.params.itemId || '').replace(/\D/g, '');
+  const { action, notes } = req.body || {};
+  if (!itemId) return res.status(400).json({ ok: false, error: 'Invalid item id' });
+  if (action !== 'reviewed' && action !== 'rework') {
+    return res.status(400).json({ ok: false, error: 'action must be "reviewed" or "rework"' });
+  }
+  if (action === 'rework' && !(typeof notes === 'string' && notes.trim())) {
+    return res.status(400).json({ ok: false, error: 'notes are required for rework' });
+  }
+  try {
+    const reviewFormSvc = require('./services/documentReviewFormService');
+    if (action === 'reviewed') await reviewFormSvc.markReviewed(itemId);
+    else await reviewFormSvc.requestRework(itemId, notes.trim());
+    console.log(`[Cockpit] document ${itemId} (${(req.params.caseRef || '').trim()}): ${action}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`[Cockpit] document action ${action} failed for ${itemId}:`, err.message);
+    res.status(500).json({ ok: false, error: 'Internal server error' });
+  }
+});
+
 // Leads tab — the whole Lead Board, newest first (pre-booking pipeline)
 app.get('/api/leads', async (_req, res) => {
   try {

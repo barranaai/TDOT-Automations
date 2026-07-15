@@ -116,6 +116,47 @@ function buildCockpitHTML(caseRef) {
     .placeholder p { font-size:13px; max-width:420px; margin:0 auto 14px; }
     .muted { color:var(--light); font-size:12px; }
 
+    /* Tab-panel building blocks (Documents / Payments / Meetings / Timeline) */
+    .sbtn { display:inline-flex; align-items:center; gap:5px; padding:5px 11px; border-radius:7px; font-size:11.5px; font-weight:700; border:1px solid var(--border); color:var(--navy); background:white; cursor:pointer; font-family:inherit; transition:all .12s; text-decoration:none; }
+    .sbtn:hover:not(:disabled) { border-color:var(--navy); background:#f0f4f8; }
+    .sbtn:disabled { opacity:.5; cursor:not-allowed; }
+    .sbtn.primary { background:var(--navy); color:white; border-color:var(--navy); }
+    .sbtn.danger:hover:not(:disabled) { border-color:#dc2626; color:#dc2626; background:#fef2f2; }
+    .tab-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .act-msg { display:none; padding:9px 12px; border-radius:8px; font-size:12.5px; margin-top:12px; font-weight:600; }
+    .act-msg.info { background:#eff6ff; color:#2563eb; display:block; }
+    .act-msg.ok { background:#f0fdf4; color:#16a34a; display:block; }
+    .act-msg.err { background:#fef2f2; color:#dc2626; display:block; }
+
+    .drow { display:flex; align-items:center; gap:9px; padding:9px 0; border-top:1px solid #f6f8fb; font-size:12.5px; flex-wrap:wrap; }
+    .drow:first-child { border-top:none; }
+    .drow .dn { color:var(--navy); font-weight:600; }
+    .drow .dmeta { font-size:11px; color:var(--light); }
+    .drow .dacts { margin-left:auto; display:flex; gap:6px; }
+    .dnote { flex-basis:100%; font-size:11.5px; color:#b45309; background:#fffbeb; border-radius:7px; padding:6px 10px; margin:2px 0 2px 17px; }
+
+    .pay-strip { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+    .ms-row { display:flex; align-items:center; gap:10px; padding:11px 0; border-top:1px solid #f6f8fb; font-size:13px; flex-wrap:wrap; }
+    .ms-row:first-child { border-top:none; }
+    .ms-row .ms-label { font-weight:600; color:var(--navy); }
+    .ms-row .ms-amt { font-weight:800; color:var(--navy); font-variant-numeric:tabular-nums; }
+    .ms-row .ms-meta { font-size:11px; color:var(--light); }
+    .ms-row .ms-acts { margin-left:auto; display:flex; gap:6px; }
+
+    .kvline { display:flex; gap:10px; padding:8px 0; border-top:1px solid #f6f8fb; font-size:13px; align-items:center; flex-wrap:wrap; }
+    .kvline:first-child { border-top:none; }
+    .kvline .k { color:var(--muted); min-width:170px; }
+    .kvline .v { color:var(--navy); font-weight:600; }
+
+    .tl { position:relative; padding-left:24px; }
+    .tl::before { content:""; position:absolute; left:7px; top:6px; bottom:6px; width:2px; background:#e8edf4; border-radius:1px; }
+    .tl-ev { position:relative; padding:0 0 16px 8px; }
+    .tl-ev:last-child { padding-bottom:2px; }
+    .tl-dot { position:absolute; left:-24px; top:3px; width:12px; height:12px; border-radius:50%; border:2.5px solid white; box-shadow:0 0 0 1.5px #e2e8f0; }
+    .tl-date { font-size:10.5px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:.4px; }
+    .tl-title { font-size:13px; font-weight:700; color:var(--navy); margin-top:1px; }
+    .tl-detail { font-size:12px; color:var(--muted); margin-top:1px; }
+
     @media (max-width: 820px) {
       .grid-2, .grid-3 { grid-template-columns:1fr; }
       .doc-strip { grid-template-columns:repeat(3,1fr); }
@@ -154,9 +195,9 @@ ${buildNavHeader('dashboard')}
       <button class="tab active" data-tab="overview">Overview</button>
       <button class="tab" data-tab="documents">Documents</button>
       <button class="tab" data-tab="questionnaire">Questionnaire</button>
-      <button class="tab" data-tab="payments">Payments <span class="soon">soon</span></button>
-      <button class="tab" data-tab="meetings">Meetings <span class="soon">soon</span></button>
-      <button class="tab" data-tab="timeline">Timeline <span class="soon">soon</span></button>
+      <button class="tab" data-tab="payments">Payments</button>
+      <button class="tab" data-tab="meetings">Meetings</button>
+      <button class="tab" data-tab="timeline">Timeline</button>
     </div>
 
     <!-- Overview -->
@@ -198,51 +239,52 @@ ${buildNavHeader('dashboard')}
       </div>
     </div>
 
-    <!-- Documents tab -->
+    <!-- Documents tab — inline review actions -->
     <div class="tab-panel" id="panel-documents">
-      <div class="card placeholder">
-        <div class="pic">📂</div>
-        <h3>Document review</h3>
-        <p>Mark documents reviewed, request rework with notes, and read client replies. This already runs as a dedicated staff page — opening it here while the actions move into the cockpit.</p>
-        <a class="act-btn primary" id="doc-review-lnk" target="_blank" rel="noopener">Open document review →</a>
+      <div class="card">
+        <div class="card-title">📂 Document review
+          <span class="cnt"><a class="act-btn" id="doc-review-lnk" target="_blank" rel="noopener" style="font-size:11px;padding:5px 10px">Full review page (uploads &amp; replies) →</a></span>
+        </div>
+        <div class="muted" style="margin-bottom:10px">Mark a received document reviewed, or send it back with a note — the client is notified automatically.</div>
+        <div id="docs-actionable"></div>
+        <div id="doc-act-msg" class="act-msg"></div>
       </div>
     </div>
 
-    <!-- Questionnaire tab -->
+    <!-- Questionnaire tab — member sections + links -->
     <div class="tab-panel" id="panel-questionnaire">
-      <div class="card placeholder">
-        <div class="pic">📝</div>
-        <h3>Questionnaire review</h3>
-        <p>Review submitted answers, flag fields for correction, and notify the client. This already runs as a dedicated staff page — opening it here while the actions move into the cockpit.</p>
-        <a class="act-btn primary" id="q-review-lnk" target="_blank" rel="noopener">Open questionnaire review →</a>
+      <div class="card">
+        <div class="card-title">📝 Questionnaire
+          <span class="cnt" id="qt-cnt"></span>
+        </div>
+        <div class="tab-actions" id="q-actions"></div>
+        <div id="qt-list" style="margin-top:12px"></div>
       </div>
     </div>
 
-    <!-- Payments tab -->
+    <!-- Payments tab — retainer + milestone e-Transfers -->
     <div class="tab-panel" id="panel-payments">
-      <div class="card placeholder">
-        <div class="pic">💳</div>
-        <h3>Payments — coming next</h3>
-        <p>Consultation and retainer payment history, fee status, and the ability to send a payment link without opening Monday. Data already exists on the boards; this tab surfaces it.</p>
-        <span class="muted">Current payment status is shown on the header pill above.</span>
+      <div class="card">
+        <div class="card-title">💳 Retainer &amp; milestone payments <span class="cnt" id="pay-cnt"></span></div>
+        <div id="pay-body"></div>
+        <div id="pay-act-msg" class="act-msg"></div>
       </div>
     </div>
 
-    <!-- Meetings tab -->
+    <!-- Meetings tab — consultation artifacts from the linked lead -->
     <div class="tab-panel" id="panel-meetings">
-      <div class="card placeholder">
-        <div class="pic">🎥</div>
-        <h3>Meetings — coming next</h3>
-        <p>Consultation slot, Teams join link, the pre-consult dossier PDF, and the meeting recording — all in one place. These live on the lead record today; this tab joins them to the case.</p>
+      <div class="card">
+        <div class="card-title">🎥 Consultation meeting</div>
+        <div id="meet-body"></div>
       </div>
     </div>
 
-    <!-- Timeline tab -->
+    <!-- Timeline tab — derived from recorded timestamps -->
     <div class="tab-panel" id="panel-timeline">
-      <div class="card placeholder">
-        <div class="pic">🕓</div>
-        <h3>Timeline — coming next</h3>
-        <p>A chronological view of stage transitions, emails sent, documents received, and submissions. Needs new stage-history capture (Monday stores only the current stage today), so this one builds forward from now.</p>
+      <div class="card">
+        <div class="card-title">🕓 Case timeline <span class="cnt" id="tl-cnt"></span></div>
+        <div class="muted" style="margin-bottom:12px">Built from the dates the system records — inquiry, invite, consultation, retainer, payments, submissions and document uploads.</div>
+        <div id="tl-list"></div>
       </div>
     </div>
 
@@ -342,10 +384,185 @@ function render(d) {
     return '<div class="cat-block"><div class="cat-head">' + escHtml(cat.category) + '</div>' + lines + '</div>';
   }).join('') : '<div class="muted" style="margin-top:10px">No checklist rows seeded yet.</div>';
 
-  // Review-page links
+  // Review-page link + the tab panels
+  document.getElementById('doc-review-lnk').href = '/d/' + encodeURIComponent(CASE_REF) + '/review';
+  LAST_D = d;
+  renderDocsTab(d);
+  renderQTab(d);
+  renderPaymentsTab(d);
+  renderMeetingsTab(d);
+  renderTimelineTab(d);
+}
+
+var LAST_D = null;
+function actMsg(id, cls, txt) { var el = document.getElementById(id); if (!el) return; el.className = 'act-msg ' + cls; el.textContent = txt; }
+
+// ── Documents tab: full checklist with inline review actions ────────────────
+function renderDocsTab(d) {
+  var cats = d.documents.byCategory || [];
+  var html = cats.map(function(cat) {
+    var lines = cat.items.map(function(it) {
+      var acts = '';
+      if (it.id && it.status === 'Received') acts += '<button class="sbtn" data-doc-act="reviewed" data-doc-id="' + escHtml(it.id) + '">✓ Mark reviewed</button>';
+      if (it.id && (it.status === 'Received' || it.status === 'Reviewed')) acts += '<button class="sbtn danger" data-doc-act="rework" data-doc-id="' + escHtml(it.id) + '" data-doc-name="' + escHtml(it.name) + '">⟲ Request rework</button>';
+      var note = (it.status === 'Rework Required' && it.reviewNotes) ? '<div class="dnote">Rework note: ' + escHtml(it.reviewNotes) + '</div>' : '';
+      return '<div class="drow"><span class="dotc" style="background:' + (DOC_DOT[it.status] || '#cbd5e1') + '"></span>' +
+        '<span class="dn">' + escHtml(it.name) + '</span>' +
+        '<span class="dmeta">' + escHtml(it.applicantType) + ' · ' + escHtml(it.status) + (it.lastUpload ? (' · uploaded ' + escHtml(it.lastUpload)) : '') + '</span>' +
+        '<span class="dacts">' + acts + '</span>' + note + '</div>';
+    }).join('');
+    return '<div class="cat-block"><div class="cat-head">' + escHtml(cat.category) + '</div>' + lines + '</div>';
+  }).join('');
+  document.getElementById('docs-actionable').innerHTML = html || '<div class="muted">No checklist rows seeded yet — they appear when Document Collection starts.</div>';
+  Array.prototype.forEach.call(document.querySelectorAll('#docs-actionable [data-doc-act]'), function(btn) {
+    btn.onclick = function() { docAction(btn); };
+  });
+}
+function docAction(btn) {
+  var act = btn.getAttribute('data-doc-act'), id = btn.getAttribute('data-doc-id');
+  var notes = '';
+  if (act === 'rework') {
+    notes = window.prompt('What needs fixing on "' + (btn.getAttribute('data-doc-name') || 'this document') + '"? The client sees this note.');
+    if (notes == null) return;
+    if (!notes.trim()) { actMsg('doc-act-msg', 'err', 'A note is required for rework.'); return; }
+  } else if (!window.confirm('Mark this document as reviewed?')) { return; }
+  var key = getKey(); if (!key) return;
+  btn.disabled = true; actMsg('doc-act-msg', 'info', 'Working…');
+  fetch('/api/case/' + encodeURIComponent(CASE_REF) + '/document/' + encodeURIComponent(id) + '/status', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': key },
+    body: JSON.stringify({ action: act, notes: notes })
+  })
+  .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, j: j }; }); })
+  .then(function(res) {
+    if (res.ok) { actMsg('doc-act-msg', 'ok', act === 'reviewed' ? '✓ Marked reviewed.' : '✓ Rework requested — the client will see your note.'); loadCase(); }
+    else { btn.disabled = false; actMsg('doc-act-msg', 'err', (res.j && res.j.error) || 'Action failed.'); }
+  })
+  .catch(function(e) { btn.disabled = false; actMsg('doc-act-msg', 'err', 'Failed: ' + e.message); });
+}
+
+// ── Questionnaire tab: member sections + review / export / client link ──────
+function renderQTab(d) {
+  var qm = d.questionnaire.members || [];
+  document.getElementById('qt-cnt').textContent = (d.questionnaire.submitted || 0) + ' of ' + (d.questionnaire.total || 0) + ' submitted';
   var t = encodeURIComponent(CASE_REF);
-  document.getElementById('doc-review-lnk').href = '/d/' + t + '/review';
-  document.getElementById('q-review-lnk').href   = '/q/' + t + '/review';
+  var acts = '<a class="sbtn primary" href="/q/' + t + '/review" target="_blank" rel="noopener">Open review page →</a>' +
+    '<a class="sbtn" href="/q/' + t + '/export-pdf" target="_blank" rel="noopener">Export PDF</a>';
+  if (d.accessToken) acts += '<button class="sbtn" id="q-copy-lnk">Copy client link</button>';
+  document.getElementById('q-actions').innerHTML = acts;
+  var copyBtn = document.getElementById('q-copy-lnk');
+  if (copyBtn) copyBtn.onclick = function() {
+    var url = window.location.origin + '/q/' + t + '?t=' + encodeURIComponent(d.accessToken);
+    navigator.clipboard.writeText(url).then(function() {
+      copyBtn.textContent = '✓ Copied';
+      setTimeout(function() { copyBtn.textContent = 'Copy client link'; }, 2000);
+    });
+  };
+  document.getElementById('qt-list').innerHTML = qm.length ? qm.map(function(m) {
+    var sub = m.submittedAt ? ('<span class="dmeta" style="margin-right:8px">submitted ' + escHtml(String(m.submittedAt).slice(0, 10)) + '</span>') : '';
+    return '<div class="mrow"><span class="mname">' + escHtml(m.label || m.key) + '</span>' +
+      '<span class="mtype" style="margin-right:8px">' + escHtml(m.type || '') + '</span>' + sub + statusTag(m.status) + '</div>';
+  }).join('') : '<div class="muted">No questionnaire members yet — they appear once the case checklist is provisioned.</div>';
+}
+
+// ── Payments tab: retainer state + milestone e-Transfers with actions ───────
+function renderPaymentsTab(d) {
+  var body = document.getElementById('pay-body');
+  var p = d.payments, L = d.lead;
+  document.getElementById('pay-cnt').textContent = '';
+  if (!L) { body.innerHTML = '<div class="muted">No linked lead record — this case predates the lead pipeline, so payment history lives on the boards.</div>'; return; }
+  if (!p) { body.innerHTML = '<div class="muted">Payment details unavailable right now — reload to retry.</div>'; return; }
+
+  var strip = '<span class="pill ' + (L.retainerSigned ? 'green' : 'grey') + '"><span class="pk">Retainer</span> ' + (p.retainerFee ? ('$' + escHtml(p.retainerFee)) : 'fee not set') + '</span>';
+  if (L.retainerSent)   strip += '<span class="pill blue"><span class="pk">Sent</span> ' + escHtml(L.retainerSent) + '</span>';
+  if (L.retainerSigned) strip += '<span class="pill green"><span class="pk">Signed</span> ' + escHtml(L.retainerSigned) + '</span>';
+  if (L.consultPaid)    strip += '<span class="pill green"><span class="pk">Consult fee</span> paid · Square</span>';
+  var html = '<div class="pay-strip">' + strip + '</div>';
+
+  var ms = p.milestones || [];
+  document.getElementById('pay-cnt').textContent = ms.length ? (ms.filter(function(m) { return m.status === 'paid'; }).length + ' of ' + ms.length + ' paid') : '';
+  if (!ms.length) {
+    html += '<div class="muted">No milestone schedule yet — build the retainer plan on the consultation page first.</div>';
+  } else {
+    html += '<div class="muted" style="margin-bottom:4px">Clients pay by Interac e-Transfer to <b>' + escHtml(p.etransferEmail || '') + '</b> — the reference code ties each transfer to its milestone.</div>';
+    html += ms.map(function(m) {
+      var amt = '$' + ((m.totalCents || 0) / 100).toFixed(2);
+      var st;
+      if (m.status === 'paid') st = '<span class="pill green">PAID</span><span class="ms-meta">' + escHtml(m.paidAt || '') + (m.reference ? (' · ref ' + escHtml(m.reference)) : '') + '</span>';
+      else if (m.status === 'requested') st = '<span class="pill blue">REQUESTED</span><span class="ms-meta">' + (m.reference ? ('ref ' + escHtml(m.reference)) : '') + '</span>';
+      else st = '<span class="pill grey">PENDING</span>';
+      if (m.due && m.status !== 'paid') st += '<span class="pill amber">DUE</span>';
+      var acts = '';
+      if (m.status !== 'paid') {
+        acts = '<button class="sbtn" data-ms-act="request" data-ms-i="' + m.index + '">Send e-Transfer request</button>' +
+               '<button class="sbtn primary" data-ms-act="paid" data-ms-i="' + m.index + '">Mark paid</button>';
+      }
+      return '<div class="ms-row"><span class="ms-label">' + escHtml(m.label || ('Milestone ' + (m.index + 1))) + '</span>' +
+        '<span class="ms-amt">' + amt + '</span>' + st +
+        (m.trigger ? '<span class="ms-meta">trigger: ' + escHtml(m.trigger) + '</span>' : '') +
+        '<span class="ms-acts">' + acts + '</span></div>';
+    }).join('');
+  }
+  body.innerHTML = html;
+  Array.prototype.forEach.call(document.querySelectorAll('#pay-body [data-ms-act]'), function(btn) {
+    btn.onclick = function() { msAction(btn); };
+  });
+}
+function msAction(btn) {
+  var L = LAST_D && LAST_D.lead; if (!L) return;
+  var act = btn.getAttribute('data-ms-act'), i = parseInt(btn.getAttribute('data-ms-i'), 10);
+  var payload;
+  if (act === 'request') {
+    if (!window.confirm('Email the client an e-Transfer request for this milestone?')) return;
+    payload = { action: 'sendMilestoneEtransferRequest', value: i };
+  } else {
+    var ref = window.prompt('e-Transfer reference from the bank notification (optional):');
+    if (ref == null) return;
+    payload = { action: 'markMilestonePaid', value: JSON.stringify({ index: i, reference: ref.trim() }) };
+  }
+  var key = getKey(); if (!key) return;
+  btn.disabled = true; actMsg('pay-act-msg', 'info', 'Working…');
+  fetch('/api/consultation/' + encodeURIComponent(L.leadId) + '/action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': key },
+    body: JSON.stringify(payload)
+  })
+  .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, j: j }; }); })
+  .then(function(res) {
+    if (res.ok) { actMsg('pay-act-msg', 'ok', (res.j && res.j.message) || 'Done.'); loadCase(); }
+    else { btn.disabled = false; actMsg('pay-act-msg', 'err', (res.j && res.j.error) || 'Action failed.'); }
+  })
+  .catch(function(e) { btn.disabled = false; actMsg('pay-act-msg', 'err', 'Failed: ' + e.message); });
+}
+
+// ── Meetings tab: consultation artifacts from the linked lead ───────────────
+function renderMeetingsTab(d) {
+  var body = document.getElementById('meet-body'), L = d.lead;
+  if (!L) { body.innerHTML = '<div class="muted">No linked lead record — meeting artifacts live on the lead, which this case predates.</div>'; return; }
+  var rows = '';
+  rows += '<div class="kvline"><span class="k">Consultation slot</span><span class="v">' + escHtml(L.bookedSlot || '—') + (L.meetingType ? (' · ' + escHtml(L.meetingType)) : '') + '</span></div>';
+  rows += '<div class="kvline"><span class="k">Consultation held</span><span class="v">' + escHtml(L.consultationHeld || 'Not yet') + '</span></div>';
+  if (L.assignedConsultant) rows += '<div class="kvline"><span class="k">Consultant</span><span class="v">' + escHtml(L.assignedConsultant) + '</span></div>';
+  var links = '';
+  if (L.meetingLink)    links += '<a class="sbtn primary" href="' + escHtml(L.meetingLink) + '" target="_blank" rel="noopener">🎥 Join meeting</a>';
+  if (L.preConsultPdf)  links += '<a class="sbtn" href="' + escHtml(L.preConsultPdf) + '" target="_blank" rel="noopener">📄 Pre-consult dossier</a>';
+  if (L.recordingLink)  links += '<a class="sbtn" href="' + escHtml(L.recordingLink) + '" target="_blank" rel="noopener">📼 Recording</a>';
+  if (L.transcriptLink) links += '<a class="sbtn" href="' + escHtml(L.transcriptLink) + '" target="_blank" rel="noopener">📝 Transcript</a>';
+  rows += '<div class="kvline"><span class="k">Artifacts</span><span class="tab-actions">' + (links || '<span class="muted">None captured yet — the recording and transcript appear after the meeting.</span>') + '</span></div>';
+  rows += '<div class="kvline"><span class="k">Consultation record</span><span class="v"><a class="sbtn" href="/admin/consultation/' + encodeURIComponent(L.leadId) + '">Open consultation view →</a></span></div>';
+  body.innerHTML = rows;
+}
+
+// ── Timeline tab: chronological events derived from recorded dates ──────────
+var TL_DOT = { lead: '#2563eb', meeting: '#7c3aed', doc: '#64748b', retainer: '#1a3558', payment: '#16a34a', questionnaire: '#d97706' };
+function renderTimelineTab(d) {
+  var ev = d.timeline || [];
+  document.getElementById('tl-cnt').textContent = ev.length + ' event' + (ev.length !== 1 ? 's' : '');
+  document.getElementById('tl-list').innerHTML = ev.length ? ('<div class="tl">' + ev.map(function(e) {
+    var dt = String(e.date || '').replace('T', ' ').slice(0, 16);
+    return '<div class="tl-ev"><span class="tl-dot" style="background:' + (TL_DOT[e.kind] || '#94a3b8') + '"></span>' +
+      '<div class="tl-date">' + escHtml(dt) + '</div>' +
+      '<div class="tl-title">' + escHtml(e.title) + '</div>' +
+      (e.detail ? '<div class="tl-detail">' + escHtml(e.detail) + '</div>' : '') + '</div>';
+  }).join('') + '</div>') : '<div class="muted">No recorded events yet.</div>';
 }
 
 function loadCase() {
@@ -395,3 +612,4 @@ router.get('/:caseRef', (req, res) => {
 });
 
 module.exports = router;
+module.exports.buildCockpitHTML = buildCockpitHTML; // exported for the render harness / script validation
