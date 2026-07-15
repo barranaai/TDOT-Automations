@@ -1374,8 +1374,24 @@ function renderAtRisk(cases) {
 
     var tr = document.createElement('tr');
     tr.className = c.health === 'Red' ? 'row-red' : (c.health === 'Orange' ? 'row-orange' : '');
+    // Same ref-less treatment as the All-Cases table: say what unblocks the
+    // cockpit instead of a silent dash — and give ref'd rows the same
+    // click-through, so both tables behave identically.
+    var refCell;
+    if (c.caseRef) {
+      refCell = escHtml(c.caseRef);
+      tr.style.cursor = 'pointer';
+      tr.title = 'Open case cockpit';
+      tr.onclick = function() { window.location.href = '/admin/case/' + encodeURIComponent(c.caseRef); };
+    } else if (!c.caseType || c.caseType === 'Unknown') {
+      refCell = '<span class="badge orange">Needs Case Type</span>';
+      tr.title = 'No case reference yet — set the Case Type on this item in Monday and the reference (and cockpit) is created automatically.';
+    } else {
+      refCell = '<span class="badge blue">Ref pending</span>';
+      tr.title = 'Case Type is set — the case reference is assigned automatically; refresh shortly.';
+    }
     tr.innerHTML =
-      '<td style="font-weight:600;color:var(--navy)">' + escHtml(c.caseRef || '—') + '</td>' +
+      '<td style="font-weight:600;color:var(--navy)">' + refCell + '</td>' +
       '<td>' + escHtml(c.clientName) + '</td>' +
       '<td style="color:var(--muted)">' + shortType(c.caseType) + '</td>' +
       '<td><span style="font-size:11px">' + escHtml(c.caseStage) + '</span></td>' +
