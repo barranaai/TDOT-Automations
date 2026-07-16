@@ -292,7 +292,7 @@ ${buildNavHeader('dashboard')}
 </main>
 
 <script>
-var CASE_REF = ${JSON.stringify(caseRef)};
+var CASE_REF = ${JSON.stringify(caseRef).replace(/</g, '\\u003c')};
 
 ${SHARED_AUTH_JS}
 
@@ -493,8 +493,14 @@ function renderPaymentsTab(d) {
       if (m.due && m.status !== 'paid') st += '<span class="pill amber">DUE</span>';
       var acts = '';
       if (m.status !== 'paid') {
-        acts = '<button class="sbtn" data-ms-act="request" data-ms-i="' + m.index + '">Send e-Transfer request</button>' +
-               '<button class="sbtn primary" data-ms-act="paid" data-ms-i="' + m.index + '">Mark paid</button>';
+        // Request only when it can actually succeed AND is due (parity with the
+        // consultation page): pending+due, or a legacy Square-era row that never
+        // got proper e-Transfer details (server allows a deliberate re-issue).
+        if ((m.status === 'pending' && m.due) || m.legacySent) {
+          acts += '<button class="sbtn" data-ms-act="request" data-ms-i="' + m.index + '">' +
+                  (m.legacySent ? 'Send e-Transfer details' : 'Send e-Transfer request') + '</button>';
+        }
+        acts += '<button class="sbtn primary" data-ms-act="paid" data-ms-i="' + m.index + '">Mark paid</button>';
       }
       return '<div class="ms-row"><span class="ms-label">' + escHtml(m.label || ('Milestone ' + (m.index + 1))) + '</span>' +
         '<span class="ms-amt">' + amt + '</span>' + st +
@@ -608,6 +614,11 @@ loadCase();
 
 router.get('/:caseRef', (req, res) => {
   const caseRef = (req.params.caseRef || '').trim();
+  // Defense in depth: real refs are e.g. "2026-VV-006" — anything outside this
+  // charset can only be a probe, so reject before it reaches the HTML.
+  if (!/^[A-Za-z0-9\- ]{1,100}$/.test(caseRef)) {
+    return res.status(404).type('html').send('Case not found.');
+  }
   res.type('html').send(buildCockpitHTML(caseRef));
 });
 

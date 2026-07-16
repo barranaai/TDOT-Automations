@@ -36,7 +36,6 @@ const CM = {
   caseType:          'dropdown_mm0xd1qn',
   caseStage:         'color_mm0x8faa',
   qReadiness:        'numeric_mm0x9dea',
-  qCompletionStatus: 'color_mm0x9s08',
   caseManager:       'multiple_person_mm0xhmgk',
   clientEmail:       'text_mm0xw6bp',
 };
@@ -73,8 +72,12 @@ const JOURNEY_STEPS = [
 
 const STAGE_TO_STEP = {
   'not started': 0, 'pre-onboarding': 0, 'unknown': 0, '': 0,
+  // Retainer signed, collection not yet started — the questionnaire/documents
+  // step is CURRENT (unmapped stages fall through to step 2, which would show
+  // step 1 as already ✓done while the pending banner says it hasn't started).
+  'retainer confirmed': 1,
   'document collection started': 1,
-  'internal review': 2, 'submission preparation': 2, 'stuck': 2,
+  'internal review': 2, 'submission preparation': 2, 'submission ready': 2, 'stuck': 2,
   'submitted': 3, 'application submitted': 3,
   'approved': 4, 'refused': 4, 'closed': 4, 'withdrawn': 4, 'cancelled': 4, 'archived': 4,
 };
@@ -155,7 +158,7 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
       `query($itemId: ID!) {
          items(ids: [$itemId]) {
            column_values(ids: [
-             "${CM.caseStage}", "${CM.qReadiness}", "${CM.qCompletionStatus}"
+             "${CM.caseStage}", "${CM.qReadiness}"
            ]) { id text value }
          }
        }`,
@@ -171,7 +174,6 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
   const caseStage         = colTxt(CM.caseStage)         || 'Not Started';
   const qReadinessRaw     = colTxt(CM.qReadiness);
   const qReadinessPct     = qReadinessRaw ? Math.max(0, Math.min(100, Math.round(Number(qReadinessRaw)))) : 0;
-  const qCompletionStatus = colTxt(CM.qCompletionStatus) || '';
 
   // 3. Compute document counts
   const docItems = docSummary?.items || [];
@@ -219,7 +221,6 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
     caseStage,
     accessToken: validatedCase.accessToken,
     qReadinessPct,
-    qCompletionStatus,
     docCounts,
     docItems: clientDocs,
     totalMembers,
@@ -273,9 +274,9 @@ function buildPortalPage(snap, opts) {
   const docTotal      = snap.docCounts.total;
   const docDone       = docTotal > 0 ? (snap.docCounts.received + snap.docCounts.reviewed) : 0;
   const docPct        = docTotal > 0 ? Math.round(docDone / docTotal * 100) : 0;
-  const docBtnText    = isStaff
-    ? 'Open Document Review →'
-    : (docTotal === 0 ? 'View Your Documents →' : (docPct === 100 ? 'Review Documents →' : 'Continue Uploading →'));
+  // (client mode links to the standalone page inline under the checklist, so
+  // only the staff button needs a label)
+  const docBtnText    = 'Open Document Review →';
 
   // Pending actions list — role-aware copy
   const pending = [];
@@ -343,8 +344,9 @@ function buildPortalPage(snap, opts) {
         badge = '<span class="pay-badge duenow">Due now</span>';
         how = isStaff
           ? `<div class="howpay">Requested — awaiting the client's e-Transfer${m.reference ? ` (ref <b>${escHtml(m.reference)}</b>)` : ''}.</div>`
-          : `<div class="howpay">Please pay by <b>Interac e-Transfer</b> to <b>${escHtml(pay.etransferEmail || '')}</b> and include the reference
-               <span class="refcode">${escHtml(m.reference || '')}</span> in the message — it links your payment to this milestone.
+          : `<div class="howpay">Please pay by <b>Interac e-Transfer</b> to <b>${escHtml(pay.etransferEmail || '')}</b>${m.reference
+               ? ` and include the reference <span class="refcode">${escHtml(m.reference)}</span> in the message — it links your payment to this milestone`
+               : ` and include your case reference <span class="refcode">${escHtml(snap.caseRef)}</span> in the message`}.
                We confirm by email once it arrives.</div>`;
       } else if (m.due) {
         badge = '<span class="pay-badge duenow">Due now</span>';
@@ -412,13 +414,18 @@ function buildPortalPage(snap, opts) {
         : `${escHtml(it.status === 'Rework Required' ? 'Needs a new copy' : it.status)}${it.lastUpload ? ` · uploaded ${escHtml(it.lastUpload)}` : ''}`;
       const note = (it.status === 'Rework Required' && it.reviewNotes)
         ? `<div class="doc-note"><strong>From your case officer:</strong> ${escHtml(it.reviewNotes)}</div>` : '';
+      // Per-document guidance ("colour scan, all pages, …") exists to prevent
+      // rework — show it wherever the client can act.
+      const instructions = (uploadable && it.clientInstructions)
+        ? `<div class="doc-instr">${escHtml(it.clientInstructions)}</div>` : '';
       const right = uploadable
-        ? `<span class="up-wrap"><label class="up-btn${it.status === 'Rework Required' ? '' : ' re'}">${it.status === 'Rework Required' ? 'Upload new copy' : 'Upload'}<input type="file" data-item="${escHtml(it.id)}" data-name="${escHtml(it.name)}"></label><span class="up-state" data-state="${escHtml(it.id)}"></span></span>`
+        ? `<span class="up-wrap"><label class="up-btn${it.status === 'Rework Required' ? '' : ' re'}">${it.status === 'Rework Required' ? 'Upload new copy' : 'Upload'}<input type="file" data-item="${escHtml(it.id)}" aria-label="Upload ${escHtml(it.name)}"></label><span class="up-state" data-state="${escHtml(it.id)}"></span></span>`
         : `<span class="doc-ok">${it.status === 'Reviewed' ? '✓ Reviewed' : (it.status === 'Received' ? '✓ Received' : '')}</span>`;
       return `<div class="doc-row"><span class="doc-dot" style="background:${DOC_DOT[it.status] || '#C9CDD4'}"></span>
         <div class="doc-main">
           <div class="doc-name">${escHtml(it.name)}${showTag ? `<span class="doc-tag">${escHtml(it.applicantType)}</span>` : ''}</div>
           <div class="doc-meta">${statusLine}</div>
+          ${instructions}
           ${note}
         </div>${right}</div>`;
     }).join('');
@@ -489,10 +496,14 @@ function buildPortalPage(snap, opts) {
     .doc-tag { display:inline-block; font-size:10px; font-weight:700; color:#8A7B57; background:#F6F1E4; border-radius:999px; padding:1px 8px; margin-left:6px; vertical-align:middle; }
     .doc-meta { font-size:11.5px; color:#9AA3AF; margin-top:1px; }
     .doc-note { font-size:12px; color:#7f1d1d; background:#fef2f2; border-left:3px solid #fca5a5; border-radius:6px; padding:7px 10px; margin-top:6px; }
+    .doc-instr { font-size:12px; color:#6B7280; background:#F8F6F0; border-left:3px solid #E2D9C3; border-radius:6px; padding:7px 10px; margin-top:6px; }
     .up-wrap { flex:none; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
     .up-btn { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#fff; background:#8B0000; border-radius:8px; padding:7px 14px; cursor:pointer; }
     .up-btn.re { background:#0B1D32; }
-    .up-btn input { display:none; }
+    /* keep the input focusable (keyboard/screen-reader) — hide it visually, not display:none */
+    .up-btn input { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
+    .up-btn:focus-within { outline:3px solid #C9A84C; outline-offset:2px; }
+    .up-btn.busy { opacity:.55; pointer-events:none; }
     .up-state { font-size:10.5px; color:#9AA3AF; max-width:150px; text-align:right; }
     .doc-ok { flex:none; font-size:12px; font-weight:700; color:#1F7A4D; padding-top:3px; white-space:nowrap; }
 
@@ -671,9 +682,22 @@ function buildPortalPage(snap, opts) {
     var CASE_REF = ${jsLit(snap.caseRef)};
     var TOKEN    = ${jsLit(snap.accessToken || '')};
     var MAX      = 20 * 1024 * 1024;
+    // Reload only when EVERY upload has settled — reloading on the first
+    // success would abort any other row's in-flight upload mid-body (silent
+    // file loss for someone working down the checklist).
+    var inFlight = 0, wantReload = false;
+    function settle() {
+      inFlight--;
+      if (inFlight <= 0 && wantReload) { setTimeout(function () { window.location.reload(); }, 600); }
+    }
     function state(id, msg, isErr) {
       var el = document.querySelector('[data-state="' + id + '"]');
       if (el) { el.textContent = msg; el.style.color = isErr ? '#B42318' : '#9AA3AF'; }
+    }
+    function lock(input, on) {
+      var label = input.closest('label');
+      if (label) label.classList[on ? 'add' : 'remove']('busy');
+      input.disabled = !!on;
     }
     Array.prototype.forEach.call(document.querySelectorAll('input[type="file"][data-item]'), function (input) {
       input.addEventListener('change', function () {
@@ -681,7 +705,8 @@ function buildPortalPage(snap, opts) {
         if (!file) return;
         var id = input.getAttribute('data-item');
         if (file.size > MAX) { state(id, 'File is over 20 MB — please send a smaller copy.', true); input.value = ''; return; }
-        var label = input.closest('label'); if (label) { label.style.opacity = '.55'; label.style.pointerEvents = 'none'; }
+        lock(input, true);
+        inFlight++;
         state(id, 'Uploading ' + file.name + '…');
         var fd = new FormData();
         fd.append('file', file, file.name);
@@ -690,17 +715,19 @@ function buildPortalPage(snap, opts) {
         })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok && j.success, j: j }; }); })
         .then(function (res) {
-          if (res.ok) { state(id, 'Uploaded ✓ — refreshing…'); setTimeout(function () { window.location.reload(); }, 900); }
+          if (res.ok) { state(id, 'Uploaded ✓'); wantReload = true; }
           else {
             state(id, (res.j && res.j.error) || 'Upload failed — please try again.', true);
-            if (label) { label.style.opacity = ''; label.style.pointerEvents = ''; }
+            lock(input, false);
             input.value = '';
           }
+          settle();
         })
         .catch(function () {
           state(id, 'Upload failed — please check your connection and try again.', true);
-          if (label) { label.style.opacity = ''; label.style.pointerEvents = ''; }
+          lock(input, false);
           input.value = '';
+          settle();
         });
       });
     });

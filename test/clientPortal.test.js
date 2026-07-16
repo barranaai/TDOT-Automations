@@ -94,7 +94,15 @@ test('buildPortalPage: renders the journey stepper with the current step highlig
   assert.ok(html.includes('class="journey"'), 'stepper section present');
   assert.ok(html.includes('j-step cur'), 'current step highlighted');
   assert.ok(html.includes('Your questionnaire &amp; documents'), 'client-voiced step label');
-  assert.ok(!html.includes('>Internal Review<') || true, 'no raw ops label needed');
+  // The actual privacy property: the RAW ops stage must never appear anywhere
+  // in the client view (snap()'s caseStage is 'Document Collection Started').
+  assert.ok(!html.includes('Document Collection Started'), 'raw ops stage never leaks into the client page');
+});
+
+test('clientStage: Retainer Confirmed maps to the questionnaire/documents step (not past it)', () => {
+  const j = clientStage('Retainer Confirmed');
+  assert.equal(j.step, 1, 'retainer signed, collection not started → step 1 is CURRENT, not done');
+  assert.equal(clientStage('Submission Ready').step, 2);
 });
 
 test('buildPortalPage: renders the case journey timeline; omits it when empty', () => {
@@ -207,7 +215,8 @@ const GOOD_FILE = { originalname: 'passport.pdf', mimetype: 'application/pdf', b
 test('upload endpoint: rejects a wrong token with 403 before touching documents', async () => {
   const restore = [
     stub(htmlQ, 'validateAccess', async () => { throw new Error('Invalid token'); }),
-    stub(docSvc, 'getCaseSummary', async () => { throw new Error('must not be called'); }),
+    // Tripwire on the function the route ACTUALLY calls for ownership.
+    stub(docSvc, 'getCaseDocuments', async () => { throw new Error('must not be called'); }),
   ];
   try {
     const res = fakeRes();
@@ -252,13 +261,20 @@ test('upload endpoint: disallowed file types rejected AFTER auth (no pre-auth pr
   } finally { restoreOk(); }
 });
 
-test('upload endpoint: happy path uploads, marks Received, returns success', async () => {
+test('upload endpoint: happy path uploads, marks Received, returns success — no live housekeeping I/O', async () => {
   const calls = [];
+  const clientMasterSvc  = require('../src/services/clientMasterService');
+  const caseReadinessSvc = require('../src/services/caseReadinessService');
   const restore = [
     stub(htmlQ, 'validateAccess', async () => ({ itemId: '1', clientName: 'X' })),
     stub(docSvc, 'getCaseDocuments', async () => [{ id: '11', name: 'Passport' }]),
     stub(docSvc, 'uploadFileToOneDrive', async (...a) => { calls.push(['upload', a[0]]); }),
     stub(docSvc, 'markDocumentReceived', async (id) => { calls.push(['received', id]); }),
+    // The fire-and-forget housekeeping after res.json MUST be stubbed: left
+    // real, every `npm test` run would fire live Monday lookups (and, with
+    // creds exported, board WRITES against caseRef '2026-SP-001').
+    stub(clientMasterSvc, 'updateLastActivityDate', async () => { calls.push(['activity']); }),
+    stub(caseReadinessSvc, 'calculateForCaseRef', async () => { calls.push(['readiness']); }),
   ];
   try {
     const res = fakeRes();
@@ -266,29 +282,193 @@ test('upload endpoint: happy path uploads, marks Received, returns success', asy
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.success, true);
     assert.deepEqual(calls.slice(0, 2), [['upload', '11'], ['received', '11']]);
+    // let the post-response fire-and-forget settle inside the stubs
+    await new Promise((r) => setImmediate(r));
   } finally { restore.forEach((r) => r()); }
 });
 
 test('upload endpoint: duplicate ?t= array never crashes token parsing', async () => {
+  let seenTok = null;
   const restore = stub(htmlQ, 'validateAccess', async (ref, tok) => {
-    assert.equal(tok, 'a', 'first array value used');
-    throw new Error('Invalid token');
+    seenTok = tok; // captured in a closure — an assert inside the stub would be
+    throw new Error('Invalid token'); // swallowed by the route's auth catch
   });
   try {
     const res = fakeRes();
     await uploadHandler()({ params: { caseRef: '2026-SP-001', itemId: '11' }, query: { t: ['a', 'b'] }, body: {}, file: GOOD_FILE, cookies: {} }, res);
     assert.equal(res.statusCode, 403, 'clean 403, not a TypeError 500');
+    assert.equal(seenTok, 'a', 'first array value used');
   } finally { restore(); }
 });
 
-test('milestoneStates: legacy Square-era "sent" status reads as requested', () => {
+test('upload endpoint: backend outage during auth → 500 "try again", never 403 "bad link"', async () => {
+  const restore = stub(htmlQ, 'validateAccess', async () => { throw new Error('Monday API timeout after 30s'); });
+  try {
+    const res = fakeRes();
+    await uploadHandler()({ params: { caseRef: '2026-SP-001', itemId: '11' }, query: { t: 'real-token' }, body: {}, file: GOOD_FILE, cookies: {} }, res);
+    assert.equal(res.statusCode, 500);
+    assert.match(res.body.error, /try again/i, 'transient failure tells the client to retry, not to hunt for a new link');
+  } finally { restore(); }
+});
+
+// ─── Upload middleware (this session's audit fixes) ───────────────────────────
+
+function uploadLayer(n) {
+  const layer = clientPortalRouter.stack.find((l) => l.route && l.route.path === '/:caseRef/document/:itemId/upload');
+  return layer.route.stack[n].handle;
+}
+
+function multipartReq(fieldName, bytes) {
+  const { PassThrough } = require('stream');
+  const boundary = 'testboundary123';
+  const head = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="${fieldName}"; filename="big.pdf"\r\nContent-Type: application/pdf\r\n\r\n`);
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const body = Buffer.concat([head, bytes, tail]);
+  const req = new PassThrough();
+  req.headers = { 'content-type': `multipart/form-data; boundary=${boundary}`, 'content-length': String(body.length) };
+  req.method = 'POST';
+  req.end(body);
+  return req;
+}
+
+test('uploadSingle middleware: an over-20MB body becomes friendly 413 JSON, not a 500', async () => {
+  const wrapper = uploadLayer(1);
+  const req = multipartReq('file', Buffer.alloc(20 * 1024 * 1024 + 1024)); // just over the limit
+  const res = fakeRes();
+  let nexted = false;
+  await new Promise((resolve) => {
+    const origJson = res.json;
+    res.json = (b) => { origJson(b); resolve(); return res; };
+    wrapper(req, res, () => { nexted = true; resolve(); });
+  });
+  assert.equal(nexted, false, 'oversized upload never reaches the handler');
+  assert.equal(res.statusCode, 413);
+  assert.equal(res.body.success, false);
+  assert.match(res.body.error, /20 MB/, 'friendly size message the portal script can display');
+});
+
+test('uploadSingle middleware: an unexpected multipart field becomes 400 JSON (all multer errors answered as JSON)', async () => {
+  const wrapper = uploadLayer(1);
+  const req = multipartReq('wrongfield', Buffer.from('tiny'));
+  const res = fakeRes();
+  let nexted = false;
+  await new Promise((resolve) => {
+    const origJson = res.json;
+    res.json = (b) => { origJson(b); resolve(); return res; };
+    wrapper(req, res, () => { nexted = true; resolve(); });
+  });
+  assert.equal(nexted, false);
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.success, false);
+});
+
+test('uploadRateLimit middleware: 61st hit from one IP inside the window → 429 JSON', () => {
+  const limiter = uploadLayer(0);
+  const req = { headers: { 'x-forwarded-for': 'spoofed, 203.0.113.9' }, ip: '10.0.0.1' };
+  let last = null;
+  for (let i = 0; i < 61; i++) {
+    const res = fakeRes();
+    let passed = false;
+    limiter(req, res, () => { passed = true; });
+    last = { res, passed };
+  }
+  assert.equal(last.passed, false, '61st request blocked');
+  assert.equal(last.res.statusCode, 429);
+  assert.equal(last.res.body.success, false);
+});
+
+test('uploadRateLimit middleware: keys on the proxy-appended LAST XFF hop (spoofing the first entry cannot mint fresh buckets)', () => {
+  const limiter = uploadLayer(0);
+  // 61 requests, each with a DIFFERENT client-forged first entry but the same
+  // proxy-appended real peer — must still trip the limiter.
+  let last = null;
+  for (let i = 0; i < 61; i++) {
+    const req = { headers: { 'x-forwarded-for': `1.2.3.${i}, 198.51.100.7` }, ip: '10.0.0.1' };
+    const res = fakeRes();
+    let passed = false;
+    limiter(req, res, () => { passed = true; });
+    last = { res, passed };
+  }
+  assert.equal(last.passed, false, 'rotating forged XFF entries does not bypass the limiter');
+  assert.equal(last.res.statusCode, 429);
+});
+
+// ─── milestoneStates: legacy Square-era rows ──────────────────────────────────
+
+test('milestoneStates: legacy "sent" reads as requested, keeps its date, synthesizes the deterministic reference', () => {
   const { milestoneStates } = require('../src/services/milestonePaymentService');
   const lead = {
+    id: '12345678',
     retainerFee: '20', retainerHstRate: '13',
     retainerMilestones: JSON.stringify([{ label: 'M1', amountCents: 2000, trigger: '' }]),
-    milestonePayments: JSON.stringify({ 0: { status: 'sent', sentAt: '2026-05-01', reference: 'OLD-REF' } }),
+    milestonePayments: JSON.stringify({ 0: { status: 'sent', sentAt: '2026-05-01' } }), // Square-era: NO reference
   };
   const rows = milestoneStates(lead, '', []);
   assert.equal(rows[0].status, 'requested');
+  assert.equal(rows[0].legacySent, true, 'flag lets staff UIs offer a deliberate re-issue');
   assert.equal(rows[0].requestedAt, '2026-05-01');
+  assert.equal(rows[0].reference, 'TDOT-45678-M1',
+    'the SAME deterministic reference sendMilestoneEtransferRequest would generate — never an empty refcode in the client portal');
+});
+
+test('milestoneStates: a stored reference always wins over synthesis; non-legacy rows never get legacySent', () => {
+  const { milestoneStates } = require('../src/services/milestonePaymentService');
+  const lead = {
+    id: '12345678',
+    retainerFee: '20', retainerHstRate: '13',
+    retainerMilestones: JSON.stringify([{ label: 'M1', amountCents: 2000, trigger: '' }, { label: 'M2', amountCents: 2000, trigger: '' }]),
+    milestonePayments: JSON.stringify({
+      0: { status: 'sent', sentAt: '2026-05-01', reference: 'OLD-REF' },
+      1: { status: 'requested', requestedAt: '2026-06-01', reference: 'TDOT-45678-M2' },
+    }),
+  };
+  const rows = milestoneStates(lead, '', []);
+  assert.equal(rows[0].reference, 'OLD-REF');
+  assert.equal(rows[1].legacySent, false);
+});
+
+// ─── Seam test: the REAL getPortalSnapshot → buildPortalPage pipeline ─────────
+//
+// Every render test above feeds a hand-crafted snapshot; if the aggregator's
+// output shape drifted (milestoneStates fields, getCaseSummary items, extras
+// envelope), the portal would render blank cards for every client while the
+// unit tests stayed green. This runs the real pipeline over stubbed leaf I/O.
+
+test('seam: getPortalSnapshot output renders docs, payments and timeline through buildPortalPage', async () => {
+  const svc       = require('../src/services/clientPortalService');
+  const mondayApi = require('../src/services/mondayApi');
+  const cockpit   = require('../src/services/caseCockpitService');
+
+  const restore = [
+    stub(mondayApi, 'query', async () => ({
+      items: [{ column_values: [
+        { id: 'color_mm0x8faa', text: 'Document Collection Started' },
+        { id: 'numeric_mm0x9dea', text: '55' },
+      ] }],
+    })),
+    stub(docSvc, 'getCaseSummary', async () => ({ items: [
+      { id: '71', name: 'Passport', status: 'Missing', category: 'Identity', applicantType: 'Principal Applicant', reviewNotes: '', clientInstructions: 'Colour scan, all pages.', lastUpload: '' },
+      { id: '72', name: 'IELTS', status: 'Reviewed', category: 'Language', applicantType: 'Principal Applicant', reviewNotes: '', clientInstructions: '', lastUpload: '2026-07-10' },
+    ] })),
+    stub(htmlQ, 'loadMembers', async () => [{ label: 'Principal Applicant', submittedAt: '' }]),
+    stub(cockpit, 'getLeadExtras', async () => ({
+      lead: { id: '999', createdAt: '2026-06-01', bookedSlot: '', inviteSentAt: '' },
+      payments: { retainerFee: '20', etransferEmail: 'admstdot@gmail.com', milestones: [
+        { index: 0, label: 'Milestone 1', totalCents: 226000, status: 'requested', reference: 'TDOT-99-M1', due: true, legacySent: false, requestedAt: '2026-07-01', paidAt: '', method: 'e-transfer', trigger: '' },
+      ] },
+    })),
+  ];
+  try {
+    const snapReal = await svc.getPortalSnapshot({
+      caseRef: '2026-SP-001',
+      validatedCase: { itemId: '1', clientName: 'Seam Client', caseType: 'Study Permit', caseSubType: null, accessToken: 'tok' },
+    });
+    const html = svc.buildPortalPage(snapReal, { mode: 'client' });
+    assert.ok(html.includes('Passport') && html.includes('data-item="71"'), 'documents card renders the real snapshot rows with upload controls');
+    assert.ok(html.includes('Colour scan, all pages.'), 'clientInstructions render on uploadable rows');
+    assert.ok(html.includes('TDOT-99-M1') && html.includes('$2260.00'), 'payments card renders the milestone with its reference');
+    assert.ok(html.includes('class="journey"'), 'journey stepper renders');
+    assert.ok(!html.includes('Document Collection Started'), 'raw ops stage still never leaks');
+  } finally { restore.forEach((r) => r()); }
 });

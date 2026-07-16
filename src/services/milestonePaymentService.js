@@ -68,14 +68,21 @@ function milestoneStates(lead, currentCaseStage, orderedStages = []) {
       const trigIdx = orderedStages.indexOf(trigger);
       due = (curIdx >= 0 && trigIdx >= 0) ? curIdx >= trigIdx : trigger === currentCaseStage;
     }
+    // Legacy Square-era rows persisted status 'sent'; consumers (cockpit +
+    // client portal) branch on 'requested', so normalise here — otherwise an
+    // old request renders as "Not due yet" / a false "on its way" promise.
+    // Those rows also predate the reference system, so synthesize the SAME
+    // deterministic reference sendMilestoneEtransferRequest would generate —
+    // a client who pays against it still reconciles. `legacySent` lets staff
+    // UIs offer a deliberate "send proper e-Transfer details" re-issue.
+    const legacySent = p.status === 'sent';
     return {
       index: i, label: r.label, amountCents: r.amountCents, totalCents: r.totalCents, trigger,
-      // Legacy Square-era rows persisted status 'sent'; consumers (cockpit +
-      // client portal) branch on 'requested', so normalise here — otherwise an
-      // old request renders as "Not due yet" / a false "on its way" promise.
-      status: p.status === 'sent' ? 'requested' : (p.status || 'pending'),
+      status: legacySent ? 'requested' : (p.status || 'pending'),
+      legacySent,
       requestedAt: p.requestedAt || p.sentAt || '', paidAt: p.paidAt || '',
-      reference: p.reference || '', method: p.method || '', due,
+      reference: p.reference || (legacySent && lead && lead.id ? paymentReference(lead.id, i) : ''),
+      method: p.method || '', due,
     };
   });
 }
@@ -144,6 +151,9 @@ async function sendMilestoneEtransferRequest(leadId, index) {
     const existing = parsePayments(lead)[index] || {};
     if (existing.status === 'paid') { const e = new Error('That milestone is already paid.'); e.badRequest = true; throw e; }
     if (existing.status === 'requested') { const e = new Error('An e-transfer request for that milestone was already sent to the client.'); e.badRequest = true; throw e; }
+    // Legacy Square-era rows ('sent') never received e-Transfer details — a
+    // deliberate re-issue is allowed and recorded as such below.
+    const reIssue = existing.status === 'sent';
 
     const amount = Math.round(row.totalCents);
     if (amount <= 0) { const e = new Error('That milestone has no amount.'); e.badRequest = true; throw e; }
@@ -162,7 +172,8 @@ async function sendMilestoneEtransferRequest(leadId, index) {
     }
     await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
       { i: String(leadId),
-        body: `📧 <b>E-transfer request sent</b> — ${esc(row.label)} (${esc(dollars)})<br>` +
+        body: `📧 <b>E-transfer request ${reIssue ? 're-issued' : 'sent'}</b> — ${esc(row.label)} (${esc(dollars)})<br>` +
+              (reIssue ? `This milestone originally went out via the old Square flow with no e-Transfer details — this replaces it. ` : '') +
               `Client asked to e-transfer to <b>${esc(ETRANSFER_EMAIL)}</b>, reference <b>${esc(reference)}</b>. ` +
               `Emailed to ${esc(lead.email || '(no email on lead)')}. Record it as paid here once the e-transfer arrives.` });
 

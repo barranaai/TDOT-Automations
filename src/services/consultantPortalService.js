@@ -90,15 +90,38 @@ async function getConsultationQueue() {
   const ids = [C.bookedSlot, C.tier, C.serviceRequired, C.confirmedCaseType, C.preConsultSubmitted, C.outcome, C.meetingLink,
     C.assignedConsultant, C.meetingType, C.retainerFee, C.retainerSent, C.retainerSigned, C.retainerPaid, C.followUpDate, C.leadOwner]
     .map((c) => `"${c}"`).join(', ');
-  const data = await mondayApi.query(
+  // bookingStatus='Booked' is permanent (never reset at handoff), so this
+  // population grows forever — paginate with the cursor or rows beyond the
+  // first page silently vanish from BOTH tabs (excluded from Leads by the
+  // partition, dropped from Consultations by truncation).
+  const rawItems = [];
+  const first = await mondayApi.query(
     `query($boardId: ID!, $colId: String!, $val: String!) {
        items_page_by_column_values(limit: 200, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) {
+         cursor
          items { id name column_values(ids: [${ids}]) { id text } }
        }
      }`,
     { boardId: String(leadBoardId), colId: C.bookingStatus, val: 'Booked' }
   );
-  const items = (data?.items_page_by_column_values?.items || []).map((it) => {
+  rawItems.push(...(first?.items_page_by_column_values?.items || []));
+  let cursor = first?.items_page_by_column_values?.cursor || null;
+  let guard = 0;
+  while (cursor && ++guard <= 50) { // 50 × 200 = 10k booked leads — far beyond plausible
+    const next = await mondayApi.query(
+      `query($cursor: String!) {
+         next_items_page(limit: 200, cursor: $cursor) {
+           cursor
+           items { id name column_values(ids: [${ids}]) { id text } }
+         }
+       }`,
+      { cursor }
+    );
+    rawItems.push(...(next?.next_items_page?.items || []));
+    cursor = next?.next_items_page?.cursor || null;
+  }
+  if (cursor) console.warn('[Portal] getConsultationQueue hit the pagination guard with pages remaining — list is PARTIAL.');
+  const items = rawItems.map((it) => {
     const cv = {}; it.column_values.forEach((c) => { cv[c.id] = (c.text || '').trim(); });
     return {
       id:                 it.id,
@@ -465,8 +488,12 @@ async function getLeadDetail(leadId) {
   //   • the persist is awaited (screen = saved) but time-boxed so a degraded
   //     Monday API cannot hang the detail page.
   let inviteMessage = (lead.inviteMessage || '').trim();
+  // '[cleared]' = staff explicitly deleted the draft (saveInviteMessage) — show
+  // an empty textarea but do NOT regenerate: cleared stays cleared.
+  const draftCleared = inviteMessage === '[cleared]';
+  if (draftCleared) inviteMessage = '';
   const inviteAlreadySent = (lead.bookingInvite || '') === 'Sent';
-  if (!inviteMessage && !inviteAlreadySent && (lead.bookingStatus || '').trim() !== 'Booked') {
+  if (!inviteMessage && !draftCleared && !inviteAlreadySent && (lead.bookingStatus || '').trim() !== 'Booked') {
     const generated = await leadService.generateInviteMessage(lead);
     if (generated) {
       let current = null;
@@ -850,13 +877,21 @@ async function applyAction({ leadId, action, value, amend = false }) {
       }
       await leadService.updateLead(leadId, { bookingInvite: 'Send' });
       _leadsQueueCache.at = 0;   // the queue's Invite pill should reflect this promptly
+      // The actual email fires async via the Monday webhook and can fail — this
+      // note records the TRIGGER only; sendBookingInvite posts the definitive
+      // "emailed" / "FAILED" note when the send resolves.
       await postPortalNote(leadId, v.normalized
-        ? 'Booking invite sent to the client with a personalized message.'
-        : 'Booking invite sent to the client.');
+        ? 'Booking invite triggered from the portal with a personalized message — send in progress.'
+        : 'Booking invite triggered from the portal — send in progress.');
       return { ok: true, message: 'The booking invite is being emailed to the client.' };
 
     case 'saveInviteMessage':
-      await leadService.updateLead(leadId, { inviteMessage: v.normalized || '' }, { clearKeys: ['inviteMessage'] });
+      // An explicitly cleared draft persists as the '[cleared]' sentinel — an
+      // EMPTY column is indistinguishable from never-drafted, so the AI
+      // auto-draft would silently regenerate (and re-persist) text staff just
+      // deleted. Hydration maps the sentinel back to '' and sendBookingInvite
+      // treats it as "use the standard intro".
+      await leadService.updateLead(leadId, { inviteMessage: v.normalized || '[cleared]' });
       return { ok: true, message: '✓ Invite message saved.' };
 
     case 'resendLinks':

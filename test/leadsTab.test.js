@@ -160,18 +160,84 @@ async function withStubs(fn, leadOverrides) {
   try { return await fn(writes); } finally { restore.forEach((r) => r()); }
 }
 
-test('applyAction saveInviteMessage: saves the draft (clearKeys so an empty save truly clears)', async () => {
+test('applyAction saveInviteMessage: saves the draft; an empty save persists the [cleared] sentinel', async () => {
   await withStubs(async (writes) => {
     const r = await applyAction({ leadId: '1', action: 'saveInviteMessage', value: ' Custom pitch ' });
     assert.equal(r.ok, true);
     assert.deepEqual(writes[0].fields, { inviteMessage: 'Custom pitch' });
-    assert.deepEqual(writes[0].opts, { clearKeys: ['inviteMessage'] });
 
     writes.length = 0;
     await applyAction({ leadId: '1', action: 'saveInviteMessage', value: '' });
-    assert.deepEqual(writes[0].fields, { inviteMessage: '' }, 'explicit clear reaches Monday');
-    assert.deepEqual(writes[0].opts, { clearKeys: ['inviteMessage'] });
+    // '[cleared]' (not an empty column): an empty column is indistinguishable
+    // from never-drafted, so the AI auto-draft would regenerate the text staff
+    // just deleted. The sentinel keeps cleared cleared.
+    assert.deepEqual(writes[0].fields, { inviteMessage: '[cleared]' }, 'explicit clear persists the sentinel');
   });
+});
+
+test('sendBookingInvite: the [cleared] sentinel means the standard intro (never emailed verbatim)', async () => {
+  const bookingSvc = require('../src/services/bookingService');
+  const microsoftMail = require('../src/services/microsoftMailService');
+  let sentHtml = null;
+  const restore = [
+    stub(leadService, 'getLead', async (id) => ({
+      id, fullName: 'Test Lead', email: 'client@x.com', bookingStatus: 'Not Yet',
+      bookingInvite: '', inviteMessage: '[cleared]', leadToken: 'tok123',
+    })),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(microsoftMail, 'sendEmail', async ({ html }) => { sentHtml = html; }),
+    stub(mondayApi, 'query', async () => ({})), // notes
+  ];
+  try {
+    await bookingSvc.sendBookingInvite('1', { force: true });
+    assert.ok(sentHtml, 'email sent');
+    assert.ok(!sentHtml.includes('[cleared]'), 'sentinel never reaches the client');
+    assert.ok(sentHtml.includes('Thank you for reaching out to TDOT Immigration'), 'standard intro used');
+  } finally { restore.forEach((r) => r()); }
+});
+
+test('sendBookingInvite: email delivered but Sent-stamp fails twice → loud DO-NOT-RESEND note, never silent', async () => {
+  const bookingSvc = require('../src/services/bookingService');
+  const microsoftMail = require('../src/services/microsoftMailService');
+  const notes = [];
+  let stampAttempts = 0;
+  const restore = [
+    stub(leadService, 'getLead', async (id) => ({
+      id, fullName: 'Test Lead', email: 'client@x.com', bookingStatus: 'Not Yet',
+      bookingInvite: '', inviteMessage: '', leadToken: 'tok123',
+    })),
+    stub(leadService, 'updateLead', async (id, fields) => {
+      if (fields.bookingInvite === 'Sent') { stampAttempts++; throw new Error('Monday down'); }
+    }),
+    stub(microsoftMail, 'sendEmail', async () => {}),
+    stub(mondayApi, 'query', async (q, vars) => { if (vars && vars.b) notes.push(vars.b); return {}; }),
+  ];
+  try {
+    await bookingSvc.sendBookingInvite('1', { force: true });
+    assert.equal(stampAttempts, 2, 'stamp retried once');
+    assert.ok(notes.some((n) => /WAS DELIVERED/.test(n) && /Do NOT resend/i.test(n)),
+      'staff warned loudly that the email went out');
+  } finally { restore.forEach((r) => r()); }
+});
+
+test('sendBookingInvite: email failure marks the column Failed so a retry is a real label transition', async () => {
+  const bookingSvc = require('../src/services/bookingService');
+  const microsoftMail = require('../src/services/microsoftMailService');
+  const writes = [];
+  const restore = [
+    stub(leadService, 'getLead', async (id) => ({
+      id, fullName: 'Test Lead', email: 'client@x.com', bookingStatus: 'Not Yet',
+      bookingInvite: '', inviteMessage: '', leadToken: 'tok123',
+    })),
+    stub(leadService, 'updateLead', async (id, fields) => { writes.push(fields); }),
+    stub(microsoftMail, 'sendEmail', async () => { throw new Error('SMTP down'); }),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    await bookingSvc.sendBookingInvite('1', { force: true });
+    assert.ok(writes.some((w) => w.bookingInvite === 'Failed'), 'column marked Failed');
+    assert.ok(!writes.some((w) => w.bookingInvite === 'Sent'), 'never falsely stamped Sent');
+  } finally { restore.forEach((r) => r()); }
 });
 
 test('applyAction bookingInvite: fails fast (no false success) for booked leads and leads without email', async () => {
@@ -253,4 +319,37 @@ test('sendBookingInvite: a failed email leaves NO Sent stamp and posts a loud fa
       'never claims Sent for an email that failed');
     assert.ok(calls.some((c) => c.type === 'note'), 'staff failure note posted');
   }, { emailFails: true });
+});
+
+// ─── Webhook dispatch: the link that actually fires the invite email ──────────
+//
+// The portal writes bookingInvite='Send'; the EMAIL only happens when Monday's
+// change_column_value webhook arrives and this branch dispatches it. A drift in
+// the column mapping or the payload shape kills invite delivery silently.
+
+test('POST /webhook/lead: bookingInvite "Send" dispatches sendBookingInvite with force; "Sent"/clears/other columns do not', async () => {
+  const phase2Router = require('../src/routes/phase2');
+  const layer = phase2Router.stack.find((l) => l.route && l.route.path === '/webhook/lead');
+  const handler = layer.route.stack[layer.route.stack.length - 1].handle;
+  const C = require('../src/data/newLeadsBoard.json').columns;
+  const bookingSvc = require('../src/services/bookingService');
+
+  const calls = [];
+  const restore = stub(bookingSvc, 'sendBookingInvite', async (id, opts) => { calls.push({ id, opts }); });
+  const fire = async (event) => {
+    const res = { json: () => res, status: () => res };
+    await handler({ body: { event } }, res);
+    await new Promise((r) => setImmediate(r)); // let the fire-and-forget settle
+  };
+  try {
+    await fire({ columnId: C.bookingInvite, pulseId: 777, value: { label: { text: 'Send' } } });
+    assert.equal(calls.length, 1, '"Send" dispatches exactly once');
+    assert.equal(calls[0].id, '777');
+    assert.deepEqual(calls[0].opts, { force: true }, 'force bypasses the already-Sent skip for deliberate resends');
+
+    await fire({ columnId: C.bookingInvite, pulseId: 777, value: { label: { text: 'Sent' } } });
+    await fire({ columnId: C.bookingInvite, pulseId: 777, value: null });
+    await fire({ columnId: C.bookingInvite, pulseId: 777, value: { label: {} } });
+    assert.equal(calls.length, 1, 'our own "Sent" write, clears and malformed payloads never re-fire the email');
+  } finally { restore(); }
 });

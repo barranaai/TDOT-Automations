@@ -54,12 +54,15 @@ const intakeUpload = multer({
   },
 });
 
-// Light per-IP rate limit (in-memory sliding window). Keyed on the first
-// X-Forwarded-For hop (Render sits behind a proxy); generous enough that a
-// shared office IP never hits it, tight enough to stop scripted abuse.
+// Light per-IP rate limit (in-memory sliding window). Keyed on the LAST
+// X-Forwarded-For hop — Render's proxy APPENDS the true peer IP, while the
+// first entry is client-supplied (spoofing it would mint a fresh bucket per
+// request). Generous enough that a shared office IP never hits it, tight
+// enough to stop scripted abuse.
 const _intakeHits = new Map();
 function intakeRateLimit(req, res, next) {
-  const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim() || 'unknown';
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const ip = xff[xff.length - 1] || req.ip || 'unknown';
   const now = Date.now();
   const hits = (_intakeHits.get(ip) || []).filter((t) => now - t < 15 * 60 * 1000);
   if (hits.length >= 15) {
@@ -67,7 +70,13 @@ function intakeRateLimit(req, res, next) {
   }
   hits.push(now);
   _intakeHits.set(ip, hits);
-  if (_intakeHits.size > 5000) _intakeHits.clear(); // bound memory
+  if (_intakeHits.size > 5000) {
+    // evict expired windows only — clear() would let a flood reset live counters
+    for (const [k, v] of _intakeHits) {
+      const live = v.filter((t) => now - t < 15 * 60 * 1000);
+      if (live.length === 0) _intakeHits.delete(k); else _intakeHits.set(k, live);
+    }
+  }
   next();
 }
 

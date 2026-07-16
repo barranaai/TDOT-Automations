@@ -887,7 +887,7 @@ function renderMilestonePayments(list){
     var meta = m.status==='paid'
         ? '<span class="ms-meta">paid '+escHtml(m.paidAt||'')+(m.reference?(' · ref '+escHtml(m.reference)):'')+'</span>'
         : (m.status==='requested'&&m.reference ? '<span class="ms-meta">ref '+escHtml(m.reference)+'</span>' : '');
-    var reqBtn=(m.status==='pending'&&m.due)?'<button class="btn" type="button" data-msp-req="'+m.index+'">'+ICONS.mail+' Send e-transfer request</button>':'';
+    var reqBtn=((m.status==='pending'&&m.due)||m.legacySent)?'<button class="btn" type="button" data-msp-req="'+m.index+'">'+ICONS.mail+' '+(m.legacySent?'Send e-transfer details':'Send e-transfer request')+'</button>':'';
     var paidBtn=(m.status!=='paid')?'<button class="btn primary" type="button" data-msp-paid="'+m.index+'">'+ICONS.check+' Mark paid</button>':'';
     return '<div class="ms-row"><span class="ms-label">'+escHtml(m.label||('Milestone '+(m.index+1)))+'</span><span class="ms-amt">'+amt+'</span>'+badge+meta+reqBtn+paidBtn+'</div>';
   }).join('');

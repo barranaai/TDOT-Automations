@@ -45,9 +45,18 @@ function oneStr(v) {
 // flavour). Multer buffers the whole body into memory BEFORE any in-handler
 // auth can run, so this limiter is the practical guard against
 // unauthenticated 20MB spray.
+//
+// Key on the LAST X-Forwarded-For entry: Render's proxy APPENDS the true
+// peer IP, so the last hop is proxy-attested — the FIRST entry is whatever
+// the client sent (rotating fake values there would mint a fresh bucket per
+// request and bypass the limiter entirely).
 const _uploadHits = new Map();
+function clientIp(req) {
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
+  return xff[xff.length - 1] || req.ip || 'unknown';
+}
 function uploadRateLimit(req, res, next) {
-  const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim() || 'unknown';
+  const ip = clientIp(req);
   const now = Date.now();
   const hits = (_uploadHits.get(ip) || []).filter((t) => now - t < 15 * 60 * 1000);
   if (hits.length >= 60) { // generous: a real client uploading a whole checklist stays well under
@@ -55,7 +64,15 @@ function uploadRateLimit(req, res, next) {
   }
   hits.push(now);
   _uploadHits.set(ip, hits);
-  if (_uploadHits.size > 5000) _uploadHits.clear(); // bound memory
+  if (_uploadHits.size > 5000) {
+    // Bound memory by evicting expired windows — never wipe live counters
+    // (a clear() here would let the same flood that filled the map reset
+    // every legitimate IP's window).
+    for (const [k, v] of _uploadHits) {
+      const live = v.filter((t) => now - t < 15 * 60 * 1000);
+      if (live.length === 0) _uploadHits.delete(k); else _uploadHits.set(k, live);
+    }
+  }
   next();
 }
 
@@ -156,7 +173,14 @@ router.post('/:caseRef/document/:itemId/upload', uploadRateLimit, uploadSingle, 
     // page. Nothing (not even the extension check) is answered pre-auth.
     if (!tryStaffAuth(req)) await htmlQ.validateAccess(caseRef, token);
   } catch (err) {
-    return res.status(403).json({ success: false, error: 'Access denied — please use the most recent link from your case officer.' });
+    // Distinguish a bad token from a Monday hiccup (same rule as the GET):
+    // a transient backend failure must say "try again", not send a legitimate
+    // client hunting for a newer link.
+    if (/token|not found|no such case|missing/i.test(err.message || '')) {
+      return res.status(403).json({ success: false, error: 'Access denied — please use the most recent link from your case officer.' });
+    }
+    console.error(`[/client upload] auth backend error for ${caseRef}:`, err.message);
+    return res.status(500).json({ success: false, error: 'We could not verify your link just now — please try again in a moment.' });
   }
 
   const ext = path.extname(file.originalname || '').toLowerCase();

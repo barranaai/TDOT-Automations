@@ -380,8 +380,11 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
 
   // Personalized body (AI-drafted from the intake form, staff-edited on the
   // portal Leads tab) replaces the standard intro when set. Plain text →
-  // escaped paragraphs; a blank line is a paragraph break.
-  const custom = String(lead.inviteMessage || '').trim();
+  // escaped paragraphs; a blank line is a paragraph break. '[cleared]' is the
+  // staff-cleared sentinel (see consultantPortalService.saveInviteMessage) —
+  // it means "use the standard intro", same as never drafted.
+  const rawMsg = String(lead.inviteMessage || '').trim();
+  const custom = rawMsg === '[cleared]' ? '' : rawMsg;
   const bodyHtml = custom
     ? custom.split(/\n\s*\n/).map((p) => `<p>${esc(p.trim()).replace(/\n/g, '<br>')}</p>`).join('')
     : `<p>Thank you for reaching out to TDOT Immigration. Our team has reviewed your inquiry — the next step is a consultation where we can give you case-specific advice.</p>`;
@@ -406,14 +409,34 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
     });
   } catch (err) {
     console.error(`[Booking] Invite email FAILED for ${leadId}: ${err.message}`);
-    // Column stays 'Send' (accurate: pending) — tell staff loudly so it gets retried.
-    await postInviteNote(leadId, `⚠️ <b>Booking invite email FAILED to send</b> — please retry from the portal. Error: ${String(err.message || err).slice(0, 200)}`);
+    // Mark the column 'Failed' — a retry then writes 'Send' as a REAL label
+    // transition, which reliably re-fires the Monday webhook (a same-value
+    // 'Send'→'Send' write may not). Best-effort: the loud note is the backstop.
+    await leadService.updateLead(leadId, { bookingInvite: 'Failed' }).catch((e) =>
+      console.error(`[Booking] Could not mark invite Failed for ${leadId}: ${e.message}`));
+    await postInviteNote(leadId, `⚠️ <b>Booking invite email FAILED to send</b> — please retry from the portal (or set Booking Invite to "Send" on the board). Error: ${String(err.message || err).slice(0, 200)}`);
     return;
   }
 
-  // Stamp Sent + WHEN (Toronto date, matching how the portal displays lead times).
+  // Stamp Sent + WHEN (Toronto date, matching how the portal displays lead
+  // times). The email IS out at this point — if the stamp write fails, the
+  // board would say "not sent" while the client already has the email, and the
+  // natural staff reaction (resend) double-emails them. So: retry once, and on
+  // persistent failure warn loudly instead of staying silent.
   const sentDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
-  await leadService.updateLead(leadId, { bookingInvite: 'Sent', inviteSentAt: sentDate });
+  try {
+    await leadService.updateLead(leadId, { bookingInvite: 'Sent', inviteSentAt: sentDate });
+  } catch (err) {
+    console.error(`[Booking] Sent-stamp failed for ${leadId} (retrying once): ${err.message}`);
+    try {
+      await leadService.updateLead(leadId, { bookingInvite: 'Sent', inviteSentAt: sentDate });
+    } catch (err2) {
+      console.error(`[Booking] Sent-stamp retry failed for ${leadId}: ${err2.message}`);
+      await postInviteNote(leadId, `⚠️ <b>Booking invite email WAS DELIVERED to the client</b>, but stamping it "Sent" on this lead failed twice. <b>Do NOT resend.</b> Please set Booking Invite to "Sent" manually.`).catch(() => {});
+      return;
+    }
+  }
+  await postInviteNote(leadId, `📧 <b>Booking invite emailed</b> to ${lead.email} on ${sentDate}.`).catch(() => {});
   console.log(`[Booking] Invite emailed to ${lead.email} for lead ${leadId}`);
 }
 
