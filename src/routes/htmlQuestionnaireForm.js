@@ -31,8 +31,30 @@ const router   = express.Router();
 const svc    = require('../services/htmlQuestionnaireService');
 const review = require('../services/htmlQuestionnaireReviewService');
 const { sendMissingFieldsEmail } = require('../services/missingFieldsEmailService');
-const { requireStaffAuth, createStaffToken, setStaffCookie } = require('../middleware/staffAuth');
+const { requireStaffAuth, tryStaffAuth, createStaffToken, setStaffCookie } = require('../middleware/staffAuth');
 const { FORMS_DIR, resolveMemberTypes } = require('../../config/questionnaireFormMap');
+
+// The case cockpit is gated by the ADMIN_API_KEY (not the Monday-OAuth staff
+// cookie). To let the cockpit embed the questionnaire review inline, the read
+// routes accept EITHER a valid staff cookie OR the admin key (header or ?key=).
+// The key already grants full case access via /api/*, so this adds no new
+// exposure. Mutating routes (flag/notify) keep requireStaffAuth only.
+const REVIEW_ADMIN_KEY = process.env.ADMIN_API_KEY || '';
+function staffOrAdminKey(req, res, next) {
+  const staff = tryStaffAuth(req);
+  if (staff) { req.staff = staff; return next(); }
+  const key = req.headers['x-api-key'] || req.query.key || '';
+  if (REVIEW_ADMIN_KEY && key === REVIEW_ADMIN_KEY) { req.staff = { name: 'TDOT Staff' }; return next(); }
+  return requireStaffAuth(req, res, next); // no cookie, no key → Monday OAuth login
+}
+
+// When embedded in the cockpit (?embed=1) strip the standalone-page chrome so
+// the review sits cleanly inside the tab.
+const EMBED_CSS = '<style>#print-toolbar{display:none!important}body{background:#fff!important}'
+  + '.page-wrapper{padding:16px!important;max-width:none!important;margin:0!important;box-shadow:none!important}</style>';
+function maybeEmbed(req, html) {
+  return req.query.embed ? String(html).replace('</head>', EMBED_CSS + '</head>') : html;
+}
 
 // ─── Monday OAuth config ──────────────────────────────────────────────────────
 
@@ -195,7 +217,7 @@ router.get('/auth/monday/callback', async (req, res) => {
 
 // ─── Staff review page — GET /q/:caseRef/review ──────────────────────────────
 
-router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
+router.get('/:caseRef/review', staffOrAdminKey, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
   const formKey = sanitiseFormKey(req.query.formKey || 'primary');
 
@@ -235,9 +257,9 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
         m.fields.length > 0 && m.fields.some(f => f.value && f.value.trim())
       );
       if (!anyData) {
-        return res.type('html').send(svc.buildErrorPage(
+        return res.type('html').send(maybeEmbed(req, svc.buildErrorPage(
           'No submitted data found for this case. The client may not have completed the questionnaire yet.'
-        ));
+        )));
       }
 
       const formFile = reviewFormFile || formFiles.primary;
@@ -245,7 +267,7 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
         return res.status(404).type('html').send(svc.buildErrorPage('Form file not found for this case type.'));
       }
 
-      return res.type('html').send(svc.buildReviewFormPage({
+      return res.type('html').send(maybeEmbed(req, svc.buildReviewFormPage({
         formFile,
         caseRef,
         formKey: 'primary' + formKeySuffix,
@@ -254,7 +276,7 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
         savedFlags:   allMembersData[0].flags,
         members:      allMembersData,
         formKeySuffix,
-      }));
+      })));
     }
 
     // ── Single-member review (original logic) ──────────────────────────────
@@ -266,11 +288,11 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
     const hasData = fields.some(f => f.value && f.value.trim() !== '');
 
     if (!fields.length || !hasData) {
-      return res.type('html').send(svc.buildErrorPage(
+      return res.type('html').send(maybeEmbed(req, svc.buildErrorPage(
         fields.length
           ? 'The client has opened the questionnaire but has not yet filled in any answers. Please ask them to complete and submit the form before reviewing.'
           : 'No submitted data found for this case. The client may not have opened the questionnaire yet.'
-      ));
+      )));
     }
 
     const formFile = (formKey === 'additional' || formKey.endsWith('-additional'))
@@ -290,7 +312,7 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
       savedFlags:  flags,
     });
 
-    return res.type('html').send(html);
+    return res.type('html').send(maybeEmbed(req, html));
   } catch (err) {
     console.error(`[/q/review] Error for ${caseRef}:`, err.message);
     return res.status(500).type('html').send(svc.buildErrorPage('An error occurred loading the review page.'));
@@ -302,7 +324,7 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
 // Opens a clean, print-ready HTML report in a new tab with the browser's
 // print / Save-as-PDF dialog triggered automatically.  No extra libraries.
 
-router.get('/:caseRef/export-pdf', requireStaffAuth, async (req, res) => {
+router.get('/:caseRef/export-pdf', staffOrAdminKey, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
   const formKey = sanitiseFormKey(req.query.formKey || 'primary');
 
@@ -941,3 +963,7 @@ router.get('/:caseRef', async (req, res) => {
 });
 
 module.exports = router;
+// Exported for tests — the cockpit-embed auth (admin key OR staff cookie) and
+// the ?embed chrome-strip are security/behaviour surfaces worth pinning.
+module.exports.staffOrAdminKey = staffOrAdminKey;
+module.exports.maybeEmbed = maybeEmbed;

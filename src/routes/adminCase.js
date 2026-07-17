@@ -259,6 +259,7 @@ ${buildNavHeader('dashboard')}
         </div>
         <div class="tab-actions" id="q-actions"></div>
         <div id="qt-list" style="margin-top:12px"></div>
+        <div id="qt-embed" style="margin-top:14px"></div>
       </div>
     </div>
 
@@ -445,10 +446,29 @@ function renderQTab(d) {
   var qm = d.questionnaire.members || [];
   document.getElementById('qt-cnt').textContent = (d.questionnaire.submitted || 0) + ' of ' + (d.questionnaire.total || 0) + ' submitted';
   var t = encodeURIComponent(CASE_REF);
-  var acts = '<a class="sbtn primary" href="/q/' + t + '/review" target="_blank" rel="noopener">Open review page →</a>' +
-    '<a class="sbtn" href="/q/' + t + '/export-pdf" target="_blank" rel="noopener">Export PDF</a>';
+  // Carry the admin key on the staff review/PDF links so they work in a new tab
+  // (that tab's sessionStorage is empty; the review route accepts ?key=).
+  var kq = (getKey() ? ('?key=' + encodeURIComponent(getKey())) : '');
+  var acts = '<button class="sbtn primary" id="q-show-embed">Show questionnaire ▾</button>' +
+    '<a class="sbtn" href="/q/' + t + '/review' + kq + '" target="_blank" rel="noopener">Open full page →</a>' +
+    '<a class="sbtn" href="/q/' + t + '/export-pdf' + kq + '" target="_blank" rel="noopener">Export PDF</a>';
   if (d.accessToken) acts += '<button class="sbtn" id="q-copy-lnk">Copy client link</button>';
   document.getElementById('q-actions').innerHTML = acts;
+  // Inline embed: load the generated questionnaire (sections + answers) right
+  // in the cockpit, so staff see it next to the document checklist.
+  var embed = document.getElementById('qt-embed');
+  var shown = false;
+  var showBtn = document.getElementById('q-show-embed');
+  if (showBtn) showBtn.onclick = function() {
+    shown = !shown;
+    showBtn.textContent = shown ? 'Hide questionnaire ▴' : 'Show questionnaire ▾';
+    if (shown && !embed.querySelector('iframe')) {
+      var src = '/q/' + t + '/review?embed=1' + (getKey() ? ('&key=' + encodeURIComponent(getKey())) : '');
+      embed.innerHTML = '<iframe title="Questionnaire review" src="' + src + '" ' +
+        'style="width:100%;height:70vh;border:1px solid #E2E5EA;border-radius:12px;background:#fff"></iframe>';
+    }
+    embed.style.display = shown ? 'block' : 'none';
+  };
   var copyBtn = document.getElementById('q-copy-lnk');
   if (copyBtn) copyBtn.onclick = function() {
     var url = window.location.origin + '/q/' + t + '?t=' + encodeURIComponent(d.accessToken);
