@@ -58,10 +58,13 @@ const SHARED_CSS_VARS = `
 //  destinations — the Dashboard + Engine Controls links were retired so the
 //  portal reads as a consultants-only tool. Those pages still render this bar
 //  and remain reachable by direct URL (/admin/dashboard, /admin/engines).
-//  activePage: 'leads' | 'consultations' (others render the bar without an active link)
+//  activePage: 'leads' | 'consultations' | 'dashboard' (Cases) (others render the bar without an active link)
 function buildNavHeader(activePage) {
   const isConsult = activePage === 'consultations';
   const isLeads   = activePage === 'leads';
+  // The dashboard is the firm-wide Cases hub; the per-case cockpit also passes
+  // 'dashboard', so "Cases" stays highlighted while viewing a single case.
+  const isCases   = activePage === 'dashboard';
 
   return `<header class="admin-hdr">
   <div class="admin-hdr-left">
@@ -75,6 +78,9 @@ function buildNavHeader(activePage) {
       </a>
       <a href="/admin/consultations" class="nav-lnk${isConsult ? ' active' : ''}">
         <span class="nav-icon">🗓️</span> Consultations
+      </a>
+      <a href="/admin/dashboard" class="nav-lnk${isCases ? ' active' : ''}">
+        <span class="nav-icon">🗂️</span> Cases
       </a>
     </nav>
   </div>
