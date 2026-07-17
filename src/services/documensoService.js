@@ -77,9 +77,14 @@ async function api(path, { method = 'GET', json, form, raw } = {}) {
  * bottom of the last page — and is the one thing worth eyeballing on the first
  * live send; it's isolated here for easy tuning.
  */
-async function sendForSignature({ pdfBuffer, title, externalId, signer, subject, message }) {
-  if (!pdfBuffer || !pdfBuffer.length) throw new Error('sendForSignature: empty PDF');
-  if (!signer || !signer.email) throw new Error('sendForSignature: signer.email required');
+// Signature-field placement (percent of page). Isolated so the first live
+// calibration pass can nudge it without touching the rest of the flow.
+const SIGNATURE_FIELD = { type: 'SIGNATURE', page: 1, positionX: 12, positionY: 82, width: 30, height: 8 };
+
+/** Create an envelope (DRAFT — not distributed). Returns { envelopeId, envelopeItemId, raw }. */
+async function createEnvelope({ pdfBuffer, title, externalId, signer, subject, message }) {
+  if (!pdfBuffer || !pdfBuffer.length) throw new Error('createEnvelope: empty PDF');
+  if (!signer || !signer.email) throw new Error('createEnvelope: signer.email required');
 
   const payload = {
     title,
@@ -89,14 +94,7 @@ async function sendForSignature({ pdfBuffer, title, externalId, signer, subject,
       email: signer.email,
       name:  signer.name || signer.email,
       role:  'SIGNER',
-      fields: [{
-        type: 'SIGNATURE',
-        page: 1,            // Documenso pages are 1-indexed; tuned live if needed
-        positionX: 12,      // percent from left
-        positionY: 82,      // percent from top (near the signature line)
-        width: 30,
-        height: 8,
-      }],
+      fields: [{ ...SIGNATURE_FIELD }],
     }],
     meta: {
       subject: subject || `Please sign: ${title}`,
@@ -111,11 +109,20 @@ async function sendForSignature({ pdfBuffer, title, externalId, signer, subject,
   const created = await api('/envelope/create', { method: 'POST', form });
   const envelopeId = created?.id ?? created?.envelopeId ?? created?.envelope?.id;
   const envelopeItemId = created?.items?.[0]?.id ?? created?.envelopeItems?.[0]?.id;
-  if (!envelopeId) throw new Error(`Documenso create returned no envelope id: ${JSON.stringify(created).slice(0, 200)}`);
+  if (!envelopeId) throw new Error(`Documenso create returned no envelope id: ${JSON.stringify(created).slice(0, 300)}`);
+  return { envelopeId: String(envelopeId), envelopeItemId: envelopeItemId != null ? String(envelopeItemId) : '', raw: created };
+}
 
-  await api('/envelope/distribute', { method: 'POST', json: { envelopeId } });
+/** Distribute (send) a previously-created envelope to its recipients. */
+async function distributeEnvelope(envelopeId) {
+  return api('/envelope/distribute', { method: 'POST', json: { envelopeId } });
+}
 
-  return { envelopeId: String(envelopeId), envelopeItemId: envelopeItemId != null ? String(envelopeItemId) : '', signUrl: created?.signUrl || '' };
+/** Create + distribute in one step (the production path). */
+async function sendForSignature(args) {
+  const env = await createEnvelope(args);
+  await distributeEnvelope(env.envelopeId);
+  return { envelopeId: env.envelopeId, envelopeItemId: env.envelopeItemId, signUrl: env.raw?.signUrl || '' };
 }
 
 /** Read an envelope (used to resolve externalId + the signed item id from a webhook). */
@@ -222,6 +229,8 @@ module.exports = {
   isEnabled,
   externalIdFor,
   parseExternalId,
+  createEnvelope,
+  distributeEnvelope,
   sendForSignature,
   getEnvelope,
   downloadSignedPdf,

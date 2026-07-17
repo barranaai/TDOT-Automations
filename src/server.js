@@ -305,6 +305,51 @@ app.post('/api/utils/doc-codes/generate', async (req, res) => {
   );
 });
 
+// Documenso e-sign self-test (admin-key gated via /api). Creates a DRAFT
+// envelope from a tiny test PDF to verify the token + request shape WITHOUT
+// emailing anyone. Pass ?distribute=1&email=you@x.com to also send a real test
+// signature request. Used once during live calibration; safe to leave in place.
+app.post('/api/documenso/selftest', express.json(), async (req, res) => {
+  try {
+    const documenso = require('./services/documensoService');
+    const cfg = documenso._cfg();
+    const email = (req.query.email || req.body?.email || 'signer@example.com').toString();
+    const distribute = /^(1|true)$/i.test(String(req.query.distribute || ''));
+
+    // tiny 1-page PDF
+    const PDFDocument = require('pdfkit');
+    const pdfBuffer = await new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'LETTER', margin: 72 });
+      const chunks = [];
+      doc.on('data', (c) => chunks.push(c)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject);
+      doc.fontSize(18).text('TDOT Immigration — e-signature self-test', { align: 'left' });
+      doc.moveDown().fontSize(11).text('This is a throwaway test document to calibrate the Documenso integration. Signature field is placed near the bottom of this page.');
+      doc.moveDown(10).text('Signature: ______________________________');
+      doc.end();
+    });
+
+    const env = await documenso.createEnvelope({
+      pdfBuffer, title: 'TDOT e-sign self-test', externalId: 'selftest',
+      signer: { email, name: 'Self Test' },
+      subject: 'TDOT e-sign self-test', message: 'Calibration only — safe to ignore or delete.',
+    });
+    let distributed = false;
+    if (distribute) { await documenso.distributeEnvelope(env.envelopeId); distributed = true; }
+
+    res.json({
+      ok: true,
+      config: { baseUrl: cfg.baseUrl, tokenSet: Boolean(cfg.token), secretSet: Boolean(cfg.secret), enabled: cfg.enabled },
+      envelopeId: env.envelopeId, envelopeItemId: env.envelopeItemId, distributed,
+      raw: env.raw,
+    });
+  } catch (err) {
+    res.status(err.status && err.status < 500 ? 400 : 502).json({
+      ok: false, error: err.message,
+      hint: 'Check DOCUMENSO_API_TOKEN / DOCUMENSO_BASE_URL, and that the create request shape matches the v2 API.',
+    });
+  }
+});
+
 app.get('/api/boards/client-master', async (req, res) => {
   try {
     const board = await boardService.getBoardStructure(clientMasterBoardId);
