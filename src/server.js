@@ -315,6 +315,9 @@ app.post('/api/documenso/selftest', express.json(), async (req, res) => {
     const cfg = documenso._cfg();
     const email = (req.query.email || req.body?.email || 'signer@example.com').toString();
     const distribute = /^(1|true)$/i.test(String(req.query.distribute || ''));
+    // externalId lets a controlled test target a real (disposable) lead, e.g.
+    // "retainer-<leadId>" — signing it exercises the real capture → case-open.
+    const externalId = (req.query.externalId || 'selftest').toString();
 
     // tiny 1-page PDF
     const PDFDocument = require('pdfkit');
@@ -329,7 +332,7 @@ app.post('/api/documenso/selftest', express.json(), async (req, res) => {
     });
 
     const env = await documenso.createEnvelope({
-      pdfBuffer, title: 'TDOT e-sign self-test', externalId: 'selftest',
+      pdfBuffer, title: 'TDOT e-sign self-test', externalId,
       signer: { email, name: 'Self Test' },
       subject: 'TDOT e-sign self-test', message: 'Calibration only — safe to ignore or delete.',
     });

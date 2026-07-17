@@ -164,6 +164,9 @@ function recordWebhook(body) {
     externalId: p.externalId || null,
     envelopeId: p.id || null,
     status: p.status || null,
+    payloadKeys: p && typeof p === 'object' ? Object.keys(p) : [],
+    hasEnvelopeItems: Boolean(p.envelopeItems && p.envelopeItems.length),
+    raw: (() => { try { return JSON.stringify(body).slice(0, 4000); } catch { return null; } })(),
   };
 }
 function lastWebhook() { return _lastWebhook; }
