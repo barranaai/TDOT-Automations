@@ -78,6 +78,11 @@ const STAGE_TO_STEP = {
   'retainer confirmed': 1,
   'document collection started': 1,
   'internal review': 2, 'submission preparation': 2, 'submission ready': 2, 'stuck': 2,
+  // Application in progress / in a pool waiting for an invitation — the client's
+  // part (questionnaire + documents) is done and we're actively working. Mapped
+  // explicitly so these real board stages don't fall through the unrecognised
+  // default and mis-render the journey.
+  'profile created': 2, 'profile linked': 2, 'ads posted': 2, 'task done': 2,
   'submitted': 3, 'application submitted': 3,
   'approved': 4, 'refused': 4, 'closed': 4, 'withdrawn': 4, 'cancelled': 4, 'archived': 4,
 };

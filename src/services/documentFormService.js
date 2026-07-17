@@ -38,6 +38,7 @@ const REVIEW_NOTES_COL    = 'long_text_mm0zbpr'; // Review Notes
 const INTAKE_ID_COL       = 'text_mm0zfsp1';   // Template Board item ID (stored at checklist creation)
 const CATEGORY_MIRROR_COL = 'lookup_mm0zqbvt'; // Document Category (mirror — often null)
 const CATEGORY_TEXT_COL   = 'text_mm261tka';   // Document Category (direct text — set at checklist creation)
+const EXEC_APPLICANT_TYPE_COL = 'text_mm26jcv7'; // Applicant Type on the execution row itself (schema-seeded items have NO Template link, so this is where their member type lives)
 
 // Template Board columns
 const TMPL_DESC_COL           = 'long_text_mm0zmb7j'; // Description
@@ -62,6 +63,7 @@ const FETCH_COLS = [
   INTAKE_ID_COL,
   CATEGORY_MIRROR_COL,
   CATEGORY_TEXT_COL,
+  EXEC_APPLICANT_TYPE_COL,
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -235,7 +237,11 @@ async function getCaseDocuments(caseRef) {
         documentCode:       c(DOC_CODE_COL),
         status:             c(DOC_STATUS_COL) || 'Missing',
         category,
-        applicantType:      tmpl.applicantType || 'Principal Applicant',
+        // Template-linked items carry applicantType on the Template row; schema-
+        // seeded items have NO Template link, so read their member type from the
+        // execution row's own column before defaulting. Without this fallback,
+        // every schema-seeded per-member doc renders as "Principal Applicant".
+        applicantType:      tmpl.applicantType || c(EXEC_APPLICANT_TYPE_COL) || 'Principal Applicant',
         lastUpload:         c(UPLOAD_DATE_COL),
         description:        tmpl.description        || '',
         clientInstructions: tmpl.clientInstructions || '',

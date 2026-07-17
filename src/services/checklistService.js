@@ -42,6 +42,29 @@ function isSchemaDrivenEnabled(caseType, subType) {
   return allowlist.split(',').map((s) => s.trim().toLowerCase()).includes(wanted);
 }
 
+// Re-seed Checklist column (shared with reseedButtonService) — used to surface
+// a failed auto-seed as "Failed ⚠" so staff see it needs a one-click re-seed
+// instead of the failure being silently swallowed.
+const RESEED_COL = (require('../../config/monday').cmColumns || {}).reseedChecklist || 'color_mm47h11c';
+
+async function flagSeedFailed(itemId, caseRef, err) {
+  const msg = String((err && err.message) || err || 'unknown error').slice(0, 300);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // Visible status marker on the case.
+  await mondayApi.query(
+    `mutation($b: ID!, $i: ID!, $c: JSON!) {
+       change_multiple_column_values(board_id: $b, item_id: $i, column_values: $c, create_labels_if_missing: true) { id }
+     }`,
+    { b: String(clientMasterBoardId), i: String(itemId), c: JSON.stringify({ [RESEED_COL]: { label: 'Failed ⚠' } }) }
+  );
+  // Audit note telling staff exactly what to do.
+  await mondayApi.query(
+    `mutation($i: ID!, $body: String!){ create_update(item_id: $i, body: $body){ id } }`,
+    { i: String(itemId), body: `⚠️ <b>Document checklist auto-seed FAILED</b> for ${esc(caseRef)} after 2 attempts — the case has no checklist yet. Flip <b>Re-seed Checklist → Run</b> to build it (safe, additive). Error: ${esc(msg)}` }
+  ).catch(() => {});
+  console.error(`[ChecklistService] Flagged seed failure on Client Master for ${caseRef}`);
+}
+
 async function markChecklistApplied(itemId) {
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
@@ -163,16 +186,31 @@ async function onDocumentCollectionStarted({ itemId, boardId }) {
   if (isSchemaDrivenEnabled(caseType, caseSubType)) {
     const schema = caseSchemaService.lookup(caseType, caseSubType);
     if (schema) {
-      try {
-        await seedFromSchema({ schema, caseRef, clientName: item.name, clientMasterItemId: itemId });
-        await markChecklistApplied(itemId);
-        await seedQuestionnairePrefillSafe({ caseRef, caseType, caseSubType, clientName: item.name, itemId });
-        console.log(`[ChecklistService] Checklist Template Applied → Yes for ${caseRef} (schema path)`);
-        return;
-      } catch (err) {
-        console.error(`[ChecklistService] Schema seeding failed for ${caseRef}: ${err.message}. NOT falling back to Template Board to avoid mixed sources — please investigate.`);
-        return;
+      // The DCS webhook fires ONCE per stage transition — a single failure here
+      // strands the case with an empty checklist forever. seedFromSchema's
+      // reconcile is additive/idempotent, so one bounded retry is safe and
+      // recovers the common case (a transient Monday hiccup that outlasted
+      // mondayApi's own inner retries). On final failure we do NOT set
+      // checklistApplied (keeps the case re-seedable) and, critically, make the
+      // failure VISIBLE to staff instead of swallowing it silently.
+      let lastErr = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          await seedFromSchema({ schema, caseRef, clientName: item.name, clientMasterItemId: itemId });
+          await markChecklistApplied(itemId);
+          await seedQuestionnairePrefillSafe({ caseRef, caseType, caseSubType, clientName: item.name, itemId });
+          console.log(`[ChecklistService] Checklist Template Applied → Yes for ${caseRef} (schema path${attempt > 1 ? `, attempt ${attempt}` : ''})`);
+          return;
+        } catch (err) {
+          lastErr = err;
+          console.error(`[ChecklistService] Schema seeding attempt ${attempt} failed for ${caseRef}: ${err.message}`);
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 1500));
+        }
       }
+      // Both attempts failed — flag it loudly so staff can one-click re-seed.
+      await flagSeedFailed(itemId, caseRef, lastErr).catch((e) =>
+        console.error(`[ChecklistService] Could not flag seed failure for ${caseRef}: ${e.message}`));
+      return;
     }
     console.log(`[ChecklistService] Schema-driven enabled but no schema for "${caseType}/${caseSubType}" — using Template Board.`);
   }
@@ -299,6 +337,10 @@ async function reseedByCaseRef(caseRef) {
   const composition = await compositionAdapter.readForCase(ref);
   const result = await seedFromSchema({ schema, caseRef: ref, clientName: item.name, clientMasterItemId: item.id });
   await markChecklistApplied(item.id);
+  // Recovery must restore the questionnaire prefill too, not just the documents —
+  // a case that failed its original auto-seed also missed its prefill, so a
+  // reseed that only rebuilt docs would leave a blank, un-prefilled questionnaire.
+  await seedQuestionnairePrefillSafe({ caseRef: ref, caseType, caseSubType: subType, clientName: item.name, itemId: item.id });
 
   return {
     ok: true,

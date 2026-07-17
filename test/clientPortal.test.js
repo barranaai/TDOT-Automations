@@ -20,6 +20,15 @@ test('clientStage: maps every known stage family onto the journey', () => {
   assert.equal(clientStage('Approved').step, 4);
 });
 
+test('clientStage: EE-pool / in-progress board stages map explicitly to "we prepare" (not the unrecognised default)', () => {
+  // These are real Case Stage values that were previously unmapped and fell
+  // through to the guessed default — pin them so the client journey is honest.
+  for (const s of ['Profile Created', 'Profile Linked', 'Ads posted', 'Task Done']) {
+    assert.equal(clientStage(s).step, 2, `${s} → step 2`);
+    assert.equal(clientStage(s).label, 'We prepare your application', `${s} label`);
+  }
+});
+
 test('clientStage: unrecognised ops labels read as in-progress, never leak', () => {
   const s = clientStage('Ads posted');
   assert.equal(s.step, 2);
