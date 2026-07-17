@@ -496,5 +496,25 @@ router.post('/webhook/lead', express.json(), async (req, res) => {
   }
 });
 
+// POST /webhook/documenso — e-signature completion (auto-capture signed agreements)
+//
+// Authenticated by the shared X-Documenso-Secret header (constant-time compare,
+// fail-closed). On DOCUMENT_COMPLETED we download the signed PDF, store it to
+// OneDrive, and set the "signed" state — for the retainer that opens the case,
+// exactly as a manual "Mark retainer signed" would.
+router.post('/webhook/documenso', express.json({ limit: '2mb' }), async (req, res) => {
+  const documenso = require('../services/documensoService');
+  if (!documenso.verifyWebhook(req.headers)) {
+    return res.status(401).json({ error: 'invalid signature' });
+  }
+  res.json({ status: 'received' }); // ack fast; process async
+  try {
+    const result = await documenso.captureCompleted(req.body);
+    console.log('[Documenso Webhook]', JSON.stringify(result));
+  } catch (err) {
+    console.error('[Documenso Webhook] capture failed:', err.message);
+  }
+});
+
 module.exports = router;
 module.exports.buildBookingPageHtml = buildBookingPageHtml; // exported for tests / preview

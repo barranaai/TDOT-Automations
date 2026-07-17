@@ -100,6 +100,29 @@ async function ensureConsultAgreementReady(leadId) {
 
 async function sendConsultAgreement(leadId) {
   const { lead, url } = await ensureConsultAgreementReady(leadId);
+
+  // e-signature path (Documenso): send for in-browser signature; the signed
+  // copy auto-captures via webhook. On any failure, fall through to the legacy
+  // email so the client is never left un-served.
+  const documenso = require('./documensoService');
+  if (documenso.isEnabled() && lead.email) {
+    try {
+      const pdf = await getConsultAgreementDocument(lead);
+      const env = await documenso.sendForSignature({
+        pdfBuffer: pdf,
+        title: `TDOT Consultation Agreement — ${lead.fullName || 'Client'}`,
+        externalId: documenso.externalIdFor('consult', leadId),
+        signer: { email: lead.email, name: lead.fullName || lead.email },
+        subject: 'Your TDOT Immigration consultation agreement — please sign',
+      });
+      await leadService.updateLead(leadId, { consultAgreementSent: todayISO() });
+      return { ok: true, via: 'documenso', envelopeId: env.envelopeId };
+    } catch (err) {
+      console.error(`[ConsultAgreement] Documenso send FAILED for lead ${leadId} — falling back to email: ${err.message}`);
+      // fall through to the legacy email flow
+    }
+  }
+
   const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
       <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
         <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your initial consultation agreement</h1></div>

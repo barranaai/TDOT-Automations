@@ -209,6 +209,41 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
     return { status: 'no-email' };
   }
 
+  // ── e-signature path (Documenso) ──
+  // When enabled, send the agreement for in-browser signature instead of the
+  // "download + email it back" flow. The signed copy is auto-captured (webhook)
+  // → the case opens with no manual "Mark signed". On ANY failure we fall
+  // through to the legacy email below so the client is never left un-served.
+  const documenso = require('./documensoService');
+  if (documenso.isEnabled()) {
+    try {
+      const pdf = await getRetainerDocument(lead);
+      const env = await documenso.sendForSignature({
+        pdfBuffer: pdf,
+        title: `TDOT Retainer Agreement — ${lead.fullName || 'Client'}`,
+        externalId: documenso.externalIdFor('retainer', leadId),
+        signer: { email: lead.email, name: lead.fullName || lead.email },
+        subject: 'Your TDOT Immigration retainer agreement — please sign',
+        message: 'Please review and sign your retainer agreement. Once signed, we’ll email you the first payment details. Thank you — TDOT Immigration.',
+      });
+      await leadService.updateLead(leadId, {
+        retainerSent:         todayISO(),
+        conversionStatus:     'Consulted',
+        adobeSignAgreementId: String(env.envelopeId), // existing e-sign id column
+      });
+      await postLeadNote(leadId,
+        `📤 <b>Retainer agreement sent for e-signature (Documenso)</b> to ${esc(lead.email)}. ` +
+        `It auto-captures and opens the case the moment the client signs.`);
+      console.log(`[Retainer2] Retainer sent via Documenso for lead ${leadId} (envelope ${env.envelopeId})`);
+      return { status: 'sent', via: 'documenso', envelopeId: env.envelopeId };
+    } catch (err) {
+      console.error(`[Retainer2] Documenso send FAILED for lead ${leadId} — falling back to email: ${err.message}`);
+      await postLeadNote(leadId,
+        `⚠ <b>E-signature send (Documenso) failed — fell back to emailing the PDF link.</b> (error: ${esc(err.message)})`);
+      // fall through to the legacy email flow
+    }
+  }
+
   const etransferEmail = require('./milestonePaymentService').ETRANSFER_EMAIL || 'admstdot@gmail.com';
   const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
       <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
