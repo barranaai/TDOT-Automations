@@ -507,6 +507,7 @@ router.post('/webhook/documenso', express.json({ limit: '2mb' }), async (req, re
   if (!documenso.verifyWebhook(req.headers)) {
     return res.status(401).json({ error: 'invalid signature' });
   }
+  documenso.recordWebhook(req.body); // for live-calibration confirmation
   res.json({ status: 'received' }); // ack fast; process async
   try {
     const result = await documenso.captureCompleted(req.body);

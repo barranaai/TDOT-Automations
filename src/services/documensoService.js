@@ -153,6 +153,21 @@ function verifyWebhook(headers = {}) {
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 
+// Lightweight in-memory record of the most recent inbound webhook, so a live
+// calibration test can confirm the round-trip without server log access.
+let _lastWebhook = null;
+function recordWebhook(body) {
+  const p = (body && body.payload) || {};
+  _lastWebhook = {
+    at: new Date().toISOString(),
+    event: body && body.event,
+    externalId: p.externalId || null,
+    envelopeId: p.id || null,
+    status: p.status || null,
+  };
+}
+function lastWebhook() { return _lastWebhook; }
+
 /**
  * Handle a verified DOCUMENT_COMPLETED webhook: resolve the lead + agreement
  * type from externalId, download the signed PDF, store it to OneDrive, and set
@@ -242,5 +257,7 @@ module.exports = {
   downloadSignedPdf,
   verifyWebhook,
   captureCompleted,
+  recordWebhook,
+  lastWebhook,
   _cfg: cfg, // exposed for tests
 };

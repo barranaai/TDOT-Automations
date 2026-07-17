@@ -355,6 +355,11 @@ app.post('/api/documenso/selftest', express.json(), async (req, res) => {
   }
 });
 
+// Documenso: the most recent inbound webhook (for live-calibration confirmation).
+app.get('/api/documenso/last-webhook', (req, res) => {
+  res.json({ last: require('./services/documensoService').lastWebhook() });
+});
+
 app.get('/api/boards/client-master', async (req, res) => {
   try {
     const board = await boardService.getBoardStructure(clientMasterBoardId);
