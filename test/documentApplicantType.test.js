@@ -51,6 +51,30 @@ test('getCaseDocuments: schema-seeded item (no Template link) reads applicantTyp
   } finally { restore(); }
 });
 
+test('normApplicantType: schema role labels canonicalise to the manifest member types (filter must not hide real members)', () => {
+  const n = docSvc.normApplicantType;
+  // The exact live mismatch that was hiding spouse/child docs on CEC-EE-021.
+  assert.equal(n('Spouse'), n('Spouse / Common-Law Partner'), 'schema "Spouse" matches manifest "Spouse / Common-Law Partner"');
+  assert.equal(n('Dependent Child 1'), n('Dependent Child'), 'indexed child matches un-indexed manifest type');
+  assert.equal(n('Dependent Child 2'), n('Dependent Child'));
+  assert.equal(n('Principal Applicant'), n('Principal Applicant'));
+  assert.equal(n('Sponsor'), n('Sponsor'));
+  // A genuinely different role must NOT collide (phantom docs still filtered).
+  assert.notEqual(n('Spouse'), n('Sponsor'));
+  assert.notEqual(n('Dependent Child'), n('Principal Applicant'));
+});
+
+test('manifest allow-set (normalised) shows real members and hides phantom ones', () => {
+  const n = docSvc.normApplicantType;
+  const allowed = new Set(['Principal Applicant', 'Sponsor', 'Spouse / Common-Law Partner', 'Dependent Child'].map(n));
+  const shown = (t) => allowed.has(n(t));
+  // real members' schema-labelled docs are shown
+  assert.ok(shown('Spouse') && shown('Dependent Child 1') && shown('Dependent Child 2') && shown('Principal Applicant'));
+  // phantom member (spouse doc on a single-applicant case) is hidden
+  const singleAllowed = new Set(['Principal Applicant', 'Sponsor'].map(n));
+  assert.ok(!singleAllowed.has(n('Spouse')), 'phantom spouse doc hidden when no spouse member');
+});
+
 test('getCaseDocuments: Template-linked item still wins from the Template row (no regression)', async () => {
   const restore = stub(mondayApi, 'query', async (q) => {
     if (q.includes('items_page_by_column_values')) {

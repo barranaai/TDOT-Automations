@@ -297,6 +297,21 @@ async function getCaseDocuments(caseRef) {
  * (`Spouse / Common-Law Partner`, `Dependent Child`, etc.) — see
  * config/questionnaireFormMap.js MEMBER_TYPE constants.
  */
+/**
+ * Canonicalise an applicant-type label so the schema seeder's role labels match
+ * the questionnaire manifest's member types:
+ *   "Spouse / Common-Law Partner" → "spouse"   (drop the "/ …" variance)
+ *   "Dependent Child 2"           → "dependent child"  (drop the member index)
+ * Used only for allow-list matching, never for display.
+ */
+function normApplicantType(t) {
+  return String(t || '')
+    .toLowerCase()
+    .replace(/\s*\/.*$/, '')
+    .replace(/\s+\d+$/, '')
+    .trim();
+}
+
 async function getAllowedApplicantTypesFromManifest({ caseRef, clientName }) {
   if (!caseRef || !clientName) return null;
   try {
@@ -354,8 +369,14 @@ async function getCaseSummary(caseRef) {
   if (clientName) {
     const allowed = await getAllowedApplicantTypesFromManifest({ caseRef, clientName });
     if (allowed) {
+      // Match on a NORMALISED applicant type so the schema seeder's role labels
+      // ("Spouse", "Dependent Child 1") match the questionnaire manifest's member
+      // types ("Spouse / Common-Law Partner", "Dependent Child"). Without this,
+      // every schema-seeded spouse/child document is wrongly hidden. Genuinely
+      // phantom members (no matching manifest entry) are still filtered out.
+      const allowedNorm = new Set(allowed.map(normApplicantType));
       filteredItems = items.filter(it =>
-        allowed.includes(it.applicantType || 'Principal Applicant')
+        allowedNorm.has(normApplicantType(it.applicantType || 'Principal Applicant'))
       );
       const hidden = items.length - filteredItems.length;
       if (hidden > 0) {
@@ -568,4 +589,5 @@ module.exports = {
   getDisclaimerForCase,
   uploadFileToOneDrive,
   markDocumentReceived,
+  normApplicantType, // exported for tests (manifest-filter label matching)
 };
