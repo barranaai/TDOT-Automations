@@ -336,11 +336,16 @@ app.post('/api/documenso/selftest', express.json(), async (req, res) => {
     let distributed = false;
     if (distribute) { await documenso.distributeEnvelope(env.envelopeId); distributed = true; }
 
+    // Fetch the created envelope so we can see its item id, recipients, and the
+    // placed signature field (the create response is just { id }).
+    let envelope = null;
+    try { envelope = await documenso.getEnvelope(env.envelopeId); } catch (e) { envelope = { fetchError: e.message }; }
+
     res.json({
       ok: true,
       config: { baseUrl: cfg.baseUrl, tokenSet: Boolean(cfg.token), secretSet: Boolean(cfg.secret), enabled: cfg.enabled },
       envelopeId: env.envelopeId, envelopeItemId: env.envelopeItemId, distributed,
-      raw: env.raw,
+      envelope,
     });
   } catch (err) {
     res.status(err.status && err.status < 500 ? 400 : 502).json({
