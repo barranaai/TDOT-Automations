@@ -165,10 +165,19 @@ async function captureCompleted(body) {
   if (event && event !== 'DOCUMENT_COMPLETED') return { skipped: event };
   const p = (body && body.payload) || {};
 
-  // 1. Resolve externalId → { type, leadId } (fetch the envelope if the webhook
-  //    didn't inline it).
+  // 1. Resolve externalId + the signed item id. The webhook may inline them; if
+  //    not, fetch the envelope once (the item id lives under `envelopeItems`).
   let ext = p.externalId;
-  if (!ext && p.id) { try { ext = (await getEnvelope(p.id))?.externalId; } catch (_) { /* fall through */ } }
+  let itemId = (p.envelopeItems && p.envelopeItems[0] && p.envelopeItems[0].id)
+    || (p.items && p.items[0] && p.items[0].id)
+    || null;
+  if ((!ext || !itemId) && p.id) {
+    try {
+      const env = await getEnvelope(p.id);
+      if (!ext) ext = env && env.externalId;
+      if (!itemId) itemId = env && env.envelopeItems && env.envelopeItems[0] && env.envelopeItems[0].id;
+    } catch (_) { /* fall through with whatever we have */ }
+  }
   const parsed = parseExternalId(ext);
   if (!parsed) { const e = new Error(`unresolved externalId "${ext}"`); e.badRequest = true; throw e; }
   const { type, leadId } = parsed;
@@ -178,9 +187,6 @@ async function captureCompleted(body) {
   if (!lead) { const e = new Error(`lead ${leadId} not found`); e.badRequest = true; throw e; }
 
   // 2. Download the signed PDF and store it to OneDrive (best-effort).
-  const itemId = (p.items && p.items[0] && p.items[0].id)
-    || (p.envelopeItems && p.envelopeItems[0] && p.envelopeItems[0].id)
-    || null;
   let stored = false;
   try {
     if (itemId != null) {
