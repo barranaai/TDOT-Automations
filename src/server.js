@@ -363,6 +363,21 @@ app.get('/api/documenso/last-webhook', (req, res) => {
   res.json({ last: require('./services/documensoService').lastWebhook() });
 });
 
+// Documenso: re-run capture for an already-completed envelope (calibration only).
+// Idempotent — captureCompleted won't re-open a case whose Retainer Signed is
+// already set; this validates the signed-PDF download + OneDrive store.
+app.post('/api/documenso/recapture', express.json(), async (req, res) => {
+  try {
+    const documenso = require('./services/documensoService');
+    const envelopeId = (req.query.envelopeId || req.body?.envelopeId || '').toString();
+    if (!envelopeId) return res.status(400).json({ ok: false, error: 'envelopeId required' });
+    const result = await documenso.captureCompleted({ event: 'DOCUMENT_COMPLETED', payload: { envelopeId } });
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
 app.get('/api/boards/client-master', async (req, res) => {
   try {
     const board = await boardService.getBoardStructure(clientMasterBoardId);

@@ -189,9 +189,12 @@ async function captureCompleted(body) {
   let itemId = (p.envelopeItems && p.envelopeItems[0] && p.envelopeItems[0].id)
     || (p.items && p.items[0] && p.items[0].id)
     || null;
-  if ((!ext || !itemId) && p.id) {
+  // The v2 API keys on the string envelopeId ("envelope_…"), NOT the numeric
+  // payload.id the webhook also carries — use envelopeId for the fetch.
+  const envId = p.envelopeId || p.id;
+  if ((!ext || !itemId) && envId) {
     try {
-      const env = await getEnvelope(p.id);
+      const env = await getEnvelope(envId);
       if (!ext) ext = env && env.externalId;
       if (!itemId) itemId = env && env.envelopeItems && env.envelopeItems[0] && env.envelopeItems[0].id;
     } catch (_) { /* fall through with whatever we have */ }
