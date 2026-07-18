@@ -24,6 +24,8 @@ const boardService = require('./services/boardService');
 const webhookManager  = require('./services/webhookManager');
 const { startScheduler } = require('./services/scheduler');
 const caseReadinessService = require('./services/caseReadinessService');
+const caseAccess = require('./services/caseAccessService');
+const { tryStaffAuth } = require('./middleware/staffAuth');
 const slaRiskEngine        = require('./services/slaRiskEngine');
 const expiryRiskEngine     = require('./services/expiryRiskEngine');
 const caseHealthEngine     = require('./services/caseHealthEngine');
@@ -398,6 +400,40 @@ app.get('/api/dashboard/stats', async (req, res) => {
   }
 });
 
+// Resolve who is asking: the shared admin key → see all; otherwise a Monday
+// staff login → see only their assigned cases (unless their email is an admin).
+// Deliberately NOT under app.use('/api', requireApiKey) so the staff cookie
+// works without the shared key — and so staff-cookie access is scoped to THIS
+// endpoint, not the whole /api surface.
+function resolveViewer(req) {
+  const key = req.headers['x-api-key'] || req.query.key || '';
+  if (ADMIN_API_KEY && key === ADMIN_API_KEY) {
+    return { isAdmin: true, scope: 'all', name: 'Admin', email: '' };
+  }
+  const staff = tryStaffAuth(req);
+  if (staff) {
+    const v = caseAccess.viewerFromStaff(staff);
+    v.scope = v.isAdmin ? 'all' : 'assigned';
+    return v;
+  }
+  return null;
+}
+
+// Identity-aware dashboard stats — filtered to the viewer's assigned cases.
+app.get('/admin/dashboard-stats', async (req, res) => {
+  const viewer = resolveViewer(req);
+  if (!viewer) {
+    return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
+  }
+  try {
+    const stats = await dashboardService.getDashboardStats(viewer.isAdmin ? undefined : viewer);
+    res.json({ ...stats, viewer: { name: viewer.name, email: viewer.email, scope: viewer.scope, isAdmin: viewer.isAdmin } });
+  } catch (err) {
+    console.error('[Dashboard] Identity stats failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Staff case cockpit — unified single-case snapshot for /admin/case/:caseRef
 app.get('/api/case/:caseRef', async (req, res) => {
   try {
@@ -406,6 +442,25 @@ app.get('/api/case/:caseRef', async (req, res) => {
   } catch (err) {
     const notFound = /not found/i.test(err.message || '');
     if (!notFound) console.error('[Cockpit] Overview failed:', err.stack || err.message);
+    res.status(notFound ? 404 : 500).json({ error: err.message });
+  }
+});
+
+// Identity-aware cockpit data — a Monday-logged-in staffer may only open a case
+// they're assigned to (any people column); the admin key / allowlisted email
+// sees any case. Not under /api so the staff cookie works without the key.
+app.get('/admin/case-data/:caseRef', async (req, res) => {
+  const viewer = resolveViewer(req);
+  if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
+  try {
+    const overview = await caseCockpitService.getCaseOverview((req.params.caseRef || '').trim());
+    if (!viewer.isAdmin && !caseAccess.viewerCanSee(overview.assignees, viewer)) {
+      return res.status(403).json({ error: 'not-assigned', message: 'You are not assigned to this case, so you cannot view it.' });
+    }
+    res.json(overview);
+  } catch (err) {
+    const notFound = /not found/i.test(err.message || '');
+    if (!notFound) console.error('[Cockpit] Identity overview failed:', err.stack || err.message);
     res.status(notFound ? 404 : 500).json({ error: err.message });
   }
 });

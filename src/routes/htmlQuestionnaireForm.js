@@ -176,7 +176,7 @@ router.get('/auth/monday/callback', async (req, res) => {
   try {
     const meRes = await axios.post(
       'https://api.monday.com/v2',
-      { query: '{ me { id name email } }' },
+      { query: '{ me { id name email teams { id } } }' },
       { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
     );
     me = meRes.data?.data?.me;
@@ -208,7 +208,8 @@ router.get('/auth/monday/callback', async (req, res) => {
   }
 
   // Issue the staff session cookie
-  const sessionToken = createStaffToken({ id: me.id, name: me.name, email: me.email });
+  const teamIds = Array.isArray(me.teams) ? me.teams.map((t) => String(t.id)) : [];
+  const sessionToken = createStaffToken({ id: me.id, name: me.name, email: me.email, teamIds });
   setStaffCookie(res, sessionToken);
 
   console.log(`[StaffAuth] Staff login — ${me.name} (${me.email})`);

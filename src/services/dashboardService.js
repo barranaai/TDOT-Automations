@@ -34,7 +34,10 @@ const COLS = {
   expectedReadiness:  'numeric_mm0xrbk1',
 };
 
-const COL_IDS = Object.values(COLS);
+const caseAccess = require('./caseAccessService');
+// Fetch our stat columns PLUS every people column (for per-user access control),
+// de-duplicated (Case Manager / Ops Supervisor already appear in COLS).
+const FETCH_IDS = [...new Set([...Object.values(COLS), ...caseAccess.PEOPLE_COLUMNS])];
 
 // ─── Fetch all items with cursor-based pagination ─────────────────────────────
 async function fetchAllItems() {
@@ -49,7 +52,7 @@ async function fetchAllItems() {
              cursor
              items {
                id name
-               column_values(ids: [${COL_IDS.map((id) => `"${id}"`).join(',')}]) { id text }
+               column_values(ids: [${FETCH_IDS.map((id) => `"${id}"`).join(',')}]) { id text value }
              }
            }
          }
@@ -74,6 +77,12 @@ function toNum(text) {
 
 function parseItem(item) {
   const col = (id) => item.column_values?.find((c) => c.id === id)?.text?.trim() || '';
+
+  // Assignees (stable Monday ids) from every people column → drives per-user
+  // access control. Read from `value` (JSON), not `text` (names).
+  const valueByColId = {};
+  for (const cv of item.column_values || []) valueByColId[cv.id] = cv.value;
+  const assignees = caseAccess.assigneesFromColumnValues(valueByColId);
 
   const qR       = toNum(col(COLS.qReadiness));
   const docR     = toNum(col(COLS.docReadiness));
@@ -109,13 +118,20 @@ function parseItem(item) {
     supervisor:         col(COLS.opsSupervisor)  || '',
     lastActivity:       col(COLS.lastActivityDate),
     hardDeadline:       col(COLS.hardDeadline),
+    assignees,          // { personIds, teamIds } — for per-user access filtering
   };
 }
 
 // ─── Aggregate all cases into dashboard stats ─────────────────────────────────
-async function getDashboardStats() {
+// @param {Object} [viewer]  when supplied AND not an admin, only cases this
+//   viewer is assigned to (any people column) are counted/returned.
+async function getDashboardStats(viewer) {
   const rawItems = await fetchAllItems();
-  const cases    = rawItems.map(parseItem);
+  let   cases    = rawItems.map(parseItem);
+
+  if (viewer && !viewer.isAdmin) {
+    cases = cases.filter((c) => caseAccess.viewerCanSee(c.assignees, viewer));
+  }
 
   // Summary counters
   const summary = {

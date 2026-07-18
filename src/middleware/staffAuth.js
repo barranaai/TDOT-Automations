@@ -54,11 +54,11 @@ function redirectToLogin(req, res) {
  * Create a signed JWT for a successfully authenticated Monday user.
  * Call this in the OAuth callback handler after verifying the user.
  *
- * @param {{ id, name, email }} staffInfo
+ * @param {{ id, name, email, teamIds? }} staffInfo
  * @returns {string} Signed JWT
  */
-function createStaffToken({ id, name, email }) {
-  return jwt.sign({ id, name, email }, _SECRET, { expiresIn: '8h' });
+function createStaffToken({ id, name, email, teamIds = [] }) {
+  return jwt.sign({ id: id != null ? String(id) : id, name, email, teamIds }, _SECRET, { expiresIn: '8h' });
 }
 
 /**

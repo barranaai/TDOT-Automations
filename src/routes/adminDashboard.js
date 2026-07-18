@@ -850,9 +850,22 @@ function loadData() {
   document.getElementById('content').style.display = 'none';
   document.getElementById('error-msg').style.display = 'none';
 
-  fetch('/api/dashboard/stats', { headers: { 'X-Api-Key': key } })
+  // Identity-aware endpoint: send the admin key if we have one (→ see all),
+  // otherwise the Monday staff cookie is sent automatically (→ your cases).
+  var headers = key ? { 'X-Api-Key': key } : {};
+  fetch('/admin/dashboard-stats', { headers: headers, credentials: 'same-origin' })
     .then(function(r) {
-      if (r.status === 401 || r.status === 403) { window.location.href = '/admin'; throw new Error('Unauthorized'); }
+      if (r.status === 401) {
+        return r.json().then(function(j) {
+          document.getElementById('loading').style.display = 'none';
+          var el = document.getElementById('error-msg');
+          el.innerHTML = 'Please sign in to view the dashboard. ' +
+            '<a href="' + (j.loginUrl || '/q/auth/monday') + '" style="color:#fff;text-decoration:underline">Sign in with Monday</a>' +
+            ' — or enter the team admin key on the <a href="/admin" style="color:#fff;text-decoration:underline">sign-in page</a>.';
+          el.style.display = 'block';
+          throw new Error('Unauthorized');
+        });
+      }
       return r.json();
     })
     .then(function(data) {
@@ -861,8 +874,15 @@ function loadData() {
       document.getElementById('loading').style.display = 'none';
       document.getElementById('content').style.display = 'block';
       var gen = new Date(data.generatedAt);
+      var scope = '';
+      if (data.viewer && data.viewer.scope === 'assigned') {
+        scope = ' · 👤 Your assigned cases (' + (data.summary ? data.summary.total : 0) + ')' +
+          (data.viewer.name ? ' — ' + data.viewer.name : '');
+      } else if (data.viewer && data.viewer.isAdmin) {
+        scope = ' · 🗂️ All cases' + (data.viewer.name && data.viewer.name !== 'Admin' ? ' — ' + data.viewer.name : '');
+      }
       document.getElementById('hdr-updated').textContent =
-        'Updated: ' + gen.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        'Updated: ' + gen.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + scope;
     })
     .catch(function(e) {
       if (e.message === 'Unauthorized') return; // page is navigating away — suppress error flash
@@ -1654,9 +1674,10 @@ function shortType(t) {
 
 /* ── Boot ─────────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', function() {
-  if (!getKey()) return;
+  // No admin key is fine — a Monday-logged-in staffer is authed by cookie and
+  // loadData()'s endpoint resolves identity (or shows a Sign-in prompt on 401).
   startClock();
-  checkApiStatus();
+  if (getKey()) checkApiStatus();
   loadData();
 });
 </script>

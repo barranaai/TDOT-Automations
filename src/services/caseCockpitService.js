@@ -64,8 +64,12 @@ function linkUrl(colValue) {
   }
 }
 
+const caseAccess = require('./caseAccessService');
+
 async function readClientMaster(itemId) {
-  const ids = Object.values(CM).map((c) => `"${c}"`).join(', ');
+  // Fetch our columns PLUS every people column (for the access check), deduped.
+  const fetchIds = [...new Set([...Object.values(CM), ...caseAccess.PEOPLE_COLUMNS])];
+  const ids = fetchIds.map((c) => `"${c}"`).join(', ');
   const data = await mondayApi.query(
     `query($itemId: ID!) {
        items(ids: [$itemId]) {
@@ -78,6 +82,8 @@ async function readClientMaster(itemId) {
   const by = {};
   for (const c of cols) by[c.id] = c;
   const txt = (id) => (by[id]?.text || '').trim();
+  const valueByColId = {};
+  for (const c of cols) valueByColId[c.id] = c.value;
 
   return {
     clientEmail:     txt(CM.clientEmail),
@@ -91,6 +97,7 @@ async function readClientMaster(itemId) {
     deadline:        txt(CM.hardDeadline) || '',
     portalLink:      linkUrl(by[CM.portalLink]?.value) || txt(CM.portalLink),
     folderLink:      linkUrl(by[CM.folderLink]?.value) || txt(CM.folderLink),
+    assignees:       caseAccess.assigneesFromColumnValues(valueByColId), // { personIds, teamIds }
   };
 }
 
@@ -289,6 +296,7 @@ async function getCaseOverview(caseRef) {
     accessToken,
     clientEmail:     cm.clientEmail || '',
     manager:         cm.manager || 'Unassigned',
+    assignees:       cm.assignees || { personIds: [], teamIds: [] }, // for per-user access control
     paymentStatus:   cm.paymentStatus || 'Unpaid',
     caseStage:       cm.caseStage || 'Not Started',
     health:          cm.health || '—',

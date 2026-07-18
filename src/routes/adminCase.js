@@ -592,11 +592,27 @@ function renderTimelineTab(d) {
 }
 
 function loadCase() {
+  // Identity-aware: admin key → any case; Monday staff cookie → only if assigned.
   var key = getKey();
-  if (!key) return;
-  fetch('/api/case/' + encodeURIComponent(CASE_REF), { headers: { 'X-Api-Key': key } })
+  var headers = key ? { 'X-Api-Key': key } : {};
+  fetch('/admin/case-data/' + encodeURIComponent(CASE_REF), { headers: headers, credentials: 'same-origin' })
     .then(function(r) {
-      if (r.status === 401 || r.status === 403) { window.location.href = '/admin'; throw new Error('Unauthorized'); }
+      if (r.status === 401) {
+        return r.json().then(function(j) {
+          document.getElementById('loading').style.display = 'none';
+          var el = document.getElementById('error-msg');
+          el.innerHTML = 'Please sign in. <a href="' + (j.loginUrl || '/q/auth/monday') + '">Sign in with Monday</a> or enter the admin key on the <a href="/admin">sign-in page</a>.';
+          el.style.display = 'block';
+          throw new Error('Unauthorized');
+        });
+      }
+      if (r.status === 403) {
+        document.getElementById('loading').style.display = 'none';
+        var el2 = document.getElementById('error-msg');
+        el2.textContent = 'You are not assigned to this case, so you cannot view it. Ask an owner or the assigned case manager for access.';
+        el2.style.display = 'block';
+        throw new Error('Forbidden');
+      }
       if (r.status === 404) throw new Error('Case not found: ' + CASE_REF);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
@@ -607,7 +623,7 @@ function loadCase() {
       document.getElementById('content').style.display = 'block';
     })
     .catch(function(e) {
-      if (e.message === 'Unauthorized') return;
+      if (e.message === 'Unauthorized' || e.message === 'Forbidden') return;
       document.getElementById('loading').style.display = 'none';
       var el = document.getElementById('error-msg');
       el.textContent = 'Failed to load case: ' + e.message;
@@ -625,7 +641,7 @@ document.getElementById('tabbar').addEventListener('click', function(e) {
 });
 
 startClock();
-checkApiStatus();
+if (getKey()) checkApiStatus();  // status pill uses the admin key; skip for cookie-only staff
 loadCase();
 </script>
 </body>
