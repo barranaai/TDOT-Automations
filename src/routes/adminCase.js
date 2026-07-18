@@ -427,16 +427,17 @@ function docAction(btn) {
     if (notes == null) return;
     if (!notes.trim()) { actMsg('doc-act-msg', 'err', 'A note is required for rework.'); return; }
   } else if (!window.confirm('Mark this document as reviewed?')) { return; }
-  var key = getKey(); if (!key) return;
+  var key = getKey();
+  var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
   btn.disabled = true; actMsg('doc-act-msg', 'info', 'Working…');
-  fetch('/api/case/' + encodeURIComponent(CASE_REF) + '/document/' + encodeURIComponent(id) + '/status', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': key },
+  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/document/' + encodeURIComponent(id) + '/status', {
+    method: 'POST', headers: headers, credentials: 'same-origin',
     body: JSON.stringify({ action: act, notes: notes })
   })
-  .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, j: j }; }); })
+  .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
   .then(function(res) {
     if (res.ok) { actMsg('doc-act-msg', 'ok', act === 'reviewed' ? '✓ Marked reviewed.' : '✓ Rework requested — the client will see your note.'); loadCase(); }
-    else { btn.disabled = false; actMsg('doc-act-msg', 'err', (res.j && res.j.error) || 'Action failed.'); }
+    else { btn.disabled = false; actMsg('doc-act-msg', 'err', res.status === 403 ? 'You are not assigned to this case.' : res.status === 401 ? 'Please sign in again.' : ((res.j && res.j.error) || 'Action failed.')); }
   })
   .catch(function(e) { btn.disabled = false; actMsg('doc-act-msg', 'err', 'Failed: ' + e.message); });
 }
@@ -545,16 +546,18 @@ function msAction(btn) {
     if (ref == null) return;
     payload = { action: 'markMilestonePaid', value: JSON.stringify({ index: i, reference: ref.trim() }) };
   }
-  var key = getKey(); if (!key) return;
+  var key = getKey();
+  var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
   btn.disabled = true; actMsg('pay-act-msg', 'info', 'Working…');
-  fetch('/api/consultation/' + encodeURIComponent(L.leadId) + '/action', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': key },
+  // leadId is derived server-side from the assigned case — don't send it.
+  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/milestone', {
+    method: 'POST', headers: headers, credentials: 'same-origin',
     body: JSON.stringify(payload)
   })
-  .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, j: j }; }); })
+  .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, status: r.status, j: j }; }); })
   .then(function(res) {
     if (res.ok) { actMsg('pay-act-msg', 'ok', (res.j && res.j.message) || 'Done.'); loadCase(); }
-    else { btn.disabled = false; actMsg('pay-act-msg', 'err', (res.j && res.j.error) || 'Action failed.'); }
+    else { btn.disabled = false; actMsg('pay-act-msg', 'err', res.status === 403 ? 'You are not assigned to this case.' : res.status === 401 ? 'Please sign in again.' : ((res.j && res.j.error) || 'Action failed.')); }
   })
   .catch(function(e) { btn.disabled = false; actMsg('pay-act-msg', 'err', 'Failed: ' + e.message); });
 }

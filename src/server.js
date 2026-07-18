@@ -465,6 +465,63 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
   }
 });
 
+// Shared gate for cockpit WRITE actions: resolve the viewer + confirm they're
+// assigned to (or admin for) this case, returning the case overview so callers
+// can derive the linked lead server-side (never trust a client-supplied leadId).
+async function resolveCaseForWrite(req, res, caseRef) {
+  const viewer = resolveViewer(req);
+  if (!viewer) { res.status(401).json({ ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' }); return null; }
+  let overview;
+  try { overview = await caseCockpitService.getCaseOverview(caseRef); }
+  catch (err) { res.status(/not found/i.test(err.message || '') ? 404 : 500).json({ ok: false, error: err.message }); return null; }
+  if (!viewer.isAdmin && !caseAccess.viewerCanSee(overview.assignees, viewer)) {
+    res.status(403).json({ ok: false, error: 'You are not assigned to this case.' }); return null;
+  }
+  return { viewer, overview };
+}
+
+// Identity-gated document action (mark reviewed / request rework).
+app.post('/admin/case-action/:caseRef/document/:itemId/status', express.json(), async (req, res) => {
+  const ctx = await resolveCaseForWrite(req, res, (req.params.caseRef || '').trim());
+  if (!ctx) return;
+  const itemId = String(req.params.itemId || '').replace(/\D/g, '');
+  const { action, notes } = req.body || {};
+  if (!itemId) return res.status(400).json({ ok: false, error: 'Invalid item id' });
+  if (action !== 'reviewed' && action !== 'rework') return res.status(400).json({ ok: false, error: 'action must be "reviewed" or "rework"' });
+  if (action === 'rework' && !(typeof notes === 'string' && notes.trim())) return res.status(400).json({ ok: false, error: 'notes are required for rework' });
+  try {
+    const reviewFormSvc = require('./services/documentReviewFormService');
+    if (action === 'reviewed') await reviewFormSvc.markReviewed(itemId);
+    else await reviewFormSvc.requestRework(itemId, notes.trim());
+    console.log(`[Cockpit] doc ${itemId} (${(req.params.caseRef || '').trim()}) ${action} by ${ctx.viewer.email || 'admin'}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[Cockpit] identity doc action failed:', err.message);
+    res.status(500).json({ ok: false, error: 'Internal server error' });
+  }
+});
+
+// Identity-gated milestone action — leadId is DERIVED from the assigned case,
+// and only the two milestone actions are permitted (never arbitrary lead ops).
+const COCKPIT_MS_ACTIONS = ['sendMilestoneEtransferRequest', 'markMilestonePaid'];
+app.post('/admin/case-action/:caseRef/milestone', express.json(), async (req, res) => {
+  const ctx = await resolveCaseForWrite(req, res, (req.params.caseRef || '').trim());
+  if (!ctx) return;
+  const leadId = ctx.overview.lead && ctx.overview.lead.id;
+  if (!leadId) return res.status(400).json({ error: 'No linked lead for this case.' });
+  const { action, value } = req.body || {};
+  if (!COCKPIT_MS_ACTIONS.includes(action)) return res.status(400).json({ error: 'Unsupported action.' });
+  try {
+    const result = await consultantPortalService.applyAction({ leadId: String(leadId), action, value });
+    res.json(result);
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    if (err.notFound) return res.status(404).json({ error: err.message });
+    console.error('[Cockpit] identity milestone action failed:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Cockpit Documents tab — inline mark-reviewed / request-rework. Same service
 // functions the /d/:caseRef/review page uses, but behind the cockpit's
 // ADMIN_API_KEY (the /d page uses the separate Monday-OAuth staff cookie).
