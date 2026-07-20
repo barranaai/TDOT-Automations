@@ -35,6 +35,7 @@ const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
 const CM = {
   paymentStatus:   'color_mm0x9fnn', // Phase 1 trigger when set to "Paid"
   paymentConfDate: 'date_mm0xgk76',
+  retainedBy:      'multiple_person_mm334yp5', // "Retained by" (one of the RBAC people columns)
 };
 
 const RENDER_URL = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
@@ -72,19 +73,31 @@ async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt
 
   if (lead.retainerPaid) {
     console.log(`[Payment] Lead ${lead.id} retainer already marked paid (${lead.retainerPaid}) — skipping`);
+    // Self-heal: if a prior maybeMarkRetained flip failed transiently, a redelivered
+    // webhook / repeat "Mark paid" reconciles it here (idempotent + both-gated).
+    try { await maybeMarkRetained(lead); }
+    catch (e) { console.warn(`[Payment] retained reconcile (already-paid) failed for lead ${lead.id}: ${e.message}`); }
     return lead.clientMasterItemId || null;
   }
 
-  // 1. Lead Board.
+  // 1. Lead Board — record the payment. The conversion status is NOT set here:
+  //    "Retained" is a BOTH-gated state (signed AND paid), so maybeMarkRetained
+  //    (below) owns it — that way payment alone can never mark a client retained,
+  //    and it flips the moment the second of {signed, paid} lands, either order.
   await leadService.updateLead(lead.id, {
     retainerPaid:     when,
     ...(txnId ? { squareRetainerTxnId: txnId } : {}),
-    conversionStatus: 'Retained — Paid',
   });
   console.log(`[Payment] Lead ${lead.id} retainer paid${txnId ? ` (txn ${txnId})` : reference ? ` (e-transfer ref ${reference})` : ''}`);
 
   // The retainer payment IS the first milestone — record it as paid on the panel.
   try { await require('./milestonePaymentService').patchPayment(lead.id, 0, { status: 'paid', paidAt: when, ...(txnId ? { txnId } : {}), ...(reference ? { reference, method: 'e-transfer' } : {}) }); } catch (_) {}
+
+  // Signed + paid ⇒ Retained. Best-effort (never block the payment record / Phase-1
+  // trigger below). Placed BEFORE the clientMasterItemId guard so a signed+paid lead
+  // whose handoff failed still gets the Lead funnel flip (it just skips "Retained by").
+  try { await maybeMarkRetained(lead.id); }
+  catch (e) { console.warn(`[Payment] maybeMarkRetained failed for lead ${lead.id}: ${e.message}`); }
 
   // 2. Client Master → Payment Status = "Paid" (Phase 1 trigger).
   if (!lead.clientMasterItemId) {
@@ -185,4 +198,133 @@ async function sendRetainerPaymentLink(leadId, { amountCents, label } = {}) {
   return url;
 }
 
-module.exports = { onSquareRetainerPaymentReceived, recordRetainerPaid, sendRetainerPaymentLink, extractCompletedPayment };
+/** Best-effort Monday note on a lead item. */
+async function postLeadNote(leadId, body) {
+  try {
+    await mondayApi.query(
+      `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
+      { itemId: String(leadId), body }
+    );
+  } catch (err) { console.warn(`[Retained] note failed for ${leadId}: ${err.message}`); }
+}
+
+// Resolve a Monday user id from an email. Caches only DEFINITIVE results (a
+// resolved id, or a confirmed "no such user"). A transient lookup FAILURE returns
+// null WITHOUT caching, so the next retention retries instead of the process being
+// permanently poisoned into skipping the "Retained by" (RBAC) write.
+const _userIdByEmail = new Map();
+async function resolveMondayUserIdByEmail(email) {
+  const key = String(email || '').trim().toLowerCase();
+  if (!key) return null;
+  if (_userIdByEmail.has(key)) return _userIdByEmail.get(key);
+  let id;
+  try {
+    const data = await mondayApi.query(
+      `query($emails: [String]) { users(emails: $emails) { id email } }`, { emails: [key] });
+    const users = (data && data.users) || [];
+    const u = users.find((x) => String(x.email || '').toLowerCase() === key) || users[0];
+    id = u && u.id != null ? String(u.id) : null; // definitive: resolved id or confirmed absent
+  } catch (err) {
+    console.warn(`[Retained] Monday user lookup failed for ${key} (not caching — will retry): ${err.message}`);
+    return null; // transient — do NOT cache, so a later retention retries
+  }
+  _userIdByEmail.set(key, id);
+  return id;
+}
+
+/**
+ * Set the Client Master "Retained by" people column to the retaining consultant
+ * (which also grants them RBAC visibility of the case). Best-effort and
+ * non-destructive: never overwrites an existing assignment, and no-ops if the
+ * consultant can't be resolved to a Monday user.
+ */
+async function setRetainedBy(lead) {
+  if (!lead || !lead.clientMasterItemId) return { ok: false, reason: 'no-case' };
+  const { resolveConsultant } = require('../../config/consultantRouting');
+  const consultant = resolveConsultant(lead);
+  const userId = consultant.mondayUserId || await resolveMondayUserIdByEmail(consultant.email);
+  if (!userId || !Number.isFinite(Number(userId))) {
+    console.warn(`[Retained] No valid Monday user id for consultant ${consultant.name} (${consultant.email}) — "Retained by" not set on CM ${lead.clientMasterItemId}`);
+    return { ok: false, reason: 'no-user' };
+  }
+
+  // Don't stomp an existing "Retained by" assignment (staff may have set it).
+  // FAIL CLOSED: if the current-value read fails, treat the column as possibly
+  // occupied and SKIP the write — a transient read error must never overwrite a
+  // human-set assignment (this column drives RBAC case visibility).
+  try {
+    const cur = await mondayApi.query(
+      `query($id: [ID!]) { items(ids: $id) { column_values(ids: ["${CM.retainedBy}"]) { value } } }`,
+      { id: [String(lead.clientMasterItemId)] });
+    const raw = cur && cur.items && cur.items[0] && cur.items[0].column_values && cur.items[0].column_values[0] && cur.items[0].column_values[0].value;
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && Array.isArray(parsed.personsAndTeams) && parsed.personsAndTeams.length) {
+      console.log(`[Retained] CM ${lead.clientMasterItemId} already has "Retained by" — leaving as-is`);
+      return { ok: true, already: true };
+    }
+  } catch (err) {
+    console.warn(`[Retained] Could not verify existing "Retained by" on CM ${lead.clientMasterItemId} (${err.message}) — skipping to avoid overwriting a manual assignment`);
+    return { ok: false, reason: 'read-failed' };
+  }
+
+  await mondayApi.query(
+    `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+     }`,
+    { boardId: String(clientMasterBoardId), itemId: String(lead.clientMasterItemId),
+      cols: JSON.stringify({ [CM.retainedBy]: { personsAndTeams: [{ id: Number(userId), kind: 'person' }] } }) }
+  );
+  console.log(`[Retained] CM ${lead.clientMasterItemId} "Retained by" → ${consultant.name} (user ${userId})`);
+  return { ok: true, userId, consultant: consultant.name };
+}
+
+/**
+ * The single authority for the terminal "Retained" state: a client is retained
+ * once the retainer agreement is BOTH signed and paid — whichever lands last.
+ * Called from both events (recordRetainerPaid and retainerService2.onRetainerSigned),
+ * so ordering doesn't matter and a late signing can't downgrade a paid client.
+ * Idempotent on both writes. Concurrent calls for the same lead collapse to one
+ * execution (mirrors retainerService2._sendInFlight), so two near-simultaneous
+ * webhooks can't produce a duplicate "Client retained" note. Returns a summary.
+ * @param {string|object} leadOrId
+ */
+const _retainInFlight = new Map(); // leadId → Promise (collapse concurrent flips)
+async function maybeMarkRetained(leadOrId) {
+  const key = String((leadOrId && typeof leadOrId === 'object') ? leadOrId.id : leadOrId);
+  if (_retainInFlight.has(key)) return _retainInFlight.get(key);
+  const p = _doMaybeMarkRetained(leadOrId);
+  _retainInFlight.set(key, p);
+  try { return await p; } finally { _retainInFlight.delete(key); }
+}
+
+async function _doMaybeMarkRetained(leadOrId) {
+  const lead = (leadOrId && typeof leadOrId === 'object') ? leadOrId : await leadService.getLead(leadOrId);
+  if (!lead) return { ok: false, reason: 'no-lead' };
+  const signed = Boolean(String(lead.retainerSigned || '').trim());
+  const paid   = Boolean(String(lead.retainerPaid || '').trim());
+  if (!(signed && paid)) return { ok: false, retained: false, signed, paid };
+
+  // 1. Lead funnel → clean terminal "Retained" (idempotent; only writes on change).
+  const wasRetained = lead.conversionStatus === 'Retained';
+  if (!wasRetained) {
+    await leadService.updateLead(lead.id, { conversionStatus: 'Retained' });
+    await postLeadNote(lead.id,
+      '🎉 <b>Client retained</b> — retainer agreement signed and payment received. Conversion status set to "Retained".');
+    console.log(`[Retained] Lead ${lead.id} → Retained (signed ${lead.retainerSigned}, paid ${lead.retainerPaid})`);
+  }
+
+  // 2. Client Master → "Retained by" the retaining consultant (best-effort; also
+  //    grants RBAC visibility). Idempotent + non-destructive inside setRetainedBy.
+  let retainedBy = null;
+  if (lead.clientMasterItemId) {
+    try { retainedBy = await setRetainedBy(lead); }
+    catch (err) { console.warn(`[Retained] "Retained by" write failed for lead ${lead.id} → CM ${lead.clientMasterItemId}: ${err.message}`); }
+  }
+  return { ok: true, retained: true, statusChanged: !wasRetained, retainedBy };
+}
+
+module.exports = {
+  onSquareRetainerPaymentReceived, recordRetainerPaid, sendRetainerPaymentLink,
+  extractCompletedPayment, maybeMarkRetained, setRetainedBy,
+  _resetRetainedCaches: () => _userIdByEmail.clear(), // test hook (the cache is stable in prod)
+};

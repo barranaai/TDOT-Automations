@@ -387,6 +387,16 @@ async function onRetainerSigned(leadId) {
   } catch (err) {
     console.warn(`[Retainer2] Retainer payment link send failed for lead ${leadId} (handoff still done): ${err.message}`);
   }
+
+  // 3. Signed + paid ⇒ Retained. On the normal path payment hasn't happened yet,
+  // so this no-ops; but if the retainer was somehow paid BEFORE the signed date
+  // landed, this upgrades the lead to "Retained" instead of leaving it stuck at
+  // "Retained — Awaiting Payment". maybeMarkRetained owns the both-gated flip.
+  try {
+    await require('./paymentService').maybeMarkRetained(leadId);
+  } catch (err) {
+    console.warn(`[Retainer2] maybeMarkRetained failed for lead ${leadId}: ${err.message}`);
+  }
 }
 
 const _sendInFlight = new Map(); // leadId → Promise (collapses concurrent webhook calls)

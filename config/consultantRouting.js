@@ -24,6 +24,10 @@ const CONSULTANTS = {
   shafoli: {
     key: 'shafoli', name: 'Shafoli Kapur',
     email: (process.env.CONSULTANT_EMAIL_SHAFOLI || 'shafoli@tdotimm.com').trim(),
+    // Monday user id — used to set the "Retained by" people column (RBAC visibility)
+    // when a client is retained. Optional: falls back to a live users(emails:) lookup
+    // by the email above, so this only needs setting if the lookup can't resolve.
+    mondayUserId: (process.env.MONDAY_USER_ID_SHAFOLI || '').trim(),
     teamMemberId: (process.env.SQUARE_TM_SHAFOLI || 'TMyC12DauGxiI8x-').trim(),
     rcicNumber: (process.env.RCIC_NUMBER_SHAFOLI || 'R518177').trim(),
     rcicRole:   (process.env.RCIC_ROLE_SHAFOLI  || 'RCIC-IRB').trim(),
@@ -32,6 +36,7 @@ const CONSULTANTS = {
   shermin: {
     key: 'shermin', name: 'Shermin Teymouri Mofrad',
     email: (process.env.CONSULTANT_EMAIL_SHERMIN || 'shermin@tdotimm.com').trim(),
+    mondayUserId: (process.env.MONDAY_USER_ID_SHERMIN || '').trim(),
     teamMemberId: (process.env.SQUARE_TM_SHERMIN || 'TMAaDa6-290I5zyi').trim(),
     rcicNumber: (process.env.RCIC_NUMBER_SHERMIN || 'R709839').trim(),
     rcicRole:   (process.env.RCIC_ROLE_SHERMIN  || 'RCIC').trim(),
