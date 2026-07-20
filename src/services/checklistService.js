@@ -17,6 +17,7 @@ const CM_COLS = {
   primaryCaseType:         'dropdown_mm0xd1qn',
   caseSubType:             'dropdown_mm0x4t91',
   checklistTemplateApplied:'color_mm0xs7kp',
+  questionnaireApplied:    'color_mm0x3tpw',  // "Questionnaire Template Applied" — set Yes when a Q form is assigned
 };
 
 /**
@@ -325,6 +326,32 @@ async function seedQuestionnairePrefillSafe({ caseRef, caseType, caseSubType, cl
   } catch (err) {
     console.warn(`[ChecklistService] questionnaire pre-fill failed for ${caseRef} (non-fatal): ${err.message}`);
   }
+  // Mirror "Checklist Template Applied": mark the questionnaire as assigned so the
+  // Client Master column reflects it. Only when this case type actually HAS a
+  // questionnaire form (case types with none legitimately stay "No"). Best-effort.
+  await markQuestionnaireApplied({ itemId, caseType, caseSubType });
+}
+
+/**
+ * Set "Questionnaire Template Applied" (color_mm0x3tpw) → Yes when a questionnaire
+ * form is assigned for the case. Symmetric with markChecklistApplied. Best-effort:
+ * a failure here must never affect seeding. No-op when the case type has no form.
+ */
+async function markQuestionnaireApplied({ itemId, caseType, caseSubType }) {
+  try {
+    const { resolveForm } = require('../../config/questionnaireFormMap');
+    if (!resolveForm(caseType, caseSubType)) return; // no questionnaire for this case type
+    await mondayApi.query(
+      `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
+         change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues, create_labels_if_missing: true) { id }
+       }`,
+      { boardId: String(clientMasterBoardId), itemId: String(itemId),
+        colValues: JSON.stringify({ [CM_COLS.questionnaireApplied]: { label: 'Yes' } }) }
+    );
+    console.log(`[ChecklistService] Questionnaire Template Applied → Yes for item ${itemId}`);
+  } catch (err) {
+    console.warn(`[ChecklistService] Could not set Questionnaire Template Applied for ${itemId}: ${err.message}`);
+  }
 }
 
 /**
@@ -388,4 +415,4 @@ async function reseedByCaseRef(caseRef) {
   };
 }
 
-module.exports = { onDocumentCollectionStarted, reseedByCaseRef, _internal: { isSchemaDrivenEnabled } };
+module.exports = { onDocumentCollectionStarted, reseedByCaseRef, _internal: { isSchemaDrivenEnabled, markQuestionnaireApplied } };
