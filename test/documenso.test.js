@@ -47,6 +47,16 @@ test('isEnabled: requires BOTH the flag AND a token', () => {
 });
 
 // ─── capture: routing + state write (no network: externalId inline, no items) ─
+test('signature anchor matches both templates (retainer + consult, incl. "Client :  Signature" spacing)', () => {
+  // Mirrors SIG_ANCHOR — the signature block isn't the last PDF page (retainer
+  // annexes follow it), so page detection keys on this text.
+  const RE = /in witness thereof|signature of\b|client\s*:?\s*signature/i;
+  assert.ok(RE.test('IN WITNESS THEREOF this Agreement has been duly executed'));
+  assert.ok(RE.test('Signature of M Ikram Rana'), 'retainer client sig block');
+  assert.ok(RE.test('Email: x@y.com     Client :   Signature ______________'), 'consult, tolerating the space-before-colon the extractor emits');
+  assert.ok(!RE.test('ANNEX B — Fee Structure and Payment Schedule'), 'annex pages do not match');
+});
+
 test('captureCompleted: retainer completion sets Retainer Signed (which opens the case) + posts a note', async () => {
   const leadService = require('../src/services/leadService');
   const mondayApi   = require('../src/services/mondayApi');

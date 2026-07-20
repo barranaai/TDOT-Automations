@@ -225,6 +225,8 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
         signer: { email: lead.email, name: lead.fullName || lead.email },
         subject: 'Your TDOT Immigration retainer agreement — please sign',
         message: 'Please review and sign your retainer agreement. Once signed, we’ll email you the first payment details. Thank you — TDOT Immigration.',
+        // Client signature line on the execution page (annexes follow it).
+        signaturePosition: { positionX: 11, positionY: 36, width: 40, height: 6 },
       });
       await leadService.updateLead(leadId, {
         retainerSent:         todayISO(),

@@ -93,13 +93,38 @@ async function pdfPageCount(pdfBuffer) {
   } catch (_) { return 1; }
 }
 
+// The signature block isn't always the last page — the retainer appends annexes
+// AFTER the execution page. So we find the page whose text matches a signature
+// anchor. Works for both templates (retainer "IN WITNESS THEREOF / Signature of",
+// consult "Client: Signature"). Returns a 1-based page, or 0 if not found.
+const SIG_ANCHOR = /in witness thereof|signature of\b|client\s*:?\s*signature/i;
+async function findSignaturePage(pdfBuffer, anchor = SIG_ANCHOR) {
+  try {
+    const pdfParse = require('pdf-parse');
+    const re = anchor instanceof RegExp ? anchor : new RegExp(anchor, 'i');
+    const pageTexts = [];
+    await pdfParse(pdfBuffer, {
+      pagerender: async (pageData) => {
+        const tc = await pageData.getTextContent();
+        const txt = (tc.items || []).map((i) => i.str).join(' ');
+        pageTexts.push(txt);
+        return txt;
+      },
+    });
+    const idx = pageTexts.findIndex((t) => re.test(t));
+    return idx >= 0 ? idx + 1 : 0;
+  } catch (_) { return 0; }
+}
+
 /** Create an envelope (DRAFT — not distributed). Returns { envelopeId, envelopeItemId, raw }. */
-async function createEnvelope({ pdfBuffer, title, externalId, signer, subject, message, signaturePosition }) {
+async function createEnvelope({ pdfBuffer, title, externalId, signer, subject, message, signaturePosition, signatureAnchor }) {
   if (!pdfBuffer || !pdfBuffer.length) throw new Error('createEnvelope: empty PDF');
   if (!signer || !signer.email) throw new Error('createEnvelope: signer.email required');
 
-  const lastPage = await pdfPageCount(pdfBuffer);
-  const sigField = { type: 'SIGNATURE', page: lastPage, ...SIGNATURE_FIELD, ...(signaturePosition || {}) };
+  // Signature page = the page carrying the signature block (annexes come after
+  // it in the retainer), falling back to the last page if the anchor isn't found.
+  const page = (await findSignaturePage(pdfBuffer, signatureAnchor)) || (await pdfPageCount(pdfBuffer));
+  const sigField = { type: 'SIGNATURE', page, ...SIGNATURE_FIELD, ...(signaturePosition || {}) };
 
   const payload = {
     title,
@@ -273,6 +298,7 @@ module.exports = {
   parseExternalId,
   createEnvelope,
   distributeEnvelope,
+  findSignaturePage,
   sendForSignature,
   getEnvelope,
   downloadSignedPdf,

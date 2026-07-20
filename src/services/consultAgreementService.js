@@ -114,6 +114,8 @@ async function sendConsultAgreement(leadId) {
         externalId: documenso.externalIdFor('consult', leadId),
         signer: { email: lead.email, name: lead.fullName || lead.email },
         subject: 'Your TDOT Immigration consultation agreement — please sign',
+        // Client signature line near the bottom of the single-page agreement.
+        signaturePosition: { positionX: 25, positionY: 72, width: 28, height: 6 },
       });
       await leadService.updateLead(leadId, { consultAgreementSent: todayISO() });
       return { ok: true, via: 'documenso', envelopeId: env.envelopeId };
