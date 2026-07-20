@@ -91,6 +91,7 @@ test('captureCompleted: consultation completion posts a note but does NOT set re
     const r = await documenso.captureCompleted({ event: 'DOCUMENT_COMPLETED', payload: { externalId: 'consult-777', items: [] } });
     assert.equal(r.type, 'consult');
     assert.ok(!writes.some((f) => f.retainerSigned), 'consultation signing must not open a case');
+    assert.ok(writes.some((f) => f.consultAgreementSigned), 'consult signed date IS stamped (its own column, no case opened)');
   } finally { restore.forEach((r) => r()); }
 });
 

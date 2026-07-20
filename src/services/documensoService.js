@@ -277,9 +277,16 @@ async function captureCompleted(body) {
     if (!lead.retainerSigned) await leadService.updateLead(leadId, { retainerSigned: todayISO() });
     await postNote(leadId, `✍️ <b>Retainer agreement signed via Documenso</b>${stored ? ' — signed copy saved to OneDrive.' : '.'} The case will open automatically.`);
   } else {
+    // Consultation signing never opens a case — it just records the signed date
+    // (its own column, mirroring Retainer Signed) + stores the signed PDF.
+    if (!lead.consultAgreementSigned) await leadService.updateLead(leadId, { consultAgreementSigned: todayISO() });
     await postNote(leadId, `✍️ <b>Consultation agreement signed via Documenso</b>${stored ? ' — signed copy saved to OneDrive.' : '.'}`);
   }
-  return { type, leadId, stored, retainerSignedSet: type === 'retainer' && !lead.retainerSigned };
+  return {
+    type, leadId, stored,
+    retainerSignedSet: type === 'retainer' && !lead.retainerSigned,
+    consultSignedSet:  type === 'consult'  && !lead.consultAgreementSigned,
+  };
 }
 
 async function postNote(leadId, body) {

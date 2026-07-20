@@ -664,7 +664,7 @@ function render(d){
   RP_LOCKED = !!(d.retainerSent && String(d.retainerSent).trim()); RP_AMEND = false; applyRetainerLock();
 
   var ca=d.consultAgreement||{};
-  document.getElementById('ca-sent').textContent=ca.sent?('· sent '+ca.sent):'';
+  document.getElementById('ca-sent').textContent=ca.signed?('· signed '+ca.signed):(ca.sent?('· sent '+ca.sent):'');
   var caw=document.getElementById('ca-warn');
   caw.innerHTML=(ca.warnings&&ca.warnings.length)
     ? '<div class="rp-warn"><b>Before sending:</b><ul>'+ca.warnings.map(function(w){return '<li>'+escHtml(w)+'</li>';}).join('')+'</ul></div>' : '';

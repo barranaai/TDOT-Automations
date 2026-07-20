@@ -13,7 +13,7 @@ test('buildTimeline: assembles the full journey in chronological order', () => {
       createdAt: '2026-06-01T10:00:00Z', inviteSentAt: '2026-06-02',
       bookedSlot: '2026-06-10 15:00', meetingType: 'Virtual',
       consultationHeld: '2026-06-10', assignedConsultant: 'Shermin Teymouri Mofrad',
-      consultAgreementSent: '2026-06-05',
+      consultAgreementSent: '2026-06-05', consultAgreementSigned: '2026-06-06',
       retainerSent: '2026-06-12', retainerSigned: '2026-06-15', retainerPaid: '2026-06-16',
     },
     milestones: [
@@ -28,7 +28,8 @@ test('buildTimeline: assembles the full journey in chronological order', () => {
   assert.deepEqual(titles, [
     'Inquiry received',                            // Jun 1
     'Booking invite sent',                         // Jun 2
-    'Consultation agreement emailed',              // Jun 5
+    'Consultation agreement sent',                 // Jun 5
+    'Consultation agreement signed',               // Jun 6
     'Consultation scheduled',                      // Jun 10 15:00
     'Consultation held',                           // Jun 10 (date-only → end of day, after the slot)
     'Retainer agreement sent',                     // Jun 12

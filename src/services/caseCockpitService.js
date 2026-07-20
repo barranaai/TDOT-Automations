@@ -150,7 +150,8 @@ function pickLeadFields(lead) {
     transcriptLink:      lead.transcriptLink || '',
     preConsultPdf:       lead.preConsultPdf || '',
     consultationHeld:    lead.consultationHeld || '',
-    consultAgreementSent: lead.consultAgreementSent || '',
+    consultAgreementSent:   lead.consultAgreementSent || '',
+    consultAgreementSigned: lead.consultAgreementSigned || '',
     inviteSentAt:        lead.inviteSentAt || '',
     assignedConsultant:  (lead.assignedConsultant || '').trim(),
     retainerFee:         lead.retainerFee || '',
@@ -182,7 +183,8 @@ function buildTimeline({ lead, milestones = [], qMembers = [], docItems = [] } =
   push(L.inviteSentAt,         'Booking invite sent',         '', 'lead');
   push(L.bookedSlot,           'Consultation scheduled',      L.meetingType ? `${L.meetingType} meeting` : '', 'meeting');
   push(L.consultationHeld,     'Consultation held',           L.assignedConsultant ? `with ${L.assignedConsultant}` : '', 'meeting');
-  push(L.consultAgreementSent, 'Consultation agreement emailed', '', 'doc');
+  push(L.consultAgreementSent,   'Consultation agreement sent',   '', 'doc');
+  push(L.consultAgreementSigned, 'Consultation agreement signed', '', 'doc');
   push(L.retainerSent,         'Retainer agreement sent',     '', 'retainer');
   push(L.retainerSigned,       'Retainer signed — case opened', '', 'retainer');
   push(L.retainerPaid,         'First retainer payment recorded', '', 'payment');

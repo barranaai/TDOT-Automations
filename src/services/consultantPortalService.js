@@ -260,6 +260,7 @@ async function getConsultationDetail(leadId) {
     // Initial Consultation agreement (consultant-sent)
     consultAgreement: {
       sent:     lead.consultAgreementSent || '',
+      signed:   lead.consultAgreementSigned || '',
       warnings: consultAgreementService.buildConsultAgreementData(lead).warnings,
     },
 
