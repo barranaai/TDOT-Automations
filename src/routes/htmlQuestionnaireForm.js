@@ -32,7 +32,7 @@ const svc    = require('../services/htmlQuestionnaireService');
 const review = require('../services/htmlQuestionnaireReviewService');
 const { sendMissingFieldsEmail } = require('../services/missingFieldsEmailService');
 const { requireStaffAuth, tryStaffAuth, createStaffToken, setStaffCookie } = require('../middleware/staffAuth');
-const { FORMS_DIR, resolveMemberTypes } = require('../../config/questionnaireFormMap');
+const { FORMS_DIR, resolveMemberTypes, formEmbedsMembers, MEMBER_TYPE } = require('../../config/questionnaireFormMap');
 
 // The case cockpit is gated by the ADMIN_API_KEY (not the Monday-OAuth staff
 // cookie). To let the cockpit embed the questionnaire review inline, the read
@@ -235,7 +235,13 @@ router.get('/:caseRef/review', staffOrAdminKey, async (req, res) => {
     const formFiles   = resolveForm(caseType, caseSubType) || {};
     const memberTypes = resolveMemberTypes(caseType, caseSubType);
     const hasTwo      = Boolean(formFiles?.additional);
-    const isMultiMember = memberTypes.length > 0;
+    let   isMultiMember = memberTypes.length > 0;
+    // Board-aware fallback (mirrors the serve route): review per-member even for a
+    // case type with no configured member-types, when the board lists >1 member.
+    if (!isMultiMember && !formEmbedsMembers(caseType, caseSubType)) {
+      const bm = await svc.loadMembers({ clientName, caseRef }); // cached
+      if (bm.length > 1) isMultiMember = true;
+    }
 
     // Determine which form file to review (primary vs additional)
     const isAdditionalReview = (formKey === 'additional' || formKey.endsWith('-additional'));
@@ -865,8 +871,17 @@ router.get('/:caseRef', async (req, res) => {
     }
 
     const hasTwo         = Boolean(formFiles.additional);
-    const memberTypes    = resolveMemberTypes(caseType, caseSubType);
-    const hasMembers     = memberTypes.length > 0;
+    let   memberTypes    = resolveMemberTypes(caseType, caseSubType);
+    let   hasMembers     = memberTypes.length > 0;
+    // Board-aware fallback: a case type with no configured member-types still gets
+    // per-member sections when the Family Members board actually lists accompanying
+    // members (spouse/children) — UNLESS the form intentionally embeds them all
+    // (spousal F10). Only reads the board on this fallback path, cached.
+    let   preloadedMembers = null;
+    if (!hasMembers && !formEmbedsMembers(caseType, caseSubType)) {
+      preloadedMembers = await svc.loadMembers({ clientName, caseRef });
+      if (preloadedMembers.length > 1) { hasMembers = true; memberTypes = [MEMBER_TYPE.SPOUSE, MEMBER_TYPE.CHILD]; }
+    }
     const needsOverview  = hasTwo || hasMembers;
     const overviewUrl    = needsOverview
       ? `/q/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(token)}`
@@ -890,7 +905,7 @@ router.get('/:caseRef', async (req, res) => {
     // For dual-form cases, form=additional selects the second form file;
     // default (no form param) serves the primary form with a nav banner.
     if (!fParam) {
-      const members      = await svc.loadMembers({ clientName, caseRef });
+      const members      = preloadedMembers || await svc.loadMembers({ clientName, caseRef });
       const withStatuses = await svc.getMemberStatuses({ clientName, caseRef, members, formFiles });
 
       const isAdditionalView = (formParam === 'additional') && hasTwo;

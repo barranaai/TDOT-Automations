@@ -105,6 +105,7 @@ function summariseDocuments(items) {
   const counts = { total: items.length, received: 0, reviewed: 0, rework: 0, missing: 0 };
   const rework = [];
   const catMap = new Map();
+  const memMap = new Map(); // applicantType (member) → (category → items[])
 
   for (const it of items) {
     const s = it.status || 'Missing';
@@ -114,21 +115,35 @@ function summariseDocuments(items) {
     else                              counts.missing++;
 
     const cat = it.category || 'Other';
-    if (!catMap.has(cat)) catMap.set(cat, []);
-    catMap.get(cat).push({
-      // id + notes + upload date power the Documents tab's INLINE actions
-      // (mark reviewed / request rework) — not just the read-only summary.
+    const member = it.applicantType || 'Principal Applicant';
+    // id + notes + upload date power the Documents tab's INLINE actions
+    // (mark reviewed / request rework) — not just the read-only summary.
+    const row = {
       id:            it.id,
       name:          it.name,
       status:        s,
-      applicantType: it.applicantType || 'Principal Applicant',
+      applicantType: member,
       lastUpload:    it.lastUpload || '',
       reviewNotes:   it.reviewNotes || '',
-    });
+    };
+    if (!catMap.has(cat)) catMap.set(cat, []);
+    catMap.get(cat).push(row);
+
+    if (!memMap.has(member)) memMap.set(member, new Map());
+    const cm = memMap.get(member);
+    if (!cm.has(cat)) cm.set(cat, []);
+    cm.get(cat).push(row);
   }
 
   const byCategory = [...catMap.entries()].map(([category, list]) => ({ category, items: list }));
-  return { counts, byCategory, rework: rework.map((r) => ({ name: r.name, applicantType: r.applicantType })) };
+  // Per-member view (applicantType → category → items), Principal Applicant first,
+  // then spouse/children alphabetically — mirrors the standalone /d review page so
+  // a consultant sees each member's documents grouped together inside the cockpit.
+  const memberRank = (m) => (/principal applicant/i.test(m) ? 0 : 1);
+  const byMember = [...memMap.entries()]
+    .sort((a, b) => memberRank(a[0]) - memberRank(b[0]) || a[0].localeCompare(b[0]))
+    .map(([member, cm]) => ({ member, categories: [...cm.entries()].map(([category, list]) => ({ category, items: list })) }));
+  return { counts, byCategory, byMember, rework: rework.map((r) => ({ name: r.name, applicantType: r.applicantType })) };
 }
 
 // ─── Lead link + derived timeline ────────────────────────────────────────────

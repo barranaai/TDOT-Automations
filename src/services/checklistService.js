@@ -8,7 +8,7 @@ const { createClientFolders } = require('./oneDriveService');
 // the Template Board flow below runs exactly as before.
 const caseSchemaService     = require('./caseSchemaService');
 const compositionAdapter    = require('./compositionAdapter');
-const { seedPlan }          = require('./seedPlanner');
+const { seedPlan, findOrphanMembers } = require('./seedPlanner');
 const { reconcileExecutionRows } = require('./executionSeederService');
 
 // Client Master column IDs
@@ -92,6 +92,12 @@ async function seedFromSchema({ schema, caseRef, clientName, clientMasterItemId 
 
   const plan = seedPlan({ schema, composition });
 
+  // Guardrail: a family member on the board whose role the SELECTED schema can't
+  // seed (e.g. children on the board + a single-applicant Sub Type) would be
+  // silently dropped — no rows, no error. Surface it so staff can correct the
+  // Sub Type instead of the case quietly missing that member's documents.
+  const orphans = findOrphanMembers({ schema, composition });
+
   // OneDrive folders per category (same as the Template Board path).
   const categories = [...new Set(plan.map((r) => r.category).filter(Boolean))];
   let categoryLinks = {};
@@ -111,6 +117,20 @@ async function seedFromSchema({ schema, caseRef, clientName, clientMasterItemId 
     categoryLinks,
   });
   console.log(`[ChecklistService] SCHEMA seed done for ${caseRef} — created ${result.created}, skipped ${result.skipped}, failed ${result.failed}`);
+
+  // Post the orphan-members warning AFTER a successful seed (best-effort; never
+  // fails the seed). Gated on created > 0 so a retry (or an idempotent re-seed
+  // that adds nothing) can't double-post the note within one DCS event.
+  if (orphans.length && clientMasterItemId && result.created > 0) {
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const who = orphans.map((o) => `${o.count} ${esc(o.label)}${o.count > 1 ? 's' : ''}`).join(', ');
+    console.warn(`[ChecklistService] ${caseRef}: family on board not covered by Sub Type "${schema.subType}" — orphaned: ${who}`);
+    await mondayApi.query(
+      `mutation($i: ID!, $body: String!){ create_update(item_id: $i, body: $body){ id } }`,
+      { i: String(clientMasterItemId),
+        body: `⚠️ <b>Family members not covered by this checklist.</b> ${esc(who)} on the Family Members board, but the current Case Sub Type <b>"${esc(schema.subType) || '(none)'}"</b> has no matching document role — <b>their documents were NOT seeded.</b> If they are accompanying this application, change the Case Sub Type to the accompanying variant and flip <b>Re-seed Checklist → Run</b>.` }
+    ).catch((e) => console.warn(`[ChecklistService] orphan note failed for ${caseRef}: ${e.message}`));
+  }
   return result;
 }
 

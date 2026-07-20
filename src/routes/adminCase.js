@@ -104,6 +104,11 @@ function buildCockpitHTML(caseRef) {
     .doc-stat .l { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; margin-top:2px; }
     .cat-block { margin-top:14px; }
     .cat-head { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#64748b; margin-bottom:6px; }
+    .member-block { margin-top:18px; padding:12px 14px; border:1px solid #e7ecf3; border-radius:10px; background:#fbfcfe; }
+    .member-block:first-child { margin-top:8px; }
+    .member-head { font-size:13px; font-weight:800; color:var(--navy); display:flex; align-items:center; gap:8px; }
+    .member-head .member-cnt { font-size:11px; font-weight:600; color:#64748b; background:#eef2f8; padding:1px 8px; border-radius:999px; }
+    .member-block .cat-block:first-of-type { margin-top:10px; }
     .doc-line { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:12px; border-top:1px solid #f6f8fb; }
     .doc-line:first-child { border-top:none; }
     .doc-line .dn { color:var(--navy); }
@@ -399,21 +404,37 @@ var LAST_D = null;
 function actMsg(id, cls, txt) { var el = document.getElementById(id); if (!el) return; el.className = 'act-msg ' + cls; el.textContent = txt; }
 
 // ── Documents tab: full checklist with inline review actions ────────────────
+// Grouped by family member (Principal Applicant first, then spouse/children) so a
+// consultant sees each member's documents together. Single-applicant cases render
+// flat (no member header). Inline review actions are preserved per row.
+function renderDocRow(it) {
+  var acts = '';
+  if (it.id && it.status === 'Received') acts += '<button class="sbtn" data-doc-act="reviewed" data-doc-id="' + escHtml(it.id) + '">✓ Mark reviewed</button>';
+  if (it.id && (it.status === 'Received' || it.status === 'Reviewed')) acts += '<button class="sbtn danger" data-doc-act="rework" data-doc-id="' + escHtml(it.id) + '" data-doc-name="' + escHtml(it.name) + '">⟲ Request rework</button>';
+  var note = (it.status === 'Rework Required' && it.reviewNotes) ? '<div class="dnote">Rework note: ' + escHtml(it.reviewNotes) + '</div>' : '';
+  return '<div class="drow"><span class="dotc" style="background:' + (DOC_DOT[it.status] || '#cbd5e1') + '"></span>' +
+    '<span class="dn">' + escHtml(it.name) + '</span>' +
+    '<span class="dmeta">' + escHtml(it.status) + (it.lastUpload ? (' · uploaded ' + escHtml(it.lastUpload)) : '') + '</span>' +
+    '<span class="dacts">' + acts + '</span>' + note + '</div>';
+}
+function renderDocCat(cat) {
+  return '<div class="cat-block"><div class="cat-head">' + escHtml(cat.category) + '</div>' + cat.items.map(renderDocRow).join('') + '</div>';
+}
 function renderDocsTab(d) {
-  var cats = d.documents.byCategory || [];
-  var html = cats.map(function(cat) {
-    var lines = cat.items.map(function(it) {
-      var acts = '';
-      if (it.id && it.status === 'Received') acts += '<button class="sbtn" data-doc-act="reviewed" data-doc-id="' + escHtml(it.id) + '">✓ Mark reviewed</button>';
-      if (it.id && (it.status === 'Received' || it.status === 'Reviewed')) acts += '<button class="sbtn danger" data-doc-act="rework" data-doc-id="' + escHtml(it.id) + '" data-doc-name="' + escHtml(it.name) + '">⟲ Request rework</button>';
-      var note = (it.status === 'Rework Required' && it.reviewNotes) ? '<div class="dnote">Rework note: ' + escHtml(it.reviewNotes) + '</div>' : '';
-      return '<div class="drow"><span class="dotc" style="background:' + (DOC_DOT[it.status] || '#cbd5e1') + '"></span>' +
-        '<span class="dn">' + escHtml(it.name) + '</span>' +
-        '<span class="dmeta">' + escHtml(it.applicantType) + ' · ' + escHtml(it.status) + (it.lastUpload ? (' · uploaded ' + escHtml(it.lastUpload)) : '') + '</span>' +
-        '<span class="dacts">' + acts + '</span>' + note + '</div>';
+  var byMember = d.documents.byMember || [];
+  var html;
+  if (byMember.length <= 1) {
+    // Single applicant (or no members) — flat category list, no member header.
+    var cats = (byMember[0] && byMember[0].categories) || [];
+    html = cats.map(renderDocCat).join('');
+  } else {
+    html = byMember.map(function(m) {
+      var cnt = m.categories.reduce(function(a, c) { return a + c.items.length; }, 0);
+      return '<div class="member-block"><div class="member-head">' + escHtml(m.member) +
+        '<span class="member-cnt">' + cnt + ' doc' + (cnt === 1 ? '' : 's') + '</span></div>' +
+        m.categories.map(renderDocCat).join('') + '</div>';
     }).join('');
-    return '<div class="cat-block"><div class="cat-head">' + escHtml(cat.category) + '</div>' + lines + '</div>';
-  }).join('');
+  }
   document.getElementById('docs-actionable').innerHTML = html || '<div class="muted">No checklist rows seeded yet — they appear when Document Collection starts.</div>';
   Array.prototype.forEach.call(document.querySelectorAll('#docs-actionable [data-doc-act]'), function(btn) {
     btn.onclick = function() { docAction(btn); };

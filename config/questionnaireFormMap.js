@@ -70,9 +70,11 @@ const FORM_MAP = {
   'Addition of Spouse':                                            { primary: F1, memberTypes: [SPOUSE] },
 
   // ── Spousal / Family ────────────────────────────────────────────────────────
-  // Spousal Sponsorship F10 already covers both members in one form — no memberTypes needed
-  'Inland Spousal Sponsorship':                                    { primary: F10 },
-  'Outland Spousal Sponsorship':                                   { primary: F10 },
+  // Spousal Sponsorship F10 already covers both members in one form — no memberTypes needed.
+  // embedsAllMembers flags this so the board-aware fallback does NOT split it into
+  // per-member sections when the sponsored spouse is listed on the Family board.
+  'Inland Spousal Sponsorship':                                    { primary: F10, embedsAllMembers: true },
+  'Outland Spousal Sponsorship':                                   { primary: F10, embedsAllMembers: true },
   // File 15 (Parents/Grandparents/Children sponsorship) not yet created — unmapped
 
   // ── Work Permits ─────────────────────────────────────────────────────────────
@@ -191,4 +193,17 @@ function resolveMemberTypes(caseType, subType) {
   return form?.memberTypes || [];
 }
 
-module.exports = { FORMS_DIR, resolveForm, resolveMemberTypes, MEMBER_TYPE: { SPOUSE, CHILD, SPONSOR, WORKER_SP, PARENT, SIBLING } };
+/**
+ * Does this case's form intentionally embed ALL members in one form (so it must
+ * NOT be split into per-member sections even when the Family Members board lists
+ * accompanying members)? True only for the spousal forms (F10 covers both
+ * spouses in a single form).
+ */
+function formEmbedsMembers(caseType, subType) {
+  const type = (caseType || '').trim();
+  const sub  = (subType  || '').trim() || null;
+  const entry = (sub && FORM_SUBTYPE_MAP[type]?.[sub]) || FORM_MAP[type];
+  return Boolean(entry && entry.embedsAllMembers);
+}
+
+module.exports = { FORMS_DIR, resolveForm, resolveMemberTypes, formEmbedsMembers, MEMBER_TYPE: { SPOUSE, CHILD, SPONSOR, WORKER_SP, PARENT, SIBLING } };

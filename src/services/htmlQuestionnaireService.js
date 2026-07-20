@@ -373,8 +373,20 @@ async function seedQuestionnairePrefill({ clientName, caseRef, caseType, caseSub
       pairs: prefillMap.buildPrimaryFields(ctx),
     });
     // Each accompanying member's own form (thin today; harmless when empty).
-    for (const m of members) {
-      const key = (m.memberKey || '').trim();
+    // Derive each member's form key from the CURRENT board — mirroring the key
+    // the manifest will use (a generated spouse/child-1 when the board key is
+    // blank/malformed) — via the PURE builder, so prefill lands on the section
+    // that actually renders. Critically we do NOT persist a manifest here: doing
+    // so at DCS would freeze it and drop family added to the board later (the
+    // manifest is created lazily from the then-current board on first /q open).
+    // manifestExtras and boardExtras come from the SAME board array, same order,
+    // so the index join can't misalign.
+    const manifest = buildManifestFromBoard(members) || [];
+    const manifestExtras = manifest.filter((m) => m.key && m.key !== 'primary');
+    const boardExtras = members.filter((m) => ROLE_TO_PORTAL_TYPE[m.role]);
+    for (let i = 0; i < boardExtras.length; i++) {
+      const m = boardExtras[i];
+      const key = (manifestExtras[i] && manifestExtras[i].key) || (m.memberKey || '').trim();
       if (!key || key === 'primary') continue;
       seeded += await seedFormFileIfEmpty({
         clientName, caseRef, itemId: clientMasterItemId, formKey: key,
@@ -383,7 +395,7 @@ async function seedQuestionnairePrefill({ clientName, caseRef, caseType, caseSub
     }
 
     if (seeded > 0 && clientMasterItemId) await postPrefillNote(clientMasterItemId, seeded);
-    console.log(`[Prefill] Seeded ${seeded} field(s) across ${1 + members.length} form(s) for ${caseRef}.`);
+    console.log(`[Prefill] Seeded ${seeded} field(s) across ${1 + boardExtras.length} form(s) for ${caseRef}.`);
     return { ok: true, seeded };
   } catch (err) {
     console.warn(`[Prefill] seed failed for ${caseRef}: ${err.message}`);
@@ -492,6 +504,35 @@ const SEED_CACHE_TTL_MS = 60 * 1000;
  * Returns the seeded member list, or null when the board has no extra members
  * (or the read/save failed) — callers then fall back to primary-only.
  */
+/**
+ * PURE: build the member manifest ([primary, …accompanying]) from a board
+ * composition, WITHOUT persisting. The non-primary entries are in board order.
+ * Reused by seedMembersFromBoard (which persists) AND by prefill (which must NOT
+ * persist — persisting at DCS would freeze the manifest and drop family added to
+ * the board later). Returns null when the board has no accompanying members.
+ */
+function buildManifestFromBoard(boardMembers) {
+  const extras = (boardMembers || []).filter((m) => ROLE_TO_PORTAL_TYPE[m.role]);
+  if (extras.length === 0) return null;
+  const members = defaultMembers();
+  for (const bm of extras) {
+    const type  = ROLE_TO_PORTAL_TYPE[bm.role];
+    const count = members.filter((m) => m.type === type).length + 1;
+    // Reuse the board's memberKey when it's well-formed and free — it
+    // matches generateMemberKey's convention by construction at intake.
+    const boardKey = (bm.memberKey || '').trim();
+    const keyOk    = /^[a-z][a-z0-9-]{0,40}$/.test(boardKey)
+                     && boardKey !== 'primary'
+                     && !members.some((m) => m.key === boardKey);
+    const key = keyOk ? boardKey : generateMemberKey(type, members);
+    // Placeholder row names ("Spouse (from intake)") stay out of labels.
+    const name  = (bm.name || '').trim();
+    const label = name && !/\(from intake\)/i.test(name) ? name : memberLabel(type, count);
+    members.push({ key, type, label, addedAt: new Date().toISOString(), source: 'family-board' });
+  }
+  return members;
+}
+
 async function seedMembersFromBoard({ clientName, caseRef }) {
   const cached = seedCache.get(caseRef);
   if (cached && cached.exp > Date.now()) return cached.members;
@@ -500,29 +541,8 @@ async function seedMembersFromBoard({ clientName, caseRef }) {
   try {
     const compositionAdapter = require('./compositionAdapter'); // lazy: avoid require cycles
     const { members: boardMembers } = await compositionAdapter.readForCase(caseRef);
-
-    const extras = (boardMembers || []).filter((m) => ROLE_TO_PORTAL_TYPE[m.role]);
-    if (extras.length > 0) {
-      const members = defaultMembers();
-      for (const bm of extras) {
-        const type  = ROLE_TO_PORTAL_TYPE[bm.role];
-        const count = members.filter((m) => m.type === type).length + 1;
-
-        // Reuse the board's memberKey when it's well-formed and free — it
-        // matches generateMemberKey's convention by construction at intake.
-        const boardKey = (bm.memberKey || '').trim();
-        const keyOk    = /^[a-z][a-z0-9-]{0,40}$/.test(boardKey)
-                         && boardKey !== 'primary'
-                         && !members.some((m) => m.key === boardKey);
-        const key = keyOk ? boardKey : generateMemberKey(type, members);
-
-        // Placeholder row names ("Spouse (from intake)") stay out of labels.
-        const name  = (bm.name || '').trim();
-        const label = name && !/\(from intake\)/i.test(name) ? name : memberLabel(type, count);
-
-        members.push({ key, type, label, addedAt: new Date().toISOString(), source: 'family-board' });
-      }
-
+    const members = buildManifestFromBoard(boardMembers);
+    if (members) {
       await saveMembers({ clientName, caseRef, members });
       console.log(`[HtmlQ] Seeded member manifest for ${caseRef} from Family Members board — ${members.length} members (${members.map((m) => m.key).join(', ')})`);
       result = members;

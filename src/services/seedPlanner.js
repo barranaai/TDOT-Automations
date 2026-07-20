@@ -161,4 +161,43 @@ function seedPlan({ schema, composition }) {
   return rows;
 }
 
-module.exports = { seedPlan, _internal: { camelToWords, slugUpper, isRoleIncluded, isDocIncluded } };
+/**
+ * Coarse role "family" so a board member is judged COVERED whenever the schema
+ * has any role that would seed for it — even under a differently-named role.
+ * Critical: single-applicant schemas name the spouse/child roles
+ * `NonAccompanyingSpouse` / `NonAccompanyingChild`, which seedPlan STILL seeds
+ * (their includeWhen.caseFlag spouseIncluded/childrenIncluded is derived from
+ * member presence). Matching on the family — not the literal role string —
+ * avoids falsely flagging those covered members as orphaned.
+ */
+function roleFamily(role) {
+  const r = String(role || '').toLowerCase();
+  if (r.includes('child'))                        return 'child';
+  if (r.includes('spouse') || r.includes('partner')) return 'spouse';
+  if (r.includes('sponsor'))                      return 'sponsor';
+  if (r.includes('parent'))                       return 'parent';
+  if (r.includes('sibling'))                      return 'sibling';
+  return r; // principalapplicant, worker, etc.
+}
+
+/**
+ * Board members whose role FAMILY has no matching role in the selected schema —
+ * i.e. members the schema genuinely can't seed any documents for (e.g. children
+ * on the board + a Sub Type whose schema has no child role at all). PURE.
+ * Returns [] when everyone is covered. Uses roleFamily so a Spouse/DependentChild
+ * on the board is treated as covered by a NonAccompanyingSpouse/NonAccompanyingChild
+ * schema role (which seedPlan does seed via the derived caseFlag) — no false alarm.
+ * @returns {Array<{ role: string, label: string, count: number }>}
+ */
+function findOrphanMembers({ schema, composition }) {
+  const families = new Set((schema && Array.isArray(schema.roles) ? schema.roles : []).map((r) => roleFamily(r.role)));
+  const members = (composition && Array.isArray(composition.members)) ? composition.members : [];
+  const byRole = new Map();
+  for (const m of members) {
+    if (!m || !m.role || families.has(roleFamily(m.role))) continue;
+    byRole.set(m.role, (byRole.get(m.role) || 0) + 1);
+  }
+  return [...byRole.entries()].map(([role, count]) => ({ role, label: camelToWords(role), count }));
+}
+
+module.exports = { seedPlan, findOrphanMembers, _internal: { camelToWords, slugUpper, isRoleIncluded, isDocIncluded, roleFamily } };
