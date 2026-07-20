@@ -69,11 +69,13 @@ function diffPlan({ plan, existingKeys, caseRef }) {
  * PURE. From a case's existing rows, pick the ones to prune because they belong
  * to a DIFFERENT sub-type than the one now being seeded (the stale-duplicate
  * signature: a case re-seeded after its Case Sub Type changed). Conservative:
- *   - only SCHEMA-sourced rows (intakeItemId "code:…") — never legacy Template
- *     Board rows or manually-added rows,
+ *   - only reconciler-managed SCHEMA rows — identified by having a uniqueKey AND
+ *     no Template-Board relation (this covers BOTH the old numeric-intakeItemId
+ *     format and the new "code:" format; it excludes legacy Template-Board rows
+ *     and manually-added rows, which have no uniqueKey),
  *   - only rows whose caseSubType differs from the current one,
  *   - NEVER a row a client has uploaded to (status beyond "Missing").
- * @param {Array<{id,subType,intakeItemId,status}>} rows
+ * @param {Array<{id,subType,uniqueKey,templateRel,status}>} rows
  * @param {string} keepSubType  the sub-type currently being seeded
  */
 function selectStaleRows(rows, keepSubType) {
@@ -81,21 +83,22 @@ function selectStaleRows(rows, keepSubType) {
   const keep = norm(keepSubType);
   const uploaded = (s) => { const n = norm(s); return n !== '' && n !== 'missing'; };
   return (rows || []).filter((r) =>
-    /^code:/i.test(String(r.intakeItemId || '').trim()) &&
-    norm(r.subType) !== keep &&
-    !uploaded(r.status)
+    String(r.uniqueKey || '').trim() !== '' &&        // reconciler-managed schema row (old or new format)
+    String(r.templateRel || '').trim() === '' &&      // NOT a legacy Template-Board row
+    norm(r.subType) !== keep &&                        // from a DIFFERENT sub-type than the current one
+    !uploaded(r.status)                                // never a row a client has uploaded to
   );
 }
 
 /** I/O. Read a case's existing rows with the fields the prune needs. */
 async function getExistingRowsForPrune(caseRef) {
   const data = await mondayApi.query(
-    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:500, board_id:$b, columns:[{column_id:"${EXEC_COLS.caseReferenceNumber}", column_values:[$v]}]){ items{ id column_values(ids:["${EXEC_COLS.caseSubType}","${EXEC_COLS.intakeItemId}","color_mm0zwgvr"]){ id text } } } }`,
+    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:500, board_id:$b, columns:[{column_id:"${EXEC_COLS.caseReferenceNumber}", column_values:[$v]}]){ items{ id column_values(ids:["${EXEC_COLS.caseSubType}","${EXEC_COLS.uniqueKey}","board_relation_mm0zhagw","color_mm0zwgvr"]){ id text } } } }`,
     { b: String(BOARD_ID), v: String(caseRef) }
   );
   return (data?.items_page_by_column_values?.items || []).map((it) => {
     const g = (id) => (it.column_values.find((c) => c.id === id) || {}).text || '';
-    return { id: it.id, subType: g(EXEC_COLS.caseSubType), intakeItemId: g(EXEC_COLS.intakeItemId), status: g('color_mm0zwgvr') };
+    return { id: it.id, subType: g(EXEC_COLS.caseSubType), uniqueKey: g(EXEC_COLS.uniqueKey), templateRel: g('board_relation_mm0zhagw'), status: g('color_mm0zwgvr') };
   });
 }
 
