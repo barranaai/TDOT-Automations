@@ -94,7 +94,7 @@ input[type=text]:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--bran
 <body>
 <div class="card">
   <div class="card-header">
-    <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration" class="logo-img">
+    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration" class="logo-img">
     <span class="brand-sub">Client Portal</span>
   </div>
   <div class="card-body">
@@ -329,7 +329,7 @@ select.form-input{cursor:pointer}
 <!-- Top bar -->
 <div class="top-bar">
   <div class="top-bar-brand">
-    <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration" class="top-bar-logo">
+    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration" class="top-bar-logo">
     <div class="top-bar-divider"></div>
     <div class="top-bar-info">
       <h1>Client Questionnaire</h1>

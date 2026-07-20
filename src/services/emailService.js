@@ -69,7 +69,7 @@ function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl,
 
       <!-- Header -->
       <tr><td style="background:#0B1D32;border-radius:12px 12px 0 0;padding:28px 32px 26px;text-align:center;border-bottom:3px solid #C9A84C;">
-        <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=192&q=75" alt="TDOT Immigration" style="height:42px;object-fit:contain;display:inline-block;margin-bottom:10px;">
+        <img src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration" style="height:42px;object-fit:contain;display:inline-block;margin-bottom:10px;background:#fff;padding:3px 6px;border-radius:6px;">
         <div style="font-size:11px;letter-spacing:.18em;color:#C9A84C;text-transform:uppercase;font-weight:700;">Client Portal</div>
       </td></tr>
 

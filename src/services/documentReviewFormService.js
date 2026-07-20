@@ -478,7 +478,7 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
 
   <header class="top-bar">
     <div class="top-bar-brand">
-      <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration">
+      <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration">
       <div class="top-bar-left">
         <h1>📂 Document Review — ${escHtml(caseRef)}</h1>
         <p>${escHtml(clientName || 'Unknown Client')}</p>

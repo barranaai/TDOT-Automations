@@ -3072,7 +3072,7 @@ function buildOverviewPage({ caseRef, token, members, formFiles, allowedMemberTy
 </head>
 <body>
   <header class="overview-hdr">
-    <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration">
+    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration">
     <div>
       <div style="font-size:16px;font-weight:700;letter-spacing:.02em;">TDOT Immigration — Client Questionnaire</div>
       <div style="font-size:12px;color:rgba(255,255,255,.65);margin-top:3px;">Case ${escHtml(caseRef)}</div>

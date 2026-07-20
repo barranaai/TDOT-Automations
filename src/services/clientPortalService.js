@@ -601,7 +601,7 @@ function buildPortalPage(snap, opts) {
 <body>
   <header class="top">
     <div class="top-brand">
-      <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration">
+      <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration">
       <div>
         <h1>${escHtml(snap.clientName)}<span class="stage-pill">${escHtml(isStaff ? snap.caseStage : journey.label)}</span></h1>
         <p>Case ${escHtml(snap.caseRef)} · ${escHtml(snap.caseType || '')}${snap.caseSubType ? ' / ' + escHtml(snap.caseSubType) : ''}</p>

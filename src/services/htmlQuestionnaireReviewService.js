@@ -714,7 +714,7 @@ function buildReviewPage({ caseRef, formKey, formTitle, fields, flags, staffName
   <!-- Top bar -->
   <div class="top-bar">
     <div class="top-bar-brand">
-      <img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration">
+      <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration">
       <div class="top-bar-left">
         <h1>📋 Questionnaire Review — ${escHtml(clientName)}</h1>
         <p>${escHtml(caseRef)} · ${escHtml(caseType)} · ${escHtml(formTitle)}</p>
