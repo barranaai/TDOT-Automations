@@ -140,7 +140,24 @@ async function seedFromSchema({ schema, caseRef, clientName, clientMasterItemId 
  *
  * @param {{ itemId: string|number, boardId: string|number }} param
  */
-async function onDocumentCollectionStarted({ itemId, boardId }) {
+// Collapse concurrent seed triggers for the SAME case. THREE paths call this in
+// one onboarding burst — the DCS webhook (mondayWebhook), retainerService.onRetainerPaid,
+// and caseRefService.resumeOnboardingIfStuck. The checklistApplied guard below is a
+// racy read-then-write: without this collapse they all read "No" before any writes
+// "Yes", so each seeds — and because the Case Sub Type can still be settling, each
+// can seed a DIFFERENT sub-type, which is the actual cause of the duplicate-checklist
+// pile-up (rows under 2-3 sub-types, seeded seconds apart). Collapsing to ONE
+// in-flight run per item means exactly one seed happens; later re-fires hit the guard.
+const _dcsInFlight = new Map(); // itemId → Promise
+async function onDocumentCollectionStarted(args) {
+  const key = String((args && args.itemId) || '');
+  if (key && _dcsInFlight.has(key)) return _dcsInFlight.get(key);
+  const p = _doOnDocumentCollectionStarted(args);
+  if (key) { _dcsInFlight.set(key, p); }
+  try { return await p; } finally { if (key) _dcsInFlight.delete(key); }
+}
+
+async function _doOnDocumentCollectionStarted({ itemId, boardId }) {
   console.log(`[ChecklistService] Triggered for item ${itemId} on board ${boardId}`);
 
   // 1. Fetch the Client Master item
