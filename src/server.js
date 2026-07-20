@@ -365,6 +365,25 @@ app.get('/api/documenso/last-webhook', (req, res) => {
   res.json({ last: require('./services/documensoService').lastWebhook() });
 });
 
+// Generate the REAL agreement PDF (server-side, so v2 templates apply) and stream
+// it — used to calibrate the signature-field placement against the actual doc.
+app.get('/api/documenso/preview-agreement', async (req, res) => {
+  try {
+    const type = String(req.query.type || 'retainer');
+    const leadId = String(req.query.leadId || '').trim();
+    if (!leadId) return res.status(400).json({ error: 'leadId required' });
+    const leadService = require('./services/leadService');
+    const lead = await leadService.getLead(leadId);
+    if (!lead) return res.status(404).json({ error: 'lead not found' });
+    let pdf;
+    if (type === 'consult') pdf = await require('./services/consultAgreementService').getConsultAgreementDocument(lead);
+    else                    pdf = await require('./services/retainerService2').getRetainerDocument(lead);
+    res.type('application/pdf').send(pdf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Documenso: re-run capture for an already-completed envelope (calibration only).
 // Idempotent — captureCompleted won't re-open a case whose Retainer Signed is
 // already set; this validates the signed-PDF download + OneDrive store.

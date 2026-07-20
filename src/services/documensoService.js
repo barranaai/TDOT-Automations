@@ -77,14 +77,29 @@ async function api(path, { method = 'GET', json, form, raw } = {}) {
  * bottom of the last page — and is the one thing worth eyeballing on the first
  * live send; it's isolated here for easy tuning.
  */
-// Signature-field placement (percent of page). Isolated so the first live
-// calibration pass can nudge it without touching the rest of the flow.
-const SIGNATURE_FIELD = { type: 'SIGNATURE', page: 1, positionX: 12, positionY: 82, width: 30, height: 8 };
+// Signature-field placement (percent of page). Our agreements sign at the END,
+// so the field goes on the LAST page (page number resolved per-document from the
+// PDF, since the retainer's length varies with its annexes). Calibrated to the
+// "Client: Signature ______" block near the bottom-left of the TDOT agreement
+// templates. Callers may pass a per-document override via opts.signaturePosition.
+const SIGNATURE_FIELD = { positionX: 25, positionY: 70, width: 28, height: 8 };
+
+/** Count PDF pages (for last-page field placement); default 1 on any error. */
+async function pdfPageCount(pdfBuffer) {
+  try {
+    const { PDFDocument } = require('pdf-lib');
+    const doc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+    return doc.getPageCount() || 1;
+  } catch (_) { return 1; }
+}
 
 /** Create an envelope (DRAFT — not distributed). Returns { envelopeId, envelopeItemId, raw }. */
-async function createEnvelope({ pdfBuffer, title, externalId, signer, subject, message }) {
+async function createEnvelope({ pdfBuffer, title, externalId, signer, subject, message, signaturePosition }) {
   if (!pdfBuffer || !pdfBuffer.length) throw new Error('createEnvelope: empty PDF');
   if (!signer || !signer.email) throw new Error('createEnvelope: signer.email required');
+
+  const lastPage = await pdfPageCount(pdfBuffer);
+  const sigField = { type: 'SIGNATURE', page: lastPage, ...SIGNATURE_FIELD, ...(signaturePosition || {}) };
 
   const payload = {
     title,
@@ -94,7 +109,7 @@ async function createEnvelope({ pdfBuffer, title, externalId, signer, subject, m
       email: signer.email,
       name:  signer.name || signer.email,
       role:  'SIGNER',
-      fields: [{ ...SIGNATURE_FIELD }],
+      fields: [sigField],
     }],
     meta: {
       subject: subject || `Please sign: ${title}`,
