@@ -1,7 +1,7 @@
 'use strict';
 module.exports = {
   caseType: "Study Permit Extension",
-  subType: "Accompanying Spouse/Child",
+  subType: "Accompanying Spouse or Child",
   schemaVersion: 1,
   source: "Document Checklist Items/Study Permit/Document Checklist- Study Permit  Extension- Accompanying spouse or child.pdf",
   reviewedBy: 'Workflow review (Claude)',

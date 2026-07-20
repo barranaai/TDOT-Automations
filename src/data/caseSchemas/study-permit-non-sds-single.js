@@ -36,7 +36,7 @@ const SUPPORTER_DOCUMENTS = [
 
 module.exports = {
   caseType:      'Study Permit',
-  subType:       'Non SDS Stream - Single Applicant',
+  subType:       'Single Applicant',
   schemaVersion: 1,
   source:        'Document Checklist Items/Study Permit/Document Checklist- Study Permit - Non SDS Stream- Single Applicant.pdf',
   reviewedBy:    'Faran + Claude (batch review)',

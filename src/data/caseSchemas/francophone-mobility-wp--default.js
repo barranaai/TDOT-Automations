@@ -1,9 +1,11 @@
 'use strict';
+// Francophone Mobility WP shares the "Work Permit Extension (NB)" checklist per the
+// master mapping (Applications- Subtypes- Document Checklists-Questionnaire.xlsx).
 module.exports = {
-  caseType: "PGWP",
-  subType: "Single Applicant",
+  caseType: "Francophone Mobility WP",
+  subType: "",
   schemaVersion: 1,
-  source: "Document Checklist Items/Work Permits/Document Checklist- PGWP (Single Applicant).pdf",
+  source: "Document Checklist Items/Work Permits/Document Checklist- Work Permit Extension (NB) - Single or accompanying spouse.pdf",
   reviewedBy: 'Workflow review (Claude)',
   reviewedAt: '2026-05-13',
   caseFlags: {},
@@ -14,10 +16,10 @@ module.exports = {
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity' },
       { code: 'PHOTO', name: 'Digital photo as per specifications of Temporary Residents', category: 'Identity' },
-      { code: 'EDUCATION', name: 'Canadian Education Documents (for each program)', category: 'Academic' },
       { code: 'IDCIVIL', name: 'Identity and Civil Documents', category: 'Identity' },
-      { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' } },
-      { code: 'LANGUAGETEST', name: 'Language Test Report', category: 'Academic' }
+      { code: 'COHABITATION', name: 'Proof of cohabitation', category: 'Relationship' },
+      { code: 'INCOME', name: 'Proof/source of Income- Mandatory for Worker Spouse', category: 'Financial' },
+      { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' } }
     ] }
   ],
 };

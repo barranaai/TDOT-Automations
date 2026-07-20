@@ -1,7 +1,7 @@
 'use strict';
 module.exports = {
   caseType: "Study Permit",
-  subType: "Non SDS Stream - Accompanying Spouse/Child",
+  subType: "Non SDS - Accompanying Spouse or Child",
   schemaVersion: 1,
   source: "Document Checklist Items/Study Permit/Document Checklist- Study Permit- Non SDS Stream- Accompanying spouse or child.pdf",
   reviewedBy: 'Workflow review (Claude)',

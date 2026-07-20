@@ -1,7 +1,7 @@
 'use strict';
 module.exports = {
   caseType: "Study Permit",
-  subType: "Dependent Child - Outland",
+  subType: "Dependent Child (Outland)",
   schemaVersion: 1,
   source: "Document Checklist Items/Study Permit/Document Checklist- Study Permit for dependent child- Outland.pdf",
   reviewedBy: 'Workflow review (Claude)',

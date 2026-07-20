@@ -42,7 +42,7 @@ const SPONSOR_DOCUMENTS = [
 
 module.exports = {
   caseType:      'Outland Spousal Sponsorship',
-  subType:       'Marriage',
+  subType:       '',
   schemaVersion: 1,
   source:        'Document Checklist Items/Spousal Sponsorship/Document Checklist- Spousal Sponsorship - Outland.pdf',
   reviewedBy:    'Faran + Claude (batch review)',

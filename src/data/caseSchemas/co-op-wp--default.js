@@ -1,7 +1,9 @@
 'use strict';
+// Co-op WP shares the PGWP (Single Applicant) checklist per the master mapping
+// (Applications- Subtypes- Document Checklists-Questionnaire.xlsx).
 module.exports = {
-  caseType: "PGWP",
-  subType: "Single Applicant",
+  caseType: "Co-op WP",
+  subType: "",
   schemaVersion: 1,
   source: "Document Checklist Items/Work Permits/Document Checklist- PGWP (Single Applicant).pdf",
   reviewedBy: 'Workflow review (Claude)',
