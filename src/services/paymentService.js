@@ -220,7 +220,7 @@ async function resolveMondayUserIdByEmail(email) {
   let id;
   try {
     const data = await mondayApi.query(
-      `query($emails: [String]) { users(emails: $emails) { id email } }`, { emails: [key] });
+      `query($emails: [String!]) { users(emails: $emails) { id email } }`, { emails: [key] });
     const users = (data && data.users) || [];
     const u = users.find((x) => String(x.email || '').toLowerCase() === key) || users[0];
     id = u && u.id != null ? String(u.id) : null; // definitive: resolved id or confirmed absent
