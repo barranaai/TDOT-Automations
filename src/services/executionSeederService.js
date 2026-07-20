@@ -65,6 +65,60 @@ function diffPlan({ plan, existingKeys, caseRef }) {
   return { toCreate, toSkip };
 }
 
+/**
+ * PURE. From a case's existing rows, pick the ones to prune because they belong
+ * to a DIFFERENT sub-type than the one now being seeded (the stale-duplicate
+ * signature: a case re-seeded after its Case Sub Type changed). Conservative:
+ *   - only SCHEMA-sourced rows (intakeItemId "code:…") — never legacy Template
+ *     Board rows or manually-added rows,
+ *   - only rows whose caseSubType differs from the current one,
+ *   - NEVER a row a client has uploaded to (status beyond "Missing").
+ * @param {Array<{id,subType,intakeItemId,status}>} rows
+ * @param {string} keepSubType  the sub-type currently being seeded
+ */
+function selectStaleRows(rows, keepSubType) {
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const keep = norm(keepSubType);
+  const uploaded = (s) => { const n = norm(s); return n !== '' && n !== 'missing'; };
+  return (rows || []).filter((r) =>
+    /^code:/i.test(String(r.intakeItemId || '').trim()) &&
+    norm(r.subType) !== keep &&
+    !uploaded(r.status)
+  );
+}
+
+/** I/O. Read a case's existing rows with the fields the prune needs. */
+async function getExistingRowsForPrune(caseRef) {
+  const data = await mondayApi.query(
+    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:500, board_id:$b, columns:[{column_id:"${EXEC_COLS.caseReferenceNumber}", column_values:[$v]}]){ items{ id column_values(ids:["${EXEC_COLS.caseSubType}","${EXEC_COLS.intakeItemId}","color_mm0zwgvr"]){ id text } } } }`,
+    { b: String(BOARD_ID), v: String(caseRef) }
+  );
+  return (data?.items_page_by_column_values?.items || []).map((it) => {
+    const g = (id) => (it.column_values.find((c) => c.id === id) || {}).text || '';
+    return { id: it.id, subType: g(EXEC_COLS.caseSubType), intakeItemId: g(EXEC_COLS.intakeItemId), status: g('color_mm0zwgvr') };
+  });
+}
+
+/**
+ * I/O. Delete schema-sourced rows left over from a PREVIOUS Case Sub Type, so a
+ * sub-type change re-seeds cleanly instead of piling stale duplicates on top.
+ * Best-effort; never throws (a prune failure must not fail the seed).
+ * @returns {Promise<number>} number of rows pruned
+ */
+async function pruneStaleSubTypeRows({ caseRef, keepSubType }) {
+  let rows;
+  try { rows = await getExistingRowsForPrune(caseRef); }
+  catch (err) { console.warn(`[ExecSeeder] prune read failed for ${caseRef}: ${err.message}`); return 0; }
+  const stale = selectStaleRows(rows, keepSubType);
+  let pruned = 0;
+  for (const r of stale) {
+    try { await mondayApi.query(`mutation($id:ID!){ delete_item(item_id:$id){ id } }`, { id: String(r.id) }); pruned++; await sleep(150); }
+    catch (err) { console.warn(`[ExecSeeder] prune delete failed for row ${r.id}: ${err.message}`); }
+  }
+  if (pruned) console.log(`[ExecSeeder] ${caseRef}: pruned ${pruned} stale row(s) from other sub-type(s) — kept "${keepSubType}"`);
+  return pruned;
+}
+
 /** I/O. Create one Execution Board row from a planned row. */
 async function createRow({ caseRef, caseSubType, clientMasterItemId, row, uniqueKey, folderUrl }) {
   const cols = {
@@ -144,13 +198,20 @@ async function reconcileExecutionRows({ caseRef, caseSubType, clientMasterItemId
     await sleep(200);
   }
 
-  console.log(`[ExecSeeder] ${caseRef}: created ${created}, skipped ${toSkip.length}, failed ${failed}`);
-  return { created, skipped: toSkip.length, failed };
+  // Prune rows left over from a PREVIOUS sub-type so a Sub Type change re-seeds
+  // clean (this is the fix for the multi-sub-type duplicate pile-up). Runs after
+  // create so the current-sub-type rows are already in place; best-effort.
+  const pruned = await pruneStaleSubTypeRows({ caseRef, keepSubType: caseSubType });
+
+  console.log(`[ExecSeeder] ${caseRef}: created ${created}, skipped ${toSkip.length}, failed ${failed}, pruned ${pruned}`);
+  return { created, skipped: toSkip.length, failed, pruned };
 }
 
 module.exports = {
   reconcileExecutionRows,
   diffPlan,
   planRowToUniqueKey,
+  selectStaleRows,
+  pruneStaleSubTypeRows,
   _cols: EXEC_COLS,
 };
