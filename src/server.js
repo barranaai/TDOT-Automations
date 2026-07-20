@@ -61,6 +61,10 @@ app.use('/admin',           adminLeadsRouter);        // leads tab (/admin/leads
 app.use('/admin',           adminLoginRouter);       // TDOT-branded login + auto-redirect
 
 app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
+// Self-hosted static assets (brand logo, etc.). Self-hosting the logo means it no
+// longer 404s when the marketing site rebuilds/moves its image URLs, and it works
+// in emails (unlike data URIs, which Gmail/Outlook block). Long cache — it rarely changes.
+app.use('/assets', express.static(path.join(__dirname, '..', 'public'), { maxAge: '30d' }));
 
 // Phase 2 routes — all in one router (lead capture, booking, consult, retainer, webhooks)
 const phase2Router = require('./routes/phase2');

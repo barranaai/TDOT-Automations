@@ -3,11 +3,16 @@
  * Used by adminLogin, adminDashboard, and adminEngines.
  */
 
-// ─── TDOT Logo — actual logo image (inverted/white, for dark backgrounds) ─────
-const TDOT_LOGO_SVG = `<img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration" style="height:36px;object-fit:contain;display:block">`;
+// ─── TDOT Logo — SELF-HOSTED (public/tdot-logo.png, served at /assets) ─────────
+// Previously hot-linked from tdotimm.com's Next.js image optimizer; that URL now
+// 404s (the marketing site moved to WordPress). Self-hosting = it never breaks
+// again. The official logo is colour-on-white, so it sits on a white "chip" so it
+// reads cleanly on the dark header.
+const LOGO_URL = `${process.env.RENDER_URL || 'https://tdot-automations.onrender.com'}/assets/tdot-logo.png`;
+const TDOT_LOGO_SVG = `<img src="${LOGO_URL}" alt="TDOT Immigration" style="height:34px;background:#fff;padding:4px 8px;border-radius:6px;object-fit:contain;display:block">`;
 
 // ─── Larger variant used on the login page dark header ────────────────────────
-const TDOT_LOGO_SVG_LARGE = `<img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=192&q=75" alt="TDOT Immigration" style="height:44px;object-fit:contain;display:block">`;
+const TDOT_LOGO_SVG_LARGE = `<img src="${LOGO_URL}" alt="TDOT Immigration" style="height:44px;background:#fff;padding:5px 10px;border-radius:8px;object-fit:contain;display:block">`;
 
 // ─── Shared CSS variables + reset ────────────────────────────────────────────
 const SHARED_CSS_VARS = `

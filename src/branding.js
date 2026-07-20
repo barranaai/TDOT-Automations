@@ -34,8 +34,13 @@ const BRAND = Object.freeze({
   border:         '#E7E2D6',  // warm border to match lightBg
 });
 
-// Inverted (white) logo for dark headers
-const TDOT_LOGO_LIGHT_HTML = `<img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=128&q=75" alt="TDOT Immigration" style="height:36px;object-fit:contain;display:block">`;
-const TDOT_LOGO_LIGHT_HTML_LARGE = `<img src="https://tdotimm.com/_next/image?url=%2Ftdot_logo_inv.webp&w=256&q=75" alt="TDOT Immigration" style="height:46px;object-fit:contain;display:block">`;
+// TDOT logo — SELF-HOSTED at /assets/tdot-logo.png (public/tdot-logo.png). The old
+// tdotimm.com/_next/image URL now 404s (site moved to WordPress); self-hosting on
+// our own domain means it never breaks again AND loads in email clients (Gmail/
+// Outlook block data-URI images, but a normal HTTPS URL is fine). The official logo
+// is colour-on-white, so it sits on a white "chip" to read on dark email headers.
+const LOGO_URL = `${process.env.RENDER_URL || 'https://tdot-automations.onrender.com'}/assets/tdot-logo.png`;
+const TDOT_LOGO_LIGHT_HTML = `<img src="${LOGO_URL}" alt="TDOT Immigration" style="height:36px;background:#fff;padding:5px 9px;border-radius:7px;object-fit:contain;display:inline-block">`;
+const TDOT_LOGO_LIGHT_HTML_LARGE = `<img src="${LOGO_URL}" alt="TDOT Immigration" style="height:46px;background:#fff;padding:6px 11px;border-radius:8px;object-fit:contain;display:inline-block">`;
 
 module.exports = { BRAND, TDOT_LOGO_LIGHT_HTML, TDOT_LOGO_LIGHT_HTML_LARGE };
