@@ -72,9 +72,21 @@ async function onSlotConfirmed(leadId, meetingTypeOverride) {
     }
 
     // Best-effort: write the paid appointment onto the Square calendar with the
-    // client as the customer + an in-person/virtual seller note.
-    createSquareBooking(lead, slotStr, meetingType).catch((e) =>
-      console.warn(`[Consult] Square booking write failed for lead ${leadId}: ${e.message}`));
+    // client as the customer + an in-person/virtual seller note. Now that the
+    // plan supports seller-level writes this genuinely fires, so a real failure
+    // means the consultant won't see the appointment on their Square calendar —
+    // surface it as an actionable staff note instead of only a server log. (The
+    // benign "not configured"/"no phone" cases return without throwing, so this
+    // catch only fires on a genuine API failure.)
+    createSquareBooking(lead, slotStr, meetingType).catch(async (e) => {
+      console.warn(`[Consult] Square booking write failed for lead ${leadId}: ${e.message}`);
+      try {
+        await mondayApi.query(
+          `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
+          { itemId: String(leadId), body: `⚠️ <b>Square appointment not added automatically</b> — please add this consultation to the Square calendar manually. <i>(${escapeHtml(e.message)})</i>` }
+        );
+      } catch (_) { /* the note is best-effort too — never disturb the booking flow */ }
+    });
 
     // No auto client email here anymore. The client gets the Teams calendar invite
     // (virtual) + Square receipt at booking; the branded confirmation is now folded
