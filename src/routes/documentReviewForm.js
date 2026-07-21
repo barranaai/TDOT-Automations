@@ -99,8 +99,8 @@ router.post('/:caseRef/review/:itemId/status', requireStaffAuth, async (req, res
   const { action, notes } = req.body || {};
 
   if (!itemId) return res.status(400).json({ ok: false, error: 'Invalid item id' });
-  if (action !== 'reviewed' && action !== 'rework') {
-    return res.status(400).json({ ok: false, error: 'action must be "reviewed" or "rework"' });
+  if (action !== 'reviewed' && action !== 'rework' && action !== 'received') {
+    return res.status(400).json({ ok: false, error: 'action must be "reviewed", "rework", or "received"' });
   }
   if (action === 'rework' && !(notes && notes.trim())) {
     return res.status(400).json({ ok: false, error: 'notes are required for rework' });
@@ -109,8 +109,10 @@ router.post('/:caseRef/review/:itemId/status', requireStaffAuth, async (req, res
   try {
     if (action === 'reviewed') {
       await reviewFormSvc.markReviewed(itemId);
-    } else {
+    } else if (action === 'rework') {
       await reviewFormSvc.requestRework(itemId, notes);
+    } else {
+      await reviewFormSvc.reopenDoc(itemId); // 'received' — undo / reopen to pending
     }
 
     console.log(`[/d/review] ${req.staff?.name || 'Staff'} → item ${itemId} (${caseRef}): ${action}`);

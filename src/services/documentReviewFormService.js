@@ -195,6 +195,25 @@ async function requestRework(itemId, notes) {
   );
 }
 
+/**
+ * Reopen a document — revert a Reviewed / Rework Required back to "Received"
+ * (uploaded, awaiting review). Lets a reviewer undo a mis-click WITHOUT emailing
+ * the client: the status webhook only recalculates readiness for a "Received"
+ * change (no client notification, unlike Rework). Silent, internal correction.
+ */
+async function reopenDoc(itemId) {
+  await mondayApi.query(
+    `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+     }`,
+    {
+      boardId: String(EXEC_BOARD_ID),
+      itemId:  String(itemId),
+      cols:    JSON.stringify({ [DOC_STATUS_COL]: { label: 'Received' } }),
+    }
+  );
+}
+
 // ─── HTML page builder ───────────────────────────────────────────────────────
 
 /**
@@ -432,6 +451,10 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
       background: #fff; color: #8B0000; border-color: #8B0000;
     }
     .btn-rework:hover:not(:disabled) { background: #FAF1F1; }
+    .btn-undo {
+      background: #fff; color: #475569; border-color: #cbd5e1;
+    }
+    .btn-undo:hover:not(:disabled) { background: #f1f5f9; }
 
     /* Rework modal */
     .modal-bg {
@@ -568,6 +591,50 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
       });
     });
 
+    /* ── Shared: update a row's status pill + button states in place ── */
+    var STATUS_STYLE = {
+      'Reviewed':        { bg: '#f0fdf4', fg: '#166534', border: '#bbf7d0' },
+      'Rework Required': { bg: '#fef2f2', fg: '#991b1b', border: '#fca5a5' },
+      'Received':        { bg: '#fffbeb', fg: '#92400e', border: '#fde68a' },
+      'Missing':         { bg: '#f1f5f9', fg: '#475569', border: '#cbd5e1' }
+    };
+    function setRowStatus(row, status) {
+      if (!row) return;
+      row.setAttribute('data-status', status);
+      var pill = row.querySelector('.status-pill');
+      if (pill) {
+        var c = STATUS_STYLE[status] || STATUS_STYLE['Received'];
+        pill.textContent = status;
+        pill.style.background = c.bg; pill.style.color = c.fg; pill.style.borderColor = c.border;
+      }
+      var isReviewed = status === 'Reviewed', isRework = status === 'Rework Required', noUpload = status === 'Missing';
+      var rv = row.querySelector('.btn-reviewed'), rw = row.querySelector('.btn-rework'), ud = row.querySelector('.btn-undo');
+      if (rv) rv.disabled = isReviewed || noUpload;
+      if (rw) rw.disabled = isRework   || noUpload;
+      if (ud) ud.disabled = !(isReviewed || isRework);
+    }
+
+    /* ── Undo / reopen to pending — reverts to Received, NO client email ── */
+    async function undoReview(itemId, btn) {
+      btn.disabled = true;
+      try {
+        var res = await fetch('/d/' + encodeURIComponent(CASE_REF) + '/review/' + encodeURIComponent(itemId) + '/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'received' }),
+        });
+        var data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Failed');
+        var row = btn.closest('.doc-row');
+        setRowStatus(row, 'Received');
+        if (row) { var n = row.querySelector('.review-notes'); if (n) n.remove(); }
+        showToast('↺ Reopened — back to pending review');
+      } catch (err) {
+        btn.disabled = false;
+        showToast('✗ ' + (err.message || 'Failed to reopen'), true);
+      }
+    }
+
     /* ── Mark Reviewed ── */
     async function markReviewed(itemId, btn) {
       btn.disabled = true;
@@ -580,20 +647,8 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
         var data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error || 'Failed');
         showToast('✓ Marked as Reviewed');
-        // Update DOM in place — the row state, status pill, and button states
-        var row = btn.closest('.doc-row');
-        if (row) {
-          row.setAttribute('data-status', 'Reviewed');
-          var pill = row.querySelector('.status-pill');
-          if (pill) {
-            pill.textContent = 'Reviewed';
-            pill.style.background = '#f0fdf4';
-            pill.style.color = '#166534';
-            pill.style.borderColor = '#bbf7d0';
-          }
-          // Disable both action buttons after success
-          row.querySelectorAll('.btn-reviewed, .btn-rework').forEach(function (b) { b.disabled = true; });
-        }
+        // Update DOM in place — status pill + button states (enables Undo).
+        setRowStatus(btn.closest('.doc-row'), 'Reviewed');
       } catch (err) {
         btn.disabled = false;
         showToast('✗ ' + (err.message || 'Failed to mark reviewed'), true);
@@ -635,15 +690,7 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
         // Update the row in place
         var row = document.querySelector('.doc-row[data-item-id="' + _modalItemId + '"]');
         if (row) {
-          row.setAttribute('data-status', 'Rework Required');
-          var pill = row.querySelector('.status-pill');
-          if (pill) {
-            pill.textContent = 'Rework Required';
-            pill.style.background = '#fef2f2';
-            pill.style.color = '#991b1b';
-            pill.style.borderColor = '#fca5a5';
-          }
-          row.querySelectorAll('.btn-reviewed, .btn-rework').forEach(function (b) { b.disabled = true; });
+          setRowStatus(row, 'Rework Required'); // enables Undo, disables Request Rework
           // Inject the new review note inline
           var meta = row.querySelector('.doc-meta');
           if (meta) {
@@ -780,6 +827,9 @@ function rowHtml(it, folderUrl) {
 
   const reviewedDisabled = isReviewed || noUpload ? 'disabled' : '';
   const reworkDisabled   = isRework   || noUpload ? 'disabled' : '';
+  // Undo is available only once a decision has been made (Reviewed / Rework);
+  // it reverts to "Received" without emailing the client — a silent mis-click fix.
+  const undoDisabled     = (isReviewed || isRework) ? '' : 'disabled';
 
   const folderBtn = folderUrl
     ? `<a class="btn btn-onedrive" href="${escHtml(folderUrl)}" target="_blank" rel="noopener">📁 Open in OneDrive</a>`
@@ -815,6 +865,8 @@ function rowHtml(it, folderUrl) {
                 onclick="markReviewed('${escJs(it.id)}', this)">✓ Mark Reviewed</button>
         <button class="btn btn-rework" ${reworkDisabled}
                 onclick="openRework('${escJs(it.id)}', '${escJs(it.name)}')">⟲ Request Rework</button>
+        <button class="btn btn-undo" ${undoDisabled}
+                onclick="undoReview('${escJs(it.id)}', this)" title="Revert to pending review (no email sent to the client)">↺ Undo</button>
       </div>
     </div>`;
 }
@@ -825,4 +877,5 @@ module.exports = {
   getClientReplies,
   markReviewed,
   requestRework,
+  reopenDoc,
 };
