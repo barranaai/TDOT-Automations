@@ -249,6 +249,7 @@ async function getConsultationDetail(leadId) {
     retainerSent:   lead.retainerSent || '',
     retainerSigned: lead.retainerSigned || '',
     retainerPaid:   lead.retainerPaid || '',
+    conversionStatus: lead.conversionStatus || '', // 'Retained' once signed AND paid — locks the send button
     clientMasterItemId: lead.clientMasterItemId || '',
 
     // KPI attribution (staff-entered on the detail page)
@@ -828,6 +829,17 @@ async function applyAction({ leadId, action, value, amend = false }) {
     // background column-change webhook. The UI gates this button until fee + plan.
     case 'retainAndSend': {
       if (agreementSent) { const e = new Error('The retainer agreement has already been sent to this client.'); e.badRequest = true; e.locked = true; throw e; }
+      // Never send a fresh agreement to a client who has already signed / been
+      // retained — even if retainerSent was never stamped (manual signing, a
+      // failed stamp, or a legacy path). The UI locks the button on this too, but
+      // this is the authoritative guard.
+      const alreadyRetained = !!(lead.retainerSigned && String(lead.retainerSigned).trim())
+        || !!(lead.retainerPaid && String(lead.retainerPaid).trim())
+        || String(lead.conversionStatus || '').trim() === 'Retained';
+      if (alreadyRetained) {
+        const e = new Error('This client has already been retained (signed/paid) — a new retainer agreement should not be sent. Use “Amend” to record a change instead.');
+        e.badRequest = true; e.locked = true; throw e;
+      }
       if (!feeSet) { const e = new Error('Set the retainer fee before sending the agreement.'); e.badRequest = true; throw e; }
       await leadService.updateLead(leadId, { outcome: 'Retain' });
       const r = (await require('./retainerService2').maybeSendRetainerAgreement(leadId, { notifyIfMissing: true })) || {};

@@ -155,6 +155,15 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
     console.log(`[Retainer2] Retainer already sent for lead ${leadId} — skipping`);
     return { status: 'already' };
   }
+  // Never send a fresh agreement to a client who has already signed / been
+  // retained, even if retainerSent was never stamped (manual signing, a failed
+  // stamp, or a legacy path) — a re-set Outcome=Retain must not re-issue it.
+  if ((lead.retainerSigned && String(lead.retainerSigned).trim())
+      || (lead.retainerPaid && String(lead.retainerPaid).trim())
+      || String(lead.conversionStatus || '').trim() === 'Retained') {
+    console.log(`[Retainer2] Lead ${leadId} already signed/retained — not re-sending the agreement`);
+    return { status: 'already' };
+  }
   if (lead.outcome !== 'Retain') {
     return { status: 'not-retain' }; // fee set on a not-yet-retained lead — nothing to send
   }

@@ -584,8 +584,11 @@ ${SHARED_AUTH_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function safeUrl(u){ u=String(u==null?'':u).trim(); return /^(https?:|mailto:)/i.test(u)?u:'#'; } // block javascript:/data: in href
 var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload only once (don't clobber edits)
-// Lock state: once the retainer agreement is sent, fee + plan are read-only unless the consultant "Amend"s.
-var RP_LOCKED=false, RP_AMEND=false;
+// Lock state: once the retainer agreement is sent — OR the client has already
+// signed / been retained — fee + plan are read-only and no NEW agreement can be
+// sent, unless the consultant "Amend"s. RP_SENT (sent specifically) vs RP_RETAINED
+// (signed/paid/Retained) only differ in the wording of the lock message.
+var RP_LOCKED=false, RP_AMEND=false, RP_SENT=false, RP_RETAINED=false;
 // Progressive-enablement state for the retainer send flow: you must Set fee →
 // Save plan → Retain & send, in order. Each disabled button explains the due step.
 var RP_FEE_SET=false, RP_PLAN_SAVED=false, PERSISTED_FEE='';
@@ -659,9 +662,16 @@ function render(d){
     if(d.retainerPlan){ hydrateRetainer(d.retainerPlan); RP_HYDRATED=true; }
     else { loadRetainerPlan(); } // fallback: separate fetch (older payload)
   } else { updateMileSum(); } // keep the milestone sum in step with the fee
-  // Lock fee+plan once the agreement is sent (trim to match the server guard). Reset
-  // amend on every render so the panel re-locks after any action, not just a committed one.
-  RP_LOCKED = !!(d.retainerSent && String(d.retainerSent).trim()); RP_AMEND = false; applyRetainerLock();
+  // Lock fee+plan once the agreement is sent — OR the client has already signed /
+  // been retained — so a fresh agreement is never re-sent to a retained client
+  // (mirrors the server guard). Reset amend on every render so the panel re-locks
+  // after any action, not just a committed one.
+  var _retSent   = !!(d.retainerSent   && String(d.retainerSent).trim());
+  var _retSigned = !!(d.retainerSigned && String(d.retainerSigned).trim());
+  var _retPaid   = !!(d.retainerPaid   && String(d.retainerPaid).trim());
+  var _retained  = String(d.conversionStatus||'').trim()==='Retained';
+  RP_SENT = _retSent; RP_RETAINED = _retSigned || _retPaid || _retained;
+  RP_LOCKED = _retSent || RP_RETAINED; RP_AMEND = false; applyRetainerLock();
 
   var ca=d.consultAgreement||{};
   document.getElementById('ca-sent').textContent=ca.signed?('· signed '+ca.signed):(ca.sent?('· sent '+ca.sent):'');
@@ -772,15 +782,20 @@ function applyRetainerLock(){
   // Preview + Save: need the fee first.
   gate('btn-retainer-preview', locked || !RP_FEE_SET, 'Set the retainer fee first');
   gate('btn-retainer-save',    locked || !RP_FEE_SET, 'Set the retainer fee first');
-  // Retain & send: need fee AND a saved plan; never re-sendable once sent.
+  // Retain & send: need fee AND a saved plan; never re-sendable once the agreement
+  // is sent OR the client has already signed / been retained.
   gate('btn-retain-send',
        RP_LOCKED || !RP_FEE_SET || !RP_PLAN_SAVED,
-       RP_LOCKED ? 'Agreement already sent' : (!RP_FEE_SET ? 'Set the retainer fee first' : 'Save the retainer plan first'));
+       RP_RETAINED ? 'Client already retained — no new agreement needed'
+         : RP_SENT ? 'Agreement already sent'
+         : (!RP_FEE_SET ? 'Set the retainer fee first' : 'Save the retainer plan first'));
 
   if(banner){ banner.style.display = RP_LOCKED ? 'flex' : 'none'; banner.className = 'rp-lock' + (RP_AMEND ? ' amending' : ''); }
   if(msg) msg.innerHTML = RP_AMEND
     ? '✎ <b>Amending a sent agreement.</b> Changes are recorded as a note — the client may hold the original terms.'
-    : '🔒 <b>The retainer agreement has been sent.</b> The fee &amp; milestones are locked.';
+    : RP_RETAINED
+      ? '🔒 <b>This client has already been retained.</b> The fee &amp; milestones are locked — no new agreement will be sent.'
+      : '🔒 <b>The retainer agreement has been sent.</b> The fee &amp; milestones are locked.';
   if(amendBtn) amendBtn.style.display = (RP_LOCKED && !RP_AMEND) ? 'inline-flex' : 'none';
 }
 function startAmend(){
