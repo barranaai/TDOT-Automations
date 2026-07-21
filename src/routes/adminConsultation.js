@@ -588,7 +588,7 @@ var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload onl
 // signed / been retained — fee + plan are read-only and no NEW agreement can be
 // sent, unless the consultant "Amend"s. RP_SENT (sent specifically) vs RP_RETAINED
 // (signed/paid/Retained) only differ in the wording of the lock message.
-var RP_LOCKED=false, RP_AMEND=false, RP_SENT=false, RP_RETAINED=false;
+var RP_LOCKED=false, RP_AMEND=false, RP_SENT=false, RP_RETAINED=false, RP_SIGNED=false;
 // Progressive-enablement state for the retainer send flow: you must Set fee →
 // Save plan → Retain & send, in order. Each disabled button explains the due step.
 var RP_FEE_SET=false, RP_PLAN_SAVED=false, PERSISTED_FEE='';
@@ -670,7 +670,12 @@ function render(d){
   var _retSigned = !!(d.retainerSigned && String(d.retainerSigned).trim());
   var _retPaid   = !!(d.retainerPaid   && String(d.retainerPaid).trim());
   var _retained  = String(d.conversionStatus||'').trim()==='Retained';
+  var _caseOpen  = !!(d.clientMasterItemId && String(d.clientMasterItemId).trim());
   RP_SENT = _retSent; RP_RETAINED = _retSigned || _retPaid || _retained;
+  // "Mark retainer signed" disables once the deal is DONE — the case is open or the
+  // client is retained — but STAYS enabled for a signed lead whose handoff failed
+  // (no case yet), so staff can retry per the failed-handoff recovery note.
+  RP_SIGNED = (_retSigned && _caseOpen) || _retained;
   RP_LOCKED = _retSent || RP_RETAINED; RP_AMEND = false; applyRetainerLock();
 
   var ca=d.consultAgreement||{};
@@ -772,6 +777,13 @@ function applyRetainerLock(){
   if(fs) fs.disabled = locked;
   // Milestone-editing buttons live OUTSIDE the fieldset, so lock them explicitly.
   ['rp-add-mile','rp-split-mile'].forEach(function(id){ var b=rpEl(id); if(b) b.disabled = locked; });
+  // "Mark retainer signed" (manual/email flow) stays clickable after the agreement
+  // is SENT (that's when you'd use it) AND for a signed-but-handoff-failed lead (so
+  // staff can retry the case creation), but must NOT stay clickable once the deal is
+  // done — the case is open / client retained — re-clicking re-fires the whole
+  // signed→handoff→payment-link chain on a completed retention.
+  var signedBtn=document.getElementById('btn-signed');
+  if(signedBtn){ signedBtn.disabled = RP_SIGNED; signedBtn.title = RP_SIGNED ? 'Retainer already signed — the case is open' : ''; }
 
   // Progressive gating — Set fee → Save plan → Retain & send, in order. Each
   // disabled button's tooltip names the step you still owe.

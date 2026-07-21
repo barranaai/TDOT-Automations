@@ -49,6 +49,55 @@ test('retainAndSend: refuses (locked) when the client is already signed/paid/Ret
   }
 });
 
+test('retainerSigned action: idempotent on a DONE deal (case open OR retained) — no re-write, no re-fire', async () => {
+  for (const shape of [
+    { retainerSigned: '2026-07-20', clientMasterItemId: '999', conversionStatus: 'Retained — Awaiting Payment' }, // case open
+    { retainerSigned: '2026-07-20', clientMasterItemId: '', conversionStatus: 'Retained' },                        // retained
+  ]) {
+    let wrote = false;
+    const restore = [
+      stub(leadService, 'getLead', async () => ({ id: '1', outcome: 'Retain', retainerPaid: '', ...shape })),
+      stub(leadService, 'updateLead', async () => { wrote = true; }),
+      stub(mondayApi, 'query', async () => ({})),
+    ];
+    try {
+      const r = await portal.applyAction({ leadId: '1', action: 'retainerSigned', value: '' });
+      assert.equal(r.ok, true);
+      assert.match(r.message, /already marked signed|no change/i);
+      assert.equal(wrote, false, `shape ${JSON.stringify(shape)}: must NOT re-write (would re-fire the chain)`);
+    } finally { restore.forEach((x) => x()); }
+  }
+});
+
+test('retainerSigned action: signed but handoff FAILED (no case, not retained) → re-mark PROCEEDS to retry', async () => {
+  let wrote = null;
+  const restore = [
+    // retainerSigned stamped, but NO clientMasterItemId and not Retained — the failed-handoff state.
+    stub(leadService, 'getLead', async () => ({ id: '1', outcome: 'Retain', retainerSigned: '2026-07-20', clientMasterItemId: '', conversionStatus: 'Consulted', retainerPaid: '' })),
+    stub(leadService, 'updateLead', async (id, f) => { wrote = f; }),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await portal.applyAction({ leadId: '1', action: 'retainerSigned', value: '2026-07-21' });
+    assert.equal(r.ok, true);
+    assert.ok(wrote && wrote.retainerSigned, 'a signed-but-no-case lead re-marks (re-fires handoff) so staff can recover');
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('retainerSigned action: still marks signed when outcome=Retain and not yet signed', async () => {
+  let wrote = null;
+  const restore = [
+    stub(leadService, 'getLead', async () => ({ id: '1', outcome: 'Retain', retainerSigned: '', retainerPaid: '', conversionStatus: 'Consulted' })),
+    stub(leadService, 'updateLead', async (id, f) => { wrote = f; }),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await portal.applyAction({ leadId: '1', action: 'retainerSigned', value: '2026-07-21' });
+    assert.equal(r.ok, true);
+    assert.ok(wrote && wrote.retainerSigned === '2026-07-21', 'writes the signed date on a not-yet-signed lead');
+  } finally { restore.forEach((x) => x()); }
+});
+
 test('maybeSendRetainerAgreement: no-op ("already") for a signed/retained lead with retainerSent empty', async () => {
   for (const shape of [
     { retainerSigned: '2026-07-20' },

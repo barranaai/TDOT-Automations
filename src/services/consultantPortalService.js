@@ -864,6 +864,17 @@ async function applyAction({ leadId, action, value, amend = false }) {
         const e = new Error('Set the outcome to “Retain” before marking the retainer signed.');
         e.badRequest = true; throw e;
       }
+      // Idempotent on a DONE deal: once the case is open (handoff succeeded) or the
+      // client is retained, a re-click must NOT re-write the date — that re-fires the
+      // signed→handoff→payment-link chain on a completed retention. But a signed lead
+      // whose handoff FAILED (retainerSigned stamped, no case yet) must still be
+      // re-markable so staff can retry per the failed-handoff recovery note.
+      const alreadySigned = !!(lead.retainerSigned && String(lead.retainerSigned).trim());
+      const caseOpen      = !!(lead.clientMasterItemId && String(lead.clientMasterItemId).trim());
+      const isRetained    = String(lead.conversionStatus || '').trim() === 'Retained';
+      if (alreadySigned && (caseOpen || isRetained)) {
+        return { ok: true, message: `The retainer was already marked signed on ${lead.retainerSigned} and the case is open — no change.` };
+      }
       await leadService.updateLead(leadId, { retainerSigned: v.normalized });
       await postPortalNote(leadId, `Retainer marked signed (${v.normalized}).`);
       return { ok: true, message: 'Retainer marked signed — the case is being created and the payment link emailed to the client.' };
