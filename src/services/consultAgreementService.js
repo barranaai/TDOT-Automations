@@ -98,31 +98,62 @@ async function ensureConsultAgreementReady(leadId) {
   return { lead, url };
 }
 
+/**
+ * Create + distribute the Documenso consult e-sign envelope for a lead. Sends NO
+ * fallback email itself — callers decide (standalone email, or the consultation
+ * package's review link). On a successful envelope send it stamps
+ * consultAgreementSent IMMEDIATELY (mirroring the retainer path) — the client
+ * already has Documenso's signing email at that point, so the delivery must be
+ * recorded even if a caller's follow-up email later fails. Returns:
+ *   { envelopeId }          envelope sent + Sent stamped — the client has
+ *                           Documenso's signing email
+ *   { alreadySigned: true } agreement already signed (never re-issue an envelope)
+ *   null                    e-sign disabled / no client email / the send failed
+ *                           (logged) — caller falls back to the review-PDF link
+ */
+async function maybeSendConsultEsign(lead) {
+  const documenso = require('./documensoService');
+  if (!documenso.isEnabled() || !lead || !lead.email) return null;
+  if (lead.consultAgreementSigned && String(lead.consultAgreementSigned).trim()) return { alreadySigned: true };
+  let env;
+  try {
+    const pdf = await getConsultAgreementDocument(lead);
+    env = await documenso.sendForSignature({
+      pdfBuffer: pdf,
+      title: `TDOT Consultation Agreement — ${lead.fullName || 'Client'}`,
+      externalId: documenso.externalIdFor('consult', lead.id),
+      signer: { email: lead.email, name: lead.fullName || lead.email },
+      subject: 'Your TDOT Immigration consultation agreement — please sign',
+      // Client signature line near the bottom of the single-page agreement.
+      signaturePosition: { positionX: 25, positionY: 72, width: 28, height: 6 },
+    });
+  } catch (err) {
+    console.error(`[ConsultAgreement] Documenso send FAILED for lead ${lead.id} — falling back to the review link: ${err.message}`);
+    return null;
+  }
+  // Best-effort stamp — the envelope IS out; a transient Monday failure must not
+  // make the caller think the e-sign send failed (that would trigger the fallback
+  // email on top of Documenso's own signing email).
+  try { await leadService.updateLead(lead.id, { consultAgreementSent: todayISO() }); }
+  catch (err) { console.warn(`[ConsultAgreement] Sent-date stamp failed for lead ${lead.id} (envelope ${env.envelopeId} IS distributed): ${err.message}`); }
+  return { envelopeId: env.envelopeId };
+}
+
 async function sendConsultAgreement(leadId) {
   const { lead, url } = await ensureConsultAgreementReady(leadId);
 
   // e-signature path (Documenso): send for in-browser signature; the signed
   // copy auto-captures via webhook. On any failure, fall through to the legacy
   // email so the client is never left un-served.
-  const documenso = require('./documensoService');
-  if (documenso.isEnabled() && lead.email) {
-    try {
-      const pdf = await getConsultAgreementDocument(lead);
-      const env = await documenso.sendForSignature({
-        pdfBuffer: pdf,
-        title: `TDOT Consultation Agreement — ${lead.fullName || 'Client'}`,
-        externalId: documenso.externalIdFor('consult', leadId),
-        signer: { email: lead.email, name: lead.fullName || lead.email },
-        subject: 'Your TDOT Immigration consultation agreement — please sign',
-        // Client signature line near the bottom of the single-page agreement.
-        signaturePosition: { positionX: 25, positionY: 72, width: 28, height: 6 },
-      });
-      await leadService.updateLead(leadId, { consultAgreementSent: todayISO() });
-      return { ok: true, via: 'documenso', envelopeId: env.envelopeId };
-    } catch (err) {
-      console.error(`[ConsultAgreement] Documenso send FAILED for lead ${leadId} — falling back to email: ${err.message}`);
-      // fall through to the legacy email flow
-    }
+  const esign = await maybeSendConsultEsign(lead);
+  if (esign && esign.alreadySigned) {
+    // Signed already — never re-issue an envelope or email a "please review" for
+    // a completed agreement.
+    return { ok: true, alreadySigned: true, url };
+  }
+  if (esign && esign.envelopeId) {
+    // Sent-date already stamped inside maybeSendConsultEsign.
+    return { ok: true, via: 'documenso', envelopeId: esign.envelopeId };
   }
 
   const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
@@ -145,5 +176,5 @@ async function sendConsultAgreement(leadId) {
 
 module.exports = {
   buildConsultAgreementData, generateConsultAgreementPdf, getConsultAgreementDocument,
-  ensureConsultAgreementReady, sendConsultAgreement,
+  ensureConsultAgreementReady, sendConsultAgreement, maybeSendConsultEsign,
 };

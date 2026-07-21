@@ -925,14 +925,31 @@ async function applyAction({ leadId, action, value, amend = false }) {
 
     case 'sendConsultAgreement': {
       const r = await require('./consultAgreementService').sendConsultAgreement(leadId);
-      await postPortalNote(leadId, 'Initial consultation agreement emailed to the client.');
-      return { ok: true, message: 'The initial consultation agreement has been emailed to the client.', url: r.url };
+      if (r.alreadySigned) {
+        return { ok: true, message: 'The consultation agreement is already signed — nothing was re-sent.', url: r.url };
+      }
+      const viaEsign = r.via === 'documenso';
+      await postPortalNote(leadId, viaEsign
+        ? 'Initial consultation agreement sent for e-signature (Documenso) — signing auto-records on this lead.'
+        : 'Initial consultation agreement emailed to the client.');
+      return { ok: true, message: viaEsign
+        ? 'The consultation agreement has been sent for e-signature — signing records automatically.'
+        : 'The initial consultation agreement has been emailed to the client.', url: r.url };
     }
 
     case 'sendConsultationPackage': {
       const r = await require('./consultationService').sendConsultationPackage(leadId);
-      await postPortalNote(leadId, 'Consultation package emailed to the client (booking details + pre-consult form + agreement + 24h disclaimer).');
-      return { ok: true, message: 'The consolidated consultation email (details, pre-consult form & agreement) has been sent to the client.', url: r.url };
+      const viaEsign = r.via === 'documenso';
+      await postPortalNote(leadId, r.alreadySigned
+        ? 'Consultation package re-sent to the client (booking details + pre-consult form + 24h disclaimer). The consultation agreement is ALREADY SIGNED — no signature was requested; the email includes their signed-copy link.'
+        : viaEsign
+        ? 'Consultation package emailed to the client (booking details + pre-consult form + agreement + 24h disclaimer) — the agreement also went out for e-signature (Documenso); signing auto-records on this lead.'
+        : 'Consultation package emailed to the client (booking details + pre-consult form + agreement + 24h disclaimer).');
+      return { ok: true, message: r.alreadySigned
+        ? 'The consultation email has been re-sent. The agreement is already signed, so no new signature was requested.'
+        : viaEsign
+        ? 'The consolidated consultation email has been sent — the agreement also went out for e-signature, so signing records automatically.'
+        : 'The consolidated consultation email (details, pre-consult form & agreement) has been sent to the client.', url: r.url };
     }
 
     case 'saveRetainerSelections': {

@@ -211,7 +211,11 @@ async function resendConsultationLinks(leadId) {
  * the pre-consultation form + the consultation agreement (review-PDF link) + a
  * clear disclaimer that both must be completed ≥24h before or the consult may be
  * cancelled. Replaces the old separate booking-confirmation + agreement emails.
- * (When Adobe Sign is available, the agreement link becomes a real e-sign link.)
+ * When Documenso e-sign is enabled, the agreement ALSO goes out as a real e-sign
+ * envelope (the client gets Documenso's signature-request email alongside this
+ * package; signing auto-captures + stamps Consult Agreement Signed) — the
+ * package's agreement button then becomes a preview link. If e-sign is disabled
+ * or the envelope send fails, the button stays the legacy review-PDF link.
  */
 async function sendConsultationPackage(leadId) {
   const lead = await leadService.getLead(leadId);
@@ -220,9 +224,16 @@ async function sendConsultationPackage(leadId) {
 
   const token = lead.leadToken || '';
   const preUrl = `${RENDER_URL}/consult/${lead.id}?t=${encodeURIComponent(token)}`;
-  // Generate + cache the agreement PDF so the client's link is instant. Interim:
-  // a review-PDF link; swap for the Adobe e-sign link once that integration lands.
-  const { url: agreementUrl } = await require('./consultAgreementService').ensureConsultAgreementReady(leadId);
+  // Generate + cache the agreement PDF so the client's link is instant (it doubles
+  // as the preview link on the e-sign path and the fallback review link otherwise).
+  const consultAgreementSvc = require('./consultAgreementService');
+  const { url: agreementUrl } = await consultAgreementSvc.ensureConsultAgreementReady(leadId);
+  // e-signature path (Documenso): issue the real signing envelope alongside the
+  // package — the client signs in-browser and the webhook auto-stamps the signed
+  // date. null = disabled / send failed → the package keeps the review-PDF link.
+  const esign = await consultAgreementSvc.maybeSendConsultEsign(lead);
+  const viaEsign = !!(esign && esign.envelopeId);
+  const alreadySigned = !!(esign && esign.alreadySigned);
 
   const e = escapeHtml;
   const when = lead.bookedSlot || (lead.consultationHeld || '');
@@ -243,21 +254,35 @@ async function sendConsultationPackage(leadId) {
       ${lead.assignedConsultant ? `<p style="margin:6px 0"><b>With:</b> ${e(lead.assignedConsultant)}, RCIC</p>` : ''}
       ${whereBlock}
       <div style="border-top:1px solid ${BRAND.border};margin:20px 0"></div>
-      <p style="margin:0 0 4px"><b>Before your consultation, please complete these two steps:</b></p>
+      <p style="margin:0 0 4px"><b>${alreadySigned ? 'Before your consultation, please complete the step below:' : 'Before your consultation, please complete these two steps:'}</b></p>
       <p style="margin:14px 0 2px">1. Complete your pre-consultation form so we can prepare for your case:</p>
       <p style="margin:2px 0">${btn(preUrl, 'Complete pre-consultation form')}</p>
-      <p style="margin:16px 0 2px">2. Review and sign your initial consultation agreement:</p>
-      <p style="margin:2px 0">${btn(agreementUrl, 'Review consultation agreement')}</p>
+      ${alreadySigned
+        ? `<p style="margin:16px 0 2px">2. Your initial consultation agreement is already signed — no further action needed. Your copy:</p>
+      <p style="margin:2px 0">${btn(agreementUrl, 'View consultation agreement (PDF)')}</p>`
+        : viaEsign
+        ? `<p style="margin:16px 0 2px">2. Sign your initial consultation agreement — we've emailed it to you separately for e-signature (check your inbox for the signature request). You can preview it here:</p>
+      <p style="margin:2px 0">${btn(agreementUrl, 'Preview consultation agreement (PDF)')}</p>`
+        : `<p style="margin:16px 0 2px">2. Review and sign your initial consultation agreement:</p>
+      <p style="margin:2px 0">${btn(agreementUrl, 'Review consultation agreement')}</p>`}
       <div style="background:#fff4e5;border:1px solid #f0c98a;border-radius:8px;padding:12px 14px;margin:22px 0 6px;font-size:13.5px;color:#7a4b00">
-        <b>Please complete both steps at least 24 hours before your scheduled consultation.</b> If they are not completed in time, your consultation may be cancelled.
+        ${alreadySigned
+          ? `<b>Please complete the pre-consultation form at least 24 hours before your scheduled consultation.</b> If it is not completed in time, your consultation may be cancelled.`
+          : `<b>Please complete both steps at least 24 hours before your scheduled consultation.</b> If they are not completed in time, your consultation may be cancelled.`}
       </div>
       <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:20px">Any questions? Just reply to this email.</p>
     </div></div>`;
 
   await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation — details, form & agreement', html });
-  await leadService.updateLead(leadId, { consultAgreementSent: new Date().toISOString().split('T')[0] });
-  console.log(`[Consult] Consultation package sent to ${lead.email} for lead ${leadId}`);
-  return { ok: true, url: agreementUrl };
+  // Sent-date stamping: the e-sign path stamps inside maybeSendConsultEsign (the
+  // moment the envelope is out, so a package-email failure can't lose it), and an
+  // already-signed re-send must NOT move Sent past Signed. Stamp only the
+  // review-link fallback path here.
+  if (!viaEsign && !alreadySigned) {
+    await leadService.updateLead(leadId, { consultAgreementSent: new Date().toISOString().split('T')[0] });
+  }
+  console.log(`[Consult] Consultation package sent to ${lead.email} for lead ${leadId} (agreement via ${viaEsign ? 'documenso e-sign' : alreadySigned ? 'already-signed copy' : 'review link'})`);
+  return { ok: true, url: agreementUrl, via: viaEsign ? 'documenso' : 'review-link', alreadySigned };
 }
 
 // ─── Pre-consult form ────────────────────────────────────────────────────────
