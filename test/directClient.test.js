@@ -31,7 +31,7 @@ test('createDirectClient: creates a fully-wired lead (tag, case type, consultant
   let createArgs = null; const updates = [];
   const restore = [
     stubRegistryDown(),
-    stub(leadService, 'findByColumnValue', async () => null),
+    stub(leadService, 'findAllByColumnValue', async () => []),
     stub(leadService, 'createLead', async (f) => { createArgs = f; return { id: '900', ...f }; }),
     stub(leadService, 'updateLead', async (id, f) => { updates.push({ id, f }); }),
     stub(mondayApi, 'query', async () => ({})), // portal note
@@ -58,7 +58,7 @@ test('createDirectClient: rejects bad input before creating anything', async () 
   let created = false;
   const restore = [
     stubRegistryDown(),
-    stub(leadService, 'findByColumnValue', async () => null),
+    stub(leadService, 'findAllByColumnValue', async () => []),
     stub(leadService, 'createLead', async () => { created = true; return { id: 'x' }; }),
     stub(leadService, 'updateLead', async () => {}),
     stub(mondayApi, 'query', async () => ({})),
@@ -97,9 +97,9 @@ test('createDirectClient: duplicate guard — an existing un-retained direct lea
   let created = false;
   const restore = [
     stubRegistryDown(),
-    stub(leadService, 'findByColumnValue', async (key, val) => (
+    stub(leadService, 'findAllByColumnValue', async (key, val) => (
       key === 'email' && val === 'walkin@example.com'
-        ? { id: '777', sourceChannel: 'Direct Retainer', retainerSent: '' } : null)),
+        ? [{ id: '777', sourceChannel: 'Direct Retainer', retainerSent: '' }] : [])),
     stub(leadService, 'createLead', async () => { created = true; return { id: 'x' }; }),
     stub(leadService, 'updateLead', async () => {}),
     stub(mondayApi, 'query', async () => ({})),
@@ -112,11 +112,52 @@ test('createDirectClient: duplicate guard — an existing un-retained direct lea
   } finally { restore.forEach((x) => x()); }
 });
 
+// Live-found regression (2026-07-23): the guard used a FIRST-HIT-ONLY lookup, so
+// an older non-direct lead sharing the email hid the reusable one and every
+// re-submit minted a duplicate. The guard must scan ALL matches.
+test('createDirectClient: guard still reuses when an OLDER non-direct lead shares the email', async () => {
+  let created = false;
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'findAllByColumnValue', async () => ([
+      { id: '100', sourceChannel: 'Website', retainerSent: '' },        // older enquiry — first hit
+      { id: '778', sourceChannel: 'Direct Retainer', retainerSent: '' }, // the reusable one
+    ])),
+    stub(leadService, 'createLead', async () => { created = true; return { id: 'x' }; }),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'walkin@example.com', caseType: CASE_TYPE, consultant: CONSULTANT });
+    assert.equal(r.reused, true, 'must find the direct lead behind the older non-direct one');
+    assert.equal(r.leadId, '778');
+    assert.equal(created, false, 'no duplicate minted');
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('createDirectClient: a direct lead whose retainer ALREADY went out is not reused (new matter)', async () => {
+  let created = false;
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'findAllByColumnValue', async () => ([
+      { id: '779', sourceChannel: 'Direct Retainer', retainerSent: '2026-07-01' },
+    ])),
+    stub(leadService, 'createLead', async () => { created = true; return { id: '780' }; }),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'walkin@example.com', caseType: CASE_TYPE, consultant: CONSULTANT });
+    assert.ok(!r.reused, 'a retained/sent client starts a fresh lead');
+    assert.equal(created, true);
+  } finally { restore.forEach((x) => x()); }
+});
+
 test('createDirectClient: wiring failure NEVER strands staff — retries once, then returns the lead with a warning', async () => {
   let createCalls = 0, updateCalls = 0;
   const restore = [
     stubRegistryDown(),
-    stub(leadService, 'findByColumnValue', async () => null),
+    stub(leadService, 'findAllByColumnValue', async () => []),
     stub(leadService, 'createLead', async () => { createCalls++; return { id: '901' }; }),
     stub(leadService, 'updateLead', async () => { updateCalls++; throw new Error('monday 500'); }),
     stub(mondayApi, 'query', async () => ({})), // failure note (best-effort)

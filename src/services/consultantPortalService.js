@@ -1096,15 +1096,21 @@ async function createDirectClient(payload = {}) {
   if (!consultantNames.includes(consultant)) bad('Choose the consultant retaining this client — they sign the agreement and own the case.');
 
   // Duplicate guard: a lost response / re-submit must not mint a second lead.
-  // Reuse an existing direct-tagged lead with this email that hasn't been sent
-  // a retainer yet (best-effort — a read failure falls through to create).
+  // Reuse an existing direct-tagged lead with this email that hasn't been sent a
+  // retainer yet. MUST scan every match — the same email commonly already exists
+  // on an older non-direct lead (a past enquiry), and a first-hit-only lookup
+  // would find that one, fail the tag check, and create a duplicate every time.
+  // Best-effort: a read failure falls through to create.
   try {
-    const existing = await leadService.findByColumnValue('email', email);
-    if (existing
-        && (existing.sourceChannel || '').trim() === DIRECT_SOURCE
-        && !(existing.retainerSent && String(existing.retainerSent).trim())) {
-      console.log(`[Consultant] Direct client for ${email} already exists (lead ${existing.id}) — reusing`);
-      return { ok: true, leadId: existing.id, reused: true };
+    const matches = await leadService.findAllByColumnValue('email', email);
+    const reusable = (matches || []).filter((l) =>
+      (l.sourceChannel || '').trim() === DIRECT_SOURCE &&
+      !(l.retainerSent && String(l.retainerSent).trim()));
+    if (reusable.length) {
+      // Newest wins if several exist (highest Monday item id).
+      const pick = reusable.sort((a, b) => Number(b.id) - Number(a.id))[0];
+      console.log(`[Consultant] Direct client for ${email} already exists (lead ${pick.id}) — reusing`);
+      return { ok: true, leadId: pick.id, reused: true };
     }
   } catch (_) { /* fall through to create */ }
 

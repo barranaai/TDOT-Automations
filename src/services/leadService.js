@@ -208,6 +208,27 @@ async function findByColumnValue(key, value) {
   return id ? getLead(id) : null;
 }
 
+/**
+ * Every lead whose column matches — findByColumnValue stops at the FIRST hit,
+ * which silently hides duplicates (e.g. one email across several leads). Callers
+ * that must reason about all of them (duplicate guards) need the full set.
+ * @returns {Promise<object[]>} matching leads (camelCase), newest-id last
+ */
+async function findAllByColumnValue(key, value, { limit = 50 } = {}) {
+  const colId = COLS[key];
+  if (!colId || !value) return [];
+  const data = await mondayApi.query(
+    `query($boardId: ID!, $colId: String!, $val: String!, $limit: Int!) {
+       items_page_by_column_values(limit: $limit, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) {
+         items { id name created_at column_values { id text value } }
+       }
+     }`,
+    { boardId: String(leadBoardId), colId, val: String(value), limit }
+  );
+  const items = data?.items_page_by_column_values?.items || [];
+  return items.map(parseItem);
+}
+
 /** Parse a raw Monday item ({id,name,created_at?,column_values[{id,text,value}]})
  *  into a camelCase lead object, using the board's column map. Shared by getLead
  *  (single) and listAllLeads (bulk) so the parsing lives in ONE place. */
@@ -432,4 +453,4 @@ Situation (their own words): ${lead.situationDescription || 'Not provided'}`
   }
 }
 
-module.exports = { createLead, qualifyLead, generateInviteMessage, getLead, updateLead, findByColumnValue, listAllLeads, parseItem };
+module.exports = { createLead, qualifyLead, generateInviteMessage, getLead, updateLead, findByColumnValue, findAllByColumnValue, listAllLeads, parseItem };
