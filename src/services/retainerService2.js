@@ -28,6 +28,17 @@ const RENDER_URL = process.env.RENDER_URL || 'https://tdot-automations.onrender.
 
 function todayISO() { return new Date().toISOString().split('T')[0]; }
 
+// A lead that ever booked or held a consultation. Direct retainer clients
+// (walk-in/referral, no consultation) have neither — the agreement send must
+// not stamp them 'Consulted'.
+function hadConsultation(lead) {
+  return Boolean(
+    (lead.bookedSlot && String(lead.bookedSlot).trim()) ||
+    (lead.consultationHeld && String(lead.consultationHeld).trim()) ||
+    (lead.bookingStatus || '').trim() === 'Booked'
+  );
+}
+
 function esc(s) {
   return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -239,7 +250,9 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
       });
       await leadService.updateLead(leadId, {
         retainerSent:         todayISO(),
-        conversionStatus:     'Consulted',
+        // 'Consulted' only for clients who actually booked/held a consultation —
+        // a DIRECT retainer client (walk-in/referral) must not be mislabeled.
+        ...(hadConsultation(lead) ? { conversionStatus: 'Consulted' } : {}),
         adobeSignAgreementId: String(env.envelopeId), // existing e-sign id column
       });
       await postLeadNote(leadId,
@@ -284,8 +297,8 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
   }
 
   await leadService.updateLead(leadId, {
-    retainerSent:     todayISO(),
-    conversionStatus: 'Consulted',
+    retainerSent: todayISO(),
+    ...(hadConsultation(lead) ? { conversionStatus: 'Consulted' } : {}),
   });
   console.log(`[Retainer2] Retainer agreement sent to lead ${leadId} (${lead.email}) — fee included`);
   return { status: 'sent' };

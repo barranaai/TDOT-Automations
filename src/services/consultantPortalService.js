@@ -531,6 +531,9 @@ async function getLeadDetail(leadId) {
     bookingStatus: lead.bookingStatus || 'Not Yet',
     bookedSlot:    lead.bookedSlot || '',
     outcome:       lead.outcome || '',
+    // Walk-in/referral entering at the retainer stage — the leads page shows the
+    // consultation/retainer link for these even though they never book.
+    directRetainer: (lead.sourceChannel || '').trim() === DIRECT_SOURCE,
     consultant:    (lead.assignedConsultant || '').trim(),
     preConsultSubmitted: (lead.preConsultSubmitted || '') === 'Yes',
     clientMasterItemId:  lead.clientMasterItemId || '',
@@ -1034,9 +1037,136 @@ async function previewConsultAgreement(leadId) {
   return { buffer, filename: `consult-agreement-${leadId}.pdf` };
 }
 
+// ─── Direct retainer client (walk-in / referral — no booking, no consultation) ─
+//
+// The retainer chain has no booking/consultation gate, but a hand-made lead
+// misses everything the intake pipeline wires up. This creates a FULLY-wired
+// lead in one step: token + OneDrive folder (createLead), pinned consultant
+// (agreement signatory + "Retained by"/RBAC), confirmed case type (handoff
+// auto-resolves it → case ref + checklist seed at first payment instead of
+// silently no-opping), and the "Direct Retainer" source tag that keeps the KPI
+// funnel honest and stops the retainer send stamping a false "Consulted".
+
+const DIRECT_SOURCE = 'Direct Retainer';
+
+/**
+ * Case-type labels for the direct-client form + validation. Prefer the LIVE
+ * Client Master canon (the same registry the handoff validates against, so a
+ * form-accepted type can never be deferred at handoff for label drift); fall
+ * back to the static config when the registry is unreachable. Per-case
+ * sub-types only exist in the config mapping.
+ */
+async function directCaseTypeLabels() {
+  const cfg = require('../../config/caseTypes');
+  try {
+    const live = await require('./caseTypeRegistryService').getCaseTypes();
+    if (Array.isArray(live) && live.length) {
+      const subTypesByCase = {};
+      for (const ct of live) subTypesByCase[ct] = cfg.SUB_TYPES_BY_CASE[ct] || [];
+      return { caseTypes: live, subTypesByCase };
+    }
+  } catch (_) { /* registry unreachable — static config below */ }
+  return { caseTypes: cfg.CASE_TYPE_LABELS, subTypesByCase: cfg.SUB_TYPES_BY_CASE };
+}
+
+async function createDirectClient(payload = {}) {
+  const clean = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
+  const fullName    = clean(payload.fullName, 120);
+  const email       = clean(payload.email, 200);
+  const phone       = clean(payload.phone, 40);
+  const caseType    = clean(payload.caseType, 100);
+  const caseSubType = clean(payload.caseSubType, 120);
+  const consultant  = clean(payload.consultant, 80);
+  const address     = clean(payload.residentialAddress, 500);
+  const referredBy  = clean(payload.referredBy, 200);
+
+  const bad = (m) => { const e = new Error(m); e.badRequest = true; throw e; };
+  if (fullName.length < 2) bad('The client’s full legal name is required.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('A valid client email is required — the retainer agreement is sent to it.');
+  const labels = await directCaseTypeLabels();
+  if (!labels.caseTypes.includes(caseType)) bad('Choose a case type — it generates the case reference and the document checklist.');
+  if (caseSubType) {
+    // ANY supplied sub-type must belong to the chosen case type — a case type
+    // with no sub-types accepts none.
+    const subs = labels.subTypesByCase[caseType] || [];
+    if (!subs.includes(caseSubType)) bad('That sub-type does not belong to the chosen case type.');
+  }
+  const { CONSULTANTS } = require('../../config/consultantRouting');
+  const consultantNames = Object.values(CONSULTANTS).map((c) => c.name);
+  if (!consultantNames.includes(consultant)) bad('Choose the consultant retaining this client — they sign the agreement and own the case.');
+
+  // Duplicate guard: a lost response / re-submit must not mint a second lead.
+  // Reuse an existing direct-tagged lead with this email that hasn't been sent
+  // a retainer yet (best-effort — a read failure falls through to create).
+  try {
+    const existing = await leadService.findByColumnValue('email', email);
+    if (existing
+        && (existing.sourceChannel || '').trim() === DIRECT_SOURCE
+        && !(existing.retainerSent && String(existing.retainerSent).trim())) {
+      console.log(`[Consultant] Direct client for ${email} already exists (lead ${existing.id}) — reusing`);
+      return { ok: true, leadId: existing.id, reused: true };
+    }
+  } catch (_) { /* fall through to create */ }
+
+  // createLead wires the token + OneDrive folder; the follow-up update carries
+  // the direct-specific fields (its mutation auto-creates the new labels).
+  const created = await leadService.createLead({
+    fullName, email, phone,
+    situationDescription: referredBy
+      ? `Direct retainer client — entered at the retainer stage, no consultation. Referred by: ${referredBy}`
+      : 'Direct retainer client — entered at the retainer stage, no consultation.',
+  });
+  const leadId = created.id;
+  const wiring = {
+    sourceChannel:      DIRECT_SOURCE,
+    confirmedCaseType:  caseType,
+    selectedSubType:    caseSubType,
+    assignedConsultant: consultant,
+    residentialAddress: address,
+    referredBy,
+    conversionStatus:   'Qualified', // honest: qualified to retain, never booked/consulted
+  };
+  try {
+    await leadService.updateLead(leadId, wiring);
+  } catch (err) {
+    // The lead EXISTS — a thrown error would tell staff "try again", and the
+    // retry would mint a duplicate. Retry the wiring once; if it still fails,
+    // land staff on the created lead with an explicit manual-fix warning.
+    console.warn(`[Consultant] Direct-client wiring failed for lead ${leadId} — retrying once: ${err.message}`);
+    try {
+      await leadService.updateLead(leadId, wiring);
+    } catch (err2) {
+      console.error(`[Consultant] Direct-client wiring failed twice for lead ${leadId}: ${err2.message}`);
+      await postPortalNote(leadId,
+        `⚠ <b>Direct retainer client created, but the wiring write failed</b> (${err2.message}). ` +
+        `Please set manually: Confirmed Case Type “${caseType}”${caseSubType ? ` (sub-type ${caseSubType})` : ''}, ` +
+        `consultant “${consultant}”, Source Channel “${DIRECT_SOURCE}”.`);
+      return { ok: true, leadId, warning: 'The client was created, but tagging failed — opening the lead; please set the case type and consultant manually (see the note on the lead).' };
+    }
+  }
+  await postPortalNote(leadId,
+    `Direct retainer client created — walk-in/referral entering at the retainer stage (no consultation). ` +
+    `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}${referredBy ? ` · Referred by: ${referredBy}` : ''}. ` +
+    `Next: set the retainer fee + plan and click “Retain &amp; send agreement”.`);
+  console.log(`[Consultant] Direct retainer client created — lead ${leadId} (${fullName}, ${caseType}, ${consultant})`);
+  return { ok: true, leadId };
+}
+
+/** Option lists for the direct-client form (case types → sub-types, consultants). */
+async function getDirectClientOptions() {
+  const labels = await directCaseTypeLabels();
+  const { CONSULTANTS } = require('../../config/consultantRouting');
+  return {
+    caseTypes: labels.caseTypes,
+    subTypesByCase: labels.subTypesByCase,
+    consultants: Object.values(CONSULTANTS).map((c) => c.name),
+  };
+}
+
 module.exports = {
   getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS,
   getLeadsQueue, getLeadDetail, buildIntakeSections,
   parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement,
   resolveFamilyMembers, FAMILY_MEMBER_TYPES, MILESTONE_TRIGGER_STAGES,
+  createDirectClient, getDirectClientOptions, DIRECT_SOURCE,
 };

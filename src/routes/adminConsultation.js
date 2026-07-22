@@ -107,6 +107,20 @@ function buildQueueHTML() {
   .q-filters { display:flex; gap:8px; flex-wrap:wrap; }
   .q-filters input, .q-filters select { padding:7px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:12.5px; font-family:inherit; background:#fff; color:var(--navy); }
   .q-filters input { width:150px; }
+  .btn-direct { padding:7px 12px; border:1px solid var(--navy); background:var(--navy); color:#fff; border-radius:8px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit; }
+  .btn-direct:hover { opacity:.92; }
+  #dc-overlay { position:fixed; inset:0; background:rgba(15,23,42,.45); display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px; }
+  #dc-modal { background:#fff; border-radius:14px; padding:22px 24px; width:100%; max-width:460px; max-height:90vh; overflow-y:auto; box-shadow:0 20px 50px rgba(2,6,23,.35); }
+  #dc-modal h3 { margin:0 0 4px; font-size:17px; color:var(--navy); }
+  .dc-sub { font-size:12px; color:#64748b; margin:0 0 14px; }
+  #dc-modal label { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; margin:10px 0 3px; }
+  #dc-modal input, #dc-modal select { width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; color:var(--navy); background:#fff; box-sizing:border-box; }
+  .dc-hint { font-weight:500; text-transform:none; letter-spacing:0; }
+  #dc-err { color:#dc2626; font-size:12.5px; min-height:16px; margin-top:10px; }
+  .dc-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+  .dc-btn { padding:9px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:var(--navy); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .dc-btn.primary { background:var(--navy); border-color:var(--navy); color:#fff; }
+  .dc-btn:disabled { opacity:.6; cursor:default; }
 </style></head><body>
 ${buildNavHeader('consultations')}
 <main class="wrap">
@@ -130,6 +144,7 @@ ${buildNavHeader('consultations')}
         <select id="f-month"><option value="">All months</option></select>
         <select id="f-outcome"><option value="">All outcomes</option></select>
         <select id="f-followup"><option value="">Follow-up: any</option><option value="due">Due (≤ today)</option><option value="has">Has follow-up</option></select>
+        <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
       </div>
     </div>
     <div class="card">
@@ -137,6 +152,27 @@ ${buildNavHeader('consultations')}
         <thead><tr><th>Client</th><th>Service</th><th>Consultant</th><th>Slot (Toronto)</th><th>Meeting</th><th>Pre-consult</th><th>Retainer</th><th>Follow-up</th><th>Outcome</th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Direct retainer client (walk-in / referral — enters at the retainer stage) -->
+  <div id="dc-overlay" style="display:none">
+    <div id="dc-modal" role="dialog" aria-modal="true" aria-labelledby="dc-title">
+      <h3 id="dc-title">New direct retainer client</h3>
+      <p class="dc-sub">Walk-in / referral entering at the retainer stage — no booking or consultation. Creates the client fully wired (case type → case reference &amp; checklist, consultant → agreement signatory &amp; case visibility), then opens the retainer panel.</p>
+      <label for="dc-name">Full legal name *</label><input id="dc-name" type="text" maxlength="120" autocomplete="off">
+      <label for="dc-email">Email *</label><input id="dc-email" type="email" maxlength="200" autocomplete="off">
+      <label for="dc-phone">Phone</label><input id="dc-phone" type="text" maxlength="40" autocomplete="off">
+      <label for="dc-address">Residential address <span class="dc-hint">(printed on the retainer agreement)</span></label><input id="dc-address" type="text" maxlength="500" autocomplete="off">
+      <label for="dc-casetype">Case type *</label><select id="dc-casetype"><option value="">Choose…</option></select>
+      <label for="dc-subtype">Case sub-type</label><select id="dc-subtype"><option value="">— (can be set later)</option></select>
+      <label for="dc-consultant">Consultant *</label><select id="dc-consultant"><option value="">Choose…</option></select>
+      <label for="dc-referred">Referred by</label><input id="dc-referred" type="text" maxlength="200" autocomplete="off">
+      <div id="dc-err" role="alert"></div>
+      <div class="dc-actions">
+        <button class="dc-btn" id="dc-cancel" type="button">Cancel</button>
+        <button class="dc-btn primary" id="dc-create" type="button">Create &amp; open retainer</button>
+      </div>
     </div>
   </div>
 </main>
@@ -169,6 +205,62 @@ function renderRows(rows){
     tr.onclick=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id')); };
   });
 }
+/* ── Direct retainer client (walk-in / referral) ── */
+var DC_OPTS=null;
+function dcEl(id){ return document.getElementById(id); }
+function openDirectClient(){
+  dcEl('dc-err').textContent='';
+  dcEl('dc-overlay').style.display='flex';
+  var first=dcEl('dc-name'); if(first) first.focus();
+  if(DC_OPTS) return;
+  var key=getKey(); if(!key) return;
+  fetch('/api/consultation/direct-client/options',{headers:{'X-Api-Key':key}})
+    .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(o){
+      DC_OPTS=o;
+      dcEl('dc-casetype').innerHTML='<option value="">Choose…</option>'+(o.caseTypes||[]).map(function(c){return '<option value="'+escHtml(c)+'">'+escHtml(c)+'</option>';}).join('');
+      dcEl('dc-consultant').innerHTML='<option value="">Choose…</option>'+(o.consultants||[]).map(function(c){return '<option value="'+escHtml(c)+'">'+escHtml(c)+'</option>';}).join('');
+    })
+    .catch(function(){ dcEl('dc-err').textContent='Could not load the case-type list — close and reopen to retry.'; });
+}
+function dcSubtypes(){
+  var ct=dcEl('dc-casetype').value;
+  var subs=(DC_OPTS&&DC_OPTS.subTypesByCase&&DC_OPTS.subTypesByCase[ct])||[];
+  dcEl('dc-subtype').innerHTML='<option value="">— (can be set later)</option>'+subs.map(function(s){return '<option value="'+escHtml(s)+'">'+escHtml(s)+'</option>';}).join('');
+}
+function submitDirectClient(){
+  var err=dcEl('dc-err'); err.textContent='';
+  var body={ fullName:dcEl('dc-name').value, email:dcEl('dc-email').value, phone:dcEl('dc-phone').value,
+             residentialAddress:dcEl('dc-address').value, caseType:dcEl('dc-casetype').value,
+             caseSubType:dcEl('dc-subtype').value, consultant:dcEl('dc-consultant').value, referredBy:dcEl('dc-referred').value };
+  if(!body.fullName.trim()||!body.email.trim()||!body.caseType||!body.consultant){
+    err.textContent='Name, email, case type and consultant are required.'; return;
+  }
+  var key=getKey(); if(!key) return;
+  var btn=dcEl('dc-create'); btn.disabled=true; btn.textContent='Creating…';
+  fetch('/api/consultation/direct-client',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
+    .then(function(res){
+      if(res.s!==200) throw new Error((res.j&&res.j.error)||('HTTP '+res.s));
+      // warning = created but the tagging write failed (a note on the lead has
+      // the manual steps); reused = an identical un-retained direct lead already
+      // existed. Either way, land on the lead — never invite a re-create.
+      if(res.j.warning) window.alert(res.j.warning);
+      else if(res.j.reused) window.alert('This client already exists as a direct retainer lead — opening it instead of creating a duplicate.');
+      window.location.href='/admin/consultation/'+encodeURIComponent(res.j.leadId);
+    })
+    .catch(function(e){ btn.disabled=false; btn.textContent='Create & open retainer'; err.textContent=e.message||'Creation failed — try again.'; });
+}
+(function initDirectClient(){
+  var b=dcEl('btn-direct-client'); if(b) b.onclick=openDirectClient;
+  function closeDc(){ dcEl('dc-overlay').style.display='none'; var bb=dcEl('btn-direct-client'); if(bb) bb.focus(); }
+  var c=dcEl('dc-cancel'); if(c) c.onclick=closeDc;
+  var ov=dcEl('dc-overlay'); if(ov) ov.onclick=function(ev){ if(ev.target===ov) closeDc(); };
+  document.addEventListener('keydown',function(ev){ var o=dcEl('dc-overlay'); if(ev.key==='Escape'&&o&&o.style.display!=='none') closeDc(); });
+  var ct=dcEl('dc-casetype'); if(ct) ct.onchange=dcSubtypes;
+  var cr=dcEl('dc-create'); if(cr) cr.onclick=submitDirectClient;
+})();
+
 function monthOf(slot){ var m=String(slot||'').match(/^(\d{4}-\d{2})/); return m?m[1]:''; }
 function distinctVals(rows,fn){ var s={}; rows.forEach(function(r){ var v=fn(r); if(v) s[v]=1; }); return Object.keys(s).sort(); }
 function fillSel(id,vals,label){ var el=document.getElementById(id); var cur=el.value; el.innerHTML='<option value="">'+label+'</option>'+vals.map(function(v){return '<option value="'+escHtml(v)+'">'+escHtml(v)+'</option>';}).join(''); el.value=cur; }
@@ -227,7 +319,9 @@ function renderKpis(d){
     + step(f.booked||0,'Booked') + '<span class="f-arrow">→</span>'
     + step(f.consulted||0,'Consulted') + arrow(rt.retainedFromBooked)
     + step(f.retained||0,'Retained') + arrow(rt.paidFromRetained)
-    + step(f.paid||0,'Paid') + '</div>';
+    + step(f.paid||0,'Paid')
+    + (f.retainedDirect?'<div class="f-step" title="Walk-in / referral clients retained without a booking or consultation — kept out of the booked→retained conversion"><div class="f-n">+'+(f.retainedDirect||0)+'</div><div class="f-l">Direct</div></div>':'')
+    + '</div>';
   var unclassified=(r.signed||0)-(r.tr||0)-(r.pr||0);
   var mini = '<div class="kpi-2col">'
     + '<div class="kpi-mini"><h4>Retainers by type</h4>'

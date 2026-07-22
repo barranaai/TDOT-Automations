@@ -378,10 +378,17 @@ function render(d){
   document.getElementById('invite-msg').value=d.inviteMessage||'';
   document.getElementById('inv-when').textContent=d.inviteSent
     ? ('sent'+(d.inviteSentAt?(' '+String(d.inviteSentAt).slice(0,10)):'')+' — sending again re-emails the client') : '';
-  if(d.bookingStatus==='Booked'){
+  // Booked leads get the consultation view; DIRECT retainer clients (walk-in /
+  // referral — never book) get the same link, since the retainer panel lives there.
+  if(d.bookingStatus==='Booked' || d.directRetainer){
     document.getElementById('invite-card').style.display='none';
     document.getElementById('qa-card').style.display='block';
-    document.getElementById('lnk-consult').href='/admin/consultation/'+encodeURIComponent(d.leadId);
+    var lc=document.getElementById('lnk-consult');
+    lc.href='/admin/consultation/'+encodeURIComponent(d.leadId);
+    if(d.directRetainer && d.bookingStatus!=='Booked'){
+      lc.innerHTML=lc.innerHTML.replace('Open consultation view','Open retainer view');
+      var rb=document.getElementById('btn-resend'); if(rb) rb.style.display='none'; // no meeting to resend
+    }
   }
 }
 

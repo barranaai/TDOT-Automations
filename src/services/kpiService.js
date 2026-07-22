@@ -64,10 +64,19 @@ function computeKpis(leads = [], month = '') {
     totalLeads: leads.length,
     consultations: { booked: 0, held: 0, revenue: 0, virtual: 0, inPerson: 0, newClients: 0, existingClients: 0, byConsultant: {}, byLeadOwner: {} },
     retainers: { sent: 0, signed: 0, paid: 0, tr: 0, pr: 0, feeValue: 0, byConsultant: {} },
-    funnel: { leads: 0, booked: 0, consulted: 0, retained: 0, paid: 0 },
+    funnel: { leads: 0, booked: 0, consulted: 0, retained: 0, retainedDirect: 0, paid: 0 },
   };
+  // Walk-in/referral clients enter at the retainer stage with no booking or
+  // consultation — count their retentions separately so booked→retained
+  // conversion isn't inflated by retentions that never entered the funnel.
+  // Classified by the EXPLICIT tag (createDirectClient's Source Channel), never
+  // by missing booking data — inference would silently reclassify historical
+  // leads whose booking fields simply weren't stamped.
+  const isDirect = (l) => (l.sourceChannel || '').trim() === 'Direct Retainer';
   for (const l of leads) {
-    if (inM(l.createdAt)) K.funnel.leads++;
+    // Direct clients never enter the booking funnel — they'd deflate the
+    // booked-from-leads rate. totalLeads still counts them.
+    if (inM(l.createdAt) && !isDirect(l)) K.funnel.leads++;
     if (inM(l.bookedSlot)) {
       K.consultations.booked++; K.funnel.booked++;
       inc(K.consultations.byConsultant, l.assignedConsultant || 'Unassigned');
@@ -80,7 +89,8 @@ function computeKpis(leads = [], month = '') {
     if (inM(l.consultationHeld)) { K.consultations.held++; K.funnel.consulted++; }
     if (inM(l.retainerSent)) K.retainers.sent++;
     if (inM(l.retainerSigned)) {
-      K.retainers.signed++; K.funnel.retained++;
+      K.retainers.signed++;
+      if (isDirect(l)) K.funnel.retainedDirect++; else K.funnel.retained++;
       K.retainers.feeValue += feeToNum(l.retainerFee);
       const t = trPrOf(l.confirmedCaseType || l.caseTypeInterest);
       if (t === 'TR') K.retainers.tr++; else if (t === 'PR') K.retainers.pr++;
@@ -93,8 +103,11 @@ function computeKpis(leads = [], month = '') {
   const pct = (a, b) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
   K.funnel.rates = {
     bookedFromLeads: pct(K.funnel.booked, K.funnel.leads),
+    // Booked-only retentions over booked — direct (walk-in) retentions excluded
+    // so a month with walk-ins can't show >100% conversion.
     retainedFromBooked: pct(K.funnel.retained, K.funnel.booked),
-    paidFromRetained: pct(K.funnel.paid, K.funnel.retained),
+    // Paid covers ALL retentions (funnel + direct), so the denominator does too.
+    paidFromRetained: pct(K.funnel.paid, K.funnel.retained + K.funnel.retainedDirect),
   };
   return K;
 }

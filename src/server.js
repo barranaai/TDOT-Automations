@@ -593,6 +593,29 @@ app.get('/api/lead/:leadId', async (req, res) => {
   }
 });
 
+// Consultant portal — direct retainer client (walk-in/referral, no consultation):
+// option lists for the form + creation. Creation is validated in the service
+// (badRequest on missing name/email/case type/consultant).
+app.get('/api/consultation/direct-client/options', async (_req, res) => {
+  try {
+    res.json(await consultantPortalService.getDirectClientOptions());
+  } catch (err) {
+    console.error('[Consultant] Direct client options failed:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/consultation/direct-client', express.json(), async (req, res) => {
+  try {
+    const result = await consultantPortalService.createDirectClient(req.body || {});
+    res.json(result);
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    console.error('[Consultant] Direct client create failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Consultant portal — booked-consultation queue
 app.get('/api/consultations', async (_req, res) => {
   try {
