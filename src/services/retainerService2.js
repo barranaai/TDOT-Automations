@@ -166,11 +166,13 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
     console.log(`[Retainer2] Retainer already sent for lead ${leadId} — skipping`);
     return { status: 'already' };
   }
-  // Never send a fresh agreement to a client who has already signed / been
-  // retained, even if retainerSent was never stamped (manual signing, a failed
+  // Never send a fresh agreement to a client who has already SIGNED / been
+  // RETAINED, even if retainerSent was never stamped (manual signing, a failed
   // stamp, or a legacy path) — a re-set Outcome=Retain must not re-issue it.
+  // NOTE: retainerPaid alone does NOT block — direct/walk-in clients often pay
+  // their first milestone at the desk BEFORE the agreement goes out, and that
+  // prepayment must not strand the send (live-found on lead 12640670547).
   if ((lead.retainerSigned && String(lead.retainerSigned).trim())
-      || (lead.retainerPaid && String(lead.retainerPaid).trim())
       || String(lead.conversionStatus || '').trim() === 'Retained') {
     console.log(`[Retainer2] Lead ${leadId} already signed/retained — not re-sending the agreement`);
     return { status: 'already' };
@@ -256,8 +258,10 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
         adobeSignAgreementId: String(env.envelopeId), // existing e-sign id column
       });
       await postLeadNote(leadId,
-        `📤 <b>Retainer agreement sent for e-signature (Documenso)</b> to ${esc(lead.email)}. ` +
-        `It auto-captures and opens the case the moment the client signs.`);
+        `📤 <b>Retainer agreement sent for e-signature (Documenso)</b> to ${esc(lead.email)} ` +
+        `(envelope <code>${esc(String(env.envelopeId))}</code>). ` +
+        `It auto-captures and opens the case the moment the client signs. If the client can't find ` +
+        `the signing email, check their spam folder or resend it from the Documenso dashboard.`);
       console.log(`[Retainer2] Retainer sent via Documenso for lead ${leadId} (envelope ${env.envelopeId})`);
       return { status: 'sent', via: 'documenso', envelopeId: env.envelopeId };
     } catch (err) {

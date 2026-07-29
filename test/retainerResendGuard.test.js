@@ -26,10 +26,9 @@ function retainedLead(extra = {}) {
   };
 }
 
-test('retainAndSend: refuses (locked) when the client is already signed/paid/Retained, even with retainerSent empty', async () => {
+test('retainAndSend: refuses (locked) when the client is already SIGNED or Retained, even with retainerSent empty', async () => {
   for (const shape of [
     { retainerSigned: '2026-07-20', retainerPaid: '', conversionStatus: 'Retained — Awaiting Payment' },
-    { retainerSigned: '', retainerPaid: '2026-07-20', conversionStatus: 'Retained — Awaiting Payment' },
     { retainerSigned: '2026-07-20', retainerPaid: '2026-07-20', conversionStatus: 'Retained' },
     { retainerSigned: '', retainerPaid: '', conversionStatus: 'Retained' },
   ]) {
@@ -47,6 +46,25 @@ test('retainAndSend: refuses (locked) when the client is already signed/paid/Ret
       assert.equal(sendCalled, false, 'the agreement send must NOT be reached for a retained client');
     } finally { restore.forEach((x) => x()); }
   }
+});
+
+// Live-found on lead 12640670547: a walk-in prepaid their first milestone by
+// e-transfer BEFORE the agreement went out, and the old guard (which treated
+// bare retainerPaid as "deal done") stranded the send forever. Paid-only must
+// still allow the FIRST send.
+test('retainAndSend: a PAID-but-unsigned walk-in (prepaid milestone) can still be sent the agreement', async () => {
+  let sendCalled = false;
+  const restore = [
+    stub(leadService, 'getLead', async () => retainedLead({ retainerSigned: '', retainerPaid: '2026-07-27', conversionStatus: 'Qualified' })),
+    stub(retainer2, 'maybeSendRetainerAgreement', async () => { sendCalled = true; return { status: 'sent' }; }),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await portal.applyAction({ leadId: '1', action: 'retainAndSend', value: null });
+    assert.equal(r.ok, true);
+    assert.equal(sendCalled, true, 'the send MUST proceed for a prepaid-but-unsigned client');
+  } finally { restore.forEach((x) => x()); }
 });
 
 test('retainerSigned action: idempotent on a DONE deal (case open OR retained) — no re-write, no re-fire', async () => {
@@ -101,7 +119,6 @@ test('retainerSigned action: still marks signed when outcome=Retain and not yet 
 test('maybeSendRetainerAgreement: no-op ("already") for a signed/retained lead with retainerSent empty', async () => {
   for (const shape of [
     { retainerSigned: '2026-07-20' },
-    { retainerPaid: '2026-07-20' },
     { conversionStatus: 'Retained' },
   ]) {
     const restore = [
@@ -114,4 +131,22 @@ test('maybeSendRetainerAgreement: no-op ("already") for a signed/retained lead w
       assert.equal(r.status, 'already', `shape ${JSON.stringify(shape)} → already (no send)`);
     } finally { restore.forEach((x) => x()); }
   }
+});
+
+test('maybeSendRetainerAgreement: PAID-only (walk-in prepayment) is NOT "already" — the send proceeds', async () => {
+  const documenso = require('../src/services/documensoService');
+  const microsoftMail = require('../src/services/microsoftMailService');
+  const updates = [];
+  const restore = [
+    stub(leadService, 'getLead', async () => retainedLead({ retainerSigned: '', retainerPaid: '2026-07-27', conversionStatus: 'Qualified' })),
+    stub(leadService, 'updateLead', async (id, f) => { updates.push(f); }),
+    stub(documenso, 'isEnabled', () => false),           // legacy email path (no PDF gen needed)
+    stub(microsoftMail, 'sendEmail', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await retainer2.maybeSendRetainerAgreement('1');
+    assert.equal(r.status, 'sent', 'prepaid walk-in still receives the agreement');
+    assert.ok(updates.some((f) => f.retainerSent), 'retainerSent stamped on the successful send');
+  } finally { restore.forEach((x) => x()); }
 });

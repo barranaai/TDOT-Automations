@@ -762,10 +762,11 @@ function render(d){
   // after any action, not just a committed one.
   var _retSent   = !!(d.retainerSent   && String(d.retainerSent).trim());
   var _retSigned = !!(d.retainerSigned && String(d.retainerSigned).trim());
-  var _retPaid   = !!(d.retainerPaid   && String(d.retainerPaid).trim());
   var _retained  = String(d.conversionStatus||'').trim()==='Retained';
   var _caseOpen  = !!(d.clientMasterItemId && String(d.clientMasterItemId).trim());
-  RP_SENT = _retSent; RP_RETAINED = _retSigned || _retPaid || _retained;
+  // NOTE: retainerPaid alone does NOT lock — walk-in clients often prepay their
+  // first milestone before the agreement is sent; the send must stay available.
+  RP_SENT = _retSent; RP_RETAINED = _retSigned || _retained;
   // "Mark retainer signed" disables once the deal is DONE — the case is open or the
   // client is retained — but STAYS enabled for a signed lead whose handoff failed
   // (no case yet), so staff can retry per the failed-handoff recovery note.

@@ -369,6 +369,46 @@ app.get('/api/documenso/last-webhook', (req, res) => {
   res.json({ last: require('./services/documensoService').lastWebhook() });
 });
 
+// Documenso: READ-ONLY envelope search (diagnostics — the API token lives only in
+// this environment). Lists recent envelopes, optionally filtered by externalId
+// substring (e.g. ?externalId=retainer-12641191022). Creates/changes nothing.
+app.get('/api/documenso/envelopes', async (req, res) => {
+  try {
+    const documenso = require('./services/documensoService');
+    const cfg = documenso._cfg();
+    if (!cfg.token) return res.status(503).json({ ok: false, error: 'DOCUMENSO_API_TOKEN not set' });
+    const wanted = String(req.query.externalId || '').trim();
+    const perPage = Math.min(parseInt(req.query.perPage, 10) || 50, 100);
+    const headers = { Authorization: cfg.token };
+    // The v2 API's list shape has varied — try the known read endpoints in order.
+    const attempts = [
+      `${cfg.baseUrl}/envelope/find?page=1&perPage=${perPage}`,
+      `${cfg.baseUrl}/envelope?page=1&perPage=${perPage}`,
+      `${cfg.baseUrl.replace(/\/v2$/, '/v1')}/documents?page=1&perPage=${perPage}`,
+    ];
+    let list = null, used = null, lastErr = null;
+    for (const url of attempts) {
+      try {
+        const r = await fetch(url, { headers });
+        if (!r.ok) { lastErr = `${url} → ${r.status}`; continue; }
+        const j = await r.json();
+        list = j.envelopes || j.documents || j.data || (Array.isArray(j) ? j : null);
+        if (list) { used = url; break; }
+        lastErr = `${url} → unrecognized shape: ${JSON.stringify(j).slice(0, 200)}`;
+      } catch (e) { lastErr = `${url} → ${e.message}`; }
+    }
+    if (!list) return res.status(502).json({ ok: false, error: `no list endpoint worked; last: ${lastErr}` });
+    const compact = list.map((d) => ({
+      id: d.id, envelopeId: d.envelopeId || d.id, externalId: d.externalId || null,
+      title: d.title, status: d.status, createdAt: d.createdAt,
+      recipients: (d.recipients || []).map((x) => ({ email: x.email, signingStatus: x.signingStatus || x.status || null, sendStatus: x.sendStatus || null })),
+    })).filter((d) => !wanted || String(d.externalId || '').includes(wanted));
+    res.json({ ok: true, endpoint: used, count: compact.length, envelopes: compact });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // Generate the REAL agreement PDF (server-side, so v2 templates apply) and stream
 // it — used to calibrate the signature-field placement against the actual doc.
 app.get('/api/documenso/preview-agreement', async (req, res) => {
