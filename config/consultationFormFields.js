@@ -28,8 +28,7 @@ const SERVICE_GROUPS = {
     "Spousal sponsorship",
     "Family sponsorship",
     "Caregiver pathway",
-    "Humanitarian and compassionate",
-    "PR application review"
+    "Humanitarian and compassionate"
   ],
   "Temporary Residence": [
     "Study permit",
@@ -679,7 +678,6 @@ const FIELDS = [
       "Family sponsorship",
       "Caregiver pathway",
       "Humanitarian and compassionate",
-      "PR application review",
       "Study permit",
       "Work permit",
       "PGWP",

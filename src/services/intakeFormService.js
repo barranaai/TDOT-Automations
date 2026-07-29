@@ -34,7 +34,9 @@ function esc(s) {
 const SERVICE_GROUPS = {
   'Permanent Residence': [
     'Express Entry profile', 'Express Entry ITA and eAPR', 'PNP or OINP', 'Spousal sponsorship',
-    'Family sponsorship', 'Caregiver pathway', 'Humanitarian and compassionate', 'PR application review',
+    'Family sponsorship', 'Caregiver pathway', 'Humanitarian and compassionate',
+    // 'PR application review' retired from the form 2026-07-30 (user request) —
+    // serviceToCaseType still maps it for historical leads.
   ],
   'Temporary Residence': [
     'Study permit', 'Work permit', 'PGWP', 'BOWP', 'Visitor visa or TRV', 'Visitor record',
@@ -66,8 +68,8 @@ function serviceToInterest(service) {
        'Employer compliance support'].includes(s)) return 'Work Permit';
   if (['Spousal sponsorship', 'Family sponsorship'].includes(s)) return 'Spousal Sponsorship';
   if (['Express Entry profile', 'Express Entry ITA and eAPR', 'PNP or OINP', 'Caregiver pathway',
-       'Humanitarian and compassionate', 'PR application review', 'PR card renewal',
-       'PR travel document', 'Residency obligation review'].includes(s)) return 'Permanent Residence';
+       'Humanitarian and compassionate', 'PR application review', // retired from the form; kept so historical leads still map
+       'PR card renewal', 'PR travel document', 'Residency obligation review'].includes(s)) return 'Permanent Residence';
   return 'Other';
 }
 
