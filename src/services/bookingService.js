@@ -84,10 +84,54 @@ async function getAvailableSlots(tier, weeksAhead = 4, teamMemberId) {
 }
 
 /**
+ * Belt-and-braces buffer enforcement. Square's availability search SHOULD
+ * already exclude booked time + the service's transition (buffer) time — but a
+ * live probe (2026-07-29) caught it offering slots that overlap staff-created
+ * ACCEPTED appointments (e.g. a slot at the exact start of an existing booking).
+ * So we re-check every offered slot against the real Square booking list and
+ * drop any that would collide with a same-team booking + its buffer.
+ *
+ * Occupancy model (matches Square's engine): an existing booking occupies
+ * [start, start + duration + its transition_time); a new slot needs
+ * [slotStart, slotStart + slotDuration + DEFAULT_TRANSITION_MIN) clear.
+ * PURE — exported for tests.
+ */
+const DEFAULT_TRANSITION_MIN = 10; // the consult services' configured transition_time
+const INACTIVE_BOOKING_STATUSES = new Set(['CANCELLED_BY_CUSTOMER', 'CANCELLED_BY_SELLER', 'DECLINED', 'NO_SHOW']);
+
+function dropBufferConflicts(slots, bookings) {
+  const occupied = []; // { teamMemberId, startMs, endMs (incl. transition) }
+  for (const b of bookings || []) {
+    if (INACTIVE_BOOKING_STATUSES.has(b.status)) continue;
+    const seg = (b.appointment_segments || [])[0] || {};
+    const startMs = Date.parse(b.start_at);
+    if (!Number.isFinite(startMs)) continue;
+    const durMin   = seg.duration_minutes ?? 30;
+    const transMin = b.transition_time_minutes ?? DEFAULT_TRANSITION_MIN;
+    occupied.push({ teamMemberId: seg.team_member_id, startMs, endMs: startMs + (durMin + transMin) * 60000 });
+  }
+  if (!occupied.length) return { slots, dropped: 0 };
+
+  const kept = [];
+  let dropped = 0;
+  for (const s of slots) {
+    const sStart = Date.parse(s.startAt);
+    const sEnd   = sStart + ((s.durationMinutes ?? 30) + DEFAULT_TRANSITION_MIN) * 60000;
+    const clash = occupied.some((o) =>
+      o.teamMemberId && s.teamMemberId && o.teamMemberId === s.teamMemberId &&
+      sStart < o.endMs && sEnd > o.startMs);
+    if (clash) { dropped++; continue; }
+    kept.push(s);
+  }
+  return { slots: kept, dropped };
+}
+
+/**
  * Level 1: pull real open times from Square for the configured consult service.
  * Square already excludes conflicts on the real calendar; we additionally
- * subtract OUR own in-flight holds/bookings so two leads can't grab the same
- * time during the pay window (which Level 1 doesn't yet write back to Square).
+ * (a) re-verify against the real booking list (see dropBufferConflicts) and
+ * (b) subtract OUR own in-flight holds/bookings so two leads can't grab the
+ * same time during the pay window (which Level 1 doesn't yet write back to Square).
  */
 async function getSquareAvailableSlots(weeksAhead = 4, teamMemberId) {
   const squareBookings = require('./squareBookingsService');
@@ -95,7 +139,7 @@ async function getSquareAvailableSlots(weeksAhead = 4, teamMemberId) {
   const maxDays = Math.min(weeksAhead * 7, 31);                            // Square max window is 32 days
   const endAt = new Date(Date.now() + maxDays * 24 * 3600 * 1000);
 
-  const slots = await squareBookings.searchAvailability({
+  let slots = await squareBookings.searchAvailability({
     serviceVariationId: process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID,
     // The assigned consultant (from routing) scopes the calendar; falls back to
     // the env default, then to any bookable staff on the service.
@@ -104,6 +148,17 @@ async function getSquareAvailableSlots(weeksAhead = 4, teamMemberId) {
     endAtIso: endAt.toISOString(),
     pool: 'consult',
   });
+
+  // Best-effort conflict re-check — a listBookings failure must never take the
+  // booking page down; we just fall back to trusting Square's availability.
+  try {
+    const bookings = await squareBookings.listBookings({ startAtIso: startAt.toISOString(), endAtIso: endAt.toISOString() });
+    const res = dropBufferConflicts(slots, bookings);
+    if (res.dropped) console.warn(`[Booking] Dropped ${res.dropped} Square-offered slot(s) that collide with existing bookings + buffer`);
+    slots = res.slots;
+  } catch (err) {
+    console.warn(`[Booking] Conflict re-check skipped (listBookings failed): ${err.message}`);
+  }
 
   const taken = await getTakenSlots();
   return slots.filter((s) => !taken.has(`${s.date} ${s.time}`));
@@ -444,5 +499,6 @@ module.exports = {
   getAvailableSlots, getSquareAvailableSlots, getStaticAvailableSlots, squareCalendarEnabled,
   holdSlot, releaseExpiredSlots, createCheckout,
   handleSquarePaymentWebhook, confirmSlot, verifySquareSignature, sendBookingInvite,
+  dropBufferConflicts,
   CONSULT_FEE_CENTS,
 };

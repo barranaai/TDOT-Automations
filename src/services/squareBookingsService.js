@@ -175,6 +175,29 @@ async function searchAvailability({ serviceVariationId, teamMemberId, startAtIso
   return mapAvailabilities(data.availabilities, pool);
 }
 
+/**
+ * All bookings at our location in a window (cursor-paginated, capped). Used by
+ * the booking page's belt-and-braces conflict filter — live probing showed
+ * Square's availability search can offer slots that overlap staff-created
+ * ACCEPTED appointments, so we re-check offered slots against the real
+ * calendar ourselves.
+ */
+async function listBookings({ startAtIso, endAtIso, maxPages = 4 }) {
+  const out = [];
+  let cursor = '';
+  for (let page = 0; page < maxPages; page++) {
+    const qs = new URLSearchParams({
+      location_id: locationId(), start_at_min: startAtIso, start_at_max: endAtIso, limit: '100',
+      ...(cursor ? { cursor } : {}),
+    });
+    const data = await _get(`/v2/bookings?${qs}`);
+    out.push(...(data.bookings || []));
+    cursor = data.cursor || '';
+    if (!cursor) break;
+  }
+  return out;
+}
+
 /** Find a Square customer by email, or create one. Requires a phone (E.164) for booking. */
 async function ensureCustomer({ email, fullName, phoneE164 }) {
   if (email) {
@@ -256,7 +279,7 @@ module.exports = {
   preflightSquareBooking,
   // I/O
   retrieveBusinessBookingProfile, listTeamMemberBookingProfiles, listAppointmentServices,
-  searchAvailability, ensureCustomer, createBooking, upsertBookingCustomAttribute,
+  searchAvailability, listBookings, ensureCustomer, createBooking, upsertBookingCustomAttribute,
   // constants
   SQUARE_VERSION, TZ,
 };
