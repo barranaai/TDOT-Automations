@@ -400,7 +400,11 @@ async function ensureSignedState(leadId) {
     await require('./paymentService').advanceCaseToPaid(fresh)
       .catch((err) => console.warn(`[Handoff] Deferred paid-advance failed for lead ${leadId}: ${err.message}`));
   } else {
-    if (!payText) {
+    // Stamp over anything EXCEPT 'Paid' — Monday board automations stamp their
+    // own labels on new items (observed live: "Alreaday Sent" [sic] appears on
+    // creation), and the first signing must override them. Staff-cleared labels
+    // are protected by the once-only gate above, never by this condition.
+    if (payText.toLowerCase() !== 'paid' && payText !== 'Signed (Unpaid)') {
       await mondayApi.query(
         `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
            change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols, create_labels_if_missing: true) { id }

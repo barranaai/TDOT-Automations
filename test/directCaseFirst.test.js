@@ -120,6 +120,21 @@ test('ensureSignedState: stamps Payment Status + lead status and tops up family 
   } finally { restore.forEach((x) => x()); }
 });
 
+test('ensureSignedState: overrides a Monday-automation label ("Alreaday Sent") at first signing — only Paid is sacred', async () => {
+  const m = signedStateMondayStub({ payText: 'Alreaday Sent', caseRef: '2026-CIT-001' });
+  const restore = [
+    stub(leadService, 'getLead', async () => baseLead({ clientMasterItemId: 'CM-900', conversionStatus: 'Qualified' })),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', m.fn),
+    stub(familyComp, 'createFromLead', async () => 0),
+  ];
+  try {
+    await handoff.ensureSignedState('800');
+    assert.ok(m.calls.some((c) => /Signed \(Unpaid\)/.test(String(c.vars && c.vars.cols))),
+      'the automation-stamped label is overridden by the real signed state');
+  } finally { restore.forEach((x) => x()); }
+});
+
 test('ensureSignedState: ONCE-ONLY — a lead already at signed-state is skipped entirely (no reads, no family resurrection)', async () => {
   for (const cs of ['Retained — Awaiting Payment', 'Retained']) {
     let mondayCalls = 0, wrote = false, familyCalled = false;
