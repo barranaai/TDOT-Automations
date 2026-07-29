@@ -59,9 +59,15 @@ async function onSlotConfirmed(leadId, meetingTypeOverride) {
       ? meetingTypeOverride
       : (MEETING_TYPES.includes(lead.meetingType) ? lead.meetingType : 'Virtual');
 
+    // The client's booking-page choice (duration ↔ fee ↔ Square variation),
+    // persisted by POST /book. Absent on legacy/env-fallback leads.
+    const consultOpt = parseConsultOption(lead);
+    const durationMin = (consultOpt && consultOpt.durationMin)
+      || parseInt(process.env.SQUARE_CONSULT_DURATION_MIN, 10) || 30;
+
     let meeting = null;
     if (meetingType === 'Virtual') {
-      meeting = await meetingService.createMeeting(lead, slotStr);
+      meeting = await meetingService.createMeeting(lead, slotStr, durationMin);
       await leadService.updateLead(leadId, {
         zoomMeetingId:   meeting.meetingId,                                   // column titled "Meeting Id" (provider-agnostic)
         meetingLink:     { url: meeting.joinUrl, text: `Join (${PROVIDER_LABEL[meeting.provider] || meeting.provider})` },
@@ -108,9 +114,23 @@ async function onSlotConfirmed(leadId, meetingTypeOverride) {
  * seller-level writes (plan-gated), a configured service variation, and a valid
  * client phone; any gap just logs and returns without disturbing the booking flow.
  */
+/** Parse the lead's stored booking-page choice {durationMin, feeCents, variationId} (null if absent/bad). */
+function parseConsultOption(lead) {
+  try {
+    const o = JSON.parse(lead.consultOption || '');
+    if (o && typeof o === 'object' && Number.isFinite(parseInt(o.durationMin, 10))) {
+      return { ...o, durationMin: parseInt(o.durationMin, 10) };
+    }
+  } catch (_) { /* legacy lead / no choice stored */ }
+  return null;
+}
+
 async function createSquareBooking(lead, slotStr, meetingType) {
   if (lead.squareBookingId) return;                                    // already written
-  const serviceVariationId = process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID;
+  // The client's chosen variation (per-consultant, per-duration) wins; the env
+  // default keeps legacy leads working.
+  const consultOpt = parseConsultOption(lead);
+  const serviceVariationId = (consultOpt && consultOpt.variationId) || process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID;
   if (!serviceVariationId) return;                                     // Appointments not configured
 
   const sq = require('./squareBookingsService');
@@ -134,7 +154,8 @@ async function createSquareBooking(lead, slotStr, meetingType) {
   if (!version) { console.warn(`[Consult] Square booking skipped for ${lead.id}: no service-variation version`); return; }
 
   const teamMemberId    = routeConsultant(lead).teamMemberId || process.env.SQUARE_CONSULT_TEAM_MEMBER_ID;
-  const durationMinutes = parseInt(process.env.SQUARE_CONSULT_DURATION_MIN, 10) || 30;
+  const durationMinutes = (consultOpt && consultOpt.durationMin)
+    || parseInt(process.env.SQUARE_CONSULT_DURATION_MIN, 10) || 30;
   const caseNote = lead.confirmedCaseType || lead.caseTypeInterest;
   const sellerNote = `${meetingType} consultation — ${lead.fullName || 'Client'}${caseNote ? ` (${caseNote})` : ''}`;
 
@@ -930,7 +951,7 @@ function escapeHtml(s) {
 }
 
 module.exports = {
-  onSlotConfirmed, createZoomMeeting, getZoomAccessToken,
+  onSlotConfirmed, createZoomMeeting, getZoomAccessToken, parseConsultOption,
   buildPreConsultFormHtml, savePreConsultData, resendConsultationLinks, sendConsultationPackage,
   send24hReminders, send1hReminders, sendPreConsultReminders,
   // exported for tests

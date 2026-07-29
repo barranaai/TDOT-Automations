@@ -31,12 +31,18 @@ function esc(s) {
 function buildConsultAgreementData(lead = {}) {
   const { CONSULT_FEE_CENTS } = require('./bookingService');
   const slotDate = String(lead.bookedSlot || '').split(' ')[0] || lead.consultationHeld || '';
+  // The agreement must state what the client ACTUALLY chose and paid — the
+  // booking-page option (per-consultant duration + fee) wins over the env
+  // defaults, which remain the fallback for legacy leads.
+  const opt = require('./consultationService').parseConsultOption(lead);
+  const feeCents = (opt && Number.isFinite(opt.feeCents)) ? opt.feeCents : CONSULT_FEE_CENTS;
+  const durationText = opt ? `${opt.durationMin} minutes` : CONSULT_DURATION;
   const data = {
     agreementDate:       formatAgreementDate(todayISO()),
     paName:              lead.fullName || lead.name || '',
     paAddress:           lead.residentialAddress || '',
-    amountPaid:          centsToMoney(CONSULT_FEE_CENTS),
-    consultDurationMins: CONSULT_DURATION,
+    amountPaid:          centsToMoney(feeCents),
+    consultDurationMins: durationText,
     consultationDate:    formatAgreementDate(slotDate) || slotDate || '',
     paPhone:             lead.phone || '',
     paEmail:             lead.email || '',

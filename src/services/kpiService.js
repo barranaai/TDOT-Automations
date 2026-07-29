@@ -85,7 +85,16 @@ function computeKpis(leads = [], month = '') {
       else if (/phone/i.test(l.meetingType || '')) K.consultations.phone++;
       else if (String(l.meetingType || '').trim()) K.consultations.virtual++;
       if (isExistingClient(l)) K.consultations.existingClients++; else K.consultations.newClients++;
-      if (String(l.squareConsultTxnId || '').trim()) K.consultations.revenue += fee;
+      if (String(l.squareConsultTxnId || '').trim()) {
+        // Per-lead fee (the booking-page duration choice) when recorded; the
+        // flat env fee covers legacy leads booked before per-duration pricing.
+        let f = fee;
+        try {
+          const o = JSON.parse(l.consultOption || '');
+          if (o && Number.isFinite(o.feeCents)) f = o.feeCents / 100;
+        } catch (_) { /* legacy lead */ }
+        K.consultations.revenue += f;
+      }
     }
     if (inM(l.consultationHeld)) { K.consultations.held++; K.funnel.consulted++; }
     if (inM(l.retainerSent)) K.retainers.sent++;

@@ -102,7 +102,8 @@
     "paymentReviewedBy": "text_mm4xgjv5",
     "inviteMessage": "long_text_mm4xdbm0",
     "inviteSentAt": "date_mm4xn57e",
-    "consultAgreementSigned": "date_mm5em108"
+    "consultAgreementSigned": "date_mm5em108",
+    "consultOption": "text_mm5qb9kb"
   },
   "createdAt": "2026-06-08T18:00:45.756Z"
 }

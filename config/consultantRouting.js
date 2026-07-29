@@ -32,6 +32,14 @@ const CONSULTANTS = {
     rcicNumber: (process.env.RCIC_NUMBER_SHAFOLI || 'R518177').trim(),
     rcicRole:   (process.env.RCIC_ROLE_SHAFOLI  || 'RCIC-IRB').trim(),
     rcicTitle:  (process.env.RCIC_TITLE_SHAFOLI || 'Regulated Canadian Immigration Consultant - Immigration and Refugee Consultant').trim(),
+    // Consultation options the client picks from on the booking page (duration +
+    // fee). variationId = the "(TDOT Automation)" Square services created
+    // 2026-07-30 — dedicated to this system; staff services stay untouched.
+    // Order = display order; `default: true` marks the pre-selected one.
+    consultOptions: [
+      { durationMin: 30, feeCents: 20000, variationId: 'TMJIRVYQUD76E7A3YGXSEOQ5', default: true },
+      { durationMin: 45, feeCents: 30000, variationId: 'Z2XFERF43EO567YZGX4Y5WDL' },
+    ],
   },
   shermin: {
     key: 'shermin', name: 'Shermin Teymouri Mofrad',
@@ -41,8 +49,31 @@ const CONSULTANTS = {
     rcicNumber: (process.env.RCIC_NUMBER_SHERMIN || 'R709839').trim(),
     rcicRole:   (process.env.RCIC_ROLE_SHERMIN  || 'RCIC').trim(),
     rcicTitle:  (process.env.RCIC_TITLE_SHERMIN || 'Immigration Case Officer').trim(),
+    consultOptions: [
+      { durationMin: 30, feeCents: 12000, variationId: 'VPLVMBZPVKUX32MXMWED6S63', default: true },
+      { durationMin: 15, feeCents:  6000, variationId: '5463HO7BTOQ3H7XVRDXWSGQ3' },
+    ],
   },
 };
+
+/**
+ * The booking-page consultation options for a routed consultant ({key,name,…}
+ * or a bare key). Falls back to a single option built from the legacy env
+ * config (flat fee, env variation, 30 min) so the flow still works if a
+ * consultant entry ever lacks options.
+ */
+function consultOptionsFor(consultantOrKey) {
+  const key = typeof consultantOrKey === 'string' ? consultantOrKey : consultantOrKey && consultantOrKey.key;
+  const c = CONSULTANTS[key];
+  if (c && Array.isArray(c.consultOptions) && c.consultOptions.length) return c.consultOptions;
+  const feeEnv = parseInt(process.env.SQUARE_CONSULT_FEE_CENTS, 10);
+  return [{
+    durationMin: parseInt(process.env.SQUARE_CONSULT_DURATION_MIN, 10) || 30,
+    feeCents: (Number.isFinite(feeEnv) && feeEnv >= 0) ? feeEnv : 20000,
+    variationId: process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID || '',
+    default: true,
+  }];
+}
 
 // Intake services (serviceRequired) / case types that map to each rule bucket.
 const EE_SERVICES  = ['Express Entry profile', 'Express Entry ITA and eAPR'];
@@ -145,6 +176,6 @@ function consultantMergeFields(lead = {}) {
 }
 
 module.exports = {
-  routeConsultant, resolveConsultant, consultantMergeFields,
+  routeConsultant, resolveConsultant, consultantMergeFields, consultOptionsFor,
   CONSULTANTS, EE_SERVICES, PNP_SERVICES, HC_SERVICES, CRS_THRESHOLD,
 };

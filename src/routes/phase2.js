@@ -142,9 +142,32 @@ router.get('/book/:leadId', async (req, res) => {
       const [bd, bt] = String(lead.bookedSlot || '').split(' ');
       return res.type('html').send(buildBookingDoneHtml(lead, bd || '', bt || ''));
     }
-    const consultant = require('../../config/consultantRouting').routeConsultant(lead);
-    const slots = await bookingService.getAvailableSlots(lead.tier || 'T2', 4, consultant.teamMemberId);
-    res.type('html').send(buildBookingPageHtml(lead, slots, req.query.t, consultant));
+    const routing = require('../../config/consultantRouting');
+    const consultant = routing.routeConsultant(lead);
+    // One availability search per consultation option (duration ↔ Square
+    // variation) — a 45-min consult needs a bigger clear window than a 30-min.
+    // All-or-nothing: if ANY option's live search fails, EVERY option falls
+    // back together to a single static-template set (no duration picker) —
+    // never a mixed page where one duration shows real calendar availability
+    // and the other shows unverified template times.
+    const options = routing.consultOptionsFor(consultant);
+    let sets = null;
+    if (bookingService.squareCalendarEnabled()) {
+      try {
+        sets = await Promise.all(options.map(async (o) => ({
+          ...o,
+          slots: await bookingService.getSquareAvailableSlots(4, consultant.teamMemberId, o.variationId),
+        })));
+      } catch (err) {
+        console.warn(`[Book] Live availability failed for lead ${leadId} — consistent static fallback: ${err.message}`);
+        sets = null;
+      }
+    }
+    if (!sets) {
+      const def = options.find((o) => o.default) || options[0];
+      sets = [{ ...def, slots: await bookingService.getStaticAvailableSlots(lead.tier || 'T2', 4) }];
+    }
+    res.type('html').send(buildBookingPageHtml(lead, { sets }, req.query.t, consultant));
   } catch (err) {
     console.error('[Book] GET failed:', err.message);
     res.status(500).type('html').send(buildErrorHtml(err.message));
@@ -171,6 +194,17 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
       return res.type('html').send(buildBookingDoneHtml(lead, bd || slotDate, bt || slotTime));
     }
     await bookingService.holdSlot(leadId, slotDate, slotTime);
+
+    // Resolve the chosen consultation option (duration ↔ fee ↔ Square variation)
+    // against the ROUTED consultant's list — the posted value is untrusted.
+    // Missing/invalid → the consultant's default option.
+    const routing = require('../../config/consultantRouting');
+    const consultant = routing.routeConsultant(lead);
+    const options = routing.consultOptionsFor(consultant);
+    const wantedDur = parseInt(req.body.durationMin, 10);
+    const option = options.find((o) => o.durationMin === wantedDur)
+      || options.find((o) => o.default) || options[0];
+
     // Persist the meeting-type choice — drives the confirmation (Teams link vs
     // office address) and the Square appointment note.
     try { await leadService.updateLead(leadId, { meetingType }); }
@@ -179,7 +213,6 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
     // panel, named in the meeting invite, and recorded on the case — instead of
     // being recomputed cosmetically on every render. Best-effort.
     try {
-      const consultant = require('../../config/consultantRouting').routeConsultant(lead);
       if (consultant && consultant.name && lead.assignedConsultant !== consultant.name) {
         await leadService.updateLead(leadId, { assignedConsultant: consultant.name });
       }
@@ -190,19 +223,37 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
     // The rules engine sets T0 from public form answers, so a free-T0 branch
     // would let anyone mint a free consult by ticking "removal order".
     // Escape hatch: setting SQUARE_CONSULT_FEE_CENTS=0 makes consults free for
-    // everyone (deliberate config, not reachable from the form).
-    const fee = bookingService.CONSULT_FEE_CENTS;
-    if (fee === 0) {
+    // everyone (deliberate config, not reachable from the form). Checked BEFORE
+    // the option persists — a free consult must never record a paid option (the
+    // agreement would state an amount that was never charged).
+    if (bookingService.CONSULT_FEE_CENTS === 0) {
       await bookingService.confirmSlot(leadId, 'free-config', meetingType);
       return res.type('html').send(buildBookingDoneHtml(lead, slotDate, slotTime));
     }
 
+    // Persist the chosen option — the confirm path books this exact Square
+    // variation, the consult agreement states this fee/duration, and KPI
+    // revenue counts it. A failed write must not block the paying client; the
+    // downstream readers fall back to the env defaults (logged loudly here),
+    // and the payment webhook re-verifies the option against the PAID amount.
+    try {
+      await leadService.updateLead(leadId, {
+        consultOption: JSON.stringify({
+          durationMin: option.durationMin, feeCents: option.feeCents,
+          variationId: option.variationId, consultant: consultant.name,
+        }),
+      });
+    } catch (e) { console.error(`[Book] consultOption persist FAILED for ${leadId} (fee/duration may fall back to defaults downstream): ${e.message}`); }
+
     const { url: checkoutUrl } = await bookingService.createCheckout({
-      leadId, amount: fee,
-      description: `Consultation with TDOT Immigration — ${slotDate} ${slotTime}`,
-      // Same lead + same slot → same Square link (a re-submit can't mint a
-      // second payable link).
-      idempotencyKey: `lead-${leadId}-${slotDate}-${slotTime}`.replace(/[^A-Za-z0-9_-]/g, ''),
+      leadId, amount: option.feeCents,
+      description: `Consultation (${option.durationMin} min) with TDOT Immigration — ${slotDate} ${slotTime}`,
+      // Same lead + slot + duration + fee → same Square link (a re-submit can't
+      // mint a second payable link). Duration AND fee are in the key: a changed
+      // duration needs a new link, and a consultant re-route that changes the
+      // fee for the same duration must not collide with the old key (Square
+      // rejects idempotency reuse with a different amount).
+      idempotencyKey: `lead-${leadId}-${slotDate}-${slotTime}-${option.durationMin}-${option.feeCents}`.replace(/[^A-Za-z0-9_-]/g, ''),
     });
     res.redirect(checkoutUrl);
   } catch (err) {
@@ -234,16 +285,41 @@ router.post('/webhook/square', express.raw({ type: '*/*' }), async (req, res) =>
   }
 });
 
-function buildBookingPageHtml(lead, slots, token, consultant) {
-  const byDate = {};
-  for (const s of slots) (byDate[s.date] = byDate[s.date] || []).push(s);
-  const dateBlocks = Object.keys(byDate).sort().map((date) => {
-    const d = new Date(`${date}T12:00:00`);
-    const label = d.toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' });
-    const btns = byDate[date].map((s) =>
-      `<button type="submit" name="pick" value="${s.date}|${s.time}" class="slot">${s.time}</button>`).join('');
-    return `<div class="day"><div class="day-label">${label}</div><div class="slots">${btns}</div></div>`;
-  }).join('');
+function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
+  // Input: { sets: [{durationMin, feeCents, slots, default}] } (one per
+  // consultation option) — or a plain slots array (legacy callers/tests),
+  // rendered as a single set with no duration chooser.
+  const sets = Array.isArray(slotsOrSets)
+    ? [{ durationMin: null, feeCents: null, slots: slotsOrSets, default: true }]
+    : ((slotsOrSets && slotsOrSets.sets) || []);
+  const cad = (cents) => (cents / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' }).replace('CA', '');
+
+  const renderDateBlocks = (slots) => {
+    const byDate = {};
+    for (const s of slots) (byDate[s.date] = byDate[s.date] || []).push(s);
+    return Object.keys(byDate).sort().map((date) => {
+      const d = new Date(`${date}T12:00:00`);
+      const label = d.toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' });
+      const btns = byDate[date].map((s) =>
+        `<button type="submit" name="pick" value="${s.date}|${s.time}" class="slot">${s.time}</button>`).join('');
+      return `<div class="day"><div class="day-label">${label}</div><div class="slots">${btns}</div></div>`;
+    }).join('');
+  };
+
+  const empty = '<div class="empty">No open times in the next few weeks — we will reach out to schedule.</div>';
+  const multiDuration = sets.length > 1 && sets.every((s) => s.durationMin);
+  // Duration chooser (only when the consultant offers a choice) + one slot list
+  // per duration; the JS below shows the list matching the selected duration.
+  const durationSection = multiDuration ? `
+      <div class="mtype">
+        <div class="mtype-q">Consultation length? <span style="color:${BRAND.primary}">*</span></div>
+        ${sets.map((s) => `<label class="mtype-opt dur-opt${s.default ? ' sel' : ''}"><input type="radio" name="durationChoice" value="${s.durationMin}" ${s.default ? 'checked' : ''} required>
+          <span class="mtype-t">⏱ ${s.durationMin} minutes</span><span class="mtype-s">${cad(s.feeCents)} CAD</span></label>`).join('')}
+      </div>` : '';
+  const slotSections = multiDuration
+    ? sets.map((s) => `<div class="dur-slots" data-dur="${s.durationMin}" style="display:${s.default ? 'block' : 'none'}">${renderDateBlocks(s.slots) || empty}</div>`).join('')
+    : (renderDateBlocks((sets[0] || {}).slots || []) || empty);
+  const dateBlocks = slotSections;
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1"><title>Book Your Consultation — TDOT Immigration</title>
@@ -275,8 +351,8 @@ function buildBookingPageHtml(lead, slots, token, consultant) {
     <p style="margin:0;opacity:0.85;font-size:14px;">${consultant && consultant.name ? `Your consultation will be with <b>${consultant.name}</b>. ` : ''}Choose a time that works for you.</p></div>
     <form class="card" method="POST" action="/book/${lead.id}?t=${encodeURIComponent(token)}" onsubmit="return prep(event)">
       <input type="hidden" name="slotDate" id="slotDate"><input type="hidden" name="slotTime" id="slotTime">
-      <input type="hidden" name="meetingType" id="meetingType">
-      <div class="mtype">
+      <input type="hidden" name="meetingType" id="meetingType"><input type="hidden" name="durationMin" id="durationMin">
+      <div class="mtype" id="mtype-box">
         <div class="mtype-q">How would you like to meet? <span style="color:${BRAND.primary}">*</span></div>
         <label class="mtype-opt"><input type="radio" name="meetingTypeChoice" value="Virtual" required>
           <span class="mtype-t">💻 Virtual</span><span class="mtype-s">Online video call</span></label>
@@ -285,8 +361,9 @@ function buildBookingPageHtml(lead, slots, token, consultant) {
         <label class="mtype-opt"><input type="radio" name="meetingTypeChoice" value="Phone Call" required>
           <span class="mtype-t">📞 Phone call</span><span class="mtype-s">We call you at your number</span></label>
       </div>
+      ${durationSection}
       <div class="pick-hint">Then pick a time below:</div>
-      ${dateBlocks || '<div class="empty">No open times in the next few weeks — we will reach out to schedule.</div>'}
+      ${dateBlocks}
       <div id="redirecting"><span class="spin"></span>Reserving your time — taking you to secure payment…</div>
     </form>
     <script>
@@ -300,24 +377,65 @@ function buildBookingPageHtml(lead, slots, token, consultant) {
         if (document.getElementById('slotDate').value) { e.preventDefault(); return false; } // double-submit guard
         var mt=document.querySelector('input[name="meetingTypeChoice"]:checked');
         if(!mt){ e.preventDefault(); alert('Please choose Virtual, In-person, or Phone call first.'); return false; }
+        var dc=document.querySelector('input[name="durationChoice"]:checked');
+        // The clicked slot must belong to the SELECTED duration's list — an
+        // implicit (Enter-key) submission would otherwise pick a hidden slot
+        // from another duration's grid.
+        var wrap=b.closest('.dur-slots');
+        if(wrap && (!dc || wrap.getAttribute('data-dur')!==dc.value)){
+          e.preventDefault(); alert('Please pick a time from the list for your selected consultation length.'); return false;
+        }
         document.getElementById('meetingType').value=mt.value;
+        if(dc) document.getElementById('durationMin').value=dc.value;
         const [d,t]=b.value.split('|');document.getElementById('slotDate').value=d;document.getElementById('slotTime').value=t;
         lockSlots(b);
         return true;}
-      // Highlight the chosen meeting type.
-      Array.prototype.forEach.call(document.querySelectorAll('input[name="meetingTypeChoice"]'), function(r){
-        r.addEventListener('change', function(){
-          Array.prototype.forEach.call(document.querySelectorAll('.mtype-opt'), function(o){ o.classList.remove('sel'); });
-          var opt = r.closest('.mtype-opt'); if (r.checked && opt) opt.classList.add('sel');
+      // Highlight the chosen option WITHIN its own group (meeting type and
+      // duration are separate groups — selecting one must not clear the other).
+      function bindGroup(name){
+        Array.prototype.forEach.call(document.querySelectorAll('input[name="'+name+'"]'), function(r){
+          r.addEventListener('change', function(){
+            var box = r.closest('.mtype');
+            Array.prototype.forEach.call(box.querySelectorAll('.mtype-opt'), function(o){ o.classList.remove('sel'); });
+            var opt = r.closest('.mtype-opt'); if (r.checked && opt) opt.classList.add('sel');
+          });
         });
+      }
+      bindGroup('meetingTypeChoice');
+      bindGroup('durationChoice');
+      // Duration switch: show that duration's availability (slot grids differ —
+      // a 45-min consult needs a larger clear window than a 30-min).
+      function syncDurationSlots(){
+        var dc=document.querySelector('input[name="durationChoice"]:checked');
+        var lists=document.querySelectorAll('.dur-slots');
+        if(!dc || !lists.length) return;
+        Array.prototype.forEach.call(lists, function(el){
+          el.style.display = (el.getAttribute('data-dur')===dc.value) ? 'block' : 'none';
+        });
+      }
+      Array.prototype.forEach.call(document.querySelectorAll('input[name="durationChoice"]'), function(r){
+        r.addEventListener('change', syncDurationSlots);
       });
+      // Card highlights must always mirror the actually-checked radios — a
+      // history-restored page (Back from checkout) can desync them, and the
+      // price the client expects comes from the highlighted card.
+      function resyncHighlights(){
+        Array.prototype.forEach.call(document.querySelectorAll('.mtype'), function(box){
+          Array.prototype.forEach.call(box.querySelectorAll('.mtype-opt'), function(o){ o.classList.remove('sel'); });
+          var checked = box.querySelector('input:checked');
+          if(checked){ var opt=checked.closest('.mtype-opt'); if(opt) opt.classList.add('sel'); }
+        });
+      }
       // Coming back (e.g. cancelled on the payment page) must re-enable everything.
       window.addEventListener('pageshow', function(){
         var btns = document.querySelectorAll('.slot');
         for (var i = 0; i < btns.length; i++) { btns[i].disabled = false; btns[i].classList.remove('picked'); }
         document.getElementById('slotDate').value = ''; document.getElementById('slotTime').value = '';
         document.getElementById('meetingType').value = '';
+        document.getElementById('durationMin').value = '';
         document.getElementById('redirecting').style.display = 'none';
+        syncDurationSlots();
+        resyncHighlights();
       });
     </script>
   </div></body></html>`;

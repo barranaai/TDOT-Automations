@@ -72,10 +72,10 @@ function squareCalendarEnabled() {
  * otherwise from the static SLOT_TEMPLATE. Any Square error falls back to the
  * template so the booking page never goes dark.
  */
-async function getAvailableSlots(tier, weeksAhead = 4, teamMemberId) {
+async function getAvailableSlots(tier, weeksAhead = 4, teamMemberId, serviceVariationId) {
   if (squareCalendarEnabled()) {
     try {
-      return await getSquareAvailableSlots(weeksAhead, teamMemberId);
+      return await getSquareAvailableSlots(weeksAhead, teamMemberId, serviceVariationId);
     } catch (err) {
       console.warn(`[Booking] Square availability failed — falling back to static template: ${err.message}`);
     }
@@ -98,6 +98,20 @@ async function getAvailableSlots(tier, weeksAhead = 4, teamMemberId) {
  */
 const DEFAULT_TRANSITION_MIN = 10; // the consult services' configured transition_time
 const INACTIVE_BOOKING_STATUSES = new Set(['CANCELLED_BY_CUSTOMER', 'CANCELLED_BY_SELLER', 'DECLINED', 'NO_SHOW']);
+
+// 30s micro-cache for the conflict re-check's booking list — one page view runs
+// an availability search per duration option, all against the same calendar.
+let _bookingsCache = null;
+const BOOKINGS_CACHE_MS = 30 * 1000;
+async function listBookingsCached(squareBookings, startAtIso, endAtIso) {
+  const key = `${startAtIso.slice(0, 15)}|${endAtIso.slice(0, 15)}`; // same request window (minute granularity)
+  if (_bookingsCache && _bookingsCache.key === key && (Date.now() - _bookingsCache.at) < BOOKINGS_CACHE_MS) {
+    return _bookingsCache.data;
+  }
+  const data = await squareBookings.listBookings({ startAtIso, endAtIso });
+  _bookingsCache = { key, at: Date.now(), data };
+  return data;
+}
 
 function dropBufferConflicts(slots, bookings) {
   const occupied = []; // { teamMemberId, startMs, endMs (incl. transition) }
@@ -133,14 +147,15 @@ function dropBufferConflicts(slots, bookings) {
  * (b) subtract OUR own in-flight holds/bookings so two leads can't grab the
  * same time during the pay window (which Level 1 doesn't yet write back to Square).
  */
-async function getSquareAvailableSlots(weeksAhead = 4, teamMemberId) {
+async function getSquareAvailableSlots(weeksAhead = 4, teamMemberId, serviceVariationId) {
   const squareBookings = require('./squareBookingsService');
   const startAt = new Date(Date.now() + 25 * 3600 * 1000);                 // Square requires ≥24h
   const maxDays = Math.min(weeksAhead * 7, 31);                            // Square max window is 32 days
   const endAt = new Date(Date.now() + maxDays * 24 * 3600 * 1000);
 
   let slots = await squareBookings.searchAvailability({
-    serviceVariationId: process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID,
+    // Per-duration variation (the client's booking-page choice) or the legacy env default.
+    serviceVariationId: serviceVariationId || process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID,
     // The assigned consultant (from routing) scopes the calendar; falls back to
     // the env default, then to any bookable staff on the service.
     teamMemberId: teamMemberId || process.env.SQUARE_CONSULT_TEAM_MEMBER_ID || undefined,
@@ -151,8 +166,10 @@ async function getSquareAvailableSlots(weeksAhead = 4, teamMemberId) {
 
   // Best-effort conflict re-check — a listBookings failure must never take the
   // booking page down; we just fall back to trusting Square's availability.
+  // Micro-cached (30s): a page view now runs one search PER duration option,
+  // and the booking list is identical across them.
   try {
-    const bookings = await squareBookings.listBookings({ startAtIso: startAt.toISOString(), endAtIso: endAt.toISOString() });
+    const bookings = await listBookingsCached(squareBookings, startAt.toISOString(), endAt.toISOString());
     const res = dropBufferConflicts(slots, bookings);
     if (res.dropped) console.warn(`[Booking] Dropped ${res.dropped} Square-offered slot(s) that collide with existing bookings + buffer`);
     slots = res.slots;
@@ -336,34 +353,82 @@ async function handleSquarePaymentWebhook(event) {
   // (Retainer + milestones are now collected by e-transfer, not Square, so there
   // is no milestone-note branch here anymore — those are reconciled manually.)
 
+  // The amount actually charged — with per-duration pricing this is the MONEY
+  // truth the recorded option must match (see reconcileConsultOptionWithPayment).
+  const amountCents = Number(payment.amount_money && payment.amount_money.amount);
+
   // Route by which lead+column holds this order id.
   const C = require('../data/newLeadsBoard.json').columns;
   const consultLead  = await leadService.findByColumnValue('squareConsultOrderId', orderId);
-  if (consultLead) return confirmSlot(consultLead.id, txnId);
+  if (consultLead) return confirmSlot(consultLead.id, txnId, undefined, amountCents);
 
   const retainerLead = await leadService.findByColumnValue('squareRetainerOrderId', orderId);
   if (retainerLead) return require('./paymentService').onSquareRetainerPaymentReceived(event);
 
   // Fallback: the stored order id can be lost/overwritten (e.g. two links
-  // issued by racing instances during a deploy). Our checkout sets the Square
-  // payment note to the reference id ("lead-<id>" / "retainer-<id>") — route
-  // by it so a real payment is never dropped.
+  // issued by racing instances during a deploy, or a client paying a STALE
+  // per-duration link after re-submitting with a different duration). Our
+  // checkout sets the Square payment note to the reference id ("lead-<id>" /
+  // "retainer-<id>") — route by it so a real payment is never dropped.
   const ref = String(payment.note || '').match(/^(lead|retainer)-(\d+)$/);
   if (ref) {
     console.warn(`[Square] Order ${orderId} not matched by order id — routing via payment note "${payment.note}"`);
-    if (ref[1] === 'lead') return confirmSlot(ref[2], txnId);
+    if (ref[1] === 'lead') return confirmSlot(ref[2], txnId, undefined, amountCents);
     return require('./paymentService').onSquareRetainerPaymentReceived(event, { fallbackLeadId: ref[2] });
   }
 
   console.warn(`[Square] Order ${orderId} (txn ${txnId}) not matched to any lead`);
 }
 
+/**
+ * MONEY invariant: the option recorded on the lead (and everything downstream —
+ * the Square appointment's variation/duration, the Teams meeting length, the
+ * consult agreement's "amount paid", KPI revenue) must reflect what the client
+ * ACTUALLY paid. A client can pay a STALE payment link (submit 45-min → back →
+ * submit 30-min → pay the still-open 45-min tab), so the paid amount is the
+ * source of truth: when it maps to a different option of the routed consultant,
+ * the stored option is corrected before the booking confirms. A paid amount
+ * matching NO option (legacy flat-fee links) keeps the stored/env behavior but
+ * posts a loud staff note to verify the duration with the client.
+ */
+async function reconcileConsultOptionWithPayment(lead, paidCents) {
+  let stored = null;
+  try { stored = JSON.parse(lead.consultOption || ''); } catch (_) { /* legacy */ }
+  if (stored && Number(stored.feeCents) === paidCents) return; // recorded = paid ✓
+
+  const routing = require('../../config/consultantRouting');
+  const consultant = routing.routeConsultant(lead);
+  const paidOption = routing.consultOptionsFor(consultant).find((o) => o.feeCents === paidCents);
+  if (paidOption) {
+    await leadService.updateLead(lead.id, {
+      consultOption: JSON.stringify({
+        durationMin: paidOption.durationMin, feeCents: paidOption.feeCents,
+        variationId: paidOption.variationId, consultant: consultant.name,
+      }),
+    });
+    console.warn(`[Booking] Lead ${lead.id}: paid ${paidCents}c = the ${paidOption.durationMin}-min option — recorded option corrected (was ${stored ? `${stored.durationMin}min/${stored.feeCents}c` : 'none'})`);
+  } else if (stored) {
+    console.warn(`[Booking] Lead ${lead.id}: paid ${paidCents}c matches NO option (stored ${stored.durationMin}min/${stored.feeCents}c) — keeping stored, flagging staff`);
+    await postInviteNote(lead.id,
+      `⚠️ <b>Consultation payment amount needs a look:</b> the client paid <b>$${(paidCents / 100).toFixed(2)}</b>, ` +
+      `but the recorded booking choice is <b>${stored.durationMin} minutes ($${(Number(stored.feeCents) / 100).toFixed(2)})</b>. ` +
+      `Please confirm the intended duration with the client and adjust the Square appointment if needed.`).catch(() => {});
+  }
+}
+
 /** Mark a booking confirmed after the consultation fee is paid. */
-async function confirmSlot(leadId, txnId, meetingType) {
+async function confirmSlot(leadId, txnId, meetingType, amountCents) {
   const lead = await leadService.getLead(leadId);
   if (lead && lead.bookingStatus === 'Booked') {
     console.log(`[Booking] Lead ${leadId} already booked — skipping (idempotent)`);
     return;
+  }
+  // Align the recorded option with the amount actually paid BEFORE anything
+  // downstream reads it (onSlotConfirmed re-reads the lead). Best-effort — a
+  // reconcile failure must not lose a real payment.
+  if (lead && Number.isFinite(amountCents) && amountCents > 0) {
+    try { await reconcileConsultOptionWithPayment(lead, amountCents); }
+    catch (err) { console.warn(`[Booking] consultOption reconcile failed for ${leadId}: ${err.message}`); }
   }
   await leadService.updateLead(leadId, {
     bookingStatus:      'Booked',
@@ -431,7 +496,22 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
   const microsoftMail = require('./microsoftMailService');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const first = esc(String(lead.fullName || 'there').split(' ')[0]);
-  const fee = (CONSULT_FEE_CENTS / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+  // Quote the ROUTED consultant's real pricing (per-duration options), not the
+  // flat env fee — the booking page will offer exactly these.
+  let feeLine = '';
+  try {
+    const routing = require('../../config/consultantRouting');
+    const opts = routing.consultOptionsFor(routing.routeConsultant(lead));
+    const cad = (c) => (c / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+    const priced = opts.filter((o) => o.feeCents > 0);
+    if (priced.length > 1) {
+      feeLine = `The consultation fee is ${priced.map((o) => `<b>${cad(o.feeCents)}</b> for ${o.durationMin} minutes`).join(' or ')}, payable securely online when you book.`;
+    } else if (priced.length === 1) {
+      feeLine = `The consultation fee is <b>${cad(priced[0].feeCents)}</b>, payable securely online when you book.`;
+    }
+  } catch (_) {
+    if (CONSULT_FEE_CENTS > 0) feeLine = `The consultation fee is <b>${(CONSULT_FEE_CENTS / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })}</b>, payable securely online when you book.`;
+  }
 
   // Personalized body (AI-drafted from the intake form, staff-edited on the
   // portal Leads tab) replaces the standard intro when set. Plain text →
@@ -458,7 +538,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
           <p>Hi ${first},</p>
           ${bodyHtml}
           <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Choose your consultation time</a></p>
-          <p>You'll see our real-time availability and can pick whatever works for you. ${CONSULT_FEE_CENTS > 0 ? `The consultation fee is <b>${fee}</b>, payable securely online when you book.` : ''}</p>
+          <p>You'll see our real-time availability and can pick whatever works for you. ${feeLine}</p>
           <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it. Questions? Just reply to this email.</p>
         </div></div>`,
     });
@@ -499,6 +579,6 @@ module.exports = {
   getAvailableSlots, getSquareAvailableSlots, getStaticAvailableSlots, squareCalendarEnabled,
   holdSlot, releaseExpiredSlots, createCheckout,
   handleSquarePaymentWebhook, confirmSlot, verifySquareSignature, sendBookingInvite,
-  dropBufferConflicts,
+  dropBufferConflicts, reconcileConsultOptionWithPayment,
   CONSULT_FEE_CENTS,
 };

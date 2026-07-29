@@ -64,6 +64,7 @@ const COL_TYPE = {
   empRepName: 'text', empCompanyName: 'text', empCompanyAddress: 'text',
   empCompanyPhone: 'text', empRepPhone: 'text', empRepEmail: 'text',
   consultAgreementSent: 'date', consultAgreementSigned: 'date',
+  consultOption: 'text', // JSON: the booking-page choice {durationMin, feeCents, variationId, consultant}
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));
