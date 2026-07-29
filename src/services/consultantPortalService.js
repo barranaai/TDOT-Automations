@@ -445,7 +445,10 @@ async function getLeadsQueue() {
     return _leadsQueueCache.rows;
   }
   const leads = await leadService.listAllLeads();
-  const rows = leads.filter((l) => (l.bookingStatus || '').trim() !== 'Booked').map((l) => ({
+  // Direct retainer clients are CASES, not funnel leads — they never appear here
+  // (their home is the Consultations page's Direct section + the case cockpit).
+  const rows = leads.filter((l) => (l.bookingStatus || '').trim() !== 'Booked'
+    && (l.sourceChannel || '').trim() !== DIRECT_SOURCE).map((l) => ({
     id:            l.id,
     name:          l.fullName || l.name,
     createdAt:     l.createdAt || '',
@@ -1117,13 +1120,21 @@ async function createDirectClient(payload = {}) {
 
   // createLead wires the token + OneDrive folder; the follow-up update carries
   // the direct-specific fields (its mutation auto-creates the new labels).
+  // The engine row lives in the dedicated "Direct retainer clients" group on
+  // the Lead Board — these clients are cases, not funnel leads.
+  const directGroupId = require('../data/newLeadsBoard.json').directRetainerGroupId || undefined;
   const created = await leadService.createLead({
     fullName, email, phone,
+    // Tagged AT creation (not in the follow-up write) — there must be no window
+    // where this row exists as an untagged "Website" lead that a refreshing
+    // Leads tab could cache and display.
+    sourceChannel: DIRECT_SOURCE,
     situationDescription: referredBy
       ? `Direct retainer client — entered at the retainer stage, no consultation. Referred by: ${referredBy}`
       : 'Direct retainer client — entered at the retainer stage, no consultation.',
-  });
+  }, { groupId: directGroupId });
   const leadId = created.id;
+  _directQueueCache = { at: 0, rows: null }; // the new client must show in the Direct section immediately
   const wiring = {
     sourceChannel:      DIRECT_SOURCE,
     confirmedCaseType:  caseType,
@@ -1151,12 +1162,55 @@ async function createDirectClient(payload = {}) {
       return { ok: true, leadId, warning: 'The client was created, but tagging failed — opening the lead; please set the case type and consultant manually (see the note on the lead).' };
     }
   }
+  // CASE-FIRST: direct retainer clients enter the case lifecycle at creation —
+  // open the Client Master case NOW (neutral labels; the case ref generates off
+  // the confirmed case type). Signing later upgrades the same case via
+  // ensureSignedState — the handoff is idempotent, so no duplicate is possible.
+  let caseOpened = false;
+  try {
+    const cmId = await require('./handoffService').openCaseEarly({ leadId });
+    caseOpened = !!cmId;
+  } catch (err) {
+    console.error(`[Consultant] Early case-open failed for direct client ${leadId}: ${err.message}`);
+    await postPortalNote(leadId,
+      `⚠ <b>The Client Master case could not be opened yet</b> (${err.message}). ` +
+      `It will be created automatically when the retainer is signed — no action needed unless this repeats.`).catch(() => {});
+  }
   await postPortalNote(leadId,
     `Direct retainer client created — walk-in/referral entering at the retainer stage (no consultation). ` +
     `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}${referredBy ? ` · Referred by: ${referredBy}` : ''}. ` +
+    (caseOpened ? `The Client Master case is open (case-first — this client is never a funnel lead). ` : '') +
     `Next: set the retainer fee + plan and click “Retain &amp; send agreement”.`);
-  console.log(`[Consultant] Direct retainer client created — lead ${leadId} (${fullName}, ${caseType}, ${consultant})`);
-  return { ok: true, leadId };
+  console.log(`[Consultant] Direct retainer client created — lead ${leadId} (${fullName}, ${caseType}, ${consultant}, caseOpened=${caseOpened})`);
+  return { ok: true, leadId, caseOpened };
+}
+
+/**
+ * In-progress direct retainer clients (created case-first, not yet Retained) —
+ * the Consultations page's "Direct retainer clients" section. Retained ones
+ * graduate to the normal case views and drop off this list.
+ */
+let _directQueueCache = { at: 0, rows: null };
+async function getDirectRetainerQueue() {
+  if (_directQueueCache.rows && (Date.now() - _directQueueCache.at) < 60 * 1000) return _directQueueCache.rows;
+  const leads = await leadService.listAllLeads();
+  const rows = leads
+    .filter((l) => (l.sourceChannel || '').trim() === DIRECT_SOURCE
+      && String(l.conversionStatus || '').trim() !== 'Retained')
+    .map((l) => ({
+      id: l.id,
+      name: l.fullName || l.name,
+      createdAt: l.createdAt || '',
+      caseType: l.confirmedCaseType || '',
+      consultant: (l.assignedConsultant || '').trim(),
+      retainerStatus: l.retainerPaid ? 'Paid' : l.retainerSigned ? 'Signed'
+        : l.retainerSent ? 'Sent' : l.retainerFee ? 'Fee set' : 'New',
+      caseOpen: !!(l.clientMasterItemId && String(l.clientMasterItemId).trim()),
+      clientMasterItemId: l.clientMasterItemId || '',
+    }))
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || Number(b.id) - Number(a.id));
+  _directQueueCache = { at: Date.now(), rows };
+  return rows;
 }
 
 /** Option lists for the direct-client form (case types → sub-types, consultants). */
@@ -1175,5 +1229,5 @@ module.exports = {
   getLeadsQueue, getLeadDetail, buildIntakeSections,
   parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement,
   resolveFamilyMembers, FAMILY_MEMBER_TYPES, MILESTONE_TRIGGER_STAGES,
-  createDirectClient, getDirectClientOptions, DIRECT_SOURCE,
+  createDirectClient, getDirectClientOptions, getDirectRetainerQueue, DIRECT_SOURCE,
 };

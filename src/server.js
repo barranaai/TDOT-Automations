@@ -645,6 +645,16 @@ app.get('/api/consultation/direct-client/options', async (_req, res) => {
   }
 });
 
+// Consultant portal — in-progress direct retainer clients (case-first; not yet Retained)
+app.get('/api/direct-retainers', async (_req, res) => {
+  try {
+    res.json({ clients: await consultantPortalService.getDirectRetainerQueue() });
+  } catch (err) {
+    console.error('[Consultant] Direct queue failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/consultation/direct-client', express.json(), async (req, res) => {
   try {
     const result = await consultantPortalService.createDirectClient(req.body || {});

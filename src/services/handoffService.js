@@ -35,6 +35,7 @@ const CM = {
   caseType:      'dropdown_mm0xd1qn', // setting this (separately) triggers caseRefService
   paymentStatus: 'color_mm0x9fnn',    // titled "Payment Status" on the board
   caseStage:     'color_mm0x8faa',
+  caseRef:       'text_mm142s49',     // read-only here (for the signed-time family top-up)
   oneDriveFolderId:   cmColumns.oneDriveFolderId,
   oneDriveFolderLink: cmColumns.oneDriveFolderLink,
 };
@@ -201,7 +202,16 @@ async function transferLeadUpdates(leadId, cmItemId) {
   }
 }
 
-async function _doHandoff(leadId) {
+/**
+ * Create (or reuse) the Client Master case for a lead.
+ * @param {object} [opts]
+ * @param {boolean} [opts.presigned] — the case is being opened BEFORE the
+ *   retainer is signed (direct retainer clients enter the case lifecycle at
+ *   creation). Skips the signed-state stamps — Payment Status stays empty and
+ *   the lead's conversion status is untouched; ensureSignedState() applies
+ *   them when the client actually signs.
+ */
+async function _doHandoff(leadId, { presigned = false } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) throw new Error(`Lead ${leadId} not found`);
   if (lead.clientMasterItemId) {
@@ -223,7 +233,9 @@ async function _doHandoff(leadId) {
   const existing = await findClientMasterByEmailAndName(lead.email, lead.fullName);
   if (existing) {
     console.log(`[Handoff] Reusing existing Client Master ${existing} for lead ${leadId} (matched by email + name)`);
-    await leadService.updateLead(leadId, { clientMasterItemId: existing, conversionStatus: 'Retained — Awaiting Payment' });
+    await leadService.updateLead(leadId, presigned
+      ? { clientMasterItemId: existing }
+      : { clientMasterItemId: existing, conversionStatus: 'Retained — Awaiting Payment' });
     // Preserve the lead's conversation history on the (reused) case.
     await transferLeadUpdates(leadId, existing);
     // Carry the intake OneDrive folder onto the reused case too (best-effort),
@@ -244,9 +256,11 @@ async function _doHandoff(leadId) {
   const groupId = await getHandoffGroupId();
 
   // Create WITHOUT Case Type (Case Type is set separately below so the webhook fires).
+  // presigned (direct retainer, case-first): Payment Status stays EMPTY — the
+  // client hasn't signed anything yet; ensureSignedState() stamps it at signing.
   const createCols = {
     [CM.clientEmail]:   lead.email,
-    [CM.paymentStatus]: { label: 'Signed (Unpaid)' },
+    ...(presigned ? {} : { [CM.paymentStatus]: { label: 'Signed (Unpaid)' } }),
     [CM.caseStage]:     { label: 'Pre-Onboarding' },
   };
   // Carry the intake-stage OneDrive folder across (caseRefService renames it
@@ -277,7 +291,9 @@ async function _doHandoff(leadId) {
     return reread.clientMasterItemId;
   }
 
-  await leadService.updateLead(leadId, { clientMasterItemId: newId, conversionStatus: 'Retained — Awaiting Payment' });
+  await leadService.updateLead(leadId, presigned
+    ? { clientMasterItemId: newId }
+    : { clientMasterItemId: newId, conversionStatus: 'Retained — Awaiting Payment' });
 
   // Preserve the lead's conversation history (its Updates thread) on the new case.
   await transferLeadUpdates(leadId, newId);
@@ -330,13 +346,112 @@ async function _doHandoff(leadId) {
   return newId;
 }
 
+/**
+ * Apply the SIGNED-state effects to a lead whose case ALREADY exists — the
+ * case-first (direct retainer) flow opens the case at creation with neutral
+ * labels, so signing must (idempotently) catch it up:
+ *   • CM Payment Status → 'Signed (Unpaid)' — only when EMPTY (never downgrades
+ *     an existing 'Paid', e.g. a walk-in who prepaid a milestone).
+ *   • Lead conversion status → 'Retained — Awaiting Payment' — unless the lead
+ *     is already Retained (a redelivered signed webhook must never downgrade).
+ *   • Family Members top-up: the consultant enters family in the retainer panel
+ *     AFTER the early case-open (whose ref-time family hook found nothing), so
+ *     materialize them now (createFromLead skips boards staff already curated).
+ * For the classic signed-time handoff all three are no-ops.
+ */
+async function ensureSignedState(leadId) {
+  const lead = await leadService.getLead(leadId);
+  if (!lead || !lead.clientMasterItemId) return;
+
+  // ONCE-ONLY: a lead that already reached signed-state is skipped ENTIRELY —
+  // the classic flow (whose fresh handoff just stamped these labels) and every
+  // re-fired webhook (a staff date correction, a Documenso redelivery) are true
+  // no-ops: no CM reads, no re-stamps of a staff-cleared Payment Status, and no
+  // resurrection of staff-curated Family Members rows.
+  const cs = (lead.conversionStatus || '').trim();
+  if (cs === 'Retained' || cs === 'Retained — Awaiting Payment') return;
+
+  const cmItemId = lead.clientMasterItemId;
+  let payText = '', caseRef = '';
+  try {
+    const d = await mondayApi.query(
+      `query($ids:[ID!]){ items(ids:$ids){ column_values(ids:["${CM.paymentStatus}","${CM.caseRef}"]){ id text } } }`,
+      { ids: [String(cmItemId)] });
+    const cvs = (d?.items?.[0]?.column_values) || [];
+    payText = ((cvs.find((c) => c.id === CM.paymentStatus) || {}).text || '').trim();
+    caseRef = ((cvs.find((c) => c.id === CM.caseRef) || {}).text || '').trim();
+  } catch (err) {
+    console.warn(`[Handoff] ensureSignedState read failed for CM ${cmItemId}: ${err.message}`);
+    return; // fail closed — better to leave labels than write against unknown state
+  }
+
+  // Re-read the lead once just before writing — a payment or the Retained flip
+  // may have landed while we read the case (walk-ins pay at the desk).
+  const fresh = (await leadService.getLead(leadId).catch(() => null)) || lead;
+  const paidNow = !!(fresh.retainerPaid && String(fresh.retainerPaid).trim());
+  const csNow = (fresh.conversionStatus || '').trim();
+
+  if (paidNow) {
+    // PAID-FIRST: the payment's case advance was deferred while unsigned
+    // (recordRetainerPaid). Signing is the moment onboarding may start — run
+    // the deferred Paid advance; the Retained flip (signed+paid, both-gated)
+    // follows in this same signed chain via maybeMarkRetained, so no interim
+    // conversion label is written here.
+    await require('./paymentService').advanceCaseToPaid(fresh)
+      .catch((err) => console.warn(`[Handoff] Deferred paid-advance failed for lead ${leadId}: ${err.message}`));
+  } else {
+    if (!payText) {
+      await mondayApi.query(
+        `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+           change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols, create_labels_if_missing: true) { id }
+         }`,
+        { boardId: String(clientMasterBoardId), itemId: String(cmItemId),
+          cols: JSON.stringify({ [CM.paymentStatus]: { label: 'Signed (Unpaid)' } }) }
+      ).catch((err) => console.warn(`[Handoff] Payment Status stamp failed for CM ${cmItemId}: ${err.message}`));
+    }
+    if (csNow !== 'Retained' && csNow !== 'Retained — Awaiting Payment') {
+      await leadService.updateLead(leadId, { conversionStatus: 'Retained — Awaiting Payment' })
+        .catch((err) => console.warn(`[Handoff] conversionStatus stamp failed for lead ${leadId}: ${err.message}`));
+    }
+  }
+
+  // Family top-up with the IN-SCOPE signing lead — the consultant entered the
+  // family AFTER the early case-open. Never resolved via the first-hit
+  // clientMasterItemId lookup: when two leads share one case (dedup reuse), that
+  // lookup can return the OTHER lead and silently drop the entered family.
+  if (caseRef) {
+    await require('./familyCompositionService').createFromLead({ lead: fresh, caseRef, cmItemId })
+      .catch((err) => console.warn(`[Handoff] Signed-time family top-up failed for ${caseRef}: ${err.message}`));
+  }
+}
+
 /** Idempotent entry point. Collapses concurrent calls for the same lead. */
 async function onRetainerSigned({ leadId }) {
   const key = String(leadId);
   if (_inFlight.has(key)) return _inFlight.get(key);
-  const p = _doHandoff(leadId);
+  const p = (async () => {
+    const cmId = await _doHandoff(leadId);
+    // Early-opened cases (direct retainer) get their signed-state labels +
+    // consultant-entered family applied now; for fresh handoffs this no-ops.
+    try { await ensureSignedState(leadId); }
+    catch (err) { console.warn(`[Handoff] ensureSignedState failed for ${leadId}: ${err.message}`); }
+    return cmId;
+  })();
   _inFlight.set(key, p);
   try { return await p; } finally { _inFlight.delete(key); }
 }
 
-module.exports = { onRetainerSigned, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, transferLeadUpdates, buildImportedHistoryChunks };
+/**
+ * Case-first entry (direct retainer clients): open the Client Master case at
+ * client creation, BEFORE any signing — neutral labels, case ref + folder +
+ * history exactly like a handoff. Idempotent + concurrency-collapsed.
+ */
+async function openCaseEarly({ leadId }) {
+  const key = `early-${leadId}`;
+  if (_inFlight.has(key)) return _inFlight.get(key);
+  const p = _doHandoff(leadId, { presigned: true });
+  _inFlight.set(key, p);
+  try { return await p; } finally { _inFlight.delete(key); }
+}
+
+module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, transferLeadUpdates, buildImportedHistoryChunks };

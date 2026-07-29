@@ -105,12 +105,40 @@ async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt
       `Run the handoff (mark Retainer Signed) first, then re-trigger payment.`);
     return null;
   }
+  // Paid BEFORE signed (walk-in prepaying at the desk, case already open via the
+  // case-first direct flow): the payment is recorded above, but onboarding
+  // (Paid → Document Collection → checklist + client emails) must NOT start on
+  // an unsigned retainer. handoffService.ensureSignedState runs this deferred
+  // advance the moment the client signs.
+  if (!(lead.retainerSigned && String(lead.retainerSigned).trim())) {
+    console.warn(`[Payment] Lead ${lead.id} paid BEFORE signing — case advance deferred until the retainer is signed`);
+    try {
+      await mondayApi.query(
+        `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+        { i: String(lead.id), b: `💵 <b>Retainer payment recorded before signing.</b> Onboarding (Payment Status → Paid → document collection) starts automatically the moment the retainer is signed.` });
+    } catch (_) { /* note is best-effort */ }
+    return null;
+  }
+  await advanceCaseToPaid(lead, when);
+  return lead.clientMasterItemId;
+}
+
+/**
+ * Client Master → Payment Status "Paid" (+ confirmation date) — the Phase 1
+ * onboarding trigger. Called from recordRetainerPaid on the normal signed→paid
+ * order, and from handoffService.ensureSignedState for the deferred paid-first
+ * order (payment landed before signing). Idempotent (same-label rewrite).
+ */
+async function advanceCaseToPaid(leadOrId, when) {
+  const lead = (leadOrId && typeof leadOrId === 'object') ? leadOrId : await leadService.getLead(leadOrId);
+  if (!lead || !lead.clientMasterItemId) return null;
+  const date = when || (lead.retainerPaid && String(lead.retainerPaid).trim()) || todayISO();
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
        change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
      }`,
     { boardId: String(clientMasterBoardId), itemId: String(lead.clientMasterItemId),
-      cols: JSON.stringify({ [CM.paymentStatus]: { label: 'Paid' }, [CM.paymentConfDate]: { date: when } }) }
+      cols: JSON.stringify({ [CM.paymentStatus]: { label: 'Paid' }, [CM.paymentConfDate]: { date } }) }
   );
   console.log(`[Payment] Client Master ${lead.clientMasterItemId} → Payment Status "Paid" (Phase 1 onboarding triggered)`);
   return lead.clientMasterItemId;
@@ -324,7 +352,7 @@ async function _doMaybeMarkRetained(leadOrId) {
 }
 
 module.exports = {
-  onSquareRetainerPaymentReceived, recordRetainerPaid, sendRetainerPaymentLink,
+  onSquareRetainerPaymentReceived, recordRetainerPaid, advanceCaseToPaid, sendRetainerPaymentLink,
   extractCompletedPayment, maybeMarkRetained, setRetainedBy,
   _resetRetainedCaches: () => _userIdByEmail.clear(), // test hook (the cache is stable in prod)
 };

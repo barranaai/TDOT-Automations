@@ -153,6 +153,17 @@ ${buildNavHeader('consultations')}
         <tbody id="qbody"></tbody>
       </table>
     </div>
+
+    <div class="q-head" id="direct-head" style="display:none">
+      <h2 class="sec-h">Direct retainer clients <span id="direct-count" class="muted" style="font-weight:500"></span></h2>
+      <span class="muted" style="font-size:12px">Walk-in / referral — case-first, no consultation. Drops off once retained.</span>
+    </div>
+    <div class="card" id="direct-card" style="display:none">
+      <table>
+        <thead><tr><th>Client</th><th>Case type</th><th>Consultant</th><th>Retainer</th><th>Case</th></tr></thead>
+        <tbody id="direct-body"></tbody>
+      </table>
+    </div>
   </div>
 
   <!-- Direct retainer client (walk-in / referral — enters at the retainer stage) -->
@@ -260,6 +271,33 @@ function submitDirectClient(){
   var ct=dcEl('dc-casetype'); if(ct) ct.onchange=dcSubtypes;
   var cr=dcEl('dc-create'); if(cr) cr.onclick=submitDirectClient;
 })();
+
+/* In-progress direct retainer clients (case-first; drops off once Retained). */
+function loadDirectRetainers(){
+  var key=getKey(); if(!key) return;
+  fetch('/api/direct-retainers',{headers:{'X-Api-Key':key}})
+    .then(function(r){ return r.ok ? r.json() : { clients: [] }; })
+    .then(function(d){
+      var rows=(d.clients||[]);
+      if(!rows.length) return; // section stays hidden when empty
+      document.getElementById('direct-head').style.display='flex';
+      document.getElementById('direct-card').style.display='block';
+      document.getElementById('direct-count').textContent='('+rows.length+')';
+      document.getElementById('direct-body').innerHTML=rows.map(function(c){
+        var rs=qpill(c.retainerStatus==='Paid'?'green':(c.retainerStatus==='Signed'||c.retainerStatus==='Sent')?'blue':'amber', c.retainerStatus);
+        var cs=c.caseOpen?qpill('green','Open'):qpill('grey','Pending');
+        return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
+          '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+'</td>'+
+          '<td style="color:var(--muted)">'+escHtml(c.caseType||'—')+'</td>'+
+          '<td>'+escHtml(c.consultant||'—')+'</td>'+
+          '<td>'+rs+'</td><td>'+cs+'</td></tr>';
+      }).join('');
+      Array.prototype.forEach.call(document.querySelectorAll('#direct-body tr.row'),function(tr){
+        tr.onclick=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id')); };
+      });
+    }).catch(function(){ /* section simply stays hidden */ });
+}
+loadDirectRetainers();
 
 function monthOf(slot){ var m=String(slot||'').match(/^(\d{4}-\d{2})/); return m?m[1]:''; }
 function distinctVals(rows,fn){ var s={}; rows.forEach(function(r){ var v=fn(r); if(v) s[v]=1; }); return Object.keys(s).sort(); }

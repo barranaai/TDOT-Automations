@@ -107,9 +107,9 @@ function buildCols(fields, clearKeys = []) {
  * Create a new Lead Board item from the public form payload, then assign a
  * lead access token. Returns { id, ...formData }.
  */
-async function createLead(formData) {
+async function createLead(formData, { groupId } = {}) {
   const name = (formData.fullName || '').trim() || 'Unnamed Lead';
-  console.log(`[Lead] Creating lead for ${formData.email || '(no email)'}`);
+  console.log(`[Lead] Creating lead for ${formData.email || '(no email)'}${groupId ? ` (group ${groupId})` : ''}`);
 
   // Phone is set in a follow-up update so a bad phone format can't block creation.
   const createFields = {
@@ -124,12 +124,19 @@ async function createLead(formData) {
     conversionStatus:     'New',
   };
 
-  const result = await mondayApi.query(
-    `mutation($boardId: ID!, $name: String!, $cols: JSON!) {
-       create_item(board_id: $boardId, item_name: $name, column_values: $cols) { id }
-     }`,
-    { boardId: String(leadBoardId), name, cols: JSON.stringify(buildCols(createFields)) }
-  );
+  const result = groupId
+    ? await mondayApi.query(
+        `mutation($boardId: ID!, $groupId: String!, $name: String!, $cols: JSON!) {
+           create_item(board_id: $boardId, group_id: $groupId, item_name: $name, column_values: $cols) { id }
+         }`,
+        { boardId: String(leadBoardId), groupId: String(groupId), name, cols: JSON.stringify(buildCols(createFields)) }
+      )
+    : await mondayApi.query(
+        `mutation($boardId: ID!, $name: String!, $cols: JSON!) {
+           create_item(board_id: $boardId, item_name: $name, column_values: $cols) { id }
+         }`,
+        { boardId: String(leadBoardId), name, cols: JSON.stringify(buildCols(createFields)) }
+      );
 
   const id = result?.create_item?.id;
   if (!id) throw new Error('Lead create_item returned no ID');
