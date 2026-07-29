@@ -306,7 +306,7 @@ function kpiCard(label,num,sub){ return '<div class="kpi-card"><div class="k-lab
 function kpiByList(obj){ var ks=Object.keys(obj||{}); if(!ks.length) return '<div class="muted" style="font-size:12px">None</div>'; return ks.sort(function(a,b){return obj[b]-obj[a];}).map(function(k){ return '<div class="r2"><span>'+escHtml(k)+'</span><b>'+obj[k]+'</b></div>'; }).join(''); }
 function renderKpis(d){
   var c=d.consultations||{}, r=d.retainers||{}, f=d.funnel||{}, rt=(f.rates||{});
-  var cards = kpiCard('Consultations booked', c.booked||0, (c.virtual||0)+' virtual · '+(c.inPerson||0)+' in-person')
+  var cards = kpiCard('Consultations booked', c.booked||0, (c.virtual||0)+' virtual · '+(c.inPerson||0)+' in-person'+((c.phone||0)?' · '+c.phone+' phone':''))
     + kpiCard('Consultations held', c.held||0, '')
     + kpiCard('Consultation revenue', kpiMoney(c.revenue||0), 'paid consults')
     + kpiCard('Retainers signed', r.signed||0, (r.sent||0)+' sent · '+(r.paid||0)+' paid')

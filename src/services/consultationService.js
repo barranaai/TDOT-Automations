@@ -54,9 +54,10 @@ async function onSlotConfirmed(leadId, meetingTypeOverride) {
     // Prefer the value threaded in from the POST (free path) so we don't depend
     // on the meetingType column having persisted; fall back to the stored value
     // (paid path, where the webhook fires later with no value in hand).
-    const meetingType = (meetingTypeOverride === 'In-person' || meetingTypeOverride === 'Virtual')
+    const MEETING_TYPES = ['In-person', 'Virtual', 'Phone Call'];
+    const meetingType = MEETING_TYPES.includes(meetingTypeOverride)
       ? meetingTypeOverride
-      : (lead.meetingType === 'In-person' ? 'In-person' : 'Virtual');
+      : (MEETING_TYPES.includes(lead.meetingType) ? lead.meetingType : 'Virtual');
 
     let meeting = null;
     if (meetingType === 'Virtual') {
@@ -67,7 +68,8 @@ async function onSlotConfirmed(leadId, meetingTypeOverride) {
         consultationHeld: slotStr.split(' ')[0], // date of the consult
       });
     } else {
-      // In-person: no video meeting — the confirmation carries the office address.
+      // In-person / Phone Call: no video meeting — the confirmation carries the
+      // office address (in-person) or the we'll-call-you line (phone).
       await leadService.updateLead(leadId, { consultationHeld: slotStr.split(' ')[0] });
     }
 
@@ -153,8 +155,11 @@ async function sendBookingConfirmation(lead, meeting, slotStr, meetingType) {
   const token  = lead.leadToken || '';
   const preUrl = `${RENDER_URL}/consult/${lead.id}?t=${encodeURIComponent(token)}`;
   const isInPerson = meetingType === 'In-person';
+  const isPhone    = meetingType === 'Phone Call';
   const whereBlock = isInPerson
     ? `<p><b>Where:</b> In person at our office<br>${escapeHtml(OFFICE_ADDRESS)}</p>`
+    : isPhone
+    ? `<p><b>How:</b> Phone consultation — we will call you at <b>${escapeHtml((lead.phone || '').trim() || 'the phone number on file')}</b> at the scheduled time.</p>`
     : (meeting
         ? `<p><b>Join the ${PROVIDER_LABEL[meeting.provider] || 'video'} call:</b><br><a href="${meeting.joinUrl}" style="color:${BRAND.primary}">${meeting.joinUrl}</a></p>`
           + (meeting.provider === 'teams' ? `<p style="font-size:13px;color:${BRAND.mutedOnLight}">A calendar invite has also been sent to your email — accept it and the meeting appears in your calendar.</p>` : '')
@@ -169,7 +174,7 @@ async function sendBookingConfirmation(lead, meeting, slotStr, meetingType) {
       ${whereBlock}
       <p style="margin-top:24px">Please complete this short form before your call so we can make the most of your time:</p>
       <p><a href="${preUrl}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Complete pre-consultation form</a></p>
-      <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">See you ${isInPerson ? 'soon' : 'on the call'}.</p>
+      <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">${isInPerson ? 'See you soon.' : isPhone ? 'Speak to you then.' : 'See you on the call.'}</p>
     </div></div>`;
   await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation is booked', html });
 }
@@ -196,6 +201,8 @@ async function resendConsultationLinks(leadId) {
       ${lead.bookedSlot ? `<p><b>When:</b> ${e(lead.bookedSlot)} (Toronto time)</p>` : ''}
       ${lead.meetingType === 'In-person'
         ? `<p><b>Where:</b> In person at our office<br>${e(OFFICE_ADDRESS)}</p>`
+        : lead.meetingType === 'Phone Call'
+        ? `<p><b>How:</b> Phone consultation — we will call you at <b>${e((lead.phone || '').trim() || 'the phone number on file')}</b> at the scheduled time.</p>`
         : (joinUrl ? `<p><b>Join the call:</b><br><a href="${e(joinUrl)}" style="color:${BRAND.primary}">${e(joinUrl)}</a></p>` : '')}
       <p style="margin-top:20px">Please complete this short form before your call so we can make the most of your time:</p>
       <p><a href="${e(preUrl)}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Complete pre-consultation form</a></p>
@@ -241,6 +248,8 @@ async function sendConsultationPackage(leadId) {
   const joinUrl = (lead.meetingLink || '').trim();
   const whereBlock = isInPerson
     ? `<p style="margin:6px 0"><b>Where:</b> In person at our office<br>${e(OFFICE_ADDRESS)}</p>`
+    : lead.meetingType === 'Phone Call'
+    ? `<p style="margin:6px 0"><b>How:</b> Phone consultation — we will call you at <b>${e((lead.phone || '').trim() || 'the phone number on file')}</b> at the scheduled time.</p>`
     : (joinUrl ? `<p style="margin:6px 0"><b>Join the video call:</b><br><a href="${e(joinUrl)}" style="color:${BRAND.primary}">${e(joinUrl)}</a></p>` : '');
   const btn = (href, label) => `<a href="${e(href)}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;margin:4px 0">${label}</a>`;
 
@@ -869,10 +878,13 @@ async function sendReminderWindow(label, minH, maxH, markerTag) {
     try {
       const lead = await leadService.getLead(L.id);
       if (lead.email) {
-        // In-person → the office address; virtual → the join URL (Zoom/Teams).
-        // Older virtual bookings without a stored meetingLink just omit the line.
+        // In-person → the office address; phone → we'll-call-you; virtual → the
+        // join URL (Zoom/Teams). Older virtual bookings without a stored
+        // meetingLink just omit the line.
         const whereLine = lead.meetingType === 'In-person'
           ? `<p><b>Where:</b> In person at our office<br>${escapeHtml(OFFICE_ADDRESS)}</p>`
+          : lead.meetingType === 'Phone Call'
+          ? `<p><b>How:</b> Phone consultation — we will call you at <b>${escapeHtml((lead.phone || '').trim() || 'the phone number on file')}</b>.</p>`
           : (lead.meetingLink ? `<p><b>Join link:</b> <a href="${escapeHtml(lead.meetingLink)}">${escapeHtml(lead.meetingLink)}</a></p>` : '');
         await microsoftMail.sendEmail({
           to: lead.email,

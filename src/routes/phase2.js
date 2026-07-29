@@ -160,8 +160,8 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
   try {
     const { slotDate, slotTime } = req.body;
     if (!slotDate || !slotTime) return res.status(400).type('html').send('Please choose a slot.');
-    // In-person or virtual (defaults to Virtual if the field is missing/invalid).
-    const meetingType = req.body.meetingType === 'In-person' ? 'In-person' : 'Virtual';
+    // In-person, phone, or virtual (defaults to Virtual if missing/invalid).
+    const meetingType = ['In-person', 'Phone Call'].includes(req.body.meetingType) ? req.body.meetingType : 'Virtual';
 
     const lead = await leadService.getLead(leadId);
     // Double-submit guard: a lead that's already Booked must not be re-held or
@@ -282,6 +282,8 @@ function buildBookingPageHtml(lead, slots, token, consultant) {
           <span class="mtype-t">💻 Virtual</span><span class="mtype-s">Online video call</span></label>
         <label class="mtype-opt"><input type="radio" name="meetingTypeChoice" value="In-person" required>
           <span class="mtype-t">🏢 In-person</span><span class="mtype-s">At our North York office</span></label>
+        <label class="mtype-opt"><input type="radio" name="meetingTypeChoice" value="Phone Call" required>
+          <span class="mtype-t">📞 Phone call</span><span class="mtype-s">We call you at your number</span></label>
       </div>
       <div class="pick-hint">Then pick a time below:</div>
       ${dateBlocks || '<div class="empty">No open times in the next few weeks — we will reach out to schedule.</div>'}
@@ -297,7 +299,7 @@ function buildBookingPageHtml(lead, slots, token, consultant) {
       function prep(e){const b=e.submitter;if(!b||!b.value){e.preventDefault();return false;}
         if (document.getElementById('slotDate').value) { e.preventDefault(); return false; } // double-submit guard
         var mt=document.querySelector('input[name="meetingTypeChoice"]:checked');
-        if(!mt){ e.preventDefault(); alert('Please choose In-person or Virtual first.'); return false; }
+        if(!mt){ e.preventDefault(); alert('Please choose Virtual, In-person, or Phone call first.'); return false; }
         document.getElementById('meetingType').value=mt.value;
         const [d,t]=b.value.split('|');document.getElementById('slotDate').value=d;document.getElementById('slotTime').value=t;
         lockSlots(b);
