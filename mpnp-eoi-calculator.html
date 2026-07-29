@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MPNP Expression of Interest — Points Calculator</title>
+<style>
+  :root {
+    --green: #79b530;
+    --green-dark: #5c8c24;
+    --gray: #e9ecef;
+    --yellow: #fff3cd;
+    --border: #d0d4d9;
+    --text: #222;
+    --muted: #666;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    margin: 0;
+    padding: 24px 16px 80px;
+    background: #f6f7f8;
+    line-height: 1.45;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 9px 12px;
+    text-align: left;
+    vertical-align: middle;
+    font-size: 14px;
+  }
+  thead th {
+    background: var(--green);
+    color: #fff;
+    border-color: var(--green);
+  }
+  td.pts { width: 90px; text-align: center; white-space: nowrap; }
+  tr.factor td {
+    background: var(--yellow);
+    text-align: center;
+    font-weight: 700;
+  }
+  tr.subhead td {
+    background: var(--gray);
+    text-align: center;
+    font-weight: 600;
+    font-style: italic;
+  }
+  tr.max td { font-weight: 700; background: #f0f7e8; }
+  tr.max td.pts { color: var(--green-dark); }
+  label.opt { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  .pval { color: var(--muted); font-size: 12px; }
+  input[type=radio], input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+  .total-bar {
+    position: sticky;
+    bottom: 0;
+    margin-top: 20px;
+    background: var(--green);
+    color: #fff;
+    padding: 16px 20px;
+    border-radius: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 -2px 8px rgba(0,0,0,.12);
+  }
+  .total-bar .score { font-size: 24px; font-weight: 700; }
+  .total-bar small { font-weight: 400; opacity: .9; }
+  button.reset {
+    background: #fff;
+    color: var(--green-dark);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.reset:hover { background: #f0f0f0; }
+  .disclaimer { font-size: 11px; color: var(--muted); margin-top: 24px; }
+  details { margin-top: 16px; font-size: 13px; color: var(--muted); }
+  details summary { cursor: pointer; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MPNP Expression of Interest — Points Calculator</h1>
+  <p class="sub">Manitoba Provincial Nominee Program · self-contained replica · scored out of 1000</p>
+
+  <form id="calc">
+  <table>
+    <thead>
+      <tr><th>Assessment Factor</th><th class="pts">Ranking Points</th></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  </form>
+
+  <div class="total-bar">
+    <div>Your Overall Points: <span class="score" id="score">0</span> <small>out of 1000</small></div>
+    <button type="button" class="reset" id="reset">Reset</button>
+  </div>
+
+  <details>
+    <summary>Notes on this calculator's scoring logic</summary>
+    <ul>
+      <li><b>Factor 1 (Language):</b> First and Second Official Language are scored separately and add together (max 50 from the inputs, though the source labels the factor max as 125).</li>
+      <li><b>Factor 3 (Work):</b> Years of experience and "fully recognized by a provincial licensing body" stack (max 75 + 100 = 175).</li>
+      <li><b>Factor 5 (Adaptability):</b> All nine options share one selection group — only <b>one</b> can be chosen (matching the source site; the sub-categories do not sum).</li>
+      <li><b>Factor 6 (Risk Assessment):</b> Checkboxes — multiple can be selected and they subtract (down to −200).</li>
+    </ul>
+  </details>
+
+  <p class="disclaimer">Disclaimer: This calculator is provided solely for guidance and tentative calculation. No assurance is given for its accuracy. Your individual circumstances may impact your final score. Point values replicate those of the SIA Immigration MPNP EOI calculator.</p>
+</div>
+
+<script>
+// ---- Data: every factor, option and point value (extracted from source) ----
+const FACTORS = [
+  {
+    title: "Factor 1: Language Proficiency", max: 125,
+    groups: [
+      { sub: "First Official Language", name: "first_language", type: "radio", opts: [
+        ["CLB 8 or higher", 25], ["CLB 7", 22], ["CLB 6", 20],
+        ["CLB 5", 17], ["CLB 4", 12], ["CLB 3 or lower", 0],
+      ]},
+      { sub: "Second Official Language", name: "second_language", type: "radio", opts: [
+        ["CLB 5 or higher (overall)", 25],
+      ]},
+    ],
+  },
+  {
+    title: "Factor 2: Age", max: 75,
+    groups: [
+      { name: "age", type: "radio", opts: [
+        ["18", 20], ["19", 30], ["20", 40], ["21 to 45", 75], ["46", 40],
+        ["47", 30], ["48", 20], ["49", 10], ["50 or older", 0],
+      ]},
+    ],
+  },
+  {
+    title: "Factor 3: Work Experience", max: 175,
+    groups: [
+      { name: "work", type: "radio", opts: [
+        ["Less than 1 year", 0], ["1 year", 40], ["2 years", 50],
+        ["3 years", 60], ["4 years or more", 75],
+      ]},
+      { name: "work_1", type: "radio", opts: [
+        ["Fully recognized by provincial licensing body", 100],
+      ]},
+    ],
+  },
+  {
+    title: "Factor 4: Education", max: 125,
+    groups: [
+      { name: "education", type: "radio", opts: [
+        ["Master's degree or Doctorate", 125],
+        ["Two post-secondary programs of at least 2 years each", 115],
+        ["One post-secondary program of three years or more", 110],
+        ["One post-secondary program of two years", 100],
+        ["One-year post-secondary program", 70],
+        ["Trade Certificate", 70],
+        ["No formal post-secondary education", 0],
+      ]},
+    ],
+  },
+  {
+    title: "Factor 5: Adaptability", max: 500,
+    groups: [
+      { sub: "Connection", name: "adapt", type: "radio", opts: [
+        ["Close relative in Manitoba", 200],
+        ["Previous work experience in Manitoba (6 months or more)", 100],
+        ["Completed post-secondary program in Manitoba (2 years or more)", 100],
+        ["Completed post-secondary program in Manitoba (one year)", 50],
+        ["Close friend or distant relative in Manitoba", 50],
+      ]},
+      { sub: "Manitoba Demand", name: "adapt", type: "radio", opts: [
+        ["Ongoing employment in Manitoba for 6 months or more with long-term job offer from the same employer", 500],
+        ["Invitation to Apply under a Strategic Initiative", 500],
+      ]},
+      { sub: "Regional Development", name: "adapt", type: "radio", opts: [
+        ["Immigration destination in Manitoba is outside of Winnipeg", 50],
+      ]},
+    ],
+  },
+  {
+    title: "Factor 6: Risk Assessment", max: -200,
+    groups: [
+      { name: "risk", type: "checkbox", opts: [
+        ["Close relative in another province and no close relative in MB", 0],
+        ["Work experience in another province", -100],
+        ["Studies in another province", -100],
+        ["Previous immigration application to another province", 0],
+      ]},
+    ],
+  },
+];
+
+// ---- Render ----
+const tbody = document.getElementById("tbody");
+let uid = 0;
+for (const f of FACTORS) {
+  tbody.insertAdjacentHTML("beforeend",
+    `<tr class="factor"><td colspan="2">${f.title}</td></tr>`);
+  for (const g of f.groups) {
+    if (g.sub) {
+      tbody.insertAdjacentHTML("beforeend",
+        `<tr class="subhead"><td colspan="2">${g.sub}</td></tr>`);
+    }
+    for (const [label, pts] of g.opts) {
+      const id = "i" + (uid++);
+      const sign = pts > 0 ? "+" : "";
+      tbody.insertAdjacentHTML("beforeend",
+        `<tr>
+          <td><label class="opt" for="${id}">
+            <input type="${g.type}" id="${id}" name="${g.name}" value="${pts}" />
+            <span>${label}</span>
+          </label></td>
+          <td class="pts pval">${sign}${pts}</td>
+        </tr>`);
+    }
+  }
+  const sign = f.max > 0 ? "" : "";
+  tbody.insertAdjacentHTML("beforeend",
+    `<tr class="max"><td>Maximum Points – ${f.title.split(":")[0]}</td>
+     <td class="pts">${f.max}</td></tr>`);
+}
+
+// ---- Scoring ----
+const scoreEl = document.getElementById("score");
+function recompute() {
+  let total = 0;
+  document.querySelectorAll("#calc input:checked").forEach(el => {
+    total += Number(el.value);
+  });
+  scoreEl.textContent = total;
+}
+document.getElementById("calc").addEventListener("change", recompute);
+document.getElementById("reset").addEventListener("click", () => {
+  document.getElementById("calc").reset();
+  recompute();
+});
+recompute();
+</script>
+</body>
+</html>

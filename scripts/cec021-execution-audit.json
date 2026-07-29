@@ -1,0 +1,573 @@
+{
+  "caseRef": "2026-CEC-EE-021",
+  "count": 81,
+  "items": [
+    {
+      "id": "12252282724",
+      "name": "Passport with all stamped pages",
+      "createdAt": "2026-06-11T13:37:22Z",
+      "uniqueKey": "2026-CEC-EE-021-PWASP-CEC-ID-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252257235",
+      "name": "All Permits ever held in Canada",
+      "createdAt": "2026-06-11T13:37:27Z",
+      "uniqueKey": "2026-CEC-EE-021-APEHICEEO1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252264924",
+      "name": "Digital photo as per specifications Permanent Residents",
+      "createdAt": "2026-06-11T13:37:31Z",
+      "uniqueKey": "2026-CEC-EE-021-DPAPS-PR-CEC-ID-1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252287344",
+      "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+      "createdAt": "2026-06-11T13:37:34Z",
+      "uniqueKey": "2026-CEC-EE-021-POLP-CEC-O-1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252284528",
+      "name": "Medical Exam",
+      "createdAt": "2026-06-11T13:37:37Z",
+      "uniqueKey": "2026-CEC-EE-021-ME-CEC-MED-1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252313795",
+      "name": "Police clearance certificates (PCC)",
+      "createdAt": "2026-06-11T13:37:40Z",
+      "uniqueKey": "2026-CEC-EE-021-PCC-EE-L-1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252314540",
+      "name": "Canadian Education Documents",
+      "createdAt": "2026-06-11T13:37:43Z",
+      "uniqueKey": "2026-CEC-EE-021-CED-CEC-EDU-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252282358",
+      "name": "Foreign Education Documents along with Educational Credential Assessment",
+      "createdAt": "2026-06-11T13:37:46Z",
+      "uniqueKey": "2026-CEC-EE-021-FEDaECEA-CEC-EDU-1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252286480",
+      "name": "Sibling- Proof of living in Canada",
+      "createdAt": "2026-06-11T13:37:51Z",
+      "uniqueKey": "2026-CEC-EE-021-SPLIC-CEC-O-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252257379",
+      "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+      "createdAt": "2026-06-11T13:37:54Z",
+      "uniqueKey": "2026-CEC-EE-021-POWFTCP(I&OC)_CEC_O_1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252257923",
+      "name": "Identity and Civil Documents",
+      "createdAt": "2026-06-11T13:37:57Z",
+      "uniqueKey": "2026-CEC-EE-021-IACD-CEC-ID-1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252327585",
+      "name": "One and same name affidavit if name /surname changed",
+      "createdAt": "2026-06-11T13:37:59Z",
+      "uniqueKey": "2026-CEC-EE-021-OASNAAINC-CEC-O-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252327587",
+      "name": "Birth Certificate",
+      "createdAt": "2026-06-11T13:38:02Z",
+      "uniqueKey": "2026-CEC-EE-021-BC-CEC-ID-001",
+      "applicantType": "Dependent Child"
+    },
+    {
+      "id": "12252286511",
+      "name": "Passport with all stamped pages",
+      "createdAt": "2026-06-11T13:38:06Z",
+      "uniqueKey": "2026-CEC-EE-021-PWASP-I-1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252350788",
+      "name": "All Permits ever held in Canada",
+      "createdAt": "2026-06-11T13:38:10Z",
+      "uniqueKey": "2026-CEC-EE-021-APEHICO1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252329438",
+      "name": "Digital photo as per specifications Permanent Residents",
+      "createdAt": "2026-06-11T13:38:14Z",
+      "uniqueKey": "2026-CEC-EE-021-DPAPSID001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252264977",
+      "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+      "createdAt": "2026-06-11T13:38:18Z",
+      "uniqueKey": "2026-CEC-EE-021-POLPIGCTO1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252304954",
+      "name": "Medical Exam",
+      "createdAt": "2026-06-11T13:38:22Z",
+      "uniqueKey": "2026-CEC-EE-021-ME-Med-1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252329539",
+      "name": "Police clearance certificates (PCC)",
+      "createdAt": "2026-06-11T13:38:25Z",
+      "uniqueKey": "2026-CEC-EE-021-PCC-LEG-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252287156",
+      "name": "Canadian Education Documents",
+      "createdAt": "2026-06-11T13:38:29Z",
+      "uniqueKey": "2026-CEC-EE-021-CED_EDU_001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252314362",
+      "name": "Foreign Education Documents along with Educational Credential Assessment",
+      "createdAt": "2026-06-11T13:38:32Z",
+      "uniqueKey": "2026-CEC-EE-021-FEDAWCEA_EDU_001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252307604",
+      "name": "Sibling- Proof of living in Canada- if applicable",
+      "createdAt": "2026-06-11T13:38:35Z",
+      "uniqueKey": "2026-CEC-EE-021-SPOLICA-O-1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252297418",
+      "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+      "createdAt": "2026-06-11T13:38:39Z",
+      "uniqueKey": "2026-CEC-EE-021-PoweftcpIaOC_O_1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252313634",
+      "name": "Identity and Civil Documents",
+      "createdAt": "2026-06-11T13:38:42Z",
+      "uniqueKey": "2026-CEC-EE-021-ICDI1",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252282559",
+      "name": "One and same name affidavit if name /surname changed",
+      "createdAt": "2026-06-11T13:38:46Z",
+      "uniqueKey": "2026-CEC-EE-021-OASNAAINSN_O_001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252335322",
+      "name": "Passport with all stamped pages",
+      "createdAt": "2026-06-11T13:38:50Z",
+      "uniqueKey": "2026-CEC-EE-021-PWASP-I-1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252299237",
+      "name": "All Permits ever held in Canada",
+      "createdAt": "2026-06-11T13:38:54Z",
+      "uniqueKey": "2026-CEC-EE-021-APEHICO1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252295666",
+      "name": "Digital photo as per specifications Permanent Residents",
+      "createdAt": "2026-06-11T13:38:57Z",
+      "uniqueKey": "2026-CEC-EE-021-DpappsPR_ID_001",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252282463",
+      "name": "Proof of language proficiency (IELTS- G/CELPIP-G/PTE Core/TEF Canada/ TCF Canada)",
+      "createdAt": "2026-06-11T13:39:00Z",
+      "uniqueKey": "2026-CEC-EE-021-POLPIGCPTCCO1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252307965",
+      "name": "Medical Exam",
+      "createdAt": "2026-06-11T13:39:03Z",
+      "uniqueKey": "2026-CEC-EE-021-ME-Med-001",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252308447",
+      "name": "Police clearance certificates (PCC)",
+      "createdAt": "2026-06-11T13:39:07Z",
+      "uniqueKey": "2026-CEC-EE-021-PCC-LEG-001",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252265050",
+      "name": "Canadian Education Documents",
+      "createdAt": "2026-06-11T13:39:11Z",
+      "uniqueKey": "2026-CEC-EE-021-CEDEDU1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252282815",
+      "name": "Foreign Education Documents along with Educational Credential Assessment",
+      "createdAt": "2026-06-11T13:39:15Z",
+      "uniqueKey": "2026-CEC-EE-021-FEDaECEA-E-001",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252347549",
+      "name": "Sibling- Proof of living in Canada- if applicable",
+      "createdAt": "2026-06-11T13:39:18Z",
+      "uniqueKey": "2026-CEC-EE-021-SPOLICA-O-1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252314121",
+      "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+      "createdAt": "2026-06-11T13:39:22Z",
+      "uniqueKey": "2026-CEC-EE-021-P O W E F T C P I A O C O 1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252314124",
+      "name": "Identity and Civil Documents",
+      "createdAt": "2026-06-11T13:39:25Z",
+      "uniqueKey": "2026-CEC-EE-021-IACDI1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252305043",
+      "name": "One and same name affidavit if name /surname changed",
+      "createdAt": "2026-06-11T13:39:29Z",
+      "uniqueKey": "2026-CEC-EE-021-OASNAAINSC_O_1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252308523",
+      "name": "Passport with all stamped pages",
+      "createdAt": "2026-06-11T13:39:33Z",
+      "uniqueKey": "2026-CEC-EE-021-PwaspI1",
+      "applicantType": "Dependent Child"
+    },
+    {
+      "id": "12252327775",
+      "name": "All Permits ever held in Canada",
+      "createdAt": "2026-06-11T13:39:42Z",
+      "uniqueKey": "2026-CEC-EE-021-APEHICO1",
+      "applicantType": "Dependent Child"
+    },
+    {
+      "id": "12252347921",
+      "name": "Digital photo as per specifications Permanent Residents",
+      "createdAt": "2026-06-11T13:39:46Z",
+      "uniqueKey": "2026-CEC-EE-021-DPAPSPR_ID_001",
+      "applicantType": "Dependent Child"
+    },
+    {
+      "id": "12252314980",
+      "name": "Medical Exam",
+      "createdAt": "2026-06-11T13:39:49Z",
+      "uniqueKey": "2026-CEC-EE-021-MEMed001",
+      "applicantType": "Dependent Child"
+    },
+    {
+      "id": "12252283097",
+      "name": "Birth Certificate",
+      "createdAt": "2026-06-11T13:39:52Z",
+      "uniqueKey": "2026-CEC-EE-021-BCI001",
+      "applicantType": "Dependent Child"
+    },
+    {
+      "id": "12252315292",
+      "name": "Passport with all stamped pages",
+      "createdAt": "2026-06-11T13:39:56Z",
+      "uniqueKey": "2026-CEC-EE-021-Pwasp-CEC-ID-001",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252281560",
+      "name": "All Permits ever held in Canada",
+      "createdAt": "2026-06-11T13:39:59Z",
+      "uniqueKey": "2026-CEC-EE-021-APEHICEEO1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252304167",
+      "name": "Digital photo as per specifications Permanent Residents",
+      "createdAt": "2026-06-11T13:40:03Z",
+      "uniqueKey": "2026-CEC-EE-021-DPAPS-PR-CEC-ID-1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252303729",
+      "name": "Medical Exam",
+      "createdAt": "2026-06-11T13:40:06Z",
+      "uniqueKey": "2026-CEC-EE-021-ME-CEC-MED-1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252330095",
+      "name": "Police clearance certificates (PCC)",
+      "createdAt": "2026-06-11T13:40:10Z",
+      "uniqueKey": "2026-CEC-EE-021-PCC_EE_L_1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252368390",
+      "name": "One and same name affidavit if name /surname changed",
+      "createdAt": "2026-06-11T13:40:13Z",
+      "uniqueKey": "2026-CEC-EE-021-OASNAAINS-CEC-O-1",
+      "applicantType": "Spouse / Common-Law Partner"
+    },
+    {
+      "id": "12252351132",
+      "name": "Passport with all stamped pages",
+      "createdAt": "2026-06-11T13:40:16Z",
+      "uniqueKey": "2026-CEC-EE-021-PWASP-CEC-ID-001",
+      "applicantType": "Dependent Child"
+    },
+    {
+      "id": "12252308401",
+      "name": "Digital photo as per specifications Permanent Residents",
+      "createdAt": "2026-06-11T13:40:19Z",
+      "uniqueKey": "2026-CEC-EE-021-DPAPSPRCID1",
+      "applicantType": "Dependent Child"
+    },
+    {
+      "id": "12252337960",
+      "name": "Medical Exam",
+      "createdAt": "2026-06-11T13:40:22Z",
+      "uniqueKey": "2026-CEC-EE-021-ME-CEC-MED-1",
+      "applicantType": "Dependent Child"
+    },
+    {
+      "id": "12252827439",
+      "name": "Questionnaire",
+      "createdAt": "2026-06-11T14:16:10Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-QUESTIONNAIRE-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252804746",
+      "name": "Passport with all stamped pages",
+      "createdAt": "2026-06-11T14:16:13Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-PASSPORT-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252822577",
+      "name": "All Permits ever held in Canada",
+      "createdAt": "2026-06-11T14:16:16Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-PERMITS-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252775785",
+      "name": "Digital photo as per specifications Permanent Residents",
+      "createdAt": "2026-06-11T14:16:21Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-PHOTO-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252741598",
+      "name": "Proof of language proficiency (IELTS-G/CELPIP-G/PTE Core/TEF Canada/TCF Canada)",
+      "createdAt": "2026-06-11T14:16:24Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-LANGUAGE-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252775862",
+      "name": "Medical Exam",
+      "createdAt": "2026-06-11T14:16:28Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-MEDICAL-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252795544",
+      "name": "Police clearance certificates (PCC)",
+      "createdAt": "2026-06-11T14:16:31Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-PCC-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252791537",
+      "name": "Canadian Education Documents",
+      "createdAt": "2026-06-11T14:16:34Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-CANEDU-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252795546",
+      "name": "Foreign Education Documents along with Educational Credential Assessment",
+      "createdAt": "2026-06-11T14:16:38Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-FOREIGNEDU-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252765267",
+      "name": "Sibling- Proof of living in Canada (if applicable)",
+      "createdAt": "2026-06-11T14:16:41Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-SIBLINGPROOF-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252772121",
+      "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+      "createdAt": "2026-06-11T14:16:44Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-WORKEXP-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252772917",
+      "name": "Identity and Civil Documents",
+      "createdAt": "2026-06-11T14:16:47Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-PRINCIPALAPPLICANT-IDCIVIL-001",
+      "applicantType": "Principal Applicant"
+    },
+    {
+      "id": "12252804850",
+      "name": "Questionnaire",
+      "createdAt": "2026-06-11T14:16:50Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-QUESTIONNAIRE-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252773247",
+      "name": "Passport with all stamped pages",
+      "createdAt": "2026-06-11T14:16:54Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-PASSPORT-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252776009",
+      "name": "All Permits ever held in Canada",
+      "createdAt": "2026-06-11T14:16:57Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-PERMITS-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252772126",
+      "name": "Digital photo as per specifications Permanent Residents",
+      "createdAt": "2026-06-11T14:17:01Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-PHOTO-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252831315",
+      "name": "Proof of language proficiency (IELTS-G/CELPIP-G/PTE Core/TEF Canada/TCF Canada)",
+      "createdAt": "2026-06-11T14:17:05Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-LANGUAGE-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252805866",
+      "name": "Medical Exam",
+      "createdAt": "2026-06-11T14:17:08Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-MEDICAL-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252741267",
+      "name": "Police clearance certificates (PCC)",
+      "createdAt": "2026-06-11T14:17:10Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-PCC-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252819372",
+      "name": "Canadian Education Documents",
+      "createdAt": "2026-06-11T14:17:14Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-CANEDU-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252741271",
+      "name": "Foreign Education Documents along with Educational Credential Assessment",
+      "createdAt": "2026-06-11T14:17:19Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-FOREIGNEDU-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252776279",
+      "name": "Sibling- Proof of living in Canada (if applicable)",
+      "createdAt": "2026-06-11T14:17:23Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-SIBLINGPROOF-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252795018",
+      "name": "Proof of work experience for the claiming period (Inside and Outside Canada)",
+      "createdAt": "2026-06-11T14:17:26Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-WORKEXP-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252745008",
+      "name": "Identity and Civil Documents",
+      "createdAt": "2026-06-11T14:17:30Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-SPOUSE-IDCIVIL-001",
+      "applicantType": "Spouse"
+    },
+    {
+      "id": "12252842643",
+      "name": "Questionnaire",
+      "createdAt": "2026-06-11T14:17:34Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-DEPENDENTCHILD1-QUESTIONNAIRE-001",
+      "applicantType": "Dependent Child 1"
+    },
+    {
+      "id": "12252830910",
+      "name": "Passport with all stamped pages",
+      "createdAt": "2026-06-11T14:17:37Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-DEPENDENTCHILD1-PASSPORT-001",
+      "applicantType": "Dependent Child 1"
+    },
+    {
+      "id": "12252772138",
+      "name": "All Permits ever held in Canada",
+      "createdAt": "2026-06-11T14:17:40Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-DEPENDENTCHILD1-PERMITS-001",
+      "applicantType": "Dependent Child 1"
+    },
+    {
+      "id": "12252793057",
+      "name": "Digital photo as per specifications Permanent Residents",
+      "createdAt": "2026-06-11T14:17:44Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-DEPENDENTCHILD1-PHOTO-001",
+      "applicantType": "Dependent Child 1"
+    },
+    {
+      "id": "12252831416",
+      "name": "Medical Exam",
+      "createdAt": "2026-06-11T14:17:47Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-DEPENDENTCHILD1-MEDICAL-001",
+      "applicantType": "Dependent Child 1"
+    },
+    {
+      "id": "12252842727",
+      "name": "Birth Certificate",
+      "createdAt": "2026-06-11T14:17:51Z",
+      "uniqueKey": "2026-CEC-EE-021-CANADIAN-EXPERIENCE-CLASS-EE-AFTER-ITA-CEC-ACCOMPANYING-SPOUSE-CHILD-DEPENDENTCHILD1-BIRTHCERT-001",
+      "applicantType": "Dependent Child 1"
+    }
+  ]
+}

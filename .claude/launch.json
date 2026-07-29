@@ -2,10 +2,24 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "tdot-automations",
-      "runtimeExecutable": "/opt/homebrew/bin/node",
-      "runtimeArgs": ["src/server.js"],
-      "port": 5050
+      "name": "tdot-server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "src/server.js"
+      ],
+      "port": 5050,
+      "autoPort": true
+    },
+    {
+      "name": "mpnp-static",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8099"
+      ],
+      "port": 8099,
+      "autoPort": true
     }
   ]
 }
