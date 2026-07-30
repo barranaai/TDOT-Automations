@@ -258,12 +258,18 @@ async function getConsultationDetail(leadId) {
     bookedBy:          lead.bookedBy || '',
     paymentReviewedBy: lead.paymentReviewedBy || '',
 
-    // Initial Consultation agreement (consultant-sent)
-    consultAgreement: {
-      sent:     lead.consultAgreementSent || '',
-      signed:   lead.consultAgreementSigned || '',
-      warnings: consultAgreementService.buildConsultAgreementData(lead).warnings,
-    },
+    // Initial Consultation agreement (consultant-sent). countersign = the RCIC's
+    // signature over the client-signed copy: sentAt when the countersign envelope
+    // went out, signedAt once fully signed (client + consultant).
+    consultAgreement: (() => {
+      const cs = consultAgreementService.parseCountersign(lead);
+      return {
+        sent:     lead.consultAgreementSent || '',
+        signed:   lead.consultAgreementSigned || '',
+        countersign: { sentAt: cs.sentAt || '', signedAt: cs.signedAt || '' },
+        warnings: consultAgreementService.buildConsultAgreementData(lead).warnings,
+      };
+    })(),
 
     // Assigned consultant. Routing (case type + CRS → Shafoli/Shermin) is the
     // default, but once a booking persists `assignedConsultant`, that stored name
@@ -752,6 +758,7 @@ function validateAction(action, value) {
     case 'resendLinks':
     case 'sendConsultAgreement':
     case 'sendConsultationPackage':
+    case 'consultantSignAgreement':
     case 'retainAndSend':
       return { ok: true, normalized: null };
     default:
@@ -963,6 +970,19 @@ async function applyAction({ leadId, action, value, amend = false }) {
         : 'The consolidated consultation email (details, pre-consult form & agreement) has been sent to the client.', url: r.url };
     }
 
+    case 'consultantSignAgreement': {
+      const r = await consultAgreementService.startConsultCountersign(leadId);
+      if (r.alreadySigned) {
+        return { ok: true, message: 'The consultant has already countersigned this agreement — nothing to do.' };
+      }
+      if (!r.resumed) {
+        await postPortalNote(leadId, 'RCIC countersign envelope issued (Documenso) over the client-signed consultation agreement — completion auto-records and emails the client their fully signed copy.');
+      }
+      return { ok: true, signUrl: r.signUrl || '', message: r.signUrl
+        ? (r.resumed ? 'The countersign envelope was already out — opening the signing page.' : 'Countersign envelope issued — opening the signing page.')
+        : (r.resumed ? 'The countersign envelope is already out — the signing link is in the consultant\'s email (Documenso).' : 'Countersign envelope issued — the signing link has been emailed to the consultant (Documenso).') };
+    }
+
     case 'saveRetainerSelections': {
       const s = v.normalized;
       // Writes ONLY the new inert columns — NOT retainerFee/outcome/retainerSigned,
@@ -1043,6 +1063,19 @@ async function previewConsultAgreement(leadId) {
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
   const buffer = await require('./consultAgreementService').generateConsultAgreementPdf(lead);
   return { buffer, filename: `consult-agreement-${leadId}.pdf` };
+}
+
+/**
+ * The SIGNED consultation agreement PDF (client-signed; fully signed once the
+ * RCIC countersigns — the newest state wins).
+ * @throws {Error} .notFound on missing lead / no signed copy retrievable
+ */
+async function getSignedConsultAgreementPdf(leadId) {
+  const lead = await leadService.getLead(leadId);
+  if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
+  const buffer = await require('./consultAgreementService').getSignedConsultPdf(lead);
+  if (!buffer) { const e = new Error('No signed copy is available yet — the signed PDF could not be retrieved from OneDrive or Documenso.'); e.notFound = true; throw e; }
+  return { buffer, filename: `consult-agreement-SIGNED-${leadId}.pdf` };
 }
 
 // ─── Direct retainer client (walk-in / referral — no booking, no consultation) ─
@@ -1238,7 +1271,7 @@ async function getDirectClientOptions() {
 module.exports = {
   getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS,
   getLeadsQueue, getLeadDetail, buildIntakeSections,
-  parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement,
+  parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement, getSignedConsultAgreementPdf,
   resolveFamilyMembers, FAMILY_MEMBER_TYPES, MILESTONE_TRIGGER_STAGES,
   createDirectClient, getDirectClientOptions, getDirectRetainerQueue, DIRECT_SOURCE,
 };

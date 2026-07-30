@@ -65,6 +65,7 @@ const COL_TYPE = {
   empCompanyPhone: 'text', empRepPhone: 'text', empRepEmail: 'text',
   consultAgreementSent: 'date', consultAgreementSigned: 'date',
   consultOption: 'text', // JSON: the booking-page choice {durationMin, feeCents, variationId, consultant}
+  consultCountersign: 'text', // JSON: consult e-sign envelope state {clientEnvelopeId, clientItemId, envelopeId, itemId, signUrl, sentAt, signedAt}
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));

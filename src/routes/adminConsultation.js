@@ -587,6 +587,8 @@ ${buildNavHeader('consultations')}
               <button class="btn" id="btn-resend" title="Resend meeting + pre-consult links">${I.refresh} Resend links</button>
               <button class="btn" id="btn-consult-preview" title="Preview the consultation agreement">${I.eye} Preview agreement</button>
               <button class="btn" id="btn-consult-send" title="Send consultation email: booking + form + agreement">${I.send} Review &amp; send</button>
+              <button class="btn" id="btn-consult-signed-view" style="display:none" title="View the signed consultation agreement">${I.eye} View signed agreement</button>
+              <button class="btn" id="btn-consult-countersign" style="display:none" title="Add the consultant (RCIC) signature to the client-signed agreement">${I.send} Sign as consultant</button>
             </div>
           </div>
         </div>
@@ -818,10 +820,24 @@ function render(d){
   RP_LOCKED = _retSent || RP_RETAINED; RP_AMEND = false; applyRetainerLock();
 
   var ca=d.consultAgreement||{};
-  document.getElementById('ca-sent').textContent=ca.signed?('· signed '+ca.signed):(ca.sent?('· sent '+ca.sent):'');
+  var cactr=ca.countersign||{};
+  var caSigned=Boolean(ca.signed);
+  document.getElementById('ca-sent').textContent=
+    cactr.signedAt?('· fully signed '+cactr.signedAt):
+    caSigned?('· client signed '+ca.signed+(cactr.sentAt?(' · countersign sent '+cactr.sentAt):'')):
+    (ca.sent?('· sent '+ca.sent):'');
   var caw=document.getElementById('ca-warn');
-  caw.innerHTML=(ca.warnings&&ca.warnings.length)
+  // Pre-send warnings (blank address etc.) are moot once the client has signed.
+  caw.innerHTML=(!caSigned&&ca.warnings&&ca.warnings.length)
     ? '<div class="rp-warn"><b>Before sending:</b><ul>'+ca.warnings.map(function(w){return '<li>'+escHtml(w)+'</li>';}).join('')+'</ul></div>' : '';
+  // Once the client signs, the document of record is the SIGNED copy — preview /
+  // Review & send / Resend links are redundant and hide. In their place: view the
+  // signed agreement, and (until the RCIC countersigns) sign as the consultant.
+  document.getElementById('btn-resend').style.display=caSigned?'none':'';
+  document.getElementById('btn-consult-preview').style.display=caSigned?'none':'';
+  document.getElementById('btn-consult-send').style.display=caSigned?'none':'';
+  document.getElementById('btn-consult-signed-view').style.display=caSigned?'':'none';
+  document.getElementById('btn-consult-countersign').style.display=(caSigned&&!cactr.signedAt)?'':'none';
 
   document.getElementById('c-status').innerHTML=
     kv('Booking status',d.bookingStatus)+kv('Consultation held',d.consultationHeld)+
@@ -1153,6 +1169,39 @@ function previewRetainer(){
 }
 function saveRetainer(){ doAction('saveRetainerSelections', JSON.stringify(collectSelections()), 'Save this retainer plan (template, scope annex, fees, milestones)? This does not send anything to the client.'); }
 
+function viewSignedConsult(){
+  var key=getKey(); if(!key) return;
+  // Pre-open the tab synchronously (inside the click) so popup blockers allow it.
+  var w=window.open('','_blank');
+  setMsg('Fetching the signed agreement…','info'); disableActions(true);
+  fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/consult-agreement-signed',{ method:'POST', headers:{'X-Api-Key':key} })
+   .then(function(r){ disableActions(false); if(r.status===401||r.status===403){ if(w)w.close(); window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().then(function(j){ throw new Error((j&&j.error)||('HTTP '+r.status)); }); } return r.blob(); })
+   .then(function(blob){ var u=URL.createObjectURL(blob); if(w){ w.location=u; } else { window.open(u,'_blank'); } setMsg('Signed agreement opened in a new tab.','ok'); })
+   .catch(function(e){ disableActions(false); if(w)try{w.close();}catch(_){} if(e.message==='x')return; setMsg(netErr(e),'err'); });
+}
+
+function countersignConsult(){
+  if(!window.confirm('Add the consultant (RCIC) signature to this agreement now? The client has already signed. Your signature completes the agreement, and the fully signed copy is emailed to the client automatically.')) return;
+  var key=getKey(); if(!key) return;
+  // Open the tab synchronously (inside the click) so popup blockers allow it,
+  // then point it at the Documenso signing page once the envelope is issued.
+  var w=window.open('','_blank');
+  setMsg('Issuing the countersign envelope…','info'); disableActions(true);
+  fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{
+    method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'},
+    body: JSON.stringify({ action:'consultantSignAgreement', value:null })
+  }).then(function(r){ return r.json().then(function(j){ return {status:r.status,j:j}; }); })
+   .then(function(res){
+     disableActions(false);
+     if(res.status===401||res.status===403){ if(w)w.close(); window.location.href='/admin'; return; }
+     if(res.status!==200){ if(w)w.close(); throw new Error((res.j&&res.j.error)||('HTTP '+res.status)); }
+     if(res.j.signUrl){ if(w){ w.location=res.j.signUrl; } else { window.open(res.j.signUrl,'_blank'); } }
+     else if(w){ w.close(); }
+     setMsg(res.j.message||'Done.','ok');
+     load();
+   }).catch(function(e){ disableActions(false); if(w)try{w.close();}catch(_){} setMsg(netErr(e),'err'); });
+}
+
 function previewConsult(){
   var key=getKey(); if(!key) return;
   setMsg('Rendering consultation agreement…','info'); disableActions(true);
@@ -1203,6 +1252,8 @@ function initActions(){
   var rpfs=rpEl('rp-lock-fs'); if(rpfs){ ['input','change'].forEach(function(ev){ rpfs.addEventListener(ev,function(){ RP_PLAN_SAVED=false; applyRetainerLock(); }); }); }
   var feeInput=document.getElementById('fee'); if(feeInput) feeInput.addEventListener('input', updateMileSum);
   document.getElementById('btn-consult-preview').onclick=previewConsult;
+  document.getElementById('btn-consult-signed-view').onclick=viewSignedConsult;
+  document.getElementById('btn-consult-countersign').onclick=countersignConsult;
   document.getElementById('btn-consult-send').onclick=function(){
     doAction('sendConsultationPackage', null, 'Send the client ONE consultation email now — booking details, meeting link, the pre-consultation form, and the consultation agreement (sent for e-signature when e-sign is enabled) — with a note to complete both at least 24 hours before the consultation? Preview the agreement first and make sure the client\\'s address is filled in.');
   };

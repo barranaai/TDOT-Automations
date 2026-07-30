@@ -139,10 +139,233 @@ async function maybeSendConsultEsign(lead) {
   }
   // Best-effort stamp — the envelope IS out; a transient Monday failure must not
   // make the caller think the e-sign send failed (that would trigger the fallback
-  // email on top of Documenso's own signing email).
-  try { await leadService.updateLead(lead.id, { consultAgreementSent: todayISO() }); }
+  // email on top of Documenso's own signing email). The client envelope ids ride
+  // along in the countersign state — they're the download fallback for the
+  // client-signed PDF when the RCIC later countersigns.
+  try {
+    await leadService.updateLead(lead.id, {
+      consultAgreementSent: todayISO(),
+      consultCountersign: JSON.stringify({
+        ...parseCountersign(lead),
+        clientEnvelopeId: env.envelopeId, clientItemId: env.envelopeItemId || '',
+      }),
+    });
+  }
   catch (err) { console.warn(`[ConsultAgreement] Sent-date stamp failed for lead ${lead.id} (envelope ${env.envelopeId} IS distributed): ${err.message}`); }
   return { envelopeId: env.envelopeId };
+}
+
+// ─── RCIC countersign (second envelope over the client-signed PDF) ───────────
+
+/** PURE — the countersign state stored as JSON on the lead ({} when unset). */
+function parseCountersign(lead) {
+  try {
+    const v = JSON.parse(String((lead && lead.consultCountersign) || ''));
+    return (v && typeof v === 'object') ? v : {};
+  } catch (_) { return {}; }
+}
+
+/**
+ * PURE — a signing URL is only trusted when it is https on the Documenso host
+ * we're configured against. The value round-trips through a Monday text column,
+ * and the portal NAVIGATES a staff browser to it — a tampered column value must
+ * become '' (the consultant still has Documenso's own emailed link), never an
+ * open redirect.
+ */
+function safeSignUrl(u) {
+  try {
+    const x = new URL(String(u || ''));
+    const base = new URL(process.env.DOCUMENSO_BASE_URL || 'https://app.documenso.com/api/v2');
+    return (x.protocol === 'https:' && x.host === base.host) ? x.href : '';
+  } catch (_) { return ''; }
+}
+
+async function _storeSignedToOneDrive(lead, pdf) {
+  const oneDrive = require('./oneDriveService');
+  const ref = { clientName: lead.fullName || `Lead ${lead.id}`, caseRef: `LEAD-${lead.id}` };
+  await oneDrive.uploadFile({ ...ref, category: 'Consultation', filename: 'consultation-agreement-SIGNED.pdf', buffer: pdf, mimeType: 'application/pdf' });
+}
+
+/**
+ * The signed consultation-agreement PDF, newest signature state first.
+ * Once the RCIC has countersigned, the consult2 envelope is the source of truth
+ * — a replayed client-completion webhook can regress the OneDrive canonical
+ * file to the client-only copy, so the countersigned download comes FIRST and
+ * heals the canonical copy on the way through. Before the countersign, the
+ * OneDrive copy (stored at client completion) leads, with the client envelope
+ * download as the fallback. Returns null when nothing signed is retrievable.
+ */
+async function getSignedConsultPdf(lead) {
+  const leadId = lead.id;
+  const documenso = require('./documensoService');
+  const cs = parseCountersign(lead);
+  if (cs.signedAt && cs.itemId) {
+    try {
+      const pdf = await documenso.downloadSignedPdf(cs.itemId);
+      if (pdf && pdf.length) {
+        try { await _storeSignedToOneDrive(lead, pdf); } catch (_) { /* heal is best-effort */ }
+        return pdf;
+      }
+    } catch (err) { console.warn(`[ConsultAgreement] Countersigned download failed (item ${cs.itemId}, lead ${leadId}) — falling back to OneDrive: ${err.message}`); }
+  }
+  try {
+    const oneDrive = require('./oneDriveService');
+    const pdf = await oneDrive.readFile({
+      clientName: lead.fullName || `Lead ${leadId}`, caseRef: `LEAD-${leadId}`,
+      subfolder: 'Consultation', filename: 'consultation-agreement-SIGNED.pdf',
+    });
+    if (pdf && pdf.length) return pdf;
+  } catch (err) { console.warn(`[ConsultAgreement] OneDrive signed-copy read failed for lead ${leadId}: ${err.message}`); }
+  for (const itemId of [cs.clientItemId].filter(Boolean)) {
+    try {
+      const pdf = await documenso.downloadSignedPdf(itemId);
+      if (pdf && pdf.length) return pdf;
+    } catch (err) { console.warn(`[ConsultAgreement] Documenso signed download failed (item ${itemId}, lead ${leadId}): ${err.message}`); }
+  }
+  return null;
+}
+
+/**
+ * Issue (or return the already-issued) RCIC countersign envelope for a lead
+ * whose CLIENT has signed the consultation agreement. Idempotent — a stored
+ * envelopeId is returned as-is, so double-clicks and re-opens never mint a
+ * second envelope. Returns:
+ *   { alreadySigned: true }        the RCIC already countersigned
+ *   { envelopeId, signUrl, resumed } envelope out (resumed = it already existed);
+ *                                  signUrl may be '' — Documenso emailed the
+ *                                  consultant their signing link regardless
+ * @throws {Error} .badRequest / .notFound with staff-readable messages
+ */
+const _countersignInFlight = new Map(); // leadId → Promise — concurrent portal clicks share ONE issue attempt
+
+async function startConsultCountersign(leadId) {
+  const key = String(leadId);
+  if (_countersignInFlight.has(key)) return _countersignInFlight.get(key);
+  const p = _doStartConsultCountersign(leadId).finally(() => _countersignInFlight.delete(key));
+  _countersignInFlight.set(key, p);
+  return p;
+}
+
+async function _doStartConsultCountersign(leadId) {
+  const documenso = require('./documensoService');
+  const lead = await leadService.getLead(leadId);
+  if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
+  if (!documenso.isEnabled()) { const e = new Error('E-signing (Documenso) is not enabled.'); e.badRequest = true; throw e; }
+  if (!(lead.consultAgreementSigned && String(lead.consultAgreementSigned).trim())) {
+    const e = new Error('The client has not signed the consultation agreement yet — the consultant signs after the client.');
+    e.badRequest = true; throw e;
+  }
+  const cs = parseCountersign(lead);
+  if (cs.signedAt) return { alreadySigned: true };
+  if (cs.envelopeId) return { envelopeId: cs.envelopeId, signUrl: safeSignUrl(cs.signUrl), resumed: true };
+
+  const consultant = require('../../config/consultantRouting').resolveConsultant(lead);
+  if (!consultant || !consultant.email) {
+    const e = new Error('No consultant email on record — cannot issue the countersign envelope.');
+    e.badRequest = true; throw e;
+  }
+
+  // The document being countersigned is the CLIENT-SIGNED copy — never the
+  // unsigned draft, so the final PDF carries both signatures.
+  const pdf = await getSignedConsultPdf(lead);
+  if (!pdf) {
+    const e = new Error('The client-signed agreement PDF could not be retrieved (OneDrive + Documenso) — cannot start the countersign.');
+    e.badRequest = true; throw e;
+  }
+
+  let env;
+  try {
+    env = await documenso.sendForSignature({
+      pdfBuffer: pdf,
+      title: `TDOT Consultation Agreement — ${lead.fullName || 'Client'} (RCIC countersign)`,
+      externalId: documenso.externalIdFor('consult2', lead.id),
+      signer: { email: consultant.email, name: consultant.name || consultant.email },
+      subject: `Countersign: consultation agreement — ${lead.fullName || 'client'}`,
+      message: 'The client has signed their initial consultation agreement. Please add your signature as the consulting RCIC.',
+      // The RCIC signature line sits directly BELOW the client's (client line is
+      // calibrated at y=72) — worth eyeballing on the first live countersign.
+      signaturePosition: { positionX: 25, positionY: 79, width: 28, height: 6 },
+    });
+  } catch (err) {
+    console.error(`[ConsultAgreement] Countersign envelope FAILED for lead ${leadId}: ${err.message}`);
+    const e = new Error(`Could not issue the countersign envelope: ${err.message}`);
+    e.badRequest = true; throw e;
+  }
+
+  // The envelope IS out — persist its ids so retries return it instead of
+  // minting duplicates. This write is the dedupe record, so it gets one retry;
+  // if Monday still refuses, surface persistFailed so staff know a later click
+  // may issue a duplicate envelope.
+  const state = { ...cs, envelopeId: env.envelopeId, itemId: env.envelopeItemId || '', signUrl: safeSignUrl(env.signUrl), sentAt: todayISO() };
+  let persistFailed = false;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try { await leadService.updateLead(leadId, { consultCountersign: JSON.stringify(state) }); persistFailed = false; break; }
+    catch (err) {
+      persistFailed = true;
+      console.warn(`[ConsultAgreement] Countersign state persist attempt ${attempt} failed for lead ${leadId} (envelope ${env.envelopeId} IS distributed — a retry may duplicate it): ${err.message}`);
+    }
+  }
+  return { envelopeId: env.envelopeId, signUrl: state.signUrl, ...(persistFailed ? { persistFailed: true } : {}) };
+}
+
+/**
+ * consult2 webhook completion: stamp signedAt on the countersign state and email
+ * the client their fully-signed copy (attached). The state write is the critical
+ * step; the email is best-effort with a loud staff note on failure.
+ */
+async function recordCountersignComplete(lead, { signedPdf, stored } = {}) {
+  const leadId = lead.id;
+  // Re-read for freshness AND idempotency: Documenso delivers webhooks at least
+  // once, and the recapture tool can replay completions — a countersign that is
+  // already recorded must not re-stamp, re-email the client, or re-note.
+  const fresh = await leadService.getLead(leadId).catch(() => null);
+  const current = parseCountersign(fresh || lead);
+  if (current.signedAt) return { emailed: false, signedAt: current.signedAt, alreadyRecorded: true };
+  const state = { ...current, signedAt: todayISO() };
+  await leadService.updateLead(leadId, { consultCountersign: JSON.stringify(state) });
+
+  // The email PROMISES a fully-signed copy, so its attachment may only come from
+  // the consult2 envelope itself — never from getSignedConsultPdf, whose OneDrive
+  // first-preference can still be the CLIENT-ONLY copy when the webhook download
+  // failed (stored=false). No honest PDF → no email; staff forward manually.
+  let emailed = false;
+  let pdf = (signedPdf && signedPdf.length) ? signedPdf : null;
+  if (!pdf && state.itemId) {
+    try {
+      pdf = await require('./documensoService').downloadSignedPdf(state.itemId);
+      if (pdf && pdf.length && !stored) {
+        // Repair the canonical OneDrive copy while we have the real thing.
+        try { await _storeSignedToOneDrive(lead, pdf); } catch (_) { /* store stays best-effort */ }
+      }
+    } catch (err) { console.warn(`[ConsultAgreement] Countersigned PDF re-download failed for lead ${leadId}: ${err.message}`); }
+  }
+  if (lead.email && pdf && pdf.length) {
+    const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
+      <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
+        <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your signed consultation agreement</h1></div>
+      <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
+        <p>Hi ${esc((lead.fullName || 'there').split(' ')[0])},</p>
+        <p>Your initial consultation agreement has now been signed by both you and your consultant. Your copy of the fully signed agreement is attached to this email for your records.</p>
+        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Any questions? Just reply to this email.</p>
+      </div></div>`;
+    try {
+      await require('./microsoftMailService').sendEmail({
+        to: lead.email, subject: 'Your fully signed TDOT Immigration consultation agreement', html,
+        attachments: [{ filename: 'consultation-agreement-signed.pdf', buffer: pdf, mimeType: 'application/pdf' }],
+      });
+      emailed = true;
+    } catch (err) { console.error(`[ConsultAgreement] Fully-signed copy email FAILED for lead ${leadId}: ${err.message}`); }
+  }
+
+  try {
+    await require('./mondayApi').query(
+      `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+      { i: String(leadId), b: emailed
+        ? `✍️ <b>Consultation agreement countersigned by the consultant</b>${stored ? ' — fully-signed copy saved to OneDrive and' : ' —'} emailed to the client.`
+        : `✍️ <b>Consultation agreement countersigned by the consultant</b>${stored ? ' — fully-signed copy saved to OneDrive.' : '.'} ⚠️ The client copy email did NOT go out — please forward the signed agreement to the client manually.` }
+    );
+  } catch (err) { console.warn(`[ConsultAgreement] countersign note failed for ${leadId}: ${err.message}`); }
+  return { emailed, signedAt: state.signedAt };
 }
 
 async function sendConsultAgreement(leadId) {
@@ -183,4 +406,5 @@ async function sendConsultAgreement(leadId) {
 module.exports = {
   buildConsultAgreementData, generateConsultAgreementPdf, getConsultAgreementDocument,
   ensureConsultAgreementReady, sendConsultAgreement, maybeSendConsultEsign,
+  parseCountersign, getSignedConsultPdf, startConsultCountersign, recordCountersignComplete, safeSignUrl,
 };

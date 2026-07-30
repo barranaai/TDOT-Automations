@@ -70,7 +70,7 @@ async function getAccessToken() {
  * @param {string}          options.html      — HTML body
  * @param {string}          [options.replyTo] — optional reply-to address
  */
-async function sendEmail({ to, subject, html, replyTo }) {
+async function sendEmail({ to, subject, html, replyTo, attachments }) {
   const fromEmail = process.env.MS_FROM_EMAIL;
   if (!fromEmail) {
     throw new Error('Microsoft Mail: MS_FROM_EMAIL must be set in .env');
@@ -92,6 +92,20 @@ async function sendEmail({ to, subject, html, replyTo }) {
 
   if (replyTo) {
     message.replyTo = [{ emailAddress: { address: replyTo } }];
+  }
+
+  // File attachments: [{ filename, buffer, mimeType }] → Graph fileAttachment.
+  // Graph caps a simple sendMail request around 3 MB total — our agreement PDFs
+  // are well under that; larger files would need an upload session (not needed).
+  if (Array.isArray(attachments) && attachments.length) {
+    message.attachments = attachments
+      .filter((a) => a && a.buffer && a.buffer.length)
+      .map((a) => ({
+        '@odata.type': '#microsoft.graph.fileAttachment',
+        name:          a.filename || 'attachment',
+        contentType:   a.mimeType || 'application/octet-stream',
+        contentBytes:  Buffer.from(a.buffer).toString('base64'),
+      }));
   }
 
   const token = await getAccessToken();
