@@ -452,6 +452,13 @@ function buildDetailHTML(leadId) {
   /* Group captions split the plan into "Case & agreement" (what is being retained)
      and "Fees" (what it costs) — the two read as separate rows. */
   .rp-group-t { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.8px; color:#94a3b8; border-bottom:1px solid #eef2f7; padding-bottom:5px; margin-bottom:10px; }
+  /* Every control in a row must sit on ONE baseline: labels stay single-line
+     (explanatory text lives in .rp-hint UNDER the control, where its wrapping
+     cannot push the control down), and the field is a flex column so the label
+     row is a fixed height regardless of label length. */
+  .rp-config .rp-field { display:flex; flex-direction:column; }
+  .rp-config .subhead { white-space:nowrap; line-height:1.2; }
+  .rp-hint { font-size:11px; font-weight:500; color:#94a3b8; line-height:1.35; margin-top:5px; text-transform:none; letter-spacing:0; }
   .rp-config .rp-field { margin-top:0; }
   .rp-config .frow { gap:6px; } .rp-config .frow input { width:auto; flex:1 1 90px; min-width:0; }
   .rp-pay-block { background:#f8fafc; border:1px solid #eef2f7; border-radius:10px; padding:12px 14px; margin-top:8px; }
@@ -506,7 +513,10 @@ function buildDetailHTML(leadId) {
   .rp-field select, .rp-field input { width:100%; max-width:420px; padding:9px 11px; border:1px solid var(--border); border-radius:8px; font-size:13px; font-family:inherit; }
   .rp-grid2 { display:flex; gap:10px; flex-wrap:wrap; }
   .rp-grid2 .rp-field { flex:1; min-width:200px; }
-  .rp-check { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--navy); margin-top:8px; }
+  .rp-check { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--navy); margin-top:8px; align-self:flex-start; white-space:nowrap; }
+  /* The full-width rule above is for text/number inputs — a checkbox must stay a
+     checkbox (unconstrained it stretches and wraps its own label). */
+  .rp-field input[type=checkbox] { width:15px; height:15px; max-width:none; flex:0 0 15px; margin:0; }
   .rp-sugg { font-size:12px; color:#475569; background:#f8fafc; border:1px solid #eef2f7; border-radius:8px; padding:9px 12px; line-height:1.55; }
   .rp-flag { display:inline-block; font-size:9.5px; font-weight:800; padding:1px 7px; border-radius:10px; margin-left:6px; text-transform:uppercase; letter-spacing:.4px; }
   .rp-flag.high { background:#f0fdf4; color:#16a34a; } .rp-flag.verify { background:#fffbeb; color:#d97706; }
@@ -625,12 +635,14 @@ ${buildNavHeader('consultations')}
           <select id="rp-template"></select>
         </div>
         <div class="rp-field">
-          <div class="subhead">Case type <span class="muted">(confirms the client-stated interest)</span></div>
+          <div class="subhead">Case type</div>
           <select id="rp-casetype"><option value="">Loading case types…</option></select>
+          <div class="rp-hint">Confirms the client-stated interest</div>
         </div>
         <div class="rp-field">
-          <div class="subhead">Sub-type <span class="muted">(drives checklist + questionnaire)</span></div>
+          <div class="subhead">Sub-type</div>
           <select id="rp-subtype"><option value=""></option></select>
+          <div class="rp-hint">Drives the checklist + questionnaire</div>
         </div>
         <div class="rp-field">
           <div class="subhead">Scope annex</div>
