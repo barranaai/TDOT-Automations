@@ -114,8 +114,11 @@ function renderRows(rows){
   if(!rows.length){ tb.innerHTML='<tr><td colspan="7" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.')+'</td></tr>'; return; }
   tb.innerHTML=rows.map(function(c){
     var urgent=c.urgent?(' '+qpill('red','URGENT')):'';
+    // Non-booking intent ("Request quote", "Existing file update", …) — visible
+    // before anyone opens the lead and reaches for the booking invite.
+    var wants=(c.wantsTo&&c.wantsTo!=='Book consultation')?(' '+qpill('amber',c.wantsTo)):'';
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
-      '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+urgent+'</td>'+
+      '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+urgent+wants+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
       '<td>'+escHtml(createdOf(c)||'—')+'</td>'+
       '<td class="tier">'+escHtml(c.tier||'—')+'</td>'+
@@ -286,6 +289,7 @@ ${buildNavHeader('leads')}
         </div>
         <div class="card" id="invite-card">
           <div class="card-t">${I.send} Booking invite email <span class="when" id="inv-when"></span></div>
+          <div id="invite-warn" style="display:none;background:#fff4e5;border:1px solid #f0c98a;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:13px;color:#7a4b00"></div>
           <div class="muted" style="margin-bottom:8px;line-height:1.5">This is the invite email's body — the standard consultation-booking paragraph (no case-condition commentary, per firm policy). Edit only if needed, then send. The email adds the greeting, booking button and fee details around it.</div>
           <textarea id="invite-msg" rows="8" placeholder="The email will use the standard consultation-booking paragraph unless you write a message here."></textarea>
           <div class="btn-row">
@@ -310,12 +314,21 @@ ${buildNavHeader('leads')}
 <script>
 ${SHARED_AUTH_JS}
 var LEAD_ID=${jsLit(String(leadId))};
+var WANTS_TO=''; // the client's stated intent — set in render(d); gates the invite confirmation
 var ICONS=${jsLit({ flag: I.flag, file: I.file, user: I.user, clock: I.clock })};
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function initials(n){ return String(n||'?').split(/\\s+/).map(function(w){return w.charAt(0);}).join('').slice(0,2).toUpperCase(); }
 function kv(k,v){ return '<div class="kv"><div class="k">'+escHtml(k)+'</div><div class="v">'+escHtml(v)+'</div></div>'; }
 
 function render(d){
+  WANTS_TO=d.wantsTo||'';
+  var iw=document.getElementById('invite-warn');
+  if(iw){
+    if(WANTS_TO && WANTS_TO!=='Book consultation'){
+      iw.textContent='⚠ This client selected "'+WANTS_TO+'" on the intake form — they did not ask to book a consultation. Consider reaching out about their actual request first.';
+      iw.style.display='block';
+    } else { iw.style.display='none'; }
+  }
   document.getElementById('c-avatar').textContent=initials(d.name||d.leadId);
   document.getElementById('c-name').textContent=d.name||d.leadId;
   document.getElementById('c-sub').textContent=(d.service||'—')+'  ·  lead '+d.leadId;
@@ -330,6 +343,7 @@ function render(d){
   pills+='<span class="chip '+(bs==='Booked'?'green':bs==='Slot Held'?'blue':bs==='Abandoned'?'grey':'amber')+'"><span class="pk">Booking</span> '+escHtml(bs)+'</span>';
   if(d.tier) pills+='<span class="chip blue"><span class="pk">Tier</span> '+escHtml(d.tier)+'</span>';
   if(d.priority) pills+='<span class="chip amber"><span class="pk">Priority</span> '+escHtml(d.priority)+'</span>';
+  if(d.wantsTo && d.wantsTo!=='Book consultation') pills+='<span class="chip amber"><span class="pk">Asked for</span> '+escHtml(d.wantsTo)+'</span>';
   if(d.consultant) pills+='<span class="chip green">'+ICONS.user+' '+escHtml(d.consultant)+'</span>';
   if((d.flags||[]).length) pills+='<span class="chip red">'+ICONS.flag+' URGENT</span>';
   document.getElementById('c-pills').innerHTML=pills;
@@ -416,7 +430,13 @@ document.getElementById('btn-save-msg').onclick=function(){
   doAction(this,'saveInviteMessage',null,document.getElementById('invite-msg').value,'inv-msg');
 };
 document.getElementById('btn-invite').onclick=function(){
-  doAction(this,'bookingInvite','Email this client their consultation booking link with this message?',
+  // Intent-aware confirmation: a client who asked for a quote / file update /
+  // general information did NOT ask to book — make staff say so explicitly
+  // before the paid-consultation invite goes out.
+  var confirmTxt=(WANTS_TO && WANTS_TO!=='Book consultation')
+    ? 'THIS CLIENT ASKED FOR "'+WANTS_TO+'" — not a consultation booking. Send the paid-consultation booking invite anyway?'
+    : 'Email this client their consultation booking link with this message?';
+  doAction(this,'bookingInvite',confirmTxt,
     document.getElementById('invite-msg').value,'inv-msg');
 };
 document.getElementById('btn-resend').onclick=function(){

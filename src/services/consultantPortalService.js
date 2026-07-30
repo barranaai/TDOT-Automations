@@ -459,6 +459,7 @@ async function getLeadsQueue() {
     bookedSlot:    l.bookedSlot || '',
     consultant:    (l.assignedConsultant || '').trim(),
     outcome:       l.outcome || '',
+    wantsTo:       l.whatDoYouWant || '', // non-booking intents get a queue pill + invite warning
     urgent:        l.removalOrder === 'Yes' || l.enforcementLetter === 'Yes' || Boolean((l.deadlineDate || '').trim()),
     inviteSent:    (l.bookingInvite || '') === 'Sent',
     inviteSentAt:  l.inviteSentAt || '',  // blank for invites sent before the stamp existed
@@ -534,6 +535,9 @@ async function getLeadDetail(leadId) {
     bookingStatus: lead.bookingStatus || 'Not Yet',
     bookedSlot:    lead.bookedSlot || '',
     outcome:       lead.outcome || '',
+    // The client's stated intent ("Book consultation" / "Request quote" / …) —
+    // the portal warns before sending a booking invite when it isn't a booking.
+    wantsTo:       lead.whatDoYouWant || '',
     // Walk-in/referral entering at the retainer stage — the leads page shows the
     // consultation/retainer link for these even though they never book.
     directRetainer: (lead.sourceChannel || '').trim() === DIRECT_SOURCE,
