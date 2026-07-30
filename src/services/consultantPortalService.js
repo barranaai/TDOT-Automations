@@ -1089,11 +1089,18 @@ async function createDirectClient(payload = {}) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('A valid client email is required — the retainer agreement is sent to it.');
   const labels = await directCaseTypeLabels();
   if (!labels.caseTypes.includes(caseType)) bad('Choose a case type — it generates the case reference and the document checklist.');
-  if (caseSubType) {
-    // ANY supplied sub-type must belong to the chosen case type — a case type
-    // with no sub-types accepts none.
+  {
     const subs = labels.subTypesByCase[caseType] || [];
-    if (!subs.includes(caseSubType)) bad('That sub-type does not belong to the chosen case type.');
+    if (caseSubType) {
+      // ANY supplied sub-type must belong to the chosen case type — a case type
+      // with no sub-types accepts none.
+      if (!subs.includes(caseSubType)) bad('That sub-type does not belong to the chosen case type.');
+    } else if (subs.length) {
+      // REQUIRED when the case type has variants: a blank sub-type blocks the
+      // document checklist (multi-variant seeding is refused — see the
+      // 2026-CEC-PR-002 pile-up), so collect it up front.
+      bad('This case type has checklist variants — choose the Case Sub Type (it drives the document checklist).');
+    }
   }
   const { CONSULTANTS } = require('../../config/consultantRouting');
   const consultantNames = Object.values(CONSULTANTS).map((c) => c.name);

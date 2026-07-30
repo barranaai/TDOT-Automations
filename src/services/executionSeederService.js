@@ -90,15 +90,32 @@ function selectStaleRows(rows, keepSubType) {
   );
 }
 
+/**
+ * PURE. A board_relation column's `text` is NULL from Monday's API — the linked
+ * items live in the raw `value` JSON. Returns 'linked' when the relation holds
+ * any item (so selectStaleRows' legacy-Template-Board exclusion actually works).
+ */
+function parseTemplateRel(col) {
+  if (!col) return '';
+  if (String(col.text || '').trim()) return String(col.text).trim();
+  try {
+    const v = JSON.parse(col.value || '{}');
+    const ids = v.linkedPulseIds || v.linked_item_ids || v.linkedItemIds || [];
+    if (Array.isArray(ids) && ids.length) return 'linked';
+  } catch (_) { /* no relation */ }
+  return '';
+}
+
 /** I/O. Read a case's existing rows with the fields the prune needs. */
 async function getExistingRowsForPrune(caseRef) {
   const data = await mondayApi.query(
-    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:500, board_id:$b, columns:[{column_id:"${EXEC_COLS.caseReferenceNumber}", column_values:[$v]}]){ items{ id column_values(ids:["${EXEC_COLS.caseSubType}","${EXEC_COLS.uniqueKey}","board_relation_mm0zhagw","color_mm0zwgvr"]){ id text } } } }`,
+    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:500, board_id:$b, columns:[{column_id:"${EXEC_COLS.caseReferenceNumber}", column_values:[$v]}]){ items{ id column_values(ids:["${EXEC_COLS.caseSubType}","${EXEC_COLS.uniqueKey}","board_relation_mm0zhagw","color_mm0zwgvr"]){ id text value } } } }`,
     { b: String(BOARD_ID), v: String(caseRef) }
   );
   return (data?.items_page_by_column_values?.items || []).map((it) => {
     const g = (id) => (it.column_values.find((c) => c.id === id) || {}).text || '';
-    return { id: it.id, subType: g(EXEC_COLS.caseSubType), uniqueKey: g(EXEC_COLS.uniqueKey), templateRel: g('board_relation_mm0zhagw'), status: g('color_mm0zwgvr') };
+    const relCol = it.column_values.find((c) => c.id === 'board_relation_mm0zhagw');
+    return { id: it.id, subType: g(EXEC_COLS.caseSubType), uniqueKey: g(EXEC_COLS.uniqueKey), templateRel: parseTemplateRel(relCol), status: g('color_mm0zwgvr') };
   });
 }
 
@@ -215,6 +232,7 @@ module.exports = {
   diffPlan,
   planRowToUniqueKey,
   selectStaleRows,
+  parseTemplateRel,
   pruneStaleSubTypeRows,
   _cols: EXEC_COLS,
 };

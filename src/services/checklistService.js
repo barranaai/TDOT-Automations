@@ -66,6 +66,42 @@ async function flagSeedFailed(itemId, caseRef, err) {
   console.error(`[ChecklistService] Flagged seed failure on Client Master for ${caseRef}`);
 }
 
+/** Does this case type have sub-type variants (schema registry OR config catalogue)? */
+function caseTypeHasSubTypeVariants(caseType) {
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const want = norm(caseType);
+  try {
+    if (caseSchemaService.listRegistered().some((r) => norm(r.caseType) === want && norm(r.subType) !== '')) return true;
+  } catch (_) { /* registry unavailable — fall through to config */ }
+  try {
+    const { SUB_TYPES_BY_CASE } = require('../../config/caseTypes');
+    const key = Object.keys(SUB_TYPES_BY_CASE).find((k) => norm(k) === want);
+    return !!(key && (SUB_TYPES_BY_CASE[key] || []).length);
+  } catch (_) { return false; }
+}
+
+// One "choose the Sub Type" note per case — the DCS triggers can fire several
+// times in one onboarding burst; a marker in the note body dedups via the item's
+// updates feed (same pattern as the handoff's history-import guard).
+const SUBTYPE_NOTE_MARKER = 'checklist-blocked-no-subtype';
+async function postSubTypeNeededNote(itemId, caseRef, caseType) {
+  try {
+    const d = await mondayApi.query(
+      `query($ids:[ID!]){ items(ids:$ids){ updates(limit:30){ body } } }`, { ids: [String(itemId)] });
+    const updates = (d?.items?.[0]?.updates) || [];
+    if (updates.some((u) => String(u.body || '').includes(SUBTYPE_NOTE_MARKER))) return;
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    await mondayApi.query(
+      `mutation($i: ID!, $body: String!){ create_update(item_id: $i, body: $body){ id } }`,
+      { i: String(itemId),
+        body: `⚠️ <b>Document checklist NOT created yet — Case Sub Type required.</b> ` +
+          `“${esc(caseType)}” has more than one checklist variant, so seeding without a Sub Type would create every variant's documents at once (duplicates). ` +
+          `Set the <b>Case Sub Type</b> on this case, then flip <b>Re-seed Checklist → Run</b> to build the correct checklist. ` +
+          `<span style="display:none">${SUBTYPE_NOTE_MARKER}</span>` }
+    );
+  } catch (err) { console.warn(`[ChecklistService] sub-type-needed note failed for ${caseRef}: ${err.message}`); }
+}
+
 async function markChecklistApplied(itemId) {
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
@@ -216,6 +252,17 @@ async function _doOnDocumentCollectionStarted({ itemId, boardId }) {
     return;
   }
 
+  // HARD GATE — a MULTI-VARIANT case type must NEVER seed with a blank Sub Type.
+  // Live incident 2026-CEC-PR-002 (2026-07-29): blank Sub Type → no schema match
+  // → the Template-Board fallback applies NO sub-type filter and seeded the
+  // ENTIRE 62-item group across all three variants (the "triplicate" checklist).
+  // Single-variant case types (no registered sub-types anywhere) seed as before.
+  if (!caseSubType && caseTypeHasSubTypeVariants(caseType)) {
+    console.warn(`[ChecklistService] ${caseRef}: Case Sub Type is blank but "${caseType}" has sub-type variants — checklist NOT seeded until staff choose one`);
+    await postSubTypeNeededNote(itemId, caseRef, caseType);
+    return;
+  }
+
   // ── Schema-driven seeding (gated) ──
   // If enabled AND a code schema is registered for this (caseType, subType),
   // seed from the schema + Family Members composition instead of the Template
@@ -266,6 +313,19 @@ async function _doOnDocumentCollectionStarted({ itemId, boardId }) {
   if (!templateItems.length) {
     console.warn(`[ChecklistService] No template items found for case type "${caseType}". Nothing to create.`);
     return;
+  }
+
+  // Belt-and-braces variant guard for the template path: with a blank Sub Type
+  // the fetch above is UNFILTERED — if the group actually contains multiple
+  // sub-type variants, refuse to seed them all (the PR-002 pile-up) even when
+  // the registry/config gate above didn't know this case type had variants.
+  if (!caseSubType) {
+    const variantTags = [...new Set(templateItems.map((t) => String(t.caseSubType || '').trim()).filter(Boolean))];
+    if (variantTags.length > 1) {
+      console.warn(`[ChecklistService] ${caseRef}: blank Sub Type but the template group has ${variantTags.length} variants (${variantTags.join(' | ')}) — checklist NOT seeded`);
+      await postSubTypeNeededNote(itemId, caseRef, caseType);
+      return;
+    }
   }
 
   // 4. Create OneDrive category folders and get sharing links
@@ -415,4 +475,4 @@ async function reseedByCaseRef(caseRef) {
   };
 }
 
-module.exports = { onDocumentCollectionStarted, reseedByCaseRef, _internal: { isSchemaDrivenEnabled, markQuestionnaireApplied } };
+module.exports = { onDocumentCollectionStarted, reseedByCaseRef, _internal: { isSchemaDrivenEnabled, markQuestionnaireApplied, caseTypeHasSubTypeVariants } };

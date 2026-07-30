@@ -237,7 +237,9 @@ function openDirectClient(){
 function dcSubtypes(){
   var ct=dcEl('dc-casetype').value;
   var subs=(DC_OPTS&&DC_OPTS.subTypesByCase&&DC_OPTS.subTypesByCase[ct])||[];
-  dcEl('dc-subtype').innerHTML='<option value="">— (can be set later)</option>'+subs.map(function(s){return '<option value="'+escHtml(s)+'">'+escHtml(s)+'</option>';}).join('');
+  // Required when the case type has variants — a blank sub-type blocks the
+  // document checklist, so it must be chosen up front.
+  dcEl('dc-subtype').innerHTML='<option value="">'+(subs.length?'Choose… (required)':'— (none for this case type)')+'</option>'+subs.map(function(s){return '<option value="'+escHtml(s)+'">'+escHtml(s)+'</option>';}).join('');
 }
 function submitDirectClient(){
   var err=dcEl('dc-err'); err.textContent='';
@@ -246,6 +248,10 @@ function submitDirectClient(){
              caseSubType:dcEl('dc-subtype').value, consultant:dcEl('dc-consultant').value, referredBy:dcEl('dc-referred').value };
   if(!body.fullName.trim()||!body.email.trim()||!body.caseType||!body.consultant){
     err.textContent='Name, email, case type and consultant are required.'; return;
+  }
+  var subOpts=(DC_OPTS&&DC_OPTS.subTypesByCase&&DC_OPTS.subTypesByCase[body.caseType])||[];
+  if(subOpts.length && !body.caseSubType){
+    err.textContent='This case type has checklist variants — choose the Case Sub Type.'; return;
   }
   var key=getKey(); if(!key) return;
   var btn=dcEl('dc-create'); btn.disabled=true; btn.textContent='Creating…';

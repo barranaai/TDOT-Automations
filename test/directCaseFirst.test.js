@@ -269,10 +269,11 @@ test('createDirectClient: engine row goes to the direct group and the case opens
     stub(mondayApi, 'query', async () => ({})),
   ];
   try {
-    const { CASE_TYPE_LABELS } = require('../config/caseTypes');
+    const { CASE_TYPE_LABELS, SUB_TYPES_BY_CASE } = require('../config/caseTypes');
+    const noSubs = CASE_TYPE_LABELS.find((ct) => !(SUB_TYPES_BY_CASE[ct] || []).length);
     const r = await portal.createDirectClient({
       fullName: 'Walkin Client', email: 'w@example.com',
-      caseType: CASE_TYPE_LABELS[0], consultant: 'Shermin Teymouri Mofrad',
+      caseType: noSubs, consultant: 'Shermin Teymouri Mofrad',
     });
     assert.equal(r.ok, true);
     assert.equal(r.caseOpened, true, 'case-first: the Client Master case exists at creation');
@@ -291,10 +292,11 @@ test('createDirectClient: a failed early case-open does not block creation (sign
     stub(mondayApi, 'query', async () => ({})),
   ];
   try {
-    const { CASE_TYPE_LABELS } = require('../config/caseTypes');
+    const { CASE_TYPE_LABELS, SUB_TYPES_BY_CASE } = require('../config/caseTypes');
+    const noSubs = CASE_TYPE_LABELS.find((ct) => !(SUB_TYPES_BY_CASE[ct] || []).length);
     const r = await portal.createDirectClient({
       fullName: 'Walkin Client', email: 'w2@example.com',
-      caseType: CASE_TYPE_LABELS[0], consultant: 'Shermin Teymouri Mofrad',
+      caseType: noSubs, consultant: 'Shermin Teymouri Mofrad',
     });
     assert.equal(r.ok, true);
     assert.equal(r.caseOpened, false, 'reported honestly; the signed-time handoff remains the fallback');

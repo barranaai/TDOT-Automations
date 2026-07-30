@@ -19,7 +19,9 @@ const { CASE_TYPE_LABELS, SUB_TYPES_BY_CASE } = require('../config/caseTypes');
 
 function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; }
 
-const CASE_TYPE = CASE_TYPE_LABELS[0];
+// A case type WITHOUT sub-type variants — the happy path needs no sub-type
+// (variant-carrying types now REQUIRE one; covered by its own test below).
+const CASE_TYPE = CASE_TYPE_LABELS.find((ct) => !(SUB_TYPES_BY_CASE[ct] || []).length);
 const CONSULTANT = 'Shermin Teymouri Mofrad';
 
 // Registry unreachable in tests → the label source falls back to the static config.

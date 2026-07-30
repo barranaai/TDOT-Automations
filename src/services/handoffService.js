@@ -33,6 +33,7 @@ const { clientMasterBoardId, cmColumns } = require('../../config/monday');
 const CM = {
   clientEmail:   'text_mm0xw6bp',
   caseType:      'dropdown_mm0xd1qn', // setting this (separately) triggers caseRefService
+  caseSubType:   'dropdown_mm0x4t91', // written from the lead's selectedSubType when present
   paymentStatus: 'color_mm0x9fnn',    // titled "Payment Status" on the board
   caseStage:     'color_mm0x8faa',
   caseRef:       'text_mm142s49',     // read-only here (for the signed-time family top-up)
@@ -324,6 +325,23 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
       );
       caseTypeSet = true;
       console.log(`[Handoff] Lead ${leadId} → Client Master ${newId} · Case Type "${caseType}"`);
+      // Carry the lead's chosen sub-type (direct-retainer form / retainer plan)
+      // onto the case — a blank Case Sub Type on a multi-variant case type
+      // blocks checklist seeding (see checklistService's blank-sub-type gate;
+      // live incident 2026-CEC-PR-002). Labels are validated upstream, so
+      // create_labels_if_missing stays OFF (a junk value must never pollute
+      // the Client Master dropdown).
+      const subType = String(lead.selectedSubType || '').trim();
+      if (subType) {
+        await mondayApi.query(
+          `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+             change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+           }`,
+          { boardId: String(clientMasterBoardId), itemId: String(newId),
+            cols: JSON.stringify({ [CM.caseSubType]: { labels: [subType] } }) }
+        ).then(() => console.log(`[Handoff] Lead ${leadId} → CM ${newId} · Sub Type "${subType}"`))
+         .catch((err) => console.warn(`[Handoff] Sub Type "${subType}" not accepted for ${newId} (${err.message}) — staff can set it manually`));
+      }
     } catch (err) {
       console.warn(`[Handoff] Case Type "${caseType}" not accepted for ${newId} (${err.message}) — deferring to staff`);
     }
