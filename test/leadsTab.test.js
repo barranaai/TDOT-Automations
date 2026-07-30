@@ -192,7 +192,9 @@ test('sendBookingInvite: the [cleared] sentinel means the standard intro (never 
     await bookingSvc.sendBookingInvite('1', { force: true });
     assert.ok(sentHtml, 'email sent');
     assert.ok(!sentHtml.includes('[cleared]'), 'sentinel never reaches the client');
-    assert.ok(sentHtml.includes('Thank you for reaching out to TDOT Immigration'), 'standard intro used');
+    // The standard body is now the fixed compliance-safe consultation paragraph
+    // (2026-07-31 directive: no case-condition commentary in invites).
+    assert.ok(sentHtml.includes('A paid consultation will let us review your specific situation'), 'standard paragraph used');
   } finally { restore.forEach((r) => r()); }
 });
 

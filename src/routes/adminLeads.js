@@ -286,8 +286,8 @@ ${buildNavHeader('leads')}
         </div>
         <div class="card" id="invite-card">
           <div class="card-t">${I.send} Booking invite email <span class="when" id="inv-when"></span></div>
-          <div class="muted" style="margin-bottom:8px;line-height:1.5">This message goes in the invite email in place of the standard intro — drafted automatically from the intake form. Review, edit, then send. The email adds the greeting, booking button and fee details around it.</div>
-          <textarea id="invite-msg" rows="8" placeholder="No AI draft available — the email will use the standard intro unless you write a message here."></textarea>
+          <div class="muted" style="margin-bottom:8px;line-height:1.5">This is the invite email's body — the standard consultation-booking paragraph (no case-condition commentary, per firm policy). Edit only if needed, then send. The email adds the greeting, booking button and fee details around it.</div>
+          <textarea id="invite-msg" rows="8" placeholder="The email will use the standard consultation-booking paragraph unless you write a message here."></textarea>
           <div class="btn-row">
             <button class="btn" id="btn-save-msg" title="Save the message without sending">${I.clip} Save draft</button>
             <button class="btn primary" id="btn-invite" title="Email the client this message with their booking link">${I.send} Send booking invite</button>

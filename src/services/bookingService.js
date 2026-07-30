@@ -513,16 +513,17 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
     if (CONSULT_FEE_CENTS > 0) feeLine = `The consultation fee is <b>${(CONSULT_FEE_CENTS / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })}</b>, payable securely online when you book.`;
   }
 
-  // Personalized body (AI-drafted from the intake form, staff-edited on the
-  // portal Leads tab) replaces the standard intro when set. Plain text →
-  // escaped paragraphs; a blank line is a paragraph break. '[cleared]' is the
-  // staff-cleared sentinel (see consultantPortalService.saveInviteMessage) —
-  // it means "use the standard intro", same as never drafted.
+  // Body: the saved draft (the standard compliance-safe paragraph, possibly
+  // staff-edited on the portal Leads tab) when set; otherwise the SAME standard
+  // paragraph built fresh — per the 2026-07-31 directive the invite carries NO
+  // case-condition commentary, hopeful thoughts, or promises in either path.
+  // '[cleared]' is the staff-cleared sentinel (consultantPortalService
+  // .saveInviteMessage) — it means "use the standard paragraph".
   const rawMsg = String(lead.inviteMessage || '').trim();
   const custom = rawMsg === '[cleared]' ? '' : rawMsg;
-  const bodyHtml = custom
-    ? custom.split(/\n\s*\n/).map((p) => `<p>${esc(p.trim()).replace(/\n/g, '<br>')}</p>`).join('')
-    : `<p>Thank you for reaching out to TDOT Immigration. Our team has reviewed your inquiry — the next step is a consultation where we can give you case-specific advice.</p>`;
+  const standardBody = await leadService.generateInviteMessage(lead);
+  const bodyHtml = (custom || standardBody)
+    .split(/\n\s*\n/).map((p) => `<p>${esc(p.trim()).replace(/\n/g, '<br>')}</p>`).join('');
 
   // Send FIRST, stamp after — the Leads UI treats "Sent + date" as authoritative,
   // so it must never assert a send that failed. (The old mark-Sent-first ordering

@@ -414,51 +414,24 @@ Source: ${lead.sourceChannel || 'Website'}`
   return result;
 }
 
-const INVITE_SYSTEM_PROMPT = `You write short, warm, professional client emails for TDOT Immigration (a Toronto-based RCIC firm).
-Given a prospective client's intake details, draft the BODY of an email whose one goal is to get them to book a paid consultation to discuss their case in detail.
-
-Rules:
-- 2 short paragraphs, 60-100 words total. No subject line, no greeting line (the template adds "Hi <name>,"), no sign-off (the template adds it).
-- Reference their specific situation (service, goal, urgency) so it reads personally written — but only facts they gave; never invent details, promises, or eligibility opinions.
-- Do NOT include any links, fees, dates, or placeholders — the email template adds the booking button and fee line.
-- Plain text only (no markdown, no HTML). Confident, encouraging, never pushy or alarmist.`;
-
 /**
- * Draft the personalized booking-invite body from the lead's intake details.
- * Returns the plain-text message, or null when the AI is unavailable/fails —
- * callers fall back to the standard template text.
+ * The booking-invite body — a FIXED, compliance-safe paragraph (user directive
+ * 2026-07-31): the invite must say NOTHING about the client's case condition,
+ * eligibility, or prospects — no summaries of their situation, no hopeful
+ * thoughts, no promises. Personalization is limited to the greeting (added by
+ * the email template) and the service name below. Deterministic on purpose —
+ * this used to be AI-drafted, and a generative draft can always improvise a
+ * case-condition remark; a template cannot.
  */
-async function generateInviteMessage(lead) {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  try {
-    const opt = (label, v) => (String(v || '').trim() ? `\n${label}: ${v}` : '');
-    const userPrompt = `Intake details:
-Name: ${lead.fullName || ''}
-Service requested: ${lead.confirmedCaseType || lead.serviceRequired || lead.caseTypeInterest || ''}
-Their goal: ${lead.whatDoYouWant || ''}
-Situation (their own words): ${lead.situationDescription || 'Not provided'}`
-      + opt('Inside Canada', lead.insideCanada)
-      + opt('Current status', lead.currentStatus)
-      + opt('Status expiry', lead.statusExpiry)
-      + opt('Urgent deadline', lead.deadlineDate ? `${lead.deadlineDate} (${lead.deadlineReason || 'reason not given'})` : '')
-      + opt('Recent refusal', lead.recentRefusal === 'Yes' ? `${lead.refusalType || ''} ${lead.refusalDate || ''}`.trim() : '')
-      + opt('CRS score', lead.crsScore);
+function inviteServicePhrase(lead) {
+  let s = String(lead.confirmedCaseType || lead.serviceRequired || lead.caseTypeInterest || '').trim();
+  // Light normalization so the sentence reads naturally.
+  if (/^express entry/i.test(s)) s = 'Express Entry';
+  return s || 'immigration';
+}
 
-    // Tight per-request bounds: this runs inline in the lead-detail page load,
-    // so a degraded Anthropic API must fail fast (standard intro is the fallback)
-    // rather than hang the page on the SDK's default multi-minute timeout.
-    const response = await getAnthropic().messages.create({
-      model: ANTHROPIC_MODEL,
-      max_tokens: 400,
-      system: INVITE_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }],
-    }, { timeout: 12000, maxRetries: 0 });
-    const text = (response.content?.[0]?.text || '').trim();
-    return text || null;
-  } catch (err) {
-    console.warn(`[Lead] Invite-message generation failed for ${lead.id}: ${err.message}`);
-    return null;
-  }
+async function generateInviteMessage(lead) {
+  return `A paid consultation will let us review your specific situation in detail, assess your eligibility factors, and map out the right strategy for your ${inviteServicePhrase(lead)} journey. To book your consultation with one of our Regulated Canadian Immigration Consultants, please use the button below.`;
 }
 
 module.exports = { createLead, qualifyLead, generateInviteMessage, getLead, updateLead, findByColumnValue, findAllByColumnValue, listAllLeads, parseItem };
