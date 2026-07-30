@@ -449,6 +449,9 @@ function buildDetailHTML(leadId) {
   @media (max-width:900px){ .cols{ grid-template-columns:1fr; } .ctx{ position:static; } }
   /* Retainer config: short inputs flow into an even, aligned grid instead of a long stack. */
   .rp-config { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px 16px; align-items:start; }
+  /* Group captions split the plan into "Case & agreement" (what is being retained)
+     and "Fees" (what it costs) — the two read as separate rows. */
+  .rp-group-t { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.8px; color:#94a3b8; border-bottom:1px solid #eef2f7; padding-bottom:5px; margin-bottom:10px; }
   .rp-config .rp-field { margin-top:0; }
   .rp-config .frow { gap:6px; } .rp-config .frow input { width:auto; flex:1 1 90px; min-width:0; }
   .rp-pay-block { background:#f8fafc; border:1px solid #eef2f7; border-radius:10px; padding:12px 14px; margin-top:8px; }
@@ -615,11 +618,8 @@ ${buildNavHeader('consultations')}
         <button class="btn" id="rp-amend" type="button">✎ Amend</button>
       </div>
       <fieldset id="rp-lock-fs" class="rp-fs">
+      <div class="rp-group-t">Case &amp; agreement</div>
       <div class="rp-config">
-        <div class="rp-field">
-          <div class="subhead">Retainer fee</div>
-          <div class="frow"><input id="fee" type="number" min="1" step="1" placeholder="Fee (CAD $)"><button class="btn" id="btn-fee">${I.check} Set fee</button></div>
-        </div>
         <div class="rp-field">
           <div class="subhead">Signatory template</div>
           <select id="rp-template"></select>
@@ -635,6 +635,13 @@ ${buildNavHeader('consultations')}
         <div class="rp-field">
           <div class="subhead">Scope annex</div>
           <select id="rp-annex"></select>
+        </div>
+      </div>
+      <div class="rp-group-t" style="margin-top:16px">Fees</div>
+      <div class="rp-config">
+        <div class="rp-field">
+          <div class="subhead">Retainer fee</div>
+          <div class="frow"><input id="fee" type="number" min="1" step="1" placeholder="Fee (CAD $)"><button class="btn" id="btn-fee">${I.check} Set fee</button></div>
         </div>
         <div class="rp-field">
           <div class="subhead">Government fee (CAD)</div>
