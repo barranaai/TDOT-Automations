@@ -859,6 +859,19 @@ async function applyAction({ leadId, action, value, amend = false }) {
         e.badRequest = true; e.locked = true; throw e;
       }
       if (!feeSet) { const e = new Error('Set the retainer fee before sending the agreement.'); e.badRequest = true; throw e; }
+      {
+        // A variant case type MUST carry a sub-type before the retainer goes out —
+        // a blank one blocks the document checklist at case-open (the direct-client
+        // form enforces the same rule at creation). Legacy non-canonical case
+        // types pass — their variants are unknown.
+        const canon = await directCaseTypeLabels();
+        const ct = (lead.confirmedCaseType || lead.caseTypeInterest || '').trim();
+        const subs = canon.caseTypes.includes(ct) ? (canon.subTypesByCase[ct] || []) : [];
+        if (subs.length && !String(lead.selectedSubType || '').trim()) {
+          const e = new Error(`"${ct}" needs a Sub-type before sending — pick one in the retainer plan (it selects the document checklist).`);
+          e.badRequest = true; throw e;
+        }
+      }
       await leadService.updateLead(leadId, { outcome: 'Retain' });
       const r = (await require('./retainerService2').maybeSendRetainerAgreement(leadId, { notifyIfMissing: true })) || {};
       await postPortalNote(leadId, r.status === 'sent'
@@ -985,14 +998,43 @@ async function applyAction({ leadId, action, value, amend = false }) {
 
     case 'saveRetainerSelections': {
       const s = v.normalized;
-      // Writes ONLY the new inert columns — NOT retainerFee/outcome/retainerSigned,
-      // so saving the plan never re-fires the retainer-agreement / payment automations.
+      // Canonical case-type / sub-type enforcement: the SAME vocabulary must flow
+      // retainer panel → lead → Client Master → checklist/questionnaire seeding
+      // (a free-typed sub-type silently matches no checklist variant). The canon
+      // is the live Client Master registry with config fallback — the same source
+      // the direct-client form and the pickers' options endpoint use.
+      // ABSENT ≠ blank: the panel omits these fields when its options never
+      // loaded (or a legacy value is displayed) — an omitted field must leave the
+      // stored value untouched, never clear it.
+      const subTypeProvided = s.subType != null;
+      const canon = await directCaseTypeLabels();
+      if (s.caseType && !canon.caseTypes.includes(s.caseType)) {
+        const e = new Error(`"${s.caseType}" is not a canonical case type — pick one from the list.`);
+        e.badRequest = true; throw e;
+      }
+      // `lead` is already in scope (loaded at the top of applyAction) — the
+      // validation input must never come from a second read that can fail.
+      const effectiveCaseType = (s.caseType || lead.confirmedCaseType || lead.caseTypeInterest || '').trim();
+      // Legacy leads can carry a case type that predates the canon — their
+      // stored sub-type passes through untouched until staff confirm a
+      // canonical case type; only canonical types get strict sub-type rules.
+      const knownCase = canon.caseTypes.includes(effectiveCaseType);
+      const subs = canon.subTypesByCase[effectiveCaseType] || [];
+      if (subTypeProvided && s.subType && knownCase && subs.length && !subs.includes(s.subType)) {
+        const e = new Error(`"${s.subType}" is not a known sub-type of ${effectiveCaseType} — pick one from the list.`);
+        e.badRequest = true; throw e;
+      }
+      if (subTypeProvided && knownCase && !subs.length) s.subType = ''; // no variants — nothing to store
+      // Writes ONLY inert columns — NOT retainerFee/outcome/retainerSigned, so
+      // saving the plan never re-fires the retainer-agreement / payment
+      // automations (confirmedCaseType has no webhook consumers — verified).
       // clearKeys = the fields a consultant may blank/deselect, so clearing them in
       // the UI actually erases the stored value instead of leaving it stale.
       await leadService.updateLead(leadId, {
+        ...(s.caseType ? { confirmedCaseType: s.caseType } : {}),
         selectedTemplate:   s.template,
         selectedScopeAnnex: s.annexCode,
-        selectedSubType:    s.subType || '',
+        ...(subTypeProvided ? { selectedSubType: s.subType || '' } : {}),
         govFee:             (s.govFeeDollars != null) ? s.govFeeDollars : '',
         retainerHstRate:    (s.hstRate != null) ? String(s.hstRate) : '13',
         retainerWithRprf:   s.withRprf ? 'Yes' : 'No',
@@ -1002,7 +1044,8 @@ async function applyAction({ leadId, action, value, amend = false }) {
         empRepName: s.empRepName || '', empCompanyName: s.empCompanyName || '', empCompanyAddress: s.empCompanyAddress || '',
         empCompanyPhone: s.empCompanyPhone || '', empRepPhone: s.empRepPhone || '', empRepEmail: s.empRepEmail || '',
       }, { clearKeys: [
-        'selectedSubType', 'govFee',
+        ...(subTypeProvided ? ['selectedSubType'] : []),
+        'govFee',
         'inviterName', 'inviterAddress', 'inviterPhone', 'inviterEmail',
         'empRepName', 'empCompanyName', 'empCompanyAddress', 'empCompanyPhone', 'empRepPhone', 'empRepEmail',
       ] });

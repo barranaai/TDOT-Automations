@@ -625,12 +625,16 @@ ${buildNavHeader('consultations')}
           <select id="rp-template"></select>
         </div>
         <div class="rp-field">
-          <div class="subhead">Scope annex</div>
-          <select id="rp-annex"></select>
+          <div class="subhead">Case type <span class="muted">(confirms the client-stated interest)</span></div>
+          <select id="rp-casetype"><option value="">Loading case types…</option></select>
         </div>
         <div class="rp-field">
-          <div class="subhead">Sub-type <span class="muted">(optional)</span></div>
-          <input id="rp-subtype" type="text" placeholder="e.g. Extension (Inside Canada)">
+          <div class="subhead">Sub-type <span class="muted">(drives checklist + questionnaire)</span></div>
+          <select id="rp-subtype"><option value=""></option></select>
+        </div>
+        <div class="rp-field">
+          <div class="subhead">Scope annex</div>
+          <select id="rp-annex"></select>
         </div>
         <div class="rp-field">
           <div class="subhead">Government fee (CAD)</div>
@@ -1003,7 +1007,18 @@ function hydrateRetainer(d){
   var html='<option value="">— select scope annex —</option>';
   [['permanent','Permanent'],['temporary','Temporary']].forEach(function(g){ var list=groups[g[0]]; if(list&&list.length){ html+='<optgroup label="'+g[1]+'">'+list.map(function(a){ return '<option value="'+escA(a.code)+'">['+escHtml(a.code)+'] '+escHtml(a.label)+'</option>'; }).join('')+'</optgroup>'; } });
   var asel=rpEl('rp-annex'); asel.innerHTML=html; asel.value=annex.code||'';
-  rpEl('rp-subtype').value=plan.subType||'';
+  // Case type + sub-type: canonical dropdowns (same options endpoint as the
+  // direct-client form) so the vocabulary matches Client Master + the checklist/
+  // questionnaire seeders end to end. Until the options arrive the stored values
+  // show as inert placeholders (value="" — never submitted), so a slow/failed
+  // fetch still displays what is on file without risking a destructive save.
+  RP_PLAN_CT=plan.caseType||''; RP_PLAN_ST=plan.subType||'';
+  if(RP_CT_OPTS){ rpPopulateCaseTypes(); }
+  else {
+    var ctI=rpEl('rp-casetype'); if(ctI) ctI.innerHTML='<option value="">'+(RP_PLAN_CT?escHtml(RP_PLAN_CT)+' (loading list…)':'Loading case types…')+'</option>';
+    var stI=rpEl('rp-subtype'); if(stI) stI.innerHTML='<option value="">'+(RP_PLAN_ST?escHtml(RP_PLAN_ST)+' (loading list…)':'')+'</option>';
+    rpFetchCaseTypeOpts();
+  }
   var gov=plan.govFee||{}; rpEl('rp-govfee').value=(gov.dollars!=null)?gov.dollars:'';
   rpEl('rp-rprf').checked=(gov.withRprf!==false);
   if(rpEl('rp-hst')) rpEl('rp-hst').value=(plan.hstRate!=null)?(Math.round(plan.hstRate*1000)/10):13;
@@ -1153,10 +1168,65 @@ function splitMilestones(){
   }
   updateMileSum();
 }
+// Canonical case-type / sub-type pickers. RP_PLAN_CT/ST carry the values to
+// select (from the saved plan or the staff's in-progress choice) so the async
+// options fetch can populate late without losing them.
+var RP_CT_OPTS=null, RP_CT_FETCHING=false, RP_PLAN_CT='', RP_PLAN_ST='';
+function rpFetchCaseTypeOpts(){
+  if(RP_CT_OPTS||RP_CT_FETCHING) return;
+  var key=getKey(); if(!key) return;
+  RP_CT_FETCHING=true;
+  fetchT('/api/consultation/direct-client/options',{headers:{'X-Api-Key':key}})
+   .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+   .then(function(o){ RP_CT_OPTS=o; RP_CT_FETCHING=false; rpPopulateCaseTypes(); })
+   .catch(function(){ RP_CT_FETCHING=false; var s=rpEl('rp-casetype'); if(s) s.innerHTML='<option value="">'+(RP_PLAN_CT?escHtml(RP_PLAN_CT)+' (list unavailable — reload to edit)':'— could not load case types (reload to retry) —')+'</option>'; });
+}
+function rpPopulateCaseTypes(){
+  var sel=rpEl('rp-casetype'); if(!sel||!RP_CT_OPTS) return;
+  var list=RP_CT_OPTS.caseTypes||[], cur=RP_PLAN_CT||'';
+  var html='<option value="">— select case type —</option>';
+  // A legacy value outside the canon stays VISIBLE (staff see what is on file)
+  // but is flagged so collectSelections never sends it — the server would
+  // reject it, which must not block unrelated plan edits (e.g. an amend).
+  if(cur&&list.indexOf(cur)<0) html+='<option data-noncanon="1" value="'+escA(cur)+'">'+escHtml(cur)+' (legacy — pick a canonical type to confirm)</option>';
+  html+=list.map(function(c){ return '<option value="'+escA(c)+'">'+escHtml(c)+'</option>'; }).join('');
+  sel.innerHTML=html; sel.value=cur;
+  rpPopulateSubtypes();
+}
+function rpPopulateSubtypes(){
+  var sel=rpEl('rp-subtype'); if(!sel) return;
+  var ct=rpEl('rp-casetype')?rpEl('rp-casetype').value:'';
+  var subs=(RP_CT_OPTS&&RP_CT_OPTS.subTypesByCase&&RP_CT_OPTS.subTypesByCase[ct])||[];
+  var cur=RP_PLAN_ST||'';
+  var html;
+  if(!subs.length){
+    html='<option value="">— (none for this case type) —</option>';
+    if(cur) html+='<option data-noncanon="1" value="'+escA(cur)+'">'+escHtml(cur)+' (legacy)</option>';
+  } else {
+    html='<option value="">Choose… (required for the checklist)</option>';
+    if(cur&&subs.indexOf(cur)<0) html+='<option data-noncanon="1" value="'+escA(cur)+'">'+escHtml(cur)+' (legacy — pick from the list)</option>';
+    html+=subs.map(function(s){ return '<option value="'+escA(s)+'">'+escHtml(s)+'</option>'; }).join('');
+  }
+  sel.innerHTML=html; sel.value=cur;
+}
+function rpSelectedNonCanon(el){
+  var o=el&&el.selectedOptions&&el.selectedOptions[0];
+  return !!(o&&o.getAttribute('data-noncanon'));
+}
 function collectSelections(){
-  var sel={ template:rpEl('rp-template').value, annexCode:rpEl('rp-annex').value, subType:(rpEl('rp-subtype').value||'').trim(),
+  var sel={ template:rpEl('rp-template').value, annexCode:rpEl('rp-annex').value,
     feeCents:feeCentsNow(), govFeeDollars: rpEl('rp-govfee').value!==''?Number(rpEl('rp-govfee').value):undefined,
     hstRate: Math.round(hstRateNow()*1000)/10, withRprf: rpEl('rp-rprf').checked, milestones:collectMilestones(), familyMembers:collectFamily() };
+  // Case type / sub-type ride along ONLY when the canon options actually loaded —
+  // an omitted field leaves the stored value untouched server-side, so a slow or
+  // failed options fetch can never wipe what is on file. A displayed legacy
+  // (non-canonical) selection is likewise not sent: case type falls back to
+  // "no change" and the sub-type is omitted, so unrelated edits still save.
+  if(RP_CT_OPTS){
+    var ctEl=rpEl('rp-casetype'), stEl=rpEl('rp-subtype');
+    sel.caseType=rpSelectedNonCanon(ctEl)?'':((ctEl&&ctEl.value)||'');
+    if(!rpSelectedNonCanon(stEl)) sel.subType=((stEl&&stEl.value)||'').trim();
+  }
   RP_BLOCK_FIELDS.forEach(function(k){ var el=rpEl('rp-'+k); if(el) sel[k]=(el.value||'').trim(); });
   return sel;
 }
@@ -1239,6 +1309,8 @@ function initActions(){
   // Retainer panel
   var amendBtn=document.getElementById('rp-amend'); if(amendBtn) amendBtn.onclick=startAmend;
   rpEl('rp-template').onchange=toggleTemplateBlocks;
+  var ctSel=rpEl('rp-casetype'); if(ctSel) ctSel.onchange=function(){ RP_PLAN_CT=this.value; RP_PLAN_ST=''; rpPopulateSubtypes(); };
+  var stSel=rpEl('rp-subtype'); if(stSel) stSel.onchange=function(){ RP_PLAN_ST=this.value; };
   rpEl('rp-add-mile').onclick=addMile;
   rpEl('rp-add-family').onclick=addFamily;
   rpEl('rp-split-mile').onclick=splitMilestones;
