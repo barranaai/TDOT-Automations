@@ -263,10 +263,14 @@ test('consultation detail page: countersign buttons exist and pre-sign buttons h
   const html = buildDetailHTML('555');
   assert.ok(html.includes('id="btn-consult-signed-view"'), 'View signed agreement button present');
   assert.ok(html.includes('id="btn-consult-countersign"'), 'Sign as consultant button present');
-  for (const id of ['btn-resend', 'btn-consult-preview', 'btn-consult-send']) {
+  for (const id of ['btn-consult-preview', 'btn-consult-send']) {
     assert.ok(html.includes(`document.getElementById('${id}').style.display=caSigned?'none':''`),
       `${id} hides once the client has signed`);
   }
+  // Resend links must SURVIVE the client signature (user decision 2026-07-30):
+  // it re-sends the meeting + pre-consult form links, not the agreement.
+  assert.ok(!html.includes("document.getElementById('btn-resend').style.display=caSigned"),
+    'btn-resend stays visible after the client signs');
   assert.ok(html.includes("'· fully signed '"), 'fully-signed status line present');
   assert.ok(html.includes('consult-agreement-signed'), 'signed-PDF endpoint wired');
 });

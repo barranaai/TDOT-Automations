@@ -831,9 +831,10 @@ function render(d){
   caw.innerHTML=(!caSigned&&ca.warnings&&ca.warnings.length)
     ? '<div class="rp-warn"><b>Before sending:</b><ul>'+ca.warnings.map(function(w){return '<li>'+escHtml(w)+'</li>';}).join('')+'</ul></div>' : '';
   // Once the client signs, the document of record is the SIGNED copy — preview /
-  // Review & send / Resend links are redundant and hide. In their place: view the
-  // signed agreement, and (until the RCIC countersigns) sign as the consultant.
-  document.getElementById('btn-resend').style.display=caSigned?'none':'';
+  // Review & send are redundant and hide. In their place: view the signed
+  // agreement, and (until the RCIC countersigns) sign as the consultant.
+  // Resend links stays — it re-sends the MEETING + pre-consult form links,
+  // which a signed-but-form-pending client still needs.
   document.getElementById('btn-consult-preview').style.display=caSigned?'none':'';
   document.getElementById('btn-consult-send').style.display=caSigned?'none':'';
   document.getElementById('btn-consult-signed-view').style.display=caSigned?'':'none';
