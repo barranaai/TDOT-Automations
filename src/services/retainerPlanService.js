@@ -6,7 +6,7 @@
  *   applicantCount     lead.hasSpouse + childrenCount → { adults, children, total }
  *   computeFees        professional fee → HST + total (Ontario 13%)
  *   computeGovFee      annex gov-fee key + applicants → default government-fee total
- *   defaultMilestones  professional fee → 4 default rows (row 1 = non-refundable admin)
+ *   defaultMilestones  professional fee → 1 default row (the locked non-refundable admin fee)
  *   validateMilestones rows must sum to the professional fee, row 1 locked
  *
  * No I/O, no Monday — deterministic and unit-tested. The consultant is the final
@@ -158,8 +158,13 @@ function computeGovFee(govFeeKey, applicants = {}, { withRprf = true } = {}) {
 
 const ADMIN_LABEL = 'Milestone 1 – Non-Refundable Admin Fee';
 
-/** Pre-fill 4 milestone rows summing exactly to the professional fee; row 1 locked. */
-function defaultMilestones(serviceFeeCents, n = 4) {
+/**
+ * Pre-fill the milestone schedule: ONE row by default (user decision 2026-07-30)
+ * — the locked non-refundable admin fee carrying the full professional fee.
+ * Staff add further rows / split as the deal actually calls for; a multi-row
+ * default kept shipping agreements with an unintended 4-way split.
+ */
+function defaultMilestones(serviceFeeCents, n = 1) {
   const fee = Math.max(0, Math.round(Number(serviceFeeCents) || 0));
   const count = Math.max(1, Math.floor(n));
   const base = Math.floor(fee / count);

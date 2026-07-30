@@ -107,12 +107,17 @@ test('biometrics scales per person up to the family max', () => {
 
 // ---- milestones (§10) ----
 
-test('defaultMilestones: 4 rows summing exactly to the fee, row 1 locked admin', () => {
-  const rows = defaultMilestones(250003); // odd cents → remainder lands on last row
-  assert.equal(rows.length, 4);
+test('defaultMilestones: ONE default row — the locked admin fee carrying the whole fee (user decision 2026-07-30)', () => {
+  const rows = defaultMilestones(250003);
+  assert.equal(rows.length, 1, 'no unintended multi-way split by default');
   assert.equal(rows[0].label, 'Milestone 1 – Non-Refundable Admin Fee');
   assert.equal(rows[0].locked, true);
-  assert.equal(rows.reduce((s, r) => s + r.amountCents, 0), 250003);
+  assert.equal(rows[0].amountCents, 250003, 'single row = exact fee');
+
+  // The n parameter still splits when a caller asks for it (remainder on last row).
+  const four = defaultMilestones(250003, 4);
+  assert.equal(four.length, 4);
+  assert.equal(four.reduce((s, r) => s + r.amountCents, 0), 250003);
 });
 
 test('computeFees honours a per-case HST rate (default 13%, can be 0)', () => {
