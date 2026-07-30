@@ -322,15 +322,23 @@ function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
   const dateBlocks = slotSections;
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1"><title>Book Your Consultation — TDOT Immigration</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light only"><title>Book Your Consultation — TDOT Immigration</title>
   <style>
+    /* The page is a deliberate light design — "light only" stops iOS dark mode
+       from repainting form controls with dark-mode system colors (live bug:
+       slot buttons rendered WHITE-on-white on iPhones in dark mode). */
+    :root{color-scheme:light only;}
     body{background:${BRAND.lightBg};font-family:-apple-system,sans-serif;margin:0;color:${BRAND.textOnLight};}
     .container{max-width:640px;margin:0 auto;padding:32px 24px;}
     .header{background:${BRAND.darkPanel};color:${BRAND.textOnDark};padding:28px;border-radius:12px 12px 0 0;text-align:center;}
     .card{background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;box-shadow:0 4px 12px rgba(0,0,0,0.08);}
     .day{margin-bottom:20px;} .day-label{font-weight:700;margin-bottom:8px;}
     .slots{display:flex;flex-wrap:wrap;gap:8px;}
-    .slot{background:#fff;border:1.5px solid ${BRAND.border};border-radius:8px;padding:10px 16px;font-size:15px;cursor:pointer;}
+    .slot{background:#fff;border:1.5px solid ${BRAND.border};border-radius:8px;padding:10px 16px;font-size:15px;cursor:pointer;
+      /* Explicit color + no native appearance: iOS Safari's dark-mode ButtonText
+         is WHITE — an unstyled button color made the times invisible on iPhones. */
+      color:${BRAND.textOnLight};-webkit-appearance:none;appearance:none;font-family:inherit;}
     .slot:hover:not(:disabled){border-color:${BRAND.primary};background:${BRAND.primary};color:#fff;}
     .slot:disabled{opacity:.45;cursor:not-allowed;}
     .slot.picked{border-color:${BRAND.primary};background:${BRAND.primary};color:#fff;opacity:1;}

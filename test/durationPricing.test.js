@@ -55,6 +55,12 @@ test('booking page: duration picker with prices + per-duration slot lists + vali
   assert.match(html, /data-dur="30" style="display:block"/, 'default duration list visible');
   assert.match(html, /data-dur="45" style="display:none"/, 'other duration list hidden');
   assert.match(html, /name="durationMin" id="durationMin"/, 'hidden field posts the choice');
+  // iOS dark-mode regression (live-found): slot buttons MUST carry an explicit
+  // text color + no native appearance, and the page declares itself light-only —
+  // otherwise iPhone dark mode paints ButtonText white on the white buttons.
+  assert.match(html, /\.slot\{[^}]*color:#1F2937/s, 'slot buttons have an explicit text color');
+  assert.match(html, /appearance:none/, 'native button appearance neutralized');
+  assert.match(html, /name="color-scheme" content="light only"/, 'page pinned to light scheme');
   for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) new Function(m[1]); // throws on syntax error
 });
 
