@@ -537,8 +537,14 @@ function buildDetailHTML(leadId) {
   /* One-line retainer action bar. Tight 8px gap WITHIN a group, wider 18px gap
      BETWEEN groups — so the three stages (edit · review/save · sign) read as a
      sequence. Groups wrap as whole units on narrow screens. */
-  .rp-actionbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; margin-top:16px; padding-top:14px; border-top:1px solid var(--border); }
-  .rp-actiongroup { display:inline-flex; align-items:center; gap:8px; }
+  /* Tight enough that all eight actions sit on ONE line at desktop widths
+     (wrap stays on as the narrow-screen safety net). */
+  .rp-actionbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin-top:16px; padding-top:14px; border-top:1px solid var(--border); }
+  .rp-actiongroup { display:inline-flex; align-items:center; gap:6px; }
+  .rp-actionbar .btn { padding:8px 10px; font-size:12px; }
+  /* A disabled action must LOOK disabled — without this, "Mark retainer signed"
+     was correctly disabled on completed retentions but appeared clickable. */
+  .btn:disabled { opacity:.45; cursor:not-allowed; }
   .rp-lock { display:flex; align-items:center; gap:12px; justify-content:space-between; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:10px 14px; margin-bottom:12px; font-size:13px; color:#92400e; }
   .rp-lock.amending { background:#eff6ff; border-color:#bfdbfe; color:#1e40af; }
   .rp-lock #rp-amend { flex:none; }
@@ -729,8 +735,8 @@ ${buildNavHeader('consultations')}
         </span>
         <span class="rp-actiongroup">
           <button class="btn" id="btn-signed" type="button">${I.userCheck} Mark retainer signed</button>
-          <button class="btn" id="btn-retainer-signed-view" type="button" style="display:none" title="View the signed retainer agreement">${I.eye} View signed retainer</button>
           <button class="btn" id="btn-retainer-countersign" type="button" style="display:none" title="Add the consultant (RCIC) signature to the client-signed retainer">${I.send} Sign retainer as consultant</button>
+          <button class="btn" id="btn-retainer-signed-view" type="button" style="display:none" title="View the signed retainer agreement">${I.eye} View signed retainer</button>
         </span>
       </div>
 
@@ -753,7 +759,7 @@ var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload onl
 // signed / been retained — fee + plan are read-only and no NEW agreement can be
 // sent, unless the consultant "Amend"s. RP_SENT (sent specifically) vs RP_RETAINED
 // (signed/paid/Retained) only differ in the wording of the lock message.
-var RP_LOCKED=false, RP_AMEND=false, RP_SENT=false, RP_RETAINED=false, RP_SIGNED=false;
+var RP_LOCKED=false, RP_AMEND=false, RP_SENT=false, RP_RETAINED=false, RP_SIGNED=false, RP_RC_DONE=false;
 // Progressive-enablement state for the retainer send flow: you must Set fee →
 // Save plan → Retain & send, in order. Each disabled button explains the due step.
 var RP_FEE_SET=false, RP_PLAN_SAVED=false, PERSISTED_FEE='';
@@ -872,12 +878,17 @@ function render(d){
     kv('Retainer countersigned',(d.retainerCountersign||{}).signedAt)+
     kv('Retainer paid',d.retainerPaid)+
     (d.clientMasterItemId?kv('Case created','Yes (handed off)'):'');
-  // RCIC countersign of the retainer: viewable once the CLIENT has signed;
-  // sign-as-consultant offered until the countersign completes.
+  // RCIC countersign of the retainer: both buttons appear once the CLIENT has
+  // signed. After the countersign completes, "Sign retainer as consultant"
+  // stays visible but DISABLED (applyRetainerLock owns the disabled state so
+  // it survives disableActions round-trips); "View signed retainer" — last in
+  // the row — is the one action that stays live.
   var rcs=d.retainerCountersign||{};
   var rSigned=Boolean(d.retainerSigned);
+  RP_RC_DONE=Boolean(rcs.signedAt);
   document.getElementById('btn-retainer-signed-view').style.display=rSigned?'':'none';
-  document.getElementById('btn-retainer-countersign').style.display=(rSigned&&!rcs.signedAt)?'':'none';
+  document.getElementById('btn-retainer-countersign').style.display=rSigned?'':'none';
+  applyRetainerLock();
 
   document.getElementById('c-intake').innerHTML=
     kv('Email',d.email)+kv('Phone',d.phone)+kv('Country',d.country)+
@@ -928,7 +939,13 @@ function load(){
 // ── Phase B: write actions ────────────────────────────────────────────────
 function setMsg(text,kind){ var el=document.getElementById('act-msg'); el.className='act-msg '+kind; el.textContent=text; }
 function actButtons(){ return Array.prototype.slice.call(document.querySelectorAll('.actions button')); }
-function disableActions(on){ actButtons().forEach(function(b){ b.disabled=on; }); }
+function disableActions(on){
+  actButtons().forEach(function(b){ b.disabled=on; });
+  // Re-enabling blanket-clears disabled — reapply the gated states so a failed
+  // action can't leave "Mark retainer signed"/"Sign retainer as consultant"
+  // (and the progressive fee/save/send gates) falsely clickable.
+  if(!on && typeof applyRetainerLock==='function') applyRetainerLock();
+}
 function highlightOutcome(cur){ Array.prototype.forEach.call(document.querySelectorAll('.obtn'),function(b){ b.classList.toggle('active', b.getAttribute('data-outcome')===cur); }); }
 
 // fetch with a hard timeout so a hung request (e.g. a stalled CloudConvert
@@ -973,6 +990,9 @@ function applyRetainerLock(){
   // signed→handoff→payment-link chain on a completed retention.
   var signedBtn=document.getElementById('btn-signed');
   if(signedBtn){ signedBtn.disabled = RP_SIGNED; signedBtn.title = RP_SIGNED ? 'Retainer already signed — the case is open' : ''; }
+  // "Sign retainer as consultant" locks once the countersign completes.
+  var rcBtn=document.getElementById('btn-retainer-countersign');
+  if(rcBtn){ rcBtn.disabled = RP_RC_DONE; rcBtn.title = RP_RC_DONE ? 'Retainer already countersigned by the consultant' : 'Add the consultant (RCIC) signature to the client-signed retainer'; }
 
   // Progressive gating — Set fee → Save plan → Retain & send, in order. Each
   // disabled button's tooltip names the step you still owe.

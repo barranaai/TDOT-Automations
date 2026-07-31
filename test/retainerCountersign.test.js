@@ -172,4 +172,14 @@ test('portal: consultantSignRetainer action valid; detail page carries the retai
   assert.ok(html.includes('retainer-agreement-signed'), 'signed-retainer endpoint wired');
   assert.ok(html.includes("'consultantSignRetainer'"), 'countersign action wired');
   assert.ok(html.includes('Retainer countersigned'), 'status row shows the countersign date');
+
+  // Button-row semantics (user directive 2026-07-31):
+  assert.ok(html.indexOf('id="btn-retainer-countersign"') < html.indexOf('id="btn-retainer-signed-view"'),
+    'View signed retainer is LAST in the row');
+  assert.ok(html.includes('rcBtn.disabled = RP_RC_DONE'),
+    'countersign button DISABLES (not hides) once the consultant has signed');
+  assert.ok(html.includes('.btn:disabled { opacity:.45; cursor:not-allowed; }'),
+    'disabled buttons are visibly disabled');
+  assert.ok(html.includes("if(!on && typeof applyRetainerLock==='function') applyRetainerLock();"),
+    'gated disabled states survive the disableActions round-trip');
 });
