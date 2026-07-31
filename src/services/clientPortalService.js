@@ -496,7 +496,7 @@ function buildPortalPage(snap, opts) {
     /* Sequence-of-need columns: actions left, reference right; stacked (same
        priority order) below 1000px. minmax(0,…) so wide content can shrink. */
     .cols { display:grid; grid-template-columns: minmax(0,1fr); gap: 0 24px; align-items:start; }
-    @media (min-width:1000px){ .cols { grid-template-columns: minmax(0,7fr) minmax(0,5fr); } }
+    @media (min-width:1000px){ .cols { grid-template-columns: minmax(0,2fr) minmax(0,1fr); } }
 
     /* Journey stepper */
     .journey { background:#fff; border:1px solid #EAE3D5; border-radius:10px; padding:18px 16px 14px; margin-bottom:20px; }
