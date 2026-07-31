@@ -132,13 +132,39 @@ const CLIENT_TITLE_MAP = [
   [/^Questionnaire submitted — (.+)$/,   (m) => `Questionnaire submitted — ${m[1]}`],
 ];
 
-/** PURE: staff timeline events → client-voiced events (unknown titles dropped). */
-function toClientTimeline(events) {
+/** Toronto calendar date (YYYY-MM-DD) — the firm's clock, not the server's. */
+function torontoToday() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto' }).format(new Date());
+}
+
+/**
+ * PURE: staff timeline events → client-voiced events (unknown titles dropped).
+ * Truthfulness rules (`today` injectable for tests):
+ *  - "Consultation held" is stamped with the SLOT date at booking time, so it
+ *    is SUPPRESSED until that day arrives — the portal must never say a future
+ *    consultation "took place";
+ *  - a future consultation slot reads as upcoming ("is scheduled"), past ones
+ *    as "was booked";
+ *  - the generic first-payment event is dropped whenever a milestone "Paid"
+ *    event exists — they describe the same money and rendered as a duplicate.
+ */
+function toClientTimeline(events, today = torontoToday()) {
+  const list = events || [];
+  const hasMilestonePaid = list.some((ev) => /^Paid — /.test(ev.title || ''));
   const out = [];
-  for (const ev of events || []) {
+  for (const ev of list) {
+    const staffTitle = ev.title || '';
+    const isFuture = String(ev.date || '').slice(0, 10) > today;
+    if (isFuture && /^Consultation held$/.test(staffTitle)) continue;
+    if (hasMilestonePaid && /^First retainer payment recorded$/.test(staffTitle)) continue;
     for (const [re, fmt] of CLIENT_TITLE_MAP) {
-      const m = re.exec(ev.title || '');
-      if (m) { out.push({ date: ev.date, title: fmt(m), detail: ev.detail || '', kind: ev.kind }); break; }
+      const m = re.exec(staffTitle);
+      if (m) {
+        let title = fmt(m);
+        if (isFuture && /^Consultation scheduled$/.test(staffTitle)) title = 'Your consultation is scheduled';
+        out.push({ date: ev.date, title, detail: ev.detail || '', kind: ev.kind });
+        break;
+      }
     }
   }
   return out;
@@ -466,7 +492,11 @@ function buildPortalPage(snap, opts) {
       letter-spacing:.04em; margin-left:8px; vertical-align:middle;
     }
 
-    .content { max-width: 760px; margin: 24px auto; padding: 0 18px 60px; }
+    .content { max-width: 1320px; margin: 24px auto; padding: 0 22px 60px; }
+    /* Sequence-of-need columns: actions left, reference right; stacked (same
+       priority order) below 1000px. minmax(0,…) so wide content can shrink. */
+    .cols { display:grid; grid-template-columns: minmax(0,1fr); gap: 0 24px; align-items:start; }
+    @media (min-width:1000px){ .cols { grid-template-columns: minmax(0,7fr) minmax(0,5fr); } }
 
     /* Journey stepper */
     .journey { background:#fff; border:1px solid #EAE3D5; border-radius:10px; padding:18px 16px 14px; margin-bottom:20px; }
@@ -620,6 +650,13 @@ function buildPortalPage(snap, opts) {
 
     ${stepperHtml}
 
+    <!-- Two columns in sequence of need: the LEFT column is what the client
+         must know and DO (pending → questionnaire → documents); the RIGHT is
+         reference material (payments, then the history timeline). On narrow
+         screens they stack in that same priority order. -->
+    <div class="cols">
+    <div class="col-main">
+
     <section class="pending">
       <h2>📌 ${isStaff ? 'Case status' : "What's pending"}</h2>
       <ul>${pendingHtml}</ul>
@@ -670,9 +707,9 @@ function buildPortalPage(snap, opts) {
         : (docListHtml ? `<div style="margin-top:12px;font-size:12px;color:#9AA3AF;">Files upload securely straight from this page. Prefer the full page with detailed instructions? <a href="${escHtml(docUrl)}" style="color:#8B0000;font-weight:700;">Open it here</a>.</div>` : '')}
     </section>
 
-    ${paymentsHtml}
-
-    ${timelineHtml}
+    </div>
+    ${(paymentsHtml || timelineHtml) ? `<aside class="col-side">${paymentsHtml}${timelineHtml}</aside>` : ''}
+    </div>
 
     <p class="footer">
       ${isStaff
@@ -773,6 +810,7 @@ module.exports = {
   getPortalSnapshot,
   buildPortalPage,
   buildPortalUrl,
+  toClientTimeline,
   // pure — exported for tests
   clientStage,
   toClientTimeline,
