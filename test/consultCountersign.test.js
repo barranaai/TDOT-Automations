@@ -57,6 +57,39 @@ test('parseCountersign: JSON round-trip, junk-safe', () => {
   assert.deepEqual(consultAgmt.parseCountersign(null), {});
 });
 
+// ─── getSignedConsultPdf resolution (live-failure classes, 2026-07-31) ──────
+
+test('getSignedConsultPdf: countersigned state with a BLANK item id recovers it from the envelope', () => {
+  // Intake Test 5's live failure: {signedAt, envelopeId, itemId:""} skipped the
+  // Documenso branch entirely and 404ed even though the envelope was complete.
+  return withStubs([
+    [documenso, 'getEnvelope', async (id) => { assert.equal(id, 'env-cs'); return { envelopeItems: [{ id: 'item-recovered' }] }; }],
+    [documenso, 'downloadSignedPdf', async (id) => { assert.equal(id, 'item-recovered'); return FAKE_PDF; }],
+    [oneDrive, 'uploadFile', async () => {}], // heal
+  ], async () => {
+    const pdf = await consultAgmt.getSignedConsultPdf({
+      id: '555', fullName: 'X', consultCountersign: '{"envelopeId":"env-cs","itemId":"","signedAt":"2026-07-30"}',
+    });
+    assert.equal(pdf, FAKE_PDF);
+  });
+});
+
+test('getSignedConsultPdf: a retained client\'s copy is found in the RENAMED case folder', () => {
+  // Praj's live failure: the consult copy moved with the folder rename at
+  // case-open ("Praj - 2026-VV-008"), but only the LEAD-named path was tried.
+  const reads = [];
+  return withStubs([
+    [mondayApi, 'query', async () => ({ items: [{ column_values: [{ text: '2026-VV-008' }] }] })],
+    [oneDrive, 'readFile', async (args) => { reads.push(args.caseRef); return args.caseRef === '2026-VV-008' ? FAKE_PDF : null; }],
+  ], async () => {
+    const pdf = await consultAgmt.getSignedConsultPdf({
+      id: '555', fullName: 'Praj', clientMasterItemId: '888', consultCountersign: '',
+    });
+    assert.equal(pdf, FAKE_PDF);
+    assert.deepEqual(reads, ['2026-VV-008'], 'case folder tried FIRST');
+  });
+});
+
 // ─── startConsultCountersign ─────────────────────────────────────────────────
 
 const BASE_LEAD = {

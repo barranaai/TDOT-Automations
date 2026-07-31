@@ -76,14 +76,25 @@ async function storeSignedToOneDrive(lead, pdf) {
 async function getSignedRetainerPdf(lead) {
   const documenso = require('./documensoService');
   const rc = parseRetainerCountersign(lead);
-  if (rc.signedAt && rc.itemId) {
-    try {
-      const pdf = await documenso.downloadSignedPdf(rc.itemId);
-      if (pdf && pdf.length) {
-        try { await storeSignedToOneDrive(lead, pdf); } catch (_) { /* heal is best-effort */ }
-        return pdf;
-      }
-    } catch (err) { console.warn(`[RetainerCountersign] countersigned download failed (item ${rc.itemId}, lead ${lead.id}) — falling back to OneDrive: ${err.message}`); }
+  if (rc.signedAt) {
+    // The item id can be blank (some envelope-create responses omit it) —
+    // recover it from the envelope itself before giving up on the download.
+    let itemId = rc.itemId;
+    if (!itemId && rc.envelopeId) {
+      try {
+        const env = await documenso.getEnvelope(rc.envelopeId);
+        itemId = env && env.envelopeItems && env.envelopeItems[0] && env.envelopeItems[0].id;
+      } catch (_) { /* fall through to OneDrive */ }
+    }
+    if (itemId) {
+      try {
+        const pdf = await documenso.downloadSignedPdf(itemId);
+        if (pdf && pdf.length) {
+          try { await storeSignedToOneDrive(lead, pdf); } catch (_) { /* heal is best-effort */ }
+          return pdf;
+        }
+      } catch (err) { console.warn(`[RetainerCountersign] countersigned download failed (item ${itemId}, lead ${lead.id}) — falling back to OneDrive: ${err.message}`); }
+    }
   }
   try {
     const oneDrive = require('./oneDriveService');
@@ -233,4 +244,5 @@ async function recordRetainerCountersignComplete(lead, { signedPdf, stored } = {
 
 module.exports = {
   parseRetainerCountersign, getSignedRetainerPdf, startRetainerCountersign, recordRetainerCountersignComplete,
+  candidateFolderRefs, // shared with the consult flow — same rename-aware folder resolution
 };

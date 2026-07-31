@@ -182,7 +182,10 @@ function safeSignUrl(u) {
 
 async function _storeSignedToOneDrive(lead, pdf) {
   const oneDrive = require('./oneDriveService');
-  const ref = { clientName: lead.fullName || `Lead ${lead.id}`, caseRef: `LEAD-${lead.id}` };
+  // Best-known folder first: once a case opens, the client folder is RENAMED
+  // to "{name} - {caseRef}" — writing by the old LEAD name would resurrect a
+  // stale folder. Shared resolution with the retainer countersign.
+  const [ref] = await require('./retainerCountersignService').candidateFolderRefs(lead);
   await oneDrive.uploadFile({ ...ref, category: 'Consultation', filename: 'consultation-agreement-SIGNED.pdf', buffer: pdf, mimeType: 'application/pdf' });
 }
 
@@ -199,22 +202,35 @@ async function getSignedConsultPdf(lead) {
   const leadId = lead.id;
   const documenso = require('./documensoService');
   const cs = parseCountersign(lead);
-  if (cs.signedAt && cs.itemId) {
-    try {
-      const pdf = await documenso.downloadSignedPdf(cs.itemId);
-      if (pdf && pdf.length) {
-        try { await _storeSignedToOneDrive(lead, pdf); } catch (_) { /* heal is best-effort */ }
-        return pdf;
-      }
-    } catch (err) { console.warn(`[ConsultAgreement] Countersigned download failed (item ${cs.itemId}, lead ${leadId}) — falling back to OneDrive: ${err.message}`); }
+  if (cs.signedAt) {
+    // The item id can be blank (some envelope-create responses omit it) —
+    // recover it from the envelope itself before giving up on the download.
+    let itemId = cs.itemId;
+    if (!itemId && cs.envelopeId) {
+      try {
+        const env = await documenso.getEnvelope(cs.envelopeId);
+        itemId = env && env.envelopeItems && env.envelopeItems[0] && env.envelopeItems[0].id;
+      } catch (_) { /* fall through to OneDrive */ }
+    }
+    if (itemId) {
+      try {
+        const pdf = await documenso.downloadSignedPdf(itemId);
+        if (pdf && pdf.length) {
+          try { await _storeSignedToOneDrive(lead, pdf); } catch (_) { /* heal is best-effort */ }
+          return pdf;
+        }
+      } catch (err) { console.warn(`[ConsultAgreement] Countersigned download failed (item ${itemId}, lead ${leadId}) — falling back to OneDrive: ${err.message}`); }
+    }
   }
+  // OneDrive: the case folder first (renamed at case-open — a retained client's
+  // consult copy moved with it), then the pre-case LEAD-named folder.
   try {
     const oneDrive = require('./oneDriveService');
-    const pdf = await oneDrive.readFile({
-      clientName: lead.fullName || `Lead ${leadId}`, caseRef: `LEAD-${leadId}`,
-      subfolder: 'Consultation', filename: 'consultation-agreement-SIGNED.pdf',
-    });
-    if (pdf && pdf.length) return pdf;
+    const { candidateFolderRefs } = require('./retainerCountersignService');
+    for (const ref of await candidateFolderRefs(lead)) {
+      const pdf = await oneDrive.readFile({ ...ref, subfolder: 'Consultation', filename: 'consultation-agreement-SIGNED.pdf' }).catch(() => null);
+      if (pdf && pdf.length) return pdf;
+    }
   } catch (err) { console.warn(`[ConsultAgreement] OneDrive signed-copy read failed for lead ${leadId}: ${err.message}`); }
   for (const itemId of [cs.clientItemId].filter(Boolean)) {
     try {
