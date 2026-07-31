@@ -248,7 +248,23 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
         subject: 'Your TDOT Immigration retainer agreement — please sign',
         message: 'Please review and sign your retainer agreement. Once signed, we’ll email you the first payment details. Thank you — TDOT Immigration.',
         // Client signature line on the execution page (annexes follow it).
-        signaturePosition: { positionX: 11, positionY: 36, width: 40, height: 6 },
+        // ANCHORED to the actual "Signature of …" label — the old static y=36
+        // landed the client's field on the RCIC's line (Praj, 2026-07-31): the
+        // execution block's position shifts with how much text precedes it.
+        // Anchor priority: the client's own name (pa / pa-inviter), then the
+        // first non-RCIC signature label (employer template — the employer rep
+        // signs). Static y=27 remains only as the can't-parse fallback,
+        // measured on the rendered pa execution page.
+        signaturePosition: { positionX: 11, positionY: 27, width: 40, height: 6 },
+        signatureAnchorItem: {
+          anchors: [
+            ...(String(lead.fullName || '').trim()
+              ? [new RegExp('^signature of\\s+' + String(lead.fullName).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')]
+              : []),
+            /^signature of\s+(?!rcic)/i,
+          ],
+          gapPct: 2,
+        },
       });
       await leadService.updateLead(leadId, {
         retainerSent:         todayISO(),

@@ -96,6 +96,52 @@ async function pdfPageCount(pdfBuffer) {
   } catch (_) { return 1; }
 }
 
+/**
+ * Find the page + vertical position (% from the page top) of the first text
+ * item matching one of `anchors`, tried in priority order. Used to place a
+ * signature field relative to the document's ACTUAL signature line — a fixed
+ * percentage is wrong whenever preceding content reflows (the Praj incident:
+ * the static retainer y landed the client's field on the RCIC's line).
+ * Returns { page, yTopPct } or null (unparsable / no match).
+ */
+/**
+ * PURE — first text item matching one of `anchors` (tried in priority order)
+ * across extracted pages ([[{ str, yTopPct }], …]). Split from the PDF
+ * extraction so the matching rules are unit-testable without pdf-parse, whose
+ * bundled pdf.js rejects some synthetic PDFs nondeterministically ("bad XRef
+ * entry") — real CloudConvert renders parse reliably.
+ */
+function anchorHitFromPages(pages, anchors) {
+  for (const a of [].concat(anchors || [])) {
+    const re = a instanceof RegExp ? a : new RegExp(a, 'i');
+    for (let p = 0; p < (pages || []).length; p++) {
+      const hit = (pages[p] || []).find((it) => it && it.str && re.test(it.str));
+      if (hit) return { page: p + 1, yTopPct: hit.yTopPct };
+    }
+  }
+  return null;
+}
+
+async function findAnchorPosition(pdfBuffer, anchors) {
+  try {
+    const pdfParse = require('pdf-parse');
+    const pages = [];
+    await pdfParse(pdfBuffer, {
+      pagerender: async (pageData) => {
+        const view = pageData.pageInfo.view;
+        const H = (view[3] - view[1]) || 1;
+        const tc = await pageData.getTextContent();
+        pages.push((tc.items || []).map((it) => ({
+          str: String(it.str || '').trim(),
+          yTopPct: (1 - it.transform[5] / H) * 100,
+        })));
+        return '';
+      },
+    });
+    return anchorHitFromPages(pages, anchors);
+  } catch (_) { return null; /* caller keeps the static fallback */ }
+}
+
 // The signature block isn't always the last page — the retainer appends annexes
 // AFTER the execution page. So we find the page whose text matches a signature
 // anchor. Works for both templates (retainer "IN WITNESS THEREOF / Signature of",
@@ -120,14 +166,28 @@ async function findSignaturePage(pdfBuffer, anchor = SIG_ANCHOR) {
 }
 
 /** Create an envelope (DRAFT — not distributed). Returns { envelopeId, envelopeItemId, raw }. */
-async function createEnvelope({ pdfBuffer, title, externalId, signer, subject, message, signaturePosition, signatureAnchor }) {
+async function createEnvelope({ pdfBuffer, title, externalId, signer, subject, message, signaturePosition, signatureAnchor, signatureAnchorItem }) {
   if (!pdfBuffer || !pdfBuffer.length) throw new Error('createEnvelope: empty PDF');
   if (!signer || !signer.email) throw new Error('createEnvelope: signer.email required');
 
-  // Signature page = the page carrying the signature block (annexes come after
-  // it in the retainer), falling back to the last page if the anchor isn't found.
-  const page = (await findSignaturePage(pdfBuffer, signatureAnchor)) || (await pdfPageCount(pdfBuffer));
-  const sigField = { type: 'SIGNATURE', page, ...SIGNATURE_FIELD, ...(signaturePosition || {}) };
+  // Preferred: place the field relative to the document's ACTUAL signature line
+  // (signatureAnchorItem.anchors, priority-ordered). The field bottom lands
+  // gapPct above the matched label, so the signature sits ON the line above it.
+  let page = 0;
+  let dynY = null;
+  if (signatureAnchorItem && signatureAnchorItem.anchors) {
+    const hit = await findAnchorPosition(pdfBuffer, signatureAnchorItem.anchors);
+    if (hit) {
+      page = hit.page;
+      const h = (signaturePosition && signaturePosition.height) || SIGNATURE_FIELD.height;
+      const gap = signatureAnchorItem.gapPct != null ? signatureAnchorItem.gapPct : 2;
+      dynY = Math.max(2, Math.round((hit.yTopPct - h - gap) * 10) / 10);
+    }
+  }
+  // Fallback: the page carrying the signature block (annexes come after it in
+  // the retainer), falling back to the last page if the anchor isn't found.
+  if (!page) page = (await findSignaturePage(pdfBuffer, signatureAnchor)) || (await pdfPageCount(pdfBuffer));
+  const sigField = { type: 'SIGNATURE', page, ...SIGNATURE_FIELD, ...(signaturePosition || {}), ...(dynY != null ? { positionY: dynY } : {}) };
 
   const payload = {
     title,
@@ -358,6 +418,8 @@ module.exports = {
   createEnvelope,
   distributeEnvelope,
   findSignaturePage,
+  findAnchorPosition,
+  anchorHitFromPages,
   sendForSignature,
   getEnvelope,
   downloadSignedPdf,
