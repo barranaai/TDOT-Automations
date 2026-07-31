@@ -43,6 +43,26 @@ const mondayStub = async (q) => /column_values/.test(q)
   ? { items: [{ column_values: [{ text: '2026-XX-001' }] }] }
   : {};
 
+test('recipientSignUrl: builds the signing link from the envelope recipient token; silent on failure', () => {
+  // getEnvelope is a module-internal call — stub the HTTP layer, not the export.
+  const jsonResponse = (body) => ({ ok: true, headers: { get: () => 'application/json' }, json: async () => body });
+  return withEnv({ DOCUMENSO_API_TOKEN: 'test-token' }, () =>
+    withStubs([[global, 'fetch', async () => jsonResponse({ recipients: [{ token: 'tok123' }] })]], async () => {
+      assert.equal(await documenso.recipientSignUrl('env-1'), 'https://app.documenso.com/sign/tok123');
+    }).then(() => withStubs([[global, 'fetch', async () => jsonResponse({ recipients: [{ signingUrl: 'https://app.documenso.com/sign/direct' }] })]], async () => {
+      assert.equal(await documenso.recipientSignUrl('env-1'), 'https://app.documenso.com/sign/direct');
+    })).then(() => withStubs([[global, 'fetch', async () => { throw new Error('down'); }]], async () => {
+      assert.equal(await documenso.recipientSignUrl('env-1'), '', 'the emailed link still reaches the signer');
+    })));
+});
+
+test('countersign tab never dead-ends: without a signUrl the page opens the Documenso dashboard', () => {
+  const { buildDetailHTML } = require('../src/routes/adminConsultation');
+  const html = buildDetailHTML('777');
+  assert.ok(html.includes("w.location='https://app.documenso.com/documents'"),
+    'no-signUrl path lands the pre-opened tab on the dashboard instead of closing it');
+});
+
 test('parseExternalId: retainer2 is its own type — never swallowed by retainer', () => {
   assert.deepEqual(documenso.parseExternalId('retainer2-9'), { type: 'retainer2', leadId: '9' });
   assert.deepEqual(documenso.parseExternalId('retainer-9'),  { type: 'retainer',  leadId: '9' });

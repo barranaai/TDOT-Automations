@@ -221,11 +221,33 @@ async function distributeEnvelope(envelopeId) {
   return api('/envelope/distribute', { method: 'POST', json: { envelopeId } });
 }
 
+/**
+ * Best-effort: the recipient's direct signing URL. The create response carries
+ * no signUrl, so without this the portal's "sign as consultant" tab has nowhere
+ * to go. Reads the envelope and tries the shapes Documenso is known to use.
+ */
+async function recipientSignUrl(envelopeId) {
+  try {
+    const env = await getEnvelope(envelopeId);
+    const recipients = (env && (env.recipients || (env.envelope && env.envelope.recipients))) || [];
+    const r = recipients[0] || {};
+    if (r.signingUrl) return String(r.signingUrl);
+    const token = r.token || r.signingToken || '';
+    if (token) {
+      const origin = new URL((process.env.DOCUMENSO_BASE_URL || 'https://app.documenso.com/api/v2')).origin;
+      return `${origin}/sign/${token}`;
+    }
+  } catch (_) { /* the emailed link still reaches the signer */ }
+  return '';
+}
+
 /** Create + distribute in one step (the production path). */
 async function sendForSignature(args) {
   const env = await createEnvelope(args);
   await distributeEnvelope(env.envelopeId);
-  return { envelopeId: env.envelopeId, envelopeItemId: env.envelopeItemId, signUrl: env.raw?.signUrl || '' };
+  let signUrl = env.raw?.signUrl || '';
+  if (!signUrl) signUrl = await recipientSignUrl(env.envelopeId);
+  return { envelopeId: env.envelopeId, envelopeItemId: env.envelopeItemId, signUrl };
 }
 
 /** Read an envelope (used to resolve externalId + the signed item id from a webhook). */
@@ -450,6 +472,7 @@ module.exports = {
   findSignaturePage,
   findAnchorPosition,
   anchorHitFromPages,
+  recipientSignUrl,
   sendForSignature,
   getEnvelope,
   downloadSignedPdf,

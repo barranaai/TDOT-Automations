@@ -1316,7 +1316,10 @@ function countersignAgreement(action,confirmTxt){
      if(res.status===401||res.status===403){ if(w)w.close(); window.location.href='/admin'; return; }
      if(res.status!==200){ if(w)w.close(); throw new Error((res.j&&res.j.error)||('HTTP '+res.status)); }
      if(res.j.signUrl){ if(w){ w.location=res.j.signUrl; } else { window.open(res.j.signUrl,'_blank'); } }
-     else if(w){ w.close(); }
+     // No direct signing link available — land the tab on the Documenso
+     // dashboard (where the pending request lives) instead of silently
+     // closing it, which read as "the button did nothing".
+     else if(w){ w.location='https://app.documenso.com/documents'; }
      setMsg(res.j.message||'Done.','ok');
      load();
    }).catch(function(e){ disableActions(false); if(w)try{w.close();}catch(_){} setMsg(netErr(e),'err'); });
