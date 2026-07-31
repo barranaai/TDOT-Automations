@@ -61,6 +61,14 @@ function buildMilestoneAnnexPdf({ schedule, hstRate = 0.13, govFeeDollars = null
                   { w: 100, t: `HST (${ratePct}%)`, a: 'right' }, { w: 102, t: 'Total (CAD)', a: 'right' }];
     const RH = 24;
 
+    // A milestone label may wrap in its 196px column (staff type them freely) —
+    // each row grows to fit its label instead of clipping the second line.
+    function rowHeightFor(label) {
+      doc.fontSize(10).font('Helvetica');
+      const h = doc.heightOfString(String(label), { width: cols[0].w - 4 });
+      return Math.max(RH, Math.ceil(h) + 14);
+    }
+
     function drawRow(y, cells, { head = false, bold = false } = {}) {
       let cx = X;
       cells.forEach((txt, i) => {
@@ -76,10 +84,13 @@ function buildMilestoneAnnexPdf({ schedule, hstRate = 0.13, govFeeDollars = null
     doc.rect(X, y, W, RH).fill('#f1f3f6');
     drawRow(y, cols.map((c) => c.t), { head: true }); y += RH;
 
-    schedule.rows.forEach((r) => {
-      drawRow(y, [r.label, m(r.amountCents), m(r.hstCents), m(r.totalCents)]);
-      doc.strokeColor('#eceef2').moveTo(X, y + RH).lineTo(X + W, y + RH).stroke();
-      y += RH;
+    schedule.rows.forEach((r, i) => {
+      // Row 1 carries the asterisk pointing at the 50% non-refundable note below.
+      const label = i === 0 ? `${r.label} *` : r.label;
+      const rh = rowHeightFor(label);
+      drawRow(y, [label, m(r.amountCents), m(r.hstCents), m(r.totalCents)]);
+      doc.strokeColor('#eceef2').moveTo(X, y + rh).lineTo(X + W, y + rh).stroke();
+      y += rh;
     });
 
     doc.rect(X, y, W, RH).fill('#fbeaea');
@@ -87,12 +98,18 @@ function buildMilestoneAnnexPdf({ schedule, hstRate = 0.13, govFeeDollars = null
     y += RH;
 
     // First-milestone (admin fee) acknowledgement — mirrors the master agreement.
+    // The 50% is stated with the ACTUAL dollar figures so the fee schedule leaves
+    // no room for interpretation about what is and is not refundable.
     // Reset x to the left margin (the table left doc.x at the last column).
     let cy = y + 18;
-    doc.fillColor(navy).fontSize(10).font('Helvetica-Bold').text('First milestone — administrative fee (50% non-refundable)', X, cy, { width: W });
+    const first = schedule.rows[0];
+    const adminHalfCents = first ? Math.round(first.amountCents / 2) : 0;
+    doc.fillColor(navy).fontSize(10).font('Helvetica-Bold').text('* First milestone — administrative fee (50% non-refundable)', X, cy, { width: W });
     doc.font('Helvetica').fillColor('#111111').fontSize(9.5).text(
-      'By signing the retainer agreement, the Client acknowledges and agrees that fifty percent (50%) of the '
-      + 'first milestone payment constitutes a non-refundable administrative fee, charged upon engagement.', X, doc.y + 2, { width: W, align: 'justify' });
+      `Of the first milestone payment of ${first ? m(first.amountCents) : '$0.00'} (before HST), fifty percent (50%) — ${m(adminHalfCents)} — `
+      + 'constitutes a non-refundable administrative fee, charged upon engagement. The remainder of the first milestone is subject to the '
+      + 'refund terms of the retainer agreement. By signing the retainer agreement, the Client acknowledges and agrees to this.',
+      X, doc.y + 2, { width: W, align: 'justify' });
     cy = doc.y + 14;
 
     if (govFeeDollars != null) {
