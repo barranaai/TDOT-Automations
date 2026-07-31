@@ -32,6 +32,7 @@ const { clientMasterBoardId, cmColumns } = require('../../config/monday');
 
 const CM = {
   clientEmail:   'text_mm0xw6bp',
+  clientPhone:   'phone_mm33zr0c',    // titled "Client Contact Number" on the board
   caseType:      'dropdown_mm0xd1qn', // setting this (separately) triggers caseRefService
   caseSubType:   'dropdown_mm0x4t91', // written from the lead's selectedSubType when present
   paymentStatus: 'color_mm0x9fnn',    // titled "Payment Status" on the board
@@ -49,6 +50,41 @@ const LEAD_TO_CANONICAL = {
   'Visitor Visa': 'Visitor Visa',
   'Citizenship':  'Citizenship',
 };
+
+/**
+ * PURE — Monday phone-column value from a free-typed lead phone. Monday wants
+ * { phone, countryShortName }; a North American number gets the CA flag, other
+ * international formats go through without one. null = nothing usable (never
+ * write garbage into the client record).
+ */
+function phoneColValue(raw) {
+  const s = String(raw || '').trim();
+  const cleaned = s.replace(/[^\d+]/g, '');
+  const bare = cleaned.replace(/\D/g, '');
+  if (bare.length < 7) return null;
+  if (/^1?\d{10}$/.test(bare)) return { phone: `+1${bare.slice(-10)}`, countryShortName: 'CA' };
+  return { phone: cleaned.startsWith('+') ? cleaned : `+${bare}` };
+}
+
+/**
+ * Best-effort: copy the client's phone onto the Client Master row ("Client
+ * Contact Number"). Separate from the create mutation so an odd phone format
+ * can never fail the case creation itself.
+ */
+async function setClientPhone(itemId, lead) {
+  const v = phoneColValue(lead && lead.phone);
+  if (!v) return;
+  try {
+    await mondayApi.query(
+      `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+         change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+       }`,
+      { boardId: String(clientMasterBoardId), itemId: String(itemId), cols: JSON.stringify({ [CM.clientPhone]: v }) }
+    );
+  } catch (err) {
+    console.warn(`[Handoff] Client phone write failed for CM ${itemId} (lead ${lead && lead.id}): ${err.message}`);
+  }
+}
 
 const _inFlight = new Map(); // leadId → Promise (collapses concurrent calls in-process)
 let _cachedGroupId = null;
@@ -251,6 +287,7 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
         { boardId: String(clientMasterBoardId), itemId: String(existing), cols: JSON.stringify(reuseCols) }
       ).catch((err) => console.warn(`[Handoff] Folder carry to reused CM ${existing} failed: ${err.message}`));
     }
+    await setClientPhone(existing, lead);
     return existing;
   }
 
@@ -295,6 +332,9 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
   await leadService.updateLead(leadId, presigned
     ? { clientMasterItemId: newId }
     : { clientMasterItemId: newId, conversionStatus: 'Retained — Awaiting Payment' });
+
+  // Client contact number — separate best-effort write (see setClientPhone).
+  await setClientPhone(newId, lead);
 
   // Preserve the lead's conversation history (its Updates thread) on the new case.
   await transferLeadUpdates(leadId, newId);
@@ -476,4 +516,4 @@ async function openCaseEarly({ leadId }) {
   try { return await p; } finally { _inFlight.delete(key); }
 }
 
-module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, transferLeadUpdates, buildImportedHistoryChunks };
+module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone };
