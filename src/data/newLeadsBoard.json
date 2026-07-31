@@ -104,7 +104,8 @@
     "inviteSentAt": "date_mm4xn57e",
     "consultAgreementSigned": "date_mm5em108",
     "consultOption": "text_mm5qb9kb",
-    "consultCountersign": "text_mm5rc93t"
+    "consultCountersign": "text_mm5rc93t",
+    "retainerCountersign": "text_mm5say4s"
   },
   "createdAt": "2026-06-08T18:00:45.756Z",
   "directRetainerGroupId": "group_mm5qe7tb"

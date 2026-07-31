@@ -66,6 +66,7 @@ const COL_TYPE = {
   consultAgreementSent: 'date', consultAgreementSigned: 'date',
   consultOption: 'text', // JSON: the booking-page choice {durationMin, feeCents, variationId, consultant}
   consultCountersign: 'text', // JSON: consult e-sign envelope state {clientEnvelopeId, clientItemId, envelopeId, itemId, signUrl, sentAt, signedAt}
+  retainerCountersign: 'text', // JSON: retainer e-sign envelope state (same shape as consultCountersign)
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));
@@ -98,7 +99,12 @@ function buildCols(fields, clearKeys = []) {
     const isEmpty = (value === undefined || value === null || value === '');
     if (isEmpty && !clear.has(key)) continue;
     const colId = COLS[key];
-    if (!colId) continue; // unknown field — skip safely
+    if (!colId) {
+      // Skip safely, but LOUDLY — a silently-dropped key hid the retainer
+      // envelope-id write (adobeSignAgreementId) for weeks.
+      console.warn(`[Lead] updateLead: no column mapping for key "${key}" — value dropped`);
+      continue;
+    }
     cols[colId] = formatValue(COL_TYPE[key] || 'text', isEmpty ? '' : value);
   }
   return cols;

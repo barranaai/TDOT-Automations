@@ -249,6 +249,11 @@ async function getConsultationDetail(leadId) {
     retainerSent:   lead.retainerSent || '',
     retainerSigned: lead.retainerSigned || '',
     retainerPaid:   lead.retainerPaid || '',
+    // RCIC countersign over the client-signed retainer (mirrors consultAgreement.countersign)
+    retainerCountersign: (() => {
+      const rc = require('./retainerCountersignService').parseRetainerCountersign(lead);
+      return { sentAt: rc.sentAt || '', signedAt: rc.signedAt || '' };
+    })(),
     conversionStatus: lead.conversionStatus || '', // 'Retained' once signed AND paid — locks the send button
     clientMasterItemId: lead.clientMasterItemId || '',
 
@@ -759,6 +764,7 @@ function validateAction(action, value) {
     case 'sendConsultAgreement':
     case 'sendConsultationPackage':
     case 'consultantSignAgreement':
+    case 'consultantSignRetainer':
     case 'retainAndSend':
       return { ok: true, normalized: null };
     default:
@@ -996,6 +1002,19 @@ async function applyAction({ leadId, action, value, amend = false }) {
         : (r.resumed ? 'The countersign envelope is already out — the signing link is in the consultant\'s email (Documenso).' : 'Countersign envelope issued — the signing link has been emailed to the consultant (Documenso).') };
     }
 
+    case 'consultantSignRetainer': {
+      const r = await require('./retainerCountersignService').startRetainerCountersign(leadId);
+      if (r.alreadySigned) {
+        return { ok: true, message: 'The consultant has already countersigned this retainer — nothing to do.' };
+      }
+      if (!r.resumed) {
+        await postPortalNote(leadId, 'RCIC countersign envelope issued (Documenso) over the client-signed retainer agreement — completion auto-records and emails the client their fully signed copy.');
+      }
+      return { ok: true, signUrl: r.signUrl || '', message: r.signUrl
+        ? (r.resumed ? 'The countersign envelope was already out — opening the signing page.' : 'Countersign envelope issued — opening the signing page.')
+        : (r.resumed ? 'The countersign envelope is already out — the signing link is in the consultant\'s email (Documenso).' : 'Countersign envelope issued — the signing link has been emailed to the consultant (Documenso).') };
+    }
+
     case 'saveRetainerSelections': {
       const s = v.normalized;
       // Canonical case-type / sub-type enforcement: the SAME vocabulary must flow
@@ -1119,6 +1138,15 @@ async function getSignedConsultAgreementPdf(leadId) {
   const buffer = await require('./consultAgreementService').getSignedConsultPdf(lead);
   if (!buffer) { const e = new Error('No signed copy is available yet — the signed PDF could not be retrieved from OneDrive or Documenso.'); e.notFound = true; throw e; }
   return { buffer, filename: `consult-agreement-SIGNED-${leadId}.pdf` };
+}
+
+/** The SIGNED retainer PDF (client-signed; fully signed once the RCIC countersigns). */
+async function getSignedRetainerAgreementPdf(leadId) {
+  const lead = await leadService.getLead(leadId);
+  if (!lead) { const e = new Error('Lead not found'); e.notFound = true; throw e; }
+  const buffer = await require('./retainerCountersignService').getSignedRetainerPdf(lead);
+  if (!buffer) { const e = new Error('No signed copy is available yet — the signed PDF could not be retrieved from OneDrive or Documenso.'); e.notFound = true; throw e; }
+  return { buffer, filename: `retainer-agreement-SIGNED-${leadId}.pdf` };
 }
 
 // ─── Direct retainer client (walk-in / referral — no booking, no consultation) ─
@@ -1314,7 +1342,7 @@ async function getDirectClientOptions() {
 module.exports = {
   getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS,
   getLeadsQueue, getLeadDetail, buildIntakeSections,
-  parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement, getSignedConsultAgreementPdf,
+  parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement, getSignedConsultAgreementPdf, getSignedRetainerAgreementPdf,
   resolveFamilyMembers, FAMILY_MEMBER_TYPES, MILESTONE_TRIGGER_STAGES,
   createDirectClient, getDirectClientOptions, getDirectRetainerQueue, DIRECT_SOURCE,
 };

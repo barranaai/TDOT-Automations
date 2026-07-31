@@ -271,7 +271,14 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
         // 'Consulted' only for clients who actually booked/held a consultation —
         // a DIRECT retainer client (walk-in/referral) must not be mislabeled.
         ...(hadConsultation(lead) ? { conversionStatus: 'Consulted' } : {}),
-        adobeSignAgreementId: String(env.envelopeId), // existing e-sign id column
+        // The client envelope ids live in the countersign state — they are the
+        // download reference for the client-signed PDF when the RCIC later
+        // countersigns. (Replaces the old adobeSignAgreementId write, which was
+        // silently dropped: that key never had a Lead Board column mapping.)
+        retainerCountersign: JSON.stringify({
+          ...require('./retainerCountersignService').parseRetainerCountersign(lead),
+          clientEnvelopeId: String(env.envelopeId), clientItemId: env.envelopeItemId != null ? String(env.envelopeItemId) : '',
+        }),
       });
       await postLeadNote(leadId,
         `📤 <b>Retainer agreement sent for e-signature (Documenso)</b> to ${esc(lead.email)} ` +

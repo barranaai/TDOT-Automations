@@ -43,12 +43,12 @@ function isEnabled() {
 }
 
 // ─── externalId ⇄ (type, leadId) ─────────────────────────────────────────────
-// Types: retainer (client signs), consult (client signs), consult2 (the RCIC
-// countersign of the client-signed consultation agreement — a second envelope
+// Types: retainer / consult (the CLIENT signs), retainer2 / consult2 (the RCIC
+// countersign of the respective client-signed agreement — a second envelope
 // whose only recipient is the consultant).
 function externalIdFor(type, leadId) { return `${type}-${leadId}`; }
 function parseExternalId(externalId) {
-  const m = /^(retainer|consult2|consult)-(\d+)$/.exec(String(externalId || '').trim());
+  const m = /^(retainer2|retainer|consult2|consult)-(\d+)$/.exec(String(externalId || '').trim());
   return m ? { type: m[1], leadId: m[2] } : null;
 }
 
@@ -310,31 +310,39 @@ async function captureCompleted(body) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error(`lead ${leadId} not found`); e.badRequest = true; throw e; }
   const consultAgreementSvc = require('./consultAgreementService');
+  const retainerCountersignSvc = require('./retainerCountersignService');
   const csState = consultAgreementSvc.parseCountersign(lead);
+  const rcState = retainerCountersignSvc.parseRetainerCountersign(lead);
 
-  // consult2 guard: a completion naming an envelope that is NOT the recorded
+  // Countersign guard: a completion naming an envelope that is NOT the recorded
   // countersign envelope must not stamp/email anything for this lead.
-  if (type === 'consult2') {
+  if (type === 'consult2' || type === 'retainer2') {
+    const state = type === 'consult2' ? csState : rcState;
     const wired = [p.envelopeId, p.id].filter((x) => x != null).map(String);
-    if (csState.envelopeId && wired.length && !wired.includes(String(csState.envelopeId))) {
-      console.warn(`[Documenso] consult2 completion for lead ${leadId} names envelope ${wired.join('/')} but the recorded countersign envelope is ${csState.envelopeId} — skipping`);
-      return { skipped: 'consult2 envelope mismatch' };
+    if (state.envelopeId && wired.length && !wired.includes(String(state.envelopeId))) {
+      console.warn(`[Documenso] ${type} completion for lead ${leadId} names envelope ${wired.join('/')} but the recorded countersign envelope is ${state.envelopeId} — skipping`);
+      return { skipped: `${type} envelope mismatch` };
     }
   }
 
-  // 2. Download the signed PDF and store it to OneDrive (best-effort). The
-  //    consult2 (countersigned) copy uses the SAME filename as the consult one —
+  // 2. Download the signed PDF; store it to OneDrive (best-effort) unless:
+  //    - a late/replayed CLIENT completion would REGRESS the canonical SIGNED
+  //      file to the client-only copy after the countersign completed, or
+  //    - the type is retainer2, whose storage happens in
+  //      recordRetainerCountersignComplete targeting the RENAMED case folder
+  //      (the generic LEAD-named path would resurrect a stale folder).
+  //    The countersigned (…2) copies use the SAME filename as the client ones —
   //    the fully-signed version replaces the client-only version as the one
-  //    canonical "SIGNED" file. For that same reason a late/replayed CLIENT
-  //    (consult) completion must NOT store once the countersign is recorded —
-  //    it would regress the canonical file to the client-only copy.
+  //    canonical "SIGNED" file.
   let stored = false;
   let signedPdf = null;
-  const storeWouldRegress = type === 'consult' && Boolean(csState.signedAt);
+  const skipStore = (type === 'consult' && Boolean(csState.signedAt))
+    || (type === 'retainer' && Boolean(rcState.signedAt))
+    || type === 'retainer2';
   try {
-    if (itemId != null && !storeWouldRegress) {
+    if (itemId != null) {
       signedPdf = await downloadSignedPdf(itemId);
-      if (signedPdf && signedPdf.length) {
+      if (signedPdf && signedPdf.length && !skipStore) {
         const oneDrive = require('./oneDriveService');
         const ref = { clientName: lead.fullName || `Lead ${leadId}`, caseRef: `LEAD-${leadId}` };
         await oneDrive.ensureClientFolder(ref).catch(() => {});
@@ -355,9 +363,31 @@ async function captureCompleted(body) {
   if (type === 'retainer') {
     // Exactly what a human clicking "Mark retainer signed" does — setting the
     // date fires the Monday webhook → onRetainerSigned → the case opens. Single
-    // path, no double-run.
-    if (!lead.retainerSigned) await leadService.updateLead(leadId, { retainerSigned: todayISO() });
+    // path, no double-run. The COMPLETED envelope's ids ride along in the
+    // countersign state as the client-signed download reference.
+    if (!lead.retainerSigned) {
+      await leadService.updateLead(leadId, {
+        retainerSigned: todayISO(),
+        retainerCountersign: JSON.stringify({
+          ...rcState,
+          ...(envId != null ? { clientEnvelopeId: String(envId) } : {}),
+          ...(itemId != null ? { clientItemId: String(itemId) } : {}),
+        }),
+      });
+    }
     await postNote(leadId, `✍️ <b>Retainer agreement signed via Documenso</b>${stored ? ' — signed copy saved to OneDrive.' : '.'} The case will open automatically.`);
+  } else if (type === 'retainer2') {
+    // RCIC countersign completed → the retainer is FULLY signed. Same
+    // event-fabrication guard as consult2: with no signed payload in hand,
+    // verify the envelope really completed before stamping.
+    if (!(signedPdf && signedPdf.length) && envId) {
+      try {
+        const env = await getEnvelope(envId);
+        const status = String((env && env.status) || '').toUpperCase();
+        if (status && !status.includes('COMPLET')) return { skipped: `retainer2 envelope status ${status}` };
+      } catch (_) { /* can't verify — proceed; recordRetainerCountersignComplete still dedupes replays */ }
+    }
+    await retainerCountersignSvc.recordRetainerCountersignComplete(lead, { signedPdf, stored });
   } else if (type === 'consult2') {
     // RCIC countersign completed → the agreement is FULLY signed. Record it on
     // the countersign state (never touching consultAgreementSigned — that is the
@@ -397,7 +427,7 @@ async function captureCompleted(body) {
     type, leadId, stored,
     retainerSignedSet: type === 'retainer' && !lead.retainerSigned,
     consultSignedSet:  type === 'consult'  && !lead.consultAgreementSigned,
-    countersignSet:    type === 'consult2',
+    countersignSet:    type === 'consult2' || type === 'retainer2',
   };
 }
 
