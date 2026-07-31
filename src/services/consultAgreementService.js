@@ -273,7 +273,16 @@ async function _doStartConsultCountersign(leadId) {
   }
   const cs = parseCountersign(lead);
   if (cs.signedAt) return { alreadySigned: true };
-  if (cs.envelopeId) return { envelopeId: cs.envelopeId, signUrl: safeSignUrl(cs.signUrl), resumed: true };
+  if (cs.envelopeId) {
+    // Envelopes issued before signing-link resolution existed stored no URL —
+    // recover it now so the resumed click still opens the signing page.
+    let url = safeSignUrl(cs.signUrl);
+    if (!url) {
+      url = safeSignUrl(await documenso.recipientSignUrl(cs.envelopeId));
+      if (url) leadService.updateLead(leadId, { consultCountersign: JSON.stringify({ ...cs, signUrl: url }) }).catch(() => {});
+    }
+    return { envelopeId: cs.envelopeId, signUrl: url, resumed: true };
+  }
 
   const consultant = require('../../config/consultantRouting').resolveConsultant(lead);
   if (!consultant || !consultant.email) {

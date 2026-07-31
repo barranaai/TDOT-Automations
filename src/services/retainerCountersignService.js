@@ -140,7 +140,16 @@ async function _doStartRetainerCountersign(leadId) {
   }
   const rc = parseRetainerCountersign(lead);
   if (rc.signedAt) return { alreadySigned: true };
-  if (rc.envelopeId) return { envelopeId: rc.envelopeId, signUrl: safeSignUrl(rc.signUrl), resumed: true };
+  if (rc.envelopeId) {
+    // Envelopes issued before signing-link resolution existed stored no URL —
+    // recover it now so the resumed click still opens the signing page.
+    let url = safeSignUrl(rc.signUrl);
+    if (!url) {
+      url = safeSignUrl(await documenso.recipientSignUrl(rc.envelopeId));
+      if (url) leadService.updateLead(leadId, { retainerCountersign: JSON.stringify({ ...rc, signUrl: url }) }).catch(() => {});
+    }
+    return { envelopeId: rc.envelopeId, signUrl: url, resumed: true };
+  }
 
   const consultant = require('../../config/consultantRouting').resolveConsultant(lead);
   if (!consultant || !consultant.email) {
