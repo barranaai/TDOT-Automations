@@ -1117,7 +1117,7 @@ function renderMilestonePayments(list){
 }
 function rebuildMilestones(rows){
   var tb=rpEl('milestone-body'); tb.innerHTML='';
-  if(!rows||!rows.length) rows=[{label:'Milestone 1 – Non-Refundable Admin Fee',amountCents:0,locked:true}];
+  if(!rows||!rows.length) rows=[{label:'Milestone 1 – Admin Fee (50% Non-Refundable)',amountCents:0,locked:true}];
   rows.forEach(function(m,i){ var tr=document.createElement('tr'); tr.innerHTML=mileRowHtml(m,i===0); tb.appendChild(tr); });
   bindMile();
 }

@@ -6,7 +6,7 @@
  *   applicantCount     lead.hasSpouse + childrenCount → { adults, children, total }
  *   computeFees        professional fee → HST + total (Ontario 13%)
  *   computeGovFee      annex gov-fee key + applicants → default government-fee total
- *   defaultMilestones  professional fee → 1 default row (the locked non-refundable admin fee)
+ *   defaultMilestones  professional fee → 1 default row (locked; 50% of it is the non-refundable admin fee)
  *   validateMilestones rows must sum to the professional fee, row 1 locked
  *
  * No I/O, no Monday — deterministic and unit-tested. The consultant is the final
@@ -156,13 +156,18 @@ function computeGovFee(govFeeKey, applicants = {}, { withRprf = true } = {}) {
 
 // ---- Milestones (§10) ----
 
-const ADMIN_LABEL = 'Milestone 1 – Non-Refundable Admin Fee';
+// The non-refundable portion is 50% OF THE FIRST MILESTONE'S AMOUNT — that half
+// is the administrative fee (user directive 2026-07-31). The label and the
+// Annex B acknowledgement both state it that way; the whole milestone is NOT
+// non-refundable.
+const ADMIN_LABEL = 'Milestone 1 – Admin Fee (50% Non-Refundable)';
 
 /**
  * Pre-fill the milestone schedule: ONE row by default (user decision 2026-07-30)
- * — the locked non-refundable admin fee carrying the full professional fee.
- * Staff add further rows / split as the deal actually calls for; a multi-row
- * default kept shipping agreements with an unintended 4-way split.
+ * — the locked first milestone carrying the full professional fee, of which 50%
+ * is the non-refundable admin fee. Staff add further rows / split as the deal
+ * actually calls for; a multi-row default kept shipping agreements with an
+ * unintended 4-way split.
  */
 function defaultMilestones(serviceFeeCents, n = 1) {
   const fee = Math.max(0, Math.round(Number(serviceFeeCents) || 0));
@@ -190,7 +195,7 @@ function validateMilestones(rows, serviceFeeCents) {
 
   if (!list.length) errors.push('At least one milestone is required.');
   if (list[0] && !/non-?refundable/i.test(String(list[0].label || ''))) {
-    errors.push('The first milestone must be the non-refundable administrative fee.');
+    errors.push('The first milestone must carry the administrative fee (50% of it non-refundable).');
   }
   if (list.some((r) => !(Math.round(Number(r && r.amountCents) || 0) > 0))) {
     errors.push('Every milestone must have an amount greater than zero.');

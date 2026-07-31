@@ -89,10 +89,10 @@ function buildMilestoneAnnexPdf({ schedule, hstRate = 0.13, govFeeDollars = null
     // First-milestone (admin fee) acknowledgement — mirrors the master agreement.
     // Reset x to the left margin (the table left doc.x at the last column).
     let cy = y + 18;
-    doc.fillColor(navy).fontSize(10).font('Helvetica-Bold').text('First milestone — non-refundable administrative fee', X, cy, { width: W });
+    doc.fillColor(navy).fontSize(10).font('Helvetica-Bold').text('First milestone — administrative fee (50% non-refundable)', X, cy, { width: W });
     doc.font('Helvetica').fillColor('#111111').fontSize(9.5).text(
-      'By signing the retainer agreement, the Client acknowledges and agrees that the first milestone is a '
-      + 'non-refundable administrative fee, charged upon engagement.', X, doc.y + 2, { width: W, align: 'justify' });
+      'By signing the retainer agreement, the Client acknowledges and agrees that fifty percent (50%) of the '
+      + 'first milestone payment constitutes a non-refundable administrative fee, charged upon engagement.', X, doc.y + 2, { width: W, align: 'justify' });
     cy = doc.y + 14;
 
     if (govFeeDollars != null) {
