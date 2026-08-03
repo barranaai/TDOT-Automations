@@ -370,6 +370,15 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
     .doc-meta .upload-date {
       font-size: 11px; color: #94a3b8; margin-top: 6px;
     }
+    .doc-meta .doc-guide {
+      margin-top: 8px; padding: 8px 10px;
+      background: #f8fafc; border-left: 3px solid #cbd5e1;
+      border-radius: 4px; font-size: 12px; color: #475569;
+      line-height: 1.55; max-width: 640px;
+    }
+    .doc-meta .doc-guide ul { margin: 2px 0 0 16px; padding: 0; }
+    .doc-meta .doc-guide li { margin: 3px 0; }
+    .doc-meta .doc-guide a { color: #1d4ed8; }
     .doc-meta .review-notes {
       margin-top: 8px; padding: 8px 10px;
       background: #fef2f2; border-left: 3px solid #fca5a5;
@@ -847,11 +856,18 @@ function rowHtml(it, folderUrl) {
     ? `<div class="desc">${escHtml(it.description)}</div>`
     : '';
 
+  // What the CLIENT was asked to provide — the reviewer needs the same
+  // yardstick the client saw to judge whether the upload satisfies it.
+  const guideBlock = it.clientInstructions
+    ? `<div class="doc-guide">💡 ${require('./instructionFormatter').formatInstructions(it.clientInstructions)}</div>`
+    : '';
+
   return `
     <div class="doc-row" data-item-id="${escHtml(it.id)}" data-status="${escHtml(status)}">
       <div class="doc-meta">
         <div class="name">${escHtml(it.name)}</div>
         ${descBlock}
+        ${guideBlock}
         ${dateBlock}
         ${noteBlock}
         <div class="replies-slot" data-item-id="${escHtml(it.id)}"></div>

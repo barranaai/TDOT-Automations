@@ -454,7 +454,7 @@ function buildPortalPage(snap, opts) {
       // Per-document guidance ("colour scan, all pages, …") exists to prevent
       // rework — show it wherever the client can act.
       const instructions = (uploadable && it.clientInstructions)
-        ? `<div class="doc-instr">${escHtml(it.clientInstructions)}</div>` : '';
+        ? `<div class="doc-instr">${require('./instructionFormatter').formatInstructions(it.clientInstructions)}</div>` : '';
       const right = uploadable
         ? `<span class="up-wrap"><label class="up-btn${it.status === 'Rework Required' ? '' : ' re'}">${it.status === 'Rework Required' ? 'Upload new copy' : 'Upload'}<input type="file" data-item="${escHtml(it.id)}" aria-label="Upload ${escHtml(it.name)}"></label><span class="up-state" data-state="${escHtml(it.id)}"></span></span>`
         : `<span class="doc-ok">${it.status === 'Reviewed' ? '✓ Reviewed' : (it.status === 'Received' ? '✓ Received' : '')}</span>`;
@@ -537,7 +537,10 @@ function buildPortalPage(snap, opts) {
     .doc-tag { display:inline-block; font-size:10px; font-weight:700; color:#8A7B57; background:#F6F1E4; border-radius:999px; padding:1px 8px; margin-left:6px; vertical-align:middle; }
     .doc-meta { font-size:11.5px; color:#9AA3AF; margin-top:1px; }
     .doc-note { font-size:12px; color:#7f1d1d; background:#fef2f2; border-left:3px solid #fca5a5; border-radius:6px; padding:7px 10px; margin-top:6px; }
-    .doc-instr { font-size:12px; color:#6B7280; background:#F8F6F0; border-left:3px solid #E2D9C3; border-radius:6px; padding:7px 10px; margin-top:6px; }
+    .doc-instr { font-size:12px; color:#6B7280; background:#F8F6F0; border-left:3px solid #E2D9C3; border-radius:6px; padding:7px 10px; margin-top:6px; line-height:1.55; }
+    .doc-instr ul { margin:2px 0 0 16px; padding:0; }
+    .doc-instr li { margin:3px 0; }
+    .doc-instr a { color:#8B0000; }
     .up-wrap { flex:none; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
     .up-btn { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#fff; background:#8B0000; border-radius:8px; padding:7px 14px; cursor:pointer; }
     .up-btn.re { background:#0B1D32; }
