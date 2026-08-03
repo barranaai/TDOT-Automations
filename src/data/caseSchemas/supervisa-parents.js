@@ -40,6 +40,7 @@ const PA_SPOUSE_DOCUMENTS = [
   },
   {
     code: 'DIGITALPHOTO', name: 'Digital photo (Temporary Resident specifications)', category: 'Identity',
+    guidance: 'Must meet IRCC temporary-resident photo specifications: https://www.canada.ca/en/immigration-refugees-citizenship/services/application/application-forms-guides/temporary-resident-visa-application-photograph-specifications.html',
   },
   {
     code: 'UPFRONTMEDICAL', name: 'Upfront Medical', category: 'Medical',
@@ -75,6 +76,7 @@ const PA_SPOUSE_DOCUMENTS = [
 const SPONSOR_DOCUMENTS = [
   {
     code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
+    guidance: 'Pages with photo, name, signature, date/place of birth, place of issue and address.',
   },
   {
     code: 'CURSTATUS', name: 'Current Status in the country', category: 'Other',

@@ -10,10 +10,14 @@ module.exports = {
   memberFlags: { nameChanged: { label: 'Applicant name/surname differs across official documents' } },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant', required: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms' },
-      { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity' },
-      { code: 'PERMITS', name: 'All permits ever held in Canada', category: 'Background' },
-      { code: 'PHOTO', name: 'Digital photo as per specifications of Temporary Residents', category: 'Identity' }
+      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
+        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
+      { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
+        guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
+      { code: 'PERMITS', name: 'All permits ever held in Canada', category: 'Background',
+        guidance: 'Your status documents in the country, i.e. study permits, work permits and visitor records you have ever held.' },
+      { code: 'PHOTO', name: 'Digital photo as per specifications of Temporary Residents', category: 'Identity',
+        guidance: 'Must meet IRCC temporary-resident photo specifications: https://www.canada.ca/en/immigration-refugees-citizenship/services/application/application-forms-guides/temporary-resident-visa-application-photograph-specifications.html' }
     ] }
   ],
 };
