@@ -445,7 +445,10 @@ function buildPortalPage(snap, opts) {
     || new Set((snap.docItems || []).map((d) => d.applicantLabel || d.applicantType || '')).size > 1;
   const docListHtml = [...docsByCat.entries()].map(([cat, items]) => {
     const rows = items.map((it) => {
-      const uploadable = !isStaff && (it.status === 'Missing' || it.status === 'Rework Required');
+      // Uploads stay open until the team marks the item Reviewed — matching the
+      // full upload page, so a client with several files (bank statements etc.)
+      // can keep adding them here instead of hunting for the other page.
+      const uploadable = !isStaff && it.status !== 'Reviewed';
       const statusLine = it.status === 'Missing'
         ? 'Not uploaded yet'
         : `${escHtml(it.status === 'Rework Required' ? 'Needs a new copy' : it.status)}${it.lastUpload ? ` · uploaded ${escHtml(it.lastUpload)}` : ''}`;
@@ -456,7 +459,7 @@ function buildPortalPage(snap, opts) {
       const instructions = (uploadable && it.clientInstructions)
         ? `<div class="doc-instr">${require('./instructionFormatter').formatInstructions(it.clientInstructions)}</div>` : '';
       const right = uploadable
-        ? `<span class="up-wrap"><label class="up-btn${it.status === 'Rework Required' ? '' : ' re'}">${it.status === 'Rework Required' ? 'Upload new copy' : 'Upload'}<input type="file" data-item="${escHtml(it.id)}" aria-label="Upload ${escHtml(it.name)}"></label><span class="up-state" data-state="${escHtml(it.id)}"></span></span>`
+        ? `<span class="up-wrap"><label class="up-btn${it.status === 'Rework Required' ? '' : ' re'}">${it.status === 'Rework Required' ? 'Upload new copy' : (it.status === 'Missing' ? 'Upload' : 'Add more files')}<input type="file" multiple data-item="${escHtml(it.id)}" aria-label="Upload ${escHtml(it.name)}"></label><span class="up-state" data-state="${escHtml(it.id)}"></span></span>`
         : `<span class="doc-ok">${it.status === 'Reviewed' ? '✓ Reviewed' : (it.status === 'Received' ? '✓ Received' : '')}</span>`;
       return `<div class="doc-row"><span class="doc-dot" style="background:${DOC_DOT[it.status] || '#C9CDD4'}"></span>
         <div class="doc-main">
@@ -728,7 +731,7 @@ function buildPortalPage(snap, opts) {
     </p>
 
   </main>
-  ${!isStaff && (snap.docItems || []).some((d) => d.status === 'Missing' || d.status === 'Rework Required') ? `<script>
+  ${!isStaff && (snap.docItems || []).some((d) => d.status !== 'Reviewed') ? `<script>
   (function () {
     var CASE_REF = ${jsLit(snap.caseRef)};
     var TOKEN    = ${jsLit(snap.accessToken || '')};
@@ -750,36 +753,40 @@ function buildPortalPage(snap, opts) {
       if (label) label.classList[on ? 'add' : 'remove']('busy');
       input.disabled = !!on;
     }
+    function uploadOne(id, file) {
+      inFlight++;
+      var fd = new FormData();
+      fd.append('file', file, file.name);
+      return fetch('/client/' + encodeURIComponent(CASE_REF) + '/document/' + encodeURIComponent(id) + '/upload?t=' + encodeURIComponent(TOKEN), {
+        method: 'POST', body: fd
+      })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok && j.success, j: j }; }); })
+      .then(function (res) { settle(); return res.ok ? { ok: true } : { ok: false, error: (res.j && res.j.error) || 'Upload failed — please try again.' }; })
+      .catch(function () { settle(); return { ok: false, error: 'Upload failed — please check your connection and try again.' }; });
+    }
     Array.prototype.forEach.call(document.querySelectorAll('input[type="file"][data-item]'), function (input) {
       input.addEventListener('change', function () {
-        var file = input.files && input.files[0];
-        if (!file) return;
+        // Multiple files per pick — uploaded ONE AT A TIME so a single failure
+        // names the file that failed and the rest still land.
+        var files = Array.prototype.slice.call(input.files || []);
+        if (!files.length) return;
         var id = input.getAttribute('data-item');
-        if (file.size > MAX) { state(id, 'File is over 20 MB — please send a smaller copy.', true); input.value = ''; return; }
+        var over = files.filter(function (f) { return f.size > MAX; });
+        if (over.length) { state(id, '"' + over[0].name + '" is over 20 MB — please send a smaller copy.', true); input.value = ''; return; }
         lock(input, true);
-        inFlight++;
-        state(id, 'Uploading ' + file.name + '…');
-        var fd = new FormData();
-        fd.append('file', file, file.name);
-        fetch('/client/' + encodeURIComponent(CASE_REF) + '/document/' + encodeURIComponent(id) + '/upload?t=' + encodeURIComponent(TOKEN), {
-          method: 'POST', body: fd
-        })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok && j.success, j: j }; }); })
-        .then(function (res) {
-          if (res.ok) { state(id, 'Uploaded ✓'); wantReload = true; }
-          else {
-            state(id, (res.j && res.j.error) || 'Upload failed — please try again.', true);
-            lock(input, false);
-            input.value = '';
+        var done = 0, failed = null;
+        (function next(i) {
+          if (i >= files.length) {
+            if (failed) { state(id, failed, true); lock(input, false); input.value = ''; }
+            else { state(id, files.length > 1 ? ('All ' + files.length + ' files uploaded ✓') : 'Uploaded ✓'); wantReload = true; }
+            return;
           }
-          settle();
-        })
-        .catch(function () {
-          state(id, 'Upload failed — please check your connection and try again.', true);
-          lock(input, false);
-          input.value = '';
-          settle();
-        });
+          state(id, 'Uploading ' + files[i].name + (files.length > 1 ? (' (' + (i + 1) + ' of ' + files.length + ')') : '') + '…');
+          uploadOne(id, files[i]).then(function (res) {
+            if (res.ok) { done++; } else if (!failed) { failed = '"' + files[i].name + '": ' + res.error + (done ? ' (' + done + ' file(s) did upload)' : ''); }
+            next(i + 1);
+          });
+        })(0);
       });
     });
   })();
