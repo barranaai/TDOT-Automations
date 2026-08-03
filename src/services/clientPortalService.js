@@ -225,6 +225,7 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
     status:         it.status || 'Missing',
     category:       it.category || 'General',
     applicantType:  it.applicantType || 'Principal Applicant',
+    applicantLabel: it.applicantLabel || it.applicantType || 'Principal Applicant',
     reviewNotes:    it.reviewNotes || '',
     clientInstructions: it.clientInstructions || '',
     lastUpload:     it.lastUpload || '',
@@ -436,7 +437,12 @@ function buildPortalPage(snap, opts) {
     if (!docsByCat.has(it.category)) docsByCat.set(it.category, []);
     docsByCat.get(it.category).push(it);
   }
-  const showTag = snap.totalMembers > 1;
+  // Show the role tag whenever the CHECKLIST spans more than one party — not
+  // just when the case has multiple family members: a single-applicant visitor
+  // case still has Inviter documents, and without tags the repeated names
+  // ("Passport…" for applicant AND inviter) read as unexplained duplicates.
+  const showTag = snap.totalMembers > 1
+    || new Set((snap.docItems || []).map((d) => d.applicantLabel || d.applicantType || '')).size > 1;
   const docListHtml = [...docsByCat.entries()].map(([cat, items]) => {
     const rows = items.map((it) => {
       const uploadable = !isStaff && (it.status === 'Missing' || it.status === 'Rework Required');
@@ -454,7 +460,7 @@ function buildPortalPage(snap, opts) {
         : `<span class="doc-ok">${it.status === 'Reviewed' ? '✓ Reviewed' : (it.status === 'Received' ? '✓ Received' : '')}</span>`;
       return `<div class="doc-row"><span class="doc-dot" style="background:${DOC_DOT[it.status] || '#C9CDD4'}"></span>
         <div class="doc-main">
-          <div class="doc-name">${escHtml(it.name)}${showTag ? `<span class="doc-tag">${escHtml(it.applicantType)}</span>` : ''}</div>
+          <div class="doc-name">${escHtml(it.name)}${showTag ? `<span class="doc-tag">${escHtml(it.applicantLabel || it.applicantType)}</span>` : ''}</div>
           <div class="doc-meta">${statusLine}</div>
           ${instructions}
           ${note}

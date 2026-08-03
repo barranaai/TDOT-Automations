@@ -200,4 +200,41 @@ function findOrphanMembers({ schema, composition }) {
   return [...byRole.entries()].map(([role, count]) => ({ role, label: camelToWords(role), count }));
 }
 
-module.exports = { seedPlan, findOrphanMembers, _internal: { camelToWords, slugUpper, isRoleIncluded, isDocIncluded, roleFamily } };
+/**
+ * Reverse of the documentCode format this planner emits
+ * (`CASETYPE-SUBTYPE-ROLESLUG[idx]-DOCCODE-001`): resolve a code back to its
+ * schema, role, and document definition. This is what lets READERS recover the
+ * schema's display label and per-document guidance for already-seeded rows —
+ * no board rewrite or reseed needed.
+ * Longest schema prefix wins ("VISITOR-VISA-SPOUSE" must not shadow
+ * "VISITOR-VISA-SPOUSAL-SPONSORSHIP-IN-PROCESS" and vice versa).
+ * @returns {{schema, role, doc, memberIndex:number}|null}
+ */
+function resolveDocumentCode(code) {
+  const c = String(code || '').trim();
+  if (!c) return null;
+  const registry = require('./caseSchemaService');
+  const candidates = [];
+  for (const { caseType, subType } of registry.listRegistered()) {
+    const prefix = `${slugUpper(caseType)}-${slugUpper(subType)}`;
+    if (c.startsWith(`${prefix}-`)) candidates.push({ caseType, subType, prefix });
+  }
+  candidates.sort((a, b) => b.prefix.length - a.prefix.length);
+  for (const cand of candidates) {
+    const schema = registry.lookup(cand.caseType, cand.subType);
+    if (!schema || !Array.isArray(schema.roles)) continue;
+    const rest = c.slice(cand.prefix.length + 1); // ROLESLUG[idx]-DOCCODE-001
+    for (const roleDef of schema.roles) {
+      const rs = slugUpper(roleDef.role);
+      if (!rest.startsWith(rs)) continue;
+      const after = rest.slice(rs.length);         // [idx]-DOCCODE-001
+      const m = /^(\d*)-(.+)-001$/.exec(after);
+      if (!m) continue;
+      const doc = (roleDef.documents || []).find((d) => d.code === m[2]);
+      if (doc) return { schema, role: roleDef, doc, memberIndex: m[1] ? Number(m[1]) : 1 };
+    }
+  }
+  return null;
+}
+
+module.exports = { seedPlan, findOrphanMembers, resolveDocumentCode, _internal: { camelToWords, slugUpper, isRoleIncluded, isDocIncluded, roleFamily } };

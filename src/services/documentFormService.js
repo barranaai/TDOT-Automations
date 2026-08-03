@@ -228,8 +228,27 @@ async function getCaseDocuments(caseRef) {
       const intakeId = c(INTAKE_ID_COL);
       const tmpl     = (intakeId && templateMap[intakeId]) || {};
 
+      // Schema-seeded rows carry `code:<documentCode>` instead of a Template
+      // link — resolve the code back to the schema definition so the client
+      // still gets the per-document guidance and the role's DISPLAY label
+      // (e.g. "Inviter (in Canada)" instead of the internal role key
+      // "Sponsor"). Read-time resolution: already-seeded cases get this with
+      // no board rewrite.
+      const resolved = String(intakeId || '').startsWith('code:')
+        ? require('./seedPlanner').resolveDocumentCode(intakeId.slice(5))
+        : null;
+
       // Category: template dropdown → execution text column → mirror → fallback
       const category = tmpl.category || c(CATEGORY_TEXT_COL) || c(CATEGORY_MIRROR_COL) || 'General';
+
+      // Template-linked items carry applicantType on the Template row; schema-
+      // seeded items have NO Template link, so read their member type from the
+      // execution row's own column before defaulting. Without this fallback,
+      // every schema-seeded per-member doc renders as "Principal Applicant".
+      const applicantType = tmpl.applicantType || c(EXEC_APPLICANT_TYPE_COL) || 'Principal Applicant';
+      const applicantLabel = resolved && resolved.role.label
+        ? resolved.role.label + (resolved.memberIndex > 1 ? ` ${resolved.memberIndex}` : '')
+        : applicantType;
 
       return {
         id:                 item.id,
@@ -237,14 +256,11 @@ async function getCaseDocuments(caseRef) {
         documentCode:       c(DOC_CODE_COL),
         status:             c(DOC_STATUS_COL) || 'Missing',
         category,
-        // Template-linked items carry applicantType on the Template row; schema-
-        // seeded items have NO Template link, so read their member type from the
-        // execution row's own column before defaulting. Without this fallback,
-        // every schema-seeded per-member doc renders as "Principal Applicant".
-        applicantType:      tmpl.applicantType || c(EXEC_APPLICANT_TYPE_COL) || 'Principal Applicant',
+        applicantType,      // internal vocabulary — filters/grouping keys
+        applicantLabel,     // human-facing — what pages should DISPLAY
         lastUpload:         c(UPLOAD_DATE_COL),
         description:        tmpl.description        || '',
-        clientInstructions: tmpl.clientInstructions || '',
+        clientInstructions: tmpl.clientInstructions || (resolved && resolved.doc.guidance) || '',
         checklistPhase:     tmpl.checklistPhase     || '',
         reviewNotes:        c(REVIEW_NOTES_COL)     || '',
         intakeId,

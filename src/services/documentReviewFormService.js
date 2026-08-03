@@ -228,7 +228,7 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
   // Group: applicant member → category → items
   const groups = {};
   for (const it of items) {
-    const member = it.applicantType || 'Principal Applicant';
+    const member = it.applicantLabel || it.applicantType || 'Principal Applicant';
     const cat    = it.category      || 'General';
     if (!groups[member])           groups[member]      = {};
     if (!groups[member][cat])      groups[member][cat] = [];

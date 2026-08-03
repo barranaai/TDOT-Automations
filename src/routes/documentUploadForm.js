@@ -257,7 +257,7 @@ function groupByCategory(items) {
 function groupByMemberAndCategory(items) {
   const memberMap = {};
   items.forEach((item) => {
-    const mt = item.applicantType || 'Principal Applicant';
+    const mt = item.applicantLabel || item.applicantType || 'Principal Applicant';
     if (!memberMap[mt]) memberMap[mt] = [];
     memberMap[mt].push(item);
   });
