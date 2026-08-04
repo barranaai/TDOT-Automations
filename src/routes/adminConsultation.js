@@ -173,7 +173,7 @@ ${buildNavHeader('consultations')}
       <p class="dc-sub">Walk-in / referral entering at the retainer stage — no booking or consultation. Creates the client fully wired (case type → case reference &amp; checklist, consultant → agreement signatory &amp; case visibility), then opens the retainer panel.</p>
       <label for="dc-name">Full legal name *</label><input id="dc-name" type="text" maxlength="120" autocomplete="off">
       <label for="dc-email">Email *</label><input id="dc-email" type="email" maxlength="200" autocomplete="off">
-      <label for="dc-phone">Phone</label><input id="dc-phone" type="text" maxlength="40" autocomplete="off">
+      <label for="dc-phone">Phone *</label><input id="dc-phone" type="tel" maxlength="40" autocomplete="off" required>
       <label for="dc-address">Residential address * <span class="dc-hint">(printed on the retainer agreement)</span></label><input id="dc-address" type="text" maxlength="500" autocomplete="off" required>
       <label for="dc-casetype">Case type *</label><select id="dc-casetype"><option value="">Choose…</option></select>
       <label for="dc-subtype">Case sub-type</label><select id="dc-subtype"><option value="">— (can be set later)</option></select>
@@ -246,8 +246,8 @@ function submitDirectClient(){
   var body={ fullName:dcEl('dc-name').value, email:dcEl('dc-email').value, phone:dcEl('dc-phone').value,
              residentialAddress:dcEl('dc-address').value, caseType:dcEl('dc-casetype').value,
              caseSubType:dcEl('dc-subtype').value, consultant:dcEl('dc-consultant').value, referredBy:dcEl('dc-referred').value };
-  if(!body.fullName.trim()||!body.email.trim()||!body.caseType||!body.consultant||!body.residentialAddress.trim()){
-    err.textContent='Name, email, residential address, case type and consultant are required.'; return;
+  if(!body.fullName.trim()||!body.email.trim()||!body.phone.trim()||!body.caseType||!body.consultant||!body.residentialAddress.trim()){
+    err.textContent='Name, email, phone, residential address, case type and consultant are required.'; return;
   }
   var subOpts=(DC_OPTS&&DC_OPTS.subTypesByCase&&DC_OPTS.subTypesByCase[body.caseType])||[];
   if(subOpts.length && !body.caseSubType){

@@ -40,7 +40,7 @@ test('createDirectClient: creates a fully-wired lead (tag, case type, consultant
   ];
   try {
     const r = await portal.createDirectClient({
-      fullName: 'Walkin Client', email: 'walkin@example.com', phone: '+1416', residentialAddress: '1 Main St',
+      fullName: 'Walkin Client', email: 'walkin@example.com', phone: '+14165550100', residentialAddress: '1 Main St',
       caseType: CASE_TYPE, consultant: CONSULTANT, referredBy: 'Existing client X',
     });
     assert.equal(r.ok, true);
@@ -66,13 +66,18 @@ test('createDirectClient: rejects bad input before creating anything', async () 
     stub(mondayApi, 'query', async () => ({})),
   ];
   const ADDR = '1 Main St';
+  const PHONE = '4165550100';
   const cases = [
-    { fullName: '', email: 'a@b.co', residentialAddress: ADDR, caseType: CASE_TYPE, consultant: CONSULTANT },
-    { fullName: 'A B', email: 'not-an-email', residentialAddress: ADDR, caseType: CASE_TYPE, consultant: CONSULTANT },
-    { fullName: 'A B', email: 'a@b.co', residentialAddress: ADDR, caseType: 'Made Up Case Type', consultant: CONSULTANT },
-    { fullName: 'A B', email: 'a@b.co', residentialAddress: ADDR, caseType: CASE_TYPE, consultant: 'Unknown Person' },
+    { fullName: '', email: 'a@b.co', phone: PHONE, residentialAddress: ADDR, caseType: CASE_TYPE, consultant: CONSULTANT },
+    { fullName: 'A B', email: 'not-an-email', phone: PHONE, residentialAddress: ADDR, caseType: CASE_TYPE, consultant: CONSULTANT },
+    { fullName: 'A B', email: 'a@b.co', phone: PHONE, residentialAddress: ADDR, caseType: 'Made Up Case Type', consultant: CONSULTANT },
+    { fullName: 'A B', email: 'a@b.co', phone: PHONE, residentialAddress: ADDR, caseType: CASE_TYPE, consultant: 'Unknown Person' },
     // Address is compulsory (user directive 2026-08-04) — it prints on the agreement.
-    { fullName: 'A B', email: 'a@b.co', residentialAddress: '', caseType: CASE_TYPE, consultant: CONSULTANT },
+    { fullName: 'A B', email: 'a@b.co', phone: PHONE, residentialAddress: '', caseType: CASE_TYPE, consultant: CONSULTANT },
+    // Phone is compulsory too (user directive 2026-08-04) — it lands on the case
+    // record; validated by the SAME rule as the Client Master write (≥7 digits).
+    { fullName: 'A B', email: 'a@b.co', phone: '', residentialAddress: ADDR, caseType: CASE_TYPE, consultant: CONSULTANT },
+    { fullName: 'A B', email: 'a@b.co', phone: '12345', residentialAddress: ADDR, caseType: CASE_TYPE, consultant: CONSULTANT },
   ];
   try {
     for (const c of cases) {
@@ -84,14 +89,14 @@ test('createDirectClient: rejects bad input before creating anything', async () 
       .find((s) => s && !(SUB_TYPES_BY_CASE[withSubs] || []).includes(s));
     if (withSubs && foreignSub) {
       await assert.rejects(
-        () => portal.createDirectClient({ fullName: 'A B', email: 'a@b.co', residentialAddress: '1 Main St', caseType: withSubs, caseSubType: foreignSub, consultant: CONSULTANT }),
+        () => portal.createDirectClient({ fullName: 'A B', email: 'a@b.co', residentialAddress: '1 Main St', phone: '4165550100', caseType: withSubs, caseSubType: foreignSub, consultant: CONSULTANT }),
         (e) => e.badRequest === true);
     }
     // a sub-type supplied for a case type that HAS NO sub-types is also rejected
     const noSubs = CASE_TYPE_LABELS.find((ct) => !(SUB_TYPES_BY_CASE[ct] || []).length);
     if (noSubs) {
       await assert.rejects(
-        () => portal.createDirectClient({ fullName: 'A B', email: 'a@b.co', residentialAddress: '1 Main St', caseType: noSubs, caseSubType: 'Anything At All', consultant: CONSULTANT }),
+        () => portal.createDirectClient({ fullName: 'A B', email: 'a@b.co', residentialAddress: '1 Main St', phone: '4165550100', caseType: noSubs, caseSubType: 'Anything At All', consultant: CONSULTANT }),
         (e) => e.badRequest === true, 'foreign sub-type on a no-sub-type case type must be rejected');
     }
     assert.equal(created, false, 'no lead created on any invalid input');
@@ -110,7 +115,7 @@ test('createDirectClient: duplicate guard — an existing un-retained direct lea
     stub(mondayApi, 'query', async () => ({})),
   ];
   try {
-    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'walkin@example.com', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT });
+    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'walkin@example.com', residentialAddress: '1 Main St', phone: '4165550100', caseType: CASE_TYPE, consultant: CONSULTANT });
     assert.equal(r.reused, true);
     assert.equal(r.leadId, '777');
     assert.equal(created, false, 'no duplicate lead minted');
@@ -133,7 +138,7 @@ test('createDirectClient: guard still reuses when an OLDER non-direct lead share
     stub(mondayApi, 'query', async () => ({})),
   ];
   try {
-    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'walkin@example.com', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT });
+    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'walkin@example.com', residentialAddress: '1 Main St', phone: '4165550100', caseType: CASE_TYPE, consultant: CONSULTANT });
     assert.equal(r.reused, true, 'must find the direct lead behind the older non-direct one');
     assert.equal(r.leadId, '778');
     assert.equal(created, false, 'no duplicate minted');
@@ -152,7 +157,7 @@ test('createDirectClient: a direct lead whose retainer ALREADY went out is not r
     stub(mondayApi, 'query', async () => ({})),
   ];
   try {
-    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'walkin@example.com', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT });
+    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'walkin@example.com', residentialAddress: '1 Main St', phone: '4165550100', caseType: CASE_TYPE, consultant: CONSULTANT });
     assert.ok(!r.reused, 'a retained/sent client starts a fresh lead');
     assert.equal(created, true);
   } finally { restore.forEach((x) => x()); }
@@ -168,7 +173,7 @@ test('createDirectClient: wiring failure NEVER strands staff — retries once, t
     stub(mondayApi, 'query', async () => ({})), // failure note (best-effort)
   ];
   try {
-    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'w2@example.com', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT });
+    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'w2@example.com', residentialAddress: '1 Main St', phone: '4165550100', caseType: CASE_TYPE, consultant: CONSULTANT });
     assert.equal(r.ok, true, 'no throw — throwing would tell staff to re-create (duplicate)');
     assert.equal(r.leadId, '901', 'staff lands on the created lead');
     assert.ok(r.warning, 'the manual-fix warning is surfaced');

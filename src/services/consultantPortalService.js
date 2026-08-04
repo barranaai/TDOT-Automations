@@ -1196,6 +1196,9 @@ async function createDirectClient(payload = {}) {
   if (fullName.length < 2) bad('The client’s full legal name is required.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('A valid client email is required — the retainer agreement is sent to it.');
   if (address.length < 5) bad('The client’s residential address is required — it is printed on the retainer agreement.');
+  // Same rule the Client Master write uses (handoffService.phoneColValue), so a
+  // phone that passes here is guaranteed to land on the case row.
+  if (!require('./handoffService').phoneColValue(phone)) bad('A valid client phone number is required — it goes on the case record and is used to reach the client.');
   const labels = await directCaseTypeLabels();
   if (!labels.caseTypes.includes(caseType)) bad('Choose a case type — it generates the case reference and the document checklist.');
   {
