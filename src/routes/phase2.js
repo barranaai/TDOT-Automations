@@ -270,13 +270,12 @@ router.post('/webhook/square', express.raw({ type: '*/*' }), async (req, res) =>
     // req.body is only a Buffer here when that parser skipped (non-JSON CT).
     const raw = (req.rawBody || req.body).toString();
     const sig = req.headers['x-square-hmacsha256-signature'];
-    // Square signs (notificationUrl + rawBody) with the EXACT URL configured
-    // on the subscription — normalize trailing slashes so an env-var quirk
-    // (RENDER_URL ending in "/") can't break every signature.
-    const base = String(process.env.RENDER_URL || '').replace(/\/+$/, '');
-    const url = `${base}/webhook/square`;
-    if (!bookingService.verifySquareSignature(raw, sig, url)) {
-      console.warn(`[Square Webhook] Bad signature — ignoring (url used: "${url}", sig present: ${!!sig}, secret set: ${!!process.env.SQUARE_WEBHOOK_SECRET})`);
+    // Accept a signature computed over ANY origin this app answers on — see
+    // bookingService.squareNotificationUrls for why (RENDER_URL and the Square
+    // subscription URL move independently).
+    const squareUrls = bookingService.squareNotificationUrls();
+    if (!squareUrls.some((u) => bookingService.verifySquareSignature(raw, sig, u))) {
+      console.warn(`[Square Webhook] Bad signature — ignoring (urls tried: ${squareUrls.join(', ')}; sig present: ${!!sig}, secret set: ${!!process.env.SQUARE_WEBHOOK_SECRET})`);
       return;
     }
     await bookingService.handleSquarePaymentWebhook(JSON.parse(raw));

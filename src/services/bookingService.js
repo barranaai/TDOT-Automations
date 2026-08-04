@@ -323,6 +323,29 @@ async function createCheckout({ leadId, amount, description, type = 'lead', idem
 }
 
 /** Verify Square webhook HMAC signature (fail-closed, constant-time). */
+/**
+ * PURE — every public origin this app answers on, rendered as Square
+ * notification URLs.
+ *
+ * Square signs (notificationUrl + body) with the EXACT URL configured on the
+ * SUBSCRIPTION, which is independent of RENDER_URL. The app is reachable on
+ * both the custom domain and the permanent .onrender.com one, so the webhook
+ * accepts a signature computed over ANY of ours: otherwise pointing RENDER_URL
+ * at the custom domain silently rejects every payment webhook until someone
+ * also edits the Square subscription. The shared secret still gates the
+ * request — this widens the URL, never the authentication.
+ *
+ * @param {object} env  defaults to process.env (injectable for tests)
+ * @returns {string[]} de-duplicated candidate URLs, trailing slashes normalized
+ */
+function squareNotificationUrls(env = process.env) {
+  return [...new Set(
+    [env.SQUARE_NOTIFICATION_URL, env.RENDER_URL, 'https://tdot-automations.onrender.com']
+      .filter(Boolean)
+      .map((b) => `${String(b).replace(/\/+$/, '')}/webhook/square`)
+  )];
+}
+
 function verifySquareSignature(rawBody, signature, notificationUrl) {
   const secret = process.env.SQUARE_WEBHOOK_SECRET;
   if (!secret) {
@@ -579,7 +602,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
 module.exports = {
   getAvailableSlots, getSquareAvailableSlots, getStaticAvailableSlots, squareCalendarEnabled,
   holdSlot, releaseExpiredSlots, createCheckout,
-  handleSquarePaymentWebhook, confirmSlot, verifySquareSignature, sendBookingInvite,
+  handleSquarePaymentWebhook, confirmSlot, verifySquareSignature, squareNotificationUrls, sendBookingInvite,
   dropBufferConflicts, reconcileConsultOptionWithPayment,
   CONSULT_FEE_CENTS,
 };
