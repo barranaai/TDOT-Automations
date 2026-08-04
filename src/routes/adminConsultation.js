@@ -117,6 +117,14 @@ function buildQueueHTML() {
   #dc-modal input, #dc-modal select { width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; color:var(--navy); background:#fff; box-sizing:border-box; }
   .dc-hint { font-weight:500; text-transform:none; letter-spacing:0; }
   #dc-err { color:#dc2626; font-size:12.5px; min-height:16px; margin-top:10px; }
+  #dc-matches { background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 12px; margin-top:12px; font-size:12.5px; }
+  #dc-matches .dcm-title { font-weight:700; color:#92400e; margin-bottom:6px; }
+  /* .dcm-row also neutralises the #dc-modal label styling these radio labels would otherwise inherit */
+  #dc-matches .dcm-row { display:flex; align-items:flex-start; gap:7px; padding:3px 0; color:#334155; text-transform:none; letter-spacing:0; font-weight:400; font-size:12.5px; margin:0; }
+  #dc-matches .dcm-row input { margin-top:2px; flex:none; width:auto; }  /* the #dc-modal input width:100% must not stretch the radios */
+  #dc-matches .dcm-info { color:#64748b; padding:2px 0 2px 21px; }
+  #dc-matches .dcm-badge { display:inline-block; background:#fee2e2; color:#b91c1c; border-radius:6px; padding:0 6px; font-size:11px; font-weight:700; margin-left:4px; }
+  #dc-matches a { color:#1d4ed8; }
   .dc-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
   .dc-btn { padding:9px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:var(--navy); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
   .dc-btn.primary { background:var(--navy); border-color:var(--navy); color:#fff; }
@@ -180,6 +188,7 @@ ${buildNavHeader('consultations')}
       <label for="dc-subtype">Case sub-type</label><select id="dc-subtype"><option value="">— (can be set later)</option></select>
       <label for="dc-consultant">Consultant *</label><select id="dc-consultant"><option value="">Choose…</option></select>
       <label for="dc-referred">Referred by</label><input id="dc-referred" type="text" maxlength="200" autocomplete="off">
+      <div id="dc-matches" style="display:none" role="region" aria-label="Possible existing records"></div>
       <div id="dc-err" role="alert"></div>
       <div class="dc-actions">
         <button class="dc-btn" id="dc-cancel" type="button">Cancel</button>
@@ -223,6 +232,7 @@ var DC_OPTS=null;
 function dcEl(id){ return document.getElementById(id); }
 function openDirectClient(){
   dcEl('dc-err').textContent='';
+  DC_MATCHES=null; var mb=dcEl('dc-matches'); if(mb){ mb.style.display='none'; mb.innerHTML=''; }
   dcEl('dc-overlay').style.display='flex';
   var first=dcEl('dc-name'); if(first) first.focus();
   if(DC_OPTS) return;
@@ -243,6 +253,55 @@ function dcSubtypes(){
   // document checklist, so it must be chosen up front.
   dcEl('dc-subtype').innerHTML='<option value="">'+(subs.length?'Choose… (required)':'— (none for this case type)')+'</option>'+subs.map(function(s){return '<option value="'+escHtml(s)+'">'+escHtml(s)+'</option>';}).join('');
 }
+/* ── Warn-and-link: surface existing records for this email/phone ── */
+var DC_MATCHES=null;
+function dcRenderMatches(m){
+  DC_MATCHES=m;
+  var box=dcEl('dc-matches');
+  var any=m && ((m.leads&&m.leads.length)||(m.cases&&m.cases.length)||(m.clients&&m.clients.length));
+  if(!any){ box.style.display='none'; box.innerHTML=''; DC_MATCHES=null; return; }
+  var rows=[];
+  (m.clients||[]).forEach(function(c){
+    rows.push('<div class="dcm-info">Client account: '+escHtml(c.name)+(c.reasons&&c.reasons.length?' <span class="dcm-badge">'+escHtml(c.reasons.join(', '))+'</span>':'')+'</div>');
+  });
+  (m.cases||[]).forEach(function(c){
+    rows.push('<div class="dcm-info">Open case: <a href="/admin/case/'+encodeURIComponent(c.caseRef)+'" target="_blank" rel="noopener">'+escHtml(c.caseRef||'(ref pending)')+'</a> — '+escHtml(c.name)+(c.caseStage?' · '+escHtml(c.caseStage):'')+'. If this is the same matter, work in the case instead of creating a new client.</div>');
+  });
+  (m.leads||[]).forEach(function(l){
+    var linkable=!l.hasCase && !l.retainerSent && !l.booked && !l.planInProgress && l.conversionStatus!=='Retained';
+    var ident=escHtml(l.name)+(l.email?' &middot; '+escHtml(l.email):'')+(l.sourceChannel?' ('+escHtml(l.sourceChannel)+')':'');
+    if(linkable){
+      rows.push('<label class="dcm-row"><input type="radio" name="dcm-choice" value="link:'+escHtml(l.id)+'"><span>Link to existing lead — <b>'+ident+'</b> — keeps ONE record for this person</span></label>');
+    } else {
+      var why=l.hasCase?'already has a case':l.retainerSent?'retainer already sent':l.booked?'has a consultation booked — manage it from the Consultations page':l.planInProgress?'retainer plan in progress':'retained';
+      rows.push('<div class="dcm-info">Existing lead: '+ident+' — '+why+'</div>');
+    }
+  });
+  rows.push('<label class="dcm-row"><input type="radio" name="dcm-choice" value="new"><span>Create a new client anyway (I checked — this is a different person or a genuinely new matter)</span></label>');
+  box.innerHTML='<div class="dcm-title">&#9888; This email/phone already exists in the system — choose how to proceed:</div>'+rows.join('');
+  box.style.display='block';
+}
+var DC_MATCH_SEQ=0;
+function dcClearMatches(){
+  // Any edit to the identity fields invalidates the panel AND the chosen
+  // radio — a stale "link" choice must never target the previous person.
+  DC_MATCHES=null; DC_MATCH_SEQ++;
+  var box=dcEl('dc-matches'); if(box){ box.style.display='none'; box.innerHTML=''; }
+}
+function dcCheckMatches(){
+  var email=(dcEl('dc-email').value||'').trim(), phone=(dcEl('dc-phone').value||'').trim();
+  if(!email && !phone) return;
+  var key=sessionStorage.getItem('tdot_admin_key'); if(!key) return;
+  var seq=++DC_MATCH_SEQ;
+  fetch('/api/consultation/client-matches?email='+encodeURIComponent(email)+'&phone='+encodeURIComponent(phone),{headers:{'X-Api-Key':key}})
+    .then(function(r){ return r.ok?r.json():null; })
+    .then(function(m){ if(m && seq===DC_MATCH_SEQ) dcRenderMatches(m); })
+    .catch(function(){ /* the server-side 409 guard still protects the submit */ });
+}
+function dcChosen(){
+  var sel=document.querySelector('input[name="dcm-choice"]:checked');
+  return sel?sel.value:null;
+}
 function submitDirectClient(){
   var err=dcEl('dc-err'); err.textContent='';
   var body={ fullName:dcEl('dc-name').value, email:dcEl('dc-email').value, phone:dcEl('dc-phone').value,
@@ -255,16 +314,31 @@ function submitDirectClient(){
   if(subOpts.length && !body.caseSubType){
     err.textContent='This case type has checklist variants — choose the Case Sub Type.'; return;
   }
+  // Duplicate panel showing → a choice is mandatory before submitting.
+  if(DC_MATCHES){
+    var choice=dcChosen();
+    if(!choice){ err.textContent='Possible existing records found — choose "link to existing" or "create new anyway" above.'; return; }
+    if(choice.indexOf('link:')===0) body.linkLeadId=choice.slice(5);
+    else body.allowDuplicate=true;
+  }
   var key=getKey(); if(!key) return;
   var btn=dcEl('dc-create'); btn.disabled=true; btn.textContent='Creating…';
   fetch('/api/consultation/direct-client',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
     .then(function(res){
+      if(res.s===409 && res.j && res.j.matches){
+        // The server found matches the modal hadn't fetched yet — show them.
+        dcRenderMatches(res.j.matches);
+        btn.disabled=false; btn.textContent='Create & open retainer';
+        err.textContent=res.j.error||'This client may already exist — choose an option above.';
+        return;
+      }
       if(res.s!==200) throw new Error((res.j&&res.j.error)||('HTTP '+res.s));
       // warning = created but the tagging write failed (a note on the lead has
       // the manual steps); reused = an identical un-retained direct lead already
       // existed. Either way, land on the lead — never invite a re-create.
       if(res.j.warning) window.alert(res.j.warning);
+      else if(res.j.linked) window.alert('Linked to the existing lead — one record for this person, now set up as a direct retainer client.');
       else if(res.j.reused) window.alert('This client already exists as a direct retainer lead — opening it instead of creating a duplicate.');
       window.location.href='/admin/consultation/'+encodeURIComponent(res.j.leadId);
     })
@@ -278,6 +352,10 @@ function submitDirectClient(){
   document.addEventListener('keydown',function(ev){ var o=dcEl('dc-overlay'); if(ev.key==='Escape'&&o&&o.style.display!=='none') closeDc(); });
   var ct=dcEl('dc-casetype'); if(ct) ct.onchange=dcSubtypes;
   var cr=dcEl('dc-create'); if(cr) cr.onclick=submitDirectClient;
+  // Duplicate check fires when staff finish typing the identity fields; any
+  // EDIT invalidates the current panel + choice (stale link target hazard).
+  var em=dcEl('dc-email'); if(em){ em.addEventListener('blur',dcCheckMatches); em.addEventListener('input',dcClearMatches); }
+  var ph=dcEl('dc-phone'); if(ph){ ph.addEventListener('blur',dcCheckMatches); ph.addEventListener('input',dcClearMatches); }
 })();
 
 /* In-progress direct retainer clients (case-first; drops off once Retained). */

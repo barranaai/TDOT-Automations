@@ -113,8 +113,9 @@ async function findMatches({ email, phone, fullName, dob } = {}) {
   const p = normalizePhone(phone);
   if (e) for (const row of await queryByColumn(cfg, cfg.columns.primaryEmail, e)) seen.set(row.id, row);
   if (p) {
-    // Monday stores phone columns as +<digits>; query both stored forms.
-    for (const v of [`+${p}`, `+1${p}`]) {
+    // Monday phone columns store DIGITS ONLY (the '+' we write is stripped on
+    // write — live-probed), so query the digit forms: bare and NA 1-prefixed.
+    for (const v of [...new Set([p, `1${p}`])]) {
       for (const row of await queryByColumn(cfg, cfg.columns.phone, v)) if (!seen.has(row.id)) seen.set(row.id, row);
     }
   }

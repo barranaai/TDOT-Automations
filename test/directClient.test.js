@@ -109,7 +109,7 @@ test('createDirectClient: duplicate guard — an existing un-retained direct lea
     stubRegistryDown(),
     stub(leadService, 'findAllByColumnValue', async (key, val) => (
       key === 'email' && val === 'walkin@example.com'
-        ? [{ id: '777', sourceChannel: 'Direct Retainer', retainerSent: '' }] : [])),
+        ? [{ id: '777', fullName: 'Walkin Client', sourceChannel: 'Direct Retainer', retainerSent: '' }] : [])),
     stub(leadService, 'createLead', async () => { created = true; return { id: 'x' }; }),
     stub(leadService, 'updateLead', async () => {}),
     stub(mondayApi, 'query', async () => ({})),
@@ -130,8 +130,8 @@ test('createDirectClient: guard still reuses when an OLDER non-direct lead share
   const restore = [
     stubRegistryDown(),
     stub(leadService, 'findAllByColumnValue', async () => ([
-      { id: '100', sourceChannel: 'Website', retainerSent: '' },        // older enquiry — first hit
-      { id: '778', sourceChannel: 'Direct Retainer', retainerSent: '' }, // the reusable one
+      { id: '100', fullName: 'Walkin Client', sourceChannel: 'Website', retainerSent: '' },        // older enquiry — first hit
+      { id: '778', fullName: 'Walkin Client', sourceChannel: 'Direct Retainer', retainerSent: '' }, // the reusable one
     ])),
     stub(leadService, 'createLead', async () => { created = true; return { id: 'x' }; }),
     stub(leadService, 'updateLead', async () => {}),
@@ -145,7 +145,7 @@ test('createDirectClient: guard still reuses when an OLDER non-direct lead share
   } finally { restore.forEach((x) => x()); }
 });
 
-test('createDirectClient: a direct lead whose retainer ALREADY went out is not reused (new matter)', async () => {
+test('createDirectClient: a direct lead whose retainer ALREADY went out is not reused — and (since warn-and-link) the new matter needs an explicit choice', async () => {
   let created = false;
   const restore = [
     stubRegistryDown(),
@@ -157,7 +157,13 @@ test('createDirectClient: a direct lead whose retainer ALREADY went out is not r
     stub(mondayApi, 'query', async () => ({})),
   ];
   try {
-    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'walkin@example.com', residentialAddress: '1 Main St', phone: '4165550100', caseType: CASE_TYPE, consultant: CONSULTANT });
+    // Without a choice: the match surfaces as a conflict (no silent duplicate).
+    await assert.rejects(
+      () => portal.createDirectClient({ fullName: 'Walkin Client', email: 'walkin@example.com', residentialAddress: '1 Main St', phone: '4165550100', caseType: CASE_TYPE, consultant: CONSULTANT }),
+      (e) => e.conflict === true);
+    assert.equal(created, false);
+    // With the explicit choice: a fresh lead — the sent-retainer one is never reused.
+    const r = await portal.createDirectClient({ fullName: 'Walkin Client', email: 'walkin@example.com', residentialAddress: '1 Main St', phone: '4165550100', caseType: CASE_TYPE, consultant: CONSULTANT, allowDuplicate: true });
     assert.ok(!r.reused, 'a retained/sent client starts a fresh lead');
     assert.equal(created, true);
   } finally { restore.forEach((x) => x()); }
@@ -274,4 +280,231 @@ test('computeKpis: an UNTAGGED historical lead with missing booking data is NOT 
   assert.equal(K.funnel.retained, 1, 'stays in the normal funnel — history unchanged');
   assert.equal(K.funnel.retainedDirect, 0, 'no phantom "Direct" step for pre-feature months');
   assert.equal(K.funnel.leads, 1, 'still counted as a lead');
+});
+
+// ─── Warn-and-link (client accounts Phase 1, 2026-08-04) ─────────────────────
+
+const clientMaster   = require('../src/services/clientMasterService');
+const clientAccounts = require('../src/services/clientAccountService');
+const handoff2       = require('../src/services/handoffService');
+
+test('createDirectClient: existing NON-direct lead with this email → 409-style conflict carrying the matches', async () => {
+  let created = false;
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'findAllByColumnValue', async (key) => (key === 'email'
+      ? [{ id: '300', fullName: 'Same Person', email: 'dup@x.co', sourceChannel: 'Website', conversionStatus: '', clientMasterItemId: '', retainerSent: '' }] : [])),
+    stub(clientMaster, 'findCasesByEmail', async () => []),
+    stub(clientMaster, 'findCasesByPhone', async () => []),
+    stub(clientAccounts, 'findMatches', async () => []),
+    stub(leadService, 'createLead', async () => { created = true; return { id: 'x' }; }),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    await assert.rejects(
+      () => portal.createDirectClient({ fullName: 'Same Person', email: 'dup@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT }),
+      (e) => e.conflict === true && e.matches && e.matches.leads.length === 1 && e.matches.leads[0].id === '300');
+    assert.equal(created, false, 'no lead minted while the choice is unmade');
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('createDirectClient: allowDuplicate=true skips the conflict and creates', async () => {
+  let created = false;
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'findAllByColumnValue', async () => [{ id: '300', fullName: 'Same Person', sourceChannel: 'Website', retainerSent: '' }]),
+    stub(clientMaster, 'findCasesByEmail', async () => []),
+    stub(clientMaster, 'findCasesByPhone', async () => []),
+    stub(clientAccounts, 'findMatches', async () => []),
+    stub(leadService, 'createLead', async () => { created = true; return { id: '901' }; }),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(handoff2, 'openCaseEarly', async () => 'CM-901'),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await portal.createDirectClient({ fullName: 'Different Person', email: 'dup@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT, allowDuplicate: true });
+    assert.equal(r.ok, true);
+    assert.equal(created, true);
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('createDirectClient: linkLeadId converts the existing lead (one person, one record)', async () => {
+  const updates = [];
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'getLead', async () => ({ id: '300', fullName: 'Same Person', sourceChannel: 'Website', clientMasterItemId: '', conversionStatus: '', retainerSent: '' })),
+    stub(leadService, 'updateLead', async (id, f) => { updates.push({ id, f }); }),
+    stub(leadService, 'createLead', async () => { throw new Error('must not create'); }),
+    stub(handoff2, 'openCaseEarly', async () => 'CM-300'),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await portal.createDirectClient({ fullName: 'Same Person', email: 'dup@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT, linkLeadId: '300' });
+    assert.equal(r.linked, true);
+    assert.equal(r.leadId, '300');
+    const w = updates.find((u) => u.id === '300');
+    assert.equal(w.f.sourceChannel, 'Direct Retainer');
+    assert.equal(w.f.confirmedCaseType, CASE_TYPE);
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('createDirectClient: linkLeadId is refused when the lead already has a case', async () => {
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'getLead', async () => ({ id: '301', fullName: 'Cased', clientMasterItemId: '900', retainerSent: '' })),
+    stub(leadService, 'createLead', async () => { throw new Error('must not create'); }),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    await assert.rejects(
+      () => portal.createDirectClient({ fullName: 'Cased', email: 'c@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT, linkLeadId: '301' }),
+      (e) => e.badRequest === true && /already has an open case/.test(e.message));
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('findClientMatches: merges lead/case/account sources, dedupes, and survives one source failing', async () => {
+  const restore = [
+    stub(leadService, 'findAllByColumnValue', async (key) => (key === 'email'
+      ? [{ id: '1', fullName: 'A', sourceChannel: 'Website', clientMasterItemId: '', retainerSent: '' }]
+      : [{ id: '1', fullName: 'A', sourceChannel: 'Website', clientMasterItemId: '', retainerSent: '' },
+         { id: '2', fullName: 'B', sourceChannel: 'Direct Retainer', clientMasterItemId: '77', retainerSent: '2026-01-01' }])),
+    stub(clientMaster, 'findCasesByEmail', async () => { throw new Error('monday down'); }),
+    stub(clientMaster, 'findCasesByPhone', async () => [{ id: '77', name: 'B', caseRef: '2026-VV-001', caseStage: 'Retained', paymentStatus: 'Paid' }]),
+    stub(clientAccounts, 'findMatches', async () => [{ id: '5', name: 'A', email: 'a@x.co', confidence: 'exact', reasons: ['same email', 'same name'] }]),
+  ];
+  try {
+    const m = await portal.findClientMatches({ email: 'a@x.co', phone: '4165550100' });
+    assert.equal(m.leads.length, 2, 'lead 1 deduped across email+phone hits');
+    assert.equal(m.leads.find((l) => l.id === '2').hasCase, true);
+    assert.equal(m.cases.length, 1, 'phone-side case still found though the email lookup failed');
+    assert.equal(m.clients.length, 1);
+  } finally { restore.forEach((x) => x()); }
+});
+
+// ─── Review-earned rails on warn-and-link (2026-08-04) ───────────────────────
+
+test('linkLeadId: a BOOKED lead is refused — converting it would corrupt the KPI funnel', async () => {
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'getLead', async () => ({ id: '310', fullName: 'Booked Person', email: 'b@x.co', sourceChannel: 'Website', bookingStatus: 'Booked', bookedSlot: '2026-08-10 10:00', clientMasterItemId: '', retainerSent: '' })),
+    stub(leadService, 'createLead', async () => { throw new Error('must not create'); }),
+    stub(leadService, 'updateLead', async () => { throw new Error('must not write'); }),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    await assert.rejects(
+      () => portal.createDirectClient({ fullName: 'Booked Person', email: 'b@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT, linkLeadId: '310' }),
+      (e) => e.badRequest === true && /consultation booked/.test(e.message));
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('linkLeadId: a lead with a retainer plan in progress is refused', async () => {
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'getLead', async () => ({ id: '311', fullName: 'Planned Person', email: 'p@x.co', retainerMilestones: '[{"pct":100}]', clientMasterItemId: '', retainerSent: '' })),
+    stub(leadService, 'createLead', async () => { throw new Error('must not create'); }),
+    stub(leadService, 'updateLead', async () => { throw new Error('must not write'); }),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    await assert.rejects(
+      () => portal.createDirectClient({ fullName: 'Planned Person', email: 'p@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT, linkLeadId: '311' }),
+      (e) => e.badRequest === true && /retainer plan in progress/.test(e.message));
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('linkLeadId: a lead matching NOTHING typed (stale panel / mispick) is refused', async () => {
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'getLead', async () => ({ id: '312', fullName: 'Someone Else', email: 'other@y.co', phone: '9055559999', clientMasterItemId: '', retainerSent: '' })),
+    stub(leadService, 'createLead', async () => { throw new Error('must not create'); }),
+    stub(leadService, 'updateLead', async () => { throw new Error('must not write'); }),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    await assert.rejects(
+      () => portal.createDirectClient({ fullName: 'Typed Person', email: 'typed@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT, linkLeadId: '312' }),
+      (e) => e.badRequest === true && /does not match the name, email or phone/.test(e.message));
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('linkLeadId: the TYPED identity is written onto the linked lead (retainer must use the current email)', async () => {
+  const updates = [];
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'getLead', async () => ({ id: '313', fullName: 'Same Person', email: 'old-dead@x.co', phone: '4165550100', sourceChannel: 'Website', clientMasterItemId: '', retainerSent: '' })),
+    stub(leadService, 'updateLead', async (id, f) => { updates.push({ id, f }); }),
+    stub(handoff2, 'openCaseEarly', async () => 'CM-313'),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await portal.createDirectClient({ fullName: 'Same Person', email: 'new-current@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT, linkLeadId: '313' });
+    assert.equal(r.linked, true);
+    const w = updates.find((u) => u.id === '313');
+    assert.equal(w.f.email, 'new-current@x.co', 'typed email replaces the stale one');
+    assert.equal(w.f.fullName, 'Same Person');
+    assert.equal(w.f.phone, '4165550100');
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('allowDuplicate: an explicit "create new" is NEVER redirected onto a same-email spouse\'s direct lead', async () => {
+  let created = false;
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'findAllByColumnValue', async () => ([
+      // The SPOUSE's direct lead — same family email, different person.
+      { id: '790', fullName: 'John Doe', sourceChannel: 'Direct Retainer', retainerSent: '' },
+    ])),
+    stub(leadService, 'createLead', async () => { created = true; return { id: '791' }; }),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(handoff2, 'openCaseEarly', async () => 'CM-791'),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await portal.createDirectClient({ fullName: 'Jane Doe', email: 'family@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT, allowDuplicate: true });
+    assert.equal(created, true, 'a NEW lead for Jane — never John\'s record');
+    assert.ok(!r.reused);
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('direct-reuse guard requires the SAME NAME — a spouse double-submit cannot land on the other spouse', async () => {
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'findAllByColumnValue', async () => ([
+      { id: '790', fullName: 'John Doe', sourceChannel: 'Direct Retainer', retainerSent: '' },
+    ])),
+    stub(clientMaster, 'findCasesByEmail', async () => []),
+    stub(clientMaster, 'findCasesByPhone', async () => []),
+    stub(clientAccounts, 'findMatches', async () => []),
+    stub(leadService, 'createLead', async () => ({ id: 'x' })),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    // Jane (different name) hits the conflict guard instead of silently reusing John's lead.
+    await assert.rejects(
+      () => portal.createDirectClient({ fullName: 'Jane Doe', email: 'family@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT }),
+      (e) => e.conflict === true);
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('findClientMatches: a formatted typed phone still finds the digits-only stored lead', async () => {
+  const phoneQueries = [];
+  const restore = [
+    stub(leadService, 'findAllByColumnValue', async (key, val) => {
+      if (key === 'phone') { phoneQueries.push(val); return val === '14165550100' ? [{ id: '9', fullName: 'Phone Hit', clientMasterItemId: '', retainerSent: '' }] : []; }
+      return [];
+    }),
+    stub(clientMaster, 'findCasesByEmail', async () => []),
+    stub(clientMaster, 'findCasesByPhone', async () => []),
+    stub(clientAccounts, 'findMatches', async () => []),
+  ];
+  try {
+    const m = await portal.findClientMatches({ email: '', phone: '+1 (416) 555-0100' });
+    assert.ok(phoneQueries.includes('4165550100') && phoneQueries.includes('14165550100'), 'digit variants queried');
+    assert.ok(!phoneQueries.some((q) => /\+|\(/.test(q)), 'no raw/formatted forms queried');
+    assert.equal(m.leads.length, 1);
+  } finally { restore.forEach((x) => x()); }
 });

@@ -1191,6 +1191,10 @@ async function createDirectClient(payload = {}) {
   const consultant  = clean(payload.consultant, 80);
   const address     = clean(payload.residentialAddress, 500);
   const referredBy  = clean(payload.referredBy, 200);
+  // Warn-and-link choices (duplicate handling) — staff-explicit, from the modal.
+  const linkLeadId      = clean(payload.linkLeadId, 30).replace(/\D/g, '');
+  const chosenAccountId = clean(payload.clientAccountId, 30).replace(/\D/g, '');
+  const allowDuplicate  = payload.allowDuplicate === true;
 
   const bad = (m) => { const e = new Error(m); e.badRequest = true; throw e; };
   if (fullName.length < 2) bad('The client’s full legal name is required.');
@@ -1218,16 +1222,86 @@ async function createDirectClient(payload = {}) {
   const consultantNames = Object.values(CONSULTANTS).map((c) => c.name);
   if (!consultantNames.includes(consultant)) bad('Choose the consultant retaining this client — they sign the agreement and own the case.');
 
+  // Staff explicitly chose to LINK an existing lead (warn-and-link modal):
+  // convert that lead into the direct-retainer client instead of minting a new
+  // one. Only an un-retained, case-less lead is linkable — anything further
+  // along already has a case to work in.
+  if (linkLeadId) {
+    const existing = await leadService.getLead(String(linkLeadId));
+    if (!existing) bad('The lead you chose to link no longer exists — refresh and try again.');
+    if (existing.clientMasterItemId || String(existing.conversionStatus || '').trim() === 'Retained') {
+      bad('That lead already has an open case — open the case instead of creating a direct client.');
+    }
+    if (existing.retainerSent && String(existing.retainerSent).trim()) {
+      bad('That lead has already been sent a retainer — open it from the Consultations page instead.');
+    }
+    // A lead that is mid-funnel must NOT be hijacked into the direct pipeline:
+    // converting a booked lead corrupts the KPI funnel (booked without being a
+    // lead), leaves a live Square appointment dangling, and dual-lists the
+    // person in two queues. Same for an in-progress retainer plan — the old
+    // plan's template/annex/milestones would be stale under the new case type.
+    const booking = String(existing.bookingStatus || '').trim();
+    if (booking === 'Booked' || booking === 'Slot Held' || (existing.bookedSlot && String(existing.bookedSlot).trim()) || (existing.consultationHeld && String(existing.consultationHeld).trim())) {
+      bad('That lead has a consultation booked or held — manage it from the Consultations page instead of converting it to a direct client.');
+    }
+    if ([existing.retainerMilestones, existing.selectedTemplate, existing.retainerFee].some((v) => v && String(v).trim())) {
+      bad('That lead already has a retainer plan in progress — open it from the Consultations page and continue there.');
+    }
+    // The chosen lead must actually BE the person staff just typed — a stale
+    // match panel (email edited after the radios rendered) or a mispick must
+    // never route the new client into someone else's record.
+    const handoffSvc = require('./handoffService');
+    const sameEmail = existing.email && String(existing.email).trim().toLowerCase() === email.toLowerCase();
+    const samePhone = String(existing.phone || '').replace(/\D/g, '').slice(-10) === phone.replace(/\D/g, '').slice(-10) && phone.replace(/\D/g, '').length >= 7;
+    const sameName  = handoffSvc.normName(existing.fullName) === handoffSvc.normName(fullName);
+    if (!sameEmail && !samePhone && !sameName) {
+      bad('The chosen lead does not match the name, email or phone you typed — re-check the duplicate panel and try again.');
+    }
+    const priorChannel = (existing.sourceChannel || '').trim();
+    const linkWiring = {
+      // The staff-typed identity is the CURRENT one (they just validated it) —
+      // it must win over the lead's stored values, or the retainer would go to
+      // a stale email under an old name.
+      fullName, email, phone,
+      sourceChannel:      DIRECT_SOURCE,
+      confirmedCaseType:  caseType,
+      selectedSubType:    caseSubType,
+      assignedConsultant: consultant,
+      residentialAddress: address,
+      referredBy,
+      conversionStatus:   'Qualified',
+    };
+    if (chosenAccountId) linkWiring.clientAccountId = chosenAccountId;
+    await leadService.updateLead(String(linkLeadId), linkWiring);
+    _directQueueCache = { at: 0, rows: null };
+    let caseOpened = false;
+    try {
+      caseOpened = !!(await require('./handoffService').openCaseEarly({ leadId: String(linkLeadId) }));
+    } catch (err) {
+      console.error(`[Consultant] Early case-open failed for linked lead ${linkLeadId}: ${err.message}`);
+    }
+    await postPortalNote(String(linkLeadId),
+      `Linked as a direct retainer client by staff${priorChannel && priorChannel !== DIRECT_SOURCE ? ` (originally a “${priorChannel}” lead — kept as ONE client instead of a duplicate)` : ''}. ` +
+      `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}.`).catch(() => {});
+    console.log(`[Consultant] Direct client LINKED to existing lead ${linkLeadId} (was "${priorChannel}")`);
+    return { ok: true, leadId: String(linkLeadId), reused: true, linked: true, caseOpened };
+  }
+
   // Duplicate guard: a lost response / re-submit must not mint a second lead.
-  // Reuse an existing direct-tagged lead with this email that hasn't been sent a
-  // retainer yet. MUST scan every match — the same email commonly already exists
-  // on an older non-direct lead (a past enquiry), and a first-hit-only lookup
-  // would find that one, fail the tag check, and create a duplicate every time.
+  // Reuse an existing direct-tagged lead with this email AND THE SAME PERSON'S
+  // NAME that hasn't been sent a retainer yet — a double-submit always retypes
+  // the same name; a shared family email under a different name is a DIFFERENT
+  // person and must never land on their spouse's record. Staff choosing
+  // "create new anyway" (allowDuplicate) skips the reuse entirely — an
+  // explicit new record must not be silently redirected. MUST scan every
+  // match — the same email commonly also exists on an older non-direct lead.
   // Best-effort: a read failure falls through to create.
-  try {
+  if (!allowDuplicate) try {
+    const { normName } = require('./handoffService');
     const matches = await leadService.findAllByColumnValue('email', email);
     const reusable = (matches || []).filter((l) =>
       (l.sourceChannel || '').trim() === DIRECT_SOURCE &&
+      normName(l.fullName) === normName(fullName) &&
       !(l.retainerSent && String(l.retainerSent).trim()));
     if (reusable.length) {
       // Newest wins if several exist (highest Monday item id).
@@ -1236,6 +1310,27 @@ async function createDirectClient(payload = {}) {
       return { ok: true, leadId: pick.id, reused: true };
     }
   } catch (_) { /* fall through to create */ }
+
+  // Warn-and-link guard: this person may already exist (another lead, an open
+  // case, a client account). Creating blind would mint the duplicate the user
+  // asked us to stop — so the caller must EXPLICITLY choose (linkLeadId or
+  // allowDuplicate). 409 carries the matches so even a stale UI shows them.
+  // Fail-open on lookup errors: blocking creation on a Monday hiccup is worse
+  // than a rare duplicate.
+  if (!allowDuplicate) {
+    try {
+      const m = await findClientMatches({ email, phone });
+      if (m.leads.length || m.cases.length || m.clients.length) {
+        const e = new Error('This client may already exist — choose "link to existing" or "create new anyway".');
+        e.conflict = true;
+        e.matches = m;
+        throw e;
+      }
+    } catch (err) {
+      if (err.conflict) throw err;
+      console.warn(`[Consultant] duplicate-check failed (${err.message}) — proceeding with create`);
+    }
+  }
 
   // createLead wires the token + OneDrive folder; the follow-up update carries
   // the direct-specific fields (its mutation auto-creates the new labels).
@@ -1263,6 +1358,7 @@ async function createDirectClient(payload = {}) {
     referredBy,
     conversionStatus:   'Qualified', // honest: qualified to retain, never booked/consulted
   };
+  if (chosenAccountId) wiring.clientAccountId = chosenAccountId; // staff-explicit account link from the modal
   try {
     await leadService.updateLead(leadId, wiring);
   } catch (err) {
@@ -1302,6 +1398,69 @@ async function createDirectClient(payload = {}) {
     `Next: set the retainer fee + plan and click “Retain &amp; send agreement”.`);
   console.log(`[Consultant] Direct retainer client created — lead ${leadId} (${fullName}, ${caseType}, ${consultant}, caseOpened=${caseOpened})`);
   return { ok: true, leadId, caseOpened };
+}
+
+/**
+ * Everything that already exists for this email/phone — the warn-and-link
+ * panel's data. Three buckets: client accounts (registry), open Client Master
+ * cases, and leads. Each lookup is independent and best-effort: one source
+ * failing must not blind staff to the others.
+ */
+async function findClientMatches({ email, phone } = {}) {
+  const e = String(email || '').trim();
+  const p = String(phone || '').trim();
+  const out = { clients: [], cases: [], leads: [], matchedOn: { email: !!e, phone: !!p } };
+  if (!e && !p) return out;
+
+  const clientMaster = require('./clientMasterService');
+  const clientAccounts = require('./clientAccountService');
+
+  const settle = async (fn) => { try { return await fn(); } catch (err) { console.warn(`[Consultant] client-match lookup failed: ${err.message}`); return []; } };
+
+  // Lead phone columns store the digits of whatever was submitted — a
+  // formatted or '+'-prefixed staff entry never matches raw, so query the
+  // digit variants (bare 10-digit and the NA 1-prefixed form).
+  const pDigits = p.replace(/\D/g, '');
+  const pBare = pDigits.length === 11 && pDigits.startsWith('1') ? pDigits.slice(1) : pDigits;
+  const phoneVariants = pDigits.length >= 7 ? [...new Set([pDigits, pBare, `1${pBare}`])] : [];
+
+  const [leadsByEmail, leadsByPhone, casesByEmail, casesByPhone, clients] = await Promise.all([
+    e ? settle(() => leadService.findAllByColumnValue('email', e)) : [],
+    phoneVariants.length
+      ? settle(async () => (await Promise.all(phoneVariants.map((v) => leadService.findAllByColumnValue('phone', v)))).flat())
+      : [],
+    e ? settle(() => clientMaster.findCasesByEmail(e)) : [],
+    p ? settle(() => clientMaster.findCasesByPhone(p)) : [],
+    settle(() => clientAccounts.findMatches({ email: e, phone: p })),
+  ]);
+
+  const leadMap = new Map();
+  for (const l of [...leadsByEmail, ...leadsByPhone]) {
+    if (!leadMap.has(String(l.id))) {
+      leadMap.set(String(l.id), {
+        id: String(l.id),
+        name: l.fullName || l.name || `Lead ${l.id}`,
+        email: l.email || '',
+        phone: l.phone || '',
+        sourceChannel: (l.sourceChannel || '').trim(),
+        conversionStatus: (l.conversionStatus || '').trim(),
+        hasCase: !!(l.clientMasterItemId && String(l.clientMasterItemId).trim()),
+        retainerSent: !!(l.retainerSent && String(l.retainerSent).trim()),
+        // Mid-funnel state — the modal must show it and must NOT offer linking.
+        booked: ['Booked', 'Slot Held'].includes(String(l.bookingStatus || '').trim())
+          || !!(l.bookedSlot && String(l.bookedSlot).trim())
+          || !!(l.consultationHeld && String(l.consultationHeld).trim()),
+        planInProgress: [l.retainerMilestones, l.selectedTemplate, l.retainerFee].some((v) => v && String(v).trim()),
+      });
+    }
+  }
+  const caseMap = new Map();
+  for (const c of [...casesByEmail, ...casesByPhone]) if (!caseMap.has(c.id)) caseMap.set(c.id, c);
+
+  out.leads = [...leadMap.values()];
+  out.cases = [...caseMap.values()];
+  out.clients = (clients || []).map((c) => ({ id: c.id, name: c.name, email: c.email, confidence: c.confidence, reasons: c.reasons }));
+  return out;
 }
 
 /**
@@ -1350,5 +1509,5 @@ module.exports = {
   getLeadsQueue, getLeadDetail, buildIntakeSections,
   parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement, getSignedConsultAgreementPdf, getSignedRetainerAgreementPdf,
   resolveFamilyMembers, FAMILY_MEMBER_TYPES, MILESTONE_TRIGGER_STAGES,
-  createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, DIRECT_SOURCE,
+  createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, findClientMatches, DIRECT_SOURCE,
 };

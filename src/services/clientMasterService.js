@@ -148,9 +148,73 @@ async function updateLastActivityDate(caseRef) {
   }
 }
 
+// ─── Case lookups by client identity ─────────────────────────────────────────
+// (Duplicate detection / client accounts. The email variant generalises the
+// lookup that previously lived privately inside handoffService.)
+
+const CM_EMAIL_COL   = 'text_mm0xw6bp';
+const CM_PHONE_COL   = 'phone_mm33zr0c';
+const CM_TYPE_COL    = 'dropdown_mm0xd1qn';
+const CM_STAGE_COL   = 'color_mm0x8faa';
+const CM_PAYMENT_COL = 'color_mm0x9fnn';
+
+function caseRow(it) {
+  const g = (colId) => ((it.column_values || []).find((c) => c.id === colId) || {}).text || '';
+  return {
+    id: String(it.id),
+    name: it.name,
+    email: g(CM_EMAIL_COL),
+    caseRef: g(CASE_REF_COL),
+    caseType: g(CM_TYPE_COL),
+    caseStage: g(CM_STAGE_COL),
+    paymentStatus: g(CM_PAYMENT_COL),
+  };
+}
+
+const CASE_FETCH_COLS = JSON.stringify([CM_EMAIL_COL, CASE_REF_COL, CM_TYPE_COL, CM_STAGE_COL, CM_PAYMENT_COL]);
+
+async function findCasesByColumn(colId, value) {
+  const data = await mondayApi.query(
+    `query($boardId:ID!,$v:String!){ items_page_by_column_values(limit:25, board_id:$boardId, columns:[{column_id:"${colId}", column_values:[$v]}]){ items{ id name column_values(ids:${CASE_FETCH_COLS}){ id text } } } }`,
+    { boardId: String(clientMasterBoardId), v: String(value) }
+  );
+  return (data?.items_page_by_column_values?.items || []).map(caseRow);
+}
+
+/** All Client Master cases whose client email matches (exact text match). */
+async function findCasesByEmail(email) {
+  const e = String(email || '').trim();
+  if (!e) return [];
+  // Legacy rows may carry mixed case — try the exact form, then lowercased.
+  const seen = new Map();
+  for (const v of [...new Set([e, e.toLowerCase()])]) {
+    for (const row of await findCasesByColumn(CM_EMAIL_COL, v)) seen.set(row.id, row);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * All Client Master cases whose client phone matches. Monday phone columns
+ * store DIGITS ONLY — the '+' our writers send is stripped on write (verified
+ * by live probe), so the query variants must be digit-only, and the 11-digit
+ * '1…' NA form must be tried alongside the bare 10-digit one.
+ */
+async function findCasesByPhone(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length < 7) return [];
+  const bare = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+  const seen = new Map();
+  for (const v of [...new Set([bare, `1${bare}`, digits])]) {
+    for (const row of await findCasesByColumn(CM_PHONE_COL, v)) seen.set(row.id, row);
+  }
+  return [...seen.values()];
+}
+
 module.exports = {
   getBoardColumnMap,
   getDocumentCollectionStartedItems,
   findItemByCaseRef,
+  findCasesByEmail,
+  findCasesByPhone,
   updateLastActivityDate,
 };

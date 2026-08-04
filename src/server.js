@@ -708,8 +708,24 @@ app.post('/api/consultation/direct-client', express.json(), async (req, res) => 
     const result = await consultantPortalService.createDirectClient(req.body || {});
     res.json(result);
   } catch (err) {
+    if (err.conflict) return res.status(409).json({ error: err.message, matches: err.matches });
     if (err.badRequest) return res.status(400).json({ error: err.message });
     console.error('[Consultant] Direct client create failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Warn-and-link: everything that already exists for this email/phone (client
+// accounts, open cases, leads) — feeds the duplicate panel in the modal.
+app.get('/api/consultation/client-matches', async (req, res) => {
+  try {
+    const matches = await consultantPortalService.findClientMatches({
+      email: (req.query.email || '').trim(),
+      phone: (req.query.phone || '').trim(),
+    });
+    res.json(matches);
+  } catch (err) {
+    console.error('[Consultant] client-matches failed:', err.stack || err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
