@@ -67,6 +67,8 @@ const COL_TYPE = {
   consultOption: 'text', // JSON: the booking-page choice {durationMin, feeCents, variationId, consultant}
   consultCountersign: 'text', // JSON: consult e-sign envelope state {clientEnvelopeId, clientItemId, envelopeId, itemId, signUrl, sentAt, signedAt}
   retainerCountersign: 'text', // JSON: retainer e-sign envelope state (same shape as consultCountersign)
+  clientAccountId: 'text',     // Clients-board item id — the person this lead belongs to
+  previousCaseRef: 'text',     // reuse seam: the prior application this one carries profile data from
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));

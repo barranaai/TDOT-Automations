@@ -1,0 +1,33 @@
+{
+  "boardId": "18425020416",
+  "clientMasterBoardId": "18401523447",
+  "columns": {
+    "primaryEmail": "email_mm5x4qpe",
+    "altEmails": "text_mm5xqt2j",
+    "phone": "phone_mm5xhhxc",
+    "residentialAddress": "long_text_mm5xm94g",
+    "dateOfBirth": "date_mm5x6k9v",
+    "preferredContact": "color_mm5xa5b5",
+    "clientNotes": "long_text_mm5xv41c",
+    "cases": "board_relation_mm5xk52x",
+    "squareCustomerId": "text_mm5x4k3v",
+    "status": "color_mm5xp031",
+    "mergedInto": "text_mm5x8rd8",
+    "source": "text_mm5x5s20"
+  },
+  "statusLabels": [
+    "Active",
+    "Merged",
+    "Archived"
+  ],
+  "preferredContactLabels": [
+    "Email",
+    "Phone",
+    "WhatsApp"
+  ],
+  "createdAt": "2026-08-04T11:05:31.366Z",
+  "cmLinkColumns": {
+    "clientAccountId": "text_mm5xmeka",
+    "clientRelation": "board_relation_mm5xd2bh"
+  }
+}

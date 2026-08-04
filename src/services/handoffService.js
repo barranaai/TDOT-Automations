@@ -516,4 +516,4 @@ async function openCaseEarly({ leadId }) {
   try { return await p; } finally { _inFlight.delete(key); }
 }
 
-module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone };
+module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, normName, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone };
