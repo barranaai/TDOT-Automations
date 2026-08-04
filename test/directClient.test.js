@@ -535,3 +535,42 @@ test('allowDuplicate: a same-NAME un-retained direct lead is still REUSED (retry
     assert.equal(created, false, 'no second lead minted');
   } finally { restore.forEach((x) => x()); }
 });
+
+// User directive (2026-08-04): the same person retaining for a DIFFERENT case
+// type is a NEW application — the double-submit guard may only catch a
+// SAME-type re-submit.
+test('reuse guard is case-type-aware: a different case type is a NEW application, same type still reuses', async () => {
+  const withSubs2 = CASE_TYPE_LABELS.filter((ct) => !(SUB_TYPES_BY_CASE[ct] || []).length);
+  const [TYPE_A, TYPE_B] = withSubs2;
+  let created = false;
+  const existingLead = { id: '900', fullName: 'Two Matter Person', sourceChannel: 'Direct Retainer', retainerSent: '', confirmedCaseType: TYPE_A };
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'findAllByColumnValue', async () => [existingLead]),
+    stub(clientMaster, 'findCasesByEmail', async () => []),
+    stub(clientMaster, 'findCasesByPhone', async () => []),
+    stub(clientAccounts, 'findMatches', async () => []),
+    stub(leadService, 'createLead', async () => { created = true; return { id: '901' }; }),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(handoff2, 'openCaseEarly', async () => 'CM-901'),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    // DIFFERENT type, explicit choice → new lead + case, never redirected.
+    const r1 = await portal.createDirectClient({
+      fullName: 'Two Matter Person', email: 'tm@x.co', phone: '4165550100',
+      residentialAddress: '1 Main St', caseType: TYPE_B, consultant: CONSULTANT, allowDuplicate: true,
+    });
+    assert.ok(!r1.reused, 'a different case type starts a NEW application');
+    assert.equal(created, true);
+
+    // SAME type → the double-submit guard still catches the retry.
+    created = false;
+    const r2 = await portal.createDirectClient({
+      fullName: 'Two Matter Person', email: 'tm@x.co', phone: '4165550100',
+      residentialAddress: '1 Main St', caseType: TYPE_A, consultant: CONSULTANT, allowDuplicate: true,
+    });
+    assert.equal(r2.reused, true, 'a same-type re-submit lands on the existing lead');
+    assert.equal(created, false);
+  } finally { restore.forEach((x) => x()); }
+});

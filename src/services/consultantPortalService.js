@@ -1323,21 +1323,28 @@ async function createDirectClient(payload = {}) {
 
   // Duplicate guard: a lost response / re-submit must not mint a second lead.
   // Reuse an existing direct-tagged lead with this email AND THE SAME PERSON'S
-  // NAME that hasn't been sent a retainer yet — a double-submit always retypes
-  // the same name; a shared family email under a different name is a DIFFERENT
-  // person, and the name check (not a flag) is what keeps them apart. This
-  // runs even under allowDuplicate: "create new anyway" answers the
-  // DIFFERENT-person question, and skipping the scan there would drop
+  // NAME AND THE SAME (or unset) CASE TYPE that hasn't been sent a retainer
+  // yet. Each check answers a different question:
+  //   name  — a shared family email under a different name is a DIFFERENT
+  //           person and must never land on their spouse's record;
+  //   type  — the same person retaining for a DIFFERENT case type is a NEW
+  //           application (user directive 2026-08-04) — only a same-type
+  //           re-submit is the double-click this guard exists for.
+  // Runs even under allowDuplicate: "create new anyway" answers the
+  // different-person/matter question, and skipping the scan there would drop
   // double-submit protection on exactly the retry path staff are on.
   // MUST scan every match — the same email commonly also exists on an older
   // non-direct lead. Best-effort: a read failure falls through to create.
   try {
     const { normName } = require('./handoffService');
     const matches = await leadService.findAllByColumnValue('email', email);
-    const reusable = (matches || []).filter((l) =>
-      (l.sourceChannel || '').trim() === DIRECT_SOURCE &&
-      normName(l.fullName) === normName(fullName) &&
-      !(l.retainerSent && String(l.retainerSent).trim()));
+    const reusable = (matches || []).filter((l) => {
+      const existingType = String(l.confirmedCaseType || '').trim();
+      return (l.sourceChannel || '').trim() === DIRECT_SOURCE &&
+        normName(l.fullName) === normName(fullName) &&
+        (!existingType || existingType === caseType) &&
+        !(l.retainerSent && String(l.retainerSent).trim());
+    });
     if (reusable.length) {
       // Newest wins if several exist (highest Monday item id).
       const pick = reusable.sort((a, b) => Number(b.id) - Number(a.id))[0];

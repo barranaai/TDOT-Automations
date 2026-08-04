@@ -191,6 +191,29 @@ async function findOrCreate({ email, phone, fullName, residentialAddress, dob, s
   try { return await work; } finally { _inFlight.delete(key); }
 }
 
+/**
+ * I/O. Append one item to a board_relation column on an account row without
+ * dropping the existing links (Monday replaces the whole set on write, so we
+ * read-merge-write). Best-effort — navigation relations never block flows.
+ */
+async function appendAccountRelation(cfg, clientId, relColId, itemId, label) {
+  if (!relColId) return;
+  try {
+    const existing = await mondayApi.query(
+      `query($id:ID!){ items(ids:[$id]){ column_values(ids:["${relColId}"]){ value } } }`,
+      { id: String(clientId) }
+    );
+    const raw = existing?.items?.[0]?.column_values?.[0]?.value;
+    const ids = new Set();
+    try { for (const x of (JSON.parse(raw || '{}').linkedPulseIds || [])) ids.add(Number(x.linkedPulseId)); } catch (_) { /* fresh */ }
+    ids.add(Number(itemId));
+    await mondayApi.query(
+      'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
+      { b: String(cfg.boardId), i: String(clientId), c: JSON.stringify({ [relColId]: { item_ids: [...ids] } }) }
+    );
+  } catch (err) { console.warn(`[ClientAccount] ${label} relation append failed for client ${clientId}: ${err.message}`); }
+}
+
 /** Stamp the account id on a Client Master case + append the navigation relation (best-effort). */
 async function linkCase(clientId, { cmItemId }) {
   const cfg = loadBoard();
@@ -211,31 +234,23 @@ async function linkCase(clientId, { cmItemId }) {
       );
     } catch (err) { console.warn(`[ClientAccount] navigation relation write failed for case ${cmItemId}: ${err.message}`); }
   }
-  // Reverse navigation: add this case to the account's Cases relation (append-safe).
-  if (cfg.columns.cases) {
-    try {
-      const existing = await mondayApi.query(
-        `query($id:ID!){ items(ids:[$id]){ column_values(ids:["${cfg.columns.cases}"]){ value } } }`,
-        { id: String(clientId) }
-      );
-      const raw = existing?.items?.[0]?.column_values?.[0]?.value;
-      const ids = new Set();
-      try { for (const x of (JSON.parse(raw || '{}').linkedPulseIds || [])) ids.add(Number(x.linkedPulseId)); } catch (_) { /* fresh */ }
-      ids.add(Number(cmItemId));
-      await mondayApi.query(
-        'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
-        { b: String(cfg.boardId), i: String(clientId), c: JSON.stringify({ [cfg.columns.cases]: { item_ids: [...ids] } }) }
-      );
-    } catch (err) { console.warn(`[ClientAccount] Cases relation append failed for client ${clientId}: ${err.message}`); }
-  }
+  // Reverse navigation: add this case to the account's Cases relation.
+  await appendAccountRelation(cfg, clientId, cfg.columns.cases, cmItemId, 'Cases');
 }
 
-/** Stamp the account id on a lead (best-effort; leadService validates the column). */
+/**
+ * Stamp the account id on a lead AND add the lead to the account's Leads
+ * relation — each client row references every enquiry/consultation/direct
+ * entry of theirs, not just their cases (user directive 2026-08-04).
+ * Best-effort; leadService validates the column.
+ */
 async function linkLead(clientId, leadId) {
-  if (!loadBoard() || !clientId || !leadId) return;
+  const cfg = loadBoard();
+  if (!cfg || !clientId || !leadId) return;
   const leadService = require('./leadService');
   try { await leadService.updateLead(String(leadId), { clientAccountId: String(clientId) }); }
   catch (err) { console.warn(`[ClientAccount] lead stamp failed for ${leadId}: ${err.message}`); }
+  await appendAccountRelation(cfg, clientId, cfg.columns.leads, leadId, 'Leads');
 }
 
 /** One account row with its profile fields. null when dormant or missing. */

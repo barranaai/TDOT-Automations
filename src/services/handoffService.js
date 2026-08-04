@@ -130,7 +130,9 @@ async function stampClientAccount(lead, cmItemId) {
       if (r.created) console.log(`[Handoff] Client account ${clientId} created for "${lead.fullName}"`);
     }
     await accounts.linkCase(clientId, { cmItemId });
-    if (!preChosen) await accounts.linkLead(clientId, lead.id);
+    // Always — even when staff pre-chose the account: linkLead also appends
+    // the account's Leads relation, and both writes are idempotent.
+    await accounts.linkLead(clientId, lead.id);
   } catch (err) {
     console.warn(`[Handoff] client-account stamp failed for lead ${lead && lead.id}: ${err.message}`);
   }

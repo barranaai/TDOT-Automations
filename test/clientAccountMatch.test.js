@@ -185,3 +185,23 @@ test('stampClientAccount: NEVER throws — a registry failure must not block the
     await handoff.stampClientAccount({ id: '500', fullName: 'X', email: 'x@x.com' }, '900');
   } finally { restore.forEach((x) => x()); }
 });
+
+test('linkLead: stamps the lead AND appends the account\'s Leads relation (existing links kept)', async () => {
+  const leadService = require('../src/services/leadService');
+  const writes = [];
+  const restore = [
+    stub(leadService, 'updateLead', async (id, f) => writes.push(['stamp', id, f.clientAccountId])),
+    stub(mondayApi, 'query', async (q, vars) => {
+      if (/items\(ids/.test(q)) return { items: [{ column_values: [{ value: JSON.stringify({ linkedPulseIds: [{ linkedPulseId: 111 }] }) }] }] };
+      if (/change_multiple_column_values/.test(q)) { writes.push(['relation', JSON.parse(vars.c)]); return {}; }
+      return {};
+    }),
+  ];
+  try {
+    await svc.linkLead('55', '222');
+    assert.deepEqual(writes[0], ['stamp', '222', '55']);
+    const rel = writes.find((w) => w[0] === 'relation')[1];
+    const ids = rel[cfg.columns.leads].item_ids.sort();
+    assert.deepEqual(ids, [111, 222], 'the new lead is APPENDED — the existing link survives');
+  } finally { restore.forEach((x) => x()); }
+});

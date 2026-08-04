@@ -13,7 +13,8 @@
     "squareCustomerId": "text_mm5x4k3v",
     "status": "color_mm5xp031",
     "mergedInto": "text_mm5x8rd8",
-    "source": "text_mm5x5s20"
+    "source": "text_mm5x5s20",
+    "leads": "board_relation_mm5x3mew"
   },
   "statusLabels": [
     "Active",
