@@ -272,7 +272,7 @@ test('createDirectClient: engine row goes to the direct group and the case opens
     const { CASE_TYPE_LABELS, SUB_TYPES_BY_CASE } = require('../config/caseTypes');
     const noSubs = CASE_TYPE_LABELS.find((ct) => !(SUB_TYPES_BY_CASE[ct] || []).length);
     const r = await portal.createDirectClient({
-      fullName: 'Walkin Client', email: 'w@example.com',
+      fullName: 'Walkin Client', email: 'w@example.com', residentialAddress: '1 Main St',
       caseType: noSubs, consultant: 'Shermin Teymouri Mofrad',
     });
     assert.equal(r.ok, true);
@@ -295,7 +295,7 @@ test('createDirectClient: a failed early case-open does not block creation (sign
     const { CASE_TYPE_LABELS, SUB_TYPES_BY_CASE } = require('../config/caseTypes');
     const noSubs = CASE_TYPE_LABELS.find((ct) => !(SUB_TYPES_BY_CASE[ct] || []).length);
     const r = await portal.createDirectClient({
-      fullName: 'Walkin Client', email: 'w2@example.com',
+      fullName: 'Walkin Client', email: 'w2@example.com', residentialAddress: '1 Main St',
       caseType: noSubs, consultant: 'Shermin Teymouri Mofrad',
     });
     assert.equal(r.ok, true);

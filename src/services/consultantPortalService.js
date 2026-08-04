@@ -1195,6 +1195,7 @@ async function createDirectClient(payload = {}) {
   const bad = (m) => { const e = new Error(m); e.badRequest = true; throw e; };
   if (fullName.length < 2) bad('The client’s full legal name is required.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('A valid client email is required — the retainer agreement is sent to it.');
+  if (address.length < 5) bad('The client’s residential address is required — it is printed on the retainer agreement.');
   const labels = await directCaseTypeLabels();
   if (!labels.caseTypes.includes(caseType)) bad('Choose a case type — it generates the case reference and the document checklist.');
   {
