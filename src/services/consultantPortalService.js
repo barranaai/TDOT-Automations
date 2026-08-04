@@ -1310,6 +1310,8 @@ async function createDirectClient(payload = {}) {
  * graduate to the normal case views and drop off this list.
  */
 let _directQueueCache = { at: 0, rows: null };
+/** Drop the direct-retainer queue cache (e.g. after a client is deleted). */
+function invalidateDirectRetainerQueue() { _directQueueCache = { at: 0, rows: null }; }
 async function getDirectRetainerQueue() {
   if (_directQueueCache.rows && (Date.now() - _directQueueCache.at) < 60 * 1000) return _directQueueCache.rows;
   const leads = await leadService.listAllLeads();
@@ -1348,5 +1350,5 @@ module.exports = {
   getLeadsQueue, getLeadDetail, buildIntakeSections,
   parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement, getSignedConsultAgreementPdf, getSignedRetainerAgreementPdf,
   resolveFamilyMembers, FAMILY_MEMBER_TYPES, MILESTONE_TRIGGER_STAGES,
-  createDirectClient, getDirectClientOptions, getDirectRetainerQueue, DIRECT_SOURCE,
+  createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, DIRECT_SOURCE,
 };

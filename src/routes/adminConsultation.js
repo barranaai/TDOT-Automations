@@ -11,7 +11,7 @@
 
 const express = require('express');
 const router  = express.Router();
-const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS } = require('./adminShared');
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS } = require('./adminShared');
 const { OUTCOME_LABELS } = require('../services/consultantPortalService');
 
 function escAttr(s) {
@@ -121,6 +121,7 @@ function buildQueueHTML() {
   .dc-btn { padding:9px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:var(--navy); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
   .dc-btn.primary { background:var(--navy); border-color:var(--navy); color:#fff; }
   .dc-btn:disabled { opacity:.6; cursor:default; }
+  ${DELETE_UI_CSS}
 </style></head><body>
 ${buildNavHeader('consultations')}
 <main class="wrap">
@@ -149,7 +150,7 @@ ${buildNavHeader('consultations')}
     </div>
     <div class="card">
       <table>
-        <thead><tr><th>Client</th><th>Service</th><th>Consultant</th><th>Slot (Toronto)</th><th>Meeting</th><th>Pre-consult</th><th>Retainer</th><th>Follow-up</th><th>Outcome</th></tr></thead>
+        <thead><tr><th>Client</th><th>Service</th><th>Consultant</th><th>Slot (Toronto)</th><th>Meeting</th><th>Pre-consult</th><th>Retainer</th><th>Follow-up</th><th>Outcome</th><th></th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div>
@@ -160,7 +161,7 @@ ${buildNavHeader('consultations')}
     </div>
     <div class="card" id="direct-card" style="display:none">
       <table>
-        <thead><tr><th>Client</th><th>Case type</th><th>Consultant</th><th>Retainer</th><th>Case</th></tr></thead>
+        <thead><tr><th>Client</th><th>Case type</th><th>Consultant</th><th>Retainer</th><th>Case</th><th></th></tr></thead>
         <tbody id="direct-body"></tbody>
       </table>
     </div>
@@ -195,7 +196,7 @@ function qpill(cls,txt){ return '<span class="pill '+cls+'">'+escHtml(txt)+'</sp
 function todayStr(){ return (new Date()).toISOString().slice(0,10); }
 function renderRows(rows){
   var tb=document.getElementById('qbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="9" class="empty">'+(ALLROWS.length?'No consultations match your filters.':'No booked consultations right now.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="10" class="empty">'+(ALLROWS.length?'No consultations match your filters.':'No booked consultations right now.')+'</td></tr>'; return; }
   tb.innerHTML=rows.map(function(c){
     var pc=c.preConsultSubmitted?qpill('green','Submitted'):qpill('amber','Pending');
     var oc=c.outcome?qpill('blue',c.outcome):'<span class="pill grey">—</span>';
@@ -210,7 +211,8 @@ function renderRows(rows){
       '<td>'+pc+'</td>'+
       '<td>'+rs+'</td>'+
       '<td>'+fu+'</td>'+
-      '<td>'+oc+'</td></tr>';
+      '<td>'+oc+'</td>'+
+      '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this record (careful — removes Monday rows and the OneDrive folder; escalates to the full case if one exists)">'+TDOT_DEL_SVG+'</button></td></tr>';
   }).join('');
   Array.prototype.forEach.call(document.querySelectorAll('tr.row'),function(tr){
     tr.onclick=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id')); };
@@ -285,7 +287,15 @@ function loadDirectRetainers(){
     .then(function(r){ return r.ok ? r.json() : { clients: [] }; })
     .then(function(d){
       var rows=(d.clients||[]);
-      if(!rows.length) return; // section stays hidden when empty
+      if(!rows.length){
+        // Also on RE-render (e.g. the last direct client was just deleted):
+        // clear + hide, or the deleted row would linger with a stale count.
+        document.getElementById('direct-body').innerHTML='';
+        document.getElementById('direct-count').textContent='';
+        document.getElementById('direct-head').style.display='none';
+        document.getElementById('direct-card').style.display='none';
+        return;
+      }
       document.getElementById('direct-head').style.display='flex';
       document.getElementById('direct-card').style.display='block';
       document.getElementById('direct-count').textContent='('+rows.length+')';
@@ -296,7 +306,8 @@ function loadDirectRetainers(){
           '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+'</td>'+
           '<td style="color:var(--muted)">'+escHtml(c.caseType||'—')+'</td>'+
           '<td>'+escHtml(c.consultant||'—')+'</td>'+
-          '<td>'+rs+'</td><td>'+cs+'</td></tr>';
+          '<td>'+rs+'</td><td>'+cs+'</td>'+
+          '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client (careful — removes the case, its checklist, and the OneDrive folder)">'+TDOT_DEL_SVG+'</button></td></tr>';
       }).join('');
       Array.prototype.forEach.call(document.querySelectorAll('#direct-body tr.row'),function(tr){
         tr.onclick=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id')); };
@@ -394,6 +405,8 @@ function loadKpis(month){
    .then(function(d){ fillMonths(d.months, m); renderKpis(d); })
    .catch(function(e){ if(e.message==='x')return; document.getElementById('kpi-body').innerHTML='<div class="muted">KPIs unavailable: '+escHtml(e.message)+'</div>'; });
 }
+${DELETE_UI_JS}
+tdotBindDelete(function(){ load(); loadDirectRetainers(); });
 startClock(); checkApiStatus(); load(); loadKpis();
 </script></body></html>`;
 }

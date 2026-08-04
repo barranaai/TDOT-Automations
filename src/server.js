@@ -543,6 +543,54 @@ async function resolveCaseForWrite(req, res, caseRef) {
   return { viewer, overview };
 }
 
+// ─── Careful delete (ADMIN ONLY) ─────────────────────────────────────────────
+// Cascading removal of a lead/case across Monday boards + OneDrive. Preview
+// first, then execute with a typed confirmation. Lives on the resolveViewer
+// surface (NOT /api) because only viewer.isAdmin distinguishes admins from
+// regular staff — possession of the page is not authorisation to delete.
+function resolveAdminOrReject(req, res) {
+  const viewer = resolveViewer(req);
+  if (!viewer) { res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday' }); return null; }
+  if (!viewer.isAdmin) { res.status(403).json({ error: 'admin-only', message: 'Only an admin can delete records.' }); return null; }
+  return viewer;
+}
+
+app.get('/admin/delete/preview', async (req, res) => {
+  if (!resolveAdminOrReject(req, res)) return;
+  try {
+    const preview = await require('./services/deletionService').previewDeletion({
+      leadId: (req.query.leadId || '').trim() || undefined,
+      caseRef: (req.query.caseRef || '').trim() || undefined,
+    });
+    res.json(preview);
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    console.error('[Deletion] Preview failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/admin/delete/execute', express.json(), async (req, res) => {
+  const viewer = resolveAdminOrReject(req, res);
+  if (!viewer) return;
+  const { leadId, caseRef, confirmText, kind } = req.body || {};
+  try {
+    const result = await require('./services/deletionService').executeDeletion({
+      leadId: String(leadId || '').trim() || undefined,
+      caseRef: String(caseRef || '').trim() || undefined,
+      confirmText,
+      expectedKind: kind === 'case' || kind === 'lead' ? kind : undefined,
+      actor: viewer.email || viewer.name || 'admin-key',
+    });
+    consultantPortalService.invalidateDirectRetainerQueue(); // deleted clients must drop off the Direct section immediately
+    res.json(result);
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    console.error('[Deletion] Execute failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Identity-gated document action (mark reviewed / request rework).
 app.post('/admin/case-action/:caseRef/document/:itemId/status', express.json(), async (req, res) => {
   const ctx = await resolveCaseForWrite(req, res, (req.params.caseRef || '').trim());

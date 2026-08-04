@@ -7,7 +7,7 @@
 
 const express = require('express');
 const router  = express.Router();
-const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS } = require('./adminShared');
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS } = require('./adminShared');
 
 function buildDashboardHTML() {
   return `<!DOCTYPE html>
@@ -498,6 +498,7 @@ function buildDashboardHTML() {
       font-size: 11px; font-weight: 600; color: #94a3b8;
       border-top: 1px solid #e2e8f0; margin-top: 56px; letter-spacing: .3px;
     }
+    ${DELETE_UI_CSS}
   </style>
 </head>
 <body>
@@ -794,6 +795,7 @@ ${buildNavHeader('dashboard')}
             <th onclick="sortTable('overallReadiness')" data-col="overallReadiness">Readiness <span class="sort-arrow">↕</span></th>
             <th onclick="sortTable('daysElapsed')"      data-col="daysElapsed">Days <span class="sort-arrow">↕</span></th>
             <th>Status</th>
+            <th></th>
           </tr>
         </thead>
         <tbody id="all-cases-body"></tbody>
@@ -870,6 +872,7 @@ function loadData() {
     })
     .then(function(data) {
       _data = data;
+      window.TDOT_IS_ADMIN = !!(data.viewer && data.viewer.isAdmin);
       render(data);
       document.getElementById('loading').style.display = 'none';
       document.getElementById('content').style.display = 'block';
@@ -1526,7 +1529,7 @@ function renderTablePage() {
 
   if (page.length === 0) {
     var tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="10" style="text-align:center;color:var(--muted);padding:32px">No cases match the current filters.</td>';
+    tr.innerHTML = '<td colspan="11" style="text-align:center;color:var(--muted);padding:32px">No cases match the current filters.</td>';
     tbody.appendChild(tr);
     renderPagination(0);
     return;
@@ -1576,7 +1579,12 @@ function renderTablePage() {
         (c.escalationRequired ? '<span class="badge red" style="margin-right:3px">Esc</span>'       : '') +
         (c.expiryFlagged      ? '<span class="badge blue">Expiry</span>'                            : '') +
         (!c.clientBlocked && !c.escalationRequired && !c.expiryFlagged ? '<span style="color:var(--light);font-size:11px">—</span>' : '') +
-      '</td>';
+      '</td>' +
+      // Delete is ADMIN-ONLY (the server enforces it; hiding it here keeps the
+      // control honest for assigned-scope staff) and needs a case reference.
+      '<td>' + (window.TDOT_IS_ADMIN && c.caseRef
+        ? '<button class="del-btn" type="button" data-del-case="' + escHtml(c.caseRef) + '" title="Delete this case (careful — removes all its Monday rows, the lead, and the OneDrive folder)">' + TDOT_DEL_SVG + '</button>'
+        : '') + '</td>';
     tbody.appendChild(tr);
   });
 
@@ -1673,6 +1681,8 @@ function shortType(t) {
 }
 
 /* ── Boot ─────────────────────────────────────────────────────────── */
+${DELETE_UI_JS}
+tdotBindDelete(function(){ loadData(); });
 document.addEventListener('DOMContentLoaded', function() {
   // No admin key is fine — a Monday-logged-in staffer is authed by cookie and
   // loadData()'s endpoint resolves identity (or shows a Sign-in prompt on 401).

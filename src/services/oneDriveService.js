@@ -313,6 +313,85 @@ async function renameDriveItem(itemId, newName) {
 }
 
 /**
+ * Look up a folder directly under the client-documents root by its display
+ * name. 404 → null (never throws for a missing folder).
+ *
+ * @param {string} folderName  e.g. "Jane Doe - 2026-VV-009" (will be sanitized)
+ * @returns {Promise<{ id: string, name: string, webUrl: string }|null>}
+ */
+async function getClientFolderByName(folderName) {
+  const token    = await getCachedToken();
+  const safeName = String(folderName).replace(/[*:"<>?/\\|]/g, '').trim();
+  if (!safeName) return null;
+  try {
+    const res = await axios.get(itemUrl(`${ROOT_FOLDER}/${safeName}`), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return { id: res.data.id, name: res.data.name, webUrl: res.data.webUrl };
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    throw new Error(`OneDrive folder lookup failed: ${detail}`);
+  }
+}
+
+/**
+ * Resolve a driveItem by id — name, webUrl and its PARENT PATH (so callers can
+ * verify the item really sits under the client-documents root before doing
+ * anything destructive with it). 404 → null.
+ *
+ * @param {string} itemId  driveItem id
+ * @returns {Promise<{ id, name, webUrl, parentPath }|null>}
+ */
+async function getDriveItemById(itemId) {
+  const token = await getCachedToken();
+  try {
+    const res = await axios.get(`${userBase()}/items/${itemId}?$select=id,name,webUrl,parentReference`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return {
+      id: res.data.id,
+      name: res.data.name,
+      webUrl: res.data.webUrl,
+      parentPath: (res.data.parentReference && res.data.parentReference.path) || '',
+    };
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    throw new Error(`OneDrive item lookup failed: ${detail}`);
+  }
+}
+
+/**
+ * Delete a driveItem (folder + all contents) by id. Graph moves it to the
+ * drive's RECYCLE BIN — recoverable there, never a hard delete. 404 is treated
+ * as already-gone (returns false); anything else throws.
+ *
+ * @param {string} itemId  driveItem id
+ * @returns {Promise<boolean>} true = deleted now, false = was already gone
+ */
+async function deleteDriveItem(itemId, _retried = false) {
+  const token = await getCachedToken();
+  try {
+    await axios.delete(`${userBase()}/items/${itemId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    console.log(`[OneDrive] Deleted item ${itemId} (moved to recycle bin)`);
+    return true;
+  } catch (err) {
+    if (err.response?.status === 404) return false;
+    if (err.response?.status === 401 && !_retried) {
+      console.log('[OneDrive] Token expired mid-delete, refreshing…');
+      _cachedToken = null;
+      _tokenExpiry = 0;
+      return deleteDriveItem(itemId, true);
+    }
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    throw new Error(`OneDrive delete failed: ${detail}`);
+  }
+}
+
+/**
  * Upload a file and return an organisation-scoped sharing link to it (plus the
  * raw webUrl/id). Same path semantics as uploadFile; use this when the link
  * goes into a Monday column staff will click — bare webUrls in the noreply
@@ -373,4 +452,5 @@ async function uploadToLeadFolderAndLink({ fullName, leadId, folderId, filename,
 module.exports = {
   createClientFolders, uploadFile, readFile, ensureClientFolder, ensureCategoryFolderLink,
   ensureLeadFolder, renameDriveItem, uploadFileAndLink, uploadToLeadFolderAndLink,
+  getClientFolderByName, getDriveItemById, deleteDriveItem,
 };
