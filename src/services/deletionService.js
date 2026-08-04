@@ -163,6 +163,7 @@ async function caseGraph(cm) {
     folders,
     warnings: [
       ...warnings,
+      'The client’s account row on the Clients board (if any) is KEPT — it is cross-application history, and other cases may link to it.',
       'Documenso envelopes (signed agreements) and Square payment records are NOT deleted — remove those manually if needed.',
       'Monday rows go to Monday’s recycle bin (30-day recovery); OneDrive folders go to the OneDrive recycle bin.',
     ],

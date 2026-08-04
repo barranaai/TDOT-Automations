@@ -160,11 +160,52 @@ async function findClientMasterByEmailAndName(email, fullName) {
   if (!email) return null;
   const data = await mondayApi.query(
     `query($boardId: ID!, $colId: String!, $val: String!) {
-       items_page_by_column_values(limit: 25, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) { items { id name } }
+       items_page_by_column_values(limit: 25, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) { items { id name column_values(ids: ["${CM.caseStage}", "${CM.paymentStatus}", "${CM.caseType}", "${CM.caseRef}"]) { id text } } }
      }`,
     { boardId: String(clientMasterBoardId), colId: CM.clientEmail, val: String(email) }
   );
-  return pickSamePersonMatch(data?.items_page_by_column_values?.items || [], fullName);
+  const items = data?.items_page_by_column_values?.items || [];
+  const wanted = normName(fullName);
+  if (!wanted) return null;
+  const parse = (it) => {
+    const g = (colId) => (((it && it.column_values) || []).find((c) => c.id === colId) || {}).text || '';
+    return { id: String(it.id), name: it.name || '', caseRef: g(CM.caseRef), caseType: g(CM.caseType), caseStage: g(CM.caseStage), paymentStatus: g(CM.paymentStatus) };
+  };
+  const matches = items.filter((it) => normName(it.name) === wanted).map(parse);
+  if (!matches.length) return null;
+  // Once a person can have MULTIPLE cases, prefer an early SHELL among the
+  // matches (crash/double-submit recovery must find the shell it should
+  // reuse, not a progressed case that would push the decision to 'new' and
+  // orphan the shell). Progressed-only matches: first as before.
+  const isShell = (m) => decideCaseReuse({ existingStage: m.caseStage, existingPaymentStatus: m.paymentStatus, existingCaseType: m.caseType, leadResolvedCaseType: '' }) === 'reuse';
+  return matches.find(isShell) || matches[0];
+}
+
+/**
+ * PURE — may a returning client's handoff REUSE this existing Client Master
+ * row, or does it deserve a NEW case?
+ *
+ * Reuse exists for crash/double-submit recovery: an early shell of the SAME
+ * application (unpaid, pre-onboarding, same or unset case type). Anything that
+ * signals a real, progressed engagement — a payment, a later stage, a
+ * different confirmed case type — means this is a SECOND application, and
+ * reusing would overwrite the client's live case (the exact bug this fixes).
+ *
+ * 'Signed (Unpaid)' and the board automation's 'Alreaday Sent' [sic] stamp
+ * count as early: handoff itself writes 'Signed (Unpaid)' AT create, so a
+ * crashed first run leaves exactly that signature and must stay re-runnable.
+ */
+function decideCaseReuse({ existingStage, existingPaymentStatus, existingCaseType, leadResolvedCaseType } = {}) {
+  const EARLY_STAGES = ['', 'Not Started', 'Pre-Onboarding'];
+  const EARLY_PAYMENT = ['', 'Signed (Unpaid)', 'Alreaday Sent'];
+  const stage = String(existingStage || '').trim();
+  const pay   = String(existingPaymentStatus || '').trim();
+  const oldT  = String(existingCaseType || '').trim();
+  const newT  = String(leadResolvedCaseType || '').trim();
+  if (!EARLY_PAYMENT.includes(pay)) return 'new';
+  if (!EARLY_STAGES.includes(stage)) return 'new';
+  if (oldT && newT && oldT !== newT) return 'new';
+  return 'reuse';
 }
 
 /** Resolve the specific Client Master case type, or null if it must be set by staff. */
@@ -297,13 +338,30 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
   // Pre-create dedup: the SAME person may already have a case (lost Lead link).
   // Matched on email AND name so a shared family email never merges two matters.
   const existing = await findClientMasterByEmailAndName(lead.email, lead.fullName);
-  if (existing) {
-    console.log(`[Handoff] Reusing existing Client Master ${existing} for lead ${leadId} (matched by email + name)`);
+  // A returning client's SECOND application must get a NEW case — reusing a
+  // progressed case would overwrite it (caseType reset, stage clobbered).
+  // Reuse stays for what it was built for: crash/double-submit recovery of an
+  // early shell of the SAME application. Flag-gated: off = legacy reuse-always.
+  let returningFrom = null;
+  if (existing && require('../../config/features').clientMultiCaseEnabled) {
+    const decision = decideCaseReuse({
+      existingStage: existing.caseStage,
+      existingPaymentStatus: existing.paymentStatus,
+      existingCaseType: existing.caseType,
+      leadResolvedCaseType: resolveCaseType(lead),
+    });
+    if (decision === 'new') {
+      returningFrom = existing;
+      console.log(`[Handoff] Returning client — existing case ${existing.caseRef || existing.id} (${existing.caseStage || 'no stage'}/${existing.paymentStatus || 'unpaid'}) stays untouched; creating a NEW case for lead ${leadId}`);
+    }
+  }
+  if (existing && !returningFrom) {
+    console.log(`[Handoff] Reusing existing Client Master ${existing.id} for lead ${leadId} (matched by email + name)`);
     await leadService.updateLead(leadId, presigned
-      ? { clientMasterItemId: existing }
-      : { clientMasterItemId: existing, conversionStatus: 'Retained — Awaiting Payment' });
+      ? { clientMasterItemId: existing.id }
+      : { clientMasterItemId: existing.id, conversionStatus: 'Retained — Awaiting Payment' });
     // Preserve the lead's conversation history on the (reused) case.
-    await transferLeadUpdates(leadId, existing);
+    await transferLeadUpdates(leadId, existing.id);
     // Carry the intake OneDrive folder onto the reused case too (best-effort),
     // so the rename hook can find it when the case ref is assigned.
     if (lead.oneDriveFolderId) {
@@ -313,12 +371,12 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
         `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
            change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
          }`,
-        { boardId: String(clientMasterBoardId), itemId: String(existing), cols: JSON.stringify(reuseCols) }
-      ).catch((err) => console.warn(`[Handoff] Folder carry to reused CM ${existing} failed: ${err.message}`));
+        { boardId: String(clientMasterBoardId), itemId: String(existing.id), cols: JSON.stringify(reuseCols) }
+      ).catch((err) => console.warn(`[Handoff] Folder carry to reused CM ${existing.id} failed: ${err.message}`));
     }
-    await setClientPhone(existing, lead);
-    await stampClientAccount(lead, existing);
-    return existing;
+    await setClientPhone(existing.id, lead);
+    await stampClientAccount(lead, existing.id);
+    return existing.id;
   }
 
   const groupId = await getHandoffGroupId();
@@ -368,6 +426,23 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
 
   // Person-level account (Clients board) — best-effort, never blocks handoff.
   await stampClientAccount(lead, newId);
+
+  // Returning client: cross-link the two cases with notes so staff on either
+  // side see the full picture. Best-effort — the notes must never fail the
+  // handoff, and the OLD case's columns are never touched.
+  if (returningFrom) {
+    const note = async (itemId, body) => {
+      try {
+        await mondayApi.query('mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }',
+          { itemId: String(itemId), body });
+      } catch (err) { console.warn(`[Handoff] returning-client note failed on ${itemId}: ${err.message}`); }
+    };
+    await note(newId,
+      `🔁 <b>Returning client</b> — they already have case ${returningFrom.caseRef || `item ${returningFrom.id}`}` +
+      `${returningFrom.caseStage ? ` (${returningFrom.caseStage})` : ''}. That case was NOT modified; this is a separate new application.`);
+    await note(returningFrom.id,
+      `🔁 <b>Client returned</b> — a NEW application was opened for them (Client Master item ${newId}). This case was not changed.`);
+  }
 
   // Preserve the lead's conversation history (its Updates thread) on the new case.
   await transferLeadUpdates(leadId, newId);
@@ -549,4 +624,4 @@ async function openCaseEarly({ leadId }) {
   try { return await p; } finally { _inFlight.delete(key); }
 }
 
-module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, normName, stampClientAccount, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone };
+module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, normName, decideCaseReuse, stampClientAccount, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone };
