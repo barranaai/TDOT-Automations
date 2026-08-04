@@ -682,7 +682,7 @@ ${buildNavHeader('consultations')}
       <button class="btn" id="rp-add-family" type="button" style="margin-top:8px">${I.plus} Add family member</button>
 
       <div id="rp-inviter" style="display:none;margin-top:8px">
-        <div class="subhead">Inviter / sponsor</div>
+        <div class="subhead">Inviter / Sponsor / Dependent</div>
         <div class="rp-grid2">
           <div class="rp-field"><input id="rp-inviterName" type="text" placeholder="Name"></div>
           <div class="rp-field"><input id="rp-inviterEmail" type="text" placeholder="Email"></div>
@@ -1025,7 +1025,7 @@ function startAmend(){
 }
 
 // ── Retainer plan panel ──────────────────────────────────────────────────
-var RP_TPL_LABELS={ 'pa':'Principal Applicant only', 'pa-inviter':'PA + Inviter / Sponsor', 'employer':'Employer / Legal Rep' };
+var RP_TPL_LABELS={ 'pa':'Principal Applicant only', 'pa-inviter':'PA + Inviter / Sponsor / Dependent', 'employer':'Employer / Legal Rep' };
 var FAMILY_TYPES=['Spouse','Dependent Child','Parent','Sibling','Sponsor'];
 // Curated case-stage triggers + the case's live stage (both hydrated from the
 // retainer-plan payload). A milestone shows "DUE" when its trigger == CUR_CASE_STAGE.
