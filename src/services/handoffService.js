@@ -156,7 +156,7 @@ function pickSamePersonMatch(items, fullName) {
  * name (e.g. a spouse who shares the client's email), so that person gets their
  * own case instead of merging into the first one's.
  */
-async function findClientMasterByEmailAndName(email, fullName) {
+async function findClientMasterByEmailAndName(email, fullName, { preferShell = false } = {}) {
   if (!email) return null;
   const data = await mondayApi.query(
     `query($boardId: ID!, $colId: String!, $val: String!) {
@@ -176,9 +176,14 @@ async function findClientMasterByEmailAndName(email, fullName) {
   // Once a person can have MULTIPLE cases, prefer an early SHELL among the
   // matches (crash/double-submit recovery must find the shell it should
   // reuse, not a progressed case that would push the decision to 'new' and
-  // orphan the shell). Progressed-only matches: first as before.
+  // orphan the shell). Only when multi-case is ON: with the flag off the
+  // kill switch promises byte-for-byte legacy, i.e. Monday's first match.
   const isShell = (m) => decideCaseReuse({ existingStage: m.caseStage, existingPaymentStatus: m.paymentStatus, existingCaseType: m.caseType, leadResolvedCaseType: '' }) === 'reuse';
-  return matches.find(isShell) || matches[0];
+  const chosen = (preferShell && matches.find(isShell)) || matches[0];
+  // The client's OTHER cases — a returning-client note that named only the
+  // examined row would hide a live case from staff.
+  chosen.siblings = matches.filter((m) => m.id !== chosen.id);
+  return chosen;
 }
 
 /**
@@ -337,13 +342,14 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
 
   // Pre-create dedup: the SAME person may already have a case (lost Lead link).
   // Matched on email AND name so a shared family email never merges two matters.
-  const existing = await findClientMasterByEmailAndName(lead.email, lead.fullName);
+  const multiCase = require('../../config/features').clientMultiCaseEnabled;
+  const existing = await findClientMasterByEmailAndName(lead.email, lead.fullName, { preferShell: multiCase });
   // A returning client's SECOND application must get a NEW case — reusing a
   // progressed case would overwrite it (caseType reset, stage clobbered).
   // Reuse stays for what it was built for: crash/double-submit recovery of an
   // early shell of the SAME application. Flag-gated: off = legacy reuse-always.
   let returningFrom = null;
-  if (existing && require('../../config/features').clientMultiCaseEnabled) {
+  if (existing && multiCase) {
     const decision = decideCaseReuse({
       existingStage: existing.caseStage,
       existingPaymentStatus: existing.paymentStatus,
@@ -437,11 +443,18 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
           { itemId: String(itemId), body });
       } catch (err) { console.warn(`[Handoff] returning-client note failed on ${itemId}: ${err.message}`); }
     };
+    // Name EVERY existing case of this client, not just the one the reuse
+    // decision examined — a live case the note omitted would be invisible to
+    // staff working the new one.
+    const priorCases = [returningFrom, ...(returningFrom.siblings || [])].slice(0, 5);
+    const describe = (c) => `${c.caseRef || `item ${c.id}`}${c.caseStage ? ` (${c.caseStage})` : ''}`;
     await note(newId,
-      `🔁 <b>Returning client</b> — they already have case ${returningFrom.caseRef || `item ${returningFrom.id}`}` +
-      `${returningFrom.caseStage ? ` (${returningFrom.caseStage})` : ''}. That case was NOT modified; this is a separate new application.`);
-    await note(returningFrom.id,
-      `🔁 <b>Client returned</b> — a NEW application was opened for them (Client Master item ${newId}). This case was not changed.`);
+      `🔁 <b>Returning client</b> — they already have ${priorCases.length > 1 ? 'cases' : 'case'} ${priorCases.map(describe).join(', ')}. ` +
+      `${priorCases.length > 1 ? 'Those cases were' : 'That case was'} NOT modified; this is a separate new application.`);
+    for (const c of priorCases) {
+      await note(c.id,
+        `🔁 <b>Client returned</b> — a NEW application was opened for them (Client Master item ${newId}). This case was not changed.`);
+    }
   }
 
   // Preserve the lead's conversation history (its Updates thread) on the new case.

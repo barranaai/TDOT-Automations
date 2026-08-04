@@ -508,3 +508,30 @@ test('findClientMatches: a formatted typed phone still finds the digits-only sto
     assert.equal(m.leads.length, 1);
   } finally { restore.forEach((x) => x()); }
 });
+
+// Verification-sweep finding (2026-08-04): "create new anyway" must NOT disable
+// double-submit protection — the SAME person retried is still a retry. Only
+// the DIFFERENT-person question is answered by that choice, and the reuse
+// scan's name check is what settles that.
+test('allowDuplicate: a same-NAME un-retained direct lead is still REUSED (retry protection survives)', async () => {
+  let created = false;
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'findAllByColumnValue', async () => ([
+      { id: '795', fullName: 'Retry Person', sourceChannel: 'Direct Retainer', retainerSent: '' },
+    ])),
+    stub(leadService, 'createLead', async () => { created = true; return { id: '796' }; }),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await portal.createDirectClient({
+      fullName: 'Retry Person', email: 'retry@x.co', phone: '4165550100',
+      residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT,
+      allowDuplicate: true,
+    });
+    assert.equal(r.reused, true, 'the lost-response retry lands on the existing lead');
+    assert.equal(r.leadId, '795');
+    assert.equal(created, false, 'no second lead minted');
+  } finally { restore.forEach((x) => x()); }
+});

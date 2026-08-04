@@ -165,3 +165,56 @@ test('multi-match: among several same-person rows, the early SHELL is preferred 
     assert.equal(m.calls.created, 0, 'no orphan duplicate created');
   } finally { features.clientMultiCaseEnabled = flagWas; restore.forEach((x) => x()); }
 });
+
+// Verification-sweep finding (2026-08-04): the shell preference must NOT apply
+// on the rollback path — flag off promises byte-for-byte legacy (Monday's
+// first name match), or a kill switch would silently change which case is reused.
+test('flag OFF: multi-match keeps LEGACY first-match order (no shell preference)', async () => {
+  const progressed = cmRow({ id: '800', name: 'Returning Client', stage: 'Retained', pay: 'Paid', type: 'Visitor Visa', ref: '2026-VV-100' });
+  const shell      = cmRow({ id: '803', name: 'Returning Client', stage: 'Pre-Onboarding', pay: '', type: 'Citizenship', ref: '' });
+  const m = handoffStub({});
+  const leadUpdates = [];
+  const restore = [
+    stub(mondayApi, 'query', async (q, vars) => {
+      if (/items_page_by_column_values/.test(q)) return { items_page_by_column_values: { items: [progressed, shell] } };
+      return m.fn(q, vars);
+    }),
+    stub(leadService, 'getLead', async () => ({ ...LEAD })),
+    stub(leadService, 'updateLead', async (id, f) => { leadUpdates.push({ id, f }); }),
+    stub(clientAccounts, 'findOrCreate', async () => null),
+  ];
+  const flagWas = features.clientMultiCaseEnabled; features.clientMultiCaseEnabled = false;
+  try {
+    const cmId = await handoff.openCaseEarly({ leadId: '600' });
+    assert.equal(cmId, '800', 'legacy first-match — the shell preference is multi-case-only');
+    assert.equal(m.calls.created, 0);
+  } finally { features.clientMultiCaseEnabled = flagWas; restore.forEach((x) => x()); }
+});
+
+test('flag ON: the returning-client note names EVERY prior case, and each gets a cross-link', async () => {
+  // A live progressed case + an abandoned shell of a DIFFERENT type: the new
+  // application must not hide the live case from staff.
+  const live  = cmRow({ id: '800', name: 'Returning Client', stage: 'Document Collection Started', pay: 'Paid', type: 'Visitor Visa', ref: '2026-VV-100' });
+  const shell = cmRow({ id: '803', name: 'Returning Client', stage: 'Pre-Onboarding', pay: '', type: 'Study Permit', ref: '2026-SP-050' });
+  const m = handoffStub({});
+  const leadUpdates = [];
+  const restore = [
+    stub(mondayApi, 'query', async (q, vars) => {
+      if (/items_page_by_column_values/.test(q)) return { items_page_by_column_values: { items: [live, shell] } };
+      return m.fn(q, vars);
+    }),
+    stub(leadService, 'getLead', async () => ({ ...LEAD })),   // confirmedCaseType: 'Citizenship' → differs from both
+    stub(leadService, 'updateLead', async (id, f) => { leadUpdates.push({ id, f }); }),
+    stub(clientAccounts, 'findOrCreate', async () => null),
+  ];
+  const flagWas = features.clientMultiCaseEnabled; features.clientMultiCaseEnabled = true;
+  try {
+    const cmId = await handoff.openCaseEarly({ leadId: '600' });
+    assert.equal(cmId, '9900', 'a third, separate case');
+    const noteOnNew = m.calls.notes.find((n) => n.itemId === '9900' && /Returning client/.test(n.body));
+    assert.ok(/2026-VV-100/.test(noteOnNew.body), 'the LIVE case is named');
+    assert.ok(/2026-SP-050/.test(noteOnNew.body), 'the shell is named too');
+    assert.ok(m.calls.notes.some((n) => n.itemId === '800' && /Client returned/.test(n.body)), 'live case cross-linked');
+    assert.ok(m.calls.notes.some((n) => n.itemId === '803' && /Client returned/.test(n.body)), 'shell cross-linked');
+  } finally { features.clientMultiCaseEnabled = flagWas; restore.forEach((x) => x()); }
+});

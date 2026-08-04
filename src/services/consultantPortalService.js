@@ -1325,12 +1325,13 @@ async function createDirectClient(payload = {}) {
   // Reuse an existing direct-tagged lead with this email AND THE SAME PERSON'S
   // NAME that hasn't been sent a retainer yet — a double-submit always retypes
   // the same name; a shared family email under a different name is a DIFFERENT
-  // person and must never land on their spouse's record. Staff choosing
-  // "create new anyway" (allowDuplicate) skips the reuse entirely — an
-  // explicit new record must not be silently redirected. MUST scan every
-  // match — the same email commonly also exists on an older non-direct lead.
-  // Best-effort: a read failure falls through to create.
-  if (!allowDuplicate) try {
+  // person, and the name check (not a flag) is what keeps them apart. This
+  // runs even under allowDuplicate: "create new anyway" answers the
+  // DIFFERENT-person question, and skipping the scan there would drop
+  // double-submit protection on exactly the retry path staff are on.
+  // MUST scan every match — the same email commonly also exists on an older
+  // non-direct lead. Best-effort: a read failure falls through to create.
+  try {
     const { normName } = require('./handoffService');
     const matches = await leadService.findAllByColumnValue('email', email);
     const reusable = (matches || []).filter((l) =>
