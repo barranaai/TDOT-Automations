@@ -14,8 +14,6 @@ module.exports = {
   },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant (and dependent spouse)', required: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all pages (that covers 5-year eligibility period)', category: 'Identity',
         guidance: 'Provide your expired and current passports in full: clear copies of every page including all blank pages, temporary resident visas, entry stamps and any other immigration stamps. Also include copies of work permits, study permits and any other Canadian immigration documents.' },
       { code: 'PERSONALID', name: 'Personal Identification - any 2 from the listed options', category: 'Identity',
@@ -32,8 +30,6 @@ module.exports = {
         guidance: 'A police certificate states you don’t have a criminal record or, if you have one, is a copy of your criminal record. Provide PCC from all countries where you lived more than 6 months in the last 5 years; the issue date must be within the last 6 months or after your most recent arrival in Canada, whichever is earlier. How to get a police certificate: https://www.canada.ca/en/immigration-refugees-citizenship/services/application/medical-police/police-certificates/how.html.' },
     ] },
     { role: 'DependentChild', label: 'Accompanying Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus copies of your old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERSONALID', name: 'Personal Identification', category: 'Identity',

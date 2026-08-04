@@ -14,8 +14,6 @@ module.exports = {
   },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant', required: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
@@ -50,8 +48,6 @@ module.exports = {
         guidance: 'At least 3 letters describing your skills, strengths and qualities, showing why you are a good fit for the job or opportunity, with examples of your work or achievements, ending with a strong statement of support.' },
     ] },
     { role: 'DependentChild', label: 'Dependent Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
         guidance: 'Attach all permits issued to you in Canada as a visitor, student or worker.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',

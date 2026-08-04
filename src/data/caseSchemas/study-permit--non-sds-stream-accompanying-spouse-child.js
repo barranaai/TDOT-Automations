@@ -16,8 +16,6 @@ module.exports = {
   },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant', required: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' },
@@ -54,8 +52,6 @@ module.exports = {
         guidance: 'At least 3 months bank statements with good funds and no sudden deposits; investment proof in your name; most recent property/gold evaluation reports; net-worth (CA) certificate on the Chartered Accountant’s letterhead; notarized support affidavit if the assets belong to supporting immediate family members (we can share a template).' },
     ] },
     { role: 'Spouse', label: 'Accompanying Spouse', includeWhen: { caseFlag: 'spouseIncluded' }, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' },
@@ -76,8 +72,6 @@ module.exports = {
         guidance: 'A detailed letter telling the story of your relationship from first meeting to now; at least 2–3 hand-signed letters from friends and family; at least 50 photos together including wedding and early-relationship photos; wedding cards from both sides; screenshots of emails, texts, WhatsApp chats, phone/video calls and social media showing long-term interaction; evidence of financial interdependence, joint accounts or insurance with both names; records of gifts and romantic letters; boarding passes or tickets confirming travel to meet each other.' },
     ] },
     { role: 'DependentChild', label: 'Accompanying Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PHOTO', name: 'Digital photo as per specifications of Temporary Residents', category: 'Identity',

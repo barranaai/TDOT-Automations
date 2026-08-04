@@ -11,9 +11,11 @@ const countRole = (plan, role) => plan.filter((r) => r.role === role).length;
 const hasDoc    = (plan, role, codeFragment) =>
   plan.some((r) => r.role === role && r.documentCode.includes(codeFragment));
 
-// PA/Spouse have 11 doc definitions, 1 of which (NAMEAFFIDAVIT) is conditional
-// on the member flag `nameChanged`. Sponsor has 7, all unconditional.
-const PA_FULL = 11, PA_NO_AFFIDAVIT = 10, SPONSOR = 7;
+// PA/Spouse have 10 doc definitions (the Questionnaire row was removed from
+// ALL document checklists 2026-08-04 — the questionnaire has its own flow),
+// 1 of which (NAMEAFFIDAVIT) is conditional on the member flag `nameChanged`.
+// Sponsor has 7, all unconditional.
+const PA_FULL = 10, PA_NO_AFFIDAVIT = 9, SPONSOR = 7;
 
 test('PA applying alone — no spouse, no name change', () => {
   const plan = seedPlan({

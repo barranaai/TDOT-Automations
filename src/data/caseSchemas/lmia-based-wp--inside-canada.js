@@ -15,8 +15,6 @@ module.exports = {
   },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant', required: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
@@ -41,8 +39,6 @@ module.exports = {
         guidance: 'Complete academic records: marksheets/transcripts showing the grades obtained in each subject for every year or semester, certificates issued by the institutions verifying completion of each course, degree, diploma or other qualification, and the institution’s completion letter stating you completed the course.' },
     ] },
     { role: 'Spouse', label: 'Dependent Spouse', includeWhen: { caseFlag: 'spouseIncluded' }, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
@@ -53,8 +49,6 @@ module.exports = {
         guidance: 'Driver’s licence (front and back); lease agreement; most recent credit card statement; most recent utility bill (electricity/gas).' },
     ] },
     { role: 'DependentChild', label: 'Dependent Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
         guidance: 'Attach all permits issued to you in Canada as a visitor, student or worker.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',

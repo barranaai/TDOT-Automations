@@ -15,8 +15,6 @@ module.exports = {
   },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant', required: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
@@ -41,8 +39,6 @@ module.exports = {
         guidance: 'Results must be no older than two years upon date of receipt; bachelor’s, master’s or doctoral graduates need CLB 7 in English or NCLC 7 in French in all four skill areas, while college or other university program graduates need CLB 5 or NCLC 5. Accepted tests: CELPIP-G, IELTS-G, PTE Core for English; TEF Canada and TCF Canada for French. More information: https://www.canada.ca/en/immigration-refugees-citizenship/services/study-canada/work/after-graduation/eligibility/study-requirements.html' },
     ] },
     { role: 'Spouse', label: 'Accompanying Spouse', includeWhen: { caseFlag: 'spouseIncluded' }, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
@@ -67,8 +63,6 @@ module.exports = {
         guidance: 'Results must be no older than two years upon date of receipt; bachelor’s, master’s or doctoral graduates need CLB 7 in English or NCLC 7 in French in all four skill areas, while college or other university program graduates need CLB 5 or NCLC 5. Accepted tests: CELPIP-G, IELTS-G, PTE Core for English; TEF Canada and TCF Canada for French. More information: https://www.canada.ca/en/immigration-refugees-citizenship/services/study-canada/work/after-graduation/eligibility/study-requirements.html' },
     ] },
     { role: 'DependentChild', label: 'Dependent Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
         guidance: 'Attach all permits ever issued to you in Canada as a visitor, student or worker.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',

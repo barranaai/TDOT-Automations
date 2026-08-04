@@ -16,8 +16,6 @@
 // `guidance` = client-facing upload instructions, condensed faithfully from the
 // source PDF (same authoring style the team reviewed on supervisa-parents).
 const PA_SPOUSE_DOCUMENTS = [
-  { code: 'QUESTIONNAIRE', category: 'Forms',     name: 'Questionnaire',
-    guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
   { code: 'PASSPORT',      category: 'Identity',  name: 'Passport with all stamped pages',
     guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
   { code: 'NAMEAFFIDAVIT', category: 'Identity',  name: 'One and same name affidavit if name/surname changed',

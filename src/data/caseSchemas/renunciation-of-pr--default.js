@@ -14,8 +14,6 @@ module.exports = {
   },
   roles: [
     { role: 'PrincipalApplicant', label: 'Applicant and Dependent Spouse', required: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'IDENTITYCIVIL', name: 'Identity and Civil Documents', category: 'Identity',
@@ -28,8 +26,6 @@ module.exports = {
         guidance: 'PR card (all PR cards ever issued) and COPR signed by you and the officer. If there is information on both sides of the identification document, photocopy both sides.' },
     ] },
     { role: 'DependentChild', label: 'Accompanying Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'STATUSID', name: 'Status Identification (PR Card, COPR, Birth Certificate)', category: 'Identity',

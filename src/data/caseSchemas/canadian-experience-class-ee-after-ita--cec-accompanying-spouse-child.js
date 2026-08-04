@@ -15,8 +15,6 @@ module.exports = {
   },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant', required: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus copies of your old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
@@ -43,8 +41,6 @@ module.exports = {
         guidance: 'Affidavit of One and the Same Person, sworn (stamped and signed) by a practicing lawyer or notary public — we can share a template. Also provide legal proof of the name change as instructed by the government in your country.' },
     ] },
     { role: 'Spouse', label: 'Dependent Spouse/Partner', includeWhen: { caseFlag: 'spouseIncluded' }, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus copies of your old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
@@ -71,8 +67,6 @@ module.exports = {
         guidance: 'Affidavit of One and the Same Person, sworn (stamped and signed) by a practicing lawyer or notary public — we can share a template. Also provide legal proof of the name change as instructed by the government in your country.' },
     ] },
     { role: 'DependentChild', label: 'Dependent Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus copies of your old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',

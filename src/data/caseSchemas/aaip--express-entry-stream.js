@@ -15,8 +15,6 @@ module.exports = {
   },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant', required: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
@@ -45,8 +43,6 @@ module.exports = {
         guidance: 'Must be less than six months old, printed on business letterhead with the business address, telephone/fax numbers, email and website; identify the responsible officer or supervisor with their signature; be stamped with the corporate seal if applicable; and be signed by you and your employer. It must include the job title, NOC code, wage, duties and responsibilities, hours per week, weeks of work per year, vacation days/weeks, workplace location and employment start date, and confirm a full-time position of indeterminate duration (no end date) with terms effective as of the date of nomination for current employees or upon obtaining a work permit for new hires.' },
     ] },
     { role: 'Spouse', label: 'Dependent Spouse', includeWhen: { caseFlag: 'spouseIncluded' }, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',

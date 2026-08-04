@@ -19,8 +19,6 @@ module.exports = {
       label: 'Principal Applicant',
       required: true,
       documents: [
-        { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-          guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
         { code: 'PASSPORT', name: 'Passport with all pages- (in the last 5 years)', category: 'Identity',
           guidance: 'Provide a copy of your expired and current entire passport: clear copies of each page including all blank pages, Temporary Resident Visas, entry stamps and/or any other immigration stamps.' },
         { code: 'IDENTITYCIVIL', name: 'Identity and Civil Documents', category: 'Identity',
@@ -42,8 +40,6 @@ module.exports = {
       label: 'Dependent Spouse',
       includeWhen: { caseFlag: 'spouseIncluded' },
       documents: [
-        { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-          guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
         { code: 'PASSPORT', name: 'Passport with all pages- (in the last 5 years)', category: 'Identity',
           guidance: 'Provide a copy of your expired and current entire passport: clear copies of each page including all blank pages, Temporary Resident Visas, entry stamps and/or any other immigration stamps.' },
         { code: 'IDENTITYCIVIL', name: 'Identity and Civil Documents', category: 'Identity',
@@ -66,8 +62,6 @@ module.exports = {
       includeWhen: { caseFlag: 'childrenIncluded' },
       multipleAllowed: true,
       documents: [
-        { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-          guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
         { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
           guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
         { code: 'STATUSID', name: 'Status Identification', category: 'Identity',

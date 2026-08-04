@@ -18,8 +18,6 @@ module.exports = {
       label: 'Principal Applicant',
       required: true,
       documents: [
-        { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-          guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
         { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
           guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
         { code: 'NAMEAFFIDAVIT', name: 'One and same name affidavit if name/surname changed', category: 'Identity', includeWhen: { memberFlag: 'nameChanged' },

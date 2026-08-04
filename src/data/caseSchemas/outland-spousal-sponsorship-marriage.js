@@ -18,8 +18,6 @@
 'use strict';
 
 const PA_DOCUMENTS = [
-  { code: 'QUESTIONNAIRE', category: 'Forms',        name: 'Questionnaire',
-    guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
   { code: 'PASSPORT',      category: 'Identity',     name: 'Passport with all stamped pages',
     guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
   { code: 'NAMEAFFIDAVIT', category: 'Identity',     name: 'One and same name affidavit if name/surname changed',
@@ -40,8 +38,6 @@ const PA_DOCUMENTS = [
 ];
 
 const SPONSOR_DOCUMENTS = [
-  { code: 'QUESTIONNAIRE', category: 'Forms',     name: 'Questionnaire',
-    guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
   { code: 'PASSPORT',      category: 'Identity',  name: 'Passport with all stamped pages',
     guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
   { code: 'PRCARD',        category: 'Identity',  name: 'PR Card or eCOPR',

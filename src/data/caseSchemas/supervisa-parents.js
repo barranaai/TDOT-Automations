@@ -26,10 +26,6 @@
 // separate checklist rows, so they live in `guidance`, not as extra docs.
 const PA_SPOUSE_DOCUMENTS = [
   {
-    code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-    guidance: 'Complete with full and accurate details. Gaps are not accepted.',
-  },
-  {
     code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
     guidance: 'Photo/name/signature/DOB/place-of-issue pages, plus old & current passports showing entry/exit stamps.',
   },

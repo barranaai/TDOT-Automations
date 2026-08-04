@@ -12,8 +12,6 @@ module.exports = {
   memberFlags: { nameChanged: { label: 'Applicant name/surname differs across official documents' } },
   roles: [
     { role: 'PrincipalApplicant', label: 'Principal Applicant (Worker Spouse)', required: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
@@ -34,8 +32,6 @@ module.exports = {
         guidance: 'Driver’s licence (front and back); lease agreement; most recent credit card statement; most recent utility bill (electricity, gas).' }
     ] },
     { role: 'DependentChild', label: 'Accompanying Child', includeWhen: { caseFlag: 'childrenIncluded' }, multipleAllowed: true, documents: [
-      { code: 'QUESTIONNAIRE', name: 'Questionnaire', category: 'Forms',
-        guidance: 'Complete the questionnaire with full and accurate details. Any gaps will not be accepted.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
         guidance: 'Attach all permits ever issued to you in Canada as a visitor, student or worker.' },
       { code: 'PASSPORT', name: 'Passport with all stamped pages', category: 'Identity',
