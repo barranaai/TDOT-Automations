@@ -256,7 +256,10 @@ const _countersignInFlight = new Map(); // leadId → Promise — concurrent por
 
 async function startConsultCountersign(leadId) {
   const key = String(leadId);
-  if (_countersignInFlight.has(key)) return _countersignInFlight.get(key);
+  // A concurrent caller awaits the SAME issue and must be able to tell it
+  // didn't cause one — otherwise two webhook deliveries each announce an
+  // envelope that was only created once.
+  if (_countersignInFlight.has(key)) return _countersignInFlight.get(key).then((r) => ({ ...r, coalesced: true }));
   const p = _doStartConsultCountersign(leadId).finally(() => _countersignInFlight.delete(key));
   _countersignInFlight.set(key, p);
   return p;

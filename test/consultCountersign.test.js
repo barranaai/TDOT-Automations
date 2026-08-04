@@ -223,7 +223,13 @@ test('startConsultCountersign: concurrent clicks share ONE envelope (in-flight l
       ]);
       assert.equal(sends, 1, 'second concurrent click must not mint a second envelope');
       assert.equal(a.envelopeId, 'env-race');
-      assert.deepEqual(a, b, 'both callers share the one result');
+      assert.equal(b.envelopeId, 'env-race', 'both callers get the one envelope');
+      assert.equal(a.signUrl, b.signUrl);
+      // The follower is now TAGGED (coalesced) so the auto-send caller can tell
+      // it didn't cause the send — two webhook deliveries must not both
+      // announce "countersign request sent" for a single envelope.
+      assert.ok(a.coalesced || b.coalesced, 'the follower is marked');
+      assert.ok(!(a.coalesced && b.coalesced), 'exactly one caller owns the send');
     });
   }));
 
@@ -306,4 +312,93 @@ test('consultation detail page: countersign buttons exist and pre-sign buttons h
     'btn-resend stays visible after the client signs');
   assert.ok(html.includes("'· fully signed '"), 'fully-signed status line present');
   assert.ok(html.includes('consult-agreement-signed'), 'signed-PDF endpoint wired');
+});
+
+// ─── Auto-send the consult countersign (user directive 2026-08-04) ──────────
+// Mirrors the retainer: the CLIENT's signature issues the consultant's
+// envelope immediately (Documenso emails them), instead of waiting for someone
+// to notice a Monday note and click "Sign as consultant".
+
+const rcDocumenso = require('../src/services/documensoService');
+const rcLead      = require('../src/services/leadService');
+const rcSvcC      = require('../src/services/consultAgreementService');
+const rcOneDrive  = require('../src/services/oneDriveService');
+const rcMonday    = require('../src/services/mondayApi');
+
+function autoStub(overrides, fn) {
+  const saved = [];
+  for (const [o, k, v] of overrides) { saved.push([o, k, o[k]]); o[k] = v; }
+  return Promise.resolve().then(fn).finally(() => { for (const [o, k, v] of saved.reverse()) o[k] = v; });
+}
+const AUTO_LEAD = { id: '901', fullName: 'Auto Consult', email: 'c@x.co', assignedConsultant: 'Shermin Teymouri Mofrad', consultAgreementSigned: '', consultCountersign: '' };
+const autoMonday = async (q) => (/column_values/.test(q) ? { items: [{ column_values: [{ text: '2026-XX-009' }] }] } : {});
+
+test('captureCompleted consult (client): AUTO-issues the consultant countersign envelope', () => {
+  const started = [];
+  const prevEnabled = process.env.DOCUMENSO_ENABLED; process.env.DOCUMENSO_ENABLED = 'true';
+  return autoStub([
+    [rcLead, 'getLead', async () => ({ ...AUTO_LEAD })],
+    [rcLead, 'updateLead', async () => {}],
+    [rcOneDrive, 'ensureClientFolder', async () => {}],
+    [rcOneDrive, 'uploadFile', async () => {}],
+    [rcMonday, 'query', autoMonday],
+    [rcSvcC, 'startConsultCountersign', async (id) => { started.push(String(id)); return { envelopeId: 'env-c-new', signUrl: 'https://app.documenso.com/sign/x' }; }],
+  ], async () => {
+    await rcDocumenso.captureCompleted({
+      event: 'DOCUMENT_COMPLETED',
+      payload: { externalId: 'consult-901', envelopeId: 'env-c', envelopeItems: [{ id: 'item-c' }] },
+    });
+    assert.deepEqual(started, ['901'], 'the consultant envelope goes out with no staff click');
+  }).finally(() => { if (prevEnabled === undefined) delete process.env.DOCUMENSO_ENABLED; else process.env.DOCUMENSO_ENABLED = prevEnabled; });
+});
+
+test('consult auto-send failure NEVER breaks the client-signature capture', () => {
+  const updates = [];
+  const prevEnabled = process.env.DOCUMENSO_ENABLED; process.env.DOCUMENSO_ENABLED = 'true';
+  return autoStub([
+    [rcLead, 'getLead', async () => ({ ...AUTO_LEAD })],
+    [rcLead, 'updateLead', async (id, f) => { updates.push(f); }],
+    [rcOneDrive, 'ensureClientFolder', async () => {}],
+    [rcOneDrive, 'uploadFile', async () => {}],
+    [rcMonday, 'query', autoMonday],
+    [rcSvcC, 'startConsultCountersign', async () => { throw new Error('documenso down'); }],
+  ], async () => {
+    await rcDocumenso.captureCompleted({
+      event: 'DOCUMENT_COMPLETED',
+      payload: { externalId: 'consult-901', envelopeId: 'env-c', envelopeItems: [{ id: 'item-c' }] },
+    });
+    assert.ok(updates.find((f) => f.consultAgreementSigned), 'the client signature is still recorded');
+  }).finally(() => { if (prevEnabled === undefined) delete process.env.DOCUMENSO_ENABLED; else process.env.DOCUMENSO_ENABLED = prevEnabled; });
+});
+
+test('REAL consult service: concurrent auto-sends create ONE envelope; follower marked coalesced', () => {
+  let created = 0;
+  const prevTok = process.env.DOCUMENSO_API_TOKEN; process.env.DOCUMENSO_API_TOKEN = 'tok';
+  const prevEnabled = process.env.DOCUMENSO_ENABLED; process.env.DOCUMENSO_ENABLED = 'true';
+  return autoStub([
+    [rcLead, 'getLead', async () => ({ ...AUTO_LEAD, consultAgreementSigned: '2026-08-04' })],
+    [rcLead, 'updateLead', async () => {}],
+    [rcOneDrive, 'readFile', async () => Buffer.from('%PDF-1.4 fake')],
+    [rcDocumenso, 'sendForSignature', async () => { created++; await new Promise((r) => setTimeout(r, 25)); return { envelopeId: 'env-c1', envelopeItemId: 'i1', signUrl: 'https://app.documenso.com/sign/t' }; }],
+    [rcMonday, 'query', autoMonday],
+  ], async () => {
+    const [a, b] = await Promise.all([
+      rcSvcC.startConsultCountersign('901'),
+      rcSvcC.startConsultCountersign('901'),
+    ]);
+    assert.equal(created, 1, 'ONE envelope — the consultant is never emailed twice');
+    assert.ok(a.coalesced || b.coalesced, 'the follower knows it did not cause the send');
+    assert.ok(!(a.coalesced && b.coalesced), 'exactly one caller owns the send');
+  }).finally(() => {
+    if (prevTok === undefined) delete process.env.DOCUMENSO_API_TOKEN; else process.env.DOCUMENSO_API_TOKEN = prevTok;
+    if (prevEnabled === undefined) delete process.env.DOCUMENSO_ENABLED; else process.env.DOCUMENSO_ENABLED = prevEnabled;
+  });
+});
+
+test('consult countersign button reports sent-vs-signed state', () => {
+  const { buildDetailHTML } = require('../src/routes/adminConsultation');
+  const html = buildDetailHTML('901');
+  assert.ok(html.includes('var CS_RC_DONE=false, CS_RC_SENT=false;'), 'state vars declared (no ReferenceError)');
+  assert.ok(html.includes('csBtn.disabled=CS_RC_DONE'), 'DISABLES once countersigned instead of vanishing');
+  assert.ok(html.includes('Open countersign link'), 're-open state present');
 });

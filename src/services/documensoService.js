@@ -476,6 +476,28 @@ async function captureCompleted(body) {
       });
     }
     await postNote(leadId, `✍️ <b>Consultation agreement signed via Documenso</b>${stored ? ' — signed copy saved to OneDrive.' : '.'}`);
+
+    // Same automation as the retainer (user directive 2026-08-04): the client's
+    // signature issues the consultant's countersign envelope immediately, so
+    // Documenso emails them the signing link instead of the agreement waiting
+    // on someone spotting a Monday note. Identical rails — best-effort so a
+    // failure can never break the client-signature capture, idempotent so
+    // replays and a racing staff click can't double-email the consultant.
+    try {
+      const auto = await consultAgreementSvc.startConsultCountersign(leadId);
+      if (auto && auto.envelopeId && !auto.resumed && !auto.coalesced) {
+        if (auto.persistFailed) {
+          await postNote(leadId,
+            `⚠️ <b>Countersign request WAS emailed to the consultant, but could not be recorded on this lead</b> (envelope ${String(auto.envelopeId).replace(/[<>&"]/g, '')}). ` +
+            'Do NOT click “Sign as consultant” — that would send them a second request. Ask them to sign from the Documenso email they already have.');
+        } else {
+          await postNote(leadId, '🖋️ <b>Countersign request sent to the consultant</b> — Documenso emailed them the consultation agreement to sign. The client gets their fully-signed copy automatically once they do.');
+        }
+      }
+    } catch (err) {
+      console.warn(`[Documenso] auto-countersign (consult) for lead ${leadId} failed: ${err.message}`);
+      await postNote(leadId, '⚠️ <b>The countersign request could not be sent to the consultant automatically.</b> Open this lead in the Consultations page and click “Sign as consultant”.');
+    }
   }
   return {
     type, leadId, stored,

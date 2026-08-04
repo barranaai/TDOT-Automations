@@ -752,7 +752,7 @@ ${buildNavHeader('consultations')}
               <button class="btn" id="btn-consult-preview" title="Preview the consultation agreement">${I.eye} Preview agreement</button>
               <button class="btn" id="btn-consult-send" title="Send consultation email: booking + form + agreement">${I.send} Review &amp; send</button>
               <button class="btn" id="btn-consult-signed-view" style="display:none" title="View the signed consultation agreement">${I.eye} View signed agreement</button>
-              <button class="btn" id="btn-consult-countersign" style="display:none" title="Add the consultant (RCIC) signature to the client-signed agreement">${I.send} Sign as consultant</button>
+              <button class="btn" id="btn-consult-countersign" style="display:none" title="Add the consultant (RCIC) signature to the client-signed agreement">${I.send} <span class="btn-label">Sign as consultant</span></button>
             </div>
           </div>
         </div>
@@ -905,6 +905,8 @@ var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload onl
 // sent, unless the consultant "Amend"s. RP_SENT (sent specifically) vs RP_RETAINED
 // (signed/paid/Retained) only differ in the wording of the lock message.
 var RP_LOCKED=false, RP_AMEND=false, RP_SENT=false, RP_RETAINED=false, RP_SIGNED=false, RP_RC_DONE=false, RP_RC_SENT=false;
+// Consultation-agreement countersign state (same three-state button contract).
+var CS_RC_DONE=false, CS_RC_SENT=false;
 // Progressive-enablement state for the retainer send flow: you must Set fee →
 // Save plan → Retain & send, in order. Each disabled button explains the due step.
 var RP_FEE_SET=false, RP_PLAN_SAVED=false, PERSISTED_FEE='';
@@ -1014,7 +1016,22 @@ function render(d){
   document.getElementById('btn-consult-preview').style.display=caSigned?'none':'';
   document.getElementById('btn-consult-send').style.display=caSigned?'none':'';
   document.getElementById('btn-consult-signed-view').style.display=caSigned?'':'none';
-  document.getElementById('btn-consult-countersign').style.display=(caSigned&&!cactr.signedAt)?'':'none';
+  // Mirrors the retainer row (user directive 2026-08-04): the envelope is now
+  // issued automatically when the client signs, so this button STAYS VISIBLE
+  // and reports state — 'Sign as consultant' → 'Open countersign link' (already
+  // emailed; re-opens the same page) → 'Countersigned' (disabled) — instead of
+  // vanishing and leaving staff unsure whether anything happened.
+  CS_RC_DONE=Boolean(cactr.signedAt);
+  CS_RC_SENT=Boolean(cactr.sentAt)&&!CS_RC_DONE;
+  var csBtn=document.getElementById('btn-consult-countersign');
+  csBtn.style.display=caSigned?'':'none';
+  csBtn.disabled=CS_RC_DONE;
+  csBtn.title=CS_RC_DONE ? 'Agreement already countersigned by the consultant'
+    : CS_RC_SENT ? 'Already emailed to the consultant — click to open the signing page again'
+    : 'Add the consultant (RCIC) signature to the client-signed agreement';
+  var csLbl=csBtn.querySelector('.btn-label');
+  if(csLbl) csLbl.textContent=CS_RC_DONE ? 'Countersigned'
+    : CS_RC_SENT ? 'Open countersign link' : 'Sign as consultant';
 
   document.getElementById('c-status').innerHTML=
     kv('Booking status',d.bookingStatus)+kv('Consultation held',d.consultationHeld)+
@@ -1483,8 +1500,11 @@ function countersignAgreement(action,confirmTxt){
 }
 function viewSignedConsult(){ viewSignedAgreement('consult-agreement-signed'); }
 function countersignConsult(){
-  countersignAgreement('consultantSignAgreement',
-    'Add the consultant (RCIC) signature to this agreement now? The client has already signed. Your signature completes the agreement, and the fully signed copy is emailed to the client automatically.');
+  // Normally already issued automatically at client signature — this click
+  // just RE-OPENS that signing page; say which it is.
+  countersignAgreement('consultantSignAgreement', CS_RC_SENT
+    ? 'Open the countersign signing page again? This agreement was already emailed to the consultant — no new request is sent.'
+    : 'Add the consultant (RCIC) signature to this agreement now? The client has already signed. Your signature completes the agreement, and the fully signed copy is emailed to the client automatically.');
 }
 function viewSignedRetainer(){ viewSignedAgreement('retainer-agreement-signed'); }
 function countersignRetainer(){
