@@ -148,3 +148,40 @@ test('findOrCreate: concurrent double-call for the same person resolves to ONE a
     assert.equal(a.clientId, b.clientId);
   } finally { restore(); }
 });
+
+// ─── stampClientAccount (Phase 2 forward-only stamping) ──────────────────────
+
+const handoff = require('../src/services/handoffService');
+
+test('stampClientAccount: finds-or-creates the account and links case + lead', async () => {
+  const calls = [];
+  const restore = [
+    stub(svc, 'findOrCreate', async (a) => { calls.push(['foc', a.email, a.source]); return { clientId: '55', created: true }; }),
+    stub(svc, 'linkCase', async (id, o) => calls.push(['case', id, o.cmItemId])),
+    stub(svc, 'linkLead', async (id, leadId) => calls.push(['lead', id, leadId])),
+  ];
+  try {
+    await handoff.stampClientAccount({ id: '500', fullName: 'Jane Doe', email: 'jane@x.com', phone: '4165550100' }, '900');
+    assert.deepEqual(calls, [['foc', 'jane@x.com', 'handoff'], ['case', '55', '900'], ['lead', '55', '500']]);
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('stampClientAccount: a staff-chosen account on the lead is RESPECTED (no findOrCreate, no re-stamp)', async () => {
+  const calls = [];
+  const restore = [
+    stub(svc, 'findOrCreate', async () => { throw new Error('must not run — staff already chose'); }),
+    stub(svc, 'linkCase', async (id, o) => calls.push(['case', id, o.cmItemId])),
+    stub(svc, 'linkLead', async () => { throw new Error('lead already stamped by the modal'); }),
+  ];
+  try {
+    await handoff.stampClientAccount({ id: '500', fullName: 'Jane Doe', email: 'jane@x.com', clientAccountId: '77' }, '900');
+    assert.deepEqual(calls, [['case', '77', '900']]);
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('stampClientAccount: NEVER throws — a registry failure must not block the handoff', async () => {
+  const restore = [stub(svc, 'findOrCreate', async () => { throw new Error('monday down'); })];
+  try {
+    await handoff.stampClientAccount({ id: '500', fullName: 'X', email: 'x@x.com' }, '900');
+  } finally { restore.forEach((x) => x()); }
+});

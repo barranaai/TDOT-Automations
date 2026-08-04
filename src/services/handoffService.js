@@ -108,6 +108,35 @@ async function getHandoffGroupId() {
 const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 /**
+ * Best-effort: attach this client's person-level account (Clients board) to
+ * the case + lead. Accounts accrete from NEW applications only (user decision
+ * 2026-08-04 — no historical backfill). Respects a pre-chosen account (staff
+ * picked one in the warn-and-link modal → lead.clientAccountId already set).
+ * Never throws — account bookkeeping must never block a handoff.
+ */
+async function stampClientAccount(lead, cmItemId) {
+  try {
+    if (!require('../../config/features').clientAccountsEnabled) return;
+    const accounts = require('./clientAccountService'); // lazy — avoids the require cycle (it imports normName from here)
+    const preChosen = String((lead && lead.clientAccountId) || '').trim();
+    let clientId = preChosen;
+    if (!clientId) {
+      const r = await accounts.findOrCreate({
+        email: lead.email, phone: lead.phone, fullName: lead.fullName,
+        residentialAddress: lead.residentialAddress, source: 'handoff',
+      });
+      if (!r) return; // Clients board not provisioned in this environment
+      clientId = r.clientId;
+      if (r.created) console.log(`[Handoff] Client account ${clientId} created for "${lead.fullName}"`);
+    }
+    await accounts.linkCase(clientId, { cmItemId });
+    if (!preChosen) await accounts.linkLead(clientId, lead.id);
+  } catch (err) {
+    console.warn(`[Handoff] client-account stamp failed for lead ${lead && lead.id}: ${err.message}`);
+  }
+}
+
+/**
  * PURE: from the Client Master items sharing an email, pick the one that is the
  * SAME PERSON (case-insensitive, whitespace-normalised name match). A shared email
  * across a couple/family must NOT collapse two separate matters into one case, so
@@ -288,6 +317,7 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
       ).catch((err) => console.warn(`[Handoff] Folder carry to reused CM ${existing} failed: ${err.message}`));
     }
     await setClientPhone(existing, lead);
+    await stampClientAccount(lead, existing);
     return existing;
   }
 
@@ -335,6 +365,9 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
 
   // Client contact number — separate best-effort write (see setClientPhone).
   await setClientPhone(newId, lead);
+
+  // Person-level account (Clients board) — best-effort, never blocks handoff.
+  await stampClientAccount(lead, newId);
 
   // Preserve the lead's conversation history (its Updates thread) on the new case.
   await transferLeadUpdates(leadId, newId);
@@ -516,4 +549,4 @@ async function openCaseEarly({ leadId }) {
   try { return await p; } finally { _inFlight.delete(key); }
 }
 
-module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, normName, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone };
+module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, normName, stampClientAccount, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone };
