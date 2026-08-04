@@ -215,3 +215,32 @@ test('seedQuestionnairePrefill: unknown case type with no form is a safe no-op',
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no-form');
 });
+
+// ─── Archive unwrap regression (pre-consult wrapper bug, fixed 2026-08-04) ───
+// pre-consult-submission.json nests its data under `answers` (not `fields`);
+// the reader used to return the WRAPPER, so every pc_* rule silently never
+// fired — pc_marital in PRIMARY_RULES was dead code.
+
+test('readIntakeSubfolderArchive unwraps both archive shapes (fields AND answers)', async () => {
+  const shapes = [
+    [{ submittedAt: 't', leadId: '1', fields: { fullName: 'A' } }, { fullName: 'A' }],
+    [{ submittedAt: 't', leadId: '1', answers: { pc_marital: 'Married' } }, { pc_marital: 'Married' }],
+    [{ bare: 'object' }, { bare: 'object' }],
+  ];
+  for (const [archived, expected] of shapes) {
+    const restore = stub(oneDrive, 'readFile', async () => Buffer.from(JSON.stringify(archived)));
+    try {
+      const got = await svc.readIntakeSubfolderArchive({ clientName: 'X', caseRef: 'R', filename: 'f.json' });
+      assert.deepEqual(got, expected);
+    } finally { restore(); }
+  }
+});
+
+test('pc_marital from the pre-consult archive now reaches Current Marital Status', () => {
+  const v = byLabel(map.buildPrimaryFields({
+    intake: {},
+    preConsult: { pc_marital: 'married' },   // the unwrapped answers object
+    lead: {},
+  }));
+  assert.ok(v['Current Marital Status'], 'marital status rule fires from pc_marital');
+});

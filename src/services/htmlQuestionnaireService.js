@@ -276,7 +276,10 @@ async function readIntakeSubfolderArchive({ clientName, caseRef, filename }) {
     const buf = await oneDrive.readFile({ clientName, caseRef, subfolder: 'Intake', filename });
     if (!buf) return null;
     const obj = JSON.parse(buf.toString('utf8'));
-    return (obj && obj.fields) || obj || null;
+    // Unwrap BOTH archive shapes: intake-submission.json nests under `fields`,
+    // pre-consult-submission.json under `answers` — the latter was previously
+    // returned as its wrapper, so every pc_* prefill rule silently never fired.
+    return (obj && (obj.fields || obj.answers)) || obj || null;
   } catch (err) {
     console.warn(`[Prefill] archive "${filename}" unavailable for ${caseRef}: ${err.message}`);
     return null;
@@ -4798,6 +4801,7 @@ module.exports = {
   loadFormData,
   saveFormData,
   seedQuestionnairePrefill,
+  readIntakeSubfolderArchive,
   markSubmitted,
   markAllSubmitted,
   // Member manifest management
