@@ -398,6 +398,38 @@ async function captureCompleted(body) {
       });
     }
     await postNote(leadId, `✍️ <b>Retainer agreement signed via Documenso</b>${stored ? ' — signed copy saved to OneDrive.' : '.'} The case will open automatically.`);
+
+    // The consultant's countersign envelope now goes out AUTOMATICALLY the
+    // moment the client signs — previously it waited for someone to notice a
+    // Monday note and click "Sign retainer as consultant", so a signed retainer
+    // could sit indefinitely with nobody aware it was their turn.
+    // Best-effort and idempotent: startRetainerCountersign holds an in-flight
+    // lock, resumes an already-issued envelope, and no-ops once countersigned —
+    // so replays and a staff click racing this can't mint a second envelope.
+    // A failure here must never break the client-signature capture; the portal
+    // button stays as the manual fallback and the note says so.
+    try {
+      const auto = await retainerCountersignSvc.startRetainerCountersign(leadId);
+      // Only announce a genuinely NEW envelope: `resumed` = one already
+      // existed, `coalesced` = a concurrent delivery is awaiting the same
+      // in-flight issue (two webhook deliveries must not post two notes).
+      if (auto && auto.envelopeId && !auto.resumed && !auto.coalesced) {
+        if (auto.persistFailed) {
+          // The envelope IS distributed but its id never reached the lead, so
+          // nothing downstream knows it exists — say so loudly, because the
+          // obvious recovery (clicking the button) would email a SECOND
+          // signature request to the same consultant.
+          await postNote(leadId,
+            `⚠️ <b>Countersign request WAS emailed to the consultant, but could not be recorded on this lead</b> (envelope ${String(auto.envelopeId).replace(/[<>&"]/g, '')}). ` +
+            'Do NOT click “Sign retainer as consultant” — that would send them a second request. Ask them to sign from the Documenso email they already have.');
+        } else {
+          await postNote(leadId, '🖋️ <b>Countersign request sent to the consultant</b> — Documenso emailed them the retainer to sign. The client gets their fully-signed copy automatically once they do.');
+        }
+      }
+    } catch (err) {
+      console.warn(`[Documenso] auto-countersign for lead ${leadId} failed: ${err.message}`);
+      await postNote(leadId, '⚠️ <b>The countersign request could not be sent to the consultant automatically.</b> Open this lead in the Consultations page and click “Sign retainer as consultant”.');
+    }
   } else if (type === 'retainer2') {
     // RCIC countersign completed → the retainer is FULLY signed. Same
     // event-fabrication guard as consult2: with no signed payload in hand,

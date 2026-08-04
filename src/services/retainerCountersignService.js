@@ -116,7 +116,10 @@ const _inFlight = new Map(); // leadId → Promise — concurrent portal clicks 
 
 async function startRetainerCountersign(leadId) {
   const key = String(leadId);
-  if (_inFlight.has(key)) return _inFlight.get(key);
+  // A concurrent caller awaits the SAME issue and must be able to tell it
+  // didn't cause one — otherwise two webhook deliveries each announce an
+  // envelope that was only created once.
+  if (_inFlight.has(key)) return _inFlight.get(key).then((r) => ({ ...r, coalesced: true }));
   const p = _doStartRetainerCountersign(leadId).finally(() => _inFlight.delete(key));
   _inFlight.set(key, p);
   return p;

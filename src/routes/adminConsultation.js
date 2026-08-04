@@ -880,7 +880,7 @@ ${buildNavHeader('consultations')}
         </span>
         <span class="rp-actiongroup">
           <button class="btn" id="btn-signed" type="button">${I.userCheck} Mark retainer signed</button>
-          <button class="btn" id="btn-retainer-countersign" type="button" style="display:none" title="Add the consultant (RCIC) signature to the client-signed retainer">${I.send} Sign retainer as consultant</button>
+          <button class="btn" id="btn-retainer-countersign" type="button" style="display:none" title="Add the consultant (RCIC) signature to the client-signed retainer">${I.send} <span class="btn-label">Sign retainer as consultant</span></button>
           <button class="btn" id="btn-retainer-signed-view" type="button" style="display:none" title="View the signed retainer agreement">${I.eye} View signed retainer</button>
         </span>
       </div>
@@ -904,7 +904,7 @@ var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload onl
 // signed / been retained — fee + plan are read-only and no NEW agreement can be
 // sent, unless the consultant "Amend"s. RP_SENT (sent specifically) vs RP_RETAINED
 // (signed/paid/Retained) only differ in the wording of the lock message.
-var RP_LOCKED=false, RP_AMEND=false, RP_SENT=false, RP_RETAINED=false, RP_SIGNED=false, RP_RC_DONE=false;
+var RP_LOCKED=false, RP_AMEND=false, RP_SENT=false, RP_RETAINED=false, RP_SIGNED=false, RP_RC_DONE=false, RP_RC_SENT=false;
 // Progressive-enablement state for the retainer send flow: you must Set fee →
 // Save plan → Retain & send, in order. Each disabled button explains the due step.
 var RP_FEE_SET=false, RP_PLAN_SAVED=false, PERSISTED_FEE='';
@@ -1031,6 +1031,7 @@ function render(d){
   var rcs=d.retainerCountersign||{};
   var rSigned=Boolean(d.retainerSigned);
   RP_RC_DONE=Boolean(rcs.signedAt);
+  RP_RC_SENT=Boolean(rcs.sentAt)&&!RP_RC_DONE;   // envelope out, awaiting the consultant
   document.getElementById('btn-retainer-signed-view').style.display=rSigned?'':'none';
   document.getElementById('btn-retainer-countersign').style.display=rSigned?'':'none';
   applyRetainerLock();
@@ -1135,9 +1136,20 @@ function applyRetainerLock(){
   // signed→handoff→payment-link chain on a completed retention.
   var signedBtn=document.getElementById('btn-signed');
   if(signedBtn){ signedBtn.disabled = RP_SIGNED; signedBtn.title = RP_SIGNED ? 'Retainer already signed — the case is open' : ''; }
-  // "Sign retainer as consultant" locks once the countersign completes.
+  // "Sign retainer as consultant": the envelope now goes to the consultant
+  // automatically when the client signs, so the button is mostly a way to
+  // RE-OPEN that signing page (or to issue it if the auto-send failed). It
+  // locks once the countersign completes.
   var rcBtn=document.getElementById('btn-retainer-countersign');
-  if(rcBtn){ rcBtn.disabled = RP_RC_DONE; rcBtn.title = RP_RC_DONE ? 'Retainer already countersigned by the consultant' : 'Add the consultant (RCIC) signature to the client-signed retainer'; }
+  if(rcBtn){
+    rcBtn.disabled = RP_RC_DONE;
+    rcBtn.title = RP_RC_DONE ? 'Retainer already countersigned by the consultant'
+      : RP_RC_SENT ? 'Already emailed to the consultant — click to open the signing page again'
+      : 'Add the consultant (RCIC) signature to the client-signed retainer';
+    var rcLbl = rcBtn.querySelector('.btn-label');
+    if(rcLbl) rcLbl.textContent = RP_RC_DONE ? 'Countersigned'
+      : RP_RC_SENT ? 'Open countersign link' : 'Sign retainer as consultant';
+  }
 
   // Progressive gating — Set fee → Save plan → Retain & send, in order. Each
   // disabled button's tooltip names the step you still owe.
@@ -1476,8 +1488,11 @@ function countersignConsult(){
 }
 function viewSignedRetainer(){ viewSignedAgreement('retainer-agreement-signed'); }
 function countersignRetainer(){
-  countersignAgreement('consultantSignRetainer',
-    'Add the consultant (RCIC) signature to the retainer now? The client has already signed. Your signature completes the agreement, and the fully signed copy is emailed to the client automatically.');
+  // The envelope is normally issued automatically when the client signs, so
+  // this click usually just RE-OPENS that signing page — say which it is.
+  countersignAgreement('consultantSignRetainer', RP_RC_SENT
+    ? 'Open the countersign signing page again? This retainer was already emailed to the consultant — no new request is sent.'
+    : 'Add the consultant (RCIC) signature to the retainer now? The client has already signed. Your signature completes the agreement, and the fully signed copy is emailed to the client automatically.');
 }
 
 function previewConsult(){

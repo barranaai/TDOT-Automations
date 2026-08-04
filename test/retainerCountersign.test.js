@@ -203,3 +203,139 @@ test('portal: consultantSignRetainer action valid; detail page carries the retai
   assert.ok(html.includes("if(!on && typeof applyRetainerLock==='function') applyRetainerLock();"),
     'gated disabled states survive the disableActions round-trip');
 });
+
+// ─── Auto-send the countersign envelope (user directive 2026-08-04) ──────────
+// Previously the countersign waited for a human to notice a Monday note and
+// click "Sign retainer as consultant" — a signed retainer could sit for days
+// with nobody aware it was their turn. Now the client's signature issues the
+// consultant's envelope automatically (Documenso emails them the signing link);
+// the button stays as a manual fallback / re-open.
+
+test('captureCompleted retainer (client): AUTO-issues the consultant countersign envelope', () => {
+  const started = [];
+  return withEnv({ DOCUMENSO_ENABLED: 'true', DOCUMENSO_API_TOKEN: '' }, () =>
+    withStubs([
+      [leadService, 'getLead', async () => ({ ...BASE_LEAD, retainerSigned: '', retainerCountersign: '' })],
+      [leadService, 'updateLead', async () => {}],
+      [oneDrive, 'ensureClientFolder', async () => {}],
+      [oneDrive, 'uploadFile', async () => {}],
+      [mondayApi, 'query', mondayStub],
+      [rcSvc, 'startRetainerCountersign', async (leadId) => { started.push(String(leadId)); return { envelopeId: 'env-cs-new', signUrl: 'https://app.documenso.com/sign/abc' }; }],
+    ], async () => {
+      await documenso.captureCompleted({
+        event: 'DOCUMENT_COMPLETED',
+        payload: { externalId: 'retainer-777', envelopeId: 'env-real', envelopeItems: [{ id: 'item-real' }] },
+      });
+      assert.deepEqual(started, ['777'], 'the consultant envelope is issued without any staff click');
+    }));
+});
+
+test('auto-send NEVER breaks the client-signature capture when it fails', () => {
+  const updates = [];
+  return withEnv({ DOCUMENSO_ENABLED: 'true', DOCUMENSO_API_TOKEN: '' }, () =>
+    withStubs([
+      [leadService, 'getLead', async () => ({ ...BASE_LEAD, retainerSigned: '', retainerCountersign: '' })],
+      [leadService, 'updateLead', async (id, fields) => { updates.push(fields); }],
+      [oneDrive, 'ensureClientFolder', async () => {}],
+      [oneDrive, 'uploadFile', async () => {}],
+      [mondayApi, 'query', mondayStub],
+      [rcSvc, 'startRetainerCountersign', async () => { throw new Error('documenso down'); }],
+    ], async () => {
+      // Must NOT throw — the client's signature is still fully recorded.
+      await documenso.captureCompleted({
+        event: 'DOCUMENT_COMPLETED',
+        payload: { externalId: 'retainer-777', envelopeId: 'env-real', envelopeItems: [{ id: 'item-real' }] },
+      });
+      assert.ok(updates.find((f) => f.retainerSigned), 'retainerSigned still stamped despite the auto-send failure');
+    }));
+});
+
+test('a replayed client completion does NOT mint a second countersign envelope', () => {
+  // Idempotency contract: startRetainerCountersign resumes an existing envelope
+  // (resumed:true) and no-ops once countersigned (alreadySigned:true), so the
+  // auto-send is safe against webhook replays and a racing staff click.
+  const calls = [], notes = [];
+  return withEnv({ DOCUMENSO_ENABLED: 'true', DOCUMENSO_API_TOKEN: '' }, () =>
+    withStubs([
+      [leadService, 'getLead', async () => ({ ...BASE_LEAD, retainerSigned: '2026-08-04',
+        retainerCountersign: JSON.stringify({ envelopeId: 'env-cs-existing', sentAt: '2026-08-04' }) })],
+      [leadService, 'updateLead', async () => {}],
+      [oneDrive, 'ensureClientFolder', async () => {}],
+      [oneDrive, 'uploadFile', async () => {}],
+      [mondayApi, 'query', async (q, vars) => { if (/create_update/.test(q)) { notes.push(String(vars.b || '')); return {}; } return mondayStub(q); }],
+      [rcSvc, 'startRetainerCountersign', async () => { calls.push(1); return { envelopeId: 'env-cs-existing', resumed: true }; }],
+    ], async () => {
+      await documenso.captureCompleted({
+        event: 'DOCUMENT_COMPLETED',
+        payload: { externalId: 'retainer-777', envelopeId: 'env-real', envelopeItems: [{ id: 'item-real' }] },
+      });
+      assert.equal(calls.length, 1, 'called once');
+      assert.equal(notes.filter((b) => /Countersign request sent/.test(b)).length, 0,
+        'a RESUMED envelope posts no "sent" note — nothing new went out');
+    }));
+});
+
+test('the countersign button reflects sent-vs-signed state', () => {
+  const { buildDetailHTML } = require('../src/routes/adminConsultation');
+  const html = buildDetailHTML('777');
+  assert.ok(html.includes('RP_RC_SENT'), 'tracks the awaiting-consultant state');
+  assert.ok(html.includes('Open countersign link'), 'button re-opens the signing page once sent');
+  assert.ok(html.includes('rcBtn.disabled = RP_RC_DONE'), 'still DISABLES once countersigned');
+  assert.ok(html.includes('class="btn-label"'), 'label span exists so the text can change');
+});
+
+// The four tests above stub startRetainerCountersign, so they prove the WIRING
+// but not the service behind it. These drive the REAL service.
+
+test('REAL service: concurrent auto-sends create ONE envelope, and the follower is marked coalesced', () => {
+  let created = 0;
+  return withEnv({ DOCUMENSO_ENABLED: 'true', DOCUMENSO_API_TOKEN: 'tok' }, () =>
+    withStubs([
+      [leadService, 'getLead', async () => ({ ...BASE_LEAD, retainerSigned: '2026-08-04', retainerCountersign: '' })],
+      [leadService, 'updateLead', async () => {}],
+      [oneDrive, 'readFile', async () => FAKE_PDF],
+      [documenso, 'sendForSignature', async () => { created++; await new Promise((r) => setTimeout(r, 30)); return { envelopeId: 'env-1', envelopeItemId: 'item-1', signUrl: 'https://app.documenso.com/sign/t' }; }],
+      [mondayApi, 'query', mondayStub],
+    ], async () => {
+      const [a, b] = await Promise.all([
+        rcSvc.startRetainerCountersign('777'),
+        rcSvc.startRetainerCountersign('777'),
+      ]);
+      assert.equal(created, 1, 'ONE envelope — the consultant is never emailed twice');
+      assert.equal(a.envelopeId, 'env-1');
+      assert.equal(b.envelopeId, 'env-1');
+      assert.ok(a.coalesced || b.coalesced, 'the follower knows it did not cause the send (no duplicate note)');
+      assert.ok(!(a.coalesced && b.coalesced), 'exactly one caller owns the send');
+    }));
+});
+
+test('REAL service: a persist failure is REPORTED so staff are not told to re-click (which would double-email)', () => {
+  return withEnv({ DOCUMENSO_ENABLED: 'true', DOCUMENSO_API_TOKEN: 'tok' }, () =>
+    withStubs([
+      [leadService, 'getLead', async () => ({ ...BASE_LEAD, retainerSigned: '2026-08-04', retainerCountersign: '' })],
+      [leadService, 'updateLead', async () => { throw new Error('monday 500'); }],
+      [oneDrive, 'readFile', async () => FAKE_PDF],
+      [documenso, 'sendForSignature', async () => ({ envelopeId: 'env-orphan', envelopeItemId: 'i', signUrl: 'https://app.documenso.com/sign/t' })],
+      [mondayApi, 'query', mondayStub],
+    ], async () => {
+      const r = await rcSvc.startRetainerCountersign('778');
+      assert.equal(r.envelopeId, 'env-orphan');
+      assert.equal(r.persistFailed, true,
+        'the caller must be able to warn that the envelope went out but was not recorded');
+    }));
+});
+
+test('REAL service: an already-countersigned lead issues NOTHING', () => {
+  let created = 0;
+  return withEnv({ DOCUMENSO_ENABLED: 'true', DOCUMENSO_API_TOKEN: 'tok' }, () =>
+    withStubs([
+      [leadService, 'getLead', async () => ({ ...BASE_LEAD, retainerSigned: '2026-08-04',
+        retainerCountersign: JSON.stringify({ envelopeId: 'env-x', sentAt: '2026-08-04', signedAt: '2026-08-04' }) })],
+      [documenso, 'sendForSignature', async () => { created++; return {}; }],
+      [mondayApi, 'query', mondayStub],
+    ], async () => {
+      const r = await rcSvc.startRetainerCountersign('779');
+      assert.equal(r.alreadySigned, true);
+      assert.equal(created, 0, 'no envelope for a retainer that is already fully signed');
+    }));
+});
