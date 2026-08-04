@@ -24,5 +24,10 @@ module.exports = {
   clientAccountsEnabled:  process.env.CLIENT_ACCOUNTS_ENABLED === undefined
     ? true
     : on(process.env.CLIENT_ACCOUNTS_ENABLED),
-  clientMultiCaseEnabled: on(process.env.CLIENT_MULTI_CASE_ENABLED),
+  // Default ON (user approved the flip 2026-08-04 after the flag-off deploy):
+  // a returning client's new application creates a NEW case instead of
+  // overwriting their old one. CLIENT_MULTI_CASE_ENABLED=false to kill.
+  clientMultiCaseEnabled: process.env.CLIENT_MULTI_CASE_ENABLED === undefined
+    ? true
+    : on(process.env.CLIENT_MULTI_CASE_ENABLED),
 };
