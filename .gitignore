@@ -5,3 +5,4 @@ node_modules/
 .DS_Store
 render-phase2-env.txt
 .claude/launch.json
+backfill-client-accounts-report.md
