@@ -3,6 +3,7 @@ const router  = express.Router();
 const { getCaseItems, saveAnswers, submitQuestionnaire } = require('../services/questionnaireFormService');
 const { updateLastActivityDate } = require('../services/clientMasterService');
 const { calculateForCaseRef }   = require('../services/caseReadinessService');
+const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
 
 // ─── Category display order ───────────────────────────────────────────────────
 const CATEGORY_ORDER = ['Personal', 'Background', 'Travel', 'Education', 'Employment', 'Legal', 'Financial', 'General'];
@@ -94,7 +95,7 @@ input[type=text]:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--bran
 <body>
 <div class="card">
   <div class="card-header">
-    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration" class="logo-img">
+    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="${LOGO_URL}" alt="TDOT Immigration" class="logo-img">
     <span class="brand-sub">Client Portal</span>
   </div>
   <div class="card-body">
@@ -329,7 +330,7 @@ select.form-input{cursor:pointer}
 <!-- Top bar -->
 <div class="top-bar">
   <div class="top-bar-brand">
-    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration" class="top-bar-logo">
+    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="${LOGO_URL}" alt="TDOT Immigration" class="top-bar-logo">
     <div class="top-bar-divider"></div>
     <div class="top-bar-info">
       <h1>Client Questionnaire</h1>

@@ -2,6 +2,7 @@ const { sendEmail }  = require('./microsoftMailService');
 const mondayApi      = require('./mondayApi');
 const { ensureAccessToken } = require('./accessTokenService');
 const { clientMasterBoardId } = require('../../config/monday');
+const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
 
 const CM_COLS = {
   clientEmail:   'text_mm0xw6bp',
@@ -69,7 +70,7 @@ function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl,
 
       <!-- Header -->
       <tr><td style="background:#0B1D32;border-radius:12px 12px 0 0;padding:28px 32px 26px;text-align:center;border-bottom:3px solid #C9A84C;">
-        <img src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration" style="height:42px;object-fit:contain;display:inline-block;margin-bottom:10px;background:#fff;padding:3px 6px;border-radius:6px;">
+        <img src="${LOGO_URL}" alt="TDOT Immigration" style="height:42px;object-fit:contain;display:inline-block;margin-bottom:10px;background:#fff;padding:3px 6px;border-radius:6px;">
         <div style="font-size:11px;letter-spacing:.18em;color:#C9A84C;text-transform:uppercase;font-weight:700;">Client Portal</div>
       </td></tr>
 

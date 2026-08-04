@@ -7,6 +7,7 @@ const { getCaseSummary, uploadFileToOneDrive, markDocumentReceived } = require('
 const { updateLastActivityDate } = require('../services/clientMasterService');
 const { calculateForCaseRef }   = require('../services/caseReadinessService');
 const mondayApi = require('../services/mondayApi');
+const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
 
 // ─── File upload config ───────────────────────────────────────────────────────
 
@@ -235,7 +236,7 @@ input[type=text]:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--bran
 <body>
 <div class="card">
   <div class="card-header">
-    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration" class="logo-img">
+    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="${LOGO_URL}" alt="TDOT Immigration" class="logo-img">
     <span class="brand-sub">Client Portal</span>
   </div>
   <div class="card-body">
@@ -724,7 +725,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 <div class="disc-overlay" id="discOverlay">
   <div class="disc-modal" role="dialog" aria-modal="true" aria-labelledby="discTitle">
     <div class="disc-header">
-      <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration">
+      <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="${LOGO_URL}" alt="TDOT Immigration">
       <div class="disc-header-text">
         <h2 id="discTitle">Document Submission Guidelines</h2>
         <p>Please read before uploading</p>
@@ -750,7 +751,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 
 <div class="top-bar">
   <div class="top-bar-brand">
-    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration" class="top-bar-logo">
+    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="${LOGO_URL}" alt="TDOT Immigration" class="top-bar-logo">
     <div class="top-bar-divider"></div>
     <div class="top-bar-info">
       <h1>${esc(clientName)}</h1>

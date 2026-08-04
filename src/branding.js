@@ -43,4 +43,4 @@ const LOGO_URL = `${process.env.RENDER_URL || 'https://tdot-automations.onrender
 const TDOT_LOGO_LIGHT_HTML = `<img src="${LOGO_URL}" alt="TDOT Immigration" style="height:36px;background:#fff;padding:5px 9px;border-radius:7px;object-fit:contain;display:inline-block">`;
 const TDOT_LOGO_LIGHT_HTML_LARGE = `<img src="${LOGO_URL}" alt="TDOT Immigration" style="height:46px;background:#fff;padding:6px 11px;border-radius:8px;object-fit:contain;display:inline-block">`;
 
-module.exports = { BRAND, TDOT_LOGO_LIGHT_HTML, TDOT_LOGO_LIGHT_HTML_LARGE };
+module.exports = { BRAND, LOGO_URL, TDOT_LOGO_LIGHT_HTML, TDOT_LOGO_LIGHT_HTML_LARGE };

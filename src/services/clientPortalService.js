@@ -27,6 +27,7 @@ const mondayApi    = require('./mondayApi');
 const docFormSvc   = require('./documentFormService');
 const htmlQ        = require('./htmlQuestionnaireService');
 const { clientMasterBoardId } = require('../../config/monday');
+const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
 
 const BASE_URL = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
 
@@ -643,7 +644,7 @@ function buildPortalPage(snap, opts) {
 <body>
   <header class="top">
     <div class="top-brand">
-      <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration">
+      <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="${LOGO_URL}" alt="TDOT Immigration">
       <div>
         <h1>${escHtml(snap.clientName)}<span class="stage-pill">${escHtml(isStaff ? snap.caseStage : journey.label)}</span></h1>
         <p>Case ${escHtml(snap.caseRef)} · ${escHtml(snap.caseType || '')}${snap.caseSubType ? ' / ' + escHtml(snap.caseSubType) : ''}</p>

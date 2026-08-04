@@ -21,6 +21,7 @@ const { loadThresholds } = require('./caseReadinessService');
 const { clientMasterBoardId } = require('../../config/monday');
 const { FORMS_DIR, resolveForm } = require('../../config/questionnaireFormMap');
 const prefillMap       = require('../../config/questionnairePrefillMap');
+const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
 
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
 
@@ -3119,7 +3120,7 @@ function buildOverviewPage({ caseRef, token, members, formFiles, allowedMemberTy
 </head>
 <body>
   <header class="overview-hdr">
-    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration">
+    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="${LOGO_URL}" alt="TDOT Immigration">
     <div>
       <div style="font-size:16px;font-weight:700;letter-spacing:.02em;">TDOT Immigration — Client Questionnaire</div>
       <div style="font-size:12px;color:rgba(255,255,255,.65);margin-top:3px;">Case ${escHtml(caseRef)}</div>

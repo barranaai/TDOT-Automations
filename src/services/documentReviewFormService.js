@@ -23,6 +23,7 @@
 'use strict';
 
 const mondayApi = require('./mondayApi');
+const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
 
 // ─── Column IDs — Document Execution Board ───────────────────────────────────
 const EXEC_BOARD_ID    = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
@@ -510,7 +511,7 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
 
   <header class="top-bar">
     <div class="top-bar-brand">
-      <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration">
+      <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="${LOGO_URL}" alt="TDOT Immigration">
       <div class="top-bar-left">
         <h1>📂 Document Review — ${escHtml(caseRef)}</h1>
         <p>${escHtml(clientName || 'Unknown Client')}</p>

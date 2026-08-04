@@ -13,6 +13,7 @@ const { sendEmail }  = require('./microsoftMailService');
 const mondayApi      = require('./mondayApi');
 const oneDrive       = require('./oneDriveService');
 const { clientMasterBoardId } = require('../../config/monday');
+const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
 
 const QUESTIONNAIRE_SUBFOLDER = 'Questionnaire';
 
@@ -714,7 +715,7 @@ function buildReviewPage({ caseRef, formKey, formTitle, fields, flags, staffName
   <!-- Top bar -->
   <div class="top-bar">
     <div class="top-bar-brand">
-      <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="https://tdot-automations.onrender.com/assets/tdot-logo.png" alt="TDOT Immigration">
+      <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="${LOGO_URL}" alt="TDOT Immigration">
       <div class="top-bar-left">
         <h1>📋 Questionnaire Review — ${escHtml(clientName)}</h1>
         <p>${escHtml(caseRef)} · ${escHtml(caseType)} · ${escHtml(formTitle)}</p>
