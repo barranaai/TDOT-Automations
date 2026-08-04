@@ -125,6 +125,11 @@ function buildQueueHTML() {
   #dc-matches .dcm-info { color:#64748b; padding:2px 0 2px 21px; }
   #dc-matches .dcm-badge { display:inline-block; background:#fee2e2; color:#b91c1c; border-radius:6px; padding:0 6px; font-size:11px; font-weight:700; margin-left:4px; }
   #dc-matches a { color:#1d4ed8; }
+  #dc-profile { background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:10px 12px; margin-top:12px; font-size:12.5px; color:#1e3a8a; }
+  #dc-profile .dcp-title { font-weight:700; margin-bottom:4px; }
+  #dc-profile .dcp-fact { color:#7c2d12; background:#fff7ed; border:1px solid #fed7aa; border-radius:6px; padding:6px 9px; margin-top:6px; }
+  #dc-profile label.dcp-confirm { display:flex; align-items:flex-start; gap:7px; margin:8px 0 0; text-transform:none; letter-spacing:0; font-weight:600; font-size:12.5px; color:#1e3a8a; }
+  #dc-profile label.dcp-confirm input { width:auto; margin-top:2px; flex:none; }
   .dc-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
   .dc-btn { padding:9px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:var(--navy); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
   .dc-btn.primary { background:var(--navy); border-color:var(--navy); color:#fff; }
@@ -188,6 +193,7 @@ ${buildNavHeader('consultations')}
       <label for="dc-subtype">Case sub-type</label><select id="dc-subtype"><option value="">— (can be set later)</option></select>
       <label for="dc-consultant">Consultant *</label><select id="dc-consultant"><option value="">Choose…</option></select>
       <label for="dc-referred">Referred by</label><input id="dc-referred" type="text" maxlength="200" autocomplete="off">
+      <div id="dc-profile" style="display:none" role="region" aria-label="Carried from previous application"></div>
       <div id="dc-matches" style="display:none" role="region" aria-label="Possible existing records"></div>
       <div id="dc-err" role="alert"></div>
       <div class="dc-actions">
@@ -233,6 +239,10 @@ function dcEl(id){ return document.getElementById(id); }
 function openDirectClient(){
   dcEl('dc-err').textContent='';
   DC_MATCHES=null; var mb=dcEl('dc-matches'); if(mb){ mb.style.display='none'; mb.innerHTML=''; }
+  // A carried profile belongs to ONE opening of the modal — reopening it for a
+  // different walk-in must never stamp the previous client's case/family.
+  // (The ?newAppFrom boot calls openDirectClient FIRST, then loads the profile.)
+  DC_PROFILE_REF=null; var pb=dcEl('dc-profile'); if(pb){ pb.style.display='none'; pb.innerHTML=''; }
   dcEl('dc-overlay').style.display='flex';
   var first=dcEl('dc-name'); if(first) first.focus();
   if(DC_OPTS) return;
@@ -281,6 +291,39 @@ function dcRenderMatches(m){
   box.innerHTML='<div class="dcm-title">&#9888; This email/phone already exists in the system — choose how to proceed:</div>'+rows.join('');
   box.style.display='block';
 }
+/* ── "New application" prefill (?newAppFrom=CASE-REF) ── */
+var DC_PROFILE_REF=null;
+function dcApplyProfile(ref,p){
+  DC_PROFILE_REF=ref;
+  var id=p.identity||{};
+  var set=function(elId,v){ var el=dcEl(elId); if(el && v && !el.value) el.value=v; };
+  set('dc-name', id.fullName||'');
+  set('dc-email', id.email||'');
+  set('dc-phone', id.phone||'');
+  set('dc-address', id.address||'');
+  var meta=(p.fieldMeta&&p.fieldMeta.address)||null;
+  // Count only the roles the retainer draft actually carries (server filters
+  // to the retainer family types) — the shown number must match what lands.
+  var famN=(p.family||[]).filter(function(m){ return ['Spouse','DependentChild','Parent','Sibling','Sponsor'].indexOf(m.role)>=0; }).length;
+  var rows=['<div class="dcp-title">Carried from previous application '+escHtml(ref)+' — review everything before creating</div>'];
+  if(meta){
+    rows.push('<div>Address from '+escHtml(meta.origin)+(meta.savedAt?' (saved '+escHtml(String(meta.savedAt).slice(0,10))+')':'')+(meta.stale?' — <b>over a year old</b>':'')+'</div>');
+  }
+  if(famN) rows.push('<div>'+famN+' family member'+(famN>1?'s':'')+' carried — confirm the roster in the retainer panel before sending.</div>');
+  rows.push('<div>Immigration status and expiry are NEVER carried — they must be re-asked in the new questionnaire.</div>');
+  var pf=p.priorFacts||{};
+  if(pf.hadRefusal) rows.push('<div class="dcp-fact">⚠ Refusal on file'+(pf.refusalType?' ('+escHtml(pf.refusalType)+(pf.refusalDate?', '+escHtml(pf.refusalDate):'')+')':'')+' — ensure the new application discloses it.</div>');
+  (pf.openCases||[]).forEach(function(c){ rows.push('<div class="dcp-fact">This client also has open case '+escHtml(c.caseRef)+(c.caseStage?' ('+escHtml(c.caseStage)+')':'')+'.</div>'); });
+  if(id.address) rows.push('<label class="dcp-confirm"><input type="checkbox" id="dcp-addr-ok"><span>I confirmed the residential address is CURRENT with the client (it prints on the retainer agreement)</span></label>');
+  var box=dcEl('dc-profile'); box.innerHTML=rows.join(''); box.style.display='block';
+}
+function dcLoadProfile(ref){
+  var key=sessionStorage.getItem('tdot_admin_key'); if(!key) return;
+  fetch('/api/consultation/client-profile?caseRef='+encodeURIComponent(ref),{headers:{'X-Api-Key':key}})
+    .then(function(r){ return r.ok?r.json():null; })
+    .then(function(p){ if(p){ dcApplyProfile(ref,p); dcCheckMatches(); } })
+    .catch(function(){ /* staff can still fill the form by hand */ });
+}
 var DC_MATCH_SEQ=0;
 function dcClearMatches(){
   // Any edit to the identity fields invalidates the panel AND the chosen
@@ -313,6 +356,13 @@ function submitDirectClient(){
   var subOpts=(DC_OPTS&&DC_OPTS.subTypesByCase&&DC_OPTS.subTypesByCase[body.caseType])||[];
   if(subOpts.length && !body.caseSubType){
     err.textContent='This case type has checklist variants — choose the Case Sub Type.'; return;
+  }
+  // Carried-profile flow: the address prints on the retainer — an explicit
+  // confirmation is mandatory before a carried address may be used.
+  if(DC_PROFILE_REF){
+    var ok=dcEl('dcp-addr-ok');
+    if(ok && !ok.checked){ err.textContent='Confirm the residential address is current with the client (checkbox above) — it prints on the retainer agreement.'; return; }
+    body.profileSourceCaseRef=DC_PROFILE_REF;
   }
   // Duplicate panel showing → a choice is mandatory before submitting.
   if(DC_MATCHES){
@@ -356,6 +406,10 @@ function submitDirectClient(){
   // EDIT invalidates the current panel + choice (stale link target hazard).
   var em=dcEl('dc-email'); if(em){ em.addEventListener('blur',dcCheckMatches); em.addEventListener('input',dcClearMatches); }
   var ph=dcEl('dc-phone'); if(ph){ ph.addEventListener('blur',dcCheckMatches); ph.addEventListener('input',dcClearMatches); }
+  // "New application" entry from a case cockpit: open the modal pre-filled
+  // from the previous case's profile.
+  var newAppFrom=new URLSearchParams(window.location.search).get('newAppFrom');
+  if(newAppFrom){ openDirectClient(); dcLoadProfile(newAppFrom); }
 })();
 
 /* In-progress direct retainer clients (case-first; drops off once Retained). */

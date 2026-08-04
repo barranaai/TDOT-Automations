@@ -331,6 +331,9 @@ function render(d) {
   if (d.portalLink) acts += '<a class="act-btn" href="' + escHtml(d.portalLink) + '" target="_blank" rel="noopener">🏠 Client portal</a>';
   if (d.folderLink) acts += '<a class="act-btn" href="' + escHtml(d.folderLink) + '" target="_blank" rel="noopener">📁 OneDrive</a>';
   if (d.clientEmail) acts += '<a class="act-btn" href="mailto:' + escHtml(d.clientEmail) + '">✉ Email client</a>';
+  // New application for the SAME client — opens the direct-client modal
+  // pre-filled from this case's profile (staff review + confirm everything).
+  acts += '<a class="act-btn" href="/admin/consultations?newAppFrom=' + encodeURIComponent(CASE_REF) + '" title="Start a new application for this client — identity and family carried over for review; the current case stays untouched">➕ New application</a>';
   document.getElementById('c-actions').innerHTML = acts;
 
   // Pills

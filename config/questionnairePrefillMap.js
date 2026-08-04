@@ -224,11 +224,80 @@ function buildMemberFields(member) {
   return applyRules(MEMBER_RULES, member || {});
 }
 
+// ─── Cross-application reuse (client accounts Phase 4) ───────────────────────
+// The labels that may carry from a client's PREVIOUS application into a new
+// one: IDENTITY (decays ~never) and SLOW CIRCUMSTANCE (client reviews them in
+// the form). Deliberately absent: status-in-country + expiry (volatile — must
+// be re-asked), refusal history (ratchet — never auto-filled), accompanying
+// family answers (derived from the NEW case's family, not the old one's).
+// MINING labels (previous questionnaire → profile). NO 'Date of Birth': in the
+// live forms the bare label belongs to DEPENDENT-CHILD blocks (F1 et al.), so
+// label-matching would grab a child's DOB as the applicant's — and seeding it
+// back would land on a child slot. DOB reuse waits for an applicant-anchored
+// label. Mining is additionally section-guarded (see clientProfileService).
+const REUSE_LABELS = {
+  surname:          ['Family Name (Surname)'],
+  given:            ['Given Name'],
+  email:            ['Email Address'],
+  phone:            ['Phone Number', 'Mobile Number'],
+  address:          ['Current Residential Address', 'Residential Address'],
+  residenceCountry: ['Current Residence Country'],
+  maritalStatus:    ['Current Marital Status'],
+};
+
+// EMISSION labels (profile → new questionnaire seed). Applicant-anchored ONLY:
+// the bare 'Residential Address' alias is the SPONSOR'S field in the spousal
+// form (F10), so emitting it would write the client's address into the
+// sponsor's slot there. Mining still accepts the alias (section-guarded).
+const REUSE_EMIT_LABELS = {
+  surname:          ['Family Name (Surname)'],
+  given:            ['Given Name'],
+  email:            ['Email Address'],
+  phone:            ['Phone Number', 'Mobile Number'],
+  address:          ['Current Residential Address'],
+  residenceCountry: ['Current Residence Country'],
+  maritalStatus:    ['Current Marital Status'],
+};
+
+/**
+ * Build prefill pairs from a mined previous-application profile — the reverse
+ * of the mining direction, restricted to REUSE_LABELS. Pairs carry the
+ * previous-application section marker so the client sees exactly where each
+ * value came from and reviews it.
+ * @param {{ fullName?, surname?, given?, email?, phone?, address?, residenceCountry?, maritalStatus?, dob? }} identity
+ * @returns {Array<{label:string, value:string, section:string}>}
+ */
+function buildPrimaryFieldsFromProfile(identity = {}) {
+  const SECTION = 'Pre-filled from your previous application — please review';
+  const vals = { ...identity };
+  if ((!vals.surname || !vals.given) && vals.fullName) {
+    const s = splitName(vals.fullName);
+    vals.surname = vals.surname || s.surname;
+    vals.given   = vals.given || s.given;
+  }
+  const out = [];
+  const seen = new Set();
+  for (const [field, labels] of Object.entries(REUSE_EMIT_LABELS)) {
+    const v = String(vals[field] == null ? '' : vals[field]).trim();
+    if (!v) continue;
+    for (const label of labels) {
+      const k = label.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({ label, value: v, section: SECTION });
+    }
+  }
+  return out;
+}
+
 module.exports = {
   splitName,
   isRealName,
   yesNo,
   buildPrimaryFields,
   buildMemberFields,
+  REUSE_LABELS,
+  REUSE_EMIT_LABELS,
+  buildPrimaryFieldsFromProfile,
   _internal: { PRIMARY_RULES, MEMBER_RULES, residenceCountry, accompanyingSpouse, dependentChildren, refusalDate, pick },
 };

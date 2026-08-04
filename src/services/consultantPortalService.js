@@ -1195,6 +1195,39 @@ async function createDirectClient(payload = {}) {
   const linkLeadId      = clean(payload.linkLeadId, 30).replace(/\D/g, '');
   const chosenAccountId = clean(payload.clientAccountId, 30).replace(/\D/g, '');
   const allowDuplicate  = payload.allowDuplicate === true;
+  // "New application" flow: the previous case this client's profile was
+  // carried from (staff-confirmed in the modal). Drives the previousCaseRef
+  // stamp + family-roster carry + questionnaire previous-application prefill.
+  const profileSourceCaseRef = /^[A-Z0-9-]{4,30}$/i.test(clean(payload.profileSourceCaseRef, 30))
+    ? clean(payload.profileSourceCaseRef, 30) : '';
+
+  // Extras shared by BOTH the link path and the create path when a profile
+  // source is present. Family carry is best-effort: the roster lands as the
+  // retainer panel's editable draft (the consultant confirms it there before
+  // anything materializes to the Family Members board at case-ref time).
+  const reuseExtras = {};
+  if (profileSourceCaseRef) {
+    reuseExtras.previousCaseRef = profileSourceCaseRef;
+    try {
+      const compAdapter = require('./compositionAdapter');
+      const ROLE_TO_TYPE = Object.fromEntries(Object.entries(compAdapter._maps.MEMBER_TYPE_TO_ROLE).map(([t, r]) => [r, t]));
+      const comp = await compAdapter.readForCase(profileSourceCaseRef);
+      const fam = ((comp && comp.members) || [])
+        .filter((m) => m.role !== 'PrincipalApplicant')
+        .map((m) => ({
+          type: ROLE_TO_TYPE[m.role] || '',
+          name: m.name || '',
+          dateOfBirth: m.dateOfBirth || '',
+          currentStatus: m.currentStatus || '',
+          countryOfResidence: m.countryOfResidence || '',
+          accompanying: (ROLE_TO_TYPE[m.role] || '') !== 'Sponsor', // sponsors are in Canada already
+        }))
+        .filter((m) => FAMILY_MEMBER_TYPES.includes(m.type));
+      if (fam.length) reuseExtras.retainerFamilyMembers = JSON.stringify(fam);
+    } catch (err) {
+      console.warn(`[Consultant] family carry from ${profileSourceCaseRef} failed: ${err.message}`);
+    }
+  }
 
   const bad = (m) => { const e = new Error(m); e.badRequest = true; throw e; };
   if (fullName.length < 2) bad('The client’s full legal name is required.');
@@ -1270,6 +1303,7 @@ async function createDirectClient(payload = {}) {
       residentialAddress: address,
       referredBy,
       conversionStatus:   'Qualified',
+      ...reuseExtras,
     };
     if (chosenAccountId) linkWiring.clientAccountId = chosenAccountId;
     await leadService.updateLead(String(linkLeadId), linkWiring);
@@ -1357,6 +1391,7 @@ async function createDirectClient(payload = {}) {
     residentialAddress: address,
     referredBy,
     conversionStatus:   'Qualified', // honest: qualified to retain, never booked/consulted
+    ...reuseExtras,
   };
   if (chosenAccountId) wiring.clientAccountId = chosenAccountId; // staff-explicit account link from the modal
   try {

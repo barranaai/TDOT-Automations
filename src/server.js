@@ -715,6 +715,22 @@ app.post('/api/consultation/direct-client', express.json(), async (req, res) => 
   }
 });
 
+// "New application": the reusable profile of a client's previous case —
+// identity + slow-circumstance candidates (staff-confirmed in the modal),
+// family roster, and read-only prior facts. Volatile fields never appear.
+app.get('/api/consultation/client-profile', async (req, res) => {
+  try {
+    const profile = await require('./services/clientProfileService').gatherReusableProfile({
+      sourceCaseRef: (req.query.caseRef || '').trim(),
+    });
+    if (!profile) return res.status(404).json({ error: 'No case found with that reference.' });
+    res.json(profile);
+  } catch (err) {
+    console.error('[Consultant] client-profile failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Warn-and-link: everything that already exists for this email/phone (client
 // accounts, open cases, leads) — feeds the duplicate panel in the modal.
 app.get('/api/consultation/client-matches', async (req, res) => {

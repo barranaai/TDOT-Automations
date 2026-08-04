@@ -190,6 +190,29 @@ function csvFilename(caseRef, formKey) {
 }
 
 /**
+ * Load a saved form file WITH its timestamp — the client-profile reuse layer
+ * needs `savedAt` for latest-wins merging (parseJson/loadFormData discard it).
+ * Legacy CSV files carry no timestamp → savedAt null.
+ * @returns {Promise<{ fields: Array, savedAt: string|null }>}
+ */
+async function loadFormFile({ clientName, caseRef, formKey }) {
+  try {
+    const buf = await oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: dataFilename(caseRef, formKey) });
+    if (buf) {
+      const obj = JSON.parse(buf.toString('utf8'));
+      if (Array.isArray(obj)) return { fields: obj, savedAt: null };
+      return { fields: Array.isArray(obj.fields) ? obj.fields : [], savedAt: obj.savedAt || null };
+    }
+    const csvBuf = await oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: csvFilename(caseRef, formKey) });
+    if (csvBuf) return { fields: parseCsvLegacy(csvBuf.toString('utf8')), savedAt: null };
+    return { fields: [], savedAt: null };
+  } catch (err) {
+    console.warn(`[HtmlQ] loadFormFile failed for ${caseRef}/${formKey}: ${err.message}`);
+    return { fields: [], savedAt: null };
+  }
+}
+
+/**
  * Load previously saved questionnaire data for a given form.
  * Reads the JSON file first; falls back to the legacy CSV if JSON is not found.
  * Returns an array of { section, label, key, value } objects, or [] if none saved.
@@ -286,11 +309,11 @@ async function readIntakeSubfolderArchive({ clientName, caseRef, filename }) {
   }
 }
 
-/** Turn a {label,value} pair into a persisted, prefill-tagged field record. */
+/** Turn a {label,value[,section]} pair into a persisted, prefill-tagged field record. */
 function toPrefillField(pair) {
   const slug = String(pair.label).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return {
-    section: 'Pre-filled from intake',
+    section: pair.section || 'Pre-filled from intake',
     label:   pair.label,
     key:     'prefill__' + slug,   // synthetic, namespaced — never collides with a real DOM key
     value:   pair.value,
@@ -370,10 +393,31 @@ async function seedQuestionnairePrefill({ clientName, caseRef, caseType, caseSub
     const ctx = { intake: intake || {}, preConsult: preConsult || {}, lead: lead || {}, spouse };
 
     let seeded = 0;
-    // Principal applicant form.
+    // Principal applicant form. Fresh intake/pre-consult answers win; identity
+    // and slow-circumstance values from the client's PREVIOUS application fill
+    // only the labels the current sources left empty, in their own clearly
+    // marked section (client accounts Phase 4 — best-effort, never blocks).
+    let primaryPairs = prefillMap.buildPrimaryFields(ctx);
+    const previousCaseRef = String((lead && lead.previousCaseRef) || '').trim();
+    if (previousCaseRef && previousCaseRef !== caseRef) {
+      try {
+        const profile = await require('./clientProfileService').gatherReusableProfile({ sourceCaseRef: previousCaseRef });
+        if (profile) {
+          const have = new Set(primaryPairs.map((p) => p.label.trim().toLowerCase()));
+          const prev = prefillMap.buildPrimaryFieldsFromProfile(profile.identity)
+            .filter((p) => !have.has(p.label.trim().toLowerCase()));
+          if (prev.length) {
+            primaryPairs = [...primaryPairs, ...prev];
+            console.log(`[Prefill] ${prev.length} field(s) carried from previous application ${previousCaseRef} for ${caseRef}.`);
+          }
+        }
+      } catch (err) {
+        console.warn(`[Prefill] previous-application source failed for ${caseRef} (from ${previousCaseRef}): ${err.message}`);
+      }
+    }
     seeded += await seedFormFileIfEmpty({
       clientName, caseRef, itemId: clientMasterItemId, formKey: 'primary',
-      pairs: prefillMap.buildPrimaryFields(ctx),
+      pairs: primaryPairs,
     });
     // Each accompanying member's own form (thin today; harmless when empty).
     // Derive each member's form key from the CURRENT board — mirroring the key
@@ -4799,9 +4843,11 @@ module.exports = {
   validateAccessForStaff,
   resolveForm,
   loadFormData,
+  loadFormFile,
   saveFormData,
   seedQuestionnairePrefill,
   readIntakeSubfolderArchive,
+  lookupCase,
   markSubmitted,
   markAllSubmitted,
   // Member manifest management
