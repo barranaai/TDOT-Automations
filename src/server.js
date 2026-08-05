@@ -505,7 +505,8 @@ app.get('/admin/status-audit', async (req, res) => {
   if (!viewer || !viewer.isAdmin) return res.status(403).json({ error: 'Admins only' });
   try {
     const repair = req.query.repair === '1' || req.query.repair === 'true';
-    const result = await require('./services/retainerStatusReconciler').sweepRetainerStatus({ dryRun: !repair });
+    const result = await require('./services/retainerStatusReconciler')
+      .sweepRetainerStatus({ dryRun: !repair, includeStalled: true });
     res.json({ mode: repair ? 'repair' : 'report', ...result });
   } catch (err) {
     console.error('[StatusSync] Audit failed:', err.stack || err.message);

@@ -143,7 +143,15 @@ function startScheduler() {
   cron.schedule('7,22,37,52 * * * *', () =>
     require('./retainerStatusReconciler').sweepRetainerStatus().catch((err) =>
       console.error('[Scheduler] Retainer status sync failed:', err.message)));
-  console.log('[Scheduler] Job registered — retainer/payment status sync every 15 min');
+  // The board-wide "parked without payment" scan is a REPORT, not a repair, and
+  // it costs a full pass of the case board — hourly is plenty, and it keeps the
+  // 15-minute repair job cheap.
+  cron.schedule('12 * * * *', () =>
+    require('./retainerStatusReconciler').findStalledCases()
+      .then((rows) => { if (rows.length) console.warn(`[StatusSync] ${rows.length} case(s) are in document collection without Payment Status "Paid" — ` +
+        'no document reminders are going out for them: ' + rows.map((r) => r.caseRef || r.cmId).join(', ')); })
+      .catch((err) => console.error('[Scheduler] Stalled-case scan failed:', err.message)));
+  console.log('[Scheduler] Jobs registered — retainer/payment status sync every 15 min, stalled-case report hourly');
 
   // ── Case-type canon guard: the Client Master board's Primary Case Type list
   // is the approved standard. Daily, sync followers (Lead Board dropdown) and

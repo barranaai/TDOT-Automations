@@ -62,8 +62,22 @@ const CM = {
  */
 const UNAUTHORED_LABELS = ['', 'alreaday sent', 'already sent'];
 
+/**
+ * Labels that mean "a human looked at this and said it is NOT paid". These are
+ * the newest word on the subject and must never be argued with — see the
+ * conflict rule in classifyDrift.
+ */
+const STAFF_UNPAID_LABELS = ['not paid', 'working on it'];
+
 const PAID = 'Paid';
 const SIGNED_UNPAID = 'Signed (Unpaid)';
+
+/** Verdicts the sweep repairs on its own, vs. the ones only a person can settle.
+ *  The audit endpoint reports these separately — "the system will fix this
+ *  itself" and "someone has to look at this" are the two answers it exists to
+ *  tell apart, and collapsing them makes the report useless. */
+const REPAIRABLE  = ['upgrade-cm', 'backstamp-lead'];
+const NEEDS_HUMAN = ['no-case', 'dangling', 'conflict', 'ambiguous', 'error'];
 
 const s = (v) => String(v == null ? '' : v).trim();
 const todayISO = () => new Date().toISOString().split('T')[0];
@@ -111,7 +125,9 @@ function classifyDrift(lead, cmPaymentStatus) {
       : { action: 'none', reason: 'no case row, no retainer activity' };
   }
   if (cmPaymentStatus == null) {
-    return { action: 'dangling', reason: `lead points at Client Master item ${linked}, which no longer exists` };
+    // Deleted, archived, or sitting on some other board — from here they are the
+    // same thing: there is no live case row to keep in step with this lead.
+    return { action: 'dangling', reason: `lead points at Client Master item ${linked}, which is not a live case row (deleted, archived, or moved)` };
   }
 
   const have = s(cmPaymentStatus);
@@ -123,6 +139,17 @@ function classifyDrift(lead, cmPaymentStatus) {
     return { action: 'backstamp-lead', reason: 'case is marked Paid but the lead has no retainer payment date' };
   }
   if (want === PAID && !havePaid) {
+    // CONFLICT, not drift. A human has said "not paid" AFTER the lead acquired
+    // its payment date — a misclick they corrected, a bounced e-transfer, a
+    // refund. Nothing clears lead.retainerPaid, so treating that stale date as
+    // truth would rewrite "Paid" every 15 minutes, restart onboarding, and
+    // resume chasing a client who has not paid. The board already holds this
+    // line everywhere else (caseRefService: "never resume onboarding for a case
+    // that isn't currently Paid"). Report it; let a person resolve it.
+    if (STAFF_UNPAID_LABELS.includes(have.toLowerCase())) {
+      return { action: 'conflict', reason: `the case was set to "${have}" by hand, but the lead still carries a payment date of ${s(lead.retainerPaid)} — ` +
+        'clear the lead\'s Retainer Paid date if the payment was reversed, or set the case back to Paid' };
+    }
     return { action: 'upgrade-cm', to: PAID, reason: `lead was paid on ${s(lead.retainerPaid)} but the case still reads "${have || '(blank)'}"` };
   }
   if (want === SIGNED_UNPAID && have !== SIGNED_UNPAID && UNAUTHORED_LABELS.includes(have.toLowerCase())) {
@@ -193,10 +220,20 @@ async function readCasesBulk(cmItemIds, { chunk = 50 } = {}) {
   const ids = [...new Set(cmItemIds.map(s).filter(Boolean))];
   for (let i = 0; i < ids.length; i += chunk) {
     const batch = ids.slice(i, i + chunk);
-    const d = await mondayApi.query(
-      `query($ids:[ID!]){ items(ids:$ids){ id state board{id} column_values(ids:${COLS_Q}){ id text } } }`,
-      { ids: batch }
-    );
+    let d;
+    try {
+      d = await mondayApi.query(
+        `query($ids:[ID!]){ items(ids:$ids){ id state board{id} column_values(ids:${COLS_Q}){ id text } } }`,
+        { ids: batch }
+      );
+    } catch (err) {
+      // clientMasterItemId is a free-text column, so one malformed id can make
+      // Monday reject the whole query. Losing 50 cases' repairs is bad; losing
+      // every case's repair because of one bad row is much worse — so a failed
+      // chunk is skipped (its cases read as unreadable) and the sweep goes on.
+      console.warn(`[StatusSync] Case batch ${i / chunk + 1} failed (${err.message}) — those cases are skipped this cycle`);
+      continue;
+    }
     for (const item of (d && d.items) || []) {
       const parsed = parseCaseItem(item);   // deleted, archived, or off-board ⇒ absent ⇒ "dangling"
       if (parsed) out.set(String(item.id), parsed);
@@ -205,38 +242,65 @@ async function readCasesBulk(cmItemIds, { chunk = 50 } = {}) {
   return out;
 }
 
+/** A Monday date column's text is "YYYY-MM-DD", or "YYYY-MM-DD HH:MM" if the
+ *  column has time enabled. The lead's date column rejects the latter, so take
+ *  the date part and fall back to today rather than writing something invalid. */
+function asDateOnly(text) {
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s(text));
+  return m ? m[1] : '';
+}
+
+/**
+ * The side effects, behind a seam. Repairs write to a live board carrying real
+ * money, so the tests drive these paths with fakes rather than asserting on the
+ * shape of the source text.
+ */
+const io = {
+  writeCasePaymentStatus: (...a) => writeCasePaymentStatus(...a),
+  updateLead:      (id, fields) => leadService.updateLead(id, fields),
+  postLeadNote:    (id, body)   => postLeadNote(id, body),
+  maybeMarkRetained: (id)       => require('./paymentService').maybeMarkRetained(id),
+};
+
 /**
  * Apply one already-classified verdict. Split out so the single-case path and
  * the batched sweep repair drift through exactly the same code.
  */
 async function applyVerdict(lead, verdict, cm, { dryRun = false } = {}) {
   const base = { ...verdict, changed: false, leadId: String(lead.id), caseRef: cm ? cm.caseRef : '' };
-  if (dryRun || verdict.action === 'none' || verdict.action === 'dangling' || verdict.action === 'no-case') return base;
+  if (dryRun || !REPAIRABLE.includes(verdict.action)) return base;
 
   if (verdict.action === 'upgrade-cm') {
-    await writeCasePaymentStatus(lead.clientMasterItemId, verdict.to, { paymentDate: s(lead.retainerPaid) });
+    await io.writeCasePaymentStatus(lead.clientMasterItemId, verdict.to, { paymentDate: asDateOnly(lead.retainerPaid) });
     console.log(`[StatusSync] Case ${base.caseRef || lead.clientMasterItemId} Payment Status → "${verdict.to}" (${verdict.reason})`);
-    // Reaching "Paid" is the onboarding trigger. The board webhook normally
-    // carries it from here; if this repair ran because that webhook was missed
-    // in the first place, retainerService.onRetainerPaid is the same entry point
-    // it would have used, and it is idempotent.
+    // Deliberately NOT calling retainerService.onRetainerPaid here. Monday fires
+    // change_column_value for API writes too — that is exactly how the write
+    // above reaches Phase 1 (mondayWebhook → onRetainerPaid), the same route
+    // paymentService.advanceCaseToPaid relies on. Calling it directly as well
+    // gets onRetainerPaid twice, and it is NOT idempotent across that pair: the
+    // second run still sees checklistTemplateApplied = "No" (seeding takes 1-2
+    // minutes) with the stage already advanced, so it takes the deferred-resume
+    // branch and sends a SECOND intake email to the client — sendIntakeEmail has
+    // no already-sent guard.
     if (verdict.to === PAID) {
-      try { await require('./retainerService').onRetainerPaid({ itemId: lead.clientMasterItemId }); }
-      catch (err) { console.warn(`[StatusSync] onRetainerPaid after repair failed for ${lead.clientMasterItemId}: ${err.message}`); }
+      // The crash that stranded this case may have landed before the Retained
+      // flip too. Both-gated and idempotent inside; never blocks the repair.
+      try { await io.maybeMarkRetained(lead.id); }
+      catch (err) { console.warn(`[StatusSync] maybeMarkRetained after repair failed for lead ${lead.id}: ${err.message}`); }
     }
     return { ...base, changed: true };
   }
 
   if (verdict.action === 'backstamp-lead') {
-    const when = (cm && cm.paymentDate) || todayISO();
-    await leadService.updateLead(lead.id, { retainerPaid: when });
-    await postLeadNote(lead.id,
+    const when = asDateOnly(cm && cm.paymentDate) || todayISO();
+    await io.updateLead(lead.id, { retainerPaid: when });
+    await io.postLeadNote(lead.id,
       `💵 <b>Retainer payment recorded from the case board.</b> Case ${base.caseRef || lead.clientMasterItemId} ` +
       `is marked <b>Paid</b>, so the retainer payment date has been set to ${when} here to keep the lead, the ` +
       `consultant portal and the reporting in step with it.`);
     console.log(`[StatusSync] Lead ${lead.id} retainerPaid ← ${when} (case ${base.caseRef} already Paid)`);
     // Signed + paid ⇒ Retained. Both-gated and idempotent inside.
-    try { await require('./paymentService').maybeMarkRetained(lead.id); }
+    try { await io.maybeMarkRetained(lead.id); }
     catch (err) { console.warn(`[StatusSync] maybeMarkRetained after backstamp failed for lead ${lead.id}: ${err.message}`); }
     return { ...base, changed: true };
   }
@@ -332,71 +396,99 @@ async function findStalledCases() {
   return out;
 }
 
+// A sweep pages the whole Lead Board and can take a while. Two overlapping runs
+// would double-write the same repairs, so a slow one is skipped, not stacked.
+let _sweeping = false;
+
 /**
  * Sweep every lead that has any retainer activity and repair what disagrees.
  * Cron entry point; also the engine behind the admin status-audit endpoint.
  *
  * @param {object} opts
- * @param {boolean} opts.dryRun  report only (used by the audit endpoint)
- * @returns {{checked:number, repaired:Array, attention:Array}}
+ * @param {boolean} opts.dryRun          report only (the audit endpoint's default)
+ * @param {boolean} opts.includeStalled  also scan the whole case board for cases
+ *        parked in document collection without payment. Off for the 15-minute
+ *        cron — it is a report, not a repair, and it costs a full board page.
+ * @returns {{checked, repaired, wouldRepair, attention, stalled}}
  */
-async function sweepRetainerStatus({ dryRun = false } = {}) {
+async function sweepRetainerStatus({ dryRun = false, includeStalled = false } = {}) {
+  if (_sweeping) {
+    console.warn('[StatusSync] Previous sweep still running — skipping this cycle');
+    return { checked: 0, repaired: [], wouldRepair: [], attention: [], stalled: [], skipped: true };
+  }
+  _sweeping = true;
+  try {
+    return await _doSweep({ dryRun, includeStalled });
+  } finally {
+    _sweeping = false;
+  }
+}
+
+async function _doSweep({ dryRun, includeStalled }) {
+  const empty = { checked: 0, repaired: [], wouldRepair: [], attention: [], stalled: [] };
   let leads = [];
   try {
     leads = await leadService.listAllLeads();
   } catch (err) {
     console.error(`[StatusSync] Could not list leads: ${err.message}`);
-    return { checked: 0, repaired: [], attention: [], error: err.message };
+    return { ...empty, error: err.message };
   }
 
   // Only cases with retainer activity can drift. Everything else has nothing to
   // compare and would just burn API calls.
   const candidates = leads.filter((l) => s(l.retainerSigned) || s(l.retainerPaid) || s(l.clientMasterItemId));
 
-  // One bulk read for every case, rather than one call per lead — this runs four
-  // times an hour forever, so its cost must not grow with the client base.
+  // One bulk read per 50 cases rather than one call per lead. A bad id in one
+  // chunk must not cost every other case its repair, so chunks fail alone.
   let cases;
   try {
     cases = await readCasesBulk(candidates.map((l) => l.clientMasterItemId));
   } catch (err) {
     console.error(`[StatusSync] Could not read the case rows: ${err.message}`);
-    return { checked: 0, repaired: [], attention: [], error: err.message };
+    return { ...empty, error: err.message };
   }
 
-  const repaired = [], attention = [];
+  const repaired = [], wouldRepair = [], attention = [];
+  const entry = (lead, r) => ({ leadId: r.leadId, name: lead.fullName || '', caseRef: r.caseRef || '', action: r.action, to: r.to, reason: r.reason });
   for (const lead of candidates) {
     const cm = cases.get(s(lead.clientMasterItemId)) || null;
     let r;
     try {
       r = await applyVerdict(lead, classifyDrift(lead, cm ? cm.paymentStatus : null), cm, { dryRun });
     } catch (err) {
-      attention.push({ leadId: String(lead.id), name: lead.fullName || '', action: 'error', reason: err.message });
+      attention.push({ leadId: String(lead.id), name: lead.fullName || '', caseRef: cm ? cm.caseRef : '', action: 'error', reason: err.message });
       continue;
     }
-    if (r.changed) repaired.push({ leadId: r.leadId, name: lead.fullName || '', caseRef: r.caseRef, action: r.action, to: r.to, reason: r.reason });
-    else if (r.action !== 'none') attention.push({ leadId: r.leadId, name: lead.fullName || '', caseRef: r.caseRef, action: r.action, to: r.to, reason: r.reason });
+    if (r.changed) repaired.push(entry(lead, r));
+    // In report mode a repairable verdict is NOT something a human must act on —
+    // the cron will fix it within 15 minutes. Keeping the two apart is the whole
+    // point of the audit.
+    else if (REPAIRABLE.includes(r.action)) wouldRepair.push(entry(lead, r));
+    else if (NEEDS_HUMAN.includes(r.action)) attention.push(entry(lead, r));
   }
 
   if (repaired.length) console.log(`[StatusSync] Repaired ${repaired.length} case(s) whose payment status had drifted`);
   if (attention.length) console.warn(`[StatusSync] ${attention.length} case(s) need a human: ` +
     attention.map((a) => `${a.name || a.leadId} (${a.action})`).join(', '));
 
-  // Board-side check: report-only, never repaired (see findStalledCases).
   let stalled = [];
-  try {
-    stalled = await findStalledCases();
-    if (stalled.length) console.warn(`[StatusSync] ${stalled.length} case(s) sit in "${CHASING_STAGE}" without Payment Status "Paid" — ` +
-      'document reminders are switched off for them until someone sets the payment status');
-  } catch (err) {
-    console.warn(`[StatusSync] Stalled-case scan failed: ${err.message}`);
+  if (includeStalled) {
+    try {
+      stalled = await findStalledCases();
+      if (stalled.length) console.warn(`[StatusSync] ${stalled.length} case(s) sit in "${CHASING_STAGE}" without Payment Status "Paid" — ` +
+        'document reminders are switched off for them until someone sets the payment status');
+    } catch (err) {
+      console.warn(`[StatusSync] Stalled-case scan failed: ${err.message}`);
+    }
   }
 
-  return { checked: candidates.length, repaired, attention, stalled };
+  return { checked: candidates.length, repaired, wouldRepair, attention, stalled };
 }
 
 module.exports = {
   deriveCmPaymentStatus, classifyDrift,          // pure
   reconcileLead, reconcileCase, sweepRetainerStatus, // I/O
   readCasePaymentStatus, readCasesBulk, writeCasePaymentStatus, applyVerdict, findStalledCases,
-  PAID, SIGNED_UNPAID, UNAUTHORED_LABELS,
+  asDateOnly, io,                                // seams for tests
+  PAID, SIGNED_UNPAID, UNAUTHORED_LABELS, STAFF_UNPAID_LABELS, REPAIRABLE, NEEDS_HUMAN,
 };

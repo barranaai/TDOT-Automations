@@ -56,7 +56,7 @@ test('THE BUG: lead paid, case still "Signed (Unpaid)" ⇒ upgrade the case to P
 test('lead paid, case still carrying the board automation stamp ⇒ upgrade to Paid', () => {
   assert.equal(R.classifyDrift(PAID, 'Alreaday Sent').to, 'Paid');
   assert.equal(R.classifyDrift(PAID, '').to, 'Paid');
-  assert.equal(R.classifyDrift(PAID, 'Not Paid').to, 'Paid');
+  // "Not Paid" is deliberately NOT in this list — see the conflict test below.
 });
 
 test('already in sync ⇒ no write', () => {
@@ -106,7 +106,7 @@ test('lead pointing at a deleted case row ⇒ flagged, not silently repaired', (
   // Master rows were deleted. Nothing detected it before this sweep existed.
   const v = R.classifyDrift(PAID, null);
   assert.equal(v.action, 'dangling');
-  assert.match(v.reason, /no longer exists/);
+  assert.match(v.reason, /not a live case row/);
 });
 
 test('every verdict carries a human-readable reason', () => {
@@ -116,23 +116,152 @@ test('every verdict carries a human-readable reason', () => {
   }
 });
 
-/* ── the retry hole the fix closes ────────────────────────────────────── */
+/* ── a human's "Not Paid" must win ─────────────────────────────────────── */
+
+test('a case corrected back to "Not Paid" is NEVER rewritten to Paid', () => {
+  // The trap: staff mark Paid by mistake, the lead gets stamped, staff correct
+  // the board — and a naive reconciler treats the now-stale lead date as truth
+  // and puts "Paid" back every 15 minutes, restarting onboarding and resuming
+  // chasing emails against a client who has not paid. Nothing clears
+  // lead.retainerPaid, so the fight would never end.
+  const v = R.classifyDrift(PAID, 'Not Paid');
+  assert.equal(v.action, 'conflict');
+  assert.notEqual(v.action, 'upgrade-cm');
+  assert.match(v.reason, /clear the lead/i, 'the report must say how to resolve it');
+  assert.equal(R.classifyDrift(PAID, 'Working on it').action, 'conflict');
+});
+
+test('but a system-authored label is still upgraded to Paid — the original bug stays fixed', () => {
+  for (const have of ['', 'Signed (Unpaid)', 'Alreaday Sent']) {
+    assert.equal(R.classifyDrift(PAID, have).action, 'upgrade-cm', `"${have}" is not a human's word`);
+  }
+});
+
+test('conflict is a human verdict, not one the sweep repairs', () => {
+  assert.ok(R.NEEDS_HUMAN.includes('conflict'));
+  assert.ok(!R.REPAIRABLE.includes('conflict'));
+});
+
+/* ── applyVerdict: the paths that write to a live board ────────────────── */
+
+function withFakeIo(fn) {
+  const real = { ...R.io };
+  const calls = [];
+  for (const k of Object.keys(R.io)) R.io[k] = async (...a) => { calls.push([k, ...a]); };
+  return Promise.resolve(fn(calls)).finally(() => Object.assign(R.io, real));
+}
+const names = (calls) => calls.map((c) => c[0]);
+
+test('upgrading a case to Paid must NOT also call onRetainerPaid directly', () => {
+  // Monday fires change_column_value for API writes, so writing "Paid" already
+  // reaches Phase 1 through the webhook. Calling onRetainerPaid here as well
+  // runs it twice, and it is not idempotent across that pair: the second run
+  // still sees checklistTemplateApplied "No" with the stage already advanced,
+  // takes the deferred-resume branch, and sends the client a SECOND intake
+  // email — sendIntakeEmail has no already-sent guard.
+  return withFakeIo(async (calls) => {
+    const r = await R.applyVerdict(PAID, { action: 'upgrade-cm', to: 'Paid', reason: 'x' }, { caseRef: 'C-1' });
+    assert.equal(r.changed, true);
+    assert.ok(names(calls).includes('writeCasePaymentStatus'), 'it must write the label');
+    assert.ok(!names(calls).some((n) => /onRetainerPaid/i.test(n)), 'and must not fire onboarding itself');
+    assert.ok(names(calls).includes('maybeMarkRetained'), 'it should still heal a missed Retained flip');
+  });
+});
+
+test('backstamping writes the payment date to the lead, with a note', () => {
+  return withFakeIo(async (calls) => {
+    const r = await R.applyVerdict(SIGNED, { action: 'backstamp-lead', reason: 'x' },
+      { caseRef: 'C-2', paymentDate: '2026-07-30' });
+    assert.equal(r.changed, true);
+    const upd = calls.find((c) => c[0] === 'updateLead');
+    assert.deepEqual(upd[2], { retainerPaid: '2026-07-30' }, 'the board\'s own confirmation date, not today');
+    assert.ok(names(calls).includes('postLeadNote'), 'staff must be able to see why the date appeared');
+  });
+});
+
+test('dryRun writes absolutely nothing, for every repairable verdict', () => {
+  return withFakeIo(async (calls) => {
+    for (const v of [{ action: 'upgrade-cm', to: 'Paid', reason: 'x' }, { action: 'backstamp-lead', reason: 'x' }]) {
+      const r = await R.applyVerdict(PAID, v, { caseRef: 'C-3' }, { dryRun: true });
+      assert.equal(r.changed, false);
+    }
+    assert.deepEqual(calls, [], 'report mode must never touch the board');
+  });
+});
+
+test('verdicts only a human can settle never write either', () => {
+  return withFakeIo(async (calls) => {
+    for (const action of R.NEEDS_HUMAN) {
+      const r = await R.applyVerdict(PAID, { action, reason: 'x' }, null);
+      assert.equal(r.changed, false, `${action} must not write`);
+    }
+    assert.deepEqual(calls, []);
+  });
+});
+
+test('a date column carrying a time is trimmed, never written raw', () => {
+  // A date column with time enabled returns "YYYY-MM-DD HH:MM" as text; the
+  // lead's date column rejects that, and the failure would repeat forever.
+  assert.equal(R.asDateOnly('2026-07-30 14:05'), '2026-07-30');
+  assert.equal(R.asDateOnly('2026-07-30'), '2026-07-30');
+  assert.equal(R.asDateOnly('rubbish'), '');
+  assert.equal(R.asDateOnly(null), '');
+});
+
+/* ── reconcileCase: resolving a case back to its lead ─────────────────── */
+
+const leadService = require('../src/services/leadService');
+
+async function withLeads(rows, fn) {
+  const real = leadService.findAllByColumnValue;
+  leadService.findAllByColumnValue = async () => rows;
+  try { return await fn(); } finally { leadService.findAllByColumnValue = real; }
+}
+
+test('REFUSES to back-stamp when two leads claim the same case', () => {
+  // Stamping a payment onto the wrong applicant is worse than leaving the drift
+  // visible. This is the only rail preventing it.
+  return withFakeIo((calls) => withLeads(
+    [{ id: '1', retainerSigned: '2026-08-01', clientMasterItemId: '9' },
+     { id: '2', retainerSigned: '2026-08-01', clientMasterItemId: '9' }],
+    async () => {
+      const r = await R.reconcileCase('9');
+      assert.equal(r.action, 'ambiguous');
+      assert.equal(r.changed, false);
+      assert.deepEqual(calls, [], 'nothing may be written under ambiguity');
+    }));
+});
+
+test('a legacy case with no lead behind it is left alone', () => {
+  return withFakeIo((calls) => withLeads([], async () => {
+    const r = await R.reconcileCase('9');
+    assert.equal(r.action, 'none');
+    assert.deepEqual(calls, [], 'it must not invent a lead');
+  }));
+});
+
+test('an empty case id is a no-op', async () => {
+  assert.equal((await R.reconcileCase('')).action, 'none');
+});
+
+/* ── wiring ───────────────────────────────────────────────────────────── */
 
 test('recordRetainerPaid re-runs the case reconcile when the lead is already paid', () => {
   const src = require('fs').readFileSync(require.resolve('../src/services/paymentService'), 'utf8');
   const branch = src.slice(src.indexOf('if (lead.retainerPaid) {'), src.indexOf('// 1. Lead Board'));
-  assert.match(branch, /retainerStatusReconciler/,
-    'the already-paid short-circuit must retry the Client Master write, not just the lead funnel');
-  assert.match(branch, /maybeMarkRetained/, 'and must keep the existing Retained self-heal');
+  const code = branch.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');   // ignore comments
+  assert.match(code, /reconcileLead/, 'the already-paid short-circuit must retry the Client Master write');
+  assert.match(code, /maybeMarkRetained/, 'and must keep the existing Retained self-heal');
 });
 
 test('the Client Master webhook carries a manual "Paid" back to the lead', () => {
   const src = require('fs').readFileSync(require.resolve('../src/routes/mondayWebhook'), 'utf8');
   const i = src.indexOf("value?.label?.text === 'Paid'");
   assert.ok(i > 0);
-  const branch = src.slice(i, i + 900);
-  assert.match(branch, /reconcileCase/, 'staff marking the board Paid must reach the lead');
-  assert.match(branch, /onRetainerPaid/, 'and must still fire the existing onboarding trigger');
+  const branch = src.slice(i, src.indexOf('}', src.indexOf('reconcileCase', i)));
+  const code = branch.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  assert.match(code, /reconcileCase\(pulseId\)/, 'staff marking the board Paid must reach the lead');
+  assert.match(code, /onRetainerPaid/, 'and must still fire the existing onboarding trigger');
 });
 
 test('every Client Master column the reconciler queries is actually defined', () => {
@@ -153,7 +282,36 @@ test('every Client Master column the reconciler queries is actually defined', ()
   }
 });
 
-test('the sweep is scheduled', () => {
-  const src = require('fs').readFileSync(require.resolve('../src/services/scheduler'), 'utf8');
-  assert.match(src, /sweepRetainerStatus/);
+test('the sweep is scheduled, and the board-wide scan is NOT on the 15-minute job', () => {
+  const src  = require('fs').readFileSync(require.resolve('../src/services/scheduler'), 'utf8');
+  const code = src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');   // a commented-out cron is not a cron
+  assert.match(code, /cron\.schedule\('7,22,37,52 \* \* \* \*',[\s\S]{0,120}sweepRetainerStatus/,
+    'the repair sweep runs every 15 minutes');
+  assert.match(code, /cron\.schedule\('12 \* \* \* \*',[\s\S]{0,160}findStalledCases/,
+    'the full-board report runs hourly, not on the repair job');
+  // The repair sweep must not drag a full pass of the case board with it.
+  const sweepCall = /sweepRetainerStatus\(([^)]*)\)/.exec(code);
+  assert.ok(!/includeStalled\s*:\s*true/.test(sweepCall[1]), 'the 15-minute job stays cheap');
+});
+
+test('a slow sweep is skipped rather than stacked on top of itself', async () => {
+  // Two overlapping sweeps would double-write the same repairs.
+  const svc = require('../src/services/retainerStatusReconciler');
+  const leadService = require('../src/services/leadService');
+  const real = leadService.listAllLeads;
+  let concurrent = 0, sawOverlap = false;
+  leadService.listAllLeads = async () => {
+    concurrent++;
+    if (concurrent > 1) sawOverlap = true;
+    await new Promise((r) => setTimeout(r, 20));
+    concurrent--;
+    return [];
+  };
+  try {
+    const [a, b] = await Promise.all([svc.sweepRetainerStatus({ dryRun: true }), svc.sweepRetainerStatus({ dryRun: true })]);
+    assert.ok(a.skipped || b.skipped, 'the second concurrent sweep must bow out');
+    assert.equal(sawOverlap, false, 'and must never run alongside the first');
+  } finally {
+    leadService.listAllLeads = real;
+  }
 });
