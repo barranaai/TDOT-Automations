@@ -149,6 +149,14 @@ router.post('/', async (req, res) => {
       retainerService.onRetainerPaid({ itemId: pulseId }).catch(err =>
         console.error('[Retainer] Error:', err.message)
       );
+      // Staff record e-transfers by setting this label by hand. That used to
+      // start onboarding without ever telling the LEAD, so the consultant
+      // portal, the case cockpit and the KPI dashboard went on showing the
+      // client as unpaid. Carry the payment back to the lead so every surface
+      // tells the same story.
+      require('../services/retainerStatusReconciler').reconcileCase(pulseId).catch(err =>
+        console.warn('[StatusSync] Lead back-stamp failed:', err.message)
+      );
     }
 
     // Client Email corrected → resend intake email if already sent to wrong address

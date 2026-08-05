@@ -73,10 +73,17 @@ async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt
 
   if (lead.retainerPaid) {
     console.log(`[Payment] Lead ${lead.id} retainer already marked paid (${lead.retainerPaid}) — skipping`);
-    // Self-heal: if a prior maybeMarkRetained flip failed transiently, a redelivered
-    // webhook / repeat "Mark paid" reconciles it here (idempotent + both-gated).
+    // Self-heal. This branch is the natural retry for everything the FIRST run
+    // left half-done, so it must repair the CASE too, not just the lead funnel.
+    // The lead's paid date is stamped BEFORE the Client Master flip below, so a
+    // transient failure of that flip used to be permanent: the webhook
+    // redelivery, the 5-minute payment reconciler and a staff re-click of "Mark
+    // paid" all land here and used to return without ever retrying it, leaving
+    // the case unpaid on the board and silently un-onboarded.
     try { await maybeMarkRetained(lead); }
     catch (e) { console.warn(`[Payment] retained reconcile (already-paid) failed for lead ${lead.id}: ${e.message}`); }
+    try { await require('./retainerStatusReconciler').reconcileLead(lead); }
+    catch (e) { console.warn(`[Payment] case status reconcile (already-paid) failed for lead ${lead.id}: ${e.message}`); }
     return lead.clientMasterItemId || null;
   }
 
@@ -91,7 +98,11 @@ async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt
   console.log(`[Payment] Lead ${lead.id} retainer paid${txnId ? ` (txn ${txnId})` : reference ? ` (e-transfer ref ${reference})` : ''}`);
 
   // The retainer payment IS the first milestone — record it as paid on the panel.
-  try { await require('./milestonePaymentService').patchPayment(lead.id, 0, { status: 'paid', paidAt: when, ...(txnId ? { txnId } : {}), ...(reference ? { reference, method: 'e-transfer' } : {}) }); } catch (_) {}
+  // Best-effort, but never silent: when this fails the client portal goes on
+  // showing their first milestone as unpaid even though the payment landed, and
+  // a swallowed error left nobody able to see why.
+  try { await require('./milestonePaymentService').patchPayment(lead.id, 0, { status: 'paid', paidAt: when, ...(txnId ? { txnId } : {}), ...(reference ? { reference, method: 'e-transfer' } : {}) }); }
+  catch (e) { console.warn(`[Payment] Milestone 0 "paid" patch failed for lead ${lead.id} (${e.message}) — the client portal will still show it unpaid`); }
 
   // Signed + paid ⇒ Retained. Best-effort (never block the payment record / Phase-1
   // trigger below). Placed BEFORE the clientMasterItemId guard so a signed+paid lead

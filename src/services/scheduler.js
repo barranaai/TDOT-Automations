@@ -133,6 +133,18 @@ function startScheduler() {
       console.error('[Scheduler] Phase 2 payment reconciler failed:', err.message)));
   console.log('[Scheduler] Phase 2 job registered — payment reconciler every 5 min');
 
+  // ── Retainer status sync: keep Client Master "Payment Status" and the lead's
+  // retainer dates telling the same story. The payment reconciler above recovers
+  // payments Square never delivered; this one recovers the board writes that
+  // failed AFTER the payment was recorded — the case that says "Signed (Unpaid)"
+  // while the lead says paid, and never onboards because no retry path exists.
+  // Non-destructive: it upgrades toward Paid and back-stamps leads, never the
+  // reverse. Offset from :00 so it doesn't collide with the 5-minute reconciler.
+  cron.schedule('7,22,37,52 * * * *', () =>
+    require('./retainerStatusReconciler').sweepRetainerStatus().catch((err) =>
+      console.error('[Scheduler] Retainer status sync failed:', err.message)));
+  console.log('[Scheduler] Job registered — retainer/payment status sync every 15 min');
+
   // ── Case-type canon guard: the Client Master board's Primary Case Type list
   // is the approved standard. Daily, sync followers (Lead Board dropdown) and
   // alert staff about anything needing a human (e.g. a new type with no

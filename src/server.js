@@ -497,6 +497,22 @@ app.get('/admin/dashboard-stats', async (req, res) => {
   }
 });
 
+// Retainer/payment status audit — does every case's Payment Status agree with
+// its lead's retainer dates? Read-only by default; ?repair=1 applies the same
+// non-destructive fixes the 15-minute sync job makes, on demand.
+app.get('/admin/status-audit', async (req, res) => {
+  const viewer = resolveViewer(req);
+  if (!viewer || !viewer.isAdmin) return res.status(403).json({ error: 'Admins only' });
+  try {
+    const repair = req.query.repair === '1' || req.query.repair === 'true';
+    const result = await require('./services/retainerStatusReconciler').sweepRetainerStatus({ dryRun: !repair });
+    res.json({ mode: repair ? 'repair' : 'report', ...result });
+  } catch (err) {
+    console.error('[StatusSync] Audit failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Staff case cockpit — unified single-case snapshot for /admin/case/:caseRef
 app.get('/api/case/:caseRef', async (req, res) => {
   try {
