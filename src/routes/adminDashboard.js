@@ -838,8 +838,13 @@ var _data     = null;
 // Which view this page is — emitted by the server, never sniffed from the DOM.
 var VIEW = ${JSON.stringify(view)};
 var _filtered = [];
-var _sortCol  = 'health';
-var _sortDir  = 1;   // ascending on health = Red(0) first by default
+// Newest case first (user directive 2026-08-05). createdAt is the Monday item's
+// created_at, an ISO-8601 UTC string — lexicographic order IS chronological
+// order, so the generic string compare below sorts it correctly, and a case
+// with no timestamp ('') sorts to the BOTTOM under descending rather than
+// masquerading as the newest. Clicking any column header still re-sorts.
+var _sortCol  = 'createdAt';
+var _sortDir  = -1;  // descending = latest created at the top
 var _page     = 1;
 var PAGE_SIZE = 25;
 

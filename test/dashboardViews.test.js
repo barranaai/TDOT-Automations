@@ -82,3 +82,34 @@ test('the admin-only delete control survives on the cases view', async () => {
   assert.ok(html.includes('data-del-case='), 'delete button still emitted per row');
   assert.ok(html.includes('tdotBindDelete'), 'delete modal still wired');
 });
+
+// User directive 2026-08-05: the newest case must be at the top by default.
+test('All Cases defaults to newest-created first', async () => {
+  const html = await renderRoute('/');
+  assert.match(html, /var _sortCol\s*=\s*'createdAt'/, 'defaults to the creation timestamp');
+  assert.match(html, /var _sortDir\s*=\s*-1/, 'descending — latest at the top');
+});
+
+test('createdAt ordering: newest first, same-day times honoured, missing timestamps sink', () => {
+  // Mirrors the comparator in sortTable for the string branch with _sortDir=-1.
+  const cmp = (a, b) => {
+    const av = (a.createdAt || '').toLowerCase(), bv = (b.createdAt || '').toLowerCase();
+    return av < bv ? 1 : av > bv ? -1 : 0;
+  };
+  const rows = [
+    { ref: 'old',      createdAt: '2026-06-15T16:41:48Z' },
+    { ref: 'today-am', createdAt: '2026-08-05T09:10:00Z' },
+    { ref: 'mid',      createdAt: '2026-07-07T22:07:06Z' },
+    { ref: 'no-stamp', createdAt: '' },
+    { ref: 'today-pm', createdAt: '2026-08-05T18:00:00Z' },
+  ].sort(cmp);
+  assert.deepEqual(rows.map((r) => r.ref), ['today-pm', 'today-am', 'mid', 'old', 'no-stamp'],
+    'ISO-8601 sorts chronologically as a string; a blank stamp must never masquerade as newest');
+});
+
+test('dashboardService requests and maps the Monday created_at', () => {
+  const fs = require('fs');
+  const src = fs.readFileSync(require.resolve('../src/services/dashboardService'), 'utf8');
+  assert.match(src, /id name created_at/, 'created_at is selected in the items query');
+  assert.match(src, /createdAt:\s+item\.created_at/, 'and mapped onto the case object');
+});

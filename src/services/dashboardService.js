@@ -51,7 +51,7 @@ async function fetchAllItems() {
            items_page(limit: 100, cursor: $cursor) {
              cursor
              items {
-               id name
+               id name created_at
                column_values(ids: [${FETCH_IDS.map((id) => `"${id}"`).join(',')}]) { id text value }
              }
            }
@@ -92,6 +92,11 @@ function parseItem(item) {
 
   return {
     id:                 item.id,
+    // Authoritative creation time — the All Cases table defaults to newest
+    // first. Do NOT substitute daysElapsed: that is a Monday numeric column
+    // that reads 0 when its automation hasn't run, which would sort brand-new
+    // and un-stamped cases to the top indistinguishably.
+    createdAt:          item.created_at || '',
     clientName:         (item.name || '').trim(),
     caseRef:            col(COLS.caseRef),
     caseType:           col(COLS.caseType)  || 'Unknown',
