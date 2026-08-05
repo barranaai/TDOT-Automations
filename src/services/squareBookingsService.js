@@ -219,6 +219,74 @@ async function createBooking({ customerId, serviceVariationId, serviceVariationV
   return { bookingId: data.booking?.id, startAt: data.booking?.start_at, status: data.booking?.status };
 }
 
+/**
+ * Should this booking be cancelled when its consultation record is deleted?
+ * Pure — the judgement is separated from the HTTP so it can be tested flat.
+ *
+ * Cancel only what still occupies the calendar: a booking already cancelled,
+ * declined or no-showed is terminal, and a booking whose start time has passed
+ * cannot be freed (Square rejects cancelling the past — the slot was consumed).
+ * An UNKNOWN future status errs toward cancelling: worst case Square refuses
+ * and the failure surfaces; skipping silently would leave the slot occupied,
+ * which is the exact hole this exists to close.
+ *
+ * @param {object} booking  Square booking ({status, start_at, version})
+ * @param {number} nowMs    injected clock (Date.now() at the call site)
+ * @returns {{act:'cancel'|'skip', reason:string}}
+ */
+function classifyBookingForCancel(booking, nowMs) {
+  const TERMINAL = ['CANCELLED_BY_BUYER', 'CANCELLED_BY_SELLER', 'DECLINED', 'NO_SHOW'];
+  const status = String((booking && booking.status) || '').toUpperCase();
+  if (TERMINAL.includes(status)) return { act: 'skip', reason: `already ${status.toLowerCase().replace(/_/g, ' ')}` };
+  const startMs = Date.parse((booking && booking.start_at) || '');
+  if (Number.isFinite(startMs) && startMs <= nowMs) return { act: 'skip', reason: 'the appointment time has already passed' };
+  return { act: 'cancel', reason: status ? `status ${status}` : 'status unknown — attempting cancel' };
+}
+
+/**
+ * Human-readable text for a Square API failure. Axios reports any non-2xx as
+ * the useless "Request failed with status code NNN"; the actual cause sits in
+ * err.response.data.errors (code + detail: VERSION_MISMATCH, UNAUTHORIZED, …)
+ * — and which code it is decides whether a retry can ever work.
+ */
+function squareErrorText(err) {
+  const errors = err && err.response && err.response.data && err.response.data.errors;
+  if (Array.isArray(errors) && errors.length) {
+    return errors.map((e) => [e.code, e.detail].filter(Boolean).join(': ')).join('; ') || err.message;
+  }
+  return (err && err.message) || String(err);
+}
+
+/** One booking by id, or null when Square no longer knows it. */
+async function retrieveBooking(bookingId) {
+  try {
+    return (await _get(`/v2/bookings/${encodeURIComponent(bookingId)}`)).booking || null;
+  } catch (err) {
+    if (err.response && err.response.status === 404) return null;
+    throw err;
+  }
+}
+
+/**
+ * Cancel a booking iff it still occupies the calendar. Idempotent by
+ * construction: not-found, already-cancelled and already-past all resolve to
+ * "nothing to free", so a re-run after a partial failure is harmless.
+ * Throws only on a genuine failure (auth, network, Square 5xx) — the caller
+ * decides whether that blocks what it was doing.
+ * @returns {{cancelled:boolean, reason:string}}
+ */
+async function cancelBookingIfActive(bookingId) {
+  const booking = await retrieveBooking(bookingId);
+  if (!booking) return { cancelled: false, reason: 'not found in Square — nothing to free' };
+  const verdict = classifyBookingForCancel(booking, Date.now());
+  if (verdict.act === 'skip') return { cancelled: false, reason: verdict.reason };
+  await _post(`/v2/bookings/${encodeURIComponent(bookingId)}/cancel`, {
+    booking_version: booking.version,
+    idempotency_key: `cancel-${bookingId}`,   // deterministic — retries collapse in Square
+  });
+  return { cancelled: true, reason: 'cancelled' };
+}
+
 /** Stamp our lead id onto the Square booking as an audit attribute (best-effort; not queryable). */
 async function upsertBookingCustomAttribute(bookingId, key, value) {
   const data = await axios.put(
@@ -276,10 +344,11 @@ async function preflightSquareBooking() {
 module.exports = {
   // pure
   toE164, utcToTorontoSlot, buildAvailabilitySearch, buildCreateBookingBody, mapAvailabilities,
-  preflightSquareBooking,
+  preflightSquareBooking, classifyBookingForCancel, squareErrorText,
   // I/O
   retrieveBusinessBookingProfile, listTeamMemberBookingProfiles, listAppointmentServices,
   searchAvailability, listBookings, ensureCustomer, createBooking, upsertBookingCustomAttribute,
+  retrieveBooking, cancelBookingIfActive,
   // constants
   SQUARE_VERSION, TZ,
 };

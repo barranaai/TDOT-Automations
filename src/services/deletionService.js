@@ -39,6 +39,7 @@ const mondayApi     = require('./mondayApi');
 const leadService   = require('./leadService');
 const oneDrive      = require('./oneDriveService');
 const clientMaster  = require('./clientMasterService');
+const squareBookings = require('./squareBookingsService');
 const { clientMasterBoardId, leadBoardId, cmColumns } = require('../../config/monday');
 
 const familyBoard = require('../data/familyMembersBoard.json');
@@ -159,12 +160,13 @@ async function caseGraph(cm) {
     client: { name: cm.name, email: cm.email },
     cmItemId: cm.id,
     execRows, qexecRows, familyRows,
-    leads: leads.map((l) => ({ id: String(l.id), name: l.fullName || `Lead ${l.id}` })),
+    leads: leads.map((l) => ({ id: String(l.id), name: l.fullName || `Lead ${l.id}`,
+                               squareBookingId: l.squareBookingId || '', slot: l.bookedSlot || '' })),
     folders,
     warnings: [
       ...warnings,
       'The client’s account row on the Clients board (if any) is KEPT — it is cross-application history, and other cases may link to it.',
-      'Documenso envelopes (signed agreements) and Square payment records are NOT deleted — remove those manually if needed.',
+      'The Square consultation appointment (if any) IS cancelled, freeing the slot. Documenso envelopes (signed agreements) and Square payment records are NOT deleted — remove those manually if needed.',
       'Monday rows go to Monday’s recycle bin (30-day recovery); OneDrive folders go to the OneDrive recycle bin.',
     ],
   };
@@ -180,11 +182,13 @@ async function leadGraph(lead) {
     kind: 'lead',
     confirmText: 'DELETE',
     client: { name: lead.fullName || `Lead ${lead.id}`, email: lead.email || '' },
-    leads: [{ id: String(lead.id), name: lead.fullName || `Lead ${lead.id}` }],
+    leads: [{ id: String(lead.id), name: lead.fullName || `Lead ${lead.id}`,
+              squareBookingId: lead.squareBookingId || '', slot: lead.bookedSlot || '' }],
     execRows: [], qexecRows: [], familyRows: [], cmItemId: null, caseRef: '',
     folders,
     warnings: [
       ...warnings,
+      ...(lead.squareBookingId ? ['The Square consultation appointment is cancelled, freeing the slot on the calendar.'] : []),
       'Documenso envelopes (if any agreement was sent) are NOT deleted.',
       'The Monday row goes to Monday’s recycle bin (30-day recovery); the OneDrive folder goes to the OneDrive recycle bin.',
     ],
@@ -239,6 +243,10 @@ async function previewDeletion({ leadId, caseRef }) {
       familyMemberRows: g.familyRows.length,
       leadRows: g.leads.map((l) => l.name),
       oneDriveFolders: g.folders.map((f) => f.name),
+      // Consultation slots on the real Square calendar. Cancelled during
+      // execute, BEFORE the lead rows go — the booking id lives on the lead.
+      squareAppointments: g.leads.filter((l) => l.squareBookingId)
+        .map((l) => `${l.name}${l.slot ? ` — ${l.slot}` : ''}`),
     },
     warnings: g.warnings,
   };
@@ -305,7 +313,7 @@ async function executeDeletion({ leadId, caseRef, confirmText, expectedKind, act
     }
 
     const failures = [];
-    const deleted = { checklistRows: 0, questionnaireRows: 0, familyMemberRows: 0, clientMasterRow: 0, leadRows: 0, oneDriveFolders: 0 };
+    const deleted = { checklistRows: 0, questionnaireRows: 0, familyMemberRows: 0, clientMasterRow: 0, leadRows: 0, oneDriveFolders: 0, squareAppointmentsCancelled: 0 };
 
     for (const [countKey, rows] of [['checklistRows', g.execRows], ['questionnaireRows', g.qexecRows], ['familyMemberRows', g.familyRows]]) {
       const r = await deleteMondayRows(rows, countKey);
@@ -313,11 +321,34 @@ async function executeDeletion({ leadId, caseRef, confirmText, expectedKind, act
       failures.push(...r.errors);
     }
 
+    // Free the Square consultation slot(s) BEFORE any lead row goes — the
+    // booking id lives only on the lead, so once the row is deleted a failed
+    // cancel could never be retried. Runs even when child rows failed (the
+    // cancel is idempotent: a re-run sees CANCELLED / not-found and no-ops),
+    // but a cancel FAILURE joins the child failures and keeps every parent,
+    // so the id survives for the re-run.
+    for (const l of g.leads) {
+      if (!l.squareBookingId) continue;
+      try {
+        const r = await squareBookings.cancelBookingIfActive(l.squareBookingId);
+        if (r.cancelled) {
+          deleted.squareAppointmentsCancelled++;
+          console.log(`[Deletion] Square appointment ${l.squareBookingId} cancelled (${l.name}${l.slot ? `, ${l.slot}` : ''})`);
+        } else {
+          console.log(`[Deletion] Square appointment ${l.squareBookingId} left alone: ${r.reason}`);
+        }
+      } catch (err) {
+        // Square's real cause (VERSION_MISMATCH / UNAUTHORIZED / …) decides
+        // whether a retry can ever work — axios's generic message hides it.
+        failures.push(`Square appointment for ${l.name} (${l.squareBookingId}) could not be cancelled: ${squareBookings.squareErrorText(err)}`);
+      }
+    }
+
     // Child failures → keep every parent (CM row, leads, folders): the caseRef
     // survives, so the admin can simply re-run the delete once Monday recovers.
     // Deleting the CM row now would strand the failed children forever.
     if (failures.length) {
-      failures.push('Client Master row, lead row(s) and OneDrive folder(s) were KEPT because some child rows failed — fix or wait, then run the delete again.');
+      failures.push('Client Master row, lead row(s) and OneDrive folder(s) were KEPT because some steps failed — fix or wait, then run the delete again.');
     } else {
       if (g.cmItemId) {
         const r = await deleteMondayRows([{ id: g.cmItemId }], 'clientMasterRow');

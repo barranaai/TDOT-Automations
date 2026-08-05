@@ -333,6 +333,8 @@ const DELETE_UI_JS = `
         if (t.familyMemberRows) rows.push('<li><b>' + t.familyMemberRows + '</b> family member rows</li>');
         for (var i = 0; i < t.leadRows.length; i++) rows.push('<li>Lead row: ' + delEsc(t.leadRows[i]) + '</li>');
         for (var f = 0; f < t.oneDriveFolders.length; f++) rows.push('<li>OneDrive folder: ' + delEsc(t.oneDriveFolders[f]) + '</li>');
+        var sq = t.squareAppointments || [];
+        for (var q = 0; q < sq.length; q++) rows.push('<li>Square appointment (will be cancelled): ' + delEsc(sq[q]) + '</li>');
         if (!rows.length) rows.push('<li>Nothing found to remove.</li>');
         var warns = '';
         for (var w = 0; w < (p.warnings || []).length; w++) warns += '<p>' + delEsc(p.warnings[w]) + '</p>';
@@ -373,8 +375,17 @@ const DELETE_UI_JS = `
               if (d.familyMemberRows) done.push(d.familyMemberRows + ' family rows');
               if (d.leadRows) done.push(d.leadRows + ' lead row' + (d.leadRows > 1 ? 's' : ''));
               if (d.oneDriveFolders) done.push(d.oneDriveFolders + ' OneDrive folder' + (d.oneDriveFolders > 1 ? 's' : ''));
+              // The preview promised a Square cancellation — the result must say
+              // what actually happened to it, especially when the answer is
+              // "nothing" (already cancelled / past / not found in Square).
+              var sqNote = '';
+              if (sq.length) {
+                sqNote = d.squareAppointmentsCancelled
+                  ? ' Square appointment' + (d.squareAppointmentsCancelled > 1 ? 's' : '') + ' cancelled: ' + d.squareAppointmentsCancelled + ' — the slot is freed.'
+                  : ' Square appointment NOT cancelled (it was already cancelled, in the past, or gone from Square) \\u2014 check the Square calendar if you expected it to be freed.';
+              }
               var cls = res.j.ok ? 'delm-result' : 'delm-result bad';
-              var txt = res.j.ok ? ('Deleted: ' + (done.join(', ') || 'nothing found') + '. Recoverable from the Monday / OneDrive recycle bins.')
+              var txt = res.j.ok ? ('Deleted: ' + (done.join(', ') || 'nothing found') + '. Recoverable from the Monday / OneDrive recycle bins.' + sqNote)
                                  : ('Partially deleted (' + (done.join(', ') || 'nothing') + '). FAILED: ' + res.j.failures.join(' | '));
               var wrap = document.createElement('div'); wrap.className = cls; wrap.textContent = txt;
               err.parentNode.insertBefore(wrap, err);

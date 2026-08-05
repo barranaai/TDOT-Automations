@@ -233,6 +233,7 @@ test('execute (case): children before parents, folders removed, honest summary',
     assert.deepEqual(r.deleted, {
       checklistRows: 1, questionnaireRows: 1, familyMemberRows: 1,
       clientMasterRow: 1, leadRows: 1, oneDriveFolders: 2,
+      squareAppointmentsCancelled: 0,   // this lead has no Square booking
     });
     assert.deepEqual(m.deleted, ['1', '3', '4', '900', '500'], 'children first, CM before lead');
     assert.deepEqual(droppedFolders.sort(), ['od-cm-1', 'od-lead-x'], 'stored-id folder AND orphaned LEAD folder both removed');
