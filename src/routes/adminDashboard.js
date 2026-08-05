@@ -9,14 +9,287 @@ const express = require('express');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS } = require('./adminShared');
 
-function buildDashboardHTML() {
+// ─── View bodies ──────────────────────────────────────────────────────────
+// The dashboard renders ONE of these (user directive 2026-08-05): /admin/dashboard
+// is the All Cases table only; everything else lives on /admin/dashboard/summary.
+// Hoisted verbatim as static markup (neither block interpolates) so the split is
+// a swap, not a rewrite — and so the two views can never drift apart in the shell.
+const SUMMARY_BODY_HTML = `
+    <!-- ── KPI Groups ── -->
+    <div class="kpi-group">
+      <div class="kpi-group-label">Case Health</div>
+      <div class="kpi-strip">
+        <div class="kpi navy">
+          <div class="kpi-num" id="kpi-total">—</div>
+          <div class="kpi-label">Total Cases</div>
+        </div>
+        <div class="kpi green">
+          <div class="kpi-num" id="kpi-green">—</div>
+          <div class="kpi-label">Healthy</div>
+        </div>
+        <div class="kpi amber">
+          <div class="kpi-num" id="kpi-orange">—</div>
+          <div class="kpi-label">At Risk</div>
+        </div>
+        <div class="kpi red">
+          <div class="kpi-num" id="kpi-red">—</div>
+          <div class="kpi-label">Critical</div>
+        </div>
+        <div class="kpi orange">
+          <div class="kpi-num" id="kpi-blocked">—</div>
+          <div class="kpi-label">Client Blocked</div>
+        </div>
+        <div class="kpi purple">
+          <div class="kpi-num" id="kpi-escalation">—</div>
+          <div class="kpi-label">Escalations Open</div>
+        </div>
+      </div>
+      <div class="kpi-group-label" style="margin-top:18px">Operations</div>
+      <div class="kpi-strip">
+        <div class="kpi rose">
+          <div class="kpi-num" id="kpi-unassigned">—</div>
+          <div class="kpi-label">Unassigned Cases</div>
+        </div>
+        <div class="kpi indigo">
+          <div class="kpi-num" id="kpi-behind">—</div>
+          <div class="kpi-label">Behind Schedule</div>
+        </div>
+        <div class="kpi red">
+          <div class="kpi-num" id="kpi-blocking">—</div>
+          <div class="kpi-label">Cases w/ Blockers</div>
+        </div>
+        <div class="kpi slate">
+          <div class="kpi-num" id="kpi-inactive">—</div>
+          <div class="kpi-label">Inactive 14d+</div>
+        </div>
+        <div class="kpi blue">
+          <div class="kpi-num" id="kpi-expiry">—</div>
+          <div class="kpi-label">Expiry Flagged</div>
+        </div>
+        <div class="kpi teal">
+          <div class="kpi-num" id="kpi-deadline">—</div>
+          <div class="kpi-label">Due This Month</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Action Required ── -->
+    <div class="sec-hd">⚡ Action Required</div>
+    <div class="chart-row chart-row-3" style="margin-bottom:28px">
+
+      <div class="action-card border-red">
+        <div class="action-card-hd">
+          <span>🗓 Deadline ≤7 Days</span>
+          <span class="action-badge red" id="act-count-deadline">0</span>
+        </div>
+        <div class="action-list" id="act-list-deadline"></div>
+      </div>
+
+      <div class="action-card border-indigo">
+        <div class="action-card-hd">
+          <span>📉 Behind Schedule</span>
+          <span class="action-badge indigo" id="act-count-behind">0</span>
+        </div>
+        <div class="action-list" id="act-list-behind"></div>
+      </div>
+
+      <div class="action-card border-slate">
+        <div class="action-card-hd">
+          <span>🔕 No Activity 14d+</span>
+          <span class="action-badge slate" id="act-count-stale">0</span>
+        </div>
+        <div class="action-list" id="act-list-stale"></div>
+      </div>
+
+    </div>
+
+    <!-- ── Charts Row 1 ── -->
+    <div class="sec-hd">📊 Portfolio Overview</div>
+    <div class="chart-row chart-row-3" style="margin-bottom:28px">
+
+      <div class="chart-card">
+        <div class="chart-title">🟢 Case Health Distribution</div>
+        <div class="chart-wrap donut">
+          <canvas id="chart-health"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title">⏱️ SLA Risk Band</div>
+        <div class="chart-wrap donut">
+          <canvas id="chart-sla"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title">📋 Cases by Stage</div>
+        <div class="chart-wrap" style="height:220px">
+          <canvas id="chart-stage"></canvas>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Charts Row 2 ── -->
+    <div class="chart-row chart-row-2" style="margin-bottom:28px">
+
+      <div class="chart-card">
+        <div class="chart-title">📁 Cases by Immigration Type</div>
+        <div class="chart-wrap" style="height:240px">
+          <canvas id="chart-type"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title">📈 Case Readiness Breakdown</div>
+        <div style="display:flex;align-items:stretch;justify-content:center;height:190px;gap:0">
+
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-right:1px solid var(--border);padding:0 16px">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Questionnaire</div>
+            <div style="font-size:46px;font-weight:800;letter-spacing:-2px" id="readiness-q">—</div>
+            <div style="width:90%;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+              <div id="readiness-q-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#2563eb,#60a5fa);transition:width .8s ease;width:0%"></div>
+            </div>
+            <div style="font-size:11px;color:var(--light)">avg questionnaire</div>
+          </div>
+
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-right:1px solid var(--border);padding:0 16px;background:#f9fbff">
+            <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.08em">Overall</div>
+            <div style="font-size:46px;font-weight:800;letter-spacing:-2px" id="readiness-overall">—</div>
+            <div style="width:90%;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+              <div id="readiness-overall-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#7c3aed,#a78bfa);transition:width .8s ease;width:0%"></div>
+            </div>
+            <div style="font-size:11px;color:var(--light)">avg overall</div>
+          </div>
+
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:0 16px">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Documents</div>
+            <div style="font-size:46px;font-weight:800;letter-spacing:-2px" id="readiness-doc">—</div>
+            <div style="width:90%;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+              <div id="readiness-doc-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#059669,#34d399);transition:width .8s ease;width:0%"></div>
+            </div>
+            <div style="font-size:11px;color:var(--light)">avg documents</div>
+          </div>
+
+        </div>
+        <div style="border-top:1px solid var(--border);padding:9px 20px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;color:var(--muted);background:#fafbfc">
+          <span>⚠️ Missing required documents across all active cases:</span>
+          <span style="font-weight:800;color:var(--red)" id="readiness-missing">0</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Chasing Stage Row ── -->
+    <div class="chart-row chart-row-1" style="margin-bottom:28px">
+      <div class="chart-card" style="grid-column:1/-1">
+        <div class="chart-title">📬 Client Engagement — Chasing Stage Breakdown</div>
+        <div class="chart-wrap" style="height:180px">
+          <canvas id="chart-chasing"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Delay Level + Readiness vs Target Row ── -->
+    <div class="chart-row chart-row-dl" style="margin-bottom:28px">
+
+      <div class="chart-card">
+        <div class="chart-title">⏳ Client Delay Level</div>
+        <div class="chart-wrap donut">
+          <canvas id="chart-delay"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title">🎯 Readiness vs Expected — by Stage</div>
+        <div class="chart-wrap" style="height:220px">
+          <canvas id="chart-readiness-target"></canvas>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Team Workload ── -->
+    <div class="sec-hd">👥 Team Workload &amp; Performance</div>
+    <div class="mgr-grid" id="mgr-grid"></div>
+
+    <!-- ── At-Risk Cases ── -->
+    <div class="sec-hd">🚨 Cases Requiring Attention</div>
+    <div class="table-card" id="atrisk-card">
+      <table class="data-table" id="atrisk-table">
+        <thead>
+          <tr>
+            <th>Case Ref</th>
+            <th>Client</th>
+            <th>Type</th>
+            <th>Stage</th>
+            <th>Health</th>
+            <th>SLA Risk</th>
+            <th>Manager</th>
+            <th>Readiness</th>
+            <th>Days</th>
+            <th>Blocking Q</th>
+            <th>Blocking Doc</th>
+            <th>Last Active</th>
+            <th>Deadline</th>
+          </tr>
+        </thead>
+        <tbody id="atrisk-body"></tbody>
+      </table>
+    </div>
+`;
+
+const ALL_CASES_BODY_HTML = `
+    <!-- ── All Cases Table ── -->
+    <div class="sec-hd">📋 All Cases</div>
+    <div class="table-card">
+      <div class="table-toolbar">
+        <input type="text" class="search-box" id="search-box" placeholder="Search by client, case ref, type…" oninput="filterTable()" />
+        <select class="filter-sel" id="filter-stage" onchange="filterTable()">
+          <option value="">All Stages</option>
+        </select>
+        <select class="filter-sel" id="filter-health" onchange="filterTable()">
+          <option value="">All Health</option>
+          <option value="Red">Red</option>
+          <option value="Orange">Orange</option>
+          <option value="Green">Green</option>
+        </select>
+        <select class="filter-sel" id="filter-manager" onchange="filterTable()">
+          <option value="">All Managers</option>
+        </select>
+        <span class="table-count" id="table-count"></span>
+      </div>
+      <table class="data-table" id="all-cases-table">
+        <thead>
+          <tr>
+            <th onclick="sortTable('caseRef')"    data-col="caseRef">Case Ref <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('clientName')" data-col="clientName">Client <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('caseType')"   data-col="caseType">Type <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('caseStage')"  data-col="caseStage">Stage <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('health')"     data-col="health">Health <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('slaRisk')"    data-col="slaRisk">SLA Risk <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('manager')"    data-col="manager">Manager <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('overallReadiness')" data-col="overallReadiness">Readiness <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('daysElapsed')"      data-col="daysElapsed">Days <span class="sort-arrow">↕</span></th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="all-cases-body"></tbody>
+      </table>
+      <div class="pagination" id="pagination"></div>
+    </div>
+`;
+
+function buildDashboardHTML(view = 'cases') {
+  const isSummary = view === 'summary';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TDOT — Owner Dashboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <title>TDOT — ${isSummary ? 'Summary' : 'All Cases'}</title>
+  ${isSummary ? '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>' : '<!-- Chart.js: summary view only. `Chart` is referenced ONLY inside the chart renderers, which the cases view never calls — keep it that way, or this page throws on load. -->'}
   <style>
     ${SHARED_CSS_VARS}
     ${NAV_CSS}
@@ -75,6 +348,13 @@ function buildDashboardHTML() {
       letter-spacing: -.6px; margin: 0 0 4px;
     }
     .dash-subtitle { font-size: 12px; color: #94a3b8; margin: 0; font-weight: 500; }
+    /* Switch between the two dashboard views (All Cases ⇄ Summary). */
+    .view-switch {
+      align-self: center; text-decoration: none; white-space: nowrap;
+      padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 700;
+      background: #fff; color: var(--navy); border: 1px solid #e2e8f0;
+    }
+    .view-switch:hover { background: #f8fafc; }
     .dash-gen { font-size: 11px; color: #94a3b8; }
 
     /* ── KPI Strip ───────────────────────────────────────────────── */
@@ -535,273 +815,15 @@ ${buildNavHeader('dashboard')}
     <!-- ── Page Header ── -->
     <div class="dash-header">
       <div>
-        <h1 class="dash-title">Owner Dashboard</h1>
-        <p class="dash-subtitle">Live case intelligence · TDOT Immigration Platform</p>
+        <h1 class="dash-title">${isSummary ? 'Summary' : 'All Cases'}</h1>
+        <p class="dash-subtitle">${isSummary
+          ? 'Portfolio overview, workload and cases needing attention · TDOT Immigration Platform'
+          : 'Every case, searchable and sortable · TDOT Immigration Platform'}</p>
       </div>
+      <a class="view-switch" href="${isSummary ? '/admin/dashboard' : '/admin/dashboard/summary'}">${isSummary ? '📋 All Cases' : '📊 Summary'}</a>
     </div>
 
-    <!-- ── KPI Groups ── -->
-    <div class="kpi-group">
-      <div class="kpi-group-label">Case Health</div>
-      <div class="kpi-strip">
-        <div class="kpi navy">
-          <div class="kpi-num" id="kpi-total">—</div>
-          <div class="kpi-label">Total Cases</div>
-        </div>
-        <div class="kpi green">
-          <div class="kpi-num" id="kpi-green">—</div>
-          <div class="kpi-label">Healthy</div>
-        </div>
-        <div class="kpi amber">
-          <div class="kpi-num" id="kpi-orange">—</div>
-          <div class="kpi-label">At Risk</div>
-        </div>
-        <div class="kpi red">
-          <div class="kpi-num" id="kpi-red">—</div>
-          <div class="kpi-label">Critical</div>
-        </div>
-        <div class="kpi orange">
-          <div class="kpi-num" id="kpi-blocked">—</div>
-          <div class="kpi-label">Client Blocked</div>
-        </div>
-        <div class="kpi purple">
-          <div class="kpi-num" id="kpi-escalation">—</div>
-          <div class="kpi-label">Escalations Open</div>
-        </div>
-      </div>
-      <div class="kpi-group-label" style="margin-top:18px">Operations</div>
-      <div class="kpi-strip">
-        <div class="kpi rose">
-          <div class="kpi-num" id="kpi-unassigned">—</div>
-          <div class="kpi-label">Unassigned Cases</div>
-        </div>
-        <div class="kpi indigo">
-          <div class="kpi-num" id="kpi-behind">—</div>
-          <div class="kpi-label">Behind Schedule</div>
-        </div>
-        <div class="kpi red">
-          <div class="kpi-num" id="kpi-blocking">—</div>
-          <div class="kpi-label">Cases w/ Blockers</div>
-        </div>
-        <div class="kpi slate">
-          <div class="kpi-num" id="kpi-inactive">—</div>
-          <div class="kpi-label">Inactive 14d+</div>
-        </div>
-        <div class="kpi blue">
-          <div class="kpi-num" id="kpi-expiry">—</div>
-          <div class="kpi-label">Expiry Flagged</div>
-        </div>
-        <div class="kpi teal">
-          <div class="kpi-num" id="kpi-deadline">—</div>
-          <div class="kpi-label">Due This Month</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Action Required ── -->
-    <div class="sec-hd">⚡ Action Required</div>
-    <div class="chart-row chart-row-3" style="margin-bottom:28px">
-
-      <div class="action-card border-red">
-        <div class="action-card-hd">
-          <span>🗓 Deadline ≤7 Days</span>
-          <span class="action-badge red" id="act-count-deadline">0</span>
-        </div>
-        <div class="action-list" id="act-list-deadline"></div>
-      </div>
-
-      <div class="action-card border-indigo">
-        <div class="action-card-hd">
-          <span>📉 Behind Schedule</span>
-          <span class="action-badge indigo" id="act-count-behind">0</span>
-        </div>
-        <div class="action-list" id="act-list-behind"></div>
-      </div>
-
-      <div class="action-card border-slate">
-        <div class="action-card-hd">
-          <span>🔕 No Activity 14d+</span>
-          <span class="action-badge slate" id="act-count-stale">0</span>
-        </div>
-        <div class="action-list" id="act-list-stale"></div>
-      </div>
-
-    </div>
-
-    <!-- ── Charts Row 1 ── -->
-    <div class="sec-hd">📊 Portfolio Overview</div>
-    <div class="chart-row chart-row-3" style="margin-bottom:28px">
-
-      <div class="chart-card">
-        <div class="chart-title">🟢 Case Health Distribution</div>
-        <div class="chart-wrap donut">
-          <canvas id="chart-health"></canvas>
-        </div>
-      </div>
-
-      <div class="chart-card">
-        <div class="chart-title">⏱️ SLA Risk Band</div>
-        <div class="chart-wrap donut">
-          <canvas id="chart-sla"></canvas>
-        </div>
-      </div>
-
-      <div class="chart-card">
-        <div class="chart-title">📋 Cases by Stage</div>
-        <div class="chart-wrap" style="height:220px">
-          <canvas id="chart-stage"></canvas>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- ── Charts Row 2 ── -->
-    <div class="chart-row chart-row-2" style="margin-bottom:28px">
-
-      <div class="chart-card">
-        <div class="chart-title">📁 Cases by Immigration Type</div>
-        <div class="chart-wrap" style="height:240px">
-          <canvas id="chart-type"></canvas>
-        </div>
-      </div>
-
-      <div class="chart-card">
-        <div class="chart-title">📈 Case Readiness Breakdown</div>
-        <div style="display:flex;align-items:stretch;justify-content:center;height:190px;gap:0">
-
-          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-right:1px solid var(--border);padding:0 16px">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Questionnaire</div>
-            <div style="font-size:46px;font-weight:800;letter-spacing:-2px" id="readiness-q">—</div>
-            <div style="width:90%;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
-              <div id="readiness-q-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#2563eb,#60a5fa);transition:width .8s ease;width:0%"></div>
-            </div>
-            <div style="font-size:11px;color:var(--light)">avg questionnaire</div>
-          </div>
-
-          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-right:1px solid var(--border);padding:0 16px;background:#f9fbff">
-            <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.08em">Overall</div>
-            <div style="font-size:46px;font-weight:800;letter-spacing:-2px" id="readiness-overall">—</div>
-            <div style="width:90%;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
-              <div id="readiness-overall-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#7c3aed,#a78bfa);transition:width .8s ease;width:0%"></div>
-            </div>
-            <div style="font-size:11px;color:var(--light)">avg overall</div>
-          </div>
-
-          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:0 16px">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Documents</div>
-            <div style="font-size:46px;font-weight:800;letter-spacing:-2px" id="readiness-doc">—</div>
-            <div style="width:90%;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
-              <div id="readiness-doc-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#059669,#34d399);transition:width .8s ease;width:0%"></div>
-            </div>
-            <div style="font-size:11px;color:var(--light)">avg documents</div>
-          </div>
-
-        </div>
-        <div style="border-top:1px solid var(--border);padding:9px 20px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;color:var(--muted);background:#fafbfc">
-          <span>⚠️ Missing required documents across all active cases:</span>
-          <span style="font-weight:800;color:var(--red)" id="readiness-missing">0</span>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- ── Chasing Stage Row ── -->
-    <div class="chart-row chart-row-1" style="margin-bottom:28px">
-      <div class="chart-card" style="grid-column:1/-1">
-        <div class="chart-title">📬 Client Engagement — Chasing Stage Breakdown</div>
-        <div class="chart-wrap" style="height:180px">
-          <canvas id="chart-chasing"></canvas>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Delay Level + Readiness vs Target Row ── -->
-    <div class="chart-row chart-row-dl" style="margin-bottom:28px">
-
-      <div class="chart-card">
-        <div class="chart-title">⏳ Client Delay Level</div>
-        <div class="chart-wrap donut">
-          <canvas id="chart-delay"></canvas>
-        </div>
-      </div>
-
-      <div class="chart-card">
-        <div class="chart-title">🎯 Readiness vs Expected — by Stage</div>
-        <div class="chart-wrap" style="height:220px">
-          <canvas id="chart-readiness-target"></canvas>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- ── Team Workload ── -->
-    <div class="sec-hd">👥 Team Workload &amp; Performance</div>
-    <div class="mgr-grid" id="mgr-grid"></div>
-
-    <!-- ── At-Risk Cases ── -->
-    <div class="sec-hd">🚨 Cases Requiring Attention</div>
-    <div class="table-card" id="atrisk-card">
-      <table class="data-table" id="atrisk-table">
-        <thead>
-          <tr>
-            <th>Case Ref</th>
-            <th>Client</th>
-            <th>Type</th>
-            <th>Stage</th>
-            <th>Health</th>
-            <th>SLA Risk</th>
-            <th>Manager</th>
-            <th>Readiness</th>
-            <th>Days</th>
-            <th>Blocking Q</th>
-            <th>Blocking Doc</th>
-            <th>Last Active</th>
-            <th>Deadline</th>
-          </tr>
-        </thead>
-        <tbody id="atrisk-body"></tbody>
-      </table>
-    </div>
-
-    <!-- ── All Cases Table ── -->
-    <div class="sec-hd">📋 All Cases</div>
-    <div class="table-card">
-      <div class="table-toolbar">
-        <input type="text" class="search-box" id="search-box" placeholder="Search by client, case ref, type…" oninput="filterTable()" />
-        <select class="filter-sel" id="filter-stage" onchange="filterTable()">
-          <option value="">All Stages</option>
-        </select>
-        <select class="filter-sel" id="filter-health" onchange="filterTable()">
-          <option value="">All Health</option>
-          <option value="Red">Red</option>
-          <option value="Orange">Orange</option>
-          <option value="Green">Green</option>
-        </select>
-        <select class="filter-sel" id="filter-manager" onchange="filterTable()">
-          <option value="">All Managers</option>
-        </select>
-        <span class="table-count" id="table-count"></span>
-      </div>
-      <table class="data-table" id="all-cases-table">
-        <thead>
-          <tr>
-            <th onclick="sortTable('caseRef')"    data-col="caseRef">Case Ref <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('clientName')" data-col="clientName">Client <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('caseType')"   data-col="caseType">Type <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('caseStage')"  data-col="caseStage">Stage <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('health')"     data-col="health">Health <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('slaRisk')"    data-col="slaRisk">SLA Risk <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('manager')"    data-col="manager">Manager <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('overallReadiness')" data-col="overallReadiness">Readiness <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('daysElapsed')"      data-col="daysElapsed">Days <span class="sort-arrow">↕</span></th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="all-cases-body"></tbody>
-      </table>
-      <div class="pagination" id="pagination"></div>
-    </div>
+    ${isSummary ? SUMMARY_BODY_HTML : ALL_CASES_BODY_HTML}
 
   </div><!-- /content -->
 
@@ -813,6 +835,8 @@ ${buildNavHeader('dashboard')}
 
 <script>
 var _data     = null;
+// Which view this page is — emitted by the server, never sniffed from the DOM.
+var VIEW = ${JSON.stringify(view)};
 var _filtered = [];
 var _sortCol  = 'health';
 var _sortDir  = 1;   // ascending on health = Red(0) first by default
@@ -901,19 +925,27 @@ function loadData() {
 }
 
 /* ── Render all ──────────────────────────────────────────────────── */
+// Each view renders ONLY its own section. This branch is load-bearing: several
+// summary renderers dereference their container without a null check (e.g.
+// renderActionCards → getElementById('act-count-deadline').textContent), so
+// running them on the cases page would throw BEFORE initAllCasesTable and
+// leave the table empty behind a stuck spinner.
 function render(data) {
-  renderKPIs(data.summary);
-  renderActionCards(data.cases);
-  renderHealthChart(data.byHealth);
-  renderSlaChart(data.bySlaRisk);
-  renderStageChart(data.byStage);
-  renderTypeChart(data.byType);
-  renderReadiness(data.summary);
-  renderChasingChart(data.byChasingStage);
-  renderDelayChart(data.byDelayLevel);
-  renderReadinessVsTargetChart(data.readinessByStage);
-  renderManagerCards(data.byManager);
-  renderAtRisk(data.cases);
+  if (VIEW === 'summary') {
+    renderKPIs(data.summary);
+    renderActionCards(data.cases);
+    renderHealthChart(data.byHealth);
+    renderSlaChart(data.bySlaRisk);
+    renderStageChart(data.byStage);
+    renderTypeChart(data.byType);
+    renderReadiness(data.summary);
+    renderChasingChart(data.byChasingStage);
+    renderDelayChart(data.byDelayLevel);
+    renderReadinessVsTargetChart(data.readinessByStage);
+    renderManagerCards(data.byManager);
+    renderAtRisk(data.cases);
+    return;
+  }
   initAllCasesTable(data);
 }
 
@@ -1696,8 +1728,15 @@ document.addEventListener('DOMContentLoaded', function() {
 </html>`;
 }
 
+// The landing view is the All Cases table (user directive 2026-08-05).
 router.get('/', (_req, res) => {
-  res.type('html').send(buildDashboardHTML());
+  res.type('html').send(buildDashboardHTML('cases'));
+});
+
+// Everything the dashboard used to carry above the table — KPIs, Action
+// Required, portfolio charts, team workload, cases needing attention.
+router.get('/summary', (_req, res) => {
+  res.type('html').send(buildDashboardHTML('summary'));
 });
 
 module.exports = router;
