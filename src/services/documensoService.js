@@ -48,7 +48,7 @@ function isEnabled() {
 // whose only recipient is the consultant).
 function externalIdFor(type, leadId) { return `${type}-${leadId}`; }
 function parseExternalId(externalId) {
-  const m = /^(retainer2|retainer|consult2|consult)-(\d+)$/.exec(String(externalId || '').trim());
+  const m = /^(retainerinv|retainer2|retainer|consult2|consult)-(\d+)$/.exec(String(externalId || '').trim());
   return m ? { type: m[1], leadId: m[2] } : null;
 }
 
@@ -396,7 +396,7 @@ async function captureCompleted(body) {
   // named party never signed) and store a partially-signed PDF as the
   // canonical SIGNED copy, which the RCIC countersign would then be issued
   // over. Verified BEFORE the download/store, not after.
-  if ((type === 'retainer' || type === 'consult') && envId) {
+  if ((type === 'retainer' || type === 'consult' || type === 'retainerinv') && envId) {
     try {
       const env = await getEnvelope(envId);
       const status = String((env && env.status) || '').toUpperCase();
@@ -408,7 +408,8 @@ async function captureCompleted(body) {
   let signedPdf = null;
   const skipStore = (type === 'consult' && Boolean(csState.signedAt))
     || (type === 'retainer' && Boolean(rcState.signedAt))
-    || type === 'retainer2';
+    || type === 'retainer2'
+    || type === 'retainerinv';   // stores via recordInviterSignatureComplete (case folder)
   try {
     if (itemId != null) {
       signedPdf = await downloadSignedPdf(itemId);
@@ -490,6 +491,12 @@ async function captureCompleted(body) {
       } catch (_) { /* can't verify — proceed; recordRetainerCountersignComplete still dedupes replays */ }
     }
     await retainerCountersignSvc.recordRetainerCountersignComplete(lead, { signedPdf, stored });
+  } else if (type === 'retainerinv') {
+    // Inviter/sponsor/dependent co-signature completed (post-hoc flow for
+    // agreements that went out PA-only). Never touches retainerSigned — the
+    // client's own signature state — only the inviter fields in the
+    // countersign JSON, plus the stored final copy.
+    await retainerCountersignSvc.recordInviterSignatureComplete(lead, { signedPdf });
   } else if (type === 'consult2') {
     // RCIC countersign completed → the agreement is FULLY signed. Record it on
     // the countersign state (never touching consultAgreementSigned — that is the

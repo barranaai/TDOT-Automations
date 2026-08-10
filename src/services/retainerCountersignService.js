@@ -254,7 +254,121 @@ async function recordRetainerCountersignComplete(lead, { signedPdf, stored } = {
   return { emailed, signedAt: state.signedAt };
 }
 
+// ─── Post-hoc inviter/sponsor/dependent co-signature ─────────────────────────
+// For pa-inviter agreements executed BEFORE parallel co-signing existed
+// (2026-08-10): the PA and RCIC have signed, but the inviter's line is blank.
+// This issues a separate envelope to the inviter over the CURRENT fully-signed
+// PDF, so the final document carries all three signatures. State rides in the
+// countersign JSON as inviterEnvelopeId/inviterItemId/inviterSentAt/
+// inviterSignedAt; externalId type 'retainerinv' routes the completion webhook
+// to recordInviterSignatureComplete.
+
+const _invInFlight = new Map();
+
+async function sendInviterSignatureRequest(leadId) {
+  const key = String(leadId);
+  if (_invInFlight.has(key)) return _invInFlight.get(key).then((r) => ({ ...r, coalesced: true }));
+  const p = _doSendInviterSignatureRequest(leadId);
+  _invInFlight.set(key, p);
+  try { return await p; } finally { _invInFlight.delete(key); }
+}
+
+async function _doSendInviterSignatureRequest(leadId) {
+  const documenso = require('./documensoService');
+  const lead = await leadService.getLead(leadId);
+  if (!lead) { const e = new Error(`Lead ${leadId} not found.`); e.badRequest = true; throw e; }
+
+  const invName  = String(lead.inviterName || '').trim();
+  const invEmail = String(lead.inviterEmail || '').trim();
+  if (!invName || !invEmail || !/@/.test(invEmail)) {
+    const e = new Error('The lead has no complete Inviter/Sponsor/Dependent name + email — fill them in the retainer panel first.');
+    e.badRequest = true; throw e;
+  }
+  if (!(lead.retainerSigned && String(lead.retainerSigned).trim())) {
+    const e = new Error('The client has not signed this retainer yet — new sends already include the inviter automatically; this action is only for agreements that went out PA-only.');
+    e.badRequest = true; throw e;
+  }
+
+  const rc = parseRetainerCountersign(lead);
+  if (rc.inviterSignedAt) return { alreadySigned: true, signedAt: rc.inviterSignedAt };
+  if (rc.inviterEnvelopeId) return { envelopeId: rc.inviterEnvelopeId, resumed: true };
+
+  // Sign over the CURRENT canonical copy (client + RCIC signatures when the
+  // countersign is done) — never a fresh render.
+  const pdf = await getSignedRetainerPdf(lead);
+  if (!pdf) {
+    const e = new Error('The signed retainer PDF could not be retrieved (OneDrive + Documenso) — cannot request the co-signature.');
+    e.badRequest = true; throw e;
+  }
+
+  let env;
+  try {
+    env = await documenso.sendForSignature({
+      pdfBuffer: pdf,
+      title: `TDOT Retainer Agreement — ${lead.fullName || 'Client'} (co-signer)`,
+      externalId: documenso.externalIdFor('retainerinv', lead.id),
+      signer: {
+        email: invEmail, name: invName,
+        // The inviter's line is the SECOND client "Signature of …" label —
+        // position-based, since family names can be identical/prefixing.
+        anchorItem: { anchors: [/^signature of\s+(?!rcic)/i], occurrence: 2, gapPct: 2 },
+        position: { positionX: 11, positionY: 27, width: 40, height: 6 },
+      },
+      subject: `Please co-sign: retainer agreement — ${lead.fullName || 'client'}`,
+      message: 'You are named as the Inviter/Sponsor/Dependent on this retainer agreement. Please review and add your signature. Thank you — TDOT Immigration.',
+    });
+  } catch (err) {
+    const e = new Error(`Could not issue the co-signature envelope: ${err.message}`);
+    e.badRequest = true; throw e;
+  }
+
+  const state = { ...rc, inviterEnvelopeId: env.envelopeId, inviterItemId: env.envelopeItemId || '', inviterSentAt: todayISO() };
+  let persistFailed = false;
+  try { await leadService.updateLead(leadId, { retainerCountersign: JSON.stringify(state) }); }
+  catch (err) {
+    persistFailed = true;
+    console.warn(`[RetainerCountersign] inviter state persist failed for lead ${leadId} (envelope ${env.envelopeId} IS distributed): ${err.message}`);
+  }
+  try {
+    await require('./mondayApi').query(
+      `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+      { i: String(leadId), b: `🖋️ <b>Co-signature request sent to the Inviter/Sponsor/Dependent</b> — ${esc(invName)} &lt;${esc(invEmail)}&gt; ` +
+        `(envelope <code>${esc(String(env.envelopeId))}</code>). The final copy with all signatures is saved automatically once they sign.` });
+  } catch (_) { /* note is best-effort */ }
+  return { envelopeId: env.envelopeId, ...(persistFailed ? { persistFailed: true } : {}) };
+}
+
+/** retainerinv webhook completion: stamp inviterSignedAt, store the final PDF. */
+async function recordInviterSignatureComplete(lead, { signedPdf } = {}) {
+  const leadId = lead.id;
+  const fresh = await leadService.getLead(leadId).catch(() => null);
+  const current = parseRetainerCountersign(fresh || lead);
+  if (current.inviterSignedAt) return { signedAt: current.inviterSignedAt, alreadyRecorded: true };
+  const state = { ...current, inviterSignedAt: todayISO() };
+  await leadService.updateLead(leadId, { retainerCountersign: JSON.stringify(state) });
+
+  let pdf = (signedPdf && signedPdf.length) ? signedPdf : null;
+  if (!pdf && state.inviterItemId) {
+    try { pdf = await require('./documensoService').downloadSignedPdf(state.inviterItemId); }
+    catch (err) { console.warn(`[RetainerCountersign] inviter-signed PDF download failed for lead ${leadId}: ${err.message}`); }
+  }
+  let stored = false;
+  if (pdf && pdf.length) {
+    try { await storeSignedToOneDrive(lead, pdf); stored = true; }
+    catch (err) { console.warn(`[RetainerCountersign] inviter-signed store failed for lead ${leadId}: ${err.message}`); }
+  }
+  try {
+    await require('./mondayApi').query(
+      `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+      { i: String(leadId), b: `✍️ <b>Inviter/Sponsor/Dependent co-signature captured</b>${stored
+        ? ' — the final copy with all signatures replaced the stored SIGNED agreement.'
+        : '. ⚠️ The final copy could NOT be saved to OneDrive — download it from the Documenso dashboard and file it manually.'}` });
+  } catch (_) { /* note is best-effort */ }
+  return { signedAt: state.inviterSignedAt, stored };
+}
+
 module.exports = {
   parseRetainerCountersign, getSignedRetainerPdf, startRetainerCountersign, recordRetainerCountersignComplete,
+  sendInviterSignatureRequest, recordInviterSignatureComplete,
   candidateFolderRefs, // shared with the consult flow — same rename-aware folder resolution
 };

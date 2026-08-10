@@ -514,6 +514,25 @@ app.get('/admin/status-audit', async (req, res) => {
   }
 });
 
+// Post-hoc co-signature: send the Inviter/Sponsor/Dependent their signature
+// request over the CURRENT signed retainer — for pa-inviter agreements that
+// were executed before parallel co-signing existed and went to the PA only.
+// Admin-gated; idempotent (an already-issued envelope resumes, a captured
+// co-signature refuses).
+app.post('/admin/retainer/:leadId/send-inviter-signature', async (req, res) => {
+  const viewer = resolveViewer(req);
+  if (!viewer || !viewer.isAdmin) return res.status(403).json({ error: 'Admins only' });
+  try {
+    const result = await require('./services/retainerCountersignService')
+      .sendInviterSignatureRequest(String(req.params.leadId || '').trim());
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    console.error('[RetainerCountersign] inviter send failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Staff case cockpit — unified single-case snapshot for /admin/case/:caseRef
 app.get('/api/case/:caseRef', async (req, res) => {
   try {
