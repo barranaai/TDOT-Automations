@@ -38,7 +38,8 @@ const CM = {
   caseStage:      'color_mm0x8faa',
   paymentStatus:  'color_mm0x9fnn',
   qReadiness:     'numeric_mm0x9dea',
-  docReadiness:   'numeric_mm0x5g9x',
+  docReadiness:   'numeric_mm0x5g9x',   // % staff-Reviewed (a status rarely set)
+  docUploaded:    'numeric_mm2njqk1',   // % the client has uploaded — the progress number
   caseHealth:     'color_mm0xf5ry',
   slaRiskBand:    'color_mm0xszmm',
   caseManager:    'multiple_person_mm0xhmgk',
@@ -90,7 +91,8 @@ async function readClientMaster(itemId) {
     caseStage:       txt(CM.caseStage) || 'Not Started',
     paymentStatus:   txt(CM.paymentStatus) || 'Unpaid',
     qReadinessPct:   clampPct(txt(CM.qReadiness)),
-    docReadinessPct: clampPct(txt(CM.docReadiness)),
+    docReadinessPct: clampPct(txt(CM.docUploaded)),
+    docReviewedPct:  clampPct(txt(CM.docReadiness)),
     health:          txt(CM.caseHealth) || '—',
     slaRisk:         txt(CM.slaRiskBand) || '—',
     manager:         txt(CM.caseManager) || 'Unassigned',
@@ -320,7 +322,10 @@ async function getCaseOverview(caseRef) {
     slaRisk:         cm.slaRisk || '—',
     deadline:        cm.deadline || '',
     qReadinessPct:   cm.qReadinessPct || 0,
+    // Document progress = client uploads; the rarely-set staff-Reviewed % is
+    // its own field so the cockpit can show both honestly.
     docReadinessPct: cm.docReadinessPct || 0,
+    docReviewedPct:  cm.docReviewedPct || 0,
     portalLink:      cm.portalLink || '',
     folderLink:      cm.folderLink || '',
     family: (composition.members || []).map((m) => ({

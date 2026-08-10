@@ -145,8 +145,36 @@ async function fetchExecutionItems(boardId, caseRefColId, fetchColIds, caseRef) 
  * (using the intakeItemId stored on each execution item) and injects them into
  * the execution item's column_values array so calcDocMetrics works correctly.
  */
+/**
+ * Schema-seeded rows (intakeItemId = "code:<documentCode>") have NO Template
+ * Board link, so their mirror columns are blank forever and no template fetch
+ * can fill them. Until 2026-08-10 they fell straight through this function,
+ * which made calcDocMetrics count ZERO documents on every schema-seeded case —
+ * both readiness percentages sat at 0 no matter how much the client uploaded.
+ *
+ * The schema definitions carry no per-document counts/blocking/required flags:
+ * every document in a schema exists because the client must provide it. So the
+ * faithful values are: counts toward readiness = Yes, blocking = No (schemas
+ * have no blocking concept), required = Mandatory.
+ */
+function applySchemaDefaults(dItems) {
+  let applied = 0;
+  const DEFAULTS = { [D_COLS.countsTowardReady]: 'Yes', [D_COLS.blockingDoc]: 'No', [D_COLS.requiredType]: 'Mandatory' };
+  for (const item of dItems) {
+    const intakeId = item.column_values.find((c) => c.id === D_COLS.intakeItemId)?.text?.trim() || '';
+    if (!intakeId.startsWith('code:')) continue;
+    for (const [colId, dflt] of Object.entries(DEFAULTS)) {
+      const cv = item.column_values.find((c) => c.id === colId);
+      if (cv && (!cv.text || cv.text === 'null' || cv.text.trim() === '')) { cv.text = dflt; applied++; }
+    }
+  }
+  return applied;
+}
+
 async function enrichDocItemsWithTemplateData(dItems) {
-  // Collect template item IDs from execution items
+  applySchemaDefaults(dItems);
+
+  // Collect template item IDs from execution items (legacy template-linked rows)
   const templateIds = new Set();
   for (const item of dItems) {
     const intakeId = item.column_values.find((c) => c.id === D_COLS.intakeItemId)?.text?.trim();
@@ -493,4 +521,5 @@ async function calculateForCaseRef(caseRef) {
   });
 }
 
-module.exports = { calculateForCase, calculateForCaseRef, runDailyReadinessCheck, loadThresholds };
+module.exports = { calculateForCase, calculateForCaseRef, runDailyReadinessCheck, loadThresholds,
+  _internal: { calcDocMetrics, applySchemaDefaults, enrichDocItemsWithTemplateData } };

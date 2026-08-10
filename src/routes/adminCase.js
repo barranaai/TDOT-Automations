@@ -356,7 +356,9 @@ function render(d) {
   document.getElementById('q-sub').textContent =
     (d.questionnaire.submitted || 0) + ' of ' + (d.questionnaire.total || 0) + ' member section(s) submitted';
   document.getElementById('d-sub').textContent =
-    (d.documents.counts.received + d.documents.counts.reviewed) + ' of ' + d.documents.counts.total + ' document(s) in';
+    (d.documents.counts.received + d.documents.counts.reviewed) + ' of ' + d.documents.counts.total + ' document(s) in' +
+    (d.documents.counts.reviewed ? ' · ' + d.documents.counts.reviewed + ' reviewed' :
+      (d.docReviewedPct ? ' · ' + d.docReviewedPct + '% reviewed' : ''));
 
   // Family
   var fam = d.family || [];

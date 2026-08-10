@@ -18,6 +18,7 @@ const COLS = {
   escalationRequired: 'color_mm0x7bje',
   qReadiness:         'numeric_mm0x9dea',
   docReadiness:       'numeric_mm0x5g9x',
+  docUploaded:        'numeric_mm2njqk1',
   daysElapsed:        'numeric_mm0x58n1',
   clientBlockedStatus:'color_mm1b5gqv',
   chasingStage:       'color_mm1abve4',
@@ -85,7 +86,14 @@ function parseItem(item) {
   const assignees = caseAccess.assigneesFromColumnValues(valueByColId);
 
   const qR       = toNum(col(COLS.qReadiness));
-  const docR     = toNum(col(COLS.docReadiness));
+  // Document progress = what the CLIENT has uploaded ("Documents Uploaded %").
+  // The "Documents Readiness %" column counts staff-Reviewed docs — a status
+  // nobody sets in the current workflow — so keying the dashboard on it froze
+  // every case's document metric at 0 even with all documents received, and
+  // dragged overallReadiness (and the behind-schedule flag built on it) down
+  // with it. Reviewed% is still read and exposed as docReviewed.
+  const docR     = toNum(col(COLS.docUploaded));
+  const docRev   = toNum(col(COLS.docReadiness));
   const hasR     = qR > 0 || docR > 0;
   const overall  = hasR ? Math.round((qR + docR) / 2) : 0;
   const expected = toNum(col(COLS.expectedReadiness));
@@ -109,7 +117,8 @@ function parseItem(item) {
     chasingStage:       col(COLS.chasingStage)  || '',
     reminderCount:      toNum(col(COLS.reminderCount)),
     qReadiness:         qR,
-    docReadiness:       docR,
+    docReadiness:       docR,       // client upload progress (the staff-meaningful number)
+    docReviewed:        docRev,     // staff-review progress (separate pipeline)
     overallReadiness:   overall,
     expectedReadiness:  expected,
     // A case is "behind schedule" when actual is 15+ pts below expected (and expected > 0)
