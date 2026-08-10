@@ -111,6 +111,26 @@ test('the portal reports the cosigner hold honestly, not "will be emailed shortl
   assert.match(src, /case 'held-cosigner':/, 'retainAndSend handles the new status');
 });
 
+test('the retainer panel makes the co-signer details compulsory before sending', async () => {
+  // User directive 2026-08-10: if the inviter section is supposed to be filled
+  // (pa-inviter template), its details are required — enforced in the panel at
+  // the "Retain & send" click, on top of the server-side hold.
+  const vm = require('vm');
+  const router = require('../src/routes/adminConsultation');
+  const layer = router.stack.find((l) => l.route && l.route.path === '/consultation/:leadId');
+  const html = await new Promise((res) => layer.route.stack[0].handle({ query: {}, params: { leadId: '1' } }, { type: () => ({ send: res }) }));
+  const scripts = [...html.matchAll(/<script(?![^>]*src=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  for (const s of scripts) if (s.trim()) new vm.Script(s);   // the emitted client JS must parse
+  assert.ok(html.includes('co-signer, all fields required'), 'the section is visibly marked required');
+  assert.ok(html.includes('rp-inviter-err'), 'inline error element exists');
+  const js = scripts.join('\n');
+  assert.match(js, /function inviterGaps\(\)/, 'gap detector present');
+  const click = js.slice(js.indexOf("rpEl('btn-retain-send').onclick"), js.indexOf("rpEl('btn-retain-send').onclick") + 1200);
+  assert.match(click, /inviterGaps\(\)/, 'Retain & send validates the co-signer first');
+  assert.match(click, /return;/, 'and refuses to send while gaps exist');
+  assert.match(click, /BOTH signers/, 'the confirm names both signers on co-signed agreements');
+});
+
 /* ── createEnvelope: one recipient per signer, each with their field ───── */
 
 function jsonResponse(obj) {

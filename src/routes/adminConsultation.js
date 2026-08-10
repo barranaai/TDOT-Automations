@@ -827,15 +827,17 @@ ${buildNavHeader('consultations')}
       <button class="btn" id="rp-add-family" type="button" style="margin-top:8px">${I.plus} Add family member</button>
 
       <div id="rp-inviter" style="display:none;margin-top:8px">
-        <div class="subhead">Inviter / Sponsor / Dependent</div>
+        <div class="subhead">Inviter / Sponsor / Dependent <span style="color:#c0392b;font-weight:600">— co-signer, all fields required</span></div>
+        <div class="rp-hint" style="font-size:12px;color:#666;margin:2px 0 6px">This person signs the retainer alongside the client — both are emailed the agreement at once, and it completes only when both have signed.</div>
         <div class="rp-grid2">
-          <div class="rp-field"><input id="rp-inviterName" type="text" placeholder="Name"></div>
-          <div class="rp-field"><input id="rp-inviterEmail" type="text" placeholder="Email"></div>
+          <div class="rp-field"><input id="rp-inviterName" type="text" placeholder="Name (required)"></div>
+          <div class="rp-field"><input id="rp-inviterEmail" type="email" placeholder="Email (required — receives the signing request)"></div>
         </div>
         <div class="rp-grid2" style="margin-top:6px">
-          <div class="rp-field"><input id="rp-inviterPhone" type="text" placeholder="Phone"></div>
-          <div class="rp-field"><input id="rp-inviterAddress" type="text" placeholder="Address"></div>
+          <div class="rp-field"><input id="rp-inviterPhone" type="text" placeholder="Phone (required)"></div>
+          <div class="rp-field"><input id="rp-inviterAddress" type="text" placeholder="Address (required — printed in the agreement)"></div>
         </div>
+        <div class="rp-err" id="rp-inviter-err" role="alert" style="display:none;color:#c0392b;font-size:12px;margin-top:6px"></div>
       </div>
 
       <div id="rp-employer" style="display:none;margin-top:8px">
@@ -1270,6 +1272,21 @@ function toggleTemplateBlocks(){
   var t=rpEl('rp-template').value;
   rpEl('rp-inviter').style.display=(t==='pa-inviter')?'block':'none';
   rpEl('rp-employer').style.display=(t==='employer')?'block':'none';
+  var err=rpEl('rp-inviter-err'); if(err && t!=='pa-inviter') err.style.display='none';
+}
+// Which co-signer details are still missing for a pa-inviter agreement.
+// Returns [] when complete or when the template has no co-signer.
+function inviterGaps(){
+  if(rpEl('rp-template').value!=='pa-inviter') return [];
+  var gaps=[];
+  var name=(rpEl('rp-inviterName').value||'').trim();
+  var email=(rpEl('rp-inviterEmail').value||'').trim();
+  if(!name) gaps.push('name');
+  if(!email) gaps.push('email');
+  else if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) gaps.push('valid email');
+  if(!(rpEl('rp-inviterPhone').value||'').trim()) gaps.push('phone');
+  if(!(rpEl('rp-inviterAddress').value||'').trim()) gaps.push('address');
+  return gaps;
 }
 function mileTriggerCell(m){
   var trig=m.trigger||'';
@@ -1560,7 +1577,22 @@ function initActions(){
   rpEl('btn-retainer-preview').onclick=previewRetainer;
   rpEl('btn-retainer-save').onclick=saveRetainer;
   rpEl('btn-retain-send').onclick=function(){
-    doAction('retainAndSend', null, 'Retain this client and email the retainer agreement (stating the fee) to them now?');
+    // The pa-inviter agreement is CO-SIGNED: the inviter/sponsor/dependent is a
+    // named signatory, so their details are compulsory before anything is sent.
+    // (The server holds the send anyway — this catches it while staff are here.)
+    var gaps=inviterGaps();
+    var errEl=rpEl('rp-inviter-err');
+    if(gaps.length){
+      if(errEl){ errEl.textContent='Cannot send — the co-signer’s '+gaps.join(', ')+' '+(gaps.length>1?'are':'is')+' required for this agreement.'; errEl.style.display='block'; }
+      var first=rpEl(gaps[0]==='valid email'?'rp-inviterEmail':('rp-inviter'+gaps[0].charAt(0).toUpperCase()+gaps[0].slice(1)));
+      if(first){ first.focus(); }
+      return;
+    }
+    if(errEl) errEl.style.display='none';
+    var confirmMsg = rpEl('rp-template').value==='pa-inviter'
+      ? 'Retain this client and email the retainer agreement to BOTH signers now — the client and the Inviter/Sponsor/Dependent? It completes only when both have signed.'
+      : 'Retain this client and email the retainer agreement (stating the fee) to them now?';
+    doAction('retainAndSend', null, confirmMsg);
   };
   // Any edit in the plan means it must be re-saved before it can be sent — reset the
   // "saved" gate (and re-evaluate the Set-fee "done" state) on any change in the fieldset.
