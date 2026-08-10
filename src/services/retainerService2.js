@@ -159,6 +159,62 @@ async function maybeSendRetainerAgreement(leadId, opts = {}) {
   try { return await p; } finally { _agreementInFlight.delete(key); }
 }
 
+/**
+ * Who must e-sign this retainer, or why it cannot go out yet. Pure.
+ *
+ * The pa-inviter master template carries a SECOND client-side signature line —
+ * "Signature of {inviterName}" — for the inviter/sponsor/dependent. An
+ * agreement on that template sent to the PA alone comes back with a named
+ * party's line permanently blank, so the inviter signs IN PARALLEL with the PA
+ * (both emailed at once, user decision 2026-08-10), and a missing inviter
+ * email/name HOLDS the send the same way a missing fee does.
+ *
+ * @param {object} lead      needs email/fullName/inviterName/inviterEmail
+ * @param {string} template  the resolved plan template ('pa' | 'pa-inviter' | 'employer' | …)
+ * @returns {{signers: Array<{email,name,anchorItem,position}>, hold?: string}}
+ */
+function retainerSigners(lead, template) {
+  const escRe = (s) => String(s).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const POSITION = { positionX: 11, positionY: 27, width: 40, height: 6 };
+  // Anchor priority: the signer's own "Signature of <name>" line, then the
+  // first non-RCIC signature label. Static y stays only as the can't-parse
+  // fallback, measured on the rendered pa execution page.
+  const anchorsFor = (name) => ({
+    anchors: [
+      ...(String(name || '').trim() ? [new RegExp('^signature of\\s+' + escRe(name), 'i')] : []),
+      /^signature of\s+(?!rcic)/i,
+    ],
+    gapPct: 2,
+  });
+
+  const signers = [{ email: lead.email, name: lead.fullName || lead.email, anchorItem: anchorsFor(lead.fullName), position: POSITION }];
+  if (template !== 'pa-inviter') return { signers };
+
+  const invName  = String(lead.inviterName || '').trim();
+  const invEmail = String(lead.inviterEmail || '').trim();
+  // Plan readiness already requires all four inviter fields non-blank, so the
+  // usually-reachable case here is a present-but-invalid email. The blank
+  // checks stay as defense in depth (overrides / legacy leads).
+  if (!invName || !invEmail || !/@/.test(invEmail)) {
+    const why = !invName && !invEmail ? 'their name and email are missing'
+      : !invName ? 'their name is missing'
+      : !invEmail ? 'their email address is missing'
+      : `their email address ("${invEmail}") does not look valid`;
+    return { signers, hold: `The selected agreement includes an Inviter/Sponsor/Dependent signature line, but ${why} in the retainer panel.` };
+  }
+  signers.push({
+    email: invEmail, name: invName,
+    // POSITION-based, not name-based: the template renders the PA's line FIRST
+    // and the inviter's SECOND, always — while the two names can be identical
+    // or prefix each other (family members), which would make any name regex
+    // land the inviter's field on the PA's line. Occurrence 2 of the generic
+    // non-RCIC anchor is exactly the inviter's line, whatever the names are.
+    anchorItem: { anchors: [/^signature of\s+(?!rcic)/i], occurrence: 2, gapPct: 2 },
+    position: POSITION,
+  });
+  return { signers };
+}
+
 async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) return;
@@ -238,33 +294,49 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
   // through to the legacy email below so the client is never left un-served.
   const documenso = require('./documensoService');
   if (documenso.isEnabled()) {
+    // Signer set is template-driven: the pa-inviter agreement is signed by the
+    // PA AND the inviter/sponsor/dependent in parallel. An incomplete inviter
+    // block HOLDS the send (like a missing fee) — the lead stays un-sent so a
+    // re-set Outcome=Retain retries once the panel is filled in.
+    // The default ('pa') keeps the PA's anchored placement on the v1 engine and
+    // on a plan-build failure — a bare {email,name} signer would silently fall
+    // back to the module-default field position, the exact regression class the
+    // anchoring exists to prevent (Praj, 2026-07-31).
+    let signerPlan = retainerSigners(lead, 'pa');
+    if (isV2()) {
+      try {
+        const { buildRetainerPlan, overridesFromLead } = require('./retainerPlanBuilder');
+        signerPlan = retainerSigners(lead, buildRetainerPlan(lead, overridesFromLead(lead)).template);
+      } catch (err) {
+        console.warn(`[Retainer2] Signer-plan build failed for lead ${leadId} (${err.message}) — sending to the client only`);
+      }
+      if (signerPlan.hold) {
+        console.log(`[Retainer2] Agreement HELD for lead ${leadId} — ${signerPlan.hold}`);
+        // Same note discipline as the missing-fee hold: only the Outcome=Retain
+        // trigger posts (notifyIfMissing), so fee-column edits on a held lead
+        // can't spam the same warning.
+        if (notifyIfMissing) {
+          await postLeadNote(leadId,
+            `⚠ <b>Retainer agreement HELD — the co-signer is incomplete.</b> ${esc(signerPlan.hold)} ` +
+            `Fill the Inviter/Sponsor/Dependent name and email in the retainer panel, then set the Outcome to "Retain" again ` +
+            `— the agreement is emailed to BOTH signers at once.`);
+        }
+        return { status: 'held-cosigner', reason: signerPlan.hold };
+      }
+    }
+
     try {
       const pdf = await getRetainerDocument(lead);
       const env = await documenso.sendForSignature({
         pdfBuffer: pdf,
         title: `TDOT Retainer Agreement — ${lead.fullName || 'Client'}`,
         externalId: documenso.externalIdFor('retainer', leadId),
-        signer: { email: lead.email, name: lead.fullName || lead.email },
+        // Each signer's field is ANCHORED to their own "Signature of …" line —
+        // a static y once landed the client's field on the RCIC's line (Praj,
+        // 2026-07-31): the execution block shifts with how much text precedes it.
+        signers: signerPlan.signers,
         subject: 'Your TDOT Immigration retainer agreement — please sign',
         message: 'Please review and sign your retainer agreement. Once signed, we’ll email you the first payment details. Thank you — TDOT Immigration.',
-        // Client signature line on the execution page (annexes follow it).
-        // ANCHORED to the actual "Signature of …" label — the old static y=36
-        // landed the client's field on the RCIC's line (Praj, 2026-07-31): the
-        // execution block's position shifts with how much text precedes it.
-        // Anchor priority: the client's own name (pa / pa-inviter), then the
-        // first non-RCIC signature label (employer template — the employer rep
-        // signs). Static y=27 remains only as the can't-parse fallback,
-        // measured on the rendered pa execution page.
-        signaturePosition: { positionX: 11, positionY: 27, width: 40, height: 6 },
-        signatureAnchorItem: {
-          anchors: [
-            ...(String(lead.fullName || '').trim()
-              ? [new RegExp('^signature of\\s+' + String(lead.fullName).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')]
-              : []),
-            /^signature of\s+(?!rcic)/i,
-          ],
-          gapPct: 2,
-        },
       });
       await leadService.updateLead(leadId, {
         retainerSent:         todayISO(),
@@ -280,11 +352,14 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false }
           clientEnvelopeId: String(env.envelopeId), clientItemId: env.envelopeItemId != null ? String(env.envelopeItemId) : '',
         }),
       });
+      const signerDesc = signerPlan.signers.map((s) => `${esc(s.name || '')} &lt;${esc(s.email)}&gt;`).join(' and ');
       await postLeadNote(leadId,
-        `📤 <b>Retainer agreement sent for e-signature (Documenso)</b> to ${esc(lead.email)} ` +
+        `📤 <b>Retainer agreement sent for e-signature (Documenso)</b> to ${signerDesc} ` +
         `(envelope <code>${esc(String(env.envelopeId))}</code>). ` +
-        `It auto-captures and opens the case the moment the client signs. If the client can't find ` +
-        `the signing email, check their spam folder or resend it from the Documenso dashboard.`);
+        (signerPlan.signers.length > 1
+          ? `Both signers were emailed at once; the agreement auto-captures and opens the case when ALL of them have signed. `
+          : `It auto-captures and opens the case the moment the client signs. `) +
+        `If a signer can't find the signing email, check their spam folder or resend it from the Documenso dashboard.`);
       console.log(`[Retainer2] Retainer sent via Documenso for lead ${leadId} (envelope ${env.envelopeId})`);
       return { status: 'sent', via: 'documenso', envelopeId: env.envelopeId };
     } catch (err) {
@@ -518,4 +593,4 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
   }
 }
 
-module.exports = { onOutcomeRetain, maybeSendRetainerAgreement, buildRetainerPdf, getRetainerDocument, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents };
+module.exports = { onOutcomeRetain, maybeSendRetainerAgreement, buildRetainerPdf, getRetainerDocument, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents, retainerSigners };

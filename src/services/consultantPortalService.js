@@ -888,6 +888,11 @@ async function applyAction({ leadId, action, value, amend = false }) {
         case 'held':     return { ok: true, message: `Not sent — the retainer plan isn’t complete: ${(r.warnings || []).join(' · ')}. Fix these, save, and click again.` };
         case 'no-email': return { ok: true, message: 'Not sent — no client email on file. Add the client’s email, then click again.' };
         case 'no-fee':   return { ok: true, message: 'Not sent — set the retainer fee first.' };
+        case 'held-cosigner':
+          // This agreement is signed by the PA AND the inviter/sponsor/
+          // dependent — the send is held until both signers are addressable.
+          return { ok: true, message: `Not sent — ${r.reason || 'the Inviter/Sponsor/Dependent signer details are incomplete'} ` +
+            'Fix them in the retainer panel, save, and click again — the agreement goes to both signers at once.' };
         case 'failed':   return { ok: true, message: `Not sent — generation/email failed (${r.reason || 'unknown'}). It will retry; check the note on the lead.` };
         default:         return { ok: true, message: 'Outcome set to Retain — the agreement will be emailed shortly.' };
       }

@@ -111,18 +111,31 @@ async function pdfPageCount(pdfBuffer) {
  * bundled pdf.js rejects some synthetic PDFs nondeterministically ("bad XRef
  * entry") — real CloudConvert renders parse reliably.
  */
-function anchorHitFromPages(pages, anchors) {
+/**
+ * @param {number} occurrence  1-based: return the Nth matching text item in
+ *   reading order instead of the first. The pa-inviter execution block renders
+ *   TWO client "Signature of …" lines (PA first, inviter second, fixed template
+ *   order) — and the two names can be identical or prefix each other (family
+ *   members), so no name-based regex can safely tell the lines apart. Position
+ *   can: the inviter is always occurrence 2 of the generic non-RCIC anchor.
+ */
+function anchorHitFromPages(pages, anchors, occurrence = 1) {
   for (const a of [].concat(anchors || [])) {
     const re = a instanceof RegExp ? a : new RegExp(a, 'i');
+    let seen = 0;
     for (let p = 0; p < (pages || []).length; p++) {
-      const hit = (pages[p] || []).find((it) => it && it.str && re.test(it.str));
-      if (hit) return { page: p + 1, yTopPct: hit.yTopPct };
+      for (const it of pages[p] || []) {
+        if (it && it.str && re.test(it.str)) {
+          seen++;
+          if (seen === occurrence) return { page: p + 1, yTopPct: it.yTopPct };
+        }
+      }
     }
   }
   return null;
 }
 
-async function findAnchorPosition(pdfBuffer, anchors) {
+async function findAnchorPosition(pdfBuffer, anchors, occurrence = 1) {
   try {
     const pdfParse = require('pdf-parse');
     const pages = [];
@@ -138,7 +151,7 @@ async function findAnchorPosition(pdfBuffer, anchors) {
         return '';
       },
     });
-    return anchorHitFromPages(pages, anchors);
+    return anchorHitFromPages(pages, anchors, occurrence);
   } catch (_) { return null; /* caller keeps the static fallback */ }
 }
 
@@ -166,39 +179,57 @@ async function findSignaturePage(pdfBuffer, anchor = SIG_ANCHOR) {
 }
 
 /** Create an envelope (DRAFT — not distributed). Returns { envelopeId, envelopeItemId, raw }. */
-async function createEnvelope({ pdfBuffer, title, externalId, signer, subject, message, signaturePosition, signatureAnchor, signatureAnchorItem }) {
+async function createEnvelope({ pdfBuffer, title, externalId, signer, signers, subject, message, signaturePosition, signatureAnchor, signatureAnchorItem }) {
   if (!pdfBuffer || !pdfBuffer.length) throw new Error('createEnvelope: empty PDF');
-  if (!signer || !signer.email) throw new Error('createEnvelope: signer.email required');
+  // Multi-party agreements (PA + inviter/sponsor/dependent) pass `signers`;
+  // the single `signer` form stays for every one-party envelope (consult
+  // agreement, both countersigns). Each signer gets their OWN anchored field —
+  // their signature must land on THEIR "Signature of …" line, not the PA's.
+  const signerList = (signers && signers.length) ? signers
+    : (signer ? [{ ...signer, anchorItem: signatureAnchorItem, position: signaturePosition }] : []);
+  if (!signerList.length || signerList.some((s) => !s.email)) throw new Error('createEnvelope: signer.email required');
 
-  // Preferred: place the field relative to the document's ACTUAL signature line
-  // (signatureAnchorItem.anchors, priority-ordered). The field bottom lands
-  // gapPct above the matched label, so the signature sits ON the line above it.
-  let page = 0;
-  let dynY = null;
-  if (signatureAnchorItem && signatureAnchorItem.anchors) {
-    const hit = await findAnchorPosition(pdfBuffer, signatureAnchorItem.anchors);
-    if (hit) {
-      page = hit.page;
-      const h = (signaturePosition && signaturePosition.height) || SIGNATURE_FIELD.height;
-      const gap = signatureAnchorItem.gapPct != null ? signatureAnchorItem.gapPct : 2;
-      dynY = Math.max(2, Math.round((hit.yTopPct - h - gap) * 10) / 10);
+  // Fallback page: the one carrying the signature block (annexes come after it
+  // in the retainer), else the last page. Resolved once, shared by any signer
+  // whose own anchor doesn't match.
+  let fallbackPage = 0;
+
+  const recipients = [];
+  for (let i = 0; i < signerList.length; i++) {
+    const s = signerList[i];
+    const anchorItem = s.anchorItem || null;
+    const position = s.position || null;
+
+    // Preferred: place the field relative to the document's ACTUAL signature
+    // line (anchors, priority-ordered). The field bottom lands gapPct above the
+    // matched label, so the signature sits ON the line above it.
+    let page = 0;
+    let dynY = null;
+    if (anchorItem && anchorItem.anchors) {
+      const hit = await findAnchorPosition(pdfBuffer, anchorItem.anchors, anchorItem.occurrence || 1);
+      if (hit) {
+        page = hit.page;
+        const h = (position && position.height) || SIGNATURE_FIELD.height;
+        const gap = anchorItem.gapPct != null ? anchorItem.gapPct : 2;
+        dynY = Math.max(2, Math.round((hit.yTopPct - h - gap) * 10) / 10);
+      }
     }
+    if (!page) {
+      if (!fallbackPage) fallbackPage = (await findSignaturePage(pdfBuffer, signatureAnchor)) || (await pdfPageCount(pdfBuffer));
+      page = fallbackPage;
+    }
+    let sigField = { type: 'SIGNATURE', page, ...SIGNATURE_FIELD, ...(position || {}), ...(dynY != null ? { positionY: dynY } : {}) };
+    // Two un-anchored signers would otherwise stack on the same fallback spot —
+    // a signer signing on someone else's line is worse than an ugly offset.
+    if (dynY == null && i > 0) sigField.positionY = Math.min(92, (sigField.positionY || 27) + i * (sigField.height + 3));
+    recipients.push({ email: s.email, name: s.name || s.email, role: 'SIGNER', fields: [sigField] });
   }
-  // Fallback: the page carrying the signature block (annexes come after it in
-  // the retainer), falling back to the last page if the anchor isn't found.
-  if (!page) page = (await findSignaturePage(pdfBuffer, signatureAnchor)) || (await pdfPageCount(pdfBuffer));
-  const sigField = { type: 'SIGNATURE', page, ...SIGNATURE_FIELD, ...(signaturePosition || {}), ...(dynY != null ? { positionY: dynY } : {}) };
 
   const payload = {
     title,
     type: 'DOCUMENT',
     externalId,
-    recipients: [{
-      email: signer.email,
-      name:  signer.name || signer.email,
-      role:  'SIGNER',
-      fields: [sigField],
-    }],
+    recipients,
     meta: {
       subject: subject || `Please sign: ${title}`,
       message: message || 'Please review and sign the attached agreement. Thank you — TDOT Immigration.',
@@ -356,6 +387,23 @@ async function captureCompleted(body) {
   //    The countersigned (…2) copies use the SAME filename as the client ones —
   //    the fully-signed version replaces the client-only version as the one
   //    canonical "SIGNED" file.
+  // Event-fabrication guard for the CLIENT envelopes, mirroring retainer2/
+  // consult2 below: the event string is caller-supplied (the admin recapture
+  // tool fabricates DOCUMENT_COMPLETED), and a retainer envelope can now be
+  // legitimately HALF-signed — pa-inviter agreements carry two parallel
+  // signers. Without this check, a recapture on a pending envelope would stamp
+  // retainerSigned (opening the case and requesting payment on an agreement a
+  // named party never signed) and store a partially-signed PDF as the
+  // canonical SIGNED copy, which the RCIC countersign would then be issued
+  // over. Verified BEFORE the download/store, not after.
+  if ((type === 'retainer' || type === 'consult') && envId) {
+    try {
+      const env = await getEnvelope(envId);
+      const status = String((env && env.status) || '').toUpperCase();
+      if (status && !status.includes('COMPLET')) return { skipped: `${type} envelope status ${status}` };
+    } catch (_) { /* can't verify — proceed; the signed-date guards still dedupe replays */ }
+  }
+
   let stored = false;
   let signedPdf = null;
   const skipStore = (type === 'consult' && Boolean(csState.signedAt))
