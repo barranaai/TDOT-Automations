@@ -524,7 +524,8 @@ app.post('/admin/retainer/:leadId/send-inviter-signature', async (req, res) => {
   if (!viewer || !viewer.isAdmin) return res.status(403).json({ error: 'Admins only' });
   try {
     const result = await require('./services/retainerCountersignService')
-      .sendInviterSignatureRequest(String(req.params.leadId || '').trim());
+      .sendInviterSignatureRequest(String(req.params.leadId || '').trim(),
+        { reissue: req.query.reissue === '1' || req.query.reissue === 'true' });
     res.json({ ok: true, ...result });
   } catch (err) {
     if (err.badRequest) return res.status(400).json({ error: err.message });

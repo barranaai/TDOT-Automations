@@ -186,7 +186,11 @@ async function createEnvelope({ pdfBuffer, title, externalId, signer, signers, s
   // agreement, both countersigns). Each signer gets their OWN anchored field —
   // their signature must land on THEIR "Signature of …" line, not the PA's.
   const signerList = (signers && signers.length) ? signers
-    : (signer ? [{ ...signer, anchorItem: signatureAnchorItem, position: signaturePosition }] : []);
+    // A signer's OWN anchorItem/position wins — the top-level args are the
+    // legacy spelling. (Caught live: the inviter co-sign passed them inside
+    // the signer and this mapping clobbered both with undefined, dropping the
+    // field to the module default {25,70} instead of the inviter's line.)
+    : (signer ? [{ ...signer, anchorItem: signer.anchorItem || signatureAnchorItem, position: signer.position || signaturePosition }] : []);
   if (!signerList.length || signerList.some((s) => !s.email)) throw new Error('createEnvelope: signer.email required');
 
   // Fallback page: the one carrying the signature block (annexes come after it
@@ -244,7 +248,10 @@ async function createEnvelope({ pdfBuffer, title, externalId, signer, signers, s
   const envelopeId = created?.id ?? created?.envelopeId ?? created?.envelope?.id;
   const envelopeItemId = created?.items?.[0]?.id ?? created?.envelopeItems?.[0]?.id;
   if (!envelopeId) throw new Error(`Documenso create returned no envelope id: ${JSON.stringify(created).slice(0, 300)}`);
-  return { envelopeId: String(envelopeId), envelopeItemId: envelopeItemId != null ? String(envelopeItemId) : '', raw: created };
+  return { envelopeId: String(envelopeId), envelopeItemId: envelopeItemId != null ? String(envelopeItemId) : '', raw: created,
+    // What was actually placed, per recipient — lets callers verify a field
+    // landed on an anchored line instead of the static fallback.
+    placedFields: recipients.map((r) => ({ email: r.email, field: r.fields[0] })) };
 }
 
 /** Distribute (send) a previously-created envelope to its recipients. */
@@ -278,7 +285,17 @@ async function sendForSignature(args) {
   await distributeEnvelope(env.envelopeId);
   let signUrl = env.raw?.signUrl || '';
   if (!signUrl) signUrl = await recipientSignUrl(env.envelopeId);
-  return { envelopeId: env.envelopeId, envelopeItemId: env.envelopeItemId, signUrl };
+  return { envelopeId: env.envelopeId, envelopeItemId: env.envelopeItemId, signUrl, placedFields: env.placedFields };
+}
+
+/** Best-effort envelope delete/void (reissue path). Tries the known shapes. */
+async function deleteEnvelope(envelopeId) {
+  const id = encodeURIComponent(envelopeId);
+  try { return await api(`/envelope/${id}`, { method: 'DELETE' }); }
+  catch (e1) {
+    try { return await api('/envelope/delete', { method: 'POST', json: { envelopeId } }); }
+    catch (e2) { const e = new Error(`delete failed: ${e1.message} / ${e2.message}`); throw e; }
+  }
 }
 
 /** Read an envelope (used to resolve externalId + the signed item id from a webhook). */
@@ -578,6 +595,7 @@ module.exports = {
   parseExternalId,
   createEnvelope,
   distributeEnvelope,
+  deleteEnvelope,
   findSignaturePage,
   findAnchorPosition,
   anchorHitFromPages,

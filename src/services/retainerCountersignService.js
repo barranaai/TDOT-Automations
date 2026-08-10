@@ -265,15 +265,21 @@ async function recordRetainerCountersignComplete(lead, { signedPdf, stored } = {
 
 const _invInFlight = new Map();
 
-async function sendInviterSignatureRequest(leadId) {
+async function sendInviterSignatureRequest(leadId, opts = {}) {
   const key = String(leadId);
   if (_invInFlight.has(key)) return _invInFlight.get(key).then((r) => ({ ...r, coalesced: true }));
-  const p = _doSendInviterSignatureRequest(leadId);
+  const p = _doSendInviterSignatureRequest(leadId, opts);
   _invInFlight.set(key, p);
   try { return await p; } finally { _invInFlight.delete(key); }
 }
 
-async function _doSendInviterSignatureRequest(leadId) {
+/**
+ * @param {boolean} opts.reissue  void the previously-issued (still unsigned)
+ *   envelope and send a fresh one — for a mis-placed field. The old envelope is
+ *   deleted in Documenso best-effort; when that fails the result carries
+ *   oldEnvelopeActive so staff know to void it in the dashboard.
+ */
+async function _doSendInviterSignatureRequest(leadId, { reissue = false } = {}) {
   const documenso = require('./documensoService');
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error(`Lead ${leadId} not found.`); e.badRequest = true; throw e; }
@@ -289,9 +295,20 @@ async function _doSendInviterSignatureRequest(leadId) {
     e.badRequest = true; throw e;
   }
 
-  const rc = parseRetainerCountersign(lead);
+  let rc = parseRetainerCountersign(lead);
   if (rc.inviterSignedAt) return { alreadySigned: true, signedAt: rc.inviterSignedAt };
-  if (rc.inviterEnvelopeId) return { envelopeId: rc.inviterEnvelopeId, resumed: true };
+  let oldEnvelopeActive = false;
+  if (rc.inviterEnvelopeId) {
+    if (!reissue) return { envelopeId: rc.inviterEnvelopeId, resumed: true };
+    // Reissue: void the unsigned envelope so the co-signer never has two live
+    // signing requests; if the delete fails, say so rather than pretending.
+    try { await documenso.deleteEnvelope(rc.inviterEnvelopeId); }
+    catch (err) {
+      oldEnvelopeActive = true;
+      console.warn(`[RetainerCountersign] old inviter envelope ${rc.inviterEnvelopeId} could not be voided (lead ${leadId}): ${err.message}`);
+    }
+    rc = { ...rc, inviterEnvelopeId: '', inviterItemId: '', inviterSentAt: '' };
+  }
 
   // Sign over the CURRENT canonical copy (client + RCIC signatures when the
   // countersign is done) — never a fresh render.
@@ -335,7 +352,9 @@ async function _doSendInviterSignatureRequest(leadId) {
       { i: String(leadId), b: `🖋️ <b>Co-signature request sent to the Inviter/Sponsor/Dependent</b> — ${esc(invName)} &lt;${esc(invEmail)}&gt; ` +
         `(envelope <code>${esc(String(env.envelopeId))}</code>). The final copy with all signatures is saved automatically once they sign.` });
   } catch (_) { /* note is best-effort */ }
-  return { envelopeId: env.envelopeId, ...(persistFailed ? { persistFailed: true } : {}) };
+  return { envelopeId: env.envelopeId, placedFields: env.placedFields,
+    ...(persistFailed ? { persistFailed: true } : {}),
+    ...(oldEnvelopeActive ? { oldEnvelopeActive: true } : {}) };
 }
 
 /** retainerinv webhook completion: stamp inviterSignedAt, store the final PDF. */

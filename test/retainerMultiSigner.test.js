@@ -172,6 +172,51 @@ test('createEnvelope builds one SIGNER recipient per signer with distinct fallba
   }
 });
 
+test('a signer’s OWN anchorItem/position survive the single-signer form', async () => {
+  // Caught live (Oorjith Premlal, envelope_ycdaenlvdbzfmfwa): the back-compat
+  // mapping overwrote signer.anchorItem/position with the ABSENT top-level
+  // args, so the field fell to the module default {25,70} — a floating box
+  // below the RCIC line instead of the inviter's own signature line.
+  const realFetch = global.fetch;
+  const realToken = process.env.DOCUMENSO_API_TOKEN;
+  process.env.DOCUMENSO_API_TOKEN = 'test-token';
+  let captured = null;
+  global.fetch = async (url, opts) => {
+    if (String(url).includes('/envelope/create')) {
+      captured = JSON.parse(opts.body.get('payload'));
+      return jsonResponse({ id: 'env-3', items: [{ id: 'item-3' }] });
+    }
+    return jsonResponse({});
+  };
+  try {
+    await documenso.createEnvelope({
+      pdfBuffer: Buffer.from('%PDF-1.4 not really'), title: 'T', externalId: 'retainerinv-900',
+      signer: { email: 'inv@x.com', name: 'Inviter',
+        anchorItem: { anchors: [/^signature of\s+(?!rcic)/i], occurrence: 2 },
+        position: { positionX: 11, positionY: 27, width: 40, height: 6 } },
+    });
+    const f = captured.recipients[0].fields[0];
+    // the anchor misses on an unparsable buffer, but the signer's POSITION must
+    // still be honoured — never the module default {25,70,28,8}
+    assert.equal(f.positionX, 11);
+    assert.equal(f.positionY, 27);
+    assert.equal(f.width, 40);
+  } finally {
+    global.fetch = realFetch;
+    if (realToken === undefined) delete process.env.DOCUMENSO_API_TOKEN; else process.env.DOCUMENSO_API_TOKEN = realToken;
+  }
+});
+
+test('reissue voids the old unsigned envelope before sending fresh', () => {
+  const src = require('fs').readFileSync(require.resolve('../src/services/retainerCountersignService'), 'utf8');
+  const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+  assert.match(code, /if \(!reissue\) return \{ envelopeId: rc\.inviterEnvelopeId, resumed: true \}/,
+    'without reissue an issued envelope resumes');
+  assert.match(code, /deleteEnvelope\(rc\.inviterEnvelopeId\)/, 'reissue voids the old envelope');
+  assert.match(code, /oldEnvelopeActive/, 'a failed void is reported, not hidden');
+  assert.match(code, /inviterSignedAt\) return \{ alreadySigned/, 'a captured co-signature can never be reissued');
+});
+
 test('the single-signer form still works unchanged (consult + countersign envelopes)', async () => {
   const realFetch = global.fetch;
   const realToken = process.env.DOCUMENSO_API_TOKEN;
