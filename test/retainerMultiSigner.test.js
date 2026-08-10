@@ -207,6 +207,54 @@ test('a signer’s OWN anchorItem/position survive the single-signer form', asyn
   }
 });
 
+test('co-signature completion is ORDER-PROOF against a pending RCIC countersign', async () => {
+  // Harini's shape: client signed + paid, RCIC countersign envelope pending
+  // since Aug 6, co-signer signs FIRST. Without re-issuing, Shafoli's later
+  // signature would land on the client-only copy and overwrite the stored file
+  // WITHOUT the co-signature. The completion must: void the stale RCIC
+  // envelope, clear its state, and issue a fresh one over the co-signed copy.
+  const updates = [];
+  const restores = [
+    stub(leadService, 'getLead', async () => SIGNED_LEAD({
+      retainerCountersign: JSON.stringify({
+        clientEnvelopeId: 'env-c', clientItemId: 'item-c',
+        envelopeId: 'env-rcic-stale', sentAt: '2026-08-06',           // pending: no signedAt
+        inviterEnvelopeId: 'env-inv', inviterItemId: 'item-inv',
+      }) })),
+    stub(leadService, 'updateLead', async (id, f) => updates.push(JSON.parse(f.retainerCountersign))),
+  ];
+  try {
+    // The downstream I/O (Documenso void, OneDrive store, fresh countersign)
+    // runs against module-locals and fails harmlessly without creds — the state
+    // transition is the contract under test.
+    await rcSvc.recordInviterSignatureComplete(SIGNED_LEAD(), {});
+    const st = updates[0];
+    assert.ok(st.inviterSignedAt, 'co-signature stamped');
+    assert.equal(st.envelopeId, '', 'stale RCIC envelope cleared so the re-issue cannot resume it');
+    assert.equal(st.sentAt, '', 'its sent state cleared too');
+    assert.equal(st.clientEnvelopeId, 'env-c', 'the client envelope reference is untouched');
+  } finally { restores.forEach((x) => x()); }
+});
+
+test('co-signature completion leaves an ALREADY-COUNTERSIGNED retainer alone', async () => {
+  const updates = [];
+  const restores = [
+    stub(leadService, 'getLead', async () => SIGNED_LEAD({
+      retainerCountersign: JSON.stringify({
+        clientEnvelopeId: 'env-c', envelopeId: 'env-rcic', sentAt: '2026-08-06', signedAt: '2026-08-06',
+        inviterEnvelopeId: 'env-inv',
+      }) })),
+    stub(leadService, 'updateLead', async (id, f) => updates.push(JSON.parse(f.retainerCountersign))),
+  ];
+  try {
+    await rcSvc.recordInviterSignatureComplete(SIGNED_LEAD(), {});
+    const st = updates[0];
+    assert.equal(st.envelopeId, 'env-rcic', 'a completed countersign is never voided');
+    assert.equal(st.signedAt, '2026-08-06');
+    assert.ok(st.inviterSignedAt);
+  } finally { restores.forEach((x) => x()); }
+});
+
 test('reissue voids the old unsigned envelope before sending fresh', () => {
   const src = require('fs').readFileSync(require.resolve('../src/services/retainerCountersignService'), 'utf8');
   const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');

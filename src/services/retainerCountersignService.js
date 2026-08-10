@@ -363,8 +363,19 @@ async function recordInviterSignatureComplete(lead, { signedPdf } = {}) {
   const fresh = await leadService.getLead(leadId).catch(() => null);
   const current = parseRetainerCountersign(fresh || lead);
   if (current.inviterSignedAt) return { signedAt: current.inviterSignedAt, alreadyRecorded: true };
-  const state = { ...current, inviterSignedAt: todayISO() };
+  // ORDER-PROOFING: if the RCIC countersign envelope is still PENDING, it wraps
+  // the client-only copy — were Shafoli to sign it after this, her completion
+  // would overwrite the stored file with a version missing the co-signature.
+  // Void the stale envelope and re-issue it below over the co-signed copy, so
+  // the final document carries ALL signatures whatever order people sign in.
+  const rcicPending = Boolean(current.envelopeId && !current.signedAt);
+  const state = { ...current, inviterSignedAt: todayISO(),
+    ...(rcicPending ? { envelopeId: '', itemId: '', signUrl: '', sentAt: '' } : {}) };
   await leadService.updateLead(leadId, { retainerCountersign: JSON.stringify(state) });
+  if (rcicPending) {
+    try { await require('./documensoService').deleteEnvelope(current.envelopeId); }
+    catch (err) { console.warn(`[RetainerCountersign] stale RCIC envelope ${current.envelopeId} could not be voided (lead ${leadId}): ${err.message}`); }
+  }
 
   let pdf = (signedPdf && signedPdf.length) ? signedPdf : null;
   if (!pdf && state.inviterItemId) {
@@ -376,14 +387,26 @@ async function recordInviterSignatureComplete(lead, { signedPdf } = {}) {
     try { await storeSignedToOneDrive(lead, pdf); stored = true; }
     catch (err) { console.warn(`[RetainerCountersign] inviter-signed store failed for lead ${leadId}: ${err.message}`); }
   }
+  // Re-issue the RCIC countersign over the CO-SIGNED copy just stored — the
+  // consultant's fresh email replaces the voided one, and her signature lands
+  // on the version carrying the co-signature. startRetainerCountersign reads
+  // the cleared state (persisted above) so it issues fresh instead of resuming.
+  let rcicReissued = false;
+  if (rcicPending) {
+    try { const r = await startRetainerCountersign(leadId); rcicReissued = Boolean(r && r.envelopeId && !r.resumed); }
+    catch (err) { console.warn(`[RetainerCountersign] RCIC re-issue after co-signature failed for lead ${leadId}: ${err.message}`); }
+  }
   try {
     await require('./mondayApi').query(
       `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
       { i: String(leadId), b: `✍️ <b>Inviter/Sponsor/Dependent co-signature captured</b>${stored
-        ? ' — the final copy with all signatures replaced the stored SIGNED agreement.'
-        : '. ⚠️ The final copy could NOT be saved to OneDrive — download it from the Documenso dashboard and file it manually.'}` });
+        ? ' — the co-signed copy replaced the stored SIGNED agreement.'
+        : '. ⚠️ The co-signed copy could NOT be saved to OneDrive — download it from the Documenso dashboard and file it manually.'}${
+        rcicPending ? (rcicReissued
+          ? ' The consultant’s pending countersign envelope was re-issued over this co-signed version — their previous signing email is void; the new one is in their inbox.'
+          : ' ⚠️ The consultant’s pending countersign could NOT be re-issued automatically — click “Sign retainer as consultant” to issue it over the co-signed copy.') : ''}` });
   } catch (_) { /* note is best-effort */ }
-  return { signedAt: state.inviterSignedAt, stored };
+  return { signedAt: state.inviterSignedAt, stored, ...(rcicPending ? { rcicReissued } : {}) };
 }
 
 module.exports = {
