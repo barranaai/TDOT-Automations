@@ -232,7 +232,11 @@ router.get('/:caseRef/review', staffOrAdminKey, async (req, res) => {
 
     // Resolve form files and check for multi-member case
     const { resolveForm } = require('../../config/questionnaireFormMap');
-    const formFiles   = resolveForm(caseType, caseSubType) || {};
+    // Era-aware: a case pinned to the April form must be REVIEWED against the
+    // April form too — raw resolveForm here rendered legacy answers against
+    // the refreshed file (blank-looking fields, mis-keyed flags).
+    const formFiles   = (await svc.versionFormFilesForCase({ clientName, caseRef,
+      formFiles: resolveForm(caseType, caseSubType) })) || {};
     const memberTypes = resolveMemberTypes(caseType, caseSubType);
     const hasTwo      = Boolean(formFiles?.additional);
     let   isMultiMember = memberTypes.length > 0;
@@ -590,15 +594,19 @@ router.get('/:caseRef/data', async (req, res) => {
 
 router.post('/:caseRef/save', async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
-  const { token, formKey, fields, completionPct, manual, memberLabel, missingSections, missingByMember } = req.body || {};
+  const { token, formKey, fields, completionPct, manual, memberLabel, missingSections, missingByMember, formFile: echoedFormFile } = req.body || {};
 
   if (!Array.isArray(fields)) {
     return res.status(400).json({ error: 'fields must be an array' });
   }
 
   try {
-    const { itemId, clientName } = await svc.validateAccess(caseRef, token);
-    await svc.saveFormData({ clientName, caseRef, itemId, formKey: sanitiseFormKey(formKey || 'primary'), fields, completionPct: completionPct || 0 });
+    const { itemId, clientName, formFiles } = await svc.validateAccess(caseRef, token);
+    const savedKey = sanitiseFormKey(formKey || 'primary');
+    await svc.saveFormData({ clientName, caseRef, itemId, formKey: savedKey, fields, completionPct: completionPct || 0,
+      // The era the client was actually LOOKING at (validated echo) — never a
+      // save-time server guess, which can diverge from the served page.
+      formFile: svc.validSaveFormFile(formFiles, savedKey, echoedFormFile) });
 
     // Fire-and-forget: missing-fields email (only on manual save, throttled 24h server-side).
     // Multi-member uses `missingByMember` (aggregated, attached to first save call only);
@@ -655,7 +663,8 @@ router.post('/:caseRef/submit', async (req, res) => {
       ? formFiles.additional.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim()
       : (formFiles?.primary || '').replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
 
-    await svc.saveFormData({ clientName, caseRef, itemId, formKey: key, fields, completionPct: completionPct || 0 });
+    await svc.saveFormData({ clientName, caseRef, itemId, formKey: key, fields, completionPct: completionPct || 0,
+      formFile: svc.validSaveFormFile(formFiles, key, (req.body || {}).formFile) });
     await svc.markSubmitted({ itemId, caseRef, caseType, formKey: key, formLabel: formTitle, completionPct: completionPct || 0, clientName });
 
     // Fire-and-forget: on submit, always email if there are missing fields (no throttle)
@@ -733,11 +742,13 @@ router.post('/:caseRef/submit-all', async (req, res) => {
     for (const sub of memberSubmissions) {
       if (!Array.isArray(sub.fields)) continue;
       try {
+        const subKey = sanitiseFormKey(sub.formKey);
         await svc.saveFormData({
           clientName, caseRef, itemId,
-          formKey:       sanitiseFormKey(sub.formKey),
+          formKey:       subKey,
           fields:        sub.fields,
           completionPct: sub.completionPct || 0,
+          formFile:      svc.validSaveFormFile(formFiles, subKey, sub.formFile || (req.body || {}).formFile),
         });
       } catch (saveErr) {
         console.error(`[/q] Failed to save member ${sub.formKey}:`, saveErr.message);

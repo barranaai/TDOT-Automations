@@ -20,8 +20,17 @@ const FORMS_DIR = path.join(__dirname, '..', 'Questionnair Documents');
 // ─── Filename constants ───────────────────────────────────────────────────────
 // Use exact filenames as they exist on disk (case-sensitive).
 
-const F1  = '1. Express Entry - PNP - PR Application -  Questionnaire - April 2025.html';
-const F2  = '2. Work Permit Application Inside Canada (PGWP -SOWP- BOWP -LMIA - EXTENSION  - Questionnair - April 2025.html';
+// August-2026 refresh (client materials, 2026-08-12): new IRCC background
+// battery, 10-year address history, reshaped refusals. The April-2025 files
+// STAY on disk — LEGACY_FORM_FILES below maps each refreshed form to its
+// predecessor, and htmlQuestionnaireService serves the predecessor to any case
+// whose questionnaire data predates the refresh (recorded formFile, or
+// unrecorded data = started on the old form). New/untouched cases get these.
+const F1  = '1. Express Entry - PNP - PR Application -  Questionnaire - August 2026.html';
+const F2  = '2. Work Permit Application Inside Canada (PGWP -SOWP- BOWP -LMIA - EXTENSION  - Questionnaire - August 2026.html';
+const F1_LEGACY = '1. Express Entry - PNP - PR Application -  Questionnaire - April 2025.html';
+const F2_LEGACY = '2. Work Permit Application Inside Canada (PGWP -SOWP- BOWP -LMIA - EXTENSION  - Questionnair - April 2025.html';
+const LEGACY_FORM_FILES = { [F1]: F1_LEGACY, [F2]: F2_LEGACY };
 const F3  = '3. Work Permit Outside Canada (SOWP - LMIA )- Questionnaires - April 2025.html';
 const F4  = '4. Citizenship - Questionnaires - April 2025.html';
 const F5  = '5. Study Permit Extension - Questionnaires - April 2025.html';
@@ -219,4 +228,5 @@ function formEmbedsMembers(caseType, subType) {
   return Boolean(entry && entry.embedsAllMembers);
 }
 
-module.exports = { FORMS_DIR, resolveForm, resolveMemberTypes, formEmbedsMembers, MEMBER_TYPE: { SPOUSE, CHILD, SPONSOR, WORKER_SP, PARENT, SIBLING } };
+module.exports = {
+  LEGACY_FORM_FILES, FORMS_DIR, resolveForm, resolveMemberTypes, formEmbedsMembers, MEMBER_TYPE: { SPOUSE, CHILD, SPONSOR, WORKER_SP, PARENT, SIBLING } };

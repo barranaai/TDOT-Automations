@@ -67,8 +67,13 @@ const QUESTIONNAIRE_SUBFOLDER = 'Questionnaire';
 // Storing form data as JSON (same approach as officer flags) — simpler,
 // more reliable, and easier to debug than CSV.
 
-function toJson(fields, completionPct) {
-  return JSON.stringify({ fields, completionPct: completionPct || 0, savedAt: new Date().toISOString() }, null, 2);
+function toJson(fields, completionPct, formFile) {
+  return JSON.stringify({ fields, completionPct: completionPct || 0, savedAt: new Date().toISOString(),
+    // Which HTML form these answers were collected on — the anchor for form
+    // versioning (Aug-2026 refresh): a case whose data carries (or predates)
+    // the legacy file keeps being served that file, so mid-questionnaire
+    // clients never see their form change underneath them.
+    ...(formFile ? { formFile } : {}) }, null, 2);
 }
 
 function parseJson(text) {
@@ -80,6 +85,44 @@ function parseJson(text) {
   } catch {
     return [];
   }
+}
+
+/**
+ * Saved fields + the recorded form file (versioning anchor).
+ *
+ * TRANSIENT ERRORS THROW. Guessing here is what makes a Graph 429 catastrophic:
+ * an "empty" answer on a blip resolves the era to CURRENT, serves the new form
+ *   to a mid-April client, and their next autosave wholesale-replaces the saved
+ * answers with the new form's field set — unrecoverable. A failed page load
+ * ("please try again") is infinitely cheaper than that. The thrown message
+ * deliberately avoids the words token/missing/not found so upstream error
+ * classifiers treat it as a retryable backend failure, never an access denial.
+ */
+async function loadFormMeta({ clientName, caseRef, formKey }) {
+  let buf;
+  try {
+    buf = await oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: dataFilename(caseRef, formKey) });
+  } catch (err) {
+    const e = new Error(`questionnaire storage temporarily unavailable (${err.message})`);
+    e.transient = true;
+    throw e;
+  }
+  if (buf) {
+    let obj; try { obj = JSON.parse(buf.toString('utf8')); } catch (_) { obj = null; }
+    if (Array.isArray(obj)) return { fields: obj, formFile: '' };
+    if (obj) return { fields: Array.isArray(obj.fields) ? obj.fields : [], formFile: String(obj.formFile || '') };
+    return { fields: [], formFile: '' };
+  }
+  // Legacy CSV era — real pre-refresh answers with no JSON wrapper.
+  try {
+    const csvBuf = await oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: csvFilename(caseRef, formKey) });
+    if (csvBuf) return { fields: parseCsvLegacy(csvBuf.toString('utf8')), formFile: '' };
+  } catch (err) {
+    const e = new Error(`questionnaire storage temporarily unavailable (${err.message})`);
+    e.transient = true;
+    throw e;
+  }
+  return { fields: [], formFile: '', missing: true };
 }
 
 // ─── Legacy CSV fallback (read-only — for any existing .csv files) ────────────
@@ -149,6 +192,99 @@ async function lookupCase(caseRef) {
  * @returns {{ itemId, clientName, caseType, caseSubType, formFiles }}
  * @throws  Error with a user-safe message on invalid access
  */
+/**
+ * Form versioning (Aug-2026 refresh): a case is pinned to ONE era of its form
+ * set, anchored on the primary form's saved data. Recorded formFile wins;
+ * unrecorded-but-started data means the case began on the pre-refresh form;
+ * untouched cases get the current files. Non-versioned forms pass through.
+ */
+async function versionFormFilesForCase({ clientName, caseRef, formFiles }) {
+  if (!formFiles) return formFiles;
+  let LEGACY;
+  try { ({ LEGACY_FORM_FILES: LEGACY } = require('../../config/questionnaireFormMap')); } catch (_) { return formFiles; }
+  const versionedCurrent = [formFiles.primary, formFiles.additional].filter((f) => f && LEGACY[f]);
+  if (!versionedCurrent.length) return formFiles;
+
+  // Era resolution is a few OneDrive reads; page loads fire many validateAccess
+  // calls (page + /data + /flags + /members + per-member saves). A short cache
+  // keeps that to one resolution per case per minute — the era only moves via
+  // our own saves, which record it explicitly.
+  const cacheKey = `${clientName}::${caseRef}`;
+  const hit = _eraCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < 60_000) return hit.result;
+
+  const legacyOf = (f) => LEGACY[f];
+  const currentSet = new Set(versionedCurrent);
+  const legacySet  = new Set(versionedCurrent.map(legacyOf));
+  const mapToLegacy = () => ({ ...formFiles,
+    primary:    legacyOf(formFiles.primary)    || formFiles.primary,
+    additional: formFiles.additional ? (legacyOf(formFiles.additional) || formFiles.additional) : formFiles.additional });
+
+  // Scan EVERY slot real answers can live in — anchoring on one slot misses
+  // legacy cases whose only answers sit on a spouse/child form (multi-member
+  // autosave skips empty members) or under the old 'additional' key.
+  const slots = ['primary', 'primary-additional', 'additional'];
+  try {
+    const members = await loadMembers({ clientName, caseRef });
+    for (const m of members || []) {
+      if (m.key && m.key !== 'primary') { slots.push(m.key, `${m.key}-additional`); }
+      if (slots.length >= 12) break;
+    }
+  } catch (_) { /* members unreadable — the base slots still decide correctly for the common case */ }
+
+  // ANY legacy signal pins the case to the legacy era: an explicit legacy
+  // record, OR unrecorded client answers (which can only predate the refresh —
+  // every post-refresh save records its era). When signals conflict, serving
+  // the April form can only under-show a few relabeled fields; serving the Aug
+  // form can DESTROY April answers on the next wholesale save. Asymmetric
+  // harm → asymmetric rule.
+  let legacySignal = false;
+  for (const slot of slots) {
+    const meta = await loadFormMeta({ clientName, caseRef, formKey: slot });   // transient errors THROW through
+    if (meta.formFile && legacySet.has(meta.formFile)) { legacySignal = true; break; }
+    if (meta.formFile && currentSet.has(meta.formFile)) continue;   // explicitly Aug-era slot — its answers are Aug-keyed
+    // Client answers only — prefill-seeded values are OURS, present on brand-new
+    // cases, and must not pin an untouched case to the legacy era.
+    if (meta.fields.some((f) => f && f.value && String(f.value).trim() && f.source !== 'prefill')) {
+      legacySignal = true; break;
+    }
+  }
+  const result = legacySignal ? mapToLegacy() : formFiles;
+  _eraCache.set(cacheKey, { at: Date.now(), result });
+  if (_eraCache.size > 500) _eraCache.delete(_eraCache.keys().next().value);
+  return result;
+}
+const _eraCache = new Map();
+
+/**
+ * The save routes record the era the CLIENT actually had on screen: the served
+ * file is embedded in the page and echoed back with each save. Only the exact
+ * current or legacy filename for that slot is ever accepted — anything else
+ * (stale tab from before versioning existed, tampering) records NOTHING, which
+ * leaves the era to the data-presence rule. Recording a guessed era was the
+ * bug: a save-time inference can differ from what the client was looking at.
+ */
+function validSaveFormFile(formFiles, formKey, echoed) {
+  const e = String(echoed || '').trim();
+  if (!e) return '';
+  let LEGACY;
+  try { ({ LEGACY_FORM_FILES: LEGACY } = require('../../config/questionnaireFormMap')); } catch (_) { return ''; }
+  const slot = formFileForKey(formFiles, formKey);
+  const allowed = new Set([slot]);
+  if (LEGACY[slot]) allowed.add(LEGACY[slot]);
+  for (const [cur, leg] of Object.entries(LEGACY)) if (leg === slot) allowed.add(cur);
+  return allowed.has(e) ? e : '';
+}
+
+/** The form FILE a given formKey saves against (member keys use the primary
+ *  file; '-additional' keys the additional). Used to record the era on save. */
+function formFileForKey(formFiles, formKey) {
+  const k = String(formKey || 'primary');
+  return (k === 'additional' || k.endsWith('-additional'))
+    ? (formFiles && formFiles.additional) || ''
+    : (formFiles && formFiles.primary) || '';
+}
+
 async function validateAccess(caseRef, token) {
   if (!caseRef || !token) throw new Error('Missing case reference or access token.');
 
@@ -159,7 +295,10 @@ async function validateAccess(caseRef, token) {
     throw new Error('Invalid or expired access token.');
   }
 
-  const formFiles = resolveForm(entry.caseType, entry.caseSubType);
+  const formFiles = await versionFormFilesForCase({
+    clientName: entry.clientName || entry.name, caseRef,
+    formFiles: resolveForm(entry.caseType, entry.caseSubType),
+  });
 
   return { ...entry, formFiles };
 }
@@ -175,7 +314,10 @@ async function validateAccessForStaff(caseRef) {
   if (!caseRef) throw new Error('Missing case reference.');
   const entry = await lookupCase(caseRef);
   if (!entry) throw new Error('Case not found.');
-  const formFiles = resolveForm(entry.caseType, entry.caseSubType);
+  const formFiles = await versionFormFilesForCase({
+    clientName: entry.clientName || entry.name, caseRef,
+    formFiles: resolveForm(entry.caseType, entry.caseSubType),
+  });
   return { ...entry, formFiles };
 }
 
@@ -259,8 +401,8 @@ async function loadFormData({ clientName, caseRef, formKey }) {
  * @param {{ clientName, caseRef, itemId, formKey, fields, completionPct }} params
  *   fields: [{ section, label, key, value }]
  */
-async function saveFormData({ clientName, caseRef, itemId, formKey, fields, completionPct }) {
-  const content  = toJson(fields, completionPct);
+async function saveFormData({ clientName, caseRef, itemId, formKey, fields, completionPct, formFile }) {
+  const content  = toJson(fields, completionPct, formFile);
   const buffer   = Buffer.from(content, 'utf8');
   const filename = dataFilename(caseRef, formKey);
 
@@ -323,7 +465,7 @@ function toPrefillField(pair) {
 }
 
 /** Seed one form file, but ONLY when it has no data yet. Returns fields written. */
-async function seedFormFileIfEmpty({ clientName, caseRef, itemId, formKey, pairs }) {
+async function seedFormFileIfEmpty({ clientName, caseRef, itemId, formKey, pairs, formFile }) {
   if (!pairs || !pairs.length) return 0;
   const existing = await loadFormData({ clientName, caseRef, formKey });
   if (existing && existing.length) {
@@ -331,7 +473,9 @@ async function seedFormFileIfEmpty({ clientName, caseRef, itemId, formKey, pairs
     return 0;
   }
   const fields = pairs.map(toPrefillField);
-  await saveFormData({ clientName, caseRef, itemId, formKey, fields, completionPct: 0 });
+  // Record the era: prefill only ever writes into an EMPTY case, so it pins
+  // the case to the CURRENT form version explicitly (form versioning).
+  await saveFormData({ clientName, caseRef, itemId, formKey, fields, completionPct: 0, formFile });
   return fields.length;
 }
 
@@ -418,7 +562,7 @@ async function seedQuestionnairePrefill({ clientName, caseRef, caseType, caseSub
     }
     seeded += await seedFormFileIfEmpty({
       clientName, caseRef, itemId: clientMasterItemId, formKey: 'primary',
-      pairs: primaryPairs,
+      pairs: primaryPairs, formFile: formFiles.primary,
     });
     // Each accompanying member's own form (thin today; harmless when empty).
     // Derive each member's form key from the CURRENT board — mirroring the key
@@ -438,7 +582,7 @@ async function seedQuestionnairePrefill({ clientName, caseRef, caseType, caseSub
       if (!key || key === 'primary') continue;
       seeded += await seedFormFileIfEmpty({
         clientName, caseRef, itemId: clientMasterItemId, formKey: key,
-        pairs: prefillMap.buildMemberFields(m),
+        pairs: prefillMap.buildMemberFields(m), formFile: formFiles.primary,
       });
     }
 
@@ -1097,7 +1241,7 @@ async function checkStageGate({ itemId, caseRef, caseType, qPct }) {
  * @param {{ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl }} params
  * @returns {string}  HTML string ready to splice into the form HTML
  */
-function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes, otherFormUrl, otherFormTitle, isAdditionalForm, formKeySuffix }) {
+function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes, otherFormUrl, otherFormTitle, isAdditionalForm, formKeySuffix, formFile }) {
   // "isMultiMember" means the case ACTUALLY has 2+ members in the manifest,
   // not merely that the case-type supports adding family members. The
   // previous `length > 0` definition treated every member-capable case
@@ -1225,6 +1369,9 @@ ${hasAdditionalForm ? `
   var CASE_REF       = ${JSON.stringify(String(caseRef))};
   var TOKEN          = ${JSON.stringify(String(token))};
   var FORM_KEY       = ${JSON.stringify(String(formKey))};
+  /* The exact HTML form file this page rendered — echoed with every save so
+     the server records the era the client was actually LOOKING at. */
+  var FORM_FILE      = ${JSON.stringify(String(formFile || ''))};
   var OVERVIEW_URL   = ${JSON.stringify(overviewUrl || '')};
   var MEMBER_LABEL   = ${JSON.stringify(memberLabel || '')};
   // MEMBERS and ALLOWED_TYPES are passed independently of IS_MULTI so a
@@ -1651,6 +1798,7 @@ ${hasAdditionalForm ? `
             token: TOKEN, formKey: mk + FORM_KEY_SUFFIX, fields: mFields, completionPct: mProg.pct,
             manual: !silent,
             memberLabel: memberLabelMap[mk] || mk,
+            formFile: FORM_FILE,
           };
           if (attach && aggregatedMissing.length) {
             body.missingByMember = aggregatedMissing;   /* full breakdown across members */
@@ -1705,6 +1853,7 @@ ${hasAdditionalForm ? `
           manual:          !silent,
           memberLabel:     'Primary Applicant',
           missingSections: sMissing.sections,
+          formFile:        FORM_FILE,
         }),
       });
       if (!res.ok) throw new Error('Save failed (' + res.status + ')');
@@ -2901,7 +3050,7 @@ function buildFormPage({ formFile, caseRef, token, formKey, formTitle, hasAdditi
   }
 
   const html   = fs.readFileSync(filePath, 'utf8');
-  const script = buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes, otherFormUrl, otherFormTitle, isAdditionalForm, formKeySuffix });
+  const script = buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditionalForm, overviewUrl, memberLabel, members, allowedMemberTypes, otherFormUrl, otherFormTitle, isAdditionalForm, formKeySuffix, formFile });
 
   // Inject immediately before </body>
   if (html.includes('</body>')) {
@@ -4844,6 +4993,10 @@ module.exports = {
   validateAccessForStaff,
   resolveForm,
   loadFormData,
+  loadFormMeta,
+  versionFormFilesForCase,
+  formFileForKey,
+  validSaveFormFile,
   loadFormFile,
   saveFormData,
   seedQuestionnairePrefill,
