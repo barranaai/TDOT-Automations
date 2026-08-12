@@ -35,6 +35,11 @@ const F12 = '12. Visitor Visa Extension - Questionnair - April 2025.html';
 const F13 = '13. TRV - Questionnair - April 2025.html';
 const F14 = 'Indian Passport Surrender Application.html';
 const F17 = 'USA Visa  -  Questionnaire - April 2025.html';
+// OINP Workforce Priority Stream (client mapping Excel, 2026-08-12). The
+// dependent's questions live INSIDE F19 (one form, per the client's document —
+// the Excel's "Additional Questionnaire" column is deliberately blank).
+const F19 = '19. Express Entry Profile Creation + EOI OINP - Questionnaire - Aug 2026.html';
+const F20 = '20. EOI OINP- Existing Client - Questionnaire.html';
 
 // ─── Primary mapping: canonical case type → form file(s) ─────────────────────
 // { primary: filename, additional?: filename }
@@ -118,6 +123,14 @@ const FORM_MAP = {
 // Structure: { [caseType]: { [subType]: { primary, additional? } } }
 
 const FORM_SUBTYPE_MAP = {
+  // OINP redesign: ONLY the two Workforce Priority Stream sub-types resolve
+  // the new forms. Legacy OINP cases carry the retired stream sub-types (or
+  // none), never match these keys, and keep falling through to FORM_MAP's
+  // case-type entry (F6 + F1) — their questionnaires are untouched.
+  'OINP': {
+    'Workforce Priority Stream + CEC Profile (New Client)': { primary: F19, memberTypes: [] },
+    'Workforce Priority Stream (Existing Client)':          { primary: F20, memberTypes: [] },
+  },
   'LMIA Based WP': {
     'Inside Canada':             { primary: F2, memberTypes: [SPOUSE, CHILD] },
     'Extension (Inside Canada)': { primary: F2, memberTypes: [SPOUSE, CHILD] },

@@ -131,6 +131,18 @@
     "Our team can ask for additional documents/ information as we review",
     "Your application's turnaround speed is set by your document’s quality and completeness; so, keep them clear or be ready for a slow ride! "
   ],
+  "OINP|Workforce Priority Stream + CEC Profile (New Client)": [
+    "Documents accepted in English/French, if other please include the original, copy of the original with stamp and the translated document with stamp",
+    "Follow the checklist and check each item. Only well-scanned will be documents accepted",
+    "Your application's turnaround speed is set by your document’s quality and completeness; so, keep them clear or be ready for a slow ride!",
+    "These documents are required just for profile creation — we will need more documents after Invitation"
+  ],
+  "OINP|Workforce Priority Stream (Existing Client)": [
+    "Documents accepted in English/French, if other please include the original, copy of the original with stamp and the translated document with stamp",
+    "Follow the checklist and check each item. Only well-scanned will be documents accepted",
+    "Your application's turnaround speed is set by your document’s quality and completeness; so, keep them clear or be ready for a slow ride!",
+    "These documents are required just for profile creation — we will need more documents after Invitation"
+  ],
   "Inland Spousal Sponsorship|Common Law Partner": [
     "Documents accepted in English/French, if other please include the original, copy of the original with stamp and the translated document with stamp",
     "Only well-scanned will be documents accepted",

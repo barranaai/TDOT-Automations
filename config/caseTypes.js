@@ -42,7 +42,14 @@ const CASE_TYPES = [
   { caseType: 'Notary',                                                         subTypes: [] },
   { caseType: 'NSNP',                                                           subTypes: [] },
   { caseType: 'OCI / Passport Surrender',                                       subTypes: [], tbf: true },
-  { caseType: 'OINP',                                                           subTypes: ['Foreign Worker Stream', 'Human Capital Priorities Stream', 'In-demand Skills Stream', 'International Student Stream', 'Masters Graduate Stream', 'PhD Graduate Stream', 'Skilled Trades Stream'] },
+  // OINP redesign (Ontario retired every legacy stream 2026-05-30; client
+  // directive 2026-08-11): NEW cases may only use the Workforce Priority
+  // Stream pathways below. The seven legacy stream labels are deliberately
+  // ABSENT here — that removes them from every picker and every write
+  // validation — but their schemas, disclaimers and Monday labels all remain,
+  // so every existing case on an old stream keeps its checklist, questionnaire
+  // and portal exactly as-is. Do NOT delete or rename the legacy artifacts.
+  { caseType: 'OINP',                                                           subTypes: ['Workforce Priority Stream + CEC Profile (New Client)', 'Workforce Priority Stream (Existing Client)'] },
   { caseType: 'Outland Spousal Sponsorship',                                    subTypes: [] },
   { caseType: 'Parents/Grandparents Sponsorship',                               subTypes: [] },
   { caseType: 'PFL',                                                            subTypes: [] },

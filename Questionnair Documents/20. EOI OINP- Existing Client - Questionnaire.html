@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EOI OINP - Existing Client - Questionnaire</title>
+<style>
+  :root {
+    --orange: #ED7D31;
+    --red: #D32F2F;
+    --dark: #333;
+    --light-bg: #f8f9fa;
+    --border: #ddd;
+    --white: #fff;
+    --shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: var(--light-bg);
+    color: var(--dark);
+    line-height: 1.6;
+  }
+  .header {
+    background: linear-gradient(135deg, var(--orange), #e06520);
+    color: var(--white);
+    padding: 24px 32px;
+    text-align: center;
+    position: sticky; top: 0; z-index: 100;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+  }
+  .header h1 { font-size: 1.4rem; font-weight: 600; }
+  .header .subtitle { font-size: 0.85rem; opacity: 0.9; margin-top: 4px; }
+  .notice {
+    background: #FFF3CD;
+    border-left: 4px solid var(--orange);
+    padding: 12px 20px;
+    margin: 20px auto;
+    max-width: 960px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    border-radius: 0 6px 6px 0;
+  }
+  .container { max-width: 960px; margin: 0 auto 60px; padding: 0 16px; }
+  .top-accordion {
+    margin-top: 20px;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+  }
+  .top-accordion-header {
+    background: var(--red);
+    color: var(--white);
+    padding: 16px 24px;
+    font-size: 1.15rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+    transition: background 0.2s;
+  }
+  .top-accordion-header:hover { background: #b71c1c; }
+  .top-accordion-header .chevron { transition: transform 0.3s; font-size: 1.2rem; }
+  .top-accordion-header.active .chevron { transform: rotate(180deg); }
+  .top-accordion-body { display: none; background: var(--white); }
+  .top-accordion-body.open { display: block; }
+  .sub-accordion { border-bottom: 1px solid #eee; }
+  .sub-accordion:last-child { border-bottom: none; }
+  .sub-accordion-header {
+    background: var(--white);
+    padding: 14px 24px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--red);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background 0.15s;
+  }
+  .sub-accordion-header:hover { background: #fafafa; }
+  .sub-accordion-header .chevron { transition: transform 0.3s; color: #999; }
+  .sub-accordion-header.active { background: #fff8f6; }
+  .sub-accordion-header.active .chevron { transform: rotate(180deg); color: var(--red); }
+  .sub-accordion-body { display: none; padding: 20px 24px 28px; background: var(--white); }
+  .sub-accordion-body.open { display: block; }
+  .form-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .form-group { flex: 1; min-width: 200px; }
+  .form-group.full { flex-basis: 100%; }
+  .form-group label {
+    display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; color: #555;
+  }
+  .form-group input, .form-group select, .form-group textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 0.9rem; transition: border-color 0.2s, box-shadow 0.2s; background: var(--white);
+  }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px rgba(237,125,49,0.15);
+  }
+  .form-group textarea { resize: vertical; min-height: 60px; }
+  .form-group .hint { font-size: 0.75rem; color: #999; margin-top: 2px; }
+  .conditional { display: none; }
+  .conditional.visible { display: block; }
+  .dynamic-table-wrapper { overflow-x: auto; margin-top: 8px; }
+  .dynamic-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .dynamic-table th {
+    background: #f5f5f5; padding: 10px 8px; text-align: left; font-weight: 600;
+    color: #555; border: 1px solid var(--border); white-space: nowrap;
+  }
+  .dynamic-table td { padding: 6px 4px; border: 1px solid var(--border); vertical-align: top; }
+  .dynamic-table td input, .dynamic-table td select, .dynamic-table td textarea {
+    width: 100%; padding: 8px 6px; border: 1px solid #e0e0e0; border-radius: 4px; font-size: 0.85rem;
+  }
+  .dynamic-table td input:focus, .dynamic-table td select:focus, .dynamic-table td textarea:focus { outline: none; border-color: var(--orange); }
+  .btn {
+    padding: 8px 18px; border: none; border-radius: 6px; font-size: 0.85rem;
+    font-weight: 600; cursor: pointer; transition: background 0.2s, transform 0.1s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-add { background: var(--orange); color: var(--white); margin-top: 10px; }
+  .btn-add:hover { background: #d56a20; }
+  .btn-remove { background: #f5f5f5; color: var(--red); font-size: 0.8rem; padding: 6px 12px; }
+  .btn-remove:hover { background: #fee; }
+  .section-desc {
+    background: #f9f9f9; border-left: 3px solid var(--orange); padding: 10px 16px;
+    margin-bottom: 20px; font-size: 0.85rem; color: #666; border-radius: 0 6px 6px 0;
+  }
+  .important-note {
+    background: #FFF3CD; border-left: 3px solid #e6a800; padding: 10px 16px;
+    margin: 16px 0; font-size: 0.85rem; color: #856404; border-radius: 0 6px 6px 0; font-weight: 600;
+  }
+  @media (max-width: 600px) {
+    .header { padding: 16px; }
+    .header h1 { font-size: 1.1rem; }
+    .form-row { flex-direction: column; gap: 12px; }
+    .form-group { min-width: 100%; }
+    .sub-accordion-body { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Questionnaire for EOI OINP &mdash; Existing Client</h1>
+  <div class="subtitle">OINP Workforce Priority Stream &mdash; EOI (Existing Client)</div>
+</div>
+
+<div class="notice">
+  Please read the instructions before answering the questions.
+</div>
+
+<div class="container">
+
+<!-- ============================== MAIN APPLICANT ============================== -->
+<div class="top-accordion">
+  <div class="top-accordion-header active" onclick="toggleTop(this)">
+    Main Applicant
+    <span class="chevron">&#9662;</span>
+  </div>
+  <div class="top-accordion-body open">
+
+    <!-- Section 1: EOI Details -->
+    <div class="sub-accordion">
+      <div class="sub-accordion-header active" onclick="toggleSub(this)">
+        Section 1 &mdash; EOI Details
+        <span class="chevron">&#9662;</span>
+      </div>
+      <div class="sub-accordion-body open">
+
+        <div class="form-row">
+          <div class="form-group"><label>Job Offer ID</label><input type="text"></div>
+          <div class="form-group"><label>Email id associated with OINP</label><input type="email"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>SIN number</label><input type="text"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label>What was your total highest pre-tax income as stated on your Canada Revenue Agency Notice of Assessment in any one of the last 5 years?</label>
+            <input type="text" placeholder="e.g. CAD 65,000">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Please specify the tax year</label><input type="text" placeholder="e.g. 2024"></div>
+          <div class="form-group"><label>Total income (Line 15000)</label><input type="text"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label>Do you have a certificate, training or other credential related to your employment in this occupation (NOC)?</label>
+            <select><option value="">-- Select --</option><option>No</option><option>Yes</option></select>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</div><!-- /container -->
+
+<script>
+function toggleTop(header) {
+  header.classList.toggle('active');
+  header.nextElementSibling.classList.toggle('open');
+}
+function toggleSub(header) {
+  header.classList.toggle('active');
+  header.nextElementSibling.classList.toggle('open');
+}
+function toggleConditional(selectEl, targetId) {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  if (selectEl.value === 'yes' || selectEl.value === 'no') {
+    if (targetId.includes('exp') || targetId.includes('foreign')) {
+      // For explanation fields, show on "No"
+      if (selectEl.value === 'no') {
+        target.classList.add('visible');
+        target.style.display = 'block';
+      } else {
+        target.classList.remove('visible');
+        target.style.display = 'none';
+      }
+    } else {
+      // For other conditionals, show on "Yes"
+      if (selectEl.value === 'yes') {
+        target.classList.add('visible');
+        target.style.display = 'block';
+      } else {
+        target.classList.remove('visible');
+        target.style.display = 'none';
+      }
+    }
+  }
+}
+function addRow(tableId, colDefs) {
+  const tbody = document.getElementById(tableId).querySelector('tbody');
+  const tr = document.createElement('tr');
+  colDefs.forEach(def => {
+    const td = document.createElement('td');
+    const [type, value] = def.split('|');
+    if (type === 'select') {
+      const sel = document.createElement('select');
+      sel.innerHTML = '<option value="">--</option>';
+      value.split(',').forEach(opt => { sel.innerHTML += `<option>${opt}</option>`; });
+      td.appendChild(sel);
+    } else {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      if (value) inp.placeholder = value;
+      td.appendChild(inp);
+    }
+    tr.appendChild(td);
+  });
+  const tdBtn = document.createElement('td');
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-remove';
+  btn.textContent = 'Remove';
+  btn.onclick = function() { removeRow(this); };
+  tdBtn.appendChild(btn);
+  tr.appendChild(tdBtn);
+  tbody.appendChild(tr);
+}
+function removeRow(btn) {
+  const tbody = btn.closest('tbody');
+  if (tbody.rows.length > 1) btn.closest('tr').remove();
+}
+</script>
+
+</body>
+</html>
