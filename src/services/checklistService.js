@@ -96,7 +96,7 @@ async function postSubTypeNeededNote(itemId, caseRef, caseType) {
       { i: String(itemId),
         body: `⚠️ <b>Document checklist NOT created yet — Case Sub Type required.</b> ` +
           `“${esc(caseType)}” has more than one checklist variant, so seeding without a Sub Type would create every variant's documents at once (duplicates). ` +
-          `Set the <b>Case Sub Type</b> on this case, then flip <b>Re-seed Checklist → Run</b> to build the correct checklist. ` +
+          `Set the <b>Case Sub Type</b> on this case — the checklist then builds automatically (or flip <b>Re-seed Checklist → Run</b>). ` +
           `<span style="display:none">${SUBTYPE_NOTE_MARKER}</span>` }
     );
   } catch (err) { console.warn(`[ChecklistService] sub-type-needed note failed for ${caseRef}: ${err.message}`); }
@@ -458,13 +458,32 @@ async function reseedByCaseRef(caseRef) {
     throw e;
   }
 
-  const composition = await compositionAdapter.readForCase(ref);
-  const result = await seedFromSchema({ schema, caseRef: ref, clientName: item.name, clientMasterItemId: item.id });
-  await markChecklistApplied(item.id);
-  // Recovery must restore the questionnaire prefill too, not just the documents —
-  // a case that failed its original auto-seed also missed its prefill, so a
-  // reseed that only rebuilt docs would leave a blank, un-prefilled questionnaire.
-  await seedQuestionnairePrefillSafe({ caseRef: ref, caseType, caseSubType: subType, clientName: item.name, itemId: item.id });
+  // Share the per-item in-flight collapse with the automatic seeding paths:
+  // the old "set the Sub Type, then flip Re-seed → Run" staff instruction now
+  // races the sub-type webhook's automatic resume, and two concurrent
+  // reconciles each read "no existing rows" before either writes — a fully
+  // duplicated checklist. Waiting out any in-flight run first makes this
+  // reconcile see its rows (additive → no-op), and registering our own run
+  // makes a concurrent automatic seed join US instead of racing.
+  const flightKey = String(item.id);
+  if (_dcsInFlight.has(flightKey)) {
+    console.log(`[ChecklistService] reseed ${ref}: an automatic seed is in flight — waiting for it before reconciling`);
+    try { await _dcsInFlight.get(flightKey); } catch (_) { /* its failure is its own report */ }
+  }
+  const run = (async () => {
+    const composition = await compositionAdapter.readForCase(ref);
+    const result = await seedFromSchema({ schema, caseRef: ref, clientName: item.name, clientMasterItemId: item.id });
+    await markChecklistApplied(item.id);
+    // Recovery must restore the questionnaire prefill too, not just the documents —
+    // a case that failed its original auto-seed also missed its prefill, so a
+    // reseed that only rebuilt docs would leave a blank, un-prefilled questionnaire.
+    await seedQuestionnairePrefillSafe({ caseRef: ref, caseType, caseSubType: subType, clientName: item.name, itemId: item.id });
+    return { composition, result };
+  })();
+  _dcsInFlight.set(flightKey, run);
+  let composition, result;
+  try { ({ composition, result } = await run); }
+  finally { _dcsInFlight.delete(flightKey); }
 
   return {
     ok: true,
@@ -475,4 +494,97 @@ async function reseedByCaseRef(caseRef) {
   };
 }
 
-module.exports = { onDocumentCollectionStarted, reseedByCaseRef, _internal: { isSchemaDrivenEnabled, markQuestionnaireApplied, caseTypeHasSubTypeVariants } };
+// ─── Late sub-type resume ────────────────────────────────────────────────────
+// The DCS/payment trigger fires ONCE. When the Case Sub Type was still blank at
+// that moment, the multi-variant hard gate above correctly refused to seed — but
+// nothing ever re-ran seeding when the sub-type arrived later, so the case sat
+// paid, in document collection, with NO checklist and nothing chasing (live:
+// 2026-CEC-PS-064, paid Aug 6, sub-type set Aug 7, discovered empty Aug 11).
+// The Case Sub Type webhook now calls this.
+//
+// Deliberately NARROW: it only acts on the exact stranded state — Paid, in
+// Document Collection Started, checklist not applied. A sub-type EDIT on an
+// already-seeded case is a deliberate staff change that goes through the manual
+// "Re-seed Checklist → Run" flow (which prunes stale-sub-type rows); auto-
+// seeding there would pile a second variant on top of the first.
+//
+// No intake email here: every path that reaches Paid + DCS has already sent it
+// (the stage webhook or retainerService's deferred resume) — re-sending would
+// double-email the client. Seeding is the only thing that was left undone.
+
+// Seam so tests can drive the guards without the real seeding I/O.
+const resumeDeps = { seed: (args) => onDocumentCollectionStarted(args) };
+
+async function resumeSeedingAfterSubType({ itemId }) {
+  const id = String(itemId || '').trim();
+  if (!id) return { skipped: 'no item id' };
+
+  let cv;
+  try {
+    const d = await mondayApi.query(
+      `query($ids:[ID!]){ items(ids:$ids){ column_values(ids:["color_mm0x9fnn","color_mm0x8faa","${CM_COLS.checklistTemplateApplied}","${CM_COLS.caseReferenceNumber}"]){ id text } } }`,
+      { ids: [id] });
+    cv = {};
+    for (const c of (d?.items?.[0]?.column_values) || []) cv[c.id] = (c.text || '').trim();
+    if (!d?.items?.[0]) return { skipped: 'item not found' };
+  } catch (err) {
+    // Fail closed — an unreadable case tells us nothing; the manual re-seed
+    // button remains the fallback.
+    console.warn(`[ChecklistService] sub-type resume read failed for item ${id}: ${err.message}`);
+    return { skipped: `read failed: ${err.message}` };
+  }
+
+  const pay = cv['color_mm0x9fnn'] || '';
+  const stage = cv['color_mm0x8faa'] || '';
+  const applied = (cv[CM_COLS.checklistTemplateApplied] || '').toLowerCase();
+  const caseRef = cv[CM_COLS.caseReferenceNumber] || '';
+  if (pay !== 'Paid') return { skipped: `not paid (${pay || 'blank'})` };
+  if (stage !== 'Document Collection Started') return { skipped: `stage "${stage || 'blank'}"` };
+  // A blank case ref means the Case Type was set moments ago and
+  // caseRefService's sequenced chain (folder rename → FAMILY ROWS → resume
+  // incl. the intake email) is still running — seeding from here would race it,
+  // seed before the family rows exist, and flip the applied flag that chain's
+  // email is gated behind. That strand is the chain's to finish, not ours.
+  if (!caseRef) return { skipped: 'no case ref yet — the case-type chain owns onboarding' };
+  // The EXPLICIT 'No' that retainerService writes on first payment (same rule
+  // as caseRefService.resumeOnboardingIfStuck): a blank value is a manually-
+  // managed legacy case that never went through the payment flow — a sub-type
+  // EDIT there must not conjure a checklist out of nowhere.
+  if (applied !== 'no') return { skipped: applied === 'yes' ? 'checklist already applied' : `applied flag "${applied || 'blank'}" — not a payment-flow case` };
+
+  console.log(`[ChecklistService] ${caseRef}: Case Sub Type arrived after the payment trigger — resuming checklist seeding`);
+  const appliedNow = async () => {
+    const check = await mondayApi.query(
+      `query($ids:[ID!]){ items(ids:$ids){ column_values(ids:["${CM_COLS.checklistTemplateApplied}","${CM_COLS.caseSubType}"]){ id text } } }`, { ids: [id] });
+    const c = {}; for (const x of (check?.items?.[0]?.column_values) || []) c[x.id] = (x.text || '').trim();
+    return { ok: (c[CM_COLS.checklistTemplateApplied] || '').toLowerCase() === 'yes', subType: c[CM_COLS.caseSubType] || '' };
+  };
+
+  try {
+    await resumeDeps.seed({ itemId: id, boardId: clientMasterBoardId });
+    let state = await appliedNow();
+    if (!state.ok) {
+      // The call may have JOINED an in-flight run that read the PRE-sub-type
+      // state (payment marked and sub-type set within the same seconds) and
+      // was cleanly blocked by the multi-variant gate. That's not a failure,
+      // so nothing flagged it — run once more against the settled state.
+      await resumeDeps.seed({ itemId: id, boardId: clientMasterBoardId });
+      state = await appliedNow();
+    }
+    if (state.ok) {
+      await mondayApi.query(
+        `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+        { i: id, b: `✅ <b>Document checklist created</b> (variant: ${String(state.subType || 'per Case Sub Type').replace(/[<>&"]/g, '')}). ` +
+          `The Case Sub Type was set after payment, so seeding resumed automatically. ` +
+          `If that is not the intended variant, correct the Case Sub Type and flip <b>Re-seed Checklist → Run</b>. ` +
+          `If the client hasn't received their document link, resend the intake email.` });
+    }
+    return { resumed: true, seeded: state.ok };
+  } catch (err) {
+    console.error(`[ChecklistService] sub-type resume seed failed for ${caseRef}: ${err.message}`);
+    return { resumed: true, seeded: false, error: err.message };
+  }
+}
+
+module.exports = { onDocumentCollectionStarted, reseedByCaseRef, resumeSeedingAfterSubType,
+  _internal: { isSchemaDrivenEnabled, markQuestionnaireApplied, caseTypeHasSubTypeVariants, resumeDeps } };

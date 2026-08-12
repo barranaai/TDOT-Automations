@@ -32,6 +32,7 @@ const ESCALATION_CM_COL  = 'color_mm0x7bje';
 const CASE_STAGE_COL_ID           = 'color_mm0x8faa';
 const CASE_STAGE_COL_TITLE        = 'Case Stage';
 const CASE_TYPE_COL_ID            = 'dropdown_mm0xd1qn';
+const CASE_SUB_TYPE_COL_ID        = 'dropdown_mm0x4t91';
 const RETAINER_STATUS_COL_ID      = 'color_mm0x9fnn';
 const CASE_REF_COL_ID             = 'text_mm142s49';
 const CLIENT_EMAIL_COL_ID         = 'text_mm0xw6bp';
@@ -183,6 +184,23 @@ router.post('/', async (req, res) => {
       if (columnId === reseedButtonService.RESEED_COL && value?.label?.text === reseedButtonService.LABEL_RUN) {
         reseedButtonService.onReseedButton(pulseId).catch(err =>
           console.error('[Reseed] Button handler error:', err.message));
+      }
+    }
+
+    // Case Sub Type set LATE (after the payment trigger already fired):
+    // the multi-variant gate blocked seeding while the sub-type was blank, and
+    // the one-shot DCS/payment triggers never re-fire — so the case sat paid
+    // with no checklist (live: 2026-CEC-PS-064). Resume seeding; the service
+    // re-checks the exact stranded state (Paid + DCS + not applied) itself, so
+    // sub-type edits on healthy or already-seeded cases are no-ops.
+    if (columnId === CASE_SUB_TYPE_COL_ID) {
+      const newSub  = (value?.chosenValues || []).map((c) => c && c.name).filter(Boolean).join(', ');
+      const prevSub = (event.previousValue?.chosenValues || []).map((c) => c && c.name).filter(Boolean).join(', ');
+      // Only a REAL arrival acts: a clear (blank) or a same-value re-save
+      // (Monday fires change_column_value for those too) must not re-trigger.
+      if (newSub && newSub !== prevSub) {
+        require('../services/checklistService').resumeSeedingAfterSubType({ itemId: pulseId }).catch(err =>
+          console.error('[Checklist] Sub-type resume failed:', err.message));
       }
     }
 

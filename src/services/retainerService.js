@@ -31,25 +31,52 @@ async function onRetainerPaid({ itemId }) {
   // untouched. First-time payments still get the full setup as before.
   let isFirstTimePayment = true;
   let stageAlreadyStarted = false;
-  try {
-    const data = await mondayApi.query(
-      `query($itemId: ID!) {
-         items(ids: [$itemId]) {
-           column_values(ids: ["${COLS.checklistTemplateApplied}", "${COLS.caseStage}"]) { id text }
-         }
-       }`,
-      { itemId: String(itemId) }
-    );
-    const cv = {};
-    for (const c of (data?.items?.[0]?.column_values || [])) cv[c.id] = (c.text || '').trim();
-    if ((cv[COLS.checklistTemplateApplied] || '').toLowerCase() === 'yes') {
-      isFirstTimePayment = false;
+  {
+    // The read decides between a harmless date-refresh and a FULL RESET that
+    // clears both "Applied" flags and re-fires onboarding (intake email
+    // included). It used to fail OPEN into the reset — and on 2026-08-05 a
+    // rate-limit burst during a batch payment-marking made three healthy,
+    // fully-seeded cases (2026-SV-004/007/009) read as first-time payments:
+    // flags wiped, deferred onboarding re-fired at clients mid-case. The harm
+    // is asymmetric: a wrongly-SKIPPED reset is a payment date refresh staff
+    // can fix with one click (Re-seed → Run), while a wrongly-RUN reset
+    // re-emails real clients and cannot be unsent. So: retry once, and on
+    // persistent failure fail CLOSED (re-payment semantics) with a loud note.
+    let readOk = false, lastErr = null;
+    for (let attempt = 1; attempt <= 2 && !readOk; attempt++) {
+      try {
+        const data = await mondayApi.query(
+          `query($itemId: ID!) {
+             items(ids: [$itemId]) {
+               column_values(ids: ["${COLS.checklistTemplateApplied}", "${COLS.caseStage}"]) { id text }
+             }
+           }`,
+          { itemId: String(itemId) }
+        );
+        const cv = {};
+        for (const c of (data?.items?.[0]?.column_values || [])) cv[c.id] = (c.text || '').trim();
+        if ((cv[COLS.checklistTemplateApplied] || '').toLowerCase() === 'yes') {
+          isFirstTimePayment = false;
+        }
+        stageAlreadyStarted = cv[COLS.caseStage] === 'Document Collection Started';
+        readOk = true;
+      } catch (err) {
+        lastErr = err;
+        console.warn(`[Retainer] State read attempt ${attempt} failed for item ${itemId}: ${err.message}`);
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 1500));
+      }
     }
-    stageAlreadyStarted = cv[COLS.caseStage] === 'Document Collection Started';
-  } catch (err) {
-    // Fail-open: if the read fails, fall back to original behaviour (full
-    // reset) so we don't accidentally block a legitimate first-time payment.
-    console.warn(`[Retainer] Could not read state for item ${itemId} (${err.message}) — falling back to full reset`);
+    if (!readOk) {
+      isFirstTimePayment = false;   // fail CLOSED: date refresh only, never a blind reset
+      stageAlreadyStarted = false;
+      console.error(`[Retainer] State unreadable for item ${itemId} after retries (${lastErr && lastErr.message}) — treating as re-payment; NOT resetting flags`);
+      mondayApi.query(
+        `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+        { i: String(itemId),
+          b: '⚠️ <b>Payment recorded, but the case state could not be read.</b> To be safe, nothing was reset and no onboarding was re-triggered. ' +
+             'If this is a FIRST-TIME payment and the checklist/intake never started, flip <b>Re-seed Checklist → Run</b> (and resend the intake email if needed).' }
+      ).catch(() => {});
+    }
   }
 
   let cols;
