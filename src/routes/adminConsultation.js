@@ -493,7 +493,7 @@ function loadDirectRetainers(){
 }
 loadDirectRetainers();
 
-function monthOf(slot){ var m=String(slot||'').match(/^(\d{4}-\d{2})/); return m?m[1]:''; }
+function monthOf(slot){ var m=String(slot||'').match(/^(\\d{4}-\\d{2})/); return m?m[1]:''; }
 function distinctVals(rows,fn){ var s={}; rows.forEach(function(r){ var v=fn(r); if(v) s[v]=1; }); return Object.keys(s).sort(); }
 function fillSel(id,vals,label){ var el=document.getElementById(id); var cur=el.value; el.innerHTML='<option value="">'+label+'</option>'+vals.map(function(v){return '<option value="'+escHtml(v)+'">'+escHtml(v)+'</option>';}).join(''); el.value=cur; }
 function populateFilters(rows){
@@ -1334,7 +1334,7 @@ function inviterGaps(){
   var email=(rpEl('rp-inviterEmail').value||'').trim();
   if(!name) gaps.push('name');
   if(!email) gaps.push('email');
-  else if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) gaps.push('valid email');
+  else if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) gaps.push('valid email');
   if(!(rpEl('rp-inviterPhone').value||'').trim()) gaps.push('phone');
   if(!(rpEl('rp-inviterAddress').value||'').trim()) gaps.push('address');
   return gaps;
@@ -1656,6 +1656,15 @@ function initActions(){
       : 'Retain this client and email the retainer agreement (stating the fee) to them now?';
     doAction('retainAndSend', null, confirmMsg);
   };
+  // Live re-validation: the co-signer error must clear ITSELF the moment the
+  // fields become valid — a fixed email showing a stale "Cannot send" cost the
+  // team a real send (Sanjib Biswas, 2026-08-15).
+  ['rp-inviterName','rp-inviterEmail','rp-inviterPhone','rp-inviterAddress'].forEach(function(id){
+    var el=rpEl(id); if(el) el.addEventListener('input', function(){
+      var errEl=rpEl('rp-inviter-err');
+      if(errEl && errEl.style.display!=='none' && !inviterGaps().length) errEl.style.display='none';
+    });
+  });
   // Any edit in the plan means it must be re-saved before it can be sent — reset the
   // "saved" gate (and re-evaluate the Set-fee "done" state) on any change in the fieldset.
   var rpfs=rpEl('rp-lock-fs'); if(rpfs){ ['input','change'].forEach(function(ev){ rpfs.addEventListener(ev,function(){ RP_PLAN_SAVED=false; applyRetainerLock(); }); }); }

@@ -68,3 +68,36 @@ test('clientPortalService buildPortalPage: the upload script parses, hostile val
   const scripts = html.match(/<script>[\s\S]*?<\/script>/g) || [];
   assert.equal(scripts.length, 1, 'hostile </script> in embedded values must not split the script block');
 });
+
+// ─── lost-backslash guard (live bug 2026-08-15) ──────────────────────────────
+// Inside a Node template literal, `\s` silently emits `s` — the co-signer
+// email regex became /^[^s@]+@…/ and rejected every address containing an
+// "s"; the month filter's \d{4}-\d{2} became unmatchable. vm-parsing can't
+// catch this (the mangled regex is valid JS), so scan every emitted regex
+// literal for the tell-tale mangled atoms.
+function assertNoMangledRegexes(html, page) {
+  const re = /<script>([\s\S]*?)<\/script>/g;
+  let m;
+  while ((m = re.exec(html))) {
+    for (const rx of m[1].match(/\/(?:[^\/\\\n]|\\.)+\/[gimuy]*/g) || []) {
+      assert.ok(!/\[\^s@\]|\[\^@s\]|\(d\{|[^\\]d\{\d|\[\^s\]/.test(rx),
+        `${page}: regex literal looks like it lost a backslash in the template: ${rx}`);
+    }
+  }
+}
+
+test('emitted page scripts carry no backslash-mangled regex literals', () => {
+  const consult = require('../src/routes/adminConsultation');
+  assertNoMangledRegexes(consult.buildQueueHTML(), 'consultation queue');
+  assertNoMangledRegexes(consult.buildDetailHTML('1'), 'consultation detail');
+  const leads = require('../src/routes/adminLeads');
+  assertNoMangledRegexes(leads.buildLeadsQueueHTML(), 'leads queue');
+  assertNoMangledRegexes(leads.buildLeadDetailHTML('1'), 'lead detail');
+  const { buildCockpitHTML } = require('../src/routes/adminCase');
+  assertNoMangledRegexes(buildCockpitHTML('2026-XX-000'), 'cockpit');
+  // the two repaired regexes, pinned exactly as EMITTED
+  const detail = consult.buildDetailHTML('1');
+  assert.ok(detail.includes('[^\\s@]+@[^\\s@]+\\.[^\\s@]+'), 'co-signer email regex emits with real \\s');
+  const queue = consult.buildQueueHTML();
+  assert.ok(queue.includes('(\\d{4}-\\d{2})'), 'month filter emits with real \\d');
+});
