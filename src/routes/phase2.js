@@ -247,13 +247,18 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
 
     const { url: checkoutUrl } = await bookingService.createCheckout({
       leadId, amount: option.feeCents,
+      taxPct: bookingService.CONSULT_HST_PCT, // checkout itemizes fee + HST (meeting 2026-08-13)
       description: `Consultation (${option.durationMin} min) with TDOT Immigration — ${slotDate} ${slotTime}`,
       // Same lead + slot + duration + fee → same Square link (a re-submit can't
       // mint a second payable link). Duration AND fee are in the key: a changed
       // duration needs a new link, and a consultant re-route that changes the
       // fee for the same duration must not collide with the old key (Square
       // rejects idempotency reuse with a different amount).
-      idempotencyKey: `lead-${leadId}-${slotDate}-${slotTime}-${option.durationMin}-${option.feeCents}`.replace(/[^A-Za-z0-9_-]/g, ''),
+      // "-t<pct>" versions the key across the HST rollout: the same key must
+      // never be replayed with a different payload shape/amount (Square
+      // rejects that), so a pre-HST submit re-submitted post-deploy mints a
+      // fresh with-tax link instead of colliding with its old quick_pay key.
+      idempotencyKey: `lead-${leadId}-${slotDate}-${slotTime}-${option.durationMin}-${option.feeCents}-t${bookingService.CONSULT_HST_PCT}`.replace(/[^A-Za-z0-9_-]/g, ''),
     });
     res.redirect(checkoutUrl);
   } catch (err) {
@@ -313,7 +318,7 @@ function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
       <div class="mtype">
         <div class="mtype-q">Consultation length? <span style="color:${BRAND.primary}">*</span></div>
         ${sets.map((s) => `<label class="mtype-opt dur-opt${s.default ? ' sel' : ''}"><input type="radio" name="durationChoice" value="${s.durationMin}" ${s.default ? 'checked' : ''} required>
-          <span class="mtype-t">⏱ ${s.durationMin} minutes</span><span class="mtype-s">${cad(s.feeCents)} CAD</span></label>`).join('')}
+          <span class="mtype-t">⏱ ${s.durationMin} minutes</span><span class="mtype-s">${bookingService.CONSULT_HST_PCT > 0 ? `${cad(s.feeCents)} + HST = ${cad(bookingService.consultTotalWithTax(s.feeCents))} CAD` : `${cad(s.feeCents)} CAD`}</span></label>`).join('')}
       </div>` : '';
   const slotSections = multiDuration
     ? sets.map((s) => `<div class="dur-slots" data-dur="${s.durationMin}" style="display:${s.default ? 'block' : 'none'}">${renderDateBlocks(s.slots) || empty}</div>`).join('')

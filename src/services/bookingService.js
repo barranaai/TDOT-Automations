@@ -31,6 +31,14 @@ const SQUARE_VERSION = '2025-01-23';
 const _feeEnv = parseInt(process.env.SQUARE_CONSULT_FEE_CENTS, 10);
 const CONSULT_FEE_CENTS = (Number.isFinite(_feeEnv) && _feeEnv >= 0) ? _feeEnv : 20000;
 
+// Consultation checkouts charge HST ON TOP of the fee (meeting decision
+// 2026-08-13: the checkout collected a flat $200 while the team expected
+// $226). Percentage; an explicit 0 disables the tax line. Ontario HST default.
+const _hstEnv = Number(process.env.SQUARE_CONSULT_HST_PCT);
+const CONSULT_HST_PCT = (Number.isFinite(_hstEnv) && _hstEnv >= 0) ? _hstEnv : 13;
+/** The all-in amount a client pays for a consult option's fee. */
+const consultTotalWithTax = (feeCents) => Math.round(Number(feeCents || 0) * (1 + CONSULT_HST_PCT / 100));
+
 // Weekly availability (times are Toronto local). Empty day = no slots.
 const SLOT_TEMPLATE = {
   1: { newClient: ['10:45', '11:15', '11:45'], urgency: ['13:00', '13:15', '13:30', '13:45'] }, // Mon
@@ -294,23 +302,31 @@ async function releaseExpiredSlots() {
  *  - `storeOrderId` (default true) writes the order id to the consult/retainer
  *    column; milestones pass false and store the id in their own JSON instead.
  */
-async function createCheckout({ leadId, amount, description, type = 'lead', idempotencyKey, reference, storeOrderId = true }) {
+async function createCheckout({ leadId, amount, description, type = 'lead', idempotencyKey, reference, storeOrderId = true, taxPct = 0 }) {
   const referenceId = reference || `${type}-${leadId}`;
   // A deterministic key (e.g. per lead+slot) makes Square return the SAME
   // payment link on a duplicate submit instead of minting a second payable
   // link; callers that don't pass one get a fresh random key, as before.
   const idemKey = String(idempotencyKey || `${referenceId}-${crypto.randomBytes(6).toString('hex')}`).slice(0, 45);
+  const payload = { idempotency_key: idemKey, payment_note: referenceId };
+  if (taxPct > 0) {
+    // An order with an ADDITIVE order-scope tax: the checkout itemizes
+    // "fee + HST (13%) = total" instead of quick_pay's flat single amount.
+    payload.order = {
+      location_id: process.env.SQUARE_LOCATION_ID,
+      line_items: [{ name: description, quantity: '1', base_price_money: { amount, currency: 'CAD' } }],
+      taxes: [{ uid: 'hst', name: `HST (${taxPct}%)`, type: 'ADDITIVE', percentage: String(taxPct), scope: 'ORDER' }],
+    };
+  } else {
+    payload.quick_pay = {
+      name: description,
+      price_money: { amount, currency: 'CAD' },
+      location_id: process.env.SQUARE_LOCATION_ID,
+    };
+  }
   const res = await axios.post(
     `${SQUARE_API_BASE}/v2/online-checkout/payment-links`,
-    {
-      idempotency_key: idemKey,
-      quick_pay: {
-        name: description,
-        price_money: { amount, currency: 'CAD' },
-        location_id: process.env.SQUARE_LOCATION_ID,
-      },
-      payment_note: referenceId,
-    },
+    payload,
     { headers: { Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`, 'Square-Version': SQUARE_VERSION, 'Content-Type': 'application/json' } }
   );
 
@@ -417,16 +433,26 @@ async function handleSquarePaymentWebhook(event) {
 async function reconcileConsultOptionWithPayment(lead, paidCents) {
   let stored = null;
   try { stored = JSON.parse(lead.consultOption || ''); } catch (_) { /* legacy */ }
-  if (stored && Number(stored.feeCents) === paidCents) return; // recorded = paid ✓
+  // A payment matches an option at its pre-tax fee (links issued before HST,
+  // 2026-08-14) OR at fee + HST (links issued after) — both eras stay valid.
+  const matchesFee = (feeCents) => paidCents === Number(feeCents) || paidCents === consultTotalWithTax(feeCents);
+  if (stored && matchesFee(stored.feeCents)) {
+    // Recorded option is right — just remember the ACTUAL total collected
+    // (the consult agreement states the amount paid; $226 must not print $200).
+    if (Number(stored.paidCents) !== paidCents) {
+      await leadService.updateLead(lead.id, { consultOption: JSON.stringify({ ...stored, paidCents }) });
+    }
+    return;
+  }
 
   const routing = require('../../config/consultantRouting');
   const consultant = routing.routeConsultant(lead);
-  const paidOption = routing.consultOptionsFor(consultant).find((o) => o.feeCents === paidCents);
+  const paidOption = routing.consultOptionsFor(consultant).find((o) => matchesFee(o.feeCents));
   if (paidOption) {
     await leadService.updateLead(lead.id, {
       consultOption: JSON.stringify({
         durationMin: paidOption.durationMin, feeCents: paidOption.feeCents,
-        variationId: paidOption.variationId, consultant: consultant.name,
+        variationId: paidOption.variationId, consultant: consultant.name, paidCents,
       }),
     });
     console.warn(`[Booking] Lead ${lead.id}: paid ${paidCents}c = the ${paidOption.durationMin}-min option — recorded option corrected (was ${stored ? `${stored.durationMin}min/${stored.feeCents}c` : 'none'})`);
@@ -434,7 +460,7 @@ async function reconcileConsultOptionWithPayment(lead, paidCents) {
     console.warn(`[Booking] Lead ${lead.id}: paid ${paidCents}c matches NO option (stored ${stored.durationMin}min/${stored.feeCents}c) — keeping stored, flagging staff`);
     await postInviteNote(lead.id,
       `⚠️ <b>Consultation payment amount needs a look:</b> the client paid <b>$${(paidCents / 100).toFixed(2)}</b>, ` +
-      `but the recorded booking choice is <b>${stored.durationMin} minutes ($${(Number(stored.feeCents) / 100).toFixed(2)})</b>. ` +
+      `but the recorded booking choice is <b>${stored.durationMin} minutes ($${(Number(stored.feeCents) / 100).toFixed(2)} + HST)</b>. ` +
       `Please confirm the intended duration with the client and adjust the Square appointment if needed.`).catch(() => {});
   }
 }
@@ -527,13 +553,16 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
     const opts = routing.consultOptionsFor(routing.routeConsultant(lead));
     const cad = (c) => (c / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
     const priced = opts.filter((o) => o.feeCents > 0);
+    // Totals shown WITH HST (team feedback 2026-08-13: a client charged $226
+    // must never have been told "$200" with no mention of tax).
+    const hst = CONSULT_HST_PCT > 0 ? ' (incl. HST)' : '';
     if (priced.length > 1) {
-      feeLine = `The consultation fee is ${priced.map((o) => `<b>${cad(o.feeCents)}</b> for ${o.durationMin} minutes`).join(' or ')}, payable securely online when you book.`;
+      feeLine = `The consultation fee is ${priced.map((o) => `<b>${cad(consultTotalWithTax(o.feeCents))}</b>${hst} for ${o.durationMin} minutes`).join(' or ')}, payable securely online when you book.`;
     } else if (priced.length === 1) {
-      feeLine = `The consultation fee is <b>${cad(priced[0].feeCents)}</b>, payable securely online when you book.`;
+      feeLine = `The consultation fee is <b>${cad(consultTotalWithTax(priced[0].feeCents))}</b>${hst}, payable securely online when you book.`;
     }
   } catch (_) {
-    if (CONSULT_FEE_CENTS > 0) feeLine = `The consultation fee is <b>${(CONSULT_FEE_CENTS / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })}</b>, payable securely online when you book.`;
+    if (CONSULT_FEE_CENTS > 0) feeLine = `The consultation fee is <b>${(consultTotalWithTax(CONSULT_FEE_CENTS) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })}</b>${CONSULT_HST_PCT > 0 ? ' (incl. HST)' : ''}, payable securely online when you book.`;
   }
 
   // Body: the saved draft (the standard compliance-safe paragraph, possibly
@@ -604,5 +633,5 @@ module.exports = {
   holdSlot, releaseExpiredSlots, createCheckout,
   handleSquarePaymentWebhook, confirmSlot, verifySquareSignature, squareNotificationUrls, sendBookingInvite,
   dropBufferConflicts, reconcileConsultOptionWithPayment,
-  CONSULT_FEE_CENTS,
+  CONSULT_FEE_CENTS, CONSULT_HST_PCT, consultTotalWithTax,
 };

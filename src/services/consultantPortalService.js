@@ -141,8 +141,9 @@ async function getConsultationQueue() {
       leadOwner:          cv[C.leadOwner] || '',
     };
   });
-  // Soonest slot first; blanks last.
-  items.sort((a, b) => (a.bookedSlot || '9999').localeCompare(b.bookedSlot || '9999'));
+  // MOST RECENT slot first (team feedback 2026-08-13 — staff had to scroll to
+  // the bottom for this week's consultations); blanks last.
+  items.sort((a, b) => (b.bookedSlot || '').localeCompare(a.bookedSlot || ''));
   return items;
 }
 
@@ -537,6 +538,7 @@ async function getLeadDetail(leadId) {
     name:     lead.fullName || lead.name,
     email:    lead.email || '',
     phone:    lead.phone || '',
+    address:  lead.residentialAddress || '', // convert-to-direct-retainer prefill
     createdAt: lead.createdAt || '',
     tier:     lead.tier || '',
     priority: lead.priority || '',
@@ -662,6 +664,7 @@ function parseSelections(value) {
   for (const k of SELECTION_STR_FIELDS) if (raw[k] != null) sel[k] = String(raw[k]).trim();
   if (raw.feeCents != null) { const c = Math.round(Number(raw.feeCents)); if (Number.isFinite(c) && c >= 0 && c <= FEE_MAX_CAD * 100) sel.feeCents = c; }
   if (raw.govFeeDollars != null) { const d = Number(raw.govFeeDollars); if (Number.isFinite(d) && d >= 0 && d <= FEE_MAX_CAD) sel.govFeeDollars = d; }
+  if (raw.adFeeDollars != null) { const d = Number(raw.adFeeDollars); if (Number.isFinite(d) && d >= 0 && d <= FEE_MAX_CAD) sel.adFeeDollars = d; }
   if (raw.hstRate != null) { const r = Number(String(raw.hstRate).replace('%', '')); if (Number.isFinite(r) && r >= 0) sel.hstRate = r; }
   if (raw.withRprf != null) sel.withRprf = (raw.withRprf === true || raw.withRprf === 'Yes' || raw.withRprf === 'true');
   if (Array.isArray(raw.milestones)) {
@@ -1060,6 +1063,7 @@ async function applyAction({ leadId, action, value, amend = false }) {
         selectedScopeAnnex: s.annexCode,
         ...(subTypeProvided ? { selectedSubType: s.subType || '' } : {}),
         govFee:             (s.govFeeDollars != null) ? s.govFeeDollars : '',
+        advertisementFee:   (s.adFeeDollars != null && s.adFeeDollars > 0) ? s.adFeeDollars : '',
         retainerHstRate:    (s.hstRate != null) ? String(s.hstRate) : '13',
         retainerWithRprf:   s.withRprf ? 'Yes' : 'No',
         retainerMilestones: JSON.stringify(s.milestones || []),
@@ -1069,7 +1073,7 @@ async function applyAction({ leadId, action, value, amend = false }) {
         empCompanyPhone: s.empCompanyPhone || '', empRepPhone: s.empRepPhone || '', empRepEmail: s.empRepEmail || '',
       }, { clearKeys: [
         ...(subTypeProvided ? ['selectedSubType'] : []),
-        'govFee',
+        'govFee', 'advertisementFee',
         'inviterName', 'inviterAddress', 'inviterPhone', 'inviterEmail',
         'empRepName', 'empCompanyName', 'empCompanyAddress', 'empCompanyPhone', 'empRepPhone', 'empRepEmail',
       ] });

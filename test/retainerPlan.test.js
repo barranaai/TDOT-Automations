@@ -110,8 +110,8 @@ test('biometrics scales per person up to the family max', () => {
 test('defaultMilestones: ONE default row — the locked admin fee carrying the whole fee (user decision 2026-07-30)', () => {
   const rows = defaultMilestones(250003);
   assert.equal(rows.length, 1, 'no unintended multi-way split by default');
-  assert.equal(rows[0].label, 'Milestone 1 – Admin Fee (50% Non-Refundable)',
-    'only HALF the first milestone is the non-refundable admin fee — the label must say so');
+  assert.equal(rows[0].label, 'Milestone 1 – Admin Fee (Non-Refundable)',
+    'the first milestone IS the non-refundable admin fee (meeting decision 2026-08-13 — no 50% carve-out)');
   assert.equal(rows[0].locked, true);
   assert.equal(rows[0].amountCents, 250003, 'single row = exact fee');
 
@@ -152,4 +152,14 @@ test('validateMilestones flags wrong sum and missing admin row', () => {
   // Plans saved before the 50% relabel (2026-07-31) must keep validating.
   const legacy = [{ label: 'Milestone 1 – Non-Refundable Admin Fee', amountCents: 250000 }];
   assert.equal(validateMilestones(legacy, 250000).ok, true, 'old saved label still accepted');
+});
+
+test('displayMilestoneLabel normalizes only the superseded default label', () => {
+  const { displayMilestoneLabel } = require('../src/services/retainerPlanService');
+  assert.equal(displayMilestoneLabel('Milestone 1 – Admin Fee (50% Non-Refundable)'), 'Milestone 1 – Admin Fee (Non-Refundable)');
+  assert.equal(displayMilestoneLabel('Milestone 2 – On submission'), 'Milestone 2 – On submission');
+  assert.equal(displayMilestoneLabel(''), '');
+  // every client-facing milestone render flows through it
+  const mp = require('fs').readFileSync(require.resolve('../src/services/milestonePaymentService'), 'utf8');
+  assert.match(mp, /displayMilestoneLabel\(r\.label\)/, 'scheduleRows (portal card, e-transfer emails, notes) normalizes');
 });

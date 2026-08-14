@@ -37,11 +37,19 @@ function buildConsultAgreementData(lead = {}) {
   const opt = require('./consultationService').parseConsultOption(lead);
   const feeCents = (opt && Number.isFinite(opt.feeCents)) ? opt.feeCents : CONSULT_FEE_CENTS;
   const durationText = opt ? `${opt.durationMin} minutes` : CONSULT_DURATION;
+  // "has paid {amountPaid}" must state the amount actually COLLECTED: the
+  // Square webhook records paidCents on the option (fee + HST since
+  // 2026-08-14). Legacy leads without it keep the pre-tax fee — which is what
+  // those clients really paid.
+  const paidCents = (opt && Number.isFinite(Number(opt.paidCents)) && Number(opt.paidCents) > 0) ? Number(opt.paidCents) : null;
+  const amountPaidText = paidCents != null
+    ? `${centsToMoney(paidCents)}${paidCents > feeCents ? ' (incl. HST)' : ''}`
+    : centsToMoney(feeCents);
   const data = {
     agreementDate:       formatAgreementDate(todayISO()),
     paName:              lead.fullName || lead.name || '',
     paAddress:           lead.residentialAddress || '',
-    amountPaid:          centsToMoney(feeCents),
+    amountPaid:          amountPaidText,
     consultDurationMins: durationText,
     consultationDate:    formatAgreementDate(slotDate) || slotDate || '',
     paPhone:             lead.phone || '',

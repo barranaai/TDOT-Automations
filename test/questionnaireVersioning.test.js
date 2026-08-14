@@ -177,6 +177,68 @@ test('formFileForKey routes member and additional keys to the right file', () =>
   assert.equal(svc.formFileForKey(ff, 'spouse-additional'), 'A.html');
 });
 
+test('RESILIENCE: a single transient blip is retried — only a double failure throws', async () => {
+  let calls = 0;
+  const restore = stub(oneDrive, 'readFile', async ({ filename }) => {
+    calls++;
+    if (calls === 1) throw new Error('429 too many requests');   // first read blips once
+    return null;                                                  // retry + all other slots: empty
+  });
+  try {
+    const r = await svc.versionFormFilesForCase({ clientName: 'T', caseRef: freshRef(), formFiles: { primary: AUG1, additional: null } });
+    assert.equal(r.primary, AUG1, 'one blip must not fail the resolution');
+  } finally { restore(); }
+});
+
+test('concurrent cold resolutions for one case collapse into a single scan', async () => {
+  let reads = 0;
+  const caseRef = freshRef();
+  const restore = stub(oneDrive, 'readFile', async () => {
+    reads++;
+    await new Promise((r) => setTimeout(r, 20));   // hold the scan open so the calls overlap
+    return null;
+  });
+  try {
+    const args = { clientName: 'T', caseRef, formFiles: { primary: AUG1, additional: null } };
+    const [a, b, c] = await Promise.all([
+      svc.versionFormFilesForCase(args),
+      svc.versionFormFilesForCase(args),
+      svc.versionFormFilesForCase(args),
+    ]);
+    assert.equal(a.primary, AUG1); assert.equal(b.primary, AUG1); assert.equal(c.primary, AUG1);
+    assert.equal(reads, 7, 'one scan (members list + 3 slots × JSON+CSV), not three — page loads fire the page + /data + /flags at once');
+  } finally { restore(); }
+});
+
+test('PORTAL: auth-only validation skips era resolution entirely (zero storage reads)', async () => {
+  const monday = require('../src/services/mondayApi');
+  const TOKEN = 'TDOT-test-token';
+  const restoreM = stub(monday, 'query', async () => ({
+    items_page_by_column_values: { items: [{ id: '1', name: 'Vt Client', column_values: [
+      { id: 'text_mm142s49',   text: '2026-VT-P01' },
+      { id: 'dropdown_mm0xd1qn', text: 'PGWP' },                    // resolves to the versioned F2 family
+      { id: 'dropdown_mm0x4t91', text: 'Single Applicant' },
+      { id: 'text_mm0x6haq',   text: TOKEN },
+    ] }] },
+  }));
+  let reads = 0;
+  const restoreO = stub(oneDrive, 'readFile', async () => { reads++; return null; });
+  try {
+    const v = await svc.validateAccess('2026-VT-P01', TOKEN, { skipFormVersioning: true });
+    assert.equal(reads, 0, 'the portal page must not depend on OneDrive');
+    assert.match(v.formFiles.primary, /Work Permit/, 'form set still resolved (unversioned)');
+    await svc.validateAccessForStaff('2026-VT-P01', { skipFormVersioning: true });
+    assert.equal(reads, 0, 'staff portal view equally storage-free');
+  } finally { restoreO(); restoreM(); }
+});
+
+test('the portal routes actually pass the auth-only flag (all three call sites)', () => {
+  const r = require('fs').readFileSync(require.resolve('../src/routes/clientPortal'), 'utf8');
+  const calls = [...r.matchAll(/htmlQ\.validateAccess\w*\([^)]*\)/g)].map((m) => m[0]);
+  assert.equal(calls.length, 3, 'portal has exactly three validate calls (staff page, client page, upload auth)');
+  for (const c of calls) assert.match(c, /skipFormVersioning:\s*true/, `${c} must be auth-only`);
+});
+
 test('all four form files exist on disk (both eras stay servable)', () => {
   const fs = require('fs');
   const path = require('path');
@@ -184,4 +246,16 @@ test('all four form files exist on disk (both eras stay servable)', () => {
   for (const f of [AUG1, AUG2, APR1, APR2]) {
     assert.ok(fs.existsSync(path.join(FORMS_DIR, f)), `${f} must exist on disk`);
   }
+});
+
+test('ASYMMETRIC HARM ON FAILURES: a legacy record pins legacy even when another slot is down', async () => {
+  const restore = stub(oneDrive, 'readFile', async ({ filename }) => {
+    if (filename.includes('-primary.json')) return Buffer.from(JSON.stringify({ formFile: APR1, fields: [] }));
+    if (filename.includes('-additional')) throw new Error('503 service unavailable');   // both attempts fail
+    return null;
+  });
+  try {
+    const r = await svc.versionFormFilesForCase({ clientName: 'T', caseRef: freshRef(), formFiles: { primary: AUG1, additional: null } });
+    assert.equal(r.primary, APR1, 'a failed slot can never un-pin a decided legacy era (availability preserved)');
+  } finally { restore(); }
 });

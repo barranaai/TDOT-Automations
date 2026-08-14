@@ -64,7 +64,10 @@ async function reconcilePayments() {
       if (kind === 'lead') {
         if (lead.bookingStatus === 'Booked') continue; // already registered
         console.warn(`[Reconciler] Recovering unregistered CONSULT payment ${payment.id} for lead ${leadId} (status was "${lead.bookingStatus}")`);
-        await require('./bookingService').confirmSlot(leadId, payment.id);
+        // Pass the paid amount so the option reconcile records paidCents — the
+        // consult agreement states the amount actually collected (incl. HST).
+        await require('./bookingService').confirmSlot(leadId, payment.id, undefined,
+          Number(payment.amount_money && payment.amount_money.amount));
         recovered++;
       } else {
         if (lead.retainerPaid) continue; // already registered

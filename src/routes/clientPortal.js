@@ -121,12 +121,16 @@ router.get('/:caseRef', async (req, res) => {
 
   try {
     let validatedCase;
+    // skipFormVersioning: the portal never renders or saves a questionnaire
+    // form, so it must not inherit the era resolution's OneDrive dependency —
+    // a storage blip was failing this whole page with "Could not load this
+    // case" (client report 2026-08-14). The /q links era-resolve on their own.
     if (staff) {
       // Staff path — look up the case without token validation
-      validatedCase = await htmlQ.validateAccessForStaff(caseRef);
+      validatedCase = await htmlQ.validateAccessForStaff(caseRef, { skipFormVersioning: true });
     } else {
       // Client path — token must match
-      validatedCase = await htmlQ.validateAccess(caseRef, token);
+      validatedCase = await htmlQ.validateAccess(caseRef, token, { skipFormVersioning: true });
     }
 
     const snapshot = await portalSvc.getPortalSnapshot({ caseRef, validatedCase });
@@ -171,7 +175,8 @@ router.post('/:caseRef/document/:itemId/upload', uploadRateLimit, uploadSingle, 
   try {
     // Auth FIRST: staff cookie OR the case's client token — same rule as the
     // page. Nothing (not even the extension check) is answered pre-auth.
-    if (!tryStaffAuth(req)) await htmlQ.validateAccess(caseRef, token);
+    // Auth-only: an upload must not fail on questionnaire-era storage reads.
+    if (!tryStaffAuth(req)) await htmlQ.validateAccess(caseRef, token, { skipFormVersioning: true });
   } catch (err) {
     // Distinguish a bad token from a Monday hiccup (same rule as the GET):
     // a transient backend failure must say "try again", not send a legitimate

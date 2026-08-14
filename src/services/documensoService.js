@@ -462,6 +462,37 @@ async function captureCompleted(body) {
           ...(itemId != null ? { clientItemId: String(itemId) } : {}),
         }),
       });
+
+      // Staff push notification (team feedback 2026-08-13: Kamal was checking
+      // the board every morning to see who signed). Recipients come from
+      // STAFF_SIGNATURE_NOTIFY_EMAILS (comma-separated); unset = feature off.
+      // INSIDE the first-time guard — webhook redeliveries and the admin
+      // recapture endpoint replay this capture on already-signed leads, and
+      // only the delivery that actually flips the signed state may email
+      // (same replay semantics as the state write itself).
+      // Best-effort — a mail failure must never break the signature capture.
+      try {
+        const notifyList = String(process.env.STAFF_SIGNATURE_NOTIFY_EMAILS || '')
+          .split(',').map((s) => s.trim()).filter(Boolean);
+        if (notifyList.length) {
+          const esc = (s) => String(s || '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+          const base = (process.env.RENDER_URL || 'https://app.tdotimm.com').replace(/\/$/, '');
+          await require('./microsoftMailService').sendEmail({
+            to: notifyList,
+            subject: `✍️ Retainer signed — ${lead.fullName || 'client'} (${lead.confirmedCaseType || lead.caseTypeInterest || 'case type TBD'})`,
+            html: `<div style="font-family:-apple-system,sans-serif;max-width:520px">
+              <p><b>${esc(lead.fullName || 'A client')}</b> just signed their retainer agreement.</p>
+              <p style="margin:4px 0">Case type: <b>${esc(lead.confirmedCaseType || lead.caseTypeInterest || '—')}</b><br>
+              Consultant: ${esc(lead.assignedConsultant || '—')}<br>
+              Fee: ${lead.retainerFee ? '$' + esc(lead.retainerFee) : '—'}</p>
+              <p>The case opens automatically; payment ${lead.retainerPaid ? 'is already recorded' : 'is not recorded yet'}.</p>
+              <p><a href="${base}/admin/consultation/${encodeURIComponent(leadId)}">Open the consultation record</a></p>
+            </div>`,
+          });
+        }
+      } catch (err) {
+        console.warn(`[Documenso] staff signature notification failed for lead ${leadId}: ${err.message}`);
+      }
     }
     await postNote(leadId, `✍️ <b>Retainer agreement signed via Documenso</b>${stored ? ' — signed copy saved to OneDrive.' : '.'} The case will open automatically.`);
 

@@ -106,3 +106,100 @@ test('captureCompleted: ignores non-completed events and rejects an unresolved e
     );
   } finally { restore(); }
 });
+
+// ─── staff signature notification (team feedback 2026-08-13) ─────────────────
+
+test('retainer completion emails the STAFF_SIGNATURE_NOTIFY_EMAILS list (best-effort)', async () => {
+  const leadService   = require('../src/services/leadService');
+  const mondayApi     = require('../src/services/mondayApi');
+  const microsoftMail = require('../src/services/microsoftMailService');
+  const mails = [];
+  const prevEnv = process.env.STAFF_SIGNATURE_NOTIFY_EMAILS;
+  process.env.STAFF_SIGNATURE_NOTIFY_EMAILS = 'kamal@tdotimm.com, ops@tdotimm.com';
+  const restore = [
+    stub(leadService, 'getLead', async (id) => ({ id, fullName: 'Sig Client', retainerSigned: '',
+      confirmedCaseType: 'LMIA', assignedConsultant: 'Shafoli Kapur', retainerFee: '3000' })),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+    stub(microsoftMail, 'sendEmail', async (m) => { mails.push(m); }),
+  ];
+  try {
+    await documenso.captureCompleted({
+      event: 'DOCUMENT_COMPLETED',
+      payload: { id: 56, externalId: 'retainer-778', status: 'COMPLETED', items: [] },
+    });
+    assert.equal(mails.length, 1, 'one notification email');
+    assert.deepEqual(mails[0].to, ['kamal@tdotimm.com', 'ops@tdotimm.com']);
+    assert.match(mails[0].subject, /Retainer signed — Sig Client \(LMIA\)/);
+    assert.match(mails[0].html, /admin\/consultation\/778/, 'links to the consultation record');
+  } finally {
+    restore.forEach((r) => r());
+    if (prevEnv === undefined) delete process.env.STAFF_SIGNATURE_NOTIFY_EMAILS;
+    else process.env.STAFF_SIGNATURE_NOTIFY_EMAILS = prevEnv;
+  }
+});
+
+test('signature notification: unset env = off; a mail failure never breaks the capture', async () => {
+  const leadService   = require('../src/services/leadService');
+  const mondayApi     = require('../src/services/mondayApi');
+  const microsoftMail = require('../src/services/microsoftMailService');
+  const prevEnv = process.env.STAFF_SIGNATURE_NOTIFY_EMAILS;
+  let sends = 0;
+  const base = [
+    stub(leadService, 'getLead', async (id) => ({ id, fullName: 'Sig Client', retainerSigned: '' })),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    delete process.env.STAFF_SIGNATURE_NOTIFY_EMAILS;
+    let r1;
+    {
+      const restore = stub(microsoftMail, 'sendEmail', async () => { sends++; });
+      try { r1 = await documenso.captureCompleted({ event: 'DOCUMENT_COMPLETED', payload: { id: 57, externalId: 'retainer-779', status: 'COMPLETED', items: [] } }); }
+      finally { restore(); }
+    }
+    assert.equal(r1.type, 'retainer'); assert.equal(sends, 0, 'no env → no email');
+
+    process.env.STAFF_SIGNATURE_NOTIFY_EMAILS = 'kamal@tdotimm.com';
+    let r2;
+    {
+      const restore = stub(microsoftMail, 'sendEmail', async () => { throw new Error('graph 503'); });
+      try { r2 = await documenso.captureCompleted({ event: 'DOCUMENT_COMPLETED', payload: { id: 58, externalId: 'retainer-780', status: 'COMPLETED', items: [] } }); }
+      finally { restore(); }
+    }
+    assert.equal(r2.type, 'retainer', 'capture succeeds even when the notification email fails');
+  } finally {
+    base.forEach((r) => r());
+    if (prevEnv === undefined) delete process.env.STAFF_SIGNATURE_NOTIFY_EMAILS;
+    else process.env.STAFF_SIGNATURE_NOTIFY_EMAILS = prevEnv;
+  }
+});
+
+test('REPLAY GUARD: an already-signed lead never re-triggers the staff notification', async () => {
+  const leadService   = require('../src/services/leadService');
+  const mondayApi     = require('../src/services/mondayApi');
+  const microsoftMail = require('../src/services/microsoftMailService');
+  const prevEnv = process.env.STAFF_SIGNATURE_NOTIFY_EMAILS;
+  process.env.STAFF_SIGNATURE_NOTIFY_EMAILS = 'kamal@tdotimm.com';
+  let mails = 0, stateWrites = 0;
+  const restore = [
+    // retainerSigned already set = a webhook redelivery or admin recapture
+    stub(leadService, 'getLead', async (id) => ({ id, fullName: 'Replayed Client', retainerSigned: '2026-08-01' })),
+    stub(leadService, 'updateLead', async () => { stateWrites++; }),
+    stub(mondayApi, 'query', async () => ({})),
+    stub(microsoftMail, 'sendEmail', async () => { mails++; }),
+  ];
+  try {
+    const r = await documenso.captureCompleted({
+      event: 'DOCUMENT_COMPLETED',
+      payload: { id: 59, externalId: 'retainer-781', status: 'COMPLETED', items: [] },
+    });
+    assert.equal(r.type, 'retainer');
+    assert.equal(mails, 0, 'the email fires ONLY on the delivery that flips the signed state');
+    assert.equal(stateWrites, 0, 'replay semantics identical to the state write');
+  } finally {
+    restore.forEach((r) => r());
+    if (prevEnv === undefined) delete process.env.STAFF_SIGNATURE_NOTIFY_EMAILS;
+    else process.env.STAFF_SIGNATURE_NOTIFY_EMAILS = prevEnv;
+  }
+});

@@ -97,6 +97,12 @@ function buildRetainerPlan(lead = {}, overrides = {}) {
     : (govFeeCalc ? govFeeCalc.totalDollars : null);
   if (annex && !govFeeCalc) warnings.push('No default government fee for this annex — enter it manually.');
 
+  // LMIA advertisement/recruitment disbursement — manual entry only (no
+  // computed default; feedback 2026-08-13). Printed on Annex B beside the
+  // government fee; not part of the professional fee or the milestone sum.
+  const adFeeDollars = (o.adFeeDollars != null && Number.isFinite(Number(o.adFeeDollars)) && Number(o.adFeeDollars) > 0)
+    ? Number(o.adFeeDollars) : null;
+
   // --- milestones ---
   const milestones = Array.isArray(o.milestones) ? o.milestones
     : (feeCents != null ? defaultMilestones(feeCents) : []);
@@ -178,6 +184,7 @@ function buildRetainerPlan(lead = {}, overrides = {}) {
       employerPaid: govFeeCalc ? !!govFeeCalc.employerPaid : false,
       detail: govFeeCalc || null,
     },
+    adFee: { dollars: adFeeDollars },
     milestones,
     milestoneCheck,
     mergeData,
@@ -200,6 +207,7 @@ function overridesFromLead(lead = {}) {
     annexCode:     lead.selectedScopeAnnex || undefined,
     template:      lead.selectedTemplate || undefined,
     govFeeDollars: lead.govFee ? Number(lead.govFee) : undefined,
+    adFeeDollars:  lead.advertisementFee ? Number(lead.advertisementFee) : undefined,
     withRprf:      lead.retainerWithRprf ? (lead.retainerWithRprf !== 'No') : undefined,
     hstRate:       lead.retainerHstRate || undefined,
     milestones,
@@ -218,6 +226,7 @@ function milestoneAnnexFromPlan(plan) {
     hstRate:           plan.hstRate,
     govFeeDollars:     plan.govFee ? plan.govFee.dollars : null,
     govFeeEmployerPaid: plan.govFee ? plan.govFee.employerPaid : false,
+    adFeeDollars:      plan.adFee ? plan.adFee.dollars : null,
     paName:            plan.mergeData.paName,
     applicationType:   plan.mergeData.applicationType,
   };

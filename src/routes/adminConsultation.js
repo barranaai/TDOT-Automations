@@ -239,10 +239,12 @@ function dcEl(id){ return document.getElementById(id); }
 function openDirectClient(){
   dcEl('dc-err').textContent='';
   DC_MATCHES=null; var mb=dcEl('dc-matches'); if(mb){ mb.style.display='none'; mb.innerHTML=''; }
-  // A carried profile belongs to ONE opening of the modal — reopening it for a
-  // different walk-in must never stamp the previous client's case/family.
-  // (The ?newAppFrom boot calls openDirectClient FIRST, then loads the profile.)
-  DC_PROFILE_REF=null; var pb=dcEl('dc-profile'); if(pb){ pb.style.display='none'; pb.innerHTML=''; }
+  // A carried profile / lead conversion belongs to ONE opening of the modal —
+  // reopening it for a different walk-in must never stamp the previous
+  // client's case/family or link the previous lead.
+  // (The ?newAppFrom / ?convertLead boots call openDirectClient FIRST.)
+  DC_PROFILE_REF=null; DC_CONVERT_LEAD_ID=null;
+  var pb=dcEl('dc-profile'); if(pb){ pb.style.display='none'; pb.innerHTML=''; }
   dcEl('dc-overlay').style.display='flex';
   var first=dcEl('dc-name'); if(first) first.focus();
   if(DC_OPTS) return;
@@ -290,6 +292,13 @@ function dcRenderMatches(m){
   rows.push('<label class="dcm-row"><input type="radio" name="dcm-choice" value="new"><span>Create a new client anyway (I checked — this is a different person or a genuinely new matter)</span></label>');
   box.innerHTML='<div class="dcm-title">&#9888; This email/phone already exists in the system — choose how to proceed:</div>'+rows.join('');
   box.style.display='block';
+  // The duplicate panel takes precedence over a boot-time lead conversion —
+  // exactly ONE link-choosing UI may be visible, so drop the pre-link and its
+  // banner; the converting lead reappears above as an explicit radio option.
+  if(DC_CONVERT_LEAD_ID){
+    DC_CONVERT_LEAD_ID=null;
+    var pb=dcEl('dc-profile'); if(pb){ pb.style.display='none'; pb.innerHTML=''; }
+  }
 }
 /* ── "New application" prefill (?newAppFrom=CASE-REF) ── */
 var DC_PROFILE_REF=null;
@@ -330,6 +339,34 @@ function dcClearMatches(){
   // radio — a stale "link" choice must never target the previous person.
   DC_MATCHES=null; DC_MATCH_SEQ++;
   var box=dcEl('dc-matches'); if(box){ box.style.display='none'; box.innerHTML=''; }
+  // Same rule for a lead conversion: editing email/phone may mean a different
+  // person — drop the pre-linked lead and let the duplicate check re-offer it.
+  if(DC_CONVERT_LEAD_ID){
+    DC_CONVERT_LEAD_ID=null;
+    var pb=dcEl('dc-profile'); if(pb){ pb.style.display='none'; pb.innerHTML=''; }
+  }
+}
+/* ── Lead → direct retainer conversion (?convertLead=<leadId>) ── */
+var DC_CONVERT_LEAD_ID=null;
+function dcLoadConvertLead(leadId){
+  var key=getKey(); if(!key) return;
+  fetch('/api/lead/'+encodeURIComponent(leadId),{headers:{'X-Api-Key':key}})
+    .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(d){
+      var set=function(elId,v){ var el=dcEl(elId); if(el && v && !el.value) el.value=v; };
+      set('dc-name', d.name||'');
+      set('dc-email', d.email||'');
+      set('dc-phone', d.phone||'');
+      set('dc-address', d.address||'');
+      DC_CONVERT_LEAD_ID=String(leadId);
+      var box=dcEl('dc-profile');
+      if(box){
+        box.innerHTML='<div class="dcp-title">Converting lead '+escHtml(String(leadId))+' ('+escHtml(d.name||'')+') to a direct retainer client</div>'
+          +'<div>The EXISTING lead row is reused — no duplicate is created. Pick the case type and consultant, then create; the retainer panel opens next.</div>';
+        box.style.display='block';
+      }
+    })
+    .catch(function(){ var err=dcEl('dc-err'); if(err) err.textContent='Could not load that lead — fill the fields manually (the duplicate check will still offer to link it).'; });
 }
 function dcCheckMatches(){
   var email=(dcEl('dc-email').value||'').trim(), phone=(dcEl('dc-phone').value||'').trim();
@@ -370,6 +407,10 @@ function submitDirectClient(){
     if(!choice){ err.textContent='Possible existing records found — choose "link to existing" or "create new anyway" above.'; return; }
     if(choice.indexOf('link:')===0) body.linkLeadId=choice.slice(5);
     else body.allowDuplicate=true;
+  } else if(DC_CONVERT_LEAD_ID){
+    // Boot-time conversion (?convertLead): the link target was chosen by the
+    // staff member on the Leads page; an explicit radio only overrides it.
+    body.linkLeadId=DC_CONVERT_LEAD_ID;
   }
   var key=getKey(); if(!key) return;
   var btn=dcEl('dc-create'); btn.disabled=true; btn.textContent='Creating…';
@@ -410,6 +451,10 @@ function submitDirectClient(){
   // from the previous case's profile.
   var newAppFrom=new URLSearchParams(window.location.search).get('newAppFrom');
   if(newAppFrom){ openDirectClient(); dcLoadProfile(newAppFrom); }
+  // Lead conversion from the Leads page (team feedback 2026-08-13): open the
+  // modal pre-filled from the lead and pre-linked to it (no duplicate row).
+  var convertLead=new URLSearchParams(window.location.search).get('convertLead');
+  if(convertLead && !newAppFrom){ openDirectClient(); dcLoadConvertLead(convertLead); }
 })();
 
 /* In-progress direct retainer clients (case-first; drops off once Retained). */
@@ -810,6 +855,10 @@ ${buildNavHeader('consultations')}
           <div class="subhead">Government fee (CAD)</div>
           <input id="rp-govfee" type="number" min="0" step="0.01" placeholder="0.00">
           <label class="rp-check"><input id="rp-rprf" type="checkbox"> Include RPRF</label>
+        </div>
+        <div class="rp-field" id="rp-adfee-field" style="display:none">
+          <div class="subhead">Advertisement fee (CAD) <span class="muted">(LMIA recruitment)</span></div>
+          <input id="rp-adfee" type="number" min="0" step="0.01" placeholder="0.00">
         </div>
         <div class="rp-field">
           <div class="subhead">HST rate (%) <span class="muted">(13% default)</span></div>
@@ -1245,6 +1294,8 @@ function hydrateRetainer(d){
     rpFetchCaseTypeOpts();
   }
   var gov=plan.govFee||{}; rpEl('rp-govfee').value=(gov.dollars!=null)?gov.dollars:'';
+  var adf=plan.adFee||{}; rpEl('rp-adfee').value=(adf.dollars!=null)?adf.dollars:'';
+  rpUpdateAdFeeVisibility();
   rpEl('rp-rprf').checked=(gov.withRprf!==false);
   if(rpEl('rp-hst')) rpEl('rp-hst').value=(plan.hstRate!=null)?(Math.round(plan.hstRate*1000)/10):13;
   var m=plan.mergeData||{};
@@ -1338,7 +1389,7 @@ function renderMilestonePayments(list){
 }
 function rebuildMilestones(rows){
   var tb=rpEl('milestone-body'); tb.innerHTML='';
-  if(!rows||!rows.length) rows=[{label:'Milestone 1 – Admin Fee (50% Non-Refundable)',amountCents:0,locked:true}];
+  if(!rows||!rows.length) rows=[{label:'Milestone 1 – Admin Fee (Non-Refundable)',amountCents:0,locked:true}];
   rows.forEach(function(m,i){ var tr=document.createElement('tr'); tr.innerHTML=mileRowHtml(m,i===0); tb.appendChild(tr); });
   bindMile();
 }
@@ -1433,7 +1484,17 @@ function rpPopulateCaseTypes(){
   sel.innerHTML=html; sel.value=cur;
   rpPopulateSubtypes();
 }
+function rpUpdateAdFeeVisibility(){
+  // LMIA-family case types get the advertisement-fee input (feedback
+  // 2026-08-13). A stored amount stays VISIBLE regardless of case type — the
+  // value always rides along on save, so it must never be hidden while set.
+  var f=rpEl('rp-adfee-field'); if(!f) return;
+  var ct=(rpEl('rp-casetype')&&rpEl('rp-casetype').value)||RP_PLAN_CT||'';
+  var hasValue=rpEl('rp-adfee')&&rpEl('rp-adfee').value!=='';
+  f.style.display=(/lmia/i.test(ct)||hasValue)?'':'none';
+}
 function rpPopulateSubtypes(){
+  rpUpdateAdFeeVisibility();
   var sel=rpEl('rp-subtype'); if(!sel) return;
   var ct=rpEl('rp-casetype')?rpEl('rp-casetype').value:'';
   var subs=(RP_CT_OPTS&&RP_CT_OPTS.subTypesByCase&&RP_CT_OPTS.subTypesByCase[ct])||[];
@@ -1456,6 +1517,7 @@ function rpSelectedNonCanon(el){
 function collectSelections(){
   var sel={ template:rpEl('rp-template').value, annexCode:rpEl('rp-annex').value,
     feeCents:feeCentsNow(), govFeeDollars: rpEl('rp-govfee').value!==''?Number(rpEl('rp-govfee').value):undefined,
+    adFeeDollars: rpEl('rp-adfee').value!==''?Number(rpEl('rp-adfee').value):undefined,
     hstRate: Math.round(hstRateNow()*1000)/10, withRprf: rpEl('rp-rprf').checked, milestones:collectMilestones(), familyMembers:collectFamily() };
   // Case type / sub-type ride along ONLY when the canon options actually loaded —
   // an omitted field leaves the stored value untouched server-side, so a slow or

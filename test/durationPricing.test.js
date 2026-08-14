@@ -129,16 +129,25 @@ test('paid amount ≠ stored option → the recorded option is CORRECTED to the 
   } finally { restore.forEach((x) => x()); }
 });
 
-test('paid amount = stored option → no write (normal path untouched)', async () => {
-  let wrote = false;
+test('paid amount = stored option → ONE write recording paidCents, then settled', async () => {
+  // Since the HST change (2026-08-14) the reconcile remembers the actual total
+  // collected — the consult agreement's "has paid" figure comes from it. The
+  // option itself is untouched, and a re-delivered webhook writes nothing.
+  const writes = [];
   const restore = [
-    stub(leadService, 'updateLead', async () => { wrote = true; }),
+    stub(leadService, 'updateLead', async (id, f) => { writes.push(f); }),
     stub(mondayApi, 'query', async () => ({})),
   ];
   try {
     await bookingService.reconcileConsultOptionWithPayment(
       shafoliLead({ consultOption: '{"durationMin":30,"feeCents":20000,"variationId":"V"}' }), 20000);
-    assert.equal(wrote, false);
+    assert.equal(writes.length, 1, 'paidCents recorded once');
+    const o = JSON.parse(writes[0].consultOption);
+    assert.equal(o.paidCents, 20000);
+    assert.equal(o.durationMin, 30); assert.equal(o.feeCents, 20000); assert.equal(o.variationId, 'V');
+    await bookingService.reconcileConsultOptionWithPayment(
+      shafoliLead({ consultOption: writes[0].consultOption }), 20000);
+    assert.equal(writes.length, 1, 'webhook replay writes nothing');
   } finally { restore.forEach((x) => x()); }
 });
 

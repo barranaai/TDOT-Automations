@@ -98,10 +98,22 @@ function parseJson(text) {
  * deliberately avoids the words token/missing/not found so upstream error
  * classifiers treat it as a retryable backend failure, never an access denial.
  */
+/** One retry after a short pause: a single Graph blip (429/5xx/socket) must not
+ *  fail a page load when the very next read would have succeeded. A second
+ *  failure still propagates — the fail-loud contract above is unchanged. */
+async function readQFileWithRetry(args) {
+  try {
+    return await oneDrive.readFile(args);
+  } catch (_) {
+    await new Promise((r) => setTimeout(r, 350));
+    return oneDrive.readFile(args);
+  }
+}
+
 async function loadFormMeta({ clientName, caseRef, formKey }) {
   let buf;
   try {
-    buf = await oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: dataFilename(caseRef, formKey) });
+    buf = await readQFileWithRetry({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: dataFilename(caseRef, formKey) });
   } catch (err) {
     const e = new Error(`questionnaire storage temporarily unavailable (${err.message})`);
     e.transient = true;
@@ -115,7 +127,7 @@ async function loadFormMeta({ clientName, caseRef, formKey }) {
   }
   // Legacy CSV era — real pre-refresh answers with no JSON wrapper.
   try {
-    const csvBuf = await oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: csvFilename(caseRef, formKey) });
+    const csvBuf = await readQFileWithRetry({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: csvFilename(caseRef, formKey) });
     if (csvBuf) return { fields: parseCsvLegacy(csvBuf.toString('utf8')), formFile: '' };
   } catch (err) {
     const e = new Error(`questionnaire storage temporarily unavailable (${err.message})`);
@@ -213,6 +225,21 @@ async function versionFormFilesForCase({ clientName, caseRef, formFiles }) {
   const hit = _eraCache.get(cacheKey);
   if (hit && Date.now() - hit.at < 60_000) return hit.result;
 
+  // A page load fires the page GET plus /data and /flags concurrently, each
+  // hitting a cold cache — collapse them into ONE resolution per case.
+  const inflight = _eraInFlight.get(cacheKey);
+  if (inflight) return inflight;
+  const resolution = _resolveEra({ clientName, caseRef, formFiles, LEGACY, cacheKey });
+  _eraInFlight.set(cacheKey, resolution);
+  try {
+    return await resolution;
+  } finally {
+    _eraInFlight.delete(cacheKey);
+  }
+}
+
+async function _resolveEra({ clientName, caseRef, formFiles, LEGACY, cacheKey }) {
+  const versionedCurrent = [formFiles.primary, formFiles.additional].filter((f) => f && LEGACY[f]);
   const legacyOf = (f) => LEGACY[f];
   const currentSet = new Set(versionedCurrent);
   const legacySet  = new Set(versionedCurrent.map(legacyOf));
@@ -223,14 +250,26 @@ async function versionFormFilesForCase({ clientName, caseRef, formFiles }) {
   // Scan EVERY slot real answers can live in — anchoring on one slot misses
   // legacy cases whose only answers sit on a spouse/child form (multi-member
   // autosave skips empty members) or under the old 'additional' key.
+  // The member enumeration is STRICT here (unlike loadMembers, which swallows
+  // errors): a transient failure that silently read as "no members" would
+  // decide the era on the base slots alone — and a legacy case whose only
+  // answers live on a spouse/child form would be served the Aug form, the
+  // exact destruction this resolver exists to prevent.
   const slots = ['primary', 'primary-additional', 'additional'];
   try {
-    const members = await loadMembers({ clientName, caseRef });
-    for (const m of members || []) {
-      if (m.key && m.key !== 'primary') { slots.push(m.key, `${m.key}-additional`); }
-      if (slots.length >= 12) break;
+    const buf = await readQFileWithRetry({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: membersFilename(caseRef) });
+    if (buf) {
+      let data = null; try { data = JSON.parse(buf.toString('utf8')); } catch (_) { /* corrupt file = no members */ }
+      for (const m of (data && Array.isArray(data.members)) ? data.members : []) {
+        if (m && m.key && m.key !== 'primary') { slots.push(m.key, `${m.key}-additional`); }
+        if (slots.length >= 12) break;
+      }
     }
-  } catch (_) { /* members unreadable — the base slots still decide correctly for the common case */ }
+  } catch (err) {
+    const e = new Error(`questionnaire storage temporarily unavailable (${err.message})`);
+    e.transient = true;
+    throw e;
+  }
 
   // ANY legacy signal pins the case to the legacy era: an explicit legacy
   // record, OR unrecorded client answers (which can only predate the refresh —
@@ -238,9 +277,18 @@ async function versionFormFilesForCase({ clientName, caseRef, formFiles }) {
   // the April form can only under-show a few relabeled fields; serving the Aug
   // form can DESTROY April answers on the next wholesale save. Asymmetric
   // harm → asymmetric rule.
+  // All slots read in PARALLEL — a cold resolution costs one Graph round-trip,
+  // not one per slot. allSettled applies the asymmetric-harm rule to failures
+  // too: a legacy signal in ANY readable slot pins legacy immediately (a
+  // failed slot can never un-pin it), while a failure with NO legacy signal
+  // found still THROWS — the unread slot might hold the only April answers,
+  // and guessing "current" is the one unrecoverable outcome.
   let legacySignal = false;
-  for (const slot of slots) {
-    const meta = await loadFormMeta({ clientName, caseRef, formKey: slot });   // transient errors THROW through
+  let firstFailure = null;
+  const settled = await Promise.allSettled(slots.map((slot) => loadFormMeta({ clientName, caseRef, formKey: slot })));
+  for (const s of settled) {
+    if (s.status === 'rejected') { if (!firstFailure) firstFailure = s.reason; continue; }
+    const meta = s.value;
     if (meta.formFile && legacySet.has(meta.formFile)) { legacySignal = true; break; }
     if (meta.formFile && currentSet.has(meta.formFile)) continue;   // explicitly Aug-era slot — its answers are Aug-keyed
     // Client answers only — prefill-seeded values are OURS, present on brand-new
@@ -249,12 +297,14 @@ async function versionFormFilesForCase({ clientName, caseRef, formFiles }) {
       legacySignal = true; break;
     }
   }
+  if (!legacySignal && firstFailure) throw firstFailure;
   const result = legacySignal ? mapToLegacy() : formFiles;
   _eraCache.set(cacheKey, { at: Date.now(), result });
   if (_eraCache.size > 500) _eraCache.delete(_eraCache.keys().next().value);
   return result;
 }
 const _eraCache = new Map();
+const _eraInFlight = new Map();
 
 /**
  * The save routes record the era the CLIENT actually had on screen: the served
@@ -285,7 +335,14 @@ function formFileForKey(formFiles, formKey) {
     : (formFiles && formFiles.primary) || '';
 }
 
-async function validateAccess(caseRef, token) {
+/**
+ * opts.skipFormVersioning — for AUTH-ONLY callers (the client portal page and
+ * its upload endpoint) that never render or save a questionnaire form: token
+ * validation stays identical but the era resolution (and its OneDrive reads)
+ * is skipped entirely, so a storage blip can't fail a page that doesn't need
+ * storage. Any caller that serves a form or records a save MUST NOT skip.
+ */
+async function validateAccess(caseRef, token, opts = {}) {
   if (!caseRef || !token) throw new Error('Missing case reference or access token.');
 
   const entry = await lookupCase(caseRef);
@@ -295,9 +352,10 @@ async function validateAccess(caseRef, token) {
     throw new Error('Invalid or expired access token.');
   }
 
-  const formFiles = await versionFormFilesForCase({
+  const baseForms = resolveForm(entry.caseType, entry.caseSubType);
+  const formFiles = opts.skipFormVersioning ? baseForms : await versionFormFilesForCase({
     clientName: entry.clientName || entry.name, caseRef,
-    formFiles: resolveForm(entry.caseType, entry.caseSubType),
+    formFiles: baseForms,
   });
 
   return { ...entry, formFiles };
@@ -310,13 +368,14 @@ async function validateAccess(caseRef, token) {
  * caseType, caseSubType, accessToken, formFiles) so call sites are
  * interchangeable.
  */
-async function validateAccessForStaff(caseRef) {
+async function validateAccessForStaff(caseRef, opts = {}) {
   if (!caseRef) throw new Error('Missing case reference.');
   const entry = await lookupCase(caseRef);
   if (!entry) throw new Error('Case not found.');
-  const formFiles = await versionFormFilesForCase({
+  const baseForms = resolveForm(entry.caseType, entry.caseSubType);
+  const formFiles = opts.skipFormVersioning ? baseForms : await versionFormFilesForCase({
     clientName: entry.clientName || entry.name, caseRef,
-    formFiles: resolveForm(entry.caseType, entry.caseSubType),
+    formFiles: baseForms,
   });
   return { ...entry, formFiles };
 }

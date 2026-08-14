@@ -77,7 +77,10 @@ function milestoneStates(lead, currentCaseStage, orderedStages = []) {
     // UIs offer a deliberate "send proper e-Transfer details" re-issue.
     const legacySent = p.status === 'sent';
     return {
-      index: i, label: r.label, amountCents: r.amountCents, totalCents: r.totalCents, trigger,
+      // displayMilestoneLabel: pre-2026-08-13 plans stored "(50% Non-Refundable)"
+      // — normalized here so the portal card, e-transfer emails and notes can
+      // never contradict the re-generated Annex B.
+      index: i, label: require('./retainerPlanService').displayMilestoneLabel(r.label), amountCents: r.amountCents, totalCents: r.totalCents, trigger,
       status: legacySent ? 'requested' : (p.status || 'pending'),
       legacySent,
       requestedAt: p.requestedAt || p.sentAt || '', paidAt: p.paidAt || '',

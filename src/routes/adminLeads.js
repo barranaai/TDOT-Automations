@@ -296,6 +296,9 @@ ${buildNavHeader('leads')}
           <div id="invite-warn" style="display:none;background:#fff4e5;border:1px solid #f0c98a;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:13px;color:#7a4b00"></div>
           <div class="muted" style="margin-bottom:8px;line-height:1.5">This is the invite email's body — the standard consultation-booking paragraph (no case-condition commentary, per firm policy). Edit only if needed, then send. The email adds the greeting, booking button and fee details around it.</div>
           <textarea id="invite-msg" rows="8" placeholder="The email will use the standard consultation-booking paragraph unless you write a message here."></textarea>
+          <div class="btn-row" id="convert-row" style="display:none;margin-bottom:10px">
+            <a class="btn" id="btn-convert" title="Returning/existing client who doesn't need a consultation — reuse THIS lead (no duplicate) and go straight to the retainer panel">→ Convert to direct retainer</a>
+          </div>
           <div class="btn-row">
             <button class="btn" id="btn-save-msg" title="Save the message without sending">${I.clip} Save draft</button>
             <button class="btn primary" id="btn-invite" title="Email the client this message with their booking link">${I.send} Send booking invite</button>
@@ -406,6 +409,19 @@ function render(d){
     if(d.directRetainer && d.bookingStatus!=='Booked'){
       lc.innerHTML=lc.innerHTML.replace('Open consultation view','Open retainer view');
       var rb=document.getElementById('btn-resend'); if(rb) rb.style.display='none'; // no meeting to resend
+    }
+  } else {
+    // Un-booked, non-direct lead: returning clients can skip the consultation
+    // entirely (team feedback 2026-08-13) — convert THIS lead into a direct
+    // retainer client. The Consultations page opens with the modal pre-filled
+    // and linked to this lead, so no duplicate row is minted; the server still
+    // refuses leads that are already booked/sent/retained.
+    // Mirror the server's link-conversion guards (booked / slot held / open
+    // case are refused there) — never offer a button that's guaranteed to 409.
+    var cr=document.getElementById('convert-row');
+    if(cr && !d.clientMasterItemId && d.bookingStatus!=='Slot Held' && !d.bookedSlot){
+      cr.style.display='flex';
+      document.getElementById('btn-convert').href='/admin/consultation?convertLead='+encodeURIComponent(d.leadId);
     }
   }
 }

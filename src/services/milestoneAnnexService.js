@@ -21,7 +21,7 @@ const m = (c) => '$' + centsToMoney(c);
  *           govFeeEmployerPaid?:boolean, paName?:string, applicationType?:string }} p
  * @returns {Promise<Buffer>}
  */
-function buildMilestoneAnnexPdf({ schedule, hstRate = 0.13, govFeeDollars = null, govFeeEmployerPaid = false, paName = '', applicationType = '' } = {}) {
+function buildMilestoneAnnexPdf({ schedule, hstRate = 0.13, govFeeDollars = null, govFeeEmployerPaid = false, adFeeDollars = null, paName = '', applicationType = '' } = {}) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 56, size: 'LETTER' });
     const chunks = [];
@@ -85,8 +85,12 @@ function buildMilestoneAnnexPdf({ schedule, hstRate = 0.13, govFeeDollars = null
     drawRow(y, cols.map((c) => c.t), { head: true }); y += RH;
 
     schedule.rows.forEach((r, i) => {
-      // Row 1 carries the asterisk pointing at the 50% non-refundable note below.
-      const label = i === 0 ? `${r.label} *` : r.label;
+      // Row 1 carries the asterisk pointing at the non-refundable note below.
+      // Plans saved before 2026-08-13 stored the old "(50% Non-Refundable)"
+      // default label — normalize it so a re-generated annex can't state 50%
+      // in the table while the acknowledgement below says non-refundable in full.
+      const rowLabel = require('./retainerPlanService').displayMilestoneLabel(r.label);
+      const label = i === 0 ? `${rowLabel} *` : rowLabel;
       const rh = rowHeightFor(label);
       drawRow(y, [label, m(r.amountCents), m(r.hstCents), m(r.totalCents)]);
       doc.strokeColor('#eceef2').moveTo(X, y + rh).lineTo(X + W, y + rh).stroke();
@@ -97,18 +101,17 @@ function buildMilestoneAnnexPdf({ schedule, hstRate = 0.13, govFeeDollars = null
     drawRow(y, ['Total professional fee', m(schedule.totals.amountCents), m(schedule.totals.hstCents), m(schedule.totals.totalCents)], { bold: true });
     y += RH;
 
-    // First-milestone (admin fee) acknowledgement — mirrors the master agreement.
-    // The 50% is stated with the ACTUAL dollar figures so the fee schedule leaves
-    // no room for interpretation about what is and is not refundable.
+    // First-milestone (admin fee) acknowledgement — the first milestone IS the
+    // administrative fee, non-refundable in full (meeting decision 2026-08-13;
+    // supersedes the earlier 50%-of-milestone-1 wording). Stated with the ACTUAL
+    // dollar figure so the fee schedule leaves no room for interpretation.
     // Reset x to the left margin (the table left doc.x at the last column).
     let cy = y + 18;
     const first = schedule.rows[0];
-    const adminHalfCents = first ? Math.round(first.amountCents / 2) : 0;
-    doc.fillColor(navy).fontSize(10).font('Helvetica-Bold').text('* First milestone — administrative fee (50% non-refundable)', X, cy, { width: W });
+    doc.fillColor(navy).fontSize(10).font('Helvetica-Bold').text('* First milestone — administrative fee (non-refundable)', X, cy, { width: W });
     doc.font('Helvetica').fillColor('#111111').fontSize(9.5).text(
-      `Of the first milestone payment of ${first ? m(first.amountCents) : '$0.00'} (before HST), fifty percent (50%) — ${m(adminHalfCents)} — `
-      + 'constitutes a non-refundable administrative fee, charged upon engagement. The remainder of the first milestone is subject to the '
-      + 'refund terms of the retainer agreement. By signing the retainer agreement, the Client acknowledges and agrees to this.',
+      `The first milestone payment of ${first ? m(first.amountCents) : '$0.00'} (before HST) constitutes the non-refundable `
+      + 'administrative fee, charged upon engagement. By signing the retainer agreement, the Client acknowledges and agrees to this.',
       X, doc.y + 2, { width: W, align: 'justify' });
     cy = doc.y + 14;
 
@@ -117,6 +120,17 @@ function buildMilestoneAnnexPdf({ schedule, hstRate = 0.13, govFeeDollars = null
       const who = govFeeEmployerPaid ? 'employer-paid to ESDC' : 'payable to IRCC';
       doc.font('Helvetica').fillColor('#111111').fontSize(10).text(
         `$${dollarsToMoney(govFeeDollars)} — ${who}, separate from the professional fee and not subject to HST.`, X, doc.y + 3, { width: W });
+      cy = doc.y + 12;
+    }
+
+    // LMIA recruitment/advertising disbursement — manual entry on the retainer
+    // panel (team feedback 2026-08-13); rendered only when a positive amount
+    // was entered, so non-LMIA agreements are untouched.
+    if (adFeeDollars != null && Number(adFeeDollars) > 0) {
+      doc.fillColor(navy).fontSize(11).font('Helvetica-Bold').text('Advertisement fee (recruitment — third-party disbursement)', X, cy, { width: W });
+      doc.font('Helvetica').fillColor('#111111').fontSize(10).text(
+        `$${dollarsToMoney(adFeeDollars)} — for job advertisement placement as required for the LMIA recruitment process, separate from the professional fee.`,
+        X, doc.y + 3, { width: W });
       cy = doc.y + 12;
     }
 

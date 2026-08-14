@@ -274,6 +274,17 @@ async function sendConsultationPackage(leadId) {
     : (joinUrl ? `<p style="margin:6px 0"><b>Join the video call:</b><br><a href="${e(joinUrl)}" style="color:${BRAND.primary}">${e(joinUrl)}</a></p>` : '');
   const btn = (href, label) => `<a href="${e(href)}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;margin:4px 0">${label}</a>`;
 
+  // Consultant line — whole line bold, with the RCIC designation + licence
+  // number (team feedback 2026-08-13: clients kept asking "who is this?").
+  // The number comes only from an EXACT registry name match — resolveConsultant's
+  // routing fallback could name a different consultant than the one displayed.
+  const { CONSULTANTS } = require('../../config/consultantRouting');
+  const consultantName = (lead.assignedConsultant || '').trim();
+  const registryMatch  = Object.values(CONSULTANTS).find((c) => c.name === consultantName);
+  const withLine = consultantName
+    ? `<p style="margin:6px 0;font-size:15px"><b>With: ${e(consultantName)}, ${e(registryMatch ? registryMatch.rcicRole : 'RCIC')}${registryMatch ? ` #${e(registryMatch.rcicNumber)}` : ''}</b></p>`
+    : '';
+
   const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
     <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
       <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Your consultation is booked</h1></div>
@@ -281,7 +292,7 @@ async function sendConsultationPackage(leadId) {
       <p>Hi ${e((lead.fullName || 'there').split(' ')[0])},</p>
       <p>Your consultation with TDOT Immigration is confirmed. Here are the details and your next steps.</p>
       ${when ? `<p style="margin:6px 0"><b>When:</b> ${e(when)} (Toronto time)</p>` : ''}
-      ${lead.assignedConsultant ? `<p style="margin:6px 0"><b>With:</b> ${e(lead.assignedConsultant)}, RCIC</p>` : ''}
+      ${withLine}
       ${whereBlock}
       <div style="border-top:1px solid ${BRAND.border};margin:20px 0"></div>
       <p style="margin:0 0 4px"><b>${alreadySigned ? 'Before your consultation, please complete the step below:' : 'Before your consultation, please complete these two steps:'}</b></p>

@@ -171,3 +171,37 @@ test('sendConsultAgreement: already-signed lead → no envelope, no email, repor
     assert.equal(wrote, false, 'consultAgreementSent not re-stamped');
   } finally { restore.forEach((x) => x()); }
 });
+
+// ─── the "With:" line (team feedback 2026-08-13) ─────────────────────────────
+
+test('package email: consultant line is bold with RCIC designation + licence number', async () => {
+  const mails = [], writes = [];
+  const restore = [
+    stub(leadService, 'getLead', async (id) => lead({ id, assignedConsultant: 'Shafoli Kapur' })),
+    stub(leadService, 'updateLead', async (id, f) => { writes.push(f); }),
+    stub(consultAgreementSvc, 'ensureConsultAgreementReady', async () => ({ lead: lead(), url: 'https://x/agreement' })),
+    stub(consultAgreementSvc, 'maybeSendConsultEsign', async () => null),
+    stub(microsoftMail, 'sendEmail', async (m) => { mails.push(m); }),
+  ];
+  try {
+    await consultationService.sendConsultationPackage('501');
+    assert.match(mails[0].html, /<b>With: Shafoli Kapur, RCIC-IRB #R518177<\/b>/,
+      'whole line bold, real designation, real licence number');
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('package email: an unrecognized consultant name never borrows another licence number', async () => {
+  const mails = [];
+  const restore = [
+    stub(leadService, 'getLead', async (id) => lead({ id, assignedConsultant: 'Some Locum' })),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(consultAgreementSvc, 'ensureConsultAgreementReady', async () => ({ lead: lead(), url: 'https://x/agreement' })),
+    stub(consultAgreementSvc, 'maybeSendConsultEsign', async () => null),
+    stub(microsoftMail, 'sendEmail', async (m) => { mails.push(m); }),
+  ];
+  try {
+    await consultationService.sendConsultationPackage('501');
+    assert.match(mails[0].html, /<b>With: Some Locum, RCIC<\/b>/, 'falls back to the bare designation');
+    assert.ok(!/#R\d/.test(mails[0].html), 'no licence number without an exact registry match');
+  } finally { restore.forEach((x) => x()); }
+});
