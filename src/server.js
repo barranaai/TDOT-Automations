@@ -696,6 +696,20 @@ app.post('/api/case/:caseRef/document/:itemId/status', async (req, res) => {
 });
 
 // Leads tab — the whole Lead Board, newest first (pre-booking pipeline)
+// Staff-entered phone-in lead ("direct leads", meeting 2026-08-13). Same
+// duplicate contract as the direct-client modal: 409 + matches until staff
+// explicitly re-submit with allowDuplicate.
+app.post('/api/leads/create', express.json(), async (req, res) => {
+  try {
+    res.json(await consultantPortalService.createStaffLead(req.body || {}));
+  } catch (err) {
+    if (err.conflict)   return res.status(409).json({ error: err.message, matches: err.matches });
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    console.error('[Leads] Staff lead create failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/api/leads', async (_req, res) => {
   try {
     const leads = await consultantPortalService.getLeadsQueue();

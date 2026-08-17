@@ -49,6 +49,15 @@ function buildLeadsQueueHTML() {
   #content { display:none; }
   .page-h { font-size:22px; font-weight:800; color:var(--navy); letter-spacing:-.5px; margin:0 0 4px; }
   .page-sub { font-size:12px; color:#94a3b8; margin:0 0 20px; font-weight:500; }
+  .al-l { display:block; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:#64748b; margin:10px 0 4px; font-weight:600; }
+  #al-overlay input, #al-overlay select, #al-overlay textarea { width:100%; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px; font:inherit; box-sizing:border-box; }
+  #al-overlay { overflow-y:auto; }
+  #al-overlay > div { max-height:calc(100vh - 96px); overflow-y:auto; }
+  .btn { display:inline-flex; align-items:center; gap:6px; border:1px solid #e2e8f0; background:#fff; color:var(--navy); border-radius:9px; padding:8px 14px; font:inherit; font-weight:600; font-size:13px; cursor:pointer; }
+  .btn:hover { background:#f8fafc; }
+  .btn.primary { background:var(--navy); border-color:var(--navy); color:#fff; }
+  .btn.primary:hover { filter:brightness(1.12); }
+  .btn:disabled { opacity:.55; cursor:default; }
   .card { background:white; border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; overflow:hidden; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th { background:#f8fafc; text-align:left; padding:11px 14px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.7px; color:#94a3b8; border-bottom:2px solid #f1f5f9; }
@@ -73,8 +82,33 @@ ${buildNavHeader('leads')}
   <div id="loading"><div class="spinner"></div><div class="muted">Loading leads…</div></div>
   <div id="error-msg"></div>
   <div id="content">
-    <h1 class="page-h">Leads</h1>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <h1 class="page-h" style="margin-bottom:0">Leads</h1>
+      <button class="btn primary" id="btn-add-lead" type="button" title="Phone-in / walk-in caller — add them as a lead with the basics; send the booking invite from their page">＋ Add lead</button>
+    </div>
     <p class="page-sub">Intake submissions awaiting a consultation booking — newest first. Once a consultation is booked, the lead moves to Consultations.</p>
+
+    <div id="al-overlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;align-items:flex-start;justify-content:center;padding:48px 16px">
+      <div style="background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.25);max-width:460px;width:100%;padding:24px">
+        <h3 style="margin:0 0 4px;font-size:17px">Add a lead</h3>
+        <div class="muted" style="font-size:12.5px;margin-bottom:14px">A caller's basics — everything else (booking invite, pre-consultation form) is sent from their lead page afterwards. No case is opened.</div>
+        <label class="al-l" for="al-name">Full name *</label><input id="al-name" type="text" maxlength="120" autocomplete="off">
+        <label class="al-l" for="al-email">Email *</label><input id="al-email" type="email" maxlength="200" autocomplete="off">
+        <label class="al-l" for="al-phone">Phone *</label><input id="al-phone" type="tel" maxlength="40" autocomplete="off">
+        <label class="al-l" for="al-source">How they reached us</label>
+        <select id="al-source"><option>Phone</option><option>WhatsApp</option><option>Email</option><option>Instagram</option><option>Other</option></select>
+        <label class="al-l" for="al-casetype">Case type interest (optional)</label>
+        <select id="al-casetype"><option value="">— not sure yet —</option></select>
+        <label class="al-l" for="al-note">Note (optional)</label>
+        <textarea id="al-note" rows="3" maxlength="2000" placeholder="What they told us on the call…"></textarea>
+        <div id="al-matches" style="display:none;background:#fff4e5;border:1px solid #f0c98a;border-radius:8px;padding:10px 12px;margin-top:12px;font-size:13px;color:#7a4b00"></div>
+        <div id="al-err" style="color:#c0392b;font-size:13px;margin-top:10px"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+          <button class="btn" id="al-cancel" type="button">Cancel</button>
+          <button class="btn primary" id="al-create" type="button">Create lead</button>
+        </div>
+      </div>
+    </div>
 
     <div class="q-head">
       <h2 class="sec-h">Awaiting booking <span id="q-count" class="muted" style="font-weight:500"></span></h2>
@@ -177,6 +211,62 @@ function load(){
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
 ['f-search','f-status','f-service','f-month','f-urgent','f-invite'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
+/* ── Add lead (staff phone-in — meeting 2026-08-13 "direct leads") ── */
+var AL_ALLOW=false;
+function alEl(id){ return document.getElementById(id); }
+function alOpen(){
+  AL_ALLOW=false; alEl('al-err').textContent='';
+  var m=alEl('al-matches'); m.style.display='none'; m.innerHTML='';
+  alEl('al-overlay').style.display='flex'; alEl('al-name').focus();
+  var sel=alEl('al-casetype');
+  if(sel.options.length<=1){ var key=getKey(); if(!key) return;
+    fetch('/api/consultation/direct-client/options',{headers:{'X-Api-Key':key}})
+      .then(function(r){ return r.json(); })
+      .then(function(o){ sel.innerHTML='<option value="">— not sure yet —</option>'+(o.caseTypes||[]).map(function(c){ return '<option>'+escHtml(c)+'</option>'; }).join(''); })
+      .catch(function(){ /* optional field — the list just stays empty */ });
+  }
+}
+function alClose(){ alEl('al-overlay').style.display='none'; }
+function alSubmit(){
+  var err=alEl('al-err'); err.textContent='';
+  var body={ fullName:alEl('al-name').value, email:alEl('al-email').value, phone:alEl('al-phone').value,
+    sourceChannel:alEl('al-source').value, caseTypeInterest:alEl('al-casetype').value, note:alEl('al-note').value };
+  if(AL_ALLOW) body.allowDuplicate=true;
+  var key=getKey(); if(!key) return;
+  var btn=alEl('al-create'); btn.disabled=true; btn.textContent='Creating…';
+  fetch('/api/leads/create',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
+    .then(function(res){
+      if(res.s===409){
+        AL_ALLOW=true;
+        var m=res.j.matches||{}; var rows=[];
+        (m.leads||[]).forEach(function(l){ rows.push('Existing lead: <a href="/admin/lead/'+encodeURIComponent(l.id)+'" target="_blank" rel="noopener">'+escHtml(l.name||l.id)+'</a>'); });
+        (m.cases||[]).forEach(function(c){ rows.push('Open case: <a href="/admin/case/'+encodeURIComponent(c.caseRef||'')+'" target="_blank" rel="noopener">'+escHtml(c.caseRef||'(ref pending)')+'</a> — '+escHtml(c.name||'')); });
+        (m.clients||[]).forEach(function(c){ rows.push('Client account: '+escHtml(c.name||'')); });
+        var box=alEl('al-matches');
+        box.innerHTML='<b>Already in the system:</b><br>'+rows.join('<br>')+'<br><br>If this is a different person or a new matter, click <b>Create lead</b> again to add them anyway.';
+        box.style.display='block';
+        return;
+      }
+      if(res.s>=400){ err.textContent=res.j.error||('HTTP '+res.s); return; }
+      window.location.href='/admin/lead/'+encodeURIComponent(res.j.leadId);
+    })
+    .catch(function(){ err.textContent='Network error — nothing was created; try again.'; })
+    .finally(function(){ btn.disabled=false; btn.textContent='Create lead'; });
+}
+(function(){
+  var b=document.getElementById('btn-add-lead'); if(b) b.onclick=alOpen;
+  var c=document.getElementById('al-cancel'); if(c) c.onclick=alClose;
+  var s=document.getElementById('al-create'); if(s) s.onclick=alSubmit;
+  var o=document.getElementById('al-overlay'); if(o) o.addEventListener('click',function(e){ if(e.target===o) alClose(); });
+  document.addEventListener('keydown',function(e){ if(e.key==='Escape' && o && o.style.display!=='none') alClose(); });
+  // Any edit to the identity fields disarms a prior "create anyway" — a stale
+  // allowDuplicate must never skip the duplicate scan for a DIFFERENT person
+  // typed after a 409 (same rule as the direct-client modal's dcClearMatches).
+  ['al-email','al-phone'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener('input',function(){
+    if(AL_ALLOW){ AL_ALLOW=false; var m=alEl('al-matches'); if(m){ m.style.display='none'; m.innerHTML=''; } }
+  }); });
+})();
 ${DELETE_UI_JS}
 tdotBindDelete(function(){ load(); });
 startClock(); checkApiStatus(); load();

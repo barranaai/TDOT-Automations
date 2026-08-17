@@ -1205,6 +1205,66 @@ async function getSignedRetainerAgreementPdf(leadId) {
 
 const DIRECT_SOURCE = 'Direct Retainer';
 
+// ─── Staff-entered lead (phone-in — meeting 2026-08-13 "direct leads") ────────
+//
+// A caller Melanie takes down by hand becomes a NORMAL funnel lead with the
+// full intake wiring createLead provides (access token + OneDrive folder) but
+// NO case, NO consultant pin, NO retainer intent — the regular booking-invite
+// and pre-consultation machinery takes over from the lead's detail page.
+// Source options are the EXISTING board labels only (no label minting).
+const STAFF_LEAD_SOURCES = ['Phone', 'Email', 'WhatsApp', 'Instagram', 'Other'];
+
+async function createStaffLead(payload = {}) {
+  const clean = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
+  const fullName         = clean(payload.fullName, 120);
+  const email            = clean(payload.email, 200);
+  const phone            = clean(payload.phone, 40);
+  const sourceRaw        = clean(payload.sourceChannel, 30);
+  const sourceChannel    = STAFF_LEAD_SOURCES.includes(sourceRaw) ? sourceRaw : 'Phone';
+  const caseTypeInterest = clean(payload.caseTypeInterest, 100);
+  const note             = clean(payload.note, 2000);
+  const allowDuplicate   = payload.allowDuplicate === true;
+
+  const bad = (m) => { const e = new Error(m); e.badRequest = true; throw e; };
+  if (!fullName) bad('Full name is required.');
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('A valid email is required.');
+  if (!phone || phone.replace(/\D/g, '').length < 7) bad('A valid phone number is required.');
+  if (caseTypeInterest) {
+    const canon = await directCaseTypeLabels();
+    if (!canon.caseTypes.includes(caseTypeInterest)) bad(`"${caseTypeInterest}" is not a canonical case type — pick one from the list.`);
+  }
+
+  // Same duplicate contract as the direct-client modal: matches without an
+  // explicit staff choice → 409 with the matches payload; "create anyway"
+  // re-submits with allowDuplicate.
+  if (!allowDuplicate) {
+    // Via module.exports — the tests' stub seam for the matcher.
+    const matches = await module.exports.findClientMatches({ email, phone }).catch(() => null);
+    if (matches && (matches.leads.length || matches.cases.length || matches.clients.length)) {
+      const e = new Error('This email/phone already exists in the system.');
+      e.conflict = true; e.matches = matches; throw e;
+    }
+  }
+
+  const lead = await leadService.createLead({
+    fullName, email, phone, sourceChannel,
+    ...(note ? { situationDescription: note } : {}),
+  });
+  // The interest dropdown's board vocabulary is the intake's coarse label set —
+  // canonical labels do NOT exist there and create_item has no label minting,
+  // so a canon pick inside createLead would fail the whole creation. Carry it
+  // in a follow-up updateLead instead, whose mutation auto-creates labels —
+  // the SAME sanctioned path createDirectClient uses for confirmedCaseType.
+  if (caseTypeInterest) {
+    await leadService.updateLead(lead.id, { caseTypeInterest })
+      .catch((err) => console.warn(`[Leads] caseTypeInterest write failed for staff lead ${lead.id}: ${err.message} — the lead itself is created`));
+  }
+  await postPortalNote(lead.id,
+    `Lead added by staff (${sourceChannel.toLowerCase()} intake)${caseTypeInterest ? ` — interested in ${caseTypeInterest}` : ''}. ` +
+    'Next: send the booking invite from this page when they are ready.');
+  return { leadId: String(lead.id) };
+}
+
 /**
  * Case-type labels for the direct-client form + validation. Prefer the LIVE
  * Client Master canon (the same registry the handoff validates against, so a
@@ -1597,4 +1657,5 @@ module.exports = {
   parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement, getSignedConsultAgreementPdf, getSignedRetainerAgreementPdf,
   resolveFamilyMembers, FAMILY_MEMBER_TYPES, MILESTONE_TRIGGER_STAGES,
   createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, findClientMatches, DIRECT_SOURCE,
+  createStaffLead, STAFF_LEAD_SOURCES,
 };
