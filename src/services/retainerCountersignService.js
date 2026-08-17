@@ -251,6 +251,37 @@ async function recordRetainerCountersignComplete(lead, { signedPdf, stored } = {
         : `✍️ <b>Retainer agreement countersigned by the consultant</b>${stored ? ' — fully-signed copy saved to OneDrive.' : '.'} ⚠️ The client copy email did NOT go out — please forward the signed agreement to the client manually.` }
     );
   } catch (err) { console.warn(`[RetainerCountersign] note failed for ${leadId}: ${err.message}`); }
+
+  // ACTIVATION GATE completion trigger (meeting 2026-08-13): when the RCIC
+  // countersignature is the LAST piece — client already signed and paid — the
+  // deferred case advance runs here. Read the lead fresh (the state write
+  // above changed it) and evaluate the same gate the payment path uses.
+  try {
+    // Two read attempts — this is the LAST-piece trigger; a single stale read
+    // must not skip the advance (the 15-min reconciler is the final backstop,
+    // but minutes matter for the client's intake email).
+    let latest = null;
+    for (let attempt = 1; attempt <= 2 && !latest; attempt++) {
+      latest = await leadService.getLead(leadId).catch(() => null);
+      if (!latest && attempt === 1) await new Promise((r) => setTimeout(r, 1500));
+    }
+    if (latest && latest.clientMasterItemId) {
+      let gate = require('./caseGateService').signatureGateForLead(latest);
+      const paid = !!(latest.retainerPaid && String(latest.retainerPaid).trim());
+      if (!gate.complete && paid) {
+        // The signedAt we just wrote may not be readable yet — force it.
+        gate = require('./caseGateService').signatureGateForLead({
+          ...latest, retainerCountersign: JSON.stringify({ ...state }),
+        });
+      }
+      if (gate.complete && paid) {
+        console.log(`[RetainerCountersign] Gate complete for lead ${leadId} — running the deferred case advance`);
+        await require('./paymentService').advanceCaseToPaid(latest);
+      }
+    }
+  } catch (err) {
+    console.warn(`[RetainerCountersign] deferred case advance failed for lead ${leadId}: ${err.message}`);
+  }
   return { emailed, signedAt: state.signedAt };
 }
 

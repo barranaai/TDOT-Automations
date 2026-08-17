@@ -158,7 +158,7 @@ test('ensureSignedState: PAID-FIRST — runs the deferred paid-advance instead o
   const m = signedStateMondayStub({ payText: '', caseRef: '2026-CIT-001' });
   const updates = []; let advanced = null;
   const restore = [
-    stub(leadService, 'getLead', async () => baseLead({ clientMasterItemId: 'CM-900', conversionStatus: 'Qualified', retainerPaid: '2026-07-29' })),
+    stub(leadService, 'getLead', async () => baseLead({ clientMasterItemId: 'CM-900', conversionStatus: 'Qualified', retainerPaid: '2026-07-29', retainerSigned: '2026-07-29' })),
     stub(leadService, 'updateLead', async (id, f) => { updates.push(f); }),
     stub(mondayApi, 'query', m.fn),
     stub(paymentService, 'advanceCaseToPaid', async (l) => { advanced = l.id; return 'CM-900'; }),
@@ -205,7 +205,7 @@ test('recordRetainerPaid: payment on an UNSIGNED case defers the Paid advance (n
     assert.equal(r, null, 'no Phase-1 trigger returned');
     assert.ok(!calls.some((c) => /change_multiple_column_values/.test(c.q) && /"Paid"/.test(String(c.v && c.v.cols))),
       'CM Payment Status NOT advanced to Paid before signing');
-    assert.ok(notes.some((n) => /before signing/i.test(n)), 'staff note explains the deferral');
+    assert.ok(notes.some((n) => /on hold until the client signature/i.test(n)), 'staff note explains the deferral');
   } finally { restore.forEach((x) => x()); }
 });
 
@@ -301,4 +301,25 @@ test('createDirectClient: a failed early case-open does not block creation (sign
     assert.equal(r.ok, true);
     assert.equal(r.caseOpened, false, 'reported honestly; the signed-time handoff remains the fallback');
   } finally { restore.forEach((x) => x()); }
+});
+
+test('ensureSignedState: Documenso signing with countersign PENDING defers the paid-advance (gate 2026-08-13)', async () => {
+  const paymentService = require('../src/services/paymentService');
+  const m = signedStateMondayStub({ payText: '', caseRef: '2026-CIT-001' });
+  let advanced = null; const notes = [];
+  const origFn = m.fn;
+  const restore = [
+    stub(leadService, 'getLead', async () => baseLead({ clientMasterItemId: 'CM-900', conversionStatus: 'Qualified',
+      retainerPaid: '2026-07-29', retainerSigned: '2026-07-29',
+      retainerCountersign: JSON.stringify({ clientEnvelopeId: 'env-1', clientSignedVia: 'documenso' }) })),   // countersign not yet signed
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async (q, v) => { if (/create_update/.test(q)) { notes.push(v.b || v.body); return {}; } return origFn(q, v); }),
+    stub(paymentService, 'advanceCaseToPaid', async (l) => { advanced = l.id; }),
+    stub(familyComp, 'createFromLead', async () => 0),
+  ];
+  try {
+    await handoff.ensureSignedState('800');
+    assert.equal(advanced, null, 'no advance while the RCIC countersignature is missing');
+    assert.ok(notes.some((n) => /waits for the RCIC countersignature/i.test(n)), 'staff note explains the wait');
+  } finally { restore.reverse().forEach((x) => x()); }
 });

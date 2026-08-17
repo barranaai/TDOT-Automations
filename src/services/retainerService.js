@@ -79,6 +79,52 @@ async function onRetainerPaid({ itemId }) {
     }
   }
 
+  // ── Manual-flip signature gate (meeting 2026-08-13) ────────────────────────
+  // This handler also fires when staff flip Payment Status = "Paid" directly
+  // on the board — historically the only path with NO signature check, so a
+  // manual flip on an unsigned case started full onboarding (intake email +
+  // checklist) against an unexecuted retainer. FIRST-TIME payments now verify
+  // the linked lead's signatures (client + RCIC countersign for Documenso
+  // signings). No linked lead (legacy/manual cases) passes as before; an
+  // incomplete gate defers — the signing/countersign triggers re-advance later
+  // (advanceCaseToPaid re-writes "Paid", which re-fires this webhook cleanly).
+  if (isFirstTimePayment) {
+    try {
+      const leadService = require('./leadService');
+      const caseGate    = require('./caseGateService');
+      // The Paid flip being processed IS the payment record, so the paid leg
+      // is forced and only SIGNATURES are verified here. ALL claiming leads
+      // are consulted (shared cases can carry several; one fully-executed
+      // claimant is sufficient evidence the agreement is real).
+      const gateOf = (l) => caseGate.signatureGateForLead({ ...l, retainerPaid: (l.retainerPaid && String(l.retainerPaid).trim()) || today });
+      let claimants = await leadService.findAllByColumnValue('clientMasterItemId', String(itemId));
+      let pass = !claimants.length || claimants.some((l) => gateOf(l).complete);
+      if (!pass) {
+        // One retry after a beat — the legit advance path writes the lead's
+        // countersign state moments before writing "Paid"; a stale read here
+        // must not bounce a genuinely complete gate.
+        await new Promise((r) => setTimeout(r, 2000));
+        claimants = await leadService.findAllByColumnValue('clientMasterItemId', String(itemId)).catch(() => claimants);
+        pass = !claimants.length || claimants.some((l) => gateOf(l).complete);
+      }
+      if (!pass) {
+        const missing = gateOf(claimants[0]).missing;
+        console.warn(`[Retainer] Item ${itemId}: Paid flip with activation gate incomplete (missing: ${missing.join(', ')}) — onboarding DEFERRED`);
+        await mondayApi.query(
+          `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+          { i: String(itemId), b: `⛔ <b>Payment marked, but onboarding is on hold</b> — missing: ${missing.join(' and ')}. ` +
+            'The document checklist and client emails start automatically the moment the agreement is fully executed (meeting rule 2026-08-13: signed by both parties AND the consultant AND paid).' }
+        ).catch(() => {});
+        return;
+      }
+      // Gate passed on a first-time payment — graduate the row from the
+      // pending group (best-effort; no-op for rows already active).
+      await caseGate.moveCaseToActiveGroup(itemId);
+    } catch (err) {
+      console.warn(`[Retainer] Signature-gate check failed for item ${itemId}: ${err.message} — proceeding (legacy behaviour)`);
+    }
+  }
+
   let cols;
   if (isFirstTimePayment) {
     cols = {

@@ -387,7 +387,10 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
     return existing.id;
   }
 
-  const groupId = await getHandoffGroupId();
+  // New cases start in the PENDING group (meeting 2026-08-13) — they graduate
+  // to the active group when signatures + payment complete (advanceCaseToPaid).
+  // Falls back to the historical heuristic until the one-off group script runs.
+  const groupId = require('./caseGateService').pendingGroupId() || await getHandoffGroupId();
 
   // Create WITHOUT Case Type (Case Type is set separately below so the webhook fires).
   // presigned (direct retainer, case-first): Payment Status stays EMPTY — the
@@ -574,12 +577,22 @@ async function ensureSignedState(leadId) {
 
   if (paidNow) {
     // PAID-FIRST: the payment's case advance was deferred while unsigned
-    // (recordRetainerPaid). Signing is the moment onboarding may start — run
-    // the deferred Paid advance; the Retained flip (signed+paid, both-gated)
-    // follows in this same signed chain via maybeMarkRetained, so no interim
-    // conversion label is written here.
-    await require('./paymentService').advanceCaseToPaid(fresh)
-      .catch((err) => console.warn(`[Handoff] Deferred paid-advance failed for lead ${leadId}: ${err.message}`));
+    // (recordRetainerPaid). The client signing is necessary but — since
+    // 2026-08-17 (meeting decision) — not sufficient: for Documenso signings
+    // the RCIC countersignature must also be in before onboarding may start.
+    // When it is still pending, recordRetainerCountersignComplete runs this
+    // same deferred advance the moment the RCIC signs.
+    const gate = require('./caseGateService').signatureGateForLead(fresh);
+    if (gate.complete) {
+      await require('./paymentService').advanceCaseToPaid(fresh)
+        .catch((err) => console.warn(`[Handoff] Deferred paid-advance failed for lead ${leadId}: ${err.message}`));
+    } else {
+      console.log(`[Handoff] Lead ${leadId} signed+paid but activation gate incomplete (missing: ${gate.missing.join(', ')}) — advance stays deferred`);
+      await mondayApi.query(
+        `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+        { i: String(leadId), b: `✍️ <b>Client signature and payment are in.</b> Onboarding waits for the ${gate.missing.join(' and ')} and starts automatically once it lands.` }
+      ).catch(() => {});
+    }
   } else {
     // Stamp over anything EXCEPT 'Paid' — Monday board automations stamp their
     // own labels on new items (observed live: "Alreaday Sent" [sic] appears on

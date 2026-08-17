@@ -116,19 +116,28 @@ async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt
       `Run the handoff (mark Retainer Signed) first, then re-trigger payment.`);
     return null;
   }
-  // Paid BEFORE signed (walk-in prepaying at the desk, case already open via the
-  // case-first direct flow): the payment is recorded above, but onboarding
-  // (Paid → Document Collection → checklist + client emails) must NOT start on
-  // an unsigned retainer. handoffService.ensureSignedState runs this deferred
-  // advance the moment the client signs.
-  if (!(lead.retainerSigned && String(lead.retainerSigned).trim())) {
-    console.warn(`[Payment] Lead ${lead.id} paid BEFORE signing — case advance deferred until the retainer is signed`);
-    try {
-      await mondayApi.query(
-        `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
-        { i: String(lead.id), b: `💵 <b>Retainer payment recorded before signing.</b> Onboarding (Payment Status → Paid → document collection) starts automatically the moment the retainer is signed.` });
-    } catch (_) { /* note is best-effort */ }
-    return null;
+  // ACTIVATION GATE (meeting 2026-08-13): onboarding (Paid → Document
+  // Collection → checklist + client emails) starts only when the client
+  // signature AND the RCIC countersignature (for Documenso signings) are BOTH
+  // in — a payment alone must never activate a case. The deferred advance
+  // re-fires from ensureSignedState (client signs) and from
+  // recordRetainerCountersignComplete (RCIC signs), whichever lands last.
+  {
+    // Fresh read before the gate: the countersign can complete while this
+    // payment is being recorded — a stale snapshot must not make BOTH
+    // triggers defer (the reconciler would still rescue in ≤15 min, but the
+    // intake email should not wait that long).
+    const freshLead = (await leadService.getLead(lead.id).catch(() => null)) || lead;
+    const gate = require('./caseGateService').signatureGateForLead({ ...freshLead, retainerPaid: when || freshLead.retainerPaid || todayISO() });
+    if (!gate.complete) {
+      console.warn(`[Payment] Lead ${lead.id} paid but activation gate incomplete (missing: ${gate.missing.join(', ')}) — case advance deferred`);
+      try {
+        await mondayApi.query(
+          `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+          { i: String(lead.id), b: `💵 <b>Retainer payment recorded.</b> Onboarding is on hold until the ${gate.missing.join(' and ')} ${gate.missing.length > 1 ? 'are' : 'is'} in — it starts automatically the moment the agreement is fully executed.` });
+      } catch (_) { /* note is best-effort */ }
+      return null;
+    }
   }
   await advanceCaseToPaid(lead, when);
   return lead.clientMasterItemId;
@@ -143,6 +152,24 @@ async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt
 async function advanceCaseToPaid(leadOrId, when) {
   const lead = (leadOrId && typeof leadOrId === 'object') ? leadOrId : await leadService.getLead(leadOrId);
   if (!lead || !lead.clientMasterItemId) return null;
+  // IDEMPOTENT: two triggers can race here (a delayed signing webhook after
+  // the countersign trigger already advanced) — a second same-label "Paid"
+  // write re-fires the Monday webhook, whose deferred-resume branch would
+  // re-email the client. Read-before-write: already Paid = only the group
+  // move (safe no-op), never a second write.
+  try {
+    const cur = await mondayApi.query(
+      `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CM.paymentStatus}"]) { text } } }`,
+      { id: String(lead.clientMasterItemId) }
+    );
+    if (((cur?.items?.[0]?.column_values?.[0]?.text || '').trim()) === 'Paid') {
+      console.log(`[Payment] Client Master ${lead.clientMasterItemId} already Paid — skipping re-write (idempotent advance)`);
+      await require('./caseGateService').moveCaseToActiveGroup(lead.clientMasterItemId);
+      return lead.clientMasterItemId;
+    }
+  } catch (err) {
+    console.warn(`[Payment] Pre-advance status read failed for CM ${lead.clientMasterItemId}: ${err.message} — proceeding with the write`);
+  }
   const date = when || (lead.retainerPaid && String(lead.retainerPaid).trim()) || todayISO();
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
@@ -152,6 +179,10 @@ async function advanceCaseToPaid(leadOrId, when) {
       cols: JSON.stringify({ [CM.paymentStatus]: { label: 'Paid' }, [CM.paymentConfDate]: { date } }) }
   );
   console.log(`[Payment] Client Master ${lead.clientMasterItemId} → Payment Status "Paid" (Phase 1 onboarding triggered)`);
+  // Gate satisfied ⇒ the case graduates from the pending group to the active
+  // Cases-board group (meeting 2026-08-13). Best-effort; a no-op for rows
+  // already there.
+  await require('./caseGateService').moveCaseToActiveGroup(lead.clientMasterItemId);
   return lead.clientMasterItemId;
 }
 

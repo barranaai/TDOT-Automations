@@ -484,6 +484,11 @@ async function captureCompleted(body) {
         retainerSigned: todayISO(),
         retainerCountersign: JSON.stringify({
           ...rcState,
+          // clientSignedVia: the activation gate's countersign requirement keys
+          // on the signature COMPLETING through Documenso — clientEnvelopeId
+          // alone only proves an envelope was SENT (a client who then signs on
+          // paper must not wait on a countersign envelope that never issues).
+          clientSignedVia: 'documenso',
           ...(envId != null ? { clientEnvelopeId: String(envId) } : {}),
           ...(itemId != null ? { clientItemId: String(itemId) } : {}),
         }),

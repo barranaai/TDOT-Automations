@@ -99,7 +99,15 @@ function deriveCmPaymentStatus(lead) {
   if (!lead) return null;
   const signed = s(lead.retainerSigned);
   if (!signed) return null;                    // unsigned: nothing to assert, either way
-  return s(lead.retainerPaid) ? PAID : SIGNED_UNPAID;
+  if (!s(lead.retainerPaid)) return SIGNED_UNPAID;
+  // ACTIVATION GATE (meeting 2026-08-13): "Paid" on the case is the onboarding
+  // trigger — while the RCIC countersignature is still pending on a Documenso
+  // signing, the cell is left alone (same reasoning as the unsigned carve-out
+  // above). The moment the countersign lands, this same derivation returns
+  // PAID and the 15-minute sweep doubles as the resume path for any activation
+  // trigger that lost a race.
+  if (!require('./caseGateService').signatureGateForLead(lead).complete) return null;
+  return PAID;
 }
 
 /**
@@ -287,6 +295,10 @@ async function applyVerdict(lead, verdict, cm, { dryRun = false } = {}) {
       // flip too. Both-gated and idempotent inside; never blocks the repair.
       try { await io.maybeMarkRetained(lead.id); }
       catch (err) { console.warn(`[StatusSync] maybeMarkRetained after repair failed for lead ${lead.id}: ${err.message}`); }
+      // Gate-complete repair = activation — graduate the row from the pending
+      // group too (best-effort, no-op when already there).
+      try { await require('./caseGateService').moveCaseToActiveGroup(lead.clientMasterItemId); }
+      catch (_) { /* presentation only */ }
     }
     return { ...base, changed: true };
   }

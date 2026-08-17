@@ -264,6 +264,40 @@ router.post('/', async (req, res) => {
           return;
         }
 
+        // SIGNATURE GATE (meeting 2026-08-13): a manual stage drag must not
+        // out-run the signatures either. The PAYMENT leg is already proven by
+        // the board (the Paid hard gate above), so it is forced here and only
+        // signatures are verified — on ALL claiming leads (shared cases). A
+        // case that has ALREADY been onboarded (checklist applied) is exempt:
+        // re-drags of pre-gate cases must never re-defer them. No linked lead
+        // = legacy/manual case → passes as before.
+        try {
+          const chkData = await mondayApi.query(
+            `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["color_mm0xs7kp"]) { text } } }`,
+            { id: String(pulseId) }
+          ).catch(() => null);
+          const alreadyOnboarded = ((chkData?.items?.[0]?.column_values?.[0]?.text || '').trim().toLowerCase() === 'yes');
+          if (!alreadyOnboarded) {
+            const claimants = await require('../services/leadService').findAllByColumnValue('clientMasterItemId', String(pulseId));
+            const caseGate = require('../services/caseGateService');
+            const today = new Date().toISOString().slice(0, 10);
+            const gateOf = (l) => caseGate.signatureGateForLead({ ...l, retainerPaid: (l.retainerPaid && String(l.retainerPaid).trim()) || today });
+            if (claimants.length && !claimants.some((l) => gateOf(l).complete)) {
+              const missing = gateOf(claimants[0]).missing;
+              console.log(`[Webhook] Item ${pulseId} at DCS but activation gate incomplete (missing: ${missing.join(', ')}) — onboarding DEFERRED`);
+              mondayApi.query(
+                `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
+                { itemId: String(pulseId),
+                  body: `⛔ <b>Onboarding deferred:</b> missing ${missing.join(' and ')}. ` +
+                    'The intake email and checklist start automatically once the agreement is fully executed and paid (meeting rule 2026-08-13).' }
+              ).catch(() => {});
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn(`[Webhook] Signature-gate read failed for ${pulseId}: ${err.message} — proceeding (payment gate already passed)`);
+        }
+
         // Fire the intake email immediately — it only needs the case ref and access token,
         // both of which are already set before the stage change. Do NOT await the checklist
         // setup first: that can take 1-2 minutes for large templates and will be killed by
