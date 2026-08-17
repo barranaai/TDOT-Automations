@@ -822,6 +822,7 @@ ${buildNavHeader('consultations')}
       <div id="rp-lock" class="rp-lock" style="display:none">
         <span id="rp-lock-msg"></span>
         <button class="btn" id="rp-amend" type="button">✎ Amend</button>
+        <button class="btn" id="rp-reissue" type="button" style="display:none" title="Void the un-signed agreement and email a fresh one with the CURRENT fee, milestones and signer emails">🔄 Void &amp; re-issue</button>
       </div>
       <fieldset id="rp-lock-fs" class="rp-fs">
       <div class="rp-group-t">Case &amp; agreement</div>
@@ -1243,6 +1244,12 @@ function applyRetainerLock(){
       ? '🔒 <b>This client has already been retained.</b> The fee &amp; milestones are locked — no new agreement will be sent.'
       : '🔒 <b>The retainer agreement has been sent.</b> The fee &amp; milestones are locked.';
   if(amendBtn) amendBtn.style.display = (RP_LOCKED && !RP_AMEND) ? 'inline-flex' : 'none';
+  // Void & re-issue: only for a SENT but not-yet-signed agreement (a signed
+  // one is a legal document — the server refuses it too). Stays visible while
+  // amending: Amend → change fee/details → Save → re-issue is THE renegotiation
+  // and wrong-email recovery flow (meeting 2026-08-13).
+  var reissueBtn=document.getElementById('rp-reissue');
+  if(reissueBtn) reissueBtn.style.display = (RP_SENT && !RP_RETAINED) ? 'inline-flex' : 'none';
 }
 function startAmend(){
   if(!window.confirm('The retainer agreement has already been emailed to the client. Amending the fee or milestones will NOT re-send it, and the client may hold an agreement stating the original terms — a staff note will record the change. Continue?')) return;
@@ -1629,6 +1636,13 @@ function initActions(){
   };
   // Retainer panel
   var amendBtn=document.getElementById('rp-amend'); if(amendBtn) amendBtn.onclick=startAmend;
+  var reissueBtn=document.getElementById('rp-reissue'); if(reissueBtn) reissueBtn.onclick=function(){
+    doAction('reissueRetainer', null,
+      'Void the un-signed agreement and send a FRESH one now?\\n\\n'
+      +'• The old signing links stop working for every signer.\\n'
+      +'• The new agreement uses the CURRENT fee, milestones and signer emails — save any changes first.\\n'
+      +'• The client (and co-signer, if any) receive a new signing email immediately.');
+  };
   rpEl('rp-template').onchange=toggleTemplateBlocks;
   var ctSel=rpEl('rp-casetype'); if(ctSel) ctSel.onchange=function(){ RP_PLAN_CT=this.value; RP_PLAN_ST=''; rpPopulateSubtypes(); };
   var stSel=rpEl('rp-subtype'); if(stSel) stSel.onchange=function(){ RP_PLAN_ST=this.value; };

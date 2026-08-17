@@ -376,6 +376,11 @@ async function captureCompleted(body) {
   if (!parsed) { const e = new Error(`unresolved externalId "${ext}"`); e.badRequest = true; throw e; }
   const { type, leadId } = parsed;
 
+  // Serialized per lead with void-&-reissue (leadMutex): a capture must never
+  // interleave with a staff reissue that is voiding/re-sending this lead's
+  // envelopes — both flows run in this process, same lock.
+  return require('./leadMutex').withLeadLock(leadId, async () => {
+
   const leadService = require('./leadService');
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error(`lead ${leadId} not found`); e.badRequest = true; throw e; }
@@ -392,6 +397,27 @@ async function captureCompleted(body) {
     if (state.envelopeId && wired.length && !wired.includes(String(state.envelopeId))) {
       console.warn(`[Documenso] ${type} completion for lead ${leadId} names envelope ${wired.join('/')} but the recorded countersign envelope is ${state.envelopeId} — skipping`);
       return { skipped: `${type} envelope mismatch` };
+    }
+  }
+
+  // Superseded-envelope guard for the RETAINER family: after a void-&-reissue
+  // the lead records the NEW envelope id — a completion naming any OTHER
+  // envelope is a signer executing a VOIDED agreement whose TERMS may differ
+  // (the whole point of the reissue). Never stamp, store, or act on it; a lead
+  // with no recorded id (legacy sends) passes through unchanged.
+  // Deliberately NOT applied to 'consult': consult packages are re-sendable
+  // with identical terms, and the established contract is that whichever
+  // envelope actually completes replaces any stale recorded ids.
+  if (['retainer', 'retainerinv'].includes(type)) {
+    const recorded = String((type === 'retainer' ? rcState.clientEnvelopeId : rcState.inviterEnvelopeId) || '').trim();
+    const wired = [p.envelopeId, p.id].filter((x) => x != null).map(String);
+    if (recorded && wired.length && !wired.includes(recorded)) {
+      const clean = (s) => String(s).replace(/[<>&"]/g, '');
+      console.warn(`[Documenso] ${type} completion for lead ${leadId} names envelope ${wired.join('/')} but the recorded envelope is ${recorded} — superseded, skipping`);
+      await postNote(leadId,
+        `⚠️ <b>A superseded e-sign envelope was completed</b> (envelope ${clean(wired[0])}; the current one is ${clean(recorded)}). ` +
+        'A signer likely used the OLD links of a voided agreement. Nothing was recorded — ask them to sign from the NEWEST email.');
+      return { skipped: `${type} envelope mismatch (superseded)` };
     }
   }
 
@@ -608,6 +634,8 @@ async function captureCompleted(body) {
     consultSignedSet:  type === 'consult'  && !lead.consultAgreementSigned,
     countersignSet:    type === 'consult2' || type === 'retainer2',
   };
+
+  }); // withLeadLock
 }
 
 async function postNote(leadId, body) {

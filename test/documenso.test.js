@@ -203,3 +203,24 @@ test('REPLAY GUARD: an already-signed lead never re-triggers the staff notificat
     else process.env.STAFF_SIGNATURE_NOTIFY_EMAILS = prevEnv;
   }
 });
+
+test('SUPERSEDED-ENVELOPE GUARD: a voided/old envelope completion never stamps the lead', async () => {
+  const leadService = require('../src/services/leadService');
+  const mondayApi   = require('../src/services/mondayApi');
+  const writes = [], notes = [];
+  const restore = [
+    stub(leadService, 'getLead', async (id) => ({ id, fullName: 'Guard Client', retainerSigned: '',
+      retainerCountersign: JSON.stringify({ clientEnvelopeId: 'env-new' }) })),   // the reissued envelope
+    stub(leadService, 'updateLead', async (id, f) => { writes.push(f); }),
+    stub(mondayApi, 'query', async (q, v) => { if (v && v.b) notes.push(v.b); return {}; }),
+  ];
+  try {
+    const r = await documenso.captureCompleted({
+      event: 'DOCUMENT_COMPLETED',
+      payload: { id: 60, envelopeId: 'env-old', externalId: 'retainer-790', status: 'COMPLETED', items: [] },
+    });
+    assert.match(r.skipped, /superseded/);
+    assert.equal(writes.length, 0, 'the old agreement signature is never recorded');
+    assert.ok(notes.some((n) => /superseded e-sign envelope/i.test(n)), 'staff get a loud note');
+  } finally { restore.forEach((r) => r()); }
+});

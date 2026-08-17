@@ -108,7 +108,10 @@ function buildCols(fields, clearKeys = []) {
       console.warn(`[Lead] updateLead: no column mapping for key "${key}" — value dropped`);
       continue;
     }
-    cols[colId] = formatValue(COL_TYPE[key] || 'text', isEmpty ? '' : value);
+    // Monday's universal clear for change_multiple_column_values is the empty
+    // string — typed empties like {date:''} are NOT documented to clear and
+    // must never be emitted (first hit: the reissue clearing Retainer Sent).
+    cols[colId] = isEmpty ? '' : formatValue(COL_TYPE[key] || 'text', value);
   }
   return cols;
 }

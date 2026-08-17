@@ -160,6 +160,143 @@ async function maybeSendRetainerAgreement(leadId, opts = {}) {
 }
 
 /**
+ * Void the client's UN-SIGNED retainer envelope and send a fresh agreement
+ * built from the CURRENT plan — corrected signer emails, amended fee,
+ * amended milestones (meeting decision 2026-08-13: the answer to a typo'd
+ * email, a renegotiated fee, and "modified but cannot resend").
+ *
+ * Refuses on a SIGNED/RETAINED lead — a signed agreement is a legal document;
+ * and if Documenso reports the old envelope COMPLETED (client signed but the
+ * webhook was missed), it refuses too, so a signature can never be voided.
+ * The old envelope's links stop working for BOTH signers on a pa-inviter
+ * agreement (it is one shared envelope). Best-effort void: if the delete
+ * fails, the reissue still proceeds with a loud note that the old links may
+ * remain active.
+ */
+const _reissueInFlight = new Set();
+async function voidAndReissueRetainer(leadId) {
+  const key = String(leadId);
+  if (_reissueInFlight.has(key)) return { status: 'coalesced' };
+  _reissueInFlight.add(key);
+  try {
+    // Serialized with the Documenso webhook capture on the same lead — the one
+    // interleaving that matters is "the client signs WHILE staff re-issue",
+    // and both flows run in this process (see leadMutex).
+    return await require('./leadMutex').withLeadLock(key, () => _doVoidAndReissue(leadId));
+  } finally {
+    _reissueInFlight.delete(key);
+  }
+}
+
+async function _doVoidAndReissue(leadId) {
+  const documenso = require('./documensoService');
+  const rcSvc     = require('./retainerCountersignService');
+  const lead = await leadService.getLead(leadId);
+  if (!lead) return { status: 'failed', reason: 'lead not found' };
+  if ((lead.retainerSigned && String(lead.retainerSigned).trim())
+      || String(lead.conversionStatus || '').trim() === 'Retained') {
+    return { status: 'already-signed' };
+  }
+  if (!lead.retainerSent) return { status: 'not-sent' };
+
+  const rc = rcSvc.parseRetainerCountersign(lead);
+  const envId = String(rc.clientEnvelopeId || '').trim();
+  // voided: the delete provably succeeded. oldEnvelopeActive: the old signing
+  // links may still work (delete failed, e-sign disabled, or status unreadable)
+  // — the note and the staff message must never claim more than what happened.
+  let voided = false;
+  let oldEnvelopeActive = !!envId;
+  if (envId && documenso.isEnabled()) {
+    // A COMPLETED envelope means the client HAS signed — recapture territory.
+    // FAIL CLOSED on an unreadable status: if we cannot prove it is unsigned,
+    // we do not delete it (a voided signature is unrecoverable; stale-envelope
+    // completions are separately rejected by the capture's identity guard).
+    let provenUnsigned = false;
+    try {
+      const env = await documenso.getEnvelope(envId);
+      const status = String((env && (env.status || (env.document && env.document.status))) || '').toUpperCase();
+      if (status.includes('COMPLET')) return { status: 'already-signed' };
+      provenUnsigned = true;
+    } catch (err) {
+      console.warn(`[Retainer2] Could not read envelope ${envId} status for lead ${leadId}: ${err.message} — old envelope will NOT be deleted`);
+    }
+    if (provenUnsigned) {
+      try {
+        await documenso.deleteEnvelope(envId);
+        voided = true;
+        oldEnvelopeActive = false;
+      } catch (err) {
+        console.warn(`[Retainer2] Could not void old envelope ${envId} for lead ${leadId}: ${err.message}`);
+        // The delete may have failed BECAUSE the client just completed it —
+        // re-check once and refuse rather than reissue past a signature.
+        try {
+          const env2 = await documenso.getEnvelope(envId);
+          const s2 = String((env2 && (env2.status || (env2.document && env2.document.status))) || '').toUpperCase();
+          if (s2.includes('COMPLET')) return { status: 'already-signed' };
+        } catch (_) { /* still unreadable — links stay flagged live */ }
+      }
+    }
+  }
+
+  // Audit trail BEFORE the state write — if the write fails, the note still
+  // records that the old envelope was cancelled.
+  await postLeadNote(leadId,
+    `🔄 <b>Retainer agreement voided for re-issue</b> — envelope ${esc(envId || '(none recorded)')} ` +
+    (voided
+      ? 'cancelled; its signing links no longer work.'
+      : envId
+        ? 'could <b>NOT</b> be cancelled — its old signing links may still work; tell the signers to use the NEW email only.'
+        : 'had no e-sign envelope recorded (legacy/email send) — any previously emailed copy is superseded.') +
+    ' A fresh agreement with the current fee, milestones and signer details follows if the lead is ready.');
+
+  // RE-READ immediately before the state write: the pre-mutex world could have
+  // stamped a signature while we talked to Documenso, and the write below must
+  // never resurrect a stale snapshot of the countersign state.
+  const fresh = await leadService.getLead(leadId);
+  if (!fresh) return { status: 'failed', reason: 'lead vanished mid-reissue' };
+  if ((fresh.retainerSigned && String(fresh.retainerSigned).trim())
+      || String(fresh.conversionStatus || '').trim() === 'Retained') {
+    return { status: 'already-signed' };
+  }
+  const rcFresh = rcSvc.parseRetainerCountersign(fresh);
+  // Drop everything tied to the VOIDED signing: the client envelope refs AND
+  // the RCIC countersign state (a countersign of a voided agreement is
+  // meaningless — leaving it would make the NEW signing's countersign resume
+  // against the old document). The inviter post-hoc history is preserved.
+  const { clientEnvelopeId, clientItemId, envelopeId, itemId, signUrl, sentAt, signedAt, ...rcRest } = rcFresh;
+  // Best-effort: void a pending (un-signed) RCIC countersign envelope too.
+  if (envelopeId && !signedAt && documenso.isEnabled()) {
+    try { await documenso.deleteEnvelope(envelopeId); }
+    catch (err) { console.warn(`[Retainer2] Could not void stale countersign envelope ${envelopeId}: ${err.message}`); }
+  }
+  await leadService.updateLead(leadId, {
+    retainerSent: '',
+    retainerCountersign: JSON.stringify(rcRest),
+  }, { clearKeys: ['retainerSent'] });
+
+  // A pre-void send may still be in flight — its result ("already") reflects
+  // the OLD state. Let it settle, then run our own send fresh.
+  while (_agreementInFlight.has(String(leadId))) {
+    await _agreementInFlight.get(String(leadId)).catch(() => {});
+  }
+
+  let send;
+  try {
+    // Via module.exports — the tests' stub seam for the send engine.
+    send = (await module.exports.maybeSendRetainerAgreement(leadId, { notifyIfMissing: true, assumeUnsent: true })) || {};
+  } catch (err) {
+    console.error(`[Retainer2] Reissue send failed for lead ${leadId}: ${err.message}`);
+    send = { status: 'failed', reason: err.message };
+  }
+  if (send.status !== 'sent') {
+    await postLeadNote(leadId,
+      `⚠️ Re-issue: the fresh agreement was <b>not</b> sent (${esc(send.status || 'unknown')}${send.reason ? ` — ${esc(send.reason)}` : ''}). ` +
+      'Fix what it names, then click “Retain & send agreement”.');
+  }
+  return { ...send, reissued: true, oldEnvelopeActive, voided };
+}
+
+/**
  * Who must e-sign this retainer, or why it cannot go out yet. Pure.
  *
  * The pa-inviter master template carries a SECOND client-side signature line —
@@ -215,12 +352,26 @@ function retainerSigners(lead, template) {
   return { signers };
 }
 
-async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false } = {}) {
+async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false, assumeUnsent = false } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) return;
+  // assumeUnsent: the void-and-reissue path clears Retainer Sent immediately
+  // before calling here — a stale Monday read must not bounce the reissue off
+  // its own just-cleared stamp. Signed/Retained stays enforced below.
   if (lead.retainerSent) {
-    console.log(`[Retainer2] Retainer already sent for lead ${leadId} — skipping`);
-    return { status: 'already' };
+    if (!assumeUnsent) {
+      console.log(`[Retainer2] Retainer already sent for lead ${leadId} — skipping`);
+      return { status: 'already' };
+    }
+    // Even under assumeUnsent: the reissue just DROPPED clientEnvelopeId, so
+    // its presence beside the sent stamp means a concurrent REAL send won the
+    // race (every Documenso send re-records it) — never mint a second envelope.
+    let rcCheck = {};
+    try { rcCheck = JSON.parse(String(lead.retainerCountersign || '')) || {}; } catch (_) { /* legacy */ }
+    if (String(rcCheck.clientEnvelopeId || '').trim()) {
+      console.log(`[Retainer2] assumeUnsent bounce for lead ${leadId} — a concurrent send already re-recorded an envelope`);
+      return { status: 'already' };
+    }
   }
   // Never send a fresh agreement to a client who has already SIGNED / been
   // RETAINED, even if retainerSent was never stamped (manual signing, a failed
@@ -593,4 +744,4 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
   }
 }
 
-module.exports = { onOutcomeRetain, maybeSendRetainerAgreement, buildRetainerPdf, getRetainerDocument, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents, retainerSigners };
+module.exports = { onOutcomeRetain, maybeSendRetainerAgreement, voidAndReissueRetainer, buildRetainerPdf, getRetainerDocument, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents, retainerSigners };

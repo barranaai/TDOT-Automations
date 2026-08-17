@@ -769,6 +769,7 @@ function validateAction(action, value) {
     case 'consultantSignAgreement':
     case 'consultantSignRetainer':
     case 'retainAndSend':
+    case 'reissueRetainer':
       return { ok: true, normalized: null };
     default:
       return { ok: false, error: 'Unknown action.' };
@@ -1081,6 +1082,40 @@ async function applyAction({ leadId, action, value, amend = false }) {
         ? `⚠ <b>Retainer plan AMENDED after the agreement was sent</b> — template ${s.template}, scope annex ${s.annexCode}, fee $${centsToMoney(s.feeCents)}. The sent agreement may state different terms.`
         : `Retainer plan saved — template ${s.template}, scope annex ${s.annexCode}, fee $${centsToMoney(s.feeCents)}.`);
       return { ok: true, message: agreementSent ? 'Retainer plan amended — a staff note was recorded.' : 'Retainer plan saved.' };
+    }
+
+    case 'reissueRetainer': {
+      // Void the UN-SIGNED envelope and send a fresh agreement with the
+      // CURRENT plan — the designed recovery for a typo'd signer email, a
+      // renegotiated fee, or any post-send modification (meeting 2026-08-13).
+      if (!agreementSent) {
+        const e = new Error('Nothing to re-issue — no agreement has been sent. Use “Retain & send agreement”.');
+        e.badRequest = true; throw e;
+      }
+      const r = (await require('./retainerService2').voidAndReissueRetainer(leadId)) || {};
+      switch (r.status) {
+        case 'sent':
+          await postPortalNote(leadId, '🔄 Retainer agreement re-issued — the old envelope was voided and a fresh agreement emailed.');
+          return { ok: true, message: `✓ Old agreement voided${r.oldEnvelopeActive ? ' (Documenso could not cancel the old links — tell the signers to use the NEW email only)' : ''} — fresh agreement emailed with the current details.` };
+        case 'already-signed': {
+          const e = new Error('The client has already signed — a signed agreement cannot be voided from here. Record changes with “Amend”.');
+          e.badRequest = true; e.locked = true; throw e;
+        }
+        case 'not-sent': {
+          const e = new Error('Nothing to re-issue — no agreement is on record as sent.');
+          e.badRequest = true; throw e;
+        }
+        case 'coalesced':
+          return { ok: true, message: 'A re-issue is already running for this client — give it a moment, then refresh.' };
+        case 'held':
+          return { ok: true, message: `Old agreement voided, but the new one is HELD — the plan isn’t complete: ${(r.warnings || []).join(' · ')}. Fix these, save, and click “Retain & send agreement”.` };
+        case 'held-cosigner':
+          return { ok: true, message: `Old agreement voided, but the new one is HELD — ${r.reason || 'the co-signer details are incomplete'}. Fix them, save, and click “Retain & send agreement”.` };
+        case 'no-email':
+          return { ok: true, message: 'Old agreement voided, but the new one was NOT sent — no client email on file. Add it, then click “Retain & send agreement”.' };
+        default:
+          return { ok: true, message: `Old agreement voided; the new send reported "${r.status || 'unknown'}${r.reason ? ` — ${r.reason}` : ''}". Check the note on the lead, then use “Retain & send agreement” if needed.` };
+      }
     }
 
     default: {
