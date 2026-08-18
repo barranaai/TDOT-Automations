@@ -144,12 +144,38 @@ async function createLead(formData, { groupId } = {}) {
   // Melanie was looking at when she reported the leads board). Funnel leads
   // belong in the funnel group; only an explicit groupId overrides it.
   const targetGroup = String(groupId || boardCfg.funnelGroupId || '').trim();
+
+  // NEWEST FIRST on the board: Monday appends new items to the BOTTOM of a
+  // group, so staff had to scroll past months of old leads to find today's
+  // (staff request 2026-08-18 — the admin Leads page was already newest-first,
+  // the Monday board was not). Placing the row BEFORE the group's current
+  // first item puts it on top. Best-effort: if the anchor read fails the
+  // create still runs, it just lands at the bottom as before.
+  let anchorId = '';
+  if (targetGroup) {
+    try {
+      const head = await mondayApi.query(
+        `query($b:[ID!], $g:[String!]){ boards(ids:$b){ groups(ids:$g){ items_page(limit:1){ items{ id } } } } }`,
+        { b: [String(leadBoardId)], g: [targetGroup] }
+      );
+      anchorId = String(head?.boards?.[0]?.groups?.[0]?.items_page?.items?.[0]?.id || '');
+    } catch (err) {
+      console.warn(`[Lead] top-of-group anchor read failed (${err.message}) — the new lead will land at the bottom`);
+    }
+  }
+
   const result = targetGroup
     ? await mondayApi.query(
-        `mutation($boardId: ID!, $groupId: String!, $name: String!, $cols: JSON!) {
-           create_item(board_id: $boardId, group_id: $groupId, item_name: $name, column_values: $cols) { id }
-         }`,
-        { boardId: String(leadBoardId), groupId: targetGroup, name, cols: JSON.stringify(buildCols(createFields)) }
+        anchorId
+          ? `mutation($boardId: ID!, $groupId: String!, $name: String!, $cols: JSON!, $rel: ID!) {
+               create_item(board_id: $boardId, group_id: $groupId, item_name: $name, column_values: $cols,
+                           position_relative_method: before_at, relative_to: $rel) { id }
+             }`
+          : `mutation($boardId: ID!, $groupId: String!, $name: String!, $cols: JSON!) {
+               create_item(board_id: $boardId, group_id: $groupId, item_name: $name, column_values: $cols) { id }
+             }`,
+        { boardId: String(leadBoardId), groupId: targetGroup, name, cols: JSON.stringify(buildCols(createFields)),
+          ...(anchorId ? { rel: anchorId } : {}) }
       )
     : await mondayApi.query(
         `mutation($boardId: ID!, $name: String!, $cols: JSON!) {
