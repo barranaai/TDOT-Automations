@@ -159,8 +159,8 @@ async function fetchTemplatePhases(intakeIds) {
       attempts++;
       try {
         const data = await mondayApi.query(
-          `query($ids: [ID!]!) { items(ids: $ids) { id column_values(ids: ["${TMPL_COL.checklistPhase}"]) { id text } } }`,
-          { ids: chunk }
+          `query($ids: [ID!]!, $lim: Int!) { items(ids: $ids, limit: $lim) { id column_values(ids: ["${TMPL_COL.checklistPhase}"]) { id text } } }`,
+          { ids: chunk, lim: chunk.length }
         );
         const returned = data?.items || [];
         for (const t of returned) {

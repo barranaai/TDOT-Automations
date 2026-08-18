@@ -191,13 +191,13 @@ async function enrichDocItemsWithTemplateData(dItems) {
   for (let i = 0; i < allIds.length; i += BATCH) {
     const batch = allIds.slice(i, i + BATCH);
     const data  = await mondayApi.query(
-      `query($ids: [ID!]!) {
-         items(ids: $ids) {
+      `query($ids: [ID!]!, $lim: Int!) {
+         items(ids: $ids, limit: $lim) {
            id
            column_values(ids: ${JSON.stringify(fetchCols)}) { id text }
          }
        }`,
-      { ids: batch }
+      { ids: batch, lim: batch.length }
     );
     for (const tmplItem of (data?.items || [])) {
       const vals = {};

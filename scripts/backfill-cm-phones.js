@@ -15,8 +15,8 @@ const mondayApi   = require('../src/services/mondayApi');
   const current = {};
   for (let i = 0; i < ids.length; i += 25) {
     const d = await mondayApi.query(
-      `query($i: [ID!]){ items(ids: $i){ id column_values(ids: ["phone_mm33zr0c"]){ text } } }`,
-      { i: ids.slice(i, i + 25) });
+      `query($i: [ID!], $lim: Int!){ items(ids: $i, limit: $lim){ id column_values(ids: ["phone_mm33zr0c"]){ text } } }`,
+      { i: ids.slice(i, i + 25), lim: 25 });
     for (const it of d.items || []) current[it.id] = (it.column_values[0] && it.column_values[0].text) || '';
   }
   let filled = 0, skippedHasValue = 0, unusable = 0;

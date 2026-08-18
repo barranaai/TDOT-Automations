@@ -76,14 +76,23 @@ async function getFolderLinks(itemIds) {
   const map = {};
   if (!itemIds.length) return map;
 
-  const data = await mondayApi.query(
-    `query($ids: [ID!]!) {
-       items(ids: $ids) { id column_values(ids: ["${DOC_FOLDER_COL}"]) { id value text } }
-     }`,
-    { ids: itemIds.map(String) }
-  );
+  // CHUNKED + explicit limit: items(ids:) silently caps at 25 without one, so
+  // a 30+ row checklist lost the folder links on every row past the 25th.
+  const CHUNK = 100;
+  const allIds = itemIds.map(String);
+  const collected = [];
+  for (let i = 0; i < allIds.length; i += CHUNK) {
+    const batch = allIds.slice(i, i + CHUNK);
+    const data = await mondayApi.query(
+      `query($ids: [ID!]!, $lim: Int!) {
+         items(ids: $ids, limit: $lim) { id column_values(ids: ["${DOC_FOLDER_COL}"]) { id value text } }
+       }`,
+      { ids: batch, lim: batch.length }
+    );
+    collected.push(...((data && data.items) || []));
+  }
 
-  for (const it of (data?.items || [])) {
+  for (const it of collected) {
     const cv = it.column_values?.[0];
     let url = '';
     try {
@@ -109,23 +118,31 @@ async function getClientReplies(itemIds, limitPerItem = 25) {
   const ids = (itemIds || []).map(String).filter(Boolean);
   if (!ids.length) return map;
 
-  const data = await mondayApi.query(
-    `query($ids: [ID!]!, $limit: Int!) {
-       items(ids: $ids) {
-         id
-         updates(limit: $limit) {
+  // Same 25-item cap applies here — chunk and pass an explicit items limit
+  // alongside the per-item updates limit.
+  const CHUNK = 100;
+  const collected = [];
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = ids.slice(i, i + CHUNK);
+    const data = await mondayApi.query(
+      `query($ids: [ID!]!, $limit: Int!, $ilim: Int!) {
+         items(ids: $ids, limit: $ilim) {
            id
-           text_body
-           created_at
-           creator { id name }
+           updates(limit: $limit) {
+             id
+             text_body
+             created_at
+             creator { id name }
+           }
          }
-       }
-     }`,
-    { ids, limit: limitPerItem }
-  );
+       }`,
+      { ids: batch, limit: limitPerItem, ilim: batch.length }
+    );
+    collected.push(...((data && data.items) || []));
+  }
 
   const REPLY_PREFIX = '\u2709\ufe0f Client Reply';
-  for (const it of (data?.items || [])) {
+  for (const it of collected) {
     const replies = (it.updates || [])
       .filter(u => {
         const t = (u.text_body || '').trim();

@@ -76,15 +76,15 @@ async function fetchTemplateItems(intakeIds) {
   for (let i = 0; i < intakeIds.length; i += CHUNK) {
     const chunk = intakeIds.slice(i, i + CHUNK);
     const data  = await mondayApi.query(
-      `query($ids: [ID!]!) {
-         items(ids: $ids) {
+      `query($ids: [ID!]!, $lim: Int!) {
+         items(ids: $ids, limit: $lim) {
            id
            column_values(ids: ["${TMPL_CATEGORY_COL}", "${TMPL_APPLICANT_TYPE_COL}"]) {
              id text
            }
          }
        }`,
-      { ids: chunk }
+      { ids: chunk, lim: chunk.length }
     );
     for (const tmpl of data?.items || []) {
       const cat  = tmpl.column_values.find((c) => c.id === TMPL_CATEGORY_COL)?.text?.trim()       || '';

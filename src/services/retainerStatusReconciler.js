@@ -231,8 +231,11 @@ async function readCasesBulk(cmItemIds, { chunk = 50 } = {}) {
     let d;
     try {
       d = await mondayApi.query(
-        `query($ids:[ID!]){ items(ids:$ids){ id state board{id} column_values(ids:${COLS_Q}){ id text } } }`,
-        { ids: batch }
+        // limit MUST match the chunk: items(ids:) silently returns only 25
+        // without it, and every unreturned id then reads as a deleted case
+        // ("dangling") — 20 healthy cases were mis-flagged live 2026-08-17.
+        `query($ids:[ID!], $lim:Int!){ items(ids:$ids, limit:$lim){ id state board{id} column_values(ids:${COLS_Q}){ id text } } }`,
+        { ids: batch, lim: batch.length }
       );
     } catch (err) {
       // clientMasterItemId is a free-text column, so one malformed id can make

@@ -192,10 +192,15 @@ async function getCaseDocuments(caseRef) {
   ];
 
   const templateMap = {};
-  if (intakeIds.length) {
+  // CHUNKED + explicit limit: items(ids:) silently caps at 25 without one, and
+  // a checklist routinely carries 30-60 rows — the unreturned templates lost
+  // their category/applicant-type/instructions and fell back to defaults.
+  const TMPL_CHUNK = 100;
+  for (let i = 0; i < intakeIds.length; i += TMPL_CHUNK) {
+    const batch = intakeIds.slice(i, i + TMPL_CHUNK);
     const tmplData = await mondayApi.query(
-      `query($ids: [ID!]!) {
-         items(ids: $ids) {
+      `query($ids: [ID!]!, $lim: Int!) {
+         items(ids: $ids, limit: $lim) {
            id
            column_values(ids: [
              "${TMPL_DESC_COL}",
@@ -206,7 +211,7 @@ async function getCaseDocuments(caseRef) {
            ]) { id text }
          }
        }`,
-      { ids: intakeIds }
+      { ids: batch, lim: batch.length }
     );
 
     for (const tmpl of tmplData?.items || []) {
