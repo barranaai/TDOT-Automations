@@ -46,6 +46,32 @@ const PORT = process.env.PORT || 5050;
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(cookieParser());
 
+// ── Canonical host ───────────────────────────────────────────────────────────
+// The service answers on BOTH its Render hostname and the branded domain, but
+// the Monday OAuth callback is registered on the branded one only. Starting a
+// staff login from a Render-host link therefore set the CSRF state cookie on
+// one domain and returned to the other — the cookie never arrived and the
+// login died with "Invalid login state" (reported live 2026-08-18 from the
+// board's Client Portal links, 315 of which still carry the old host).
+//
+// Redirecting page GETs to the canonical host makes every stale link — board
+// columns, old emails, bookmarks — work permanently. Deliberately NOT applied
+// to webhooks (senders don't follow redirects), the API, or the health check.
+const CANONICAL_HOST = (() => {
+  try { return new URL(process.env.RENDER_URL || '').host; } catch (_) { return ''; }
+})();
+const NO_REDIRECT = /^\/(webhook|api|phase2\/health)\b/;
+app.use((req, res, next) => {
+  if (!CANONICAL_HOST) return next();
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  if (NO_REDIRECT.test(req.path)) return next();
+  const host = String(req.headers.host || '');
+  if (!host || host === CANONICAL_HOST) return next();
+  const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim() || 'https';
+  console.log(`[Canonical] ${host}${req.originalUrl} → ${CANONICAL_HOST}`);
+  return res.redirect(302, `${proto}://${CANONICAL_HOST}${req.originalUrl}`);
+});
+
 app.use('/webhook/monday', mondayWebhookRouter);
 app.use('/questionnaire',  questionnaireFormRouter);
 app.use('/documents',      documentUploadRouter);
