@@ -137,12 +137,19 @@ async function createLead(formData, { groupId } = {}) {
     conversionStatus:     'New',
   };
 
-  const result = groupId
+  // ALWAYS name the target group. create_item without group_id drops the item
+  // into the board's TOP group — which since the "Direct retainer clients"
+  // group was added (2026-07-30) meant every website/staff lead was filed
+  // among the walk-in retainer clients (found live 2026-08-17; it is what
+  // Melanie was looking at when she reported the leads board). Funnel leads
+  // belong in the funnel group; only an explicit groupId overrides it.
+  const targetGroup = String(groupId || boardCfg.funnelGroupId || '').trim();
+  const result = targetGroup
     ? await mondayApi.query(
         `mutation($boardId: ID!, $groupId: String!, $name: String!, $cols: JSON!) {
            create_item(board_id: $boardId, group_id: $groupId, item_name: $name, column_values: $cols) { id }
          }`,
-        { boardId: String(leadBoardId), groupId: String(groupId), name, cols: JSON.stringify(buildCols(createFields)) }
+        { boardId: String(leadBoardId), groupId: targetGroup, name, cols: JSON.stringify(buildCols(createFields)) }
       )
     : await mondayApi.query(
         `mutation($boardId: ID!, $name: String!, $cols: JSON!) {

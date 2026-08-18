@@ -1,6 +1,9 @@
 {
   "boardId": "18416845157",
   "workspace": "CRM",
+  "createdAt": "2026-06-08T18:00:45.756Z",
+  "directRetainerGroupId": "group_mm5qe7tb",
+  "funnelGroupId": "topics",
   "columns": {
     "fullName": "text_mm44r6k2",
     "email": "email_mm44f4hm",
@@ -109,7 +112,5 @@
     "clientAccountId": "text_mm5x5dab",
     "previousCaseRef": "text_mm5xdsxe",
     "advertisementFee": "numeric_mm67q8re"
-  },
-  "createdAt": "2026-06-08T18:00:45.756Z",
-  "directRetainerGroupId": "group_mm5qe7tb"
+  }
 }
