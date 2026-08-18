@@ -143,7 +143,9 @@ router.get('/book/:leadId', async (req, res) => {
       return res.type('html').send(buildBookingDoneHtml(lead, bd || '', bt || ''));
     }
     const routing = require('../../config/consultantRouting');
-    const consultant = routing.routeConsultant(lead);
+    // resolveConsultant honors a staff-pinned assignedConsultant (Melanie's
+    // pre-invite override, 2026-08-17) and falls back to auto-routing.
+    const consultant = routing.resolveConsultant(lead);
     // One availability search per consultation option (duration ↔ Square
     // variation) — a 45-min consult needs a bigger clear window than a 30-min.
     // All-or-nothing: if ANY option's live search fails, EVERY option falls
@@ -199,7 +201,7 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
     // against the ROUTED consultant's list — the posted value is untrusted.
     // Missing/invalid → the consultant's default option.
     const routing = require('../../config/consultantRouting');
-    const consultant = routing.routeConsultant(lead);
+    const consultant = routing.resolveConsultant(lead);   // pinned override wins (2026-08-17)
     const options = routing.consultOptionsFor(consultant);
     const wantedDur = parseInt(req.body.durationMin, 10);
     const option = options.find((o) => o.durationMin === wantedDur)

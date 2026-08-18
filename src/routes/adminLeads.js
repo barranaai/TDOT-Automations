@@ -383,6 +383,13 @@ ${buildNavHeader('leads')}
         </div>
         <div class="card" id="invite-card">
           <div class="card-t">${I.send} Booking invite email <span class="when" id="inv-when"></span></div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+            <div>
+              <div class="subhead" style="margin:0 0 4px">Consultation with</div>
+              <select id="inv-consultant" style="border:1px solid #e2e8f0;border-radius:8px;padding:7px 10px;font:inherit;min-width:230px"></select>
+            </div>
+            <span class="muted" id="inv-routed-hint" style="font-size:12px;margin-top:16px"></span>
+          </div>
           <div id="invite-warn" style="display:none;background:#fff4e5;border:1px solid #f0c98a;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:13px;color:#7a4b00"></div>
           <div class="muted" style="margin-bottom:8px;line-height:1.5">This is the invite email's body — the standard consultation-booking paragraph (no case-condition commentary, per firm policy). Edit only if needed, then send. The email adds the greeting, booking button and fee details around it.</div>
           <textarea id="invite-msg" rows="8" placeholder="The email will use the standard consultation-booking paragraph unless you write a message here."></textarea>
@@ -489,6 +496,23 @@ function render(d){
   document.getElementById('invite-msg').value=d.inviteMessage||'';
   document.getElementById('inv-when').textContent=d.inviteSent
     ? ('sent'+(d.inviteSentAt?(' '+String(d.inviteSentAt).slice(0,10)):'')+' — sending again re-emails the client') : '';
+  // Consultant override (Melanie, 2026-08-17): show the auto-routing suggestion,
+  // let staff pick, persist immediately so a "send later" keeps the choice too.
+  var cs=document.getElementById('inv-consultant');
+  if(cs){
+    var names=d.consultants||[];
+    cs.innerHTML=names.map(function(n){ return '<option value="'+escHtml(n)+'">'+escHtml(n)+(n===d.routedConsultant?' (suggested)':'')+'</option>'; }).join('');
+    cs.value=d.consultant||d.routedConsultant||names[0]||'';
+    var hint=document.getElementById('inv-routed-hint');
+    if(hint) hint.textContent=d.routedConsultant?('auto-routing suggests '+d.routedConsultant):'';
+    cs.onchange=function(){
+      var key=getKey(); if(!key) return;
+      fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify({action:'setConsultant',value:cs.value})})
+        .then(function(r){ return r.json(); })
+        .then(function(j){ if(j&&j.error){ alert(j.error); } })
+        .catch(function(){});
+    };
+  }
   // Booked leads get the consultation view; DIRECT retainer clients (walk-in /
   // referral — never book) get the same link, since the retainer panel lives there.
   if(d.bookingStatus==='Booked' || d.directRetainer){
@@ -543,11 +567,24 @@ document.getElementById('btn-invite').onclick=function(){
   // Intent-aware confirmation: a client who asked for a quote / file update /
   // general information did NOT ask to book — make staff say so explicitly
   // before the paid-consultation invite goes out.
+  var btn=this;
+  var pick=document.getElementById('inv-consultant');
+  var withWho=pick&&pick.value?(' The booking will be with '+pick.value+'.'):'';
   var confirmTxt=(WANTS_TO && WANTS_TO!=='Book consultation')
-    ? 'THIS CLIENT ASKED FOR "'+WANTS_TO+'" — not a consultation booking. Send the paid-consultation booking invite anyway?'
-    : 'Email this client their consultation booking link with this message?';
-  doAction(this,'bookingInvite',confirmTxt,
-    document.getElementById('invite-msg').value,'inv-msg');
+    ? 'THIS CLIENT ASKED FOR "'+WANTS_TO+'" — not a consultation booking. Send the paid-consultation booking invite anyway?'+withWho
+    : 'Email this client their consultation booking link with this message?'+withWho;
+  if(!confirm(confirmTxt)) return;
+  // PIN what is ON SCREEN before the invite goes out (Melanie, 2026-08-17):
+  // the booking page reads the pinned consultant live, so the invite must
+  // never race a routing recalculation. Pin first (post-confirm), then send.
+  var key=getKey(); if(!key) return;
+  var pinDone = (pick&&pick.value)
+    ? fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify({action:'setConsultant',value:pick.value})}).catch(function(){})
+    : Promise.resolve();
+  pinDone.then(function(){
+    doAction(btn,'bookingInvite',null,
+      document.getElementById('invite-msg').value,'inv-msg');
+  });
 };
 document.getElementById('btn-resend').onclick=function(){
   doAction(this,'resendLinks','Resend the meeting + pre-consult links to this client?');

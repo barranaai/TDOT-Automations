@@ -60,7 +60,6 @@ const SERVICE_GROUPS = {
     "ATIP or GCMS notes",
     "Webform",
     "Passport request or VFS support",
-    "Document review",
     "Case strategy consultation",
     "Other"
   ]
@@ -701,7 +700,6 @@ const FIELDS = [
       "ATIP or GCMS notes",
       "Webform",
       "Passport request or VFS support",
-      "Document review",
       "Case strategy consultation",
       "Other"
     ],

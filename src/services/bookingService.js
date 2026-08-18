@@ -446,7 +446,7 @@ async function reconcileConsultOptionWithPayment(lead, paidCents) {
   }
 
   const routing = require('../../config/consultantRouting');
-  const consultant = routing.routeConsultant(lead);
+  const consultant = routing.resolveConsultant(lead);   // pinned override wins (2026-08-17)
   const paidOption = routing.consultOptionsFor(consultant).find((o) => matchesFee(o.feeCents));
   if (paidOption) {
     await leadService.updateLead(lead.id, {
@@ -550,7 +550,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
   let feeLine = '';
   try {
     const routing = require('../../config/consultantRouting');
-    const opts = routing.consultOptionsFor(routing.routeConsultant(lead));
+    const opts = routing.consultOptionsFor(routing.resolveConsultant(lead));   // invite quotes the PINNED consultant's fees
     const cad = (c) => (c / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
     const priced = opts.filter((o) => o.feeCents > 0);
     // Totals shown WITH HST (team feedback 2026-08-13: a client charged $226

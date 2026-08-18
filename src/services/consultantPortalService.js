@@ -540,6 +540,19 @@ async function getLeadDetail(leadId) {
     phone:    lead.phone || '',
     address:  lead.residentialAddress || '', // convert-to-direct-retainer prefill
     createdAt: lead.createdAt || '',
+    // Pre-invite consultant override (2026-08-17): the auto-routing suggestion
+    // + the pickable registry names. `consultant` (below) is the pinned value.
+    routedConsultant: (() => {
+      try {
+        const routing = require('../../config/consultantRouting');
+        const r = routing.routeConsultant(lead);
+        return (routing.CONSULTANTS[r.key] && routing.CONSULTANTS[r.key].name) || '';
+      } catch (_) { return ''; }
+    })(),
+    consultants: (() => {
+      try { return Object.values(require('../../config/consultantRouting').CONSULTANTS).map((c) => c.name); }
+      catch (_) { return []; }
+    })(),
     tier:     lead.tier || '',
     priority: lead.priority || '',
     service:  lead.confirmedCaseType || lead.serviceRequired || '',
@@ -762,6 +775,16 @@ function validateAction(action, value) {
       const msg = String(value == null ? '' : value).trim();
       if (msg.length > 2000) return { ok: false, error: 'Invite message is too long (max 2000 characters).' };
       return { ok: true, normalized: msg };
+    }
+    case 'setConsultant': {
+      // Pre-invite consultant override (Melanie, 2026-08-17): '' clears the pin
+      // (back to auto-routing); otherwise the EXACT registry name only.
+      const v = String(value == null ? '' : value).trim();
+      if (!v) return { ok: true, normalized: '' };
+      const names = Object.values(require('../../config/consultantRouting').CONSULTANTS).map((c) => c.name);
+      return names.includes(v)
+        ? { ok: true, normalized: v }
+        : { ok: false, error: 'Unknown consultant — pick one from the list.' };
     }
     case 'resendLinks':
     case 'sendConsultAgreement':
@@ -1082,6 +1105,21 @@ async function applyAction({ leadId, action, value, amend = false }) {
         ? `⚠ <b>Retainer plan AMENDED after the agreement was sent</b> — template ${s.template}, scope annex ${s.annexCode}, fee $${centsToMoney(s.feeCents)}. The sent agreement may state different terms.`
         : `Retainer plan saved — template ${s.template}, scope annex ${s.annexCode}, fee $${centsToMoney(s.feeCents)}.`);
       return { ok: true, message: agreementSent ? 'Retainer plan amended — a staff note was recorded.' : 'Retainer plan saved.' };
+    }
+
+    case 'setConsultant': {
+      // The booking page reads the pin live (resolveConsultant) — but once a
+      // slot is BOOKED the consultation sits on a real calendar; changing the
+      // pin then would only make the record lie.
+      if ((lead.bookedSlot || '').trim() || (lead.bookingStatus || '').trim() === 'Booked') {
+        const e = new Error('Already booked — the consultation is on the assigned consultant\'s calendar. Cancel/rebook to change it.');
+        e.badRequest = true; throw e;
+      }
+      await leadService.updateLead(leadId, { assignedConsultant: v.normalized }, { clearKeys: ['assignedConsultant'] });
+      await postPortalNote(leadId, v.normalized
+        ? `Consultant set to ${v.normalized} — the booking link will offer their calendar and fees.`
+        : 'Consultant selection cleared — automatic routing applies again.');
+      return { ok: true, message: v.normalized ? `✓ Consultation will be with ${v.normalized}.` : '✓ Back to automatic routing.' };
     }
 
     case 'reissueRetainer': {

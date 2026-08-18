@@ -52,7 +52,7 @@ const SERVICE_GROUPS = {
   ],
   'Other Support': [
     'Refusal review', 'ATIP or GCMS notes', 'Webform', 'Passport request or VFS support',
-    'Document review', 'Case strategy consultation', 'Other',
+    'Case strategy consultation', 'Other',   // document-review option removed 2026-08-17 — service not offered
   ],
 };
 const ALL_SERVICES = Object.values(SERVICE_GROUPS).flat();
