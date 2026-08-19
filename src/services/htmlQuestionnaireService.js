@@ -1464,6 +1464,12 @@ ${hasAdditionalForm ? `
       .slice(0, 90);
   }
 
+  /* Same slug WITHOUT the 90-char cap — used where a key's tail carries the
+     meaning (table row/column) and must survive. */
+  function slugifyFull(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/, '');
+  }
+
   function getHeadingText(el) {
     return Array.from(el.childNodes)
       .filter(function (n) {
@@ -1635,7 +1641,20 @@ ${hasAdditionalForm ? `
           var section2 = getSectionContext(table);
           /* Embed tableId so pre-fill can identify and expand this table */
           var labelText2 = headers[ci] + ' — Row ' + (ri + 1);
-          var key2       = slugify(section2 + '--tbl-' + slugify(tableId) + '--r' + (ri + 1) + '--' + headers[ci]);
+          /* KEY COLLISION FIX (live bug 2026-08-19, case 2026-ISS-010): slugify
+             caps at 90 chars, and on long section paths that cut fell BEFORE
+             the "-r{N}-{header}" tail — so every cell of the table shared ONE
+             key and a single value smeared across all columns on reload.
+             Short keys keep their exact historical form; only keys that would
+             truncate switch to a section-trimmed form that always keeps the
+             discriminating tail. */
+          var full2      = slugifyFull(section2 + '--tbl-' + slugify(tableId) + '--r' + (ri + 1) + '--' + headers[ci]);
+          var key2;
+          if (full2.length <= 90) { key2 = full2; }
+          else {
+            var tail2 = '-tbl-' + slugifyFull(tableId) + '-r' + (ri + 1) + '-' + slugifyFull(headers[ci]);
+            key2 = slugifyFull(section2).slice(0, Math.max(0, 90 - tail2.length)) + tail2;
+          }
           fields.push({ section: section2 + ' › Table', label: labelText2, key: key2, el: cell, _tableId: tableId, _col: ci });
         }
       }
@@ -2415,11 +2434,21 @@ ${hasAdditionalForm ? `
        labels use a straight apostrophe, but some forms author them with a
        curly one (&rsquo;), so "Spouse's Date of Birth" would otherwise miss. */
     function normLbl(s){ return (s || '').replace(/[‘’ʼ]/g, "'").trim().toLowerCase(); }
+    /* AMBIGUOUS KEYS (data saved before the 2026-08-19 table-key fix): when one
+       key covers several fields, keying off it writes ONE value into all of
+       them — the smear staff reported on 2026-ISS-010. Such keys are dropped
+       from the key map so those fields fall through to the label match below,
+       where the stored labels ("From (DD/MM/YYYY) — Row 1") are still exact. */
+    var keyCount = {};
+    for (var ki = 0; ki < sourceFields.length; ki++) {
+      var kk = sourceFields[ki] && sourceFields[ki].key;
+      if (kk) keyCount[kk] = (keyCount[kk] || 0) + 1;
+    }
     var byKey = {}, byLabel = {};
     for (var i = 0; i < sourceFields.length; i++) {
       var sf = sourceFields[i];
       if (!sf.value || !sf.value.trim()) continue;
-      byKey[sf.key] = sf.value;
+      if (keyCount[sf.key] === 1) byKey[sf.key] = sf.value;
       var lbl = normLbl(sf.label);
       if (!byLabel[lbl]) byLabel[lbl] = [];
       byLabel[lbl].push(sf.value);
@@ -3640,6 +3669,10 @@ input[disabled], select[disabled], textarea[disabled] {
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/, '').slice(0, 90);
   }
 
+  function slugifyFull(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/, '');
+  }
+
   function getHeadingText(el) {
     return Array.from(el.childNodes)
       .filter(function (n) {
@@ -3736,7 +3769,20 @@ input[disabled], select[disabled], textarea[disabled] {
           if (!cell || seen.indexOf(cell) !== -1) continue;
           seen.push(cell);
           var labelText2 = headers[ci] + ' \u2014 Row ' + (ri + 1);
-          var key2       = slugify(section2 + '--tbl-' + slugify(tableId) + '--r' + (ri + 1) + '--' + headers[ci]);
+          /* KEY COLLISION FIX (live bug 2026-08-19, case 2026-ISS-010): slugify
+             caps at 90 chars, and on long section paths that cut fell BEFORE
+             the "-r{N}-{header}" tail — so every cell of the table shared ONE
+             key and a single value smeared across all columns on reload.
+             Short keys keep their exact historical form; only keys that would
+             truncate switch to a section-trimmed form that always keeps the
+             discriminating tail. */
+          var full2      = slugifyFull(section2 + '--tbl-' + slugify(tableId) + '--r' + (ri + 1) + '--' + headers[ci]);
+          var key2;
+          if (full2.length <= 90) { key2 = full2; }
+          else {
+            var tail2 = '-tbl-' + slugifyFull(tableId) + '-r' + (ri + 1) + '-' + slugifyFull(headers[ci]);
+            key2 = slugifyFull(section2).slice(0, Math.max(0, 90 - tail2.length)) + tail2;
+          }
           if (rowKey === null) rowKey = key2; /* first valid cell → becomes the row flag key */
           fields.push({ section: section2 + ' \u203a Table', label: labelText2, key: key2, el: cell, group: row, _rowKey: rowKey });
         }
@@ -4011,10 +4057,18 @@ input[disabled], select[disabled], textarea[disabled] {
     }
 
     /* ── Strategy 1: key-based match ── */
+    /* Ambiguous keys (pre-2026-08-19 table saves) are EXCLUDED: one key over
+       several fields would write a single value into all of them. Those fall
+       to the label pass below, where the stored labels are still exact. */
+    var keyCount = {};
+    for (var kc = 0; kc < SAVED_DATA.length; kc++) {
+      var ke = SAVED_DATA[kc];
+      if (ke && ke.key) keyCount[ke.key] = (keyCount[ke.key] || 0) + 1;
+    }
     var byKey = {};
     for (var i = 0; i < SAVED_DATA.length; i++) {
       var entry = SAVED_DATA[i];
-      if (entry && entry.key && entry.value !== undefined) byKey[entry.key] = entry.value;
+      if (entry && entry.key && entry.value !== undefined && keyCount[entry.key] === 1) byKey[entry.key] = entry.value;
     }
     var keyMatched = 0;
     for (var j = 0; j < fields.length; j++) {
@@ -4024,8 +4078,10 @@ input[disabled], select[disabled], textarea[disabled] {
     console.log('[TDOT Review] Key-matched:', keyMatched);
 
     /* ── Strategy 2: label+occurrence match ── */
-    if (keyMatched === 0) {
-      console.warn('[TDOT Review] Key match 0 — trying label+occurrence');
+    /* Runs whenever anything is still unmatched — with ambiguous table keys
+       excluded above, those fields are matched here rather than smeared. */
+    if (keyMatched < fields.length) {
+      if (keyMatched === 0) console.warn('[TDOT Review] Key match 0 — trying label+occurrence');
       var byLabel = {};
       for (var li = 0; li < SAVED_DATA.length; li++) {
         var ld = SAVED_DATA[li];
@@ -4041,7 +4097,11 @@ input[disabled], select[disabled], textarea[disabled] {
         var fkey = (fld.label || '').trim().toLowerCase();
         var occ  = lblOcc[fkey] || 0;
         lblOcc[fkey] = occ + 1;
-        if (byLabel[fkey] && byLabel[fkey][occ] !== undefined && byLabel[fkey][occ] !== '') {
+        /* NEVER overwrite a field the key pass already filled — this pass now
+           runs alongside it (for ambiguous-key fields), so it may only FILL
+           gaps, never correct a good value with a positional guess. */
+        var already = fld.el && ((fld.el.type === 'checkbox' || fld.el.type === 'radio') ? fld.el.checked : String(fld.el.value || '').trim() !== '');
+        if (!already && byLabel[fkey] && byLabel[fkey][occ] !== undefined && byLabel[fkey][occ] !== '') {
           setValue(fld.el, byLabel[fkey][occ]);
           lblMatched++;
         }

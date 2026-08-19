@@ -449,8 +449,52 @@ async function uploadToLeadFolderAndLink({ fullName, leadId, folderId, filename,
   return { url, webUrl: res.data.webUrl, id: res.data.id };
 }
 
+
+/**
+ * List a stored file's version history (OneDrive/SharePoint keeps versions
+ * automatically). Newest first. Returns [] when the file or history is absent.
+ *
+ * Added 2026-08-19 after an operator action overwrote a client's saved
+ * questionnaire: without a recovery path, one bad write is permanent.
+ */
+async function listFileVersions({ clientName, caseRef, subfolder, filename }) {
+  const token    = await getCachedToken();
+  const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+  const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim();
+  const filePath = `${ROOT_FOLDER}/${safeName}/${subfolder}/${safeFile}`;
+  const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
+  try {
+    const res = await axios.get(`${userBase()}/root:/${encoded}:/versions`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return (res.data && res.data.value) || [];
+  } catch (err) {
+    if (err.response?.status === 404) return [];
+    throw new Error(`OneDrive version list failed: ${err.response?.data ? JSON.stringify(err.response.data) : err.message}`);
+  }
+}
+
+/** Fetch the CONTENT of one historical version (Buffer), or null if absent. */
+async function readFileVersion({ clientName, caseRef, subfolder, filename, versionId }) {
+  const token    = await getCachedToken();
+  const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+  const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim();
+  const filePath = `${ROOT_FOLDER}/${safeName}/${subfolder}/${safeFile}`;
+  const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
+  try {
+    const res = await axios.get(
+      `${userBase()}/root:/${encoded}:/versions/${encodeURIComponent(versionId)}/content`,
+      { headers: { Authorization: `Bearer ${token}` }, responseType: 'arraybuffer' });
+    return Buffer.from(res.data);
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    throw new Error(`OneDrive version read failed: ${err.response?.data ? JSON.stringify(err.response.data) : err.message}`);
+  }
+}
+
 module.exports = {
   createClientFolders, uploadFile, readFile, ensureClientFolder, ensureCategoryFolderLink,
   ensureLeadFolder, renameDriveItem, uploadFileAndLink, uploadToLeadFolderAndLink,
   getClientFolderByName, getDriveItemById, deleteDriveItem,
+  listFileVersions, readFileVersion,
 };

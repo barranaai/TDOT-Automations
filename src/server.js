@@ -725,6 +725,59 @@ app.post('/api/case/:caseRef/document/:itemId/status', async (req, res) => {
 // Staff-entered phone-in lead ("direct leads", meeting 2026-08-13). Same
 // duplicate contract as the direct-client modal: 409 + matches until staff
 // explicitly re-submit with allowDuplicate.
+// ── Questionnaire version recovery (admin) ───────────────────────────────────
+// A saved questionnaire is one JSON file per member; any overwrite (a bad
+// client save, an operator mistake — one happened 2026-08-19) replaces it.
+// OneDrive keeps version history, so these expose list + restore.
+app.get('/admin/questionnaire/:caseRef/versions', async (req, res) => {
+  try {
+    const svc = require('./services/htmlQuestionnaireService');
+    const oneDrive = require('./services/oneDriveService');
+    const caseRef = String(req.params.caseRef || '').trim();
+    const formKey = String(req.query.formKey || 'primary').trim();
+    const { clientName } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const versions = await oneDrive.listFileVersions({
+      clientName, caseRef, subfolder: 'Questionnaire',
+      filename: `questionnaire-${caseRef}-${formKey}.json`,
+    });
+    res.json({ caseRef, formKey, clientName, versions: versions.map((v) => ({
+      id: v.id, size: v.size, lastModified: v.lastModifiedDateTime,
+      by: (v.lastModifiedBy && v.lastModifiedBy.user && v.lastModifiedBy.user.displayName) || '',
+    })) });
+  } catch (err) {
+    console.error('[QVersions] list failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/admin/questionnaire/:caseRef/restore', express.json(), async (req, res) => {
+  try {
+    const svc = require('./services/htmlQuestionnaireService');
+    const oneDrive = require('./services/oneDriveService');
+    const caseRef = String(req.params.caseRef || '').trim();
+    const { formKey = 'primary', versionId, dryRun = true } = req.body || {};
+    if (!versionId) return res.status(400).json({ error: 'versionId is required' });
+    const { clientName, itemId } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const filename = `questionnaire-${caseRef}-${formKey}.json`;
+    const buf = await oneDrive.readFileVersion({ clientName, caseRef, subfolder: 'Questionnaire', filename, versionId });
+    if (!buf) return res.status(404).json({ error: 'that version could not be read' });
+    let parsed = null;
+    try { parsed = JSON.parse(buf.toString('utf8')); } catch (_) { return res.status(422).json({ error: 'version content is not valid JSON' }); }
+    const fields = Array.isArray(parsed) ? parsed : (parsed.fields || []);
+    const filled = fields.filter((f) => f && String(f.value || '').trim()).length;
+    if (dryRun) return res.json({ dryRun: true, caseRef, formKey, versionId, wouldRestore: { fields: fields.length, filled } });
+    await oneDrive.uploadFile({
+      clientName, caseRef, category: 'Questionnaire', filename,
+      buffer: buf, mimeType: 'application/json',
+    });
+    console.log(`[QVersions] RESTORED ${caseRef}/${formKey} from version ${versionId} (${fields.length} fields)`);
+    res.json({ ok: true, caseRef, formKey, versionId, restored: { fields: fields.length, filled }, itemId });
+  } catch (err) {
+    console.error('[QVersions] restore failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/leads/create', express.json(), async (req, res) => {
   try {
     res.json(await consultantPortalService.createStaffLead(req.body || {}));
