@@ -10,6 +10,7 @@
  */
 
 const express = require('express');
+const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS } = require('./adminShared');
 
@@ -69,6 +70,7 @@ function buildCockpitHTML(caseRef) {
     .tab:hover { color:var(--navy); }
     .tab.active { color:var(--navy); border-bottom-color:var(--navy); }
     .tab .soon { font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; background:#f1f5f9; padding:2px 6px; border-radius:10px; }
+    ${UPDATES_WIDGET_CSS}
     .tab-panel { display:none; }
     .tab-panel.active { display:block; animation: fadeUp .3s ease both; }
 
@@ -203,6 +205,7 @@ ${buildNavHeader('dashboard')}
       <button class="tab" data-tab="payments">Payments</button>
       <button class="tab" data-tab="meetings">Meetings</button>
       <button class="tab" data-tab="timeline">Timeline</button>
+      <button class="tab" data-tab="updates">Updates</button>
     </div>
 
     <!-- Overview -->
@@ -294,13 +297,24 @@ ${buildNavHeader('dashboard')}
       </div>
     </div>
 
+    <!-- Updates tab — the Monday "Updates" thread (case row + linked lead rows) -->
+    <div class="tab-panel" id="panel-updates">
+      <div class="card">
+        <div class="card-title">💬 Updates <span class="cnt" id="updw-cnt"></span></div>
+        <div class="muted" style="margin-bottom:12px">The same thread Monday shows on this case — system notes and team comments, newest first. Lead-tagged entries are the pre-retainer history. Posting writes to the case's Monday thread.</div>
+        ${updatesWidgetHtml('updw')}
+      </div>
+    </div>
+
   </div><!-- /content -->
 </main>
 
 <script>
 var CASE_REF = ${JSON.stringify(caseRef).replace(/</g, '\\u003c')};
+${UPDATES_WIDGET_JS}
 
 ${SHARED_AUTH_JS}
+tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/case-updates/' + encodeURIComponent(CASE_REF) });
 
 function escHtml(s) {
   return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

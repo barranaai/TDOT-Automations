@@ -10,6 +10,7 @@
  */
 
 const express = require('express');
+const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS } = require('./adminShared');
 
@@ -284,6 +285,7 @@ function buildLeadDetailHTML(leadId) {
   .wrap { max-width:1140px; margin:0 auto; padding:20px 30px 90px; }
   #loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:50vh; gap:16px; }
   .spinner { width:42px; height:42px; border:3px solid #e2e8f0; border-top-color:var(--navy); border-radius:50%; animation:spin .7s linear infinite; }
+  ${UPDATES_WIDGET_CSS}
   @keyframes spin { to { transform:rotate(360deg); } }
   .muted { color:var(--light); font-size:12px; }
   #error-msg { display:none; background:#fff1f2; border:1px solid #fda4af; color:#dc2626; padding:14px 18px; border-radius:12px; margin:24px auto; max-width:520px; text-align:center; }
@@ -411,6 +413,7 @@ ${buildNavHeader('leads')}
           <div id="act-msg" class="act-msg"></div>
         </div>
         <div class="card"><div class="card-t">${I.cpu} AI triage notes</div><div id="c-ai"></div></div>
+        <div class="card"><div class="card-t">💬 Updates</div>${updatesWidgetHtml('updw')}</div>
       </div>
     </div>
   </div>
@@ -418,6 +421,8 @@ ${buildNavHeader('leads')}
 <script>
 ${SHARED_AUTH_JS}
 var LEAD_ID=${jsLit(String(leadId))};
+${UPDATES_WIDGET_JS}
+tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/updates/' + encodeURIComponent(LEAD_ID), itemId: LEAD_ID });
 var WANTS_TO=''; // the client's stated intent — set in render(d); gates the invite confirmation
 var ICONS=${jsLit({ flag: I.flag, file: I.file, user: I.user, clock: I.clock })};
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }

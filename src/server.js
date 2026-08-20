@@ -129,6 +129,39 @@ function requireApiKey(req, res, next) {
 
 app.use('/api', requireApiKey);
 
+// ── Updates thread (the Monday "Updates" section, in the platform) ───────────
+// GET one item's thread (lead/consultation pages), the merged case thread
+// (cockpit), and POST a staff update. All behind the /api admin-key gate.
+app.get('/api/updates/:itemId', async (req, res) => {
+  try {
+    if (!/^\d+$/.test(req.params.itemId)) return res.status(400).json({ error: 'numeric item id required' });
+    res.json({ updates: await require('./services/updatesService').getUpdatesForItem(req.params.itemId) });
+  } catch (err) {
+    console.error('[Updates] read failed:', err.message);
+    res.status(500).json({ error: 'Could not load the updates thread.' });
+  }
+});
+
+app.get('/api/case-updates/:caseRef', async (req, res) => {
+  try {
+    res.json(await require('./services/updatesService').getCaseThread(req.params.caseRef));
+  } catch (err) {
+    if (/not found/i.test(err.message || '')) return res.status(404).json({ error: 'Case not found.' });
+    console.error('[Updates] case thread failed:', err.message);
+    res.status(500).json({ error: 'Could not load the updates thread.' });
+  }
+});
+
+app.post('/api/updates/:itemId', express.json(), async (req, res) => {
+  try {
+    res.json(await require('./services/updatesService').postUpdate(req.params.itemId, req.body || {}));
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    console.error('[Updates] post failed:', err.message);
+    res.status(500).json({ error: 'Could not post the update.' });
+  }
+});
+
 // Manual trigger — resend intake email for a specific Client Master item ID
 // Usage: POST /api/resend-intake/<itemId>
 // Useful when a token was missing or an email was sent with a broken link.

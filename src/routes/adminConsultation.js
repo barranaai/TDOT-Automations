@@ -12,6 +12,7 @@
 const express = require('express');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS } = require('./adminShared');
+const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { OUTCOME_LABELS } = require('../services/consultantPortalService');
 
 function escAttr(s) {
@@ -655,6 +656,7 @@ function buildDetailHTML(leadId) {
   .col { display:flex; flex-direction:column; gap:14px; }
   .card { background:var(--card); border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; padding:16px 18px; }
   .card-t { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:800; color:var(--navy); margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #f1f5f9; }
+  ${UPDATES_WIDGET_CSS}
   .card-t svg { font-size:15px; color:var(--navy); }
   .card-t .when { margin-left:auto; font-weight:500; font-size:11px; color:var(--light); }
   .kv { display:flex; padding:6px 0; font-size:13px; border-top:1px solid #f8fafc; gap:10px; }
@@ -780,6 +782,7 @@ ${buildNavHeader('consultations')}
         <div class="card"><div class="card-t">${I.clip} Intake context</div><div id="c-intake" class="kvgrid"></div></div>
         <div class="card"><div class="card-t">${I.cap} Eligibility profile <span class="when" id="c-elig-when"></span></div><div id="c-elig" class="kvgrid"></div></div>
         <div class="card"><div class="card-t">${I.cpu} AI triage notes</div><div id="c-ai"></div></div>
+        <div class="card"><div class="card-t">💬 Updates</div>${updatesWidgetHtml('updw')}</div>
       </div>
 
       <div class="col">
@@ -946,9 +949,11 @@ ${buildNavHeader('consultations')}
 </main>
 <script>
 var LEAD_ID=${jsLit(leadId)};
+${UPDATES_WIDGET_JS}
 var OUTCOMES=${jsLit(OUTCOME_LABELS)};
 var ICONS=${jsLit({ video: I.video, file: I.file, disc: I.disc, mail: I.mail, userCheck: I.userCheck, clock: I.clock, check: I.check })};
 ${SHARED_AUTH_JS}
+tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/updates/' + encodeURIComponent(LEAD_ID), itemId: LEAD_ID });
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function safeUrl(u){ u=String(u==null?'':u).trim(); return /^(https?:|mailto:)/i.test(u)?u:'#'; } // block javascript:/data: in href
 var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload only once (don't clobber edits)
