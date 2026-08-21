@@ -43,7 +43,11 @@ const PORT = process.env.PORT || 5050;
 // verification (Square, Zoom) must HMAC the exact bytes Square/Zoom sent.
 // Route-level express.raw() never runs once this global parser has consumed
 // the body — without this hook, handlers end up hashing "[object Object]".
-app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
+// limit: the default is 100kb, and a filled long-form questionnaire (368
+// fields on the spousal form, case 2026-ISS-010) crosses it — every save and
+// submit then died as a bare 500 (found live 2026-08-20). 2mb is ~20x the
+// largest real payload seen; multipart uploads go through multer separately.
+app.use(express.json({ limit: '2mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(cookieParser());
 
 // ── Canonical host ───────────────────────────────────────────────────────────
@@ -1034,6 +1038,19 @@ process.on('unhandledRejection', (reason, promise) => {
 process.on('uncaughtException', (err) => {
   console.error('[Server] Uncaught exception:', err);
   process.exit(1);
+});
+
+// Body-parser failures (oversized/malformed JSON) must return an honest
+// status + message, not the default bare 500 the questionnaire surfaced.
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+    console.warn(`[Body] ${req.method} ${req.path}: payload too large (${err.length || '?'} bytes)`);
+    return res.status(413).json({ error: 'The form data is too large to save in one request — please contact your consultant.' });
+  }
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Malformed request body.' });
+  }
+  return next(err);
 });
 
 app.listen(PORT, () => {
