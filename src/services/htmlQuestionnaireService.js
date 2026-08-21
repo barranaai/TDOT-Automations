@@ -20,6 +20,21 @@ const { generateAndSaveSubmissionPdf } = require('./questionnairePdfService');
 const { loadThresholds } = require('./caseReadinessService');
 const { clientMasterBoardId } = require('../../config/monday');
 const { FORMS_DIR, resolveForm } = require('../../config/questionnaireFormMap');
+
+/**
+ * Embed a JS value inside an emitted <script> block. Plain JSON.stringify is
+ * NOT safe there: a "</script>" inside any string (a member label, a client's
+ * ANSWER on the review page) terminates the HTML script element mid-string —
+ * breaking the page at best, stored XSS at worst. Escaping "<" closes that
+ * hole; U+2028/U+2029 are legal in JSON but were line terminators in older
+ * JS parsers, so they get escaped too.
+ */
+function jsEmbed(value) {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
 const prefillMap       = require('../../config/questionnairePrefillMap');
 const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
 
@@ -1431,20 +1446,20 @@ ${hasAdditionalForm ? `
   'use strict';
 
   /* ── Config injected by server ── */
-  var CASE_REF       = ${JSON.stringify(String(caseRef))};
-  var TOKEN          = ${JSON.stringify(String(token))};
-  var FORM_KEY       = ${JSON.stringify(String(formKey))};
+  var CASE_REF       = ${jsEmbed(String(caseRef))};
+  var TOKEN          = ${jsEmbed(String(token))};
+  var FORM_KEY       = ${jsEmbed(String(formKey))};
   /* The exact HTML form file this page rendered — echoed with every save so
      the server records the era the client was actually LOOKING at. */
-  var FORM_FILE      = ${JSON.stringify(String(formFile || ''))};
-  var OVERVIEW_URL   = ${JSON.stringify(overviewUrl || '')};
-  var MEMBER_LABEL   = ${JSON.stringify(memberLabel || '')};
+  var FORM_FILE      = ${jsEmbed(String(formFile || ''))};
+  var OVERVIEW_URL   = ${jsEmbed(overviewUrl || '')};
+  var MEMBER_LABEL   = ${jsEmbed(memberLabel || '')};
   // MEMBERS and ALLOWED_TYPES are passed independently of IS_MULTI so a
   // single-applicant case on a member-capable type can still render the
   // "+ Add Family Member" button (via setupAddMemberButtonOnly) and turn
   // itself into a multi-applicant case via the manifest + page-reload flow.
-  var MEMBERS        = ${JSON.stringify(Array.isArray(members) ? members : [])};
-  var ALLOWED_TYPES  = ${JSON.stringify(Array.isArray(allowedMemberTypes) ? allowedMemberTypes : [])};
+  var MEMBERS        = ${jsEmbed(Array.isArray(members) ? members : [])};
+  var ALLOWED_TYPES  = ${jsEmbed(Array.isArray(allowedMemberTypes) ? allowedMemberTypes : [])};
   // Family composition is set by the consultant in the retainer panel — clients
   // do not add/remove members here, so the add menu + per-member remove buttons
   // are suppressed. (Flip to false to re-enable client-side editing.)
@@ -1454,10 +1469,10 @@ ${hasAdditionalForm ? `
   // save/submit/progress flows take their per-member or single-applicant
   // code paths.
   var IS_MULTI       = MEMBERS.length > 1;
-  var OTHER_FORM_URL   = ${JSON.stringify(otherFormUrl || '')};
-  var OTHER_FORM_TITLE = ${JSON.stringify(otherFormTitle || '')};
-  var IS_ADDITIONAL    = ${JSON.stringify(Boolean(isAdditionalForm))};
-  var FORM_KEY_SUFFIX  = ${JSON.stringify(formKeySuffix || '')};
+  var OTHER_FORM_URL   = ${jsEmbed(otherFormUrl || '')};
+  var OTHER_FORM_TITLE = ${jsEmbed(otherFormTitle || '')};
+  var IS_ADDITIONAL    = ${jsEmbed(Boolean(isAdditionalForm))};
+  var FORM_KEY_SUFFIX  = ${jsEmbed(formKeySuffix || '')};
   var SUBMIT_THRESHOLD_PCT = ${SUBMIT_THRESHOLD_PCT};
 
   /* ── Utilities ── */
@@ -1885,7 +1900,7 @@ ${hasAdditionalForm ? `
       showServerLoadFailedBanner();
       if (!silent) {
         if (saveBtn) saveBtn.disabled = false;
-        alert('Saving to the server is paused: we could not load your previously saved answers (temporary server issue).\n\nYour work is kept safely on this device. Please refresh the page in a few minutes and save again.');
+        alert('Saving to the server is paused: we could not load your previously saved answers (temporary server issue).\\n\\nYour work is kept safely on this device. Please refresh the page in a few minutes and save again.');
       }
       return;
     }
@@ -2007,7 +2022,7 @@ ${hasAdditionalForm ? `
     if (_serverLoadFailed) {
       showServerLoadFailedBanner();
       backupToLocal();
-      alert('Submitting is paused: we could not load your previously saved answers (temporary server issue).\n\nYour work is kept safely on this device. Please refresh the page in a few minutes and submit again.');
+      alert('Submitting is paused: we could not load your previously saved answers (temporary server issue).\\n\\nYour work is kept safely on this device. Please refresh the page in a few minutes and submit again.');
       return;
     }
 
@@ -3101,8 +3116,8 @@ ${hasAdditionalForm ? `
   function createNavTab() {
     var nav = document.createElement('div');
     nav.className = 'tdot-nav-bar';
-    var primaryTitle = IS_ADDITIONAL ? OTHER_FORM_TITLE : ${JSON.stringify(formTitle || '')};
-    var additionalTitle = IS_ADDITIONAL ? ${JSON.stringify(formTitle || '')} : OTHER_FORM_TITLE;
+    var primaryTitle = IS_ADDITIONAL ? OTHER_FORM_TITLE : ${jsEmbed(formTitle || '')};
+    var additionalTitle = IS_ADDITIONAL ? ${jsEmbed(formTitle || '')} : OTHER_FORM_TITLE;
     var primaryUrl = IS_ADDITIONAL ? OTHER_FORM_URL : '';
     var additionalUrl = IS_ADDITIONAL ? '' : OTHER_FORM_URL;
     var pHelp = '<span class="tdot-nav-help">${PRIMARY_FORM_HELP_TEXT}</span>';
@@ -3452,9 +3467,9 @@ function buildOverviewPage({ caseRef, token, members, formFiles, allowedMemberTy
 
   <script>
   (function() {
-    var CASE_REF = ${JSON.stringify(caseRef)};
-    var TOKEN    = ${JSON.stringify(token)};
-    var BASE     = ${JSON.stringify(base)};
+    var CASE_REF = ${jsEmbed(caseRef)};
+    var TOKEN    = ${jsEmbed(token)};
+    var BASE     = ${jsEmbed(base)};
 
     function showToast(msg, duration) {
       var el = document.getElementById('toast');
@@ -3712,14 +3727,14 @@ input[disabled], select[disabled], textarea[disabled] {
   'use strict';
 
   /* ── Server-injected data ── */
-  var CASE_REF    = ${JSON.stringify(String(caseRef))};
-  var FORM_KEY    = ${JSON.stringify(String(formKey))};
-  var STAFF_NAME  = ${JSON.stringify(String(staffName))};
-  var SAVED_DATA  = ${JSON.stringify(savedFields)};
-  var flags       = ${JSON.stringify(savedFlags)};
-  var REVIEW_MEMBERS = ${JSON.stringify(isMultiMember ? members.map(m => ({ key: m.key, type: m.type, label: m.label, fields: m.fields, flags: m.flags })) : [])};
+  var CASE_REF    = ${jsEmbed(String(caseRef))};
+  var FORM_KEY    = ${jsEmbed(String(formKey))};
+  var STAFF_NAME  = ${jsEmbed(String(staffName))};
+  var SAVED_DATA  = ${jsEmbed(savedFields)};
+  var flags       = ${jsEmbed(savedFlags)};
+  var REVIEW_MEMBERS = ${jsEmbed(isMultiMember ? members.map(m => ({ key: m.key, type: m.type, label: m.label, fields: m.fields, flags: m.flags })) : [])};
   var IS_MULTI_REVIEW = REVIEW_MEMBERS.length > 1;
-  var REVIEW_KEY_SUFFIX = ${JSON.stringify(formKeySuffix || '')};
+  var REVIEW_KEY_SUFFIX = ${jsEmbed(formKeySuffix || '')};
 
   /* ── Utilities (identical to client script so keys match) ── */
 

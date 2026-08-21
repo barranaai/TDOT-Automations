@@ -153,7 +153,7 @@ test('validSaveFormFile: only the exact current or legacy filename for the slot 
 
 test('the page embeds the served file and every save echoes it; the server records only the validated echo', () => {
   const s = require('fs').readFileSync(require.resolve('../src/services/htmlQuestionnaireService'), 'utf8');
-  assert.match(s, /var FORM_FILE\s+= \$\{JSON\.stringify\(String\(formFile \|\| ''\)\)\};/, 'served file embedded in the page');
+  assert.match(s, /var FORM_FILE\s+= \$\{jsEmbed\(String\(formFile \|\| ''\)\)\};/, 'served file embedded in the page (via the script-safe jsEmbed)');
   assert.equal((s.match(/formFile:\s*FORM_FILE/g) || []).length >= 1, true, 'client bodies echo it');
   const r = require('fs').readFileSync(require.resolve('../src/routes/htmlQuestionnaireForm'), 'utf8');
   const saveCalls = [...r.matchAll(/svc\.saveFormData\(\{[\s\S]{0,500}?\}\)/g)];

@@ -101,3 +101,58 @@ test('emitted page scripts carry no backslash-mangled regex literals', () => {
   const queue = consult.buildQueueHTML();
   assert.ok(queue.includes('(\\d{4}-\\d{2})'), 'month filter emits with real \\d');
 });
+
+// ─── questionnaire engines (coverage hole found 2026-08-21) ─────────────────
+// buildFormPage/buildReviewFormPage were NEVER parsed here — a raw `\n`
+// inside an alert string (single backslash in the template literal) shipped
+// to production and killed the ENTIRE client questionnaire engine (no
+// prefill, no save, no submit) while every HTTP probe still returned 200.
+// Parse the emitted engine for EVERY form file, single- and multi-member,
+// plus the staff review engine.
+
+test('questionnaire client engine: emitted scripts parse for every form (single + multi-member)', () => {
+  const fs   = require('node:fs');
+  const path = require('node:path');
+  const { FORMS_DIR } = require('../config/questionnaireFormMap');
+  const svc  = require('../src/services/htmlQuestionnaireService');
+
+  const forms = fs.readdirSync(FORMS_DIR).filter((f) => f.endsWith('.html'));
+  assert.ok(forms.length >= 15, `expected the full form library, found ${forms.length}`);
+
+  const members = [
+    { key: 'primary', label: "O'Hara `x` \"q\"", type: 'Principal Applicant' },
+    { key: 'member-2', label: 'Spouse </script>', type: 'Spouse' },
+  ];
+  for (const formFile of forms) {
+    const single = svc.buildFormPage({ formFile, caseRef: '2026-XX-000', token: 'TDOT-x', formKey: 'primary', members: [] });
+    assertScriptsParse(single, `client engine [${formFile}]`);
+    assertNoMangledRegexes(single, `client engine [${formFile}]`);
+
+    const multi = svc.buildFormPage({ formFile, caseRef: '2026-XX-000', token: 'TDOT-x', formKey: 'primary', members, allowedMemberTypes: ['Spouse', 'Dependent Child'] });
+    assertScriptsParse(multi, `client engine multi [${formFile}]`);
+  }
+});
+
+test('questionnaire review engine + overview: emitted scripts parse', () => {
+  const fs   = require('node:fs');
+  const { FORMS_DIR } = require('../config/questionnaireFormMap');
+  const svc  = require('../src/services/htmlQuestionnaireService');
+  const formFile = fs.readdirSync(FORMS_DIR).filter((f) => f.endsWith('.html'))[0];
+
+  const savedFields = [{ section: 'S', label: "L `x` \"q\"\n", key: 'k', value: "v with 'quotes' and </script>" }];
+  const review = svc.buildReviewFormPage({
+    formFile, caseRef: '2026-XX-000', formKey: 'primary', staffName: "O'Brien",
+    savedFields, savedFlags: { k: { note: 'fix </script>' } },
+    members: [{ key: 'primary', label: 'PA', type: 'Principal Applicant', fields: savedFields, flags: {} }],
+    formKeySuffix: '',
+  });
+  assertScriptsParse(review, 'review engine');
+  assertNoMangledRegexes(review, 'review engine');
+
+  const overview = svc.buildOverviewPage({
+    caseRef: '2026-XX-000', token: 'TDOT-x',
+    members: [{ key: 'primary', label: 'PA', type: 'Principal Applicant', status: 'In Progress', completionPct: 10 }],
+    formFiles: { primary: formFile }, allowedMemberTypes: ['Spouse'],
+  });
+  assertScriptsParse(overview, 'overview page');
+});
