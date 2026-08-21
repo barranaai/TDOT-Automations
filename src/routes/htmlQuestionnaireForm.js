@@ -532,6 +532,7 @@ router.get('/:caseRef/flags', async (req, res) => {
     }
     return res.json({ flags: clientFlags });
   } catch (err) {
+    if (err.transient) return res.status(503).json({ error: 'Temporarily unavailable — please try again in a few minutes.', retriable: true });
     return res.status(403).json({ error: err.message });
   }
 });
@@ -586,6 +587,10 @@ router.get('/:caseRef/data', async (req, res) => {
     ({ clientName } = await svc.validateAccess(caseRef, token));
   } catch (err) {
     console.error(`[/q] Data access error for ${caseRef}:`, err.message);
+    // validateAccess also resolves the form era from storage — a transient
+    // failure there is an outage, not a bad token, and must NOT 403 (the
+    // client engine freezes on any non-ok, but the message should be honest).
+    if (err.transient) return res.status(503).json({ error: 'Saved answers are temporarily unavailable. Please try again shortly.', retriable: true });
     return res.status(403).json({ error: err.message });
   }
   try {
@@ -1000,6 +1005,11 @@ router.get('/:caseRef', async (req, res) => {
 
   } catch (err) {
     console.error(`[/q] Access error for ${caseRef}:`, err.message);
+    if (err.transient) {
+      return res.status(503).type('html').send(svc.buildErrorPage(
+        'Our document system is temporarily unavailable. Nothing is wrong with your link — please try again in a few minutes.'
+      ));
+    }
     return res.status(403).type('html').send(svc.buildErrorPage(err.message));
   }
 });

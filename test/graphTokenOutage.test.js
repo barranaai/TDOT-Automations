@@ -9,11 +9,12 @@
 // every client questionnaire pre-filled BLANK, and one autosave would have
 // wholesale-replaced the real saved file.
 //
-// These tests pin the fix at the source level (same style as
-// test/inlineScripts.test.js): no re-introduced cache, retries that
-// invalidate the REAL cache, transient errors that surface as 503 (never the
-// token-substring 403 guess), and a client engine that freezes server writes
-// when saved answers could not be loaded.
+// The follow-up review (2026-08-21) found the SAME two patterns living on
+// elsewhere: composite save flows whose FIRST Graph hop (ensureFolder) had no
+// 401 retry, and two more read-swallow-then-replace files (the member
+// manifest and the correction flags). The fix centralizes auth in
+// withGraphAuth — every public OneDrive function routes through it — and
+// makes every wholesale-replaced JSON file's reader THROW on failure.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -24,28 +25,13 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 test('oneDriveService has NO local token cache — single source of truth', () => {
   const src = read('src/services/oneDriveService.js');
-  // The stacked-cache variables must stay gone.
   assert.ok(!/let _cachedToken|let _tokenExpiry/.test(src),
     'oneDriveService re-declares its own token cache — the stacked-cache outage bug');
   assert.ok(!/_tokenExpiry\s*=\s*Date\.now\(\)\s*\+\s*55/.test(src),
     'the 55-minute wrapper cache is back');
-  // getCachedToken must delegate straight to getAccessToken.
   const fn = src.slice(src.indexOf('async function getCachedToken'), src.indexOf('}', src.indexOf('async function getCachedToken')) + 1);
   assert.match(fn, /return getAccessToken\(\)/,
     'getCachedToken must delegate to getAccessToken (no local caching)');
-});
-
-test('401 retries invalidate the REAL (mail-service) cache, not dead local vars', () => {
-  const od = read('src/services/oneDriveService.js');
-  assert.match(od, /function invalidateToken\(\)/);
-  assert.match(od, /invalidateAccessToken\(\)/,
-    'invalidateToken must reach into microsoftMailService.invalidateAccessToken');
-  // Every 401 branch must call invalidateToken (upload, delete, read).
-  const branches = od.split(/status === 401/).length - 1;
-  const invalidations = od.split(/invalidateToken\(\)/).length - 1;
-  assert.ok(branches >= 3, `expected >=3 401-retry branches, found ${branches}`);
-  assert.ok(invalidations >= branches,
-    `a 401 branch does not invalidate the token cache (${invalidations} invalidations for ${branches} branches)`);
 
   const mail = read('src/services/microsoftMailService.js');
   assert.match(mail, /function invalidateAccessToken\(\)/);
@@ -53,21 +39,109 @@ test('401 retries invalidate the REAL (mail-service) cache, not dead local vars'
     'microsoftMailService must export invalidateAccessToken');
 });
 
-test('storage failures are tagged transient and loadFormData rethrows them', () => {
-  const od = read('src/services/oneDriveService.js');
-  assert.match(od, /transient = true/, 'OneDrive read/upload failures must carry err.transient');
+test('EVERY public OneDrive function routes through withGraphAuth (401 retry + transient tagging)', () => {
+  const src = read('src/services/oneDriveService.js');
+  assert.match(src, /async function withGraphAuth\(/);
+  assert.match(src, /function tagTransient\(/);
+  // The helper must invalidate the REAL cache and retry once on 401.
+  const helper = src.slice(src.indexOf('async function withGraphAuth'), src.indexOf('function wrapError'));
+  assert.match(helper, /status !== 401\) throw tagTransient/);
+  assert.match(helper, /invalidateToken\(\)/);
+  // Token-mint failures are transient by definition (both mint sites).
+  assert.ok((helper.match(/transient = true/g) || []).length >= 2,
+    'withGraphAuth must tag token-mint failures transient');
 
+  // Every exported function that talks to Graph goes through the helper —
+  // one usage per public function (14), plus nothing minting tokens directly.
+  const usages = (src.match(/withGraphAuth\('/g) || []).length;
+  assert.ok(usages >= 14, `expected >=14 withGraphAuth call sites, found ${usages} — a function bypasses the auth/retry layer`);
+  const rawMints = (src.match(/await getCachedToken\(\)/g) || []).length;
+  assert.ok(rawMints <= 2, `getCachedToken called ${rawMints}× — direct calls outside withGraphAuth re-open the no-retry bug`);
+
+  // wrapError must PRESERVE the transient flag when re-labelling errors.
+  const wrap = src.slice(src.indexOf('function wrapError'), src.indexOf('// ─── URL helpers'));
+  assert.match(wrap, /wrapped\.transient = true/);
+});
+
+test('tagTransient marks storage-side failures and leaves caller mistakes alone', () => {
+  // Source-level truth table (the function is not exported).
+  const src = read('src/services/oneDriveService.js');
+  const fn = src.slice(src.indexOf('function tagTransient'), src.indexOf('async function withGraphAuth'));
+  assert.match(fn, /st === undefined/);
+  assert.match(fn, /st === 401/);
+  assert.match(fn, /st === 429/);
+  assert.match(fn, /st >= 500/);
+  assert.ok(!/st === 403|st === 404/.test(fn), '403/404 are NOT transient');
+});
+
+test('behavioral: a 401 mid-operation mints a fresh token and the retry succeeds', async () => {
+  process.env.MS_TENANT_ID = process.env.MS_TENANT_ID || 't';
+  process.env.MS_CLIENT_ID = process.env.MS_CLIENT_ID || 'c';
+  process.env.MS_CLIENT_SECRET = process.env.MS_CLIENT_SECRET || 's';
+
+  const axios = require('axios');
+  const orig = { get: axios.get, post: axios.post };
+  let minted = 0, reads = 0;
+  axios.post = async (url) => {
+    if (/login\.microsoftonline\.com/.test(url)) {
+      minted++;
+      return { data: { access_token: `tok-${minted}`, expires_in: 3600 } };
+    }
+    throw new Error(`unexpected POST ${url}`);
+  };
+  axios.get = async (url, opts) => {
+    reads++;
+    if (opts.headers.Authorization === 'Bearer tok-1') {
+      const err = new Error('Request failed with status code 401');
+      err.response = { status: 401, data: { error: { code: 'InvalidAuthenticationToken', message: 'Lifetime validation failed, the token is expired.' } } };
+      throw err;
+    }
+    return { data: Buffer.from('{"ok":true}') };
+  };
+  try {
+    delete require.cache[require.resolve('../src/services/microsoftMailService')];
+    delete require.cache[require.resolve('../src/services/oneDriveService')];
+    const od = require('../src/services/oneDriveService');
+    const buf = await od.readFile({ clientName: 'T', caseRef: 'R', subfolder: 'S', filename: 'f.json' });
+    assert.equal(buf.toString(), '{"ok":true}');
+    assert.equal(minted, 2, 'the 401 must mint a FRESH token (invalidate + re-mint)');
+    assert.equal(reads, 2, 'exactly one retry');
+
+    // And a persistent 500 surfaces as a TRANSIENT-tagged wrapped error.
+    axios.get = async () => {
+      const err = new Error('boom');
+      err.response = { status: 503, data: { error: 'ServiceUnavailable' } };
+      throw err;
+    };
+    await assert.rejects(
+      od.readFile({ clientName: 'T', caseRef: 'R', subfolder: 'S', filename: 'f.json' }),
+      (e) => /OneDrive read failed/.test(e.message) && e.transient === true
+    );
+  } finally {
+    axios.get = orig.get; axios.post = orig.post;
+    delete require.cache[require.resolve('../src/services/microsoftMailService')];
+    delete require.cache[require.resolve('../src/services/oneDriveService')];
+  }
+});
+
+test('read-swallow-then-replace is closed on ALL wholesale-replaced questionnaire files', () => {
   const q = read('src/services/htmlQuestionnaireService.js');
-  const fn = q.slice(q.indexOf('async function loadFormData'), q.indexOf('async function saveFormData'));
-  assert.ok(!/return \[\];\s*\}\s*\}/.test(fn.slice(fn.indexOf('catch'))),
-    'loadFormData catch swallows errors again (returns [])');
-  assert.match(fn, /err\.transient = true;\s*\n\s*throw err;/,
-    'loadFormData must rethrow read failures as transient');
+  // loadFormData rethrows (the original fix)…
+  const lfd = q.slice(q.indexOf('async function loadFormData'), q.indexOf('async function saveFormData'));
+  assert.match(lfd, /err\.transient = true;\s*\n\s*throw err;/, 'loadFormData must rethrow read failures as transient');
+  // …and loadMembers seeds ONLY when the file is genuinely absent (readFile null),
+  // never on a transient failure — the seed path WRITES via saveMembers.
+  const lm = q.slice(q.indexOf('async function loadMembers'), q.indexOf('async function saveMembers'));
+  assert.match(lm, /err\.transient = true;\s*\n\s*throw err;/, 'loadMembers must rethrow read failures (the seed fallback overwrites the manifest)');
+  assert.ok(lm.indexOf('throw err') < lm.indexOf('seedMembersFromBoard'), 'the transient rethrow must come before the seed fallback');
+
+  const rv = read('src/services/htmlQuestionnaireReviewService.js');
+  const lf = rv.slice(rv.indexOf('async function loadFlags'), rv.indexOf('async function saveFlags'));
+  assert.match(lf, /err\.transient = true;\s*\n\s*throw err;/, 'loadFlags must rethrow (saveFlags wholesale-replaces the file)');
 });
 
 test('routes surface transient failures as 503, never the token-substring 403 guess', () => {
   const r = read('src/routes/htmlQuestionnaireForm.js');
-  // Every "includes('token')" classifier must be preceded by a transient check.
   const lines = r.split('\n');
   lines.forEach((line, i) => {
     if (/includes\('token'\)/.test(line)) {
@@ -76,7 +150,6 @@ test('routes surface transient failures as 503, never the token-substring 403 gu
         `classifier at line ${i + 1} can misread a Graph "token is expired" outage as a 403 access error`);
     }
   });
-  // The /data route must have its own 503 path (the client engine keys off it).
   assert.match(r, /res\.status\(503\)\.json\(\{ error: 'Saved answers are temporarily unavailable/,
     '/data route no longer distinguishes storage outage from access denial');
 });
@@ -86,12 +159,10 @@ test('client engine freezes server writes when saved answers could not load', ()
   assert.match(q, /var _serverLoadFailed = false;/);
   assert.match(q, /function showServerLoadFailedBanner\(\)/);
 
-  // The /data fetch handler must set the flag on BOTH non-ok and network error.
   const prefill = q.slice(q.indexOf('async function prefillMemberSection'), q.indexOf('/* Local backup */'));
   const sets = prefill.split('_serverLoadFailed = true').length - 1;
   assert.ok(sets >= 2, `prefillMemberSection must set _serverLoadFailed on non-ok AND network error (found ${sets})`);
 
-  // doSave and doSubmit must both gate on the flag BEFORE any fetch.
   const doSave = q.slice(q.indexOf('async function doSave'), q.indexOf('async function doSubmit'));
   const gate = doSave.indexOf('if (_serverLoadFailed)');
   assert.ok(gate !== -1 && gate < doSave.indexOf("fetch('/q/"),
@@ -100,8 +171,19 @@ test('client engine freezes server writes when saved answers could not load', ()
   const gate2 = doSubmit.indexOf('if (_serverLoadFailed)');
   assert.ok(gate2 !== -1 && gate2 < doSubmit.indexOf("fetch('/q/"),
     'doSubmit must refuse submission while _serverLoadFailed');
-
-  // localStorage backup must still run before the doSave gate returns.
   assert.ok(doSave.indexOf('backupToLocal()') < gate,
     'local backup must happen even when server saves are frozen');
+
+  // The 2026-08-21 review round: no server writes until the initial load
+  // SETTLES (a save racing the /data fetch would replace the server file),
+  // and the count-based local-vs-server contest must not discard answers
+  // typed during a freeze — local-only values overlay the server copy's gaps.
+  assert.match(q, /var _serverLoadSettled = false;/);
+  assert.match(doSave, /if \(!_serverLoadSettled\)/);
+  assert.match(doSubmit, /if \(!_serverLoadSettled\)/);
+  assert.match(q, /_serverLoadSettled = true;/);
+  assert.match(q, /Restored ' \+ recovered \+ ' locally saved answer/);
+  // The single-member call passes FORM_KEY (already suffixed) — the fetch key
+  // must not append the suffix again ('primary-additional-additional').
+  assert.match(q, /var fullKey = sectionEl \? \(memberKey \+ FORM_KEY_SUFFIX\) : FORM_KEY;/);
 });

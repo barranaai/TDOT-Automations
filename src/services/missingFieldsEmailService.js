@@ -83,7 +83,9 @@ async function readThrottle({ clientName, caseRef }) {
     if (!buf) return null;
     return JSON.parse(buf.toString('utf8'));
   } catch {
-    return null;
+    // Read FAILURE is not "never sent" — treating it that way let a storage
+    // blip bypass the 24h gate and double-email the client. Fail closed.
+    return { unavailable: true };
   }
 }
 
@@ -210,6 +212,10 @@ async function sendMissingFieldsEmail({ caseRef, isSubmit, manual, missingByMemb
   // Throttle for manual saves only
   if (!isSubmit && manual) {
     const t = await readThrottle({ clientName: client.clientName, caseRef });
+    if (t?.unavailable) {
+      console.warn(`[MissingEmail] Throttle state unreadable for ${caseRef} — skipping email (fail closed)`);
+      return;
+    }
     if (isWithinThrottleWindow(t?.lastMissingEmailAt)) {
       console.log(`[MissingEmail] Throttled (last sent ${t.lastMissingEmailAt}) for case ${caseRef}`);
       return;

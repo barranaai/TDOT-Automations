@@ -20,11 +20,7 @@ const DRIVE_USER  = process.env.MS_FROM_EMAIL || 'noreply@tdotimm.com';
 const ROOT_FOLDER = 'Client Documents';
 const GRAPH_BASE  = 'https://graph.microsoft.com/v1.0';
 
-// ─── Token cache ──────────────────────────────────────────────────────────────
-// Access tokens are valid for ~60 minutes. We cache for 55 minutes to avoid
-// fetching a new token on every upload operation.
-
-
+// ─── Token handling ───────────────────────────────────────────────────────────
 
 async function getCachedToken() {
   // NO local cache. This wrapper used to keep tokens for 55 minutes from ITS
@@ -40,6 +36,72 @@ async function getCachedToken() {
 /** After a Graph 401, drop the cached token so the retry mints a fresh one. */
 function invalidateToken() {
   try { require('./microsoftMailService').invalidateAccessToken(); } catch (_) { /* best-effort */ }
+}
+
+/**
+ * Tag a terminal Graph failure as `transient` when it is a storage-side
+ * problem (no response / 401 / 408 / 429 / 5xx) rather than a caller mistake.
+ * Routes use this flag to answer an honest 503 instead of guessing an access
+ * error from message substrings (Graph's own "token is expired" text used to
+ * trip the includes('token') 403 classifiers).
+ */
+function tagTransient(err) {
+  const st = err.response?.status;
+  if (st === undefined || st === 401 || st === 408 || st === 429 || st >= 500) {
+    err.transient = true;
+  }
+  return err;
+}
+
+/**
+ * Run ONE Graph operation with auth + honest failure semantics: mint (or use
+ * the cached) token, and on a 401 — an expired/revoked bearer despite the
+ * cache, the 2026-08-21 outage class — invalidate the cache, re-mint, and
+ * retry the WHOLE operation exactly once. Operations passed here must be
+ * idempotent (ensureFolder/PUT/GET/PATCH/DELETE all are). Terminal failures
+ * come back tagged via tagTransient; token-mint failures are transient by
+ * definition.
+ *
+ * EVERY public function in this service must route its Graph calls through
+ * this helper — a function that grabs a token and calls axios directly
+ * re-opens the class of bugs where the first hop of a composite flow 401s
+ * with no retry and the poisoned cache is never invalidated.
+ */
+async function withGraphAuth(label, fn) {
+  let token;
+  try {
+    token = await getCachedToken();
+  } catch (err) {
+    err.transient = true;
+    throw err;
+  }
+  try {
+    return await fn(token);
+  } catch (err) {
+    if (err.response?.status !== 401) throw tagTransient(err);
+    console.warn(`[OneDrive] 401 on ${label} — invalidating token cache and retrying`);
+    invalidateToken();
+    let fresh;
+    try {
+      fresh = await getCachedToken();
+    } catch (mintErr) {
+      mintErr.transient = true;
+      throw mintErr;
+    }
+    try {
+      return await fn(fresh);
+    } catch (err2) {
+      throw tagTransient(err2);
+    }
+  }
+}
+
+/** Wrap a raw axios/Graph error in a labelled Error, PRESERVING .transient. */
+function wrapError(prefix, err) {
+  const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+  const wrapped = new Error(`${prefix}: ${detail}`);
+  if (err.transient === true) wrapped.transient = true;
+  return wrapped;
 }
 
 // ─── URL helpers ──────────────────────────────────────────────────────────────
@@ -59,7 +121,7 @@ function itemUrl(path) {
   return `${userBase()}/root:/${encoded}:`;
 }
 
-// ─── Core helpers ─────────────────────────────────────────────────────────────
+// ─── Core helpers (called INSIDE a withGraphAuth scope with its token) ────────
 
 /**
  * Create a folder at parentPath/folderName.
@@ -87,7 +149,7 @@ async function ensureFolder(token, parentPath, folderName) {
     }
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
     console.error(`[OneDrive] Error creating folder "${folderName}" under "${parentPath || 'root'}": ${detail}`);
-    throw err;
+    throw err; // raw — the enclosing withGraphAuth handles 401 retry + tagging
   }
 }
 
@@ -122,32 +184,35 @@ async function createClientFolders({ clientName, caseRef, categories }) {
     return {};
   }
 
-  const token = await getCachedToken();
-
   const safeName   = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
   const clientPath = `${ROOT_FOLDER}/${safeName}`;
 
-  await ensureFolder(token, null, ROOT_FOLDER);
-  console.log(`[OneDrive] Root folder ready: ${ROOT_FOLDER}`);
+  return withGraphAuth('createClientFolders', async (token) => {
+    await ensureFolder(token, null, ROOT_FOLDER);
+    console.log(`[OneDrive] Root folder ready: ${ROOT_FOLDER}`);
 
-  await ensureFolder(token, ROOT_FOLDER, safeName);
-  console.log(`[OneDrive] Client folder ready: ${clientPath}`);
+    await ensureFolder(token, ROOT_FOLDER, safeName);
+    console.log(`[OneDrive] Client folder ready: ${clientPath}`);
 
-  const categoryLinks = {};
+    const categoryLinks = {};
 
-  for (const category of categories) {
-    if (!category) continue;
-    try {
-      const { id } = await ensureFolder(token, clientPath, category);
-      const sharingUrl = await createOrgLink(token, id);
-      categoryLinks[category] = sharingUrl;
-      console.log(`[OneDrive] ✓ ${category} → ${sharingUrl}`);
-    } catch (err) {
-      console.error(`[OneDrive] Failed to create folder for category "${category}": ${err.message}`);
+    for (const category of categories) {
+      if (!category) continue;
+      try {
+        const { id } = await ensureFolder(token, clientPath, category);
+        const sharingUrl = await createOrgLink(token, id);
+        categoryLinks[category] = sharingUrl;
+        console.log(`[OneDrive] ✓ ${category} → ${sharingUrl}`);
+      } catch (err) {
+        // Best-effort per category — but a 401 must escape so withGraphAuth
+        // can refresh the token and retry the whole (idempotent) flow.
+        if (err.response?.status === 401) throw err;
+        console.error(`[OneDrive] Failed to create folder for category "${category}": ${err.message}`);
+      }
     }
-  }
 
-  return categoryLinks;
+    return categoryLinks;
+  });
 }
 
 /**
@@ -165,8 +230,7 @@ async function createClientFolders({ clientName, caseRef, categories }) {
  * }} params
  * @returns {Promise<string>} webUrl of the uploaded file
  */
-async function uploadFile({ clientName, caseRef, category, filename, buffer, mimeType, _retried = false }) {
-  const token    = await getCachedToken();
+async function uploadFile({ clientName, caseRef, category, filename, buffer, mimeType }) {
   const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
   const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim() || 'document';
 
@@ -175,26 +239,21 @@ async function uploadFile({ clientName, caseRef, category, filename, buffer, mim
   const url      = `${userBase()}/root:/${encoded}:/content`;
 
   try {
-    const res = await axios.put(url, buffer, {
-      headers: {
-        Authorization:  `Bearer ${token}`,
-        'Content-Type': mimeType || 'application/octet-stream',
-      },
-      maxContentLength: Infinity,
-      maxBodyLength:    Infinity,
+    return await withGraphAuth('upload', async (token) => {
+      const res = await axios.put(url, buffer, {
+        headers: {
+          Authorization:  `Bearer ${token}`,
+          'Content-Type': mimeType || 'application/octet-stream',
+        },
+        maxContentLength: Infinity,
+        maxBodyLength:    Infinity,
+      });
+      console.log(`[OneDrive] Uploaded → ${res.data.webUrl}`);
+      return res.data.webUrl;
     });
-    console.log(`[OneDrive] Uploaded → ${res.data.webUrl}`);
-    return res.data.webUrl;
   } catch (err) {
-    // If token expired mid-operation, invalidate cache and retry once
-    if (err.response?.status === 401 && !_retried) {
-      console.warn('[OneDrive] 401 on upload — invalidating token cache and retrying');
-      invalidateToken();
-      return uploadFile({ clientName, caseRef, category, filename, buffer, mimeType, _retried: true });
-    }
-    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error(`[OneDrive] Upload failed (${err.response?.status}): ${detail}`);
-    const _err1 = new Error(`OneDrive upload failed: ${detail}`); _err1.transient = true; throw _err1;
+    console.error(`[OneDrive] Upload failed (${err.response?.status}): ${err.message}`);
+    throw wrapError('OneDrive upload failed', err);
   }
 }
 
@@ -211,7 +270,6 @@ async function uploadFile({ clientName, caseRef, category, filename, buffer, mim
  * @returns {Promise<Buffer|null>}
  */
 async function readFile({ clientName, caseRef, subfolder, filename }) {
-  const token    = await getCachedToken();
   const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
   const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim();
 
@@ -220,29 +278,20 @@ async function readFile({ clientName, caseRef, subfolder, filename }) {
   const url      = `${userBase()}/root:/${encoded}:/content`;
 
   try {
-    const res = await axios.get(url, {
-      headers:      { Authorization: `Bearer ${token}` },
-      responseType: 'arraybuffer',
-    });
-    return Buffer.from(res.data);
-  } catch (err) {
-    if (err.response?.status === 404) return null;
-    if (err.response?.status === 401) {
-      // Expired/revoked bearer despite the cache — mint a fresh token and
-      // retry ONCE (the 2026-08-21 outage class).
-      invalidateToken();
-      const fresh = await getCachedToken();
+    return await withGraphAuth('read', async (token) => {
       try {
-        const res2 = await axios.get(url, { headers: { Authorization: `Bearer ${fresh}` }, responseType: 'arraybuffer' });
-        return Buffer.from(res2.data);
-      } catch (err2) {
-        if (err2.response?.status === 404) return null;
-        const d2 = err2.response?.data ? JSON.stringify(err2.response.data) : err2.message;
-        const _err2 = new Error(`OneDrive read failed: ${d2}`); _err2.transient = true; throw _err2;
+        const res = await axios.get(url, {
+          headers:      { Authorization: `Bearer ${token}` },
+          responseType: 'arraybuffer',
+        });
+        return Buffer.from(res.data);
+      } catch (err) {
+        if (err.response?.status === 404) return null; // absent — not an error
+        throw err;
       }
-    }
-    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    const _err3 = new Error(`OneDrive read failed: ${detail}`); _err3.transient = true; throw _err3;
+    });
+  } catch (err) {
+    throw wrapError('OneDrive read failed', err);
   }
 }
 
@@ -253,11 +302,12 @@ async function readFile({ clientName, caseRef, subfolder, filename }) {
  * @param {{ clientName: string, caseRef: string }} params
  */
 async function ensureClientFolder({ clientName, caseRef }) {
-  const token    = await getCachedToken();
   const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
 
-  await ensureFolder(token, null, ROOT_FOLDER);
-  await ensureFolder(token, ROOT_FOLDER, safeName);
+  await withGraphAuth('ensureClientFolder', async (token) => {
+    await ensureFolder(token, null, ROOT_FOLDER);
+    await ensureFolder(token, ROOT_FOLDER, safeName);
+  });
   console.log(`[OneDrive] Client folder ensured: ${ROOT_FOLDER}/${safeName}`);
 }
 
@@ -270,14 +320,15 @@ async function ensureClientFolder({ clientName, caseRef }) {
  * @returns {Promise<string>} sharing URL for the category folder
  */
 async function ensureCategoryFolderLink({ clientName, caseRef, category }) {
-  const token      = await getCachedToken();
   const safeName   = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
   const clientPath = `${ROOT_FOLDER}/${safeName}`;
 
-  await ensureFolder(token, null, ROOT_FOLDER);
-  await ensureFolder(token, ROOT_FOLDER, safeName);
-  const { id } = await ensureFolder(token, clientPath, category);
-  return createOrgLink(token, id);
+  return withGraphAuth('ensureCategoryFolderLink', async (token) => {
+    await ensureFolder(token, null, ROOT_FOLDER);
+    await ensureFolder(token, ROOT_FOLDER, safeName);
+    const { id } = await ensureFolder(token, clientPath, category);
+    return createOrgLink(token, id);
+  });
 }
 
 /**
@@ -293,20 +344,22 @@ async function ensureCategoryFolderLink({ clientName, caseRef, category }) {
  * @returns {Promise<{ id: string, url: string }>} folder id + staff sharing link
  */
 async function ensureLeadFolder({ fullName, leadId }) {
-  const token    = await getCachedToken();
   const safeName = `${fullName} - LEAD-${leadId}`.replace(/[*:"<>?/\\|]/g, '').trim();
 
-  await ensureFolder(token, null, ROOT_FOLDER);
-  const { id, webUrl } = await ensureFolder(token, ROOT_FOLDER, safeName);
-  console.log(`[OneDrive] Lead folder ready: ${ROOT_FOLDER}/${safeName}`);
+  return withGraphAuth('ensureLeadFolder', async (token) => {
+    await ensureFolder(token, null, ROOT_FOLDER);
+    const { id, webUrl } = await ensureFolder(token, ROOT_FOLDER, safeName);
+    console.log(`[OneDrive] Lead folder ready: ${ROOT_FOLDER}/${safeName}`);
 
-  let url = webUrl;
-  try {
-    url = await createOrgLink(token, id);
-  } catch (err) {
-    console.warn(`[OneDrive] Sharing link failed for lead folder (using webUrl): ${err.message}`);
-  }
-  return { id, url };
+    let url = webUrl;
+    try {
+      url = await createOrgLink(token, id);
+    } catch (err) {
+      if (err.response?.status === 401) throw err; // let withGraphAuth retry
+      console.warn(`[OneDrive] Sharing link failed for lead folder (using webUrl): ${err.message}`);
+    }
+    return { id, url };
+  });
 }
 
 /**
@@ -321,15 +374,16 @@ async function ensureLeadFolder({ fullName, leadId }) {
  * @returns {Promise<{ id: string, name: string, webUrl: string }>}
  */
 async function renameDriveItem(itemId, newName) {
-  const token    = await getCachedToken();
   const safeName = String(newName).replace(/[*:"<>?/\\|]/g, '').trim();
-  const res = await axios.patch(
-    `${userBase()}/items/${itemId}`,
-    { name: safeName },
-    { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
-  );
-  console.log(`[OneDrive] Renamed item ${itemId} → "${safeName}"`);
-  return { id: res.data.id, name: res.data.name, webUrl: res.data.webUrl };
+  return withGraphAuth('rename', async (token) => {
+    const res = await axios.patch(
+      `${userBase()}/items/${itemId}`,
+      { name: safeName },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    console.log(`[OneDrive] Renamed item ${itemId} → "${safeName}"`);
+    return { id: res.data.id, name: res.data.name, webUrl: res.data.webUrl };
+  });
 }
 
 /**
@@ -340,18 +394,22 @@ async function renameDriveItem(itemId, newName) {
  * @returns {Promise<{ id: string, name: string, webUrl: string }|null>}
  */
 async function getClientFolderByName(folderName) {
-  const token    = await getCachedToken();
   const safeName = String(folderName).replace(/[*:"<>?/\\|]/g, '').trim();
   if (!safeName) return null;
   try {
-    const res = await axios.get(itemUrl(`${ROOT_FOLDER}/${safeName}`), {
-      headers: { Authorization: `Bearer ${token}` },
+    return await withGraphAuth('folderLookup', async (token) => {
+      try {
+        const res = await axios.get(itemUrl(`${ROOT_FOLDER}/${safeName}`), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return { id: res.data.id, name: res.data.name, webUrl: res.data.webUrl };
+      } catch (err) {
+        if (err.response?.status === 404) return null;
+        throw err;
+      }
     });
-    return { id: res.data.id, name: res.data.name, webUrl: res.data.webUrl };
   } catch (err) {
-    if (err.response?.status === 404) return null;
-    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    throw new Error(`OneDrive folder lookup failed: ${detail}`);
+    throw wrapError('OneDrive folder lookup failed', err);
   }
 }
 
@@ -364,21 +422,25 @@ async function getClientFolderByName(folderName) {
  * @returns {Promise<{ id, name, webUrl, parentPath }|null>}
  */
 async function getDriveItemById(itemId) {
-  const token = await getCachedToken();
   try {
-    const res = await axios.get(`${userBase()}/items/${itemId}?$select=id,name,webUrl,parentReference`, {
-      headers: { Authorization: `Bearer ${token}` },
+    return await withGraphAuth('itemLookup', async (token) => {
+      try {
+        const res = await axios.get(`${userBase()}/items/${itemId}?$select=id,name,webUrl,parentReference`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return {
+          id: res.data.id,
+          name: res.data.name,
+          webUrl: res.data.webUrl,
+          parentPath: (res.data.parentReference && res.data.parentReference.path) || '',
+        };
+      } catch (err) {
+        if (err.response?.status === 404) return null;
+        throw err;
+      }
     });
-    return {
-      id: res.data.id,
-      name: res.data.name,
-      webUrl: res.data.webUrl,
-      parentPath: (res.data.parentReference && res.data.parentReference.path) || '',
-    };
   } catch (err) {
-    if (err.response?.status === 404) return null;
-    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    throw new Error(`OneDrive item lookup failed: ${detail}`);
+    throw wrapError('OneDrive item lookup failed', err);
   }
 }
 
@@ -390,23 +452,22 @@ async function getDriveItemById(itemId) {
  * @param {string} itemId  driveItem id
  * @returns {Promise<boolean>} true = deleted now, false = was already gone
  */
-async function deleteDriveItem(itemId, _retried = false) {
-  const token = await getCachedToken();
+async function deleteDriveItem(itemId) {
   try {
-    await axios.delete(`${userBase()}/items/${itemId}`, {
-      headers: { Authorization: `Bearer ${token}` },
+    return await withGraphAuth('delete', async (token) => {
+      try {
+        await axios.delete(`${userBase()}/items/${itemId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        console.log(`[OneDrive] Deleted item ${itemId} (moved to recycle bin)`);
+        return true;
+      } catch (err) {
+        if (err.response?.status === 404) return false;
+        throw err;
+      }
     });
-    console.log(`[OneDrive] Deleted item ${itemId} (moved to recycle bin)`);
-    return true;
   } catch (err) {
-    if (err.response?.status === 404) return false;
-    if (err.response?.status === 401 && !_retried) {
-      console.log('[OneDrive] Token expired mid-delete, refreshing…');
-      invalidateToken();
-      return deleteDriveItem(itemId, true);
-    }
-    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    throw new Error(`OneDrive delete failed: ${detail}`);
+    throw wrapError('OneDrive delete failed', err);
   }
 }
 
@@ -419,24 +480,26 @@ async function deleteDriveItem(itemId, _retried = false) {
  * @returns {Promise<{ url: string, webUrl: string, id: string }>}
  */
 async function uploadFileAndLink({ clientName, caseRef, category, filename, buffer, mimeType }) {
-  const token    = await getCachedToken();
   const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
   const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim() || 'document';
   const filePath = `${ROOT_FOLDER}/${safeName}/${category}/${safeFile}`;
   const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
 
-  const res = await axios.put(`${userBase()}/root:/${encoded}:/content`, buffer, {
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeType || 'application/octet-stream' },
-    maxContentLength: Infinity, maxBodyLength: Infinity,
+  return withGraphAuth('uploadAndLink', async (token) => {
+    const res = await axios.put(`${userBase()}/root:/${encoded}:/content`, buffer, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeType || 'application/octet-stream' },
+      maxContentLength: Infinity, maxBodyLength: Infinity,
+    });
+    let url = res.data.webUrl;
+    try {
+      url = await createOrgLink(token, res.data.id);
+    } catch (err) {
+      if (err.response?.status === 401) throw err; // let withGraphAuth retry
+      console.warn(`[OneDrive] Org link failed for ${safeFile} (using webUrl): ${err.message}`);
+    }
+    console.log(`[OneDrive] Uploaded + linked → ${filePath}`);
+    return { url, webUrl: res.data.webUrl, id: res.data.id };
   });
-  let url = res.data.webUrl;
-  try {
-    url = await createOrgLink(token, res.data.id);
-  } catch (err) {
-    console.warn(`[OneDrive] Org link failed for ${safeFile} (using webUrl): ${err.message}`);
-  }
-  console.log(`[OneDrive] Uploaded + linked → ${filePath}`);
-  return { url, webUrl: res.data.webUrl, id: res.data.id };
 }
 
 /**
@@ -448,24 +511,29 @@ async function uploadFileAndLink({ clientName, caseRef, category, filename, buff
  * @returns {Promise<{ url: string, webUrl: string, id: string }>}
  */
 async function uploadToLeadFolderAndLink({ fullName, leadId, folderId, filename, buffer, mimeType }) {
-  const token = await getCachedToken();
   // Prefer the stored folder id — a driveItem keeps its id when the intake folder
   // is renamed to "{name} - {caseRef}" at handoff, so a post-handoff upload still
   // lands in the right place. Resolve by name only when no id was passed.
   let id = String(folderId || '').trim();
   if (!id) { id = (await ensureLeadFolder({ fullName, leadId })).id; }
   const safeFile = String(filename).replace(/[*:"<>?/\\|]/g, '').trim() || 'file';
-  const res = await axios.put(
-    `${userBase()}/items/${id}:/${encodeURIComponent(safeFile)}:/content`,
-    buffer,
-    { headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeType || 'application/octet-stream' },
-      maxContentLength: Infinity, maxBodyLength: Infinity }
-  );
-  let url = res.data.webUrl;
-  try { url = await createOrgLink(token, res.data.id); }
-  catch (err) { console.warn(`[OneDrive] Org link failed for ${safeFile} (using webUrl): ${err.message}`); }
-  console.log(`[OneDrive] Uploaded to lead folder → ${safeFile}`);
-  return { url, webUrl: res.data.webUrl, id: res.data.id };
+
+  return withGraphAuth('uploadToLeadFolder', async (token) => {
+    const res = await axios.put(
+      `${userBase()}/items/${id}:/${encodeURIComponent(safeFile)}:/content`,
+      buffer,
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeType || 'application/octet-stream' },
+        maxContentLength: Infinity, maxBodyLength: Infinity }
+    );
+    let url = res.data.webUrl;
+    try { url = await createOrgLink(token, res.data.id); }
+    catch (err) {
+      if (err.response?.status === 401) throw err; // let withGraphAuth retry
+      console.warn(`[OneDrive] Org link failed for ${safeFile} (using webUrl): ${err.message}`);
+    }
+    console.log(`[OneDrive] Uploaded to lead folder → ${safeFile}`);
+    return { url, webUrl: res.data.webUrl, id: res.data.id };
+  });
 }
 
 
@@ -477,37 +545,47 @@ async function uploadToLeadFolderAndLink({ fullName, leadId, folderId, filename,
  * questionnaire: without a recovery path, one bad write is permanent.
  */
 async function listFileVersions({ clientName, caseRef, subfolder, filename }) {
-  const token    = await getCachedToken();
   const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
   const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim();
   const filePath = `${ROOT_FOLDER}/${safeName}/${subfolder}/${safeFile}`;
   const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
   try {
-    const res = await axios.get(`${userBase()}/root:/${encoded}:/versions`, {
-      headers: { Authorization: `Bearer ${token}` },
+    return await withGraphAuth('versionList', async (token) => {
+      try {
+        const res = await axios.get(`${userBase()}/root:/${encoded}:/versions`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return (res.data && res.data.value) || [];
+      } catch (err) {
+        if (err.response?.status === 404) return [];
+        throw err;
+      }
     });
-    return (res.data && res.data.value) || [];
   } catch (err) {
-    if (err.response?.status === 404) return [];
-    throw new Error(`OneDrive version list failed: ${err.response?.data ? JSON.stringify(err.response.data) : err.message}`);
+    throw wrapError('OneDrive version list failed', err);
   }
 }
 
 /** Fetch the CONTENT of one historical version (Buffer), or null if absent. */
 async function readFileVersion({ clientName, caseRef, subfolder, filename, versionId }) {
-  const token    = await getCachedToken();
   const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
   const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim();
   const filePath = `${ROOT_FOLDER}/${safeName}/${subfolder}/${safeFile}`;
   const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
   try {
-    const res = await axios.get(
-      `${userBase()}/root:/${encoded}:/versions/${encodeURIComponent(versionId)}/content`,
-      { headers: { Authorization: `Bearer ${token}` }, responseType: 'arraybuffer' });
-    return Buffer.from(res.data);
+    return await withGraphAuth('versionRead', async (token) => {
+      try {
+        const res = await axios.get(
+          `${userBase()}/root:/${encoded}:/versions/${encodeURIComponent(versionId)}/content`,
+          { headers: { Authorization: `Bearer ${token}` }, responseType: 'arraybuffer' });
+        return Buffer.from(res.data);
+      } catch (err) {
+        if (err.response?.status === 404) return null;
+        throw err;
+      }
+    });
   } catch (err) {
-    if (err.response?.status === 404) return null;
-    throw new Error(`OneDrive version read failed: ${err.response?.data ? JSON.stringify(err.response.data) : err.message}`);
+    throw wrapError('OneDrive version read failed', err);
   }
 }
 

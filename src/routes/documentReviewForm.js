@@ -25,6 +25,11 @@ function sanitiseCaseRef(s) {
   return String(s || '').trim().slice(0, 100);
 }
 
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function sanitiseItemId(s) {
   return String(s || '').replace(/[^0-9]/g, '').slice(0, 20);
 }
@@ -43,7 +48,7 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
         <!DOCTYPE html><html><head><meta charset="UTF-8"><title>No documents</title></head>
         <body style="font-family:Segoe UI,Arial,sans-serif;background:#f0f4f8;padding:60px;text-align:center;color:#475569;">
           <h2>No documents found</h2>
-          <p>Case reference <strong>${caseRef}</strong> has no document checklist items on the Execution Board yet.</p>
+          <p>Case reference <strong>${escHtml(caseRef)}</strong> has no document checklist items on the Execution Board yet.</p>
         </body></html>
       `);
     }
@@ -66,7 +71,7 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
       <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title></head>
       <body style="font-family:Segoe UI,Arial,sans-serif;background:#f0f4f8;padding:60px;text-align:center;color:#991b1b;">
         <h2>Error loading review page</h2>
-        <p>${err.message}</p>
+        <p>${escHtml(err.message)}</p>
       </body></html>
     `);
   }

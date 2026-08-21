@@ -834,21 +834,33 @@ async function seedMembersFromBoard({ clientName, caseRef }) {
  * board has no family rows either, returns the default single-member list.
  */
 async function loadMembers({ clientName, caseRef }) {
+  // Seed/default ONLY when the manifest file is genuinely absent (readFile
+  // returns null on 404). A transient read failure must THROW: several
+  // callers (addMember, removeMember, markMemberSubmitted, seedMembersFrom-
+  // Board itself) follow loadMembers with saveMembers, so presenting an
+  // outage as "no manifest" lets a board-derived rebuild wholesale-REPLACE
+  // the real manifest — erasing portal-added members and every submittedAt
+  // stamp. Same class as the loadFormData fix (2026-08-21 Graph outage).
+  let buf;
   try {
-    const buf = await oneDrive.readFile({
+    buf = await oneDrive.readFile({
       clientName,
       caseRef,
       subfolder: QUESTIONNAIRE_SUBFOLDER,
       filename:  membersFilename(caseRef),
     });
-    if (buf) {
-      const data = JSON.parse(buf.toString('utf8'));
-      if (Array.isArray(data.members) && data.members.length > 0) {
-        return data.members;
-      }
-    }
   } catch (err) {
-    console.warn(`[HtmlQ] loadMembers failed for ${caseRef}: ${err.message}`);
+    console.error(`[HtmlQ] loadMembers read failed for ${caseRef}: ${err.message}`);
+    err.transient = true;
+    throw err;
+  }
+  if (buf) {
+    // Corrupt JSON also throws (recoverable via OneDrive versions) rather
+    // than reading as "no manifest" and getting overwritten.
+    const data = JSON.parse(buf.toString('utf8'));
+    if (Array.isArray(data.members) && data.members.length > 0) {
+      return data.members;
+    }
   }
 
   const seeded = await seedMembersFromBoard({ clientName, caseRef });
@@ -1550,6 +1562,11 @@ ${hasAdditionalForm ? `
      erase a client's completed questionnaire). localStorage backup still
      runs, so nothing typed is lost. */
   var _serverLoadFailed = false;
+  /* True once the initial server load (loadAndPrefill) has completed. A
+     manual Save clicked BEFORE the /data fetch settles could still replace
+     the server file with a not-yet-hydrated page — block server writes until
+     the load finished (localStorage backup runs regardless). */
+  var _serverLoadSettled = false;
 
   function showServerLoadFailedBanner() {
     if (document.getElementById('tdot-load-failed-banner')) return;
@@ -1893,6 +1910,16 @@ ${hasAdditionalForm ? `
     /* ── Local backup first — always ── */
     backupToLocal();
 
+    /* No server writes until the initial load settles — a save fired before
+       hydration would REPLACE the server file with a half-empty page. */
+    if (!_serverLoadSettled) {
+      if (!silent) {
+        if (saveBtn) saveBtn.disabled = false;
+        alert('Your saved answers are still loading \u2014 please wait a moment and save again.');
+      }
+      return;
+    }
+
     /* Server writes are frozen while saved answers could not be loaded —
        a save now would REPLACE the server file with what this (possibly
        blank) page shows. Local backup above already captured everything. */
@@ -1957,7 +1984,7 @@ ${hasAdditionalForm ? `
           anyFailed = true;
         }
       }
-      _isDirty = false;
+      if (!anyFailed) _isDirty = false; /* keep dirty so auto-save retries the failed member(s) */
       if (msg) {
         if (anyFailed) {
           msg.textContent = '⚠ Some sections failed to save';
@@ -2018,6 +2045,11 @@ ${hasAdditionalForm ? `
 
   async function doSubmit() {
     var p = getProgress();
+
+    if (!_serverLoadSettled) {
+      alert('Your saved answers are still loading \u2014 please wait a moment and submit again.');
+      return;
+    }
 
     if (_serverLoadFailed) {
       showServerLoadFailedBanner();
@@ -2080,7 +2112,13 @@ ${hasAdditionalForm ? `
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ token: TOKEN, members: memberSubs }),
         });
-        if (!res.ok) throw new Error('Submit failed (' + res.status + ')');
+        if (!res.ok) {
+          /* Surface the server's own message (e.g. the 503 'temporarily
+             unavailable — try again shortly') instead of a bare status code. */
+          var subErrMsg = 'Submit failed (' + res.status + ')';
+          try { var subErrBody = await res.json(); if (subErrBody && subErrBody.error) subErrMsg = subErrBody.error; } catch (e) {}
+          throw new Error(subErrMsg);
+        }
       } else {
         /* ── Single-member submit ── */
         var sMissing = collectMissingFieldsForMember('primary');
@@ -2096,7 +2134,13 @@ ${hasAdditionalForm ? `
             missingSections: sMissing.sections,
           }),
         });
-        if (!res.ok) throw new Error('Submit failed (' + res.status + ')');
+        if (!res.ok) {
+          /* Surface the server's own message (e.g. the 503 'temporarily
+             unavailable — try again shortly') instead of a bare status code. */
+          var subErrMsg = 'Submit failed (' + res.status + ')';
+          try { var subErrBody = await res.json(); if (subErrBody && subErrBody.error) subErrMsg = subErrBody.error; } catch (e) {}
+          throw new Error(subErrMsg);
+        }
       }
 
       /* Stop the auto-save timer */
@@ -2253,6 +2297,10 @@ ${hasAdditionalForm ? `
           }
         }
 
+        if (_serverLoadFailed || !_serverLoadSettled) {
+          alert('Replies are paused: your saved answers could not be loaded (temporary server issue). Please refresh the page in a few minutes and try again.');
+          return;
+        }
         var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/reply-flag', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2463,12 +2511,19 @@ ${hasAdditionalForm ? `
   }
 
   async function prefillMemberSection(memberKey, sectionEl) {
+    /* The full storage key. Multi-member sections pass the BARE member key and
+       need the suffix appended; the single-member call passes FORM_KEY, which
+       the server already built WITH the suffix ('primary-additional' on the
+       dual-form additional view) — appending again produced the doubled key
+       'primary-additional-additional', so saved answers never pre-filled back
+       and the local backup was read from the wrong slot. */
+    var fullKey = sectionEl ? (memberKey + FORM_KEY_SUFFIX) : FORM_KEY;
     /* Load saved data for this member from the server */
     var serverFields = [];
     try {
       var res = await fetch(
         '/q/' + encodeURIComponent(CASE_REF) + '/data' +
-        '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(memberKey + FORM_KEY_SUFFIX),
+        '?t=' + encodeURIComponent(TOKEN) + '&formKey=' + encodeURIComponent(fullKey),
         { method: 'GET' }
       );
       if (res.ok) {
@@ -2491,7 +2546,7 @@ ${hasAdditionalForm ? `
     }
 
     /* Local backup */
-    var localKey = 'tdot_form_' + CASE_REF + '_' + memberKey + FORM_KEY_SUFFIX;
+    var localKey = 'tdot_form_' + CASE_REF + '_' + fullKey;
     var localFields = [];
     try {
       var raw = localStorage.getItem(localKey);
@@ -2500,7 +2555,32 @@ ${hasAdditionalForm ? `
 
     var serverFilled = serverFields.filter(function(f) { return f.value && f.value.trim(); }).length;
     var localFilled  = localFields.filter(function(f) { return f.value && f.value.trim(); }).length;
-    var sourceFields = (localFilled > serverFilled) ? localFields : serverFields;
+    var sourceFields;
+    if (localFilled > serverFilled) {
+      sourceFields = localFields;
+    } else {
+      sourceFields = serverFields;
+      if (localFilled > 0 && serverFilled > 0) {
+        /* Overlay: the server copy wins on count, but answers typed on THIS
+           device that the server copy lacks (e.g. typed during a write-freeze
+           and kept only locally) must not be discarded by the count contest —
+           fill the server copy's EMPTY fields from the local backup. */
+        var srvByKey = {};
+        for (var oi = 0; oi < serverFields.length; oi++) { var sfd = serverFields[oi]; if (sfd && sfd.key) srvByKey[sfd.key] = sfd; }
+        var recovered = 0;
+        for (var li = 0; li < localFields.length; li++) {
+          var lfd = localFields[li];
+          if (!lfd || !lfd.key || !lfd.value || !lfd.value.trim()) continue;
+          var hit = srvByKey[lfd.key];
+          if (hit && (!hit.value || !hit.value.trim())) { hit.value = lfd.value; recovered++; }
+          else if (!hit) { serverFields.push(lfd); srvByKey[lfd.key] = lfd; recovered++; }
+        }
+        if (recovered) {
+          console.log('[TDOT] Restored ' + recovered + ' locally saved answer(s) missing from the server copy.');
+          _localNewerThanServer = true; /* sync the recovered values on the next save */
+        }
+      }
+    }
     var sourceFilled = Math.max(serverFilled, localFilled);
     if (!sourceFilled) return;
 
@@ -2588,6 +2668,7 @@ ${hasAdditionalForm ? `
       console.error('[TDOT] Pre-fill error:', err);
     } finally {
       _hydrating = false;
+      _serverLoadSettled = true;
     }
     /* Reveal the review banner once if any answer was auto-filled from intake. */
     if (_prefillSeen) showPrefillBanner();

@@ -52,8 +52,12 @@ async function loadFlags({ clientName, caseRef, formKey }) {
     if (!buf) return {};
     return JSON.parse(buf.toString('utf8'));
   } catch (err) {
+    // Do not swallow: saveFlags wholesale-replaces the flags file, and every
+    // writer does loadFlags-then-saveFlags — an outage read as {} would let
+    // one staff flag save wipe all existing flags AND client replies.
     console.error(`[HtmlQReview] loadFlags failed for ${caseRef}/${formKey}:`, err.message);
-    return {};
+    err.transient = true;
+    throw err;
   }
 }
 
