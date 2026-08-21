@@ -351,11 +351,18 @@ function render(d) {
   document.getElementById('c-actions').innerHTML = acts;
 
   // Pills
-  var payCls = d.paymentStatus === 'Paid' ? 'green' : (/unpaid/i.test(d.paymentStatus) ? 'red' : 'amber');
   var healthCls = d.health === 'Red' ? 'red' : (d.health === 'Orange' ? 'amber' : (d.health === 'Green' ? 'green' : 'grey'));
   var pills = '';
-  pills += '<span class="pill blue"><span class="pk">Stage</span> ' + escHtml(d.caseStage) + '</span>';
-  pills += '<span class="pill ' + payCls + '"><span class="pk">Payment</span> ' + escHtml(d.paymentStatus) + '</span>';
+  if (d.cmUnavailable) {
+    // The Client Master read failed — show honest 'unavailable' pills instead
+    // of fabricated 'Not Started / Unpaid' defaults the staffer would act on.
+    pills += '<span class="pill grey"><span class="pk">Stage</span> unavailable — reload</span>';
+    pills += '<span class="pill grey"><span class="pk">Payment</span> unavailable — reload</span>';
+  } else {
+    var payCls = d.paymentStatus === 'Paid' ? 'green' : (/unpaid/i.test(d.paymentStatus) ? 'red' : 'amber');
+    pills += '<span class="pill blue"><span class="pk">Stage</span> ' + escHtml(d.caseStage) + '</span>';
+    pills += '<span class="pill ' + payCls + '"><span class="pk">Payment</span> ' + escHtml(d.paymentStatus) + '</span>';
+  }
   pills += '<span class="pill ' + healthCls + '"><span class="pk">Health</span> ' + escHtml(d.health) + '</span>';
   pills += '<span class="pill grey"><span class="pk">Manager</span> ' + escHtml(d.manager) + '</span>';
   if (d.deadline) pills += '<span class="pill amber"><span class="pk">Deadline</span> ' + escHtml(d.deadline) + '</span>';
@@ -467,7 +474,7 @@ function docAction(btn) {
     if (notes == null) return;
     if (!notes.trim()) { actMsg('doc-act-msg', 'err', 'A note is required for rework.'); return; }
   } else if (!window.confirm('Mark this document as reviewed?')) { return; }
-  var key = getKey();
+  var key = peekKey();
   var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
   btn.disabled = true; actMsg('doc-act-msg', 'info', 'Working…');
   fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/document/' + encodeURIComponent(id) + '/status', {
@@ -489,7 +496,7 @@ function renderQTab(d) {
   var t = encodeURIComponent(CASE_REF);
   // Carry the admin key on the staff review/PDF links so they work in a new tab
   // (that tab's sessionStorage is empty; the review route accepts ?key=).
-  var kq = (getKey() ? ('?key=' + encodeURIComponent(getKey())) : '');
+  var kq = (peekKey() ? ('?key=' + encodeURIComponent(peekKey())) : '');
   var acts = '<button class="sbtn primary" id="q-show-embed">Show questionnaire ▾</button>' +
     '<a class="sbtn" href="/q/' + t + '/review' + kq + '" target="_blank" rel="noopener">Open full page →</a>' +
     '<a class="sbtn" href="/q/' + t + '/export-pdf' + kq + '" target="_blank" rel="noopener">Export PDF</a>';
@@ -504,7 +511,7 @@ function renderQTab(d) {
     shown = !shown;
     showBtn.textContent = shown ? 'Hide questionnaire ▴' : 'Show questionnaire ▾';
     if (shown && !embed.querySelector('iframe')) {
-      var src = '/q/' + t + '/review?embed=1' + (getKey() ? ('&key=' + encodeURIComponent(getKey())) : '');
+      var src = '/q/' + t + '/review?embed=1' + (peekKey() ? ('&key=' + encodeURIComponent(peekKey())) : '');
       embed.innerHTML = '<iframe title="Questionnaire review" src="' + src + '" ' +
         'style="width:100%;height:70vh;border:1px solid #E2E5EA;border-radius:12px;background:#fff"></iframe>';
     }
@@ -586,7 +593,7 @@ function msAction(btn) {
     if (ref == null) return;
     payload = { action: 'markMilestonePaid', value: JSON.stringify({ index: i, reference: ref.trim() }) };
   }
-  var key = getKey();
+  var key = peekKey();
   var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
   btn.disabled = true; actMsg('pay-act-msg', 'info', 'Working…');
   // leadId is derived server-side from the assigned case — don't send it.
@@ -636,7 +643,9 @@ function renderTimelineTab(d) {
 
 function loadCase() {
   // Identity-aware: admin key → any case; Monday staff cookie → only if assigned.
-  var key = getKey();
+  // peekKey (not getKey) so a cookie-only staffer isn't redirected to /admin
+  // before the cookie-authenticated fetch below can run.
+  var key = peekKey();
   var headers = key ? { 'X-Api-Key': key } : {};
   fetch('/admin/case-data/' + encodeURIComponent(CASE_REF), { headers: headers, credentials: 'same-origin' })
     .then(function(r) {
@@ -684,7 +693,7 @@ document.getElementById('tabbar').addEventListener('click', function(e) {
 });
 
 startClock();
-if (getKey()) checkApiStatus();  // status pill uses the admin key; skip for cookie-only staff
+if (peekKey()) checkApiStatus();  // status pill uses the admin key; skip for cookie-only staff
 loadCase();
 </script>
 </body>

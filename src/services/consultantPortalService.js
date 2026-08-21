@@ -451,6 +451,9 @@ function buildIntakeSections(f, lead) {
  */
 const LEADS_QUEUE_CACHE_MS = 20 * 1000;
 let _leadsQueueCache = { at: 0, rows: null };
+/** Drop the funnel-leads queue cache — after a staff create/delete/convert so
+    the refreshed list never shows a deleted lead alive or hides a new one. */
+function invalidateLeadsQueue() { _leadsQueueCache = { at: 0, rows: null }; }
 
 async function getLeadsQueue() {
   if (_leadsQueueCache.rows && (Date.now() - _leadsQueueCache.at) < LEADS_QUEUE_CACHE_MS) {
@@ -1300,6 +1303,7 @@ async function createStaffLead(payload = {}) {
   await postPortalNote(lead.id,
     `Lead added by staff (${sourceChannel.toLowerCase()} intake)${caseTypeInterest ? ` — interested in ${caseTypeInterest}` : ''}. ` +
     'Next: send the booking invite from this page when they are ready.');
+  invalidateLeadsQueue(); // the new lead must appear on the next queue load
   return { leadId: String(lead.id) };
 }
 
@@ -1450,6 +1454,7 @@ async function createDirectClient(payload = {}) {
     if (chosenAccountId) linkWiring.clientAccountId = chosenAccountId;
     await leadService.updateLead(String(linkLeadId), linkWiring);
     _directQueueCache = { at: 0, rows: null };
+    invalidateLeadsQueue(); // the lead just left the funnel — drop it from the funnel queue too
     let caseOpened = false;
     try {
       caseOpened = !!(await require('./handoffService').openCaseEarly({ leadId: String(linkLeadId) }));
@@ -1696,4 +1701,5 @@ module.exports = {
   resolveFamilyMembers, FAMILY_MEMBER_TYPES, MILESTONE_TRIGGER_STAGES,
   createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, findClientMatches, DIRECT_SOURCE,
   createStaffLead, STAFF_LEAD_SOURCES,
+  invalidateLeadsQueue,
 };

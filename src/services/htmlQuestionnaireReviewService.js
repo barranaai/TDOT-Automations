@@ -12,6 +12,7 @@
 const { sendEmail }  = require('./microsoftMailService');
 const mondayApi      = require('./mondayApi');
 const oneDrive       = require('./oneDriveService');
+const caseAccess     = require('./caseAccessService');
 const { clientMasterBoardId } = require('../../config/monday');
 const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
 
@@ -29,6 +30,30 @@ const CM = {
 
 const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
 const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
+
+/**
+ * Read a case's assignee ids (person + team) from the Client Master people
+ * columns, for the same per-case RBAC the cockpit enforces. Returns
+ * { personIds, teamIds } (both empty if the case can't be read — callers then
+ * deny access to non-admins). Reads ONLY the people columns' raw value JSON.
+ */
+async function getCaseAssignees(caseRef) {
+  const colIds = caseAccess.PEOPLE_COLUMNS.map((c) => `"${c}"`).join(', ');
+  const data = await mondayApi.query(
+    `query($boardId: ID!, $colId: String!, $val: String!) {
+       items_page_by_column_values(
+         limit: 1, board_id: $boardId,
+         columns: [{ column_id: $colId, column_values: [$val] }]
+       ) { items { id column_values(ids: [${colIds}]) { id value } } }
+     }`,
+    { boardId: String(clientMasterBoardId), colId: CM.caseRef, val: caseRef }
+  );
+  const item = data?.items_page_by_column_values?.items?.[0];
+  if (!item) return { personIds: [], teamIds: [], found: false };
+  const valueByColId = {};
+  for (const cv of item.column_values || []) valueByColId[cv.id] = cv.value;
+  return { ...caseAccess.assigneesFromColumnValues(valueByColId), found: true };
+}
 
 // ─── Flags helpers ─────────────────────────────────────────────────────────────
 // Flags are stored as JSON: { [fieldKey]: { label, section, comment, flaggedBy, flaggedByEmail, flaggedAt } }
@@ -947,6 +972,7 @@ module.exports = {
   loadFlags,
   saveFlags,
   getCaseDetails,
+  getCaseAssignees,
   sendCorrectionEmail,
   sendConsolidatedCorrectionEmail,
   buildReviewPage,

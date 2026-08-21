@@ -51,8 +51,12 @@ test('lead detail exposes the suggestion + pickable names; UI pins on change AND
   assert.match(svc, /Already booked — the consultation is on the assigned consultant/, 'pin refused after booking');
   const page = fs.readFileSync(require.resolve('../src/routes/adminLeads'), 'utf8');
   assert.match(page, /id="inv-consultant"/);
-  assert.match(page, /action:'setConsultant',value:cs\.value/, 'persist on change');
+  assert.match(page, /action:'setConsultant',value:want/, 'persist the chosen value on change');
   assert.match(page, /Pin first \(post-confirm\), then send/, 'what is on screen at send time is what gets pinned');
+  // A pin failure must ABORT the send (not fall through to a success toast) and
+  // the dropdown reverts to the last server-confirmed value on failure.
+  assert.match(page, /the invite was NOT sent/, 'pin failure aborts the send');
+  assert.match(page, /cs\.value=cs\._lastConfirmed/, 'dropdown reverts on a failed change');
 });
 
 test('"Document review" removed from BOTH public form service lists (board labels untouched)', () => {

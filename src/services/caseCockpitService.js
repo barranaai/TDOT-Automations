@@ -277,7 +277,7 @@ async function getCaseOverview(caseRef) {
 
   // Fan out the independent reads; degrade each section to empty on failure.
   const [cm, docSummary, composition, members] = await Promise.all([
-    readClientMaster(itemId).catch((e) => { console.warn(`[Cockpit] CM read failed for ${caseRef}: ${e.message}`); return {}; }),
+    readClientMaster(itemId).catch((e) => { console.warn(`[Cockpit] CM read failed for ${caseRef}: ${e.message}`); return { _unavailable: true }; }),
     documentFormSvc.getCaseSummary(caseRef).catch((e) => { console.warn(`[Cockpit] doc read failed for ${caseRef}: ${e.message}`); return { items: [] }; }),
     compositionAdapter.readForCase(caseRef).catch((e) => { console.warn(`[Cockpit] family read failed for ${caseRef}: ${e.message}`); return { members: [] }; }),
     htmlQ.loadMembers({ clientName, caseRef }).catch((e) => { console.warn(`[Cockpit] members read failed for ${caseRef}: ${e.message}`); return []; }),
@@ -313,11 +313,15 @@ async function getCaseOverview(caseRef) {
     caseType:    caseType || '—',
     caseSubType: caseSubType || null,
     accessToken,
+    // When the Client Master read transiently failed, do NOT present fabricated
+    // 'Unpaid / Not Started' defaults as if authoritative — flag it so the
+    // cockpit renders an explicit 'unavailable — reload' state for these pills.
+    cmUnavailable:   cm._unavailable === true,
     clientEmail:     cm.clientEmail || '',
     manager:         cm.manager || 'Unassigned',
     assignees:       cm.assignees || { personIds: [], teamIds: [] }, // for per-user access control
-    paymentStatus:   cm.paymentStatus || 'Unpaid',
-    caseStage:       cm.caseStage || 'Not Started',
+    paymentStatus:   cm._unavailable ? '' : (cm.paymentStatus || 'Unpaid'),
+    caseStage:       cm._unavailable ? '' : (cm.caseStage || 'Not Started'),
     health:          cm.health || '—',
     slaRisk:         cm.slaRisk || '—',
     deadline:        cm.deadline || '',

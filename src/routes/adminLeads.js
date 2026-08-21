@@ -252,7 +252,7 @@ function alSubmit(){
       if(res.s>=400){ err.textContent=res.j.error||('HTTP '+res.s); return; }
       window.location.href='/admin/lead/'+encodeURIComponent(res.j.leadId);
     })
-    .catch(function(){ err.textContent='Network error — nothing was created; try again.'; })
+    .catch(function(){ err.textContent='Network error — the lead may or may not have been created. Check the leads list before retrying to avoid a duplicate.'; })
     .finally(function(){ btn.disabled=false; btn.textContent='Create lead'; });
 }
 (function(){
@@ -508,14 +508,16 @@ function render(d){
     var names=d.consultants||[];
     cs.innerHTML=names.map(function(n){ return '<option value="'+escHtml(n)+'">'+escHtml(n)+(n===d.routedConsultant?' (suggested)':'')+'</option>'; }).join('');
     cs.value=d.consultant||d.routedConsultant||names[0]||'';
+    cs._lastConfirmed=cs.value; // last value the server accepted — revert target on failure
     var hint=document.getElementById('inv-routed-hint');
     if(hint) hint.textContent=d.routedConsultant?('auto-routing suggests '+d.routedConsultant):'';
     cs.onchange=function(){
-      var key=getKey(); if(!key) return;
-      fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify({action:'setConsultant',value:cs.value})})
-        .then(function(r){ return r.json(); })
-        .then(function(j){ if(j&&j.error){ alert(j.error); } })
-        .catch(function(){});
+      var key=getKey(); if(!key){ cs.value=cs._lastConfirmed; return; }
+      var want=cs.value;
+      fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify({action:'setConsultant',value:want})})
+        .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ if(!r.ok||(j&&j.error)) throw new Error((j&&j.error)||('HTTP '+r.status)); }); })
+        .then(function(){ cs._lastConfirmed=want; })
+        .catch(function(err){ cs.value=cs._lastConfirmed; alert('Could not change the consultant: '+(err.message||'please try again')); });
     };
   }
   // Booked leads get the consultation view; DIRECT retainer clients (walk-in /
@@ -540,7 +542,7 @@ function render(d){
     var cr=document.getElementById('convert-row');
     if(cr && !d.clientMasterItemId && d.bookingStatus!=='Slot Held' && !d.bookedSlot){
       cr.style.display='flex';
-      document.getElementById('btn-convert').href='/admin/consultation?convertLead='+encodeURIComponent(d.leadId);
+      document.getElementById('btn-convert').href='/admin/consultations?convertLead='+encodeURIComponent(d.leadId);
     }
   }
 }
@@ -583,12 +585,19 @@ document.getElementById('btn-invite').onclick=function(){
   // the booking page reads the pinned consultant live, so the invite must
   // never race a routing recalculation. Pin first (post-confirm), then send.
   var key=getKey(); if(!key) return;
+  var msgEl=document.getElementById('inv-msg');
+  // Pin the on-screen consultant BEFORE sending — and if the pin fails, ABORT
+  // the invite (do not send with a stale/wrong consultant while showing
+  // success). fetch resolves on 4xx/5xx, so check r.ok AND the body's error.
   var pinDone = (pick&&pick.value)
-    ? fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify({action:'setConsultant',value:pick.value})}).catch(function(){})
+    ? fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify({action:'setConsultant',value:pick.value})})
+        .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ if(!r.ok||(j&&j.error)) throw new Error((j&&j.error)||('Could not set the consultant (HTTP '+r.status+')')); }); })
     : Promise.resolve();
   pinDone.then(function(){
     doAction(btn,'bookingInvite',null,
       document.getElementById('invite-msg').value,'inv-msg');
+  }).catch(function(err){
+    if(msgEl){ msgEl.textContent='⚠ '+(err.message||'Could not pin the consultant')+' — the invite was NOT sent.'; msgEl.style.color='#b91c1c'; msgEl.style.display='block'; }
   });
 };
 document.getElementById('btn-resend').onclick=function(){

@@ -156,3 +156,30 @@ test('questionnaire review engine + overview: emitted scripts parse', () => {
   });
   assertScriptsParse(overview, 'overview page');
 });
+
+// ─── documentReviewFormService (coverage gap found 2026-08-21 staff review) ──
+// The /d/:caseRef/review "Full review page" builder emits a client script from
+// a template literal but was the only staff builder NOT parse-guarded here — a
+// lost backslash or a </script> in a client-supplied filename/note could ship
+// silently. Parse it with hostile item data.
+test('documentReviewFormService buildReviewPage: emitted script parses, hostile item data stays inert', () => {
+  const svc = require('../src/services/documentReviewFormService');
+  const items = [{
+    id: '1', name: 'Passport </script><img src=x onerror=alert(1)>',
+    category: 'Identity', applicantType: 'Principal Applicant',
+    applicantLabel: 'PA `x` "q" </script>', status: 'Received',
+    reviewNotes: "rework: fix </script> and 'quote'", clientInstructions: '',
+    clientReply: 'client said </script>', lastUpload: '2026-08-01',
+  }];
+  const html = svc.buildReviewPage({
+    caseRef: '2026-XX-000', clientName: "O'Hara </script><script>alert(1)</script>",
+    staffName: "O'Brien", items, folderLinks: { '1': 'https://x/</script>' },
+  });
+  assertScriptsParse(html, 'doc review page');
+  assertNoMangledRegexes(html, 'doc review page');
+  const scripts = html.match(/<script>[\s\S]*?<\/script>/g) || [];
+  scripts.forEach((block, i) => {
+    const inner = block.replace(/^<script>/, '').replace(/<\/script>$/, '');
+    assert.ok(!/<\/script/i.test(inner), `doc review page: block ${i} — a </script> in client data must not terminate the script`);
+  });
+});

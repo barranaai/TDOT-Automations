@@ -239,6 +239,13 @@ var DC_OPTS=null;
 function dcEl(id){ return document.getElementById(id); }
 function openDirectClient(){
   dcEl('dc-err').textContent='';
+  // Clear every field FIRST — the modal is a singleton, and a carried
+  // ?newAppFrom / ?convertLead prefill or a prior walk-in's typed values would
+  // otherwise persist into the next opening and be saved on the wrong client
+  // (a stale address prints on their retainer). The boot prefill runs AFTER
+  // this and re-populates intentionally.
+  ['dc-name','dc-email','dc-phone','dc-address','dc-referred'].forEach(function(id){ var e=dcEl(id); if(e) e.value=''; });
+  ['dc-casetype','dc-subtype','dc-consultant'].forEach(function(id){ var e=dcEl(id); if(e) e.selectedIndex=0; });
   DC_MATCHES=null; var mb=dcEl('dc-matches'); if(mb){ mb.style.display='none'; mb.innerHTML=''; }
   // A carried profile / lead conversion belongs to ONE opening of the modal —
   // reopening it for a different walk-in must never stamp the previous

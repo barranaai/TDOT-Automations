@@ -17,7 +17,32 @@ const router  = express.Router();
 
 const docFormSvc       = require('../services/documentFormService');
 const reviewFormSvc    = require('../services/documentReviewFormService');
+const qReview          = require('../services/htmlQuestionnaireReviewService');
+const caseAccess       = require('../services/caseAccessService');
 const { requireStaffAuth } = require('../middleware/staffAuth');
+
+// Per-case RBAC: a Monday-authenticated staffer may only open a case they're
+// assigned to (mirrors /admin/case-data and /q/:caseRef/review). Admins (email
+// allowlist) see all. Returns true when allowed; otherwise sends the response
+// and returns false. `json` selects a JSON body vs an HTML error page.
+async function enforceCaseAccess(req, res, caseRef, { json = false } = {}) {
+  const viewer = caseAccess.viewerFromStaff(req.staff);
+  if (viewer && viewer.isAdmin) return true;
+  let assignees;
+  try {
+    assignees = await qReview.getCaseAssignees(caseRef);
+  } catch (err) {
+    console.error(`[/d] assignee read failed for ${caseRef}:`, err.message);
+    const status = err.transient ? 503 : 500;
+    if (json) res.status(status).json({ ok: false, error: 'Could not verify case access — please try again shortly.' });
+    else res.status(status).type('html').send('<h2 style="font-family:sans-serif;color:#991b1b;text-align:center;padding:60px">Could not verify your access to this case — please try again shortly.</h2>');
+    return false;
+  }
+  if (caseAccess.viewerCanSee(assignees, viewer)) return true;
+  if (json) res.status(403).json({ ok: false, error: 'You are not assigned to this case.' });
+  else res.status(403).type('html').send('<h2 style="font-family:sans-serif;color:#991b1b;text-align:center;padding:60px">You are not assigned to this case, so you cannot view it.</h2>');
+  return false;
+}
 
 // ─── Light validation ────────────────────────────────────────────────────────
 
@@ -40,6 +65,7 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
 
   try {
+    if (!(await enforceCaseAccess(req, res, caseRef))) return;
     const summary = await docFormSvc.getCaseSummary(caseRef);
     const items   = summary?.items || [];
 
@@ -54,7 +80,12 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
     }
 
     const itemIds     = items.map(it => it.id);
-    const folderLinks = await reviewFormSvc.getFolderLinks(itemIds).catch(() => ({}));
+    // Distinguish a transient fetch failure from genuinely-absent links: on
+    // failure, flag it so the page shows a 'links temporarily unavailable —
+    // reload' banner rather than rendering every folder as "not linked yet".
+    let folderLinks = {}, folderLinksUnavailable = false;
+    try { folderLinks = await reviewFormSvc.getFolderLinks(itemIds); }
+    catch (e) { folderLinksUnavailable = true; console.warn(`[/d/review] folder-link read failed for ${caseRef}: ${e.message}`); }
 
     const html = reviewFormSvc.buildReviewPage({
       caseRef,
@@ -62,6 +93,7 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
       staffName:  req.staff?.name || 'Staff',
       items,
       folderLinks,
+      folderLinksUnavailable,
     });
 
     return res.type('html').send(html);
@@ -83,6 +115,7 @@ router.get('/:caseRef/review/updates', requireStaffAuth, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
 
   try {
+    if (!(await enforceCaseAccess(req, res, caseRef, { json: true }))) return;
     const summary = await docFormSvc.getCaseSummary(caseRef);
     const items   = summary?.items || [];
     if (!items.length) return res.json({ ok: true, replies: {} });
@@ -112,6 +145,7 @@ router.post('/:caseRef/review/:itemId/status', requireStaffAuth, async (req, res
   }
 
   try {
+    if (!(await enforceCaseAccess(req, res, caseRef, { json: true }))) return;
     if (action === 'reviewed') {
       await reviewFormSvc.markReviewed(itemId);
     } else if (action === 'rework') {

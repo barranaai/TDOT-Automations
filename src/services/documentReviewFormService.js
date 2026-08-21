@@ -242,7 +242,7 @@ async function reopenDoc(itemId) {
  * @param {Array}    params.items       — from documentFormService.getCaseDocuments()
  * @param {Object}   params.folderLinks — { itemId: oneDriveUrl }
  */
-function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks }) {
+function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, folderLinksUnavailable }) {
   // Group: applicant member → category → items
   const groups = {};
   for (const it of items) {
@@ -538,7 +538,7 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks })
   </header>
 
   <main class="content">
-
+${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97706;color:#7c2d12;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">\u26a0\ufe0f The OneDrive folder links could not be loaded just now (temporary issue). Document review still works \u2014 reload the page to restore the “Open in OneDrive” buttons.</div>' : ''}
     <div class="summary-card">
       <div class="summary-stat"><div class="num">${total}</div><div class="lbl">Total</div></div>
       <div class="summary-divider"></div>

@@ -617,6 +617,12 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
   if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
   try {
     const overview = await caseCockpitService.getCaseOverview((req.params.caseRef || '').trim());
+    // If the Client Master read failed, `assignees` is empty — do NOT run the
+    // RBAC check against it (an assigned staffer would get a misleading
+    // 'not-assigned'). Surface the outage as 503 so the page shows a retry.
+    if (overview.cmUnavailable && !viewer.isAdmin) {
+      return res.status(503).json({ error: 'temporarily-unavailable', message: 'Case data is temporarily unavailable. Please reload in a moment.' });
+    }
     if (!viewer.isAdmin && !caseAccess.viewerCanSee(overview.assignees, viewer)) {
       return res.status(403).json({ error: 'not-assigned', message: 'You are not assigned to this case, so you cannot view it.' });
     }
@@ -683,6 +689,7 @@ app.post('/admin/delete/execute', express.json(), async (req, res) => {
       actor: viewer.email || viewer.name || 'admin-key',
     });
     consultantPortalService.invalidateDirectRetainerQueue(); // deleted clients must drop off the Direct section immediately
+    consultantPortalService.invalidateLeadsQueue();          // …and off the funnel-leads queue (was showing deleted leads as alive)
     res.json(result);
   } catch (err) {
     if (err.badRequest) return res.status(400).json({ error: err.message });
@@ -766,12 +773,23 @@ app.post('/api/case/:caseRef/document/:itemId/status', async (req, res) => {
 // A saved questionnaire is one JSON file per member; any overwrite (a bad
 // client save, an operator mistake — one happened 2026-08-19) replaces it.
 // OneDrive keeps version history, so these expose list + restore.
+// A form key becomes part of the OneDrive filename — allow only the shape the
+// app actually generates (primary / <member-key> / …-additional). Anything
+// else is a path-injection attempt, not a real key.
+function sanitiseFormKeyParam(s) {
+  return String(s || 'primary').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 60) || 'primary';
+}
+
 app.get('/admin/questionnaire/:caseRef/versions', async (req, res) => {
+  const caseRef = String(req.params.caseRef || '').trim();
+  // Reading a client's questionnaire history (answers metadata, editor names,
+  // timestamps) is case-scoped: only an assigned staffer or an admin may see it.
+  const ctx = await resolveCaseForWrite(req, res, caseRef);
+  if (!ctx) return;
   try {
     const svc = require('./services/htmlQuestionnaireService');
     const oneDrive = require('./services/oneDriveService');
-    const caseRef = String(req.params.caseRef || '').trim();
-    const formKey = String(req.query.formKey || 'primary').trim();
+    const formKey = sanitiseFormKeyParam(req.query.formKey);
     const { clientName } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
     const versions = await oneDrive.listFileVersions({
       clientName, caseRef, subfolder: 'Questionnaire',
@@ -788,11 +806,18 @@ app.get('/admin/questionnaire/:caseRef/versions', async (req, res) => {
 });
 
 app.post('/admin/questionnaire/:caseRef/restore', express.json(), async (req, res) => {
+  const caseRef = String(req.params.caseRef || '').trim();
+  // Restore OVERWRITES the live questionnaire file — a destructive write, so
+  // admin-only (matches the delete cascade). resolveCaseForWrite proves a
+  // signed-in identity; the extra isAdmin check restricts the overwrite itself.
+  const ctx = await resolveCaseForWrite(req, res, caseRef);
+  if (!ctx) return;
+  if (!ctx.viewer.isAdmin) return res.status(403).json({ error: 'Admins only — restore overwrites the client’s saved answers.' });
   try {
     const svc = require('./services/htmlQuestionnaireService');
     const oneDrive = require('./services/oneDriveService');
-    const caseRef = String(req.params.caseRef || '').trim();
-    const { formKey = 'primary', versionId, dryRun = true } = req.body || {};
+    const { versionId, dryRun = true } = req.body || {};
+    const formKey = sanitiseFormKeyParam((req.body || {}).formKey);
     if (!versionId) return res.status(400).json({ error: 'versionId is required' });
     const { clientName, itemId } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
     const filename = `questionnaire-${caseRef}-${formKey}.json`;

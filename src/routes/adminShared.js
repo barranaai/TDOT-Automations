@@ -227,6 +227,15 @@ const SHARED_AUTH_JS = `
     return k;
   }
 
+  // Non-redirecting read of the admin key — returns null when absent WITHOUT
+  // bouncing to /admin. Use this on pages that also accept the Monday staff
+  // cookie (e.g. the case cockpit): getKey()'s redirect would otherwise throw
+  // a cookie-authenticated staffer off the page before the cookie-aware fetch
+  // (credentials:'same-origin') ever runs.
+  function peekKey() {
+    return sessionStorage.getItem('tdot_admin_key') || null;
+  }
+
   function signOut() {
     sessionStorage.removeItem('tdot_admin_key');
     window.location.replace('/admin');

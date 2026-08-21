@@ -44,8 +44,35 @@ function staffOrAdminKey(req, res, next) {
   const staff = tryStaffAuth(req);
   if (staff) { req.staff = staff; return next(); }
   const key = req.headers['x-api-key'] || req.query.key || '';
-  if (REVIEW_ADMIN_KEY && key === REVIEW_ADMIN_KEY) { req.staff = { name: 'TDOT Staff' }; return next(); }
+  if (REVIEW_ADMIN_KEY && key === REVIEW_ADMIN_KEY) { req.staff = { name: 'TDOT Staff' }; req.isAdminKey = true; return next(); }
   return requireStaffAuth(req, res, next); // no cookie, no key → Monday OAuth login
+}
+
+// Per-case RBAC — a Monday-authenticated staffer may only touch a case they're
+// assigned to (any of the 7 people columns). The admin API key and allowlisted
+// admin emails see every case. This mirrors /admin/case-data so a sibling URL
+// (/q/:caseRef/review, /d/...) cannot bypass the cockpit's visibility control.
+// Returns true when access is allowed; otherwise writes the 403/response and
+// returns false. `json` picks JSON vs an HTML error page.
+async function enforceCaseAccess(req, res, caseRef, { json = false } = {}) {
+  if (req.isAdminKey) return true; // shared admin key = full access
+  const caseAccess = require('../services/caseAccessService');
+  const viewer = caseAccess.viewerFromStaff(req.staff);
+  if (viewer && viewer.isAdmin) return true; // allowlisted admin email
+  let assignees;
+  try {
+    assignees = await review.getCaseAssignees(caseRef);
+  } catch (err) {
+    console.error(`[/q] assignee read failed for ${caseRef}:`, err.message);
+    const status = err.transient ? 503 : 500;
+    if (json) res.status(status).json({ error: err.transient ? 'Temporarily unavailable — please try again shortly.' : 'Could not verify case access.' });
+    else res.status(status).type('html').send(svc.buildErrorPage('Could not verify your access to this case — please try again shortly.'));
+    return false;
+  }
+  if (caseAccess.viewerCanSee(assignees, viewer)) return true;
+  if (json) res.status(403).json({ error: 'not-assigned', message: 'You are not assigned to this case, so you cannot view it.' });
+  else res.status(403).type('html').send(svc.buildErrorPage('You are not assigned to this case, so you cannot view it.'));
+  return false;
 }
 
 // When embedded in the cockpit (?embed=1) strip the standalone-page chrome so
@@ -74,6 +101,20 @@ function sanitiseFormKey(raw) {
   return String(raw || '').replace(/[^a-zA-Z0-9\-_]/g, '').slice(0, 60);
 }
 
+// Only allow a SAME-SITE relative path as the post-login redirect target.
+// Anything absolute (http://…, //evil.com) or protocol-relative is rejected to
+// a safe default — otherwise a crafted /q/auth/monday?returnTo=… link turns
+// the trusted login into an open redirect.
+function safeReturnTo(raw) {
+  let v = '';
+  try { v = decodeURIComponent(String(raw || '')); } catch (_) { v = String(raw || ''); }
+  v = v.trim();
+  // Must start with a single '/', not '//' or '/\' (protocol-relative), and
+  // carry no scheme. Reject control chars / backslashes.
+  if (!/^\/[^/\\]/.test(v) || /[\x00-\x1f\\]/.test(v)) return '/admin/dashboard';
+  return v.slice(0, 200);
+}
+
 function buildOAuthNotConfiguredPage() {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Setup Required</title>
 <style>body{font-family:'Segoe UI',sans-serif;background:#f0f4f8;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
@@ -100,8 +141,9 @@ router.get('/auth/monday', (req, res) => {
     return res.status(503).type('html').send(buildOAuthNotConfiguredPage());
   }
 
-  // State = base64(timestamp + returnTo) — simple CSRF protection
-  const returnTo  = (req.query.returnTo || '/').slice(0, 200);
+  // State = base64(timestamp + returnTo) — simple CSRF protection.
+  // returnTo is validated to a same-site relative path (no open redirect).
+  const returnTo  = safeReturnTo(req.query.returnTo || '/admin/dashboard');
   const state     = Buffer.from(JSON.stringify({ ts: Date.now(), returnTo })).toString('base64url');
 
   // Store state in a short-lived cookie for verification on callback
@@ -213,7 +255,7 @@ router.get('/auth/monday/callback', async (req, res) => {
   setStaffCookie(res, sessionToken);
 
   console.log(`[StaffAuth] Staff login — ${me.name} (${me.email})`);
-  return res.redirect(decodeURIComponent(returnTo));
+  return res.redirect(safeReturnTo(returnTo));
 });
 
 // ─── Staff review page — GET /q/:caseRef/review ──────────────────────────────
@@ -223,6 +265,7 @@ router.get('/:caseRef/review', staffOrAdminKey, async (req, res) => {
   const formKey = sanitiseFormKey(req.query.formKey || 'primary');
 
   try {
+    if (!(await enforceCaseAccess(req, res, caseRef))) return;
     const caseDetails = await review.getCaseDetails(caseRef);
     if (!caseDetails) {
       return res.status(404).type('html').send(svc.buildErrorPage('Case not found.'));
@@ -340,6 +383,7 @@ router.get('/:caseRef/export-pdf', staffOrAdminKey, async (req, res) => {
   const formKey = sanitiseFormKey(req.query.formKey || 'primary');
 
   try {
+    if (!(await enforceCaseAccess(req, res, caseRef))) return;
     const caseDetails = await review.getCaseDetails(caseRef);
     if (!caseDetails) {
       return res.status(404).type('html').send(svc.buildErrorPage('Case not found.'));
@@ -386,23 +430,35 @@ router.post('/:caseRef/flag', requireStaffAuth, async (req, res) => {
   }
 
   try {
+    if (!(await enforceCaseAccess(req, res, caseRef, { json: true }))) return;
     const caseDetails = await review.getCaseDetails(caseRef);
     if (!caseDetails) return res.status(404).json({ error: 'Case not found' });
 
     const { clientName } = caseDetails;
+    const key = sanitiseFormKey(formKey || 'primary');
 
-    // Attach flaggedBy info from the session
+    // The client's reply to a flag lives ON the flag object (clientReply /
+    // clientRepliedAt). The review page POSTs the whole in-memory flags map,
+    // which was seeded WITHOUT those reply fields — saving it wholesale would
+    // erase every client reply (and a stale tab would resurrect deleted flags).
+    // Preserve the stored reply for each key the staff kept, and keep the save
+    // as the authoritative set of flags (so an intentional un-flag still drops).
+    const existing = await review.loadFlags({ clientName, caseRef, formKey: key }).catch(() => ({}));
     const enrichedFlags = {};
-    for (const [key, flag] of Object.entries(flags)) {
-      enrichedFlags[key] = {
+    for (const [k, flag] of Object.entries(flags)) {
+      const prior = existing[k] || {};
+      enrichedFlags[k] = {
         ...flag,
         flaggedBy:      req.staff.name,
         flaggedByEmail: req.staff.email,
         flaggedAt:      new Date().toISOString(),
       };
+      // Carry the client's reply forward (the client owns it, not the editor).
+      if (prior.clientReply    && enrichedFlags[k].clientReply    === undefined) enrichedFlags[k].clientReply    = prior.clientReply;
+      if (prior.clientRepliedAt && enrichedFlags[k].clientRepliedAt === undefined) enrichedFlags[k].clientRepliedAt = prior.clientRepliedAt;
     }
 
-    await review.saveFlags({ clientName, caseRef, formKey: sanitiseFormKey(formKey || 'primary'), flags: enrichedFlags });
+    await review.saveFlags({ clientName, caseRef, formKey: key, flags: enrichedFlags });
     return res.json({ ok: true, count: Object.keys(enrichedFlags).length });
   } catch (err) {
     console.error(`[/q/flag] Error for ${caseRef}:`, err.message);
@@ -417,6 +473,7 @@ router.post('/:caseRef/notify', requireStaffAuth, async (req, res) => {
   const { formKey } = req.body || {};
 
   try {
+    if (!(await enforceCaseAccess(req, res, caseRef, { json: true }))) return;
     const caseDetails = await review.getCaseDetails(caseRef);
     if (!caseDetails) return res.status(404).json({ error: 'Case not found' });
 
@@ -461,6 +518,7 @@ router.post('/:caseRef/notify-all', requireStaffAuth, async (req, res) => {
   }
 
   try {
+    if (!(await enforceCaseAccess(req, res, caseRef, { json: true }))) return;
     const caseDetails = await review.getCaseDetails(caseRef);
     if (!caseDetails) return res.status(404).json({ error: 'Case not found' });
 

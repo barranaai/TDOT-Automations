@@ -315,7 +315,7 @@ function parseItem(item) {
 async function getLead(leadId) {
   const data = await mondayApi.query(
     `query($itemId: ID!) {
-       items(ids: [$itemId]) { id name column_values { id text value } }
+       items(ids: [$itemId]) { id name created_at column_values { id text value } }
      }`,
     { itemId: String(leadId) }
   );

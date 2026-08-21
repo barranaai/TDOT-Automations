@@ -4438,6 +4438,16 @@ input[disabled], select[disabled], textarea[disabled] {
             perMember['primary'][fk] = flags[fk];
           }
         }
+        /* Every RENDERED member must be persisted — including members whose
+           LAST flag was just removed. Those no longer appear in the flags map,
+           so without this they'd be omitted from the POST and the server would
+           keep the stale flag (it reappears on reload and is still emailed).
+           Send an empty flags object for any member with none remaining, so
+           the /flag route clears it. */
+        for (var rmI = 0; rmI < REVIEW_MEMBERS.length; rmI++) {
+          var rmk = REVIEW_MEMBERS[rmI].key;
+          if (rmk && !perMember[rmk]) perMember[rmk] = {};
+        }
         for (var memberKey in perMember) {
           var r = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/flag', {
             method:  'POST',
@@ -4548,12 +4558,16 @@ input[disabled], select[disabled], textarea[disabled] {
       editor = document.createElement('div');
       editor.className = 'tdot-flag-editor';
       editor.innerHTML =
-        '<textarea placeholder="Write a note for the client about this field...">' + existing + '</textarea>' +
+        '<textarea placeholder="Write a note for the client about this field..."></textarea>' +
         '<div class="fe-actions">' +
           '<button class="fe-save" type="button">Save Flag</button>' +
           (flags[flagKey] ? '<button class="fe-remove" type="button">Remove Flag</button>' : '') +
           '<button class="fe-cancel" type="button">Cancel</button>' +
         '</div>';
+      /* Set the existing comment as a DOM property, NOT inside the innerHTML —
+         a prior comment containing </textarea> or '<' would otherwise break
+         out of the field (or inject markup into the staff page). */
+      editor.querySelector('textarea').value = existing;
 
       editor.querySelector('.fe-save').onclick = async function () {
         var comment = editor.querySelector('textarea').value.trim();
