@@ -59,6 +59,9 @@ async function getAccessToken() {
   return _cachedToken;
 }
 
+/** Drop the cached token — callers retry after a Graph 401 (revocation, drift). */
+function invalidateAccessToken() { _cachedToken = null; _tokenExpiry = 0; }
+
 // ─── Send email ───────────────────────────────────────────────────────────────
 
 /**
@@ -127,4 +130,4 @@ async function sendEmail({ to, subject, html, replyTo, attachments }) {
   }
 }
 
-module.exports = { sendEmail, getAccessToken };
+module.exports = { sendEmail, getAccessToken, invalidateAccessToken };

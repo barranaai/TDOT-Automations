@@ -449,8 +449,14 @@ async function loadFormData({ clientName, caseRef, formKey }) {
 
     return [];
   } catch (err) {
+    // Do NOT swallow: returning [] here presented the 2026-08-21 Graph token
+    // outage as "empty questionnaire" to every caller — /data served blank
+    // pre-fills (an autosave would then REPLACE the real file), review pages
+    // said "no submitted data", and seedFormFileIfEmpty saw an "empty" form it
+    // was allowed to overwrite. A read failure must look like a failure.
     console.error(`[HtmlQ] loadFormData failed for ${caseRef}/${formKey}:`, err.message);
-    return [];
+    err.transient = true;
+    throw err;
   }
 }
 
@@ -1522,6 +1528,38 @@ ${hasAdditionalForm ? `
      source:"prefill" tag and computing a real % — before the client ever reviews. */
   var _hydrating           = false;
   var _localNewerThanServer = false;
+  /* True when the server could NOT return saved answers (503/network). While
+     set, ALL server writes are frozen: the page may be showing a blank or
+     stale form, and a save would wholesale-REPLACE the real file on the
+     server (the 2026-08-21 Graph outage would have let a single keystroke
+     erase a client's completed questionnaire). localStorage backup still
+     runs, so nothing typed is lost. */
+  var _serverLoadFailed = false;
+
+  function showServerLoadFailedBanner() {
+    if (document.getElementById('tdot-load-failed-banner')) return;
+    var b = document.createElement('div');
+    b.id = 'tdot-load-failed-banner';
+    b.style.cssText = 'position:sticky;top:0;z-index:9999;background:#fef3cd;border-bottom:2px solid #d97706;color:#7c2d12;padding:12px 16px;font-size:14px;line-height:1.5;display:flex;gap:10px;align-items:flex-start;';
+    var icon = document.createElement('div');
+    icon.textContent = '\u26a0\ufe0f';
+    icon.style.cssText = 'font-size:16px;flex-shrink:0;line-height:1.4;';
+    var msg = document.createElement('div');
+    var strong = document.createElement('strong');
+    strong.textContent = 'We could not load your previously saved answers (temporary server issue).';
+    msg.appendChild(strong);
+    msg.appendChild(document.createTextNode(' To protect your saved work, saving and submitting are paused. Anything you type is kept safely on this device \u2014 please refresh this page in a few minutes to continue.'));
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Refresh now';
+    btn.style.cssText = 'margin-left:12px;flex-shrink:0;background:#d97706;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:13px;font-weight:600;cursor:pointer;';
+    btn.onclick = function(){ window.location.reload(); };
+    b.appendChild(icon);
+    b.appendChild(msg);
+    b.appendChild(btn);
+    if (document.body && document.body.firstChild) document.body.insertBefore(b, document.body.firstChild);
+    else if (document.body) document.body.appendChild(b);
+  }
 
   /* localStorage key for local backup */
   var _LS_KEY = 'tdot_form_' + CASE_REF + '_' + FORM_KEY;
@@ -1840,6 +1878,18 @@ ${hasAdditionalForm ? `
     /* ── Local backup first — always ── */
     backupToLocal();
 
+    /* Server writes are frozen while saved answers could not be loaded —
+       a save now would REPLACE the server file with what this (possibly
+       blank) page shows. Local backup above already captured everything. */
+    if (_serverLoadFailed) {
+      showServerLoadFailedBanner();
+      if (!silent) {
+        if (saveBtn) saveBtn.disabled = false;
+        alert('Saving to the server is paused: we could not load your previously saved answers (temporary server issue).\n\nYour work is kept safely on this device. Please refresh the page in a few minutes and save again.');
+      }
+      return;
+    }
+
     if (IS_MULTI) {
       /* ── Multi-member save: save each member separately ── */
       var memberKeys = getActiveMemberKeys();
@@ -1953,6 +2003,13 @@ ${hasAdditionalForm ? `
 
   async function doSubmit() {
     var p = getProgress();
+
+    if (_serverLoadFailed) {
+      showServerLoadFailedBanner();
+      backupToLocal();
+      alert('Submitting is paused: we could not load your previously saved answers (temporary server issue).\n\nYour work is kept safely on this device. Please refresh the page in a few minutes and submit again.');
+      return;
+    }
 
     /* Defense-in-depth gate. The submit button is disabled below the
        threshold via updateSubmitGate(), but if the button is somehow
@@ -2405,8 +2462,16 @@ ${hasAdditionalForm ? `
           serverFields = data.fields;
           if (serverFields.some(function(f){ return f && f.source === "prefill"; })) _prefillSeen = true;
         }
+      } else {
+        /* 503 (storage outage) or any other failure: the server has data we
+           cannot see. Freeze server writes so we never replace it blind. */
+        _serverLoadFailed = true;
+        showServerLoadFailedBanner();
+        console.warn('[TDOT] Server could not return saved answers (' + res.status + ') for ' + memberKey + ' \u2014 server saves are paused.');
       }
     } catch (fetchErr) {
+      _serverLoadFailed = true;
+      showServerLoadFailedBanner();
       console.warn('[TDOT] Could not reach server for pre-fill (' + memberKey + ').', fetchErr);
     }
 

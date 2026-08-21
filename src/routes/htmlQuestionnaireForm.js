@@ -568,6 +568,7 @@ router.post('/:caseRef/reply-flag', async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     console.error(`[/q/reply-flag] Error for ${caseRef}:`, err.message);
+    if (err.transient) return res.status(503).json({ error: 'Temporarily unavailable — please try again in a few minutes.', retriable: true });
     const is403 = err.message.includes('token') || err.message.includes('not found');
     return res.status(is403 ? 403 : 500).json({ error: err.message });
   }
@@ -580,13 +581,21 @@ router.get('/:caseRef/data', async (req, res) => {
   const token   = (req.query.t       || '').trim();
   const formKey = sanitiseFormKey(req.query.formKey || 'primary');
 
+  let clientName;
   try {
-    const { clientName } = await svc.validateAccess(caseRef, token);
+    ({ clientName } = await svc.validateAccess(caseRef, token));
+  } catch (err) {
+    console.error(`[/q] Data access error for ${caseRef}:`, err.message);
+    return res.status(403).json({ error: err.message });
+  }
+  try {
     const fields = await svc.loadFormData({ clientName, caseRef, formKey });
     return res.json({ fields });
   } catch (err) {
+    // Storage failure is NOT "no data" and NOT "access denied" — tell the
+    // client engine so it freezes server writes instead of pre-filling blank.
     console.error(`[/q] Data load error for ${caseRef}:`, err.message);
-    return res.status(403).json({ error: err.message });
+    return res.status(503).json({ error: 'Saved answers are temporarily unavailable. Please try again shortly.', retriable: true });
   }
 });
 
@@ -629,6 +638,7 @@ router.post('/:caseRef/save', async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     console.error(`[/q] Save error for ${caseRef}:`, err.message);
+    if (err.transient) return res.status(503).json({ error: 'Temporarily unavailable — please try again in a few minutes.', retriable: true });
     return res.status(err.message.includes('token') ? 403 : 500).json({ error: err.message });
   }
 });
@@ -680,6 +690,7 @@ router.post('/:caseRef/submit', async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     console.error(`[/q] Submit error for ${caseRef}:`, err.message);
+    if (err.transient) return res.status(503).json({ error: 'Temporarily unavailable — please try again in a few minutes.', retriable: true });
     return res.status(err.message.includes('token') ? 403 : 500).json({ error: err.message });
   }
 });
@@ -781,6 +792,7 @@ router.post('/:caseRef/submit-all', async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     console.error(`[/q] Submit-all error for ${caseRef}:`, err.message);
+    if (err.transient) return res.status(503).json({ error: 'Temporarily unavailable — please try again in a few minutes.', retriable: true });
     return res.status(err.message.includes('token') ? 403 : 500).json({ error: err.message });
   }
 });
@@ -803,6 +815,7 @@ router.get('/:caseRef/members', async (req, res) => {
     });
   } catch (err) {
     console.error(`[/q/members] Error for ${caseRef}:`, err.message);
+    if (err.transient) return res.status(503).json({ error: 'Temporarily unavailable — please try again in a few minutes.', retriable: true });
     const is403 = err.message.includes('token') || err.message.includes('not found') || err.message.includes('Missing');
     return res.status(is403 ? 403 : 500).json({ error: err.message });
   }
@@ -834,6 +847,7 @@ router.post('/:caseRef/add-member', async (req, res) => {
     return res.json({ ok: true, member: newMember });
   } catch (err) {
     console.error(`[/q/add-member] Error for ${caseRef}:`, err.message);
+    if (err.transient) return res.status(503).json({ error: 'Temporarily unavailable — please try again in a few minutes.', retriable: true });
     const status = err.message.includes('token') ? 403
                  : err.message.includes('already been added') ? 409
                  : 500;
@@ -857,6 +871,7 @@ router.post('/:caseRef/remove-member', async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     console.error(`[/q/remove-member] Error for ${caseRef}:`, err.message);
+    if (err.transient) return res.status(503).json({ error: 'Temporarily unavailable — please try again in a few minutes.', retriable: true });
     const status = err.message.includes('token') ? 403
                  : err.message.includes('cannot be removed') || err.message.includes('Cannot remove') ? 409
                  : err.message.includes('not found') ? 404

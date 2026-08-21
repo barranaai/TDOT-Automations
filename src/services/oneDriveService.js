@@ -24,15 +24,22 @@ const GRAPH_BASE  = 'https://graph.microsoft.com/v1.0';
 // Access tokens are valid for ~60 minutes. We cache for 55 minutes to avoid
 // fetching a new token on every upload operation.
 
-let _cachedToken  = null;
-let _tokenExpiry  = 0;
+
 
 async function getCachedToken() {
-  if (_cachedToken && Date.now() < _tokenExpiry) return _cachedToken;
-  _cachedToken = await getAccessToken();
-  _tokenExpiry  = Date.now() + 55 * 60 * 1000; // 55 minutes
-  console.log('[OneDrive] Access token refreshed');
-  return _cachedToken;
+  // NO local cache. This wrapper used to keep tokens for 55 minutes from ITS
+  // OWN refresh time while the underlying getAccessToken has its own cache —
+  // stacked, it could adopt a token already ~54 minutes old and serve it for
+  // another 55: a recurring ~49-minute Graph outage every ~2 hours
+  // ("Lifetime validation failed, the token is expired" — found live
+  // 2026-08-21, every client questionnaire reading blank). The mail service's
+  // cache (expires_in with a 5-minute buffer) is the single source of truth.
+  return getAccessToken();
+}
+
+/** After a Graph 401, drop the cached token so the retry mints a fresh one. */
+function invalidateToken() {
+  try { require('./microsoftMailService').invalidateAccessToken(); } catch (_) { /* best-effort */ }
 }
 
 // ─── URL helpers ──────────────────────────────────────────────────────────────
@@ -182,13 +189,12 @@ async function uploadFile({ clientName, caseRef, category, filename, buffer, mim
     // If token expired mid-operation, invalidate cache and retry once
     if (err.response?.status === 401 && !_retried) {
       console.warn('[OneDrive] 401 on upload — invalidating token cache and retrying');
-      _cachedToken = null;
-      _tokenExpiry = 0;
+      invalidateToken();
       return uploadFile({ clientName, caseRef, category, filename, buffer, mimeType, _retried: true });
     }
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
     console.error(`[OneDrive] Upload failed (${err.response?.status}): ${detail}`);
-    throw new Error(`OneDrive upload failed: ${detail}`);
+    const _err1 = new Error(`OneDrive upload failed: ${detail}`); _err1.transient = true; throw _err1;
   }
 }
 
@@ -221,8 +227,22 @@ async function readFile({ clientName, caseRef, subfolder, filename }) {
     return Buffer.from(res.data);
   } catch (err) {
     if (err.response?.status === 404) return null;
+    if (err.response?.status === 401) {
+      // Expired/revoked bearer despite the cache — mint a fresh token and
+      // retry ONCE (the 2026-08-21 outage class).
+      invalidateToken();
+      const fresh = await getCachedToken();
+      try {
+        const res2 = await axios.get(url, { headers: { Authorization: `Bearer ${fresh}` }, responseType: 'arraybuffer' });
+        return Buffer.from(res2.data);
+      } catch (err2) {
+        if (err2.response?.status === 404) return null;
+        const d2 = err2.response?.data ? JSON.stringify(err2.response.data) : err2.message;
+        const _err2 = new Error(`OneDrive read failed: ${d2}`); _err2.transient = true; throw _err2;
+      }
+    }
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    throw new Error(`OneDrive read failed: ${detail}`);
+    const _err3 = new Error(`OneDrive read failed: ${detail}`); _err3.transient = true; throw _err3;
   }
 }
 
@@ -382,8 +402,7 @@ async function deleteDriveItem(itemId, _retried = false) {
     if (err.response?.status === 404) return false;
     if (err.response?.status === 401 && !_retried) {
       console.log('[OneDrive] Token expired mid-delete, refreshing…');
-      _cachedToken = null;
-      _tokenExpiry = 0;
+      invalidateToken();
       return deleteDriveItem(itemId, true);
     }
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
