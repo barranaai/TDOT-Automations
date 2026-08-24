@@ -805,6 +805,73 @@ app.get('/admin/questionnaire/:caseRef/versions', async (req, res) => {
   }
 });
 
+// Read ONE historical version's parsed content — the diagnostic half of the
+// recovery toolkit (list tells you WHEN, this tells you WHAT, restore/repair
+// fix it). Same gate as the list: assigned staff or admin.
+app.get('/admin/questionnaire/:caseRef/versions/:versionId/content', async (req, res) => {
+  const caseRef = String(req.params.caseRef || '').trim();
+  const ctx = await resolveCaseForWrite(req, res, caseRef);
+  if (!ctx) return;
+  try {
+    const svc = require('./services/htmlQuestionnaireService');
+    const oneDrive = require('./services/oneDriveService');
+    const formKey = sanitiseFormKeyParam(req.query.formKey);
+    const versionId = String(req.params.versionId || '').trim();
+    if (!/^[0-9.]{1,20}$/.test(versionId)) return res.status(400).json({ error: 'invalid versionId' });
+    const { clientName } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const buf = await oneDrive.readFileVersion({
+      clientName, caseRef, subfolder: 'Questionnaire',
+      filename: `questionnaire-${caseRef}-${formKey}.json`, versionId,
+    });
+    if (!buf) return res.status(404).json({ error: 'that version could not be read' });
+    let parsed = null;
+    try { parsed = JSON.parse(buf.toString('utf8')); } catch (_) { return res.status(422).json({ error: 'version content is not valid JSON' }); }
+    const fields = Array.isArray(parsed) ? parsed : (parsed.fields || []);
+    res.json({ caseRef, formKey, versionId, savedAt: (parsed && parsed.savedAt) || null, fields });
+  } catch (err) {
+    console.error('[QVersions] content read failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Surgical field-level repair — patch INDIVIDUAL answers (by section+label)
+// without touching the rest of the file. Built for the table-key smear class:
+// a wholesale restore would discard everything typed since the smear, while
+// only ~a dozen values are actually wrong. Admin-only, dryRun default; the
+// pre-repair state stays recoverable in OneDrive version history.
+app.post('/admin/questionnaire/:caseRef/repair', express.json(), async (req, res) => {
+  const caseRef = String(req.params.caseRef || '').trim();
+  const ctx = await resolveCaseForWrite(req, res, caseRef);
+  if (!ctx) return;
+  if (!ctx.viewer.isAdmin) return res.status(403).json({ error: 'Admins only — repair rewrites the client’s saved answers.' });
+  try {
+    const svc = require('./services/htmlQuestionnaireService');
+    const oneDrive = require('./services/oneDriveService');
+    const { patches, dryRun = true } = req.body || {};
+    const formKey = sanitiseFormKeyParam((req.body || {}).formKey);
+    if (!Array.isArray(patches) || !patches.length) return res.status(400).json({ error: 'patches must be a non-empty array of { section, label, value, expect? }' });
+    if (patches.length > 100) return res.status(400).json({ error: 'too many patches (max 100)' });
+    const { clientName } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const filename = `questionnaire-${caseRef}-${formKey}.json`;
+    const buf = await oneDrive.readFile({ clientName, caseRef, subfolder: 'Questionnaire', filename });
+    if (!buf) return res.status(404).json({ error: 'no saved questionnaire file for this formKey' });
+    let parsed = null;
+    try { parsed = JSON.parse(buf.toString('utf8')); } catch (_) { return res.status(422).json({ error: 'current file is not valid JSON — use restore, not repair' });
+    }
+    const current = Array.isArray(parsed) ? { fields: parsed } : parsed;
+    const { fields, applied, errors } = svc.applyFieldPatches(current.fields || [], patches);
+    if (errors.length) return res.status(409).json({ error: 'some patches could not be applied — nothing was written', applied: [], errors, dryRun });
+    if (dryRun) return res.json({ dryRun: true, caseRef, formKey, wouldApply: applied });
+    const content = JSON.stringify({ ...current, fields, repairedAt: new Date().toISOString(), repairedBy: ctx.viewer.email || ctx.viewer.name || 'admin' }, null, 2);
+    await oneDrive.uploadFile({ clientName, caseRef, category: 'Questionnaire', filename, buffer: Buffer.from(content, 'utf8'), mimeType: 'application/json' });
+    console.log(`[QRepair] ${caseRef}/${formKey}: ${applied.length} field(s) repaired by ${ctx.viewer.email || 'admin'}`);
+    res.json({ ok: true, caseRef, formKey, applied });
+  } catch (err) {
+    console.error('[QRepair] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/admin/questionnaire/:caseRef/restore', express.json(), async (req, res) => {
   const caseRef = String(req.params.caseRef || '').trim();
   // Restore OVERWRITES the live questionnaire file — a destructive write, so

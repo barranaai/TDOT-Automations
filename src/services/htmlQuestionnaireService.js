@@ -91,6 +91,46 @@ function toJson(fields, completionPct, formFile) {
     ...(formFile ? { formFile } : {}) }, null, 2);
 }
 
+/**
+ * Apply surgical field-level patches to a saved questionnaire fields array —
+ * the repair path for the 2026-08 table-key smear class, where colliding keys
+ * overwrote a handful of values while the rest of the file stayed good (a
+ * wholesale version restore would throw away everything typed since).
+ *
+ * Each patch targets ONE field by exact (section, label) — keys are exactly
+ * what is ambiguous in a smeared file, so they cannot address fields. A patch
+ * whose (section, label) matches zero or multiple fields is REFUSED (returned
+ * in `errors`) rather than guessed. Pure: returns new state, mutates nothing.
+ *
+ * @param {Array}  fields   [{ section, label, key, value }]
+ * @param {Array}  patches  [{ section, label, value, expect? }] — when `expect`
+ *   is given the patch only applies if the field's CURRENT value equals it
+ *   (guards against racing a client save between dry-run and execute).
+ * @returns {{ fields: Array, applied: Array, errors: Array }}
+ */
+function applyFieldPatches(fields, patches) {
+  const out = fields.map((f) => ({ ...f }));
+  const applied = [];
+  const errors = [];
+  for (const p of patches || []) {
+    const sec = String(p.section || '').trim();
+    const lbl = String(p.label || '').trim();
+    const hits = out.filter((f) => String(f.section || '').trim() === sec && String(f.label || '').trim() === lbl);
+    if (hits.length !== 1) {
+      errors.push({ section: sec, label: lbl, reason: hits.length === 0 ? 'no field matches' : `${hits.length} fields match (ambiguous)` });
+      continue;
+    }
+    const target = hits[0];
+    if (p.expect !== undefined && String(target.value || '') !== String(p.expect)) {
+      errors.push({ section: sec, label: lbl, reason: `current value ${JSON.stringify(String(target.value || '').slice(0, 60))} does not match expected` });
+      continue;
+    }
+    applied.push({ section: sec, label: lbl, from: target.value || '', to: p.value == null ? '' : String(p.value) });
+    target.value = p.value == null ? '' : String(p.value);
+  }
+  return { fields: out, applied, errors };
+}
+
 function parseJson(text) {
   try {
     const obj = JSON.parse(text);
@@ -5280,6 +5320,7 @@ function escHtml(str) {
 }
 
 module.exports = {
+  applyFieldPatches,
   // Submission gate threshold — exposed so route handlers can enforce
   // the same percentage server-side as the client-injected check.
   SUBMIT_THRESHOLD_PCT,
