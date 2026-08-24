@@ -53,3 +53,25 @@ test('repair + version-content endpoints are admin/case gated, repair is all-or-
   assert.match(rBlock, /nothing was written/, 'any patch error aborts the whole write');
   assert.match(cBlock, /resolveCaseForWrite\(req, res, caseRef\)/, 'version content read is case-gated');
 });
+
+test('applyFieldPatches: key narrows ambiguous (section,label); addIfMissing appends explicitly', () => {
+  const fields = [
+    { section: 'Fam', label: 'Family Name — Row 1', key: 'parents-r1', value: 'SMEAR' },
+    { section: 'Fam', label: 'Family Name — Row 1', key: 'siblings-r1', value: 'OK' },
+  ];
+  // without key → ambiguous refusal
+  const amb = applyFieldPatches(fields, [{ section: 'Fam', label: 'Family Name — Row 1', value: 'X' }]);
+  assert.match(amb.errors[0].reason, /2 fields match/);
+  // with key → exact hit
+  const ok = applyFieldPatches(fields, [{ section: 'Fam', label: 'Family Name — Row 1', key: 'parents-r1', value: 'TRUE NAME', expect: 'SMEAR' }]);
+  assert.equal(ok.errors.length, 0);
+  assert.equal(ok.fields[0].value, 'TRUE NAME');
+  assert.equal(ok.fields[1].value, 'OK', 'sibling untouched');
+  // addIfMissing appends a lost cell; without the flag it still refuses
+  const noflag = applyFieldPatches(fields, [{ section: 'Fam', label: 'Full Name — Row 2', value: 'Y' }]);
+  assert.match(noflag.errors[0].reason, /no field matches/);
+  const add = applyFieldPatches(fields, [{ section: 'Fam', label: 'Full Name — Row 2', value: 'Y', addIfMissing: true }]);
+  assert.equal(add.errors.length, 0);
+  assert.equal(add.applied[0].added, true);
+  assert.equal(add.fields.length, 3);
+});

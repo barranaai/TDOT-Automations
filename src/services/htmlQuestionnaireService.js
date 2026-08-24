@@ -115,7 +115,23 @@ function applyFieldPatches(fields, patches) {
   for (const p of patches || []) {
     const sec = String(p.section || '').trim();
     const lbl = String(p.label || '').trim();
-    const hits = out.filter((f) => String(f.section || '').trim() === sec && String(f.label || '').trim() === lbl);
+    let hits = out.filter((f) => String(f.section || '').trim() === sec && String(f.label || '').trim() === lbl);
+    // Some form eras hold several tables in ONE section, so (section, label)
+    // alone can be ambiguous ("Family Name — Row 1" in both the parents and
+    // siblings tables). An optional `key` narrows to the stored field key.
+    if (hits.length > 1 && p.key !== undefined) {
+      hits = hits.filter((f) => String(f.key || '') === String(p.key));
+    }
+    if (hits.length === 0 && p.addIfMissing === true) {
+      // A displaced/lost row: the cell no longer exists in the file at all.
+      // Append it (explicit opt-in only) — the client engine restores by
+      // label, so an appended field with the right label prefills correctly,
+      // and the next client save re-keys the whole file anyway.
+      const added = { section: sec, label: lbl, key: String(p.key || `repair__${lbl.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`), value: p.value == null ? '' : String(p.value) };
+      out.push(added);
+      applied.push({ section: sec, label: lbl, from: '<absent>', to: added.value, added: true });
+      continue;
+    }
     if (hits.length !== 1) {
       errors.push({ section: sec, label: lbl, reason: hits.length === 0 ? 'no field matches' : `${hits.length} fields match (ambiguous)` });
       continue;
