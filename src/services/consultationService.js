@@ -135,7 +135,7 @@ async function createSquareBooking(lead, slotStr, meetingType) {
 
   const sq = require('./squareBookingsService');
   const { torontoSlotToUTC } = require('./postConsultService');
-  const { routeConsultant } = require('../../config/consultantRouting');
+  const { resolveConsultant } = require('../../config/consultantRouting');
 
   const startMs = torontoSlotToUTC(slotStr);
   if (!Number.isFinite(startMs)) { console.warn(`[Consult] Square booking skipped for ${lead.id}: bad slot "${slotStr}"`); return; }
@@ -153,7 +153,12 @@ async function createSquareBooking(lead, slotStr, meetingType) {
   } catch (e) { console.warn(`[Consult] Square service lookup failed for ${lead.id}: ${e.message}`); }
   if (!version) { console.warn(`[Consult] Square booking skipped for ${lead.id}: no service-variation version`); return; }
 
-  const teamMemberId    = routeConsultant(lead).teamMemberId || process.env.SQUARE_CONSULT_TEAM_MEMBER_ID;
+  // resolveConsultant, NOT routeConsultant: the staff-pinned assignedConsultant
+  // must win here exactly as it does for the invite, the booking page, the
+  // price, and the agreement. Using the raw auto-router put Aksh Patel's
+  // Shermin consultation on Shafoli's calendar (2026-08-24) — the same
+  // "booking must never race a routing recalculation" class as the pin fix.
+  const teamMemberId    = resolveConsultant(lead).teamMemberId || process.env.SQUARE_CONSULT_TEAM_MEMBER_ID;
   const durationMinutes = (consultOpt && consultOpt.durationMin)
     || parseInt(process.env.SQUARE_CONSULT_DURATION_MIN, 10) || 30;
   const caseNote = lead.confirmedCaseType || lead.caseTypeInterest;

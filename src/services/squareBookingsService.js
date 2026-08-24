@@ -135,6 +135,7 @@ function mapAvailabilities(availabilities, pool) {
 
 async function _post(path, body) { return (await axios.post(base() + path, body, { headers: headers() })).data; }
 async function _get(path)         { return (await axios.get(base() + path, { headers: headers() })).data; }
+async function _put(path, body)   { return (await axios.put(base() + path, body, { headers: headers() })).data; }
 
 /** Read the seller's booking profile — tells us booking_enabled + support_seller_level_writes (≈ paid plan). */
 async function retrieveBusinessBookingProfile() {
@@ -257,6 +258,25 @@ function squareErrorText(err) {
   return (err && err.message) || String(err);
 }
 
+/**
+ * Move an existing appointment to a different staff member (same time/service).
+ * Square requires the booking's current version for optimistic concurrency;
+ * the customer is notified per the seller's notification settings — the same
+ * behaviour as editing the appointment in the Square UI.
+ * @returns {{ ok: boolean, teamMemberId?: string, error?: string }}
+ */
+async function updateBookingTeamMember(bookingId, newTeamMemberId) {
+  const booking = await retrieveBooking(bookingId);
+  if (!booking) return { ok: false, error: 'booking not found' };
+  const segs = (booking.appointment_segments || []).map((seg) => ({ ...seg, team_member_id: newTeamMemberId }));
+  if (!segs.length) return { ok: false, error: 'booking has no appointment segments' };
+  const data = await _put(`/v2/bookings/${encodeURIComponent(bookingId)}`, {
+    booking: { version: booking.version, appointment_segments: segs },
+  });
+  const got = data.booking && data.booking.appointment_segments && data.booking.appointment_segments[0];
+  return { ok: true, teamMemberId: got && got.team_member_id };
+}
+
 /** One booking by id, or null when Square no longer knows it. */
 async function retrieveBooking(bookingId) {
   try {
@@ -342,6 +362,7 @@ async function preflightSquareBooking() {
 }
 
 module.exports = {
+  updateBookingTeamMember,
   // pure
   toE164, utcToTorontoSlot, buildAvailabilitySearch, buildCreateBookingBody, mapAvailabilities,
   preflightSquareBooking, classifyBookingForCancel, squareErrorText,

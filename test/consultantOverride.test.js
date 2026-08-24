@@ -71,3 +71,13 @@ test('"Document review" removed from BOTH public form service lists (board label
   assert.equal((flat.match(/Document review/g) || []).length, 1, 'only the f4_need wording remains');
   assert.ok(!JSON.stringify(consult.SERVICE_GROUPS).includes('Document review'), 'service groups are clean');
 });
+
+test('Square appointment write-back honors the PINNED consultant (Aksh Patel bug, 2026-08-24)', () => {
+  const svc = fs.readFileSync(require.resolve('../src/services/consultationService'), 'utf8');
+  const idx = svc.indexOf('async function createSquareBooking');
+  const block = svc.slice(idx, idx + 2200);
+  assert.match(block, /resolveConsultant\(lead\)\.teamMemberId/,
+    'the write-back must use resolveConsultant (pin-aware), never the raw auto-router');
+  assert.ok(!/routeConsultant\(lead\)\.teamMemberId/.test(block),
+    'routeConsultant re-runs auto-routing and put a pinned-Shermin consult on Shafoli’s calendar');
+});
