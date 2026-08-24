@@ -36,8 +36,30 @@ const CONSULT_FEE_CENTS = (Number.isFinite(_feeEnv) && _feeEnv >= 0) ? _feeEnv :
 // $226). Percentage; an explicit 0 disables the tax line. Ontario HST default.
 const _hstEnv = Number(process.env.SQUARE_CONSULT_HST_PCT);
 const CONSULT_HST_PCT = (Number.isFinite(_hstEnv) && _hstEnv >= 0) ? _hstEnv : 13;
-/** The all-in amount a client pays for a consult option's fee. */
+/** The all-in amount a client pays for a consult option's fee (HST included). */
 const consultTotalWithTax = (feeCents) => Math.round(Number(feeCents || 0) * (1 + CONSULT_HST_PCT / 100));
+
+// ── HST exemption for clients OUTSIDE Canada (Melanie, 2026-08-24) ───────────
+// The lead's `country` is authoritative: intake sets it to exactly 'Canada'
+// when the client answered "inside Canada = Yes", otherwise to the foreign
+// country they typed. So a NON-BLANK, non-Canada country means the consultation
+// is HST-exempt. A BLANK/unknown country falls through to HST — under-charging
+// tax is a compliance risk, so the exemption fires only on a POSITIVE foreign
+// signal, never on a guess.
+const _CANADA_ALIASES = new Set(['canada', 'ca', 'can', 'canadian']);
+function isConsultHstExemptCountry(country) {
+  const c = String(country == null ? '' : country).trim().toLowerCase();
+  if (!c) return false;                 // unknown → HST applies (safe default)
+  return !_CANADA_ALIASES.has(c);       // any explicit non-Canada country → exempt
+}
+/** The consult HST % that applies to THIS lead (0 when outside Canada). */
+function consultHstPctForLead(lead) {
+  return isConsultHstExemptCountry(lead && lead.country) ? 0 : CONSULT_HST_PCT;
+}
+/** The all-in consult total for THIS lead (fee only when HST-exempt). */
+function consultTotalWithTaxForLead(feeCents, lead) {
+  return Math.round(Number(feeCents || 0) * (1 + consultHstPctForLead(lead) / 100));
+}
 
 // Weekly availability (times are Toronto local). Empty day = no slots.
 const SLOT_TEMPLATE = {
@@ -554,15 +576,17 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
     const cad = (c) => (c / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
     const priced = opts.filter((o) => o.feeCents > 0);
     // Totals shown WITH HST (team feedback 2026-08-13: a client charged $226
-    // must never have been told "$200" with no mention of tax).
-    const hst = CONSULT_HST_PCT > 0 ? ' (incl. HST)' : '';
+    // must never have been told "$200" with no mention of tax) — EXCEPT for
+    // clients outside Canada, who are HST-exempt (Melanie, 2026-08-24).
+    const leadPct = consultHstPctForLead(lead);
+    const hst = leadPct > 0 ? ' (incl. HST)' : '';
     if (priced.length > 1) {
-      feeLine = `The consultation fee is ${priced.map((o) => `<b>${cad(consultTotalWithTax(o.feeCents))}</b>${hst} for ${o.durationMin} minutes`).join(' or ')}, payable securely online when you book.`;
+      feeLine = `The consultation fee is ${priced.map((o) => `<b>${cad(consultTotalWithTaxForLead(o.feeCents, lead))}</b>${hst} for ${o.durationMin} minutes`).join(' or ')}, payable securely online when you book.`;
     } else if (priced.length === 1) {
-      feeLine = `The consultation fee is <b>${cad(consultTotalWithTax(priced[0].feeCents))}</b>${hst}, payable securely online when you book.`;
+      feeLine = `The consultation fee is <b>${cad(consultTotalWithTaxForLead(priced[0].feeCents, lead))}</b>${hst}, payable securely online when you book.`;
     }
   } catch (_) {
-    if (CONSULT_FEE_CENTS > 0) feeLine = `The consultation fee is <b>${(consultTotalWithTax(CONSULT_FEE_CENTS) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })}</b>${CONSULT_HST_PCT > 0 ? ' (incl. HST)' : ''}, payable securely online when you book.`;
+    if (CONSULT_FEE_CENTS > 0) feeLine = `The consultation fee is <b>${(consultTotalWithTaxForLead(CONSULT_FEE_CENTS, lead) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })}</b>${consultHstPctForLead(lead) > 0 ? ' (incl. HST)' : ''}, payable securely online when you book.`;
   }
 
   // Body: the saved draft (the standard compliance-safe paragraph, possibly
@@ -634,4 +658,5 @@ module.exports = {
   handleSquarePaymentWebhook, confirmSlot, verifySquareSignature, squareNotificationUrls, sendBookingInvite,
   dropBufferConflicts, reconcileConsultOptionWithPayment,
   CONSULT_FEE_CENTS, CONSULT_HST_PCT, consultTotalWithTax,
+  isConsultHstExemptCountry, consultHstPctForLead, consultTotalWithTaxForLead,
 };

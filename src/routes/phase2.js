@@ -247,9 +247,13 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
       });
     } catch (e) { console.error(`[Book] consultOption persist FAILED for ${leadId} (fee/duration may fall back to defaults downstream): ${e.message}`); }
 
+    // Clients outside Canada are HST-exempt (Melanie, 2026-08-24): the lead's
+    // country drives the tax — 0% when outside Canada, otherwise the Ontario
+    // HST. A blank/unknown country falls through to HST (never under-charge).
+    const leadTaxPct = bookingService.consultHstPctForLead(lead);
     const { url: checkoutUrl } = await bookingService.createCheckout({
       leadId, amount: option.feeCents,
-      taxPct: bookingService.CONSULT_HST_PCT, // checkout itemizes fee + HST (meeting 2026-08-13)
+      taxPct: leadTaxPct, // checkout itemizes fee + HST (meeting 2026-08-13); 0 for outside-Canada
       description: `Consultation (${option.durationMin} min) with TDOT Immigration — ${slotDate} ${slotTime}`,
       // Same lead + slot + duration + fee → same Square link (a re-submit can't
       // mint a second payable link). Duration AND fee are in the key: a changed
@@ -260,7 +264,7 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
       // never be replayed with a different payload shape/amount (Square
       // rejects that), so a pre-HST submit re-submitted post-deploy mints a
       // fresh with-tax link instead of colliding with its old quick_pay key.
-      idempotencyKey: `lead-${leadId}-${slotDate}-${slotTime}-${option.durationMin}-${option.feeCents}-t${bookingService.CONSULT_HST_PCT}`.replace(/[^A-Za-z0-9_-]/g, ''),
+      idempotencyKey: `lead-${leadId}-${slotDate}-${slotTime}-${option.durationMin}-${option.feeCents}-t${leadTaxPct}`.replace(/[^A-Za-z0-9_-]/g, ''),
     });
     res.redirect(checkoutUrl);
   } catch (err) {
@@ -299,6 +303,9 @@ function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
     ? [{ durationMin: null, feeCents: null, slots: slotsOrSets, default: true }]
     : ((slotsOrSets && slotsOrSets.sets) || []);
   const cad = (cents) => (cents / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' }).replace('CA', '');
+  // Clients outside Canada are HST-exempt on the consultation (Melanie,
+  // 2026-08-24) — the slot pricing shows fee only, no "+ HST".
+  const leadHstPct = bookingService.consultHstPctForLead(lead);
 
   const renderDateBlocks = (slots) => {
     const byDate = {};
@@ -320,7 +327,7 @@ function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
       <div class="mtype">
         <div class="mtype-q">Consultation length? <span style="color:${BRAND.primary}">*</span></div>
         ${sets.map((s) => `<label class="mtype-opt dur-opt${s.default ? ' sel' : ''}"><input type="radio" name="durationChoice" value="${s.durationMin}" ${s.default ? 'checked' : ''} required>
-          <span class="mtype-t">⏱ ${s.durationMin} minutes</span><span class="mtype-s">${bookingService.CONSULT_HST_PCT > 0 ? `${cad(s.feeCents)} + HST = ${cad(bookingService.consultTotalWithTax(s.feeCents))} CAD` : `${cad(s.feeCents)} CAD`}</span></label>`).join('')}
+          <span class="mtype-t">⏱ ${s.durationMin} minutes</span><span class="mtype-s">${leadHstPct > 0 ? `${cad(s.feeCents)} + HST = ${cad(bookingService.consultTotalWithTaxForLead(s.feeCents, lead))} CAD` : `${cad(s.feeCents)} CAD`}</span></label>`).join('')}
       </div>` : '';
   const slotSections = multiDuration
     ? sets.map((s) => `<div class="dur-slots" data-dur="${s.durationMin}" style="display:${s.default ? 'block' : 'none'}">${renderDateBlocks(s.slots) || empty}</div>`).join('')

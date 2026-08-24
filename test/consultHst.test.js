@@ -74,7 +74,36 @@ test('reconciler recovery passes the paid amount through to confirmSlot (paidCen
     'recovered consult payments must record what was actually collected');
 });
 
-test('booking idempotency key is versioned by the HST rate (no cross-deploy payload collision)', () => {
+test('booking idempotency key is versioned by the EFFECTIVE per-lead HST rate (no cross-deploy or exemption collision)', () => {
   const src = require('fs').readFileSync(require.resolve('../src/routes/phase2'), 'utf8');
-  assert.match(src, /-t\$\{bookingService\.CONSULT_HST_PCT\}/, 'key changes when the tax config changes');
+  // The key carries the tax rate ACTUALLY applied to this lead (0 when the
+  // client is outside Canada), so an exempt lead never collides with a
+  // taxed link for the same slot/fee, and vice-versa.
+  assert.match(src, /-t\$\{leadTaxPct\}/, 'key changes with the effective per-lead tax rate');
+  assert.match(src, /const leadTaxPct = bookingService\.consultHstPctForLead\(lead\)/);
+});
+
+// ── Outside-Canada HST exemption (Melanie, 2026-08-24) ──────────────────────
+test('outside-Canada leads are HST-exempt; Canada/blank keep HST (safe default)', () => {
+  // Positive foreign signal → exempt (0%).
+  for (const c of ['India', 'United States', 'USA', 'Pakistan', 'United Kingdom', 'nigeria']) {
+    assert.equal(bookingService.consultHstPctForLead({ country: c }), 0, `${c} → HST-exempt`);
+    assert.equal(bookingService.isConsultHstExemptCountry(c), true);
+  }
+  // Canada in any casing/alias, AND blank/unknown → HST applies (never under-charge).
+  for (const c of ['Canada', 'canada', '  CANADA ', 'CA', 'can', '', null, undefined]) {
+    assert.equal(bookingService.consultHstPctForLead({ country: c }), bookingService.CONSULT_HST_PCT, `${JSON.stringify(c)} → HST applies`);
+  }
+  assert.equal(bookingService.isConsultHstExemptCountry(''), false, 'blank is NOT exempt (safe default)');
+});
+
+test('consultTotalWithTaxForLead: fee-only outside Canada, fee+HST inside/unknown', () => {
+  assert.equal(bookingService.consultTotalWithTaxForLead(20000, { country: 'India' }), 20000, 'outside → fee only');
+  assert.equal(bookingService.consultTotalWithTaxForLead(20000, { country: 'Canada' }), 22600, 'inside → +13%');
+  assert.equal(bookingService.consultTotalWithTaxForLead(20000, { country: '' }), 22600, 'unknown → +13% (safe)');
+});
+
+test('booking checkout passes the per-lead tax to createCheckout', () => {
+  const src = require('fs').readFileSync(require.resolve('../src/routes/phase2'), 'utf8');
+  assert.match(src, /taxPct: leadTaxPct/, 'checkout uses the effective per-lead tax, not the flat rate');
 });
