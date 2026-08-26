@@ -37,6 +37,9 @@ async function listRecentCompletedPayments() {
   return (res.data.payments || []).filter((p) => p.status === 'COMPLETED');
 }
 
+// Order ids proven NOT ours (no lead_id metadata) — skip on later sweeps.
+const _foreignOrders = new Set();
+
 /** Cron entry point. Returns the number of payments recovered (for tests/logs). */
 async function reconcilePayments() {
   if (!process.env.SQUARE_ACCESS_TOKEN) return 0;
@@ -54,8 +57,32 @@ async function reconcilePayments() {
 
   for (const payment of payments) {
     const m = NOTE_RE.exec(String(payment.note || '').trim());
-    if (!m) continue; // not one of our checkouts
-    const [, kind, leadId] = m;
+    let kind, leadId;
+    if (m) {
+      ([, kind, leadId] = m);
+    } else if (payment.order_id) {
+      // INVOICE payments carry Square's own note, never "lead-<id>" — their
+      // identity is the lead_id we stamp on the ORDER's metadata at creation
+      // (one cheap Square read; authoritative for every invoice we issue).
+      // Foreign payments (the team's manual invoices, POS sales, …) have no
+      // such metadata — remember them so each costs ONE lookup per process,
+      // not one per 5-minute sweep forever.
+      if (_foreignOrders.has(payment.order_id)) continue;
+      try {
+        const metaLeadId = await require('./squareInvoicesService').retrieveOrderLeadMeta(payment.order_id);
+        if (metaLeadId) { kind = 'lead'; leadId = metaLeadId; }
+        else {
+          if (_foreignOrders.size > 5000) _foreignOrders.clear(); // bounded
+          _foreignOrders.add(payment.order_id);
+          continue;
+        }
+      } catch (err) {
+        console.warn(`[Reconciler] order-metadata match failed for payment ${payment.id}: ${err.message}`);
+        continue; // transient — retried next sweep (NOT cached as foreign)
+      }
+    } else {
+      continue; // not one of our checkouts
+    }
 
     try {
       const lead = await leadService.getLead(leadId);

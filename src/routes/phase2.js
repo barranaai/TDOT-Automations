@@ -251,10 +251,46 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
     // country drives the tax — 0% when outside Canada, otherwise the Ontario
     // HST. A blank/unknown country falls through to HST (never under-charge).
     const leadTaxPct = bookingService.consultHstPctForLead(lead);
+    const checkoutDescription = `Consultation (${option.durationMin} min) with TDOT Immigration — ${slotDate} ${slotTime}`;
+
+    // Consultation payments as Square INVOICES (team request 2026-08-25) — the
+    // payment lands in the team's Invoices tab. Flag-gated; ANY failure in the
+    // invoice path falls back to the payment link so a client can always pay.
+    if (bookingService.consultInvoicesEnabled()) {
+      try {
+        const inv = await bookingService.createConsultInvoiceCheckout({
+          lead, leadId, option, consultantName: consultant && consultant.name,
+          slotDate, slotTime, taxPct: leadTaxPct, description: checkoutDescription,
+        });
+        return res.redirect(inv.url);
+      } catch (e) {
+        if (e.alreadyPaid) {
+          // Paid moments ago — the webhook's confirm path owns this booking.
+          return res.type('html').send(buildBookingDoneHtml(lead, slotDate, slotTime));
+        }
+        console.error(`[Book] Invoice checkout failed for ${leadId} — falling back to payment link: ${e.message}`);
+        // Best-effort: retire any invoice this lead already holds BEFORE the
+        // link exists — otherwise the client ends up with TWO payable
+        // artifacts (the durable invoice URL + the new link). cancelInvoice
+        // no-ops on paid/missing; if it reports PAID, the client already paid
+        // during the failure — show their booking instead of another payable.
+        try {
+          const knownInvoiceId = JSON.parse(lead.consultOption || '{}').invoiceId;
+          if (knownInvoiceId) {
+            const c = await require('../services/squareInvoicesService').cancelInvoice(knownInvoiceId);
+            if (['PAID', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(c.status)) {
+              return res.type('html').send(buildBookingDoneHtml(lead, slotDate, slotTime));
+            }
+            console.log(`[Book] Outstanding invoice ${knownInvoiceId} retired before payment-link fallback (${c.status})`);
+          }
+        } catch (ce) { console.warn(`[Book] pre-fallback invoice cleanup failed for ${leadId}: ${ce.message}`); }
+      }
+    }
+
     const { url: checkoutUrl } = await bookingService.createCheckout({
       leadId, amount: option.feeCents,
       taxPct: leadTaxPct, // checkout itemizes fee + HST (meeting 2026-08-13); 0 for outside-Canada
-      description: `Consultation (${option.durationMin} min) with TDOT Immigration — ${slotDate} ${slotTime}`,
+      description: checkoutDescription,
       // Same lead + slot + duration + fee → same Square link (a re-submit can't
       // mint a second payable link). Duration AND fee are in the key: a changed
       // duration needs a new link, and a consultant re-route that changes the

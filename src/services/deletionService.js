@@ -161,7 +161,8 @@ async function caseGraph(cm) {
     cmItemId: cm.id,
     execRows, qexecRows, familyRows,
     leads: leads.map((l) => ({ id: String(l.id), name: l.fullName || `Lead ${l.id}`,
-                               squareBookingId: l.squareBookingId || '', slot: l.bookedSlot || '' })),
+                               squareBookingId: l.squareBookingId || '', slot: l.bookedSlot || '',
+                               invoiceId: (() => { try { return JSON.parse(l.consultOption || '{}').invoiceId || ''; } catch (_) { return ''; } })() })),
     folders,
     warnings: [
       ...warnings,
@@ -183,7 +184,8 @@ async function leadGraph(lead) {
     confirmText: 'DELETE',
     client: { name: lead.fullName || `Lead ${lead.id}`, email: lead.email || '' },
     leads: [{ id: String(lead.id), name: lead.fullName || `Lead ${lead.id}`,
-              squareBookingId: lead.squareBookingId || '', slot: lead.bookedSlot || '' }],
+              squareBookingId: lead.squareBookingId || '', slot: lead.bookedSlot || '',
+              invoiceId: (() => { try { return JSON.parse(lead.consultOption || '{}').invoiceId || ''; } catch (_) { return ''; } })() }],
     execRows: [], qexecRows: [], familyRows: [], cmItemId: null, caseRef: '',
     folders,
     warnings: [
@@ -328,6 +330,18 @@ async function executeDeletion({ leadId, caseRef, confirmText, expectedKind, act
     // but a cancel FAILURE joins the child failures and keeps every parent,
     // so the id survives for the re-run.
     for (const l of g.leads) {
+      // An outstanding consultation INVOICE must not survive its lead — a
+      // client could still pay it after the lead is gone. Best-effort with the
+      // same retry semantics as the appointment cancel below (idempotent;
+      // failure keeps the parents so the id survives for a re-run).
+      if (l.invoiceId) {
+        try {
+          const ri = await require('./squareInvoicesService').cancelInvoice(l.invoiceId);
+          console.log(`[Deletion] Consultation invoice ${l.invoiceId} → ${ri.status} (${l.name})`);
+        } catch (err) {
+          failures.push(`Consultation invoice ${l.invoiceId} for ${l.name} could not be cancelled: ${squareBookings.squareErrorText(err)}`);
+        }
+      }
       if (!l.squareBookingId) continue;
       try {
         const r = await squareBookings.cancelBookingIfActive(l.squareBookingId);

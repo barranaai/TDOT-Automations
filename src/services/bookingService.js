@@ -310,6 +310,31 @@ async function releaseExpiredSlots() {
   for (const it of items) {
     const heldUntil = it.column_values?.[0]?.text;
     if (heldUntil && new Date(heldUntil).getTime() < Date.now()) {
+      // Retire any outstanding INVOICE first — unlike a stale payment link
+      // (inert), an unpaid invoice is a visible document the client could
+      // still pay for a slot that no longer exists. Ordered BEFORE the status
+      // flip because the next sweep only sees 'Slot Held' rows: flipping
+      // first would make a failed cancel permanently unretryable. A cancel
+      // failure still releases the slot (freeing it wins) but posts a LOUD
+      // staff note carrying the invoice id, so it's fixable by hand.
+      try {
+        const l = await leadService.getLead(it.id);
+        const opt = JSON.parse(l.consultOption || '{}');
+        if (opt.invoiceId) {
+          const r = await require('./squareInvoicesService').cancelInvoice(opt.invoiceId);
+          console.log(`[SquareInv] Expired hold → invoice ${opt.invoiceId} ${r.status} (lead ${it.id})`);
+        }
+      } catch (e) {
+        console.warn(`[SquareInv] invoice cleanup failed for expired lead ${it.id}: ${e.message}`);
+        try {
+          const l2 = await leadService.getLead(it.id).catch(() => null);
+          const invId = l2 ? (JSON.parse(l2.consultOption || '{}').invoiceId || '') : '';
+          await require('./mondayApi').query(
+            `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+            { i: String(it.id), b: `⚠️ <b>Outstanding consultation invoice could not be auto-cancelled</b> when this slot hold expired${invId ? ` (invoice <code>${invId}</code>)` : ''}. Please cancel it in Square → Invoices so the client cannot pay for a released slot.` }
+          );
+        } catch (_) { /* the note is best-effort too */ }
+      }
       await leadService.updateLead(it.id, { bookingStatus: 'Abandoned' });
       released++;
     }
@@ -324,6 +349,108 @@ async function releaseExpiredSlots() {
  *  - `storeOrderId` (default true) writes the order id to the consult/retainer
  *    column; milestones pass false and store the id in their own JSON instead.
  */
+/** Consultation payments as Square INVOICES (team request 2026-08-25) — gated
+ * so the payment-link path stays one env change away as the fallback. */
+function consultInvoicesEnabled() {
+  return String(process.env.SQUARE_CONSULT_INVOICES || '') === '1';
+}
+
+/**
+ * Invoice-based consultation checkout. Same contract as createCheckout —
+ * returns { url } to redirect the paying client to — but the artifact is a
+ * real Square Invoice (SHARE_MANUALLY + public payment page), so it appears
+ * under the team's Invoices tab.
+ *
+ * Reuse/supersede: the deterministic bookingKey (lead+slot+duration+fee+tax)
+ * identifies the checkout. A re-submit with the SAME key returns the same
+ * invoice's URL; a CHANGED key (new slot/duration/tax) cancels the previous
+ * unpaid invoice before issuing the new one — unlike a stale payment link,
+ * a canceled invoice can never be paid, so the stale-tab double-pay class
+ * dies here rather than in after-the-fact reconciliation.
+ *
+ * Any failure THROWS — the route falls back to the payment link so a client
+ * can always pay.
+ */
+async function createConsultInvoiceCheckout({ lead, leadId, option, consultantName, slotDate, slotTime, taxPct, description }) {
+  const sqInv = require('./squareInvoicesService');
+  const bookingKey = `lead-${leadId}-${slotDate}-${slotTime}-${option.durationMin}-${option.feeCents}-t${taxPct}`.replace(/[^A-Za-z0-9_-]/g, '');
+
+  // Stored on the lead inside consultOption (no new board column; the
+  // reconciler's {...stored} spreads preserve extra keys).
+  let stored = null;
+  try { stored = JSON.parse(lead.consultOption || ''); } catch (_) { /* legacy */ }
+
+  if (stored && stored.invoiceId) {
+    // retrieveInvoice returns null ONLY for a true 404; every other failure
+    // throws. Do NOT flatten errors here: minting a new invoice while the old
+    // one's state is unknown is the double-charge path — a throw sends the
+    // client to the payment-link fallback instead (they can still pay, and no
+    // second invoice exists).
+    const existing = await sqInv.retrieveInvoice(stored.invoiceId);
+    if (existing) {
+      if (existing.status === 'PAID') {
+        // Webhook race: paid moments ago — the confirm path owns it; send the
+        // client to their booking rather than a second payable artifact.
+        const err = new Error('invoice already paid — booking confirm in flight');
+        err.alreadyPaid = true;
+        throw err;
+      }
+      if (['UNPAID', 'SCHEDULED', 'DRAFT'].includes(existing.status)) {
+        if (stored.invoiceBookingKey === bookingKey && existing.public_url) {
+          // Reuse — and RE-PERSIST the invoice identity: the route's option
+          // persist a few lines earlier rewrote consultOption WITHOUT it, and
+          // losing invoiceId kills the supersede/expiry/delete lifecycle.
+          await leadService.updateLead(leadId, {
+            consultOption: JSON.stringify({
+              durationMin: option.durationMin, feeCents: option.feeCents, variationId: option.variationId,
+              ...(consultantName ? { consultant: consultantName } : {}),
+              invoiceId: existing.id, invoiceBookingKey: bookingKey,
+            }),
+          }).catch((e) => console.warn(`[SquareInv] reuse persist failed for ${leadId}: ${e.message}`));
+          return { url: existing.public_url, invoiceId: existing.id, reused: true };
+        }
+        // Slot/duration/tax changed — retire the old artifact BEFORE minting
+        // the new one, so no payable stale invoice survives. The cancel result
+        // is AUTHORITATIVE: 'PAID' means the client paid while we looked —
+        // stop, never mint a second payable invoice for a paid consultation.
+        const cancelled = await sqInv.cancelInvoice(existing.id);
+        if (['PAID', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(cancelled.status)) {
+          const err = new Error('previous invoice was paid during re-submit — booking confirm in flight');
+          err.alreadyPaid = true;
+          throw err;
+        }
+        console.log(`[SquareInv] Superseded invoice ${existing.id} for lead ${leadId} (booking changed, ${cancelled.status})`);
+      }
+    }
+  }
+
+  const { invoiceId, orderId, publicUrl } = await sqInv.createConsultInvoice({
+    leadId,
+    amount: option.feeCents,
+    taxPct,
+    description,
+    bookingKey,
+    customer: {
+      email: lead.email || undefined,
+      fullName: lead.fullName || lead.name || undefined,
+      phoneE164: lead.phone ? require('./squareBookingsService').toE164(lead.phone) : undefined,
+    },
+  });
+
+  // Same column the webhook matches on for payment links — invoice payments
+  // carry this order id too, so confirmation routing is unchanged.
+  await leadService.updateLead(leadId, {
+    squareConsultOrderId: orderId,
+    consultOption: JSON.stringify({
+      durationMin: option.durationMin, feeCents: option.feeCents, variationId: option.variationId,
+      ...(consultantName ? { consultant: consultantName } : {}),
+      invoiceId, invoiceBookingKey: bookingKey,
+    }),
+  }).catch((e) => console.error(`[SquareInv] order/invoice persist FAILED for ${leadId} (webhook falls back to order metadata): ${e.message}`));
+
+  return { url: publicUrl, invoiceId };
+}
+
 async function createCheckout({ leadId, amount, description, type = 'lead', idempotencyKey, reference, storeOrderId = true, taxPct = 0 }) {
   const referenceId = reference || `${type}-${leadId}`;
   // A deterministic key (e.g. per lead+slot) makes Square return the SAME
@@ -402,6 +529,9 @@ function verifySquareSignature(rawBody, signature, notificationUrl) {
 }
 
 /** Entry point for POST /webhook/square. */
+// Order ids proven foreign (no lead_id metadata) — skip re-probing per webhook.
+const _webhookForeignOrders = new Set();
+
 async function handleSquarePaymentWebhook(event) {
   if (event.type !== 'payment.created' && event.type !== 'payment.updated') return;
   const payment = event.data?.object?.payment;
@@ -436,6 +566,23 @@ async function handleSquarePaymentWebhook(event) {
     console.warn(`[Square] Order ${orderId} not matched by order id — routing via payment note "${payment.note}"`);
     if (ref[1] === 'lead') return confirmSlot(ref[2], txnId, undefined, amountCents);
     return require('./paymentService').onSquareRetainerPaymentReceived(event, { fallbackLeadId: ref[2] });
+  }
+
+  // Last resort — invoice payments carry Square's own note (not "lead-<id>"),
+  // so their net is the lead_id we stamp on the ORDER's metadata at creation.
+  // Foreign orders (POS sales, the team's manual invoices) are remembered so
+  // each costs ONE lookup per process; transient errors are NOT cached (the
+  // webhook retry / reconciler gets another chance).
+  if (!_webhookForeignOrders.has(orderId)) {
+    try {
+      const metaLeadId = await require('./squareInvoicesService').retrieveOrderLeadMeta(orderId);
+      if (metaLeadId) {
+        console.warn(`[Square] Order ${orderId} routed via order metadata → lead ${metaLeadId}`);
+        return confirmSlot(metaLeadId, txnId, undefined, amountCents);
+      }
+      if (_webhookForeignOrders.size > 5000) _webhookForeignOrders.clear();
+      _webhookForeignOrders.add(orderId);
+    } catch (_) { /* transient — retried on the webhook retry / reconciler sweep */ }
   }
 
   console.warn(`[Square] Order ${orderId} (txn ${txnId}) not matched to any lead`);
@@ -491,7 +638,23 @@ async function reconcileConsultOptionWithPayment(lead, paidCents) {
 async function confirmSlot(leadId, txnId, meetingType, amountCents) {
   const lead = await leadService.getLead(leadId);
   if (lead && lead.bookingStatus === 'Booked') {
-    console.log(`[Booking] Lead ${leadId} already booked — skipping (idempotent)`);
+    // Same txn replayed (webhook retries) = benign. A DIFFERENT completed
+    // payment on an already-booked lead is a probable DOUBLE PAYMENT — the
+    // stale-tab / outstanding-invoice class. Never absorb it silently: the
+    // client's money deserves a loud staff note ('verify and refund').
+    const knownTxn = String(lead.squareConsultTxnId || '').trim();
+    if (txnId && knownTxn && txnId !== knownTxn && txnId !== 'free-config') {
+      const paid = Number.isFinite(amountCents) ? ` for $${(amountCents / 100).toFixed(2)}` : '';
+      console.warn(`[Booking] SECOND payment ${txnId}${paid} on already-booked lead ${leadId} (first: ${knownTxn}) — flagging for staff`);
+      try {
+        await require('./mondayApi').query(
+          `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+          { i: String(leadId), b: `🚨 <b>Possible DOUBLE PAYMENT on the consultation</b> — a second completed Square payment (<code>${txnId}</code>${paid}) arrived for a booking already paid by <code>${knownTxn}</code>. Please verify in Square and refund the duplicate if confirmed.` }
+        );
+      } catch (e) { console.error(`[Booking] double-payment staff note failed for ${leadId}: ${e.message}`); }
+    } else {
+      console.log(`[Booking] Lead ${leadId} already booked — skipping (idempotent)`);
+    }
     return;
   }
   // Align the recorded option with the amount actually paid BEFORE anything
@@ -659,4 +822,5 @@ module.exports = {
   dropBufferConflicts, reconcileConsultOptionWithPayment,
   CONSULT_FEE_CENTS, CONSULT_HST_PCT, consultTotalWithTax,
   isConsultHstExemptCountry, consultHstPctForLead, consultTotalWithTaxForLead,
+  consultInvoicesEnabled, createConsultInvoiceCheckout,
 };
