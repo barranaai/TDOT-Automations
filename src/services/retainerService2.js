@@ -324,11 +324,17 @@ function retainerSigners(lead, template) {
     gapPct: 2,
   });
 
-  const signers = [{ email: lead.email, name: lead.fullName || lead.email, anchorItem: anchorsFor(lead.fullName), position: POSITION }];
+  // Defense in depth for LEGACY rows written before the write-layer strip:
+  // invisible Unicode in an email makes the signature request undeliverable,
+  // and in a name it breaks the "Signature of <name>" anchor regex.
+  const { stripInvisibles } = require('./leadService');
+  const paEmail = stripInvisibles(lead.email).trim();
+  const paName  = stripInvisibles(lead.fullName || lead.email).trim();
+  const signers = [{ email: paEmail, name: paName, anchorItem: anchorsFor(paName), position: POSITION }];
   if (template !== 'pa-inviter') return { signers };
 
-  const invName  = String(lead.inviterName || '').trim();
-  const invEmail = String(lead.inviterEmail || '').trim();
+  const invName  = stripInvisibles(lead.inviterName || '').trim();
+  const invEmail = stripInvisibles(lead.inviterEmail || '').trim();
   // Plan readiness already requires all four inviter fields non-blank, so the
   // usually-reachable case here is a present-but-invalid email. The blank
   // checks stay as defense in depth (overrides / legacy leads).

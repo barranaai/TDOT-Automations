@@ -388,3 +388,40 @@ test('completion capture stays ALL-signers gated (DOCUMENT_COMPLETED only)', () 
   const src = require('fs').readFileSync(require.resolve('../src/services/documensoService'), 'utf8');
   assert.match(src, /event !== 'DOCUMENT_COMPLETED'\) return/, 'capture ignores everything but full completion');
 });
+
+// ── invisible-Unicode class (Evelyn Valdez, 2026-08-26) ─────────────────────
+// A U+2060 WORD JOINER pasted in front of the inviter's email (WhatsApp copy
+// artifact) passed trim() and the \s-based email validator, so Documenso
+// emailed "⁠valdez…@gmail.com" — undeliverable; the co-signer never got
+// the retainer. Stripped at the WRITE layer (leadService.formatValue) and
+// defensively in retainerSigners for legacy rows.
+
+test('stripInvisibles removes zero-width/joiner/direction/BOM characters', () => {
+  const { stripInvisibles } = require('../src/services/leadService');
+  assert.equal(stripInvisibles('⁠valdez@gmail.com'), 'valdez@gmail.com');
+  assert.equal(stripInvisibles('​a‌b‍c﻿'), 'abc');
+  assert.equal(stripInvisibles('‮name‬'), 'name');
+  assert.equal(stripInvisibles('plain@ok.com'), 'plain@ok.com', 'clean input untouched');
+});
+
+test('retainerSigners builds CLEAN recipients from legacy rows carrying invisible chars', () => {
+  const { retainerSigners } = require('../src/services/retainerService2');
+  const { signers, hold } = retainerSigners({
+    email: '⁠pa@x.com', fullName: '​Evelyn Valdez',
+    inviterName: '⁠Bryan James Valdez', inviterEmail: '⁠valdezbryanjames@gmail.com',
+  }, 'pa-inviter');
+  assert.equal(hold, undefined, 'a strippable email must not hold the send');
+  assert.equal(signers.length, 2);
+  assert.equal(signers[0].email, 'pa@x.com');
+  assert.equal(signers[1].email, 'valdezbryanjames@gmail.com', 'the co-signer gets a DELIVERABLE address');
+  assert.equal(signers[1].name, 'Bryan James Valdez');
+  // The PA's name-anchor must be built from the CLEAN name (an invisible char
+  // inside the regex would never match the rendered "Signature of …" line).
+  assert.match('Signature of Evelyn Valdez', signers[0].anchorItem.anchors[0]);
+});
+
+test('formatValue strips invisibles on email and text writes', () => {
+  const lead = require('fs').readFileSync(require.resolve('../src/services/leadService'), 'utf8');
+  assert.match(lead, /case 'email':\s*\{ const e = stripInvisibles\(value\)\.trim\(\)/);
+  assert.match(lead, /default:\s*return stripInvisibles\(value\)/);
+});

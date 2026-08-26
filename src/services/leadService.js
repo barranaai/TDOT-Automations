@@ -74,9 +74,21 @@ const COL_TYPE = {
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));
 
+/**
+ * Strip INVISIBLE Unicode (zero-width spaces/joiners, direction marks, BOM) —
+ * the WhatsApp/iMessage copy-paste artifacts that made an inviter's email
+ * undeliverable (U+2060 prefix, Evelyn Valdez 2026-08-26: Documenso emailed
+ * "\u2060valdez…@gmail.com" and the co-signer never received the retainer).
+ * They pass trim() and every \s-based validator, so they must be stripped at
+ * the WRITE layer, not caught by validation.
+ */
+function stripInvisibles(s) {
+  return String(s == null ? '' : s).replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, '');
+}
+
 function formatValue(type, value) {
   switch (type) {
-    case 'email':     return { email: String(value), text: String(value) };
+    case 'email':     { const e = stripInvisibles(value).trim(); return { email: e, text: e }; }
     case 'phone':     return { phone: String(value).replace(/\D/g, ''), countryShortName: 'CA' };
     case 'dropdown':  return { labels: Array.isArray(value) ? value : [String(value)] };
     case 'status':    return { label: String(value) };
@@ -84,7 +96,7 @@ function formatValue(type, value) {
     case 'date':      return (value && typeof value === 'object') ? value : { date: String(value) };
     case 'link':      return (value && typeof value === 'object') ? { url: String(value.url), text: String(value.text || value.url) } : { url: String(value), text: String(value) };
     case 'numbers':   return String(value);
-    default:          return String(value); // text
+    default:          return stripInvisibles(value); // text — invisible chars break signature anchors, email delivery, matching
   }
 }
 
@@ -480,4 +492,5 @@ async function generateInviteMessage(lead) {
   return `A paid consultation will let us review your specific situation in detail, assess your eligibility factors, and map out the right strategy for your ${inviteServicePhrase(lead)} journey. To book your consultation with one of our Regulated Canadian Immigration Consultants, please use the button below.`;
 }
 
-module.exports = { createLead, qualifyLead, generateInviteMessage, getLead, updateLead, findByColumnValue, findAllByColumnValue, listAllLeads, parseItem };
+module.exports = {
+  stripInvisibles, createLead, qualifyLead, generateInviteMessage, getLead, updateLead, findByColumnValue, findAllByColumnValue, listAllLeads, parseItem };
