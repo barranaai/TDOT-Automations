@@ -29,6 +29,21 @@ const { FORMS_DIR, resolveForm } = require('../../config/questionnaireFormMap');
  * hole; U+2028/U+2029 are legal in JSON but were line terminators in older
  * JS parsers, so they get escaped too.
  */
+/**
+ * Full-width layout for the questionnaire pages (consultant feedback
+ * 2026-08-28: "we need to scroll too much"). Every authored form wraps its
+ * content in `.container { max-width: 960px; … padding: 0 16px }` on a
+ * `body { padding: 16px }` — that 960px cap is what forces the wide tables
+ * into horizontal scrolling. Injected at SERVE time by both the client and
+ * the review engines, so every form — including era-pinned legacy files —
+ * gets it without touching the 21 authored HTML files. The print/PDF page is
+ * a separate builder and is deliberately NOT changed.
+ */
+const FULL_WIDTH_CSS = `
+.container { max-width: none !important; width: auto !important; margin: 0 !important; padding: 0 10px 60px !important; }
+body { padding: 6px 4px !important; }
+`;
+
 function jsEmbed(value) {
   return JSON.stringify(value)
     .replace(/</g, '\\u003c')
@@ -1408,6 +1423,7 @@ function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditiona
   return `
 <!-- TDOT Dynamic Questionnaire — injected by server -->
 <style>
+${FULL_WIDTH_CSS}
 #tdot-toolbar {
   position: fixed; bottom: 0; left: 0; right: 0;
   background: #0B1D32; color: #fff;
@@ -3754,6 +3770,7 @@ function buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, 
   return `
 <!-- TDOT Review Mode — injected by server -->
 <style>
+${FULL_WIDTH_CSS}
 body { padding-top: 62px !important; }
 ${isMultiMember ? `
 /* Multi-member review styles */

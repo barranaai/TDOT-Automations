@@ -183,3 +183,19 @@ test('documentReviewFormService buildReviewPage: emitted script parses, hostile 
     assert.ok(!/<\/script/i.test(inner), `doc review page: block ${i} — a </script> in client data must not terminate the script`);
   });
 });
+
+test('questionnaire pages are full-width on BOTH engines (client + review); print page untouched', () => {
+  const fs = require('node:fs');
+  const { FORMS_DIR } = require('../config/questionnaireFormMap');
+  const svc = require('../src/services/htmlQuestionnaireService');
+  const formFile = fs.readdirSync(FORMS_DIR).filter((f) => f.endsWith('.html'))[0];
+  const client = svc.buildFormPage({ formFile, caseRef: '2026-XX-000', token: 't', formKey: 'primary', members: [] });
+  const review = svc.buildReviewFormPage({ formFile, caseRef: '2026-XX-000', formKey: 'primary', staffName: 'S', savedFields: [], savedFlags: {}, members: [], formKeySuffix: '' });
+  const rule = /\.container \{ max-width: none !important;[^}]*padding: 0 10px 60px !important; \}/;
+  assert.match(client, rule, 'client questionnaire is full-width with minimal side padding');
+  assert.match(review, rule, 'consultant review is full-width with minimal side padding');
+  // The override must come AFTER the form's own 960px rule so it wins on cascade too, not just !important.
+  assert.ok(client.indexOf('max-width: 960px') < client.indexOf('max-width: none !important'), 'override injected after the authored CSS');
+  const print = svc.buildPrintPage({ caseRef: 'X', clientName: 'C', caseType: 'T', caseSubType: null, savedFields: [], savedFlags: {}, staffName: 'S' });
+  assert.ok(!rule.test(print), 'PDF/print layout deliberately unchanged');
+});
