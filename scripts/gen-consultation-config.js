@@ -64,7 +64,7 @@ const SHOW_IF = {
 // option-list overrides where the merged map under-specified
 const OPTIONS = {
   relationshipWithTdot: ['New inquiry', 'Existing client with active application', 'Previous client with completed or inactive application'],
-  whatDoYouWant: ['Book consultation', 'Start new application', 'Request quote', 'Existing file update', 'General information'],
+  whatDoYouWant: ['Book consultation', 'Start new application', 'Request quote', 'Existing file update'], // 'General information' dropped for new inquiries 2026-08-28
   howHeard: ['Existing client', 'Referral', 'Social media', 'Google', 'Website', 'Walk in', 'Event'],
   deadlineReason: ['ITA deadline', 'Passport request deadline', 'Restoration deadline', 'Status expiry', 'CBSA or removal matter', 'Hearing or appointment', 'PNP deadline', 'Employer deadline', 'School deadline', 'Other'],
   refusalType: ['Visitor visa', 'Study permit', 'Work permit', 'Spousal sponsorship', 'PR application', 'Express Entry', 'PNP', 'Refugee or H and C', 'Other'],

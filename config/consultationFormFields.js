@@ -724,8 +724,7 @@ const FIELDS = [
       "Book consultation",
       "Start new application",
       "Request quote",
-      "Existing file update",
-      "General information"
+      "Existing file update"
     ],
     "required": true,
     "mondayType": "status"

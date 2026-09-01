@@ -99,7 +99,11 @@ const REFUSAL_TYPES = ['Visitor visa', 'Study permit', 'Work permit', 'Spousal s
   'Express Entry', 'PNP', 'Refugee or H and C', 'Other'];
 const HOW_HEARD = ['Existing client', 'Referral', 'Social media', 'Google', 'Website', 'Walk in', 'Event'];
 const RELATIONSHIPS = ['New inquiry', 'Existing client with active application', 'Previous client with completed or inactive application'];
-const INTENTS  = ['Book consultation', 'Start new application', 'Request quote', 'Existing file update', 'General information'];
+// 'General information' removed from NEW inquiries (consultant feedback
+// 2026-08-28) — low-value intent. Existing leads that chose it are untouched:
+// the Monday label stays, the queue pill still renders it, and
+// leadPriorityService still tiers it. This enum only gates NEW submissions.
+const INTENTS  = ['Book consultation', 'Start new application', 'Request quote', 'Existing file update'];
 const STATUSES = CURRENT_STATUS;   // canonical list shared with the pre-consult form
 const YN  = ['Yes', 'No'];
 const YNS = ['Yes', 'No', 'Not sure'];
@@ -613,7 +617,7 @@ function buildIntakeFormHtml() {
       <div class="card-head"><span class="num">5</span><div><h2>Service Required</h2></div></div>
       <div class="grid">
         <div class="field"><label>What service or support are you looking for? *</label><select name="serviceRequired" id="serviceRequired" required><option value="">Choose...</option>${serviceOptions}</select></div>
-        <div class="field"><label>What would you like to do? *</label><select name="whatDoYouWant" required><option value="">Choose...</option>${opt('Book consultation')}${opt('Start new application')}${opt('Request quote')}${opt('Existing file update')}${opt('General information')}</select></div>
+        <div class="field"><label>What would you like to do? *</label><select name="whatDoYouWant" required><option value="">Choose...</option>${opt('Book consultation')}${opt('Start new application')}${opt('Request quote')}${opt('Existing file update')}</select></div>
         <div class="field wide"><label>Please briefly explain your inquiry or goal *</label><textarea name="situationDescription" rows="4" required placeholder="Example: I received an ITA, I need to extend my work permit, I need help after a refusal..."></textarea></div>
       </div>
     </section>

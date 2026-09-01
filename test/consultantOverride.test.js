@@ -81,3 +81,24 @@ test('Square appointment write-back honors the PINNED consultant (Aksh Patel bug
   assert.ok(!/routeConsultant\(lead\)\.teamMemberId/.test(block),
     'routeConsultant re-runs auto-routing and put a pinned-Shermin consult on Shafoli’s calendar');
 });
+
+test('"General information" removed from BOTH public forms for NEW inquiries — old leads undisturbed', () => {
+  // NEW inquiries: neither public form offers it, and the intake enum rejects it.
+  const intake = fs.readFileSync(require.resolve('../src/services/intakeFormService'), 'utf8');
+  const enumLine = intake.slice(intake.indexOf('const INTENTS'), intake.indexOf('\n', intake.indexOf('const INTENTS')));
+  assert.ok(!/General information/.test(enumLine), 'intake submission enum no longer accepts it');
+  const dropdown = intake.slice(intake.indexOf('name="whatDoYouWant"'), intake.indexOf('</select>', intake.indexOf('name="whatDoYouWant"')));
+  assert.ok(!/General information/.test(dropdown), 'intake dropdown no longer offers it');
+  const consult = require('../config/consultationFormFields');
+  const want = JSON.stringify(consult).match(/"whatDoYouWant"[\s\S]{0,400}?"options":\[([^\]]*)\]/);
+  assert.ok(want && !/General information/.test(want[1]), 'consultation form no longer offers it');
+  const gen = fs.readFileSync(require.resolve('../scripts/gen-consultation-config'), 'utf8');
+  assert.ok(!/'General information'\]/.test(gen), 'the config generator cannot resurrect it');
+  // OLD leads: everything that READS the stored value keeps working — the
+  // priority rule still recognises it (tiering existing rows), and the queue
+  // pill renders whatever is stored. Nobody "cleans these up".
+  const prio = fs.readFileSync(require.resolve('../src/services/leadPriorityService'), 'utf8');
+  assert.match(prio, /whatDoYouWant === 'General information'/, 'priority rule for existing General-information leads must survive');
+  const leads = fs.readFileSync(require.resolve('../src/routes/adminLeads'), 'utf8');
+  assert.match(leads, /qpill\('amber',c\.wantsTo\)/, 'queue pill renders stored intents verbatim');
+});
