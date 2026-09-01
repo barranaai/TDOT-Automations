@@ -199,3 +199,23 @@ test('questionnaire pages are full-width on BOTH engines (client + review); prin
   const print = svc.buildPrintPage({ caseRef: 'X', clientName: 'C', caseType: 'T', caseSubType: null, savedFields: [], savedFlags: {}, staffName: 'S' });
   assert.ok(!rule.test(print), 'PDF/print layout deliberately unchanged');
 });
+
+test('table cells wrap on BOTH engines: text inputs → auto-growing textareas; collectors widened; print untouched', () => {
+  const fs = require('node:fs');
+  const { FORMS_DIR } = require('../config/questionnaireFormMap');
+  const svc = require('../src/services/htmlQuestionnaireService');
+  const src = fs.readFileSync(require.resolve('../src/services/htmlQuestionnaireService'), 'utf8');
+  const formFile = fs.readdirSync(FORMS_DIR).filter((f) => f.endsWith('.html'))[0];
+  const client = svc.buildFormPage({ formFile, caseRef: '2026-XX-000', token: 't', formKey: 'primary', members: [] });
+  const review = svc.buildReviewFormPage({ formFile, caseRef: '2026-XX-000', formKey: 'primary', staffName: 'S', savedFields: [], savedFlags: {}, members: [], formKeySuffix: '' });
+  for (const [name, html] of [['client', client], ['review', review]]) {
+    assert.match(html, /function convertTableCellInputs\(root\)/, `${name}: conversion function emitted`);
+    assert.match(html, /textarea\.tdot-wrap-cell \{[^}]*white-space:pre-wrap/, `${name}: wrapping CSS emitted`);
+    assert.match(html, /convertTableCellInputs\(document\);\s*\n\s*watchTableCells\(\);/, `${name}: conversion + row-watcher run at init`);
+  }
+  // Every dynamic-table collector must see textareas, or converted cells would silently drop from saves/review.
+  assert.equal((src.match(/row\.querySelectorAll\('input, select'\)/g) || []).length, 0, 'no collector left on the narrow selector');
+  assert.equal((src.match(/row\.querySelectorAll\('input, select, textarea'\)/g) || []).length, 2, 'both table collectors widened');
+  const print = svc.buildPrintPage({ caseRef: 'X', clientName: 'C', caseType: 'T', caseSubType: null, savedFields: [], savedFlags: {}, staffName: 'S' });
+  assert.ok(!/convertTableCellInputs/.test(print), 'print/PDF untouched');
+});

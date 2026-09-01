@@ -44,6 +44,69 @@ const FULL_WIDTH_CSS = `
 body { padding: 6px 4px !important; }
 `;
 
+/**
+ * Wrapping table cells (consultant feedback 2026-08-28): a long answer in a
+ * table cell used to sit in a single-line <input> that scrolls INSIDE the box,
+ * hiding most of the value. At runtime both engines swap every text <input>
+ * inside a table cell for an auto-growing <textarea>, so the cell's text
+ * wraps and the whole entry is visible. The TABLE itself may still scroll
+ * sideways (accepted); the FIELDS never do. Keys are header/position-based,
+ * so the tag swap leaves every stored key untouched; both collectors were
+ * widened to 'input, select, textarea' so converted cells are still saved.
+ * Pure strings (no backslashes) — safe inside the engines' template literals.
+ */
+const WRAP_CELLS_CSS = [
+  'textarea.tdot-wrap-cell { display:block; width:100%; min-width:0; box-sizing:border-box; resize:none; overflow:hidden;',
+  '  white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; line-height:1.35; font:inherit; font-size:0.85rem;',
+  '  padding:6px 8px; border:1px solid #cfcfcf; border-radius:3px; min-height:30px; }',
+  'textarea.tdot-wrap-cell:focus { outline:none; border-color:#d97706; }',
+].join('\n');
+
+const WRAP_CELLS_JS = [
+  '  /* ── Wrapping table cells: text <input> in a <td> → auto-growing <textarea> ── */',
+  '  function convertTableCellInputs(root) {',
+  '    var inputs = (root || document).querySelectorAll("table td > input");',
+  '    for (var i = 0; i < inputs.length; i++) {',
+  '      var inp = inputs[i];',
+  '      if ((inp.getAttribute("type") || "text").toLowerCase() !== "text") continue;',
+  '      if (inp.classList.contains("tdot-no-wrap")) continue;',
+  '      var ta = document.createElement("textarea");',
+  '      for (var a = 0; a < inp.attributes.length; a++) {',
+  '        var at = inp.attributes[a];',
+  '        if (at.name === "type" || at.name === "value") continue;',
+  '        ta.setAttribute(at.name, at.value);',
+  '      }',
+  '      ta.value = inp.value;',
+  '      ta.rows = 1;',
+  '      ta.className = (inp.className ? inp.className + " " : "") + "tdot-wrap-cell";',
+  '      inp.parentNode.replaceChild(ta, inp);',
+  '      autosizeCell(ta);',
+  '    }',
+  '  }',
+  '  function autosizeCell(el) {',
+  '    if (!el || !el.classList || !el.classList.contains("tdot-wrap-cell")) return;',
+  '    el.style.height = "auto";',
+  '    var h = el.scrollHeight;',
+  '    if (h > 0) el.style.height = h + "px";',
+  '  }',
+  '  function autosizeAllCells(root) {',
+  '    var els = (root || document).querySelectorAll("textarea.tdot-wrap-cell");',
+  '    for (var i = 0; i < els.length; i++) autosizeCell(els[i]);',
+  '  }',
+  '  function watchTableCells() {',
+  '    document.addEventListener("input", function (e) { autosizeCell(e.target); });',
+  '    document.addEventListener("change", function () { setTimeout(function () { autosizeAllCells(); }, 0); });',
+  '    if (!window.MutationObserver) return;',
+  '    var pending = false;',
+  '    var mo = new MutationObserver(function () {',
+  '      if (pending) return;',
+  '      pending = true;',
+  '      setTimeout(function () { pending = false; convertTableCellInputs(document); }, 0);',
+  '    });',
+  '    mo.observe(document.body, { childList: true, subtree: true });',
+  '  }',
+].join('\n');
+
 function jsEmbed(value) {
   return JSON.stringify(value)
     .replace(/</g, '\\u003c')
@@ -1424,6 +1487,7 @@ function buildInjectionScript({ caseRef, token, formKey, formTitle, hasAdditiona
 <!-- TDOT Dynamic Questionnaire — injected by server -->
 <style>
 ${FULL_WIDTH_CSS}
+${WRAP_CELLS_CSS}
 #tdot-toolbar {
   position: fixed; bottom: 0; left: 0; right: 0;
   background: #0B1D32; color: #fff;
@@ -1775,7 +1839,7 @@ ${hasAdditionalForm ? `
       var rows = tbody.querySelectorAll('tr');
       for (var ri = 0; ri < rows.length; ri++) {
         var row       = rows[ri];
-        var rowInputs = row.querySelectorAll('input, select');
+        var rowInputs = row.querySelectorAll('input, select, textarea');
         for (var ci = 0; ci < headers.length; ci++) {
           var cell = rowInputs[ci];
           if (!cell || seen.indexOf(cell) !== -1) continue;
@@ -3308,6 +3372,8 @@ ${hasAdditionalForm ? `
 
   /* ── Initialise ── */
 
+${WRAP_CELLS_JS}
+
   async function init() {
     /* Set up multi-member DOM before anything else */
     if (IS_MULTI) {
@@ -3331,7 +3397,12 @@ ${hasAdditionalForm ? `
     document.addEventListener('change', function () { markDirty(); invalidateCache(); updateProgressUI(); });
     document.addEventListener('input',  function () { markDirty(); invalidateCache(); updateProgressUI(); });
 
+    /* Wrap table cells BEFORE prefill so values land in the textareas; watch for added rows. */
+    convertTableCellInputs(document);
+    watchTableCells();
+
     await loadAndPrefill();
+    autosizeAllCells();
     if (IS_MULTI) {
       /* Load flags for each member section */
       var memberKeys = getActiveMemberKeys();
@@ -3771,6 +3842,7 @@ function buildReviewInjectionScript({ caseRef, formKey, staffName, savedFields, 
 <!-- TDOT Review Mode — injected by server -->
 <style>
 ${FULL_WIDTH_CSS}
+${WRAP_CELLS_CSS}
 body { padding-top: 62px !important; }
 ${isMultiMember ? `
 /* Multi-member review styles */
@@ -3993,7 +4065,7 @@ input[disabled], select[disabled], textarea[disabled] {
 
       var rows = tbody.querySelectorAll('tr');
       for (var ri = 0; ri < rows.length; ri++) {
-        var row = rows[ri], rowInputs = row.querySelectorAll('input, select');
+        var row = rows[ri], rowInputs = row.querySelectorAll('input, select, textarea');
         var section2 = getSectionContext(table);
         /* rowKey is set to the FIRST column's cell key (backward-compatible: existing
            flags were stored under that key when the first Flag button was clicked). */
@@ -4968,6 +5040,8 @@ input[disabled], select[disabled], textarea[disabled] {
     });
   }
 
+${WRAP_CELLS_JS}
+
   function init() {
     if (IS_MULTI_REVIEW) {
       setupMultiMemberReview();
@@ -4986,6 +5060,10 @@ input[disabled], select[disabled], textarea[disabled] {
       expandTableRows(SAVED_DATA, null);
     }
 
+    /* Wrap table cells AFTER rows are expanded and BEFORE collection/prefill. */
+    convertTableCellInputs(document);
+    watchTableCells();
+
     var fields = collectFields();
 
     if (IS_MULTI_REVIEW) {
@@ -4996,6 +5074,7 @@ input[disabled], select[disabled], textarea[disabled] {
 
     fireConditionalToggles();
     makeReadOnly();
+    autosizeAllCells();
     markEmptySections();
     fields.forEach(attachFlagUI);
     createReviewBar();
