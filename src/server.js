@@ -654,10 +654,10 @@ async function resolveCaseForWrite(req, res, caseRef) {
 // first, then execute with a typed confirmation. Lives on the resolveViewer
 // surface (NOT /api) because only viewer.isAdmin distinguishes admins from
 // regular staff — possession of the page is not authorisation to delete.
-function resolveAdminOrReject(req, res) {
+function resolveAdminOrReject(req, res, message = 'Only an admin can delete records.') {
   const viewer = resolveViewer(req);
   if (!viewer) { res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday' }); return null; }
-  if (!viewer.isAdmin) { res.status(403).json({ error: 'admin-only', message: 'Only an admin can delete records.' }); return null; }
+  if (!viewer.isAdmin) { res.status(403).json({ error: 'admin-only', message }); return null; }
   return viewer;
 }
 
@@ -883,7 +883,7 @@ app.post('/admin/questionnaire/:caseRef/regenerate-pdfs', express.json(), async 
   if (!/^[A-Za-z0-9-]{3,40}$/.test(caseRef)) return res.status(400).json({ error: 'bad caseRef' });
   try {
     const svc = require('./services/htmlQuestionnaireService');
-    const { dryRun = true, qCompletionStatus = '', updates = null, updatesTruncated = false, skipKeys = [], createMissing = false } = req.body || {};
+    const { dryRun = true, qCompletionStatus = '', updates = null, updatesTruncated = false, skipKeys = [], createMissing = false, editedAfterSubmission = 'skip' } = req.body || {};
     // skipFormVersioning: the recorded formFile wins for the label; the era resolver's extra reads are not needed here.
     const { clientName, formFiles } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
     const result = await require('./services/questionnairePdfService').regenerateCasePdfs({
@@ -892,6 +892,7 @@ app.post('/admin/questionnaire/:caseRef/regenerate-pdfs', express.json(), async 
       updatesTruncated: updatesTruncated === true,
       skipKeys: Array.isArray(skipKeys) ? skipKeys.slice(0, 50).map(String) : [],
       dryRun: dryRun !== false, createMissing: createMissing === true,
+      editedAfterSubmission: editedAfterSubmission === 'render' ? 'render' : 'skip',
     });
     if (!result.dryRun) console.log(`[QPdf] regenerate ${caseRef}: ${result.forms.filter((f) => f.action === 'regenerated').length} PDF(s) rewritten, ${result.failed} failed, by ${viewer.email || 'admin-key'}`);
     // Partial transient failure → 503 WITH the per-form results; the driver records what was done and
@@ -902,6 +903,25 @@ app.post('/admin/questionnaire/:caseRef/regenerate-pdfs', express.json(), async 
     console.error(`[QPdf] regenerate failed for ${caseRef}:`, err.message);
     const status = err.transient ? 503 : (/not found/i.test(err.message || '') ? 404 : 500);
     res.status(status).json({ error: err.message, transient: !!err.transient });
+  }
+});
+
+// Read-only OneDrive listing of one case sub-folder (ADMIN ONLY) — for audits
+// such as "where did the client's uploads land". Never writes.
+app.get('/admin/onedrive/list', async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can list case folders.')) return;   // send the key as x-api-key, not ?key=
+  const caseRef   = String(req.query.caseRef || '').trim();
+  const subfolder = String(req.query.subfolder || '').trim();
+  if (!/^[A-Za-z0-9-]{3,40}$/.test(caseRef) || !/^[A-Za-z0-9 _&()-]{1,60}$/.test(subfolder)) {
+    return res.status(400).json({ error: 'caseRef and subfolder required' });
+  }
+  try {
+    const { clientName } = await require('./services/htmlQuestionnaireService').validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const files = await require('./services/oneDriveService').listFiles({ clientName, caseRef, subfolder });
+    res.json({ caseRef, clientName, subfolder, count: files.length, files });
+  } catch (err) {
+    console.error(`[OneDriveList] failed for ${caseRef}/${subfolder}:`, err.message);
+    res.status(err.transient ? 503 : (/not found/i.test(err.message || '') ? 404 : 500)).json({ error: err.transient ? 'OneDrive temporarily unavailable' : err.message });
   }
 });
 

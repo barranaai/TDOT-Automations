@@ -175,7 +175,7 @@ function drawRunningHeader(doc, ctx) {
   doc.save();
   doc.font('Helvetica-Bold').fontSize(8).fillColor(NAVY)
      .text('TDOT IMMIGRATION', left, y, { lineBreak: false });
-  const meta = [ctx.clientName, ctx.caseRef, ctx.memberLabel && ctx.memberLabel !== 'Primary Applicant' ? ctx.memberLabel : null, ctx.submitted ? 'Submitted' : 'In progress']
+  const meta = [ctx.clientName, ctx.caseRef, ctx.memberLabel && ctx.memberLabel !== 'Primary Applicant' ? ctx.memberLabel : null, ctx.submitted ? (ctx.editedAt ? 'Submitted · edited after' : 'Submitted') : 'In progress']
     .filter(Boolean).join('  ·  ');
   doc.font('Helvetica').fontSize(8).fillColor(TEXT_MUTED)
      .text(meta, left, y, { width: right - left, align: 'right', lineBreak: false });
@@ -204,7 +204,7 @@ function ensureSpace(doc, needed, ctx) {
 
 // ─── Cover ───────────────────────────────────────────────────────────────────
 
-function drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, completionPct, submittedAt, submitted = true, blocks = [] }) {
+function drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, completionPct, submittedAt, submitted = true, editedAt = null, blocks = [] }) {
   const leftX = PAGE_MARGINS.left, rightEdge = doc.page.width - PAGE_MARGINS.right, W = rightEdge - leftX;
 
   doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(20).text('Client Questionnaire', leftX, PAGE_MARGINS.top, { lineBreak: false });
@@ -222,7 +222,10 @@ function drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, comp
   rows.push(['Completion', `${Math.max(0, Math.min(100, Math.round(completionPct || 0)))}%`]);
   // A DRAFT save (client still working) must never read as a submission —
   // the same file is overwritten on every save, so the cover states the truth.
-  if (submitted) {
+  if (submitted && editedAt) {
+    // Submitted, then edited again by the client: newest content, honest status.
+    rows.push(['Status', 'Submitted — edited after submission'], ['Submitted', formatTimestamp(submittedAt)], ['Last saved', formatTimestamp(editedAt)]);
+  } else if (submitted) {
     rows.push(['Status', 'Submitted'], ['Submitted', formatTimestamp(submittedAt)]);
   } else {
     rows.push(['Status', 'In progress — not yet submitted'], ['Last saved', formatTimestamp(submittedAt)]);
@@ -406,7 +409,7 @@ function drawTable(doc, block, ctx) {
 
 // ─── Build PDF buffer from field data ────────────────────────────────────────
 
-function buildPdfBuffer({ clientName, caseRef, formLabel, memberLabel, completionPct, submittedAt, fields, submitted = true }) {
+function buildPdfBuffer({ clientName, caseRef, formLabel, memberLabel, completionPct, submittedAt, fields, submitted = true, editedAt = null }) {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({
@@ -424,10 +427,10 @@ function buildPdfBuffer({ clientName, caseRef, formLabel, memberLabel, completio
       doc.on('error', reject);
 
       const blocks = buildLayoutModel(fields);
-      const ctx = { clientName, caseRef, memberLabel, submitted };
+      const ctx = { clientName, caseRef, memberLabel, submitted, editedAt: submitted ? editedAt : null };
 
       drawRunningHeader(doc, ctx);
-      drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, completionPct, submittedAt, submitted, blocks });
+      drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, completionPct, submittedAt, submitted, editedAt: submitted ? editedAt : null, blocks });
 
       if (!blocks.length) {
         doc.fillColor(TEXT_MUTED).font('Helvetica-Oblique').fontSize(10)
@@ -533,6 +536,10 @@ function scheduleDraftPdf(params, { immediate = false } = {}) {
 // ─── One-time regeneration from the JSON truth files (admin-driven) ──────────
 
 const MEMBERS_PREFIX   = 'questionnaire-members-';
+// Until the draft-PDF-on-save policy went live (5c2c4dc, deployed 2026-09-02
+// 10:42 UTC) a questionnaire PDF was ONLY ever written by a submission — so a
+// PDF last modified before that moment is per-form proof of submission.
+const LEGACY_PDF_CUTOFF_MS = Date.parse('2026-09-02T10:42:00Z');
 const RECENT_WINDOW_MS = 15 * 60 * 1000;   // a form saved this recently may have a live client on it → skip, re-run later
 const MONTHS_RE        = '(January|February|March|April|May|June|July|August|September|October|November|December)';
 const formTitleFromFile = (file) => String(file || '')
@@ -597,6 +604,7 @@ function parseSubmissionUpdates(updates) {
  * Decide whether ONE stored form was submitted. Pure.
  * Precedence — and ambiguity NEVER resolves to "submitted":
  *   1. an exact per-form audit comment (review?formKey=<this form>)        → submitted
+ *   1b. a PDF written before the draft-PDF policy (submission-only era)     → submitted
  *   2. a batch comment naming this member — only if the case has a single
  *      form slot (with an additional slot, which page was batch-submitted is unknown)
  *   3. the member's manifest submittedAt — same single-slot condition (the
@@ -606,11 +614,12 @@ function parseSubmissionUpdates(updates) {
  *   5. otherwise: draft
  * @returns {{ submitted: boolean, via: string, submittedAt?: string|null, uncertain?: boolean }}
  */
-function decideSubmission({ formKey, memberKey, member, manifestExists, hasAdditionalSlot, evidence, caseDone, savedAt }) {
+function decideSubmission({ formKey, memberKey, member, manifestExists, hasAdditionalSlot, evidence, caseDone, savedAt, legacyPdfAt = null }) {
   const stamp = (member && member.submittedAt) || null;
   if (evidence && evidence.exact.has(formKey)) {
     return { submitted: true, via: 'update-exact', submittedAt: evidence.exact.get(formKey) || stamp || savedAt || null };
   }
+  if (legacyPdfAt) return { submitted: true, via: 'legacy-pdf', submittedAt: legacyPdfAt };   // per-form proof (see LEGACY_PDF_CUTOFF_MS)
   const label = (member && member.label) || (memberKey === 'primary' ? 'Primary Applicant' : null);
   const batch = evidence && label
     ? evidence.batches.find((b) => b.labels.some((l) => l.toLowerCase() === label.toLowerCase()))
@@ -649,7 +658,7 @@ function decideSubmission({ formKey, memberKey, member, manifestExists, hasAddit
  * In dry-run the PDF is still BUILT (not uploaded) so render errors surface.
  */
 async function regenerateCasePdfs({ clientName, caseRef, formFiles = null, qCompletionStatus = '', updates = null, updatesTruncated = false,
-                                    skipKeys = [], dryRun = true, createMissing = false, now = Date.now() }) {
+                                    skipKeys = [], dryRun = true, createMissing = false, editedAfterSubmission = 'skip', now = Date.now() }) {
   if (!clientName || !caseRef) throw new Error('clientName and caseRef are required');
   const write = dryRun === false;
   const files = await oneDrive.listFiles({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER });
@@ -720,22 +729,32 @@ async function regenerateCasePdfs({ clientName, caseRef, formFiles = null, qComp
       r.completionPct = Number(data.completionPct) || 0;
 
       if (normCount.get(formKey) > 1) { r.reason = 'status-uncertain'; r.submittedVia = 'ambiguous-legacy-key'; continue; }
-      const decision = decideSubmission({ formKey, memberKey, member, manifestExists, hasAdditionalSlot, evidence, caseDone, savedAt: r.savedAt });
+      const pdfMeta = byName.get(`questionnaire-${caseRef}-${form.storedKey}.pdf`);
+      const pdfMs   = pdfMeta ? Date.parse(pdfMeta.lastModifiedDateTime || '') : NaN;
+      const legacyPdfAt = Number.isFinite(pdfMs) && pdfMs < LEGACY_PDF_CUTOFF_MS ? pdfMeta.lastModifiedDateTime : null;
+      const decision = decideSubmission({ formKey, memberKey, member, manifestExists, hasAdditionalSlot, evidence, caseDone, savedAt: r.savedAt, legacyPdfAt });
       r.submitted = decision.submitted; r.submittedVia = decision.via;
       if (decision.uncertain) { r.reason = 'status-uncertain'; continue; }
       // The Updates feed was cut at the fetch limit: an older exact comment may be missing.
       if (!decision.submitted && updatesTruncated && !(member && member.submittedAt)) { r.reason = 'status-uncertain'; r.submittedVia = 'updates-truncated'; continue; }
       // Edited after submission: the live save path labels such saves "In progress";
       // re-labelling newer content "Submitted <old date>" would be wrong → report, never write.
+      let editedAt = null;
       if (decision.submitted) {
+        // Only the CLIENT save timestamp counts: admin repairs/restores rewrite
+        // the file (listing lastModified moves) but preserve savedAt.
         const subMs   = Date.parse(decision.submittedAt || '');
-        const savedMs = Math.max(Date.parse(r.savedAt || '') || 0, Date.parse(form.lastModified || '') || 0);
-        if (Number.isFinite(subMs) && savedMs > subMs + 5 * 60 * 1000) { r.reason = 'edited-after-submission'; r.editedAt = new Date(savedMs).toISOString(); continue; }
+        const savedMs = Date.parse(r.savedAt || '') || 0;
+        if (Number.isFinite(subMs) && savedMs > subMs + 5 * 60 * 1000) {
+          r.editedAt = new Date(savedMs).toISOString();
+          if (editedAfterSubmission !== 'render') { r.reason = 'edited-after-submission'; continue; }
+          editedAt = r.editedAt;   // third cover state: "Submitted — edited after submission"
+        }
       }
       const submittedAt = decision.submittedAt || r.savedAt || new Date(now).toISOString();
 
       const buffer = await buildPdfBuffer({ clientName, caseRef, formLabel: r.formLabel, memberLabel: r.memberLabel,
-        completionPct: r.completionPct, submittedAt, fields, submitted: r.submitted });
+        completionPct: r.completionPct, submittedAt, fields, submitted: r.submitted, editedAt });
       r.bytes = buffer.length;
       if (!write) { r.action = 'would-regenerate'; r.reason = ''; continue; }
       await oneDrive.uploadFile({ clientName, caseRef, category: QUESTIONNAIRE_SUBFOLDER,
@@ -754,4 +773,4 @@ async function regenerateCasePdfs({ clientName, caseRef, formFiles = null, qComp
 /** Test seam: pending draft windows (keys) — not for production use. */
 function _pendingDraftKeys() { return [..._draftPending.keys()]; }
 
-module.exports = { generateAndSaveSubmissionPdf, scheduleDraftPdf, regenerateCasePdfs, decideSubmission, parseSubmissionUpdates, splitFormKey, buildPdfBuffer, buildLayoutModel, MAX_GRID_COLS, DRAFT_PDF_THROTTLE_MS, RECENT_WINDOW_MS, _pendingDraftKeys };
+module.exports = { generateAndSaveSubmissionPdf, scheduleDraftPdf, regenerateCasePdfs, decideSubmission, parseSubmissionUpdates, splitFormKey, buildPdfBuffer, buildLayoutModel, MAX_GRID_COLS, DRAFT_PDF_THROTTLE_MS, RECENT_WINDOW_MS, LEGACY_PDF_CUTOFF_MS, _pendingDraftKeys };

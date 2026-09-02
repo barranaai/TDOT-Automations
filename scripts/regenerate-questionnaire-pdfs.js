@@ -13,6 +13,7 @@
  *   node scripts/regenerate-questionnaire-pdfs.js --only 2026-ISS-009    # one (or comma-separated) case(s)
  *   node scripts/regenerate-questionnaire-pdfs.js --write --out report.json
  *   --create-missing      also create PDFs for answered forms that have none (default: refresh existing only)
+ *   --render-edited       forms edited after submission get a "Submitted — edited after submission" cover (default: skip + report)
  *   --base <url>          default https://app.tdotimm.com       --pace <ms>  between cases (default 250)
  * A JSON report is ALWAYS written (--out, else ./regen-report-<mode>-<timestamp>.json), per case as it goes.
  */
@@ -33,6 +34,7 @@ const opt  = (n, d) => { const i = argv.indexOf(n); return i !== -1 && argv[i + 
 
 const WRITE          = flag('--write');
 const CREATE_MISSING = flag('--create-missing');
+const RENDER_EDITED  = flag('--render-edited');   // forms edited after submission → "Submitted — edited after submission" cover (default: skip + report)
 const ONLY  = opt('--only', '').split(',').map((s) => s.trim()).filter(Boolean);
 const BASE  = opt('--base', 'https://app.tdotimm.com').replace(/\/$/, '');
 const OUT   = opt('--out', '') || `regen-report-${WRITE ? 'write' : 'dry-run'}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
@@ -76,7 +78,7 @@ async function callCase(row) {
   const url = `${BASE}/admin/questionnaire/${encodeURIComponent(row.caseRef)}/regenerate-pdfs`;
   const done = new Map(); // formKey → form result already regenerated in an earlier attempt
   for (let attempt = 0; ; attempt++) {
-    const body = JSON.stringify({ dryRun: !WRITE, qCompletionStatus: row.qStatus, updates: row.updates, updatesTruncated: row.updatesTruncated, createMissing: CREATE_MISSING, skipKeys: [...done.keys()] });
+    const body = JSON.stringify({ dryRun: !WRITE, qCompletionStatus: row.qStatus, updates: row.updates, updatesTruncated: row.updatesTruncated, createMissing: CREATE_MISSING, editedAfterSubmission: RENDER_EDITED ? 'render' : 'skip', skipKeys: [...done.keys()] });
     let res, text;
     try {
       res  = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': KEY }, body, signal: AbortSignal.timeout(180000) });
@@ -107,8 +109,8 @@ async function callCase(row) {
   }
 }
 
-const report = { mode: WRITE ? 'write' : 'dry-run', createMissing: CREATE_MISSING, base: BASE, startedAt: new Date().toISOString(), duplicates: [], cases: [], aborted: null };
-const tally  = { cases: 0, forms: 0, regenerated: 0, wouldRegenerate: 0, failed: 0, skipped: {}, via: {}, errors: 0, noForms: 0, submittedPdfs: 0, draftPdfs: 0, parseMiss: 0, updatesTruncated: 0 };
+const report = { mode: WRITE ? 'write' : 'dry-run', createMissing: CREATE_MISSING, renderEdited: RENDER_EDITED, base: BASE, startedAt: new Date().toISOString(), duplicates: [], cases: [], aborted: null };
+const tally  = { cases: 0, forms: 0, regenerated: 0, wouldRegenerate: 0, failed: 0, skipped: {}, via: {}, errors: 0, noForms: 0, submittedPdfs: 0, editedPdfs: 0, draftPdfs: 0, parseMiss: 0, updatesTruncated: 0 };
 const save   = () => fs.writeFileSync(OUT, JSON.stringify({ ...report, tally }, null, 2));
 
 (async () => {
@@ -148,13 +150,14 @@ const save   = () => fs.writeFileSync(OUT, JSON.stringify({ ...report, tally }, 
     }
     for (const f of forms) {
       tally.forms++;
-      if (f.action === 'regenerated') { tally.regenerated++; bump(tally.via, f.submittedVia); f.submitted ? tally.submittedPdfs++ : tally.draftPdfs++; }
-      else if (f.action === 'would-regenerate') { tally.wouldRegenerate++; bump(tally.via, f.submittedVia); f.submitted ? tally.submittedPdfs++ : tally.draftPdfs++; }
+      const count = () => { bump(tally.via, f.submittedVia); if (f.submitted && f.editedAt) tally.editedPdfs++; else if (f.submitted) tally.submittedPdfs++; else tally.draftPdfs++; };
+      if (f.action === 'regenerated') { tally.regenerated++; count(); }
+      else if (f.action === 'would-regenerate') { tally.wouldRegenerate++; count(); }
       else if (f.action === 'failed') tally.failed++;
       else bump(tally.skipped, f.reason + (f.reason === 'status-uncertain' && f.submittedVia ? ':' + f.submittedVia : ''));
     }
     if (r.status === 200) {
-      const summary = forms.map((f) => `${f.formKey}:${f.action === 'skipped' ? 'skip(' + f.reason + (f.submittedVia && f.reason === 'status-uncertain' ? ':' + f.submittedVia : '') + ')' : f.action === 'failed' ? 'FAILED' : (f.submitted ? 'submitted' : 'draft') + '/' + f.submittedVia + (f.bytes ? ' ' + Math.round(f.bytes / 1024) + 'KB' : '')}`).join(', ');
+      const summary = forms.map((f) => `${f.formKey}:${f.action === 'skipped' ? 'skip(' + f.reason + (f.submittedVia && f.reason === 'status-uncertain' ? ':' + f.submittedVia : '') + ')' : f.action === 'failed' ? 'FAILED' : (f.submitted ? (f.editedAt ? 'submitted+edited' : 'submitted') : 'draft') + '/' + f.submittedVia + (f.bytes ? ' ' + Math.round(f.bytes / 1024) + 'KB' : '')}`).join(', ');
       console.log(`[${i + 1}/${cases.length}] ${row.caseRef}  ${forms.length ? summary : '(no saved forms)'}`);
     }
     save();

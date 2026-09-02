@@ -123,10 +123,11 @@ async function getDisclaimerForCase(caseRef) {
 
 /**
  * Fetch category from the Template Board using the stored intakeId.
- * Used as fallback when the mirror column on the Execution Board is null.
+ * Returns '' (not a default) when the id is not a Template item id or the
+ * lookup fails, so the caller's fallback chain decides — never this function.
  */
 async function getCategoryFromTemplate(intakeId) {
-  if (!intakeId) return 'General';
+  if (!isTemplateItemId(intakeId)) return '';
   try {
     const data = await mondayApi.query(
       `query($id: ID!) {
@@ -137,11 +138,42 @@ async function getCategoryFromTemplate(intakeId) {
       { id: String(intakeId) }
     );
     return data?.items?.[0]?.column_values
-      ?.find((c) => c.id === TMPL_CATEGORY_COL)?.text?.trim() || 'General';
+      ?.find((c) => c.id === TMPL_CATEGORY_COL)?.text?.trim() || '';
   } catch (err) {
     console.warn(`[DocForm] Template category lookup failed for intakeId ${intakeId}: ${err.message}`);
-    return 'General';
+    return '';
   }
+}
+
+/** A Template Board item id is numeric. Schema-seeded rows store "code:<documentCode>" instead. */
+function isTemplateItemId(intakeId) { return /^\d+$/.test(String(intakeId || '').trim()); }
+
+/** Category from the checklist schema for a schema-seeded row ("code:<documentCode>"), else ''. */
+function categoryFromSchemaCode(intakeId) {
+  const s = String(intakeId || '').trim();
+  if (!s.startsWith('code:')) return '';
+  try {
+    const resolved = require('./seedPlanner').resolveDocumentCode(s.slice(5));
+    return (resolved && resolved.doc && resolved.doc.category) ? String(resolved.doc.category).trim() : '';
+  } catch (err) {
+    console.warn(`[DocForm] Schema category lookup failed for ${s}: ${err.message}`);
+    return '';
+  }
+}
+
+/**
+ * Pure. The OneDrive folder for an upload — the same precedence the client
+ * form uses to DISPLAY the category (getCaseDocuments), so a file lands in the
+ * folder the client saw it listed under:
+ *   Template Board category (template-linked rows) → the execution row's own
+ *   category column → the mirror column → the schema definition (code rows)
+ *   → "General" only as a last resort.
+ * (Before 2026-09-02 a non-empty "code:…" id short-circuited to the Template
+ * lookup, which failed → every schema-seeded upload landed in "General".)
+ */
+function resolveUploadCategory({ templateCategory = '', catText = '', mirror = '', schemaCategory = '' }) {
+  const clean = (v) => String(v || '').trim();
+  return clean(templateCategory) || clean(catText) || clean(mirror) || clean(schemaCategory) || 'General';
 }
 
 // ─── Public: load form data ───────────────────────────────────────────────────
@@ -414,12 +446,11 @@ async function getCaseSummary(caseRef) {
 /**
  * Upload a file to the client's OneDrive category subfolder.
  *
- * Category resolution order:
- *  1. Execution item's intakeId → fetch category directly from Template Board.
- *  2. Execution item's mirror column (lookup_mm0zqbvt) if intakeId is missing.
- *  3. Default "General".
+ * Category = resolveUploadCategory(): Template Board (template-linked rows
+ * only) → execution row's category column → mirror → schema definition
+ * (schema-seeded "code:" rows) → "General".
  *
- * Client name is fetched from the Client Master Board in parallel with (1).
+ * Client name is fetched from the Client Master Board in parallel.
  */
 async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, mimeType) {
   // Fetch the execution item — include documentFolder to check if it needs backfilling
@@ -443,12 +474,14 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, m
   let folderText   = cols.find((c) => c.id === DOC_FOLDER_COL)?.text?.trim()      || '';
 
   // Parallel: resolve category + get client name
-  const [category, clientName] = await Promise.all([
-    intakeId
-      ? getCategoryFromTemplate(intakeId)   // preferred: direct template lookup
-      : Promise.resolve(catText || mirror || 'General'), // fallback: text col → mirror → default
+  const [templateCategory, clientName] = await Promise.all([
+    getCategoryFromTemplate(intakeId),   // '' unless a real Template item id resolves
     getClientName(caseRef),
   ]);
+  const category = resolveUploadCategory({ templateCategory, catText, mirror, schemaCategory: categoryFromSchemaCode(intakeId) });
+  if (category === 'General' && (catText || mirror || intakeId)) {
+    console.warn(`[DocForm] Category fell back to "General" for item ${itemId} (intakeId="${intakeId}", catText="${catText}", mirror="${mirror}")`);
+  }
 
   console.log(
     `[DocForm] Uploading "${originalName}" | case ${caseRef} | client "${clientName}" | category "${category}"`
@@ -465,7 +498,11 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, m
 
   // ── Backfill folder link if the Document Folder column is empty ───────────
   // This covers items created when OneDrive was unavailable at checklist time.
-  if (!folderText && category) {
+  // Also re-point links the pre-2026-09-02 bug backfilled to "General Folder"
+  // (the link column's text reads "General Folder - <url>") once the row's
+  // real category is known — idempotent, and the file now lands in that folder.
+  const staleGeneralLink = /^General Folder\b/i.test(folderText) && category !== 'General';
+  if ((!folderText || staleGeneralLink) && category) {
     try {
       const folderUrl = await ensureCategoryFolderLink({ clientName, caseRef, category });
       await mondayApi.query(
@@ -481,7 +518,7 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, m
         }
       );
       folderText = folderUrl;   // so the update comment links to the folder
-      console.log(`[DocForm] Backfilled folder link for "${category}" on item ${itemId}`);
+      console.log(`[DocForm] ${staleGeneralLink ? 'Re-pointed stale General' : 'Backfilled'} folder link for "${category}" on item ${itemId}`);
     } catch (err) {
       // Best-effort — upload already succeeded so don't fail the whole request
       console.warn(`[DocForm] Folder link backfill failed for item ${itemId}:`, err.message);
@@ -611,4 +648,5 @@ module.exports = {
   uploadFileToOneDrive,
   markDocumentReceived,
   normApplicantType, // exported for tests (manifest-filter label matching)
+  resolveUploadCategory, isTemplateItemId, categoryFromSchemaCode, // exported for tests (upload folder resolution)
 };

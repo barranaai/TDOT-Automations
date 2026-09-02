@@ -14,12 +14,13 @@ const CASE = '2026-ISS-009';
 const F = (formKey) => `questionnaire-${CASE}-${formKey}.json`;
 const P = (formKey) => `questionnaire-${CASE}-${formKey}.pdf`;
 const OLD = '2026-07-01T10:00:00.000Z';
+const RECENT_PDF = '2026-09-02T11:00:00.000Z'; // after the draft-PDF policy cutoff → a PDF proves nothing by itself
 const NOW = Date.parse('2026-09-02T12:00:00.000Z');
 
 function harness({ files, store, manifest, modified = {} }) {
   const uploads = [];
   const fake = {
-    listFiles: async () => files.map((name) => ({ name, size: 10, lastModifiedDateTime: modified[name] || OLD })),
+    listFiles: async () => files.map((name) => ({ name, size: 10, lastModifiedDateTime: modified[name] || (name.endsWith('.pdf') ? RECENT_PDF : OLD) })),
     readFile:  async ({ filename }) => {
       if (filename === `questionnaire-members-${CASE}.json`) return manifest ? Buffer.from(typeof manifest === 'string' ? manifest : JSON.stringify(manifest)) : null;
       return store[filename] != null ? Buffer.from(typeof store[filename] === 'string' ? store[filename] : JSON.stringify(store[filename])) : null;
@@ -152,6 +153,10 @@ test('slot count also comes from disk; edited-after-submission, legacy-key colli
   assert.ok(out.forms.every((f) => f.reason === 'status-uncertain' && f.submittedVia === 'ambiguous-manifest'), JSON.stringify(out.forms));
   assert.equal(h.uploads.length, 0);
 
+  // (b0) an admin repair moves the file's lastModified but not the client's savedAt → still plainly "Submitted"
+  h = harness({ files: [F('primary'), P('primary')], store: { [F('primary')]: answered(1, { savedAt: '2026-08-10T12:00:10.000Z' }) }, manifest: { members: [{ key: 'primary', label: 'Primary Applicant' }] }, modified: { [F('primary')]: '2026-08-24T17:30:00.000Z' } });
+  out = await run(h.svc, { updates: [{ body: '📋 Questionnaire Submitted …/review?formKey=primary', createdAt: '2026-08-10T12:00:30.000Z' }], dryRun: false });
+  assert.equal(out.forms[0].action, 'regenerated'); assert.equal(out.forms[0].submitted, true); assert.equal(out.forms[0].editedAt, undefined);
   // (b) exact comment, but the JSON was saved well AFTER the submission → skipped (the live path labels such saves "In progress")
   h = harness({ files: [F('primary'), P('primary')], store: { [F('primary')]: answered(1, { savedAt: '2026-08-20T09:00:00.000Z' }) }, manifest: { members: [{ key: 'primary', label: 'Primary Applicant', submittedAt: '2026-08-10T12:00:00.000Z' }] } });
   out = await run(h.svc, { updates: [{ body: '📋 Questionnaire Submitted …/review?formKey=primary', createdAt: '2026-08-10T12:00:30.000Z' }], dryRun: false });
@@ -176,6 +181,42 @@ test('slot count also comes from disk; edited-after-submission, legacy-key colli
   out = await run(h.svc, { updates: [], skipKeys: ['primary'], dryRun: false });
   assert.equal(byKey(out).primary.reason, 'skipped-by-caller'); assert.equal(byKey(out)['spouse-1'].action, 'regenerated');
   assert.deepEqual(h.uploads.map((u) => u.filename), [P('spouse-1')]);
+});
+
+test('legacy PDF (written before the draft-PDF policy) is per-form proof of submission; edited-after-submission renders the third cover state only when asked', async () => {
+  const { svc } = harness({ files: [], store: {}, manifest: null });
+  assert.ok(svc.LEGACY_PDF_CUTOFF_MS === Date.parse('2026-09-02T10:42:00Z'));
+  // dual-slot batch case: without the PDF the primary slot is ambiguous; a pre-cutoff PDF resolves it
+  const ev = svc.parseSubmissionUpdates([{ body: '📋 Questionnaire Submitted (2 members)\n\nMembers submitted:\n  • Primary Applicant: 85%\n  • Spouse: 80%\n…/review?formKey=primary', createdAt: '2026-08-11T09:00:00.000Z' }]);
+  const base = { formKey: 'primary', memberKey: 'primary', member: { key: 'primary', label: 'Primary Applicant', submittedAt: '2026-08-11T09:00:00.000Z' }, manifestExists: true, hasAdditionalSlot: true, evidence: ev, caseDone: true, savedAt: OLD };
+  assert.deepEqual(svc.decideSubmission(base), { submitted: false, via: 'ambiguous-batch', uncertain: true });
+  assert.deepEqual(svc.decideSubmission({ ...base, legacyPdfAt: '2026-08-11T09:00:05.000Z' }), { submitted: true, via: 'legacy-pdf', submittedAt: '2026-08-11T09:00:05.000Z' });
+
+  // case run: the PDF's listing timestamp decides whether it counts (before cutoff → proof; after → could be a draft PDF)
+  const mk = (pdfModified) => harness({
+    files: [F('primary'), P('primary'), F('primary-additional'), P('primary-additional')],
+    store: { [F('primary')]: answered(1), [F('primary-additional')]: answered(2) },
+    manifest: { members: [{ key: 'primary', label: 'Primary Applicant', submittedAt: '2026-08-11T09:00:00.000Z' }] },
+    modified: { [P('primary')]: pdfModified, [P('primary-additional')]: pdfModified },
+  });
+  let h = mk('2026-08-11T09:00:05.000Z');
+  let out = await run(h.svc, { formFiles: { primary: 'a', additional: 'b' }, updates: [], dryRun: false });
+  assert.ok(out.forms.every((f) => f.action === 'regenerated' && f.submitted && f.submittedVia === 'legacy-pdf'), JSON.stringify(out.forms));
+  h = mk('2026-09-02T12:00:00.000Z'); // after the cutoff: a draft-policy PDF proves nothing
+  out = await run(h.svc, { formFiles: { primary: 'a', additional: 'b' }, updates: [], dryRun: false });
+  assert.ok(out.forms.every((f) => f.reason === 'status-uncertain'), JSON.stringify(out.forms));
+
+  // edited after submission: default skip; with editedAfterSubmission:'render' the PDF is built with the third state
+  const mk2 = () => harness({ files: [F('primary'), P('primary')], store: { [F('primary')]: answered(1, { savedAt: '2026-08-20T09:00:00.000Z' }) }, manifest: { members: [{ key: 'primary', label: 'Primary Applicant' }] } });
+  const updates = [{ body: '📋 Questionnaire Submitted …/review?formKey=primary', createdAt: '2026-08-10T12:00:30.000Z' }];
+  h = mk2(); out = await run(h.svc, { updates, dryRun: false });
+  assert.equal(out.forms[0].reason, 'edited-after-submission'); assert.equal(h.uploads.length, 0);
+  h = mk2(); out = await run(h.svc, { updates, dryRun: false, editedAfterSubmission: 'render' });
+  assert.equal(out.forms[0].action, 'regenerated'); assert.equal(out.forms[0].submitted, true); assert.equal(out.forms[0].editedAt, '2026-08-20T09:00:00.000Z');
+  assert.equal(h.uploads.length, 1);
+  const src = fs.readFileSync(require.resolve('../src/services/questionnairePdfService'), 'utf8');
+  assert.match(src, /\['Status', 'Submitted — edited after submission'\], \['Submitted', formatTimestamp\(submittedAt\)\], \['Last saved', formatTimestamp\(editedAt\)\]/);
+  assert.match(src, /ctx\.editedAt \? 'Submitted · edited after' : 'Submitted'/);
 });
 
 test('per-form failures are recorded and the case continues; corrupt manifest aborts the case before any write; transient listing failure propagates', async () => {
@@ -233,5 +274,7 @@ test('endpoint + listFiles + driver pins', () => {
   assert.match(drv, /regen-report-/, 'a report file is always written');
   assert.match(drv, /parseMiss/, 'parse-health counter');
   assert.match(drv, /updatesTruncated: rawUpdates\.length >= UPDATES_LIMIT/, 'flags a cut Updates feed');
+  assert.match(drv, /editedAfterSubmission: RENDER_EDITED \? 'render' : 'skip'/, 'edited-after-submission rendering is opt-in');
+  assert.match(server.slice(i), /editedAfterSubmission === 'render' \? 'render' : 'skip'/, 'endpoint whitelists the option');
   assert.doesNotMatch(drv, /mutation/, 'driver never mutates Monday');
 });
