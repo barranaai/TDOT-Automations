@@ -375,12 +375,20 @@ router.get('/:caseRef/review', staffOrAdminKey, async (req, res) => {
 
 // ─── PDF export — GET /q/:caseRef/export-pdf ─────────────────────────────────
 //
-// Opens a clean, print-ready HTML report in a new tab with the browser's
-// print / Save-as-PDF dialog triggered automatically.  No extra libraries.
+// Serves a real PDF (the same consultant-readable layout the saved
+// questionnaire PDFs use), built on demand from the saved JSON truth files.
+//   ?formKey=<key>  → that one form (the review bar)
+//   no formKey      → the whole case: every saved form, primary first (cockpit)
+// Staff correction flags are printed beside the answers. Read-only.
 
 router.get('/:caseRef/export-pdf', staffOrAdminKey, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
-  const formKey = sanitiseFormKey(req.query.formKey || 'primary');
+  // ?formKey present → exactly that stored form (an empty/invalid value is an error, never "the whole case")
+  const rawKey  = req.query.formKey;
+  const formKey = rawKey === undefined ? null : sanitiseFormKey(String(rawKey));
+  if (rawKey !== undefined && (!String(rawKey).trim() || !formKey)) {
+    return res.status(400).type('html').send(svc.buildErrorPage('Unknown form.'));
+  }
 
   try {
     if (!(await enforceCaseAccess(req, res, caseRef))) return;
@@ -388,33 +396,28 @@ router.get('/:caseRef/export-pdf', staffOrAdminKey, async (req, res) => {
     if (!caseDetails) {
       return res.status(404).type('html').send(svc.buildErrorPage('Case not found.'));
     }
+    const { clientName, caseType, caseSubType, qCompletionStatus } = caseDetails;
+    const formFiles = svc.resolveForm(caseType, caseSubType);
 
-    const { clientName, caseType, caseSubType } = caseDetails;
-
-    const [fields, flags] = await Promise.all([
-      svc.loadFormData({ clientName, caseRef, formKey }),
-      review.loadFlags({ clientName, caseRef, formKey }),
-    ]);
-
-    if (!fields.length) {
+    const result = await require('../services/questionnairePdfService').exportCasePdf({
+      clientName, caseRef, formFiles, formKey,
+      caseDone: String(qCompletionStatus || '').trim().toLowerCase() === 'done',
+      loadFlags: (k) => review.loadFlags({ clientName, caseRef, formKey: k }),
+    });
+    if (!result) {
       return res.type('html').send(svc.buildErrorPage(
-        'No submitted data found for this case. The client may not have completed the questionnaire yet.'
+        'No saved questionnaire data found for this case yet.'
       ));
     }
-
-    const html = svc.buildPrintPage({
-      caseRef,
-      clientName,
-      caseType,
-      caseSubType,
-      savedFields: fields,
-      savedFlags:  flags,
-      staffName:   req.staff.name,
-    });
-
-    return res.type('html').send(html);
+    const filename = `Questionnaire-${caseRef}${formKey ? '-' + formKey : ''}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    console.log(`[/q/export-pdf] ${caseRef}${formKey ? '/' + formKey : ' (all forms)'} → ${result.forms.length} form(s), ${result.buffer.length} bytes, by ${req.staff?.name || 'staff'}`);
+    return res.send(result.buffer);
   } catch (err) {
     console.error(`[/q/export-pdf] Error for ${caseRef}:`, err.message);
+    if (err.transient) return res.status(503).type('html').send(svc.buildErrorPage('Our document system is temporarily unavailable — please try again in a few minutes.'));
     return res.status(500).type('html').send(svc.buildErrorPage('An error occurred generating the PDF export.'));
   }
 });

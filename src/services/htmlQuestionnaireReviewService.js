@@ -110,6 +110,8 @@ async function saveFlags({ clientName, caseRef, formKey, flags }) {
  * Look up client details from Monday for a given caseRef.
  * Used by the review/notify endpoints (no token validation needed — staff already authed).
  */
+const Q_COMPLETION_COL = (typeof CM !== 'undefined' && CM && CM.qCompletionStatus) || 'color_mm0x9s08'; // Client Master: Q Completion Status (Done / Working on it)
+
 async function getCaseDetails(caseRef) {
   const data = await mondayApi.query(
     `query($boardId: ID!, $colId: String!, $val: String!) {
@@ -122,7 +124,7 @@ async function getCaseDetails(caseRef) {
            name
            column_values(ids: [
              "${CM.caseRef}", "${CM.caseType}", "${CM.caseSubType}",
-             "${CM.clientEmail}", "${CM.accessToken}"
+             "${CM.clientEmail}", "${CM.accessToken}", "${Q_COMPLETION_COL}"
            ]) { id text }
          }
        }
@@ -143,6 +145,7 @@ async function getCaseDetails(caseRef) {
     caseSubType: col(CM.caseSubType) || null,
     clientEmail: col(CM.clientEmail),
     accessToken: col(CM.accessToken),
+    qCompletionStatus: col(Q_COMPLETION_COL),   // "Done" / "Working on it" — the export's last-resort status signal
   };
 }
 

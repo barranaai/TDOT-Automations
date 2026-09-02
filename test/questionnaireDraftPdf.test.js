@@ -101,7 +101,8 @@ test('buildLayoutModel: section paths become part/sub-section blocks; "Label —
   assert.deepEqual(blocks.map((b) => b.type), ['part', 'fields', 'table', 'part', 'fields']);
   assert.equal(blocks[0].title, 'Main Applicant');
   assert.equal(blocks[1].title, 'Section 1 › Personal Details');
-  assert.deepEqual(blocks[1].rows, [{ label: 'Given Name', value: 'Harini' }, { label: 'Middle Name', value: '' }]);
+  assert.deepEqual(blocks[1].rows, [{ label: 'Given Name', value: 'Harini', key: 'a' }, { label: 'Middle Name', value: '', key: 'b' }]);
+  assert.deepEqual(blocks[2].keys, [['c', 'd'], ['e', 'f']], 'table cells keep their field keys (flags are keyed by field key)');
   const t = blocks[2];
   assert.equal(t.title, 'Section 2 › Address History', 'the "› Table" suffix is dropped from the heading');
   assert.deepEqual(t.columns, ['From (DD/MM/YYYY)', 'City']);

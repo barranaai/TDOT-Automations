@@ -42,6 +42,7 @@ const RULE       = '#e5e7eb';
 const BAND       = '#f3f4f6';
 const ZEBRA      = '#fafafa';
 const TABLE_HEAD = '#eef2f7';
+const FLAG_TEXT  = '#8a5a00';   // staff correction flags ("Officer note")
 
 const PAGE_MARGINS   = { top: 64, bottom: 30, left: 48, right: 48 };
 const CONTENT_BOTTOM = 62;   // content stops this many pt above the page bottom (footer lives below)
@@ -113,17 +114,19 @@ function buildLayoutModel(fields) {
       const row = m ? parseInt(m[2], 10) : 1;
       if (!open || open.type !== 'table' || open.title !== title || open.tableId !== tableId) {
         flush();
-        open = { type: 'table', title, tableId, sub: humanizeTableId(tableId), columns: [], rows: [] };
+        open = { type: 'table', title, tableId, sub: humanizeTableId(tableId), columns: [], rows: [], keys: [] };
       }
       if (!open.columns.includes(col)) open.columns.push(col);
-      while (open.rows.length < row) open.rows.push([]);
-      open.rows[row - 1][open.columns.indexOf(col)] = value;
+      while (open.rows.length < row) { open.rows.push([]); open.keys.push([]); }
+      const ci = open.columns.indexOf(col);
+      open.rows[row - 1][ci] = value;
+      open.keys[row - 1][ci] = String(f.key || '');
     } else {
       if (!open || open.type !== 'fields' || open.title !== title) {
         flush();
         open = { type: 'fields', title, rows: [] };
       }
-      open.rows.push({ label, value });
+      open.rows.push({ label, value, key: String(f.key || '') });
     }
   }
   flush();
@@ -157,9 +160,13 @@ function buildLayoutModel(fields) {
   for (const b of blocks) if (b.type === 'table') titleCount.set(b.title, (titleCount.get(b.title) || 0) + 1);
   for (const b of blocks) {
     if (b.type !== 'table') continue;
-    b.rows = b.rows
-      .map((r) => b.columns.map((_, i) => r[i] == null ? '' : r[i]))
-      .filter((r) => r.some((c) => c !== ''));
+    const kept = [];
+    b.rows.forEach((r, i) => {
+      const full = b.columns.map((_, c) => (r[c] == null ? '' : r[c]));
+      if (full.some((c) => c !== '')) kept.push({ row: full, keys: b.columns.map((_, c) => ((b.keys[i] || [])[c] || '')) });
+    });
+    b.rows = kept.map((k) => k.row);
+    b.keys = kept.map((k) => k.keys);   // field keys per cell (staff flags are keyed by field key)
     if (titleCount.get(b.title) > 1 && b.sub) b.title = `${b.title} · ${b.sub}`;
     delete b.tableId; delete b.sub;
   }
@@ -175,7 +182,7 @@ function drawRunningHeader(doc, ctx) {
   doc.save();
   doc.font('Helvetica-Bold').fontSize(8).fillColor(NAVY)
      .text('TDOT IMMIGRATION', left, y, { lineBreak: false });
-  const meta = [ctx.clientName, ctx.caseRef, ctx.memberLabel && ctx.memberLabel !== 'Primary Applicant' ? ctx.memberLabel : null, ctx.submitted ? (ctx.editedAt ? 'Submitted · edited after' : 'Submitted') : 'In progress']
+  const meta = [ctx.clientName, ctx.caseRef, ctx.memberLabel && ctx.memberLabel !== 'Primary Applicant' ? ctx.memberLabel : null, ctx.submitted ? (ctx.editedAt ? 'Submitted · edited after' : 'Submitted') : (ctx.statusUnknown ? 'Saved' : 'In progress')]
     .filter(Boolean).join('  ·  ');
   doc.font('Helvetica').fontSize(8).fillColor(TEXT_MUTED)
      .text(meta, left, y, { width: right - left, align: 'right', lineBreak: false });
@@ -204,7 +211,7 @@ function ensureSpace(doc, needed, ctx) {
 
 // ─── Cover ───────────────────────────────────────────────────────────────────
 
-function drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, completionPct, submittedAt, submitted = true, editedAt = null, blocks = [] }) {
+function drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, completionPct, submittedAt, submitted = true, editedAt = null, statusUnknown = false, flagsUnavailable = false, blocks = [] }) {
   const leftX = PAGE_MARGINS.left, rightEdge = doc.page.width - PAGE_MARGINS.right, W = rightEdge - leftX;
 
   doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(20).text('Client Questionnaire', leftX, PAGE_MARGINS.top, { lineBreak: false });
@@ -227,9 +234,14 @@ function drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, comp
     rows.push(['Status', 'Submitted — edited after submission'], ['Submitted', formatTimestamp(submittedAt)], ['Last saved', formatTimestamp(editedAt)]);
   } else if (submitted) {
     rows.push(['Status', 'Submitted'], ['Submitted', formatTimestamp(submittedAt)]);
+  } else if (statusUnknown) {
+    // On-demand staff export where per-form submission cannot be confirmed
+    // (per-member stamp on a two-form case): say what is known, no more.
+    rows.push(['Status', 'Saved — submission status not confirmed for this form'], ['Last saved', formatTimestamp(submittedAt)]);
   } else {
     rows.push(['Status', 'In progress — not yet submitted'], ['Last saved', formatTimestamp(submittedAt)]);
   }
+  if (flagsUnavailable) rows.push(['Officer notes', 'could not be loaded at export time — see the review page']);
   for (const [label, value] of rows) {
     doc.font('Helvetica').fontSize(10);
     const h = Math.max(doc.heightOfString(value, { width: W - 96 }), 12);
@@ -290,24 +302,33 @@ function drawSectionHeading(doc, title, ctx) {
   doc.y = y + h + 6;
 }
 
-function drawFieldRow(doc, label, value, ctx, zebra) {
+// Built-in PDF fonts (WinAnsi) have no flag glyph — plain-text markers only.
+const flagNote = (flag) => (flag ? `Officer note: ${clean(flag.comment) || '(flagged for correction)'}` : '');
+
+function drawFieldRow(doc, label, value, ctx, zebra, flag = null) {
   const leftX = PAGE_MARGINS.left, rightEdge = doc.page.width - PAGE_MARGINS.right;
   const valueX = leftX + LABEL_W + 10, valueW = rightEdge - valueX - 6;
   const hasValue = Boolean(value);
   const shown = hasValue ? value : '—';
+  const note = flagNote(flag);
 
   doc.font('Helvetica').fontSize(9);
   const labelH = doc.heightOfString(label, { width: LABEL_W - 12, lineGap: 1.5 });
   doc.font('Helvetica').fontSize(10);
-  const valueH = doc.heightOfString(shown, { width: valueW, lineGap: 1.5 });
+  let valueH = doc.heightOfString(shown, { width: valueW, lineGap: 1.5 });
+  if (note) { doc.font('Helvetica-Oblique').fontSize(8.5); valueH += doc.heightOfString(note, { width: valueW }) + 3; }
   const rowH = Math.max(labelH, valueH) + 8;
   ensureSpace(doc, rowH, ctx);
 
   const y0 = doc.y;
   if (zebra) { doc.save(); doc.rect(leftX, y0 - 2, rightEdge - leftX, rowH).fill(ZEBRA); doc.restore(); }
+  if (flag) { doc.save(); doc.rect(leftX, y0 - 2, 3, rowH).fill(FLAG_TEXT); doc.restore(); }
   doc.fillColor(TEXT_MUTED).font('Helvetica').fontSize(9).text(label, leftX + 6, y0 + 2, { width: LABEL_W - 12, lineGap: 1.5 });
   doc.fillColor(hasValue ? TEXT_BODY : TEXT_MUTED).font('Helvetica').fontSize(10)
      .text(shown, valueX, y0 + 1, { width: valueW, lineGap: 1.5 });
+  if (note) {
+    doc.fillColor(FLAG_TEXT).font('Helvetica-Oblique').fontSize(8.5).text(note, valueX, doc.y + 2, { width: valueW });
+  }
   doc.y = y0 + rowH;
 }
 
@@ -358,35 +379,41 @@ function drawTableHeader(doc, columns, widths, ctx) {
 
 // Wide tables (more columns than fit legibly) → one "Entry N" block per row,
 // label / value lines: readable, and each line copies as "Label   value".
-function drawRecords(doc, block, ctx) {
+function drawRecords(doc, block, ctx, flags) {
   block.rows.forEach((row, ri) => {
     ensureSpace(doc, 40, ctx);
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9)
        .text(`Entry ${ri + 1}`, PAGE_MARGINS.left + 6, doc.y + 2, { lineBreak: false });
     doc.y += 16;
-    block.columns.forEach((col, i) => drawFieldRow(doc, col, row[i], ctx, i % 2 === 1));
+    block.columns.forEach((col, i) => drawFieldRow(doc, col, row[i], ctx, i % 2 === 1, flags[(block.keys[ri] || [])[i]] || null));
     doc.y += 6;
   });
   doc.y += 4;
 }
 
-function drawTable(doc, block, ctx) {
+function drawTable(doc, block, ctx, flags = {}) {
   drawSectionHeading(doc, block.title, ctx);
   if (!block.rows.length) {
     doc.fillColor(TEXT_MUTED).font('Helvetica-Oblique').fontSize(9).text('— no entries —', PAGE_MARGINS.left + 6, doc.y, { lineBreak: false });
     doc.y += 16;
     return;
   }
-  if (block.columns.length > MAX_GRID_COLS) return drawRecords(doc, block, ctx);
+  if (block.columns.length > MAX_GRID_COLS) return drawRecords(doc, block, ctx, flags);
   const leftX = PAGE_MARGINS.left, W = pageWidth(doc);
   const widths = tableColumnWidths(doc, block.columns, block.rows, W);
-  if (!widths) return drawRecords(doc, block, ctx);   // words would not fit → records
+  if (!widths) return drawRecords(doc, block, ctx, flags);   // words would not fit → records
   drawTableHeader(doc, block.columns, widths, ctx);
 
+  const notes = []; // flagged cells → listed under the table
   block.rows.forEach((row, ri) => {
     doc.font('Helvetica').fontSize(9);
+    const cellText = row.map((cell, i) => {
+      const flag = flags[(block.keys[ri] || [])[i]];
+      if (flag) notes.push(`Officer note — Entry ${ri + 1} · ${block.columns[i]}: ${clean(flag.comment) || '(flagged for correction)'}`);
+      return (flag ? '[!] ' : '') + (cell || '—');
+    });
     let h = 0;
-    row.forEach((cell, i) => { h = Math.max(h, doc.heightOfString(cell || '—', { width: widths[i] - 8, lineGap: 1 })); });
+    cellText.forEach((t, i) => { h = Math.max(h, doc.heightOfString(t, { width: widths[i] - 8, lineGap: 1 })); });
     h += 8;
     if (doc.y + h > doc.page.height - CONTENT_BOTTOM) {
       doc.addPage(); drawRunningHeader(doc, ctx); doc.y = PAGE_MARGINS.top;
@@ -396,28 +423,96 @@ function drawTable(doc, block, ctx) {
     if (ri % 2 === 1) { doc.save(); doc.rect(leftX, y, W, h).fill(ZEBRA); doc.restore(); }
     let x = leftX;
     row.forEach((cell, i) => {
-      const has = Boolean(cell);
-      doc.fillColor(has ? TEXT_BODY : TEXT_MUTED).font('Helvetica').fontSize(9)
-         .text(has ? cell : '—', x + 4, y + 4, { width: widths[i] - 8, lineGap: 1 });
+      const flagged = Boolean(flags[(block.keys[ri] || [])[i]]);
+      doc.fillColor(flagged ? FLAG_TEXT : (cell ? TEXT_BODY : TEXT_MUTED)).font('Helvetica').fontSize(9)
+         .text(cellText[i], x + 4, y + 4, { width: widths[i] - 8, lineGap: 1 });
       x += widths[i];
     });
     doc.moveTo(leftX, y + h).lineTo(leftX + W, y + h).lineWidth(0.25).strokeColor(RULE).stroke();
     doc.y = y + h;
   });
+  for (const n of notes) {
+    ensureSpace(doc, 14, ctx);
+    doc.fillColor(FLAG_TEXT).font('Helvetica-Oblique').fontSize(8.5).text(n, leftX + 6, doc.y + 3, { width: W - 12 });
+    doc.y += 2;
+  }
   doc.y += 10;
 }
 
 // ─── Build PDF buffer from field data ────────────────────────────────────────
 
-function buildPdfBuffer({ clientName, caseRef, formLabel, memberLabel, completionPct, submittedAt, fields, submitted = true, editedAt = null }) {
+/**
+ * Render ONE form (cover + body) into an open document. `first` = the
+ * document's first page is still blank (no addPage before the cover).
+ */
+// Flags whose field never made it into the rendered model (e.g. a cell of an
+// all-empty table row, or a key the form no longer has) — never dropped silently.
+function drawUnmatchedFlags(doc, flags, modelKeys, ctx) {
+  const left = Object.keys(flags).filter((k) => !modelKeys.has(k) && flags[k] && typeof flags[k] === 'object');
+  if (!left.length) return;
+  drawSectionHeading(doc, 'Officer notes on fields not shown above', ctx);
+  for (const k of left) {
+    const f = flags[k];
+    const where = [clean(f.section), clean(f.label) || k].filter(Boolean).join(' › ');
+    ensureSpace(doc, 16, ctx);
+    doc.fillColor(FLAG_TEXT).font('Helvetica-Oblique').fontSize(8.5)
+       .text(`${where}: ${clean(f.comment) || '(flagged for correction)'}`, PAGE_MARGINS.left + 6, doc.y + 2, { width: pageWidth(doc) - 12 });
+    doc.y += 3;
+  }
+  doc.y += 8;
+}
+
+function renderFormInto(doc, form, base, first) {
+  const blocks = buildLayoutModel(form.fields);
+  const flags  = form.flags && typeof form.flags === 'object' ? form.flags : {};
+  const modelKeys = new Set();
+  for (const b of blocks) {
+    if (b.type === 'fields') b.rows.forEach((r) => modelKeys.add(r.key));
+    if (b.type === 'table') (b.keys || []).forEach((row) => row.forEach((k) => modelKeys.add(k)));
+  }
+  const submitted = form.submitted !== undefined ? Boolean(form.submitted) : true;
+  const ctx = { clientName: base.clientName, caseRef: base.caseRef, memberLabel: form.memberLabel, submitted,
+                editedAt: submitted ? (form.editedAt || null) : null, statusUnknown: !submitted && Boolean(form.statusUnknown) };
+  if (!first) doc.addPage();
+  drawRunningHeader(doc, ctx);
+  drawCoverBlock(doc, { formLabel: form.formLabel, clientName: base.clientName, caseRef: base.caseRef, memberLabel: form.memberLabel,
+    completionPct: form.completionPct, submittedAt: form.submittedAt, submitted, editedAt: ctx.editedAt, statusUnknown: ctx.statusUnknown,
+    flagsUnavailable: Boolean(form.flagsUnavailable), blocks });
+  if (!blocks.length) {
+    doc.fillColor(TEXT_MUTED).font('Helvetica-Oblique').fontSize(10).text('No responses were recorded.', { width: pageWidth(doc) });
+    drawUnmatchedFlags(doc, flags, modelKeys, ctx);
+    return;
+  }
+  // Body starts on a fresh page so the cover/contents stay clean.
+  doc.addPage(); drawRunningHeader(doc, ctx); doc.y = PAGE_MARGINS.top;
+  for (const b of blocks) {
+    if (b.type === 'part') { drawPartHeading(doc, b.title, ctx); continue; }
+    if (b.type === 'table') { drawTable(doc, b, ctx, flags); continue; }
+    drawSectionHeading(doc, b.title, ctx);
+    b.rows.forEach((r, i) => drawFieldRow(doc, r.label, r.value, ctx, i % 2 === 1, flags[r.key] || null));
+    doc.y += 8;
+  }
+  drawUnmatchedFlags(doc, flags, modelKeys, ctx);
+}
+
+/**
+ * One PDF holding one or more forms (a whole case: every member / form slot),
+ * each with its own cover; page numbers run across the document.
+ * forms: [{ formLabel, memberLabel, completionPct, submittedAt, fields, submitted, editedAt, statusUnknown, flags }]
+ */
+function buildCasePdfBuffer({ clientName, caseRef, forms }) {
   return new Promise((resolve, reject) => {
     try {
+      if (!Array.isArray(forms) || !forms.length) throw new Error('buildCasePdfBuffer: no forms');
+      const first = forms[0];
       const doc = new PDFDocument({
         size: 'LETTER', margins: PAGE_MARGINS, bufferPages: true,
         info: {
-          Title:    `Questionnaire — ${caseRef}${memberLabel ? ' — ' + memberLabel : ''}`,
+          Title:    forms.length === 1
+            ? `Questionnaire — ${caseRef}${first.memberLabel ? ' — ' + first.memberLabel : ''}`
+            : `Questionnaire — ${caseRef} — ${forms.length} forms`,
           Author:   'TDOT Immigration',
-          Subject:  formLabel || 'Client Questionnaire',
+          Subject:  forms.length === 1 ? (first.formLabel || 'Client Questionnaire') : 'Client Questionnaire',
           Keywords: `questionnaire, ${caseRef}`,
         },
       });
@@ -426,26 +521,7 @@ function buildPdfBuffer({ clientName, caseRef, formLabel, memberLabel, completio
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      const blocks = buildLayoutModel(fields);
-      const ctx = { clientName, caseRef, memberLabel, submitted, editedAt: submitted ? editedAt : null };
-
-      drawRunningHeader(doc, ctx);
-      drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, completionPct, submittedAt, submitted, editedAt: submitted ? editedAt : null, blocks });
-
-      if (!blocks.length) {
-        doc.fillColor(TEXT_MUTED).font('Helvetica-Oblique').fontSize(10)
-           .text('No responses were recorded.', { width: pageWidth(doc) });
-      } else {
-        // Body starts on a fresh page so the cover/contents stay clean.
-        doc.addPage(); drawRunningHeader(doc, ctx); doc.y = PAGE_MARGINS.top;
-        for (const b of blocks) {
-          if (b.type === 'part') { drawPartHeading(doc, b.title, ctx); continue; }
-          if (b.type === 'table') { drawTable(doc, b, ctx); continue; }
-          drawSectionHeading(doc, b.title, ctx);
-          b.rows.forEach((r, i) => drawFieldRow(doc, r.label, r.value, ctx, i % 2 === 1));
-          doc.y += 8;
-        }
-      }
+      forms.forEach((form, i) => renderFormInto(doc, form, { clientName, caseRef }, i === 0));
 
       const generatedStr = formatTimestamp();
       const range = doc.bufferedPageRange();
@@ -456,6 +532,11 @@ function buildPdfBuffer({ clientName, caseRef, formLabel, memberLabel, completio
       doc.end();
     } catch (err) { reject(err); }
   });
+}
+
+/** One-form PDF (the save/submit path). */
+function buildPdfBuffer({ clientName, caseRef, formLabel, memberLabel, completionPct, submittedAt, fields, submitted = true, editedAt = null, flags = null, statusUnknown = false }) {
+  return buildCasePdfBuffer({ clientName, caseRef, forms: [{ formLabel, memberLabel, completionPct, submittedAt, fields, submitted, editedAt, flags, statusUnknown }] });
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -770,7 +851,110 @@ async function regenerateCasePdfs({ clientName, caseRef, formFiles = null, qComp
            forms: results, failed, transientFailures };
 }
 
+// ─── On-demand staff export (the review bar / cockpit "Export PDF" button) ───
+
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  const worker = async () => { while (i < items.length) { const idx = i++; out[idx] = await fn(items[idx], idx); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+/**
+ * Build the PDF a staff member downloads: ONE form (formKey = exact stored
+ * key) or the whole case (every saved form with a client answer, primary
+ * first, then manifest order, each member's additional slot right after its
+ * main form; members removed from the manifest and legacy duplicate slots are
+ * dropped). Read-only. Status per form: a submission-era PDF or the member's
+ * manifest stamp on a single-slot case; when nothing per member can back a
+ * verdict the cover says "Saved — submission status not confirmed" rather
+ * than guessing either way. Staff correction flags are printed beside the
+ * answers; a transient flags-read failure fails the export (never a PDF that
+ * quietly claims "no corrections").
+ * @returns {Promise<{ buffer: Buffer, forms: Array }|null>} null when nothing is saved
+ */
+async function exportCasePdf({ clientName, caseRef, formFiles = null, formKey = null, caseDone = false, loadFlags = null }) {
+  if (!clientName || !caseRef) throw new Error('clientName and caseRef are required');
+  const files  = await oneDrive.listFiles({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER });
+  const byName = new Map(files.map((f) => [f.name, f]));
+  const re = new RegExp(`^questionnaire-${escapeRe(caseRef)}-(.+)\\.json$`, 'i');
+  const allKeys = files.map((f) => re.exec(f.name)).filter(Boolean).map((m) => m[1])
+    .filter((k) => !/-flags$/i.test(k) && /^[a-z0-9][a-z0-9-]*$/i.test(k));
+  // the slot count comes from EVERYTHING on disk, never from the one key being exported
+  const slotFromDisk = allKeys.some((k) => splitFormKey(k).isAdditional);
+  // legacy "additional" and "primary-additional" are one slot → keep the normalised file
+  const byNorm = new Map();
+  for (const k of allKeys) { const nk = splitFormKey(k).formKey; const prev = byNorm.get(nk); if (!prev || (prev.toLowerCase() === 'additional' && k.toLowerCase() !== 'additional')) byNorm.set(nk, k); }
+  let keys = formKey ? allKeys.filter((k) => k === formKey) : [...byNorm.values()];
+  if (!keys.length) return null;
+
+  let members = [], manifestExists = false;
+  const manifestBuf = await oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: `${MEMBERS_PREFIX}${caseRef}.json` });
+  if (manifestBuf) { try { const d = JSON.parse(manifestBuf.toString('utf8')); if (Array.isArray(d.members)) { members = d.members; manifestExists = members.length > 0; } } catch (_) { /* treat as absent */ } }
+  const hasAdditionalSlot = Boolean(formFiles && formFiles.additional) || slotFromDisk;
+  // whole-case export: a member removed from the manifest is not part of the case any more
+  if (!formKey && manifestExists) keys = keys.filter((k) => { const { memberKey } = splitFormKey(k); return memberKey === 'primary' || members.some((m) => m && m.key === memberKey); });
+  if (!keys.length) return null;
+
+  const position = (k) => {
+    const { memberKey, isAdditional } = splitFormKey(k);
+    const mi = memberKey === 'primary' ? 0 : (members.findIndex((m) => m && m.key === memberKey) + 1 || 1e6);
+    return mi * 2 + (isAdditional ? 1 : 0);
+  };
+  keys.sort((a, b) => position(a) - position(b) || a.localeCompare(b));
+
+  // read each form's JSON + flags together, a few forms at a time (order kept)
+  const loaded = await mapLimit(keys, 4, async (storedKey) => {
+    const [buf, flagsRes] = await Promise.all([
+      oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: `questionnaire-${caseRef}-${storedKey}.json` }),
+      (async () => {
+        if (typeof loadFlags !== 'function') return { flags: {}, flagsUnavailable: false };
+        try { return { flags: (await loadFlags(storedKey)) || {}, flagsUnavailable: false }; }
+        catch (err) {
+          if (err && err.transient) throw err;   // outage → the route answers 503; never a PDF that claims "no corrections"
+          console.warn(`[QPdf] export: flags unreadable for ${caseRef}/${storedKey}: ${err.message}`);
+          return { flags: {}, flagsUnavailable: true };
+        }
+      })(),
+    ]);
+    return { storedKey, buf, ...flagsRes };
+  });
+
+  const forms = [];
+  for (const { storedKey, buf, flags, flagsUnavailable } of loaded) {
+    if (!buf) continue;
+    let parsed; try { parsed = JSON.parse(buf.toString('utf8')); } catch (_) { continue; }
+    const data   = Array.isArray(parsed) ? { fields: parsed } : (parsed || {});
+    const fields = Array.isArray(data.fields) ? data.fields : [];
+    if (!fields.some(isClientAnswer)) continue;                       // nothing the client answered (prefill-only / empty)
+    const { formKey: normKey, memberKey, isAdditional } = splitFormKey(storedKey);
+    const member = members.find((m) => m && m.key === memberKey) || null;
+    const memberLabel = (member && member.label) || (memberKey === 'primary' ? 'Primary Applicant' : memberKey);
+    const fileForLabel = data.formFile || (isAdditional ? (formFiles && formFiles.additional) : (formFiles && formFiles.primary)) || '';
+    const formLabel = formTitleFromFile(fileForLabel) || (isAdditional ? 'Additional Questionnaire' : 'Questionnaire');
+    const savedAt = data.savedAt || null;
+    const pdfMeta = byName.get(`questionnaire-${caseRef}-${storedKey}.pdf`);
+    const pdfMs   = pdfMeta ? Date.parse(pdfMeta.lastModifiedDateTime || '') : NaN;
+    const legacyPdfAt = Number.isFinite(pdfMs) && pdfMs < LEGACY_PDF_CUTOFF_MS ? pdfMeta.lastModifiedDateTime : null;
+    const decision = decideSubmission({ formKey: normKey, memberKey, member, manifestExists, hasAdditionalSlot, evidence: null, caseDone: Boolean(caseDone), savedAt, legacyPdfAt });
+    // a definitive "not submitted" needs a manifest member to back it
+    const statusUnknown = Boolean(decision.uncertain) || (!decision.submitted && (!manifestExists || !member));
+    let editedAt = null;
+    if (decision.submitted) {
+      const subMs = Date.parse(decision.submittedAt || ''), savedMs = Date.parse(savedAt || '') || 0;
+      if (Number.isFinite(subMs) && savedMs > subMs + 5 * 60 * 1000) editedAt = savedAt;
+    }
+    forms.push({ formKey: storedKey, formLabel, memberLabel, completionPct: Number(data.completionPct) || 0,
+      submittedAt: decision.submittedAt || savedAt || new Date().toISOString(),
+      submitted: decision.submitted, editedAt, statusUnknown, fields, flags, flagsUnavailable });
+  }
+  if (!forms.length) return null;
+  const buffer = await buildCasePdfBuffer({ clientName, caseRef, forms });
+  return { buffer, forms: forms.map((f) => ({ formKey: f.formKey, memberLabel: f.memberLabel, formLabel: f.formLabel, submitted: f.submitted, statusUnknown: f.statusUnknown, editedAt: f.editedAt, flagsUnavailable: f.flagsUnavailable, fieldCount: f.fields.length })) };
+}
+
 /** Test seam: pending draft windows (keys) — not for production use. */
 function _pendingDraftKeys() { return [..._draftPending.keys()]; }
 
-module.exports = { generateAndSaveSubmissionPdf, scheduleDraftPdf, regenerateCasePdfs, decideSubmission, parseSubmissionUpdates, splitFormKey, buildPdfBuffer, buildLayoutModel, MAX_GRID_COLS, DRAFT_PDF_THROTTLE_MS, RECENT_WINDOW_MS, LEGACY_PDF_CUTOFF_MS, _pendingDraftKeys };
+module.exports = { generateAndSaveSubmissionPdf, scheduleDraftPdf, regenerateCasePdfs, exportCasePdf, decideSubmission, parseSubmissionUpdates, splitFormKey, buildPdfBuffer, buildCasePdfBuffer, buildLayoutModel, MAX_GRID_COLS, DRAFT_PDF_THROTTLE_MS, RECENT_WINDOW_MS, LEGACY_PDF_CUTOFF_MS, _pendingDraftKeys };

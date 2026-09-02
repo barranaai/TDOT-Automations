@@ -196,11 +196,10 @@ test('questionnaire pages are full-width on BOTH engines (client + review); prin
   assert.match(review, rule, 'consultant review is full-width with minimal side padding');
   // The override must come AFTER the form's own 960px rule so it wins on cascade too, not just !important.
   assert.ok(client.indexOf('max-width: 960px') < client.indexOf('max-width: none !important'), 'override injected after the authored CSS');
-  const print = svc.buildPrintPage({ caseRef: 'X', clientName: 'C', caseType: 'T', caseSubType: null, savedFields: [], savedFlags: {}, staffName: 'S' });
-  assert.ok(!rule.test(print), 'PDF/print layout deliberately unchanged');
+  assert.equal(typeof svc.buildPrintPage, 'undefined', 'the HTML print page is gone — Export PDF serves a real PDF (questionnairePdfService.exportCasePdf)');
 });
 
-test('table cells wrap on BOTH engines: text inputs → auto-growing textareas; collectors widened; print untouched', () => {
+test('table cells wrap on BOTH engines: text inputs → auto-growing textareas; collectors widened', () => {
   const fs = require('node:fs');
   const { FORMS_DIR } = require('../config/questionnaireFormMap');
   const svc = require('../src/services/htmlQuestionnaireService');
@@ -216,6 +215,4 @@ test('table cells wrap on BOTH engines: text inputs → auto-growing textareas; 
   // Every dynamic-table collector must see textareas, or converted cells would silently drop from saves/review.
   assert.equal((src.match(/row\.querySelectorAll\('input, select'\)/g) || []).length, 0, 'no collector left on the narrow selector');
   assert.equal((src.match(/row\.querySelectorAll\('input, select, textarea'\)/g) || []).length, 2, 'both table collectors widened');
-  const print = svc.buildPrintPage({ caseRef: 'X', clientName: 'C', caseType: 'T', caseSubType: null, savedFields: [], savedFlags: {}, staffName: 'S' });
-  assert.ok(!/convertTableCellInputs/.test(print), 'print/PDF untouched');
 });
