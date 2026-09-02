@@ -530,7 +530,228 @@ function scheduleDraftPdf(params, { immediate = false } = {}) {
   _draftPending.set(key, { timer, params });
 }
 
+// ─── One-time regeneration from the JSON truth files (admin-driven) ──────────
+
+const MEMBERS_PREFIX   = 'questionnaire-members-';
+const RECENT_WINDOW_MS = 15 * 60 * 1000;   // a form saved this recently may have a live client on it → skip, re-run later
+const MONTHS_RE        = '(January|February|March|April|May|June|July|August|September|October|November|December)';
+const formTitleFromFile = (file) => String(file || '')
+  .replace(/\.html?$/i, '')
+  .replace(/^\d+\.\s*/, '')
+  .replace(/\s*-\s*Questionnaire?.*$/i, '')
+  .replace(new RegExp(`\\s*-\\s*${MONTHS_RE}\\s+\\d{4}\\s*$`, 'i'), '')
+  .trim();
+const escapeRe = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// A CLIENT answer: prefill-seeded values (source:'prefill' / prefill__ keys) are not answers.
+const isPrefill      = (f) => Boolean(f) && (f.source === 'prefill' || String(f.key || '').startsWith('prefill__'));
+const isClientAnswer = (f) => Boolean(f) && !isPrefill(f) && String(f.value == null ? '' : f.value).trim() !== '';
+
+/** Normalise a stored form key. Legacy bare "additional" = the primary member's additional slot. */
+function splitFormKey(formKey) {
+  const k = String(formKey || '');
+  if (/^additional$/i.test(k)) return { formKey: 'primary-additional', memberKey: 'primary', isAdditional: true };
+  const isAdditional = /-additional$/i.test(k);
+  return { formKey: k, memberKey: k.replace(/-additional$/i, ''), isAdditional };
+}
+
+/**
+ * Submission evidence from the case's Monday Updates (plain-text bodies).
+ * Two audit-comment shapes exist (htmlQuestionnaireService.markSubmitted /
+ * markAllSubmitted):
+ *   single form:  "📋 Questionnaire Submitted … Staff Review Link: …/review?formKey=<formKey>"
+ *   batch:        "📋 Questionnaire Submitted (N members) … Members submitted:\n  • <label>: <pct>% …"
+ * @param {Array<{ body: string, createdAt?: string }>|null|undefined} updates — null/undefined = not fetched
+ * @returns {{ exact: Map<string, string|null>, batches: Array<{ labels: string[], createdAt: string|null }>, count: number }|null}
+ */
+function parseSubmissionUpdates(updates) {
+  if (!Array.isArray(updates)) return null;
+  const exact = new Map(), batches = [];
+  let count = 0;
+  for (const u of updates) {
+    const body = String((u && u.body) || '').trim();
+    // Anchor on the audit-comment prefix: a staff note that merely mentions
+    // "questionnaire submitted" and carries a review link is NOT evidence.
+    if (!/^(📋\s*)?Questionnaire Submitted\b/.test(body)) continue;
+    count++;
+    const createdAt = (u && u.createdAt) || null;
+    if (/Questionnaire Submitted\s*\(\d+\s+members?\)/i.test(body)) {
+      const labels = [];
+      const re = /•\s*([^:<\n]+?):\s*\d+%/g;
+      let m;
+      while ((m = re.exec(body))) labels.push(m[1].trim());
+      batches.push({ labels, createdAt });
+      continue;
+    }
+    const km = /review\?formKey=([^\s&"'<>]+)/i.exec(body);
+    if (!km) continue;
+    let key;
+    try { key = decodeURIComponent(km[1]); } catch (_) { key = km[1]; }
+    key = splitFormKey(key).formKey;
+    const prev = exact.get(key);
+    if (!exact.has(key) || (createdAt && (!prev || createdAt > prev))) exact.set(key, createdAt);
+  }
+  return { exact, batches, count };
+}
+
+/**
+ * Decide whether ONE stored form was submitted. Pure.
+ * Precedence — and ambiguity NEVER resolves to "submitted":
+ *   1. an exact per-form audit comment (review?formKey=<this form>)        → submitted
+ *   2. a batch comment naming this member — only if the case has a single
+ *      form slot (with an additional slot, which page was batch-submitted is unknown)
+ *   3. the member's manifest submittedAt — same single-slot condition (the
+ *      stamp is per member, set by whichever slot was submitted)
+ *   4. Q Completion Status "Done" alone is never evidence for a form: with a
+ *      manifest the unstamped member is a draft; without one → uncertain
+ *   5. otherwise: draft
+ * @returns {{ submitted: boolean, via: string, submittedAt?: string|null, uncertain?: boolean }}
+ */
+function decideSubmission({ formKey, memberKey, member, manifestExists, hasAdditionalSlot, evidence, caseDone, savedAt }) {
+  const stamp = (member && member.submittedAt) || null;
+  if (evidence && evidence.exact.has(formKey)) {
+    return { submitted: true, via: 'update-exact', submittedAt: evidence.exact.get(formKey) || stamp || savedAt || null };
+  }
+  const label = (member && member.label) || (memberKey === 'primary' ? 'Primary Applicant' : null);
+  const batch = evidence && label
+    ? evidence.batches.find((b) => b.labels.some((l) => l.toLowerCase() === label.toLowerCase()))
+    : null;
+  if (batch) {
+    if (!hasAdditionalSlot) return { submitted: true, via: 'update-batch', submittedAt: batch.createdAt || stamp || savedAt || null };
+    return { submitted: false, via: 'ambiguous-batch', uncertain: true };
+  }
+  if (stamp) {
+    if (!hasAdditionalSlot) return { submitted: true, via: 'manifest', submittedAt: stamp };
+    return { submitted: false, via: 'ambiguous-manifest', uncertain: true };
+  }
+  if (caseDone) {
+    // "Done" is written only after a submission — but WHICH forms is unknown.
+    // With a manifest, a member lacking a stamp (e.g. added later) is a draft.
+    // Without a manifest there is nothing per member to lean on → uncertain.
+    return manifestExists ? { submitted: false, via: 'draft-despite-done' } : { submitted: false, via: 'ambiguous-done', uncertain: true };
+  }
+  return { submitted: false, via: 'none' };
+}
+
+/**
+ * Regenerate the PDF of EVERY saved form of one case from its JSON truth
+ * file (layout refresh; run by an admin over the portfolio).
+ *
+ * Reads: the case's Questionnaire folder listing, each form JSON, the members
+ * manifest (read directly — loadMembers would seed + WRITE a manifest when
+ * absent). The ONLY write is the overwrite of questionnaire-{caseRef}-{formKey}.pdf,
+ * and only when dryRun === false. Never touches JSON, manifest, Monday, email.
+ *
+ * Skips (all reported with a reason, never written): forms with no CLIENT
+ * answer, forms with no existing PDF (unless createMissing), forms saved
+ * within RECENT_WINDOW_MS (a client may be on it), members missing from an
+ * existing manifest, and forms whose submission status is ambiguous.
+ * Per-form failures are recorded (action 'failed') and the case continues.
+ * In dry-run the PDF is still BUILT (not uploaded) so render errors surface.
+ */
+async function regenerateCasePdfs({ clientName, caseRef, formFiles = null, qCompletionStatus = '', updates = null, updatesTruncated = false,
+                                    skipKeys = [], dryRun = true, createMissing = false, now = Date.now() }) {
+  if (!clientName || !caseRef) throw new Error('clientName and caseRef are required');
+  const write = dryRun === false;
+  const files = await oneDrive.listFiles({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER });
+  const byName = new Map(files.map((f) => [f.name, f]));
+  const re = new RegExp(`^questionnaire-${escapeRe(caseRef)}-(.+)\\.json$`, 'i');
+  const forms = [];
+  for (const f of files) {
+    const m = re.exec(f.name);
+    if (!m) continue;
+    const storedKey = m[1];
+    if (/-flags$/i.test(storedKey)) continue;              // staff correction flags sidecar
+    if (!/^[a-z0-9][a-z0-9-]*$/i.test(storedKey)) continue; // not a form key we ever write
+    forms.push({ storedKey, filename: f.name, lastModified: f.lastModifiedDateTime || null });
+  }
+
+  let members = [], manifestExists = false;
+  const manifestBuf = await oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: `${MEMBERS_PREFIX}${caseRef}.json` });
+  if (manifestBuf) {
+    let d;
+    try { d = JSON.parse(manifestBuf.toString('utf8')); }
+    catch (_) { throw new Error(`members manifest for ${caseRef} is not valid JSON — nothing regenerated for this case`); }
+    if (Array.isArray(d.members)) { members = d.members; manifestExists = members.length > 0; }
+  }
+  const caseDone = String(qCompletionStatus || '').trim().toLowerCase() === 'done';
+  const evidence = parseSubmissionUpdates(updates);
+  // Two form slots? The CURRENT form map can disagree with history (case re-typed,
+  // sub-type override, unmapped type) — so also trust what is on disk / in the
+  // audit trail. Over-counting slots only makes the run more cautious.
+  const slotFromMap      = Boolean(formFiles && formFiles.additional);
+  const slotFromDisk     = forms.some((f) => splitFormKey(f.storedKey).isAdditional);
+  const slotFromEvidence = Boolean(evidence) && [...evidence.exact.keys()].some((k) => /-additional$/i.test(k));
+  const hasAdditionalSlot = slotFromMap || slotFromDisk || slotFromEvidence;
+  const hasAdditionalSlotSource = slotFromMap ? 'map' : slotFromDisk ? 'disk' : slotFromEvidence ? 'evidence' : 'none';
+  // Legacy bare "additional" and "primary-additional" normalise to ONE slot — if
+  // both files exist, one comment cannot tell them apart.
+  const normCount = new Map();
+  for (const f of forms) { const k = splitFormKey(f.storedKey).formKey; normCount.set(k, (normCount.get(k) || 0) + 1); }
+  const skip = new Set((Array.isArray(skipKeys) ? skipKeys : []).map(String));
+
+  const results = [];
+  let failed = 0, transientFailures = 0;
+  for (const form of forms) {
+    const { formKey, memberKey, isAdditional } = splitFormKey(form.storedKey);
+    const r = { formKey: form.storedKey, action: 'skipped', reason: '', fieldCount: 0, answered: 0, submitted: false, submittedVia: '',
+                memberLabel: '', formLabel: '', hadPdf: byName.has(`questionnaire-${caseRef}-${form.storedKey}.pdf`) };
+    results.push(r);
+    try {
+      if (skip.has(form.storedKey)) { r.reason = 'skipped-by-caller'; continue; }   // already done in an earlier (partially failed) attempt
+      const buf = await oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: form.filename });
+      if (!buf) { r.reason = 'vanished'; continue; }
+      let parsed;
+      try { parsed = JSON.parse(buf.toString('utf8')); } catch (_) { r.reason = 'invalid-json'; continue; }
+      const data   = Array.isArray(parsed) ? { fields: parsed } : (parsed || {});
+      const fields = Array.isArray(data.fields) ? data.fields : [];
+      r.fieldCount = fields.length;
+      r.answered   = fields.filter(isClientAnswer).length;
+      r.savedAt    = data.savedAt || null;
+      if (!r.answered) { r.reason = fields.some(isPrefill) ? 'prefill-only' : 'no-answers'; continue; }
+      if (!createMissing && !r.hadPdf) { r.reason = 'no-existing-pdf'; continue; }
+      const recent = [form.lastModified, r.savedAt].some((t) => { const ms = Date.parse(t || ''); return Number.isFinite(ms) && (now - ms) < RECENT_WINDOW_MS; });
+      if (recent) { r.reason = 'recently-saved'; continue; }
+
+      const member = members.find((m) => m && m.key === memberKey) || null;
+      if (manifestExists && !member) { r.reason = 'orphan-member'; continue; }
+      r.memberLabel = (member && member.label) || (memberKey === 'primary' ? 'Primary Applicant' : memberKey);
+      const fileForLabel = data.formFile || (isAdditional ? (formFiles && formFiles.additional) : (formFiles && formFiles.primary)) || '';
+      r.formLabel = formTitleFromFile(fileForLabel) || (isAdditional ? 'Additional Questionnaire' : 'Questionnaire');
+      r.completionPct = Number(data.completionPct) || 0;
+
+      if (normCount.get(formKey) > 1) { r.reason = 'status-uncertain'; r.submittedVia = 'ambiguous-legacy-key'; continue; }
+      const decision = decideSubmission({ formKey, memberKey, member, manifestExists, hasAdditionalSlot, evidence, caseDone, savedAt: r.savedAt });
+      r.submitted = decision.submitted; r.submittedVia = decision.via;
+      if (decision.uncertain) { r.reason = 'status-uncertain'; continue; }
+      // The Updates feed was cut at the fetch limit: an older exact comment may be missing.
+      if (!decision.submitted && updatesTruncated && !(member && member.submittedAt)) { r.reason = 'status-uncertain'; r.submittedVia = 'updates-truncated'; continue; }
+      // Edited after submission: the live save path labels such saves "In progress";
+      // re-labelling newer content "Submitted <old date>" would be wrong → report, never write.
+      if (decision.submitted) {
+        const subMs   = Date.parse(decision.submittedAt || '');
+        const savedMs = Math.max(Date.parse(r.savedAt || '') || 0, Date.parse(form.lastModified || '') || 0);
+        if (Number.isFinite(subMs) && savedMs > subMs + 5 * 60 * 1000) { r.reason = 'edited-after-submission'; r.editedAt = new Date(savedMs).toISOString(); continue; }
+      }
+      const submittedAt = decision.submittedAt || r.savedAt || new Date(now).toISOString();
+
+      const buffer = await buildPdfBuffer({ clientName, caseRef, formLabel: r.formLabel, memberLabel: r.memberLabel,
+        completionPct: r.completionPct, submittedAt, fields, submitted: r.submitted });
+      r.bytes = buffer.length;
+      if (!write) { r.action = 'would-regenerate'; r.reason = ''; continue; }
+      await oneDrive.uploadFile({ clientName, caseRef, category: QUESTIONNAIRE_SUBFOLDER,
+        filename: `questionnaire-${caseRef}-${form.storedKey}.pdf`, buffer, mimeType: 'application/pdf' });
+      r.action = 'regenerated';
+    } catch (err) {
+      r.action = 'failed'; r.reason = ''; r.error = err.message; r.transient = Boolean(err.transient);
+      failed++; if (err.transient) transientFailures++;
+    }
+  }
+  return { caseRef, clientName, dryRun: !write, manifestExists, memberCount: members.length, hasAdditionalSlot, hasAdditionalSlotSource, updatesTruncated: Boolean(updatesTruncated),
+           evidence: evidence ? { exact: [...evidence.exact.keys()], batches: evidence.batches.length, comments: evidence.count } : null,
+           forms: results, failed, transientFailures };
+}
+
 /** Test seam: pending draft windows (keys) — not for production use. */
 function _pendingDraftKeys() { return [..._draftPending.keys()]; }
 
-module.exports = { generateAndSaveSubmissionPdf, scheduleDraftPdf, buildPdfBuffer, buildLayoutModel, MAX_GRID_COLS, DRAFT_PDF_THROTTLE_MS, _pendingDraftKeys };
+module.exports = { generateAndSaveSubmissionPdf, scheduleDraftPdf, regenerateCasePdfs, decideSubmission, parseSubmissionUpdates, splitFormKey, buildPdfBuffer, buildLayoutModel, MAX_GRID_COLS, DRAFT_PDF_THROTTLE_MS, RECENT_WINDOW_MS, _pendingDraftKeys };

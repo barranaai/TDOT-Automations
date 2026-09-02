@@ -296,6 +296,39 @@ async function readFile({ clientName, caseRef, subfolder, filename }) {
 }
 
 /**
+ * List the FILES in a case sub-folder (folders skipped). An absent folder is
+ * not an error → []. Pages through @odata.nextLink.
+ * @returns {Promise<Array<{ name: string, size: number, lastModifiedDateTime: string }>>}
+ */
+async function listFiles({ clientName, caseRef, subfolder }) {
+  const safeName   = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+  const folderPath = `${ROOT_FOLDER}/${safeName}/${subfolder}`;
+  const firstUrl   = `${childrenUrl(folderPath)}?$select=name,size,lastModifiedDateTime,file,folder&$top=200`;
+  try {
+    return await withGraphAuth('list', async (token) => {
+      const out = [];
+      let next = firstUrl;
+      while (next) {
+        let res;
+        try {
+          res = await axios.get(next, { headers: { Authorization: `Bearer ${token}` } });
+        } catch (err) {
+          if (err.response?.status === 404) return []; // folder absent — not an error
+          throw err;
+        }
+        for (const it of (res.data?.value || [])) {
+          if (it.file) out.push({ name: it.name, size: it.size, lastModifiedDateTime: it.lastModifiedDateTime });
+        }
+        next = res.data?.['@odata.nextLink'] || null;
+      }
+      return out;
+    });
+  } catch (err) {
+    throw wrapError('OneDrive list failed', err);
+  }
+}
+
+/**
  * Ensure the client root folder exists in OneDrive.
  * Safe to call before any uploads — will not duplicate folders.
  *
@@ -590,7 +623,7 @@ async function readFileVersion({ clientName, caseRef, subfolder, filename, versi
 }
 
 module.exports = {
-  createClientFolders, uploadFile, readFile, ensureClientFolder, ensureCategoryFolderLink,
+  createClientFolders, uploadFile, readFile, listFiles, ensureClientFolder, ensureCategoryFolderLink,
   ensureLeadFolder, renameDriveItem, uploadFileAndLink, uploadToLeadFolderAndLink,
   getClientFolderByName, getDriveItemById, deleteDriveItem,
   listFileVersions, readFileVersion,

@@ -872,6 +872,39 @@ app.post('/admin/questionnaire/:caseRef/repair', express.json(), async (req, res
   }
 });
 
+// One-time PDF layout refresh (ADMIN ONLY, dry-run by default): regenerate
+// each saved form's questionnaire-{caseRef}-{formKey}.pdf from its JSON truth
+// file. Only the PDFs are (over)written; JSON / manifest / Monday untouched.
+// Driven per case by scripts/regenerate-questionnaire-pdfs.js.
+app.post('/admin/questionnaire/:caseRef/regenerate-pdfs', express.json(), async (req, res) => {
+  const viewer = resolveAdminOrReject(req, res);
+  if (!viewer) return;
+  const caseRef = String(req.params.caseRef || '').trim();
+  if (!/^[A-Za-z0-9-]{3,40}$/.test(caseRef)) return res.status(400).json({ error: 'bad caseRef' });
+  try {
+    const svc = require('./services/htmlQuestionnaireService');
+    const { dryRun = true, qCompletionStatus = '', updates = null, updatesTruncated = false, skipKeys = [], createMissing = false } = req.body || {};
+    // skipFormVersioning: the recorded formFile wins for the label; the era resolver's extra reads are not needed here.
+    const { clientName, formFiles } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const result = await require('./services/questionnairePdfService').regenerateCasePdfs({
+      clientName, caseRef, formFiles, qCompletionStatus: String(qCompletionStatus || ''),
+      updates: Array.isArray(updates) ? updates.slice(0, 200) : null,
+      updatesTruncated: updatesTruncated === true,
+      skipKeys: Array.isArray(skipKeys) ? skipKeys.slice(0, 50).map(String) : [],
+      dryRun: dryRun !== false, createMissing: createMissing === true,
+    });
+    if (!result.dryRun) console.log(`[QPdf] regenerate ${caseRef}: ${result.forms.filter((f) => f.action === 'regenerated').length} PDF(s) rewritten, ${result.failed} failed, by ${viewer.email || 'admin-key'}`);
+    // Partial transient failure → 503 WITH the per-form results; the driver records what was done and
+    // retries the case passing skipKeys for the forms already regenerated.
+    if (result.transientFailures) return res.status(503).json({ ...result, error: 'some forms failed transiently', transient: true });
+    res.json(result);
+  } catch (err) {
+    console.error(`[QPdf] regenerate failed for ${caseRef}:`, err.message);
+    const status = err.transient ? 503 : (/not found/i.test(err.message || '') ? 404 : 500);
+    res.status(status).json({ error: err.message, transient: !!err.transient });
+  }
+});
+
 app.post('/admin/questionnaire/:caseRef/restore', express.json(), async (req, res) => {
   const caseRef = String(req.params.caseRef || '').trim();
   // Restore OVERWRITES the live questionnaire file — a destructive write, so
