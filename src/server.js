@@ -925,6 +925,27 @@ app.get('/admin/onedrive/list', async (req, res) => {
   }
 });
 
+// Re-file a case's "General" uploads into their category folders (ADMIN ONLY,
+// dry-run by default). Only OneDrive moves — never deletes, never Monday.
+// See documentRefileService; driven per case by scripts/refile-general-uploads.js.
+app.post('/admin/onedrive/refile-general', express.json(), async (req, res) => {
+  const viewer = resolveAdminOrReject(req, res, 'Only an admin can re-file case documents.');
+  if (!viewer) return;
+  const caseRef = String((req.body || {}).caseRef || '').trim();
+  const dryRun  = (req.body || {}).dryRun !== false;
+  if (!/^[A-Za-z0-9-]{3,40}$/.test(caseRef)) return res.status(400).json({ error: 'bad caseRef' });
+  try {
+    const { clientName } = await require('./services/htmlQuestionnaireService').validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const result = await require('./services/documentRefileService').refileGeneralUploads({ caseRef, clientName, dryRun });
+    if (!dryRun) console.log(`[Refile] ${caseRef}: ${result.moved.length} moved, ${result.failed.length} failed, by ${viewer.email || 'admin-key'}`);
+    const transient = result.failed.some((f) => f.transient);
+    res.status(transient ? 503 : 200).json(transient ? { ...result, error: 'some moves failed transiently', transient: true } : result);
+  } catch (err) {
+    console.error(`[Refile] failed for ${caseRef}:`, err.message);
+    res.status(err.transient ? 503 : (/not found/i.test(err.message || '') ? 404 : 500)).json({ error: err.message, transient: !!err.transient });
+  }
+});
+
 app.post('/admin/questionnaire/:caseRef/restore', express.json(), async (req, res) => {
   const caseRef = String(req.params.caseRef || '').trim();
   // Restore OVERWRITES the live questionnaire file — a destructive write, so

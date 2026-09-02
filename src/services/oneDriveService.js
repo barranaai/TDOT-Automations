@@ -329,6 +329,30 @@ async function listFiles({ clientName, caseRef, subfolder }) {
 }
 
 /**
+ * Move ONE file between two sub-folders of a case (same drive). The target
+ * folder is created if missing; a same-named file there keeps both
+ * (conflictBehavior=rename). Never deletes. Returns { webUrl, name } — name is
+ * the stored name after the move (differs from filename only on a clash).
+ */
+async function moveFile({ clientName, caseRef, fromSubfolder, toSubfolder, filename }) {
+  const safeName = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+  const safeFile = filename.replace(/[*:"<>?\\|/]/g, '').trim();
+  if (!safeFile || !fromSubfolder || !toSubfolder || fromSubfolder === toSubfolder) throw new Error('moveFile: bad arguments');
+  const casePath = `${ROOT_FOLDER}/${safeName}`;
+  const srcUrl   = itemUrl(`${casePath}/${fromSubfolder}/${safeFile}`);
+  try {
+    return await withGraphAuth('move', async (token) => {
+      const headers = { Authorization: `Bearer ${token}` };
+      const target  = await ensureFolder(token, casePath, toSubfolder);   // existing folder is returned as-is (409 → fetch)
+      const res = await axios.patch(srcUrl, { parentReference: { id: target.id }, '@microsoft.graph.conflictBehavior': 'rename' }, { headers });
+      return { webUrl: res.data?.webUrl || '', name: res.data?.name || '' };   // name differs from filename if OneDrive renamed on a clash
+    });
+  } catch (err) {
+    throw wrapError('OneDrive move failed', err);
+  }
+}
+
+/**
  * Ensure the client root folder exists in OneDrive.
  * Safe to call before any uploads — will not duplicate folders.
  *
@@ -623,7 +647,7 @@ async function readFileVersion({ clientName, caseRef, subfolder, filename, versi
 }
 
 module.exports = {
-  createClientFolders, uploadFile, readFile, listFiles, ensureClientFolder, ensureCategoryFolderLink,
+  createClientFolders, uploadFile, readFile, listFiles, moveFile, ensureClientFolder, ensureCategoryFolderLink,
   ensureLeadFolder, renameDriveItem, uploadFileAndLink, uploadToLeadFolderAndLink,
   getClientFolderByName, getDriveItemById, deleteDriveItem,
   listFileVersions, readFileVersion,
