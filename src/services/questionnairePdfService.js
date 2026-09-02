@@ -107,7 +107,7 @@ function drawFooter(doc, caseRef, pageNum, totalPages, generatedStr) {
   doc.restore();
 }
 
-function drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, completionPct, submittedAt }) {
+function drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, completionPct, submittedAt, submitted = true }) {
   const { width } = doc.page;
   const leftX = PAGE_MARGINS.left;
   const rightEdge = width - PAGE_MARGINS.right;
@@ -131,10 +131,14 @@ function drawCoverBlock(doc, { formLabel, clientName, caseRef, memberLabel, comp
     ['Case Ref',   caseRef],
   ];
   if (memberLabel && memberLabel !== 'Primary Applicant') rows.push(['Member', memberLabel]);
-  rows.push(
-    ['Completion', `${Math.max(0, Math.min(100, Math.round(completionPct || 0)))}%`],
-    ['Submitted',  formatTimestamp(submittedAt)],
-  );
+  rows.push(['Completion', `${Math.max(0, Math.min(100, Math.round(completionPct || 0)))}%`]);
+  // A DRAFT save (client still working) must never read as a submission —
+  // the same file is overwritten on every save, so the cover states the truth.
+  if (submitted) {
+    rows.push(['Status', 'Submitted'], ['Submitted', formatTimestamp(submittedAt)]);
+  } else {
+    rows.push(['Status', 'In progress — not yet submitted'], ['Last saved', formatTimestamp(submittedAt)]);
+  }
 
   let y = ruleY + 14;
   doc.fontSize(10);
@@ -229,7 +233,7 @@ function drawFieldRow(doc, label, value) {
 
 // ─── Build PDF buffer from field data ────────────────────────────────────────
 
-function buildPdfBuffer({ clientName, caseRef, formLabel, memberLabel, completionPct, submittedAt, fields }) {
+function buildPdfBuffer({ clientName, caseRef, formLabel, memberLabel, completionPct, submittedAt, fields, submitted = true }) {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({
@@ -296,6 +300,7 @@ function buildPdfBuffer({ clientName, caseRef, formLabel, memberLabel, completio
  */
 async function generateAndSaveSubmissionPdf(params) {
   const { clientName, caseRef, formKey, formLabel, memberLabel, completionPct, submittedAt } = params;
+  const submitted = params.submitted !== undefined ? !!params.submitted : true;
   let { fields } = params;
 
   if (!clientName || !caseRef || !formKey) {
@@ -328,6 +333,7 @@ async function generateAndSaveSubmissionPdf(params) {
       completionPct,
       submittedAt: submittedAt || new Date().toISOString(),
       fields,
+      submitted,
     });
 
     const filename = `questionnaire-${caseRef}-${formKey}.pdf`;
@@ -340,10 +346,53 @@ async function generateAndSaveSubmissionPdf(params) {
       mimeType: 'application/pdf',
     });
 
-    console.log(`[QPdf] Saved submission PDF → ${filename} (${buffer.length} bytes, ${fields.length} fields)`);
+    console.log(`[QPdf] Saved ${submitted ? 'submission' : 'draft'} PDF → ${filename} (${buffer.length} bytes, ${fields.length} fields)`);
   } catch (err) {
     console.warn(`[QPdf] PDF generation/upload failed for ${caseRef}/${formKey}: ${err.message}`);
   }
 }
 
-module.exports = { generateAndSaveSubmissionPdf };
+/**
+ * DRAFT PDFs on every save (user request 2026-08-29): the SAME file
+ * questionnaire-{caseRef}-{formKey}.pdf is overwritten, so staff always see
+ * one current PDF per form (no version clutter; OneDrive keeps history).
+ *
+ * Trigger policy — the autosave fires every 60s while the client types, so a
+ * PDF per autosave would churn hundreds of overwrites per session. Instead:
+ *   - a MANUAL "Save Progress" (or submit) regenerates immediately, and
+ *   - autosaves are THROTTLED per form: the first autosave in a window
+ *     schedules one PDF DRAFT_PDF_THROTTLE_MS later, built from the LATEST
+ *     fields seen when it fires; later autosaves in the window just refresh
+ *     those fields. A manual save flushes and cancels the pending one.
+ * Fire-and-forget: never throws, never blocks the JSON save (the truth).
+ */
+const DRAFT_PDF_THROTTLE_MS = (() => {
+  const n = Number(process.env.DRAFT_PDF_THROTTLE_MS);
+  return Number.isFinite(n) && n >= 0 ? n : 5 * 60 * 1000;
+})();
+const _draftPending = new Map(); // "caseRef|formKey" → { timer, params }
+
+function scheduleDraftPdf(params, { immediate = false } = {}) {
+  const key = `${params.caseRef}|${params.formKey}`;
+  // Called via module.exports so tests can stub the generator.
+  const run = (p) => module.exports.generateAndSaveSubmissionPdf({ ...p, submitted: false, submittedAt: p.savedAt || new Date().toISOString() })
+    .catch((err) => console.warn(`[QPdf] draft PDF failed for ${key}: ${err.message}`));
+  const pending = _draftPending.get(key);
+  if (immediate) {
+    if (pending) { clearTimeout(pending.timer); _draftPending.delete(key); }
+    return run(params);
+  }
+  if (pending) { pending.params = params; return; }   // keep the window, refresh the fields
+  const timer = setTimeout(() => {
+    const p = _draftPending.get(key);
+    _draftPending.delete(key);
+    if (p) run(p.params);
+  }, DRAFT_PDF_THROTTLE_MS);
+  if (timer.unref) timer.unref();
+  _draftPending.set(key, { timer, params });
+}
+
+/** Test seam: pending draft windows (keys) — not for production use. */
+function _pendingDraftKeys() { return [..._draftPending.keys()]; }
+
+module.exports = { generateAndSaveSubmissionPdf, scheduleDraftPdf, buildPdfBuffer, DRAFT_PDF_THROTTLE_MS, _pendingDraftKeys };

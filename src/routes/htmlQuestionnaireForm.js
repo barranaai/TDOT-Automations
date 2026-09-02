@@ -680,6 +680,22 @@ router.post('/:caseRef/save', async (req, res) => {
       // save-time server guess, which can diverge from the served page.
       formFile: svc.validSaveFormFile(formFiles, savedKey, echoedFormFile) });
 
+    // Fire-and-forget: keep ONE current PDF per form alongside the JSON
+    // (questionnaire-{caseRef}-{formKey}.pdf, overwritten on every save —
+    // user request 2026-08-29). A manual "Save Progress" regenerates now;
+    // the 60s autosave is throttled to one PDF per window (latest fields).
+    // Never awaited — a PDF failure can never block or fail the save.
+    try {
+      const usesAdditional = savedKey === 'additional' || savedKey.endsWith('-additional');
+      const draftFormFile  = (usesAdditional && formFiles?.additional) ? formFiles.additional : (formFiles?.primary || '');
+      const draftFormTitle = draftFormFile.replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
+      require('../services/questionnairePdfService').scheduleDraftPdf({
+        clientName, caseRef, formKey: savedKey, formLabel: draftFormTitle,
+        memberLabel: memberLabel || 'Primary Applicant',
+        completionPct: completionPct || 0, fields, savedAt: new Date().toISOString(),
+      }, { immediate: manual === true });
+    } catch (e) { console.warn(`[/q] draft PDF scheduling failed for ${caseRef}/${savedKey}: ${e.message}`); }
+
     // Fire-and-forget: missing-fields email (only on manual save, throttled 24h server-side).
     // Multi-member uses `missingByMember` (aggregated, attached to first save call only);
     // single-member uses `missingSections` for the current member.
