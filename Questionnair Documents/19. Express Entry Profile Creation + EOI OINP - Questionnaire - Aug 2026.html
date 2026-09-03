@@ -352,12 +352,13 @@
 
         <div class="dynamic-table-wrapper">
           <table class="dynamic-table" id="ma-employment">
-            <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>No. of Hours worked per week</th><th>Company Name</th><th>Full Address of Company with Postal Code</th><th>Country</th><th></th></tr></thead>
+            <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>NOC Code (if known)</th><th>No. of Hours worked per week</th><th>Company Name</th><th>Full Address of Company with Postal Code</th><th>Country</th><th></th></tr></thead>
             <tbody>
               <tr>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text"></td>
+                <td><input type="text" placeholder="e.g. 21231"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
@@ -368,6 +369,7 @@
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text"></td>
+                <td><input type="text" placeholder="e.g. 21231"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
@@ -378,6 +380,7 @@
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text"></td>
+                <td><input type="text" placeholder="e.g. 21231"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
@@ -387,7 +390,7 @@
             </tbody>
           </table>
         </div>
-        <button class="btn btn-add" onclick="addRow('ma-employment', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|','text|'])">+ Add Row</button>
+        <button class="btn btn-add" onclick="addRow('ma-employment', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|e.g. 21231','text|','text|','text|','text|'])">+ Add Row</button>
 
         <div style="margin-top: 28px;">
           <div class="section-desc">
@@ -603,12 +606,13 @@
 
         <div class="dynamic-table-wrapper">
           <table class="dynamic-table" id="dep-employment">
-            <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>No of Working hours per week</th><th>Company Name</th><th>City</th><th>Country</th><th></th></tr></thead>
+            <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>NOC Code (if known)</th><th>No of Working hours per week</th><th>Company Name</th><th>City</th><th>Country</th><th></th></tr></thead>
             <tbody>
               <tr>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text"></td>
+                <td><input type="text" placeholder="e.g. 21231"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
@@ -619,6 +623,7 @@
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text"></td>
+                <td><input type="text" placeholder="e.g. 21231"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
@@ -629,6 +634,7 @@
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text"></td>
+                <td><input type="text" placeholder="e.g. 21231"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
@@ -638,7 +644,7 @@
             </tbody>
           </table>
         </div>
-        <button class="btn btn-add" onclick="addRow('dep-employment', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|','text|'])">+ Add Row</button>
+        <button class="btn btn-add" onclick="addRow('dep-employment', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|e.g. 21231','text|','text|','text|','text|'])">+ Add Row</button>
 
         <div style="margin-top: 28px;">
           <div class="section-desc">

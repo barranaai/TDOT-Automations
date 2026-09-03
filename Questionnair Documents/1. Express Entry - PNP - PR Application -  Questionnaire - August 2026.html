@@ -585,12 +585,13 @@
         </div>
         <div class="dynamic-table-wrapper">
           <table class="dynamic-table" id="ma-history">
-            <thead><tr><th>Start Date</th><th>End Date</th><th>Job Title / Education</th><th>Company / School Name</th><th>City &amp; Country (Address with Postal Code)</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Start Date</th><th>End Date</th><th>Job Title / Education</th><th>NOC Code (if known)</th><th>Company / School Name</th><th>City &amp; Country (Address with Postal Code)</th><th>Status</th><th></th></tr></thead>
             <tbody>
               <tr>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text"></td>
+                <td><input type="text" placeholder="e.g. 21231"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
                 <td><select><option value="">--</option><option>Student</option><option>Worker</option><option>Citizen</option><option>Unemployed</option></select></td>
@@ -599,7 +600,7 @@
             </tbody>
           </table>
         </div>
-        <button class="btn btn-add" onclick="addRow('ma-history', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','select|Student,Worker,Citizen,Unemployed'])">+ Add Row</button>
+        <button class="btn btn-add" onclick="addRow('ma-history', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|e.g. 21231','text|','text|','select|Student,Worker,Citizen,Unemployed'])">+ Add Row</button>
 
         <div class="form-row" style="margin-top:20px;">
           <div class="form-group full">
@@ -881,11 +882,12 @@
         <div class="section-desc">Provide details of your personal history in the last ten years. Ensure you include the full dates (DD/MM/YYYY) for each period of employment, education, or unemployment. Provide details of your employment history including part-time, full-time employment, foreign work experience, education etc. Provide details of your self-employment details including Uber, Skip, Door-dash or any other work experience. <strong>There should be no gaps in your timeline.</strong></div>
         <div class="dynamic-table-wrapper">
           <table class="dynamic-table" id="sp-history">
-            <thead><tr><th>Start Date</th><th>End Date</th><th>Job Title / Education</th><th>Company / School</th><th>City &amp; Country (Address with Postal Code)</th><th>Status</th><th></th></tr></thead>
-            <tbody><tr><td><input type="text" placeholder="DD/MM/YYYY"></td><td><input type="text" placeholder="DD/MM/YYYY"></td><td><input type="text"></td><td><input type="text"></td><td><input type="text"></td><td><select><option value="">--</option><option>Student</option><option>Worker</option><option>Citizen</option><option>Unemployed</option></select></td><td><button class="btn btn-remove" onclick="removeRow(this)">Remove</button></td></tr></tbody>
+            <thead><tr><th>Start Date</th><th>End Date</th><th>Job Title / Education</th><th>NOC Code (if known)</th><th>Company / School</th><th>City &amp; Country (Address with Postal Code)</th><th>Status</th><th></th></tr></thead>
+            <tbody><tr><td><input type="text" placeholder="DD/MM/YYYY"></td><td><input type="text" placeholder="DD/MM/YYYY"></td><td><input type="text"></td>
+<td><input type="text" placeholder="e.g. 21231"></td><td><input type="text"></td><td><input type="text"></td><td><select><option value="">--</option><option>Student</option><option>Worker</option><option>Citizen</option><option>Unemployed</option></select></td><td><button class="btn btn-remove" onclick="removeRow(this)">Remove</button></td></tr></tbody>
           </table>
         </div>
-        <button class="btn btn-add" onclick="addRow('sp-history', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','select|Student,Worker,Citizen,Unemployed'])">+ Add Row</button>
+        <button class="btn btn-add" onclick="addRow('sp-history', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|e.g. 21231','text|','text|','select|Student,Worker,Citizen,Unemployed'])">+ Add Row</button>
 
         <div class="form-row" style="margin-top:20px;">
           <div class="form-group full">
@@ -998,11 +1000,12 @@
         <div class="section-desc">Provide details of your personal history in the last ten years. Ensure you include the full dates (DD/MM/YYYY) for each period of employment, education, or unemployment. Provide details of your employment history including part-time, full-time employment, foreign work experience, education etc. Provide details of your self-employment details including Uber, Skip, Door-dash or any other work experience. <strong>There should be no gaps in your timeline.</strong></div>
         <div class="dynamic-table-wrapper">
           <table class="dynamic-table" id="ch-history">
-            <thead><tr><th>Start Date</th><th>End Date</th><th>Job Title / Education</th><th>Company / School</th><th>City &amp; Country (Address with Postal Code)</th><th>Status</th><th></th></tr></thead>
-            <tbody><tr><td><input type="text" placeholder="DD/MM/YYYY"></td><td><input type="text" placeholder="DD/MM/YYYY"></td><td><input type="text"></td><td><input type="text"></td><td><input type="text"></td><td><select><option value="">--</option><option>Student</option><option>Worker</option><option>Citizen</option><option>Unemployed</option></select></td><td><button class="btn btn-remove" onclick="removeRow(this)">Remove</button></td></tr></tbody>
+            <thead><tr><th>Start Date</th><th>End Date</th><th>Job Title / Education</th><th>NOC Code (if known)</th><th>Company / School</th><th>City &amp; Country (Address with Postal Code)</th><th>Status</th><th></th></tr></thead>
+            <tbody><tr><td><input type="text" placeholder="DD/MM/YYYY"></td><td><input type="text" placeholder="DD/MM/YYYY"></td><td><input type="text"></td>
+<td><input type="text" placeholder="e.g. 21231"></td><td><input type="text"></td><td><input type="text"></td><td><select><option value="">--</option><option>Student</option><option>Worker</option><option>Citizen</option><option>Unemployed</option></select></td><td><button class="btn btn-remove" onclick="removeRow(this)">Remove</button></td></tr></tbody>
           </table>
         </div>
-        <button class="btn btn-add" onclick="addRow('ch-history', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','select|Student,Worker,Citizen,Unemployed'])">+ Add Row</button>
+        <button class="btn btn-add" onclick="addRow('ch-history', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|e.g. 21231','text|','text|','select|Student,Worker,Citizen,Unemployed'])">+ Add Row</button>
       </div>
     </div>
 

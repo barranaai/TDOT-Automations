@@ -75,7 +75,7 @@ const ROW_RE = /^(.*?)\s+[—–-]\s+Row\s+(\d+)\s*$/i;
 // Several tables can live under ONE section title (Relationship Story holds
 // visits / friends / ceremonies) — the id is what tells them apart.
 const TABLE_ID_RE = /-tbl-tbl-([a-z0-9-]+?)-r\d+-/i;
-const MAX_GRID_COLS = 7; // wider tables are rendered as records (one entry = label/value rows)
+const MAX_GRID_COLS = 8; // wider tables are rendered as records (one entry = label/value rows); the longest-word rule still guards legibility
 
 function splitPath(section) {
   return clean(section || 'General').split(/\s*›\s*/).filter(Boolean);

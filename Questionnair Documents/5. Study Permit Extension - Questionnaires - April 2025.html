@@ -411,12 +411,13 @@
         </div>
         <div class="dynamic-table-wrapper">
           <table class="dynamic-table" id="sp-employment">
-            <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>Company Name</th><th>City</th><th>Country</th><th></th></tr></thead>
+            <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>NOC Code (if known)</th><th>Company Name</th><th>City</th><th>Country</th><th></th></tr></thead>
             <tbody>
               <tr>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text"></td>
+                <td><input type="text" placeholder="e.g. 21231"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
@@ -425,7 +426,7 @@
             </tbody>
           </table>
         </div>
-        <button class="btn btn-add" onclick="addRow('sp-employment', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button>
+        <button class="btn btn-add" onclick="addRow('sp-employment', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|e.g. 21231','text|','text|','text|'])">+ Add Row</button>
       </div>
     </div>
 

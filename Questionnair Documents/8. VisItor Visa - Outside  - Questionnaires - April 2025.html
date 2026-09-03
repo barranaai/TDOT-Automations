@@ -322,11 +322,12 @@ table.dynamic-table td input, table.dynamic-table td select { font-size: 0.85rem
               <p class="section-note">Ensure you include the full dates (DD/MM/YYYY) for each period of employment. Provide details of your employment history including part-time, full-time employment, foreign work experience etc. Provide details of your self-employment details including Uber, Skip, Door-dash or any other business.</p>
               <div class="table-wrapper">
                 <table class="dynamic-table" id="tbl-ma-employment">
-                  <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>Company Name</th><th>City</th><th>Country</th><th></th></tr></thead>
+                  <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>NOC Code (if known)</th><th>Company Name</th><th>City</th><th>Country</th><th></th></tr></thead>
                   <tbody><tr>
                     <td><input type="text" placeholder="DD/MM/YYYY"></td>
                     <td><input type="text" placeholder="DD/MM/YYYY"></td>
                     <td><input type="text"></td>
+                    <td><input type="text" placeholder="e.g. 21231"></td>
                     <td><input type="text"></td>
                     <td><input type="text"></td>
                     <td><input type="text"></td>
@@ -334,7 +335,7 @@ table.dynamic-table td input, table.dynamic-table td select { font-size: 0.85rem
                   </tr></tbody>
                 </table>
               </div>
-              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-employment',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button></div>
+              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-employment', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|e.g. 21231','text|','text|','text|'])">+ Add Row</button></div>
             </div>
           </div>
         </div>
@@ -742,11 +743,12 @@ table.dynamic-table td input, table.dynamic-table td select { font-size: 0.85rem
               <p class="section-note">Ensure you include the full dates (DD/MM/YYYY) for each period of employment. Provide details of your employment history including part-time, full-time employment, foreign work experience etc. Provide details of your self-employment details including Uber, Skip, Door-dash or any other business.</p>
               <div class="table-wrapper">
                 <table class="dynamic-table" id="tbl-dep-employment">
-                  <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>Company Name</th><th>City</th><th>Country</th><th></th></tr></thead>
+                  <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>NOC Code (if known)</th><th>Company Name</th><th>City</th><th>Country</th><th></th></tr></thead>
                   <tbody><tr>
                     <td><input type="text" placeholder="DD/MM/YYYY"></td>
                     <td><input type="text" placeholder="DD/MM/YYYY"></td>
                     <td><input type="text"></td>
+                    <td><input type="text" placeholder="e.g. 21231"></td>
                     <td><input type="text"></td>
                     <td><input type="text"></td>
                     <td><input type="text"></td>
@@ -754,7 +756,7 @@ table.dynamic-table td input, table.dynamic-table td select { font-size: 0.85rem
                   </tr></tbody>
                 </table>
               </div>
-              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-dep-employment',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button></div>
+              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-dep-employment', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|e.g. 21231','text|','text|','text|'])">+ Add Row</button></div>
             </div>
           </div>
         </div>

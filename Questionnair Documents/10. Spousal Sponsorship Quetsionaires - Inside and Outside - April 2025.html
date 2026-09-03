@@ -329,11 +329,12 @@ table.dynamic-table td textarea { min-height: 36px; }
           <p class="section-note">Provide details of your personal history in the last ten years. Ensure you include the full dates (DD/MM/YYYY) for each period of employment, education, or unemployment. Provide details including part-time, full-time employment, foreign work experience, education etc. Include self-employment details including Uber, Skip, Door-dash or any other work experience. There should be no gaps in your timeline.</p>
           <div class="table-wrapper">
             <table class="dynamic-table" id="tbl-ma-history">
-              <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title / Education</th><th>Company / School Name</th><th>City and Country</th><th>Status</th><th></th></tr></thead>
+              <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title / Education</th><th>NOC Code (if known)</th><th>Company / School Name</th><th>City and Country</th><th>Status</th><th></th></tr></thead>
               <tbody><tr>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text" placeholder="DD/MM/YYYY"></td>
                 <td><input type="text"></td>
+                <td><input type="text" placeholder="e.g. 21231"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
                 <td><input type="text"></td>
@@ -341,7 +342,7 @@ table.dynamic-table td textarea { min-height: 36px; }
               </tr></tbody>
             </table>
           </div>
-          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-history',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|','text|','text|'])">+ Add Row</button></div>
+          <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-ma-history', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|e.g. 21231','text|','text|','text|'])">+ Add Row</button></div>
           <div style="margin-top:16px;">
             <div class="form-group full">
               <label>Have you declared your international experience in any of your previous IRCC applications (e.g., Study Permit, Work Permit, Visitor Visa, PNP, etc.)? – YES or NO. If NO, please provide an explanation.</label>
@@ -656,18 +657,19 @@ table.dynamic-table td textarea { min-height: 36px; }
               <p class="section-note">Ensure you include the full dates (DD/MM/YYYY) for each period of employment. Provide details including part-time, full-time employment, foreign work experience etc. Include self-employment details including Uber, Skip, Door-dash or any other business. The information you provide should match exactly with the details in your Permanent Residency (PR) application.</p>
               <div class="table-wrapper">
                 <table class="dynamic-table" id="tbl-sp-employment">
-                  <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>Company Details (Company Name, Full Address, Number)</th><th>Monthly Gross Salary</th><th></th></tr></thead>
+                  <thead><tr><th>Start Date (DD/MM/YYYY)</th><th>End Date (DD/MM/YYYY)</th><th>Job Title</th><th>NOC Code (if known)</th><th>Company Details (Company Name, Full Address, Number)</th><th>Monthly Gross Salary</th><th></th></tr></thead>
                   <tbody><tr>
                     <td><input type="text" placeholder="DD/MM/YYYY"></td>
                     <td><input type="text" placeholder="DD/MM/YYYY"></td>
                     <td><input type="text"></td>
+                    <td><input type="text" placeholder="e.g. 21231"></td>
                     <td><textarea></textarea></td>
                     <td><input type="text"></td>
                     <td><button class="btn btn-remove" onclick="removeRow(this)">✕</button></td>
                   </tr></tbody>
                 </table>
               </div>
-              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-sp-employment',['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','textarea|','text|'])">+ Add Row</button></div>
+              <div class="table-actions"><button class="btn btn-add" onclick="addRow('tbl-sp-employment', ['text|DD/MM/YYYY','text|DD/MM/YYYY','text|','text|e.g. 21231','textarea|','text|'])">+ Add Row</button></div>
             </div>
           </div>
         </div>
