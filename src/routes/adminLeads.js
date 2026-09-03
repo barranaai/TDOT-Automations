@@ -11,6 +11,8 @@
 
 const express = require('express');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
+const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
+const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS } = require('./adminShared');
 
@@ -327,6 +329,12 @@ function buildLeadDetailHTML(leadId) {
   .card-t { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:800; color:var(--navy); margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #f1f5f9; }
   .card-t svg { font-size:15px; color:var(--navy); }
   .card-t .when { margin-left:auto; font-weight:500; font-size:11px; color:var(--light); }
+  .obtns { display:flex; flex-wrap:wrap; gap:6px; }
+  .obtn { padding:8px 10px; border:1px solid var(--border, #e2e8f0); border-radius:8px; background:white; font-size:12.5px; font-weight:600; cursor:pointer; color:var(--navy, #1e3a5f); font-family:inherit; transition:all .12s; }
+  .obtn:hover:not(:disabled) { border-color:var(--navy, #1e3a5f); background:#f0f4f8; }
+  .obtn.active { background:var(--navy, #1e3a5f); color:white; border-color:var(--navy, #1e3a5f); }
+  .obtn:disabled { opacity:.55; cursor:not-allowed; }
+${REMARKS_CSS}
   .kv { display:flex; padding:6px 0; font-size:13px; border-top:1px solid #f8fafc; gap:10px; }
   .kv:first-child { border-top:none; }
   .kv .k { color:var(--muted); min-width:150px; flex-shrink:0; }
@@ -404,6 +412,14 @@ ${buildNavHeader('leads')}
           </div>
           <div id="inv-msg" class="act-msg"></div>
         </div>
+        <div class="card">
+          <div class="card-t">${I.flag} Outcome &amp; remarks</div>
+          <div class="subhead">Outcome</div>
+          <div class="obtns" id="obtns"></div>
+          <div id="oc-msg" class="act-msg"></div>
+          <div class="subhead" style="margin-top:10px">Remarks <span class="muted">— what was done for this lead</span></div>
+          ${remarksHtml('rmk')}
+        </div>
         <div class="card" id="qa-card" style="display:none">
           <div class="card-t">${I.bolt} Quick actions</div>
           <div class="btn-col">
@@ -421,8 +437,31 @@ ${buildNavHeader('leads')}
 <script>
 ${SHARED_AUTH_JS}
 var LEAD_ID=${jsLit(String(leadId))};
+var OUTCOMES=${jsLit(OUTCOME_LABELS)};
+var REMARKS=${jsLit(REMARK_PRESETS)};
+${REMARKS_JS}
 ${UPDATES_WIDGET_JS}
 tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/updates/' + encodeURIComponent(LEAD_ID), itemId: LEAD_ID });
+tdotRemarksMount({ prefix:'rmk', leadId: LEAD_ID, presets: REMARKS, updatesPrefix:'updw' });
+(function(){
+  // Outcome buttons — same action + board column as the consultation view. "Retain" is
+  // deliberately not a one-click here: it goes through the retainer panel (fee → plan → send).
+  var box=document.getElementById('obtns'); if(!box) return;
+  OUTCOMES.forEach(function(label){
+    if(label==='Retain') return;
+    var b=document.createElement('button'); b.type='button'; b.className='obtn'; b.textContent=label; b.setAttribute('data-outcome',label);
+    b.onclick=function(){
+      var p=doAction(this,'outcome',null,label,'oc-msg');
+      if(!p) return;
+      p.then(function(res){
+        if(!res||!res.ok) return;                 // failure: nothing highlighted, message already shown
+        load();                                   // re-render from the server's truth (Outcome row + .active)
+        var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r();
+      });
+    };
+    box.appendChild(b);
+  });
+})();
 var WANTS_TO=''; // the client's stated intent — set in render(d); gates the invite confirmation
 var ICONS=${jsLit({ flag: I.flag, file: I.file, user: I.user, clock: I.clock })};
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -483,6 +522,7 @@ function render(d){
   st+=kv('Booking invite', d.inviteSent?('Sent'+(d.inviteSentAt?(' · '+String(d.inviteSentAt).slice(0,10)):'')):'Not sent yet');
   st+=kv('Pre-consult', d.preConsultSubmitted?'Submitted':'Pending');
   if(d.outcome) st+=kv('Outcome', d.outcome);
+  Array.prototype.forEach.call(document.querySelectorAll('.obtn'),function(b){ b.classList.toggle('active', b.getAttribute('data-outcome')===(d.outcome||'')); });
   if(d.consultant) st+=kv('Consultant', d.consultant);
   st+=kv('Intake archive', d.hasIntakeArchive?('Submitted '+String(d.intakeSubmittedAt||'').slice(0,10)):'Not found');
   if(d.consentsAt) st+=kv('Consents', String(d.consentsAt).slice(0,10));
@@ -552,10 +592,10 @@ function doAction(btn, action, confirmText, value, msgElId){
   if(confirmText && !window.confirm(confirmText)) return;
   var key=getKey(); if(!key) return;
   var mid=msgElId||'act-msg';
-  var payload={action:action};
+  var payload={action:action, staffName:(window.tdotRemarksName_rmk ? window.tdotRemarksName_rmk() : '')};
   if(value!==undefined) payload.value=value;
   btn.disabled=true; actMsg(mid,'info','Working…');
-  fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{
+  return fetch('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{
     method:'POST', headers:{'Content-Type':'application/json','X-Api-Key':key},
     body:JSON.stringify(payload)
   })
@@ -564,8 +604,9 @@ function doAction(btn, action, confirmText, value, msgElId){
     btn.disabled=false;
     if(res.ok) actMsg(mid,'ok', res.j.message||'Done.');
     else actMsg(mid,'err', res.j.error||'Action failed.');
+    return res;
   })
-  .catch(function(e){ btn.disabled=false; actMsg(mid,'err','Failed: '+e.message); });
+  .catch(function(e){ btn.disabled=false; actMsg(mid,'err','Failed: '+e.message); return {ok:false}; });
 }
 document.getElementById('btn-save-msg').onclick=function(){
   doAction(this,'saveInviteMessage',null,document.getElementById('invite-msg').value,'inv-msg');

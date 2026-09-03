@@ -13,7 +13,8 @@ const express = require('express');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS } = require('./adminShared');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
-const { OUTCOME_LABELS } = require('../services/consultantPortalService');
+const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
+const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 
 function escAttr(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -696,6 +697,7 @@ function buildDetailHTML(leadId) {
   .obtn { padding:9px 10px; border:1px solid var(--border); border-radius:8px; background:white; font-size:12.5px; font-weight:600; cursor:pointer; color:var(--navy); font-family:inherit; text-align:center; transition:all .12s; }
   .obtn:hover:not(:disabled) { border-color:var(--navy); background:#f0f4f8; }
   .obtn.active { background:var(--navy); color:white; border-color:var(--navy); box-shadow:var(--shadow-sm); }
+${REMARKS_CSS}
   .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:9px 13px; border-radius:8px; font-size:12.5px; font-weight:700; text-decoration:none; border:1px solid var(--border); color:var(--navy); background:white; cursor:pointer; font-family:inherit; transition:all .12s; }
   .btn:hover:not(:disabled) { border-color:var(--navy); background:#f0f4f8; }
   .btn.primary { background:var(--navy); color:white; border-color:var(--navy); } .btn.primary:hover:not(:disabled) { background:var(--navy-light); }
@@ -798,6 +800,10 @@ ${buildNavHeader('consultations')}
           <div class="subhead">Record outcome</div>
           <div class="obtns" id="obtns"></div>
           <div id="act-msg" class="act-msg"></div>
+          <div class="agroup">
+            <div class="subhead">Remarks <span class="muted">— what was done for this lead</span></div>
+            ${remarksHtml('rmk')}
+          </div>
           <div class="agroup">
             <div class="subhead">Communications &amp; agreement <span class="muted" id="ca-sent"></span></div>
             <div id="ca-warn"></div>
@@ -958,6 +964,8 @@ ${buildNavHeader('consultations')}
 var LEAD_ID=${jsLit(leadId)};
 ${UPDATES_WIDGET_JS}
 var OUTCOMES=${jsLit(OUTCOME_LABELS)};
+var REMARKS=${jsLit(REMARK_PRESETS)};
+${REMARKS_JS}
 var ICONS=${jsLit({ video: I.video, file: I.file, disc: I.disc, mail: I.mail, userCheck: I.userCheck, clock: I.clock, check: I.check })};
 ${SHARED_AUTH_JS}
 tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/updates/' + encodeURIComponent(LEAD_ID), itemId: LEAD_ID });
@@ -1165,7 +1173,7 @@ function load(){
 
 // ── Phase B: write actions ────────────────────────────────────────────────
 function setMsg(text,kind){ var el=document.getElementById('act-msg'); el.className='act-msg '+kind; el.textContent=text; }
-function actButtons(){ return Array.prototype.slice.call(document.querySelectorAll('.actions button')); }
+function actButtons(){ return Array.prototype.slice.call(document.querySelectorAll('.actions button:not(.rmk-chip):not(#rmk-post)')); } // the remarks widget manages its own busy state
 function disableActions(on){
   actButtons().forEach(function(b){ b.disabled=on; });
   // Re-enabling blanket-clears disabled — reapply the gated states so a failed
@@ -1186,7 +1194,7 @@ function doAction(action,value,confirmMsg){
   setMsg('Working…','info'); disableActions(true);
   fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{
     method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'},
-    body: JSON.stringify({ action:action, value:value, amend: RP_AMEND })
+    body: JSON.stringify({ action:action, value:value, amend: RP_AMEND, staffName: (window.tdotRemarksName_rmk ? window.tdotRemarksName_rmk() : '') })
   }).then(function(r){ return r.json().then(function(j){ return {status:r.status,j:j}; }); })
    .then(function(res){
      disableActions(false);
@@ -1623,6 +1631,7 @@ function previewConsult(){
 }
 
 function initActions(){
+  tdotRemarksMount({ prefix:'rmk', leadId: LEAD_ID, presets: REMARKS, updatesPrefix:'updw' });
   var obtns=document.getElementById('obtns');
   OUTCOMES.forEach(function(label){
     // "Retain" is handled by the guided "Retain & send agreement" button in the

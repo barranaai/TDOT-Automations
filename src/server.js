@@ -1108,8 +1108,13 @@ app.get('/api/consultation/:leadId', async (req, res) => {
 app.post('/api/consultation/:leadId/action', express.json(), async (req, res) => {
   try {
     const { action, value, amend } = req.body || {};
+    // Who did it: every /api call carries the shared admin key (requireApiKey), so the
+    // person is not identifiable server-side — the page sends the name they typed
+    // (the same "Your name" the Updates box uses). Self-reported, shown on the note.
+    const rawName = (req.body || {}).staffName;
+    const staffName = typeof rawName === 'string' ? rawName.trim().slice(0, 60) : '';
     const result = await consultantPortalService.applyAction({
-      leadId: (req.params.leadId || '').trim(), action, value, amend: amend === true,
+      leadId: (req.params.leadId || '').trim(), action, value, amend: amend === true, staffName,
     });
     res.json(result);
   } catch (err) {

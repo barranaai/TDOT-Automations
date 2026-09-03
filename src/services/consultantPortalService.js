@@ -612,6 +612,9 @@ function normaliseRows(x) {
 // dash) — writing a near-match would mint a junk label via
 // create_labels_if_missing, so they must match byte-for-byte.
 const OUTCOME_LABELS = ['Retain', 'Don’t Retain — Ineligible', 'Don’t Retain — Not Wanted', 'Newsletter', 'Follow-Up'];
+// One-click remark presets (consultant note #8) — config/leadRemarks.js
+const { REMARK_PRESETS } = require('../../config/leadRemarks');
+const escHtmlNote = (str) => String(str == null ? '' : str).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FEE_MAX_CAD = 100000;
 
@@ -717,6 +720,18 @@ function validateAction(action, value) {
       return OUTCOME_LABELS.includes(value)
         ? { ok: true, normalized: value }
         : { ok: false, error: 'Invalid outcome value.' };
+    case 'remark': {
+      // { preset?: key, text?: string } — a preset alone is a one-click remark; text alone is free-form.
+      let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid remark payload.' }; }
+      if (!o || typeof o !== 'object') return { ok: false, error: 'Invalid remark payload.' };
+      const presetKey = String(o.preset || '').trim();
+      const preset = presetKey ? REMARK_PRESETS.find((r) => r.key === presetKey) : null;
+      if (presetKey && !preset) return { ok: false, error: 'Unknown remark preset.' };
+      const text = String(o.text || '').replace(/\r\n/g, '\n').trim();
+      if (text.length > 2000) return { ok: false, error: 'Remarks are limited to 2000 characters.' };
+      if (!preset && !text) return { ok: false, error: 'Pick a remark or write one.' };
+      return { ok: true, normalized: { preset: preset ? preset.key : '', presetLabel: preset ? preset.label : '', text } };
+    }
     case 'sendMilestoneEtransferRequest': {
       const i = parseInt(value, 10);
       if (!Number.isInteger(i) || i < 0 || i > 20) return { ok: false, error: 'Invalid milestone.' };
@@ -802,6 +817,22 @@ function validateAction(action, value) {
   }
 }
 
+/**
+ * Post a staff remark on the lead's Monday row (consultant note #8). NOT
+ * best-effort: the remark IS the action, so a failure surfaces to the user.
+ * Body: 📝 [Remark · <staff>] <Preset label> — <free text>
+ */
+async function postRemarkNote(leadId, { presetLabel = '', text = '', staffName = '' } = {}) {
+  const head = `📝 <b>[Remark${staffName ? ' · ' + escHtmlNote(staffName) : ''}]</b>`;
+  const parts = [];
+  if (presetLabel) parts.push(`<b>${escHtmlNote(presetLabel)}</b>`);
+  if (text) parts.push(escHtmlNote(text).replace(/\n/g, '<br>'));
+  await mondayApi.query(
+    `mutation($id: ID!, $b: String!) { create_update(item_id: $id, body: $b) { id } }`,
+    { id: String(leadId), b: `${head} ${parts.join(' — ')}` }
+  );
+}
+
 /** Post a portal-origin audit note on the lead (best-effort; never blocks the action). */
 async function postPortalNote(leadId, text) {
   try {
@@ -819,7 +850,8 @@ async function postPortalNote(leadId, text) {
  * posts an audit note, and returns a human-facing result message.
  * @throws {Error} with .badRequest=true on validation failure, .notFound on missing lead
  */
-async function applyAction({ leadId, action, value, amend = false }) {
+async function applyAction({ leadId, action, value, amend = false, staffName = '' }) {
+  const who = String(staffName || '').trim().slice(0, 60);
   const v = validateAction(action, value);
   if (!v.ok) { const e = new Error(v.error); e.badRequest = true; throw e; }
 
@@ -842,13 +874,19 @@ async function applyAction({ leadId, action, value, amend = false }) {
   switch (action) {
     case 'outcome':
       await leadService.updateLead(leadId, { outcome: v.normalized });
-      await postPortalNote(leadId, `Outcome set to “${v.normalized}”.`);
+      await postPortalNote(leadId, `Outcome set to “${v.normalized}”${who ? ` by ${escHtmlNote(who)}` : ''}.`);
       if (v.normalized === 'Retain') {
         return { ok: true, message: feeSet
           ? 'Outcome recorded as Retain — the retainer agreement (stating the fee) is being emailed to the client.'
           : 'Outcome recorded as Retain. The agreement states the fee, so it will be emailed automatically once you set the retainer fee below — no agreement goes out without a fee.' };
       }
       return { ok: true, message: `Outcome recorded: ${v.normalized}.` };
+
+    case 'remark': {
+      // Not blocked by the plan lock — a remark records what was done, it edits no terms.
+      await postRemarkNote(leadId, { ...v.normalized, staffName: who });
+      return { ok: true, message: `Remark posted to the lead's Monday updates${v.normalized.presetLabel ? `: ${v.normalized.presetLabel}` : ''}.` };
+    }
 
     case 'retainerFee':
       await leadService.updateLead(leadId, { retainerFee: v.normalized });
@@ -1695,6 +1733,7 @@ async function getDirectClientOptions() {
 }
 
 module.exports = {
+  REMARK_PRESETS, postRemarkNote,
   getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS,
   getLeadsQueue, getLeadDetail, buildIntakeSections,
   parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement, getSignedConsultAgreementPdf, getSignedRetainerAgreementPdf,

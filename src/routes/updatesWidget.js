@@ -136,6 +136,7 @@ const UPDATES_WIDGET_JS = [
   '  };',
   '',
   '  load();',
+  '  window["tdotUpdatesReload_" + p] = load;   // other widgets on the page (remarks) refresh the thread after posting',
   '}',
 ].join('\n');
 
