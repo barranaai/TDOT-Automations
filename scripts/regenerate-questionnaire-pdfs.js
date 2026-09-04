@@ -13,6 +13,7 @@
  *   node scripts/regenerate-questionnaire-pdfs.js --only 2026-ISS-009    # one (or comma-separated) case(s)
  *   node scripts/regenerate-questionnaire-pdfs.js --write --out report.json
  *   --create-missing      also create PDFs for answered forms that have none (default: refresh existing only)
+ *   --missing-only        create ONLY the absent PDFs; never rewrite an existing one (implies --create-missing)
  *   --render-edited       forms edited after submission get a "Submitted — edited after submission" cover (default: skip + report)
  *   --base <url>          default https://app.tdotimm.com       --pace <ms>  between cases (default 250)
  * A JSON report is ALWAYS written (--out, else ./regen-report-<mode>-<timestamp>.json), per case as it goes.
@@ -33,7 +34,12 @@ const flag = (n) => argv.includes(n);
 const opt  = (n, d) => { const i = argv.indexOf(n); return i !== -1 && argv[i + 1] ? argv[i + 1] : d; };
 
 const WRITE          = flag('--write');
-const CREATE_MISSING = flag('--create-missing');
+// --missing-only: create the PDFs that do not exist yet and leave every existing
+// one exactly as it is (no rewrite, no new OneDrive version). Implemented by
+// probing the case in dry-run first and telling the server to skip the forms
+// that already have a PDF.
+const MISSING_ONLY   = flag('--missing-only');
+const CREATE_MISSING = flag('--create-missing') || MISSING_ONLY;
 const RENDER_EDITED  = flag('--render-edited');   // forms edited after submission → "Submitted — edited after submission" cover (default: skip + report)
 const ONLY  = opt('--only', '').split(',').map((s) => s.trim()).filter(Boolean);
 const BASE  = opt('--base', 'https://app.tdotimm.com').replace(/\/$/, '');
@@ -77,8 +83,23 @@ const TRANSIENT_WAITS = [30000, 60000, 120000];
 async function callCase(row) {
   const url = `${BASE}/admin/questionnaire/${encodeURIComponent(row.caseRef)}/regenerate-pdfs`;
   const done = new Map(); // formKey → form result already regenerated in an earlier attempt
+  const preSkip = [];     // --missing-only: forms that already have a PDF — never touched
+
+  if (MISSING_ONLY && WRITE) {
+    const probe = await callOnce(url, JSON.stringify({ dryRun: true, qCompletionStatus: row.qStatus, updates: row.updates, updatesTruncated: row.updatesTruncated, createMissing: true, editedAfterSubmission: RENDER_EDITED ? 'render' : 'skip', skipKeys: [] }));
+    // A probe that does not come back with a form list means we do not know what
+    // exists — never write blind, report the case and move on.
+    if (probe.status !== 200 || !probe.json || !Array.isArray(probe.json.forms)) {
+      return { status: probe.status || 0, body: (probe.json || { error: probe.text || 'probe failed' }), transient: probe.status === 503 || probe.status === 429 };
+    }
+    for (const f of probe.json.forms) if (f.hadPdf) preSkip.push(f.formKey);
+    if (!probe.json.forms.some((f) => !f.hadPdf && (f.action === 'would-regenerate'))) {
+      return { status: 200, body: { ...probe.json, dryRun: false, forms: probe.json.forms.map((f) => (f.hadPdf ? { ...f, action: 'skipped', reason: 'already-has-pdf' } : f)), nothingMissing: true }, transient: false };
+    }
+  }
+
   for (let attempt = 0; ; attempt++) {
-    const body = JSON.stringify({ dryRun: !WRITE, qCompletionStatus: row.qStatus, updates: row.updates, updatesTruncated: row.updatesTruncated, createMissing: CREATE_MISSING, editedAfterSubmission: RENDER_EDITED ? 'render' : 'skip', skipKeys: [...done.keys()] });
+    const body = JSON.stringify({ dryRun: !WRITE, qCompletionStatus: row.qStatus, updates: row.updates, updatesTruncated: row.updatesTruncated, createMissing: CREATE_MISSING, editedAfterSubmission: RENDER_EDITED ? 'render' : 'skip', skipKeys: [...preSkip, ...done.keys()] });
     let res, text;
     try {
       res  = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': KEY }, body, signal: AbortSignal.timeout(180000) });
@@ -109,13 +130,27 @@ async function callCase(row) {
   }
 }
 
-const report = { mode: WRITE ? 'write' : 'dry-run', createMissing: CREATE_MISSING, renderEdited: RENDER_EDITED, base: BASE, startedAt: new Date().toISOString(), duplicates: [], cases: [], aborted: null };
+/** One request, no retries — used for the --missing-only probe. */
+async function callOnce(url, body) {
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': KEY }, body, signal: AbortSignal.timeout(180000) });
+    const text = await res.text();
+    let json = null; try { json = JSON.parse(text); } catch (_) { /* HTML error page */ }
+    if (res.status === 401 || res.status === 403) { const e = new Error(`AUTH FAILURE ${res.status}: ${text.slice(0, 200)}`); e.abortRun = 'auth-failure'; throw e; }
+    return { status: res.status, json, text };
+  } catch (err) {
+    if (err.abortRun) throw err;
+    return { status: 0, json: null, text: err.message };
+  }
+}
+
+const report = { mode: WRITE ? 'write' : 'dry-run', createMissing: CREATE_MISSING, missingOnly: MISSING_ONLY, renderEdited: RENDER_EDITED, base: BASE, startedAt: new Date().toISOString(), duplicates: [], cases: [], aborted: null };
 const tally  = { cases: 0, forms: 0, regenerated: 0, wouldRegenerate: 0, failed: 0, skipped: {}, via: {}, errors: 0, noForms: 0, submittedPdfs: 0, editedPdfs: 0, draftPdfs: 0, parseMiss: 0, updatesTruncated: 0 };
 const save   = () => fs.writeFileSync(OUT, JSON.stringify({ ...report, tally }, null, 2));
 
 (async () => {
   if (!KEY) { console.error('ADMIN_API_KEY missing in .env'); process.exit(2); }
-  console.log(`${WRITE ? '*** WRITE MODE ***' : 'dry-run'} → ${BASE}${CREATE_MISSING ? '  (+create-missing)' : ''}\nReport → ${OUT}`);
+  console.log(`${WRITE ? '*** WRITE MODE ***' : 'dry-run'} → ${BASE}${MISSING_ONLY ? '  (missing PDFs ONLY — existing ones untouched)' : CREATE_MISSING ? '  (+create-missing)' : ''}\nReport → ${OUT}`);
   const all = await fetchAllCases();
   const withRef = all.filter((r) => r.caseRef);
 

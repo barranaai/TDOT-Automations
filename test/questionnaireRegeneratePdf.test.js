@@ -269,12 +269,18 @@ test('endpoint + listFiles + driver pins', () => {
   assert.match(drv, /consecutiveFailures >= 5/, 'aborts on a systemic failure run');
   assert.match(drv, /rows\.length > 1/, 'duplicated case refs are skipped');
   assert.match(drv, /text_body/, 'reads plain-text Update bodies for the submission evidence');
-  assert.match(drv, /skipKeys: \[\.\.\.done\.keys\(\)\]/, 'retries pass the already-regenerated forms as skipKeys');
+  assert.match(drv, /skipKeys: \[\.\.\.preSkip, \.\.\.done\.keys\(\)\]/, 'retries pass the already-regenerated forms as skipKeys');
   assert.match(drv, /err\.name === 'TimeoutError'/, 'a client-side timeout is not retried (the server may still be running)');
   assert.match(drv, /regen-report-/, 'a report file is always written');
   assert.match(drv, /parseMiss/, 'parse-health counter');
   assert.match(drv, /updatesTruncated: rawUpdates\.length >= UPDATES_LIMIT/, 'flags a cut Updates feed');
   assert.match(drv, /editedAfterSubmission: RENDER_EDITED \? 'render' : 'skip'/, 'edited-after-submission rendering is opt-in');
+  // --missing-only: probe first, then tell the server to leave every existing PDF alone
+  assert.match(drv, /const MISSING_ONLY   = flag\('--missing-only'\);/);
+  assert.match(drv, /const CREATE_MISSING = flag\('--create-missing'\) \|\| MISSING_ONLY;/, 'missing-only implies create-missing');
+  assert.match(drv, /for \(const f of probe\.json\.forms\) if \(f\.hadPdf\) preSkip\.push\(f\.formKey\);/, 'forms that already have a PDF are skipped');
+  assert.match(drv, /if \(probe\.status !== 200 \|\| !probe\.json \|\| !Array\.isArray\(probe\.json\.forms\)\)/, 'a failed probe never writes blind');
+  assert.match(drv, /skipKeys: \[\.\.\.preSkip, \.\.\.done\.keys\(\)\]/);
   assert.match(server.slice(i), /editedAfterSubmission === 'render' \? 'render' : 'skip'/, 'endpoint whitelists the option');
   assert.doesNotMatch(drv, /mutation/, 'driver never mutates Monday');
 });
