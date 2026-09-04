@@ -92,3 +92,60 @@ test('flag save preserves the client reply (edit must not erase it)', () => {
   assert.match(block, /clientReply/);
   assert.match(block, /clientRepliedAt/);
 });
+
+// ── Team decision 2026-09-04: every signed-in staffer can open every case ────
+// Visibility only. Deleting a case, restoring/repairing a client's answers, the
+// status audit and the OneDrive tools stay behind ADMIN_EMAILS.
+
+const caseAccessPolicy = require('../src/services/caseAccessService');
+
+const withPolicy = (value, fn) => {
+  const prev = process.env.CASE_VISIBILITY;
+  if (value === undefined) delete process.env.CASE_VISIBILITY; else process.env.CASE_VISIBILITY = value;
+  try { return fn(); } finally { if (prev === undefined) delete process.env.CASE_VISIBILITY; else process.env.CASE_VISIBILITY = prev; }
+};
+
+const STRANGER = { userId: '999', teamIds: [], email: 'someone@tdotimm.com', isAdmin: false };
+const ASSIGNED = { userId: '48329256', teamIds: [], email: 'gauri@tdotimm.com', isAdmin: false };
+const CASE     = { personIds: ['48329256'], teamIds: [] };
+
+test('default: any signed-in staffer sees any case; nobody signed out sees anything', () => {
+  withPolicy(undefined, () => {
+    assert.equal(caseAccessPolicy.caseVisibilityPolicy(), 'all');
+    assert.equal(caseAccessPolicy.viewerCanSee(CASE, STRANGER), true, 'a colleague who is not assigned can now open it');
+    assert.equal(caseAccessPolicy.viewerCanSee(CASE, ASSIGNED), true);
+    assert.equal(caseAccessPolicy.viewerCanSee({ personIds: [], teamIds: [] }, STRANGER), true, 'an unassigned case too');
+    assert.equal(caseAccessPolicy.viewerCanSee(CASE, null), false, 'still requires a signed-in viewer');
+  });
+});
+
+test('CASE_VISIBILITY=assigned restores the original per-assignment rule without a deploy', () => {
+  withPolicy('assigned', () => {
+    assert.equal(caseAccessPolicy.caseVisibilityPolicy(), 'assigned');
+    assert.equal(caseAccessPolicy.viewerCanSee(CASE, ASSIGNED), true);
+    assert.equal(caseAccessPolicy.viewerCanSee(CASE, STRANGER), false);
+    assert.equal(caseAccessPolicy.viewerCanSee(CASE, { ...STRANGER, isAdmin: true }), true, 'admins are unaffected');
+  });
+  withPolicy('ASSIGNED  ', () => assert.equal(caseAccessPolicy.caseVisibilityPolicy(), 'assigned', 'case/space tolerant'));
+  withPolicy('nonsense', () => assert.equal(caseAccessPolicy.caseVisibilityPolicy(), 'all', 'anything unrecognised opens up, never silently locks out'));
+});
+
+test('opening visibility grants NO admin powers: the destructive surfaces still demand ADMIN_EMAILS', () => {
+  const src = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
+  for (const [route, guard] of [
+    ["app.get('/admin/delete/preview'", 'resolveAdminOrReject'],
+    ["app.post('/admin/delete/execute'", 'resolveAdminOrReject'],
+    ["app.post('/admin/onedrive/refile-general'", 'resolveAdminOrReject'],
+    ["app.get('/admin/status-audit'", 'viewer.isAdmin'],
+  ]) {
+    const i = src.indexOf(route);
+    assert.ok(i !== -1, `${route} exists`);
+    assert.ok(src.slice(i, i + 700).includes(guard), `${route} still requires ${guard}`);
+  }
+  // restore/repair rewrite a client's saved answers — admin only, regardless of visibility
+  for (const needle of ['Admins only — repair rewrites', 'Admins only — restore overwrites']) {
+    assert.ok(src.includes(needle), needle);
+  }
+  const access = fs.readFileSync(require.resolve('../src/services/caseAccessService.js'), 'utf8');
+  assert.doesNotMatch(access, /caseVisibilityPolicy\(\)[^\n]*isAdmin\s*=/, 'the policy never confers admin');
+});

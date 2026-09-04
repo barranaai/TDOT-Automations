@@ -539,7 +539,7 @@ function resolveViewer(req) {
   const staff = tryStaffAuth(req);
   if (staff) {
     const v = caseAccess.viewerFromStaff(staff);
-    v.scope = v.isAdmin ? 'all' : 'assigned';
+    v.scope = (v.isAdmin || caseAccess.caseVisibilityPolicy() === 'all') ? 'all' : 'assigned';
     return v;
   }
   return null;
@@ -552,7 +552,7 @@ app.get('/admin/dashboard-stats', async (req, res) => {
     return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
   }
   try {
-    const stats = await dashboardService.getDashboardStats(viewer.isAdmin ? undefined : viewer);
+    const stats = await dashboardService.getDashboardStats(viewer.scope === 'all' ? undefined : viewer);
     res.json({ ...stats, viewer: { name: viewer.name, email: viewer.email, scope: viewer.scope, isAdmin: viewer.isAdmin } });
   } catch (err) {
     console.error('[Dashboard] Identity stats failed:', err.stack || err.message);

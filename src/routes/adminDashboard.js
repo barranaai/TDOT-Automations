@@ -910,7 +910,7 @@ function loadData() {
       if (data.viewer && data.viewer.scope === 'assigned') {
         scope = ' · 👤 Your assigned cases (' + (data.summary ? data.summary.total : 0) + ')' +
           (data.viewer.name ? ' — ' + data.viewer.name : '');
-      } else if (data.viewer && data.viewer.isAdmin) {
+      } else if (data.viewer && data.viewer.scope === 'all') {
         scope = ' · 🗂️ All cases' + (data.viewer.name && data.viewer.name !== 'Admin' ? ' — ' + data.viewer.name : '');
       }
       document.getElementById('hdr-updated').textContent =

@@ -21,6 +21,24 @@ const PEOPLE_COLUMNS = [
   'multiple_person_mm0xrzve',  // Override Approved By
 ];
 
+/**
+ * Case VISIBILITY policy — deliberately separate from admin POWERS.
+ *
+ *   "all"      (default, team decision 2026-09-04) any signed-in staffer can
+ *              open any case. The team works across each other's files, and the
+ *              assigned-only rule kept costing people access to cases they needed.
+ *   "assigned" the original rule: a case is visible only to the people named in
+ *              one of its Client Master people columns.
+ *
+ * This grants READ access to every case and nothing else. Deleting a case,
+ * restoring or repairing a client's saved answers, the status audit and the
+ * OneDrive tools all still require an ADMIN_EMAILS address (or the shared admin
+ * key), and none of them consult this policy.
+ */
+function caseVisibilityPolicy() {
+  return String(process.env.CASE_VISIBILITY || 'all').trim().toLowerCase() === 'assigned' ? 'assigned' : 'all';
+}
+
 /** ADMIN_EMAILS="a@x.com,b@x.com" → these users (and the shared admin key) see all cases. */
 function isAdminEmail(email) {
   const list = String(process.env.ADMIN_EMAILS || '')
@@ -57,8 +75,9 @@ function assigneesFromColumnValues(valueByColId = {}) {
  * @param {{ userId?: string, teamIds?: string[], isAdmin?: boolean }} viewer
  */
 function viewerCanSee(assignees, viewer) {
-  if (!viewer) return false;
+  if (!viewer) return false;            // not signed in — never
   if (viewer.isAdmin) return true;
+  if (caseVisibilityPolicy() === 'all') return true;   // any signed-in staffer
   const a = assignees || {};
   const persons = a.personIds || [];
   const teams = a.teamIds || [];
@@ -82,6 +101,7 @@ function viewerFromStaff(staff) {
 
 module.exports = {
   PEOPLE_COLUMNS,
+  caseVisibilityPolicy,
   isAdminEmail,
   assigneesFromColumnValues,
   viewerCanSee,

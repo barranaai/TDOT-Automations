@@ -34,23 +34,35 @@ test('assigneesFromColumnValues: tolerates empty/blank/garbage values', () => {
   assert.deepEqual(a.teamIds, []);
 });
 
-test('viewerCanSee: person match', () => {
+
+// The per-assignment matching below is the CASE_VISIBILITY="assigned" rule.
+// Since 2026-09-04 the default is "all" (any signed-in staffer sees any case),
+// so these pin the matching logic under the policy that still uses it.
+function assignedOnly(fn) {
+  const prev = process.env.CASE_VISIBILITY;
+  process.env.CASE_VISIBILITY = 'assigned';
+  try { return fn(); } finally { if (prev === undefined) delete process.env.CASE_VISIBILITY; else process.env.CASE_VISIBILITY = prev; }
+}
+
+test('viewerCanSee: person match (assigned-only policy)', () => assignedOnly(() => {
   const assignees = { personIds: ['101', '202'], teamIds: [] };
   assert.equal(access.viewerCanSee(assignees, { userId: '202', teamIds: [] }), true);
   assert.equal(access.viewerCanSee(assignees, { userId: '303', teamIds: [] }), false);
-});
+}));
 
-test('viewerCanSee: team match (member of an assigned team)', () => {
+test('viewerCanSee: team match (assigned-only policy)', () => assignedOnly(() => {
   const assignees = { personIds: ['101'], teamIds: ['900'] };
   assert.equal(access.viewerCanSee(assignees, { userId: '55', teamIds: ['900', '901'] }), true, 'belongs to assigned team 900');
   assert.equal(access.viewerCanSee(assignees, { userId: '55', teamIds: ['902'] }), false, 'not in any assigned team');
-});
+}));
 
-test('viewerCanSee: admin always sees; empty assignees never match a non-admin', () => {
+test('viewerCanSee: admin always sees; a signed-out viewer never does', () => {
   assert.equal(access.viewerCanSee({ personIds: [], teamIds: [] }, { userId: '1', teamIds: [], isAdmin: true }), true);
-  assert.equal(access.viewerCanSee({ personIds: [], teamIds: [] }, { userId: '1', teamIds: [] }), false);
-  assert.equal(access.viewerCanSee(undefined, { userId: '1', teamIds: [] }), false);
-  assert.equal(access.viewerCanSee({ personIds: ['1'] }, null), false, 'no viewer → no access');
+  assert.equal(access.viewerCanSee({ personIds: ['1'] }, null), false, 'no viewer → no access, under either policy');
+  assignedOnly(() => {
+    assert.equal(access.viewerCanSee({ personIds: [], teamIds: [] }, { userId: '1', teamIds: [] }), false);
+    assert.equal(access.viewerCanSee(undefined, { userId: '1', teamIds: [] }), false);
+  });
 });
 
 test('isAdminEmail + viewerFromStaff: allowlist drives isAdmin (case-insensitive)', () => {
