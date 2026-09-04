@@ -91,9 +91,13 @@ test('phantom-docs audit is read-only and buckets every Received row', () => {
   assert.doesNotMatch(s, /mutation|uploadFile|moveFile|change_multiple_column_values/, 'never writes');
   assert.match(s, /subfolder=\*/, 'reads the whole case tree');
   assert.match(s, /normFilename/, 'matches names the way OneDrive stores them');
-  for (const bucket of ['ok', 'misfiled', 'PHANTOM', 'no-upload-record', 'folder-missing']) {
+  for (const bucket of ['ok', 'misfiled', 'renamed', 'PHANTOM', 'no-upload-record', 'folder-missing']) {
     assert.ok(s.includes(`'${bucket}'`), `bucket ${bucket} exists`);
   }
+  // a vanished FILENAME is only a missing DOCUMENT when the case is short of files —
+  // staff rename and re-file while preparing a submission
+  assert.match(s, /const shortOfFiles = clientFiles < unmatched\.length;/);
+  assert.match(s, /o\.verdict = shortOfFiles \? 'PHANTOM' : 'renamed';/);
 });
 
 // ── Behavioural: drive uploadFileToOneDrive with stubbed Monday + OneDrive ──

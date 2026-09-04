@@ -15,11 +15,20 @@
  *   ok               - the file is in the folder the row's category names
  *   misfiled         - the file exists, but in another folder (the pre-2026-09-02
  *                      "General" bug; the re-filing sweep moves these)
- *   PHANTOM          - a client upload was recorded and the file is nowhere in
- *                      the case folder  <- the ones that matter
+ *   renamed          - the recorded name is gone, but the case folder holds at
+ *                      least as many client files as unmatched rows: staff
+ *                      reorganised into their own folders ("++prepration",
+ *                      "<client> - EE final", "Apply Online", ...) and renamed
+ *                      as they went. Filename matching cannot see through that.
+ *   PHANTOM          - the recorded name is gone AND the case folder holds fewer
+ *                      client files than unmatched rows  <- the ones to look at
  *   no-upload-record - Received with no client-upload comment at all (status set
  *                      by hand, or an upload from before the audit comments)
  *   folder-missing   - the case folder does not resolve by "<client> - <ref>"
+ *
+ * The renamed/PHANTOM split matters: staff routinely rename and re-file
+ * documents while preparing a submission, so a missing FILENAME is not a
+ * missing DOCUMENT. Only a case that is short of files is worth chasing.
  *
  *   node scripts/audit-phantom-docs.js                  # everything
  *   node scripts/audit-phantom-docs.js --only 2026-SPE-013
@@ -39,6 +48,9 @@ const STATUS_COL      = 'color_mm0zwgvr';   // Document Status: Missing / Receiv
 const CATEGORY_COL    = 'text_mm261tka';
 const UPLOAD_DATE_COL = 'date_mm0zyw0m';
 const UPDATES_LIMIT   = 30;
+// Folders the system creates per category; anything else with files in it was made by staff.
+const CATEGORY_FOLDERS = new Set(['General', 'Identity', 'Academic', 'Financial', 'Background', 'Relationship',
+  'Medical', 'Other', 'Forms', 'Travel', 'Legal', 'Employment', 'Supporting', 'Personal']);
 
 const argv = process.argv.slice(2);
 const opt  = (n, d) => { const i = argv.indexOf(n); return i !== -1 && argv[i + 1] ? argv[i + 1] : d; };
@@ -100,7 +112,8 @@ async function caseTree(caseRef) {
   console.log(`rows marked Received: ${rows.length} across ${byCase.size} cases`);
 
   const report = { base: BASE, startedAt: new Date().toISOString(), cases: [], findings: [] };
-  const tally = { cases: 0, rows: 0, ok: 0, misfiled: 0, phantom: 0, noUploadRecord: 0, folderMissing: 0, treeErrors: 0 };
+  const tally = { cases: 0, rows: 0, ok: 0, misfiled: 0, renamed: 0, phantom: 0, noUploadRecord: 0, folderMissing: 0, treeErrors: 0 };
+  const SYSTEM_FOLDERS = new Set(['Questionnaire', 'Retainer']);   // ours, not the client's documents
   const save = () => fs.writeFileSync(OUT, JSON.stringify({ ...report, tally }, null, 2));
 
   const refs = [...byCase.keys()].sort();
@@ -131,12 +144,7 @@ async function caseTree(caseRef) {
       if (!files.length) { tally.noUploadRecord++; outcomes.push({ ...rowBrief(row), verdict: 'no-upload-record' }); continue; }
       // the row is satisfied if ANY file it recorded is present somewhere
       const found = files.map((f) => ({ file: f, folders: where.get(normFilename(f)) || [] })).filter((x) => x.folders.length);
-      if (!found.length) {
-        tally.phantom++;
-        const v = { ...rowBrief(row), verdict: 'PHANTOM', recordedFiles: files };
-        outcomes.push(v); report.findings.push({ caseRef, clientName: tree.clientName, ...v });
-        continue;
-      }
+      if (!found.length) { outcomes.push({ ...rowBrief(row), verdict: 'unmatched', recordedFiles: files }); continue; }
       const inCategory = found.some((x) => x.folders.some((fo) => fo === row.category));
       if (inCategory) { tally.ok++; outcomes.push({ ...rowBrief(row), verdict: 'ok' }); }
       else {
@@ -144,18 +152,36 @@ async function caseTree(caseRef) {
         outcomes.push({ ...rowBrief(row), verdict: 'misfiled', foundIn: [...new Set(found.flatMap((x) => x.folders))] });
       }
     }
-    report.cases.push({ caseRef, clientName: tree.clientName, folders: (tree.tree || []).length, rows: outcomes });
-    const p = outcomes.filter((o) => o.verdict === 'PHANTOM').length;
+    // A recorded name that is gone is only a MISSING DOCUMENT if the case is
+    // actually short of files; otherwise staff renamed it while preparing.
+    const unmatched = outcomes.filter((o) => o.verdict === 'unmatched');
+    const clientFiles = (tree.tree || []).filter((f) => !SYSTEM_FOLDERS.has(f.folder)).reduce((n, f) => n + f.files.length, 0) + (tree.rootFiles || []).length;
+    const staffFolders = (tree.tree || []).filter((f) => !SYSTEM_FOLDERS.has(f.folder) && !CATEGORY_FOLDERS.has(f.folder) && f.files.length).map((f) => `${f.folder} (${f.files.length})`);
+    const shortOfFiles = clientFiles < unmatched.length;
+    for (const o of unmatched) {
+      o.verdict = shortOfFiles ? 'PHANTOM' : 'renamed';
+      o.clientFilesInCase = clientFiles;
+      if (shortOfFiles) { tally.phantom++; report.findings.push({ caseRef, clientName: tree.clientName, clientFiles, staffFolders, ...o }); }
+      else tally.renamed++;
+    }
+    report.cases.push({ caseRef, clientName: tree.clientName, folders: (tree.tree || []).length, clientFiles, staffFolders, rows: outcomes });
     const m = outcomes.filter((o) => o.verdict === 'misfiled').length;
     const n = outcomes.filter((o) => o.verdict === 'no-upload-record').length;
-    console.log(`[${i + 1}/${refs.length}] ${caseRef}  received:${outcomes.length}  ok:${outcomes.length - p - m - n}  misfiled:${m}  no-record:${n}${p ? `  *** PHANTOM:${p} ***` : ''}`);
+    const rn = outcomes.filter((o) => o.verdict === 'renamed').length;
+    const p = outcomes.filter((o) => o.verdict === 'PHANTOM').length;
+    console.log(`[${i + 1}/${refs.length}] ${caseRef}  received:${outcomes.length}  ok:${outcomes.length - p - m - n - rn}  misfiled:${m}  renamed:${rn}  no-record:${n}${p ? `  *** SHORT OF FILES: ${p} (holds ${clientFiles}) ***` : ''}`);
     save(); await sleep(PACE);
   }
   report.finishedAt = new Date().toISOString(); save();
   console.log('\nSummary:', JSON.stringify(tally, null, 2));
   if (report.findings.length) {
-    console.log(`\nPHANTOM DOCUMENTS (${report.findings.length}) — marked Received, file not in the case folder:`);
-    for (const f of report.findings) console.log(`  ${f.caseRef.padEnd(16)} ${String(f.clientName || '').padEnd(24)} ${f.doc}\n      recorded: ${f.recordedFiles.join(', ')}  (uploaded ${f.uploadDate || '—'})`);
+    const cases = [...new Set(report.findings.map((f) => f.caseRef))];
+    console.log(`\nWORTH A LOOK — ${report.findings.length} row(s) across ${cases.length} case(s) whose recorded file is gone AND whose folder holds fewer files than that:`);
+    for (const ref of cases) {
+      const rows = report.findings.filter((f) => f.caseRef === ref);
+      console.log(`  ${ref}  ${rows[0].clientName || ''}  — ${rows.length} unmatched, ${rows[0].clientFiles} client file(s) present${rows[0].staffFolders.length ? `, staff folders: ${rows[0].staffFolders.join(', ')}` : ''}`);
+      for (const f of rows) console.log(`      ${f.doc}  ←  ${f.recordedFiles.join(', ')}  (uploaded ${f.uploadDate || '—'})`);
+    }
   }
   console.log(`\nReport → ${OUT}`);
 })().catch((err) => { console.error('FAILED:', err.stack || err.message); process.exit(err.abortRun ? 2 : 1); });
