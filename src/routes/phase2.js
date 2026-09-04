@@ -48,7 +48,7 @@ const intakeUpload = multer({
     const ok = /\.(pdf|jpe?g|png)$/i.test(file.originalname || '');
     if (!ok) { // dropped files are surfaced to staff in the digest, not lost silently
       req.body._rejectedUploads = req.body._rejectedUploads || [];
-      req.body._rejectedUploads.push(file.originalname || '(unnamed file)');
+      req.body._rejectedUploads.push(require('../utils/uploadFilename').decodeUploadFilename(file.originalname) || '(unnamed file)');
     }
     cb(null, ok);
   },

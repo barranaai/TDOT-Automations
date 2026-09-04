@@ -2,6 +2,7 @@ const path      = require('path');
 const fs        = require('fs');
 const mondayApi = require('./mondayApi');
 const { uploadFile: uploadToOneDrive, ensureCategoryFolderLink } = require('./oneDriveService');
+const { decodeUploadFilename } = require('../utils/uploadFilename');
 const { clientMasterBoardId } = require('../../config/monday');
 
 // ─── Disclaimer map (keyed by "caseType|subType") ────────────────────────────
@@ -452,7 +453,11 @@ async function getCaseSummary(caseRef) {
  *
  * Client name is fetched from the Client Master Board in parallel.
  */
-async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, originalName, mimeType) {
+async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, rawOriginalName, mimeType) {
+  // multipart filenames arrive as UTF-8 bytes read as latin1 (RFC 7578) - repair
+  // them ONCE, here, so the OneDrive file name and the audit comment (both fed
+  // from this variable) carry the name the client actually chose.
+  const originalName = decodeUploadFilename(rawOriginalName);
   // Fetch the execution item — include documentFolder to check if it needs backfilling
   const execData = await mondayApi.query(
     `query($itemId: ID!) {
@@ -649,4 +654,5 @@ module.exports = {
   markDocumentReceived,
   normApplicantType, // exported for tests (manifest-filter label matching)
   resolveUploadCategory, isTemplateItemId, categoryFromSchemaCode, // exported for tests (upload folder resolution)
+  decodeUploadFilename, // re-exported so the upload tests can reach it through this service
 };
