@@ -912,14 +912,15 @@ app.get('/admin/onedrive/list', async (req, res) => {
   if (!resolveAdminOrReject(req, res, 'Only an admin can list case folders.')) return;   // send the key as x-api-key, not ?key=
   const caseRef   = String(req.query.caseRef || '').trim();
   const subfolder = String(req.query.subfolder || '').trim();
-  const wholeTree = subfolder === '*';   // every sub-folder of the case, with its files
-  if (!/^[A-Za-z0-9-]{3,40}$/.test(caseRef) || (!wholeTree && !/^[A-Za-z0-9 _&()-]{1,60}$/.test(subfolder))) {
+  const wholeTree = subfolder === '*';       // every sub-folder of the case, with its files
+  const findMode  = req.query.find === '1';  // just report where this case's folder actually is
+  if (!/^[A-Za-z0-9-]{3,40}$/.test(caseRef) || (!wholeTree && !findMode && !/^[A-Za-z0-9 _&()-]{1,60}$/.test(subfolder))) {
     return res.status(400).json({ error: 'caseRef and subfolder required' });
   }
   try {
     const oneDrive = require('./services/oneDriveService');
     const { clientName } = await require('./services/htmlQuestionnaireService').validateAccessForStaff(caseRef, { skipFormVersioning: true });
-    if (req.query.find === '1') {
+    if (findMode) {
       // Diagnosis: what is this case's folder called, and does the expected name still match?
       const expected = oneDrive.caseFolderName({ clientName, caseRef });
       const [byName, byRef] = await Promise.all([
