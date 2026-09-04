@@ -538,7 +538,9 @@ function render(d){
 
   // Invite email: pre-fill the (AI-drafted or staff-saved) message. Booked
   // leads no longer need an invite — swap the card for the quick actions.
-  document.getElementById('invite-msg').value=d.inviteMessage||'';
+  // NEVER clobber an unsaved draft: render() now runs again after an outcome
+  // click, and the invite card sits right under the outcome buttons.
+  if(!INV_DIRTY) document.getElementById('invite-msg').value=d.inviteMessage||'';
   document.getElementById('inv-when').textContent=d.inviteSent
     ? ('sent'+(d.inviteSentAt?(' '+String(d.inviteSentAt).slice(0,10)):'')+' — sending again re-emails the client') : '';
   // Consultant override (Melanie, 2026-08-17): show the auto-routing suggestion,
@@ -608,8 +610,13 @@ function doAction(btn, action, confirmText, value, msgElId){
   })
   .catch(function(e){ btn.disabled=false; actMsg(mid,'err','Failed: '+e.message); return {ok:false}; });
 }
+// Unsaved-draft guard: set while the staffer is typing the invite message,
+// cleared once that text is persisted (saved or sent). render() honours it.
+var INV_DIRTY=false;
+document.getElementById('invite-msg').addEventListener('input',function(){ INV_DIRTY=true; });
 document.getElementById('btn-save-msg').onclick=function(){
-  doAction(this,'saveInviteMessage',null,document.getElementById('invite-msg').value,'inv-msg');
+  doAction(this,'saveInviteMessage',null,document.getElementById('invite-msg').value,'inv-msg')
+    .then(function(res){ if(res&&res.ok) INV_DIRTY=false; });
 };
 document.getElementById('btn-invite').onclick=function(){
   // Intent-aware confirmation: a client who asked for a quote / file update /
@@ -635,8 +642,9 @@ document.getElementById('btn-invite').onclick=function(){
         .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ if(!r.ok||(j&&j.error)) throw new Error((j&&j.error)||('Could not set the consultant (HTTP '+r.status+')')); }); })
     : Promise.resolve();
   pinDone.then(function(){
-    doAction(btn,'bookingInvite',null,
-      document.getElementById('invite-msg').value,'inv-msg');
+    return doAction(btn,'bookingInvite',null,
+      document.getElementById('invite-msg').value,'inv-msg')
+      .then(function(res){ if(res&&res.ok) INV_DIRTY=false; });
   }).catch(function(err){
     if(msgEl){ msgEl.textContent='⚠ '+(err.message||'Could not pin the consultant')+' — the invite was NOT sent.'; msgEl.style.color='#b91c1c'; msgEl.style.display='block'; }
   });

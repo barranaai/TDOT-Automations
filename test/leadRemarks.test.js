@@ -72,6 +72,21 @@ test('remark is not blocked by the retainer-terms lock; a Monday failure surface
   await assert.rejects(() => svc2.applyAction({ leadId: '1', action: 'remark', value: { preset: 'fees-quoted' } }), /Monday down/);
 });
 
+test('lead page: re-rendering after an outcome/remark click must NOT clobber an unsaved booking-invite draft', () => {
+  // Regression (found by the post-ship verification pass): the outcome buttons
+  // call load() → render(), and render() used to overwrite #invite-msg
+  // unconditionally. The invite card sits directly under the outcome buttons on
+  // exactly the leads those buttons are for, so a staffer mid-draft lost it.
+  const html = require('../src/routes/adminLeads').buildLeadDetailHTML('12641191022');
+  assert.match(html, /var INV_DIRTY=false;/, 'dirty flag declared');
+  assert.match(html, /getElementById\('invite-msg'\)\.addEventListener\('input',function\(\)\{ INV_DIRTY=true; \}\)/, 'typing marks the draft dirty');
+  assert.match(html, /if\(!INV_DIRTY\) document\.getElementById\('invite-msg'\)\.value=d\.inviteMessage\|\|'';/, 'render never clobbers an unsaved draft');
+  assert.doesNotMatch(html, /\n\s*document\.getElementById\('invite-msg'\)\.value=d\.inviteMessage/, 'no unguarded assignment left');
+  // …and the flag clears once that text is persisted, so later renders show the server's copy
+  assert.match(html, /doAction\(this,'saveInviteMessage',null,document\.getElementById\('invite-msg'\)\.value,'inv-msg'\)\s*\n\s*\.then\(function\(res\)\{ if\(res&&res\.ok\) INV_DIRTY=false; \}\);/, 'save clears the flag');
+  assert.match(html, /return doAction\(btn,'bookingInvite'[\s\S]{0,200}INV_DIRTY=false;/, 'sending the invite clears the flag');
+});
+
 test('endpoint forwards the page-sent (self-reported) name into the action; widget exposes a reload hook', () => {
   const server = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
   const i = server.indexOf("app.post('/api/consultation/:leadId/action'");
