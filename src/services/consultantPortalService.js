@@ -833,6 +833,47 @@ async function postRemarkNote(leadId, { presetLabel = '', text = '', staffName =
   );
 }
 
+/**
+ * Email the team when a lead's OUTCOME changes (team feedback 2026-08-13:
+ * Kamal was reading the board every morning to see what had been decided).
+ * Recipients come from STAFF_OUTCOME_NOTIFY_EMAILS (comma-separated);
+ * unset = feature off, exactly like STAFF_SIGNATURE_NOTIFY_EMAILS.
+ *
+ * Only a REAL change is announced — re-clicking the outcome a lead already has
+ * sends nothing. Best-effort: a mail failure never breaks the outcome write
+ * (the board column and the audit note are the record; this is a nudge).
+ */
+async function notifyOutcomeChange({ leadId, lead = {}, from = '', to = '', staffName = '' }) {
+  try {
+    const before = String(from || '').trim(), after = String(to || '').trim();
+    if (!after || before === after) return { sent: false, reason: 'unchanged' };
+    const list = String(process.env.STAFF_OUTCOME_NOTIFY_EMAILS || '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (!list.length) return { sent: false, reason: 'no-recipients' };
+
+    const esc = (str) => String(str == null ? '' : str).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+    const base = (process.env.RENDER_URL || 'https://app.tdotimm.com').replace(/\/$/, '');
+    const who  = String(staffName || '').trim();
+    const name = lead.fullName || lead.name || 'A lead';
+    const caseType = lead.confirmedCaseType || lead.caseTypeInterest || '';
+    await require('./microsoftMailService').sendEmail({
+      to: list,
+      subject: `🏁 Outcome: ${after} — ${name}${caseType ? ' (' + caseType + ')' : ''}`,
+      html: `<div style="font-family:-apple-system,sans-serif;max-width:520px">
+        <p><b>${esc(name)}</b> — outcome ${before ? 'changed from <b>' + esc(before) + '</b> to ' : 'set to '}<b>${esc(after)}</b>${who ? ' by ' + esc(who) : ''}.</p>
+        <p style="margin:4px 0">Case type: <b>${esc(caseType || '—')}</b><br>
+        Consultant: ${esc(lead.assignedConsultant || '—')}<br>
+        Fee: ${lead.retainerFee ? '$' + esc(lead.retainerFee) : 'not set'}</p>
+        <p><a href="${base}/admin/consultation/${encodeURIComponent(leadId)}">Open the consultation record</a></p>
+      </div>`,
+    });
+    console.log(`[Consultant] outcome notification sent for lead ${leadId}: ${before || '(none)'} → ${after}`);
+    return { sent: true, recipients: list.length };
+  } catch (err) {
+    console.warn(`[Consultant] outcome notification failed for lead ${leadId}: ${err.message}`);
+    return { sent: false, reason: 'error', error: err.message };
+  }
+}
+
 /** Post a portal-origin audit note on the lead (best-effort; never blocks the action). */
 async function postPortalNote(leadId, text) {
   try {
@@ -875,6 +916,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
     case 'outcome':
       await leadService.updateLead(leadId, { outcome: v.normalized });
       await postPortalNote(leadId, `Outcome set to “${v.normalized}”${who ? ` by ${escHtmlNote(who)}` : ''}.`);
+      await module.exports.notifyOutcomeChange({ leadId, lead, from: lead.outcome, to: v.normalized, staffName: who });
       if (v.normalized === 'Retain') {
         return { ok: true, message: feeSet
           ? 'Outcome recorded as Retain — the retainer agreement (stating the fee) is being emailed to the client.'
@@ -947,6 +989,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         }
       }
       await leadService.updateLead(leadId, { outcome: 'Retain' });
+      await module.exports.notifyOutcomeChange({ leadId, lead, from: lead.outcome, to: 'Retain', staffName: who });
       const r = (await require('./retainerService2').maybeSendRetainerAgreement(leadId, { notifyIfMissing: true })) || {};
       await postPortalNote(leadId, r.status === 'sent'
         ? 'Outcome set to “Retain” — retainer agreement emailed to the client.'
@@ -1733,7 +1776,7 @@ async function getDirectClientOptions() {
 }
 
 module.exports = {
-  REMARK_PRESETS, postRemarkNote,
+  REMARK_PRESETS, postRemarkNote, notifyOutcomeChange,
   getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS,
   getLeadsQueue, getLeadDetail, buildIntakeSections,
   parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement, getSignedConsultAgreementPdf, getSignedRetainerAgreementPdf,
