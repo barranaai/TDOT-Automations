@@ -300,9 +300,9 @@ async function readFile({ clientName, caseRef, subfolder, filename }) {
  * not an error → []. Pages through @odata.nextLink.
  * @returns {Promise<Array<{ name: string, size: number, lastModifiedDateTime: string }>>}
  */
-async function listFiles({ clientName, caseRef, subfolder }) {
+async function listChildren({ clientName, caseRef, subfolder = '' }) {
   const safeName   = `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
-  const folderPath = `${ROOT_FOLDER}/${safeName}/${subfolder}`;
+  const folderPath = [`${ROOT_FOLDER}/${safeName}`, String(subfolder || '').trim()].filter(Boolean).join('/');
   const firstUrl   = `${childrenUrl(folderPath)}?$select=name,size,lastModifiedDateTime,file,folder&$top=200`;
   try {
     return await withGraphAuth('list', async (token) => {
@@ -317,7 +317,7 @@ async function listFiles({ clientName, caseRef, subfolder }) {
           throw err;
         }
         for (const it of (res.data?.value || [])) {
-          if (it.file) out.push({ name: it.name, size: it.size, lastModifiedDateTime: it.lastModifiedDateTime });
+          out.push({ name: it.name, size: it.size, lastModifiedDateTime: it.lastModifiedDateTime, isFolder: Boolean(it.folder) });
         }
         next = res.data?.['@odata.nextLink'] || null;
       }
@@ -326,6 +326,12 @@ async function listFiles({ clientName, caseRef, subfolder }) {
   } catch (err) {
     throw wrapError('OneDrive list failed', err);
   }
+}
+
+/** Files only (folders skipped) — the long-standing contract. */
+async function listFiles({ clientName, caseRef, subfolder }) {
+  const kids = await listChildren({ clientName, caseRef, subfolder });
+  return kids.filter((k) => !k.isFolder).map(({ name, size, lastModifiedDateTime }) => ({ name, size, lastModifiedDateTime }));
 }
 
 /**
@@ -647,7 +653,7 @@ async function readFileVersion({ clientName, caseRef, subfolder, filename, versi
 }
 
 module.exports = {
-  createClientFolders, uploadFile, readFile, listFiles, moveFile, ensureClientFolder, ensureCategoryFolderLink,
+  createClientFolders, uploadFile, readFile, listFiles, listChildren, moveFile, ensureClientFolder, ensureCategoryFolderLink,
   ensureLeadFolder, renameDriveItem, uploadFileAndLink, uploadToLeadFolderAndLink,
   getClientFolderByName, getDriveItemById, deleteDriveItem,
   listFileVersions, readFileVersion,

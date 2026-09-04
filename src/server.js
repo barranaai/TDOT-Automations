@@ -912,12 +912,23 @@ app.get('/admin/onedrive/list', async (req, res) => {
   if (!resolveAdminOrReject(req, res, 'Only an admin can list case folders.')) return;   // send the key as x-api-key, not ?key=
   const caseRef   = String(req.query.caseRef || '').trim();
   const subfolder = String(req.query.subfolder || '').trim();
-  if (!/^[A-Za-z0-9-]{3,40}$/.test(caseRef) || !/^[A-Za-z0-9 _&()-]{1,60}$/.test(subfolder)) {
+  const wholeTree = subfolder === '*';   // every sub-folder of the case, with its files
+  if (!/^[A-Za-z0-9-]{3,40}$/.test(caseRef) || (!wholeTree && !/^[A-Za-z0-9 _&()-]{1,60}$/.test(subfolder))) {
     return res.status(400).json({ error: 'caseRef and subfolder required' });
   }
   try {
+    const oneDrive = require('./services/oneDriveService');
     const { clientName } = await require('./services/htmlQuestionnaireService').validateAccessForStaff(caseRef, { skipFormVersioning: true });
-    const files = await require('./services/oneDriveService').listFiles({ clientName, caseRef, subfolder });
+    if (wholeTree) {
+      const kids = await oneDrive.listChildren({ clientName, caseRef, subfolder: '' });
+      const folders = [];
+      for (const f of kids.filter((k) => k.isFolder)) {
+        folders.push({ folder: f.name, files: await oneDrive.listFiles({ clientName, caseRef, subfolder: f.name }) });
+      }
+      const rootFiles = kids.filter((k) => !k.isFolder).map((k) => ({ name: k.name, size: k.size, lastModifiedDateTime: k.lastModifiedDateTime }));
+      return res.json({ caseRef, clientName, tree: folders, rootFiles, count: folders.reduce((n, f) => n + f.files.length, 0) + rootFiles.length });
+    }
+    const files = await oneDrive.listFiles({ clientName, caseRef, subfolder });
     res.json({ caseRef, clientName, subfolder, count: files.length, files });
   } catch (err) {
     console.error(`[OneDriveList] failed for ${caseRef}/${subfolder}:`, err.message);

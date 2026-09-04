@@ -256,11 +256,13 @@ test('endpoint + listFiles + driver pins', () => {
   assert.doesNotMatch(block, /saveFormData|saveMembers|change_multiple_column_values|loadMembers/, 'never writes JSON / manifest / Monday, never seeds a manifest');
 
   const od = fs.readFileSync(require.resolve('../src/services/oneDriveService.js'), 'utf8');
-  const j = od.indexOf('async function listFiles(');
-  const lf = od.slice(j, od.indexOf('\n}\n', j));
-  assert.match(lf, /status === 404\) return \[\]/, 'absent folder → []');
-  assert.match(lf, /@odata\.nextLink/, 'pages');
-  assert.match(lf, /if \(it\.file\)/, 'files only');
+  // paging + the absent-folder rule live in listChildren; listFiles filters it to files
+  const j = od.indexOf('async function listChildren(');
+  const lc = od.slice(j, od.indexOf('\n}\n', j));
+  assert.match(lc, /status === 404\) return \[\]/, 'absent folder → []');
+  assert.match(lc, /@odata\.nextLink/, 'pages');
+  const k = od.indexOf('async function listFiles(');
+  assert.match(od.slice(k, od.indexOf('\n}\n', k)), /filter\(\(k\) => !k\.isFolder\)/, 'files only');
   assert.match(od, /readFile, listFiles,/, 'exported');
 
   const drv = fs.readFileSync(require.resolve('../scripts/regenerate-questionnaire-pdfs.js'), 'utf8');

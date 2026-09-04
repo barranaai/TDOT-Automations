@@ -71,7 +71,7 @@ test('uploadFileToOneDrive uses the shared resolution (no intakeId short-circuit
   assert.match(g, /if \(!isTemplateItemId\(intakeId\)\) return ''/);
 });
 
-test('admin OneDrive listing endpoint is admin-only and read-only', () => {
+test('admin OneDrive listing endpoint is admin-only and read-only; subfolder=* returns the whole case tree', () => {
   const src = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
   const i = src.indexOf("app.get('/admin/onedrive/list'");
   assert.ok(i !== -1, 'route exists');
@@ -79,6 +79,21 @@ test('admin OneDrive listing endpoint is admin-only and read-only', () => {
   assert.match(block, /resolveAdminOrReject\(req, res(, '[^']*')?\)/);
   assert.match(block, /listFiles\(/);
   assert.doesNotMatch(block, /uploadFile|deleteDriveItem|renameDriveItem|mutation/, 'never writes');
+  // tree mode (phantom-doc audit): every sub-folder with its files, still read-only
+  assert.match(block, /const wholeTree = subfolder === '\*'/);
+  assert.match(block, /listChildren\(\{ clientName, caseRef, subfolder: '' \}\)/);
+  assert.match(block, /res\.json\(\{ caseRef, clientName, tree: folders, rootFiles/);
+  assert.match(block, /!wholeTree && !\/\^\[A-Za-z0-9 _&\(\)-\]\{1,60\}\$\/\.test\(subfolder\)/, 'the name guard still applies to a real sub-folder');
+});
+
+test('phantom-docs audit is read-only and buckets every Received row', () => {
+  const s = fs.readFileSync(require.resolve('../scripts/audit-phantom-docs.js'), 'utf8');
+  assert.doesNotMatch(s, /mutation|uploadFile|moveFile|change_multiple_column_values/, 'never writes');
+  assert.match(s, /subfolder=\*/, 'reads the whole case tree');
+  assert.match(s, /normFilename/, 'matches names the way OneDrive stores them');
+  for (const bucket of ['ok', 'misfiled', 'PHANTOM', 'no-upload-record', 'folder-missing']) {
+    assert.ok(s.includes(`'${bucket}'`), `bucket ${bucket} exists`);
+  }
 });
 
 // ── Behavioural: drive uploadFileToOneDrive with stubbed Monday + OneDrive ──

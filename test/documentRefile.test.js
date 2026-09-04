@@ -93,10 +93,13 @@ test('pins: moveFile never deletes and keeps both on a clash; endpoint admin-onl
   const od = fs.readFileSync(require.resolve('../src/services/oneDriveService.js'), 'utf8');
   const i = od.indexOf('async function moveFile(');
   const mf = od.slice(i, od.indexOf('\n}\n', i));
+  assert.ok(i !== -1, 'moveFile present');
   assert.match(mf, /conflictBehavior': 'rename'/);
   assert.match(mf, /fromSubfolder === toSubfolder\) throw/);
   assert.doesNotMatch(mf, /axios\.delete/);
-  assert.match(od, /readFile, listFiles, moveFile,/);
+  assert.match(od, /readFile, listFiles, listChildren, moveFile,/);
+  // listFiles is now a filter over listChildren — one paging code path, same contract
+  assert.match(od, /async function listFiles\(\{ clientName, caseRef, subfolder \}\) \{\s*\n\s*const kids = await listChildren\(/);
 
   const server = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
   const j = server.indexOf("app.post('/admin/onedrive/refile-general'");
