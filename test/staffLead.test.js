@@ -13,15 +13,19 @@ const mondayApi   = require('../src/services/mondayApi');
 
 function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; }
 
-const VALID = { fullName: 'Phone Caller', email: 'caller@x.com', phone: '4165550001', sourceChannel: 'Phone' };
+const VALID = { fullName: 'Phone Caller', email: 'caller@x.com', phone: '4165550001', sourceChannel: 'Phone',
+                residentialAddress: '12 King St W, Toronto, ON M5H 1A1, Canada' };
 
-test('validation: name/email/phone required; junk source falls back to Phone; case type must be canonical', async () => {
+test('validation: name/email/phone/address required; junk source falls back to Phone; case type must be canonical', async () => {
   const restore = [stub(svc, 'findClientMatches', async () => ({ clients: [], cases: [], leads: [] }))];
   try {
     for (const bad of [
       { ...VALID, fullName: '' },
       { ...VALID, email: 'not-an-email' },
       { ...VALID, phone: '12' },
+      { ...VALID, residentialAddress: '' },        // staff request 2026-09-04: address is mandatory
+      { ...VALID, residentialAddress: '   ' },
+      (() => { const v = { ...VALID }; delete v.residentialAddress; return v; })(),
       { ...VALID, caseTypeInterest: 'Made Up Type' },
     ]) {
       await assert.rejects(svc.createStaffLead(bad), (e) => e.badRequest === true);
@@ -77,4 +81,32 @@ test('UI + route wiring (source contract)', () => {
   const server = fs.readFileSync(require.resolve('../src/server'), 'utf8');
   assert.match(server, /app\.post\('\/api\/leads\/create'/);
   assert.match(server, /err\.conflict\)\s+return res\.status\(409\)/, 'duplicate contract surfaces as 409 + matches');
+});
+
+test('the address is written AT creation, so a mandatory field is never missing', async () => {
+  const created = [];
+  const restore = [
+    stub(svc, 'findClientMatches', async () => ({ clients: [], cases: [], leads: [] })),
+    stub(leadService, 'createLead', async (f) => { created.push(f); return { id: '9200', ...f }; }),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    await svc.createStaffLead({ ...VALID, residentialAddress: '  12 King St W, Toronto  ' });
+    assert.equal(created.length, 1);
+    assert.equal(created[0].residentialAddress, '12 King St W, Toronto', 'trimmed and passed to createLead itself');
+  } finally { restore.reverse().forEach((x) => x()); }
+
+  // leadService must actually carry it onto the board row at create time
+  const src = require('fs').readFileSync(require.resolve('../src/services/leadService'), 'utf8');
+  const i = src.indexOf('const createFields = {');
+  assert.match(src.slice(i, src.indexOf('};', i)), /residentialAddress:\s*formData\.residentialAddress/);
+});
+
+test('the "Add lead" modal asks for the address and blocks submit without it', () => {
+  const html = require('../src/routes/adminLeads').buildLeadDetailHTML ? require('../src/routes/adminLeads').buildLeadsQueueHTML() : '';
+  assert.match(html, /id="al-address"/, 'the field exists');
+  assert.match(html, /Residential address \*/, 'marked required for staff');
+  assert.match(html, /residentialAddress:alEl\('al-address'\)\.value/, 'sent to the API');
+  assert.match(html, /Name, email, phone and residential address are all required\./, 'immediate feedback');
 });

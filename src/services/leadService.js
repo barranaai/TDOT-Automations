@@ -144,6 +144,7 @@ async function createLead(formData, { groupId } = {}) {
     preferredContact:     formData.preferredContact,
     caseTypeInterest:     formData.caseTypeInterest,
     situationDescription: formData.situationDescription,
+    residentialAddress:   formData.residentialAddress,
     howHeard:             formData.howHeard,
     sourceChannel:        formData.sourceChannel || 'Website',
     conversionStatus:     'New',

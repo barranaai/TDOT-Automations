@@ -98,6 +98,7 @@ ${buildNavHeader('leads')}
         <label class="al-l" for="al-name">Full name *</label><input id="al-name" type="text" maxlength="120" autocomplete="off">
         <label class="al-l" for="al-email">Email *</label><input id="al-email" type="email" maxlength="200" autocomplete="off">
         <label class="al-l" for="al-phone">Phone *</label><input id="al-phone" type="tel" maxlength="40" autocomplete="off">
+        <label class="al-l" for="al-address">Residential address *</label><input id="al-address" type="text" maxlength="500" autocomplete="off" placeholder="Street, city, province/state, postal code, country">
         <label class="al-l" for="al-source">How they reached us</label>
         <select id="al-source"><option>Phone</option><option>WhatsApp</option><option>Email</option><option>Instagram</option><option>Other</option></select>
         <label class="al-l" for="al-casetype">Case type interest (optional)</label>
@@ -233,7 +234,14 @@ function alClose(){ alEl('al-overlay').style.display='none'; }
 function alSubmit(){
   var err=alEl('al-err'); err.textContent='';
   var body={ fullName:alEl('al-name').value, email:alEl('al-email').value, phone:alEl('al-phone').value,
+    residentialAddress:alEl('al-address').value,
     sourceChannel:alEl('al-source').value, caseTypeInterest:alEl('al-casetype').value, note:alEl('al-note').value };
+  /* Immediate feedback for the mandatory fields; the server enforces them too. */
+  if(!body.fullName.trim() || !body.email.trim() || !body.phone.trim() || !body.residentialAddress.trim()){
+    err.textContent='Name, email, phone and residential address are all required.';
+    (!body.fullName.trim()?alEl('al-name'):!body.email.trim()?alEl('al-email'):!body.phone.trim()?alEl('al-phone'):alEl('al-address')).focus();
+    return;
+  }
   if(AL_ALLOW) body.allowDuplicate=true;
   var key=getKey(); if(!key) return;
   var btn=alEl('al-create'); btn.disabled=true; btn.textContent='Creating…';

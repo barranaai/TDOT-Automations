@@ -1345,12 +1345,16 @@ async function createStaffLead(payload = {}) {
   const sourceChannel    = STAFF_LEAD_SOURCES.includes(sourceRaw) ? sourceRaw : 'Phone';
   const caseTypeInterest = clean(payload.caseTypeInterest, 100);
   const note             = clean(payload.note, 2000);
+  const address          = clean(payload.residentialAddress, 500);
   const allowDuplicate   = payload.allowDuplicate === true;
 
   const bad = (m) => { const e = new Error(m); e.badRequest = true; throw e; };
   if (!fullName) bad('Full name is required.');
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('A valid email is required.');
   if (!phone || phone.replace(/\D/g, '').length < 7) bad('A valid phone number is required.');
+  // Required (staff request 2026-09-04): the retainer agreement prints it, the
+  // questionnaire pre-fills from it, and chasing it later costs a call back.
+  if (!address) bad('A residential address is required.');
   if (caseTypeInterest) {
     const canon = await directCaseTypeLabels();
     if (!canon.caseTypes.includes(caseTypeInterest)) bad(`"${caseTypeInterest}" is not a canonical case type — pick one from the list.`);
@@ -1370,6 +1374,7 @@ async function createStaffLead(payload = {}) {
 
   const lead = await leadService.createLead({
     fullName, email, phone, sourceChannel,
+    residentialAddress: address,   // written AT creation — a mandatory field must never be missing
     ...(note ? { situationDescription: note } : {}),
   });
   // The interest dropdown's board vocabulary is the intake's coarse label set —
