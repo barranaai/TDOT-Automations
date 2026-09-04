@@ -83,7 +83,11 @@ test('admin OneDrive listing endpoint is admin-only and read-only; subfolder=* r
   assert.match(block, /const wholeTree = subfolder === '\*'/);
   assert.match(block, /listChildren\(\{ clientName, caseRef, subfolder: '' \}\)/);
   assert.match(block, /res\.json\(\{ caseRef, clientName, tree: folders, rootFiles/);
-  assert.match(block, /!wholeTree && !\/\^\[A-Za-z0-9 _&\(\)-\]\{1,60\}\$\/\.test\(subfolder\)/, 'the name guard still applies to a real sub-folder');
+  assert.match(block, /!wholeTree && !findMode && !\/\^\[A-Za-z0-9 _&\(\)-\]\{1,60\}\$\/\.test\(subfolder\)/, 'the name guard still applies to a real sub-folder');
+  // ?find=1 answers "where is this case's folder" and needs no sub-folder
+  assert.match(block, /const findMode  = req\.query\.find === '1';/);
+  assert.match(block, /findCaseFolderByRef\(caseRef\)/);
+  assert.match(block, /renamed: Boolean\(byRef && byRef\.name && byRef\.name !== expected\)/);
 });
 
 test('phantom-docs audit is read-only and buckets every Received row', () => {

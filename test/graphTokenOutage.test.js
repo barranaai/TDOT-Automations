@@ -105,7 +105,10 @@ test('behavioral: a 401 mid-operation mints a fresh token and the retry succeeds
     const buf = await od.readFile({ clientName: 'T', caseRef: 'R', subfolder: 'S', filename: 'f.json' });
     assert.equal(buf.toString(), '{"ok":true}');
     assert.equal(minted, 2, 'the 401 must mint a FRESH token (invalidate + re-mint)');
-    assert.equal(reads, 2, 'exactly one retry');
+    // 3 GETs: the case-folder resolution (401 -> retried) then the file read.
+    // Since 2026-09-04 a read resolves the case folder by its reference first,
+    // so a renamed client folder cannot silently read as "no file".
+    assert.equal(reads, 3, 'exactly one retry of the request that 401d');
 
     // And a persistent 500 surfaces as a TRANSIENT-tagged wrapped error.
     axios.get = async () => {
