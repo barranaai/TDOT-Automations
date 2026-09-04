@@ -358,6 +358,50 @@ async function moveFile({ clientName, caseRef, fromSubfolder, toSubfolder, filen
   }
 }
 
+/** The folder a case's documents live in: "<client name> - <case ref>", sanitised. */
+function caseFolderName({ clientName, caseRef }) {
+  return `${clientName} - ${caseRef}`.replace(/[*:"<>?/\\|]/g, '').trim();
+}
+
+/**
+ * Find a case's folder by its CASE REFERENCE rather than its name.
+ *
+ * The expected name embeds the client name, so renaming the Monday item -
+ * staff routinely append a client number, e.g. "Nayala Sadaf" becomes
+ * "Nayala Sadaf (2720)" - leaves every path pointing at a folder that no
+ * longer exists. The case reference is unique and never changes, so the
+ * folder whose name ends in " - <caseRef>" is the case's folder whatever the
+ * client half says.
+ *
+ * Read-only. Returns { id, name, webUrl } or null. Pages the root listing.
+ */
+async function findCaseFolderByRef(caseRef) {
+  const ref = String(caseRef || '').trim();
+  if (!ref) return null;
+  const suffix = ` - ${ref}`;
+  try {
+    return await withGraphAuth('folderByRef', async (token) => {
+      let next = `${childrenUrl(ROOT_FOLDER)}?$select=id,name,webUrl,folder&$top=200`;
+      while (next) {
+        let res;
+        try {
+          res = await axios.get(next, { headers: { Authorization: `Bearer ${token}` } });
+        } catch (err) {
+          if (err.response?.status === 404) return null;   // the root itself is missing
+          throw err;
+        }
+        for (const it of (res.data?.value || [])) {
+          if (it.folder && String(it.name || '').endsWith(suffix)) return { id: it.id, name: it.name, webUrl: it.webUrl };
+        }
+        next = res.data?.['@odata.nextLink'] || null;
+      }
+      return null;
+    });
+  } catch (err) {
+    throw wrapError('OneDrive folder-by-ref lookup failed', err);
+  }
+}
+
 /**
  * Ensure the client root folder exists in OneDrive.
  * Safe to call before any uploads — will not duplicate folders.
@@ -653,7 +697,7 @@ async function readFileVersion({ clientName, caseRef, subfolder, filename, versi
 }
 
 module.exports = {
-  createClientFolders, uploadFile, readFile, listFiles, listChildren, moveFile, ensureClientFolder, ensureCategoryFolderLink,
+  createClientFolders, uploadFile, readFile, listFiles, listChildren, moveFile, caseFolderName, findCaseFolderByRef, ensureClientFolder, ensureCategoryFolderLink,
   ensureLeadFolder, renameDriveItem, uploadFileAndLink, uploadToLeadFolderAndLink,
   getClientFolderByName, getDriveItemById, deleteDriveItem,
   listFileVersions, readFileVersion,

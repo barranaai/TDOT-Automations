@@ -919,6 +919,16 @@ app.get('/admin/onedrive/list', async (req, res) => {
   try {
     const oneDrive = require('./services/oneDriveService');
     const { clientName } = await require('./services/htmlQuestionnaireService').validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    if (req.query.find === '1') {
+      // Diagnosis: what is this case's folder called, and does the expected name still match?
+      const expected = oneDrive.caseFolderName({ clientName, caseRef });
+      const [byName, byRef] = await Promise.all([
+        oneDrive.getClientFolderByName(expected).catch((e) => ({ error: e.message })),
+        oneDrive.findCaseFolderByRef(caseRef).catch((e) => ({ error: e.message })),
+      ]);
+      return res.json({ caseRef, clientName, expected, foundByName: byName || null, foundByRef: byRef || null,
+        renamed: Boolean(byRef && byRef.name && byRef.name !== expected) });
+    }
     if (wholeTree) {
       const kids = await oneDrive.listChildren({ clientName, caseRef, subfolder: '' });
       const folders = [];
