@@ -29,6 +29,7 @@
 
 const PDFDocument = require('pdfkit');
 const oneDrive    = require('./oneDriveService');
+const { stripLegacyStatutoryPairs, NOT_RECORDED_TEXT } = require('../utils/statutoryLegacy');
 
 const QUESTIONNAIRE_SUBFOLDER = 'Questionnaire';
 
@@ -93,10 +94,15 @@ function buildLayoutModel(fields) {
 
   const flush = () => { if (open) { blocks.push(open); open = null; } };
 
-  for (const f of fields || []) {
+  // Pre-2026-09-09 statutory placeholder pairs ("yes"/"no" option labels the
+  // old engine saved for every row) print as ONE "not recorded" row, never as
+  // an answer (Gauri 2026-09-04, point 02).
+  const { fields: cleaned } = stripLegacyStatutoryPairs(fields || [], { keep: true });
+
+  for (const f of cleaned) {
     const parts = splitPath(f.section);
     const label = clean(f.label || '(Untitled field)');
-    const value = clean(f.value);
+    const value = f.notRecorded ? NOT_RECORDED_TEXT : clean(f.value);
     const idMatch = TABLE_ID_RE.exec(String(f.key || ''));
     const tableId = idMatch ? idMatch[1].toLowerCase() : '';
     // A table cell is a "… › Table" section, or a "Label — Row N" cell whose key
@@ -795,7 +801,7 @@ async function regenerateCasePdfs({ clientName, caseRef, formFiles = null, qComp
       const data   = Array.isArray(parsed) ? { fields: parsed } : (parsed || {});
       const fields = Array.isArray(data.fields) ? data.fields : [];
       r.fieldCount = fields.length;
-      r.answered   = fields.filter(isClientAnswer).length;
+      r.answered   = stripLegacyStatutoryPairs(fields).fields.filter(isClientAnswer).length;   // placeholder pairs are not answers
       r.savedAt    = data.savedAt || null;
       if (!r.answered) { r.reason = fields.some(isPrefill) ? 'prefill-only' : 'no-answers'; continue; }
       if (!createMissing && !r.hadPdf) { r.reason = 'no-existing-pdf'; continue; }
@@ -927,7 +933,7 @@ async function exportCasePdf({ clientName, caseRef, formFiles = null, formKey = 
     let parsed; try { parsed = JSON.parse(buf.toString('utf8')); } catch (_) { continue; }
     const data   = Array.isArray(parsed) ? { fields: parsed } : (parsed || {});
     const fields = Array.isArray(data.fields) ? data.fields : [];
-    if (!fields.some(isClientAnswer)) continue;                       // nothing the client answered (prefill-only / empty)
+    if (!stripLegacyStatutoryPairs(fields).fields.some(isClientAnswer)) continue;   // nothing the client answered (prefill-only / placeholder-only / empty)
     const { formKey: normKey, memberKey, isAdditional } = splitFormKey(storedKey);
     const member = members.find((m) => m && m.key === memberKey) || null;
     const memberLabel = (member && member.label) || (memberKey === 'primary' ? 'Primary Applicant' : memberKey);

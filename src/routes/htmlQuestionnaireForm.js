@@ -304,15 +304,20 @@ router.get('/:caseRef/review', staffOrAdminKey, async (req, res) => {
           svc.loadFormData({ clientName, caseRef, formKey: member.key + formKeySuffix }),
           review.loadFlags({ clientName, caseRef, formKey: member.key + formKeySuffix }),
         ]);
-        allMembersData.push({ ...member, fields: mFields, flags: mFlags });
+        const stripped = svc.stripLegacyStatutoryPairs(mFields, { keep: true });
+        allMembersData.push({ ...member, fields: stripped.fields, flags: mFlags, notRecorded: stripped.notRecorded.length });
       }
 
       const anyData = allMembersData.some(m =>
         m.fields.length > 0 && m.fields.some(f => f.value && f.value.trim())
       );
       if (!anyData) {
+        const lost = allMembersData.reduce((n, m) => n + (m.notRecorded || 0), 0);
+        const statutoryNote = lost
+          ? ` Note: its ${lost} statutory Yes/No rows were not captured by the form before 2026-09-09 — the client must answer them again.`
+          : '';
         return res.type('html').send(maybeEmbed(req, svc.buildErrorPage(
-          'No submitted data found for this case. The client may not have completed the questionnaire yet.'
+          'No submitted data found for this case. The client may not have completed the questionnaire yet.' + statutoryNote
         )));
       }
 
@@ -334,17 +339,24 @@ router.get('/:caseRef/review', staffOrAdminKey, async (req, res) => {
     }
 
     // ── Single-member review (original logic) ──────────────────────────────
-    const [fields, flags] = await Promise.all([
+    const [rawFields, flags] = await Promise.all([
       svc.loadFormData({ clientName, caseRef, formKey }),
       review.loadFlags({ clientName, caseRef, formKey }),
     ]);
+    // Pre-2026-09-09 statutory placeholder pairs become ONE "not recorded"
+    // marker per row (value '', notRecorded:true) — the page shows a note
+    // instead of the fake "No" the old engine displayed.
+    const { fields, notRecorded } = svc.stripLegacyStatutoryPairs(rawFields, { keep: true });
 
     const hasData = fields.some(f => f.value && f.value.trim() !== '');
 
     if (!fields.length || !hasData) {
+      const statutoryNote = notRecorded.length
+        ? ` Note: its ${notRecorded.length} statutory Yes/No rows were not captured by the form before 2026-09-09 — the client must answer them again.`
+        : '';
       return res.type('html').send(maybeEmbed(req, svc.buildErrorPage(
         fields.length
-          ? 'The client has opened the questionnaire but has not yet filled in any answers. Please ask them to complete and submit the form before reviewing.'
+          ? 'The client has opened the questionnaire but has not yet filled in any answers. Please ask them to complete and submit the form before reviewing.' + statutoryNote
           : 'No submitted data found for this case. The client may not have opened the questionnaire yet.'
       )));
     }
@@ -655,7 +667,9 @@ router.get('/:caseRef/data', async (req, res) => {
     return res.status(403).json({ error: err.message });
   }
   try {
-    const fields = await svc.loadFormData({ clientName, caseRef, formKey });
+    // Pre-2026-09-09 statutory placeholder pairs are dropped: the client must
+    // answer those rows again rather than have a fake "Yes" restored.
+    const { fields } = svc.stripLegacyStatutoryPairs(await svc.loadFormData({ clientName, caseRef, formKey }));
     return res.json({ fields });
   } catch (err) {
     // Storage failure is NOT "no data" and NOT "access denied" — tell the

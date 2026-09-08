@@ -20,6 +20,100 @@ const { generateAndSaveSubmissionPdf } = require('./questionnairePdfService');
 const { loadThresholds } = require('./caseReadinessService');
 const { clientMasterBoardId } = require('../../config/monday');
 const { FORMS_DIR, resolveForm } = require('../../config/questionnaireFormMap');
+const { stripLegacyStatutoryPairs } = require('../utils/statutoryLegacy');
+
+// ─── Engine helper shared by BOTH injected scripts (client + review) ─────────
+//
+// Pass 3 of collectFields: static label-value tables (Spousal .part-table /
+// .edu-level-table, and the statutory ".stat-table" of F12 / F13). Row label
+// in the first <td>, inputs in later <td>s, no <label> association.
+//
+// Yes/No radios in such a row are ONE answer: the group is collected as ONE
+// field carrying `_radioName`, keyed by the first radio (the name every
+// pre-2026-09-09 file already used), and every radio of that name in the row
+// is marked seen. Until this fix each radio was its own field, so the saved
+// value was the option label ("yes" / "no"), never the client's choice
+// (Gauri 2026-09-04, point 02). Text/select cells are unchanged.
+//
+// Plain string (no backticks, no ${}) interpolated into both template
+// literals, so the two engines can never drift apart again.
+const STATIC_TABLE_COLLECTOR_JS = `
+  /* ctx: { seen, fields, makeKey(section, label, el), getSectionContext(el),
+            skipTable(table) -> bool (optional), extra(row) -> object (optional) } */
+  function collectStaticTableFields(ctx) {
+    var staticTables = document.querySelectorAll('table');
+    for (var sti = 0; sti < staticTables.length; sti++) {
+      var stbl = staticTables[sti];
+      if (stbl.classList && stbl.classList.contains('dynamic-table')) continue;
+      if (ctx.skipTable && ctx.skipTable(stbl)) continue;
+      var stHeaders = [];
+      var stThs = stbl.querySelectorAll('thead th');
+      for (var sthi = 0; sthi < stThs.length; sthi++) stHeaders.push((stThs[sthi].textContent || '').trim());
+      var stTbody = stbl.querySelector('tbody');
+      var stRows  = stTbody ? stTbody.querySelectorAll('tr') : stbl.querySelectorAll('tr');
+      for (var sri = 0; sri < stRows.length; sri++) {
+        var stRow = stRows[sri];
+        var stCells = stRow.children;
+        if (stCells.length < 2) continue;
+        var firstCell = stCells[0];
+        /* Skip rows where the first cell is <th> (header row in tbody-less tables) */
+        if (firstCell.tagName === 'TH') continue;
+        var rowLabel = (firstCell.textContent || '').trim();
+        if (!rowLabel) continue;
+        for (var stci = 1; stci < stCells.length; stci++) {
+          var stInputs = stCells[stci].querySelectorAll('input, select, textarea');
+          for (var stii = 0; stii < stInputs.length; stii++) {
+            var stInput = stInputs[stii];
+            if (ctx.seen.indexOf(stInput) !== -1) continue;
+            ctx.seen.push(stInput);
+            var stSection   = ctx.getSectionContext(stbl);
+            var stColHeader = stHeaders[stci] || '';
+            /* Append column header only when the row genuinely has multiple
+               data columns AND the header text is meaningful. For 2-column
+               tables ("Person", "Yes/No") the row label alone is clearer. */
+            var stLabel = (stColHeader && stCells.length > 2)
+              ? rowLabel + ' \\u2014 ' + stColHeader
+              : rowLabel;
+            var entry = { section: stSection, label: stLabel, key: ctx.makeKey(stSection, stLabel, stInput), el: stInput };
+            if (stInput.type === 'radio' && stInput.name) {
+              /* One field per radio GROUP: read/write the checked state, not the option label. */
+              entry._radioName = stInput.name;
+              var rowRadios = stRow.querySelectorAll('input[type="radio"][name="' + stInput.name + '"]');
+              for (var rri = 0; rri < rowRadios.length; rri++) {
+                if (ctx.seen.indexOf(rowRadios[rri]) === -1) ctx.seen.push(rowRadios[rri]);
+              }
+            }
+            var ex = ctx.extra ? ctx.extra(stRow) : null;
+            if (ex) { for (var ep in ex) { if (ex.hasOwnProperty(ep)) entry[ep] = ex[ep]; } }
+            ctx.fields.push(entry);
+          }
+        }
+      }
+    }
+  }
+`;
+
+// Client-side twin of utils/statutoryLegacy.stripLegacyStatutoryPairs — the
+// server already strips the pre-fix placeholder pairs from /data, but the
+// browser's localStorage backup was written by the OLD engine and can still
+// carry them; they must never restore a tick. Plain string, same reasons.
+const LEGACY_STRIP_JS = `
+  function stripLegacyStatutoryPairs(arr) {
+    if (!Array.isArray(arr)) return arr;
+    var byKey = {};
+    for (var i = 0; i < arr.length; i++) { var f = arr[i]; if (f && f.key && byKey[f.key] === undefined) byKey[f.key] = f; }
+    var drop = {};
+    for (var k in byKey) {
+      if (!byKey.hasOwnProperty(k)) continue;
+      if (k.slice(-14) !== '-answer-yes-no') continue;
+      var a = byKey[k], b = byKey[k + '-2'];
+      if (a && b && String(a.value || '').trim().toLowerCase() === 'yes' && String(b.value || '').trim().toLowerCase() === 'no') {
+        drop[k] = true; drop[k + '-2'] = true;
+      }
+    }
+    return arr.filter(function (f) { return !(f && f.key && drop[f.key]); });
+  }
+`;
 
 /**
  * Embed a JS value inside an emitted <script> block. Plain JSON.stringify is
@@ -1355,8 +1449,9 @@ async function getMemberStatuses({ clientName, caseRef, members, formFiles }) {
       loadFormFileMeta({ clientName, caseRef, formKey: member.key }),
       formFiles?.additional ? loadFormFileMeta({ clientName, caseRef, formKey: addKey }) : Promise.resolve(null),
     ]);
-    const hasData           = primaryFile.fields.some(isClientAnswer);
-    const hasAdditionalData = !!additionalFile && additionalFile.fields.some(isClientAnswer);
+    // Pre-fix statutory placeholder pairs are not client answers.
+    const hasData           = stripLegacyStatutoryPairs(primaryFile.fields).fields.some(isClientAnswer);
+    const hasAdditionalData = !!additionalFile && stripLegacyStatutoryPairs(additionalFile.fields).fields.some(isClientAnswer);
 
     let status = 'Not Started';
     if (member.submittedAt) status = 'Submitted';
@@ -2066,6 +2161,19 @@ ${hasAdditionalForm ? `
   }
 
   function isExcludedFromProgress(el, optionalSections) {
+    /* The statutory "If you answered Yes … please provide complete details"
+       box (F12/F13 .explanation-block) applies only when some statutory
+       answer IS Yes; for an all-No client it must not count as missing. */
+    var expl = el.closest ? el.closest('.explanation-block') : null;
+    if (expl) {
+      var scope = (expl.closest && expl.closest('[data-member-key]')) || document;
+      var tableRadios = scope.querySelectorAll('table input[type="radio"]');
+      var anyYes = false;
+      for (var ti = 0; ti < tableRadios.length; ti++) {
+        if (tableRadios[ti].checked && String(tableRadios[ti].value || '').toLowerCase() === 'yes') { anyYes = true; break; }
+      }
+      if (!anyYes) return true;
+    }
     var node = el.parentElement;
     while (node && node !== document.body) {
       if (isHiddenConditional(node)) return true;
@@ -2170,6 +2278,9 @@ ${hasAdditionalForm ? `
 
   function invalidateCache() { _cacheStale = true; }
 
+  ${STATIC_TABLE_COLLECTOR_JS}
+  ${LEGACY_STRIP_JS}
+
   function collectFields() {
     if (!_cacheStale && _fieldCache) return _fieldCache;
 
@@ -2200,7 +2311,9 @@ ${hasAdditionalForm ? `
     }
 
     /* 1 — Standard form-group inputs */
-    var groups = document.querySelectorAll('.form-group, .field-group');
+    /* .explanation-block: the statutory "please provide complete details" label + textarea (F12/F13) —
+       authored outside .form-group, so it was never collected (Gauri 2026-09-04, point 02). */
+    var groups = document.querySelectorAll('.form-group, .field-group, .explanation-block');
     for (var gi = 0; gi < groups.length; gi++) {
       var group = groups[gi];
       var lbl   = group.querySelector('label');
@@ -2265,55 +2378,13 @@ ${hasAdditionalForm ? `
       }
     }
 
-    /* 3 — Static label-value tables (e.g., .part-table, .edu-level-table on
-       Spousal Sponsorship). Pattern: each row has its label in the first
-       <td> and one or more inputs in later <td> cells, with no name/id/
-       <label> association. Passes 1 + 2 don't capture these, so they were
-       silently dropped on save/submit and never displayed in the review.
-       Skip .dynamic-table (handled above) and any thead rows. */
-    var staticTables = document.querySelectorAll('table');
-    for (var sti = 0; sti < staticTables.length; sti++) {
-      var stbl = staticTables[sti];
-      if (stbl.classList && stbl.classList.contains('dynamic-table')) continue;
-      if (IS_MULTI && isInHiddenMmSection(stbl)) continue;
-      var stHeaders = [];
-      var stThs = stbl.querySelectorAll('thead th');
-      for (var sthi = 0; sthi < stThs.length; sthi++) stHeaders.push((stThs[sthi].textContent || '').trim());
-      var stTbody = stbl.querySelector('tbody');
-      var stRows  = stTbody ? stTbody.querySelectorAll('tr') : stbl.querySelectorAll('tr');
-      for (var sri = 0; sri < stRows.length; sri++) {
-        var stRow = stRows[sri];
-        var stCells = stRow.children;
-        if (stCells.length < 2) continue;
-        var firstCell = stCells[0];
-        /* Skip rows where the first cell is <th> (header row in tbody-less tables) */
-        if (firstCell.tagName === 'TH') continue;
-        var rowLabel = (firstCell.textContent || '').trim();
-        if (!rowLabel) continue;
-        for (var stci = 1; stci < stCells.length; stci++) {
-          var stInputs = stCells[stci].querySelectorAll('input, select, textarea');
-          for (var stii = 0; stii < stInputs.length; stii++) {
-            var stInput = stInputs[stii];
-            if (seen.indexOf(stInput) !== -1) continue;
-            seen.push(stInput);
-            var stSection   = getSectionContext(stbl);
-            var stColHeader = stHeaders[stci] || '';
-            /* Append column header only when the row genuinely has multiple
-               data columns AND the header text is meaningful. For 2-column
-               tables ("Person", "Yes/No") the row label alone is clearer. */
-            var stLabel = (stColHeader && stCells.length > 2)
-              ? rowLabel + ' — ' + stColHeader
-              : rowLabel;
-            fields.push({
-              section: stSection,
-              label:   stLabel,
-              key:     makeKey(stSection, stLabel, stInput),
-              el:      stInput,
-            });
-          }
-        }
-      }
-    }
+    /* 3 — Static label-value tables (Spousal .part-table / .edu-level-table,
+       the statutory .stat-table). Shared collector: Yes/No radios in a row are
+       ONE field with _radioName (see STATIC_TABLE_COLLECTOR_JS). */
+    collectStaticTableFields({
+      seen: seen, fields: fields, makeKey: makeKey, getSectionContext: getSectionContext,
+      skipTable: function (t) { return IS_MULTI && isInHiddenMmSection(t); },
+    });
 
     _fieldCache = fields;
     _cacheStale = false;
@@ -3062,7 +3133,9 @@ ${hasAdditionalForm ? `
       if (res.ok) {
         var data = await res.json();
         if (data.fields && Array.isArray(data.fields)) {
-          serverFields = data.fields;
+          /* The server strips pre-fix statutory placeholder pairs; strip again
+             here so an older server response can never restore a fake tick. */
+          serverFields = stripLegacyStatutoryPairs(data.fields);
           if (serverFields.some(function(f){ return f && f.source === "prefill"; })) _prefillSeen = true;
         }
       } else {
@@ -3083,7 +3156,8 @@ ${hasAdditionalForm ? `
     var localFields = [];
     try {
       var raw = localStorage.getItem(localKey);
-      if (raw) { var obj = JSON.parse(raw); localFields = Array.isArray(obj.fields) ? obj.fields : []; }
+      /* The backup may have been written by the OLD engine: drop its statutory placeholder pairs. */
+      if (raw) { var obj = JSON.parse(raw); localFields = stripLegacyStatutoryPairs(Array.isArray(obj.fields) ? obj.fields : []); }
     } catch (e) {}
 
     var serverFilled = serverFields.filter(function(f) { return f.value && f.value.trim(); }).length;
@@ -4283,6 +4357,8 @@ input[disabled], select[disabled], textarea[disabled] {
   transition: background .15s, border-color .15s;
 }
 .tdot-flag-btn:hover { background: #fff7ed; border-color: #f59e0b; color: #b45309; }
+.tdot-not-recorded { margin-top: 4px; font-size: 11px; font-weight: 700; color: #b45309; white-space: normal; }
+.tdot-not-recorded-banner { margin: 10px 0 12px; padding: 10px 14px; border-left: 4px solid #f59e0b; background: #fff7ed; color: #7c2d12; font-size: 13px; line-height: 1.45; border-radius: 0 6px 6px 0; }
 .tdot-flag-btn.flagged { background: #fff7ed; border-color: #f59e0b; color: #b45309; font-weight: 700; }
 
 /* Flag inline editor */
@@ -4393,6 +4469,8 @@ input[disabled], select[disabled], textarea[disabled] {
     return section ? section.getAttribute('data-member-key') : FORM_KEY;
   }
 
+  ${STATIC_TABLE_COLLECTOR_JS}
+
   function collectFields() {
     var fields = [], seen = [], keyMap = {};
     function makeKey(section, label, el) {
@@ -4403,7 +4481,9 @@ input[disabled], select[disabled], textarea[disabled] {
       keyMap[counterKey]++; return base + '-' + keyMap[counterKey];
     }
 
-    var groups = document.querySelectorAll('.form-group, .field-group');
+    /* .explanation-block: the statutory "please provide complete details" label + textarea (F12/F13) —
+       authored outside .form-group, so it was never collected (Gauri 2026-09-04, point 02). */
+    var groups = document.querySelectorAll('.form-group, .field-group, .explanation-block');
     for (var gi = 0; gi < groups.length; gi++) {
       var group = groups[gi];
       var lbl   = group.querySelector('label');
@@ -4474,51 +4554,13 @@ input[disabled], select[disabled], textarea[disabled] {
       }
     }
 
-    /* Static label-value tables (e.g., .part-table, .edu-level-table on the
-       Spousal Sponsorship form). Same pattern as the client-side third
-       pass: row label in the first <td>, inputs in later <td>s, no native
-       <label> association. The review needs to collect these so staff
-       sees the values the client filled (and so saved data pre-fills
-       correctly in the rendered form). */
-    var staticTables = document.querySelectorAll('table');
-    for (var sti = 0; sti < staticTables.length; sti++) {
-      var stbl = staticTables[sti];
-      if (stbl.classList && stbl.classList.contains('dynamic-table')) continue;
-      var stHeaders = [];
-      var stThs = stbl.querySelectorAll('thead th');
-      for (var sthi = 0; sthi < stThs.length; sthi++) stHeaders.push((stThs[sthi].textContent || '').trim());
-      var stTbody = stbl.querySelector('tbody');
-      var stRows  = stTbody ? stTbody.querySelectorAll('tr') : stbl.querySelectorAll('tr');
-      for (var sri = 0; sri < stRows.length; sri++) {
-        var stRow = stRows[sri];
-        var stCells = stRow.children;
-        if (stCells.length < 2) continue;
-        var firstCell = stCells[0];
-        if (firstCell.tagName === 'TH') continue;
-        var rowLabel = (firstCell.textContent || '').trim();
-        if (!rowLabel) continue;
-        for (var stci = 1; stci < stCells.length; stci++) {
-          var stInputs = stCells[stci].querySelectorAll('input, select, textarea');
-          for (var stii = 0; stii < stInputs.length; stii++) {
-            var stInput = stInputs[stii];
-            if (seen.indexOf(stInput) !== -1) continue;
-            seen.push(stInput);
-            var stSection   = getSectionContext(stbl);
-            var stColHeader = stHeaders[stci] || '';
-            var stLabel = (stColHeader && stCells.length > 2)
-              ? rowLabel + ' — ' + stColHeader
-              : rowLabel;
-            fields.push({
-              section: stSection,
-              label:   stLabel,
-              key:     makeKey(stSection, stLabel, stInput),
-              el:      stInput,
-              group:   stRow,
-            });
-          }
-        }
-      }
-    }
+    /* Static label-value tables — the SAME shared collector as the client
+       engine (STATIC_TABLE_COLLECTOR_JS), so keys match and a Yes/No radio
+       row is one field carrying _radioName. "group" = the row, for flags. */
+    collectStaticTableFields({
+      seen: seen, fields: fields, makeKey: makeKey, getSectionContext: getSectionContext,
+      extra: function (row) { return { group: row }; },
+    });
     return fields;
   }
 
@@ -4574,7 +4616,11 @@ input[disabled], select[disabled], textarea[disabled] {
       if (!radioGroups.hasOwnProperty(gName)) continue;
       var radios = radioGroups[gName];
       var checked = radios.find(function(r) { return r.checked; });
-      var target = checked || radios[0];
+      /* An UNANSWERED group fires on its "No" option when it has one, so
+         value-keyed handlers (F12/F13 toggleRefusalBlock) CLOSE their block
+         instead of opening it as if the client had said Yes. */
+      var noOpt = radios.find(function(r) { return String(r.value || '').toLowerCase() === 'no'; });
+      var target = checked || noOpt || radios[0];
       if (target) {
         try { target.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
       }
@@ -4793,9 +4839,13 @@ input[disabled], select[disabled], textarea[disabled] {
       }
       console.log('[TDOT Review] Label-matched:', lblMatched);
 
-      /* ── Strategy 3: positional match as last resort ── */
-      if (lblMatched === 0) {
-        console.warn('[TDOT Review] Label match 0 — using positional fallback');
+      /* ── Strategy 3: positional match as LAST resort ── only when NOTHING
+         matched by key or label. Once keys have matched, saved order and DOM
+         order can legitimately differ (a field collected today that an older
+         file never held, e.g. the statutory explanation box), and a positional
+         pass would overwrite good values with their neighbours'. */
+      if (keyMatched === 0 && lblMatched === 0) {
+        console.warn('[TDOT Review] Key + label match 0 — using positional fallback');
         var limit = Math.min(fields.length, SAVED_DATA.length);
         var posMatched = 0;
         for (var k = 0; k < limit; k++) {
@@ -5130,6 +5180,74 @@ input[disabled], select[disabled], textarea[disabled] {
 
   /* ── Review bar ── */
 
+  /* ── Statutory answers the old engine never captured ──
+     A saved entry carrying notRecorded:true is a pre-2026-09-09 placeholder
+     pair (server-side stripLegacyStatutoryPairs kept ONE marker per row).
+     Nothing is ticked for it; the row gets an inline note and the section a
+     warning, so staff never read a fake "No" as the client's answer. */
+  function markNotRecorded(fields) {
+    /* Marker keys per MEMBER ('' = the single-member SAVED_DATA): keys are
+       identical across cloned member sections by design, so one member's
+       placeholder must never blank another member's real answer. */
+    var byMember = {};
+    function collectKeys(list, mk) {
+      for (var i = 0; i < (list || []).length; i++) {
+        var f = list[i];
+        if (f && f.notRecorded && f.key) { if (!byMember[mk]) byMember[mk] = {}; byMember[mk][f.key] = true; }
+      }
+    }
+    collectKeys(SAVED_DATA, '');
+    for (var mi = 0; mi < REVIEW_MEMBERS.length; mi++) collectKeys(REVIEW_MEMBERS[mi].fields, REVIEW_MEMBERS[mi].key);
+    var count = 0, firstTable = null;
+    for (var fi = 0; fi < fields.length; fi++) {
+      var f = fields[fi];
+      if (!f._radioName) continue;
+      var mk  = (IS_MULTI_REVIEW && typeof getMemberKeyForEl === 'function') ? (getMemberKeyForEl(f.el) || '') : '';
+      var set = byMember[mk] || (mk ? null : byMember['']);
+      if (!set || !set[f.key]) continue;
+      var radios = document.querySelectorAll('input[type="radio"][name="' + f._radioName + '"]');
+      var noOpt = null;
+      for (var ri = 0; ri < radios.length; ri++) {
+        radios[ri].checked = false;
+        if (String(radios[ri].value || '').toLowerCase() === 'no') noOpt = radios[ri];
+      }
+      /* Re-fire the group's toggle so a value-keyed handler (toggleRefusalBlock)
+         settles its dependent block for this unanswered row: on the "No" option
+         (closes an empty block) — unless the block already holds answers the
+         client typed (refusal date / visa type / country …), in which case fire
+         on "Yes" so staff still SEE those details. Nothing is ticked either way. */
+      var host = f.el.closest ? f.el.closest('.sub-accordion-body, .accordion-body, .section-body') : null;
+      var depBlocks = host ? host.querySelectorAll('.refusal-block, .conditional-block, .refusal-details') : [];
+      var depFilled = false;
+      for (var di = 0; di < depBlocks.length && !depFilled; di++) {
+        var depInputs = depBlocks[di].querySelectorAll('input, select, textarea');
+        for (var dj = 0; dj < depInputs.length; dj++) { if (String(depInputs[dj].value || '').trim()) { depFilled = true; break; } }
+      }
+      var yesOpt = null;
+      for (var yi = 0; yi < radios.length; yi++) { if (String(radios[yi].value || '').toLowerCase() === 'yes') yesOpt = radios[yi]; }
+      var toggleTarget = (depFilled && yesOpt) || noOpt || radios[radios.length - 1];
+      if (toggleTarget) { try { toggleTarget.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {} }
+      var cell = f.el.closest ? (f.el.closest('td') || f.el.parentElement) : f.el.parentElement;
+      if (cell && !cell.querySelector('.tdot-not-recorded')) {
+        var note = document.createElement('div');
+        note.className = 'tdot-not-recorded';
+        note.textContent = 'Not recorded — ask the client to re-confirm';
+        cell.appendChild(note);
+      }
+      var tbl = f.el.closest ? f.el.closest('table') : null;
+      if (tbl && !firstTable) firstTable = tbl;
+      count++;
+    }
+    if (!count) return;
+    var banner = document.createElement('div');
+    banner.className = 'tdot-not-recorded-banner';
+    banner.textContent = '⚠ ' + count + ' statutory Yes/No answer' + (count === 1 ? '' : 's') +
+      ' on this questionnaire were not captured by the form before 2026-09-09 (it showed "No" for everyone). ' +
+      'Nothing is ticked below for those rows — please ask the client to re-confirm them.';
+    if (firstTable && firstTable.parentElement) firstTable.parentElement.insertBefore(banner, firstTable);
+    else document.body.insertBefore(banner, document.body.firstChild);
+  }
+
   function createReviewBar() {
     var bar = document.createElement('div');
     bar.id  = 'tdot-review-bar';
@@ -5462,6 +5580,7 @@ ${WRAP_CELLS_JS}
     autosizeAllCells();
     markEmptySections();
     fields.forEach(attachFlagUI);
+    markNotRecorded(fields);
     createReviewBar();
     updateFlagCount();
     setupAccordionToggles();
@@ -5532,6 +5651,11 @@ module.exports = {
   resolveCasePct,
   deriveQuestionnaireProgress,
   _resetProgressSync,
+  // Pre-2026-09-09 statutory placeholder pairs → "not recorded" (routes + PDF use it)
+  stripLegacyStatutoryPairs,
+  // Engine helper sources (tests evaluate them in a fake DOM)
+  STATIC_TABLE_COLLECTOR_JS,
+  LEGACY_STRIP_JS,
   seedQuestionnairePrefill,
   readIntakeSubfolderArchive,
   lookupCase,
