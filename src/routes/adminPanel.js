@@ -1131,16 +1131,16 @@ function buildAdminHTML() {
     })
     .then(function(r) {
       return r.json().then(function(d) {
-        if (!r.ok) throw new Error(d.error || 'Failed (' + r.status + ')');
+        if (!r.ok) throw new Error(d.error || d.reason || 'Failed (' + r.status + ')');
         return d;
       });
     })
-    .then(function() {
+    .then(function(d) {
       btn.classList.add('success');
       btn.textContent = '\u2713 Sent';
       result.style.color = 'var(--green)';
-      result.textContent = 'Intake email queued for item ' + itemId + '.';
-      addLog('success', 'Resend intake email \u2014 item ' + itemId + ' queued.');
+      result.textContent = 'Intake email sent to ' + (d.to || 'the client') + ' for item ' + itemId + '.';
+      addLog('success', 'Resend intake email \u2014 item ' + itemId + ' sent to ' + (d.to || 'the client') + '.');
     })
     .catch(function(e) {
       btn.classList.add('error');

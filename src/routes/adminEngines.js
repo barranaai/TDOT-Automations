@@ -930,11 +930,11 @@ ${buildNavHeader('engines')}
     }
     btn.disabled = true; btn.textContent = '\u27f3 Sending\u2026';
     fetch('/api/resend-intake/' + itemId, { method: 'POST', headers: { 'X-Api-Key': key } })
-      .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.error || 'Failed'); return d; }); })
-      .then(function() {
+      .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.error || d.reason || 'Failed'); return d; }); })
+      .then(function(d) {
         btn.classList.add('success'); btn.textContent = '\u2713 Sent';
-        res.style.color = 'var(--green)'; res.textContent = 'Intake email queued for item ' + itemId + '.';
-        addLog('success', 'Resend intake \u2014 item ' + itemId + ' queued.');
+        res.style.color = 'var(--green)'; res.textContent = 'Intake email sent to ' + (d.to || 'the client') + ' for item ' + itemId + '.';
+        addLog('success', 'Resend intake \u2014 item ' + itemId + ' sent to ' + (d.to || 'the client') + '.');
       })
       .catch(function(e) {
         btn.classList.add('error'); btn.textContent = '\u2717 Failed';

@@ -153,7 +153,7 @@ test('documents card: upload controls only on Missing/Rework rows; done rows rea
 test('documents card: staff mode renders read-only (no upload inputs, review button instead)', () => {
   const html = buildPortalPage(docSnap(), { mode: 'staff', staffName: 'G' });
   assert.ok(!html.includes('data-item='), 'no client upload controls for staff');
-  assert.ok(!html.includes('<script>'), 'no upload script in staff mode');
+  assert.ok(!html.includes('var MAX      = 20 * 1024 * 1024'), 'no upload script in staff mode (the staff page carries only the resend-access script)');
 });
 
 test('documents card: no uploadables → no script emitted', () => {

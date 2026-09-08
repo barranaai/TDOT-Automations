@@ -122,6 +122,7 @@ async function sendEmail({ to, subject, html, replyTo, attachments }) {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
+        timeout: 30000,   // awaited by staff/admin routes — fail fast instead of hanging the request
       }
     );
   } catch (err) {

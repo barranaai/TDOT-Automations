@@ -169,15 +169,31 @@ app.post('/api/updates/:itemId', express.json(), async (req, res) => {
 // Manual trigger — resend intake email for a specific Client Master item ID
 // Usage: POST /api/resend-intake/<itemId>
 // Useful when a token was missing or an email was sent with a broken link.
+// ?variant=resend sends the "here is your portal link again" variant (the same
+// email the staff button on /client/:caseRef sends). The result is awaited and
+// reported honestly — no more "triggered" before anything happened.
 app.post('/api/resend-intake/:itemId', async (req, res) => {
   const { itemId } = req.params;
   if (!itemId || !/^\d+$/.test(itemId)) {
     return res.status(400).json({ error: 'itemId must be a numeric Monday item ID' });
   }
-  res.json({ status: 'triggered', message: `Resending intake email for item ${itemId}…` });
-  emailService.sendIntakeEmail(itemId).catch((err) =>
-    console.error(`[ResendIntake] Failed for item ${itemId}:`, err.message)
-  );
+  const variant = Array.isArray(req.query.variant) ? '' : String(req.query.variant || 'onboarding');
+  if (variant !== 'resend' && variant !== 'onboarding') {
+    return res.status(400).json({ error: 'variant must be "resend" or "onboarding"' });
+  }
+  const resend = variant === 'resend';
+  try {
+    const r = await emailService.sendIntakeEmail(itemId, { resend });
+    const to = r && r.to ? require('./services/clientPortalService').maskEmail(r.to) : '';
+    if (!r || !r.sent) {
+      const reason = (r && r.reason) || 'not sent';
+      return res.status(400).json({ status: 'skipped', sent: false, to, reason, error: reason });
+    }
+    res.json({ status: 'sent', sent: true, to, caseRef: r.caseRef, variant });
+  } catch (err) {
+    console.error(`[ResendIntake] Failed for item ${itemId}:`, err.message);   // full detail stays in the log
+    res.status(502).json({ status: 'failed', sent: false, error: 'The email could not be sent — see the server log.' });
+  }
 });
 
 // Manual re-seed — schema-driven checklist seeding for one case, with NO intake

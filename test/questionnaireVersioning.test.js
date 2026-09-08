@@ -232,10 +232,10 @@ test('PORTAL: auth-only validation skips era resolution entirely (zero storage r
   } finally { restoreO(); restoreM(); }
 });
 
-test('the portal routes actually pass the auth-only flag (all three call sites)', () => {
+test('the portal routes actually pass the auth-only flag (all four call sites)', () => {
   const r = require('fs').readFileSync(require.resolve('../src/routes/clientPortal'), 'utf8');
   const calls = [...r.matchAll(/htmlQ\.validateAccess\w*\([^)]*\)/g)].map((m) => m[0]);
-  assert.equal(calls.length, 3, 'portal has exactly three validate calls (staff page, client page, upload auth)');
+  assert.equal(calls.length, 4, 'portal has exactly four validate calls (staff page, client page, resend-access lookup, upload auth)');
   for (const c of calls) assert.match(c, /skipFormVersioning:\s*true/, `${c} must be auth-only`);
 });
 

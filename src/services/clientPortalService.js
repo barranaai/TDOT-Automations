@@ -50,6 +50,20 @@ function escHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/**
+ * "jasnoor.k@gmail.com" → "j***@gmail.com" — enough for staff to confirm the
+ * destination, no more. Anything that is not ONE plain address (a display
+ * name, two addresses, spaces) masks fully, so a second address can never
+ * ride into the case thread in clear text.
+ */
+function maskEmail(email) {
+  const s = String(email || '').trim();
+  if (!s) return '';
+  const at = s.lastIndexOf('@');
+  if (at < 1 || /[\s,;<>]/.test(s) || s.indexOf('@') !== at) return '***';
+  return Array.from(s)[0] + '***' + s.slice(at);
+}
+
 // Serialise a value into an inline <script> safely: JSON.stringify does NOT
 // escape `</script>`, so neutralise every `<` (same convention as the admin
 // pages' jsLit).
@@ -205,7 +219,7 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
       `query($itemId: ID!) {
          items(ids: [$itemId]) {
            column_values(ids: [
-             "${CM.caseStage}", "${CM.qReadiness}", "${CM.qCompletionStatus}"
+             "${CM.caseStage}", "${CM.qReadiness}", "${CM.qCompletionStatus}", "${CM.clientEmail}"
            ]) { id text value }
          }
        }`,
@@ -284,6 +298,10 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
     qSubmitted,                          // every member submitted (or board Done) — decides "Submitted", not 100%
     qLabel:      qSubmitted ? 'Submitted' : qProgress.label,
     qUnavailable,                        // member files could not be read this load — no "click Submit" nudges
+    // Staff view only: where a re-sent portal link would go (masked), and whether it can go anywhere.
+    clientEmailMasked:  maskEmail(colTxt(CM.clientEmail)),
+    clientEmailPresent: colTxt(CM.clientEmail) !== '',                          // something is in the cell…
+    hasClientEmail:     /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(colTxt(CM.clientEmail)),   // …and it is ONE valid address
     docCounts,
     docItems: clientDocs,
     totalMembers,
@@ -661,6 +679,7 @@ function buildPortalPage(snap, opts) {
       transition: background .15s;
     }
     .btn:hover { background:#6B0000; }
+    .btn:disabled, .btn[disabled] { opacity:.45; cursor:not-allowed; background:#8B0000; }
     .btn-light { background:#FFFFFF; color:#8B0000; border:1px solid #8B0000; }
     .btn-light:hover { background:#FAF1F1; }
 
@@ -764,6 +783,23 @@ function buildPortalPage(snap, opts) {
         : (docListHtml ? `<div style="margin-top:12px;font-size:12px;color:#9AA3AF;">Files upload securely straight from this page. Prefer the full page with detailed instructions? <a href="${escHtml(docUrl)}" style="color:#8B0000;font-weight:700;">Open it here</a>.</div>` : '')}
     </section>
 
+    ${isStaff ? `<!-- Client access (staff only) — Gauri 2026-09-04, point 03: re-send the portal link
+         from the case, for ANY case, e.g. a client returning months later to upload more. -->
+    <section class="card" id="client-access">
+      <div class="card-head">
+        <div>
+          <h3>✉️ Client access</h3>
+          <div class="sub">${snap.hasClientEmail
+            ? `The portal link goes to <strong>${escHtml(snap.clientEmailMasked)}</strong> (the Client Email on the Client Master row). Re-sending uses the same link — earlier emails keep working.`
+            : (snap.clientEmailPresent
+              ? `The Client Email on the Client Master row is not a single valid address (${escHtml(snap.clientEmailMasked || '***')}) — fix it there, then re-send.`
+              : 'No client email on the Client Master row — add one there first, then re-send.')}</div>
+        </div>
+      </div>
+      <button type="button" class="btn" id="resend-access-btn" ${snap.hasClientEmail ? '' : 'disabled'} style="margin-top:12px;border:0;${snap.hasClientEmail ? 'cursor:pointer;' : ''}">Resend portal access email →</button>
+      <div id="resend-access-msg" style="margin-top:10px;font-size:13px;color:#6B7280;" aria-live="polite"></div>
+    </section>` : ''}
+
     </div>
     ${(paymentsHtml || timelineHtml) ? `<aside class="col-side">${paymentsHtml}${timelineHtml}</aside>` : ''}
     </div>
@@ -776,6 +812,46 @@ function buildPortalPage(snap, opts) {
     </p>
 
   </main>
+  ${isStaff ? `<script>
+  (function () {
+    var CASE_REF = ${jsLit(snap.caseRef)};
+    var TO       = ${jsLit(snap.clientEmailMasked || '')};
+    var btn = document.getElementById('resend-access-btn');
+    var msg = document.getElementById('resend-access-msg');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (btn.disabled) return;
+      if (!window.confirm('Re-send the portal access email to ' + TO + '?')) return;
+      btn.disabled = true;
+      msg.style.color = '#6B7280';
+      msg.textContent = 'Sending…';
+      fetch('/client/' + encodeURIComponent(CASE_REF) + '/resend-access', { method: 'POST', headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); })
+        .then(function (res) {
+          if (res.ok && res.j && res.j.ok) {
+            msg.style.color = '#166534';
+            msg.textContent = '✓ Sent to ' + (res.j.to || TO) + (res.j.noted
+              ? ' — a note was added to the case in Monday.'
+              : ' — the Monday note could not be added; please mention it in the case thread.');
+            /* 60 s cool-down after a SUCCESSFUL send (the server refuses repeats in that window too) */
+            setTimeout(function () { btn.disabled = false; }, 60000);
+            return;
+          }
+          msg.style.color = '#B42318';
+          msg.textContent = (res.j && res.j.error) || 'Could not send — please try again.';
+          if (res.status === 401 && res.j && res.j.loginUrl) {
+            var a = document.createElement('a');
+            a.href = res.j.loginUrl + '?returnTo=' + encodeURIComponent(window.location.pathname + '?staff=1');
+            a.textContent = ' Sign in again →';
+            a.style.color = '#8B0000'; a.style.fontWeight = '700';
+            msg.appendChild(a);
+          }
+          btn.disabled = false;   /* an error is retryable at once */
+        })
+        .catch(function () { msg.style.color = '#B42318'; msg.textContent = 'Could not reach the server — please try again.'; btn.disabled = false; });
+    });
+  })();
+  </script>` : ''}
   ${!isStaff && (snap.docItems || []).some((d) => d.status !== 'Reviewed') ? `<script>
   (function () {
     var CASE_REF = ${jsLit(snap.caseRef)};
@@ -872,6 +948,7 @@ module.exports = {
   buildPortalPage,
   buildPortalUrl,
   toClientTimeline,
+  maskEmail,
   // pure — exported for tests
   clientStage,
   toClientTimeline,

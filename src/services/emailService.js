@@ -1,4 +1,4 @@
-const { sendEmail }  = require('./microsoftMailService');
+const mail           = require('./microsoftMailService');   // module reference, so tests can stub sendEmail
 const mondayApi      = require('./mondayApi');
 const { ensureAccessToken } = require('./accessTokenService');
 const { clientMasterBoardId } = require('../../config/monday');
@@ -52,15 +52,24 @@ async function getClientDetails(itemId) {
   };
 }
 
-function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl, questionnaireUrl, documentsUrl }) {
+function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl, questionnaireUrl, documentsUrl, resend = false }) {
   const firstName = clientName.split(' ')[0] || 'Client';
+  // A RESEND (staff button on the case page — Gauri 2026-09-04, point 03) is
+  // the same links for a client who already has a case: no onboarding wording,
+  // and the token is carried by the links only, never printed separately.
+  const intro = resend
+    ? `Here is your Client Portal link again. From the portal you can continue your questionnaire,
+          upload any documents we have asked for, and see what still needs your attention.`
+    : `Your case has been set up. We've created a single Client Portal where you can complete your
+          questionnaire, upload documents, and track everything related to your case in one place.`;
+  const showToken = Boolean(accessToken) && !resend;
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Your Case Is Ready — Action Required</title>
+<title>${resend ? 'Your Client Portal link' : 'Your Case Is Ready — Action Required'}</title>
 </head>
 <body style="margin:0;padding:0;background:#FAF8F4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
 
@@ -79,8 +88,7 @@ function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl,
 
         <p style="font-size:18px;font-weight:700;color:#1e293b;margin:0 0 8px;">Hi ${firstName},</p>
         <p style="font-size:15px;color:#475569;line-height:1.65;margin:0 0 24px;">
-          Your case has been set up. We've created a single Client Portal where you can complete your
-          questionnaire, upload documents, and track everything related to your case in one place.
+          ${intro}
         </p>
 
         <!-- Single portal CTA -->
@@ -108,11 +116,11 @@ function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl,
                 <td style="font-size:13px;color:#64748b;padding:3px 16px 3px 0;white-space:nowrap;">Case Reference</td>
                 <td style="font-size:13px;font-weight:700;color:#1e293b;">${caseRef}</td>
               </tr>
-              <tr>
+              ${caseType ? `<tr>
                 <td style="font-size:13px;color:#64748b;padding:3px 16px 3px 0;white-space:nowrap;">Case Type</td>
                 <td style="font-size:13px;font-weight:600;color:#1e293b;">${caseType}</td>
-              </tr>
-              ${accessToken ? `<tr>
+              </tr>` : ''}
+              ${showToken ? `<tr>
                 <td style="font-size:13px;color:#64748b;padding:3px 16px 3px 0;white-space:nowrap;">Access Token</td>
                 <td style="font-size:13px;font-family:monospace;color:#1e293b;">${accessToken}</td>
               </tr>` : ''}
@@ -131,7 +139,7 @@ function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl,
       <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;border-radius:0 0 12px 12px;padding:20px 32px;text-align:center;">
         <p style="font-size:12px;color:#94a3b8;margin:0;line-height:1.6;">
           TDOT Immigration Services<br>
-          This email was sent to you because your case has been activated in our system.<br>
+          ${resend ? 'Your case officer re-sent your portal link so you can pick up where you left off.' : 'This email was sent to you because your case has been activated in our system.'}<br>
           Please do not forward this email — the form links are specific to your case.
         </p>
       </td></tr>
@@ -201,7 +209,11 @@ async function onClientEmailChanged(itemId) {
 
   console.log(`[Email] Client email corrected for ${label} (stage: "${caseStage}") — resending intake email to ${newEmail}`);
 
-  await sendIntakeEmail(itemId);
+  const r = await sendIntakeEmail(itemId);
+  if (!r || !r.sent) {
+    console.warn(`[Email] Client email corrected for ${label} but the intake email was NOT resent: ${(r && r.reason) || 'unknown reason'}`);
+    return;
+  }
 
   // Audit comment on the Monday item so the correction is fully traceable
   await mondayApi.query(
@@ -219,17 +231,26 @@ async function onClientEmailChanged(itemId) {
  * Send the client intake email with questionnaire + document upload links.
  * Called after both templates are applied for a case.
  */
-async function sendIntakeEmail(itemId) {
+/**
+ * @param {string} itemId  Client Master item
+ * @param {{ resend?: boolean }} [opts]  resend=true sends the "here is your
+ *   portal link again" variant (staff button on the case page) — same links,
+ *   same token (never rotated, so every earlier link keeps working).
+ * @returns {Promise<{ sent: boolean, to: string, caseRef: string, reason?: string }>}
+ *   The automatic callers ignore this; the staff route reports it.
+ */
+async function sendIntakeEmail(itemId, opts = {}) {
+  const resend = opts.resend === true;
   const client = await getClientDetails(itemId);
 
   if (!client.clientEmail) {
     console.warn(`[Email] No email address for item ${itemId} — skipping intake email`);
-    return;
+    return { sent: false, to: '', caseRef: client.caseRef, reason: 'This case has no client email on the Client Master row.' };
   }
 
   if (!client.caseRef) {
     console.warn(`[Email] No case ref for item ${itemId} — skipping intake email`);
-    return;
+    return { sent: false, to: client.clientEmail, caseRef: '', reason: 'This case has no case reference yet.' };
   }
 
   const encodedRef = encodeURIComponent(client.caseRef);
@@ -245,21 +266,31 @@ async function sendIntakeEmail(itemId) {
 
   if (!accessToken) {
     console.error(`[Email] No access token available for item ${itemId} (${client.caseRef}) — intake email not sent`);
-    return;
+    return { sent: false, to: client.clientEmail, caseRef: client.caseRef, reason: 'No access token could be created for this case.' };
   }
 
   const portalUrl        = `${BASE_URL}/client/${encodedRef}?t=${encodeURIComponent(accessToken)}`;
   const questionnaireUrl = `${BASE_URL}/q/${encodedRef}?t=${encodeURIComponent(accessToken)}`;
   const documentsUrl     = `${BASE_URL}/documents/${encodedRef}`;
 
-  await sendEmail({
+  await mail.sendEmail({
     to:      client.clientEmail,
-    subject: `Action Required — Your ${client.caseType || 'Immigration'} Case Is Ready (${client.caseRef})`,
-    html:    buildEmailHtml({ ...client, portalUrl, questionnaireUrl, documentsUrl }),
+    subject: resend
+      ? `Your Client Portal link — ${client.caseRef}`
+      : `Action Required — Your ${client.caseType || 'Immigration'} Case Is Ready (${client.caseRef})`,
+    html:    buildEmailHtml({ ...client, portalUrl, questionnaireUrl, documentsUrl, resend }),
     replyTo: EMAIL_REPLY_TO || undefined,
   });
 
-  console.log(`[Email] Intake email sent to ${client.clientEmail} for case ${client.caseRef}`);
+  console.log(`[Email] ${resend ? 'Portal access email re-sent' : 'Intake email sent'} to ${maskAddr(client.clientEmail)} for case ${client.caseRef}`);
+  return { sent: true, to: client.clientEmail, caseRef: client.caseRef };
+}
+
+/** Log-safe address: first character + domain. */
+function maskAddr(email) {
+  const s = String(email || '').trim();
+  const at = s.lastIndexOf('@');
+  return at < 1 ? '***' : Array.from(s)[0] + '***' + s.slice(at);
 }
 
 module.exports = { sendIntakeEmail, onClientEmailChanged };

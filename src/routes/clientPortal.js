@@ -154,6 +154,93 @@ router.get('/:caseRef', async (req, res) => {
 });
 
 /**
+ * POST /client/:caseRef/resend-access   (staff only)
+ *
+ * Re-sends the client's portal access email from the case page (Gauri
+ * 2026-09-04, point 03): for ANY case, whatever its stage or payment status —
+ * a client returning months later to upload more, an Express Entry client
+ * back after an invitation, a lost email. Same links, same token (never
+ * rotated, so every earlier link keeps working). Never accepts the client
+ * token as authority: a staff cookie is required, and the case must be one
+ * the staffer may see. Posts an audit note on the Client Master item.
+ */
+router.post('/:caseRef/resend-access', async (req, res) => {
+  const caseRef = sanitiseCaseRef(req.params.caseRef);
+  const staff   = tryStaffAuth(req);
+  if (!staff) return res.status(401).json({ ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday' });
+
+  const emailService = require('../services/emailService');
+  const mondayApi    = require('../services/mondayApi');
+  const caseAccess   = require('../services/caseAccessService');
+  let itemId;
+  try {
+    ({ itemId } = await htmlQ.validateAccessForStaff(caseRef, { skipFormVersioning: true }));
+  } catch (err) {
+    if (/not found|no such case|missing/i.test(err.message || '')) return res.status(404).json({ ok: false, error: 'Case not found.' });
+    console.error(`[/client resend] lookup failed for ${caseRef}:`, err.message);
+    return res.status(503).json({ ok: false, error: 'Could not look the case up just now — please try again in a moment.' });
+  }
+
+  // Same visibility rule as the review pages: open to every signed-in staffer
+  // by default; when CASE_VISIBILITY=assigned, only the case's assignees (and admins).
+  const viewer = caseAccess.viewerFromStaff(staff);
+  if (!viewer.isAdmin && caseAccess.caseVisibilityPolicy() !== 'all') {
+    try {
+      const ids = caseAccess.PEOPLE_COLUMNS.map((c) => `"${c}"`).join(', ');
+      const data = await mondayApi.query(`query($itemId: ID!) { items(ids: [$itemId]) { column_values(ids: [${ids}]) { id value } } }`, { itemId: String(itemId) });
+      const valueByColId = {};
+      for (const c of data?.items?.[0]?.column_values || []) valueByColId[c.id] = c.value;
+      if (!caseAccess.viewerCanSee(caseAccess.assigneesFromColumnValues(valueByColId), viewer)) {
+        return res.status(403).json({ ok: false, error: 'You are not assigned to this case.' });
+      }
+    } catch (err) {
+      console.error(`[/client resend] access check failed for ${caseRef}:`, err.message);
+      return res.status(503).json({ ok: false, error: 'Could not verify your access just now — please try again.' });
+    }
+  }
+
+  // Server-side cool-down per case: one send per RESEND_COOLDOWN_MS, whatever
+  // the client did (the page also disables its button). Refuses with 429.
+  const sinceLast = Date.now() - (_lastResendAt.get(String(itemId)) || 0);
+  if (sinceLast < RESEND_COOLDOWN_MS) {
+    const wait = Math.ceil((RESEND_COOLDOWN_MS - sinceLast) / 1000);
+    return res.status(429).json({ ok: false, error: `The portal email was re-sent for this case less than a minute ago — try again in ${wait}s.` });
+  }
+
+  let result;
+  try {
+    result = await emailService.sendIntakeEmail(itemId, { resend: true });
+  } catch (err) {
+    console.error(`[/client resend] send failed for ${caseRef}:`, err.message);
+    return res.status(502).json({ ok: false, error: 'The email could not be sent — please try again in a moment.' });
+  }
+  if (!result || !result.sent) {
+    return res.status(400).json({ ok: false, error: (result && result.reason) || 'The email could not be sent.' });
+  }
+  _lastResendAt.set(String(itemId), Date.now());
+
+  // Audit note on the case: who re-sent, when, to where (masked) — the trail
+  // that makes a double-send visible in the case thread. Awaited, so the
+  // page can say honestly whether the note exists.
+  const masked = portalSvc.maskEmail(result.to);
+  const when = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
+  let noted = false;
+  try {
+    await mondayApi.query(
+      `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+      { itemId: String(itemId), body: `✉️ Portal access email re-sent by ${staff.name || 'staff'} to ${masked} — ${when} (Toronto). Same portal link as before; earlier emails keep working.` }
+    );
+    noted = true;
+  } catch (err) {
+    console.warn(`[/client resend] audit note failed for ${caseRef}:`, err.message);
+  }
+
+  return res.json({ ok: true, to: masked, noted });
+});
+const RESEND_COOLDOWN_MS = 60 * 1000;
+const _lastResendAt = new Map();   // itemId → last successful re-send (this process)
+
+/**
  * POST /client/:caseRef/document/:itemId/upload?t=<token>
  *
  * Token-gated document upload from the portal's Documents card. Reuses the
