@@ -37,6 +37,7 @@ const CM = {
   caseType:          'dropdown_mm0xd1qn',
   caseStage:         'color_mm0x8faa',
   qReadiness:        'numeric_mm0x9dea',
+  qCompletionStatus: 'color_mm0x9s08',   // Done = submitted (fallback when the manifest cannot be read)
   caseManager:       'multiple_person_mm0xhmgk',
   clientEmail:       'text_mm0xw6bp',
 };
@@ -185,27 +186,53 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
   //      document summary, the questionnaire manifest, and the lead-linked
   //      extras (payments/history; the SAME helper the staff cockpit uses).
   const cockpit = require('./caseCockpitService');
-  const [cmData, docSummary, members, extras] = await Promise.all([
+  // Questionnaire progress comes from the SAVED ANSWERS (Gauri 2026-09-04,
+  // point 01): the Monday number used to be written only at Submit, so every
+  // in-progress questionnaire read 0% / Not Started here. The member files are
+  // the truth; the Monday columns are the fallback when they cannot be read.
+  // loadMembers → getMemberStatuses is one chained entry of the parallel wave.
+  const qReadMembers = async () => {
+    const members = await htmlQ.loadMembers({ clientName: validatedCase.clientName, caseRef });
+    try {
+      return { members, qMembers: await htmlQ.getMemberStatuses({ clientName: validatedCase.clientName, caseRef, members, formFiles: validatedCase.formFiles }), unavailable: false };
+    } catch (e) {
+      console.warn(`[Portal] questionnaire status read failed for ${caseRef}: ${e.message}`);
+      return { members, qMembers: members.map((m) => ({ ...m, hasData: false, completionPct: 0 })), unavailable: true };
+    }
+  };
+  const [cmData, docSummary, qRead, extras] = await Promise.all([
     mondayApi.query(
       `query($itemId: ID!) {
          items(ids: [$itemId]) {
            column_values(ids: [
-             "${CM.caseStage}", "${CM.qReadiness}"
+             "${CM.caseStage}", "${CM.qReadiness}", "${CM.qCompletionStatus}"
            ]) { id text value }
          }
        }`,
       { itemId: String(itemId) }
     ).catch(() => null),
     docFormSvc.getCaseSummary(caseRef).catch(() => ({ items: [] })),
-    htmlQ.loadMembers({ clientName: validatedCase.clientName, caseRef }).catch(() => []),
+    qReadMembers().catch((e) => { console.warn(`[Portal] members read failed for ${caseRef}: ${e.message}`); return { members: [], qMembers: [], unavailable: true }; }),
     cockpit.getLeadExtras(itemId, caseRef).catch(() => ({ lead: null, payments: null })),
   ]);
+  const { members, qMembers, unavailable: qUnavailable } = qRead;
   const cmCols = cmData?.items?.[0]?.column_values || [];
   const colTxt = (id) => (cmCols.find(c => c.id === id)?.text || '').trim();
 
   const caseStage         = colTxt(CM.caseStage)         || 'Not Started';
   const qReadinessRaw     = colTxt(CM.qReadiness);
-  const qReadinessPct     = qReadinessRaw ? Math.max(0, Math.min(100, Math.round(Number(qReadinessRaw)))) : 0;
+  const mondayQPct        = qReadinessRaw ? Math.max(0, Math.min(100, Math.round(Number(qReadinessRaw)))) : 0;
+  const mondayQDone       = colTxt(CM.qCompletionStatus) === 'Done';
+
+  const qProgress     = htmlQ.deriveQuestionnaireProgress({ members: qMembers, mondayPct: mondayQPct });
+  const qReadinessPct = qProgress.pct;
+  // Submitted when every member's manifest says so — OR the board says Done
+  // and the manifest has no evidence either way (a submission whose manifest
+  // write failed, a pre-manifest case, or a read failure). A manifest that
+  // DOES carry stamps but not for every member (a family member added after
+  // the submission) stays In Progress even though the board still reads Done.
+  const manifestHasStamps = qMembers.some((m) => m && m.submittedAt);
+  const qSubmitted    = qProgress.submitted || (mondayQDone && (qUnavailable || qMembers.length === 0 || !manifestHasStamps));
 
   // 3. Compute document counts
   const docItems = docSummary?.items || [];
@@ -254,6 +281,9 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
     caseStage,
     accessToken: validatedCase.accessToken,
     qReadinessPct,
+    qSubmitted,                          // every member submitted (or board Done) — decides "Submitted", not 100%
+    qLabel:      qSubmitted ? 'Submitted' : qProgress.label,
+    qUnavailable,                        // member files could not be read this load — no "click Submit" nudges
     docCounts,
     docItems: clientDocs,
     totalMembers,
@@ -293,15 +323,23 @@ function buildPortalPage(snap, opts) {
     ? `${BASE_URL}/d/${encodedRef}/review`
     : `${BASE_URL}/documents/${encodedRef}${tokenParam}`;
 
-  // Q card colour cue based on readiness
+  // Q card colour cue based on readiness. "Submitted" is decided by
+  // submission (every member), never by 100% — the 80% gate is the
+  // authoritative threshold. Snapshots from before the progress rework carry
+  // no qSubmitted; fall back to the manifest count.
   const qPct      = snap.qReadinessPct;
-  const qDone     = snap.submittedMembers === snap.totalMembers && qPct >= 100;
-  const qLabel    = qDone ? 'Submitted' : (qPct > 0 ? 'In Progress' : 'Not Started');
+  const qDone     = typeof snap.qSubmitted === 'boolean'
+    ? snap.qSubmitted
+    : (snap.totalMembers > 0 && snap.submittedMembers === snap.totalMembers);
+  // "Started" = answers on file OR a non-zero % — one boolean drives the
+  // label, the badge colour and the button copy so they never disagree.
+  const qStarted  = snap.qLabel === 'In Progress' || qPct > 0;
+  const qLabel    = qDone ? 'Submitted' : (qStarted ? 'In Progress' : 'Not Started');
 
   // Button copy is role-aware
   const qBtnText = isStaff
     ? 'Open Review Form →'
-    : (qDone ? 'Review Your Answers →' : (qPct > 0 ? 'Continue Filling →' : 'Start Questionnaire →'));
+    : (qDone ? 'Review Your Answers →' : (qStarted ? 'Continue Filling →' : 'Start Questionnaire →'));
 
   // Doc card status
   const docTotal      = snap.docCounts.total;
@@ -322,6 +360,12 @@ function buildPortalPage(snap, opts) {
     pending.push(isStaff
       ? `📝 Questionnaire is ${qPct}% complete — client still has fields to finish`
       : `📝 Questionnaire is ${qPct}% complete — please finish remaining fields`);
+  } else if (!qDone && !snap.qUnavailable) {
+    // Only when the member files were actually read this load — a storage
+    // blip must never nudge a client who already submitted to "click Submit".
+    pending.push(isStaff
+      ? '📝 Questionnaire is filled in but not yet submitted by the client'
+      : '📝 Your questionnaire is filled in — please open it and click Submit');
   }
   if (snap.totalMembers > 1 && snap.submittedMembers < snap.totalMembers) {
     const remaining = snap.totalMembers - snap.submittedMembers;
@@ -684,7 +728,7 @@ function buildPortalPage(snap, opts) {
             ? 'Open the staff review form to flag fields, leave feedback, or request corrections.'
             : 'Tell us about your background, history, and details for your case.'}</div>
         </div>
-        <span class="badge ${qDone ? 'badge-ok' : (qPct > 0 ? 'badge-prog' : 'badge-todo')}">${escHtml(qLabel)}</span>
+        <span class="badge ${qDone ? 'badge-ok' : (qStarted ? 'badge-prog' : 'badge-todo')}">${escHtml(qLabel)}</span>
       </div>
       <div class="progress-row">
         <div class="progress-bar"><div class="progress-fill" style="width:${qPct}%;"></div></div>

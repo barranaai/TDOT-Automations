@@ -669,7 +669,7 @@ router.get('/:caseRef/data', async (req, res) => {
 
 router.post('/:caseRef/save', async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
-  const { token, formKey, fields, completionPct, manual, memberLabel, missingSections, missingByMember, formFile: echoedFormFile } = req.body || {};
+  const { token, formKey, fields, completionPct, aggregatePct, manual, manualSync, memberLabel, missingSections, missingByMember, formFile: echoedFormFile } = req.body || {};
 
   if (!Array.isArray(fields)) {
     return res.status(400).json({ error: 'fields must be an array' });
@@ -682,6 +682,22 @@ router.post('/:caseRef/save', async (req, res) => {
       // The era the client was actually LOOKING at (validated echo) — never a
       // save-time server guess, which can diverge from the served page.
       formFile: svc.validSaveFormFile(formFiles, savedKey, echoedFormFile) });
+
+    // Fire-and-forget: keep the Client Master "Q Readiness" % and "Q Completion
+    // Status" current (Working on it) so the board, cockpit and portal show
+    // progress before the client ever clicks Submit. The board % is derived
+    // server-side from every member file (one formula everywhere); the page's
+    // own number (`aggregatePct`, else completionPct) is only the fallback.
+    // Never awaited — a Monday hiccup can never fail the save.
+    const pagePct = Number((aggregatePct != null && aggregatePct !== '') ? aggregatePct : completionPct);
+    // A multi-member manual save posts one request per member; only the LAST
+    // carries manualSync so the immediate sync sees every file (older engine
+    // payloads have no flag → treated as immediate, as before).
+    svc.syncProgressToMonday({
+      itemId, caseRef, clientName, formFiles,
+      pct: Number.isFinite(pagePct) ? pagePct : 0,
+      immediate: manual === true && manualSync !== false,
+    });
 
     // Fire-and-forget: keep ONE current PDF per form alongside the JSON
     // (questionnaire-{caseRef}-{formKey}.pdf, overwritten on every save —
@@ -757,7 +773,7 @@ router.post('/:caseRef/submit', async (req, res) => {
 
     await svc.saveFormData({ clientName, caseRef, itemId, formKey: key, fields, completionPct: completionPct || 0,
       formFile: svc.validSaveFormFile(formFiles, key, (req.body || {}).formFile) });
-    await svc.markSubmitted({ itemId, caseRef, caseType, formKey: key, formLabel: formTitle, completionPct: completionPct || 0, clientName });
+    await svc.markSubmitted({ itemId, caseRef, caseType, formKey: key, formLabel: formTitle, completionPct: completionPct || 0, clientName, formFiles });
 
     // Fire-and-forget: on submit, always email if there are missing fields (no throttle)
     if (Array.isArray(missingSections) && missingSections.length) {
@@ -854,7 +870,7 @@ router.post('/:caseRef/submit-all', async (req, res) => {
 
     // All saves succeeded — do the batch submit (single Monday update + single audit comment)
     await svc.markAllSubmitted({
-      itemId, caseRef, caseType, formLabel: formTitle, clientName,
+      itemId, caseRef, caseType, formLabel: formTitle, clientName, formFiles,
       memberSubmissions,
     });
 

@@ -289,7 +289,7 @@ async function getCaseOverview(caseRef) {
     qMembers = await htmlQ.getMemberStatuses({ clientName, caseRef, members, formFiles });
   } catch (e) {
     console.warn(`[Cockpit] q-status read failed for ${caseRef}: ${e.message}`);
-    qMembers = members.map((m) => ({ ...m, status: m.submittedAt ? 'Submitted' : 'Not Started' }));
+    qMembers = members.map((m) => ({ ...m, status: m.submittedAt ? 'Submitted' : 'Not Started', hasData: false, completionPct: 0 }));
   }
 
   const documents = summariseDocuments(docSummary.items || []);
@@ -325,7 +325,9 @@ async function getCaseOverview(caseRef) {
     health:          cm.health || '—',
     slaRisk:         cm.slaRisk || '—',
     deadline:        cm.deadline || '',
-    qReadinessPct:   cm.qReadinessPct || 0,
+    // Questionnaire % from the SAVED ANSWERS when they could be read (the
+    // Monday number used to be written only at Submit); Monday is the fallback.
+    qReadinessPct:   htmlQ.deriveQuestionnaireProgress({ members: qMembers, mondayPct: cm.qReadinessPct || 0 }).pct,
     // Document progress = client uploads; the rarely-set staff-Reviewed % is
     // its own field so the cockpit can show both honestly.
     docReadinessPct: cm.docReadinessPct || 0,

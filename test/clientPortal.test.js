@@ -461,6 +461,7 @@ test('seam: getPortalSnapshot output renders docs, payments and timeline through
       { id: '72', name: 'IELTS', status: 'Reviewed', category: 'Language', applicantType: 'Principal Applicant', reviewNotes: '', clientInstructions: '', lastUpload: '2026-07-10' },
     ] })),
     stub(htmlQ, 'loadMembers', async () => [{ label: 'Principal Applicant', submittedAt: '' }]),
+    stub(htmlQ, 'getMemberStatuses', async ({ members }) => members.map((m) => ({ ...m, status: 'In Progress', hasData: true, completionPct: 55 }))),
     stub(cockpit, 'getLeadExtras', async () => ({
       lead: { id: '999', createdAt: '2026-06-01', bookedSlot: '', inviteSentAt: '' },
       payments: { retainerFee: '20', etransferEmail: 'admstdot@gmail.com', milestones: [

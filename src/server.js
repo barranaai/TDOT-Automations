@@ -834,6 +834,42 @@ app.get('/admin/questionnaire/:caseRef/versions/:versionId/content', async (req,
   }
 });
 
+// Case-level questionnaire progress as the portal/cockpit derive it — from the
+// saved answers, with the Monday columns alongside (read-only diagnostic; the
+// reconcile script uses it to stamp dormant rows). Admin-only: a lightweight
+// gate, so the sweep does not pay for a full cockpit overview per row.
+app.get('/admin/questionnaire/:caseRef/progress', async (req, res) => {
+  const caseRef = String(req.params.caseRef || '').trim();
+  if (!resolveAdminOrReject(req, res, 'Only an admin can read questionnaire progress diagnostics.')) return;
+  try {
+    const svc = require('./services/htmlQuestionnaireService');
+    const mondayApi = require('./services/mondayApi');
+    const v = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const [members, cm] = await Promise.all([
+      svc.loadMembers({ clientName: v.clientName, caseRef }),
+      mondayApi.query(
+        `query($itemId: ID!) { items(ids: [$itemId]) { column_values(ids: ["numeric_mm0x9dea", "color_mm0x9s08"]) { id text } } }`,
+        { itemId: String(v.itemId) }
+      ),
+    ]);
+    const cols = cm?.items?.[0]?.column_values || [];
+    const txt  = (id) => (cols.find((c) => c.id === id)?.text || '').trim();
+    const qMembers = await svc.getMemberStatuses({ clientName: v.clientName, caseRef, members, formFiles: v.formFiles });
+    const mondayPct = txt('numeric_mm0x9dea') === '' ? null : Number(txt('numeric_mm0x9dea'));
+    const derived = svc.deriveQuestionnaireProgress({ members: qMembers, mondayPct: mondayPct || 0 });
+    res.json({
+      caseRef, itemId: String(v.itemId),
+      monday: { pct: mondayPct, status: txt('color_mm0x9s08') },
+      members: qMembers.map((m) => ({ key: m.key, label: m.label, status: m.status, hasData: !!m.hasData, hasAdditionalData: !!m.hasAdditionalData, completionPct: m.completionPct || 0, submittedAt: m.submittedAt || '' })),
+      pct: derived.pct, label: derived.label, submitted: derived.submitted, anyData: derived.anyData,
+    });
+  } catch (err) {
+    console.error('[QProgress] read failed:', err.message);
+    const notFound = /not found|no case/i.test(err.message || '');
+    res.status(err.transient ? 503 : (notFound ? 404 : 500)).json({ error: err.message });
+  }
+});
+
 // Surgical field-level repair — patch INDIVIDUAL answers (by section+label)
 // without touching the rest of the file. Built for the table-key smear class:
 // a wholesale restore would discard everything typed since the smear, while

@@ -5,8 +5,11 @@
  * then writes the results back to the Client Master Board. Also fires stage
  * gates when the case crosses the readiness threshold.
  *
- * Q Readiness is managed exclusively by htmlQuestionnaireService.markSubmitted()
- * (HTML form path). This service preserves that stored value — never overwrites it.
+ * Q Readiness is written by htmlQuestionnaireService — on every client SAVE
+ * (progress sync, since 2026-09-08) and on Submit. This service preserves
+ * that stored value — never overwrites it. Because the % now moves BEFORE
+ * submission, the stage gates below also require Q Completion Status = Done
+ * (the questionnaire was submitted); a high in-progress % never advances a case.
  *
  * Called from:
  *  - htmlQuestionnaireService (after client submits form)
@@ -284,7 +287,7 @@ function calcDocMetrics(items) {
  *   already stored on the master board by the last form submission.  Pass null
  *   if unknown — gates will be skipped safely for that run.
  */
-async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshold, storedQReadiness = null) {
+async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshold, storedQReadiness = null, qSubmitted = false, currentReadyForReview = '') {
   const docReady = docMetrics.readinessPct;
 
   // blockingQCount is always 0 — no blocking questions in the HTML-form workflow.
@@ -301,15 +304,30 @@ async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshol
   let qReady        = 0;
 
   if (storedQReadiness !== null) {
-    // Q readiness is set by htmlQuestionnaireService.markSubmitted() — never overwrite it.
+    // Q readiness is written by htmlQuestionnaireService (save + submit) — never overwrite it.
     // Use the stored value only for threshold/gate logic and visibility columns.
+    // Since progress sync (2026-09-08) the % moves while the client is still
+    // typing, so a gate ALSO needs the questionnaire submitted (Q Completion
+    // Status = Done) — an 85% draft plus a complete checklist must not advance
+    // a case on its own.
     qReady = storedQReadiness;
     const totalBlocking = docMetrics.blockingCount;
-    thresholdMet  = qReady >= minThreshold && docReady >= minThreshold && totalBlocking === 0;
-    fullyComplete = qReady >= FULL_LOCK_THRESHOLD && docReady >= FULL_LOCK_THRESHOLD && totalBlocking === 0;
+    const pctMet  = qReady >= minThreshold && docReady >= minThreshold && totalBlocking === 0;
+    thresholdMet  = qSubmitted === true && pctMet;
+    fullyComplete = qSubmitted === true && qReady >= FULL_LOCK_THRESHOLD && docReady >= FULL_LOCK_THRESHOLD && totalBlocking === 0;
 
-    colValues[CM.docThresholdMet] = { label: thresholdMet ? 'Yes' : 'No' };
-    colValues[CM.readyForReview]  = { label: thresholdMet ? 'Done' : 'Working on it' };
+    // The visibility columns follow the gate — except for one transition: a
+    // row that ALREADY reads Ready for Review = Done, meets the % thresholds,
+    // and only lacks the submission mark. That is a questionnaire submitted
+    // before the status column caught up (the reconcile fixes those); it must
+    // not flip from Done/Yes to Working/No in the meantime. Every other
+    // not-submitted row above threshold is written No / Working on it as the
+    // rule says.
+    const lagging = !qSubmitted && pctMet && currentReadyForReview === 'Done';
+    if (!lagging) {
+      colValues[CM.docThresholdMet] = { label: thresholdMet ? 'Yes' : 'No' };
+      colValues[CM.readyForReview]  = { label: thresholdMet ? 'Done' : 'Working on it' };
+    }
   }
   // storedQReadiness === null: write only doc columns, gates skip safely this run.
 
@@ -339,7 +357,7 @@ async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshol
  *   the master board (set by the last form submission).  When provided, the daily scan
  *   can still fire stage gates even though the Q board has no items.
  */
-async function calculateForCase({ masterItemId, caseRef, caseType, caseStage, checkLock = true, storedQReadiness = null }) {
+async function calculateForCase({ masterItemId, caseRef, caseType, caseStage, checkLock = true, storedQReadiness = null, qSubmitted = false, currentReadyForReview = '' }) {
   if (!caseRef || !masterItemId) return null;
 
   // Only calculate for active collection/review stages
@@ -367,7 +385,7 @@ async function calculateForCase({ masterItemId, caseRef, caseType, caseStage, ch
   const minThreshold = thresholds[caseType] || 80;
   const qMetrics     = calcQMetrics();
   const docMetrics   = calcDocMetrics(dItems);
-  const result       = await writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshold, storedQReadiness);
+  const result       = await writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshold, storedQReadiness, qSubmitted, currentReadyForReview);
 
   console.log(
     `[Readiness] ${caseRef} | Q:(html-form, stored=${storedQReadiness ?? 'unknown'}%)` +
@@ -403,7 +421,7 @@ async function runDailyReadinessCheck() {
 
   // qReadiness is fetched so HTML-form cases can still fire stage gates when
   // doc readiness crosses the threshold after the initial form submission.
-  const FETCH_IDS = [CM.caseRef, CM.caseType, CM.caseStage, CM.automationLock, CM.qReadiness];
+  const FETCH_IDS = [CM.caseRef, CM.caseType, CM.caseStage, CM.automationLock, CM.qReadiness, CM.qCompletionStatus, CM.readyForReview];
   let items = [];
   let cursor = null;
 
@@ -454,6 +472,7 @@ async function runDailyReadinessCheck() {
     // Parse the stored Q readiness (non-null so HTML-form gate checks fire correctly)
     const rawQ           = col(CM.qReadiness);
     const storedQReadiness = rawQ !== '' ? parseFloat(rawQ) : null;
+    const qSubmitted       = col(CM.qCompletionStatus) === 'Done';
 
     try {
       const result = await calculateForCase({
@@ -462,6 +481,8 @@ async function runDailyReadinessCheck() {
         caseType:  col(CM.caseType),
         caseStage,
         storedQReadiness,
+        qSubmitted,
+        currentReadyForReview: col(CM.readyForReview),
       });
       if (result) processed++;
       else skipped++;
@@ -485,7 +506,7 @@ async function runDailyReadinessCheck() {
 async function calculateForCaseRef(caseRef) {
   if (!caseRef) return;
 
-  const LOOKUP_IDS = [CM.caseRef, CM.caseType, CM.caseStage, CM.automationLock, CM.qReadiness];
+  const LOOKUP_IDS = [CM.caseRef, CM.caseType, CM.caseStage, CM.automationLock, CM.qReadiness, CM.qCompletionStatus, CM.readyForReview];
   const data = await mondayApi.query(
     `query($boardId: ID!, $colId: String!, $val: String!) {
        items_page_by_column_values(
@@ -511,6 +532,7 @@ async function calculateForCaseRef(caseRef) {
 
   const rawQ           = col(CM.qReadiness);
   const storedQReadiness = rawQ !== '' ? parseFloat(rawQ) : null;
+  const qSubmitted       = col(CM.qCompletionStatus) === 'Done';
 
   await calculateForCase({
     masterItemId: item.id,
@@ -518,8 +540,10 @@ async function calculateForCaseRef(caseRef) {
     caseType:  col(CM.caseType),
     caseStage: col(CM.caseStage),
     storedQReadiness,
+    qSubmitted,
+    currentReadyForReview: col(CM.readyForReview),
   });
 }
 
 module.exports = { calculateForCase, calculateForCaseRef, runDailyReadinessCheck, loadThresholds,
-  _internal: { calcDocMetrics, applySchemaDefaults, enrichDocItemsWithTemplateData } };
+  _internal: { calcDocMetrics, applySchemaDefaults, enrichDocItemsWithTemplateData, writeToCaseMaster } };

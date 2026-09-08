@@ -648,6 +648,233 @@ async function saveFormData({ clientName, caseRef, itemId, formKey, fields, comp
   console.log(`[HtmlQ] Saved ${fields.length} fields (${filled} non-empty) as JSON for ${caseRef}/${formKey} (${completionPct}%)`);
 }
 
+// ─── Progress → Monday (on every save) ───────────────────────────────────────
+//
+// Until 2026-09-08 the Client Master "Q Readiness" % and "Q Completion Status"
+// were written ONLY when the client clicked Submit, so every in-progress
+// questionnaire read 0% / Not Started on the board, the cockpit and the portal
+// (Gauri, 2026-09-04 meeting, point 01). Now every client save also syncs:
+//   • Q Readiness   = the case-level completion the client engine computed
+//   • Q Completion  = "Working on it" — unless it is already "Done" (a
+//     submitted case is never downgraded; its % keeps following the answers)
+// Throttle: a manual "Save Progress" syncs at once; the 60s autosave is
+// coalesced to one write per Q_PROGRESS_SYNC_MS per case (latest % wins), so
+// a typing client does not cost a Monday mutation a minute. Fire-and-forget:
+// never throws, never blocks the JSON save (the truth).
+//
+// Stage gates are NOT driven by this number alone any more: caseReadiness /
+// checkStageGate additionally require the questionnaire to be submitted.
+
+const Q_PROGRESS_SYNC_MS = (() => {
+  const n = Number(process.env.Q_PROGRESS_SYNC_MS);
+  return Number.isFinite(n) && n >= 0 ? n : 5 * 60 * 1000;
+})();
+// A manual "Save Progress" in a family case posts one /save per member in
+// quick succession; a short debounce turns that burst into ONE board write
+// that sees every member file already saved.
+const Q_PROGRESS_MANUAL_DEBOUNCE_MS = (() => {
+  const n = Number(process.env.Q_PROGRESS_MANUAL_DEBOUNCE_MS);
+  return Number.isFinite(n) && n >= 0 ? n : 1500;
+})();
+const _progressPending = new Map();   // itemId → { timer, params }
+const _submissionStamp = new Map();   // itemId → count of submissions seen this process
+const _itemWriteLocks  = new Map();   // itemId → tail of the per-case write chain
+
+/**
+ * Serialise the Client Master questionnaire-column writes of one case: the
+ * progress sync and the two submit paths all go through here, so a sync can
+ * never interleave with a submission (its status read happens AFTER any
+ * submission write that was ahead of it, and a submission always lands
+ * after any sync that was ahead of it — retries included).
+ */
+function withItemWriteLock(itemId, fn) {
+  const key  = String(itemId);
+  const prev = _itemWriteLocks.get(key) || Promise.resolve();
+  const next = prev.catch(() => {}).then(fn);
+  _itemWriteLocks.set(key, next);
+  next.finally(() => { if (_itemWriteLocks.get(key) === next) _itemWriteLocks.delete(key); }).catch(() => {});
+  return next;
+}
+
+function clampPct(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+/**
+ * ONE formula for the case-level % — the board, the portal, the cockpit and
+ * the reconcile all use it: read every member's saved file(s) and derive
+ * (deriveQuestionnaireProgress). The number a single page's engine computed
+ * is only the fallback when the files cannot be read: a dual-form case
+ * (F6 + F1) renders each form on its own page, so a page-local % would make
+ * the board sawtooth between the two forms.
+ */
+async function resolveCasePct({ clientName, caseRef, formFiles, fallbackPct }) {
+  const fallback = { pct: clampPct(fallbackPct), submitted: null, derived: false };
+  if (!clientName) return fallback;
+  try {
+    const members  = await loadMembers({ clientName, caseRef });
+    const qMembers = await getMemberStatuses({ clientName, caseRef, members, formFiles });
+    const d = deriveQuestionnaireProgress({ members: qMembers, mondayPct: fallbackPct });
+    return { pct: d.pct, submitted: d.submitted, derived: true };
+  } catch (err) {
+    console.warn(`[HtmlQ] case-level progress derivation failed for ${caseRef} (using the page's %): ${err.message}`);
+    return fallback;
+  }
+}
+
+async function writeProgressToMonday({ itemId, caseRef, clientName, formFiles, pct }) {
+  const key   = String(itemId);
+  const stamp = _submissionStamp.get(key) || 0;
+  // Everything — derive, read, write — runs under the case's write lock, so
+  // a submission cannot interleave: if one was ahead of us its Done is already
+  // on the board when we read the status; if one arrives behind us it waits
+  // for our write (retries included) and lands last.
+  return withItemWriteLock(key, async () => {
+    // A submission was recorded while we waited for the lock: our % predates
+    // it — never write over the submission's Done / aggregate.
+    if ((_submissionStamp.get(key) || 0) !== stamp) {
+      console.log(`[HtmlQ] Progress sync skipped for ${caseRef} — a submission was recorded meanwhile`);
+      return;
+    }
+    const { pct: value } = await module.exports.resolveCasePct({ clientName, caseRef, formFiles, fallbackPct: pct });
+    const data = await mondayApi.query(
+      `query($itemId: ID!) {
+         items(ids: [$itemId]) { column_values(ids: ["${CM.qCompletionStatus}"]) { id text } }
+       }`,
+      { itemId: String(itemId) }
+    );
+    // A submission was recorded during our reads: it is queued behind this
+    // lock and will write the final numbers — ours are already stale.
+    if ((_submissionStamp.get(key) || 0) !== stamp) {
+      console.log(`[HtmlQ] Progress sync skipped for ${caseRef} — a submission was recorded meanwhile`);
+      return;
+    }
+    const status = (data?.items?.[0]?.column_values?.[0]?.text || '').trim();
+    const cols = { [CM.qReadiness]: value };
+    if (status !== 'Done') cols[CM.qCompletionStatus] = { label: 'Working on it' };
+    // Best-effort: one retry only — the next save re-syncs anyway, and a long
+    // retry ladder would hold the lock (and a waiting submission) for a minute.
+    await mondayApi.query(
+      `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+         change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+       }`,
+      { boardId: String(clientMasterBoardId), itemId: String(itemId), cols: JSON.stringify(cols) },
+      1
+    );
+    console.log(`[HtmlQ] Progress synced to Monday — ${caseRef}: ${value}%${status === 'Done' ? ' (status stays Done)' : ' (Working on it)'}`);
+  });
+}
+
+/**
+ * Sync questionnaire progress to the Client Master row. Safe to call on every
+ * save; returns a promise that never rejects.
+ *   immediate (manual save) → debounced Q_PROGRESS_MANUAL_DEBOUNCE_MS (a burst of
+ *                             member saves becomes one write)
+ *   autosave               → one write per Q_PROGRESS_SYNC_MS window per case
+ * A pending autosave window is promoted to the short debounce by a manual save.
+ * `pct` is the page's own number — only the fallback for the derivation.
+ * @param {{ itemId, caseRef, clientName?, formFiles?, pct, immediate?: boolean }} p
+ */
+function syncProgressToMonday({ itemId, caseRef, clientName, formFiles, pct, immediate = false }) {
+  if (!itemId) return Promise.resolve();
+  const key    = String(itemId);
+  const params = { itemId, caseRef, clientName, formFiles, pct: clampPct(pct) };
+  const run    = (p) => module.exports.writeProgressToMonday(p)
+    .catch((err) => console.warn(`[HtmlQ] progress sync failed for ${caseRef}: ${err.message}`));
+  const delay  = immediate ? Q_PROGRESS_MANUAL_DEBOUNCE_MS : Q_PROGRESS_SYNC_MS;
+  const pending = _progressPending.get(key);
+  if (pending) {
+    pending.params = params;                          // latest state wins
+    if (!immediate) return Promise.resolve();         // keep the open window
+    clearTimeout(pending.timer);                      // promote to the short debounce
+    _progressPending.delete(key);
+  }
+  if (delay === 0) return run(params);
+  const timer = setTimeout(() => {
+    const p = _progressPending.get(key);
+    _progressPending.delete(key);
+    if (p) run(p.params);
+  }, delay);
+  if (timer.unref) timer.unref();
+  _progressPending.set(key, { timer, params });
+  return Promise.resolve();
+}
+
+/**
+ * Drop a pending sync for one case — the submit paths call this so a stale
+ * pre-submit % can never land on the board AFTER the submission's write.
+ */
+function cancelProgressSync(itemId) {
+  const p = _progressPending.get(String(itemId));
+  if (!p) return false;
+  clearTimeout(p.timer);
+  _progressPending.delete(String(itemId));
+  return true;
+}
+
+/** Record a submission: cancels any pending sync and invalidates in-flight ones. */
+function noteSubmission(itemId) {
+  const key = String(itemId);
+  cancelProgressSync(key);
+  _submissionStamp.set(key, (_submissionStamp.get(key) || 0) + 1);
+}
+
+/** Write every pending sync now (process shutdown). Never throws. */
+async function flushProgressSync() {
+  const pending = [..._progressPending.entries()];
+  _progressPending.clear();
+  await Promise.all(pending.map(([, p]) => {
+    clearTimeout(p.timer);
+    return module.exports.writeProgressToMonday(p.params).catch((err) => console.warn(`[HtmlQ] flush failed: ${err.message}`));
+  }));
+  return pending.length;
+}
+
+// A Render deploy sends SIGTERM: flush the coalesced writes (bounded) so a
+// client whose last autosave fell inside the window still reaches the board.
+// Registered only when running as the server — never for scripts or tests.
+if (require.main && /[\\/]src[\\/]server\.js$/.test(require.main.filename || '')) {
+  process.once('SIGTERM', async () => {
+    const n = await Promise.race([flushProgressSync(), new Promise((r) => setTimeout(r, 4000, 'timeout'))]);
+    console.log(`[HtmlQ] SIGTERM — progress sync flush: ${n === 'timeout' ? 'timed out' : `${n} write(s)`}`);
+    process.exit(0);
+  });
+}
+
+/** Test hook: drop every pending sync and every submission stamp. */
+function _resetProgressSync() {
+  for (const p of _progressPending.values()) clearTimeout(p.timer);
+  _progressPending.clear();
+  _submissionStamp.clear();
+}
+
+// ─── Case-level questionnaire progress (what the portal + cockpit show) ──────
+//
+// Pure. The saved answers are the truth; the Monday number is the fallback for
+// a case whose files cannot be read (or a legacy case with none).
+//   pct       — average of the members' stored completion when any member has
+//               client data, else the Monday value
+//   submitted — every member carries submittedAt
+//   label     — 'Submitted' | 'In Progress' | 'Not Started'
+// "Submitted" is decided by submission, NOT by 100% — the 80% gate is the
+// authoritative threshold (a client who cleared it and clicked Submit is done).
+
+function deriveQuestionnaireProgress({ members, mondayPct }) {
+  const list      = Array.isArray(members) ? members : [];
+  const fallback  = clampPct(mondayPct);
+  const anyData   = list.some((m) => m && (m.hasData || m.hasAdditionalData));
+  const submitted = list.length > 0 && list.every((m) => m && m.submittedAt);
+  let pct = fallback;
+  if (anyData) {
+    const sum = list.reduce((n, m) => n + clampPct(m && m.completionPct), 0);
+    pct = Math.round(sum / list.length);
+  }
+  const label = submitted ? 'Submitted' : ((anyData || pct > 0) ? 'In Progress' : 'Not Started');
+  return { pct, submitted, label, anyData };
+}
+
 // ─── Pre-fill: seed questionnaire answers from intake + pre-consult data ───────
 //
 // Called once per case at Document-Collection-Started (see checklistService),
@@ -1114,33 +1341,70 @@ async function removeMember({ clientName, caseRef, memberKey }) {
  *   formFiles: { primary, additional? } from resolveForm()
  * @returns {Array} members with status info
  */
-async function getMemberStatuses({ clientName, caseRef, members, formFiles }) {
-  const result = [];
-  for (const member of members) {
-    // Check primary form data
-    const primaryData = await loadFormData({ clientName, caseRef, formKey: member.key });
-    const hasData     = primaryData.length > 0 && primaryData.some(f => f.value && f.value.trim());
+// A CLIENT answer — the DCS pre-fill seed (source:'prefill' / prefill__ keys)
+// is not the client starting their questionnaire.
+const isPrefillField  = (f) => Boolean(f) && (f.source === 'prefill' || String(f.key || '').startsWith('prefill__'));
+const isClientAnswer  = (f) => Boolean(f) && !isPrefillField(f) && String(f.value == null ? '' : f.value).trim() !== '';
 
-    // Check additional form data (if dual-form case)
-    let hasAdditionalData = false;
-    if (formFiles?.additional) {
-      const addKey = `${member.key}-additional`;
-      const additionalData = await loadFormData({ clientName, caseRef, formKey: addKey });
-      hasAdditionalData = additionalData.length > 0 && additionalData.some(f => f.value && f.value.trim());
-    }
+async function getMemberStatuses({ clientName, caseRef, members, formFiles }) {
+  // Members are independent — read them in parallel (a portal load used to
+  // pay N sequential round-trips here).
+  return Promise.all((members || []).map(async (member) => {
+    const addKey = `${member.key}-additional`;
+    const [primaryFile, additionalFile] = await Promise.all([
+      loadFormFileMeta({ clientName, caseRef, formKey: member.key }),
+      formFiles?.additional ? loadFormFileMeta({ clientName, caseRef, formKey: addKey }) : Promise.resolve(null),
+    ]);
+    const hasData           = primaryFile.fields.some(isClientAnswer);
+    const hasAdditionalData = !!additionalFile && additionalFile.fields.some(isClientAnswer);
 
     let status = 'Not Started';
     if (member.submittedAt) status = 'Submitted';
     else if (hasData || hasAdditionalData) status = 'In Progress';
 
-    result.push({
-      ...member,
-      status,
-      hasData,
-      hasAdditionalData,
-    });
+    // Member completion: the stored % of the primary form; a dual-form member
+    // averages the two files once the client has STARTED the additional form
+    // (each engine page computes its own %). An additional form with no
+    // client answers is "not applicable yet" — the primary form's submission
+    // is the questionnaire submission (the stage gate has always fired on it),
+    // so it must not halve the number.
+    let completionPct = primaryFile.completionPct;
+    if (hasAdditionalData) completionPct = Math.round((completionPct + additionalFile.completionPct) / 2);
+
+    return { ...member, status, hasData, hasAdditionalData, completionPct };
+  }));
+}
+
+/**
+ * Saved fields + stored completion % for one form file. Transient read errors
+ * propagate (same contract as loadFormData — an outage must not look empty).
+ */
+async function loadFormFileMeta({ clientName, caseRef, formKey }) {
+  let buf;
+  try {
+    buf = await oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: dataFilename(caseRef, formKey) });
+  } catch (err) {
+    console.error(`[HtmlQ] loadFormFileMeta failed for ${caseRef}/${formKey}:`, err.message);
+    err.transient = true;
+    throw err;
   }
-  return result;
+  if (buf) {
+    let obj = null;
+    try { obj = JSON.parse(buf.toString('utf8')); } catch (_) { obj = null; }
+    if (Array.isArray(obj)) return { fields: obj, completionPct: 0 };          // legacy plain array
+    if (obj) return { fields: Array.isArray(obj.fields) ? obj.fields : [], completionPct: clampPct(obj.completionPct) };
+    return { fields: [], completionPct: 0 };
+  }
+  // No JSON yet — legacy CSV era, or nothing saved at all.
+  let csvBuf;
+  try {
+    csvBuf = await oneDrive.readFile({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: csvFilename(caseRef, formKey) });
+  } catch (err) {
+    console.error(`[HtmlQ] loadFormFileMeta (csv) failed for ${caseRef}/${formKey}:`, err.message);
+    err.transient = true;
+    throw err;
+  }
+  return { fields: csvBuf ? parseCsvLegacy(csvBuf.toString('utf8')) : [], completionPct: 0 };
 }
 
 /**
@@ -1163,7 +1427,7 @@ async function markMemberSubmitted({ clientName, caseRef, memberKey }) {
  * @param {{ itemId, caseRef, caseType, formKey, formLabel, completionPct }} params
  *   caseType is required for threshold lookup and stage gate calls.
  */
-async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, completionPct, clientName }) {
+async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, completionPct, clientName, formFiles }) {
   const pct = Math.round(completionPct);
 
   // ── Step 0: Extract member key from formKey ───────────────────────────────
@@ -1181,6 +1445,11 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
       const member = members.find(m => m.key === memberKey);
       memberLabel = member?.label || '';
     } catch (err) {
+      // A transient storage failure means the submission was NOT recorded
+      // (no submittedAt stamp): surface it — the route answers 503 "try
+      // again" and the client re-submits — instead of telling the client
+      // "submitted" while nothing durable says so.
+      if (err.transient) throw err;
       console.warn(`[HtmlQ] Could not update member manifest for ${caseRef}/${memberKey}: ${err.message}`);
     }
   }
@@ -1192,7 +1461,15 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
   let aggregatePct = pct;
   let totalMembers = 1;
   let submittedCount = 1;
-  let allDone = pct >= 100;
+  // A single-member submission IS done: /submit already enforced the 80%
+  // gate, and the gate — not 100% — is the authoritative threshold (the same
+  // rule the multi-member branch below has used since 2a4a687; the single-
+  // member initialiser was left at pct >= 100, which parked 87 submitted
+  // questionnaires on "Working on it" — Gauri, 2026-09-04, point 01).
+  // Only when the manifest could actually be read: a transient OneDrive
+  // failure in Step 1 leaves `members` null, and claiming Done then would
+  // let a family case advance on one member's submission.
+  let allDone = members !== null;
 
   if (members && members.length > 1) {
     // Count submitted members and average their completion
@@ -1226,19 +1503,26 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
   }
 
   // ── Step 3: Update Q Readiness and Q Completion Status on Monday.com ──────
-  await mondayApi.query(
-    `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
-       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
-     }`,
-    {
-      boardId: String(clientMasterBoardId),
-      itemId:  String(itemId),
-      cols:    JSON.stringify({
-        [CM.qReadiness]:        aggregatePct,
-        [CM.qCompletionStatus]: { label: allDone ? 'Done' : 'Working on it' },
-      }),
-    }
-  );
+  // The board % is the same case-level formula the portal/cockpit/save-sync
+  // use (every member's saved file), falling back to this submission's
+  // aggregate when the files cannot be read.
+  noteSubmission(itemId);   // cancels a pending pre-submit sync; invalidates queued ones
+  await withItemWriteLock(itemId, async () => {
+    aggregatePct = (await module.exports.resolveCasePct({ clientName, caseRef, formFiles, fallbackPct: aggregatePct })).pct;
+    await mondayApi.query(
+      `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+         change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+       }`,
+      {
+        boardId: String(clientMasterBoardId),
+        itemId:  String(itemId),
+        cols:    JSON.stringify({
+          [CM.qReadiness]:        aggregatePct,
+          [CM.qCompletionStatus]: { label: allDone ? 'Done' : 'Working on it' },
+        }),
+      }
+    );
+  });
 
   // ── Step 4: Audit comment with staff review link ───────────────────────────
   const label       = formLabel ? `"${formLabel}"` : `(${formKey})`;
@@ -1265,7 +1549,7 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
 
   // ── Step 5: Stage gate check ───────────────────────────────────────────────
   // Fire-and-forget: errors here must not block the submit response to the client.
-  checkStageGate({ itemId, caseRef, caseType, qPct: aggregatePct }).catch((err) =>
+  checkStageGate({ itemId, caseRef, caseType, qPct: aggregatePct, qSubmitted: allDone }).catch((err) =>
     console.error(`[HtmlQ] Stage gate check failed for ${caseRef}:`, err.message)
   );
 
@@ -1295,7 +1579,7 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
  * @param {{ itemId, caseRef, caseType, formLabel, clientName, memberSubmissions }} params
  *   memberSubmissions: [{ formKey, fields, completionPct }]
  */
-async function markAllSubmitted({ itemId, caseRef, caseType, formLabel, clientName, memberSubmissions }) {
+async function markAllSubmitted({ itemId, caseRef, caseType, formLabel, clientName, memberSubmissions, formFiles }) {
   // ── Step 1: Mark all members submitted in the manifest ────────────────────
   const perMember = [];
   for (const sub of memberSubmissions) {
@@ -1340,19 +1624,26 @@ async function markAllSubmitted({ itemId, caseRef, caseType, formLabel, clientNa
   const allDone = submittedCount >= totalMembers;
 
   // ── Step 3: Update Monday.com Q readiness (one write) ─────────────────────
-  await mondayApi.query(
-    `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
-       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
-     }`,
-    {
-      boardId: String(clientMasterBoardId),
-      itemId:  String(itemId),
-      cols:    JSON.stringify({
-        [CM.qReadiness]:        aggregatePct,
-        [CM.qCompletionStatus]: { label: allDone ? 'Done' : 'Working on it' },
-      }),
-    }
-  );
+  // Same case-level formula as the portal/cockpit/save-sync; this batch's
+  // aggregate is the fallback when the files cannot be read.
+  noteSubmission(itemId);   // cancels a pending pre-submit sync; invalidates queued ones
+  let boardPct = aggregatePct;
+  await withItemWriteLock(itemId, async () => {
+    boardPct = (await module.exports.resolveCasePct({ clientName, caseRef, formFiles, fallbackPct: aggregatePct })).pct;
+    await mondayApi.query(
+      `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+         change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+       }`,
+      {
+        boardId: String(clientMasterBoardId),
+        itemId:  String(itemId),
+        cols:    JSON.stringify({
+          [CM.qReadiness]:        boardPct,
+          [CM.qCompletionStatus]: { label: allDone ? 'Done' : 'Working on it' },
+        }),
+      }
+    );
+  });
 
   // ── Step 4: Post ONE audit comment covering all members ───────────────────
   const submittedAt = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
@@ -1374,10 +1665,10 @@ async function markAllSubmitted({ itemId, caseRef, caseType, formLabel, clientNa
     { itemId: String(itemId), body: comment }
   );
 
-  console.log(`[HtmlQ] Batch submitted — ${caseRef} — ${perMember.length} member(s) (aggregate: ${aggregatePct}%, ${submittedCount}/${totalMembers})`);
+  console.log(`[HtmlQ] Batch submitted — ${caseRef} — ${perMember.length} member(s) (aggregate: ${aggregatePct}%, board: ${boardPct}%, ${submittedCount}/${totalMembers})`);
 
-  // ── Step 5: Stage gate check ──────────────────────────────────────────────
-  checkStageGate({ itemId, caseRef, caseType, qPct: aggregatePct }).catch((err) =>
+  // ── Step 5: Stage gate check — on the number the board holds ─────────────
+  checkStageGate({ itemId, caseRef, caseType, qPct: boardPct, qSubmitted: allDone }).catch((err) =>
     console.error(`[HtmlQ] Stage gate check failed for ${caseRef}:`, err.message)
   );
 
@@ -1409,7 +1700,14 @@ async function markAllSubmitted({ itemId, caseRef, caseType, formLabel, clientNa
  * Reads the current case stage, doc readiness, and automation lock from Monday
  * so it can make the same decision the daily readiness scan would make.
  */
-async function checkStageGate({ itemId, caseRef, caseType, qPct }) {
+async function checkStageGate({ itemId, caseRef, caseType, qPct, qSubmitted = false }) {
+  // Q Readiness now moves on every client SAVE (progress sync), so the % alone
+  // no longer proves the questionnaire is finished — a gate needs a submitted
+  // questionnaire as well (same rule as caseReadinessService.writeToCaseMaster).
+  if (!qSubmitted) {
+    console.log(`[HtmlQ] Stage gate skipped — questionnaire not fully submitted for ${caseRef} (Q:${qPct}%)`);
+    return;
+  }
   // Fetch current case state — we need stage, doc readiness, and automation lock
   const data = await mondayApi.query(
     `query($itemId: ID!) {
@@ -1691,6 +1989,95 @@ ${hasAdditionalForm ? `
       node = node.parentElement;
     }
     return true;
+  }
+
+  /* ── Progress: which fields COUNT ──
+     Completion is filled / applicable fields (Gauri, 2026-09-04 meeting).
+     A field does NOT count when it sits inside:
+       • a conditional wrapper that is hidden — by inline style (toggleConditional)
+         OR by class (F12/F13 hide .conditional-block / .refusal-block via CSS);
+       • a member sub-section trimmed for that member type (data-mm-hidden);
+       • an OPTIONAL section — a "(If Accompanying)" accordion (F19 / F6,
+         single-member pages only: in multi-member mode that accordion is the
+         member blueprint and every clone's header is the member's name, so
+         membership is decided by the manifest instead) — that does not apply:
+         nothing typed in it and no "Accompany(ing) (to) the application? = Yes".
+     No "required" notion exists in any form yet; when TDOT supplies one, it
+     plugs in here. Cheap: the optional-section list is computed once per pass. */
+
+  var CONDITIONAL_CLASSES = ['conditional', 'conditional-block', 'refusal-details', 'refusal-block'];
+
+  function hasRealValue(el) {
+    var type = (el.getAttribute('type') || '').toLowerCase();
+    if (type === 'radio' || type === 'checkbox') return !!el.checked;
+    var v = (el.value || '').trim();
+    return !!v && v !== '-- Select --' && v !== 'Select...';
+  }
+
+  function isHiddenConditional(node) {
+    var i, isCond = false;
+    for (i = 0; i < CONDITIONAL_CLASSES.length; i++) {
+      if (node.classList.contains(CONDITIONAL_CLASSES[i])) { isCond = true; break; }
+    }
+    if (!isCond) return false;
+    if (node.classList.contains('visible') || node.classList.contains('open')) return false;
+    if (node.style.display === 'none') return true;
+    /* The wrapper's OWN computed display — a collapsed parent accordion does
+       not make the wrapper itself display:none, so folding sections never
+       changes the count. */
+    try { return window.getComputedStyle(node).display === 'none'; } catch (e) { return false; }
+  }
+
+  function optionalSectionHeaderText(sec) {
+    var h = sec.querySelector('.top-accordion-header, .applicant-accordion-header, .accordion-header, .sub-accordion-header');
+    return h ? (h.textContent || '') : '';
+  }
+
+  /* Every "(If Accompanying)" section in the document with whether it applies. */
+  function findOptionalSections() {
+    var out = [];
+    var secs = document.querySelectorAll('.top-accordion, .applicant-accordion, .accordion, .sub-accordion');
+    for (var i = 0; i < secs.length; i++) {
+      var sec = secs[i];
+      if (!/\\(\\s*if\\s+accompan/i.test(optionalSectionHeaderText(sec))) continue;
+      var applicable = false;
+      var inputs = sec.querySelectorAll('input, select, textarea');
+      for (var j = 0; j < inputs.length; j++) {
+        if (hasRealValue(inputs[j])) { applicable = true; break; }
+      }
+      if (!applicable) {
+        /* "Accompanying the application?" answered Yes for the same member */
+        var memberKey = (typeof getMemberKeyForEl === 'function') ? getMemberKeyForEl(sec) : null;
+        var selects = document.querySelectorAll('select');
+        for (var k = 0; k < selects.length; k++) {
+          var sel = selects[k];
+          if (!/^yes$/i.test((sel.value || '').trim())) continue;
+          var grp = sel.closest ? sel.closest('.form-group, .field-group') : null;
+          var lab = grp ? grp.querySelector('label') : null;
+          /* F19: "Accompanying the application?"  F6: "Accompany to the Application?" */
+          if (!lab || !/accompany(?:ing)?\\s+(?:to\\s+)?the\\s+application/i.test(lab.textContent || '')) continue;
+          if (memberKey && typeof getMemberKeyForEl === 'function' && getMemberKeyForEl(sel) !== memberKey) continue;
+          applicable = true; break;
+        }
+      }
+      out.push({ el: sec, applicable: applicable });
+    }
+    return out;
+  }
+
+  function isExcludedFromProgress(el, optionalSections) {
+    var node = el.parentElement;
+    while (node && node !== document.body) {
+      if (isHiddenConditional(node)) return true;
+      if (node.getAttribute('data-mm-hidden') === 'true') return true;
+      node = node.parentElement;
+    }
+    if (optionalSections) {
+      for (var i = 0; i < optionalSections.length; i++) {
+        if (!optionalSections[i].applicable && optionalSections[i].el.contains(el)) return true;
+      }
+    }
+    return false;
   }
 
   /* ── Dirty-tracking — only auto-save when the user has made changes ── */
@@ -1980,23 +2367,11 @@ ${hasAdditionalForm ? `
     var fields = collectFields();
     var total  = 0;
     var filled = 0;
+    var optionalSections = findOptionalSections();
     for (var i = 0; i < fields.length; i++) {
       var f   = fields[i];
       var val = getFieldValue(f).trim();
-      var inConditional = false;
-      var node = f.el.parentElement;
-      while (node && node !== document.body) {
-        if ((node.classList.contains('conditional') || node.classList.contains('conditional-block') || node.classList.contains('refusal-details')) &&
-            node.style.display === 'none' && !node.classList.contains('visible') && !node.classList.contains('open')) {
-          inConditional = true;
-          break;
-        }
-        if (node.getAttribute('data-mm-hidden') === 'true') {
-          inConditional = true; break;
-        }
-        node = node.parentElement;
-      }
-      if (inConditional) continue;
+      if (isExcludedFromProgress(f.el, optionalSections)) continue;
       total++;
       if (val && val !== '-- Select --' && val !== 'Select...' && val !== '') filled++;
     }
@@ -2100,6 +2475,10 @@ ${hasAdditionalForm ? `
         }
       }
       var emailAttached = false;
+      /* This page's own case-level completion. The server derives the board %
+         from every member's saved file (one formula everywhere); this number
+         is only its fallback when those files cannot be read. */
+      var aggPct = getProgress().pct;
 
       for (var mi = 0; mi < memberKeys.length; mi++) {
         var mk = memberKeys[mi];
@@ -2114,6 +2493,10 @@ ${hasAdditionalForm ? `
         try {
           var body = {
             token: TOKEN, formKey: mk + FORM_KEY_SUFFIX, fields: mFields, completionPct: mProg.pct,
+            aggregatePct: aggPct,
+            /* Only the LAST member request asks for the immediate board sync —
+               by then every member file is saved, so one write sees them all. */
+            manualSync: mi === memberKeys.length - 1,
             manual: !silent,
             memberLabel: memberLabelMap[mk] || mk,
             formFile: FORM_FILE,
@@ -2168,6 +2551,8 @@ ${hasAdditionalForm ? `
           formKey:         FORM_KEY,
           fields:          currentFields,
           completionPct:   p.pct,
+          aggregatePct:    p.pct,
+          manualSync:      true,
           manual:          !silent,
           memberLabel:     'Primary Applicant',
           missingSections: sMissing.sections,
@@ -3239,24 +3624,14 @@ ${hasAdditionalForm ? `
   function getProgressForMember(memberKey) {
     var fields = collectFields();
     var total = 0, filled = 0;
+    var optionalSections = findOptionalSections();
     for (var i = 0; i < fields.length; i++) {
       var f = fields[i];
       if (getMemberKeyForEl(f.el) !== memberKey) continue;
       var val = getFieldValue(f).trim();
-      var inConditional = false;
-      var node = f.el.parentElement;
-      while (node && node !== document.body) {
-        if ((node.classList.contains('conditional') || node.classList.contains('conditional-block') || node.classList.contains('refusal-details')) &&
-            node.style.display === 'none' && !node.classList.contains('visible') && !node.classList.contains('open')) {
-          inConditional = true; break;
-        }
-        /* Don't count fields in mm-hidden sub-sections */
-        if (node.getAttribute('data-mm-hidden') === 'true') {
-          inConditional = true; break;
-        }
-        node = node.parentElement;
-      }
-      if (inConditional) continue;
+      /* Same exclusions as getProgress(): hidden conditionals, mm-hidden
+         sub-sections, non-applicable optional sections. */
+      if (isExcludedFromProgress(f.el, optionalSections)) continue;
       total++;
       if (val && val !== '-- Select --' && val !== 'Select...' && val !== '') filled++;
     }
@@ -3276,23 +3651,15 @@ ${hasAdditionalForm ? `
     var bySection = {}; /* section → array of labels (deduped) */
     var order = [];     /* section insertion order */
     var totalMissing = 0;
+    var optionalSections = findOptionalSections();
 
     for (var i = 0; i < fields.length; i++) {
       var f = fields[i];
       if (getMemberKeyForEl(f.el) !== memberKey) continue;
 
-      /* Same conditional / mm-hidden exclusion as the progress calc */
-      var inConditional = false;
-      var node = f.el.parentElement;
-      while (node && node !== document.body) {
-        if ((node.classList.contains('conditional') || node.classList.contains('conditional-block') || node.classList.contains('refusal-details')) &&
-            node.style.display === 'none' && !node.classList.contains('visible') && !node.classList.contains('open')) {
-          inConditional = true; break;
-        }
-        if (node.getAttribute('data-mm-hidden') === 'true') { inConditional = true; break; }
-        node = node.parentElement;
-      }
-      if (inConditional) continue;
+      /* Same exclusions as the progress calc — the email only lists fields
+         the client can actually fill in. */
+      if (isExcludedFromProgress(f.el, optionalSections)) continue;
 
       var val = getFieldValue(f).trim();
       if (val && val !== '-- Select --' && val !== 'Select...') continue; /* filled */
@@ -5154,7 +5521,17 @@ module.exports = {
   formFileForKey,
   validSaveFormFile,
   loadFormFile,
+  loadFormFileMeta,
   saveFormData,
+  // Progress → Monday on every save + the case-level derivation the portal/cockpit share
+  syncProgressToMonday,
+  writeProgressToMonday,
+  cancelProgressSync,
+  noteSubmission,
+  flushProgressSync,
+  resolveCasePct,
+  deriveQuestionnaireProgress,
+  _resetProgressSync,
   seedQuestionnairePrefill,
   readIntakeSubfolderArchive,
   lookupCase,

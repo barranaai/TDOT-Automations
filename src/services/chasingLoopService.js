@@ -22,6 +22,7 @@ const CM = {
   escalationRequired: 'color_mm0x7bje',
   escalationReason:   'text_mm0xvpr9',
   qReadiness:         'numeric_mm0x9dea',
+  qCompletionStatus:  'color_mm0x9s08',    // Done = questionnaire submitted (the % alone moves on every save)
   docReadiness:       'numeric_mm0x5g9x',
   chasingStage:       'color_mm1abve4',
   reminderCount:      'numeric_mm1a4e8r',
@@ -93,7 +94,7 @@ async function fetchChasableCases() {
     CM.caseStage, CM.paymentStatus, CM.stageStartDate, CM.caseType, CM.caseSubType,
     CM.caseRef, CM.clientEmail, CM.accessToken,
     CM.automationLock, CM.manualOverride, CM.escalationRequired,
-    CM.qReadiness, CM.docReadiness,
+    CM.qReadiness, CM.qCompletionStatus, CM.docReadiness,
     CM.chasingStage, CM.reminderCount, CM.lastActivityDate,
   ];
 
@@ -303,10 +304,13 @@ async function processCase(item, offsets) {
   if (!startDate)     return 'no-start-date';
   if (!caseRef)       return 'no-case-ref';
 
-  // If both boards are fully complete, mark resolved and stop chasing
+  // If both boards are fully complete, mark resolved and stop chasing.
+  // The Q % moves on every client save now, so 100% alone is not "done" —
+  // the questionnaire must also have been SUBMITTED (Q Completion = Done).
   const qReady  = parseFloat(col(CM.qReadiness))  || 0;
   const docReady = parseFloat(col(CM.docReadiness)) || 0;
-  if (qReady >= 100 && docReady >= 100) {
+  const qSubmitted = col(CM.qCompletionStatus) === 'Done';
+  if (qSubmitted && qReady >= 100 && docReady >= 100) {
     await updateCase(item.id, { [CM.chasingStage]: { label: 'Resolved' } });
     return 'resolved';
   }
