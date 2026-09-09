@@ -297,10 +297,12 @@ function buildDashboardHTML(view = 'cases') {
     /* ── Base ──────────────────────────────────────────────────── */
     body { background: #f1f5f9; }
 
+    /* Full width (staff request 2026-09-09): the Cases hub is KPI strips + a
+       wide table — both stretch, with just enough side padding to clear the edge. */
     .wrap {
-      max-width: 1440px;
-      margin: 0 auto;
-      padding: 32px 28px 80px;
+      max-width: none;
+      margin: 0;
+      padding: 26px 14px 80px;
     }
 
     /* ── Loading ─────────────────────────────────────────────────── */

@@ -108,7 +108,9 @@ const NAV_CSS = `
     height: var(--header-h);
     background: linear-gradient(90deg, var(--navy-dark) 0%, var(--navy-mid) 100%);
     display: flex; align-items: center; justify-content: space-between;
-    padding: 0 28px;
+    /* Matches the listing pages' side padding so the logo lines up with the
+       first table column (staff request 2026-09-09: full-width listings). */
+    padding: 0 14px;
     position: sticky; top: 0; z-index: 300;
     box-shadow: 0 2px 16px rgba(0,0,0,.25);
   }

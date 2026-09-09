@@ -66,7 +66,9 @@ function buildQueueHTML() {
   ${SHARED_CSS_VARS}
   ${NAV_CSS}
   body { background:#f1f5f9; }
-  .wrap { max-width:1100px; margin:0 auto; padding:26px 24px 80px; }
+  /* Full width (staff request 2026-09-09): the queue is a wide table — every
+     column gets the screen, with just enough side padding to clear the edge. */
+  .wrap { max-width:none; margin:0; padding:22px 14px 80px; }
   #loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:50vh; gap:16px; }
   .spinner { width:42px; height:42px; border:3px solid #e2e8f0; border-top-color:var(--navy); border-radius:50%; animation:spin .7s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
