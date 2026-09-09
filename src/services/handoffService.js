@@ -325,6 +325,85 @@ async function transferLeadUpdates(leadId, cmItemId) {
  *   the lead's conversion status is untouched; ensureSignedState() applies
  *   them when the client actually signs.
  */
+// How long the case-open may wait for the client's OneDrive folder before
+// giving up. A Graph outage must never block a staff member from opening a
+// case: on timeout the case opens anyway and caseRefService's fallback finds
+// the folder from the lead when the case reference is assigned. 0 disables the
+// wait. Read at CALL time (not module load) so it is testable and so a value
+// changed on Render takes effect on the next request. A present-but-BLANK
+// value means "not configured", never 0 — clearing a Render variable instead
+// of deleting the row must not silently switch the wait off.
+function leadFolderWaitMs() {
+  const raw = String(process.env.LEAD_FOLDER_WAIT_MS == null ? '' : process.env.LEAD_FOLDER_WAIT_MS).trim();
+  const n = raw === '' ? NaN : Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 8000;
+}
+
+/** The OneDrive folder id already recorded on a Client Master row ('' when none). */
+async function caseFolderIdOf(itemId) {
+  try {
+    const d = await mondayApi.query(
+      `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CM.oneDriveFolderId}"]) { text } } }`,
+      { id: String(itemId) }
+    );
+    return (((d.items || [])[0]?.column_values || [])[0]?.text || '').trim();
+  } catch (err) {
+    // Unknown → treat as "already has one" and leave it alone: never overwrite blind.
+    console.warn(`[Handoff] Could not read the folder id on case ${itemId}: ${err.message}`);
+    return 'unknown';
+  }
+}
+
+/**
+ * The lead's OneDrive folder id, waiting for (or creating) it if need be.
+ * Returns null rather than throwing — the caller opens the case regardless.
+ * ensureLeadFolder is idempotent (409 → fetch the existing folder), so racing
+ * the fire-and-forget creation in leadService.createLead is harmless: both
+ * resolve to the same folder.
+ */
+async function ensureLeadFolderNow(lead) {
+  const stored = String(lead.oneDriveFolderId || '').trim();
+  if (stored) return { id: stored, url: lead.oneDriveFolderLink || '' };
+  const waitMs = leadFolderWaitMs();
+  if (!lead.fullName || waitMs === 0) return null;
+
+  // The id write hangs off the Graph promise itself, NOT off the race: if the
+  // folder is created a moment after we stop waiting, the id must still land on
+  // the lead — otherwise the folder exists and nothing can ever find it.
+  const creating = require('./oneDriveService').ensureLeadFolder({ fullName: lead.fullName, leadId: lead.id });
+  const recorded = creating.then(async (folder) => {
+    if (!folder || !folder.id) return null;
+    await leadService.updateLead(lead.id, {
+      oneDriveFolderId:   folder.id,
+      oneDriveFolderLink: { url: folder.url, text: 'Open client folder' },
+    }).catch((err) => console.warn(`[Handoff] Lead ${lead.id} folder id write failed: ${err.message}`));
+    return folder;
+  });
+  recorded.catch((err) => console.warn(`[Handoff] Client folder creation failed for lead ${lead.id}: ${err.message}`));
+
+  let timer;
+  try {
+    const folder = await Promise.race([
+      recorded,
+      // Deliberately NOT unref'd: an unref'd timer only fires while something
+      // else keeps the event loop alive, so the cap would silently not apply in
+      // a short-lived script. clearTimeout below runs on both outcomes, so the
+      // timer can hold the loop for at most waitMs and never delays shutdown.
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timed out after ${waitMs}ms`)), waitMs);
+      }),
+    ]);
+    if (!folder || !folder.id) return null;
+    console.log(`[Handoff] Client folder confirmed before case open for lead ${lead.id}`);
+    return folder;
+  } catch (err) {
+    console.warn(`[Handoff] Could not confirm the client folder for lead ${lead.id} before opening the case (${err.message}) — opening anyway; the id still lands on the lead if it finishes, and the case-reference hook finds it from there.`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function _doHandoff(leadId, { presigned = false } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) throw new Error(`Lead ${leadId} not found`);
@@ -372,7 +451,11 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
     await transferLeadUpdates(leadId, existing.id);
     // Carry the intake OneDrive folder onto the reused case too (best-effort),
     // so the rename hook can find it when the case ref is assigned.
-    if (lead.oneDriveFolderId) {
+    // Only when the case has none: a second lead linked to the same case must
+    // never redirect it to a DIFFERENT folder (the first lead's folder holds
+    // the documents). Same "never guess between two folders" rule the
+    // case-reference fallback applies.
+    if (lead.oneDriveFolderId && !(await caseFolderIdOf(existing.id))) {
       const reuseCols = { [CM.oneDriveFolderId]: lead.oneDriveFolderId };
       if (lead.oneDriveFolderLink) reuseCols[CM.oneDriveFolderLink] = { url: lead.oneDriveFolderLink, text: 'Open client folder' };
       await mondayApi.query(
@@ -385,6 +468,24 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
     await setClientPhone(existing.id, lead);
     await stampClientAccount(lead, existing.id);
     return existing.id;
+  }
+
+  // ── The client's documents folder, BEFORE the case row exists ────────────
+  // createCols below copies the folder id onto Client Master, and caseRefService
+  // renames that folder to "{name} - {caseRef}" when the reference is assigned.
+  // A walk-in is created and handed off in ONE request, ~2-4s before the
+  // fire-and-forget folder id lands on the lead — so the id was missing, the
+  // rename silently no-opped, and the client ended up with TWO folders
+  // (86 cases; Gauri 2026-09-04, point 12). Wait for it, bounded.
+  // Safe here and only here: an already-handed-off lead returned at the top and
+  // the reuse branch returned above, so this lead cannot yet own a RENAMED
+  // folder that a fresh "LEAD-" folder would sit beside.
+  if (!lead.oneDriveFolderId) {
+    const folder = await ensureLeadFolderNow(lead);
+    if (folder && folder.id) {
+      lead.oneDriveFolderId = folder.id;
+      if (folder.url) lead.oneDriveFolderLink = folder.url;
+    }
   }
 
   // New cases start in the PENDING group (meeting 2026-08-13) — they graduate
@@ -652,4 +753,6 @@ async function openCaseEarly({ leadId }) {
   try { return await p; } finally { _inFlight.delete(key); }
 }
 
-module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, normName, decideCaseReuse, stampClientAccount, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone };
+module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, normName, decideCaseReuse, stampClientAccount, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone,
+  // Exported for tests: the bounded wait that keeps a client to ONE folder.
+  ensureLeadFolderNow, leadFolderWaitMs };

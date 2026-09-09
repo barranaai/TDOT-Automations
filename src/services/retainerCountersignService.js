@@ -25,7 +25,6 @@ const leadService = require('./leadService');
 const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
 
 const SIGNED_FILENAME = 'retainer-agreement-SIGNED.pdf';
-const CM_CASE_REF_COL = 'text_mm142s49'; // Client Master "Case Reference Number" (see handoffService.CM)
 
 function todayISO() { return new Date().toISOString().split('T')[0]; }
 function esc(s) {
@@ -45,25 +44,19 @@ function parseRetainerCountersign(lead) {
  * ("{name} - {caseRef}", read live from Client Master) and the pre-rename lead
  * folder ("{name} - LEAD-{id}").
  */
-async function candidateFolderRefs(lead) {
-  const clientName = lead.fullName || `Lead ${lead.id}`;
-  const refs = [];
-  if ((lead.clientMasterItemId || '').trim()) {
-    try {
-      const d = await require('./mondayApi').query(
-        `query($i: [ID!]){ items(ids: $i){ column_values(ids: ["${CM_CASE_REF_COL}"]){ text } } }`,
-        { i: [String(lead.clientMasterItemId)] });
-      const caseRef = ((d.items[0].column_values[0] || {}).text || '').trim();
-      if (caseRef) refs.push({ clientName, caseRef });
-    } catch (err) { console.warn(`[RetainerCountersign] case-ref read failed for lead ${lead.id}: ${err.message}`); }
-  }
-  refs.push({ clientName, caseRef: `LEAD-${lead.id}` });
-  return refs;
-}
+// One implementation for the whole app (src/utils/clientFolderRefs) — the same
+// resolution now guards the retainer, consult-agreement, pre-consult, signed-
+// capture and intake-archive paths, so they cannot drift apart again.
+const candidateFolderRefs = (lead) => require('../utils/clientFolderRefs').candidateFolderRefs(lead);
 
 async function storeSignedToOneDrive(lead, pdf) {
   const oneDrive = require('./oneDriveService');
-  const [ref] = await candidateFolderRefs(lead); // best-known folder (case ref when it exists)
+  // writeRef, not candidateFolderRefs[0]: the case reference reaches Client
+  // Master a moment BEFORE the folder is renamed to carry it, and naming the
+  // case folder inside that window creates it as a SECOND folder beside the
+  // real one (Gauri 2026-09-04, point 12). The folder that exists wins.
+  const ref = await require('../utils/clientFolderRefs').writeRef(lead);
+  await oneDrive.ensureClientFolder(ref).catch(() => {});
   await oneDrive.uploadFile({ ...ref, category: 'Retainer', filename: SIGNED_FILENAME, buffer: pdf, mimeType: 'application/pdf' });
 }
 

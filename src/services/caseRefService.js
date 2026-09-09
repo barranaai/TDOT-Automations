@@ -9,6 +9,7 @@ const CASE_TYPE_COL     = 'dropdown_mm0xd1qn';
 const SUB_TYPE_HINT_COL = 'text_mm21gw44';
 const PORTAL_LINK_COL   = (cmColumns && cmColumns.portalLink) || 'link_mm2vta5';
 const ONEDRIVE_ID_COL   = (cmColumns && cmColumns.oneDriveFolderId) || 'text_mm47y540';
+const ONEDRIVE_ROOT_FOLDER = 'Client Documents';   // mirrors oneDriveService.ROOT_FOLDER (ownership check only)
 const CASE_STAGE_COL        = 'color_mm0x8faa';
 const CHECKLIST_APPLIED_COL = 'color_mm0xs7kp';
 
@@ -232,16 +233,94 @@ async function onCaseTypeSet({ itemId, caseType }) {
  * No-op for clients without one (legacy/manually created cases) — Phase 1
  * then creates the folder path-based at Document Collection Started, as ever.
  */
+/**
+ * The client's OneDrive folder id, resolved from the lead(s) linked to this
+ * case — the fallback for when the case row never received it.
+ *
+ * Deliberately conservative: a case can have several leads (dedup reuse), and
+ * renaming the WRONG person's folder would scatter their documents. So: exactly
+ * one linked lead may carry a folder id, that folder must still exist, must
+ * still be named "{that lead's name} - LEAD-{that lead's id}" (i.e. it has NOT
+ * already been renamed for another case), and must sit directly under the
+ * client-documents root. Anything else → '' (and a log saying why).
+ *
+ * @returns {Promise<string>} driveItem id, or '' when it cannot be established
+ */
+async function folderIdFromLead(itemId, clientName) {
+  let leads = [];
+  try {
+    leads = await require('./leadService').findAllByColumnValue('clientMasterItemId', String(itemId));
+  } catch (err) {
+    console.warn(`[CaseRef] Lead lookup for case ${itemId} failed: ${err.message}`);
+    return '';
+  }
+  const owners = (leads || []).filter((l) => l && String(l.oneDriveFolderId || '').trim());
+  if (owners.length !== 1) {
+    if (owners.length > 1) console.warn(`[CaseRef] ${owners.length} linked leads carry a folder id for case ${itemId} — not guessing which folder is the client's; leaving it alone.`);
+    return '';
+  }
+
+  const lead = owners[0];
+  const folderId = String(lead.oneDriveFolderId).trim();
+  const expected = `${lead.fullName || clientName} - LEAD-${lead.id}`.replace(/[*:"<>?/\\|]/g, '').trim();
+  try {
+    const drive = await require('./oneDriveService').getDriveItemById(folderId);
+    if (!drive) { console.warn(`[CaseRef] Lead ${lead.id}'s folder ${folderId} no longer exists — not renaming.`); return ''; }
+    if (drive.name !== expected) {
+      console.warn(`[CaseRef] Lead ${lead.id}'s folder is named "${drive.name}", not "${expected}" — it has already been renamed or belongs elsewhere; not touching it.`);
+      return '';
+    }
+    // DIRECTLY under the root — not merely somewhere inside it. Same strict
+    // test deletionService uses before acting on a staff-editable folder id.
+    if (!String(drive.parentPath || '').endsWith(`/${ONEDRIVE_ROOT_FOLDER}`)) {
+      console.warn(`[CaseRef] Lead ${lead.id}'s folder sits outside "${ONEDRIVE_ROOT_FOLDER}" (${drive.parentPath}) — not touching it.`);
+      return '';
+    }
+  } catch (err) {
+    console.warn(`[CaseRef] Could not verify lead ${lead.id}'s folder before renaming: ${err.message}`);
+    return '';
+  }
+  console.log(`[CaseRef] Client folder resolved from lead ${lead.id} for case ${itemId} (the case row had none).`);
+  return folderId;
+}
+
 async function renameClientFolderForItem({ itemId, caseRef }) {
   const data = await mondayApi.query(
     `query($id: ID!) { items(ids: [$id]) { name column_values(ids: ["${ONEDRIVE_ID_COL}"]) { text } } }`,
     { id: String(itemId) }
   );
   const item = data.items?.[0];
-  const folderId = (item?.column_values?.[0]?.text || '').trim();
-  if (!folderId) return;
-
   const oneDrive = require('./oneDriveService');
+  // No row read back, no name to rename TO — the fallback below cannot help
+  // either, and every message here quotes the client's name.
+  if (!item || !item.name) {
+    console.warn(`[CaseRef] Client Master ${itemId} returned no row — cannot rename the client folder for ${caseRef}`);
+    return;
+  }
+  let folderId = (item.column_values?.[0]?.text || '').trim();
+
+  // SAFETY NET (Gauri 2026-09-04, point 12): the id is normally copied from the
+  // lead when the case row is created, and handoffService now waits for it. If
+  // that wait timed out (OneDrive slow) the column is empty and, before this
+  // fallback, we returned silently — the lead folder kept its "LEAD-…" name and
+  // the next case-ref-addressed write created a SECOND folder beside it.
+  // Find the folder from the lead instead, but never guess: exactly one linked
+  // lead must own it, and the folder must really still carry that lead's name.
+  if (!folderId) {
+    folderId = await folderIdFromLead(itemId, item.name);
+    if (!folderId) {
+      console.log(`[CaseRef] No client folder to rename for ${caseRef} — none on the case and none resolvable from a linked lead (normal for a legacy or manually created case).`);
+      return;
+    }
+    // Back-fill so the careful-delete preview and any later rename can find it.
+    await mondayApi.query(
+      `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+         change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+       }`,
+      { boardId: String(clientMasterBoardId), itemId: String(itemId), cols: JSON.stringify({ [ONEDRIVE_ID_COL]: folderId }) }
+    ).catch((err) => console.warn(`[CaseRef] Folder-id back-fill failed for ${caseRef}: ${err.message}`));
+  }
+
   try {
     await oneDrive.renameDriveItem(folderId, `${item.name} - ${caseRef}`);
     console.log(`[CaseRef] OneDrive folder renamed for ${caseRef}`);
@@ -348,4 +427,8 @@ async function writePortalLinkForItem({ itemId, caseRef }) {
   console.log(`[CaseRef] Wrote Client Portal link for ${caseRef}`);
 }
 
-module.exports = { onCaseTypeSet, generateCaseRef, writePortalLinkForItem, CASE_TYPE_ABBR };
+module.exports = {
+  onCaseTypeSet, generateCaseRef, writePortalLinkForItem, CASE_TYPE_ABBR,
+  // Exported for tests: the rename is what keeps a client to ONE folder.
+  renameClientFolderForItem, folderIdFromLead,
+};

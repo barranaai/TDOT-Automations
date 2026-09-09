@@ -19,7 +19,10 @@ const REF    = '2026-CEC-PS-012';
 const ACTUAL = 'Nayala Sadaf - 2026-CEC-PS-012';   // what the folder is really called
 const EXPECT = 'Nayala Sadaf (2720) - 2026-CEC-PS-012';
 
-function harness({ folders = [ACTUAL], files = {} } = {}) {
+function harness({ folders = [ACTUAL], files = {}, ids = {} } = {}) {
+  // A folder's driveItem id survives a rename; the default only mirrors the
+  // name because most tests never rename one out from under a warm cache.
+  const idOf = (name) => ids[name] || ('id-' + name);
   const calls = { get: [], put: [], patch: [], post: [] };
   const notFound = () => { const e = new Error('itemNotFound'); e.response = { status: 404 }; return e; };
   const axios = {
@@ -28,7 +31,7 @@ function harness({ folders = [ACTUAL], files = {} } = {}) {
       const dec = decodeURIComponent(url);
       // root children listing (used to find a folder by case reference)
       if (/\/root\/children|root:\/Client Documents:\/children/.test(dec)) {
-        return { data: { value: folders.map((name) => ({ id: 'id-' + name, name, webUrl: 'https://w/' + name,
+        return { data: { value: folders.map((name) => ({ id: idOf(name), name, webUrl: 'https://w/' + name,
           folder: { childCount: Object.keys(files[name] || {}).length } })) } };
       }
       // a folder's own children
@@ -55,7 +58,7 @@ function harness({ folders = [ACTUAL], files = {} } = {}) {
         const [folder, ...rest] = item[1].split('/');
         if (!folders.includes(folder)) throw notFound();
         const rel = rest.join('/');
-        if (!rel) return { data: { id: 'id-' + folder, name: folder, webUrl: 'https://w/' + folder } };
+        if (!rel) return { data: { id: idOf(folder), name: folder, webUrl: 'https://w/' + folder } };
         if (!(files[folder] || {})[rel]) throw notFound();
         return { data: Buffer.from(files[folder][rel]) };
       }
@@ -224,3 +227,351 @@ test('findCaseFoldersByRef returns EVERY match so a split case is visible, and p
   assert.equal(all.length, 2, 'both folders for this reference are returned; the longer reference is not one of them');
   assert.equal((await h.svc.findCaseFolderByRef(REF)).name, ACTUAL, 'the folder holding the documents is chosen');
 });
+
+// ─── The 404 heal: settled with evidence, once, cheaply ─────────────────────
+//
+// A 404 is ambiguous: the FILE is missing, or the FOLDER was renamed under us.
+// Telling them apart used to mean re-paging the whole root, and the guard for
+// "was this name already cached?" was "at least 1ms old" — which every real
+// Graph round-trip is, so in practice every absent file paged the root twice.
+// It is now one path lookup that compares the driveItem ID.
+
+const pathLookups = (h) => h.calls.get.filter((u) => /Client Documents\/[^:/]+:$/.test(decodeURIComponent(u))).length;
+
+test('an absent file costs ONE path lookup and never a root listing', async () => {
+  const h = harness({ folders: [EXPECT], files: { [EXPECT]: { 'Identity/here.pdf': 'x' } } });
+  await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'here.pdf' });
+  const listings = h.rootListings();
+  assert.equal(await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'gone.pdf' }), null);
+  assert.equal(h.rootListings(), listings, 'the root is never paged again for a missing file');
+  assert.equal(pathLookups(h), 1, 'exactly one confirmation');
+});
+
+test('a burst of absent-file probes shares ONE confirmation', async () => {
+  // The questionnaire load probes ~14 slots in parallel; that must not become
+  // 14 lookups.
+  const h = harness({ folders: [EXPECT], files: { [EXPECT]: { 'Identity/here.pdf': 'x' } } });
+  await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'here.pdf' });
+  const listings = h.rootListings();
+  const names = Array.from({ length: 14 }, (_, i) => `absent-${i}.pdf`);
+  const got = await Promise.all(names.map((filename) =>
+    h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename })));
+  assert.deepEqual(got, names.map(() => null), 'all absent');
+  assert.equal(h.rootListings(), listings, 'no root paging');
+  assert.equal(pathLookups(h), 1, '14 parallel probes, one confirmation');
+});
+
+test('a folder renamed under a warm cache heals — no waiting for a trust window to lapse', async () => {
+  const RENAMED = 'Nayala Sadaf (2720) v3 - 2026-CEC-PS-012';
+  const folders = [EXPECT];
+  const files = { [EXPECT]: { 'Identity/a.pdf': 'ONE' } };
+  const h = harness({ folders, files });   // one service instance, one warm cache
+  assert.equal((await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' })).toString(), 'ONE');
+
+  folders[0] = RENAMED;                     // staff rename it in OneDrive
+  files[RENAMED] = { 'Identity/a.pdf': 'TWO' };
+  delete files[EXPECT];
+
+  const again = await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' });
+  assert.equal(again && again.toString(), 'TWO', 'the read follows the folder to its new name, immediately');
+});
+
+test('a folder RE-CREATED under the old name does not fool the confirmation', async () => {
+  // The "resurrection" half of the duplicate-folder defect: after a rename, a
+  // write addressed by the old name mints an empty folder there. Checking only
+  // that *a* folder wears the name would re-confirm the impostor and report
+  // every document absent until the 10-minute cache expired.
+  const RENAMED = 'Nayala Sadaf (2720) v9 - 2026-CEC-PS-012';
+  const folders = [EXPECT];
+  const files = { [EXPECT]: { 'Identity/a.pdf': 'ONE' } };
+  const ids = { [EXPECT]: 'the-real-folder' };
+  const h = harness({ folders, files, ids });
+  assert.equal((await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' })).toString(), 'ONE');
+
+  folders.length = 0;
+  folders.push(RENAMED, EXPECT);            // renamed away, and an empty duplicate left behind
+  files[RENAMED] = { 'Identity/a.pdf': 'TWO' };
+  files[EXPECT] = {};
+  ids[RENAMED] = 'the-real-folder';         // the same driveItem, under its new name
+  ids[EXPECT] = 'the-impostor';
+
+  const again = await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' });
+  assert.equal(again && again.toString(), 'TWO', 'the documents win — identity decides, not the name');
+});
+
+test('a confirmation that cannot answer re-resolves instead of guessing "absent"', async () => {
+  // Answering "absent" on a guess is the blank-questionnaire class: it silently
+  // serves an empty form over documents that are really there.
+  const RENAMED = 'Nayala Sadaf (2720) v4 - 2026-CEC-PS-012';
+  const folders = [EXPECT];
+  const files = { [EXPECT]: { 'Identity/a.pdf': 'ONE' } };
+  const ids = { [EXPECT]: 'the-real-folder' };
+  const h = harness({ folders, files, ids });
+  assert.equal((await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' })).toString(), 'ONE');
+
+  folders[0] = RENAMED;                     // renamed, so the cached name is stale
+  files[RENAMED] = { 'Identity/a.pdf': 'TWO' };
+  delete files[EXPECT];
+  ids[RENAMED] = 'the-real-folder';
+
+  // ...and the confirmation lookup itself fails, so it cannot say what happened
+  const p = require.resolve('axios');
+  const realGet = require.cache[p].exports.get;
+  let failed = 0;
+  require.cache[p].exports.get = async (url) => {
+    const dec = decodeURIComponent(url);
+    if (failed === 0 && /Client Documents\/[^:/]+:$/.test(dec)) {
+      failed++;
+      const e = new Error('Graph 503'); e.response = { status: 503 }; throw e;
+    }
+    return realGet(url);
+  };
+  try {
+    const again = await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' });
+    assert.equal(failed, 1, 'the confirmation really was the call that failed');
+    assert.equal(again && again.toString(), 'TWO', 'it re-resolved by case reference rather than answering "no such file"');
+  } finally { require.cache[p].exports.get = realGet; }
+});
+
+test('a NON-EMPTY impostor under the old name still loses to the folder holding the documents', async () => {
+  // The dangerous shape: the impostor is not empty (a write minted the full
+  // category set into it) AND it wears the shorter pre-rename name, so the
+  // split-case tie-break — most children, then shortest name — picks IT.
+  // Healing must follow the driveItem id it already proved, not re-pick a name.
+  const RENAMED = 'Nayala Sadaf (2720) v9 - 2026-CEC-PS-012';
+  const folders = [EXPECT];
+  const files = { [EXPECT]: { 'Identity/a.pdf': 'ONE' } };
+  const ids = { [EXPECT]: 'the-real-folder' };
+  const h = harness({ folders, files, ids });
+  assert.equal((await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' })).toString(), 'ONE');
+
+  folders.length = 0;
+  folders.push(RENAMED, EXPECT);
+  files[RENAMED] = { 'Identity/a.pdf': 'TWO' };
+  files[EXPECT] = { 'Identity/x.pdf': 'k', 'Legal/y.pdf': 'k', 'Employment/z.pdf': 'k' };   // MORE children
+  ids[RENAMED] = 'the-real-folder';
+  ids[EXPECT] = 'the-impostor';
+
+  assert.equal((await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' })).toString(), 'TWO',
+    'the documents are found despite the impostor out-ranking them');
+  assert.equal((await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' })).toString(), 'TWO',
+    'and the next read does not short-circuit to "absent" — the impostor id was never cached');
+  const listed = await h.svc.listFiles({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity' });
+  assert.deepEqual(listed.map((f) => f.name), ['a.pdf'], 'listings follow the same folder');
+});
+
+test('a continuation page that 404s is an error, never "this case has no folder"', async () => {
+  // Answering [] on a partial listing reports a case as folderless, which reads
+  // as "no documents" and mints a duplicate on the next write.
+  const h = harness({ folders: [EXPECT], files: { [EXPECT]: { 'Identity/a.pdf': 'ONE' } } });
+  const p = require.resolve('axios');
+  const realGet = require.cache[p].exports.get;
+  let page = 0;
+  require.cache[p].exports.get = async (url) => {
+    const dec = decodeURIComponent(url);
+    if (/Client Documents:\/children|\/root\/children/.test(dec)) {
+      page += 1;
+      if (page === 1) {
+        const res = await realGet(url);
+        return { data: { value: res.data.value, '@odata.nextLink': url + '&$skiptoken=stale' } };
+      }
+      const e = new Error('itemNotFound'); e.response = { status: 404 }; throw e;
+    }
+    return realGet(url);
+  };
+  try {
+    await assert.rejects(() => h.svc.findCaseFoldersByRef(REF), /folder-by-ref lookup failed/,
+      'a truncated listing surfaces instead of masquerading as an empty root');
+  } finally { require.cache[p].exports.get = realGet; }
+});
+
+test('version history heals with the folder too, and a real failure is not "no history"', async () => {
+  const RENAMED = 'Nayala Sadaf (2720) v5 - 2026-CEC-PS-012';
+  const folders = [EXPECT];
+  const files = { [EXPECT]: { 'Questionnaire/q.json': '{}' } };
+  const ids = { [EXPECT]: 'the-real-folder' };
+  const h = harness({ folders, files, ids });
+  await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Questionnaire', filename: 'q.json' });  // warm the cache
+
+  folders[0] = RENAMED;
+  files[RENAMED] = { 'Questionnaire/q.json': '{}' };
+  delete files[EXPECT];
+  ids[RENAMED] = 'the-real-folder';
+
+  const where = { clientName: CLIENT, caseRef: REF, subfolder: 'Questionnaire', filename: 'q.json' };
+  const versions = await h.svc.listFileVersions(where);
+  assert.ok(Array.isArray(versions), 'the renamed folder is followed rather than reported as having no history');
+
+  const p = require.resolve('axios');
+  const realGet = require.cache[p].exports.get;
+  require.cache[p].exports.get = async (url) => {
+    if (/:\/versions/.test(decodeURIComponent(url))) { const e = new Error('boom'); e.response = { status: 500 }; throw e; }
+    return realGet(url);
+  };
+  try {
+    await assert.rejects(() => h.svc.listFileVersions(where), /version list failed/,
+      'a storage failure surfaces; it is never an empty history');
+  } finally { require.cache[p].exports.get = realGet; }
+});
+
+test('a write confirms a cached folder name before using it — never mints a duplicate', async () => {
+  // A PUT to a path whose parent is missing CREATES that parent, so a stale
+  // cached name does not fail loudly: it quietly mints a second folder for the
+  // case. Reads heal on the 404; writes must check BEFORE.
+  const RENAMED = 'Nayala Sadaf (2720) v7 - 2026-CEC-PS-012';
+  const folders = [EXPECT];
+  const files = { [EXPECT]: { 'Identity/a.pdf': 'ONE' } };
+  const ids = { [EXPECT]: 'the-real-folder' };
+  const h = harness({ folders, files, ids });
+  await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' });   // warm the cache
+
+  folders[0] = RENAMED;                     // staff rename it in OneDrive
+  files[RENAMED] = { 'Identity/a.pdf': 'ONE' };
+  delete files[EXPECT];
+  ids[RENAMED] = 'the-real-folder';
+
+  await h.svc.uploadFile({ clientName: CLIENT, caseRef: REF, category: 'Identity',
+    filename: 'new.pdf', buffer: Buffer.from('x'), mimeType: 'application/pdf' });
+  assert.equal(h.calls.put.length, 1, 'exactly one PUT');
+  assert.match(h.calls.put[0], new RegExp(RENAMED.replace(/[()]/g, '\\$&')), 'it landed in the folder that holds the documents');
+  assert.ok(!h.calls.put[0].includes(`${EXPECT}/`), 'and never re-created the stale name');
+});
+
+test('a write whose confirmation cannot answer re-resolves rather than trusting the cache', async () => {
+  const RENAMED = 'Nayala Sadaf (2720) v8 - 2026-CEC-PS-012';
+  const folders = [EXPECT];
+  const files = { [EXPECT]: { 'Identity/a.pdf': 'ONE' } };
+  const ids = { [EXPECT]: 'the-real-folder' };
+  const h = harness({ folders, files, ids });
+  await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' });
+
+  folders[0] = RENAMED;
+  files[RENAMED] = { 'Identity/a.pdf': 'ONE' };
+  delete files[EXPECT];
+  ids[RENAMED] = 'the-real-folder';
+
+  const p = require.resolve('axios');
+  const realGet = require.cache[p].exports.get;
+  let failed = 0;
+  require.cache[p].exports.get = async (url) => {
+    const dec = decodeURIComponent(url);
+    if (failed === 0 && /Client Documents\/[^:/]+:$/.test(dec)) {
+      failed++; const e = new Error('Graph 503'); e.response = { status: 503 }; throw e;
+    }
+    return realGet(url);
+  };
+  try {
+    await h.svc.uploadFile({ clientName: CLIENT, caseRef: REF, category: 'Identity',
+      filename: 'new.pdf', buffer: Buffer.from('x'), mimeType: 'application/pdf' });
+    assert.equal(failed, 1, 'the confirmation really was the call that failed');
+    assert.match(h.calls.put[0], new RegExp(RENAMED.replace(/[()]/g, '\\$&')), 'the write still found the right folder');
+  } finally { require.cache[p].exports.get = realGet; }
+});
+
+test('a write whose confirmation is throttled follows the folder by id, not by the name tie-break', async () => {
+  // The dangerous shape: the real folder renamed away (same driveItem), a
+  // NON-EMPTY duplicate left behind under the old name — so the split-case
+  // tie-break (most children, then shortest name) prefers the wrong one.
+  // A confirmation that fails must not fall back to that tie-break.
+  const RENAMED = 'Nayala Sadaf (2720) v9 - 2026-CEC-PS-012';
+  const folders = [EXPECT];
+  const files = { [EXPECT]: { 'Identity/a.pdf': 'REAL' } };
+  const ids = { [EXPECT]: 'the-real-folder' };
+  const h = harness({ folders, files, ids });
+  await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' });   // warm
+
+  folders.length = 0; folders.push(RENAMED, EXPECT);
+  files[RENAMED] = { 'Identity/a.pdf': 'REAL' };
+  files[EXPECT] = { 'Identity/x.pdf': 'k', 'Legal/y.pdf': 'k', 'Employment/z.pdf': 'k' };   // MORE children
+  ids[RENAMED] = 'the-real-folder';
+  ids[EXPECT] = 'the-impostor';
+
+  const p = require.resolve('axios');
+  const realGet = require.cache[p].exports.get;
+  let failed = 0;
+  require.cache[p].exports.get = async (url) => {
+    if (failed === 0 && /Client Documents\/[^:/]+:$/.test(decodeURIComponent(url))) {
+      failed++; const e = new Error('Graph 429'); e.response = { status: 429 }; throw e;
+    }
+    return realGet(url);
+  };
+  try {
+    await h.svc.uploadFile({ clientName: CLIENT, caseRef: REF, category: 'Identity',
+      filename: 'new.pdf', buffer: Buffer.from('x'), mimeType: 'application/pdf' });
+    assert.equal(failed, 1, 'the confirmation really was the call that failed');
+    assert.equal(h.calls.put.length, 1, 'one PUT');
+    assert.ok(!h.calls.put[0].includes(`${EXPECT}/`), 'a throttled confirmation must not hand the write to the impostor');
+    assert.match(h.calls.put[0], new RegExp(RENAMED.replace(/[()]/g, '\\$&')), 'it landed with the documents');
+  } finally { require.cache[p].exports.get = realGet; }
+});
+
+test('a reference lookup never overwrites a folder identity already established', async () => {
+  const RENAMED = 'Nayala Sadaf (2720) v9 - 2026-CEC-PS-012';
+  const folders = [EXPECT];
+  const files = { [EXPECT]: { 'Identity/a.pdf': 'REAL' } };
+  const ids = { [EXPECT]: 'the-real-folder' };
+  const h = harness({ folders, files, ids });
+  await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' });
+
+  folders.length = 0; folders.push(RENAMED, EXPECT);          // renamed, impostor left behind
+  files[RENAMED] = { 'Identity/a.pdf': 'REAL' };
+  files[EXPECT] = { 'Identity/x.pdf': 'k', 'Legal/y.pdf': 'k', 'Employment/z.pdf': 'k' };
+  ids[RENAMED] = 'the-real-folder';
+  ids[EXPECT] = 'the-impostor';
+  assert.equal((await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' })).toString(), 'REAL',
+    'the read heals to the real folder by identity');
+
+  // Now a lead-scoped write asks by reference. It must not re-seed the cache
+  // with pickCaseFolder's answer (the bigger impostor) over what we know.
+  await h.svc.findCaseFolderByRef(REF);
+  await h.svc.uploadFile({ clientName: CLIENT, caseRef: REF, category: 'Identity',
+    filename: 'new.pdf', buffer: Buffer.from('x'), mimeType: 'application/pdf' });
+  assert.ok(!h.calls.put.some((u) => u.includes(`${EXPECT}/`)), 'the write stayed with the documents');
+  assert.equal((await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' })).toString(), 'REAL',
+    'and the documents are still visible afterwards');
+});
+
+test('a burst healing one rename pages the root ONCE, not once per caller', async () => {
+  const RENAMED = 'Nayala Sadaf (2720) v6 - 2026-CEC-PS-012';
+  const folders = [EXPECT];
+  const files = { [EXPECT]: { 'Identity/a.pdf': 'ONE' } };
+  const ids = { [EXPECT]: 'the-real-folder' };
+  const h = harness({ folders, files, ids });
+  await h.svc.readFile({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity', filename: 'a.pdf' });
+  const before = h.rootListings();
+
+  folders[0] = RENAMED;
+  files[RENAMED] = { 'Identity/a.pdf': 'ONE' };
+  delete files[EXPECT];
+  ids[RENAMED] = 'the-real-folder';
+
+  await Promise.all(Array.from({ length: 12 }, (_, i) =>
+    h.svc.uploadFile({ clientName: CLIENT, caseRef: REF, category: 'Identity',
+      filename: `f${i}.pdf`, buffer: Buffer.from('x'), mimeType: 'application/pdf' })));
+  assert.equal(h.rootListings() - before, 1, '12 parallel uploads share one root enumeration');
+  assert.equal(h.calls.put.length, 12, 'and all 12 were written');
+  assert.ok(h.calls.put.every((u) => u.includes(`${RENAMED}/`)), 'all into the renamed folder');
+});
+
+test('a folder the tie-break merely guessed does not pin the case to itself', async () => {
+  // The case ref reaches Monday before the rename runs, so a write can mint an
+  // impostor that is briefly the ONLY folder carrying the reference — and gets
+  // cached. Once the real folder is renamed in, the cache must still be
+  // correctable: only an identity FOLLOWED to the document-holder outranks the
+  // tie-break, not one the tie-break itself produced.
+  const REAL = 'Nayala Sadaf - 2026-CEC-PS-012';
+  const folders = [EXPECT];                                    // the impostor, alone at first
+  const files = { [EXPECT]: { 'Identity/stray.pdf': 'k' } };
+  const ids = { [EXPECT]: 'the-impostor' };
+  const h = harness({ folders, files, ids });
+  assert.equal((await h.svc.findCaseFolderByRef(REF)).id, 'the-impostor', 'it is the only candidate, so it is cached');
+
+  folders.push(REAL);                                          // the real folder is renamed in
+  files[REAL] = { 'Identity/a.pdf': 'REAL', 'Legal/b.pdf': 'x', 'Employment/c.pdf': 'x' };
+  ids[REAL] = 'the-real-folder';
+
+  assert.equal((await h.svc.findCaseFolderByRef(REF)).id, 'the-real-folder', 'the guess is corrected, not pinned');
+  const listed = await h.svc.listFiles({ clientName: CLIENT, caseRef: REF, subfolder: 'Identity' });
+  assert.deepEqual(listed.map((f) => f.name), ['a.pdf'], 'and reads follow the documents');
+});
+

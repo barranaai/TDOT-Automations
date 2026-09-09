@@ -458,7 +458,10 @@ async function captureCompleted(body) {
       signedPdf = await downloadSignedPdf(itemId);
       if (signedPdf && signedPdf.length && !skipStore) {
         const oneDrive = require('./oneDriveService');
-        const ref = { clientName: lead.fullName || `Lead ${leadId}`, caseRef: `LEAD-${leadId}` };
+        // The client's folder is renamed to "{name} - {caseRef}" once the case
+        // exists; addressing it as LEAD-<id> after that RE-CREATES the old
+        // folder and splits their documents (Gauri 2026-09-04, point 12).
+        const ref = await require('../utils/clientFolderRefs').writeRef(lead);
         await oneDrive.ensureClientFolder(ref).catch(() => {});
         await oneDrive.uploadFile({
           ...ref,

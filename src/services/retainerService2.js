@@ -61,22 +61,25 @@ function cacheRetainerPdf(leadId, buf) {
 // Durable copy of the SENT agreement. The in-memory cache is a fast path only —
 // it's capped at 50 and wiped on every restart, so without this the /retainer
 // route would regenerate from the lead's CURRENT columns, which can differ from
-// what the client was emailed/signed. We persist the exact sent PDF to the lead's
-// OneDrive folder at send-time and serve THAT. Stored under LEAD-<id> (the
-// agreement is reviewed before handoff, while the folder still has that name);
-// best-effort on both sides — a miss falls back to the in-memory cache, then to a
-// last-resort regenerate.
+// what the client was emailed/signed. We persist the exact sent PDF to the
+// client's OneDrive folder at send-time and serve THAT. The folder is resolved
+// by clientFolderRefs — the case folder once the case exists, the "LEAD-<id>"
+// folder before that — and read back with readFirst, which tries both, so a
+// PDF stored before the case opened is still served afterwards. Best-effort on
+// both sides: a miss falls back to the in-memory cache, then a last-resort
+// regenerate.
 const RETAINER_PDF = { subfolder: 'Retainer', filename: 'retainer-agreement.pdf' };
-function leadFolderRef(lead) { return { clientName: lead.fullName || lead.name || '', caseRef: `LEAD-${lead.id}` }; }
 
 async function storeRetainerPdf(lead, buf) {
   try {
     const oneDrive = require('./oneDriveService');
-    const ref = leadFolderRef(lead);
+    // Once the case exists the folder is named "{name} - {caseRef}"; writing to
+    // LEAD-<id> then RE-CREATES the old folder beside it (point 12).
+    const ref = await require('../utils/clientFolderRefs').writeRef(lead);
     if (!ref.clientName) return;
     await oneDrive.ensureClientFolder(ref);
     await oneDrive.uploadFile({ ...ref, category: RETAINER_PDF.subfolder, filename: RETAINER_PDF.filename, buffer: buf, mimeType: 'application/pdf' });
-    console.log(`[Retainer2] Stored durable retainer PDF for lead ${lead.id}`);
+    console.log(`[Retainer2] Stored durable retainer PDF for lead ${lead.id} (${ref.caseRef})`);
   } catch (err) {
     console.warn(`[Retainer2] Durable retainer PDF store failed for lead ${lead.id} (in-memory cache still warm): ${err.message}`);
   }
@@ -84,10 +87,11 @@ async function storeRetainerPdf(lead, buf) {
 
 async function readStoredRetainerPdf(lead) {
   try {
-    const oneDrive = require('./oneDriveService');
-    const ref = leadFolderRef(lead);
-    if (!ref.clientName) return null;
-    return await oneDrive.readFile({ ...ref, subfolder: RETAINER_PDF.subfolder, filename: RETAINER_PDF.filename });
+    if (!(lead.fullName || lead.name)) return null;
+    // Try the case folder, then the pre-rename lead folder: agreements sent
+    // before the case existed are still stored under the old name.
+    return await require('../utils/clientFolderRefs')
+      .readFirst(require('./oneDriveService'), lead, { subfolder: RETAINER_PDF.subfolder, filename: RETAINER_PDF.filename });
   } catch (err) {
     console.warn(`[Retainer2] Durable retainer PDF read failed for lead ${lead.id}: ${err.message}`);
     return null;

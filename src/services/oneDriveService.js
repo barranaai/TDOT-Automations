@@ -186,7 +186,7 @@ async function createClientFolders({ clientName, caseRef, categories }) {
 
   // Resolve first: re-seeding a case whose folder was renamed must reuse that
   // folder, never mint a second one beside it.
-  const safeName   = await resolveCaseFolderName({ clientName, caseRef });
+  const safeName   = await resolveCaseFolderNameForWrite({ clientName, caseRef });
   const clientPath = `${ROOT_FOLDER}/${safeName}`;
 
   return withGraphAuth('createClientFolders', async (token) => {
@@ -239,7 +239,7 @@ async function uploadFile({ clientName, caseRef, category, filename, buffer, mim
     // Resolved BEFORE the write, never healed after it: a PUT to a path whose
     // parent is missing can create that parent, which would quietly mint a
     // second folder for this case instead of failing loudly.
-    const resolved = await resolveCaseFolderName({ clientName, caseRef });
+    const resolved = await resolveCaseFolderNameForWrite({ clientName, caseRef });
     return await (async (safeName) => {
       const filePath = `${ROOT_FOLDER}/${safeName}/${category}/${safeFile}`;
       const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
@@ -337,7 +337,7 @@ async function listFiles({ clientName, caseRef, subfolder }) {
  * the stored name after the move (differs from filename only on a clash).
  */
 async function moveFile({ clientName, caseRef, fromSubfolder, toSubfolder, filename }) {
-  const safeName = await resolveCaseFolderName({ clientName, caseRef });   // renamed folders still resolve
+  const safeName = await resolveCaseFolderNameForWrite({ clientName, caseRef });   // renamed folders still resolve
   const safeFile = filename.replace(/[*:"<>?\\|/]/g, '').trim();
   if (!safeFile || !fromSubfolder || !toSubfolder || fromSubfolder === toSubfolder) throw new Error('moveFile: bad arguments');
   const casePath = `${ROOT_FOLDER}/${safeName}`;
@@ -361,12 +361,20 @@ async function moveFile({ clientName, caseRef, fromSubfolder, toSubfolder, filen
 // reads as "no file" / "no files". The case REFERENCE never changes, so it, not
 // the name, decides which folder a case owns.
 //
-// Cost: one root enumeration per case, cached for CASE_FOLDER_TTL_MS. Absent
-// files are then free (the folder is confirmed, so a 404 is a missing file, not
-// a moved folder), which matters because the questionnaire load probes for
+// Cost: one root enumeration per case, cached for CASE_FOLDER_TTL_MS. A 404
+// against that cached name then costs ONE path-addressed lookup - never another
+// root enumeration - which matters because the questionnaire load probes for
 // files that legitimately do not exist. Concurrent callers share one lookup.
-const _caseFolderName = new Map();          // caseRef -> { name|null, at }  (null = looked, found nothing)
+//
+// The driveItem ID is cached alongside the name, because the name alone cannot
+// answer "is this still OUR folder": a write can RE-CREATE a folder under the
+// old name after a rename (the "resurrection" half of the duplicate-folder
+// defect, Gauri 2026-09-04 point 12), and a name-only check would keep
+// confirming that impostor while the documents sat elsewhere.
+const _caseFolderName = new Map();          // caseRef -> { name|null, id, at }  (null = looked, found nothing)
 const _caseFolderInFlight = new Map();      // caseRef -> Promise, so N callers page the root once
+const _caseFolderConfirm  = new Map();      // `ref\nname` -> Promise, so a burst of absent-file probes costs one lookup
+const _caseFolderFollow   = new Map();      // `ref\nid`   -> Promise, so a burst healing one rename pages the root once
 const CASE_FOLDER_TTL_MS     = 10 * 60 * 1000;   // a rename mid-process heals within this
 const CASE_FOLDER_MISS_TTL_MS = 30 * 1000;       // a case with no folder yet re-checks soon after setup
 
@@ -393,14 +401,20 @@ async function findCaseFoldersByRef(caseRef) {
     return await withGraphAuth('foldersByRef', async (token) => {
       const hits = [];
       let next = `${childrenUrl(ROOT_FOLDER)}?$select=id,name,webUrl,folder&$top=200`;
+      let firstPage = true;
       while (next) {
         let res;
         try {
           res = await axios.get(next, { headers: { Authorization: `Bearer ${token}` } });
         } catch (err) {
-          if (err.response?.status === 404) return [];   // the root itself is missing
+          // Only the FIRST request can mean "the root does not exist yet". A
+          // 404 on a continuation is a stale skiptoken, and answering [] there
+          // would report a case as folderless on a partial listing - which
+          // reads as "no documents" and mints a duplicate on the next write.
+          if (err.response?.status === 404 && firstPage) return [];
           throw err;
         }
+        firstPage = false;
         for (const it of (res.data?.value || [])) {
           if (it.folder && String(it.name || '').endsWith(suffix)) {
             hits.push({ id: it.id, name: it.name, webUrl: it.webUrl, childCount: it.folder.childCount });
@@ -428,10 +442,33 @@ function pickCaseFolder(hits, caseRef) {
   return sorted[0];
 }
 
-/** The single best folder carrying this case reference, or null. */
+/**
+ * The single best folder carrying this case reference, or null.
+ *
+ * A hit SEEDS the name cache: this is the same root enumeration
+ * resolveCaseFolderName performs, so the answer is the same fact - and without
+ * seeding it, a caller that proves the folder exists can hand the file to
+ * uploadFile, which still holds a negative entry from a lookup seconds earlier
+ * and writes to the expected-but-absent name instead, minting the duplicate.
+ */
 async function findCaseFolderByRef(caseRef) {
-  const hits = await findCaseFoldersByRef(caseRef);
-  return hits.length ? pickCaseFolder(hits, caseRef) : null;
+  const ref = String(caseRef || '').trim();
+  const hits = await findCaseFoldersByRef(ref);
+  if (!hits.length) return null;
+  // An identity that was FOLLOWED - traced to the driveItem known to hold this
+  // case's documents - outranks the name/childCount tie-break, so a lookup
+  // cannot hand the next write to an impostor minted beside it. An entry the
+  // tie-break itself seeded carries no such authority and must stay
+  // correctable, or the FIRST folder to be cached would pin the case forever.
+  const live   = liveCaseFolderEntry(ref);
+  const known  = (live && live.followed && live.id) ? hits.find((h) => h.id === live.id) : null;
+  const chosen = known || pickCaseFolder(hits, ref);
+  // Re-affirming keeps the original `at`: renewing it on every lookup would
+  // stop even a wrong entry from ever ageing out.
+  _caseFolderName.set(ref, known
+    ? { name: chosen.name, id: chosen.id || '', at: live.at, followed: true }
+    : { name: chosen.name, id: chosen.id || '', at: Date.now() });
+  return chosen;
 }
 
 /**
@@ -441,25 +478,30 @@ async function findCaseFolderByRef(caseRef) {
  * CASE_FOLDER_MISS_TTL_MS so setup's own folder is noticed quickly - and
  * concurrent callers share a single lookup.
  */
+function liveCaseFolderEntry(ref) {
+  const hit = _caseFolderName.get(ref);
+  if (!hit) return null;
+  const ttl = hit.name ? CASE_FOLDER_TTL_MS : CASE_FOLDER_MISS_TTL_MS;
+  return (Date.now() - hit.at) < ttl ? hit : null;
+}
+
 async function resolveCaseFolderName({ clientName, caseRef }) {
   const ref = String(caseRef || '').trim();
   const expected = caseFolderName({ clientName, caseRef });
-  const hit = _caseFolderName.get(ref);
-  if (hit) {
-    const ttl = hit.name ? CASE_FOLDER_TTL_MS : CASE_FOLDER_MISS_TTL_MS;
-    if ((Date.now() - hit.at) < ttl) return hit.name || expected;
-  }
+  const hit = liveCaseFolderEntry(ref);
+  if (hit) return hit.name || expected;
   const inFlight = _caseFolderInFlight.get(ref);
   if (inFlight) return (await inFlight) || expected;
 
   const lookup = (async () => {
     const hits = await findCaseFoldersByRef(ref);
-    if (!hits.length) { _caseFolderName.set(ref, { name: null, at: Date.now() }); return null; }
+    if (!hits.length) { _caseFolderName.set(ref, { name: null, id: '', at: Date.now() }); return null; }
     const chosen = pickCaseFolder(hits, ref);
     if (chosen.name !== expected) {
       console.warn(`[OneDrive] case ${ref}: documents live in "${chosen.name}" but the client name now yields "${expected}" - using the folder that carries the case reference`);
     }
-    _caseFolderName.set(ref, { name: chosen.name, at: Date.now() });
+    // The ID is what identifies the folder later; the name is only how it is addressed today.
+    _caseFolderName.set(ref, { name: chosen.name, id: chosen.id || '', at: Date.now() });
     return chosen.name;
   })();
   _caseFolderInFlight.set(ref, lookup);
@@ -472,29 +514,159 @@ async function resolveCaseFolderName({ clientName, caseRef }) {
  *
  * The name is resolved up front rather than tried optimistically: a split case
  * has a folder under the expected name too, so a name-first attempt would
- * succeed against the wrong one and never look. Once resolved (and cached), a
- * 404 means the FILE is missing and is passed straight back to the caller; a
- * 404 against a STALE cached name re-resolves once and retries.
+ * succeed against the wrong one and never look.
+ *
+ * A 404 afterwards is ambiguous - the FILE is missing, or the FOLDER was
+ * renamed under a cached name - and getting that wrong is expensive in both
+ * directions: answering "absent" when the folder moved is the blank-
+ * questionnaire class, and re-enumerating the root to be sure taxes every one
+ * of the many absent-file probes a questionnaire load makes. So it is settled
+ * with evidence, once, cheaply: one path lookup of the cached name, comparing
+ * the driveItem ID.
  */
 async function withCaseFolder({ clientName, caseRef }, run) {
   const ref = String(caseRef || '').trim();
+  // Read the cache BEFORE resolving: whether the name was already known is a
+  // fact, not something to infer afterwards from how long the call took. (It
+  // used to be "the entry is at least 1ms old", which a real Graph round-trip
+  // always is - so every genuinely absent file re-enumerated the root.)
+  const before = liveCaseFolderEntry(ref);
   const name = await resolveCaseFolderName({ clientName, caseRef });
   try {
     return await run(name);
   } catch (err) {
     if (err?.response?.status !== 404) throw err;
-    const cached = _caseFolderName.get(ref);
-    const wasCached = Boolean(cached && cached.name === name && (Date.now() - cached.at) > 0);
-    if (!wasCached) throw err;                 // freshly resolved: the folder is right, the file is not there
-    _caseFolderName.delete(ref);               // the cached name may have gone stale mid-process
-    const real = await resolveCaseFolderName({ clientName, caseRef });
-    if (real === name) throw err;
-    return run(real);
+    // Resolved in THIS call, or resolved to nothing: the name is as good as it
+    // gets and the FILE is simply not there.
+    if (!before || !before.name || before.name !== name) throw err;
+
+    // Healing keeps the identity this branch just established. Re-picking a
+    // name by case reference alone would hand a split case back to
+    // pickCaseFolder, and an impostor minted under the OLD name wears the
+    // shorter name - so it wins the tie-break and the documents in the renamed
+    // folder become invisible, permanently, because the impostor's id is then
+    // what gets cached. The folder we know holds the documents wins.
+    const heal = async (why) => {
+      dropCaseFolderName(ref, name);           // ...only if nobody else healed it first
+      console.warn(`[OneDrive] case ${ref}: ${why} - re-resolving by case reference`);
+      const mine = await followKnownFolder(ref, before.id);
+      if (mine) {
+        if (mine === name) throw err;
+        return run(mine);
+      }
+      // The folder we knew is genuinely gone from the root - fall back to the
+      // split-case policy, which is all the evidence left.
+      const real = await resolveCaseFolderName({ clientName, caseRef });
+      if (real === name) throw err;
+      return run(real);
+    };
+
+    let stillThere;
+    try {
+      stillThere = await confirmCaseFolder(ref, name);
+    } catch (probeErr) {
+      // Cannot tell whether the folder moved. Never answer "the file is absent"
+      // on a guess - re-resolve instead, which heals if Graph is healthy and
+      // surfaces a real error if it is not.
+      return heal(`could not confirm folder "${name}" (${probeErr.message})`);
+    }
+    // Same folder, same name: the FILE is missing. This is the common case and
+    // it costs exactly one extra lookup, shared across a concurrent burst.
+    if (stillThere && (!before.id || stillThere.id === before.id)) throw err;
+
+    return heal(stillThere
+      ? `folder "${name}" is now a DIFFERENT item (${stillThere.id}) than the one holding the documents (${before.id})`
+      : `folder "${name}" no longer exists`);
   }
 }
 
+/** Forget a cached name, but only while it is still the one being healed away from. */
+function dropCaseFolderName(ref, name) {
+  const cur = _caseFolderName.get(ref);
+  if (cur && cur.name === name) _caseFolderName.delete(ref);
+}
+
+/**
+ * Is the case folder still the item we cached, under the name we cached?
+ * One path-addressed lookup, shared by every caller asking about the same
+ * (reference, name) at the same time - a questionnaire load fires a dozen
+ * absent-file probes in parallel and they must not become a dozen lookups.
+ */
+function confirmCaseFolder(ref, name) {
+  const key = `${ref}\n${name}`;
+  let pending = _caseFolderConfirm.get(key);
+  if (!pending) {
+    pending = getClientFolderByName(name).finally(() => _caseFolderConfirm.delete(key));
+    _caseFolderConfirm.set(key, pending);
+  }
+  return pending;
+}
+
+/**
+ * Follow the folder we KNOW holds this case's documents to whatever it is
+ * called now. Returns its name, or '' when that driveItem is gone from the
+ * root. Identity beats the name: an impostor minted under the old name wears
+ * the SHORTER name, so it would win the split-case tie-break and the real
+ * documents would go quiet.
+ */
+function followKnownFolder(ref, knownId) {
+  if (!knownId) return Promise.resolve('');
+  // Deduped like every other root-paging lookup here: a burst of reads or
+  // uploads all healing the SAME rename must page the root once, not N times.
+  const key = `${ref}\n${knownId}`;
+  let pending = _caseFolderFollow.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const mine = (await findCaseFoldersByRef(ref)).find((h) => h.id === knownId);
+      if (!mine) return '';
+      // followed: this identity was traced to the driveItem KNOWN to hold the
+      // case's documents. That is what gives it authority over the tie-break.
+      _caseFolderName.set(ref, { name: mine.name, id: mine.id, at: Date.now(), followed: true });
+      console.log(`[OneDrive] case ${ref}: followed the folder holding the documents to "${mine.name}"`);
+      return mine.name;
+    })().finally(() => _caseFolderFollow.delete(key));
+    _caseFolderFollow.set(key, pending);
+  }
+  return pending;
+}
+
+/**
+ * The folder name to WRITE into.
+ *
+ * A read can afford to be optimistic and heal on the 404. A write cannot: a PUT
+ * to a path whose parent is missing CREATES that parent, so a stale cached name
+ * does not fail loudly - it quietly mints a second folder for the case, which
+ * is the split this whole area exists to prevent. So when the name came from
+ * the cache rather than from this call, it costs one confirmation first.
+ */
+async function resolveCaseFolderNameForWrite({ clientName, caseRef }) {
+  const ref = String(caseRef || '').trim();
+  const before = liveCaseFolderEntry(ref);
+  const name = await resolveCaseFolderName({ clientName, caseRef });
+  // Resolved in THIS call, or resolved to nothing (no folder yet - this write
+  // creates it): as fresh as it can be.
+  if (!before || !before.name || before.name !== name) return name;
+
+  let stillThere;
+  try {
+    stillThere = await confirmCaseFolder(ref, name);
+  } catch (probeErr) {
+    console.warn(`[OneDrive] case ${ref}: could not confirm folder "${name}" before writing (${probeErr.message}) - re-resolving`);
+    dropCaseFolderName(ref, name);
+    // Identity first, exactly as the mismatch branch below and the read heal do.
+    // A probe that could not answer is no reason to hand a split case back to
+    // pickCaseFolder, which a non-empty impostor under the OLD name wins.
+    return (await followKnownFolder(ref, before.id)) || resolveCaseFolderName({ clientName, caseRef });
+  }
+  if (stillThere && (!before.id || stillThere.id === before.id)) return name;
+
+  dropCaseFolderName(ref, name);
+  console.warn(`[OneDrive] case ${ref}: cached folder "${name}" is no longer the item holding the documents - re-resolving before writing`);
+  return (await followKnownFolder(ref, before.id)) || resolveCaseFolderName({ clientName, caseRef });
+}
+
 /** Test seam: forget the resolved folder names. */
-function _clearCaseFolderCache() { _caseFolderName.clear(); _caseFolderInFlight.clear(); }
+function _clearCaseFolderCache() { _caseFolderName.clear(); _caseFolderInFlight.clear(); _caseFolderConfirm.clear(); _caseFolderFollow.clear(); }
 
 
 /**
@@ -504,7 +676,7 @@ function _clearCaseFolderCache() { _caseFolderName.clear(); _caseFolderInFlight.
  * @param {{ clientName: string, caseRef: string }} params
  */
 async function ensureClientFolder({ clientName, caseRef }) {
-  const safeName = await resolveCaseFolderName({ clientName, caseRef });   // never duplicate a renamed folder
+  const safeName = await resolveCaseFolderNameForWrite({ clientName, caseRef });   // never duplicate a renamed folder
 
   await withGraphAuth('ensureClientFolder', async (token) => {
     await ensureFolder(token, null, ROOT_FOLDER);
@@ -522,7 +694,7 @@ async function ensureClientFolder({ clientName, caseRef }) {
  * @returns {Promise<string>} sharing URL for the category folder
  */
 async function ensureCategoryFolderLink({ clientName, caseRef, category }) {
-  const safeName   = await resolveCaseFolderName({ clientName, caseRef });   // never duplicate a renamed folder
+  const safeName   = await resolveCaseFolderNameForWrite({ clientName, caseRef });   // never duplicate a renamed folder
   const clientPath = `${ROOT_FOLDER}/${safeName}`;
 
   return withGraphAuth('ensureCategoryFolderLink', async (token) => {
@@ -682,7 +854,7 @@ async function deleteDriveItem(itemId) {
  * @returns {Promise<{ url: string, webUrl: string, id: string }>}
  */
 async function uploadFileAndLink({ clientName, caseRef, category, filename, buffer, mimeType }) {
-  const safeName = await resolveCaseFolderName({ clientName, caseRef });   // renamed folders still resolve
+  const safeName = await resolveCaseFolderNameForWrite({ clientName, caseRef });   // renamed folders still resolve
   const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim() || 'document';
   const filePath = `${ROOT_FOLDER}/${safeName}/${category}/${safeFile}`;
   const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
@@ -748,22 +920,22 @@ async function uploadToLeadFolderAndLink({ fullName, leadId, folderId, filename,
  */
 async function listFileVersions({ clientName, caseRef, subfolder, filename }) {
   const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim();
-  const safeName = await resolveCaseFolderName({ clientName, caseRef });   // renamed folders still resolve
-  const filePath = `${ROOT_FOLDER}/${safeName}/${subfolder}/${safeFile}`;
-  const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
   try {
-    return await withGraphAuth('versionList', async (token) => {
-      try {
+    // Through withCaseFolder like every other read: swallowing the 404 in here
+    // would hide a renamed folder from the heal and report a file that exists
+    // as having no history at all.
+    return await withCaseFolder({ clientName, caseRef }, async (safeName) => {
+      const filePath = `${ROOT_FOLDER}/${safeName}/${subfolder}/${safeFile}`;
+      const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
+      return withGraphAuth('versionList', async (token) => {
         const res = await axios.get(`${userBase()}/root:/${encoded}:/versions`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         return (res.data && res.data.value) || [];
-      } catch (err) {
-        if (err.response?.status === 404) return [];
-        throw err;
-      }
+      });
     });
   } catch (err) {
+    if (err?.response?.status === 404) return [];   // absent — not an error
     throw wrapError('OneDrive version list failed', err);
   }
 }
@@ -771,22 +943,19 @@ async function listFileVersions({ clientName, caseRef, subfolder, filename }) {
 /** Fetch the CONTENT of one historical version (Buffer), or null if absent. */
 async function readFileVersion({ clientName, caseRef, subfolder, filename, versionId }) {
   const safeFile = filename.replace(/[*:"<>?\\|]/g, '').trim();
-  const safeName = await resolveCaseFolderName({ clientName, caseRef });   // renamed folders still resolve
-  const filePath = `${ROOT_FOLDER}/${safeName}/${subfolder}/${safeFile}`;
-  const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
   try {
-    return await withGraphAuth('versionRead', async (token) => {
-      try {
+    return await withCaseFolder({ clientName, caseRef }, async (safeName) => {
+      const filePath = `${ROOT_FOLDER}/${safeName}/${subfolder}/${safeFile}`;
+      const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
+      return withGraphAuth('versionRead', async (token) => {
         const res = await axios.get(
           `${userBase()}/root:/${encoded}:/versions/${encodeURIComponent(versionId)}/content`,
           { headers: { Authorization: `Bearer ${token}` }, responseType: 'arraybuffer' });
         return Buffer.from(res.data);
-      } catch (err) {
-        if (err.response?.status === 404) return null;
-        throw err;
-      }
+      });
     });
   } catch (err) {
+    if (err?.response?.status === 404) return null;   // absent — not an error
     throw wrapError('OneDrive version read failed', err);
   }
 }

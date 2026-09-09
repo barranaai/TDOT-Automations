@@ -147,12 +147,15 @@ async function getConsultationQueue() {
   return items;
 }
 
-/** Best-effort read of a OneDrive JSON in the lead's Intake folder. */
-async function readLeadJson(clientName, leadId, filename) {
+/**
+ * Best-effort read of a OneDrive JSON in the client's Intake folder — the case
+ * folder once the case exists, else the pre-rename lead folder (point 12).
+ */
+async function readLeadJson(lead, filename) {
+  const leadId = lead && lead.id;
   try {
-    const buf = await oneDrive.readFile({
-      clientName, caseRef: `LEAD-${leadId}`, subfolder: 'Intake', filename,
-    });
+    const buf = await require('../utils/clientFolderRefs')
+      .readFirst(oneDrive, lead, { subfolder: 'Intake', filename });
     return buf ? JSON.parse(buf.toString('utf8')) : null;
   } catch (err) {
     console.warn(`[Consultant] ${filename} unavailable for lead ${leadId}: ${err.message}`);
@@ -171,8 +174,8 @@ async function getConsultationDetail(leadId) {
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
 
   const [preConsult, intake, currentCaseStage] = await Promise.all([
-    readLeadJson(lead.fullName, leadId, 'pre-consult-submission.json'),
-    readLeadJson(lead.fullName, leadId, 'intake-submission.json'),
+    readLeadJson(lead, 'pre-consult-submission.json'),
+    readLeadJson(lead, 'intake-submission.json'),
     readCaseStage(lead.clientMasterItemId),
   ]);
 
@@ -496,7 +499,7 @@ async function getLeadDetail(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Lead not found'); e.notFound = true; throw e; }
 
-  const intake = await readLeadJson(lead.fullName, leadId, 'intake-submission.json');
+  const intake = await readLeadJson(lead, 'intake-submission.json');
   const f = (intake && intake.fields) || {};
   const { sections, flags } = buildIntakeSections(f, lead);
 

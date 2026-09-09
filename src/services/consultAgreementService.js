@@ -192,10 +192,13 @@ function safeSignUrl(u) {
 
 async function _storeSignedToOneDrive(lead, pdf) {
   const oneDrive = require('./oneDriveService');
-  // Best-known folder first: once a case opens, the client folder is RENAMED
-  // to "{name} - {caseRef}" — writing by the old LEAD name would resurrect a
-  // stale folder. Shared resolution with the retainer countersign.
-  const [ref] = await require('./retainerCountersignService').candidateFolderRefs(lead);
+  // Once a case opens the client folder is RENAMED to "{name} - {caseRef}", so
+  // writing by the old LEAD name resurrects a stale folder — but the case
+  // reference lands on Client Master a moment BEFORE the rename, so naming the
+  // case folder inside that window creates a second one. writeRef picks the
+  // folder that actually EXISTS; the rename carries the file across.
+  const ref = await require('../utils/clientFolderRefs').writeRef(lead);
+  await oneDrive.ensureClientFolder(ref).catch(() => {});
   await oneDrive.uploadFile({ ...ref, category: 'Consultation', filename: 'consultation-agreement-SIGNED.pdf', buffer: pdf, mimeType: 'application/pdf' });
 }
 

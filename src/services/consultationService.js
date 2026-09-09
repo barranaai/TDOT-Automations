@@ -351,10 +351,10 @@ const PRECONSULT_FQ = {
 /** Best-effort load of the full intake archive from the client's OneDrive folder. */
 async function loadIntakeArchive(lead) {
   try {
-    const oneDrive = require('./oneDriveService');
-    const buf = await oneDrive.readFile({
-      clientName: lead.fullName, caseRef: `LEAD-${lead.id}`, subfolder: 'Intake', filename: 'intake-submission.json',
-    });
+    // Case folder first, then the pre-rename lead folder — the archive was
+    // written before the case existed and stays wherever it landed.
+    const buf = await require('../utils/clientFolderRefs')
+      .readFirst(require('./oneDriveService'), lead, { subfolder: 'Intake', filename: 'intake-submission.json' });
     return buf ? (JSON.parse(buf.toString()).fields || null) : null;
   } catch (err) {
     console.warn(`[Consult] Intake archive unavailable for ${lead.id} (form still works): ${err.message}`);
@@ -580,8 +580,15 @@ async function savePreConsultData(leadId, formData) {
   // 2+3. OneDrive: raw JSON archive + full-dossier PDF + board link (best-effort).
   try {
     const oneDrive = require('./oneDriveService');
+    // Case folder once the case exists — a retained client re-opening their
+    // pre-consult link must not re-create the old "LEAD-…" folder (point 12).
+    // The WHOLE lead: writeRef's last resort asks the folder its own name via
+    // lead.oneDriveFolderId, so a hand-built subset would disable that recovery.
+    const ref = await require('../utils/clientFolderRefs').writeRef({
+      ...(lead || {}), id: leadId, fullName: lead?.fullName || 'Client',
+    });
     const put = (filename, buffer, mimeType) => oneDrive.uploadFile({
-      clientName: lead?.fullName || 'Client', caseRef: `LEAD-${leadId}`, category: 'Intake', filename, buffer, mimeType,
+      ...ref, category: 'Intake', filename, buffer, mimeType,
     });
     await put('pre-consult-submission.json',
       Buffer.from(JSON.stringify({ submittedAt: new Date().toISOString(), leadId, answers: { ...formData } }, null, 2)),
@@ -591,7 +598,7 @@ async function savePreConsultData(leadId, formData) {
     const sections = buildDossierSections(lead || { id: leadId }, archive, formData, fBlock);
     const pdf = await buildPreConsultPdf(lead || { id: leadId }, sections);
     const { url } = await oneDrive.uploadFileAndLink({
-      clientName: lead?.fullName || 'Client', caseRef: `LEAD-${leadId}`, category: 'Intake',
+      ...ref, category: 'Intake',
       filename: 'pre-consultation-summary.pdf', buffer: pdf, mimeType: 'application/pdf',
     });
     await leadService.updateLead(leadId, { preConsultPdf: { url, text: 'Pre-Consult PDF' } });
