@@ -218,6 +218,7 @@ async function getConsultationDetail(leadId) {
     name:      lead.fullName || lead.name,
     email:     lead.email || '',
     phone:     lead.phone || '',
+    residentialAddress: lead.residentialAddress || '',   // editable on the page (prints on the agreement)
     country:   lead.country || '',
     tier:      lead.tier || '',
     priority:  lead.priority || '',
@@ -356,7 +357,9 @@ function buildIntakeSections(f, lead) {
     row('Full legal name', A('fullName') || lead.fullName || ''),
     row('Email', A('email')),
     row('Phone', A('phone')),
-    row('Residential address', A('residentialAddress')),
+    // Column FIRST: the address is editable on the lead page, so a correction
+    // must show here too (the archive keeps what the client originally typed).
+    row('Residential address', String(lead.residentialAddress || '').trim() || A('residentialAddress')),
     row('Inside Canada', A('insideCanada')),
     row('Country', A('insideCanada') === 'Yes' ? 'Canada' : A('currentCountry', 'country')),
   ]);
@@ -756,6 +759,20 @@ function validateAction(action, value) {
       const clean = (s) => String(s || '').trim().slice(0, 80);
       return { ok: true, normalized: { followUpDate: fu, leadOwner: clean(o.leadOwner), bookedBy: clean(o.bookedBy), paymentReviewedBy: clean(o.paymentReviewedBy) } };
     }
+    // Residential address on an EXISTING lead (Gauri 2026-09-04, point 07):
+    // the Add-lead form has required it since 2026-09-04, but leads created
+    // before that (and any typo) had nowhere to be corrected — the consultation
+    // agreement and the retainer print this line.
+    case 'saveResidentialAddress': {
+      // Keep the LINE BREAKS: the agreement/retainer templates render them
+      // (docxtemplater linebreaks:true), so a two-line address printed on two
+      // lines must stay that way after a typo fix. Only horizontal runs collapse.
+      const addr = String(value == null ? '' : value)
+        .replace(/\r\n?/g, '\n').split('\n').map((l) => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).slice(0, 4).join('\n');
+      if (addr.length < 5) return { ok: false, error: 'Enter the client’s full residential address (street, city, province/state, postal code, country).' };
+      if (addr.length > 500) return { ok: false, error: 'Address is too long (max 500 characters).' };
+      return { ok: true, normalized: addr };
+    }
     case 'retainerFee': {
       // Reject loosely-typed inputs (boolean→1, [5]→5, '0x10'→16, '1e9'): require
       // a plain decimal number or numeric string before coercion.
@@ -955,6 +972,18 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       await leadService.updateLead(leadId, { followUpDate: n.followUpDate, leadOwner: n.leadOwner, bookedBy: n.bookedBy, paymentReviewedBy: n.paymentReviewedBy });
       await postPortalNote(leadId, `Attribution saved — owner: ${n.leadOwner || '—'}, booked by: ${n.bookedBy || '—'}, payment reviewed by: ${n.paymentReviewedBy || '—'}, follow-up: ${n.followUpDate || '—'}.`);
       return { ok: true, message: 'Attribution saved.' };
+    }
+
+    case 'saveResidentialAddress': {
+      const before = String(lead.residentialAddress || '').trim();
+      await leadService.updateLead(leadId, { residentialAddress: v.normalized });
+      // The unsigned consultation-agreement REVIEW copy is a cache of the lead's
+      // data — drop it so the client's review link shows the corrected address.
+      // A retainer already sent and any SIGNED copy are documents of record and keep the old one.
+      try { consultAgreementService.evictCache(leadId); } catch (_) { /* best-effort */ }
+      const line = (s) => escHtmlNote(String(s || '').replace(/\n/g, ', '));
+      await postPortalNote(leadId, `Residential address ${before ? 'corrected' : 'added'}${who ? ` by ${escHtmlNote(who)}` : ''}: ${line(v.normalized)}${before ? ` (was: ${line(before)})` : ''}. The consultation agreement and retainer print this line; a retainer already sent and any signed copy keep the old address.`);
+      return { ok: true, message: 'Residential address saved.', residentialAddress: v.normalized };
     }
 
     // ONE-CLICK retain: set Outcome=Retain and email the agreement synchronously,

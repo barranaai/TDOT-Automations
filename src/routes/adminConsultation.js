@@ -807,6 +807,13 @@ ${buildNavHeader('consultations')}
           <div class="agroup">
             <div class="subhead">Communications &amp; agreement <span class="muted" id="ca-sent"></span></div>
             <div id="ca-warn"></div>
+            <!-- Residential address (Gauri 2026-09-04, point 07): editable here because it prints on the
+                 consultation agreement and the retainer — leads created before 2026-09-04 had no way to fix it. -->
+            <div class="attr-f" style="margin:6px 0 12px">
+              <span>Client residential address <span class="muted">(prints on the agreement and retainer)</span></span>
+              <textarea id="ca-address" rows="2" maxlength="500" placeholder="Street, city, province/state, postal code, country" style="width:100%;box-sizing:border-box;font:inherit;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;resize:vertical"></textarea>
+              <div class="frow" style="margin-top:8px"><button class="btn" id="btn-addr-save" title="Save the residential address on the lead">Save address</button></div>
+            </div>
             <div class="btn-grid2">
               <button class="btn" id="btn-invite" title="Send booking invite">${I.send} Send booking invite</button>
               <button class="btn" id="btn-resend" title="Resend meeting + pre-consult links">${I.refresh} Resend links</button>
@@ -1077,6 +1084,9 @@ function render(d){
     caSigned?('· client signed '+ca.signed+(cactr.sentAt?(' · countersign sent '+cactr.sentAt):'')):
     (ca.sent?('· sent '+ca.sent):'');
   var caw=document.getElementById('ca-warn');
+  // The editable address — never overwrite a value the consultant is typing.
+  var cad=document.getElementById('ca-address');
+  if(cad && !ADDR_DIRTY && document.activeElement!==cad) cad.value=d.residentialAddress||'';
   // Pre-send warnings (blank address etc.) are moot once the client has signed.
   caw.innerHTML=(!caSigned&&ca.warnings&&ca.warnings.length)
     ? '<div class="rp-warn"><b>Before sending:</b><ul>'+ca.warnings.map(function(w){return '<li>'+escHtml(w)+'</li>';}).join('')+'</ul></div>' : '';
@@ -1188,6 +1198,7 @@ function highlightOutcome(cur){ Array.prototype.forEach.call(document.querySelec
 function fetchT(url,opts,ms){ var ac=new AbortController(); var to=setTimeout(function(){ac.abort();},ms||60000); opts=opts||{}; opts.signal=ac.signal; return fetch(url,opts).finally(function(){clearTimeout(to);}); }
 function netErr(e){ return e&&e.name==='AbortError' ? 'Timed out — please try again.' : ('Failed: '+(e&&e.message||e)); }
 
+var ADDR_DIRTY=false;   // the residential-address box has unsaved typing (render() leaves it alone)
 function doAction(action,value,confirmMsg){
   if(confirmMsg && !window.confirm(confirmMsg)) return;
   var key=getKey(); if(!key) return;
@@ -1714,6 +1725,13 @@ function initActions(){
   };
   document.getElementById('btn-attr-save').onclick=function(){
     doAction('saveAttribution', JSON.stringify({ followUpDate: document.getElementById('at-followup').value, leadOwner: document.getElementById('at-owner').value, bookedBy: document.getElementById('at-bookedby').value, paymentReviewedBy: document.getElementById('at-reviewer').value }), null);
+  };
+  // Address box: typed-but-unsaved text survives the re-render every other action
+  // triggers (same guard as the invite draft); cleared once the save succeeds.
+  document.getElementById('ca-address').addEventListener('input',function(){ ADDR_DIRTY=true; });
+  document.getElementById('btn-addr-save').onclick=function(){
+    ADDR_DIRTY=false;
+    doAction('saveResidentialAddress', document.getElementById('ca-address').value, null); // load() re-renders → the blank-address warning clears
   };
 }
 

@@ -66,6 +66,8 @@ function buildConsultAgreementData(lead = {}) {
 }
 
 const _cache = new Map(); // leadId → PDF Buffer
+/** Drop the cached (unsigned) review copy — e.g. after the lead's address was corrected. */
+function evictCache(leadId) { return _cache.delete(String(leadId)); }
 function cachePdf(leadId, buf) {
   const k = String(leadId);
   _cache.set(k, buf);
@@ -440,6 +442,7 @@ async function sendConsultAgreement(leadId) {
 }
 
 module.exports = {
+  evictCache,
   buildConsultAgreementData, generateConsultAgreementPdf, getConsultAgreementDocument,
   ensureConsultAgreementReady, sendConsultAgreement, maybeSendConsultEsign,
   parseCountersign, getSignedConsultPdf, startConsultCountersign, recordCountersignComplete, safeSignUrl,

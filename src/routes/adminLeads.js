@@ -390,6 +390,13 @@ ${buildNavHeader('leads')}
     <div class="cols">
       <div class="col">
         <div class="card"><div class="card-t">${I.clip} Their inquiry</div><div id="c-inquiry"></div></div>
+        <!-- Residential address (Gauri 2026-09-04, point 07): required on every new lead since 2026-09-04,
+             editable here for older leads and typos — it prints on the consultation agreement and the retainer. -->
+        <div class="card"><div class="card-t">${I.clip} Residential address <span class="muted">(prints on the consultation agreement and retainer)</span></div>
+          <textarea id="lead-address" rows="2" maxlength="500" placeholder="Street, city, province/state, postal code, country" style="width:100%;box-sizing:border-box;font:inherit;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;resize:vertical"></textarea>
+          <div style="margin-top:8px"><button class="btn" id="btn-lead-addr">Save address</button></div>
+          <div id="lead-addr-msg" class="act-msg"></div>
+        </div>
         <div id="c-sections"></div>
         <div class="card" id="c-attach-card" style="display:none"><div class="card-t">${I.file} Attachments <span class="muted">(OneDrive · Intake)</span></div><div id="c-attach"></div></div>
       </div>
@@ -478,6 +485,8 @@ function kv(k,v){ return '<div class="kv"><div class="k">'+escHtml(k)+'</div><di
 
 function render(d){
   WANTS_TO=d.wantsTo||'';
+  var la=document.getElementById('lead-address');
+  if(la && !ADDR_DIRTY && document.activeElement!==la) la.value=d.address||'';   // never overwrite what the staffer is typing
   var iw=document.getElementById('invite-warn');
   if(iw){
     if(WANTS_TO && WANTS_TO!=='Book consultation'){
@@ -679,6 +688,16 @@ function load(){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
+// Address box: typed-but-unsaved text survives any re-render (same guard as the
+// invite draft); after a save the box shows the value the server actually stored.
+var ADDR_DIRTY=false;
+var _addrEl=document.getElementById('lead-address'), _addrBtn=document.getElementById('btn-lead-addr');
+if(_addrEl) _addrEl.addEventListener('input',function(){ ADDR_DIRTY=true; });
+if(_addrBtn) _addrBtn.onclick=function(){
+  doAction(_addrBtn,'saveResidentialAddress',null,_addrEl.value,'lead-addr-msg').then(function(res){
+    if(res&&res.ok&&res.j&&res.j.residentialAddress){ ADDR_DIRTY=false; _addrEl.value=res.j.residentialAddress; load(); }
+  });
+};
 startClock(); checkApiStatus(); load();
 </script></body></html>`;
 }
