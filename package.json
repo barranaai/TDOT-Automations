@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node --test 'test/*.test.js'"
+    "test": "NODE_OPTIONS=\"--require ./test/helpers/noNetwork.js\" node --test 'test/*.test.js'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",

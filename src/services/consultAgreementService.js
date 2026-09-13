@@ -23,6 +23,19 @@ const RENDER_URL = process.env.RENDER_URL || 'https://tdot-automations.onrender.
 const CONSULT_DURATION = `${parseInt(process.env.CONSULT_DURATION_MINS, 10) || 30} minutes`;
 
 function todayISO() { return new Date().toISOString().split('T')[0]; }
+
+/**
+ * Where a signature field goes on the consultation agreement.
+ *
+ * Both engines that render it (LibreOffice via CloudConvert in production,
+ * Word locally) emit each signature line as two text items on one baseline:
+ * the label ("Client" / "RCIC" "-" "IRB") and ":   Signature ______". Matching
+ * the second item is label-independent, so it holds for every {rcicRole}, and
+ * reading order fixes which line is which: occurrence 1 is the client's,
+ * occurrence 2 the RCIC's. gapPct 0.5 puts the field's bottom edge just above
+ * the underline.
+ */
+const CONSULT_SIGNATURE_ANCHOR = (occurrence) => ({ anchors: [/^:?\s*signature\s*_{3,}/i], occurrence, gapPct: 0.5 });
 function esc(s) {
   return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -48,7 +61,11 @@ function buildConsultAgreementData(lead = {}) {
   const data = {
     agreementDate:       formatAgreementDate(todayISO()),
     paName:              lead.fullName || lead.name || '',
-    paAddress:           lead.residentialAddress || '',
+    // One line: this agreement is a single page and the address appears twice,
+    // once mid-sentence. The lead keeps its line breaks (the retainer prints
+    // them as a block); here they become ", " so a four-line address cannot
+    // push the signature block onto a second page.
+    paAddress:           String(lead.residentialAddress || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).join(', '),
     amountPaid:          amountPaidText,
     consultDurationMins: durationText,
     consultationDate:    formatAgreementDate(slotDate) || slotDate || '',
@@ -66,6 +83,11 @@ function buildConsultAgreementData(lead = {}) {
 }
 
 const _cache = new Map(); // leadId → PDF Buffer
+// leadId → { envelopeId, envelopeItemId, at }: an envelope that Documenso
+// distributed but Monday refused to record. The column is the memory of record;
+// this is the fallback so that, until it is written, NOTHING can mint a second
+// signing request for the same client — not the sweep, not the button.
+const _unstampedEnvelope = new Map();
 /** Drop the cached (unsigned) review copy — e.g. after the lead's address was corrected. */
 function evictCache(leadId) { return _cache.delete(String(leadId)); }
 function cachePdf(leadId, buf) {
@@ -101,9 +123,12 @@ async function getConsultAgreementDocument(lead) {
  * decides how to deliver (standalone email, or bundled into the booking package).
  * @throws {Error} .notFound / .badRequest
  */
-async function ensureConsultAgreementReady(leadId) {
-  const lead = await leadService.getLead(leadId);
-  if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
+async function ensureConsultAgreementReady(leadId, { overrides = {} } = {}) {
+  const stored = await leadService.getLead(leadId);
+  if (!stored) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
+  // overrides: values the caller just wrote (the address entered a moment ago)
+  // that Monday may not read back yet — the PDF must print them, not the stale read.
+  const lead = { ...stored, ...overrides };
   if (!lead.email) { const e = new Error('No client email on file — cannot generate the agreement.'); e.badRequest = true; throw e; }
   let pdf;
   try { pdf = await generateConsultAgreementPdf(lead); }
@@ -131,6 +156,43 @@ async function maybeSendConsultEsign(lead) {
   const documenso = require('./documensoService');
   if (!documenso.isEnabled() || !lead || !lead.email) return null;
   if (lead.consultAgreementSigned && String(lead.consultAgreementSigned).trim()) return { alreadySigned: true };
+  // One outstanding envelope per client. A re-send of the package (the team's
+  // button after an automatic send, or twice in a row) must re-email the
+  // package but never issue a SECOND signing request — the client would be
+  // asked to sign the same agreement twice.
+  const memo = _unstampedEnvelope.get(String(lead.id));
+  const outstanding = String(parseCountersign(lead).clientEnvelopeId || '').trim() || (memo && memo.envelopeId) || '';
+  if (outstanding && memo && !String(parseCountersign(lead).clientEnvelopeId || '').trim()) {
+    // Found only in memory: try once more to get it on the record.
+    await leadService.updateLead(lead.id, { consultAgreementSent: todayISO(), consultCountersign: JSON.stringify({
+      ...Object.fromEntries(Object.entries(parseCountersign(lead)).filter(([k]) => !k.startsWith('package'))),
+      clientEnvelopeId: memo.envelopeId, clientItemId: memo.envelopeItemId || '',
+    }) }).then(() => _unstampedEnvelope.delete(String(lead.id))).catch(() => {});
+  }
+  if (outstanding) {
+    // ...but only while that envelope is still LIVE. A rejected, cancelled or
+    // deleted one would otherwise be "reused" forever and the client could never
+    // be sent a fresh agreement. Unreadable → keep reusing (fail toward not
+    // double-sending).
+    let status = '', gone = false, deleted = false;
+    try {
+      const env = await documenso.getEnvelope(outstanding);
+      status  = String((env && (env.status || (env.document && env.document.status))) || '').toUpperCase();
+      deleted = Boolean(env && (env.deletedAt || (env.document && env.document.deletedAt)));
+    } catch (err) { gone = /\b404\b|not found/i.test(err.message); }
+    // Signed but not yet stamped (the webhook is on its way): never ask the
+    // client to sign again — the package reads as "already signed".
+    if (status.includes('COMPLET')) return { alreadySigned: true };
+    // Documenso statuses: DRAFT, PENDING, COMPLETED, REJECTED, CANCELLED; a
+    // soft-deleted envelope carries deletedAt.
+    if (gone || deleted || /REJECT|CANCEL/.test(status)) {
+      console.log(`[ConsultAgreement] Lead ${lead.id}'s client envelope ${outstanding} is ${gone ? 'gone' : status} — minting a fresh one`);
+    } else {
+      console.log(`[ConsultAgreement] Lead ${lead.id} already has client envelope ${outstanding} (${status || 'status unknown'}) — reusing it, not minting another`);
+      const signUrl = safeSignUrl(await documenso.recipientSignUrl(outstanding).catch(() => ''));
+      return { envelopeId: outstanding, reused: true, signUrl };
+    }
+  }
   let env;
   try {
     const pdf = await getConsultAgreementDocument(lead);
@@ -140,8 +202,14 @@ async function maybeSendConsultEsign(lead) {
       externalId: documenso.externalIdFor('consult', lead.id),
       signer: { email: lead.email, name: lead.fullName || lead.email },
       subject: 'Your TDOT Immigration consultation agreement — please sign',
-      // Client signature line near the bottom of the single-page agreement.
-      signaturePosition: { positionX: 25, positionY: 72, width: 28, height: 6 },
+      // Anchored to the document's ACTUAL "Signature ____" line (first
+      // occurrence = the client's), so a layout reflow can never drop the field
+      // on the RCIC's line (the Praj incident, on the retainer). The static
+      // position is only the can't-parse fallback. The two lines sit ~4% apart
+      // on the one-page agreement, so the field is 4% tall to keep the client's
+      // and the RCIC's signatures from overlapping.
+      signatureAnchorItem: CONSULT_SIGNATURE_ANCHOR(1),
+      signaturePosition: { positionX: 25, positionY: 74, width: 28, height: 4 },
     });
   } catch (err) {
     console.error(`[ConsultAgreement] Documenso send FAILED for lead ${lead.id} — falling back to the review link: ${err.message}`);
@@ -153,16 +221,29 @@ async function maybeSendConsultEsign(lead) {
   // along in the countersign state — they're the download fallback for the
   // client-signed PDF when the RCIC later countersigns.
   try {
-    await leadService.updateLead(lead.id, {
+    // The envelope going out ends every package marker (hold, pending, stalled,
+    // attempts…) — stripped in the SAME write that records the ids, so no later
+    // writer can clobber the ids by re-writing a stale snapshot of this column.
+    const cs = Object.fromEntries(Object.entries(parseCountersign(lead)).filter(([k]) => !k.startsWith('package')));
+    const stamp = () => leadService.updateLead(lead.id, {
       consultAgreementSent: todayISO(),
-      consultCountersign: JSON.stringify({
-        ...parseCountersign(lead),
-        clientEnvelopeId: env.envelopeId, clientItemId: env.envelopeItemId || '',
-      }),
+      consultCountersign: JSON.stringify({ ...cs, clientEnvelopeId: env.envelopeId, clientItemId: env.envelopeItemId || '' }),
     });
+    try { await stamp(); }
+    catch (e1) {
+      // The envelope IS out. One more try after a pause; then tell the caller
+      // the record failed so it can say so — and nobody re-sends.
+      await new Promise((r) => setTimeout(r, 1500));
+      await stamp();
+    }
   }
-  catch (err) { console.warn(`[ConsultAgreement] Sent-date stamp failed for lead ${lead.id} (envelope ${env.envelopeId} IS distributed): ${err.message}`); }
-  return { envelopeId: env.envelopeId };
+  catch (err) {
+    console.warn(`[ConsultAgreement] Sent-date stamp failed for lead ${lead.id} (envelope ${env.envelopeId} IS distributed): ${err.message}`);
+    _unstampedEnvelope.set(String(lead.id), { envelopeId: env.envelopeId, envelopeItemId: env.envelopeItemId || '', at: Date.now() });
+    return { envelopeId: env.envelopeId, envelopeItemId: env.envelopeItemId || '', stampFailed: err.message };
+  }
+  _unstampedEnvelope.delete(String(lead.id));
+  return { envelopeId: env.envelopeId, envelopeItemId: env.envelopeItemId || '' };
 }
 
 // ─── RCIC countersign (second envelope over the client-signed PDF) ───────────
@@ -323,9 +404,10 @@ async function _doStartConsultCountersign(leadId) {
       signer: { email: consultant.email, name: consultant.name || consultant.email },
       subject: `Countersign: consultation agreement — ${lead.fullName || 'client'}`,
       message: 'The client has signed their initial consultation agreement. Please add your signature as the consulting RCIC.',
-      // The RCIC signature line sits directly BELOW the client's (client line is
-      // calibrated at y=72) — worth eyeballing on the first live countersign.
-      signaturePosition: { positionX: 25, positionY: 79, width: 28, height: 6 },
+      // The RCIC line is the SECOND "Signature ____" on the page, directly
+      // below the client's; anchored, with the static position as fallback.
+      signatureAnchorItem: CONSULT_SIGNATURE_ANCHOR(2),
+      signaturePosition: { positionX: 25, positionY: 78, width: 28, height: 4 },
     });
   } catch (err) {
     console.error(`[ConsultAgreement] Countersign envelope FAILED for lead ${leadId}: ${err.message}`);
@@ -449,4 +531,5 @@ module.exports = {
   buildConsultAgreementData, generateConsultAgreementPdf, getConsultAgreementDocument,
   ensureConsultAgreementReady, sendConsultAgreement, maybeSendConsultEsign,
   parseCountersign, getSignedConsultPdf, startConsultCountersign, recordCountersignComplete, safeSignUrl,
+  _forgetUnstampedEnvelopes: () => _unstampedEnvelope.clear(),   // test seam
 };

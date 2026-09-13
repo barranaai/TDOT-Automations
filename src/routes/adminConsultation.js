@@ -1019,7 +1019,9 @@ function hydrateAttribution(d){
   var fu=document.getElementById('at-followup'); if(fu) fu.value=d.followUpDate||'';
   setAttrSel('at-owner', d.leadOwner||''); setAttrSel('at-bookedby', d.bookedBy||''); setAttrSel('at-reviewer', d.paymentReviewedBy||'');
 }
+var LAST_DETAIL=null; // the detail last rendered — the send button's confirm text reads the package state from it
 function render(d){
+  LAST_DETAIL=d;
   document.getElementById('c-avatar').textContent=initials(d.name||d.leadId);
   document.getElementById('c-name').textContent=d.name||d.leadId;
   document.getElementById('c-sub').textContent=(d.serviceRequired||'—')+'  ·  '+(d.tier?('Tier '+d.tier):'')+'  ·  lead '+d.leadId;
@@ -1084,7 +1086,14 @@ function render(d){
   document.getElementById('ca-sent').textContent=
     cactr.signedAt?('· fully signed '+cactr.signedAt):
     caSigned?('· client signed '+ca.signed+(cactr.sentAt?(' · countersign sent '+cactr.sentAt):'')):
-    (ca.sent?('· sent '+ca.sent):'');
+    ca.sent?('· sent '+ca.sent):
+    ca.emailedAt?'· emailed to the client, but the Sent date could not be saved — set "Consult Agreement Sent" by hand; do NOT re-send':
+    ca.stalled?'· automatic send was interrupted — check the client\\'s inbox and Documenso, then "Review & send" if needed':
+    (ca.held&&ca.expired)?'· was HELD for a missing address and the consultation date has passed — "Review & send" if still needed':
+    (ca.held&&ca.attempts>=3)?'· HELD — the automatic release failed 3 times; use "Review & send"':
+    ca.held?(ca.autoSend?'· HELD — no residential address; enter it below and the package sends itself':'· HELD by the automatic package, which is now switched off — use "Review & send"'):
+    (ca.autoSend&&d.bookingStatus!=='Booked')?'· not sent yet — sends automatically when the consultation is paid':
+    ca.autoSend?'· not sent — this booking predates automatic sending, or the send did not run; use "Review & send"':'';
   var caw=document.getElementById('ca-warn');
   // The editable address — never overwrite a value the consultant is typing.
   var cad=document.getElementById('ca-address');
@@ -1723,7 +1732,10 @@ function initActions(){
   document.getElementById('btn-retainer-signed-view').onclick=viewSignedRetainer;
   document.getElementById('btn-retainer-countersign').onclick=countersignRetainer;
   document.getElementById('btn-consult-send').onclick=function(){
-    doAction('sendConsultationPackage', null, 'Send the client ONE consultation email now — booking details, meeting link, the pre-consultation form, and the consultation agreement (sent for e-signature when e-sign is enabled) — with a note to complete both at least 24 hours before the consultation? Preview the agreement first and make sure the client\\'s address is filled in.');
+    var ca=(LAST_DETAIL&&LAST_DETAIL.consultAgreement)||{};
+    doAction('sendConsultationPackage', null, ca.sent
+      ? 'This client already received the consultation package on '+ca.sent+'. Send it AGAIN? They get the same email once more; the agreement they were already asked to sign is reused — no second signing request is issued.'
+      : 'Send the client ONE consultation email now — booking details, meeting link, the pre-consultation form, and the consultation agreement (sent for e-signature when e-sign is enabled) — with a note to complete both at least 24 hours before the consultation? Preview the agreement first and make sure the client\\'s address is filled in.');
   };
   document.getElementById('btn-attr-save').onclick=function(){
     doAction('saveAttribution', JSON.stringify({ followUpDate: document.getElementById('at-followup').value, leadOwner: document.getElementById('at-owner').value, bookedBy: document.getElementById('at-bookedby').value, paymentReviewedBy: document.getElementById('at-reviewer').value }), null);

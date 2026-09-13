@@ -143,6 +143,12 @@ function startScheduler() {
   cron.schedule('7,22,37,52 * * * *', () =>
     require('./retainerStatusReconciler').sweepRetainerStatus().catch((err) =>
       console.error('[Scheduler] Retainer status sync failed:', err.message)));
+  // Consultation package safety net (point 08): finishes a send a restart cut
+  // short and releases a hold whose address was typed straight into Monday.
+  // No-op while CONSULT_PACKAGE_AUTO_SEND is off. Offset from the others.
+  cron.schedule('9,24,39,54 * * * *', () =>
+    require('./consultationService').sweepConsultPackages().catch((err) =>
+      console.error('[Scheduler] Consultation package sweep failed:', err.message)));
   // The board-wide "parked without payment" scan is a REPORT, not a repair, and
   // it costs a full pass of the case board — hourly is plenty, and it keeps the
   // 15-minute repair job cheap.

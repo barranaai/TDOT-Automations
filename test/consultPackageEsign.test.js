@@ -49,7 +49,7 @@ test('maybeSendConsultEsign: sends the consult-<leadId> envelope when enabled + 
   ];
   try {
     const r = await consultAgreementSvc.maybeSendConsultEsign(lead({ id: '502' }));
-    assert.deepEqual(r, { envelopeId: 'env-77' });
+    assert.equal(r.envelopeId, 'env-77'); assert.ok(!r.stampFailed, 'stamped');
     assert.equal(call.externalId, 'consult-502', 'externalId ties the envelope back to the lead');
     assert.equal(call.signer.email, 'pack@example.com');
     assert.ok(writes.some((f) => f.consultAgreementSent), 'Sent stamped the moment the envelope is out (survives a later package-email failure)');
@@ -66,7 +66,10 @@ test('maybeSendConsultEsign: a failed Sent-stamp does NOT hide the successful en
   ];
   try {
     const r = await consultAgreementSvc.maybeSendConsultEsign(lead({ id: '505' }));
-    assert.deepEqual(r, { envelopeId: 'env-78' }, 'still reports the envelope — the client HAS the signing email');
+    assert.equal(r.envelopeId, 'env-78', 'still reports the envelope — the client HAS the signing email');
+    // ...and says the record failed, so the caller can tell staff "do NOT re-send"
+    // instead of reading a missing Sent stamp as "not sent" (point 08, review round 2).
+    assert.match(r.stampFailed, /monday 500/);
   } finally { restore.forEach((x) => x()); }
 });
 

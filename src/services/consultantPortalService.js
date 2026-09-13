@@ -278,6 +278,14 @@ async function getConsultationDetail(leadId) {
         signed:   lead.consultAgreementSigned || '',
         countersign: { sentAt: cs.sentAt || '', signedAt: cs.signedAt || '' },
         warnings: consultAgreementService.buildConsultAgreementData(lead).warnings,
+        // point 08: the automatic package — 'blank-address' while it is HELD
+        // for a missing residential address (entering the address releases it).
+        held:     cs.packageHeld || '',
+        stalled:  cs.packageStalled || '',
+        emailedAt: cs.packageEmailedAt || '',
+        expired:  cs.packageExpired || '',
+        attempts: cs.packageAttempts || 0,
+        autoSend: require('./consultationService').consultPackageAutoSendEnabled(),
       };
     })(),
 
@@ -986,7 +994,26 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       try { consultAgreementService.evictCache(leadId); } catch (_) { /* best-effort */ }
       const line = (s) => escHtmlNote(String(s || '').replace(/\n/g, ', '));
       await postPortalNote(leadId, `Residential address ${before ? 'corrected' : 'added'}${who ? ` by ${escHtmlNote(who)}` : ''}: ${line(v.normalized)}${before ? ` (was: ${line(before)})` : ''}. The consultation agreement and retainer print this line; a retainer already sent and any signed copy keep the old address.`);
-      return { ok: true, message: 'Residential address saved.', residentialAddress: v.normalized };
+      // A package HELD for a blank address (point 08) is released by this very
+      // action. autoSend sends only when the hold marker is present — so an
+      // address edit on any other lead sends nothing — and gets the new address
+      // handed over, since a re-read may not show it yet.
+      let released = null;
+      if (consultAgreementService.parseCountersign(lead).packageHeld) {
+        released = await require('./consultationService')
+          .autoSendConsultationPackage(leadId, { trigger: 'address', overrides: { residentialAddress: v.normalized } })
+          .catch((err) => ({ status: 'failed', reason: err.message }));
+      }
+      const message = released && released.status === 'sent'
+        ? 'Residential address saved — the consultation package has been emailed to the client.'
+        : released && released.status === 'failed'
+        ? `Residential address saved, but the held consultation package could not be sent (${released.reason || 'unknown error'}) — use "Review & send".`
+        : released && released.status === 'disabled'
+        ? 'Residential address saved. Automatic sending is switched off — the held consultation package still needs "Review & send".'
+        : released && released.status === 'expired'
+        ? 'Residential address saved. The consultation date has already passed, so the held package was not sent — use "Review & send" if it is still needed.'
+        : 'Residential address saved.';
+      return { ok: true, message, residentialAddress: v.normalized, ...(released ? { packageReleased: released.status } : {}) };
     }
 
     // ONE-CLICK retain: set Outcome=Retain and email the agreement synchronously,
@@ -1130,11 +1157,17 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         : viaEsign
         ? 'Consultation package emailed to the client (booking details + pre-consult form + agreement + 24h disclaimer) — the agreement also went out for e-signature (Documenso); signing auto-records on this lead.'
         : 'Consultation package emailed to the client (booking details + pre-consult form + agreement + 24h disclaimer).');
-      return { ok: true, message: r.alreadySigned
+      const base = r.alreadySigned
         ? 'The consultation email has been re-sent. The agreement is already signed, so no new signature was requested.'
         : viaEsign
         ? 'The consolidated consultation email has been sent — the agreement also went out for e-signature, so signing records automatically.'
-        : 'The consolidated consultation email (details, pre-consult form & agreement) has been sent to the client.', url: r.url };
+        : 'The consolidated consultation email (details, pre-consult form & agreement) has been sent to the client.';
+      // Delivered, but Monday refused the record: say so, or the page keeps
+      // reading "not sent" and someone sends it again.
+      const message = r.stampFailed
+        ? `${base} HOWEVER the Sent date could not be saved in Monday (${r.stampFailed}) — please set "Consult Agreement Sent" to today by hand. Do not re-send.`
+        : base;
+      return { ok: true, message, url: r.url, ...(r.stampFailed ? { stampFailed: r.stampFailed } : {}) };
     }
 
     case 'consultantSignAgreement': {
