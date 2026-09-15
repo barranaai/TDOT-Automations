@@ -102,6 +102,107 @@ async function postSubTypeNeededNote(itemId, caseRef, caseType) {
   } catch (err) { console.warn(`[ChecklistService] sub-type-needed note failed for ${caseRef}: ${err.message}`); }
 }
 
+// ─── WRONG Case Sub Type ──────────────────────────────────────────────────────
+// The Case Sub Type dropdown is shared across ALL case types, so staff can pick
+// a label that belongs to another one. Live 2026-CEC-EE-080 (2026-09-14):
+// "Single Applicant" (a PGWP / Study Permit label) on a CEC case matched no
+// schema and no template variant, and the checklist silently never built — the
+// client saw an empty document list. Where a Template-Board group does exist,
+// the same mistake keeps only the variant-less rows: a PARTIAL checklist, also
+// silently. So a sub-type nobody knows is refused up front, with a staff note.
+
+// EXACTLY the seeder's own matching (caseSchemaService.keyOf, templateService's
+// sub-type filter): trim + lowercase, nothing more. A looser rule would let a
+// value through that the seeder then cannot match — the silent failure again.
+const normSub = (s) => String(s == null ? '' : s).trim().toLowerCase();
+
+/** The code catalogues' Sub Types for a case type (schema registry ∪ config), display labels. */
+function knownSubTypeLabels(caseType) {
+  const want = normSub(caseType);
+  const out = new Map();
+  try {
+    for (const r of caseSchemaService.listRegistered()) {
+      if (normSub(r.caseType) === want && normSub(r.subType)) out.set(normSub(r.subType), String(r.subType).trim());
+    }
+  } catch (_) { /* registry unavailable — config below */ }
+  try {
+    const { SUB_TYPES_BY_CASE } = require('../../config/caseTypes');
+    const key = Object.keys(SUB_TYPES_BY_CASE).find((k) => normSub(k) === want);
+    for (const l of (key && SUB_TYPES_BY_CASE[key]) || []) if (normSub(l)) out.set(normSub(l), String(l).trim());
+  } catch (_) { /* config unavailable */ }
+  return [...out.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Is this Sub Type a real variant of this case type?
+ *
+ * Refuses only when NOTHING knows it — the schema registry, the config
+ * catalogue AND the case type's Template-Board group — so a legacy
+ * template-only variant still seeds. A Template-Board read that fails for a
+ * transient reason FAILS OPEN (behaviour as before this gate): a Monday blip
+ * must never block a case that would have seeded.
+ * @returns {Promise<{ known: boolean, valid: string[] }>}
+ */
+async function checkSubTypeKnown(caseType, subType) {
+  const valid = knownSubTypeLabels(caseType);
+  const want = normSub(subType);
+  if (!want || !valid.length) return { known: true, valid };          // nothing to judge against
+  if (valid.some((l) => normSub(l) === want)) return { known: true, valid };
+  try {
+    const items = await require('./templateService').getTemplateItemsByCaseType(caseType, null);
+    if ((items || []).some((t) => normSub(t.caseSubType) === want)) return { known: true, valid };
+  } catch (err) {
+    if (!/No template group found/i.test(String(err && err.message))) {
+      console.warn(`[ChecklistService] sub-type check could not read the Template Board (${err.message}) — not blocking`);
+      return { known: true, valid };
+    }
+    // No template group for this case type: the catalogues are the whole truth.
+  }
+  return { known: false, valid };
+}
+
+/** What the note SHOWS staff: the config catalogue (today's options) when it has any —
+ *  the registry also carries retired variants (e.g. legacy OINP streams). */
+function displayedSubTypeLabels(caseType, valid) {
+  try {
+    const { SUB_TYPES_BY_CASE } = require('../../config/caseTypes');
+    const key = Object.keys(SUB_TYPES_BY_CASE).find((k) => normSub(k) === normSub(caseType));
+    const cfg = [...new Set(((key && SUB_TYPES_BY_CASE[key]) || []).map((l) => String(l).trim()).filter(Boolean))];
+    if (cfg.length) return cfg.sort((a, b) => a.localeCompare(b));
+  } catch (_) { /* config unavailable — show everything known */ }
+  return valid;
+}
+
+// The same (case type, wrong value) re-fired by several triggers stays quiet;
+// anything else gets a note. The marker is closed with ";" so one value's slug
+// can never match inside another's ("CEC" vs "CEC Single Applicant"), and only
+// the NEWEST wrong-sub-type note counts, so switching A → B → A notes again.
+const WRONG_SUBTYPE_MARKER = 'checklist-blocked-wrong-subtype';
+const subTypeSlug = (s) => normSub(s).replace(/[^a-z0-9]+/g, '-');
+async function postWrongSubTypeNote(itemId, caseRef, caseType, subType, valid) {
+  const marker = `${WRONG_SUBTYPE_MARKER}:${subTypeSlug(caseType)}:${subTypeSlug(subType)};`;
+  try {
+    const d = await mondayApi.query(
+      `query($ids:[ID!]){ items(ids:$ids){ updates(limit:30){ body } } }`, { ids: [String(itemId)] });
+    const updates = (d?.items?.[0]?.updates) || [];            // newest first
+    const latest = updates.find((u) => String(u.body || '').includes(`${WRONG_SUBTYPE_MARKER}:`));
+    if (latest && String(latest.body || '').includes(marker)) return;
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const several = /,/.test(String(subType)) && String(subType).split(',').every((part) => valid.some((l) => normSub(l) === normSub(part)));
+    await mondayApi.query(
+      `mutation($i: ID!, $body: String!){ create_update(item_id: $i, body: $body){ id } }`,
+      { i: String(itemId),
+        body: `⚠️ <b>Document checklist NOT created — the Case Sub Type doesn't match this case type.</b> ` +
+          (several
+            ? `More than one Sub Type is selected (“${esc(subType)}”) — choose exactly one. `
+            : `“${esc(subType)}” is not a Sub Type of “${esc(caseType)}” (the Sub Type list is shared across case types, so another case type's label can be picked). `) +
+          `Valid Sub Types: ${displayedSubTypeLabels(caseType, valid).map((l) => `<b>${esc(l)}</b>`).join(', ')}. ` +
+          `Set the correct <b>Case Sub Type</b> on this case. While the case is at <b>Document Collection Started</b> the checklist then builds automatically; otherwise flip <b>Re-seed Checklist → Run</b>. ` +
+          `<span style="display:none">${marker}</span>` }
+    );
+  } catch (err) { console.warn(`[ChecklistService] wrong-sub-type note failed for ${caseRef}: ${err.message}`); }
+}
+
 async function markChecklistApplied(itemId) {
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
@@ -261,6 +362,17 @@ async function _doOnDocumentCollectionStarted({ itemId, boardId }) {
     console.warn(`[ChecklistService] ${caseRef}: Case Sub Type is blank but "${caseType}" has sub-type variants — checklist NOT seeded until staff choose one`);
     await postSubTypeNeededNote(itemId, caseRef, caseType);
     return;
+  }
+
+  // WRONG sub-type gate — a label no catalogue or template knows for this case
+  // type would seed nothing, or only the variant-less rows, with no warning.
+  if (caseSubType && caseTypeHasSubTypeVariants(caseType)) {
+    const { known, valid } = await checkSubTypeKnown(caseType, caseSubType);
+    if (!known) {
+      console.warn(`[ChecklistService] ${caseRef}: Case Sub Type "${caseSubType}" is not a variant of "${caseType}" — checklist NOT seeded (valid: ${valid.join(' | ')})`);
+      await postWrongSubTypeNote(itemId, caseRef, caseType, caseSubType, valid);
+      return;
+    }
   }
 
   // ── Schema-driven seeding (gated) ──
@@ -587,4 +699,4 @@ async function resumeSeedingAfterSubType({ itemId }) {
 }
 
 module.exports = { onDocumentCollectionStarted, reseedByCaseRef, resumeSeedingAfterSubType,
-  _internal: { isSchemaDrivenEnabled, markQuestionnaireApplied, caseTypeHasSubTypeVariants, resumeDeps } };
+  _internal: { isSchemaDrivenEnabled, markQuestionnaireApplied, caseTypeHasSubTypeVariants, resumeDeps, knownSubTypeLabels, checkSubTypeKnown, displayedSubTypeLabels } };
