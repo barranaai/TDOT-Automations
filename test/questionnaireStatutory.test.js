@@ -276,7 +276,7 @@ test('guard: every served form\'s radio stat-table header slugs to the suffix th
 // ─── Wiring pins ─────────────────────────────────────────────────────────────
 
 test('pins: the review\'s positional fallback only runs when NOTHING matched; unanswered groups fire on "No"; placeholder-only files get the note', () => {
-  assert.match(SRC, /if \(keyMatched === 0 && lblMatched === 0\) \{/);
+  assert.match(SRC, /if \(matched === 0 && savedAnswers > 0\) \{/, 'positional fallback only when the restore matcher placed nothing');
   assert.match(SRC, /var target = checked \|\| noOpt \|\| radios\[0\];/);
   const routes = fs.readFileSync(require.resolve('../src/routes/htmlQuestionnaireForm.js'), 'utf8');
   assert.match(routes, /statutory Yes\/No rows were not captured by the form before 2026-09-09/);

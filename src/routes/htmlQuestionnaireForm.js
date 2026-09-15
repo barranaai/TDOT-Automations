@@ -862,6 +862,7 @@ router.post('/:caseRef/submit-all', async (req, res) => {
 
     // Save each member's form data first — all must succeed before marking submitted
     const saveErrors = [];
+    let saveTransient = false;
     for (const sub of memberSubmissions) {
       if (!Array.isArray(sub.fields)) continue;
       try {
@@ -876,7 +877,13 @@ router.post('/:caseRef/submit-all', async (req, res) => {
       } catch (saveErr) {
         console.error(`[/q] Failed to save member ${sub.formKey}:`, saveErr.message);
         saveErrors.push(sub.formKey);
+        if (saveErr && saveErr.transient) saveTransient = true;
       }
+    }
+    // A storage blip is "try again", not a hard failure — the page keeps the
+    // client's answers and the next attempt normally succeeds.
+    if (saveErrors.length && saveTransient) {
+      return res.status(503).json({ error: 'Temporarily unavailable — please try again in a few minutes.', retriable: true });
     }
     if (saveErrors.length) {
       return res.status(500).json({ error: `Failed to save data for: ${saveErrors.join(', ')}. Submission aborted.` });

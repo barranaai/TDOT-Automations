@@ -31,6 +31,32 @@ const F2  = '2. Work Permit Application Inside Canada (PGWP -SOWP- BOWP -LMIA - 
 const F1_LEGACY = '1. Express Entry - PNP - PR Application -  Questionnaire - April 2025.html';
 const F2_LEGACY = '2. Work Permit Application Inside Canada (PGWP -SOWP- BOWP -LMIA - EXTENSION  - Questionnair - April 2025.html';
 const LEGACY_FORM_FILES = { [F1]: F1_LEGACY, [F2]: F2_LEGACY };
+// Edition markers (2026-09-16, case 2026-CEC-EE-077): question labels that
+// exist on ONE edition of a refreshed form and appear NOWHERE in the other
+// (not as a label, header, cell or any other text). A saved file that carries
+// no era record — the Submit button never sent one until 2026-09-16 — can be
+// placed by its own labels: August markers and no April marker prove the
+// answers were typed on the August form. Anything else stays on April (the
+// safe default). Derived from the HTML files and pinned by
+// test/questionnaireEraRecovery.test.js — a form edit that changes these
+// labels fails that test.
+const FORM_EDITION_MARKERS = {
+  [F1]: {
+    current: [
+      'City & Country (Address with Postal Code)',
+      'City (Address with Postal Code)',
+      'Current City & Country of Residence (Address with Postal Code)',
+      "Father's Family Name at Birth",
+      "Mother's Family Name at Birth",
+      'NOC Code (if known)',
+    ],
+    legacy: ['City & Country', 'Current City & Country of Residence'],
+  },
+  [F2]: {
+    current: ['City (Address with Postal Code)', 'NOC Code (if known)'],
+    legacy: ['City'],
+  },
+};
 const F3  = '3. Work Permit Outside Canada (SOWP - LMIA )- Questionnaires - April 2025.html';
 const F4  = '4. Citizenship - Questionnaires - April 2025.html';
 const F5  = '5. Study Permit Extension - Questionnaires - April 2025.html';
@@ -229,4 +255,4 @@ function formEmbedsMembers(caseType, subType) {
 }
 
 module.exports = {
-  LEGACY_FORM_FILES, FORMS_DIR, resolveForm, resolveMemberTypes, formEmbedsMembers, MEMBER_TYPE: { SPOUSE, CHILD, SPONSOR, WORKER_SP, PARENT, SIBLING } };
+  LEGACY_FORM_FILES, FORM_EDITION_MARKERS, FORMS_DIR, resolveForm, resolveMemberTypes, formEmbedsMembers, MEMBER_TYPE: { SPOUSE, CHILD, SPONSOR, WORKER_SP, PARENT, SIBLING } };

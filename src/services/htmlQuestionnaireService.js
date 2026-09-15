@@ -115,6 +115,168 @@ const LEGACY_STRIP_JS = `
   }
 `;
 
+// ─── Restore matcher shared by BOTH injected scripts (client + review) ───────
+//
+// Decides which saved answer each box on the page receives when a form opens.
+// Until 2026-09-16 the matchers dropped EMPTY saved answers before matching,
+// so a box the client had left blank looked "not found" and fell through to a
+// label match that took the first answer carrying the same label — on forms
+// that hold several people with identical table labels ("Given Name — Row 2")
+// that was ANOTHER PERSON's answer (case 2026-CEC-EE-077: the spouse's family
+// table filled with the main applicant's family). The client's next save then
+// stored it, and clearing the box never helped: it refilled on every open.
+//
+// Rules now:
+//   • a box whose own key appears exactly once in the saved file takes THAT
+//     answer — even when it is empty (empty = leave the box untouched);
+//   • the label match only places answers whose box no longer exists under the
+//     same key (pre-2026-08-19 smeared table keys, intake pre-fill), and only
+//     from saved entries NOT already claimed by their own box;
+//   • label matching is positional INCLUDING empty entries, so a blank row 1
+//     can no longer shift row 2's answer into row 1;
+//   • label matching is by SECTION first: an answer from a section the page
+//     still has can only land in that section. Answers from sections the page
+//     does not have (intake pre-fill, a renamed heading) place by label alone.
+// rowsFromLabels: how many rows a table had, read from saved " — Row N"
+// labels in the table's section — for pre-2026-08-19 keys cut before their
+// "-r{N}-" part, which table expansion could not read (review 2026-09-16).
+// labelRowCount: the same for table #index of the page, but 0 when another
+// table in that section carries every column of this one (the rows could
+// belong to either, and a wrong guess moves answers between tables).
+// Returns an array aligned with domFields: the value to set, or null.
+// Plain string (no backticks, no ${}, no backslashes) interpolated into both
+// template literals.
+const RESTORE_MATCH_JS = `
+  function planRestoreValues(domFields, savedFields, normLabel) {
+    var norm = normLabel || function (x) { return String(x == null ? '' : x).trim().toLowerCase(); };
+    function hasText(v) { return typeof v === 'string' ? v.trim() !== '' : (v != null && String(v).trim() !== ''); }
+    function sectionOf(x) { return 's:' + String(x.section == null ? '' : x.section); }
+    var saved = Array.isArray(savedFields) ? savedFields : [];
+    var dom = Array.isArray(domFields) ? domFields : [];
+    var keyCount = {}, byKey = {};
+    for (var i = 0; i < saved.length; i++) {
+      var s = saved[i];
+      if (!s || !s.key) continue;
+      keyCount[s.key] = (keyCount[s.key] || 0) + 1;
+      byKey[s.key] = s;
+    }
+    var claimed = {}, domSections = {};
+    for (var d = 0; d < dom.length; d++) {
+      if (!dom[d]) continue;
+      domSections[sectionOf(dom[d])] = true;
+      var dk = dom[d].key;
+      if (dk && keyCount[dk] === 1) claimed[dk] = true;
+    }
+    var bySpot = {}, byLabel = {};
+    for (var j = 0; j < saved.length; j++) {
+      var e = saved[j];
+      if (!e) continue;
+      if (e.key && claimed[e.key]) continue;
+      var l = 'l:' + norm(e.label);
+      var es = sectionOf(e);
+      if (domSections[es] === true) {
+        if (!bySpot[es]) bySpot[es] = {};
+        if (!bySpot[es][l]) bySpot[es][l] = [];
+        bySpot[es][l].push(e);
+      } else {
+        if (!byLabel[l]) byLabel[l] = [];
+        byLabel[l].push(e);
+      }
+    }
+    var out = [], spotOcc = {}, labelOcc = {};
+    for (var k = 0; k < dom.length; k++) {
+      var f = dom[k];
+      if (!f) { out.push(null); continue; }
+      if (f.key && claimed[f.key]) {
+        var own = byKey[f.key];
+        out.push(hasText(own.value) ? own.value : null);
+        continue;
+      }
+      var fl = 'l:' + norm(f.label);
+      var fsec = sectionOf(f);
+      var list = null, n = 0;
+      if (bySpot[fsec] && bySpot[fsec][fl]) {
+        if (!spotOcc[fsec]) spotOcc[fsec] = {};
+        n = spotOcc[fsec][fl] || 0;
+        spotOcc[fsec][fl] = n + 1;
+        list = bySpot[fsec][fl];
+      } else {
+        n = labelOcc[fl] || 0;
+        labelOcc[fl] = n + 1;
+        list = byLabel[fl] || null;
+      }
+      var cand = list ? list[n] : null;
+      out.push(cand && hasText(cand.value) ? cand.value : null);
+    }
+    return out;
+  }
+
+  function rowsFromLabels(savedFields, section, headers, normLabel) {
+    var norm = normLabel || function (x) { return String(x == null ? '' : x).trim().toLowerCase(); };
+    var want = {}, wantCount = 0;
+    var hs = Array.isArray(headers) ? headers : [];
+    for (var h = 0; h < hs.length; h++) {
+      var hn = norm(hs[h]);
+      if (hn && want['h:' + hn] !== true) { want['h:' + hn] = true; wantCount++; }
+    }
+    if (!wantCount) return 0;
+    var list = Array.isArray(savedFields) ? savedFields : [];
+    var rows = {}, max = 0;
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (!e || String(e.section == null ? '' : e.section) !== section) continue;
+      var lbl = String(e.label == null ? '' : e.label);
+      var at = lbl.lastIndexOf(' — Row ');
+      if (at < 0) continue;
+      var numText = lbl.slice(at + 7);
+      var n = parseInt(numText, 10);
+      if (!(n > 0) || n > 200 || String(n) !== numText) continue;
+      var hk = 'h:' + norm(lbl.slice(0, at));
+      if (want[hk] !== true) continue;
+      var rk = 'r:' + n;
+      if (!rows[rk]) rows[rk] = { count: 0, seen: {} };
+      if (rows[rk].seen[hk] !== true) { rows[rk].seen[hk] = true; rows[rk].count++; }
+      if (rows[rk].count === wantCount && n > max) max = n;
+    }
+    return max;
+  }
+
+  function labelRowCount(looseRows, tables, index, normLabel) {
+    var norm = normLabel || function (x) { return String(x == null ? '' : x).trim().toLowerCase(); };
+    var me = tables && tables[index];
+    if (!me) return 0;
+    var mine = {}, mineCount = 0;
+    var mh = Array.isArray(me.headers) ? me.headers : [];
+    for (var h = 0; h < mh.length; h++) {
+      var hn = norm(mh[h]);
+      if (hn && mine['h:' + hn] !== true) { mine['h:' + hn] = true; mineCount++; }
+    }
+    if (!mineCount) return 0;
+    for (var t = 0; t < tables.length; t++) {
+      var other = tables[t];
+      if (t === index || !other || other.section !== me.section) continue;
+      var covered = 0, seen = {};
+      var oh = Array.isArray(other.headers) ? other.headers : [];
+      for (var k = 0; k < oh.length; k++) {
+        var on = norm(oh[k]);
+        if (mine['h:' + on] === true && seen['h:' + on] !== true) { seen['h:' + on] = true; covered++; }
+      }
+      if (covered === mineCount) return 0;
+    }
+    return rowsFromLabels(looseRows, me.section, mh, norm);
+  }
+
+  function tableHeadersOf(table) {
+    var out = [];
+    var ths = table.querySelectorAll('thead th');
+    for (var i = 0; i < ths.length; i++) {
+      var h = (ths[i].textContent || '').trim();
+      if (h && h.toLowerCase() !== 'remove') out.push(h);
+    }
+    return out;
+  }
+`;
+
 /**
  * Embed a JS value inside an emitted <script> block. Plain JSON.stringify is
  * NOT safe there: a "</script>" inside any string (a member label, a client's
@@ -266,13 +428,86 @@ const QUESTIONNAIRE_SUBFOLDER = 'Questionnaire';
 // Storing form data as JSON (same approach as officer flags) — simpler,
 // more reliable, and easier to debug than CSV.
 
-function toJson(fields, completionPct, formFile) {
+function toJson(fields, completionPct, formFile, setAside) {
   return JSON.stringify({ fields, completionPct: completionPct || 0, savedAt: new Date().toISOString(),
     // Which HTML form these answers were collected on — the anchor for form
     // versioning (Aug-2026 refresh): a case whose data carries (or predates)
     // the legacy file keeps being served that file, so mid-questionnaire
     // clients never see their form change underneath them.
-    ...(formFile ? { formFile } : {}) }, null, 2);
+    ...(formFile ? { formFile } : {}),
+    // Answers this file held that a later save had no box for (computeSetAside).
+    // Never restored into the form, never counted, never printed — kept so a
+    // client's answer can not silently vanish.
+    ...(Array.isArray(setAside) && setAside.length ? { setAside } : {}) }, null, 2);
+}
+
+// ─── Answers a save would silently drop are KEPT ASIDE (2026-09-16) ─────────
+//
+// A save rewrites the whole file from the boxes on the page. When the page has
+// no box for an answer the file holds — the April form served over August
+// answers (case 2026-CEC-EE-077, 2026-09-14: addresses, NOC codes, parents'
+// names at birth erased), a table row the client removed, a sub-section
+// hidden for a member type, a form edit — that answer used to vanish from the
+// file. It now moves to `setAside` in the same file.
+//
+//   • only answers whose box is ABSENT from the save move aside; a box that is
+//     present but empty is the client's own edit and is respected;
+//   • intake pre-fill (source "prefill" — ours, rebuilt from the intake
+//     archives) and the pre-2026-09-09 statutory placeholder pairs (never real
+//     answers) are not kept;
+//   • an entry leaves the list only when the same answer is back, word for
+//     word, in its own box; the same answer dropped again is not duplicated;
+//   • bounded (SET_ASIDE_CAP, oldest first) — OneDrive version history stays
+//     the backstop.
+const SET_ASIDE_CAP = 2000;
+const _asideText = (v) => (v == null ? '' : String(v)).trim();
+// Section + question label with any " — Row N" suffix removed: the same answer
+// still on the page in the same table column (a row moved up when the client
+// removed one above it) is not lost.
+const _asideSpot = (f) => `${(f && f.section) || ''}\u0001${String((f && f.label) || '').replace(/\s+\u2014\s+Row\s+\d+$/i, '').trim().toLowerCase()}`;
+const _asideId   = (f) => ((f && f.key) ? `k:${f.key}` : `l:${(f && f.section) || ''}\u0001${(f && f.label) || ''}`);
+
+function computeSetAside({ previousFields, previousSetAside, incomingFields, fromFormFile, now }) {
+  const at = now || new Date().toISOString();
+  const incoming = new Map();
+  const onPage = new Set();                          // spot + value of every answer on the page
+  for (const f of (Array.isArray(incomingFields) ? incomingFields : [])) {
+    if (!f) continue;
+    incoming.set(_asideId(f), _asideText(f.value));
+    if (_asideText(f.value)) onPage.add(`${_asideSpot(f)}\u0002${_asideText(f.value)}`);
+  }
+  const kept = [];
+  const seen = new Set();
+  for (const e of (Array.isArray(previousSetAside) ? previousSetAside : [])) {
+    if (!e || typeof e !== 'object' || !_asideText(e.value)) continue;
+    const id = _asideId(e);
+    if (incoming.has(id) && incoming.get(id) === _asideText(e.value)) continue;   // the answer is back in its box
+    if (onPage.has(`${_asideSpot(e)}\u0002${_asideText(e.value)}`)) continue;   // …or back in the same column
+    const sig = `${id}\u0002${_asideText(e.value)}`;
+    if (seen.has(sig)) continue;                     // carried twice (e.g. a restore merged two lists)
+    seen.add(sig);
+    kept.push(e);
+  }
+  let added = 0;
+  for (const f of stripLegacyStatutoryPairs(Array.isArray(previousFields) ? previousFields : []).fields) {
+    if (!f || typeof f !== 'object' || f.source === 'prefill') continue;
+    if (!_asideText(f.value)) continue;
+    const id = _asideId(f);
+    if (incoming.has(id)) continue;                  // its box is on the page — kept, edited or cleared by the client
+    if (onPage.has(`${_asideSpot(f)}\u0002${_asideText(f.value)}`)) continue;   // still on the page, in the same column
+    const sig = `${id}\u0002${_asideText(f.value)}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    kept.push({ section: f.section || '', label: f.label || '', key: f.key || '', value: f.value, setAsideAt: at,
+      ...(fromFormFile ? { fromFormFile } : {}) });
+    added++;
+  }
+  let setAside = kept;
+  if (setAside.length > SET_ASIDE_CAP) {
+    console.warn(`[HtmlQ] kept-aside list over ${SET_ASIDE_CAP} entries — dropping the ${setAside.length - SET_ASIDE_CAP} oldest (version history still holds them)`);
+    setAside = setAside.slice(setAside.length - SET_ASIDE_CAP);
+  }
+  return { setAside, added };
 }
 
 /**
@@ -493,6 +728,39 @@ async function versionFormFilesForCase({ clientName, caseRef, formFiles }) {
   }
 }
 
+/**
+ * Which edition of a refreshed form a saved file was typed on, judged by its
+ * own labels (config FORM_EDITION_MARKERS — labels that exist on one edition
+ * and appear nowhere in the other). 'current' only when August markers are
+ * present and no April marker is; 'legacy' for the reverse; else 'unknown'.
+ * Table cells are matched without their " — Row N" suffix.
+ */
+function _editionLabel(label) {
+  return String(label == null ? '' : label)
+    .replace(/[\u2018\u2019\u02BC]/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/ \u2014 Row \d+$/i, '')
+    .toLowerCase();
+}
+function editionFromLabels(fields, currentFile) {
+  let MARKERS;
+  try { ({ FORM_EDITION_MARKERS: MARKERS } = require('../../config/questionnaireFormMap')); } catch (_) { return 'unknown'; }
+  const m = MARKERS && MARKERS[currentFile];
+  if (!m) return 'unknown';
+  const cur = new Set((m.current || []).map(_editionLabel));
+  const leg = new Set((m.legacy || []).map(_editionLabel));
+  let hasCur = false, hasLeg = false;
+  for (const f of (Array.isArray(fields) ? fields : [])) {
+    const l = _editionLabel(f && f.label);
+    if (cur.has(l)) hasCur = true;
+    if (leg.has(l)) hasLeg = true;
+  }
+  if (hasCur && !hasLeg) return 'current';
+  if (hasLeg && !hasCur) return 'legacy';
+  return 'unknown';
+}
+
 async function _resolveEra({ clientName, caseRef, formFiles, LEGACY, cacheKey }) {
   const versionedCurrent = [formFiles.primary, formFiles.additional].filter((f) => f && LEGACY[f]);
   const legacyOf = (f) => LEGACY[f];
@@ -538,19 +806,54 @@ async function _resolveEra({ clientName, caseRef, formFiles, LEGACY, cacheKey })
   // failed slot can never un-pin it), while a failure with NO legacy signal
   // found still THROWS — the unread slot might hold the only April answers,
   // and guessing "current" is the one unrecoverable outcome.
-  let legacySignal = false;
+  // Evidence is gathered per refreshed form file across ALL its slots, then
+  // decided (review 2026-09-16): a family member's form can hide the very
+  // sections that carry the edition markers (a Dependent Child on F2 keeps no
+  // education/employment table), so a slot whose labels say nothing must not
+  // pin April when another slot's CLIENT answers prove August.
+  //   legacy  — an explicit April record, or unrecorded client answers whose
+  //             labels say April (or a slot with no form of its own);
+  //   proof   — client answers under an August record, or unrecorded client
+  //             answers whose labels say August;
+  //   unknown — unrecorded client answers whose labels say nothing.
+  // April when legacy, or unknown without proof. Asymmetric harm still holds:
+  // any legacy evidence wins, and a failed read with no April verdict throws.
   let firstFailure = null;
+  const evidence = new Map();
+  const evidenceFor = (file) => {
+    if (!evidence.has(file)) evidence.set(file, { legacy: false, proof: false, unknown: false });
+    return evidence.get(file);
+  };
   const settled = await Promise.allSettled(slots.map((slot) => loadFormMeta({ clientName, caseRef, formKey: slot })));
-  for (const s of settled) {
+  for (let i = 0; i < settled.length; i++) {
+    const s = settled[i];
+    // The form this slot is saved against. A slot that belongs to a form with
+    // NO April/August editions — the Express Entry profile form (F6) that the
+    // PNP / Federal PR / CEC-profile case types fill alongside F1 — says
+    // nothing about F1's era: until 2026-09-16 its answers pinned F1 to April,
+    // so F1 answers typed on the August form were wiped by the next save.
+    const slotFile = formFileForKey(formFiles, slots[i]);
+    if (slotFile && !LEGACY[slotFile]) continue;
     if (s.status === 'rejected') { if (!firstFailure) firstFailure = s.reason; continue; }
     const meta = s.value;
-    if (meta.formFile && legacySet.has(meta.formFile)) { legacySignal = true; break; }
-    if (meta.formFile && currentSet.has(meta.formFile)) continue;   // explicitly Aug-era slot — its answers are Aug-keyed
+    const ev = evidenceFor(slotFile || '');
+    if (meta.formFile && legacySet.has(meta.formFile)) { ev.legacy = true; continue; }
     // Client answers only — prefill-seeded values are OURS, present on brand-new
-    // cases, and must not pin an untouched case to the legacy era.
-    if (meta.fields.some((f) => f && f.value && String(f.value).trim() && f.source !== 'prefill')) {
-      legacySignal = true; break;
-    }
+    // cases, and must not pin an untouched case to the legacy era (nor prove one).
+    const answered = meta.fields.some((f) => f && f.value && String(f.value).trim() && f.source !== 'prefill');
+    if (meta.formFile && currentSet.has(meta.formFile)) { if (answered) ev.proof = true; continue; }
+    if (!answered) continue;
+    // Unrecorded answers (Submit sent no era before 2026-09-16; anything saved
+    // before the refresh) are placed by their own labels. A slot with no form of
+    // its own (the old standalone 'additional' key) keeps the conservative rule.
+    const verdict = slotFile ? editionFromLabels(meta.fields, slotFile) : 'legacy';
+    if (verdict === 'current') ev.proof = true;
+    else if (verdict === 'legacy') ev.legacy = true;
+    else ev.unknown = true;
+  }
+  let legacySignal = false;
+  for (const ev of evidence.values()) {
+    if (ev.legacy || (ev.unknown && !ev.proof)) legacySignal = true;
   }
   if (!legacySignal && firstFailure) throw firstFailure;
   const result = legacySignal ? mapToLegacy() : formFiles;
@@ -722,24 +1025,151 @@ async function loadFormData({ clientName, caseRef, formKey }) {
  *   fields: [{ section, label, key, value }]
  */
 async function saveFormData({ clientName, caseRef, itemId, formKey, fields, completionPct, formFile }) {
-  const content  = toJson(fields, completionPct, formFile);
-  const buffer   = Buffer.from(content, 'utf8');
   const filename = dataFilename(caseRef, formKey);
+  // One save per file at a time (in this process): each save reads the file
+  // it replaces, so two overlapping saves must not both build on the same copy.
+  return _serialiseSave(`${caseRef}::${formKey}`, async () => {
+    const previous = await _readFileForSave({ clientName, caseRef, formKey });
 
-  // Ensure the client folder exists (safe to call even if it was already created)
-  await oneDrive.ensureClientFolder({ clientName, caseRef });
+    // Era record: the validated echo wins. An ABSENT echo — a page opened
+    // before 2026-09-16, when Submit sent none — keeps the file's existing
+    // record instead of erasing it: an erased record reopened 2026-CEC-EE-077
+    // on the April form and the next save wiped its August-only answers.
+    const recorded = formFile || _recordWithoutEcho(previous && previous.formFile, fields);
+    const { setAside, added } = previous
+      ? computeSetAside({ previousFields: previous.fields, previousSetAside: previous.setAside,
+          incomingFields: fields, fromFormFile: previous.formFile })
+      : { setAside: [], added: 0 };
 
-  await oneDrive.uploadFile({
-    clientName,
-    caseRef,
-    category: QUESTIONNAIRE_SUBFOLDER,
-    filename,
-    buffer,
-    mimeType: 'application/json',
+    const buffer = Buffer.from(toJson(fields, completionPct, recorded, setAside), 'utf8');
+
+    // Ensure the client folder exists (safe to call even if it was already created)
+    await oneDrive.ensureClientFolder({ clientName, caseRef });
+
+    await oneDrive.uploadFile({
+      clientName,
+      caseRef,
+      category: QUESTIONNAIRE_SUBFOLDER,
+      filename,
+      buffer,
+      mimeType: 'application/json',
+    });
+
+    const filled = fields.filter(f => f.value && f.value.trim()).length;
+    console.log(`[HtmlQ] Saved ${fields.length} fields (${filled} non-empty) as JSON for ${caseRef}/${formKey} (${completionPct}%)`);
+    if (added) console.warn(`[HtmlQ] ${caseRef}/${formKey}: kept ${added} answer(s) aside that this save had no box for (${setAside.length} held aside in total)`);
   });
+}
 
-  const filled = fields.filter(f => f.value && f.value.trim()).length;
-  console.log(`[HtmlQ] Saved ${fields.length} fields (${filled} non-empty) as JSON for ${caseRef}/${formKey} (${completionPct}%)`);
+/**
+ * The file an admin RESTORE writes (src/server.js). Restore used to write the
+ * old version byte for byte, discarding the current kept-aside list and every
+ * answer typed since that the old version has no box for. Now: the version's
+ * fields are restored exactly, and the kept-aside list carries forward the
+ * current file's list, the version's own list, and any current answer whose
+ * box the restored version lacks. With nothing to keep, the version is written
+ * byte for byte, as before.
+ * @returns {{ text: string, rewritten: boolean, keptAside: number }}
+ * @throws  err.badVersion when the version is not JSON
+ */
+function buildRestoreContent({ versionText, currentText, now }) {
+  const parse = (t) => { try { return JSON.parse(t); } catch (_) { return undefined; } };
+  const ver = parse(versionText);
+  if (ver === undefined || ver === null || (typeof ver !== 'object')) {
+    const e = new Error('version content is not valid JSON'); e.badVersion = true; throw e;
+  }
+  const verObj = Array.isArray(ver) ? { fields: ver } : ver;
+  const cur = currentText == null ? undefined : parse(currentText);
+  const curObj = Array.isArray(cur) ? { fields: cur } : ((cur && typeof cur === 'object') ? cur : null);
+  const { setAside } = computeSetAside({
+    previousFields:   curObj && Array.isArray(curObj.fields) ? curObj.fields : [],
+    previousSetAside: [
+      ...(curObj && Array.isArray(curObj.setAside) ? curObj.setAside : []),
+      ...(Array.isArray(verObj.setAside) ? verObj.setAside : []),
+    ],
+    incomingFields: Array.isArray(verObj.fields) ? verObj.fields : [],
+    fromFormFile:   curObj ? String(curObj.formFile || '') : '',
+    now,
+  });
+  if (!setAside.length && !Array.isArray(verObj.setAside)) return { text: versionText, rewritten: false, keptAside: 0 };
+  const { setAside: _old, ...rest } = verObj;
+  const out = setAside.length ? { ...rest, setAside } : rest;
+  return { text: JSON.stringify(out, null, 2), rewritten: true, keptAside: setAside.length };
+}
+
+/**
+ * The era record for a save whose page sent none (an engine older than
+ * 2026-09-16). The existing record is kept — unless the answers being saved
+ * prove the other edition of the same refreshed form by their own labels
+ * (a pre-deploy April tab submitting over a file that was since recorded
+ * August, review 2026-09-16): then the record follows the labels, so the next
+ * open serves the edition those answers were typed on. An unclear verdict or a
+ * form without editions keeps the existing record.
+ */
+function _recordWithoutEcho(previousFormFile, incomingFields) {
+  const prev = String(previousFormFile || '');
+  if (!prev) return '';
+  let LEGACY;
+  try { ({ LEGACY_FORM_FILES: LEGACY } = require('../../config/questionnaireFormMap')); } catch (_) { return prev; }
+  const current = LEGACY[prev] ? prev : Object.keys(LEGACY).find((cur) => LEGACY[cur] === prev);
+  if (!current) return prev;
+  const verdict = editionFromLabels(incomingFields, current);
+  if (verdict === 'current') return current;
+  if (verdict === 'legacy') return LEGACY[current];
+  return prev;
+}
+
+/**
+ * Read the file a save is about to replace. A storage failure FAILS the save
+ * (transient → the route answers 503 and the client engine keeps its changes
+ * and retries): writing blind would drop the kept-aside answers and the era
+ * record. An absent file → null. An unreadable file does not block the client
+ * — version history holds the old copy.
+ */
+async function _readFileForSave({ clientName, caseRef, formKey }) {
+  let buf;
+  try {
+    buf = await readQFileWithRetry({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER, filename: dataFilename(caseRef, formKey) });
+  } catch (err) {
+    const e = new Error(`questionnaire storage temporarily unavailable (${err.message})`);
+    e.transient = true;
+    throw e;
+  }
+  if (!buf) return null;
+  let obj = null;
+  try { obj = JSON.parse(buf.toString('utf8')); } catch (_) { obj = null; }
+  if (Array.isArray(obj)) return { fields: obj, formFile: '', setAside: [] };
+  if (obj && typeof obj === 'object') {
+    return { fields: Array.isArray(obj.fields) ? obj.fields : [], formFile: String(obj.formFile || ''),
+      setAside: Array.isArray(obj.setAside) ? obj.setAside : [] };
+  }
+  console.warn(`[HtmlQ] ${caseRef}/${formKey}: the saved file is not readable JSON — saving without carrying answers aside (version history keeps the old copy)`);
+  return null;
+}
+
+// A save waits for the previous save to the same file — but only so long:
+// storage requests carry no timeout, and one that never answers must not hold
+// every later save (autosave, Save, Submit) hostage until the process restarts
+// (review 2026-09-16). After the wait the save proceeds, as saves did before
+// this queue existed.
+const _saveChains = new Map();
+function _serialiseSave(id, fn) {
+  const prior = _saveChains.get(id);
+  const waitMs = Number(process.env.Q_SAVE_QUEUE_WAIT_MS) || 45_000;
+  let timer = null;
+  const gate = prior
+    ? Promise.race([prior, new Promise((resolve) => {
+        timer = setTimeout(() => {
+          console.warn(`[HtmlQ] ${id}: the previous save has not finished after ${waitMs} ms — saving anyway`);
+          resolve();
+        }, waitMs);
+      })]).then(() => { if (timer) clearTimeout(timer); })
+    : Promise.resolve();
+  const run = gate.then(fn);
+  const tail = run.then(() => {}, () => {});
+  _saveChains.set(id, tail);
+  tail.then(() => { if (_saveChains.get(id) === tail) _saveChains.delete(id); });
+  return run;
 }
 
 // ─── Progress → Monday (on every save) ───────────────────────────────────────
@@ -2280,6 +2710,7 @@ ${hasAdditionalForm ? `
 
   ${STATIC_TABLE_COLLECTOR_JS}
   ${LEGACY_STRIP_JS}
+  ${RESTORE_MATCH_JS}
 
   function collectFields() {
     if (!_cacheStale && _fieldCache) return _fieldCache;
@@ -2709,12 +3140,15 @@ ${hasAdditionalForm ? `
             total:           mProg.total,
             memberLabel:     memLabels[mk] || mk,
             missingSections: collectMissingFieldsForMember(mk).sections,
+            /* The era this page was served — without it a submitted file lost
+               its era record and reopened on the April form (2026-CEC-EE-077). */
+            formFile:        FORM_FILE,
           });
         }
         var res = await fetch('/q/' + encodeURIComponent(CASE_REF) + '/submit-all', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ token: TOKEN, members: memberSubs }),
+          body:    JSON.stringify({ token: TOKEN, members: memberSubs, formFile: FORM_FILE }),
         });
         if (!res.ok) {
           /* Surface the server's own message (e.g. the 503 'temporarily
@@ -2736,6 +3170,7 @@ ${hasAdditionalForm ? `
             completionPct:   p.pct,
             memberLabel:     'Primary Applicant',
             missingSections: sMissing.sections,
+            formFile:        FORM_FILE,
           }),
         });
         if (!res.ok) {
@@ -3041,9 +3476,11 @@ ${hasAdditionalForm ? `
      * a multi-dash table id (e.g. "ma-flagged") is captured correctly up to the
      * "-r{N}-" boundary. */
     var tableMaxRow = {};
+    var parsedSlug  = [];
     for (var i = 0; i < savedFields.length; i++) {
       var key   = savedFields[i].key;
       var match = key.match(/-tbl-(.+?)-r(\\d+)-/);
+      parsedSlug.push(match ? match[1] : null);
       if (match) {
         var tblSlug = match[1];
         var rowNum  = parseInt(match[2], 10);
@@ -3055,10 +3492,28 @@ ${hasAdditionalForm ? `
 
     var root = scopeEl || document;
     var tables = root.querySelectorAll('.dynamic-table');
+    /* Saved rows whose key names none of these tables (pre-2026-08-19 keys could
+       be cut before their "-r{N}-" part) still tell how many rows a table had:
+       rowsFromLabels reads them by section + column headers. Without this those
+       rows never get a box and their answers stay hidden (review 2026-09-16). */
+    var domSlugs = {};
+    for (var tsi = 0; tsi < tables.length; tsi++) domSlugs['t:' + slugify(tables[tsi].id || ('table-' + tsi))] = true;
+    var looseRows = [];
+    for (var lri = 0; lri < savedFields.length; lri++) {
+      if (!parsedSlug[lri] || domSlugs['t:' + parsedSlug[lri]] !== true) looseRows.push(savedFields[lri]);
+    }
+    var tableInfo = [];
+    for (var tii = 0; tii < tables.length; tii++) {
+      tableInfo.push({ section: getSectionContext(tables[tii]) + ' › Table', headers: tableHeadersOf(tables[tii]) });
+    }
     for (var ti = 0; ti < tables.length; ti++) {
       var table   = tables[ti];
       var tblSlug = slugify(table.id || ('table-' + ti));
       var maxRow  = tableMaxRow[tblSlug];
+      /* The larger of the key count and the label count: old keys can parse for
+         rows 1-9 yet be cut before "-r10-", hiding rows from 10 on. */
+      var labelMax = labelRowCount(looseRows, tableInfo, ti);
+      if (labelMax > (maxRow || 0)) maxRow = labelMax;
       if (!maxRow) continue;
 
       var currentRows = table.querySelectorAll('tbody tr').length;
@@ -3201,25 +3656,6 @@ ${hasAdditionalForm ? `
        labels use a straight apostrophe, but some forms author them with a
        curly one (&rsquo;), so "Spouse's Date of Birth" would otherwise miss. */
     function normLbl(s){ return (s || '').replace(/[‘’ʼ]/g, "'").trim().toLowerCase(); }
-    /* AMBIGUOUS KEYS (data saved before the 2026-08-19 table-key fix): when one
-       key covers several fields, keying off it writes ONE value into all of
-       them — the smear staff reported on 2026-ISS-010. Such keys are dropped
-       from the key map so those fields fall through to the label match below,
-       where the stored labels ("From (DD/MM/YYYY) — Row 1") are still exact. */
-    var keyCount = {};
-    for (var ki = 0; ki < sourceFields.length; ki++) {
-      var kk = sourceFields[ki] && sourceFields[ki].key;
-      if (kk) keyCount[kk] = (keyCount[kk] || 0) + 1;
-    }
-    var byKey = {}, byLabel = {};
-    for (var i = 0; i < sourceFields.length; i++) {
-      var sf = sourceFields[i];
-      if (!sf.value || !sf.value.trim()) continue;
-      if (keyCount[sf.key] === 1) byKey[sf.key] = sf.value;
-      var lbl = normLbl(sf.label);
-      if (!byLabel[lbl]) byLabel[lbl] = [];
-      byLabel[lbl].push(sf.value);
-    }
 
     /* Get fields within this member section only */
     var fields = collectFields();
@@ -3227,16 +3663,16 @@ ${hasAdditionalForm ? `
       ? fields.filter(function(f) { return getMemberKeyForEl(f.el) === memberKey; })
       : fields;
 
-    var matched = 0, lblOcc = {};
+    /* Which saved answer each box receives (RESTORE_MATCH_JS): a box whose own
+       key is in the saved file takes THAT answer even when it is empty, so a
+       blank box can never be filled with another person's answer; ambiguous
+       pre-2026-08-19 keys and intake pre-fill still place by label. */
+    var planned = planRestoreValues(memberFields, sourceFields, normLbl);
+
+    var matched = 0;
     for (var fi = 0; fi < memberFields.length; fi++) {
       var f   = memberFields[fi];
-      var val = byKey[f.key];
-      if (!val) {
-        var fLbl = normLbl(f.label);
-        var occ  = lblOcc[fLbl] || 0;
-        lblOcc[fLbl] = occ + 1;
-        if (byLabel[fLbl] && byLabel[fLbl][occ]) val = byLabel[fLbl][occ];
-      }
+      var val = planned[fi];
       if (val) {
         setFieldValue(f, val);
         matched++;
@@ -4470,6 +4906,7 @@ input[disabled], select[disabled], textarea[disabled] {
   }
 
   ${STATIC_TABLE_COLLECTOR_JS}
+  ${RESTORE_MATCH_JS}
 
   function collectFields() {
     var fields = [], seen = [], keyMap = {};
@@ -4716,9 +5153,11 @@ input[disabled], select[disabled], textarea[disabled] {
    */
   function expandTableRows(savedFields, scopeEl) {
     var tableMaxRow = {};
+    var parsedSlug = [];
     for (var i = 0; i < savedFields.length; i++) {
       var key = savedFields[i].key;
       var match = key.match(/-tbl-(.+?)-r(\\d+)-/);
+      parsedSlug.push(match ? match[1] : null);
       if (match) {
         var tblSlug = match[1];
         var rowNum = parseInt(match[2], 10);
@@ -4729,6 +5168,22 @@ input[disabled], select[disabled], textarea[disabled] {
     }
     var root = scopeEl || document;
     var tables = root.querySelectorAll('.dynamic-table');
+    /* Rows whose key names none of these tables: see the client engine —
+       rowsFromLabels reads them by section + column headers. */
+    var domSlugs = {};
+    for (var tsi = 0; tsi < tables.length; tsi++) {
+      var dsl = slugify(tables[tsi].id || ('table-' + tsi));
+      domSlugs['t:' + dsl] = true;
+      domSlugs['t:' + dsl.replace(/^[a-z0-9]+-/, '')] = true;
+    }
+    var looseRows = [];
+    for (var lri = 0; lri < savedFields.length; lri++) {
+      if (!parsedSlug[lri] || domSlugs['t:' + parsedSlug[lri]] !== true) looseRows.push(savedFields[lri]);
+    }
+    var tableInfo = [];
+    for (var tii = 0; tii < tables.length; tii++) {
+      tableInfo.push({ section: getSectionContext(tables[tii]) + ' › Table', headers: tableHeadersOf(tables[tii]) });
+    }
     for (var ti = 0; ti < tables.length; ti++) {
       var table = tables[ti];
       var tblSlug = slugify(table.id || ('table-' + ti));
@@ -4740,6 +5195,10 @@ input[disabled], select[disabled], textarea[disabled] {
         var stripped = tblSlug.replace(/^[a-z0-9]+-/, '');
         if (stripped !== tblSlug) maxRow = tableMaxRow[stripped];
       }
+      /* The larger of the key count and the label count: old keys can parse for
+         rows 1-9 yet be cut before "-r10-", hiding rows from 10 on. */
+      var labelMax = labelRowCount(looseRows, tableInfo, ti);
+      if (labelMax > (maxRow || 0)) maxRow = labelMax;
       if (!maxRow) continue;
       var currentRows = table.querySelectorAll('tbody tr').length;
       var needed = maxRow - currentRows;
@@ -4787,83 +5246,40 @@ input[disabled], select[disabled], textarea[disabled] {
       console.log('[TDOT Review] field[' + fi + ']: key=' + fields[fi].key + ' label=' + fields[fi].label + ' tag=' + fields[fi].el.tagName);
     }
 
-    /* ── Strategy 1: key-based match ── */
-    /* Ambiguous keys (pre-2026-08-19 table saves) are EXCLUDED: one key over
-       several fields would write a single value into all of them. Those fall
-       to the label pass below, where the stored labels are still exact. */
-    var keyCount = {};
-    for (var kc = 0; kc < SAVED_DATA.length; kc++) {
-      var ke = SAVED_DATA[kc];
-      if (ke && ke.key) keyCount[ke.key] = (keyCount[ke.key] || 0) + 1;
-    }
-    var byKey = {};
-    for (var i = 0; i < SAVED_DATA.length; i++) {
-      var entry = SAVED_DATA[i];
-      if (entry && entry.key && entry.value !== undefined && keyCount[entry.key] === 1) byKey[entry.key] = entry.value;
-    }
-    var keyMatched = 0;
+    /* ── Strategies 1 + 2: the shared restore matcher (RESTORE_MATCH_JS) ──
+       A box whose own key is in the file exactly once shows THAT answer — even
+       an empty one; ambiguous pre-2026-08-19 keys and renamed boxes place by
+       section + label, positionally with blanks counted. Until 2026-09-16 this
+       page matched labels across EVERY saved answer, so staff reviewing a
+       one-page family form (F1) saw other people's answers in boxes the client
+       had left blank. */
+    var planned = planRestoreValues(fields, SAVED_DATA, function (x) { return (x || '').trim().toLowerCase(); });
+    var matched = 0;
     for (var j = 0; j < fields.length; j++) {
-      var v = byKey[fields[j].key];
-      if (v !== undefined && v !== '') { setValue(fields[j].el, v); keyMatched++; }
+      if (planned[j]) { setValue(fields[j].el, planned[j]); matched++; }
     }
-    console.log('[TDOT Review] Key-matched:', keyMatched);
+    console.log('[TDOT Review] Restore-matched:', matched);
 
-    /* ── Strategy 2: label+occurrence match ── */
-    /* Runs whenever anything is still unmatched — with ambiguous table keys
-       excluded above, those fields are matched here rather than smeared. */
-    if (keyMatched < fields.length) {
-      if (keyMatched === 0) console.warn('[TDOT Review] Key match 0 — trying label+occurrence');
-      var byLabel = {};
-      for (var li = 0; li < SAVED_DATA.length; li++) {
-        var ld = SAVED_DATA[li];
-        if (!ld) continue;
-        var lbl = (ld.label || '').trim().toLowerCase();
-        if (!byLabel[lbl]) byLabel[lbl] = [];
-        byLabel[lbl].push(ld.value);
-      }
-      var lblOcc = {};
-      var lblMatched = 0;
-      for (var lj = 0; lj < fields.length; lj++) {
-        var fld = fields[lj];
-        var fkey = (fld.label || '').trim().toLowerCase();
-        var occ  = lblOcc[fkey] || 0;
-        lblOcc[fkey] = occ + 1;
-        /* NEVER overwrite a field the key pass already filled — this pass now
-           runs alongside it (for ambiguous-key fields), so it may only FILL
-           gaps, never correct a good value with a positional guess. */
-        var already = fld.el && ((fld.el.type === 'checkbox' || fld.el.type === 'radio') ? fld.el.checked : String(fld.el.value || '').trim() !== '');
-        if (!already && byLabel[fkey] && byLabel[fkey][occ] !== undefined && byLabel[fkey][occ] !== '') {
-          setValue(fld.el, byLabel[fkey][occ]);
-          lblMatched++;
+    /* ── Strategy 3: positional match as LAST resort ── only when the matcher
+       placed nothing although the file holds answers (keys AND labels from a
+       different form). Once anything matched, saved order and page order can
+       legitimately differ, and a positional pass would misplace answers. */
+    var savedAnswers = 0;
+    for (var sa = 0; sa < SAVED_DATA.length; sa++) {
+      if (SAVED_DATA[sa] && SAVED_DATA[sa].value !== undefined && SAVED_DATA[sa].value !== '') savedAnswers++;
+    }
+    if (matched === 0 && savedAnswers > 0) {
+      console.warn('[TDOT Review] Restore match 0 — using positional fallback');
+      var limit = Math.min(fields.length, SAVED_DATA.length);
+      var posMatched = 0;
+      for (var k = 0; k < limit; k++) {
+        var pd = SAVED_DATA[k];
+        if (pd && pd.value !== undefined && pd.value !== '') {
+          setValue(fields[k].el, pd.value);
+          posMatched++;
         }
       }
-      console.log('[TDOT Review] Label-matched:', lblMatched);
-
-      /* ── Strategy 3: positional match as LAST resort ── only when NOTHING
-         matched by key or label. Once keys have matched, saved order and DOM
-         order can legitimately differ (a field collected today that an older
-         file never held, e.g. the statutory explanation box), and a positional
-         pass would overwrite good values with their neighbours'. */
-      if (keyMatched === 0 && lblMatched === 0) {
-        console.warn('[TDOT Review] Key + label match 0 — using positional fallback');
-        var limit = Math.min(fields.length, SAVED_DATA.length);
-        var posMatched = 0;
-        for (var k = 0; k < limit; k++) {
-          var pd = SAVED_DATA[k];
-          if (pd && pd.value !== undefined && pd.value !== '') {
-            setValue(fields[k].el, pd.value);
-            posMatched++;
-          }
-        }
-        console.log('[TDOT Review] Positional-matched:', posMatched);
-
-        /* Verify first 3 assignments stuck */
-        for (var vi = 0; vi < Math.min(limit, 10); vi++) {
-          if (SAVED_DATA[vi] && SAVED_DATA[vi].value !== '') {
-            console.log('[TDOT Review] pos[' + vi + '] expected=' + JSON.stringify(SAVED_DATA[vi].value) + ' got=' + JSON.stringify(fields[vi].el.value));
-          }
-        }
-      }
+      console.log('[TDOT Review] Positional-matched:', posMatched);
     }
   }
 
@@ -5463,28 +5879,14 @@ input[disabled], select[disabled], textarea[disabled] {
         return getMemberKeyForEl(f.el) === m.key;
       });
 
-      /* Build lookup maps from member's saved data */
-      var byKey = {}, byLabel = {};
-      for (var i = 0; i < m.fields.length; i++) {
-        var sf = m.fields[i];
-        if (!sf.value || !sf.value.trim()) continue;
-        byKey[sf.key] = sf.value;
-        var lbl = (sf.label || '').trim().toLowerCase();
-        if (!byLabel[lbl]) byLabel[lbl] = [];
-        byLabel[lbl].push(sf.value);
-      }
-
-      var matched = 0, lblOcc = {};
+      /* Which saved answer each box shows (RESTORE_MATCH_JS) — the same rules as
+         the client form, so staff never see an answer in a box the client left
+         empty, and an ambiguous (pre-2026-08-19) key never smears one value. */
+      var planned = planRestoreValues(memberFields, m.fields, function (x) { return (x || '').trim().toLowerCase(); });
+      var matched = 0;
       for (var fi = 0; fi < memberFields.length; fi++) {
-        var f = memberFields[fi];
-        var val = byKey[f.key];
-        if (!val) {
-          var fLbl = (f.label || '').trim().toLowerCase();
-          var occ = lblOcc[fLbl] || 0;
-          lblOcc[fLbl] = occ + 1;
-          if (byLabel[fLbl] && byLabel[fLbl][occ]) val = byLabel[fLbl][occ];
-        }
-        if (val) { setValue(f.el, val); matched++; }
+        var val = planned[fi];
+        if (val) { setValue(memberFields[fi].el, val); matched++; }
       }
       console.log('[TDOT Review] Pre-filled ' + m.key + ': ' + matched + ' fields');
 
@@ -5656,6 +6058,11 @@ module.exports = {
   // Engine helper sources (tests evaluate them in a fake DOM)
   STATIC_TABLE_COLLECTOR_JS,
   LEGACY_STRIP_JS,
+  RESTORE_MATCH_JS,
+  computeSetAside,
+  buildRestoreContent,
+  editionFromLabels,
+  SET_ASIDE_CAP,
   seedQuestionnairePrefill,
   readIntakeSubfolderArchive,
   lookupCase,

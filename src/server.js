@@ -843,7 +843,12 @@ app.get('/admin/questionnaire/:caseRef/versions/:versionId/content', async (req,
     let parsed = null;
     try { parsed = JSON.parse(buf.toString('utf8')); } catch (_) { return res.status(422).json({ error: 'version content is not valid JSON' }); }
     const fields = Array.isArray(parsed) ? parsed : (parsed.fields || []);
-    res.json({ caseRef, formKey, versionId, savedAt: (parsed && parsed.savedAt) || null, fields });
+    // The recorded form edition and any kept-aside answers (answers a later
+    // save had no box for) — staff need both to diagnose and repair a file.
+    res.json({ caseRef, formKey, versionId, savedAt: (parsed && parsed.savedAt) || null,
+      formFile: (parsed && !Array.isArray(parsed) && parsed.formFile) || null,
+      setAside: (parsed && !Array.isArray(parsed) && Array.isArray(parsed.setAside)) ? parsed.setAside : [],
+      fields });
   } catch (err) {
     console.error('[QVersions] content read failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -1042,13 +1047,24 @@ app.post('/admin/questionnaire/:caseRef/restore', express.json(), async (req, re
     try { parsed = JSON.parse(buf.toString('utf8')); } catch (_) { return res.status(422).json({ error: 'version content is not valid JSON' }); }
     const fields = Array.isArray(parsed) ? parsed : (parsed.fields || []);
     const filled = fields.filter((f) => f && String(f.value || '').trim()).length;
-    if (dryRun) return res.json({ dryRun: true, caseRef, formKey, versionId, wouldRestore: { fields: fields.length, filled } });
+    // Carry the current file's kept-aside answers — and any current answer the
+    // old version has no box for — into the restored file (buildRestoreContent).
+    // If the current file cannot be read, restore nothing rather than drop them.
+    let currentText = null;
+    try {
+      const curBuf = await oneDrive.readFile({ clientName, caseRef, subfolder: 'Questionnaire', filename });
+      currentText = curBuf ? curBuf.toString('utf8') : null;
+    } catch (readErr) {
+      return res.status(503).json({ error: `the current file could not be read, so nothing was restored (${readErr.message})`, retriable: true });
+    }
+    const plan = svc.buildRestoreContent({ versionText: buf.toString('utf8'), currentText });
+    if (dryRun) return res.json({ dryRun: true, caseRef, formKey, versionId, wouldRestore: { fields: fields.length, filled, keptAside: plan.keptAside } });
     await oneDrive.uploadFile({
       clientName, caseRef, category: 'Questionnaire', filename,
-      buffer: buf, mimeType: 'application/json',
+      buffer: plan.rewritten ? Buffer.from(plan.text, 'utf8') : buf, mimeType: 'application/json',
     });
-    console.log(`[QVersions] RESTORED ${caseRef}/${formKey} from version ${versionId} (${fields.length} fields)`);
-    res.json({ ok: true, caseRef, formKey, versionId, restored: { fields: fields.length, filled }, itemId });
+    console.log(`[QVersions] RESTORED ${caseRef}/${formKey} from version ${versionId} (${fields.length} fields, ${plan.keptAside} kept aside)`);
+    res.json({ ok: true, caseRef, formKey, versionId, restored: { fields: fields.length, filled, keptAside: plan.keptAside }, itemId });
   } catch (err) {
     console.error('[QVersions] restore failed:', err.message);
     res.status(500).json({ error: err.message });
