@@ -891,6 +891,68 @@ app.get('/admin/questionnaire/:caseRef/progress', async (req, res) => {
   }
 });
 
+// Read-only era audit of ONE case (step 2 of the 2026-CEC-EE-077 work): which
+// edition each questionnaire file RECORDS, which edition its own labels prove,
+// how many client answers it holds, how many answers sit in `setAside`, and
+// which edition the client would be served right now. Admin-only and strictly
+// read-only: it reads the manifest file directly rather than calling
+// loadMembers (which SEEDS a manifest when none exists) and never writes.
+app.get('/admin/questionnaire/:caseRef/era-audit', async (req, res) => {
+  const caseRef = String(req.params.caseRef || '').trim();
+  if (!resolveAdminOrReject(req, res, 'Only an admin can read the questionnaire era audit.')) return;
+  if (!/^[A-Za-z0-9-]{3,40}$/.test(caseRef)) return res.status(400).json({ error: 'bad caseRef' });
+  try {
+    const svc = require('./services/htmlQuestionnaireService');
+    const oneDrive = require('./services/oneDriveService');
+    const { LEGACY_FORM_FILES } = require('../config/questionnaireFormMap');
+    const v = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const forms = svc.resolveForm(v.caseType, v.caseSubType);
+    if (!forms) return res.json({ caseRef, caseType: v.caseType, caseSubType: v.caseSubType, forms: null, versioned: false, slots: [] });
+
+    const readJson = async (filename) => {
+      const buf = await oneDrive.readFile({ clientName: v.clientName, caseRef, subfolder: 'Questionnaire', filename });
+      if (!buf) return null;
+      try { return JSON.parse(buf.toString('utf8')); } catch (_) { return { unreadable: true }; }
+    };
+    const manifest = await readJson(`questionnaire-members-${caseRef}.json`);
+    const memberKeys = (manifest && Array.isArray(manifest.members) ? manifest.members : [])
+      .map((m) => m && m.key).filter((k) => k && k !== 'primary').slice(0, 8);
+    const slotKeys = ['primary', 'primary-additional', 'additional'];
+    for (const k of memberKeys) slotKeys.push(k, `${k}-additional`);
+
+    const slots = [];
+    for (const formKey of slotKeys) {
+      const file = await readJson(`questionnaire-${caseRef}-${formKey}.json`);
+      if (!file) continue;
+      const fields = Array.isArray(file) ? file : (Array.isArray(file.fields) ? file.fields : []);
+      const recorded = (!Array.isArray(file) && file.formFile) ? String(file.formFile) : '';
+      const setAside = (!Array.isArray(file) && Array.isArray(file.setAside)) ? file.setAside : [];
+      const formFile = svc.formFileForKey(forms, formKey);
+      slots.push({
+        formKey, formFile: formFile || null, recorded: recorded || null,
+        verdict: formFile && LEGACY_FORM_FILES[formFile] ? svc.editionFromLabels(fields, formFile) : 'n/a',
+        fields: fields.length,
+        clientAnswers: fields.filter((f) => f && f.value && String(f.value).trim() && f.source !== 'prefill').length,
+        keptAside: setAside.length,
+        keptAsideLabels: setAside.slice(0, 5).map((e) => e && e.label),
+        savedAt: (!Array.isArray(file) && file.savedAt) || null,
+        unreadable: !!(file && file.unreadable),
+      });
+    }
+    // What the client would be served right now (era resolution is read-only).
+    let resolved = forms, resolveError = null;
+    try { resolved = await svc.versionFormFilesForCase({ clientName: v.clientName, caseRef, formFiles: forms }); }
+    catch (err) { resolveError = err.message; }
+    res.json({ caseRef, caseType: v.caseType, caseSubType: v.caseSubType, forms, resolved, resolveError,
+      versioned: Boolean(LEGACY_FORM_FILES[forms.primary] || (forms.additional && LEGACY_FORM_FILES[forms.additional])),
+      slots, ...svc.eraAuditFlags({ forms, resolved, slots }) });
+  } catch (err) {
+    console.error(`[QEraAudit] failed for ${caseRef}:`, err.message);
+    const notFound = /not found|no case/i.test(err.message || '');
+    res.status(err.transient ? 503 : (notFound ? 404 : 500)).json({ error: err.message, transient: !!err.transient });
+  }
+});
+
 // Surgical field-level repair — patch INDIVIDUAL answers (by section+label)
 // without touching the rest of the file. Built for the table-key smear class:
 // a wholesale restore would discard everything typed since the smear, while

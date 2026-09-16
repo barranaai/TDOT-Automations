@@ -1062,6 +1062,38 @@ async function saveFormData({ clientName, caseRef, itemId, formKey, fields, comp
 }
 
 /**
+ * Read-only audit of one case's questionnaire era (src/server.js, step 2 of the
+ * 2026-CEC-EE-077 work): turn the facts gathered per slot into plain flags, so
+ * a sweep can say WHICH cases the April/August flip touched and how badly.
+ * Pure — the endpoint does the reading.
+ *
+ * @param {{ forms: {primary, additional}, resolved: {primary, additional},
+ *           slots: Array<{ formKey, formFile, recorded, verdict, clientAnswers, keptAside }> }} p
+ * @returns {{ servedEdition, flipped, unrecordedAnswers, keptAside, slotsWithAnswers, severity }}
+ */
+function eraAuditFlags({ forms, resolved, slots }) {
+  let LEGACY;
+  try { ({ LEGACY_FORM_FILES: LEGACY } = require('../../config/questionnaireFormMap')); } catch (_) { LEGACY = {}; }
+  const list = Array.isArray(slots) ? slots : [];
+  const versioned = list.filter((s) => s && s.formFile && LEGACY[s.formFile]);
+  const withAnswers = versioned.filter((s) => s.clientAnswers > 0);
+  // Serving the April file for a form whose current edition is August.
+  const flipped = ['primary', 'additional'].some((k) => forms && resolved && forms[k] && LEGACY[forms[k]] && resolved[k] === LEGACY[forms[k]]);
+  const unrecordedAnswers = withAnswers.filter((s) => !s.recorded).length;
+  const keptAside = versioned.reduce((n, s) => n + (Number(s.keptAside) || 0), 0);
+  // How much attention the case needs: answers already parked (the April form
+  // saved over August answers) > serving April while its own labels say August
+  // > merely unrecorded answers (the next save will record them).
+  let severity = 'none';
+  if (unrecordedAnswers) severity = 'watch';
+  if (flipped) severity = 'flipped';
+  if (flipped && withAnswers.some((s) => s.verdict === 'current')) severity = 'flipped-wrongly';
+  if (keptAside > 0) severity = 'answers-parked';
+  return { servedEdition: (resolved && resolved.primary) || null, flipped, unrecordedAnswers, keptAside,
+    slotsWithAnswers: withAnswers.map((s) => s.formKey), severity };
+}
+
+/**
  * The file an admin RESTORE writes (src/server.js). Restore used to write the
  * old version byte for byte, discarding the current kept-aside list and every
  * answer typed since that the old version has no box for. Now: the version's
@@ -6061,6 +6093,7 @@ module.exports = {
   RESTORE_MATCH_JS,
   computeSetAside,
   buildRestoreContent,
+  eraAuditFlags,
   editionFromLabels,
   SET_ASIDE_CAP,
   seedQuestionnairePrefill,
