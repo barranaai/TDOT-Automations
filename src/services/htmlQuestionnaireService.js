@@ -2633,6 +2633,11 @@ ${hasAdditionalForm ? `
      finished single applicants below the 80% submit gate. */
   function isFormHiddenBlock(node) {
     if (!node.style || node.style.display !== 'none') return false;
+    /* A member section belongs to a person the consultant put on the case, so
+       it is never "not applicable". Whatever leaves it hidden is a bug to fix
+       in the open, not a reason to drop that member's questions from the
+       count — dropping them would unlock Submit on an empty family form. */
+    if (node.getAttribute && node.getAttribute('data-member-key')) return false;
     var cls = node.className;
     if (cls && typeof cls !== 'string' && typeof cls.baseVal === 'string') cls = cls.baseVal;   /* SVG */
     return !ACCORDION_BODY_RE.test(String(cls || ''));
@@ -3939,6 +3944,12 @@ ${hasAdditionalForm ? `
     var section = _memberBlueprint.cloneNode(true);
     section.setAttribute('data-member-key', member.key);
     section.style.position = 'relative';
+    /* The blueprint is the form's dependent template — on F1 that is
+       #spouse-section, which the form ships with an inline display:none until
+       the client answers "yes" to an accompanying spouse. A member the
+       consultant put on the case is not conditional: clear that inherited
+       style or the whole section stays invisible to the client. */
+    section.style.display = '';
 
     /* Update the header text */
     var header = findSectionHeader(section);
@@ -4016,6 +4027,12 @@ ${hasAdditionalForm ? `
   }
 
   function deduplicateIds(section, memberKey) {
+    /* The section's OWN id is cloned along with it: every member section kept
+       id="spouse-section", so document.getElementById('spouse-section') — what
+       the form's own toggleConditional() calls when the PRIMARY applicant
+       answers "accompanying spouse: no" — matched the first MEMBER's section
+       and hid a real family member's questions. Prefix it like the rest. */
+    if (section.id) section.id = memberKey + '-' + section.id;
     var els = section.querySelectorAll('[id]');
     for (var i = 0; i < els.length; i++) {
       els[i].id = memberKey + '-' + els[i].id;
@@ -5917,6 +5934,7 @@ input[disabled], select[disabled], textarea[disabled] {
       var section = blueprint.cloneNode(true);
       section.setAttribute('data-member-key', m.key);
       section.style.position = 'relative';
+      section.style.display = '';                 /* the blueprint ships hidden — see createMemberSection */
 
       /* Update header */
       var header = section.querySelector('.top-accordion-header, .applicant-header, .accordion-header');
@@ -5950,6 +5968,7 @@ input[disabled], select[disabled], textarea[disabled] {
 
       /* Deduplicate IDs + radio group names (see the client-side note in
          deduplicateIds — same cross-member radio collision on the review page). */
+      if (section.id) section.id = m.key + '-' + section.id;     /* the section's own id clones too — see deduplicateIds */
       var idEls = section.querySelectorAll('[id]');
       for (var ii = 0; ii < idEls.length; ii++) idEls[ii].id = m.key + '-' + idEls[ii].id;
       var rEls = section.querySelectorAll('input[type="radio"][name]');

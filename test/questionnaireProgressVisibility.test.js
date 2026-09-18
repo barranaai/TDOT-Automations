@@ -233,3 +233,51 @@ test('the client engine AND the staff review engine both collect the statutory q
   assert.ok(!svc.STAT_Q_COLLECTOR_JS.includes('`') && !svc.STAT_Q_COLLECTOR_JS.includes('${'),
     'plain template text, so the two engines cannot drift apart');
 });
+
+// ─── Family members: never invisible, never dropped from the count ──────────
+//
+// The dependent blueprint the engine clones for each family member IS F1's
+// #spouse-section, which the form ships with an inline display:none until the
+// client says they have an accompanying spouse. A member the consultant put on
+// the case is not conditional: the clone must be revealed, and its questions
+// must count — otherwise a family case shows 100% on the primary applicant
+// alone and Submit unlocks with every dependent's form empty.
+
+test('a cloned member section is revealed, in both engines', () => {
+  const at = SRC.indexOf('function createMemberSection(member) {');
+  const client = SRC.slice(at, at + 1200);
+  assert.match(client, /section\.setAttribute\('data-member-key', member\.key\);[\s\S]{0,800}?section\.style\.display = '';/,
+    'the client engine clears the blueprint’s inherited display:none');
+  const reviewAt = SRC.indexOf('function buildReviewInjectionScript(');
+  const review = SRC.slice(SRC.indexOf("section.setAttribute('data-member-key', m.key);", reviewAt));
+  assert.match(review.slice(0, 400), /section\.style\.display = '';/, 'the review engine clears it too');
+});
+
+test('a member section is never treated as "hidden because it does not apply" — even if something leaves it hidden', () => {
+  const dom = fakeDom();
+  const { isHiddenConditional, isFormHiddenBlock } = visibilityRule(dom);
+  const member = dom.body.appendChild(new El('div', {
+    cls: ['top-accordion'], display: 'none', attrs: { 'data-member-key': 'member-1' },
+  }));
+  assert.equal(isFormHiddenBlock(member), false, 'a member section is not a form-hidden block');
+  assert.equal(isHiddenConditional(member), false, 'so its questions keep counting');
+  // …while the same markup WITHOUT a member key is the conditional case Fix A targets.
+  const conditional = dom.body.appendChild(new El('div', { cls: ['top-accordion'], id: 'spouse-section', display: 'none' }));
+  assert.equal(isHiddenConditional(conditional), true);
+});
+
+test('a cloned member section gets its OWN id prefixed, so the primary applicant\'s answer cannot hide a family member', () => {
+  const dom = fakeDom();
+  const { deduplicateIds } = engineSlice('  function deduplicateIds(section, memberKey) {', '\n  function reattachAccordionHandlers(', {
+    names: ['deduplicateIds'], globals: { document: dom.document },
+  });
+  // The blueprint the engine clones for each member IS F1's #spouse-section.
+  const section = dom.body.appendChild(new El('div', { cls: ['top-accordion'], id: 'spouse-section' }));
+  deduplicateIds(section, 'member-1');
+  assert.equal(section.id, 'member-1-spouse-section', 'the section’s own id is namespaced');
+  // getElementById('spouse-section') — what the form calls when the PRIMARY
+  // applicant answers "accompanying spouse: no" — must no longer find a member.
+  assert.equal(dom.document.getElementById('spouse-section'), null);
+  const review = SRC.slice(SRC.indexOf('function buildReviewInjectionScript('));
+  assert.match(review, /if \(section\.id\) section\.id = m\.key \+ '-' \+ section\.id;/, 'the review engine namespaces it too');
+});
