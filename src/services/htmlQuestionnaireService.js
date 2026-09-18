@@ -93,6 +93,54 @@ const STATIC_TABLE_COLLECTOR_JS = `
   }
 `;
 
+// ─── Engine helper shared by BOTH injected scripts (client + review) ─────────
+//
+// Pass 4 of collectFields: statutory Yes/No questions authored as plain
+// <div class="stat-q"> blocks (F1 Express Entry, F2/F3 Work Permit, F4
+// Citizenship, F5 Study Permit Extension) — a .q-num, a .q-text and a bare
+// <select> in .q-answer, with NO <label> and no <table>. Passes 1-3 match on
+// .form-group/.field-group/.explanation-block, .dynamic-table and <table>, so
+// none of them ever saw these blocks: the client's answers about criminal
+// convictions, refugee claims and visa refusals were collected nowhere, hence
+// never saved, never restored to the form, never shown to staff and never
+// counted. (The .stat-TABLE forms F12/F13 were fixed separately in b80b5e9;
+// no form carries both shapes.)
+//
+// Plain string (no backticks, no ${}) interpolated into both template
+// literals, so the two engines can never drift apart.
+const STAT_Q_COLLECTOR_JS = `
+  /* ctx: { seen, fields, getSectionContext(el), slugifyFull(s),
+            skipBlock(block) -> bool (optional), extra(block) -> object (optional) } */
+  function collectStatQuestionFields(ctx) {
+    var statBlocks = document.querySelectorAll('.stat-q');
+    for (var sqi = 0; sqi < statBlocks.length; sqi++) {
+      var sqBlock = statBlocks[sqi];
+      if (ctx.skipBlock && ctx.skipBlock(sqBlock)) continue;
+      var sqInput = sqBlock.querySelector('.q-answer select, .q-answer input, .q-answer textarea');
+      if (!sqInput || ctx.seen.indexOf(sqInput) !== -1) continue;
+      ctx.seen.push(sqInput);
+      var sqNumEl  = sqBlock.querySelector('.q-num');
+      var sqTextEl = sqBlock.querySelector('.q-text');
+      var sqNum    = sqNumEl ? (sqNumEl.textContent || '').trim() : '';
+      var sqText   = sqTextEl ? (sqTextEl.textContent || '').trim().replace(/\\s+/g, ' ') : '';
+      var sqSection = ctx.getSectionContext(sqBlock);
+      /* Keyed by the question NUMBER, never by its text: the text runs well
+         past slugify's 90-character cap, where two questions would collapse
+         onto ONE key and smear each other's answers. The tail is reserved
+         first and the SECTION is what gets truncated — the same recipe the
+         dynamic-table keys use. */
+      var sqTail = '-sq-' + ctx.slugifyFull(sqNum || String(sqi + 1));
+      var sqKey  = ctx.slugifyFull(sqSection).slice(0, Math.max(0, 90 - sqTail.length)) + sqTail;
+      var sqEntry = { section: sqSection, label: (sqNum ? sqNum + '. ' : '') + sqText, key: sqKey, el: sqInput };
+      if (ctx.extra) {
+        var sqX = ctx.extra(sqBlock);
+        for (var sqK in sqX) if (Object.prototype.hasOwnProperty.call(sqX, sqK)) sqEntry[sqK] = sqX[sqK];
+      }
+      ctx.fields.push(sqEntry);
+    }
+  }
+`;
+
 // Client-side twin of utils/statutoryLegacy.stripLegacyStatutoryPairs — the
 // server already strips the pre-fix placeholder pairs from /data, but the
 // browser's localStorage backup was written by the OLD engine and can still
@@ -2571,7 +2619,27 @@ ${hasAdditionalForm ? `
     return !!v && v !== '-- Select --' && v !== 'Select...';
   }
 
+  /* An accordion BODY is what a collapse toggles — F12/F13's toggleTop writes
+     the same inline display:none when folding a section, and so does the
+     engine's own handler on cloned member sections. Folding must never change
+     the count, so bodies always keep counting. */
+  var ACCORDION_BODY_RE = /(^|\s)(top-accordion-body|sub-accordion-body|accordion-body|applicant-body)(\s|$)/;
+
+  /* A block the FORM itself hid because it does not apply to this client:
+     toggleConditional() writes an inline display:none on the CONTAINER (F1's
+     #spouse-section / #children-section for a client with no spouse and no
+     children), while collapsing only toggles a CLASS on a body. Questions the
+     client can never see must not count as missing — that is what kept
+     finished single applicants below the 80% submit gate. */
+  function isFormHiddenBlock(node) {
+    if (!node.style || node.style.display !== 'none') return false;
+    var cls = node.className;
+    if (cls && typeof cls !== 'string' && typeof cls.baseVal === 'string') cls = cls.baseVal;   /* SVG */
+    return !ACCORDION_BODY_RE.test(String(cls || ''));
+  }
+
   function isHiddenConditional(node) {
+    if (isFormHiddenBlock(node)) return true;
     var i, isCond = false;
     for (i = 0; i < CONDITIONAL_CLASSES.length; i++) {
       if (node.classList.contains(CONDITIONAL_CLASSES[i])) { isCond = true; break; }
@@ -2741,6 +2809,7 @@ ${hasAdditionalForm ? `
   function invalidateCache() { _cacheStale = true; }
 
   ${STATIC_TABLE_COLLECTOR_JS}
+  ${STAT_Q_COLLECTOR_JS}
   ${LEGACY_STRIP_JS}
   ${RESTORE_MATCH_JS}
 
@@ -2847,6 +2916,13 @@ ${hasAdditionalForm ? `
     collectStaticTableFields({
       seen: seen, fields: fields, makeKey: makeKey, getSectionContext: getSectionContext,
       skipTable: function (t) { return IS_MULTI && isInHiddenMmSection(t); },
+    });
+
+    /* 4 — Statutory Yes/No questions authored as .stat-q blocks (see
+       STAT_Q_COLLECTOR_JS): the questions passes 1-3 could not see. */
+    collectStatQuestionFields({
+      seen: seen, fields: fields, getSectionContext: getSectionContext, slugifyFull: slugifyFull,
+      skipBlock: function (b) { return IS_MULTI && isInHiddenMmSection(b); },
     });
 
     _fieldCache = fields;
@@ -4938,6 +5014,7 @@ input[disabled], select[disabled], textarea[disabled] {
   }
 
   ${STATIC_TABLE_COLLECTOR_JS}
+  ${STAT_Q_COLLECTOR_JS}
   ${RESTORE_MATCH_JS}
 
   function collectFields() {
@@ -5029,6 +5106,13 @@ input[disabled], select[disabled], textarea[disabled] {
     collectStaticTableFields({
       seen: seen, fields: fields, makeKey: makeKey, getSectionContext: getSectionContext,
       extra: function (row) { return { group: row }; },
+    });
+
+    /* Statutory .stat-q questions — the SAME shared collector as the client
+       engine, so the keys match and staff read exactly what the client saved. */
+    collectStatQuestionFields({
+      seen: seen, fields: fields, getSectionContext: getSectionContext, slugifyFull: slugifyFull,
+      extra: function (b) { return { group: b }; },
     });
     return fields;
   }
@@ -6089,6 +6173,7 @@ module.exports = {
   stripLegacyStatutoryPairs,
   // Engine helper sources (tests evaluate them in a fake DOM)
   STATIC_TABLE_COLLECTOR_JS,
+  STAT_Q_COLLECTOR_JS,
   LEGACY_STRIP_JS,
   RESTORE_MATCH_JS,
   computeSetAside,
