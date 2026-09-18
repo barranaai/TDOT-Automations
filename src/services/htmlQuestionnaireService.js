@@ -259,7 +259,16 @@ const RESTORE_MATCH_JS = `
     return out;
   }
 
-  function rowsFromLabels(savedFields, section, headers, normLabel) {
+  /* tableSlugs: the id(s) of the table being filled. A saved cell's key carries
+     "-tbl-<id>" even when an older engine truncated the row/column tail off the
+     end, so the key still says WHICH table a row belongs to while the label says
+     which row and column. Rows named that way are accepted even if they do not
+     cover every column of today's table — forms gain columns over time (the
+     August 2026 Express Entry form added "NOC Code (if known)"), and demanding
+     full coverage rejected every row a client had saved against the older
+     column set, so their table opened EMPTY. Rows with no such key still need
+     full coverage, which is what keeps one table's rows out of another's. */
+  function rowsFromLabels(savedFields, section, headers, normLabel, tableSlugs) {
     var norm = normLabel || function (x) { return String(x == null ? '' : x).trim().toLowerCase(); };
     var want = {}, wantCount = 0;
     var hs = Array.isArray(headers) ? headers : [];
@@ -268,6 +277,9 @@ const RESTORE_MATCH_JS = `
       if (hn && want['h:' + hn] !== true) { want['h:' + hn] = true; wantCount++; }
     }
     if (!wantCount) return 0;
+    var marks = [];
+    var slugList = Array.isArray(tableSlugs) ? tableSlugs : (tableSlugs ? [tableSlugs] : []);
+    for (var sl = 0; sl < slugList.length; sl++) if (slugList[sl]) marks.push('-tbl-' + slugList[sl]);
     var list = Array.isArray(savedFields) ? savedFields : [];
     var rows = {}, max = 0;
     for (var i = 0; i < list.length; i++) {
@@ -282,9 +294,15 @@ const RESTORE_MATCH_JS = `
       var hk = 'h:' + norm(lbl.slice(0, at));
       if (want[hk] !== true) continue;
       var rk = 'r:' + n;
-      if (!rows[rk]) rows[rk] = { count: 0, seen: {} };
+      if (!rows[rk]) rows[rk] = { count: 0, seen: {}, named: false };
       if (rows[rk].seen[hk] !== true) { rows[rk].seen[hk] = true; rows[rk].count++; }
-      if (rows[rk].count === wantCount && n > max) max = n;
+      if (marks.length && rows[rk].named !== true) {
+        var ekey = String(e.key == null ? '' : e.key);
+        for (var mk = 0; mk < marks.length; mk++) {
+          if (ekey.indexOf(marks[mk]) !== -1) { rows[rk].named = true; break; }
+        }
+      }
+      if ((rows[rk].count === wantCount || rows[rk].named === true) && n > max) max = n;
     }
     return max;
   }
@@ -311,7 +329,7 @@ const RESTORE_MATCH_JS = `
       }
       if (covered === mineCount) return 0;
     }
-    return rowsFromLabels(looseRows, me.section, mh, norm);
+    return rowsFromLabels(looseRows, me.section, mh, norm, me.slugs);
   }
 
   function tableHeadersOf(table) {
@@ -3617,7 +3635,12 @@ ${hasAdditionalForm ? `
     }
     var tableInfo = [];
     for (var tii = 0; tii < tables.length; tii++) {
-      tableInfo.push({ section: getSectionContext(tables[tii]) + ' › Table', headers: tableHeadersOf(tables[tii]) });
+      var tiSlug = slugify(tables[tii].id || ('table-' + tii));
+      /* A cloned member's table id is prefixed ("member-1-sp-history") while the
+         saved key carries the original ("sp-history") — offer both. */
+      var tiBare = tiSlug.replace(/^[a-z0-9]+-/, '');
+      tableInfo.push({ section: getSectionContext(tables[tii]) + ' › Table', headers: tableHeadersOf(tables[tii]),
+        slugs: tiBare !== tiSlug ? [tiSlug, tiBare] : [tiSlug] });
     }
     for (var ti = 0; ti < tables.length; ti++) {
       var table   = tables[ti];
@@ -5315,7 +5338,12 @@ input[disabled], select[disabled], textarea[disabled] {
     }
     var tableInfo = [];
     for (var tii = 0; tii < tables.length; tii++) {
-      tableInfo.push({ section: getSectionContext(tables[tii]) + ' › Table', headers: tableHeadersOf(tables[tii]) });
+      var tiSlug = slugify(tables[tii].id || ('table-' + tii));
+      /* A cloned member's table id is prefixed ("member-1-sp-history") while the
+         saved key carries the original ("sp-history") — offer both. */
+      var tiBare = tiSlug.replace(/^[a-z0-9]+-/, '');
+      tableInfo.push({ section: getSectionContext(tables[tii]) + ' › Table', headers: tableHeadersOf(tables[tii]),
+        slugs: tiBare !== tiSlug ? [tiSlug, tiBare] : [tiSlug] });
     }
     for (var ti = 0; ti < tables.length; ti++) {
       var table = tables[ti];

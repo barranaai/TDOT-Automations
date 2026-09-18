@@ -213,7 +213,8 @@ test('both engines use the shared matcher, and the empty-skipping matchers are g
   assert.equal((src.match(/planRestoreValues\(memberFields, m\.fields,/g) || []).length, 1, 'staff family review');
   assert.equal((src.match(/planRestoreValues\(fields, SAVED_DATA,/g) || []).length, 1, 'staff single-page review (F1 family forms)');
   assert.equal((src.match(/var labelMax = labelRowCount\(looseRows, tableInfo, ti\);\s+if \(labelMax > \(maxRow \|\| 0\)\) maxRow = labelMax;/g) || []).length, 2, 'both engines expand old-key tables by label (the larger count wins)');
-  assert.equal((src.match(/tableInfo\.push\(\{ section: getSectionContext\(tables\[tii\]\) \+ ' › Table', headers: tableHeadersOf\(tables\[tii\]\) \}\);/g) || []).length, 2, 'both engines describe every table by section + headers');
+  assert.equal((src.match(/tableInfo\.push\(\{ section: getSectionContext\(tables\[tii\]\) \+ ' › Table', headers: tableHeadersOf\(tables\[tii\]\),\s+slugs: tiBare !== tiSlug \? \[tiSlug, tiBare\] : \[tiSlug\] \}\);/g) || []).length, 2,
+    'both engines describe every table by section + headers + its own id (the id attributes a row whose key was truncated)');
   assert.doesNotMatch(src, /byLabel\[fkey\]\[occ\]/, 'the staff review\'s all-answers label pass is gone');
   assert.equal((src.match(/\$\{RESTORE_MATCH_JS\}/g) || []).length, 2, 'embedded in both injected scripts');
   assert.doesNotMatch(src, /if \(!sf\.value \|\| !sf\.value\.trim\(\)\) continue;/, 'no matcher skips empty saved answers');
@@ -237,4 +238,85 @@ test('the emitted client form and staff review page carry the matcher and their 
     while ((m = re.exec(html))) { n++; assert.doesNotThrow(() => new vm.Script(m[1]), `${name} script #${n} parses`); }
     assert.ok(n >= 1, `${name}: scripts found`);
   }
+});
+
+// ─── A form that GAINED a column must still restore older saved rows ────────
+//
+// (2026-09-18, case 2026-CEC-EE-059.) A row was only accepted when it carried
+// EVERY column of today's table. The August 2026 Express Entry form added
+// "NOC Code (if known)" to the Personal History table, so all sixteen rows a
+// client had saved against the six-column version were rejected: the table
+// opened with one empty row and 89 answered cells had nowhere to land. Saving
+// from that page would have written the empty table over their history.
+//
+// A saved cell's key carries "-tbl-<table id>" even when an older engine
+// truncated the row/column tail off the end, so the KEY says which table a row
+// belongs to while the LABEL says which row and column. Rows named that way
+// are accepted without full column coverage; rows that are not stay strict,
+// which is what keeps one table's rows out of another table's boxes.
+
+const HIST = 'Main Applicant › Section 5 — Personal History (Employment / Education / Unemployment) › Table';
+const TODAY_HEADERS = ['Start Date', 'End Date', 'Job Title / Education', 'NOC Code (if known)', 'Company / School Name', 'Status'];
+/** A cell as the OLD engine saved it: the key truncated at 90 characters, cutting off "-r<N>-<column>". */
+function legacyCell(row, header, value, table = 'ma-history') {
+  return {
+    section: HIST,
+    label: `${header} — Row ${row}`,
+    key: `main-applicant-section-5-personal-history-employment-education-unemployment-tbl-${table}`,
+    value,
+  };
+}
+const OLD_COLUMNS = ['Start Date', 'End Date', 'Job Title / Education', 'Company / School Name', 'Status'];
+const legacyRows = (n, table) => {
+  const out = [];
+  for (let r = 1; r <= n; r++) for (const h of OLD_COLUMNS) out.push(legacyCell(r, h, `${h} ${r}`, table));
+  return out;
+};
+
+test('a saved row whose key names this table is restored even though the form has since gained a column', () => {
+  const saved = legacyRows(16);
+  assert.equal(rowsFromLabels(saved, HIST, TODAY_HEADERS, fold), 0,
+    'without the table id there is nothing to attribute the rows to — the strict rule rejects them');
+  assert.equal(rowsFromLabels(saved, HIST, TODAY_HEADERS, fold, ['ma-history']), 16,
+    'the key names the table, so all sixteen rows come back');
+  assert.equal(rowsFromLabels(saved, HIST, TODAY_HEADERS, fold, 'ma-history'), 16, 'a bare slug works too');
+});
+
+test('rows are attributed by table id, so one table\'s rows never appear in another\'s boxes', () => {
+  const saved = legacyRows(9, 'ma-travel');                       // saved for a DIFFERENT table in the same section
+  assert.equal(rowsFromLabels(saved, HIST, TODAY_HEADERS, fold, ['ma-history']), 0,
+    'the id does not match, and the rows do not carry every column, so they are refused');
+  // …while a row that DOES carry every column of today's table is accepted as before, id or not.
+  const full = [];
+  for (const h of TODAY_HEADERS) full.push({ section: HIST, label: `${h} — Row 1`, key: 'anything', value: h });
+  assert.equal(rowsFromLabels(full, HIST, TODAY_HEADERS, fold, ['ma-history']), 1);
+  assert.equal(rowsFromLabels(full, HIST, TODAY_HEADERS, fold), 1, 'unchanged when no id is supplied');
+});
+
+test('a cloned member\'s table id is prefixed, so both the prefixed and the bare id are offered', () => {
+  const saved = legacyRows(4, 'sp-history');
+  assert.equal(rowsFromLabels(saved, HIST, TODAY_HEADERS, fold, ['member-1-sp-history']), 0, 'the prefixed id alone does not match the saved key');
+  assert.equal(rowsFromLabels(saved, HIST, TODAY_HEADERS, fold, ['member-1-sp-history', 'sp-history']), 4, 'the bare id does');
+});
+
+test('labelRowCount passes the table\'s ids through, and still refuses to guess between look-alike tables', () => {
+  const saved = legacyRows(16);
+  const me = { section: HIST, headers: TODAY_HEADERS, slugs: ['ma-history'] };
+  assert.equal(labelRowCount(saved, [me], 0), 16);
+  // A sibling table in the same section carrying every one of my columns = ambiguous, so no guess (unchanged rule).
+  const twin = { section: HIST, headers: TODAY_HEADERS.concat(['Extra']), slugs: ['ma-history-2'] };
+  assert.equal(labelRowCount(saved, [me, twin], 0), 0, 'ambiguity still wins over the id');
+});
+
+test('modern saved files are untouched: full-coverage rows count exactly as before', () => {
+  const sec = 'Main Applicant › Section 2 — Family Information › Table';
+  const saved = [];
+  for (let r = 1; r <= 3; r++) for (const h of ['Full Name', 'Relationship']) {
+    saved.push({ section: sec, label: `${h} — Row ${r}`, key: `ma-tbl-ma-family-living-r${r}-${slug(h)}`, value: `${h}${r}` });
+  }
+  assert.equal(rowsFromLabels(saved, sec, ['Full Name', 'Relationship'], fold), 3);
+  assert.equal(rowsFromLabels(saved, sec, ['Full Name', 'Relationship'], fold, ['ma-family-living']), 3,
+    'the id changes nothing when the rows already carry every column');
+  assert.equal(rowsFromLabels(saved, sec, ['Full Name', 'Relationship', 'Date of Birth'], fold), 0,
+    'a row missing a column with no id to name it is still refused');
 });
