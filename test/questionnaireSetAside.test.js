@@ -336,3 +336,55 @@ test('a page that sends no era: the record follows what the saved labels prove, 
     } finally { h.restore(); }
   }
 });
+
+// ─── Answers that share ONE key are still kept apart (2026-09-18) ───────────
+//
+// An older engine truncated table keys at 90 characters, so every cell of a
+// long table could carry the SAME key. A kept-aside answer was identified by
+// key + value, so those cells collapsed to one entry per distinct text and the
+// rest were dropped from the file — on case 2026-CEC-EE-059 a save from the
+// page as it then rendered kept 53 of 95 history answers and lost 36. The
+// cell's own name now distinguishes them.
+
+test('answers sharing one truncated key are each kept aside, even when several read the same', () => {
+  const sec = 'Main Applicant › Section 5 — Personal History (Employment / Education / Unemployment) › Table';
+  const KEY = 'main-applicant-section-5-personal-history-employment-education-unemployment-tbl-ma-history';
+  const cell = (row, header, value) => ({ section: sec, label: `${header} — Row ${row}`, key: KEY, value });
+  const previousFields = [
+    cell(2, 'Status', 'Citizen'), cell(3, 'Status', 'Citizen'), cell(4, 'Status', 'Citizen'),
+    cell(2, 'Company / School Name', 'L&T'), cell(3, 'Company / School Name', 'Q2 MANAGEMENT'),
+  ];
+  // The page shows none of these rows (the table rendered empty), and nothing
+  // in that column repeats them, so every one of them must be kept.
+  const r = svc.computeSetAside({ previousFields, previousSetAside: [], incomingFields: [
+    { section: sec, label: 'Status — Row 1', key: 'ma-tbl-ma-history-r1-status', value: 'Worker' },
+  ] });
+  assert.equal(r.setAside.length, 5, 'all five are kept, not collapsed to two by their text');
+  assert.deepEqual(r.setAside.map((e) => e.label).sort(), [
+    'Company / School Name — Row 2', 'Company / School Name — Row 3',
+    'Status — Row 2', 'Status — Row 3', 'Status — Row 4',
+  ]);
+  assert.ok(r.setAside.every((e) => e.key === KEY), 'each entry keeps the key it was saved under');
+});
+
+test('a kept-aside entry carried twice still collapses — the dedup did not simply get weaker', () => {
+  const e = { section: 'S › Table', label: 'City — Row 3', key: 'r3', value: 'Goa', setAsideAt: '2026-09-14T00:00:00.000Z' };
+  const r = svc.computeSetAside({
+    previousFields: [], incomingFields: [{ section: 'Other', label: 'Untouched', key: 'z', value: 'z' }],
+    previousSetAside: [e, { ...e }, { ...e }],
+  });
+  assert.equal(r.setAside.length, 1, 'the same answer in the same cell is one entry');
+});
+
+test('two cells of one row that share a key and a value are both kept', () => {
+  const sec = 'Main Applicant › Addresses › Table';
+  const KEY = 'truncated-tbl-ma-address';
+  const r = svc.computeSetAside({
+    previousFields: [
+      { section: sec, label: 'City — Row 1', key: KEY, value: 'Toronto' },
+      { section: sec, label: 'Province — Row 1', key: KEY, value: 'Toronto' },
+    ],
+    previousSetAside: [], incomingFields: [{ section: 'Other', label: 'x', key: 'x', value: '' }],
+  });
+  assert.deepEqual(r.setAside.map((e) => e.label).sort(), ['City — Row 1', 'Province — Row 1']);
+});

@@ -532,6 +532,14 @@ const _asideText = (v) => (v == null ? '' : String(v)).trim();
 // removed one above it) is not lost.
 const _asideSpot = (f) => `${(f && f.section) || ''}\u0001${String((f && f.label) || '').replace(/\s+\u2014\s+Row\s+\d+$/i, '').trim().toLowerCase()}`;
 const _asideId   = (f) => ((f && f.key) ? `k:${f.key}` : `l:${(f && f.section) || ''}\u0001${(f && f.label) || ''}`);
+/* What makes a kept-aside answer THAT answer. The key alone is not enough: an
+   older engine truncated table keys at 90 characters, so every cell of a long
+   table can share ONE key — identifying by key + value then collapsed dozens of
+   real answers into one entry per distinct text and dropped the rest. The cell's
+   own name distinguishes them. For a file with sound keys this changes nothing:
+   the section and label are already implied by the key, and an entry carried
+   twice still matches itself. */
+const _asideSig  = (f) => `${_asideId(f)}\u0002${(f && f.section) || ''}\u0001${(f && f.label) || ''}\u0002${_asideText(f && f.value)}`;
 
 function computeSetAside({ previousFields, previousSetAside, incomingFields, fromFormFile, now }) {
   const at = now || new Date().toISOString();
@@ -549,7 +557,7 @@ function computeSetAside({ previousFields, previousSetAside, incomingFields, fro
     const id = _asideId(e);
     if (incoming.has(id) && incoming.get(id) === _asideText(e.value)) continue;   // the answer is back in its box
     if (onPage.has(`${_asideSpot(e)}\u0002${_asideText(e.value)}`)) continue;   // …or back in the same column
-    const sig = `${id}\u0002${_asideText(e.value)}`;
+    const sig = _asideSig(e);
     if (seen.has(sig)) continue;                     // carried twice (e.g. a restore merged two lists)
     seen.add(sig);
     kept.push(e);
@@ -561,7 +569,7 @@ function computeSetAside({ previousFields, previousSetAside, incomingFields, fro
     const id = _asideId(f);
     if (incoming.has(id)) continue;                  // its box is on the page — kept, edited or cleared by the client
     if (onPage.has(`${_asideSpot(f)}\u0002${_asideText(f.value)}`)) continue;   // still on the page, in the same column
-    const sig = `${id}\u0002${_asideText(f.value)}`;
+    const sig = _asideSig(f);
     if (seen.has(sig)) continue;
     seen.add(sig);
     kept.push({ section: f.section || '', label: f.label || '', key: f.key || '', value: f.value, setAsideAt: at,
