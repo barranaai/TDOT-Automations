@@ -214,3 +214,14 @@ test('validateUndoRequest: bounds', () => {
   assert.match(U.validateUndoRequest({ ...good, actor: { name: 'x' } }), /Sign in with Monday/);
   assert.match(U.validateUndoRequest({ ...good, leadId: 'abc' }), /Unknown client/);
 });
+
+test('the INVARIANT guard itself works: if anything upstream ever let an unsafe plan through, it refuses', () => {
+  const gate = require('../src/services/caseGateService');
+  const orig = gate.signatureGateForLead;
+  gate.signatureGateForLead = (l) => ({ ...orig(l), complete: true, missing: [] });   // simulate a future regression upstream
+  try {
+    const p = plan();
+    assert.equal(p.ok, false);
+    assert.equal(p.refusal.code, 'INVARIANT');
+  } finally { gate.signatureGateForLead = orig; }
+});

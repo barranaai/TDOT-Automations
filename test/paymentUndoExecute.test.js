@@ -52,7 +52,7 @@ function withFakeIo(fn, { lead = baseLead(), cm = baseCase(), ...hooks } = {}) {
     writeLeadFields: async (id, fields) => { log('writeLeadFields', id, fields); if (!hooks.commitIsNoop) Object.assign(store.lead, fields); },
     postNote: async (item, body) => { log('postNote', item, body); if (hooks.notesThrow) throw new Error('note failed'); },
     notify: async (uid, text, item) => { log('notify', uid, item); },
-    resolveUserId: async (email) => ({ 'admin2@example.com': '222', 'shafoli@example.com': '333' })[email] || null,
+    resolveUserId: async (email) => ({ 'faran@example.com': '111', 'admin2@example.com': '222', 'shafoli@example.com': '333' })[email] || null,
     consultantFor: () => ({ name: 'Shafoli Kapur', email: 'shafoli@example.com' }),
     adminEmails: () => ['faran@example.com', 'admin2@example.com'],
     invalidateQueues: () => { log('invalidateQueues'); },
@@ -241,7 +241,8 @@ test('FLAG (staff who can’t undo): a note on the case and the lead, admins + R
   const notes = calls.filter((c) => c[0] === 'postNote');
   assert.equal(notes.length, 2);
   assert.match(notes[0][2], /don’t countersign/, 'the RCIC is asked to hold — the countersignature is the live trigger');
-  assert.deepEqual(calls.filter((c) => c[0] === 'notify').map((c) => c[1]).sort(), ['222', '333']);
+  assert.deepEqual(calls.filter((c) => c[0] === 'notify').map((c) => c[1]).sort(), ['111', '222', '333'],
+    'every admin and the RCIC — the flagger is not an admin, so nobody is left out');
   assert.equal(store.lead.retainerPaid, D);
 }));
 
@@ -290,3 +291,17 @@ test('the real commit compares against FRESH state: a payment changed in the que
     assert.equal(writes.length, 0);
   } finally { leadService.getLead = origGet; mondayApi.query = origQuery; }
 });
+
+
+test('a half-applied reversal where ONLY the payment date is left is still converged, never "already"', () => withFakeIo(async ({ store, names }) => {
+  const pv = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+  const p = pv.plan;
+  // the row and the status landed; the payment date — the dangerous one — did not
+  const pay = ms.readPayments(store.lead).pay; pay[0] = p.after; store.lead.milestonePayments = JSON.stringify(pay);
+  store.lead.conversionStatus = 'Retained — Awaiting Payment';
+  const res = await U.executeMilestonePaidReversal({ leadId: '13108401448', index: 0, confirmText: p.confirmText, reason: REASON, expect: p.expect, actor: ACTOR });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.notEqual(res.already, true, 'a payment date left behind can still start onboarding — never report it done');
+  assert.equal(store.lead.retainerPaid, '');
+  assert.ok(names().includes('commit'));
+}));
