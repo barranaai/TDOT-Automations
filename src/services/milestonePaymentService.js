@@ -60,6 +60,7 @@ function serializePayments(leadId, pay) {
   if (text.length > MAX_PAYMENTS_JSON) {
     const e = new Error(`Payment records for lead ${leadId} would be ${text.length} characters — over the ${MAX_PAYMENTS_JSON} limit, so nothing was written.`);
     e.code = 'PAYMENTS_TOO_LARGE';
+    e.badRequest = true;   // shown to staff as-is, not as a generic server error
     throw e;
   }
   return text;
@@ -68,6 +69,7 @@ function serializePayments(leadId, pay) {
 function paymentsUnreadableError(leadId) {
   const e = new Error(`The payment records on lead ${leadId} can't be read, so nothing was written over them. Ask an admin to check the lead's "Milestone Payments (JSON)" column.`);
   e.code = 'PAYMENTS_UNREADABLE';
+  e.badRequest = true;
   return e;
 }
 
@@ -204,6 +206,12 @@ async function sendMilestoneEtransferRequest(leadId, index) {
     const existing = parsePayments(lead)[index] || {};
     if (existing.status === 'paid') { const e = new Error('That milestone is already paid.'); e.badRequest = true; throw e; }
     if (existing.status === 'requested') { const e = new Error('An e-transfer request for that milestone was already sent to the client.'); e.badRequest = true; throw e; }
+    // The client's record already says the retainer is paid (Square, or the case
+    // set to Paid) — never ask them to pay it again.
+    if (Number(index) === 0 && String(lead.retainerPaid || '').trim()) {
+      const e = new Error(`The retainer is already recorded as paid (${String(lead.retainerPaid).trim()}), so no request was sent. If that date is wrong, an admin can remove it first.`);
+      e.badRequest = true; e.code = 'ALREADY_PAID'; throw e;
+    }
     // Legacy Square-era rows ('sent') never received e-Transfer details — a
     // deliberate re-issue is allowed and recorded as such below.
     const reIssue = existing.status === 'sent';
@@ -242,18 +250,24 @@ async function sendMilestoneEtransferRequest(leadId, index) {
  * milestone, this IS the retainer payment, so it also flips the client into
  * onboarding (Client Master → Paid / Phase 1), the same as the old Square path.
  */
+const MARK_LOCK_WAIT_MS = 20000;
 async function markMilestonePaid(leadId, index, opts = {}) {
   // Under the lead's lock — the one "Undo mark paid" and the e-signature capture
   // hold — so a mark and an undo on the same lead can never interleave into
-  // "the milestone reads unpaid but Retainer Paid is still stamped". Nothing this
-  // reaches takes the lock itself (it is not re-entrant).
-  return require('./leadMutex').withLeadLock(leadId, () => _markMilestonePaid(leadId, index, opts));
+  // "the milestone reads unpaid but Retainer Paid is still stamped". A staff click
+  // waits at most 20 s behind a hung capture, then says so — recording nothing.
+  const r = await require('./leadMutex').withLeadLockOrSkip(leadId, MARK_LOCK_WAIT_MS, () => _markMilestonePaid(leadId, index, opts));
+  if (r && r.busy === true && Object.keys(r).length === 1) {
+    const e = new Error('This client’s record is busy (a signature is being processed). Nothing was recorded — try again in a minute.');
+    e.badRequest = true; e.code = 'BUSY'; throw e;
+  }
+  return r;
 }
 
 /** A compact record of who did something, for the payment row's tooltip. */
 function actorStamp(actor) {
   const a = actor || {};
-  const by = String(a.name || a.email || '').trim().slice(0, 60) || 'Unknown';
+  const by = String(a.name || a.email || '').trim().replace(/\s+/g, ' ').slice(0, 60) || 'Unknown';
   return { by, at: new Date().toISOString().slice(0, 16) + 'Z', verified: a.verified === true };
 }
 
@@ -262,7 +276,22 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
   if (!lead) return { ok: false };
   const existing = parsePayments(lead)[index] || {};
   const when = paidAt || todayISO();
-  if (existing.status === 'paid') { console.log(`[Milestone] ${leadId}#${index} already paid — skipping`); return { ok: true, already: true }; }
+  if (existing.status === 'paid') {
+    // Never swallow a payment silently. A row that already reads paid is either
+    // a double-click (same or no reference — harmless) or a SECOND payment being
+    // recorded over a first record that may be wrong (the 2026-09-22 wrong-client
+    // mark): recording "done" then would lose the real one when the wrong one is
+    // undone. Say exactly what is on file either way.
+    const on = `${existing.paidAt || '?'}${existing.reference ? `, ref ${existing.reference}` : ''}${existing.marked && existing.marked.by ? `, by ${existing.marked.by}` : ''}`;
+    const typed = String(reference || '').trim();
+    if (typed && typed !== String(existing.reference || '').trim()) {
+      const e = new Error(`This milestone is already recorded as paid (${on}). Nothing was recorded now. If that record is wrong, undo it (admins) or flag it first, then record this payment.`);
+      e.badRequest = true;
+      throw e;
+    }
+    console.log(`[Milestone] ${leadId}#${index} already paid — skipping`);
+    return { ok: true, already: true, existingOn: on };
+  }
   // Keep the request-time reference when staff mark paid without entering one.
   const ref = reference || existing.reference || '';
   const marked = actorStamp(actor);
@@ -270,7 +299,9 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
   const label = (scheduleRows(lead)[index] || {}).label || `Milestone ${index + 1}`;
   await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
     { i: String(leadId), b: `✅ <b>Payment received</b> — ${esc(label)} (${esc(method)}${ref ? `, ref ${esc(ref)}` : ''}). ` +
-      `Recorded by ${esc(marked.by)}${marked.verified ? '' : ' (name as typed — not signed in with Monday)'}.` });
+      (/^Unidentified/.test(marked.by)
+        ? 'Recorded with the shared admin key — nobody was identified (not signed in with Monday).'
+        : `Recorded by ${esc(marked.by)}${marked.verified ? '' : ' (name as typed — not signed in with Monday)'}.`) });
   console.log(`[Milestone] ${leadId}#${index} marked paid (${method}${ref ? ` ref ${ref}` : ''})`);
 
   // The first milestone paid = retainer paid → start onboarding (Phase 1).

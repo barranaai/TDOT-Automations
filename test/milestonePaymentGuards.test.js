@@ -181,3 +181,123 @@ test('advanceCaseToPaid still activates a genuinely paid client — and recordRe
     assert.match(src, /await advanceCaseToPaid\(lead, when, \{ recheckPaid: false \}\);/, 'recordRetainerPaid opts out explicitly');
   } finally { r0(); r2(); }
 });
+
+// ─── A second payment on a row that already reads paid (review 2026-09-23) ────
+
+test('a SECOND payment on an already-paid row is refused out loud — never reported "Recorded" and dropped', async () => {
+  const stored = JSON.stringify({ 1: { status: 'paid', paidAt: '2026-09-22', reference: 'WRONG-CLIENT', marked: { by: 'Kamalpreet', at: '2026-09-22T20:59Z' } } });
+  const writes = [];
+  const r1 = stub(leadService, 'getLead', async () => LEAD({ milestonePayments: stored }));
+  const r2 = stub(leadService, 'updateLead', async (...a) => { writes.push(a); });
+  const r3 = stub(mondayApi, 'query', async () => ({}));
+  try {
+    await assert.rejects(ms.markMilestonePaid('555001', 1, { reference: 'REAL-ONE', actor: { name: 'Gauri' } }),
+      (e) => e.badRequest === true && /already recorded as paid \(2026-09-22, ref WRONG-CLIENT, by Kamalpreet\)/.test(e.message) && /Nothing was recorded now/.test(e.message));
+    assert.equal(writes.length, 0);
+    // a double-click (same or no reference) is harmless and says what is on file
+    const again = await ms.markMilestonePaid('555001', 1, { reference: 'WRONG-CLIENT', actor: { name: 'K' } });
+    assert.equal(again.already, true);
+    assert.match(again.existingOn, /ref WRONG-CLIENT/);
+    const noRef = await ms.markMilestonePaid('555001', 1, { actor: { name: 'K' } });
+    assert.equal(noRef.already, true);
+  } finally { r1(); r2(); r3(); }
+});
+
+test('the page is told the truth when nothing changed', async () => {
+  const cps = require('../src/services/consultantPortalService');
+  const r1 = stub(ms, 'markMilestonePaid', async () => ({ ok: true, already: true, existingOn: '2026-09-22, ref X' }));
+  try {
+    const src = require('fs').readFileSync(require.resolve('../src/services/consultantPortalService.js'), 'utf8');
+    assert.match(src, /if \(r\.already\) return \{ ok: true, message: `Already recorded as paid \(\$\{r\.existingOn\}\) — nothing changed\.` \};/);
+    assert.ok(cps);
+  } finally { r1(); }
+});
+
+test('Mark paid gives up after its wait budget when the lead stays busy — records nothing, says so', async () => {
+  const writes = [];
+  const leadMutex = require('../src/services/leadMutex');
+  const r0 = stub(leadMutex, 'withLeadLockOrSkip', async () => ({ busy: true }));
+  const r1 = stub(leadService, 'getLead', async () => LEAD());
+  const r2 = stub(leadService, 'updateLead', async (...a) => { writes.push(a); });
+  try {
+    await assert.rejects(ms.markMilestonePaid('555001', 1, { actor: { name: 'X' } }), (e) => e.code === 'BUSY' && e.badRequest === true && /Nothing was recorded/.test(e.message));
+    assert.equal(writes.length, 0);
+  } finally { r0(); r1(); r2(); }
+});
+
+test('the retainer request is never emailed when the retainer is already recorded as paid', async () => {
+  const writes = [], mails = [];
+  const r1 = stub(leadService, 'getLead', async () => LEAD({ retainerPaid: '2026-09-22' }));
+  const r2 = stub(leadService, 'updateLead', async (...a) => { writes.push(a); });
+  const r3 = stub(mondayApi, 'query', async () => ({}));
+  const mail = require('../src/services/microsoftMailService');
+  const r4 = stub(mail, 'sendEmail', async (m) => { mails.push(m); });
+  try {
+    await assert.rejects(ms.sendMilestoneEtransferRequest('555001', 0), (e) => e.code === 'ALREADY_PAID' && e.badRequest === true);
+    assert.equal(writes.length, 0);
+    assert.equal(mails.length, 0);
+    await ms.sendMilestoneEtransferRequest('555001', 1);
+    assert.equal(mails.length, 1, 'later milestones are unaffected by the retainer date');
+  } finally { r1(); r2(); r3(); r4(); }
+  const src = require('fs').readFileSync(require.resolve('../src/services/retainerService2.js'), 'utf8');
+  assert.match(src, /warnIfSent && e\.code !== 'ALREADY_PAID'/, 'the signing path does not claim a request "was already emailed" when it never was');
+});
+
+test('unreadable / oversized payment records reach staff as a plain 400 message, not a server error', async () => {
+  const r1 = stub(leadService, 'getLead', async () => LEAD({ milestonePayments: '{"0":{"status":"pa' }));
+  const r2 = stub(leadService, 'updateLead', async () => {});
+  try {
+    await assert.rejects(ms.patchPayment('555001', 1, { status: 'requested' }), (e) => e.code === 'PAYMENTS_UNREADABLE' && e.badRequest === true);
+  } finally { r1(); r2(); }
+  try { ms.serializePayments('1', { 0: { reference: 'x'.repeat(2000) } }); assert.fail('should throw'); }
+  catch (e) { assert.equal(e.code, 'PAYMENTS_TOO_LARGE'); assert.equal(e.badRequest, true); }
+});
+
+test('a name recorded on a payment is one line', async () => {
+  let stored = '{}';
+  const r1 = stub(leadService, 'getLead', async () => LEAD({ milestonePayments: stored }));
+  const r2 = stub(leadService, 'updateLead', async (id, f) => { stored = f.milestonePayments; });
+  const r3 = stub(mondayApi, 'query', async () => ({}));
+  try {
+    await ms.markMilestonePaid('555001', 1, { actor: { name: 'Kamal\nMarked paid by Faran' } });
+    assert.equal(JSON.parse(stored)[1].marked.by, 'Kamal Marked paid by Faran');
+  } finally { r1(); r2(); r3(); }
+});
+
+test('the shared-key placeholder is never labelled "(name as typed)" in the note', async () => {
+  let stored = '{}';
+  const notes = [];
+  const r1 = stub(leadService, 'getLead', async () => LEAD({ milestonePayments: stored }));
+  const r2 = stub(leadService, 'updateLead', async (id, f) => { stored = f.milestonePayments; });
+  const r3 = stub(mondayApi, 'query', async (q, v) => { if (/create_update/.test(q)) notes.push(v.b); return {}; });
+  try {
+    await ms.markMilestonePaid('555001', 1, { actor: { name: 'Unidentified (shared admin key)', verified: false } });
+    assert.match(notes[0], /shared admin key — nobody was identified/);
+    assert.doesNotMatch(notes[0], /name as typed/);
+  } finally { r1(); r2(); r3(); }
+});
+
+test('advanceCaseToPaid takes the lead lock — it waits for an undo in progress, and skips (writing nothing) if the record stays busy', async () => {
+  const writes = [];
+  const gate = require('../src/services/caseGateService');
+  const leadMutex = require('../src/services/leadMutex');
+  const r0 = stub(gate, 'moveCaseToActiveGroup', async () => {});
+  const r1 = stub(leadService, 'getLead', async () => ({ id: '555001', clientMasterItemId: '9', retainerPaid: '2026-09-22' }));
+  const r2 = stub(mondayApi, 'query', async (q) => { if (/change_multiple_column_values/.test(q)) writes.push(q); return { items: [{ column_values: [{ text: '' }] }] }; });
+  try {
+    // held by someone else (an undo): the activation waits
+    let release;
+    const held = leadMutex.withLeadLock('555001', () => new Promise((r) => { release = r; }));
+    const adv = paymentService.advanceCaseToPaid({ id: '555001', clientMasterItemId: '9', retainerPaid: '2026-09-22' });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(writes.length, 0, 'no "Paid" while the lock is held');
+    release(); await held;
+    assert.equal(await adv, '9');
+    assert.equal(writes.length, 1);
+    // busy past the budget: skipped, nothing written — the sync retries
+    const r3 = stub(leadMutex, 'withLeadLockOrSkip', async () => ({ busy: true }));
+    try { assert.equal(await paymentService.advanceCaseToPaid({ id: '555001', clientMasterItemId: '9', retainerPaid: '2026-09-22' }), null); }
+    finally { r3(); }
+    assert.equal(writes.length, 1);
+  } finally { r0(); r1(); r2(); }
+});

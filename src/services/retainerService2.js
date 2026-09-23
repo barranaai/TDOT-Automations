@@ -746,7 +746,7 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
   } catch (e) {
     if (e.badRequest) {
       console.log(`[Retainer2] First-milestone e-transfer request already handled for lead ${leadId}: ${e.message}`);
-      if (warnIfSent) {
+      if (warnIfSent && e.code !== 'ALREADY_PAID') {
         await postLeadNote(leadId,
           'ℹ The first-milestone e-transfer request was already emailed to this client — changing the Retainer Fee does not resend it.');
       }

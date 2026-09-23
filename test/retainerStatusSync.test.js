@@ -152,6 +152,7 @@ function withFakeIo(fn, fresh = {}) {
   // test says otherwise, the fresh state still calls for the repair.
   R.io.getLead  = async (id) => { calls.push(['getLead', id]); if (fresh.getLeadThrows) throw new Error('read failed'); return fresh.lead !== undefined ? fresh.lead : PAID; };
   R.io.readCase = async (id) => { calls.push(['readCase', id]); return fresh.case !== undefined ? fresh.case : { paymentStatus: 'Signed (Unpaid)', caseRef: 'C-1', paymentDate: '' }; };
+  R.io.withLeadLockOrSkip = async (id, ms, fn) => { calls.push(['lock', id]); return fresh.lockBusy ? { busy: true } : fn(); };
   return Promise.resolve(fn(calls)).finally(() => Object.assign(R.io, real));
 }
 const names = (calls) => calls.map((c) => c[0]);
@@ -369,4 +370,23 @@ test('the group move goes through io — no real Monday call from a repair', () 
     await R.applyVerdict(PAID, { action: 'upgrade-cm', to: 'Paid', reason: 'x' }, { caseRef: 'C-1' });
     assert.ok(names(calls).includes('moveCaseToActiveGroup'));
   });
+});
+
+test('an upgrade to Paid is done under the lead lock — and when an undo holds the lock, the sync steps back and writes nothing', () => {
+  return withFakeIo(async (calls) => {
+    const r = await R.applyVerdict(PAID, { action: 'upgrade-cm', to: 'Paid', reason: 'x' }, { caseRef: 'C-1' });
+    assert.equal(r.changed, false, 'busy: nothing activated this round (the next sweep re-checks)');
+    assert.ok(names(calls).includes('lock'), 'it asked for the lock');
+    assert.ok(!names(calls).includes('writeCasePaymentStatus'), 'no Paid written while an undo may be removing the payment');
+    assert.ok(!names(calls).includes('maybeMarkRetained'));
+  }, { lockBusy: true });
+});
+
+test('the lead was re-linked to another case since the snapshot: nothing is written to either case', () => {
+  return withFakeIo(async (calls) => {
+    const r = await R.applyVerdict(PAID, { action: 'upgrade-cm', to: 'Paid', reason: 'x' }, { caseRef: 'C-1' });
+    assert.equal(r.changed, false);
+    assert.match(r.reason, /case link changed/);
+    assert.ok(!names(calls).includes('writeCasePaymentStatus'), 'the verdict was about a different row — never "Paid" on a case nobody checked');
+  }, { lead: { ...PAID, clientMasterItemId: String(PAID.clientMasterItemId || '') + '999' } });
 });

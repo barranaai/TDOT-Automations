@@ -29,7 +29,9 @@ test('undo is for NAMED admins: Monday sign-in AND on the admin list — the sha
 test('who is recorded on a payment: Monday identity first, then the typed name — labelled as such', () => {
   assert.deepEqual(actorFromStaff({ name: 'Gauri Berde', email: 'g@example.com' }, 'ignored'), { name: 'Gauri Berde', email: 'g@example.com', verified: true });
   assert.deepEqual(actorFromStaff(null, '  Kamalpreet  '), { name: 'Kamalpreet', email: '', verified: false });
-  assert.deepEqual(actorFromStaff(null, ''), { name: 'Admin (shared key)', email: '', verified: false }, 'says plainly nobody was identified');
+  assert.deepEqual(actorFromStaff(null, ''), { name: 'Unidentified (shared admin key)', email: '', verified: false }, 'says plainly nobody was identified');
+  assert.equal(actorFromStaff(null, '  Kamal\npreet\t K ').name, 'Kamal preet K', 'a typed name is one line — no faked second tooltip line');
+  assert.equal(actorFromStaff({ name: 'Faran\nX', email: 'f@x.com' }, '').name, 'Faran X');
   assert.equal(actorFromStaff(null, 'x'.repeat(200)).name.length, 60);
 });
 
@@ -61,7 +63,7 @@ test('flagging is open to any signed-in staffer, and records who flagged', () =>
 });
 
 test('every Mark paid now records who clicked — from both pages', () => {
-  const cockpit = SRC.slice(SRC.indexOf("app.post('/admin/case-action/:caseRef/milestone'"), SRC.indexOf("app.post('/admin/case-action/:caseRef/milestone'") + 1400);
+  const cockpit = SRC.slice(SRC.indexOf("app.post('/admin/case-action/:caseRef/milestone'"), SRC.indexOf("app.post('/admin/case-action/:caseRef/milestone'") + 2600);
   assert.match(cockpit, /applyAction\(\{[^}]*actor: staffActor\(req, staffName\)/);
   const consult = SRC.slice(SRC.indexOf("app.post('/api/consultation/:leadId/action'"), SRC.indexOf("app.post('/api/consultation/:leadId/action'") + 1400);
   assert.match(consult, /actor: staffActor\(req, staffName\)/);
@@ -84,4 +86,19 @@ test('the viewer endpoint tells the page what to offer, and whether any admin is
   const body = SRC.slice(i, i + 900);
   assert.match(body, /canUndo: !!\(staff && staff\.email && caseAccess\.isAdminEmail\(staff\.email\)\)/, 'from the Monday sign-in, never from the key');
   assert.match(body, /adminsConfigured/);
+});
+
+test('SHARED CASE: the cockpit refuses to record payments when two client records claim the case — and fails closed', () => {
+  const i = SRC.indexOf("app.post('/admin/case-action/:caseRef/milestone'");
+  const body = SRC.slice(i, i + 2600);
+  const guard = body.indexOf("findAllByColumnValue('clientMasterItemId', String(ctx.overview.itemId))");
+  const act = body.indexOf('applyAction(');
+  assert.ok(guard !== -1 && guard < act, 'the claimant check runs BEFORE any action');
+  assert.match(body, /catch \(err\) \{ return res\.status\(503\)/, 'a failed lookup refuses — it never falls through to the write');
+  assert.match(body, /\(claimants \|\| \[\]\)\.length > 1[\s\S]*status\(409\)/);
+});
+
+test('flagging passes the viewer through, so CASE_VISIBILITY=assigned is honoured', () => {
+  const i = SRC.indexOf("app.post('/admin/retainer/:leadId/milestone/:index/flag-error'");
+  assert.match(SRC.slice(i, i + 700), /flagPaymentError\(\{[^}]*viewer \}\)/);
 });

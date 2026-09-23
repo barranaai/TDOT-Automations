@@ -31,6 +31,7 @@ const REASON = 'Marked paid on the wrong client — the e-transfer belongs to so
 /** A fake Monday: one lead, one case, and a log of every call. */
 function withFakeIo(fn, { lead = baseLead(), cm = baseCase(), ...hooks } = {}) {
   const real = { ...U.io };
+  U._resetFlagThrottle();   // each test starts with no flag on record
   const store = { lead: { ...lead }, cm: cm && { ...cm } };
   const calls = [];
   const log = (name, ...a) => calls.push([name, ...a]);
@@ -40,13 +41,14 @@ function withFakeIo(fn, { lead = baseLead(), cm = baseCase(), ...hooks } = {}) {
     readCase: async (id) => { log('readCase', id); if (hooks.readCaseThrows) throw new Error('case read failed'); return hooks.caseAfterCommit && calls.some((c) => c[0] === 'commit') ? hooks.caseAfterCommit : (store.cm && { ...store.cm }); },
     commit: async (plan) => {
       log('commit', plan.index);
-      if (hooks.commitThrows) throw hooks.commitThrows;
+      if (hooks.commitThrows && !hooks.commitLandsThenThrows) throw hooks.commitThrows;
       if (hooks.commitIsNoop) return { conversion: plan.conversionStatus };
       const pay = ms.readPayments(store.lead).pay;
       if (plan.after) pay[plan.index] = plan.after;
       store.lead.milestonePayments = JSON.stringify(pay);
       if (plan.clearKeys.includes('retainerPaid')) store.lead.retainerPaid = '';
       if (plan.conversionStatus) store.lead.conversionStatus = plan.conversionStatus.to;
+      if (hooks.commitLandsThenThrows) { hooks.commitLandsThenThrows = false; throw hooks.commitThrows; }
       return { conversion: plan.conversionStatus };
     },
     writeLeadFields: async (id, fields) => { log('writeLeadFields', id, fields); if (!hooks.commitIsNoop) Object.assign(store.lead, fields); },
@@ -57,6 +59,9 @@ function withFakeIo(fn, { lead = baseLead(), cm = baseCase(), ...hooks } = {}) {
     adminEmails: () => ['faran@example.com', 'admin2@example.com'],
     invalidateQueues: () => { log('invalidateQueues'); },
     withLeadLock: async (key, f) => { log('lock', key); if (hooks.lockDelay) t += hooks.lockDelay; return f(); },
+    isLeadItem: async (id) => { log('isLeadItem', id); if (hooks.isLeadThrows) throw new Error('board read failed'); return hooks.notALead ? false : true; },
+    findClaimants: async (id) => { log('findClaimants', id); if (hooks.claimantsThrow) throw new Error('lookup failed'); return hooks.claimants || [{ id: store.lead.id, name: store.lead.fullName }]; },
+    caseAssignees: async (id) => { log('caseAssignees', id); if (hooks.assigneesThrow) throw new Error('read failed'); return hooks.assignees || { personIds: [], teamIds: [] }; },
     now: () => t,
     nowIso: () => '2026-09-23T15:04:11.000Z',
     sleep: async () => {},
@@ -304,4 +309,127 @@ test('a half-applied reversal where ONLY the payment date is left is still conve
   assert.notEqual(res.already, true, 'a payment date left behind can still start onboarding — never report it done');
   assert.equal(store.lead.retainerPaid, '');
   assert.ok(names().includes('commit'));
+}));
+
+// ─── Review round 2 ───────────────────────────────────────────────────────────
+
+test('only a record on the Leads board can be undone or flagged — any other Monday item is refused', () => withFakeIo(async ({ names }) => {
+  const pv = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+  assert.equal(pv.ok, false);
+  assert.equal(pv.code, 'NOT_A_LEAD');
+  const f = await U.flagPaymentError({ leadId: '13108401448', index: 0, actor: { name: 'K' }, note: 'a proper explanation here' });
+  assert.equal(f.ok, false);
+  assert.equal(f.status, 404);
+  assert.ok(!names().includes('postNote'));
+}, { notALead: true }));
+
+test('the board check failing is a refusal (fail closed), never a pass', () => withFakeIo(async () => {
+  const pv = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+  assert.equal(pv.ok, false);
+  assert.equal(pv.status, 503);
+}, { isLeadThrows: true }));
+
+test('SHARED CASE end to end: the preview warns and asks for LEAD-<id>; the case ref no longer confirms', () => withFakeIo(async () => {
+  const pv = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+  assert.ok(pv.plan.warnings.some((w) => w.code === 'SHARED_CASE'));
+  assert.equal(pv.plan.confirmText, 'LEAD-13108401448');
+  const bad = await U.executeMilestonePaidReversal({ leadId: '13108401448', index: 0, confirmText: '2026-OINP-059', reason: REASON, expect: pv.plan.expect, actor: ACTOR });
+  assert.equal(bad.code, 'CONFIRM_MISMATCH');
+}, { claimants: [{ id: '13108401448', name: 'Test Client' }, { id: '13100000001', name: 'Other Person' }] }));
+
+test('a LOST RESPONSE: the write landed but the reply never came — reported as done, with the notes and alerts', () => withFakeIo(async ({ store, names }) => {
+  const { res } = await previewThenExecute();
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(store.lead.retainerPaid, '');
+  assert.equal(names().filter((n) => n === 'commit').length, 1, 'never written twice');
+  assert.ok(names().includes('postNote') && names().includes('notify'));
+}, { commitThrows: new Error('socket hang up'), commitLandsThenThrows: true }));
+
+test('a write that really failed stays a failure — no notes, no alerts', () => withFakeIo(async ({ store, names }) => {
+  const { res } = await previewThenExecute();
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 503);
+  assert.equal(store.lead.retainerPaid, D);
+  assert.ok(!names().includes('postNote') && !names().includes('notify'));
+}, { commitThrows: new Error('socket hang up') }));
+
+test('RETAINER-DATE mode: honest wording — the date was removed, the row is unchanged but carries the marker', () => withFakeIo(async ({ store, calls }) => {
+  const { res } = await previewThenExecute();
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.match(res.message, /Removed the Retainer Paid date \(2026-09-22\)\. The milestone row was not paid and is unchanged\./);
+  assert.deepEqual(res.removed, { retainerPaidDate: D });
+  const row = ms.readPayments(store.lead).pay[0];
+  assert.equal(row.status, 'requested');
+  assert.equal(row.undone.by, 'Faran', 'the tooltip can say who removed the date');
+  const leadNote = calls.find((c) => c[0] === 'postNote' && c[1] === '13108401448')[2];
+  assert.ok(!/Removed record:/.test(leadNote), 'no "removed record" when no record was removed');
+  const caseNote = calls.find((c) => c[0] === 'postNote' && c[1] === '13108384096')[2];
+  assert.match(caseNote, /Retainer Paid date removed/);
+}, { lead: baseLead({ milestonePayments: JSON.stringify({ 0: { status: 'requested', requestedAt: D, reference: 'TDOT-01448-M1' } }) }), cm: baseCase({ paymentStatus: 'Not Paid' }) }));
+
+test('FLAG: a second flag on the same row within 10 minutes sends nothing new', () => withFakeIo(async ({ calls }) => {
+  U._resetFlagThrottle();
+  const a = await U.flagPaymentError({ leadId: '13108401448', index: 0, actor: { name: 'K' }, note: 'a proper explanation here' });
+  assert.equal(a.ok, true);
+  const before = calls.length;
+  const b = await U.flagPaymentError({ leadId: '13108401448', index: 0, actor: { name: 'K' }, note: 'a proper explanation here' });
+  assert.equal(b.ok, false);
+  assert.equal(b.status, 429);
+  assert.equal(calls.length, before, 'no read, no note, no alert');
+  U._resetFlagThrottle();
+}));
+
+test('FLAG: when nobody could be alerted, the message says so and tells staff to tell an admin', () => withFakeIo(async () => {
+  U._resetFlagThrottle();
+  U.io.resolveUserId = async () => null;
+  U.io.consultantFor = () => null;
+  const r = await U.flagPaymentError({ leadId: '13108401448', index: 0, actor: { name: 'K' }, note: 'a proper explanation here' });
+  assert.equal(r.ok, true);
+  assert.equal(r.notified, 0);
+  assert.match(r.message, /nobody could be alerted automatically\. Tell an admin directly/);
+  U._resetFlagThrottle();
+}));
+
+test('FLAG: the message counts who was alerted, and names the RCIC only when the RCIC was reached', () => withFakeIo(async () => {
+  U._resetFlagThrottle();
+  const r = await U.flagPaymentError({ leadId: '13108401448', index: 0, actor: { name: 'K' }, note: 'a proper explanation here' });
+  assert.match(r.message, /3 people were alerted on Monday \(the admins and the RCIC\)/);
+  U._resetFlagThrottle();
+  U.io.consultantFor = () => ({ name: 'Nobody', email: 'nobody@example.com' });   // no Monday account
+  const r2 = await U.flagPaymentError({ leadId: '13108401448', index: 1, actor: { name: 'K' }, note: 'a proper explanation here' });
+  assert.match(r2.message, /2 people were alerted on Monday \(the admins\)/);
+  U._resetFlagThrottle();
+}));
+
+test('FLAG: the RCIC is asked to hold only while a payment actually stands', () => withFakeIo(async ({ calls }) => {
+  U._resetFlagThrottle();
+  await U.flagPaymentError({ leadId: '13108401448', index: 0, actor: { name: 'K' }, note: 'a proper explanation here' });
+  const note = calls.find((c) => c[0] === 'postNote')[2];
+  assert.ok(!/don’t countersign/.test(note), 'no payment on record — nothing for the countersignature to trigger');
+  U._resetFlagThrottle();
+}, { lead: baseLead({ milestonePayments: JSON.stringify({ 0: { status: 'requested', requestedAt: D } }), retainerPaid: '' }) }));
+
+test('FLAG under CASE_VISIBILITY=assigned: only people on the case may flag it; a failed check refuses', () => withFakeIo(async ({ names }) => {
+  U._resetFlagThrottle();
+  const viewer = { userId: '555', teamIds: [], isAdmin: false, scope: 'assigned' };
+  const prev = process.env.CASE_VISIBILITY;
+  process.env.CASE_VISIBILITY = 'assigned';
+  try {
+    const no = await U.flagPaymentError({ leadId: '13108401448', index: 0, actor: { name: 'K' }, note: 'a proper explanation here', viewer });
+    assert.equal(no.status, 403);
+    assert.ok(!names().includes('postNote'));
+    U.io.caseAssignees = async () => ({ personIds: ['555'], teamIds: [] });
+    const yes = await U.flagPaymentError({ leadId: '13108401448', index: 0, actor: { name: 'K' }, note: 'a proper explanation here', viewer });
+    assert.equal(yes.ok, true);
+    U._resetFlagThrottle();
+    U.io.caseAssignees = async () => { throw new Error('read failed'); };
+    const err = await U.flagPaymentError({ leadId: '13108401448', index: 0, actor: { name: 'K' }, note: 'a proper explanation here', viewer });
+    assert.equal(err.status, 503);
+    U._resetFlagThrottle();
+    const admin = await U.flagPaymentError({ leadId: '13108401448', index: 0, actor: { name: 'K' }, note: 'a proper explanation here', viewer: { ...viewer, isAdmin: true, scope: 'all' } });
+    assert.equal(admin.ok, true, 'admins are never scoped');
+  } finally {
+    if (prev === undefined) delete process.env.CASE_VISIBILITY; else process.env.CASE_VISIBILITY = prev;
+    U._resetFlagThrottle();
+  }
 }));

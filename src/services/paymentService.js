@@ -154,6 +154,21 @@ async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt
 async function advanceCaseToPaid(leadOrId, when, { recheckPaid = true } = {}) {
   const lead = (leadOrId && typeof leadOrId === 'object') ? leadOrId : await leadService.getLead(leadOrId);
   if (!lead || !lead.clientMasterItemId) return null;
+  // Under the lead lock, so this re-check-then-write can never interleave with
+  // an "Undo mark paid" (which holds the same lock until its change reads back).
+  // Re-entrant for callers already holding it (Mark paid, the e-sign capture).
+  // If the lock can't be had within a minute, skip: the sync activates a
+  // genuinely paid client on its next pass.
+  const r = await require('./leadMutex').withLeadLockOrSkip(lead.id, ADVANCE_LOCK_WAIT_MS, () => _advanceCaseToPaid(lead, when, { recheckPaid }));
+  if (r && r.busy) {
+    console.warn(`[Payment] Client record ${lead.id} busy — case ${lead.clientMasterItemId} not activated now; the status sync retries`);
+    return null;
+  }
+  return r;
+}
+const ADVANCE_LOCK_WAIT_MS = 60000;
+
+async function _advanceCaseToPaid(lead, when, { recheckPaid }) {
   // IDEMPOTENT: two triggers can race here (a delayed signing webhook after
   // the countersign trigger already advanced) — a second same-label "Paid"
   // write re-fires the Monday webhook, whose deferred-resume branch would

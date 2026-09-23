@@ -31,7 +31,7 @@ const crypto      = require('crypto');
 const leadService = require('./leadService');
 const mondayApi   = require('./mondayApi');
 const ms          = require('./milestonePaymentService');
-const { clientMasterBoardId } = require('../../config/monday');
+const { clientMasterBoardId, leadBoardId } = require('../../config/monday');
 
 const CM = {
   paymentStatus:    'color_mm0x9fnn',
@@ -49,8 +49,15 @@ const REASON_MAX = 1000;
 const LOCK_WAIT_MS = 20000;          // an undo queued behind a hung e-sign capture gives up, changing nothing
 const VERIFY_READS = 4;
 const VERIFY_GAP_MS = 700;
+const FLAG_COOLDOWN_MS = 10 * 60 * 1000;   // one flag per payment row per 10 minutes — the first one already alerted everyone
 
 const s = (v) => String(v == null ? '' : v).trim();
+const oneLine = (v) => s(v).replace(/\s+/g, ' ');
+/** "(name as typed)" when the name was not a Monday sign-in; nothing for the shared-key placeholder. */
+function typedMark(stamp) {
+  if (!stamp || stamp.verified || /^Unidentified/.test(s(stamp.by))) return '';
+  return ' (name as typed)';
+}
 const lower = (v) => s(v).toLowerCase();
 function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function dollars(cents) { return (Math.round(Number(cents) || 0) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' }); }
@@ -106,7 +113,10 @@ function onboardingSignals(cm) {
   return out;
 }
 
-function confirmTextFor(lead, cm) {
+function confirmTextFor(lead, cm, shared) {
+  // Two client records share this case: the case ref would not tell them apart,
+  // so the confirmation names the exact record being changed.
+  if (shared) return `LEAD-${s(lead.id)}`;
   if (cm && s(cm.caseRef)) return s(cm.caseRef);
   if (s(lead.clientMasterItemId)) return `CASE-${s(lead.clientMasterItemId)}`;
   return `LEAD-${s(lead.id)}`;
@@ -125,7 +135,7 @@ function confirmTextFor(lead, cm) {
  * @param {?string} p.now          ISO timestamp for the audit marker
  * @returns {{ok:false, refusal:{code,message,detail?}} | {ok:true, ...plan}}
  */
-function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null, cmMissing = false, actor = null, now = null } = {}) {
+function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null, cmMissing = false, claimants, actor = null, now = null } = {}) {
   const refuse = (code, message, detail) => ({ ok: false, refusal: { code, message, ...(detail ? { detail } : {}) } });
   if (!lead || !s(lead.id)) return refuse('NO_LEAD', 'That client record could not be found.');
   const i = Number(index);
@@ -156,30 +166,33 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   if (isRetainer && cm && lower(cm.paymentStatus) === 'paid') {
     const signals = onboardingSignals(cm);
     return refuse('ONBOARDING_STARTED',
-      'Onboarding has already started for this case (its Payment Status reads Paid), so the intake email and document checklist may already have gone out — undo can’t reverse that. ' +
-      'If the payment really was recorded in error: (1) on Monday, set the case’s Payment Status to “Not Paid” — only “Not Paid” or “Working on it” hold; any other label is changed back to Paid by the 15-minute sync, which restarts onboarding. ' +
-      '(2) Come back and Undo: it will then clear the payment on the client’s record. Emails already sent can’t be recalled, so contact the client.',
+      'Onboarding has already started for this case (Payment Status reads Paid), so emails may have gone to the client. ' +
+      'If the payment really was wrong: set the case’s Payment Status to “Not Paid” on Monday (only “Not Paid” or “Working on it” hold — any other label is changed back to Paid), then Undo here. Tell the client — sent emails can’t be recalled.',
       { signals });
   }
 
   const at = s(now) || new Date().toISOString();
-  const by = s((actor && (actor.name || actor.email)) || '').slice(0, 60) || 'Unknown';
+  const by = oneLine((actor && (actor.name || actor.email)) || '').slice(0, 60) || 'Unknown';
   const undone = { by, at: at.slice(0, 16) + 'Z', was: entryFingerprint(before) };
-  if (before && before.marked && s(before.marked.by)) { undone.prevBy = s(before.marked.by).slice(0, 60); undone.prevAt = s(before.marked.at); }
+  if (before && before.marked && s(before.marked.by)) { undone.prevBy = oneLine(before.marked.by).slice(0, 60); undone.prevAt = s(before.marked.at); }
 
-  const after = mode === 'milestone' ? { ...restoredEntry(lead.id, i, before), undone } : null;
+  // milestone mode: the row goes back to its prior state, with the marker.
+  // retainer-date mode: the row keeps its status — it only gains the marker, so
+  // the "i" still shows who removed the payment date and when.
+  const after = mode === 'milestone' ? { ...restoredEntry(lead.id, i, before), undone }
+    : (before ? { ...before, undone } : { status: 'pending', undone });
   const clearKeys = (isRetainer && retainerPaid) ? ['retainerPaid'] : [];
   const conversionStatus = conversionFor(lead, i);
 
   const postPay = { ...pay };
-  if (after) postPay[i] = after;
-  const paymentsText = after ? JSON.stringify(postPay) : null;
+  postPay[i] = after;
+  const paymentsText = JSON.stringify(postPay);
   if (paymentsText && paymentsText.length > ms.MAX_PAYMENTS_JSON) {
     return refuse('PAYMENTS_TOO_LARGE', 'The payment records on this client are too long to update safely. Ask Faran to check the lead.');
   }
   const postLead = {
     ...lead,
-    ...(paymentsText ? { milestonePayments: paymentsText } : {}),
+    milestonePayments: paymentsText,
     ...(clearKeys.length ? { retainerPaid: '' } : {}),
     ...(conversionStatus ? { conversionStatus: conversionStatus.to } : {}),
   };
@@ -207,6 +220,12 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   if (s(lead.clientMasterItemId) && cmMissing) {
     warnings.push({ code: 'CASE_MISSING', message: 'The case this client points at no longer exists on the Cases board. Undo will correct the client’s record only.' });
   }
+  const shared = Array.isArray(claimants) && claimants.length > 1;
+  if (shared) {
+    warnings.push({ code: 'SHARED_CASE', message: `This case is linked to ${claimants.length} client records (${claimants.map((c) => `${oneLine(c.name) || 'unnamed'} #${c.id}`).join(', ')}). You are changing ${oneLine(lead.fullName) || 'this client'} #${s(lead.id)} only — check it is the right one.` });
+  } else if (claimants === null && s(lead.clientMasterItemId)) {
+    info.push({ code: 'CLAIMANTS_UNKNOWN', message: 'Couldn’t check whether another client record shares this case — make sure this is the right client.' });
+  }
   if (cm && cm.archived) {
     warnings.push({ code: 'CASE_ARCHIVED', message: 'This client’s case is archived.' });
   }
@@ -222,8 +241,8 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   if (mode === 'retainer-date') {
     info.push({ code: 'RETAINER_DATE_ONLY', message: `The milestone row isn’t marked paid, but the client still has a Retainer Paid date (${retainerPaid}) — usually because the case board was set to Paid by hand. Undo clears that date${conversionStatus ? ' and the “Retained” status' : ''}.` });
   }
-  if (after && after.status === 'pending' && isRetainer && s(lead.retainerSigned)) {
-    info.push({ code: 'NEVER_REQUESTED', message: 'The client has never been sent the e-Transfer request for this milestone. Use “Send e-Transfer request” when you’re ready.' });
+  if (mode === 'milestone' && after.status === 'pending' && (!isRetainer || s(lead.retainerSigned))) {
+    info.push({ code: 'NEVER_REQUESTED', message: 'The client has never been sent the e-Transfer request for this milestone. Use “Send e-Transfer request” when you’re ready — the client’s portal may say the details are on their way.' });
   }
 
   const rows = ms.scheduleRows(lead);
@@ -231,7 +250,7 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   const label = s(require('./retainerPlanService').displayMilestoneLabel(row.label)) || `Milestone ${i + 1}`;
 
   const willChange = [];
-  if (after) willChange.push(`Milestone goes back to “${after.status === 'requested' ? 'requested' : after.status === 'sent' ? 'requested (old Square link)' : 'not requested'}”`);
+  if (mode === 'milestone') willChange.push(`Milestone goes back to “${after.status === 'requested' ? 'requested' : after.status === 'sent' ? 'requested (old Square link)' : 'not requested'}”`);
   if (clearKeys.length) willChange.push(`Retainer Paid date (${retainerPaid}) is cleared`);
   if (conversionStatus) willChange.push(`Conversion Status changes from “${conversionStatus.from}” to “${conversionStatus.to}”`);
   const willNotChange = ['No money moves, and nothing is sent to the client', 'Signatures (client and RCIC) and “Retained by”', 'Emails already sent, and Monday history'];
@@ -243,7 +262,7 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
     before, after, clearKeys, conversionStatus, paymentsText,
     cm, warnings, info, willChange, willNotChange,
     expect: { mode, entry: entryFingerprint(before), retainerPaid },
-    confirmText: confirmTextFor(lead, cm),
+    confirmText: confirmTextFor(lead, cm, shared),
   };
 }
 
@@ -299,7 +318,7 @@ async function commitReversal(plan) {
     if (!fresh) throw codeError('NO_LEAD', 'That client record could not be found.');
     const { pay, unreadable } = ms.readPayments(fresh);
     if (unreadable) throw codeError('PAYMENTS_UNREADABLE', 'The payment records on this client can’t be read — nothing was changed.');
-    if (plan.mode === 'milestone' && entryFingerprint(pay[plan.index]) !== plan.expect.entry) {
+    if (entryFingerprint(pay[plan.index]) !== plan.expect.entry) {
       throw codeError('CHANGED_SINCE_PREVIEW', 'This payment changed while the undo was being prepared — nothing was changed. Close the dialog and open it again.');
     }
     if (s(fresh.retainerPaid) !== plan.expect.retainerPaid) {
@@ -307,7 +326,8 @@ async function commitReversal(plan) {
     }
     const conversion = conversionFor(fresh, plan.index);
     const fields = {};
-    if (plan.mode === 'milestone') { pay[plan.index] = plan.after; fields.milestonePayments = ms.serializePayments(plan.leadId, pay); }
+    pay[plan.index] = plan.after;                                   // the reversal (milestone) or just the marker (retainer-date)
+    fields.milestonePayments = ms.serializePayments(plan.leadId, pay);
     if (plan.clearKeys.length) fields.retainerPaid = '';
     if (conversion) fields.conversionStatus = conversion.to;
     if (Object.keys(fields).length) await leadService.updateLead(plan.leadId, fields, { clearKeys: plan.clearKeys });
@@ -337,6 +357,21 @@ const io = {
     try { c.invalidateLeadsQueue(); } catch (_) { /* cache only */ }
   },
   withLeadLock:     (key, fn) => require('./leadMutex').withLeadLock(key, fn),
+  isLeadItem:       async (id) => {
+    const d = await mondayApi.query(`query($ids:[ID!]){ items(ids:$ids){ id state board{id} } }`, { ids: [String(id)] });
+    const it = d && d.items && d.items[0];
+    return !!(it && it.state !== 'deleted' && String((it.board && it.board.id) || '') === String(leadBoardId));
+  },
+  findClaimants:    async (cmItemId) => (await leadService.findAllByColumnValue('clientMasterItemId', String(cmItemId)))
+    .map((l) => ({ id: String(l.id), name: s(l.fullName) || s(l.name) })),
+  caseAssignees:    async (cmItemId) => {
+    const ca = require('./caseAccessService');
+    const cols = JSON.stringify(ca.PEOPLE_COLUMNS || []);
+    const d = await mondayApi.query(`query($ids:[ID!]){ items(ids:$ids){ column_values(ids:${cols}){ id value } } }`, { ids: [String(cmItemId)] });
+    const byId = {};
+    for (const c of ((d && d.items && d.items[0] && d.items[0].column_values) || [])) byId[c.id] = c.value;
+    return ca.assigneesFromColumnValues(byId);
+  },
   now:              () => Date.now(),
   nowIso:           () => new Date().toISOString(),
   sleep:            (msec) => new Promise((r) => setTimeout(r, msec)),
@@ -347,12 +382,20 @@ async function readState(leadId) {
   try { lead = await io.getLead(leadId); }
   catch (err) { return { error: 'Couldn’t read this client from Monday — nothing was changed. Try again in a minute.', status: 503, code: 'LEAD_UNREADABLE' }; }
   if (!lead) return { error: 'That client record could not be found.', status: 404, code: 'NO_LEAD' };
-  let cm = null, cmReadError = null, cmMissing = false;
+  // Any Monday item id reads back as a "lead" — make sure this one is on the Leads board.
+  let isLead;
+  try { isLead = await io.isLeadItem(leadId); }
+  catch (err) { return { error: 'Couldn’t confirm this client record on Monday — nothing was changed. Try again in a minute.', status: 503, code: 'LEAD_UNREADABLE' }; }
+  if (!isLead) return { error: 'That isn’t a client record.', status: 404, code: 'NOT_A_LEAD' };
+  let cm = null, cmReadError = null, cmMissing = false, claimants = null;
   if (s(lead.clientMasterItemId)) {
     try { cm = await io.readCase(lead.clientMasterItemId); if (!cm) cmMissing = true; }
     catch (err) { cmReadError = err.message || 'read failed'; }
+    try { claimants = await io.findClaimants(lead.clientMasterItemId); } catch (_) { claimants = null; }
+  } else {
+    claimants = [];
   }
-  return { lead, cm, cmReadError, cmMissing };
+  return { lead, cm, cmReadError, cmMissing, claimants };
 }
 
 /** The WHOLE post-state holds — not just "the row reads unpaid". A retry after a
@@ -376,6 +419,8 @@ async function verifyReversal(plan) {
     const e = ms.readPayments(lead).pay[plan.index] || {};
     if (plan.mode === 'milestone' && e.status === 'paid') out.push('milestone');
     if (plan.clearKeys.length && s(lead.retainerPaid)) out.push('retainerPaid');
+    // After a lost response, "landed" means OUR write is there — the marker we planned.
+    if (plan._readOnly && !(e.undone && e.undone.at === plan.after.undone.at && e.undone.was === plan.expect.entry)) out.push('marker');
     return out;
   };
   let lead = null, missing = ['unread'];
@@ -385,6 +430,7 @@ async function verifyReversal(plan) {
     missing = lead ? missingIn(lead) : ['unread'];
     if (!missing.length) return { ok: true, lead };
   }
+  if (plan._readOnly) return { ok: false, missing, lead };
   // Converge once — the payment date FIRST: it is the field every activation
   // path keys on, so it is the dangerous one to leave behind.
   try {
@@ -397,18 +443,32 @@ async function verifyReversal(plan) {
   return missing.length ? { ok: false, missing, lead } : { ok: true, lead };
 }
 
-/** Admins (other than the actor) and the RCIC on the case — best-effort. */
-async function notifyPeople(lead, text, targetItemId, actorEmail) {
+/** Admins (other than the actor) and the RCIC on the case — best-effort.
+ *  Returns how many were alerted, and whether the RCIC was one of them. */
+async function notifyPeopleDetailed(lead, text, targetItemId, actorEmail) {
   const ids = new Set();
   const emails = new Set(io.adminEmails());
-  try { const c = io.consultantFor(lead); if (c && c.mondayUserId) ids.add(String(c.mondayUserId)); else if (c && c.email) emails.add(lower(c.email)); } catch (_) { /* best-effort */ }
+  let rcicId = '', rcicEmail = '';
+  try {
+    const c = io.consultantFor(lead);
+    if (c && c.mondayUserId) { rcicId = String(c.mondayUserId); ids.add(rcicId); }
+    else if (c && c.email) { rcicEmail = lower(c.email); emails.add(rcicEmail); }
+  } catch (_) { /* best-effort */ }
   emails.delete(lower(actorEmail));
   for (const email of emails) {
-    try { const id = await io.resolveUserId(email); if (id) ids.add(String(id)); } catch (_) { /* best-effort */ }
+    try {
+      const id = await io.resolveUserId(email);
+      if (id) { ids.add(String(id)); if (email === rcicEmail) rcicId = String(id); }
+    } catch (_) { /* best-effort */ }
   }
-  let sent = 0;
-  for (const id of ids) { try { await io.notify(id, text, targetItemId); sent++; } catch (_) { /* best-effort */ } }
-  return sent;
+  let sent = 0, rcic = false;
+  for (const id of ids) {
+    try { await io.notify(id, text, targetItemId); sent++; if (id === rcicId) rcic = true; } catch (_) { /* best-effort */ }
+  }
+  return { sent, rcic };
+}
+async function notifyPeople(lead, text, targetItemId, actorEmail) {
+  return (await notifyPeopleDetailed(lead, text, targetItemId, actorEmail)).sent;
 }
 
 function publicPlan(plan) {
@@ -424,7 +484,7 @@ async function previewMilestonePaidReversal({ leadId, index, actor = null } = {}
   const plan = planMilestonePaidReversal({ ...st, index, actor, now: io.nowIso() });
   return {
     ok: true,
-    client: { name: s(st.lead.fullName) || 'Client', leadId: s(st.lead.id), caseRef: (st.cm && st.cm.caseRef) || '' },
+    client: { name: oneLine(st.lead.fullName) || 'Client', leadId: s(st.lead.id), caseRef: (st.cm && st.cm.caseRef) || '' },
     plan: publicPlan(plan),
   };
 }
@@ -432,7 +492,7 @@ async function previewMilestonePaidReversal({ leadId, index, actor = null } = {}
 function removedLine(plan) {
   const b = plan.before || {};
   return b.status === 'paid'
-    ? `recorded as paid on ${esc(b.paidAt || '?')} (${esc(b.method || 'e-transfer')}${b.reference ? `, ref ${esc(b.reference)}` : ''})${b.marked && b.marked.by ? ` by ${esc(b.marked.by)}` : ''}`
+    ? `recorded as paid on ${esc(b.paidAt || '?')} (${esc(b.method || 'e-transfer')}${b.reference ? `, ref ${esc(b.reference)}` : ''})${b.marked && b.marked.by ? ` by ${esc(oneLine(b.marked.by))}${typedMark(b.marked)}` : ''}`
     : `a Retainer Paid date of ${esc(plan.expect.retainerPaid)} with no paid milestone row`;
 }
 
@@ -479,8 +539,15 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
       let committed;
       try { committed = await io.commit(plan); }
       catch (err) {
-        return { ok: false, status: err.code === 'CHANGED_SINCE_PREVIEW' ? 409 : 503, code: err.code || 'COMMIT_FAILED',
-          error: err.code ? err.message : 'Monday didn’t accept the change — nothing was changed. Try again in a minute.' };
+        if (err.code === 'CHANGED_SINCE_PREVIEW') return { ok: false, status: 409, code: err.code, error: err.message };
+        // A write whose response was lost may still have landed. Read back: if it
+        // did, carry on as a success so the record and the alerts are not lost.
+        const landed = err.code ? { ok: false } : await verifyReversal({ ...plan, _readOnly: true });
+        if (!landed.ok) {
+          return { ok: false, status: 503, code: err.code || 'COMMIT_FAILED',
+            error: err.code ? err.message : 'Monday didn’t accept the change — nothing was changed. Try again in a minute.' };
+        }
+        committed = { conversion: conversionFor(st.lead, i), recovered: true };
       }
       const verified = await verifyReversal(plan);
       let raced = false;
@@ -507,7 +574,7 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
   const warnings = [...plan.warnings];
 
   const changed = [];
-  if (plan.after) changed.push(`milestone set back to “${plan.after.status === 'pending' ? 'not requested' : 'requested'}”`);
+  if (plan.mode === 'milestone') changed.push(`milestone set back to “${plan.after.status === 'pending' ? 'not requested' : 'requested'}”`);
   if (plan.clearKeys.length) changed.push(`Retainer Paid date (${esc(plan.expect.retainerPaid)}) cleared`);
   if (conversion) changed.push(`Conversion Status changed from “${esc(conversion.from)}” to “${esc(conversion.to)}”`);
 
@@ -518,10 +585,10 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
     `<b>Not changed:</b> signatures, “Retained by”, and anything already sent to the client. No money moved.` +
     (plan.isRetainer ? ' Onboarding starts only once the real payment is recorded and every signature is in.' : '') +
     '<br>If this payment belongs to another client, record it on that client’s file.' +
-    (plan.before ? `<br><small>Removed record: ${esc(JSON.stringify(plan.before))}</small>` : '');
-  const caseBody =
-    `↩️ <b>Payment record removed</b> — ${what} had been recorded as paid in error. Removed by ${who} on ${when}. ` +
-    `<b>Reason:</b> ${esc(s(reason))}. Details are on the client’s lead record.`;
+    (plan.mode === 'milestone' ? `<br><small>Removed record: ${esc(JSON.stringify(plan.before))}</small>` : '');
+  const caseBody = plan.mode === 'milestone'
+    ? `↩️ <b>Payment record removed</b> — ${what} had been recorded as paid in error. Removed by ${who} on ${when}. <b>Reason:</b> ${esc(s(reason))}. Details are on the client’s lead record.`
+    : `↩️ <b>Retainer Paid date removed</b> (${esc(plan.expect.retainerPaid)}) — the client’s record said the retainer was paid, but no milestone payment was recorded. Removed by ${who} on ${when}. <b>Reason:</b> ${esc(s(reason))}.`;
 
   let notesFailed = false;
   try { await io.postNote(lead.id, leadBody); } catch (_) { notesFailed = true; }
@@ -549,9 +616,13 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
   next.push('If this payment belongs to another client, record it on that client’s file.');
   return {
     ok: true,
-    message: `Removed. ${plan.label} now reads “${plan.after ? (plan.after.status === 'pending' ? 'not requested' : 'requested') : 'unpaid'}”.`,
+    message: plan.mode === 'milestone'
+      ? `Removed. ${plan.label} now reads “${plan.after.status === 'pending' ? 'not requested' : 'requested'}”.`
+      : `Removed the Retainer Paid date (${plan.expect.retainerPaid}). The milestone row was not paid and is unchanged.`,
     undone: { index: plan.index, mode: plan.mode, before: plan.before, after: plan.after, clearedRetainerPaid: !!plan.clearKeys.length, conversionStatus: conversion || null },
-    removed: plan.before ? { reference: plan.before.reference || '', paidAt: plan.before.paidAt || '', amount: dollars(plan.totalCents) } : null,
+    removed: plan.mode === 'milestone' && plan.before
+      ? { reference: plan.before.reference || '', paidAt: plan.before.paidAt || '', amount: dollars(plan.totalCents) }
+      : { retainerPaidDate: plan.expect.retainerPaid },
     warnings, notified, next,
   };
 }
@@ -560,27 +631,45 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
  * For staff who can't undo: record that a payment looks wrong and alert the
  * admins and the RCIC. Changes NO payment state.
  */
-async function flagPaymentError({ leadId, index, actor, note } = {}) {
+const _flaggedAt = new Map();   // "leadId#index" → when it was last flagged (per process)
+async function flagPaymentError({ leadId, index, actor, note, viewer = null } = {}) {
   const i = Number(index);
   if (!/^\d{3,20}$/.test(s(leadId))) return { ok: false, status: 400, error: 'Unknown client.' };
   if (!Number.isInteger(i) || i < 0 || i > MAX_INDEX) return { ok: false, status: 400, error: 'That milestone does not exist.' };
   const n = s(note);
   if (n.length < REASON_MIN) return { ok: false, status: 400, error: `Say briefly what’s wrong (at least ${REASON_MIN} characters).` };
   if (n.length > 600) return { ok: false, status: 400, error: 'Keep it under 600 characters.' };
-  const name = s(actor && (actor.name || actor.email)).slice(0, 60);
+  const name = oneLine(actor && (actor.name || actor.email)).slice(0, 60);
   if (!name) return { ok: false, status: 400, error: 'Enter your name so the admins know who flagged it.' };
+  const flagKey = `${s(leadId)}#${i}`;
+  const last = _flaggedAt.get(flagKey);
+  if (last && io.now() - last < FLAG_COOLDOWN_MS) {
+    return { ok: false, status: 429, error: 'This payment was flagged a few minutes ago and the admins were alerted then. Nothing new was sent.' };
+  }
 
   const st = await readState(leadId);
   if (st.error) return { ok: false, status: st.status, error: st.error };
   const lead = st.lead;
+  // Under CASE_VISIBILITY=assigned a staffer may flag only a case they can see.
+  if (viewer && !viewer.isAdmin && viewer.scope === 'assigned') {
+    let canSee = false;
+    if (s(lead.clientMasterItemId) && !st.cmMissing) {
+      try { canSee = require('./caseAccessService').viewerCanSee(await io.caseAssignees(lead.clientMasterItemId), viewer); }
+      catch (_) { return { ok: false, status: 503, error: 'Couldn’t check your access to this case — try again in a minute.' }; }
+    }
+    if (!canSee) return { ok: false, status: 403, error: 'You can flag payments only on cases you’re assigned to. Tell an admin directly.' };
+  }
   const entry = ms.readPayments(lead).pay[i] || {};
   const row = ms.scheduleRows(lead)[i] || {};
   const label = s(require('./retainerPlanService').displayMilestoneLabel(row.label)) || `Milestone ${i + 1}`;
   const gate = require('./caseGateService').signatureGateForLead(lead);
-  const holdCountersign = i === 0 && gate.missing.includes('RCIC countersignature');
+  // Ask the RCIC to hold only while a payment actually stands — the countersignature
+  // is what would start onboarding on top of it.
+  const holdCountersign = i === 0 && gate.missing.includes('RCIC countersignature') &&
+    (entry.status === 'paid' || !!s(lead.retainerPaid));
   const recorded = entry.status === 'paid'
-    ? `recorded as paid on ${esc(entry.paidAt || '?')}${entry.reference ? `, ref ${esc(entry.reference)}` : ''}${entry.marked && entry.marked.by ? ` by ${esc(entry.marked.by)}` : ''}`
-    : 'not recorded as paid';
+    ? `recorded as paid on ${esc(entry.paidAt || '?')}${entry.reference ? `, ref ${esc(entry.reference)}` : ''}${entry.marked && entry.marked.by ? ` by ${esc(oneLine(entry.marked.by))}${typedMark(entry.marked)}` : ''}`
+    : (i === 0 && s(lead.retainerPaid) ? `not recorded as paid, but the client has a Retainer Paid date (${esc(lead.retainerPaid)})` : 'not recorded as paid');
   const body =
     `🚩 <b>Payment flagged as recorded in error</b> — ${esc(label)} (${dollars(row.totalCents)}), ${recorded}.<br>` +
     `Flagged by ${esc(name)}${actor && actor.verified ? '' : ' (name as typed)'}: ${esc(n)}<br>` +
@@ -590,10 +679,14 @@ async function flagPaymentError({ leadId, index, actor, note } = {}) {
   try { await io.postNote(caseItem || lead.id, body); }
   catch (_) { return { ok: false, status: 503, error: 'Couldn’t post the flag on Monday — try again in a minute.' }; }
   if (caseItem) { try { await io.postNote(lead.id, body); } catch (_) { /* the case note is the one people see */ } }
-  const notified = await notifyPeople(lead,
-    `Payment flagged as wrong on ${s(lead.fullName) || 'a client'}${st.cm && st.cm.caseRef ? ` (${st.cm.caseRef})` : ''}: ${label}. ${holdCountersign ? 'Please don’t countersign yet. ' : ''}Flagged by ${name}.`,
-    caseItem || lead.id, actor && actor.email).catch(() => 0);
-  return { ok: true, message: `Flagged. The admins${holdCountersign ? ' and the RCIC' : ''} have been alerted.`, notified };
+  _flaggedAt.set(flagKey, io.now());
+  const alerted = await notifyPeopleDetailed(lead,
+    `Payment flagged as wrong on ${oneLine(lead.fullName) || 'a client'}${st.cm && st.cm.caseRef ? ` (${st.cm.caseRef})` : ''}: ${label}. ${holdCountersign ? 'Please don’t countersign yet. ' : ''}Flagged by ${name}.`,
+    caseItem || lead.id, actor && actor.email).catch(() => ({ sent: 0, rcic: false }));
+  const message = alerted.sent
+    ? `Flagged. The note is on the case, and ${alerted.sent} ${alerted.sent === 1 ? 'person was' : 'people were'} alerted on Monday (the admins${alerted.rcic ? ' and the RCIC' : ''}).`
+    : 'Flagged — the note is on the case, but nobody could be alerted automatically. Tell an admin directly.';
+  return { ok: true, message, notified: alerted.sent };
 }
 
 module.exports = {
@@ -601,5 +694,6 @@ module.exports = {
   previewMilestonePaidReversal, executeMilestonePaidReversal, flagPaymentError,
   // helpers exported for tests
   entryFingerprint, restoredEntry, conversionFor, onboardingSignals, reversalHolds, readCase, commitReversal,
-  io, AWAITING_PAYMENT, LOCK_WAIT_MS,
+  io, AWAITING_PAYMENT, LOCK_WAIT_MS, FLAG_COOLDOWN_MS,
+  _resetFlagThrottle: () => _flaggedAt.clear(),
 };

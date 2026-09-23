@@ -13,7 +13,7 @@ const { PAYMENT_UI_JS, PAYMENT_UI_CSS } = require('../src/routes/adminShared');
 
 function ui(viewer) {
   const ctx = vm.createContext({ location: { pathname: '/admin/case/2026-OINP-059', search: '', hash: '' }, encodeURIComponent, String, Number, isNaN, Date, Array });
-  vm.runInContext(PAYMENT_UI_JS + '\n;this.__ = { tdotPayAuditText, tdotPayAuditHtml, tdotPayRowActions, TDOT_PAY };', ctx);
+  vm.runInContext(PAYMENT_UI_JS + '\n;this.__ = { tdotPayAuditText, tdotPayAuditHtml, tdotPayRowActions, TDOT_PAY, payWhen };', ctx);
   ctx.__.TDOT_PAY.viewer = viewer || null;
   return ctx.__;
 }
@@ -107,4 +107,44 @@ test('one payment dialog at a time — a double-click never stacks two', () => {
   const { PAYMENT_UI_JS } = require('../src/routes/adminShared');
   const open = PAYMENT_UI_JS.slice(PAYMENT_UI_JS.indexOf('function payOverlay(){'), PAYMENT_UI_JS.indexOf('function payOverlay(){') + 400);
   assert.match(open, /querySelectorAll\('\.paym-overlay'\)[\s\S]*removeChild/);
+});
+
+test('tooltip time is OFFICE time (Toronto) with the zone shown — the same day for every viewer', () => {
+  const u = ui(ADMIN);
+  assert.equal(u.payWhen('2026-09-23T02:30Z'), 'Sep 22, 2026, 10:30 p.m. EDT', 'late evening in Toronto is still the 22nd');
+  assert.match(u.payWhen('2026-12-23T02:30Z'), /EST$/);
+  assert.equal(u.payWhen(''), '');
+});
+
+test('the shared-key placeholder is not called "a typed name"', () => {
+  const t = ui(ADMIN).tdotPayAuditText({ status: 'paid', markedBy: 'Unidentified (shared admin key)', markedAt: '', markedVerified: false });
+  assert.doesNotMatch(t, /name as typed/);
+});
+
+test('"Remove payment date…" is not offered on a case already Paid — the board is where that starts', () => {
+  assert.equal(ui(ADMIN).tdotPayRowActions({ index: 0, status: 'requested' }, { retainerPaid: '2026-09-22', casePaid: true }, 'sbtn'), '');
+  const fs = require('fs');
+  assert.match(fs.readFileSync(require.resolve('../src/routes/adminCase.js'), 'utf8'), /casePaid: d\.paymentStatus === 'Paid'/);
+});
+
+test('no e-transfer request button for a retainer already recorded as paid, on both panels', () => {
+  const fs = require('fs');
+  assert.match(fs.readFileSync(require.resolve('../src/routes/adminCase.js'), 'utf8'), /&& !\(m\.index === 0 && L\.retainerPaid\)\) \{/);
+  assert.match(fs.readFileSync(require.resolve('../src/routes/adminConsultation.js'), 'utf8'), /&&!\(m\.index===0&&D\.retainerPaid\)\)\?/);
+});
+
+test('dialogs: labelled for screen readers, focus returns to the button, and a finished dialog refreshes however it is closed', () => {
+  const js = PAYMENT_UI_JS;
+  assert.match(js, /role="dialog" aria-modal="true" aria-labelledby="paym-title"/);
+  assert.match(js, /<h3 id="paym-title"/);
+  for (const id of ['paym-ref', 'paym-by', 'paym-why', 'paym-confirm']) {
+    assert.match(js, new RegExp('<label for="' + id + '"'), 'label for ' + id);
+    assert.match(js, new RegExp('id="' + id + '"'), 'input id ' + id);
+  }
+  assert.match(js, /opener\.focus\(\)/, 'focus goes back to what opened the dialog');
+  const overlay = js.slice(js.indexOf('function payOverlay(){'), js.indexOf('function payTitle('));
+  assert.match(overlay, /if \(d\.onClose\)/, 'Escape, the backdrop and Done all run the same close — and its refresh');
+  assert.equal((js.match(/d\.onClose = o\.onDone \|\| null/g) || []).length, 2, 'set once the undo and once the flag has succeeded');
+  assert.match(js, /role="alert"/, 'errors are announced');
+  assert.match(js, /at least 10 characters/, 'the reason minimum is stated up front');
 });

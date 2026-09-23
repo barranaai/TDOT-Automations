@@ -977,6 +977,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       // Who recorded it — shown on the row's tooltip and in the note.
       const by = actor || (staffName ? { name: staffName, verified: false } : null);
       const r = await require('./milestonePaymentService').markMilestonePaid(leadId, v.normalized.index, { reference: v.normalized.reference, actor: by });
+      if (r.already) return { ok: true, message: `Already recorded as paid (${r.existingOn}) — nothing changed.` };
       return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked paid by e-transfer.` };
     }
 

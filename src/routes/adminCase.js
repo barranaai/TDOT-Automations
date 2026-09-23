@@ -572,13 +572,14 @@ function renderPaymentsTab(d) {
         // got proper e-Transfer details (server allows a deliberate re-issue).
         // Milestone 1 is due at signing even while the case is still Pre-Onboarding
         // (signing sends its request automatically; this is the manual path).
-        if ((m.status === 'pending' && (m.due || (m.index === 0 && L.retainerSigned))) || m.legacySent) {
+        // Never for a retainer already recorded as paid (the server refuses it too).
+        if (((m.status === 'pending' && (m.due || (m.index === 0 && L.retainerSigned))) || m.legacySent) && !(m.index === 0 && L.retainerPaid)) {
           acts += '<button class="sbtn" data-ms-act="request" data-ms-i="' + m.index + '">' +
                   (m.legacySent ? 'Send e-Transfer details' : 'Send e-Transfer request') + '</button>';
         }
         acts += '<button class="sbtn primary" data-ms-act="paid" data-ms-i="' + m.index + '">Mark paid</button>';
       }
-      if (TDOT_PAY.viewer) acts += tdotPayRowActions(m, { retainerPaid: L.retainerPaid }, 'sbtn');
+      if (TDOT_PAY.viewer) acts += tdotPayRowActions(m, { retainerPaid: L.retainerPaid, casePaid: d.paymentStatus === 'Paid' }, 'sbtn');
       return '<div class="ms-row"><span class="ms-label">' + escHtml(m.label || ('Milestone ' + (m.index + 1))) + '</span>' +
         '<span class="ms-amt">' + amt + '</span>' + st +
         (m.trigger ? '<span class="ms-meta">trigger: ' + escHtml(m.trigger) + '</span>' : '') +

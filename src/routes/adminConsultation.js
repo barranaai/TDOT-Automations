@@ -1432,7 +1432,7 @@ function renderMilestonePayments(list){
         ? '<span class="ms-meta">paid '+escHtml(m.paidAt||'')+(m.reference?(' · ref '+escHtml(m.reference)):'')+'</span>'
         : (m.status==='requested'&&m.reference ? '<span class="ms-meta">ref '+escHtml(m.reference)+'</span>' : '')) + tdotPayAuditHtml(m);
     // Milestone 1 is due at signing even while the case is still Pre-Onboarding.
-    var reqBtn=((m.status==='pending'&&(m.due||(m.index===0&&signed)))||m.legacySent)?'<button class="btn" type="button" data-msp-req="'+m.index+'">'+ICONS.mail+' '+(m.legacySent?'Send e-transfer details':'Send e-transfer request')+'</button>':'';
+    var reqBtn=(((m.status==='pending'&&(m.due||(m.index===0&&signed)))||m.legacySent)&&!(m.index===0&&D.retainerPaid))?'<button class="btn" type="button" data-msp-req="'+m.index+'">'+ICONS.mail+' '+(m.legacySent?'Send e-transfer details':'Send e-transfer request')+'</button>':'';
     var paidBtn=(m.status!=='paid')?'<button class="btn primary" type="button" data-msp-paid="'+m.index+'">'+ICONS.check+' Mark paid</button>':'';
     var fixBtn=TDOT_PAY.viewer?tdotPayRowActions(m,{ retainerPaid: D.retainerPaid },'btn'):'';
     return '<div class="ms-row"><span class="ms-label">'+escHtml(m.label||('Milestone '+(m.index+1)))+'</span><span class="ms-amt">'+amt+'</span>'+badge+meta+reqBtn+paidBtn+fixBtn+'</div>';

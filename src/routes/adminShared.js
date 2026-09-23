@@ -482,7 +482,13 @@ const PAYMENT_UI_JS = `
 
   function payEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   function payHeaders(){ var h = { 'Content-Type': 'application/json' }; var k = null; try { k = sessionStorage.getItem('tdot_admin_key'); } catch(e){} if (k) h['X-Api-Key'] = k; return h; }
-  function payWhen(iso){ if (!iso) return ''; var d = new Date(iso); if (isNaN(d.getTime())) return String(iso); return d.toLocaleString('en-CA', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
+  function payWhen(iso){
+    if (!iso) return ''; var d = new Date(iso); if (isNaN(d.getTime())) return String(iso);
+    /* Office time for everyone, with the zone shown — a viewer abroad must not read a different day. */
+    try { return d.toLocaleString('en-CA', { timeZone: 'America/Toronto', timeZoneName: 'short', day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
+    catch (e) { return d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; }
+  }
+  function payTyped(stamp){ return (stamp && !stamp.verified && !/^Unidentified/.test(String(stamp.by || ''))) ? ' (name as typed)' : ''; }
   function payFirst(n){ var t = String(n||'').trim().split(' ')[0]; return t || 'this client'; }
   function payAmount(m){ return '$' + (Number(m.totalCents||0)/100).toFixed(2); }
   function payTypedName(){ try { return localStorage.getItem('tdot_staff_name') || ''; } catch(e){ return ''; } }
@@ -506,7 +512,7 @@ const PAYMENT_UI_JS = `
   /* "Who changed it, when" for a milestone row — empty when there is nothing to say. */
   function tdotPayAuditText(m){
     var lines = [];
-    if (m.status === 'paid' && m.markedBy) lines.push('Marked paid by ' + m.markedBy + (m.markedVerified ? '' : ' (name as typed)') + (m.markedAt ? ' · ' + payWhen(m.markedAt) : ''));
+    if (m.status === 'paid' && m.markedBy) lines.push('Marked paid by ' + m.markedBy + payTyped({ by: m.markedBy, verified: m.markedVerified }) + (m.markedAt ? ' · ' + payWhen(m.markedAt) : ''));
     if (m.undoneBy) lines.push('A payment record was removed by ' + m.undoneBy + (m.undoneAt ? ' · ' + payWhen(m.undoneAt) : ''));
     return lines.join(TDOT_PAY_NL);
   }
@@ -525,7 +531,7 @@ const PAYMENT_UI_JS = `
         html += '<button type="button" class="' + btnClass + '" data-pay-flag="' + m.index + '" title="Alert the admins that this payment was recorded in error">Flag as wrong</button>';
         if (v.adminsConfigured && !v.signedIn) html += '<a class="pay-signin" href="' + payEsc((v.signInUrl || '/q/auth/monday') + '?returnTo=' + encodeURIComponent(location.pathname + location.search + location.hash)) + '">Admin? Sign in with Monday to undo</a>';
       }
-    } else if (m.index === 0 && ctx.retainerPaid && v.canUndo) {
+    } else if (m.index === 0 && ctx.retainerPaid && !ctx.casePaid && v.canUndo) {
       html += '<button type="button" class="' + btnClass + '" data-pay-undo="0" title="The client still carries a Retainer Paid date although this row is not paid">Remove payment date…</button>';
     }
     return html ? '<span class="pay-fix">' + html + '</span>' : '';
@@ -546,17 +552,26 @@ const PAYMENT_UI_JS = `
   function payOverlay(){
     /* One payment dialog at a time — a double-click must never stack two. */
     Array.prototype.forEach.call(document.querySelectorAll('.paym-overlay'), function(x){ if (x.parentNode) x.parentNode.removeChild(x); });
+    var opener = document.activeElement;
     var ov = document.createElement('div');
     ov.className = 'paym-overlay';
-    ov.innerHTML = '<div class="paym" role="dialog" aria-modal="true"></div>';
+    ov.innerHTML = '<div class="paym" role="dialog" aria-modal="true" aria-labelledby="paym-title"></div>';
     document.body.appendChild(ov);
     var box = ov.querySelector('.paym');
-    function close(){ if (ov.parentNode) ov.parentNode.removeChild(ov); document.removeEventListener('keydown', onKey); }
+    var d = { ov: ov, box: box, onClose: null };
+    function close(){
+      if (!ov.parentNode) return;
+      ov.parentNode.removeChild(ov); document.removeEventListener('keydown', onKey);
+      try { if (opener && opener.focus && document.body.contains(opener)) opener.focus(); } catch (e) {}
+      if (d.onClose) { var f = d.onClose; d.onClose = null; f(); }
+    }
     function onKey(e){ if (e.key === 'Escape') close(); }
     ov.addEventListener('click', function(e){ if (e.target === ov) close(); });
     document.addEventListener('keydown', onKey);
-    return { ov: ov, box: box, close: close };
+    d.close = close;
+    return d;
   }
+  function payTitle(text, danger){ return '<h3 id="paym-title"' + (danger ? ' class="danger"' : '') + '>' + payEsc(text) + '</h3>'; }
 
   /* Mark paid, with the facts that would have stopped the 2026-09-22 mistake in front of the person. */
   function tdotOpenMarkPaidModal(o){
@@ -565,19 +580,19 @@ const PAYMENT_UI_JS = `
     var never = !(m.status === 'requested' || m.legacySent);
     var expected = (m.status === 'requested' && m.reference) ? m.reference : '';
     d.box.innerHTML =
-      '<h3>Record a payment</h3>' +
+      payTitle('Record a payment') +
       '<div class="paym-client">For <b>' + payEsc(o.clientName || 'this client') + '</b>' + (o.caseRef ? ' · ' + payEsc(o.caseRef) : '') + '</div>' +
       '<div class="paym-rec"><div>' + payEsc(m.label || ('Milestone ' + (m.index + 1))) + '</div>' +
         '<div class="paym-amt">' + payAmount(m) + ' <span class="paym-muted">scheduled amount, incl. HST</span></div>' +
         (expected ? '<div class="paym-muted">The client was asked to put <b>' + payEsc(expected) + '</b> in the e-transfer message.</div>' : '') +
       '</div>' +
       (never ? '<div class="paym-warn">No payment request was ever sent for this milestone. Before recording it, check the e-transfer really came from <b>' + payEsc(o.clientName || 'this client') + '</b>.</div>' : '') +
-      '<label>Reference from the bank notification <span class="paym-muted">(optional)</span></label>' +
-      '<input class="paym-ref" type="text" maxlength="120" autocomplete="off">' +
+      '<label for="paym-ref">Reference from the bank notification <span class="paym-muted">(optional)</span></label>' +
+      '<input id="paym-ref" class="paym-ref" type="text" maxlength="120" autocomplete="off">' +
       (v.signedIn
         ? '<div class="paym-muted" style="margin-top:10px">Recorded as <b>' + payEsc(v.name) + '</b> (signed in with Monday).</div>'
-        : '<label>Your name</label><input class="paym-by" type="text" maxlength="60" value="' + payEsc(payTypedName()) + '">') +
-      '<div class="paym-err"></div>' +
+        : '<label for="paym-by">Your name</label><input id="paym-by" class="paym-by" type="text" maxlength="60" value="' + payEsc(payTypedName()) + '">') +
+      '<div class="paym-err" role="alert"></div>' +
       '<div class="paym-actions"><button type="button" class="paym-btn" data-x>Cancel</button>' +
       '<button type="button" class="paym-btn primary" data-go>Record payment for ' + payEsc(payFirst(o.clientName)) + '</button></div>';
     d.box.querySelector('[data-x]').onclick = d.close;
@@ -602,20 +617,21 @@ const PAYMENT_UI_JS = `
   /* Undo mark paid — preview first; reason + typed confirmation; the server re-checks everything. */
   function tdotOpenUndoPaymentModal(o){
     var d = payOverlay();
-    d.box.innerHTML = '<h3 class="danger">Remove payment record</h3><div class="paym-client">Loading…</div>';
+    var T = payTitle('Remove payment record', true);
+    d.box.innerHTML = T + '<div class="paym-client">Loading…</div>';
     fetch('/admin/retainer/' + encodeURIComponent(o.leadId) + '/milestone/' + encodeURIComponent(o.index) + '/undo-preview', { headers: payHeaders(), credentials: 'same-origin' })
       .then(function(r){ return r.json().then(function(j){ return { status: r.status, j: j }; }); })
       .then(function(res){
-        if (res.status === 401) { d.box.innerHTML = '<h3 class="danger">Remove payment record</h3><div class="paym-stop">' + payEsc(res.j.error || 'Sign in with Monday first.') + '</div><div class="paym-actions"><a class="paym-btn primary" href="' + payEsc('/q/auth/monday?returnTo=' + encodeURIComponent(location.pathname + location.search)) + '">Sign in with Monday</a><button type="button" class="paym-btn" data-x>Close</button></div>'; d.box.querySelector('[data-x]').onclick = d.close; return; }
-        if (res.status !== 200 || !res.j.ok) { d.box.innerHTML = '<h3 class="danger">Remove payment record</h3><div class="paym-stop">' + payEsc((res.j && res.j.error) || 'Could not load the preview.') + '</div><div class="paym-actions"><button type="button" class="paym-btn" data-x>Close</button></div>'; d.box.querySelector('[data-x]').onclick = d.close; return; }
+        if (res.status === 401) { d.box.innerHTML = T + '<div class="paym-stop">' + payEsc(res.j.error || 'Sign in with Monday first.') + '</div><div class="paym-actions"><a class="paym-btn primary" href="' + payEsc('/q/auth/monday?returnTo=' + encodeURIComponent(location.pathname + location.search)) + '">Sign in with Monday</a><button type="button" class="paym-btn" data-x>Close</button></div>'; d.box.querySelector('[data-x]').onclick = d.close; return; }
+        if (res.status !== 200 || !res.j.ok) { d.box.innerHTML = T + '<div class="paym-stop">' + payEsc((res.j && res.j.error) || 'Could not load the preview.') + '</div><div class="paym-actions"><button type="button" class="paym-btn" data-x>Close</button></div>'; d.box.querySelector('[data-x]').onclick = d.close; return; }
         renderUndo(d, o, res.j);
       })
-      .catch(function(e){ d.box.innerHTML = '<h3 class="danger">Remove payment record</h3><div class="paym-stop">Could not load the preview: ' + payEsc(e.message) + '</div><div class="paym-actions"><button type="button" class="paym-btn" data-x>Close</button></div>'; d.box.querySelector('[data-x]').onclick = d.close; });
+      .catch(function(e){ d.box.innerHTML = T + '<div class="paym-stop">Could not load the preview: ' + payEsc(e.message) + '</div><div class="paym-actions"><button type="button" class="paym-btn" data-x>Close</button></div>'; d.box.querySelector('[data-x]').onclick = d.close; });
   }
 
   function renderUndo(d, o, pv){
     var p = pv.plan, c = pv.client || {};
-    var head = '<h3 class="danger">Remove payment record</h3>' +
+    var head = payTitle('Remove payment record', true) +
       '<div class="paym-client"><b>' + payEsc(c.name) + '</b> · lead ' + payEsc(c.leadId) + (c.caseRef ? ' · case ' + payEsc(c.caseRef) : '') + '</div>';
     if (!p.ok) {
       d.box.innerHTML = head + '<div class="paym-stop">' + payEsc(p.refusal.message) + '</div>' +
@@ -627,16 +643,16 @@ const PAYMENT_UI_JS = `
     var b = p.before || {};
     var rec = p.mode === 'milestone'
       ? '<div>' + payEsc(p.label) + '</div><div class="paym-amt">' + payEsc('$' + (Number(p.totalCents||0)/100).toFixed(2)) + ' <span class="paym-muted">scheduled amount</span></div>' +
-        '<div class="paym-muted">Recorded as paid ' + payEsc(b.paidAt || '') + (b.method ? ' by ' + payEsc(b.method) : '') + (b.reference ? ' · ref ' + payEsc(b.reference) : '') + (b.marked && b.marked.by ? ' · by ' + payEsc(b.marked.by) : '') + '</div>'
+        '<div class="paym-muted">Recorded as paid ' + payEsc(b.paidAt || '') + (b.method ? ' by ' + payEsc(b.method) : '') + (b.reference ? ' · ref ' + payEsc(b.reference) : '') + (b.marked && b.marked.by ? ' · by ' + payEsc(b.marked.by) + payTyped(b.marked) : '') + '</div>'
       : '<div>' + payEsc(p.label) + '</div><div class="paym-muted">Retainer Paid date on the client: ' + payEsc(p.expect.retainerPaid) + '</div>';
     d.box.innerHTML = head +
       '<div class="paym-rec">' + rec + '</div>' +
       payList('', p.warnings, 'paym-warn') + payList('', p.info, 'paym-info') +
       '<div class="paym-sec">Will change</div><ul>' + p.willChange.map(function(x){ return '<li>' + payEsc(x) + '</li>'; }).join('') + '</ul>' +
       '<div class="paym-sec">Will not change</div><ul>' + p.willNotChange.map(function(x){ return '<li>' + payEsc(x) + '</li>'; }).join('') + '</ul>' +
-      '<label>Reason <span class="paym-muted">(goes on the record)</span></label><textarea class="paym-why" maxlength="1000" placeholder="e.g. This e-transfer was from a different client"></textarea>' +
-      '<label>Type <b>' + payEsc(p.confirmText) + '</b> to confirm</label><input class="paym-confirm" type="text" autocomplete="off">' +
-      '<div class="paym-err"></div>' +
+      '<label for="paym-why">Reason <span class="paym-muted">(at least 10 characters — it goes on the record)</span></label><textarea id="paym-why" class="paym-why" maxlength="1000" placeholder="e.g. This e-transfer was from a different client"></textarea>' +
+      '<label for="paym-confirm">Type <b>' + payEsc(p.confirmText) + '</b> to confirm</label><input id="paym-confirm" class="paym-confirm" type="text" autocomplete="off">' +
+      '<div class="paym-err" role="alert"></div>' +
       '<div class="paym-actions"><button type="button" class="paym-btn" data-x>Cancel</button><button type="button" class="paym-btn danger" data-go disabled>Remove payment record</button></div>';
     var why = d.box.querySelector('.paym-why'), conf = d.box.querySelector('.paym-confirm'), go = d.box.querySelector('[data-go]'), err = d.box.querySelector('.paym-err');
     function check(){ go.disabled = !(why.value.trim().length >= 10 && conf.value.trim() === p.confirmText); }
@@ -656,7 +672,9 @@ const PAYMENT_UI_JS = `
             payList('', res.j.warnings, 'paym-warn') +
             ((res.j.next || []).length ? '<div class="paym-sec">Next</div><ul>' + res.j.next.map(function(x){ return '<li>' + payEsc(x) + '</li>'; }).join('') + '</ul>' : '') +
             '<div class="paym-actions"><button type="button" class="paym-btn primary" data-x>Done</button></div>';
-          d.box.querySelector('[data-x]').onclick = function(){ d.close(); if (o.onDone) o.onDone(); };
+          d.onClose = o.onDone || null;   /* the row changed — refresh however the dialog is closed */
+          d.box.querySelector('[data-x]').onclick = d.close;
+          d.box.querySelector('[data-x]').focus();
           return;
         }
         err.textContent = (res.j && res.j.error) || ('Failed (HTTP ' + res.status + ').');
@@ -673,12 +691,12 @@ const PAYMENT_UI_JS = `
     var m = o.m || {}, v = TDOT_PAY.viewer || {};
     var d = payOverlay();
     d.box.innerHTML =
-      '<h3>Flag payment as wrong</h3>' +
+      payTitle('Flag payment as wrong') +
       '<div class="paym-client"><b>' + payEsc(o.clientName || 'This client') + '</b>' + (m.label ? ' · ' + payEsc(m.label) : '') + '</div>' +
       '<div class="paym-info">Nothing changes on the payment. The admins are alerted to check it and remove it if it’s wrong' + (m.index === 0 ? ', and the RCIC is asked not to countersign until they have' : '') + '.</div>' +
-      '<label>What’s wrong?</label><textarea class="paym-why" maxlength="600" placeholder="e.g. This e-transfer was from a different client"></textarea>' +
-      (v.signedIn ? '' : '<label>Your name</label><input class="paym-by" type="text" maxlength="60" value="' + payEsc(payTypedName()) + '">') +
-      '<div class="paym-err"></div>' +
+      '<label for="paym-why">What’s wrong? <span class="paym-muted">(at least 10 characters)</span></label><textarea id="paym-why" class="paym-why" maxlength="600" placeholder="e.g. This e-transfer was from a different client"></textarea>' +
+      (v.signedIn ? '' : '<label for="paym-by">Your name</label><input id="paym-by" class="paym-by" type="text" maxlength="60" value="' + payEsc(payTypedName()) + '">') +
+      '<div class="paym-err" role="alert"></div>' +
       '<div class="paym-actions"><button type="button" class="paym-btn" data-x>Cancel</button><button type="button" class="paym-btn primary" data-go>Alert the admins</button></div>';
     d.box.querySelector('[data-x]').onclick = d.close;
     var go = d.box.querySelector('[data-go]'), err = d.box.querySelector('.paym-err');
@@ -696,14 +714,17 @@ const PAYMENT_UI_JS = `
       .then(function(r){ return r.json().then(function(j){ return { status: r.status, j: j }; }); })
       .then(function(res){
         if (res.status === 200 && res.j.ok) {
-          d.box.innerHTML = '<h3>Flag payment as wrong</h3><div class="paym-ok">' + payEsc(res.j.message || 'Flagged.') + '</div><div class="paym-actions"><button type="button" class="paym-btn primary" data-x>Done</button></div>';
-          d.box.querySelector('[data-x]').onclick = function(){ d.close(); if (o.onDone) o.onDone(); };
+          d.box.innerHTML = payTitle('Flag payment as wrong') + '<div class="paym-ok">' + payEsc(res.j.message || 'Flagged.') + '</div><div class="paym-actions"><button type="button" class="paym-btn primary" data-x>Done</button></div>';
+          d.onClose = o.onDone || null;
+          d.box.querySelector('[data-x]').onclick = d.close;
+          d.box.querySelector('[data-x]').focus();
           return;
         }
         go.disabled = false; err.textContent = (res.j && res.j.error) || ('Failed (HTTP ' + res.status + ').');
       })
       .catch(function(e){ go.disabled = false; err.textContent = 'Failed: ' + e.message; });
     };
+    setTimeout(function(){ var el = d.box.querySelector('.paym-why'); if (el) el.focus(); }, 30);
   }
 `;
 

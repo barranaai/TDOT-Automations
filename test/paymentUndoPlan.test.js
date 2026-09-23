@@ -123,7 +123,10 @@ test('retainer-date only: the row isn’t paid but the lead carries a payment da
   const p = plan({ lead: l, cm: { ...CASE, paymentStatus: 'Not Paid' } });
   assert.equal(p.ok, true);
   assert.equal(p.mode, 'retainer-date');
-  assert.equal(p.after, null, 'the row is left exactly as it is');
+  assert.equal(p.after.status, 'requested', 'the row keeps its status…');
+  assert.equal(p.after.reference, 'TDOT-01448-M1');
+  assert.equal(p.after.undone.by, 'Faran', '…and only gains the marker, so the tooltip shows who removed the date');
+  assert.ok(!p.willChange.some((x) => /Milestone goes back/.test(x)), 'nothing claims the row changed');
   assert.deepEqual(p.clearKeys, ['retainerPaid']);
   assert.ok(p.info.some((x) => x.code === 'RETAINER_DATE_ONLY'));
   // …but never while the case still reads Paid
@@ -224,4 +227,31 @@ test('the INVARIANT guard itself works: if anything upstream ever let an unsafe 
     assert.equal(p.ok, false);
     assert.equal(p.refusal.code, 'INVARIANT');
   } finally { gate.signatureGateForLead = orig; }
+});
+
+test('SHARED CASE: two client records claim one case — warned by name, and the confirmation names the exact record', () => {
+  const claimants = [{ id: '13108401448', name: 'Test Client' }, { id: '13100000001', name: 'Other Person' }];
+  const p = plan({ claimants });
+  const w = p.warnings.find((x) => x.code === 'SHARED_CASE');
+  assert.ok(w, 'staff are told another record shares the case');
+  assert.match(w.message, /Other Person #13100000001/);
+  assert.equal(p.confirmText, 'LEAD-13108401448', 'the case ref would not tell the two records apart');
+  assert.equal(plan({ claimants: [claimants[0]] }).confirmText, '2026-OINP-059', 'one claimant: the case ref as usual');
+  const unknown = plan({ claimants: null });
+  assert.ok(unknown.info.some((x) => x.code === 'CLAIMANTS_UNKNOWN'), 'a failed lookup is said, not hidden');
+  assert.equal(unknown.confirmText, '2026-OINP-059');
+});
+
+test('NEVER_REQUESTED: any milestone restored to "not requested" says so — not only the first', () => {
+  const l = lead({ milestonePayments: pays({ 0: { status: 'paid', paidAt: D }, 1: { status: 'paid', paidAt: D, reference: 'X' } }) });
+  const p = plan({ lead: l, index: 1 });
+  assert.equal(p.after.status, 'pending');
+  assert.ok(p.info.some((x) => x.code === 'NEVER_REQUESTED'));
+});
+
+test('names are one line in the marker — a typed newline can’t fake a second tooltip line', () => {
+  const l = lead({ milestonePayments: pays({ 0: { status: 'paid', paidAt: D, marked: { by: 'Kamal\nMarked paid by Faran', at: '2026-09-22T10:00Z', verified: false } } }) });
+  const p = plan({ lead: l, actor: { name: 'Faran\n X', email: 'f@x.com' } });
+  assert.equal(p.after.undone.by, 'Faran X');
+  assert.equal(p.after.undone.prevBy, 'Kamal Marked paid by Faran');
 });

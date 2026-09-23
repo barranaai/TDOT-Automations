@@ -15,12 +15,16 @@
  * @param {?{name?:string,email?:string}} staff  tryStaffAuth(req) result
  * @param {?string} typedName
  */
+const oneLine = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+const SHARED_KEY_PLACEHOLDER = 'Unidentified (shared admin key)';
+
 function actorFromStaff(staff, typedName) {
   if (staff && (staff.name || staff.email)) {
-    return { name: String(staff.name || staff.email).slice(0, 60), email: String(staff.email || ''), verified: true };
+    return { name: oneLine(staff.name || staff.email).slice(0, 60), email: String(staff.email || ''), verified: true };
   }
-  const n = typeof typedName === 'string' ? typedName.trim().slice(0, 60) : '';
-  return { name: n || 'Admin (shared key)', email: '', verified: false };
+  // One line: a typed newline could otherwise fake a second line in the tooltip.
+  const n = typeof typedName === 'string' ? oneLine(typedName).slice(0, 60) : '';
+  return { name: n || SHARED_KEY_PLACEHOLDER, email: '', verified: false };
 }
 
 /**
@@ -38,7 +42,7 @@ function namedAdminCheck(staff, isAdminEmail) {
   if (!isAdminEmail(staff.email)) {
     return { ok: false, status: 403, error: 'Only admins can undo a payment. Use “Flag as wrong” to alert them.' };
   }
-  return { ok: true, actor: { name: String(staff.name || staff.email).slice(0, 60), email: String(staff.email), verified: true } };
+  return { ok: true, actor: { name: oneLine(staff.name || staff.email).slice(0, 60), email: String(staff.email), verified: true } };
 }
 
-module.exports = { actorFromStaff, namedAdminCheck };
+module.exports = { actorFromStaff, namedAdminCheck, SHARED_KEY_PLACEHOLDER };

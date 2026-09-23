@@ -792,7 +792,7 @@ app.post('/admin/retainer/:leadId/milestone/:index/flag-error', express.json(), 
   const { leadId, index } = _msParams(req);
   const { note, staffName } = req.body || {};
   try {
-    const r = await require('./services/paymentUndoService').flagPaymentError({ leadId, index, note, actor: staffActor(req, staffName) });
+    const r = await require('./services/paymentUndoService').flagPaymentError({ leadId, index, note, actor: staffActor(req, staffName), viewer });
     if (!r.ok) return res.status(r.status || 500).json({ error: r.error });
     res.json(r);
   } catch (err) {
@@ -836,6 +836,16 @@ app.post('/admin/case-action/:caseRef/milestone', express.json(), async (req, re
   if (!leadId) return res.status(400).json({ error: 'No linked lead for this case.' });
   const { action, value, staffName } = req.body || {};
   if (!COCKPIT_MS_ACTIONS.includes(action)) return res.status(400).json({ error: 'Unsupported action.' });
+  // The cockpit shows the FIRST client record linked to this case. When two
+  // records share the case, that may be the wrong person — a payment recorded
+  // here could land on someone else's file (how 2026-OINP-059 went wrong).
+  // Fail closed: send staff to the client's own record instead.
+  let claimants;
+  try { claimants = await require('./services/leadService').findAllByColumnValue('clientMasterItemId', String(ctx.overview.itemId)); }
+  catch (err) { return res.status(503).json({ error: 'Couldn’t confirm which client this case belongs to — nothing was changed. Try again in a minute.' }); }
+  if ((claimants || []).length > 1) {
+    return res.status(409).json({ error: `This case is linked to ${claimants.length} client records, so it isn’t safe to record payments from here. Open the client from Consultations and record it on their own record.` });
+  }
   try {
     const result = await consultantPortalService.applyAction({ leadId: String(leadId), action, value, actor: staffActor(req, staffName) });
     res.json(result);
