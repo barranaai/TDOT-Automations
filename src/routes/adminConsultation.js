@@ -11,7 +11,7 @@
 
 const express = require('express');
 const router  = express.Router();
-const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS } = require('./adminShared');
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS } = require('./adminShared');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
@@ -606,6 +606,7 @@ function buildDetailHTML(leadId) {
 <title>TDOT — Consultation</title><style>
   ${SHARED_CSS_VARS}
   ${NAV_CSS}
+  ${PAYMENT_UI_CSS}
   body { background:var(--bg); }
   .wrap { max-width:min(1560px, 95vw); margin:0 auto; padding:20px 30px 90px; }
   #loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:50vh; gap:16px; }
@@ -977,6 +978,7 @@ var REMARKS=${jsLit(REMARK_PRESETS)};
 ${REMARKS_JS}
 var ICONS=${jsLit({ video: I.video, file: I.file, disc: I.disc, mail: I.mail, userCheck: I.userCheck, clock: I.clock, check: I.check })};
 ${SHARED_AUTH_JS}
+${PAYMENT_UI_JS}
 tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/updates/' + encodeURIComponent(LEAD_ID), itemId: LEAD_ID });
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function safeUrl(u){ u=String(u==null?'':u).trim(); return /^(https?:|mailto:)/i.test(u)?u:'#'; } // block javascript:/data: in href
@@ -1210,13 +1212,13 @@ function fetchT(url,opts,ms){ var ac=new AbortController(); var to=setTimeout(fu
 function netErr(e){ return e&&e.name==='AbortError' ? 'Timed out — please try again.' : ('Failed: '+(e&&e.message||e)); }
 
 var ADDR_DIRTY=false;   // the residential-address box has unsaved typing (render() leaves it alone)
-function doAction(action,value,confirmMsg){
+function doAction(action,value,confirmMsg,staffNameOverride){
   if(confirmMsg && !window.confirm(confirmMsg)) return;
   var key=getKey(); if(!key) return;
   setMsg('Working…','info'); disableActions(true);
   fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{
     method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'},
-    body: JSON.stringify({ action:action, value:value, amend: RP_AMEND, staffName: (window.tdotRemarksName_rmk ? window.tdotRemarksName_rmk() : '') })
+    body: JSON.stringify({ action:action, value:value, amend: RP_AMEND, staffName: (staffNameOverride || (window.tdotRemarksName_rmk ? window.tdotRemarksName_rmk() : '')) })
   }).then(function(r){ return r.json().then(function(j){ return {status:r.status,j:j}; }); })
    .then(function(res){
      disableActions(false);
@@ -1417,23 +1419,38 @@ function updateDue(tr){
 function renderMilestonePayments(list){
   var el=rpEl('rp-milestone-pay'); if(!el) return;
   if(!list||!list.length){ el.innerHTML='<span class="muted">No milestones set yet.</span>'; return; }
+  // Undo… / Flag as wrong depend on who is looking — load that once, then render.
+  if(!TDOT_PAY.viewer){ tdotPayViewer(function(){ renderMilestonePayments(list); }); }
+  var D=LAST_DETAIL||{};
+  var signed=!!(D.retainerSigned&&String(D.retainerSigned).trim());
   el.innerHTML=list.map(function(m){
     var badge = m.status==='paid' ? '<span class="ms-badge paid">Paid</span>'
               : m.status==='requested' ? '<span class="ms-badge sent">Requested</span>'
               : (m.due ? '<span class="ms-badge due">Due</span>' : '<span class="ms-badge pending">Pending</span>');
     var amt='$'+(Number(m.totalCents||0)/100).toFixed(2);
-    var meta = m.status==='paid'
+    var meta = (m.status==='paid'
         ? '<span class="ms-meta">paid '+escHtml(m.paidAt||'')+(m.reference?(' · ref '+escHtml(m.reference)):'')+'</span>'
-        : (m.status==='requested'&&m.reference ? '<span class="ms-meta">ref '+escHtml(m.reference)+'</span>' : '');
-    var reqBtn=((m.status==='pending'&&m.due)||m.legacySent)?'<button class="btn" type="button" data-msp-req="'+m.index+'">'+ICONS.mail+' '+(m.legacySent?'Send e-transfer details':'Send e-transfer request')+'</button>':'';
+        : (m.status==='requested'&&m.reference ? '<span class="ms-meta">ref '+escHtml(m.reference)+'</span>' : '')) + tdotPayAuditHtml(m);
+    // Milestone 1 is due at signing even while the case is still Pre-Onboarding.
+    var reqBtn=((m.status==='pending'&&(m.due||(m.index===0&&signed)))||m.legacySent)?'<button class="btn" type="button" data-msp-req="'+m.index+'">'+ICONS.mail+' '+(m.legacySent?'Send e-transfer details':'Send e-transfer request')+'</button>':'';
     var paidBtn=(m.status!=='paid')?'<button class="btn primary" type="button" data-msp-paid="'+m.index+'">'+ICONS.check+' Mark paid</button>':'';
-    return '<div class="ms-row"><span class="ms-label">'+escHtml(m.label||('Milestone '+(m.index+1)))+'</span><span class="ms-amt">'+amt+'</span>'+badge+meta+reqBtn+paidBtn+'</div>';
+    var fixBtn=TDOT_PAY.viewer?tdotPayRowActions(m,{ retainerPaid: D.retainerPaid },'btn'):'';
+    return '<div class="ms-row"><span class="ms-label">'+escHtml(m.label||('Milestone '+(m.index+1)))+'</span><span class="ms-amt">'+amt+'</span>'+badge+meta+reqBtn+paidBtn+fixBtn+'</div>';
   }).join('');
+  tdotPayBind(el,{ leadId: LEAD_ID, clientName: D.name||'', rows: list, reload: function(){ RP_HYDRATED=false; load(); } });
   Array.prototype.forEach.call(el.querySelectorAll('[data-msp-req]'),function(b){
     b.onclick=function(){ doAction('sendMilestoneEtransferRequest', b.getAttribute('data-msp-req'), 'Email the e-transfer payment request for this milestone to the client now?'); };
   });
   Array.prototype.forEach.call(el.querySelectorAll('[data-msp-paid]'),function(b){
-    b.onclick=function(){ var ref=window.prompt('Record the e-transfer payment — enter the reference / confirmation number (optional):',''); if(ref===null) return; doAction('markMilestonePaid', JSON.stringify({index:Number(b.getAttribute('data-msp-paid')), reference:ref}), null); };
+    b.onclick=function(){
+      // A dialog showing WHICH client, the amount, the reference they were asked
+      // to use, and a warning when no request was ever sent (2026-09-22).
+      var i=Number(b.getAttribute('data-msp-paid'));
+      var row=list.filter(function(r){ return r.index===i; })[0]||{index:i};
+      tdotOpenMarkPaidModal({ clientName: D.name||'', caseRef: D.caseRef||'', m: row, onConfirm: function(ref,by){
+        doAction('markMilestonePaid', JSON.stringify({index:i, reference:ref}), null, by);
+      } });
+    };
   });
 }
 function rebuildMilestones(rows){

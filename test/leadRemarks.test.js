@@ -119,5 +119,5 @@ test('both pages embed the remarks widget + outcome buttons, and every inline <s
   assert.match(consHtml, /\.actions button:not\(\.rmk-chip\):not\(#rmk-post\)/, 'consultation view leaves the widget\'s own busy state alone');
   assert.match(leadHtml, /function refreshAs\(\)/, 'the credited name is shown before a one-click post');
   assert.match(leadHtml, /\(other && other\.value\)/, 'falls back to the Updates box name');
-  assert.match(consHtml, /staffName: \(window\.tdotRemarksName_rmk/, 'consultation view sends the name with actions');
+  assert.match(consHtml, /staffName: \(staffNameOverride \|\| \(window\.tdotRemarksName_rmk/, 'consultation view sends the name with actions (the Mark-paid dialog’s name first, then the remarks name)');
 });

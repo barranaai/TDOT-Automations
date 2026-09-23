@@ -12,7 +12,7 @@
 const express = require('express');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const router  = express.Router();
-const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS } = require('./adminShared');
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS } = require('./adminShared');
 
 function escAttr(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -29,6 +29,7 @@ function buildCockpitHTML(caseRef) {
   <style>
     ${SHARED_CSS_VARS}
     ${NAV_CSS}
+    ${PAYMENT_UI_CSS}
 
     body { background: #f1f5f9; }
     .wrap { max-width: 1200px; margin: 0 auto; padding: 26px 24px 80px; }
@@ -314,6 +315,7 @@ var CASE_REF = ${JSON.stringify(caseRef).replace(/</g, '\\u003c')};
 ${UPDATES_WIDGET_JS}
 
 ${SHARED_AUTH_JS}
+${PAYMENT_UI_JS}
 tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/case-updates/' + encodeURIComponent(CASE_REF) });
 
 function escHtml(s) {
@@ -547,6 +549,9 @@ function renderPaymentsTab(d) {
   var html = '<div class="pay-strip">' + strip + '</div>';
 
   var ms = p.milestones || [];
+  // Corrections (Undo… / Flag as wrong) depend on who is looking — load that
+  // once, then render. The server enforces every rule; this only decides what to offer.
+  if (!TDOT_PAY.viewer) { tdotPayViewer(function() { renderPaymentsTab(LAST_D || d); }); }
   document.getElementById('pay-cnt').textContent = ms.length ? (ms.filter(function(m) { return m.status === 'paid'; }).length + ' of ' + ms.length + ' paid') : '';
   if (!ms.length) {
     html += '<div class="muted">No milestone schedule yet — build the retainer plan on the consultation page first.</div>';
@@ -555,21 +560,25 @@ function renderPaymentsTab(d) {
     html += ms.map(function(m) {
       var amt = '$' + ((m.totalCents || 0) / 100).toFixed(2);
       var st;
-      if (m.status === 'paid') st = '<span class="pill green">PAID</span><span class="ms-meta">' + escHtml(m.paidAt || '') + (m.reference ? (' · ref ' + escHtml(m.reference)) : '') + '</span>';
+      if (m.status === 'paid') st = '<span class="pill green">PAID</span><span class="ms-meta">' + escHtml(m.paidAt || '') + (m.reference ? (' · ref ' + escHtml(m.reference)) : '') + '</span>' + tdotPayAuditHtml(m);
       else if (m.status === 'requested') st = '<span class="pill blue">REQUESTED</span><span class="ms-meta">' + (m.reference ? ('ref ' + escHtml(m.reference)) : '') + '</span>';
       else st = '<span class="pill grey">PENDING</span>';
+      if (m.status !== 'paid') st += tdotPayAuditHtml(m);   // shows who removed an earlier record, if anyone did
       if (m.due && m.status !== 'paid') st += '<span class="pill amber">DUE</span>';
       var acts = '';
       if (m.status !== 'paid') {
         // Request only when it can actually succeed AND is due (parity with the
         // consultation page): pending+due, or a legacy Square-era row that never
         // got proper e-Transfer details (server allows a deliberate re-issue).
-        if ((m.status === 'pending' && m.due) || m.legacySent) {
+        // Milestone 1 is due at signing even while the case is still Pre-Onboarding
+        // (signing sends its request automatically; this is the manual path).
+        if ((m.status === 'pending' && (m.due || (m.index === 0 && L.retainerSigned))) || m.legacySent) {
           acts += '<button class="sbtn" data-ms-act="request" data-ms-i="' + m.index + '">' +
                   (m.legacySent ? 'Send e-Transfer details' : 'Send e-Transfer request') + '</button>';
         }
         acts += '<button class="sbtn primary" data-ms-act="paid" data-ms-i="' + m.index + '">Mark paid</button>';
       }
+      if (TDOT_PAY.viewer) acts += tdotPayRowActions(m, { retainerPaid: L.retainerPaid }, 'sbtn');
       return '<div class="ms-row"><span class="ms-label">' + escHtml(m.label || ('Milestone ' + (m.index + 1))) + '</span>' +
         '<span class="ms-amt">' + amt + '</span>' + st +
         (m.trigger ? '<span class="ms-meta">trigger: ' + escHtml(m.trigger) + '</span>' : '') +
@@ -580,19 +589,23 @@ function renderPaymentsTab(d) {
   Array.prototype.forEach.call(document.querySelectorAll('#pay-body [data-ms-act]'), function(btn) {
     btn.onclick = function() { msAction(btn); };
   });
+  tdotPayBind(body, { leadId: L.leadId, clientName: d.clientName || '', rows: ms, reload: loadCase });
 }
 function msAction(btn) {
   var L = LAST_D && LAST_D.lead; if (!L) return;
   var act = btn.getAttribute('data-ms-act'), i = parseInt(btn.getAttribute('data-ms-i'), 10);
-  var payload;
   if (act === 'request') {
     if (!window.confirm('Email the client an e-Transfer request for this milestone?')) return;
-    payload = { action: 'sendMilestoneEtransferRequest', value: i };
-  } else {
-    var ref = window.prompt('e-Transfer reference from the bank notification (optional):');
-    if (ref == null) return;
-    payload = { action: 'markMilestonePaid', value: JSON.stringify({ index: i, reference: ref.trim() }) };
+    return msSend(btn, { action: 'sendMilestoneEtransferRequest', value: i });
   }
+  // Mark paid: a dialog showing WHICH client, the amount, the reference they were
+  // asked to use, and a warning when no request was ever sent (2026-09-22).
+  var row = ((LAST_D && LAST_D.payments && LAST_D.payments.milestones) || []).filter(function(r) { return r.index === i; })[0] || { index: i };
+  tdotOpenMarkPaidModal({ clientName: (LAST_D && LAST_D.clientName) || '', caseRef: CASE_REF, m: row, onConfirm: function(ref, by) {
+    msSend(btn, { action: 'markMilestonePaid', value: JSON.stringify({ index: i, reference: ref }), staffName: by });
+  } });
+}
+function msSend(btn, payload) {
   var key = peekKey();
   var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
   btn.disabled = true; actMsg('pay-act-msg', 'info', 'Working…');
