@@ -144,10 +144,14 @@ test('conflict is a human verdict, not one the sweep repairs', () => {
 
 /* ── applyVerdict: the paths that write to a live board ────────────────── */
 
-function withFakeIo(fn) {
+function withFakeIo(fn, fresh = {}) {
   const real = { ...R.io };
   const calls = [];
   for (const k of Object.keys(R.io)) R.io[k] = async (...a) => { calls.push([k, ...a]); };
+  // Before activating a case, applyVerdict re-reads the lead and the case. Unless a
+  // test says otherwise, the fresh state still calls for the repair.
+  R.io.getLead  = async (id) => { calls.push(['getLead', id]); if (fresh.getLeadThrows) throw new Error('read failed'); return fresh.lead !== undefined ? fresh.lead : PAID; };
+  R.io.readCase = async (id) => { calls.push(['readCase', id]); return fresh.case !== undefined ? fresh.case : { paymentStatus: 'Signed (Unpaid)', caseRef: 'C-1', paymentDate: '' }; };
   return Promise.resolve(fn(calls)).finally(() => Object.assign(R.io, real));
 }
 const names = (calls) => calls.map((c) => c[0]);
@@ -314,4 +318,55 @@ test('a slow sweep is skipped rather than stacked on top of itself', async () =>
   } finally {
     leadService.listAllLeads = real;
   }
+});
+
+
+// ─── Re-check before activating (2026-09-23, "Undo mark paid") ───────────────
+//
+// The sweep classifies from a snapshot of every lead that can be minutes old by
+// the time a verdict is applied. "Paid" on the case starts onboarding and the
+// intake email cannot be recalled — so the sweep re-reads the lead and the case
+// and activates only if the FRESH state still calls for it.
+
+test('activation re-reads the lead: a payment removed since the snapshot is NOT activated', () => {
+  const unpaidNow = LEAD({ retainerSigned: '2026-08-01', retainerPaid: '' });
+  return withFakeIo(async (calls) => {
+    const r = await R.applyVerdict(PAID, { action: 'upgrade-cm', to: 'Paid', reason: 'x' }, { caseRef: 'C-1' });
+    assert.equal(r.changed, false);
+    assert.ok(!names(calls).includes('writeCasePaymentStatus'), 'no Paid written from a stale snapshot');
+    assert.ok(names(calls).includes('getLead') && names(calls).includes('readCase'));
+  }, { lead: unpaidNow });
+});
+
+test('activation re-check fails CLOSED: an unreadable lead means no activation this cycle', () => {
+  return withFakeIo(async (calls) => {
+    const r = await R.applyVerdict(PAID, { action: 'upgrade-cm', to: 'Paid', reason: 'x' }, { caseRef: 'C-1' });
+    assert.equal(r.changed, false);
+    assert.equal(r.action, 'none');
+    assert.ok(!names(calls).includes('writeCasePaymentStatus'));
+  }, { getLeadThrows: true });
+});
+
+test('activation re-check: a case a human set to "Not Paid" since the snapshot is left alone', () => {
+  return withFakeIo(async (calls) => {
+    const r = await R.applyVerdict(PAID, { action: 'upgrade-cm', to: 'Paid', reason: 'x' }, { caseRef: 'C-1' });
+    assert.equal(r.changed, false);
+    assert.ok(!names(calls).includes('writeCasePaymentStatus'));
+  }, { case: { paymentStatus: 'Not Paid', caseRef: 'C-1', paymentDate: '' } });
+});
+
+test('Signed (Unpaid) repairs are not re-checked — they start nothing', () => {
+  return withFakeIo(async (calls) => {
+    const r = await R.applyVerdict(SIGNED, { action: 'upgrade-cm', to: 'Signed (Unpaid)', reason: 'x' }, { caseRef: 'C-1' });
+    assert.equal(r.changed, true);
+    assert.ok(!names(calls).includes('getLead'));
+    assert.ok(names(calls).includes('writeCasePaymentStatus'));
+  });
+});
+
+test('the group move goes through io — no real Monday call from a repair', () => {
+  return withFakeIo(async (calls) => {
+    await R.applyVerdict(PAID, { action: 'upgrade-cm', to: 'Paid', reason: 'x' }, { caseRef: 'C-1' });
+    assert.ok(names(calls).includes('moveCaseToActiveGroup'));
+  });
 });

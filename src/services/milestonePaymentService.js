@@ -33,6 +33,44 @@ const ETRANSFER_EMAIL = (process.env.ETRANSFER_EMAIL || 'admstdot@gmail.com').tr
 function paymentReference(leadId, index) { return `TDOT-${String(leadId).slice(-5)}-M${Number(index) + 1}`; }
 function dollarsCAD(cents) { return (Math.round(cents) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' }); }
 
+// Monday cuts long text written through the API at 2,000 characters, and a cut
+// payments value no longer parses — every milestone would then read "pending".
+// Stay well clear of the limit.
+const MAX_PAYMENTS_JSON = 1900;
+
+/**
+ * The payments JSON as stored, and whether it is READABLE. A non-empty value
+ * that will not parse must never be written over: parsePayments reads it as {}
+ * (every milestone "pending"), and writing that back would make the loss of
+ * real payment records permanent.
+ */
+function readPayments(lead) {
+  const raw = String((lead && lead.milestonePayments) || '').trim();
+  if (!raw) return { pay: {}, unreadable: false };
+  try {
+    const o = JSON.parse(raw);
+    if (o && typeof o === 'object' && !Array.isArray(o)) return { pay: o, unreadable: false };
+  } catch (_) { /* unreadable — below */ }
+  return { pay: {}, unreadable: true };
+}
+
+/** Serialise the payments object for writing, refusing anything Monday would cut. */
+function serializePayments(leadId, pay) {
+  const text = JSON.stringify(pay);
+  if (text.length > MAX_PAYMENTS_JSON) {
+    const e = new Error(`Payment records for lead ${leadId} would be ${text.length} characters — over the ${MAX_PAYMENTS_JSON} limit, so nothing was written.`);
+    e.code = 'PAYMENTS_TOO_LARGE';
+    throw e;
+  }
+  return text;
+}
+
+function paymentsUnreadableError(leadId) {
+  const e = new Error(`The payment records on lead ${leadId} can't be read, so nothing was written over them. Ask an admin to check the lead's "Milestone Payments (JSON)" column.`);
+  e.code = 'PAYMENTS_UNREADABLE';
+  return e;
+}
+
 /** Parse the milestonePayments JSON column → object keyed by index. */
 function parsePayments(lead) {
   try { const o = JSON.parse((lead && lead.milestonePayments) || '{}'); return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {}; }
@@ -86,6 +124,11 @@ function milestoneStates(lead, currentCaseStage, orderedStages = []) {
       requestedAt: p.requestedAt || p.sentAt || '', paidAt: p.paidAt || '',
       reference: p.reference || (legacySent && lead && lead.id ? paymentReference(lead.id, i) : ''),
       method: p.method || '', due,
+      // Who recorded or removed the payment, and when — shown to staff as a small
+      // tooltip on the row. Never rendered by the client portal.
+      markedBy: (p.marked && p.marked.by) || '', markedAt: (p.marked && p.marked.at) || '',
+      markedVerified: !!(p.marked && p.marked.verified),
+      undoneBy: (p.undone && p.undone.by) || '', undoneAt: (p.undone && p.undone.at) || '',
     };
   });
 }
@@ -94,22 +137,29 @@ function milestoneStates(lead, currentCaseStage, orderedStages = []) {
 // webhook marking one milestone paid while staff generate another's link) do a
 // clean read-modify-write instead of clobbering each other's index.
 const _patchQueue = new Map();
-async function patchPayment(leadId, index, patch) {
+/** Run `fn` in this lead's payment-write queue. Every read-modify-write of the
+ *  payments JSON goes through here — patchPayment and the payment undo alike. */
+function withPaymentWriteQueue(leadId, fn) {
   const k = String(leadId);
-  const run = () => _doPatchPayment(leadId, index, patch);
-  const next = (_patchQueue.get(k) || Promise.resolve()).then(run, run);
+  const next = (_patchQueue.get(k) || Promise.resolve()).then(fn, fn);
   _patchQueue.set(k, next.catch(() => {}));
   return next;
 }
+async function patchPayment(leadId, index, patch) {
+  return withPaymentWriteQueue(leadId, () => _doPatchPayment(leadId, index, patch));
+}
 /** Read-modify-write a per-index payment patch. Never downgrades a milestone
- *  already marked 'paid' (a late "sent" patch racing the webhook must not un-pay it). */
+ *  already marked 'paid' (a late "sent" patch racing the webhook must not un-pay it)
+ *  — undoing a payment is a deliberate admin act with its own path
+ *  (paymentUndoService), never a patch. */
 async function _doPatchPayment(leadId, index, patch) {
   const lead = await leadService.getLead(leadId);
-  const pay = parsePayments(lead);
+  const { pay, unreadable } = readPayments(lead);
+  if (unreadable) throw paymentsUnreadableError(leadId);
   const merged = { ...(pay[index] || {}), ...patch };
   if ((pay[index] || {}).status === 'paid') merged.status = 'paid';
   pay[index] = merged;
-  await leadService.updateLead(leadId, { milestonePayments: JSON.stringify(pay) });
+  await leadService.updateLead(leadId, { milestonePayments: serializePayments(leadId, pay) });
   return pay;
 }
 
@@ -173,9 +223,11 @@ async function sendMilestoneEtransferRequest(leadId, index) {
         });
       } catch (err) { console.warn(`[Milestone] e-transfer request email failed for ${leadId}#${index}: ${err.message}`); }
     }
+    // The variable MUST be named b — it was sent as "body", Monday rejected the
+    // note, and the button reported an error AFTER the client had been emailed.
     await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
       { i: String(leadId),
-        body: `📧 <b>E-transfer request ${reIssue ? 're-issued' : 'sent'}</b> — ${esc(row.label)} (${esc(dollars)})<br>` +
+        b: `📧 <b>E-transfer request ${reIssue ? 're-issued' : 'sent'}</b> — ${esc(row.label)} (${esc(dollars)})<br>` +
               (reIssue ? `This milestone originally went out via the old Square flow with no e-Transfer details — this replaces it. ` : '') +
               `Client asked to e-transfer to <b>${esc(ETRANSFER_EMAIL)}</b>, reference <b>${esc(reference)}</b>. ` +
               `Emailed to ${esc(lead.email || '(no email on lead)')}. Record it as paid here once the e-transfer arrives.` });
@@ -190,7 +242,22 @@ async function sendMilestoneEtransferRequest(leadId, index) {
  * milestone, this IS the retainer payment, so it also flips the client into
  * onboarding (Client Master → Paid / Phase 1), the same as the old Square path.
  */
-async function markMilestonePaid(leadId, index, { reference = '', paidAt = '', method = 'e-transfer', txnId = '' } = {}) {
+async function markMilestonePaid(leadId, index, opts = {}) {
+  // Under the lead's lock — the one "Undo mark paid" and the e-signature capture
+  // hold — so a mark and an undo on the same lead can never interleave into
+  // "the milestone reads unpaid but Retainer Paid is still stamped". Nothing this
+  // reaches takes the lock itself (it is not re-entrant).
+  return require('./leadMutex').withLeadLock(leadId, () => _markMilestonePaid(leadId, index, opts));
+}
+
+/** A compact record of who did something, for the payment row's tooltip. */
+function actorStamp(actor) {
+  const a = actor || {};
+  const by = String(a.name || a.email || '').trim().slice(0, 60) || 'Unknown';
+  return { by, at: new Date().toISOString().slice(0, 16) + 'Z', verified: a.verified === true };
+}
+
+async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', method = 'e-transfer', txnId = '', actor = null } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) return { ok: false };
   const existing = parsePayments(lead)[index] || {};
@@ -198,10 +265,12 @@ async function markMilestonePaid(leadId, index, { reference = '', paidAt = '', m
   if (existing.status === 'paid') { console.log(`[Milestone] ${leadId}#${index} already paid — skipping`); return { ok: true, already: true }; }
   // Keep the request-time reference when staff mark paid without entering one.
   const ref = reference || existing.reference || '';
-  await patchPayment(leadId, index, { status: 'paid', paidAt: when, method, reference: ref, ...(txnId ? { txnId } : {}) });
+  const marked = actorStamp(actor);
+  await patchPayment(leadId, index, { status: 'paid', paidAt: when, method, reference: ref, marked, ...(txnId ? { txnId } : {}) });
   const label = (scheduleRows(lead)[index] || {}).label || `Milestone ${index + 1}`;
   await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
-    { i: String(leadId), b: `✅ <b>Payment received</b> — ${esc(label)} (${esc(method)}${ref ? `, ref ${esc(ref)}` : ''}).` });
+    { i: String(leadId), b: `✅ <b>Payment received</b> — ${esc(label)} (${esc(method)}${ref ? `, ref ${esc(ref)}` : ''}). ` +
+      `Recorded by ${esc(marked.by)}${marked.verified ? '' : ' (name as typed — not signed in with Monday)'}.` });
   console.log(`[Milestone] ${leadId}#${index} marked paid (${method}${ref ? ` ref ${ref}` : ''})`);
 
   // The first milestone paid = retainer paid → start onboarding (Phase 1).
@@ -214,7 +283,8 @@ async function markMilestonePaid(leadId, index, { reference = '', paidAt = '', m
 
 module.exports = {
   sendMilestoneEtransferRequest, markMilestonePaid, milestoneStates, patchPayment,
-  ETRANSFER_EMAIL, paymentReference,
+  withPaymentWriteQueue, readPayments, serializePayments, actorStamp,
+  ETRANSFER_EMAIL, paymentReference, MAX_PAYMENTS_JSON,
   // pure-ish (exported for tests)
   parsePayments, scheduleRows,
 };

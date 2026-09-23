@@ -366,5 +366,6 @@ module.exports = {
   onClientBlocked,
   onEscalationRequired,
   onCaseAssigned,
+  sendNotification,
   ASSIGNMENT_COL_IDS: Object.keys(ROLE_LABELS),
 };

@@ -271,6 +271,9 @@ const io = {
   updateLead:      (id, fields) => leadService.updateLead(id, fields),
   postLeadNote:    (id, body)   => postLeadNote(id, body),
   maybeMarkRetained: (id)       => require('./paymentService').maybeMarkRetained(id),
+  getLead:         (id)         => leadService.getLead(id),
+  readCase:        (id)         => readCasePaymentStatus(id),
+  moveCaseToActiveGroup: (id)   => require('./caseGateService').moveCaseToActiveGroup(id),
 };
 
 /**
@@ -282,7 +285,29 @@ async function applyVerdict(lead, verdict, cm, { dryRun = false } = {}) {
   if (dryRun || !REPAIRABLE.includes(verdict.action)) return base;
 
   if (verdict.action === 'upgrade-cm') {
-    await io.writeCasePaymentStatus(lead.clientMasterItemId, verdict.to, { paymentDate: asDateOnly(lead.retainerPaid) });
+    let target = lead;
+    if (verdict.to === PAID) {
+      // "Paid" starts onboarding and the intake email cannot be recalled. The
+      // sweep classified from a snapshot that can be minutes old — an admin may
+      // have undone a payment recorded in error since. Re-confirm against FRESH
+      // lead and case state; if either read fails, skip — the next pass retries.
+      // (No lead lock here: mark-paid already holds it when it reaches this path.)
+      let freshLead, freshCase;
+      try {
+        freshLead = await io.getLead(lead.id);
+        freshCase = await io.readCase(lead.clientMasterItemId);
+      } catch (err) {
+        console.warn(`[StatusSync] Re-check before activating case ${base.caseRef || lead.clientMasterItemId} failed (${err.message}) — skipped this cycle`);
+        return { ...base, action: 'none', reason: `re-check before activating failed: ${err.message}` };
+      }
+      const again = classifyDrift(freshLead, freshCase ? freshCase.paymentStatus : null);
+      if (!(again.action === 'upgrade-cm' && again.to === PAID)) {
+        console.log(`[StatusSync] Case ${base.caseRef || lead.clientMasterItemId} no longer needs activating (${again.action}: ${again.reason}) — skipped`);
+        return { ...base, action: 'none', reason: `re-checked: ${again.reason}` };
+      }
+      target = freshLead;
+    }
+    await io.writeCasePaymentStatus(target.clientMasterItemId, verdict.to, { paymentDate: asDateOnly(target.retainerPaid) });
     console.log(`[StatusSync] Case ${base.caseRef || lead.clientMasterItemId} Payment Status → "${verdict.to}" (${verdict.reason})`);
     // Deliberately NOT calling retainerService.onRetainerPaid here. Monday fires
     // change_column_value for API writes too — that is exactly how the write
@@ -300,7 +325,7 @@ async function applyVerdict(lead, verdict, cm, { dryRun = false } = {}) {
       catch (err) { console.warn(`[StatusSync] maybeMarkRetained after repair failed for lead ${lead.id}: ${err.message}`); }
       // Gate-complete repair = activation — graduate the row from the pending
       // group too (best-effort, no-op when already there).
-      try { await require('./caseGateService').moveCaseToActiveGroup(lead.clientMasterItemId); }
+      try { await io.moveCaseToActiveGroup(lead.clientMasterItemId); }
       catch (_) { /* presentation only */ }
     }
     return { ...base, changed: true };

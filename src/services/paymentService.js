@@ -139,7 +139,9 @@ async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt
       return null;
     }
   }
-  await advanceCaseToPaid(lead, when);
+  // It has just written the payment date itself, and a read straight after a
+  // write can lag — so no re-check here (see advanceCaseToPaid).
+  await advanceCaseToPaid(lead, when, { recheckPaid: false });
   return lead.clientMasterItemId;
 }
 
@@ -149,7 +151,7 @@ async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt
  * order, and from handoffService.ensureSignedState for the deferred paid-first
  * order (payment landed before signing). Idempotent (same-label rewrite).
  */
-async function advanceCaseToPaid(leadOrId, when) {
+async function advanceCaseToPaid(leadOrId, when, { recheckPaid = true } = {}) {
   const lead = (leadOrId && typeof leadOrId === 'object') ? leadOrId : await leadService.getLead(leadOrId);
   if (!lead || !lead.clientMasterItemId) return null;
   // IDEMPOTENT: two triggers can race here (a delayed signing webhook after
@@ -169,6 +171,24 @@ async function advanceCaseToPaid(leadOrId, when) {
     }
   } catch (err) {
     console.warn(`[Payment] Pre-advance status read failed for CM ${lead.clientMasterItemId}: ${err.message} — proceeding with the write`);
+  }
+  // RE-CHECK the payment at the point of no return. The caller's copy of the
+  // lead can be seconds old, and in that window an admin can undo a payment that
+  // was recorded in error — while "Paid" on the case starts onboarding, and the
+  // intake email cannot be recalled. A failed re-read SKIPS rather than proceeds:
+  // the 15-minute status sync re-derives the case and activates a genuinely paid
+  // client on its next pass.
+  if (recheckPaid) {
+    let fresh = null;
+    try { fresh = await leadService.getLead(lead.id); }
+    catch (err) {
+      console.warn(`[Payment] Re-check before activating case ${lead.clientMasterItemId} failed (${err.message}) — not activating now; the status sync retries`);
+      return null;
+    }
+    if (!fresh || !String(fresh.retainerPaid || '').trim()) {
+      console.warn(`[Payment] Lead ${lead.id} no longer has a retainer payment recorded — case ${lead.clientMasterItemId} NOT activated`);
+      return null;
+    }
   }
   const date = when || (lead.retainerPaid && String(lead.retainerPaid).trim()) || todayISO();
   await mondayApi.query(
@@ -395,6 +415,6 @@ async function _doMaybeMarkRetained(leadOrId) {
 
 module.exports = {
   onSquareRetainerPaymentReceived, recordRetainerPaid, advanceCaseToPaid, sendRetainerPaymentLink,
-  extractCompletedPayment, maybeMarkRetained, setRetainedBy,
+  extractCompletedPayment, maybeMarkRetained, setRetainedBy, resolveMondayUserIdByEmail,
   _resetRetainedCaches: () => _userIdByEmail.clear(), // test hook (the cache is stable in prod)
 };
