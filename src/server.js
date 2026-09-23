@@ -714,6 +714,93 @@ app.post('/admin/delete/execute', express.json(), async (req, res) => {
   }
 });
 
+// ─── Payment corrections: who did it, "Undo mark paid", "Flag as wrong" ─────
+//
+// Everyone signs into the admin pages with ONE shared key, so the key says
+// nothing about who is at the keyboard. A Monday sign-in (the staff cookie)
+// does. Undo is limited to NAMED admins — signed in with Monday AND listed in
+// ADMIN_EMAILS — and deliberately ignores the shared key. Recording who
+// marked a payment takes the Monday identity when there is one, else the
+// name the page sends (labelled as typed).
+
+/** Who is acting: the Monday sign-in when present (verified), else a typed name. */
+function staffActor(req, typedName) {
+  return require('./utils/staffIdentity').actorFromStaff(tryStaffAuth(req), typedName);
+}
+
+/** A named admin, or an answer explaining exactly what's missing. */
+function resolveNamedAdminOrReject(req, res) {
+  const r = require('./utils/staffIdentity').namedAdminCheck(tryStaffAuth(req), caseAccess.isAdminEmail);
+  if (!r.ok) { res.status(r.status).json({ error: r.error, ...(r.loginUrl ? { loginUrl: r.loginUrl } : {}) }); return null; }
+  return r.actor;
+}
+
+// What the payment rows should offer this person (UI convenience only — every
+// route below enforces its own gate).
+app.get('/admin/payments/viewer', (req, res) => {
+  const viewer = resolveViewer(req);
+  if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday' });
+  const staff = tryStaffAuth(req);
+  const adminsConfigured = String(process.env.ADMIN_EMAILS || '').split(',').some((e) => e.trim());
+  res.json({
+    signedIn: !!(staff && staff.email),
+    name: (staff && staff.name) || '',
+    canUndo: !!(staff && staff.email && caseAccess.isAdminEmail(staff.email)),
+    adminsConfigured,
+    signInUrl: '/q/auth/monday',
+  });
+});
+
+const _msParams = (req) => ({ leadId: String(req.params.leadId || '').trim(), index: Number(req.params.index) });
+
+app.get('/admin/retainer/:leadId/milestone/:index/undo-preview', async (req, res) => {
+  const actor = resolveNamedAdminOrReject(req, res);
+  if (!actor) return;
+  const { leadId, index } = _msParams(req);
+  if (!/^\d{3,20}$/.test(leadId)) return res.status(400).json({ error: 'Unknown client.' });
+  try {
+    const r = await require('./services/paymentUndoService').previewMilestonePaidReversal({ leadId, index, actor });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, code: r.code });
+    res.json(r);
+  } catch (err) {
+    console.error('[PaymentUndo] preview failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/admin/retainer/:leadId/milestone/:index/undo', express.json(), async (req, res) => {
+  const actor = resolveNamedAdminOrReject(req, res);
+  if (!actor) return;
+  const { leadId, index } = _msParams(req);
+  const { confirmText, reason, expect } = req.body || {};
+  try {
+    const r = await require('./services/paymentUndoService').executeMilestonePaidReversal({ leadId, index, confirmText, reason, expect, actor });
+    console.log(`[PaymentUndo] lead ${leadId}#${index} by ${actor.email}: ${r.ok ? (r.already ? 'already removed' : 'removed') : r.code}`);
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, code: r.code, refusal: r.refusal });
+    res.json(r);
+  } catch (err) {
+    console.error('[PaymentUndo] execute failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error — check the client’s record before retrying.' });
+  }
+});
+
+// Any signed-in staffer (key or Monday) can FLAG a payment as wrong — it writes
+// nothing to payment state; it posts a note and alerts the admins and the RCIC.
+app.post('/admin/retainer/:leadId/milestone/:index/flag-error', express.json(), async (req, res) => {
+  const viewer = resolveViewer(req);
+  if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday' });
+  const { leadId, index } = _msParams(req);
+  const { note, staffName } = req.body || {};
+  try {
+    const r = await require('./services/paymentUndoService').flagPaymentError({ leadId, index, note, actor: staffActor(req, staffName) });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error });
+    res.json(r);
+  } catch (err) {
+    console.error('[PaymentFlag] failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Identity-gated document action (mark reviewed / request rework).
 app.post('/admin/case-action/:caseRef/document/:itemId/status', express.json(), async (req, res) => {
   const ctx = await resolveCaseForWrite(req, res, (req.params.caseRef || '').trim());
@@ -741,12 +828,16 @@ const COCKPIT_MS_ACTIONS = ['sendMilestoneEtransferRequest', 'markMilestonePaid'
 app.post('/admin/case-action/:caseRef/milestone', express.json(), async (req, res) => {
   const ctx = await resolveCaseForWrite(req, res, (req.params.caseRef || '').trim());
   if (!ctx) return;
-  const leadId = ctx.overview.lead && ctx.overview.lead.id;
+  // The cockpit's lead object (caseCockpitService.pickLeadFields) carries
+  // `leadId`, not `id` — reading `.id` here answered "No linked lead for this
+  // case" to every click on the cockpit's Payments tab.
+  const L = ctx.overview.lead || {};
+  const leadId = L.leadId || L.id;
   if (!leadId) return res.status(400).json({ error: 'No linked lead for this case.' });
-  const { action, value } = req.body || {};
+  const { action, value, staffName } = req.body || {};
   if (!COCKPIT_MS_ACTIONS.includes(action)) return res.status(400).json({ error: 'Unsupported action.' });
   try {
-    const result = await consultantPortalService.applyAction({ leadId: String(leadId), action, value });
+    const result = await consultantPortalService.applyAction({ leadId: String(leadId), action, value, actor: staffActor(req, staffName) });
     res.json(result);
   } catch (err) {
     if (err.badRequest) return res.status(400).json({ error: err.message });
@@ -1267,6 +1358,7 @@ app.post('/api/consultation/:leadId/action', express.json(), async (req, res) =>
     const staffName = typeof rawName === 'string' ? rawName.trim().slice(0, 60) : '';
     const result = await consultantPortalService.applyAction({
       leadId: (req.params.leadId || '').trim(), action, value, amend: amend === true, staffName,
+      actor: staffActor(req, staffName),
     });
     res.json(result);
   } catch (err) {

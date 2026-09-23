@@ -92,7 +92,7 @@ test('endpoint forwards the page-sent (self-reported) name into the action; widg
   const i = server.indexOf("app.post('/api/consultation/:leadId/action'");
   const block = server.slice(i, server.indexOf('app.', i + 10));
   assert.match(block, /typeof rawName === 'string' \? rawName\.trim\(\)\.slice\(0, 60\) : ''/, 'page-sent name validated as a string, capped');
-  assert.match(block, /staffName,\s*\n\s*\}\)/, 'staffName forwarded to applyAction');
+  assert.match(block, /staffName,\s*\n\s*actor: staffActor\(req, staffName\),\s*\n\s*\}\)/, 'staffName forwarded to applyAction (and the actor built from it, for the payment tooltip)');
   assert.doesNotMatch(block, /resolveViewer/, 'no dead "signed-in staffer" branch — every /api call carries the shared key');
   const w = fs.readFileSync(require.resolve('../src/routes/updatesWidget.js'), 'utf8');
   assert.match(w, /window\["tdotUpdatesReload_" \+ p\] = load/);

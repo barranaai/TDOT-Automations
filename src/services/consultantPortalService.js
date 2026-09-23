@@ -919,7 +919,7 @@ async function postPortalNote(leadId, text) {
  * posts an audit note, and returns a human-facing result message.
  * @throws {Error} with .badRequest=true on validation failure, .notFound on missing lead
  */
-async function applyAction({ leadId, action, value, amend = false, staffName = '' }) {
+async function applyAction({ leadId, action, value, amend = false, staffName = '', actor = null }) {
   const who = String(staffName || '').trim().slice(0, 60);
   const v = validateAction(action, value);
   if (!v.ok) { const e = new Error(v.error); e.badRequest = true; throw e; }
@@ -974,7 +974,9 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
     }
 
     case 'markMilestonePaid': {
-      const r = await require('./milestonePaymentService').markMilestonePaid(leadId, v.normalized.index, { reference: v.normalized.reference });
+      // Who recorded it — shown on the row's tooltip and in the note.
+      const by = actor || (staffName ? { name: staffName, verified: false } : null);
+      const r = await require('./milestonePaymentService').markMilestonePaid(leadId, v.normalized.index, { reference: v.normalized.reference, actor: by });
       return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked paid by e-transfer.` };
     }
 
