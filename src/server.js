@@ -857,6 +857,105 @@ app.post('/admin/case-action/:caseRef/milestone', express.json(), async (req, re
   }
 });
 
+// Identity-gated sponsor / inviter action — the cockpit's "Send sponsor link".
+// The sponsor is the SINGLE claiming lead's Inviter / Sponsor (derived
+// server-side, never a client-supplied leadId); the service creates the
+// questionnaire section where the form has one and emails the same portal
+// link the client received. Optional { name, email } saves a sponsor the
+// case has none for (both together, validated here AND in the service).
+// One send per case per minute from here, so a double-click cannot email twice.
+const SPONSOR_SEND_COOLDOWN = new Map(); // caseRef → ms of the last staff send
+const SPONSOR_MESSAGES = {
+  'no-lead':          'This case has no client record (it was created directly in Monday), so there is nowhere to store a sponsor.',
+  'no-inviter':       'No sponsor on file for this case. Enter the sponsor / inviter name and email first.',
+  'sub-type-missing': 'Set the Case Sub Type first — which documents the sponsor must provide depends on it.',
+  'no-schema':        'This case type/sub type has no document checklist schema, so the sponsor’s document list can’t be built.',
+  'not-applicable':   'This case type has no sponsor or inviter role, so there is nobody to email.',
+  'same-as-client-blocked': 'The sponsor’s email address is the same as the client’s — the client’s portal email already reached this inbox.',
+  'no-case':          'Case not found.',
+  'no-case-ref':      'This case has no case reference yet — set the Case Type first.',
+  'in-flight':        'The sponsor email is being sent for this case right now — reload in a moment.',
+};
+/** What a pass that could not finish DID write — '' when nothing. */
+function sponsorPartialSentence(r) {
+  const c = r.created || {};
+  const parts = [];
+  if (r.inviterSaved) parts.push('The sponsor was saved to the client record');
+  if (c.row || c.member) parts.push(parts.length ? 'the questionnaire section was created' : 'The questionnaire section was created');
+  return parts.join(' and ');
+}
+app.post('/admin/case-action/:caseRef/sponsor', express.json(), async (req, res) => {
+  const caseRef = (req.params.caseRef || '').trim();
+  const ctx = await resolveCaseForWrite(req, res, caseRef);
+  if (!ctx) return;
+  const sponsorOnboarding = require('./services/sponsorOnboardingService');
+  const body = req.body || {};
+  const staffName = body.staffName;
+  const name  = require('./services/leadService').stripInvisibles(String(body.name  == null ? '' : body.name)).trim();
+  const email = require('./services/leadService').stripInvisibles(String(body.email == null ? '' : body.email)).trim();
+  // "Add sponsor now" / "Save sponsor": the page promised no email when staff
+  // confirmed. The case may have been paid since the page loaded — the
+  // service keeps that promise whatever the case reads now.
+  const createOnly = body.createOnly === true;
+  // name/email only TOGETHER: a name alone or an address alone is a half-entry, not a sponsor.
+  if ((name && !email) || (!name && email)) return res.status(400).json({ ok: false, error: 'Enter both the sponsor’s name and email address.' });
+  if (email && !sponsorOnboarding.EMAIL_RE.test(email)) return res.status(400).json({ ok: false, error: 'That email address doesn’t look right.' });
+  if (name.length > sponsorOnboarding.NAME_MAX) return res.status(400).json({ ok: false, error: `The sponsor’s name is too long (max ${sponsorOnboarding.NAME_MAX} characters).` });
+  const last = SPONSOR_SEND_COOLDOWN.get(caseRef) || 0;
+  const wait = sponsorOnboarding.STAFF_COOLDOWN_MS - (Date.now() - last);
+  if (wait > 0) {
+    return res.status(429).json({ ok: false, error: `The sponsor email was sent for this case less than a minute ago — try again in ${Math.ceil(wait / 1000)}s.` });
+  }
+  let r;
+  try {
+    r = await sponsorOnboarding.ensureSponsor({
+      itemId: ctx.overview.itemId, caseRef, mode: 'staff',
+      actor: staffActor(req, staffName), trigger: 'staff',
+      override: (name && email) ? { name, email } : undefined,
+      createOnly,
+    });
+  } catch (err) {
+    // A send failure: the service already wrote its 'failed' marker (the card shows "Last attempt failed").
+    console.error(`[Sponsor] staff send failed for ${caseRef}:`, err.message);
+    return res.status(502).json({ ok: false, error: 'The email could not be sent — please try again in a moment.' });
+  }
+  if (!r.done) {
+    if (r.reason === 'shared-case') {
+      return res.status(409).json({ ok: false, error: `This case is linked to ${r.claimantCount || 2} client records, so the sponsor can’t be identified safely. Fix the duplicate on the Consultations page first.` });
+    }
+    if (r.reason === 'inviter-exists') {
+      const cur = r.current || {};
+      return res.status(409).json({ ok: false, error: `This case already has a sponsor on file (${cur.name || 'unnamed'}, ${cur.emailMasked || 'no address'}) — change it in the retainer panel’s Inviter / Sponsor block first.`, reason: r.reason });
+    }
+    if (r.reason === 'transient') {
+      // A failure AFTER the lead or the row was written: say what DID happen —
+      // the card reloads on it — never "nothing was changed".
+      const done = sponsorPartialSentence(r);
+      if (done) return res.status(503).json({ ok: false, error: `${done}, but the case could not be finished — nothing was emailed. Try again in a minute.`, reason: r.reason, created: r.created || { row: false, member: false }, inviterSaved: !!r.inviterSaved });
+      return res.status(503).json({ ok: false, error: 'Couldn’t read the case just now — nothing was changed. Try again in a minute.' });
+    }
+    if (r.reason === 'no-case') return res.status(404).json({ ok: false, error: SPONSOR_MESSAGES['no-case'] });
+    return res.status(400).json({ ok: false, error: SPONSOR_MESSAGES[r.reason] || 'The sponsor email could not be prepared.', reason: r.reason });
+  }
+  const created = r.created || { row: false, member: false };
+  // A "done" pass that sent nothing is a success only when it saved or created
+  // something; otherwise the card would read it as "Sponsor added".
+  if (!r.sent) {
+    if (r.reason === 'no-token') {
+      const done = sponsorPartialSentence(r);
+      return res.status(502).json({ ok: false, error: `${done ? `${done}, but no` : 'No'} portal link could be made for this case just now — nothing was emailed. Try again in a minute.`, reason: r.reason, created, inviterSaved: !!r.inviterSaved });
+    }
+    if (r.reason === 'in-progress') return res.status(409).json({ ok: false, error: SPONSOR_MESSAGES['in-flight'], reason: r.reason });
+    if (!(created.row || created.member) && !r.inviterSaved) {
+      if (r.reason === 'create-only') return res.status(409).json({ ok: false, error: 'Nothing to add — the sponsor is already on this case. Reload the page.', reason: r.reason });
+      return res.status(409).json({ ok: false, error: 'Nothing was sent — this case is not yet Paid and at Document Collection. Reload the page.', reason: r.reason || null });
+    }
+  }
+  if (r.sent) SPONSOR_SEND_COOLDOWN.set(caseRef, Date.now());
+  console.log(`[Sponsor] ${caseRef}: ${r.sent ? `${r.variant} email sent to ${r.to}` : `not sent (${r.reason})`} by ${ctx.viewer.email || 'admin'}`);
+  res.json({ ok: true, sent: !!r.sent, to: r.to || '', emailedAt: r.emailedAt || null, variant: r.variant || null, created, inviterSaved: !!r.inviterSaved, sectionLabel: r.sectionLabel || '', reason: r.sent ? null : (r.reason || null) });
+});
+
 // Cockpit Documents tab — inline mark-reviewed / request-rework. Same service
 // functions the /d/:caseRef/review page uses, but behind the cockpit's
 // ADMIN_API_KEY (the /d page uses the separate Monday-OAuth staff cookie).

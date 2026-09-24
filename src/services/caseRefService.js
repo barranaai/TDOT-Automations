@@ -217,12 +217,17 @@ async function onCaseTypeSet({ itemId, caseType }) {
   // Fire-and-forget, but SEQUENCED: rename the intake-stage OneDrive folder,
   // THEN materialise the lead's family answers as Family Members rows (the
   // rows key on the case ref, and must exist BEFORE any checklist seeding so
-  // family document sets are included), THEN resume any stuck onboarding —
-  // so a resumed seeding sees both the renamed folder and the family rows.
+  // family document sets are included), THEN make sure the sponsor / inviter
+  // has a row of their own where the questionnaire gives them a section
+  // ('prepare' never emails; it recognises the intake's Spouse row as the
+  // same person), THEN resume any stuck onboarding — so a resumed seeding
+  // sees the renamed folder and every family row.
   renameClientFolderForItem({ itemId, caseRef })
     .catch(err => console.warn(`[CaseRef] OneDrive folder rename skipped for ${caseRef}: ${err.message}`))
     .then(() => require('./familyCompositionService').createFamilyRowsForItem({ itemId, caseRef }))
     .catch(err => console.warn(`[CaseRef] Family rows skipped for ${caseRef}: ${err.message}`))
+    .then(() => require('./sponsorOnboardingService').ensureSponsor({ itemId, caseRef, mode: 'prepare', trigger: 'case-ref' }))
+    .catch(err => console.warn(`[CaseRef] Sponsor prepare skipped for ${caseRef}: ${err.message}`))
     .then(() => resumeOnboardingIfStuck({ itemId, caseRef }))
     .catch(err => console.warn(`[CaseRef] Stuck-onboarding check failed for ${caseRef}: ${err.message}`));
 }
@@ -386,6 +391,11 @@ async function resumeOnboardingIfStuck({ itemId, caseRef }) {
 
     emailService.sendIntakeEmail(itemId).catch(err =>
       console.error(`[CaseRef] Resume: intake email failed for ${caseRef}:`, err.message)
+    );
+    // The sponsor's own portal email (same link) — the service checks the
+    // Paid / stage / not-yet-applied gates and its sent-marker itself.
+    require('./sponsorOnboardingService').ensureSponsor({ itemId, caseRef, mode: 'onboard', trigger: 'resume' }).catch(err =>
+      console.error(`[CaseRef] Resume: sponsor onboarding failed for ${caseRef}:`, err.message)
     );
     await checklistService.onDocumentCollectionStarted({ itemId, boardId: clientMasterBoardId })
       .then(() => console.log(`[CaseRef] Resume: checklist setup complete for ${caseRef}`))

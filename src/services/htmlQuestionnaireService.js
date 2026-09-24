@@ -1822,12 +1822,44 @@ async function seedMembersFromBoard({ clientName, caseRef }) {
       console.log(`[HtmlQ] Seeded member manifest for ${caseRef} from Family Members board — ${members.length} members (${members.map((m) => m.key).join(', ')})`);
       result = members;
     }
+    // Memoise only a real answer. A failed board read must NOT be remembered
+    // as "no extra members" for the next minute: a writer that seeds through
+    // loadMembers meanwhile (addMember, the sponsor's staff send) would
+    // persist a primary-only manifest and drop every other family member.
+    seedCache.set(caseRef, { members: result, exp: Date.now() + SEED_CACHE_TTL_MS });
   } catch (err) {
     console.warn(`[HtmlQ] Board seed failed for ${caseRef} (continuing primary-only): ${err.message}`);
   }
 
-  seedCache.set(caseRef, { members: result, exp: Date.now() + SEED_CACHE_TTL_MS });
   return result;
+}
+
+/**
+ * The READ half of loadMembers, for callers that must know whether a manifest
+ * FILE exists (sponsor onboarding adds its section only to a manifest that is
+ * already there — an absent one is seeded from the board later, row and all).
+ * Returns the members array when the file exists and is non-empty, null when
+ * absent. Never seeds, never writes. A read failure throws with
+ * err.transient = true, exactly like loadMembers, so an outage is never
+ * mistaken for "no manifest".
+ */
+async function readMembersManifest({ clientName, caseRef }) {
+  let buf;
+  try {
+    buf = await oneDrive.readFile({
+      clientName,
+      caseRef,
+      subfolder: QUESTIONNAIRE_SUBFOLDER,
+      filename:  membersFilename(caseRef),
+    });
+  } catch (err) {
+    console.error(`[HtmlQ] readMembersManifest read failed for ${caseRef}: ${err.message}`);
+    err.transient = true;
+    throw err;
+  }
+  if (!buf) return null;
+  const data = JSON.parse(buf.toString('utf8'));
+  return (Array.isArray(data.members) && data.members.length > 0) ? data.members : null;
 }
 
 /**
@@ -1896,11 +1928,13 @@ async function saveMembers({ clientName, caseRef, members }) {
 /**
  * Add a new member to the case manifest.
  *
- * @param {{ clientName, caseRef, memberType }} params
+ * @param {{ clientName, caseRef, memberType, label? }} params
  *   memberType: one of the MEMBER_TYPE constants from questionnaireFormMap
+ *   label:      optional section heading (the sponsor's real name); default
+ *               is the generic "Spouse" / "Sponsor" / "Child 2" label
  * @returns {{ key, type, label }} The newly added member
  */
-async function addMember({ clientName, caseRef, memberType }) {
+async function addMember({ clientName, caseRef, memberType, label: labelIn }) {
   const members = await loadMembers({ clientName, caseRef });
 
   // Validate: don't allow duplicate singletons (spouse, worker-spouse, sponsor)
@@ -1914,7 +1948,7 @@ async function addMember({ clientName, caseRef, memberType }) {
 
   const key   = generateMemberKey(memberType, members);
   const count = members.filter(m => m.type === memberType).length + 1;
-  const label = memberLabel(memberType, count);
+  const label = (typeof labelIn === 'string' && labelIn.trim()) ? labelIn.trim() : memberLabel(memberType, count);
 
   const newMember = {
     key,
@@ -6242,6 +6276,7 @@ module.exports = {
   markSubmitted,
   markAllSubmitted,
   // Member manifest management
+  readMembersManifest,
   loadMembers,
   seedMembersFromBoard,
   addMember,

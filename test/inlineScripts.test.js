@@ -41,6 +41,23 @@ test('adminCase buildCockpitHTML: emitted scripts parse (incl. hostile caseRef s
   assert.ok(!hostile.includes('<img src=x'), 'hostile caseRef never lands raw in the HTML');
 });
 
+// The sponsor / inviter card (2026-09-24): its JS is emitted from the same
+// template literal, so it lives under the same rules — single quotes +
+// concatenation, no backtick, no ${, no backslash escape.
+test('adminCase buildCockpitHTML: the sponsor card script posts to the sponsor route and stays inside the inline-JS rules', () => {
+  const { buildCockpitHTML } = require('../src/routes/adminCase');
+  const html = buildCockpitHTML('2026-SOWP-017');
+  const script = (html.match(/<script>([\s\S]*?)<\/script>/) || [])[1] || '';
+  assert.ok(script.includes("'/sponsor'"), 'the emitted script posts to /admin/case-action/:caseRef/sponsor');
+  const a = script.indexOf('function renderSponsor'), b = script.indexOf('function renderQTab');
+  assert.ok(a !== -1 && b > a, 'renderSponsor is emitted before the questionnaire tab');
+  const block = script.slice(a, b);
+  assert.ok(!block.includes('`'), 'no backtick inside the renderSponsor block');
+  assert.ok(!block.includes('${'), 'no ${ inside the renderSponsor block');
+  assert.ok(!block.includes('\\'), 'no backslash escape inside the renderSponsor block (the lost-backslash trap)');
+  assert.ok(html.includes('id="sp-card"') && html.includes('id="sp-body"') && html.includes('id="sp-msg"'), 'the card markup is emitted');
+});
+
 test('adminLeads queue + detail: emitted scripts parse', () => {
   const { buildLeadsQueueHTML, buildLeadDetailHTML } = require('../src/routes/adminLeads');
   assertScriptsParse(buildLeadsQueueHTML(), 'leads queue');
@@ -123,6 +140,9 @@ test('questionnaire client engine: emitted scripts parse for every form (single 
     { key: 'primary', label: "O'Hara `x` \"q\"", type: 'Principal Applicant' },
     { key: 'member-2', label: 'Spouse </script>', type: 'Spouse' },
   ];
+  // The sponsor's own section (sponsor onboarding, 2026-09-24): its label is
+  // the inviter name typed on the lead — hostile here, as any client value.
+  const withSponsor = [...members, { key: 'sponsor', type: 'Sponsor', label: '</script>' }];
   for (const formFile of forms) {
     const single = svc.buildFormPage({ formFile, caseRef: '2026-XX-000', token: 'TDOT-x', formKey: 'primary', members: [] });
     assertScriptsParse(single, `client engine [${formFile}]`);
@@ -130,6 +150,11 @@ test('questionnaire client engine: emitted scripts parse for every form (single 
 
     const multi = svc.buildFormPage({ formFile, caseRef: '2026-XX-000', token: 'TDOT-x', formKey: 'primary', members, allowedMemberTypes: ['Spouse', 'Dependent Child'] });
     assertScriptsParse(multi, `client engine multi [${formFile}]`);
+
+    const sponsor = svc.buildFormPage({ formFile, caseRef: '2026-XX-000', token: 'TDOT-x', formKey: 'primary', members: withSponsor, allowedMemberTypes: ['Worker Spouse', 'Dependent Child'] });
+    assertScriptsParse(sponsor, `client engine sponsor [${formFile}]`);
+    assert.ok((sponsor.match(/<script>[\s\S]*?<\/script>/g) || []).length === (multi.match(/<script>[\s\S]*?<\/script>/g) || []).length,
+      `client engine sponsor [${formFile}]: a </script> in the sponsor's label must not split a script block`);
   }
 });
 

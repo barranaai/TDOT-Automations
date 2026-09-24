@@ -82,6 +82,144 @@ test('summariseDocuments: byCategory items carry id / lastUpload / reviewNotes f
   assert.equal(out.counts.rework, 1);
 });
 
+// ─── The sponsor / inviter card (overview.sponsor) ────────────────────────────
+// describeFromInputs is the pure half of sponsorOnboardingService.describe —
+// what the cockpit renders for the '🤝 Sponsor / inviter' card.
+
+const S = require('../src/services/sponsorOnboardingService');
+const SP_LEAD = (over = {}) => ({ id: '9001', fullName: 'Aisha Khan', clientMasterItemId: '4001', inviterName: 'Faheem Khan', inviterEmail: 'faheem@example.com', retainerSigned: '2026-09-01', retainerPaid: '2026-09-02', ...over });
+const SP_BASE = { caseType: 'SOWP', caseSubType: 'Outland (Spouse or Child)', clientEmail: 'aisha@example.com', caseStage: 'Document Collection Started', paymentStatus: 'Paid', composition: { members: [] }, qMembers: [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant' }], now: Date.parse('2026-09-24T15:00:00Z') };
+
+test('sponsor card: a shared case (two client records) fails closed — nothing to send to', () => {
+  const r = S.describeFromInputs({ ...SP_BASE, claimants: [SP_LEAD(), SP_LEAD({ id: '9002' })] });
+  assert.equal(r.available, true);
+  assert.equal(r.status, 'none');
+  assert.equal(r.reason, 'shared-case');
+  assert.equal(r.canSend, false);
+  assert.equal(r.sendBlockedReason, 'shared-case');
+  assert.equal(r.claimantCount, 2);
+});
+
+test('sponsor card: single claimant + marker sent → ok, emailed, resend allowed, section label = the sponsor', () => {
+  const r = S.describeFromInputs({ ...SP_BASE, claimants: [SP_LEAD()], marker: { status: 'sent', sentAt: '2026-09-12T18:03:00Z', sendCount: 1 } });
+  assert.equal(r.status, 'ok');
+  assert.equal(r.name, 'Faheem Khan');
+  assert.equal(r.roleLabel, 'Worker Spouse');
+  assert.equal(r.docCount, 5);
+  assert.equal(r.sectionMode, 'section');
+  assert.equal(r.sectionLabel, 'Faheem Khan');
+  assert.equal(r.emailedAt, '2026-09-12T18:03:00Z');
+  assert.equal(r.sentCount, 1);
+  assert.equal(r.canSend, true);
+  assert.equal(r.sendBlockedReason, null);
+});
+
+test('sponsor card: before Document Collection the button cannot send (not-started)', () => {
+  const r = S.describeFromInputs({ ...SP_BASE, claimants: [SP_LEAD()], caseStage: 'Retainer Signed' });
+  assert.equal(r.status, 'ok');
+  assert.equal(r.canSend, false);
+  assert.equal(r.sendBlockedReason, 'not-started');
+  assert.equal(r.emailedAt, null);
+});
+
+test('sponsor card: a marker read failure disables the button rather than guessing', () => {
+  const r = S.describeFromInputs({ ...SP_BASE, claimants: [SP_LEAD()], markerUnavailable: true });
+  assert.equal(r.markerUnavailable, true);
+  assert.equal(r.canSend, false);
+  assert.equal(r.sendBlockedReason, 'marker-unavailable');
+});
+
+test('sponsor card: a CEC case has no sponsor role → not-applicable (the card is hidden)', () => {
+  const r = S.describeFromInputs({ ...SP_BASE, caseType: 'Canadian Experience Class (EE after ITA)', caseSubType: 'CEC Single Applicant', claimants: [SP_LEAD()] });
+  assert.equal(r.status, 'none');
+  assert.equal(r.reason, 'not-applicable');
+});
+
+test('sponsor card: the masked address never carries the local part', () => {
+  for (const email of ['faheem@example.com', 'fk@example.com', 'faheem.khan+sowp@sub.example.co.uk']) {
+    const r = S.describeFromInputs({ ...SP_BASE, claimants: [SP_LEAD({ inviterEmail: email })] });
+    assert.equal(r.status, 'ok');
+    assert.ok(!r.emailMasked.includes(email.split('@')[0]), `${email} → ${r.emailMasked}`);
+    assert.ok(r.emailMasked.includes('@'), 'still recognisably an address');
+  }
+});
+
+/** The cockpit fan-out, fully stubbed (no Monday, no OneDrive). */
+function cockpitStubs({ sponsorDescribe } = {}) {
+  const cockpit     = require('../src/services/caseCockpitService');
+  const mondayApi   = require('../src/services/mondayApi');
+  const htmlQ       = require('../src/services/htmlQuestionnaireService');
+  const docSvc      = require('../src/services/documentFormService');
+  const composition = require('../src/services/compositionAdapter');
+  const stub = (obj, key, fn) => { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; };
+  return [
+    stub(htmlQ, 'validateAccessForStaff', async () => ({ itemId: '4001', clientName: 'Aisha Khan', caseType: 'SOWP', caseSubType: 'Outland (Spouse or Child)', accessToken: 't', formFiles: { primary: 'f.html' } })),
+    stub(mondayApi, 'query', async () => ({ items: [{ column_values: [{ id: 'color_mm0x8faa', text: 'Document Collection Started' }, { id: 'color_mm0x9fnn', text: 'Paid' }, { id: 'text_mm0xw6bp', text: 'aisha@example.com' }] }] })),
+    stub(docSvc, 'getCaseSummary', async () => ({ items: [] })),
+    stub(composition, 'readForCase', async () => ({ members: [] })),
+    stub(htmlQ, 'loadMembers', async () => [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', submittedAt: '' }]),
+    stub(htmlQ, 'getMemberStatuses', async ({ members }) => members.map((m) => ({ ...m, status: 'In Progress', hasData: true, completionPct: 40 }))),
+    stub(cockpit, 'getLeadExtras', async () => ({ lead: null, payments: null })),
+    stub(S.io, 'findClaimants', async () => [SP_LEAD()]),
+    stub(S.io, 'readMarker', async () => null),
+    ...(sponsorDescribe ? [stub(S, 'describe', sponsorDescribe)] : []),
+  ];
+}
+
+const OVERVIEW_KEYS = [
+  'caseRef', 'itemId', 'clientName', 'caseType', 'caseSubType', 'accessToken', 'cmUnavailable', 'clientEmail', 'manager', 'assignees',
+  'paymentStatus', 'caseStage', 'health', 'slaRisk', 'deadline', 'qReadinessPct', 'docReadinessPct', 'docReviewedPct', 'portalLink', 'folderLink',
+  'family', 'questionnaire', 'documents', 'lead', 'payments', 'timeline',
+];
+
+test('getCaseOverview: keys unchanged apart from the new sponsor key, which the real describe fills from the case reads', async () => {
+  const cockpit = require('../src/services/caseCockpitService');
+  const restore = cockpitStubs();
+  try {
+    const o = await cockpit.getCaseOverview('2026-SOWP-017');
+    const keys = Object.keys(o);
+    assert.ok(keys.includes('sponsor'));
+    assert.deepEqual(keys.filter((k) => k !== 'sponsor'), OVERVIEW_KEYS, 'no other key changes (the client portal and the cockpit page read these)');
+    assert.equal(o.sponsor.available, true);
+    assert.equal(o.sponsor.status, 'ok');
+    assert.equal(o.sponsor.name, 'Faheem Khan');
+    assert.equal(o.sponsor.canSend, true);
+    assert.equal(o.sponsor.emailedAt, null);
+    assert.ok(!JSON.stringify(o.sponsor).includes('faheem@'), 'the overview never carries the raw sponsor address');
+  } finally { restore.reverse().forEach((r) => r()); }
+});
+
+test('getCaseOverview: a failed sponsor read hides the card and never fails the page', async () => {
+  const cockpit = require('../src/services/caseCockpitService');
+  const restore = cockpitStubs({ sponsorDescribe: async () => { throw new Error('boom'); } });
+  try {
+    const o = await cockpit.getCaseOverview('2026-SOWP-017');
+    assert.deepEqual(o.sponsor, { available: false });
+    assert.equal(o.caseRef, '2026-SOWP-017');
+  } finally { restore.reverse().forEach((r) => r()); }
+});
+
+test('getCaseOverview: the describe call carries what the marker read and the gates need', async () => {
+  const cockpit = require('../src/services/caseCockpitService');
+  let seen = null;
+  const restore = cockpitStubs({ sponsorDescribe: async (args) => { seen = args; return { available: true, status: 'none', reason: 'no-inviter' }; } });
+  try {
+    const o = await cockpit.getCaseOverview('2026-SOWP-017');
+    assert.equal(o.sponsor.reason, 'no-inviter');
+    assert.equal(seen.itemId, '4001');
+    assert.equal(seen.caseRef, '2026-SOWP-017');
+    assert.equal(seen.clientName, 'Aisha Khan', 'OneDrive resolves the case folder by client name + case ref');
+    assert.equal(seen.caseType, 'SOWP');
+    assert.equal(seen.caseSubType, 'Outland (Spouse or Child)');
+    assert.equal(seen.clientEmail, 'aisha@example.com');
+    assert.equal(seen.cmUnavailable, false);
+    assert.equal(seen.caseStage, 'Document Collection Started');
+    assert.equal(seen.paymentStatus, 'Paid');
+    assert.deepEqual(seen.composition, { members: [] });
+    assert.equal(seen.qMembers.length, 1);
+  } finally { restore.reverse().forEach((r) => r()); }
+});
+
 // ─── pickLeadFields ───────────────────────────────────────────────────────────
 
 test('pickLeadFields: null-safe and maps the cockpit fields', () => {
@@ -95,4 +233,18 @@ test('pickLeadFields: null-safe and maps the cockpit fields', () => {
   assert.equal(f.retainerSigned, '2026-06-15');
   assert.equal(f.consultPaid, true);
   assert.equal(f.assignedConsultant, 'Shafoli Kapur');
+});
+
+test('sponsor card: the sponsor replaced after a send is NOT emailed — the card names whom the earlier email went to, and a first send needs Paid + Document Collection', () => {
+  const sentToFaheem = { status: 'sent', sentAt: '2026-09-12T18:03:00Z', sendCount: 1, sponsor: { name: 'Faheem Khan', emailMasked: 'f***@example.com', emailKey: S.emailKeyOf('faheem@example.com') } };
+  const r = S.describeFromInputs({ ...SP_BASE, claimants: [SP_LEAD({ inviterName: 'Rahim Ali', inviterEmail: 'rahim@example.com' })], marker: sentToFaheem });
+  assert.equal(r.status, 'ok'); assert.equal(r.name, 'Rahim Ali');
+  assert.equal(r.emailedAt, null); assert.equal(r.sentCount, 0); assert.equal(r.lastError, null);
+  assert.equal(r.replacedFrom, 'f***@example.com');
+  assert.equal(r.canSend, true);
+  const early = S.describeFromInputs({ ...SP_BASE, claimants: [SP_LEAD({ inviterName: 'Rahim Ali', inviterEmail: 'rahim@example.com' })], marker: sentToFaheem, caseStage: 'Retainer Signed' });
+  assert.equal(early.canSend, false); assert.equal(early.sendBlockedReason, 'not-started');
+  const same = S.describeFromInputs({ ...SP_BASE, claimants: [SP_LEAD()], marker: sentToFaheem });
+  assert.equal(same.replacedFrom, null); assert.equal(same.emailedAt, '2026-09-12T18:03:00Z'); assert.equal(same.sentCount, 1);
+  assert.ok(!JSON.stringify(r).includes('faheem@') && !JSON.stringify(r).includes('rahim@'));
 });

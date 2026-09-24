@@ -293,4 +293,6 @@ function maskAddr(email) {
   return at < 1 ? '***' : Array.from(s)[0] + '***' + s.slice(at);
 }
 
-module.exports = { sendIntakeEmail, onClientEmailChanged };
+// BASE_URL / EMAIL_REPLY_TO / STAGES_REQUIRING_RESEND / maskAddr are shared with
+// sponsorOnboardingService so the sponsor's link and gates are the client's.
+module.exports = { sendIntakeEmail, onClientEmailChanged, BASE_URL, EMAIL_REPLY_TO, STAGES_REQUIRING_RESEND, maskAddr };

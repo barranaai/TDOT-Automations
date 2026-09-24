@@ -156,6 +156,16 @@ function buildCockpitHTML(caseRef) {
     .kvline .k { color:var(--muted); min-width:170px; }
     .kvline .v { color:var(--navy); font-weight:600; }
 
+    /* Sponsor / inviter card */
+    .sp-line { font-size:13px; color:var(--navy); padding:4px 0; }
+    .sp-line.sp-name { font-weight:700; font-size:14px; }
+    .sp-line .sp-dim { color:var(--muted); font-weight:500; }
+    .sp-pill { margin:10px 0 12px; }
+    .sp-hint { font-size:11.5px; color:var(--light); margin-top:8px; line-height:1.5; }
+    .sp-form { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0; }
+    .sp-form input { padding:8px 10px; border:1px solid var(--border); border-radius:7px; font-size:12.5px; font-family:inherit; }
+    @media (max-width: 820px) { .sp-form { grid-template-columns:1fr; } }
+
     .tl { position:relative; padding-left:24px; }
     .tl::before { content:""; position:absolute; left:7px; top:6px; bottom:6px; width:2px; background:#e8edf4; border-radius:1px; }
     .tl-ev { position:relative; padding:0 0 16px 8px; }
@@ -239,6 +249,13 @@ ${buildNavHeader('dashboard')}
           <div class="card-title">🧾 Questionnaire members <span class="cnt" id="qm-cnt"></span></div>
           <div id="qm-list"></div>
         </div>
+      </div>
+
+      <!-- Sponsor / inviter — hidden unless the case type has a sponsor role -->
+      <div class="card" id="sp-card" style="display:none;margin-top:16px">
+        <div class="card-title">🤝 Sponsor / inviter</div>
+        <div id="sp-body"></div>
+        <div class="act-msg" id="sp-msg"></div>
       </div>
 
       <div class="card" style="margin-top:16px">
@@ -418,6 +435,9 @@ function render(d) {
     return '<div class="cat-block"><div class="cat-head">' + escHtml(cat.category) + '</div>' + lines + '</div>';
   }).join('') : '<div class="muted" style="margin-top:10px">No checklist rows seeded yet.</div>';
 
+  // Sponsor / inviter card (hidden when the case type has no sponsor role)
+  renderSponsor(d.sponsor, d.cmUnavailable);
+
   // Review-page link + the tab panels
   document.getElementById('doc-review-lnk').href = '/d/' + encodeURIComponent(CASE_REF) + '/review';
   LAST_D = d;
@@ -489,6 +509,181 @@ function docAction(btn) {
     else { btn.disabled = false; actMsg('doc-act-msg', 'err', res.status === 403 ? 'You are not assigned to this case.' : res.status === 401 ? 'Please sign in again.' : ((res.j && res.j.error) || 'Action failed.')); }
   })
   .catch(function(e) { btn.disabled = false; actMsg('doc-act-msg', 'err', 'Failed: ' + e.message); });
+}
+
+// ── Sponsor / inviter card: who the in-Canada partner is, whether the portal ──
+// email reached them, and the one button that sends it. The server decides
+// everything (who the sponsor is, the gates, the once-per-case marker); this
+// only shows the state it reports and asks before sending.
+var SP_LAST_SEND = 0;   // ms of the last successful send from this page — the button rests for 60 s
+// Office time (Toronto) with the zone shown — the same rule as the payment
+// tooltips, so a viewer abroad never reads a different day.
+function spWhen(iso) {
+  var t = new Date(iso);
+  if (isNaN(t.getTime())) return String(iso || '');
+  try { return t.toLocaleString('en-CA', { timeZone: 'America/Toronto', timeZoneName: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  catch (e) { return t.toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; }
+}
+function renderSponsor(sp, cmUnavailable) {
+  var card = document.getElementById('sp-card'), body = document.getElementById('sp-body');
+  if (!sp || sp.available === false || sp.reason === 'not-applicable') { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  var resting = (Date.now() - SP_LAST_SEND) < 60000;
+  var html = '';
+  var hint = '<div class="sp-hint">The sponsor gets their own email: the same portal link as the client, their document list, and which part of the questionnaire is theirs.</div>';
+
+  if (cmUnavailable) {
+    html = '<div class="muted">Case data is temporarily unavailable — reload in a moment.</div>';
+  } else if (sp.status === 'ok') {
+    html += '<div class="sp-line sp-name">' + escHtml(sp.name) + ' <span class="sp-dim">· ' + escHtml(sp.emailMasked) + '</span></div>';
+    var place = sp.sectionMode === 'section' ? 'own questionnaire section ("' + escHtml(sp.sectionLabel) + '")'
+      : sp.sectionMode === 'shared-form' ? 'shares the questionnaire form with the client'
+      : 'documents only (no questionnaire section)';
+    html += '<div class="sp-line">' + escHtml(sp.roleLabel) + ' · ' + sp.docCount + ' document' + (sp.docCount === 1 ? '' : 's') + ' · ' + place + '</div>';
+    // The same address as the client is a fact about the sponsor, not a state:
+    // it is shown under whichever state the case is in.
+    var sameLine = sp.reason === 'same-as-client' ? '<div class="sp-line sp-dim">Same email address as the client — the client’s portal email already reached this inbox.</div>' : '';
+    // The sponsor was replaced (retainer panel) after a send: the marker’s
+    // history is the earlier person’s, and this one has not been emailed.
+    var replacedLine = (sp.replacedFrom && !sp.emailedAt) ? '<div class="sp-line sp-dim">The earlier sponsor email went to ' + escHtml(sp.replacedFrom) + ' — ' + escHtml(sp.name) + ' has not been emailed.</div>' : '';
+    var pill, btnLabel = '', btnMode = 'send', btnOff = resting;
+    if (sp.markerUnavailable) {
+      pill = '<span class="pill amber">Can’t check whether the sponsor was emailed (OneDrive unavailable) — try again in a few minutes</span>';
+      btnLabel = sp.emailedAt ? 'Resend sponsor link' : 'Send sponsor link'; btnOff = true;
+    } else if (sp.lastError) {
+      pill = '<span class="pill red">Last attempt failed — ' + escHtml(String(sp.lastError).slice(0, 80)) + '</span>';
+      btnLabel = sp.emailedAt ? 'Resend sponsor link' : 'Send sponsor link';
+    } else if (sp.emailedAt) {
+      pill = '<span class="pill green">Emailed ' + escHtml(spWhen(sp.emailedAt)) + (sp.sentCount > 1 ? ' · sent ' + sp.sentCount + '×' : '') + '</span>';
+      btnLabel = 'Resend sponsor link';
+    } else if (sp.sendBlockedReason === 'in-progress') {
+      pill = '<span class="pill blue">Being sent right now — reload in a moment</span>'; btnOff = true;
+      btnLabel = 'Send sponsor link';
+    } else if (sp.sendBlockedReason === 'not-started') {
+      // Before payment / Document Collection nothing can be emailed from here
+      // (a same-address sponsor included — the automatic path never emails
+      // that address, so the pill must not promise it). The only thing to do
+      // is create the sponsor’s questionnaire section, where the form has one.
+      pill = spAutoEmails(sp)
+        ? '<span class="pill grey">Emails automatically when Document Collection starts (after payment)</span>'
+        : '<span class="pill grey">Not emailed yet — send it from this page once the case is paid and at Document Collection</span>';
+      if (sp.sectionMode === 'section' && !(sp.sectionExists && sp.rowExists)) { btnLabel = 'Add sponsor now'; btnMode = 'add'; }
+    } else if (sp.reason === 'same-as-client') {
+      pill = '<span class="pill amber">Same email address as the client — the client’s portal email already reached this inbox.</span>';
+      btnLabel = 'Send sponsor link anyway'; sameLine = '';
+    } else {
+      pill = '<span class="pill grey">Not emailed yet</span>';
+      btnLabel = 'Send sponsor link';
+    }
+    if (sp.sectionMode === 'section') {
+      html += '<div class="sp-line"><span class="sp-dim">Questionnaire section:</span> ' + (sp.sectionExists ? 'created'
+        : btnMode === 'add' ? 'not created yet — Add sponsor now creates it (it is also created with the first send)'
+        : 'not created yet — it is created with the first send') + '</div>';
+    }
+    html += sameLine + replacedLine;
+    html += '<div class="sp-pill">' + pill + '</div>';
+    if (btnLabel) {
+      html += '<div class="tab-actions"><button class="sbtn primary" id="sp-btn" data-sp-mode="' + btnMode + '"' + (btnOff ? ' disabled' : '') +
+        (resting && !sp.markerUnavailable ? ' title="Sent less than a minute ago"' : '') + '>' + btnLabel + '</button></div>';
+      if (btnMode === 'add') html += '<div class="sp-hint">Not yet paid / not at Document Collection: this creates the questionnaire section only. ' + spNextStep(sp, true) + '</div>';
+      else html += hint;
+    }
+  } else if (sp.reason === 'no-inviter') {
+    // Before payment / Document Collection a typed sponsor is saved, not
+    // emailed — the button and the dialog say so.
+    var saveOnly = sp.sendBlockedReason === 'not-started';
+    html += '<div class="sp-line">No sponsor on file for this case.</div>';
+    html += '<div class="sp-form"><input type="text" id="sp-name" maxlength="80" placeholder="Sponsor / inviter name" autocomplete="off">' +
+      '<input type="email" id="sp-email" placeholder="Sponsor / inviter email" autocomplete="off"></div>';
+    html += '<div class="tab-actions"><button class="sbtn primary" id="sp-btn" data-sp-mode="save"' + (resting ? ' disabled title="Sent less than a minute ago"' : '') + '>' +
+      (saveOnly ? 'Save sponsor' : 'Save sponsor &amp; send link') + '</button></div>';
+    html += '<div class="sp-hint">Saved to the client record (the Inviter / Sponsor block in the retainer panel), so both pages show the same person.' +
+      (saveOnly ? ' The portal link is sent later, once the case is paid and at Document Collection — ' + spNextStep(sp, false) : '') + '</div>';
+  } else if (sp.reason === 'shared-case') {
+    html = '<div class="muted">This case is linked to ' + (sp.claimantCount || 2) + ' client records, so the sponsor can’t be identified safely. Fix the duplicate on the Consultations page first.</div>';
+  } else if (sp.reason === 'no-lead') {
+    html = '<div class="muted">This case has no client record (it was created directly in Monday), so there is nowhere to store a sponsor.</div>';
+  } else if (sp.reason === 'sub-type-missing') {
+    html = '<div class="muted">Set the Case Sub Type first — which documents the sponsor must provide depends on it.</div>';
+  } else if (sp.reason === 'no-schema') {
+    html = '<div class="muted">This case type/sub type has no document checklist schema, so the sponsor’s document list can’t be built.</div>';
+  } else {
+    html = '<div class="muted">The sponsor could not be described for this case — reload in a moment.</div>';
+  }
+  body.innerHTML = html;
+  var btn = document.getElementById('sp-btn');
+  if (btn) btn.onclick = function() { spAction(btn, sp); };
+}
+// Whether the automatic senders would email THIS sponsor: the switch must be
+// on, and the address must not be the client’s own (the automatic path skips
+// that address — the client’s portal email already reached it).
+function spAutoEmails(sp) {
+  return !!(sp && sp.autoEnabled && sp.reason !== 'same-as-client');
+}
+// What happens to the portal email after a save / add before Document
+// Collection. The automatic senders ship behind a switch: while it is off (or
+// the address is the client’s) the card must not promise an email nobody
+// sends — staff press the button instead.
+function spNextStep(sp, sentence) {
+  if (spAutoEmails(sp)) return sentence ? 'The portal email goes out automatically when Document Collection starts.' : 'the email goes out automatically when Document Collection starts.';
+  return sentence ? 'Come back and press Send sponsor link once Document Collection starts.' : 'press Send sponsor link once the case is paid and at Document Collection.';
+}
+function spAction(btn, sp) {
+  var mode = btn.getAttribute('data-sp-mode');
+  var payload = {};
+  var question;
+  if (mode === 'save') {
+    var nameEl = document.getElementById('sp-name'), emailEl = document.getElementById('sp-email');
+    var name = (nameEl && nameEl.value || '').trim(), email = (emailEl && emailEl.value || '').trim();
+    if (!name || !email) { actMsg('sp-msg', 'err', 'Enter both the sponsor’s name and email address.'); return; }
+    if (email.indexOf('@') < 1 || email.indexOf('.', email.indexOf('@')) < 0 || email.indexOf(' ') >= 0) { actMsg('sp-msg', 'err', 'That email address doesn’t look right.'); return; }
+    payload = { name: name, email: email };
+    // A dialog that says "sent later" is kept by the server whatever the case
+    // reads by the time staff confirm (createOnly): a colleague may have
+    // marked the case Paid since this page loaded.
+    if (sp.sendBlockedReason === 'not-started') payload.createOnly = true;
+    question = sp.sendBlockedReason === 'not-started'
+      ? 'Save ' + name + ' (' + email + ') as the sponsor on the client record for ' + CASE_REF + '? The portal link is sent later, once the case is paid and at Document Collection — ' + spNextStep(sp, false)
+      : 'Save ' + name + ' (' + email + ') as the sponsor on the client record and email them the portal link for ' + CASE_REF + '?';
+  } else if (mode === 'add') {
+    payload = { createOnly: true };
+    question = 'Add ' + sp.name + ' to ' + CASE_REF + ' now? ' + spNextStep(sp, true);
+  } else {
+    question = 'Email ' + sp.name + ' (' + sp.emailMasked + ') the portal link and document list for ' + CASE_REF + '?';
+  }
+  if (!window.confirm(question)) return;
+  spSend(btn, payload, sp);
+}
+function spSend(btn, payload, sp) {
+  var key = peekKey();
+  var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
+  btn.disabled = true; actMsg('sp-msg', 'info', 'Working…');
+  // The sponsor is derived server-side from the case’s single client record — no leadId is sent.
+  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/sponsor', {
+    method: 'POST', headers: headers, credentials: 'same-origin',
+    body: JSON.stringify(payload)
+  })
+  .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
+  .then(function(res) {
+    if (res.ok) {
+      var j = res.j, made = j.created || {};
+      // A 200 without a send says what DID happen — the server refuses the
+      // rest (nothing sent, saved or created) with its own sentence.
+      if (j.sent) { SP_LAST_SEND = Date.now(); actMsg('sp-msg', 'ok', 'Sent to ' + (j.to || 'the sponsor') + ' — noted on the case.'); }
+      else if (made.row || made.member) actMsg('sp-msg', 'ok', 'Sponsor added — ' + spNextStep(sp, false));
+      else if (j.inviterSaved) actMsg('sp-msg', 'ok', 'Sponsor saved to the client record — ' + spNextStep(sp, false));
+      else actMsg('sp-msg', 'info', 'Nothing to send yet — ' + spNextStep(sp, false));
+      loadCase();
+    } else {
+      btn.disabled = false;
+      actMsg('sp-msg', 'err', res.status === 403 ? 'You are not assigned to this case.' : res.status === 401 ? 'Please sign in again.' : ((res.j && res.j.error) || 'Action failed.'));
+      // A failure AFTER the sponsor was saved or the section created: the
+      // server says so, and the card must show what now exists.
+      var partial = (res.j && res.j.created) || {};
+      if (partial.row || partial.member || (res.j && res.j.inviterSaved)) loadCase();
+    }
+  })
+  .catch(function(e) { btn.disabled = false; actMsg('sp-msg', 'err', 'Failed: ' + e.message); });
 }
 
 // ── Questionnaire tab: member sections + review / export / client link ──────

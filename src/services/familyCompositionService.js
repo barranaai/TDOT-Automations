@@ -102,6 +102,37 @@ function buildFamilyNote(planned, source) {
 }
 
 /**
+ * Create ONE Family Members row for a case. The single write path for the
+ * board: createFromLead loops over it, and sponsorOnboardingService uses it for
+ * the sponsor's row. Returns the new item id.
+ *
+ * @param {{ caseRef: string, cmItemId?: string|number, row: { memberType, name, memberKey, dateOfBirth?, currentStatus?, countryOfResidence? } }} p
+ * @returns {Promise<string>} the created item's id ('' when Monday returned none)
+ */
+async function createFamilyRow({ caseRef, cmItemId, row }) {
+  const mondayApi = require('./mondayApi');
+  const C = boardCfg.columns;
+  const cols = {
+    [C.caseReference]: caseRef,
+    [C.memberType]:    { label: row.memberType },
+    [C.memberKey]:     row.memberKey,
+  };
+  // Per-member biographic detail the consultant captured (all optional) — feeds
+  // the questionnaire pre-fill. DOB is a Monday date column; only write a valid ISO date.
+  if (C.dateOfBirth && /^\d{4}-\d{2}-\d{2}$/.test(row.dateOfBirth || '')) cols[C.dateOfBirth] = { date: row.dateOfBirth };
+  if (C.currentStatus && row.currentStatus) cols[C.currentStatus] = row.currentStatus;
+  if (C.countryOfResidence && row.countryOfResidence) cols[C.countryOfResidence] = row.countryOfResidence;
+  if (cmItemId && C.case) cols[C.case] = { item_ids: [Number(cmItemId)] };
+  const data = await mondayApi.query(
+    `mutation($b: ID!, $n: String!, $c: JSON!) {
+       create_item(board_id: $b, item_name: $n, column_values: $c, create_labels_if_missing: false) { id }
+     }`,
+    { b: String(boardCfg.boardId), n: row.name, c: JSON.stringify(cols) }
+  );
+  return String((data && data.create_item && data.create_item.id) || '');
+}
+
+/**
  * Create Family Members rows for a case from the lead's intake answers.
  * Called when the case reference is assigned (rows key on the reference).
  *
@@ -124,33 +155,16 @@ async function createFromLead({ lead, caseRef, cmItemId }) {
     return 0;
   }
 
-  const mondayApi = require('./mondayApi');
-  const C = boardCfg.columns;
   let created = 0;
   for (const row of planned) {
-    const cols = {
-      [C.caseReference]: caseRef,
-      [C.memberType]:    { label: row.memberType },
-      [C.memberKey]:     row.memberKey,
-    };
-    // Per-member biographic detail the consultant captured (all optional) — feeds
-    // the questionnaire pre-fill. DOB is a Monday date column; only write a valid ISO date.
-    if (C.dateOfBirth && /^\d{4}-\d{2}-\d{2}$/.test(row.dateOfBirth || '')) cols[C.dateOfBirth] = { date: row.dateOfBirth };
-    if (C.currentStatus && row.currentStatus) cols[C.currentStatus] = row.currentStatus;
-    if (C.countryOfResidence && row.countryOfResidence) cols[C.countryOfResidence] = row.countryOfResidence;
-    if (cmItemId && C.case) cols[C.case] = { item_ids: [Number(cmItemId)] };
-    await mondayApi.query(
-      `mutation($b: ID!, $n: String!, $c: JSON!) {
-         create_item(board_id: $b, item_name: $n, column_values: $c, create_labels_if_missing: false) { id }
-       }`,
-      { b: String(boardCfg.boardId), n: row.name, c: JSON.stringify(cols) }
-    );
+    await createFamilyRow({ caseRef, cmItemId, row });
     created++;
   }
   console.log(`[Family] Created ${created} Family Members row(s) for ${caseRef} from ${source === 'consultant' ? 'the consultant-set list' : 'intake answers'}`);
 
   // Tell staff on the case what exists and what they still decide (sub type).
   if (cmItemId) {
+    const mondayApi = require('./mondayApi');
     await mondayApi.query(
       `mutation($i: ID!, $body: String!){ create_update(item_id: $i, body: $body){ id } }`,
       { i: String(cmItemId), body: buildFamilyNote(planned, source) }
@@ -164,11 +178,23 @@ async function createFromLead({ lead, caseRef, cmItemId }) {
  * find the originating lead (if any) and materialise its family answers.
  * No-op for cases without a Phase 2 lead (manually created clients).
  */
+const _rowsInFlight = new Map(); // caseRef → the run in progress: concurrent callers share ONE read-then-create
+
 async function createFamilyRowsForItem({ itemId, caseRef }) {
-  const leadService = require('./leadService');
-  const lead = await leadService.findByColumnValue('clientMasterItemId', String(itemId));
-  if (!lead) return 0;
-  return createFromLead({ lead, caseRef, cmItemId: itemId });
+  // The case-ref chain and the sponsor onboarding (a Sub Type webhook landing
+  // mid-chain) can ask for the same case within seconds. Two runs that both
+  // read an empty board would both create the intake rows — so the second
+  // caller waits for the first's answer instead.
+  const key = String(caseRef);
+  if (_rowsInFlight.has(key)) return _rowsInFlight.get(key);
+  const run = (async () => {
+    const leadService = require('./leadService');
+    const lead = await leadService.findByColumnValue('clientMasterItemId', String(itemId));
+    if (!lead) return 0;
+    return createFromLead({ lead, caseRef, cmItemId: itemId });
+  })();
+  _rowsInFlight.set(key, run);
+  try { return await run; } finally { _rowsInFlight.delete(key); }
 }
 
-module.exports = { createFromLead, createFamilyRowsForItem, planMembersFromLead, planMembersFromConsultant, buildFamilyNote };
+module.exports = { createFromLead, createFamilyRow, createFamilyRowsForItem, planMembersFromLead, planMembersFromConsultant, buildFamilyNote };

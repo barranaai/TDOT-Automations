@@ -187,6 +187,10 @@ async function onRetainerPaid({ itemId }) {
     const checklistService = require('./checklistService');
     emailService.sendIntakeEmail(itemId).catch(err =>
       console.error(`[Retainer] Deferred intake email failed for ${itemId}:`, err.message));
+    // The sponsor's own portal email, same gates as the webhook path (lazy
+    // require: the sponsor service reads leads, which read this module).
+    require('./sponsorOnboardingService').ensureSponsor({ itemId, mode: 'onboard', trigger: 'retainer-paid' }).catch(err =>
+      console.error(`[Retainer] Deferred sponsor onboarding failed for ${itemId}:`, err.message));
     checklistService.onDocumentCollectionStarted({ itemId, boardId: clientMasterBoardId })
       .then(() => console.log(`[Retainer] Deferred checklist setup complete for item ${itemId}`))
       .catch(err => console.error(`[Retainer] Deferred checklist setup failed for ${itemId}:`, err.message));

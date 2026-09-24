@@ -201,6 +201,14 @@ router.post('/', async (req, res) => {
       if (newSub && newSub !== prevSub) {
         require('../services/checklistService').resumeSeedingAfterSubType({ itemId: pulseId }).catch(err =>
           console.error('[Checklist] Sub-type resume failed:', err.message));
+        // The sponsor's document list depends on the sub type, so a case that
+        // was Paid + DCS with the sub type blank had no sponsor email either.
+        // The service's own gates (Paid, DCS, applied ≠ Yes, signature, marker)
+        // make this a no-op — nothing sent AND nothing created — on unpaid,
+        // healthy or already-onboarded cases; before payment the case-ref
+        // chain's 'prepare' pass (after the intake's family rows) creates the row.
+        require('../services/sponsorOnboardingService').ensureSponsor({ itemId: pulseId, mode: 'onboard', trigger: 'sub-type' }).catch(err =>
+          console.error('[Sponsor] sub-type onboarding failed:', err.message));
       }
     }
 
@@ -304,6 +312,13 @@ router.post('/', async (req, res) => {
         // a Render deploy mid-flight, causing the email to never fire.
         emailService.sendIntakeEmail(pulseId).catch(err =>
           console.error('[Email] Failed to send intake email:', err.message)
+        );
+        // The sponsor / inviter's own portal email (same link, their document
+        // list). The service re-checks Paid + stage + not-yet-applied + the
+        // signature gate itself and sends once per case (OneDrive marker), so
+        // a re-drag or a duplicate delivery cannot email the sponsor twice.
+        require('../services/sponsorOnboardingService').ensureSponsor({ itemId: pulseId, mode: 'onboard', trigger: 'dcs' }).catch(err =>
+          console.error('[Sponsor] onboarding failed:', err.message)
         );
 
         // Run the long-running setup tasks in parallel (fire-and-forget from Express's

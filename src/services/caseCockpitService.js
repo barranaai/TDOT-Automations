@@ -19,6 +19,8 @@
  *     questionnaire: { members:[{ key, type, label, status, hasData }], submitted, total },
  *     documents:     { counts:{ total, received, reviewed, rework, missing },
  *                      byCategory:[{ category, items:[...] }], rework:[...] },
+ *     sponsor:       sponsorOnboardingService.describe() — the inviter / sponsor
+ *                    card ({ available:false } when it could not be read),
  *   }
  */
 
@@ -299,6 +301,19 @@ async function getCaseOverview(caseRef) {
   // section degrades to null/empty rather than failing the page.
   const { lead, payments } = await getLeadExtras(itemId, caseRef);
 
+  // ── Sponsor / inviter (best-effort) ───────────────────────────────────────
+  // Who the in-Canada partner is, whether their portal email went out, and
+  // whether the button may send. Reads the claiming leads + the OneDrive
+  // marker; any failure degrades to { available:false } (card hidden).
+  const sponsor = await require('./sponsorOnboardingService').describe({
+    itemId, caseRef, clientName, caseType, caseSubType,
+    clientEmail:   cm._unavailable ? null : cm.clientEmail,
+    cmUnavailable: cm._unavailable === true,
+    caseStage:     cm._unavailable ? '' : (cm.caseStage || 'Not Started'),
+    paymentStatus: cm._unavailable ? '' : (cm.paymentStatus || 'Unpaid'),
+    composition, qMembers,
+  }).catch((e) => { console.warn(`[Cockpit] sponsor read failed for ${caseRef}: ${e.message}`); return { available: false }; });
+
   const timeline = buildTimeline({
     lead,
     milestones: (payments && payments.milestones) || [],
@@ -349,6 +364,7 @@ async function getCaseOverview(caseRef) {
     lead: pickLeadFields(lead),
     payments,
     timeline,
+    sponsor,
   };
 }
 
