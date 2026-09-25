@@ -746,6 +746,15 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
   } catch (e) {
     if (e.badRequest) {
       console.log(`[Retainer2] First-milestone e-transfer request already handled for lead ${leadId}: ${e.message}`);
+      // The signing path withheld the request because the record already reads
+      // paid. Say so on the lead: a paid date the sync backstamped from a case
+      // set to Paid by hand is not cleared when the case is corrected, so a
+      // client who has NOT paid would otherwise be skipped in silence.
+      if (notifyIfMissing && e.code === 'ALREADY_PAID') {
+        await postLeadNote(leadId,
+          `ℹ First-milestone e-transfer request NOT sent — the retainer is already recorded as paid on ${String(lead.retainerPaid || '').trim() || 'an earlier date'}. ` +
+          'If that date is wrong, an admin can undo it (Payments → Undo…) and re-send the request from the panel.');
+      }
       if (warnIfSent && e.code !== 'ALREADY_PAID') {
         await postLeadNote(leadId,
           'ℹ The first-milestone e-transfer request was already emailed to this client — changing the Retainer Fee does not resend it.');

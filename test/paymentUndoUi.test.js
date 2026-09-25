@@ -77,6 +77,17 @@ test('row actions are offered only once the viewer is known', () => {
   assert.equal(ui(null).tdotPayRowActions({ index: 0, status: 'paid' }, {}, 'sbtn').includes('Undo'), false);
 });
 
+test('the Mark-paid and Undo dialogs label the same figure (row.totalCents) the same way — "scheduled amount, incl. HST"', () => {
+  const js = PAYMENT_UI_JS;
+  const mark = js.slice(js.indexOf('function tdotOpenMarkPaidModal('), js.indexOf('function renderUndo('));
+  const undo = js.slice(js.indexOf('function renderUndo('), js.indexOf('function renderUndo(') + 4000);
+  assert.ok(mark.length > 200 && undo.length > 200, 'both dialogs are where they were');
+  const LABEL = '<span class="paym-muted">scheduled amount, incl. HST</span>';
+  assert.ok(mark.includes("payAmount(m) + ' " + LABEL), 'Mark paid: the amount is the scheduled total incl. HST');
+  assert.ok(undo.includes("(Number(p.totalCents||0)/100).toFixed(2)) + ' " + LABEL), 'Undo: the same total, the same words');
+  assert.doesNotMatch(undo, /scheduled amount<\/span>/, 'never the bare "scheduled amount" that reads as pre-tax');
+});
+
 test('both panels embed the shared module, and Mark paid no longer uses a bare browser prompt', () => {
   const cockpit = require('../src/routes/adminCase').buildCaseHTML ? require('../src/routes/adminCase').buildCaseHTML('2026-OINP-059') : null;
   const fs = require('fs');

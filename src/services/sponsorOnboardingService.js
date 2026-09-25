@@ -39,6 +39,7 @@ const mondayApi         = require('./mondayApi');
 const mail              = require('./microsoftMailService');   // module reference, so tests can stub sendEmail
 const oneDrive          = require('./oneDriveService');
 const caseSchemaService = require('./caseSchemaService');
+const { planMembersFromLead, planMembersFromConsultant } = require('./familyCompositionService');
 const { resolveMemberTypes, formEmbedsMembers } = require('../../config/questionnaireFormMap');
 const { BASE_URL, EMAIL_REPLY_TO, STAGES_REQUIRING_RESEND, maskAddr } = require('./emailService');
 const { LOGO_URL } = require('../branding');
@@ -58,6 +59,14 @@ const MARKER_VERSION          = 1;
 const QUESTIONNAIRE_SUBFOLDER = 'Questionnaire';          // same subfolder as the member manifest
 const PENDING_STALE_MS        = 10 * 60 * 1000;           // a 'pending' older than this is a crashed send, not a lock
 const STAFF_COOLDOWN_MS       = 60 * 1000;                // the route's per-case cool-down on staff sends
+const TRANSIENT_RETRY_MS      = 90 * 1000;                // one in-process retry after a read or send failure on a one-shot trigger
+const NOTE_ONCE_MS            = 10 * 60 * 1000;           // the same "not sent" note is not posted on a case twice within this
+// The triggers that fire once per case: a sponsor email they could not send
+// is told to staff on the case (and a read failure is retried once).
+const ONE_SHOT_TRIGGERS       = new Set(['dcs', 'retainer-paid', 'resume']);
+// Non-sent outcomes the automatic path does NOT log: the switch is off, the
+// case type has no sponsor, or the sponsor already holds the link.
+const QUIET_REASONS           = new Set(['disabled', 'not-applicable', 'already-sent', 'sent']);
 const EMAIL_RE                = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;   // the retainer panel's regex
 const NAME_MAX                = 80;
 const MODES                   = ['prepare', 'onboard', 'staff'];
@@ -89,14 +98,13 @@ function isEnabled() {
   return v === 'true' || v === '1';
 }
 
-/** "12 Sep 2026, 2:03 pm" in Toronto — the wording the notes and the cockpit share. */
-function torontoTime(ms) {
-  const d = new Date(Number(ms));
-  if (Number.isNaN(d.getTime())) return '';
-  const parts = {};
-  for (const p of new Intl.DateTimeFormat('en-US', { timeZone: 'America/Toronto', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).formatToParts(d)) parts[p.type] = p.value;
-  return `${parts.day} ${parts.month} ${parts.year}, ${parts.hour}:${parts.minute} ${lower(parts.dayPeriod)}`;
-}
+/**
+ * "12 Sep 2026, 2:03 pm" in Toronto — the wording of the Monday notes, shared
+ * with the payment-undo notes (utils/torontoTime; re-exported below). The
+ * pages print their own timestamps (adminShared's payWhen, en-CA with the
+ * zone shown, on every payment panel and the sponsor card); a change there does not reach them.
+ */
+const { torontoTime } = require('../utils/torontoTime');
 
 /* ─────────────────────────────── PURE ─────────────────────────────── */
 
@@ -110,6 +118,16 @@ function sponsorRoleOf(schema) {
   if (!schema || !Array.isArray(schema.roles)) return null;
   return schema.roles.find((r) => r && r.required === true && r.role !== 'PrincipalApplicant' &&
     (r.role === 'Sponsor' || (r.role === 'Spouse' && /worker spouse/i.test(r.label || '')))) || null;
+}
+
+/** Whether ANY registered schema of this case type (any sub type) has a sponsor role. */
+function caseTypeHasSponsor(caseType) {
+  return caseSchemaService.listForCaseType(caseType).some(sponsorRoleOf);
+}
+
+/** Whether this case type is registered with sub-type variants (SOWP, Supervisa …) rather than one '' schema. */
+function caseTypeHasSubTypeVariants(caseType) {
+  return caseSchemaService.listForCaseType(caseType).some((sc) => s(sc.subType) !== '');
 }
 
 /**
@@ -127,7 +145,14 @@ function resolveSponsor({ claimants, clientEmail = null, caseType, caseSubType, 
   // The case type first: a type with no sponsor role has nothing to say about
   // leads or inviters, and the cockpit hides the card on 'not-applicable' —
   // a CEC case with no inviter must not show a "no sponsor on file" form.
-  if (schema == null) return none(s(caseSubType) ? 'no-schema' : 'sub-type-missing');
+  // With no schema for the pair, the TYPE decides: a type no variant of which
+  // has a sponsor role (CEC, OINP, Study Permit …) is not-applicable whatever
+  // the Sub Type reads — "Set the Case Sub Type first" is only ever said for
+  // a type whose variants can carry one.
+  if (schema == null) {
+    if (!caseTypeHasSponsor(caseType)) return none('not-applicable');
+    return none(!s(caseSubType) && caseTypeHasSubTypeVariants(caseType) ? 'sub-type-missing' : 'no-schema');
+  }
   const roleDef = sponsorRoleOf(schema);
   if (!roleDef) return none('not-applicable');
 
@@ -183,6 +208,22 @@ function existingPartner(sponsor, composition) {
     || members.find((m) => m && m.role === 'WorkerSpouse')
     || (sponsor.sponsorIsSpouse ? members.find((m) => m && (m.role === 'Spouse' || m.role === 'Sponsor')) : null)
     || null;
+}
+
+/**
+ * PURE. The Spouse row the LEAD's own answers put on the board — the
+ * consultant's retainer-panel list first, else the intake — in the board's
+ * shape, or null. Only when the sponsor IS the spouse (D5): that row is this
+ * person. The board search can lag a row the case-ref chain wrote seconds
+ * ago; the lead cannot, so the automatic passes ask it too before creating a
+ * row of the sponsor's own.
+ */
+function partnerFromLead(sponsor, lead) {
+  if (!sponsor || !sponsor.sponsorIsSpouse || !lead) return null;
+  const consultantRows = planMembersFromConsultant(lead);
+  const planned = consultantRows !== null ? consultantRows : planMembersFromLead(lead);
+  const row = planned.find((r) => r && r.memberType === 'Spouse');
+  return row ? { role: 'Spouse', name: row.name, memberKey: row.memberKey, flags: {}, fromLead: true } : null;
 }
 
 /** The manifest member that already is the sponsor's section, or null. */
@@ -246,9 +287,10 @@ function addressChanged(sponsor, marker) {
  * @param {number}  p.now          ms
  * @param {object}  p.gates        { ok, reason }
  * @param {boolean} [p.createOnly] staff pressed "Add sponsor now" / "Save sponsor": never a send, whatever the case reads NOW
- * @returns {{ createRow, addMember, send, variant, sectionLabel, badge, skipReason, replaced }}
+ * @param {boolean} [p.boardJustWritten] the case-ref chain wrote the intake's rows moments ago: the board read may not show them yet, so no row / section on this pass
+ * @returns {{ createRow, addMember, send, variant, sectionLabel, badge, skipReason, replaced, maybeDelivered }}
  */
-function planEnsure({ sponsor, composition, manifest = null, marker = null, mode, now, gates = { ok: false, reason: 'not-started' }, createOnly = false } = {}) {
+function planEnsure({ sponsor, composition, manifest = null, marker = null, mode, now, gates = { ok: false, reason: 'not-started' }, createOnly = false, boardJustWritten = false } = {}) {
   const section = sponsor.sectionMode === 'section';
   const sectionLabel = sectionLabelFor(sponsor, composition, manifest);
   const badge = badgeFor(sponsor, composition, manifest);
@@ -262,7 +304,13 @@ function planEnsure({ sponsor, composition, manifest = null, marker = null, mode
   // onboarding, and the automatic path may still send it once.
   const replaced = addressChanged(sponsor, marker);
   const sentBefore = !replaced && (status === 'sent' || (Number(marker && marker.sendCount) || 0) > 0);
-  const variant = sentBefore ? 'resend' : 'onboarding';
+  // A stale 'pending' that got as far as the send (attemptedAt is written
+  // right before it) may have reached the sponsor — the process died before
+  // 'sent' landed. The next email is then the link again, never a second
+  // "Action Required", and the note says so. A resend that then FAILED keeps
+  // that stamp (only a 'sent' clears it), so the one after is still the link again.
+  const maybeDelivered = !replaced && !sentBefore && !!s(marker && marker.attemptedAt) && (status === 'failed' || (status === 'pending' && !pendingFresh));
+  const variant = (sentBefore || maybeDelivered) ? 'resend' : 'onboarding';
 
   let send = false;
   let skipReason = null;
@@ -290,11 +338,13 @@ function planEnsure({ sponsor, composition, manifest = null, marker = null, mode
   // family rows by construction — so a Sub Type webhook landing mid-chain can
   // no longer put a Sponsor row on the board first and make the intake's
   // Spouse/Child rows look "already curated". It also keeps a Sub Type edit on
-  // an old, already-onboarded case from growing the board.
-  const mayCreate = mode !== 'onboard' || send;
+  // an old, already-onboarded case from growing the board. A pass that runs
+  // right after the chain wrote the intake's rows creates nothing either: the
+  // board read may not show them yet (the DCS pass re-checks).
+  const mayCreate = (mode !== 'onboard' || send) && !boardJustWritten;
   const createRow = section && mayCreate && existingPartner(sponsor, composition) == null;
   const addMember = section && mayCreate && Array.isArray(manifest) && manifestMember(sponsor, manifest) == null;
-  return { createRow, addMember, send, variant, sectionLabel, badge, skipReason, replaced };
+  return { createRow, addMember, send, variant, sectionLabel, badge, skipReason, replaced, maybeDelivered };
 }
 
 /**
@@ -317,9 +367,13 @@ function buildSponsorEmail({ variant = 'onboarding', sponsorName, clientName, ca
     : `Action Required — Your part in ${paFullName}'s ${s(caseType) || 'immigration'} application (${s(caseRef)})`;
   const title = resend ? 'Your portal link' : 'Your part in this application — Action Required';
 
+  // No article before the case type ("a Inland Spousal Sponsorship"), and on a
+  // documents-only type the intro asks for documents alone — the questionnaire
+  // paragraph below says there is no section for the sponsor.
+  const needed = sectionMode === 'documents-only' ? 'Some of the documents have to come from you.' : 'Some of the documents and answers have to come from you.';
   const intro = resend
     ? `Here is the portal link for ${pa}'s ${type} application (case ${ref}) again. You are named on it as the ${role}. The list below is what we need from you, in case it helps.`
-    : `${pa} has retained TDOT Immigration for a ${type} application (case ${ref}), and you are named on it as the ${role}. Some of the documents and answers have to come from you. Here is exactly what we need and where to do it.`;
+    : `${pa} has retained TDOT Immigration for the ${type} application (case ${ref}), and you are named on it as the ${role}. ${needed} Here is exactly what we need and where to do it.`;
 
   const docItems = docs.map((d) => `<li style="margin:0 0 6px;">${escHtml(d.name)} — <span style="color:#64748b;">${escHtml(d.category || 'Other')}</span></li>`).join('\n');
   const docsBlock = docs.length
@@ -519,12 +573,16 @@ const io = {
   postNote:          (itemId, body) => postNote(itemId, body),
   updateLead:        (leadId, fields) => leadService.updateLead(leadId, fields),   // two arguments only — a partial update never blanks a column
   now:               () => Date.now(),
+  scheduleRetry:     (fn, ms) => { const t = setTimeout(fn, ms); if (t && t.unref) t.unref(); },   // never holds the process open
 };
 
 /* ─────────────────────────── ensureSponsor ─────────────────────────── */
 
-/** The automatic gates (D6): the same ones the PA's intake email passes. */
-function gatesFor({ mode, cm, claimants, today }) {
+/**
+ * The automatic gates (D6): the same ones the PA's intake email passes.
+ * @param {string} [p.trigger]  the 'sub-type' webhook has a tighter gate (below)
+ */
+function gatesFor({ mode, cm, claimants, today, trigger = null }) {
   if (mode === 'prepare') return { ok: false, reason: 'prepare' };
   if (cm.paymentStatus !== 'Paid') return { ok: false, reason: 'not-started' };
   if (!STAGES_REQUIRING_RESEND.has(cm.caseStage)) return { ok: false, reason: 'not-started' };
@@ -534,6 +592,16 @@ function gatesFor({ mode, cm, claimants, today }) {
   // gate has its own reason: 'already-onboarded' is permanent (only the case
   // page can send now), 'not-started' is not.
   if (lower(cm.checklistTemplateApplied) === 'yes') return { ok: false, reason: 'already-onboarded' };
+  // A Sub Type edit can land on ANY case, months in — a legacy case that never
+  // went through the payment flow (applied blank) at Submission Preparation.
+  // The same rule as checklistService.resumeSeedingAfterSubType beside it:
+  // the EXPLICIT 'No' the payment flow writes, at Document Collection Started
+  // exactly. The DCS / retainer-paid / resume triggers are the payment flow
+  // itself, so the rule above is theirs.
+  if (trigger === 'sub-type') {
+    if (cm.caseStage !== 'Document Collection Started') return { ok: false, reason: 'stage-not-dcs' };
+    if (lower(cm.checklistTemplateApplied) !== 'no') return { ok: false, reason: 'not-payment-flow' };
+  }
   const lead = claimants[0] || {};
   const gate = require('./caseGateService').signatureGateForLead({ ...lead, retainerPaid: s(lead.retainerPaid) || today });
   if (!gate.complete) return { ok: false, reason: 'signature-incomplete' };
@@ -542,6 +610,17 @@ function gatesFor({ mode, cm, claimants, today }) {
 
 function whoDidIt(actor, trigger) {
   return actor && s(actor.name) ? s(actor.name).slice(0, 60) : `auto:${s(trigger) || 'unknown'}`;
+}
+
+/**
+ * The actor as the notes print it (escaped): a Monday sign-in as is; a typed
+ * name marked "(name as typed)" — the payment notes' convention — and the
+ * shared-key placeholder ("Unidentified …") as is, since it names nobody.
+ */
+function actorLabel(actor) {
+  const name = s(actor && actor.name);
+  const typed = actor && actor.verified !== true && !/^Unidentified/.test(name);
+  return escHtml(name) + (typed ? ' (name as typed)' : '');
 }
 
 /** Whether the case already reads Paid + a Document Collection stage. */
@@ -575,19 +654,55 @@ function nextStepSentence({ mode, cm, gateReason = null, sameAsClient = false, n
 /** The note for a row / section created WITHOUT a send. */
 function createdNote({ sponsor, sectionLabel, actor, mode, cm, gateReason = null, sameAsClient = false, noToken = false, autoEnabled = isEnabled() }) {
   const next = nextStepSentence({ mode, cm, gateReason, sameAsClient, noToken, autoEnabled });
-  return `🤝 Sponsor ${escHtml(sponsor.name)} added to the case by ${actor && s(actor.name) ? escHtml(s(actor.name)) : 'the system'} — ` +
+  return `🤝 Sponsor ${escHtml(sponsor.name)} added to the case by ${actor && s(actor.name) ? actorLabel(actor) : 'the system'} — ` +
     `questionnaire section "${escHtml(sectionLabel)}" created. ${next}`;
 }
 
-function sentNote({ sponsor, sectionLabel, created, variant, actor, when }) {
+/**
+ * @param {?string} [p.attemptedBefore]  torontoTime of a stale 'pending' that got as far as its send (the sponsor may hold that email)
+ */
+function sentNote({ sponsor, sectionLabel, created, variant, actor, when, attemptedBefore = null }) {
   const head = actor && s(actor.name)
-    ? `🤝 Sponsor portal email ${variant === 'resend' ? 're-sent' : 'sent'} by ${escHtml(s(actor.name))} to ${escHtml(sponsor.emailMasked)} (${escHtml(sponsor.roleLabel)})`
-    : `🤝 Sponsor portal email sent automatically to ${escHtml(sponsor.emailMasked)} (${escHtml(sponsor.roleLabel)})`;
+    ? `🤝 Sponsor portal email ${variant === 'resend' ? 're-sent' : 'sent'} by ${actorLabel(actor)} to ${escHtml(sponsor.emailMasked)} (${escHtml(sponsor.roleLabel)})`
+    : `🤝 Sponsor portal email ${variant === 'resend' ? 're-sent' : 'sent'} automatically to ${escHtml(sponsor.emailMasked)} (${escHtml(sponsor.roleLabel)})`;
   return `${head} — ${escHtml(when)} (Toronto). Same portal link as the client; the sponsor's documents are listed under "${escHtml(sponsor.roleLabel)}".` +
-    ((created.row || created.member) ? ` Questionnaire section "${escHtml(sectionLabel)}" created.` : '');
+    ((created.row || created.member) ? ` Questionnaire section "${escHtml(sectionLabel)}" created.` : '') +
+    (attemptedBefore ? ` An earlier send on ${escHtml(attemptedBefore)} (Toronto) was cut short before it could be recorded, so the sponsor may have received that email too — this one is the link again, not a second request.` : '');
+}
+
+/**
+ * The note for a one-shot trigger (DCS, retainer-paid, resume) that could
+ * NOT send: what was not sent and what staff do about it. Plain English,
+ * names only. Returns '' for reasons the case page explains on its own.
+ */
+function notSentNote({ reason, claimantCount = 0, error = '', retryScheduled = false }) {
+  const fromPage = 'send it from the case page (Send sponsor link)';
+  if (reason === 'no-inviter') {
+    return '🤝 Sponsor portal email not sent automatically — no sponsor / inviter email is on the client record. Add it on the case page (Sponsor / inviter card) and press Send sponsor link.';
+  }
+  if (reason === 'shared-case') {
+    return `🤝 Sponsor portal email not sent automatically — this case is linked to ${claimantCount || 2} client records, so the sponsor can’t be identified safely. Fix the duplicate on the Consultations page, then ${fromPage}.`;
+  }
+  if (reason === 'transient') {
+    const why = s(error) ? ` (${escHtml(s(error).slice(0, 120))})` : '';
+    const next = retryScheduled
+      ? `One more attempt follows in about ${Math.round(TRANSIENT_RETRY_MS / 1000)} seconds; if the Sponsor / inviter card still shows no email after that, ${fromPage}.`
+      : `Please ${fromPage}.`;
+    return `🤝 Sponsor portal email not sent automatically — the case could not be read or updated just now${why}. ${next}`;
+  }
+  if (reason === 'send-failed') {
+    const why = s(error) ? ` (${escHtml(s(error).slice(0, 120))})` : '';
+    const next = retryScheduled
+      ? `One more attempt follows in about ${Math.round(TRANSIENT_RETRY_MS / 1000)} seconds; if the Sponsor / inviter card still shows "Last attempt failed" after that, ${fromPage}.`
+      : `Please ${fromPage}.`;
+    return `🤝 Sponsor portal email could not be sent just now${why}. ${next}`;
+  }
+  return '';
 }
 
 const _inFlight = new Set();   // caseRef — collapses concurrent callers (webhook + sub-type + staff) into one send
+const _retried  = new Set();   // itemId/caseRef — one transient retry per case per process, ever
+const _noted    = new Map();   // "item#note text" → when that "not sent" note was last posted (per process)
 
 /**
  * Make sure the sponsor exists on the case and — when the gates hold — has been
@@ -598,12 +713,13 @@ const _inFlight = new Set();   // caseRef — collapses concurrent callers (webh
  * @param {string}  [p.itemId]    Client Master item (or resolve it from caseRef)
  * @param {string}  [p.caseRef]
  * @param {string}  p.mode        'prepare' (row/section only) | 'onboard' (automatic, env-gated) | 'staff' (the cockpit button)
- * @param {?object} [p.actor]     { name, email } for staff sends
- * @param {string}  p.trigger     'case-ref' | 'dcs' | 'retainer-paid' | 'resume' | 'sub-type' | 'staff'
+ * @param {?object} [p.actor]     { name, email, verified } for staff sends
+ * @param {string}  p.trigger     'case-ref' | 'dcs' | 'retainer-paid' | 'resume' | 'sub-type' | 'staff' (a retry adds '-retry')
  * @param {?object} [p.override]  { name, email } — staff entered the inviter on the case page (single-lead cases only)
  * @param {boolean} [p.createOnly] staff mode: "Add sponsor now" / "Save sponsor" — the row, the section, the lead; never an email
+ * @param {boolean} [p.boardJustWritten] the case-ref chain wrote the intake's rows moments ago — no row / section on this pass
  */
-async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, trigger = 'unknown', override, createOnly = false } = {}) {
+async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, trigger = 'unknown', override, createOnly = false, boardJustWritten = false } = {}) {
   if (!MODES.includes(mode)) return { done: false, reason: 'bad-mode' };
   if (mode !== 'staff' && !isEnabled()) return { done: false, reason: 'disabled' };
   // What this pass has written so far travels on every early return: a
@@ -611,14 +727,49 @@ async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, 
   // route must not say "nothing was changed".
   let inviterSaved = false;
   const created = { row: false, member: false };
-  const transient = (err) => ({ done: false, reason: 'transient', error: s(err && err.message).slice(0, 200), inviterSaved, created: { ...created } });
+  let cm = null;
+  const label = () => (cm && cm.caseRef) || s(caseRef) || s(itemId);
+  // Every answer that is not a send passes through here — a failed send too,
+  // before it is rethrown. The automatic path used to resolve silently on a
+  // read failure, a missing inviter or a shared case — and its DCS trigger is
+  // one-shot, so the sponsor email was lost for good with nobody told. Now:
+  // one log line per non-sent pass, and on the one-shot triggers a note on the
+  // case (best-effort) saying what was not sent and what to do; a read or send
+  // failure there is retried once, 90 s later. The same note is not posted
+  // twice within ten minutes: the DCS handler re-runs on every re-drag and on
+  // a duplicate delivery, and a case with no inviter has no marker to stop it.
+  const answer = (r) => {
+    if (mode !== 'onboard' || r.sent || QUIET_REASONS.has(r.reason)) return r;
+    console.log(`[Sponsor] ${label()}: not sent via ${trigger} (${r.reason})`);
+    if (!ONE_SHOT_TRIGGERS.has(trigger)) return r;
+    let retryScheduled = false;
+    if (r.reason === 'transient' || r.reason === 'send-failed') {
+      const retryKey = s(itemId) || s(caseRef);
+      if (retryKey && !_retried.has(retryKey)) {
+        _retried.add(retryKey);
+        retryScheduled = true;
+        io.scheduleRetry(() => ensureSponsor({ itemId, caseRef, mode: 'onboard', trigger: `${trigger}-retry` })
+          .catch((err) => console.error(`[Sponsor] retry failed for ${label()}: ${err.message}`)), TRANSIENT_RETRY_MS);
+      }
+    }
+    const body = notSentNote({ reason: r.reason, claimantCount: r.claimantCount, error: r.error, retryScheduled });
+    const noteItem = (cm && cm.itemId) || s(itemId);
+    if (!body || !noteItem) return r;
+    const noteKey = `${noteItem}#${body}`;
+    const nowMs = io.now();
+    const last = _noted.get(noteKey);
+    if (last != null && nowMs - last < NOTE_ONCE_MS) return r;   // already on the case — the log line above still says this pass ran
+    _noted.set(noteKey, nowMs);
+    io.postNote(noteItem, body).catch((err) => console.warn(`[Sponsor] Note failed for ${label()}: ${err.message}`));
+    return r;
+  };
+  const transient = (err) => answer({ done: false, reason: 'transient', error: s(err && err.message).slice(0, 200), inviterSaved, created: { ...created } });
 
-  let cm;
   try { cm = await io.readCase({ itemId, caseRef }); } catch (err) { return transient(err); }
-  if (!cm) return { done: false, reason: 'no-case' };
-  if (!cm.caseRef) return { done: false, reason: 'no-case-ref' };
+  if (!cm) return answer({ done: false, reason: 'no-case' });
+  if (!cm.caseRef) return answer({ done: false, reason: 'no-case-ref' });
   const key = cm.caseRef;
-  if (_inFlight.has(key)) return { done: false, reason: 'in-flight' };
+  if (_inFlight.has(key)) return answer({ done: false, reason: 'in-flight' });
   _inFlight.add(key);
   try {
     // ── Reads ──
@@ -642,16 +793,16 @@ async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, 
       // The lead already names a valid inviter: replacing that person from here
       // would resend the link to a stranger as a "resend". Change it in the
       // retainer panel's Inviter / Sponsor block instead.
-      return { done: false, reason: 'inviter-exists', claimantCount: 1, current: { name: sponsor.name, emailMasked: sponsor.emailMasked } };
+      return answer({ done: false, reason: 'inviter-exists', claimantCount: 1, current: { name: sponsor.name, emailMasked: sponsor.emailMasked } });
     }
     if (sponsor.status !== 'ok' && !(overriding && sponsor.reason === 'no-inviter')) {
-      return { done: false, reason: sponsor.reason, claimantCount: sponsor.claimantCount };
+      return answer({ done: false, reason: sponsor.reason, claimantCount: sponsor.claimantCount });
     }
     let typed = null;
     if (overriding) {
       const name = clean(override.name).slice(0, NAME_MAX);
       const email = clean(override.email);
-      if (!name || !EMAIL_RE.test(email)) return { done: false, reason: 'no-inviter', claimantCount: 1 };
+      if (!name || !EMAIL_RE.test(email)) return answer({ done: false, reason: 'no-inviter', claimantCount: 1 });
       typed = { name, email };
     }
 
@@ -667,21 +818,22 @@ async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, 
       inviterSaved = true;
       claimants = [{ ...claimants[0], inviterName: typed.name, inviterEmail: typed.email }];
       sponsor = resolveSponsor({ claimants, ...inputs });
-      const who = actor && s(actor.name) ? escHtml(s(actor.name)) : 'staff';
+      const who = actor && s(actor.name) ? actorLabel(actor) : 'staff';
       await io.postNote(cm.itemId, `🤝 Sponsor / inviter ${escHtml(typed.name)} (${escHtml(maskAddr(typed.email))}) entered from the case page by ${who} — saved to the client record.`).catch(() => {});
-      if (sponsor.status !== 'ok') return { done: false, reason: sponsor.reason, claimantCount: sponsor.claimantCount, inviterSaved };
+      if (sponsor.status !== 'ok') return answer({ done: false, reason: sponsor.reason, claimantCount: sponsor.claimantCount, inviterSaved });
     }
 
     const nowMs = io.now();
     const today = new Date(nowMs).toISOString().slice(0, 10);
-    const gates = gatesFor({ mode, cm, claimants, today });
+    const gates = gatesFor({ mode, cm, claimants, today, trigger });
     // For the notes only: whether the address is the client's own (staff mode
     // resolves without that check) — the automatic path never emails it.
     const sameAsClient = !!(clean(cm.clientEmail) && lower(sponsor.email) === lower(clean(cm.clientEmail)));
 
     // ── Writes, in order: the row, then the manifest member, then the email ──
     const stamps = {};
-    let plan = planEnsure({ sponsor, composition, manifest: null, marker, mode, now: nowMs, gates, createOnly });
+    const planArgs = { sponsor, mode, now: nowMs, gates, createOnly, boardJustWritten };
+    let plan = planEnsure({ ...planArgs, composition, manifest: null, marker });
     if (plan.createRow && mode === 'onboard' && !((composition && composition.members) || []).length) {
       // The automatic path can land mid case-ref chain: a Sub Type picked
       // seconds after the Case Type on a case paid before its type was set,
@@ -694,7 +846,23 @@ async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, 
       try { intakeRows = await io.createIntakeRows({ itemId: cm.itemId, caseRef: cm.caseRef }); } catch (err) { return transient(err); }
       if (intakeRows > 0) {
         try { composition = await io.readComposition(cm.caseRef); } catch (err) { return transient(err); }
-        plan = planEnsure({ sponsor, composition, manifest: null, marker, mode, now: nowMs, gates, createOnly });
+        plan = planEnsure({ ...planArgs, composition, manifest: null, marker });
+      }
+    }
+    if (plan.createRow && mode !== 'staff' && !((composition && composition.members) || []).length) {
+      // The board search can lag a row the chain wrote seconds ago (it came
+      // back EMPTY); the lead's own answers cannot. When they put a Spouse row
+      // on the board and the sponsor IS the spouse (D5), that row is this
+      // person: no row of their own, and the section carries that row's label.
+      // A board WITH rows but no Spouse row is staff's curation (the row was
+      // removed, or the answer changed), not a lag: the sponsor then gets a
+      // row of their own, so the board and the manifest name the same people.
+      // The staff button reads a board nobody wrote to seconds before, so it
+      // trusts the board.
+      const fromLead = partnerFromLead(sponsor, claimants[0]);
+      if (fromLead) {
+        composition = { ...composition, members: [...((composition && composition.members) || []), fromLead] };
+        plan = planEnsure({ ...planArgs, composition, manifest: null, marker });
       }
     }
     if (plan.createRow) {
@@ -724,7 +892,7 @@ async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, 
         }
       }
     } catch (err) { return transient(err); }
-    plan = planEnsure({ sponsor, composition, manifest, marker, mode, now: nowMs, gates, createOnly });
+    plan = planEnsure({ ...planArgs, composition, manifest, marker });
     if (plan.addMember) {
       try {
         await io.addMember({ clientName: cm.clientName, caseRef: cm.caseRef, memberType: sponsor.manifestType, label: sponsor.name });
@@ -744,7 +912,7 @@ async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, 
 
     if (!plan.send) {
       if (created.row || created.member) await noteCreated();
-      return { done: true, sent: false, reason: plan.skipReason || gates.reason, created, inviterSaved, sectionLabel, to: sponsor.emailMasked };
+      return answer({ done: true, sent: false, reason: plan.skipReason || gates.reason, created, inviterSaved, sectionLabel, to: sponsor.emailMasked });
     }
 
     const token = cm.accessToken || await io.ensureAccessToken(cm.itemId).catch((err) => {
@@ -753,7 +921,7 @@ async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, 
     });
     if (!token) {
       if (created.row || created.member) await noteCreated({ noToken: true });
-      return { done: true, sent: false, reason: 'no-token', created, inviterSaved, sectionLabel, to: sponsor.emailMasked };
+      return answer({ done: true, sent: false, reason: 'no-token', created, inviterSaved, sectionLabel, to: sponsor.emailMasked });
     }
 
     const prior = (marker && typeof marker === 'object') ? marker : {};
@@ -768,9 +936,16 @@ async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, 
       ...stamps,
     };
     const startedAt = new Date(io.now()).toISOString();
+    // The stale 'pending' this pass is finishing (if any): when it got as far
+    // as its send, the note says the sponsor may hold that email.
+    const attemptedBefore = plan.maybeDelivered ? torontoTime(Date.parse(prior.attemptedAt)) : null;
     // 'pending' is a lock, not a claim: a second instance reading it within 10
-    // minutes stands down; a crash leaves it to expire.
-    try { await io.writeMarker({ clientName: cm.clientName, caseRef: cm.caseRef, marker: { ...base, status: 'pending', startedAt } }); }
+    // minutes stands down; a crash leaves it to expire. attemptedAt records
+    // that the send is next — nothing but building the email sits between
+    // this write and it — so a process that dies before 'sent' lands leaves
+    // a marker that says "may have reached the sponsor", and the next send
+    // is the link again, never a second "Action Required".
+    try { await io.writeMarker({ clientName: cm.clientName, caseRef: cm.caseRef, marker: { ...base, status: 'pending', startedAt, attemptedAt: startedAt } }); }
     catch (err) { return transient(err); }
 
     const portalUrl = `${BASE_URL}/client/${encodeURIComponent(cm.caseRef)}?t=${encodeURIComponent(token)}`;
@@ -783,17 +958,21 @@ async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, 
     } catch (err) {
       await io.writeMarker({ clientName: cm.clientName, caseRef: cm.caseRef, marker: { ...base, status: 'failed', startedAt, failedAt: new Date(io.now()).toISOString(), error: s(err.message).slice(0, 200) } })
         .catch((e2) => console.error(`[Sponsor] Marker write after a failed send also failed for ${cm.caseRef}: ${e2.message}`));
+      // A one-shot trigger's send failure is told to staff and retried once
+      // (a 'failed' marker is not a lock, so the retry sends). The error still
+      // goes up: the staff route answers 502 from it, the automatic callers log it.
+      answer({ done: false, reason: 'send-failed', error: s(err.message).slice(0, 200), created: { ...created } });
       throw err;
     }
     const sentAt = new Date(io.now()).toISOString();
     const by = whoDidIt(actor, trigger);
-    const { error: _e, failedAt: _f, ...kept } = base;   // eslint-disable-line no-unused-vars — a re-send clears an earlier failure
+    const { error: _e, failedAt: _f, attemptedAt: _a, ...kept } = base;   // eslint-disable-line no-unused-vars — a re-send clears an earlier failure / attempt
     const sent = { ...kept, status: 'sent', startedAt, sentAt,
       sendCount: base.sendCount + 1, sends: [...base.sends, { variant: plan.variant, at: sentAt, to: sponsor.emailMasked, by, ...(replacedFrom ? { replacedFrom } : {}) }] };
     try { await io.writeMarker({ clientName: cm.clientName, caseRef: cm.caseRef, marker: sent }); }
     catch (err) { console.error(`[Sponsor] SENT but marker write failed for ${cm.caseRef}: ${err.message}`); }
-    console.log(`[Sponsor] ${plan.variant === 'resend' ? 'Portal link re-sent' : 'Onboarding email sent'} to ${sponsor.emailMasked} for ${cm.caseRef} (${by})`);
-    await io.postNote(cm.itemId, sentNote({ sponsor, sectionLabel, created, variant: plan.variant, actor, when: torontoTime(io.now()) }))
+    console.log(`[Sponsor] ${plan.variant === 'resend' ? 'Portal link re-sent' : 'Onboarding email sent'} to ${sponsor.emailMasked} for ${cm.caseRef} (${by})${attemptedBefore ? ' — an earlier attempt was cut short before it was recorded' : ''}`);
+    await io.postNote(cm.itemId, sentNote({ sponsor, sectionLabel, created, variant: plan.variant, actor, when: torontoTime(io.now()), attemptedBefore }))
       .catch((err) => console.warn(`[Sponsor] Note failed for ${cm.caseRef}: ${err.message}`));
     return { done: true, sent: true, to: sponsor.emailMasked, emailedAt: sentAt, variant: plan.variant, created, inviterSaved, sectionLabel };
   } finally {
@@ -895,8 +1074,9 @@ async function describe({ itemId, caseRef, clientName, caseType, caseSubType, cl
 module.exports = {
   ensureSponsor, describe, describeFromInputs,
   // pure planners (tests)
-  resolveSponsor, existingPartner, planEnsure, buildSponsorEmail, sectionLabelFor, badgeFor, sponsorRoleOf, gatesFor, createdNote, nextStepSentence, addressChanged, emailKeyOf,
+  resolveSponsor, existingPartner, partnerFromLead, planEnsure, buildSponsorEmail, sectionLabelFor, badgeFor, sponsorRoleOf, gatesFor, createdNote, sentNote, notSentNote, nextStepSentence, addressChanged, emailKeyOf,
+  caseTypeHasSponsor, caseTypeHasSubTypeVariants, actorLabel,
   io, isEnabled, readCase, torontoTime,
-  EMAIL_RE, NAME_MAX, PENDING_STALE_MS, STAFF_COOLDOWN_MS, MARKER_VERSION, QUESTIONNAIRE_SUBFOLDER, ROLE_TO_PORTAL_TYPE,
-  _inFlight,
+  EMAIL_RE, NAME_MAX, PENDING_STALE_MS, STAFF_COOLDOWN_MS, TRANSIENT_RETRY_MS, NOTE_ONCE_MS, MARKER_VERSION, QUESTIONNAIRE_SUBFOLDER, ROLE_TO_PORTAL_TYPE,
+  _inFlight, _retried, _noted,
 };

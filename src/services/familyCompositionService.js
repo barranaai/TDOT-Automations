@@ -138,6 +138,14 @@ async function createFamilyRow({ caseRef, cmItemId, row }) {
  *
  * @returns {Promise<number>} rows created (0 = nothing to do / already curated)
  */
+const RECENT_CREATE_WINDOW_MS = 10 * 60 * 1000;
+const _createdRecently = new Map();   // "cmItemId:caseRef" → ms when THIS process last created rows for it
+/** The memory's key: the case ITEM as well as the reference — a reference is
+ *  reissued when the newest case of a type is deleted and made again minutes
+ *  later (generateCaseRef hands out max + 1; a recycled row is not listed), and
+ *  the new case must not inherit the old one's "rows already written". */
+function recentKey(cmItemId, caseRef) { return `${String(cmItemId || '')}:${String(caseRef)}`; }
+
 async function createFromLead({ lead, caseRef, cmItemId }) {
   if (!lead || !caseRef) return 0;
   // The consultant's retainer-panel list is authoritative when present (even if
@@ -146,6 +154,18 @@ async function createFromLead({ lead, caseRef, cmItemId }) {
   const source  = consultantRows !== null ? 'consultant' : 'intake';
   const planned = consultantRows !== null ? consultantRows : planMembersFromLead(lead);
   if (!planned.length) return 0;
+
+  // Rows this process wrote in the last ten minutes are on the board whatever
+  // the search below says — Monday's column-value search can lag a create_item
+  // by seconds, and a read that came back empty right after them used to make
+  // a second "Spouse (from intake)" / "Child 1 (from intake)" set.
+  const key = recentKey(cmItemId, caseRef);
+  const recent = _createdRecently.get(key);
+  if (recent && Date.now() - recent < RECENT_CREATE_WINDOW_MS) {
+    console.log(`[Family] ${caseRef}: rows were created by this process ${Math.round((Date.now() - recent) / 1000)} s ago — intake auto-create skipped (the board read may lag them)`);
+    return 0;
+  }
+  _createdRecently.delete(key);
 
   // Never pollute a board staff already curated for this case.
   const compositionAdapter = require('./compositionAdapter');
@@ -156,9 +176,13 @@ async function createFromLead({ lead, caseRef, cmItemId }) {
   }
 
   let created = 0;
-  for (const row of planned) {
-    await createFamilyRow({ caseRef, cmItemId, row });
-    created++;
+  try {
+    for (const row of planned) {
+      await createFamilyRow({ caseRef, cmItemId, row });
+      created++;
+    }
+  } finally {
+    if (created > 0) _createdRecently.set(key, Date.now());   // a partial set counts too: a re-run must not double what landed
   }
   console.log(`[Family] Created ${created} Family Members row(s) for ${caseRef} from ${source === 'consultant' ? 'the consultant-set list' : 'intake answers'}`);
 
@@ -197,4 +221,4 @@ async function createFamilyRowsForItem({ itemId, caseRef }) {
   try { return await run; } finally { _rowsInFlight.delete(key); }
 }
 
-module.exports = { createFromLead, createFamilyRow, createFamilyRowsForItem, planMembersFromLead, planMembersFromConsultant, buildFamilyNote };
+module.exports = { createFromLead, createFamilyRow, createFamilyRowsForItem, planMembersFromLead, planMembersFromConsultant, buildFamilyNote, recentKey, RECENT_CREATE_WINDOW_MS, _createdRecently };

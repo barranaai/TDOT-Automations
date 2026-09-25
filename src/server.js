@@ -871,7 +871,6 @@ const SPONSOR_MESSAGES = {
   'sub-type-missing': 'Set the Case Sub Type first — which documents the sponsor must provide depends on it.',
   'no-schema':        'This case type/sub type has no document checklist schema, so the sponsor’s document list can’t be built.',
   'not-applicable':   'This case type has no sponsor or inviter role, so there is nobody to email.',
-  'same-as-client-blocked': 'The sponsor’s email address is the same as the client’s — the client’s portal email already reached this inbox.',
   'no-case':          'Case not found.',
   'no-case-ref':      'This case has no case reference yet — set the Case Type first.',
   'in-flight':        'The sponsor email is being sent for this case right now — reload in a moment.',
@@ -890,7 +889,9 @@ app.post('/admin/case-action/:caseRef/sponsor', express.json(), async (req, res)
   if (!ctx) return;
   const sponsorOnboarding = require('./services/sponsorOnboardingService');
   const body = req.body || {};
-  const staffName = body.staffName;
+  // Monday's case-reference match is not case-sensitive, so the cool-down is
+  // keyed on the reference as the service keys itself — one slot per case.
+  const cooldownKey = caseRef.toUpperCase();
   const name  = require('./services/leadService').stripInvisibles(String(body.name  == null ? '' : body.name)).trim();
   const email = require('./services/leadService').stripInvisibles(String(body.email == null ? '' : body.email)).trim();
   // "Add sponsor now" / "Save sponsor": the page promised no email when staff
@@ -901,16 +902,19 @@ app.post('/admin/case-action/:caseRef/sponsor', express.json(), async (req, res)
   if ((name && !email) || (!name && email)) return res.status(400).json({ ok: false, error: 'Enter both the sponsor’s name and email address.' });
   if (email && !sponsorOnboarding.EMAIL_RE.test(email)) return res.status(400).json({ ok: false, error: 'That email address doesn’t look right.' });
   if (name.length > sponsorOnboarding.NAME_MAX) return res.status(400).json({ ok: false, error: `The sponsor’s name is too long (max ${sponsorOnboarding.NAME_MAX} characters).` });
-  const last = SPONSOR_SEND_COOLDOWN.get(caseRef) || 0;
+  const last = SPONSOR_SEND_COOLDOWN.get(cooldownKey) || 0;
   const wait = sponsorOnboarding.STAFF_COOLDOWN_MS - (Date.now() - last);
   if (wait > 0) {
     return res.status(429).json({ ok: false, error: `The sponsor email was sent for this case less than a minute ago — try again in ${Math.ceil(wait / 1000)}s.` });
   }
   let r;
   try {
+    // Who clicked: the Monday sign-in, else the shared-key placeholder. The
+    // page sends no typed name, so none is accepted — a name in the body
+    // could otherwise put anyone's name on the note and the marker.
     r = await sponsorOnboarding.ensureSponsor({
       itemId: ctx.overview.itemId, caseRef, mode: 'staff',
-      actor: staffActor(req, staffName), trigger: 'staff',
+      actor: staffActor(req), trigger: 'staff',
       override: (name && email) ? { name, email } : undefined,
       createOnly,
     });
@@ -951,7 +955,7 @@ app.post('/admin/case-action/:caseRef/sponsor', express.json(), async (req, res)
       return res.status(409).json({ ok: false, error: 'Nothing was sent — this case is not yet Paid and at Document Collection. Reload the page.', reason: r.reason || null });
     }
   }
-  if (r.sent) SPONSOR_SEND_COOLDOWN.set(caseRef, Date.now());
+  if (r.sent) SPONSOR_SEND_COOLDOWN.set(cooldownKey, Date.now());
   console.log(`[Sponsor] ${caseRef}: ${r.sent ? `${r.variant} email sent to ${r.to}` : `not sent (${r.reason})`} by ${ctx.viewer.email || 'admin'}`);
   res.json({ ok: true, sent: !!r.sent, to: r.to || '', emailedAt: r.emailedAt || null, variant: r.variant || null, created, inviterSaved: !!r.inviterSaved, sectionLabel: r.sectionLabel || '', reason: r.sent ? null : (r.reason || null) });
 });

@@ -86,11 +86,42 @@ test('refusals: nothing to undo', () => {
   assert.equal(plan({ index: 1 }).refusal.code, 'NOT_PAID');
 });
 
-test('refusals: anything linked to Square — Square would simply record it again', () => {
+test('refusals: a Square PAYMENT (a txn id on the row or the lead) — Square would simply record it again', () => {
   assert.equal(plan({ lead: lead({ milestonePayments: pays({ 0: { status: 'paid', paidAt: D, txnId: 'sq1' } }) }) }).refusal.code, 'SQUARE_PAYMENT');
   assert.equal(plan({ lead: lead({ squareRetainerTxnId: 'sq2' }) }).refusal.code, 'SQUARE_PAYMENT');
-  assert.equal(plan({ lead: lead({ squareRetainerOrderId: 'ord3' }) }).refusal.code, 'SQUARE_PAYMENT',
-    'a Square order on file can hide a real payment that left no txn id');
+  assert.equal(plan({ lead: lead({ squareRetainerTxnId: 'sq2', squareRetainerOrderId: 'ord2' }) }).refusal.code, 'SQUARE_PAYMENT', 'a paid Square order carries both');
+});
+
+test('a Square payment LINK (order id, no txn id): what the ORDER says decides — paid refuses, unpaid warns, unchecked warns and says so', () => {
+  // Paid first by e-transfer (Mark paid), then the client also paid the link:
+  // the webhook skipped "already paid", so no txn id was ever written. Only
+  // the order knows — and the sweep would not put it back after 6 hours.
+  const paid = plan({ lead: lead({ squareRetainerOrderId: 'ord3' }), squareOrder: { paid: true } });
+  assert.equal(paid.ok, false);
+  assert.equal(paid.refusal.code, 'SQUARE_PAYMENT');
+  assert.match(paid.refusal.message, /Square shows the payment link for this retainer as PAID/);
+  assert.equal(paid.refusal.detail.source, 'square-order');
+  // the link is open: a warning, not a refusal — the id is stamped when the link is made, before any money
+  const open = plan({ lead: lead({ squareRetainerOrderId: 'ord3' }), squareOrder: { paid: false } });
+  assert.equal(open.ok, true, JSON.stringify(open));
+  const w = open.warnings.find((x) => x.code === 'SQUARE_LINK_EXISTS');
+  assert.ok(w, 'warned');
+  assert.equal(w.message, 'A Square payment link was issued for this retainer; Square shows no payment on it yet. If the client pays it later, that payment is recorded automatically.');
+  assert.doesNotMatch(w.message, /refund/i, 'says what is known — not an instruction to refund a payment nobody has seen');
+  // Square could not be checked (null, or the planner was never told): the warning names the failed check and the 6-hour sweep
+  for (const squareOrder of [null, undefined]) {
+    const unknown = plan({ lead: lead({ squareRetainerOrderId: 'ord3' }), squareOrder });
+    assert.equal(unknown.ok, true, JSON.stringify(unknown));
+    const u = unknown.warnings.find((x) => x.code === 'SQUARE_LINK_EXISTS');
+    assert.equal(u.message, 'A Square payment link was issued for this retainer, and Square could not be checked just now. Look in Square for a completed payment before removing this record — one made in the last 6 hours is put back by the Square sweep; an older one is not.');
+  }
+  // a later milestone never carried the retainer's link — whatever the order says
+  const later = plan({ index: 1, lead: lead({ squareRetainerOrderId: 'ord3', milestonePayments: pays({ 1: { status: 'paid', paidAt: D } }) }), squareOrder: { paid: true } });
+  assert.equal(later.ok, true, JSON.stringify(later));
+  assert.ok(!later.warnings.some((x) => x.code === 'SQUARE_LINK_EXISTS'));
+  // and without the order id there is no warning and no refusal, even if a stale order answer is passed
+  assert.equal(plan({ squareOrder: { paid: true } }).ok, true);
+  assert.ok(!plan().warnings.some((x) => x.code === 'SQUARE_LINK_EXISTS'));
 });
 
 test('refusals: the case can’t be read → fail closed for the retainer payment', () => {
@@ -254,4 +285,10 @@ test('names are one line in the marker — a typed newline can’t fake a second
   const p = plan({ lead: l, actor: { name: 'Faran\n X', email: 'f@x.com' } });
   assert.equal(p.after.undone.by, 'Faran X');
   assert.equal(p.after.undone.prevBy, 'Kamal Marked paid by Faran');
+});
+
+test('refusals point at "an admin", never at one person by name (the same wording as Mark paid)', () => {
+  const src = require('fs').readFileSync(require.resolve('../src/services/paymentUndoService'), 'utf8');
+  assert.doesNotMatch(src, /Ask Faran|ask Faran/);
+  assert.match(plan({ lead: lead({ milestonePayments: '{"0":{"status":"paid","paidAt":"2026-09-2' }) }).refusal.message, /Ask an admin to check the lead’s/);
 });

@@ -203,10 +203,13 @@ router.post('/', async (req, res) => {
           console.error('[Checklist] Sub-type resume failed:', err.message));
         // The sponsor's document list depends on the sub type, so a case that
         // was Paid + DCS with the sub type blank had no sponsor email either.
-        // The service's own gates (Paid, DCS, applied ≠ Yes, signature, marker)
-        // make this a no-op — nothing sent AND nothing created — on unpaid,
-        // healthy or already-onboarded cases; before payment the case-ref
-        // chain's 'prepare' pass (after the intake's family rows) creates the row.
+        // The sub-type gate is the checklist resume's: Paid, stage exactly
+        // Document Collection Started, applied exactly No (the payment flow's
+        // explicit value — a blank legacy case never sends), plus the signature
+        // gate and the once-per-case marker. So this is a no-op — nothing sent
+        // AND nothing created — on unpaid, healthy, legacy or already-onboarded
+        // cases; before payment the case-ref chain's 'prepare' pass (after the
+        // intake's family rows) creates the row.
         require('../services/sponsorOnboardingService').ensureSponsor({ itemId: pulseId, mode: 'onboard', trigger: 'sub-type' }).catch(err =>
           console.error('[Sponsor] sub-type onboarding failed:', err.message));
       }

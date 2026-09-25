@@ -31,6 +31,9 @@ const crypto      = require('crypto');
 const leadService = require('./leadService');
 const mondayApi   = require('./mondayApi');
 const ms          = require('./milestonePaymentService');
+const { LEAD_LOCK_WAIT_MS } = require('./leadMutex');
+const { torontoTime } = require('../utils/torontoTime');
+const { SHARED_KEY_PLACEHOLDER } = require('../utils/staffIdentity');
 const { clientMasterBoardId, leadBoardId } = require('../../config/monday');
 
 const CM = {
@@ -46,10 +49,11 @@ const PRE_ONBOARDING_STAGES = ['', 'pre-onboarding', 'not started'];
 const MAX_INDEX = 20;
 const REASON_MIN = 10;
 const REASON_MAX = 1000;
-const LOCK_WAIT_MS = 20000;          // an undo queued behind a hung e-sign capture gives up, changing nothing
 const VERIFY_READS = 4;
 const VERIFY_GAP_MS = 700;
 const FLAG_COOLDOWN_MS = 10 * 60 * 1000;   // one flag per payment row per 10 minutes — the first one already alerted everyone
+const FLAG_ACTOR_MAX = 5;                  // …and at most this many flags per person in that window: each one notes and alerts everyone
+const BUSY_MESSAGE = 'Another change to this client’s record is in progress (a signature, a payment or the status sync). Nothing was changed — try again in a minute.';
 
 const s = (v) => String(v == null ? '' : v).trim();
 const oneLine = (v) => s(v).replace(/\s+/g, ' ');
@@ -131,11 +135,12 @@ function confirmTextFor(lead, cm, shared) {
  * @param {?object} p.cm           the case, board-pinned (readCase), or null
  * @param {?string} p.cmReadError  the case read threw — fail closed for index 0
  * @param {boolean} p.cmMissing    the lead points at a case that no longer exists
+ * @param {?object} p.squareOrder  { paid } for the lead's Square retainer link (index 0), or null when Square could not be checked
  * @param {?object} p.actor        { name, email } — who is undoing
  * @param {?string} p.now          ISO timestamp for the audit marker
  * @returns {{ok:false, refusal:{code,message,detail?}} | {ok:true, ...plan}}
  */
-function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null, cmMissing = false, claimants, actor = null, now = null } = {}) {
+function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null, cmMissing = false, claimants, squareOrder = null, actor = null, now = null } = {}) {
   const refuse = (code, message, detail) => ({ ok: false, refusal: { code, message, ...(detail ? { detail } : {}) } });
   if (!lead || !s(lead.id)) return refuse('NO_LEAD', 'That client record could not be found.');
   const i = Number(index);
@@ -143,7 +148,7 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
 
   const { pay, unreadable } = ms.readPayments(lead);
   if (unreadable) {
-    return refuse('PAYMENTS_UNREADABLE', 'The payment records on this client can’t be read, so nothing can be changed safely. Ask Faran to check the lead’s “Milestone Payments (JSON)” column.');
+    return refuse('PAYMENTS_UNREADABLE', 'The payment records on this client can’t be read, so nothing can be changed safely. Ask an admin to check the lead’s “Milestone Payments (JSON)” column.');
   }
   const before = (pay[i] && typeof pay[i] === 'object') ? pay[i] : null;
   const retainerPaid = s(lead.retainerPaid);
@@ -157,8 +162,17 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   else if (isRetainer && retainerPaid) mode = 'retainer-date';
   else return refuse('NOT_PAID', 'This milestone isn’t recorded as paid, so there is nothing to undo. Reload the page — someone may already have undone it.');
 
-  if ((before && s(before.txnId)) || (isRetainer && (s(lead.squareRetainerTxnId) || s(lead.squareRetainerOrderId)))) {
-    return refuse('SQUARE_PAYMENT', 'This payment is linked to Square. Removing it here would not stick — the Square sync records it again within minutes. Refund or void it in Square first, then ask Faran to reconcile the record.');
+  if ((before && s(before.txnId)) || (isRetainer && s(lead.squareRetainerTxnId))) {
+    return refuse('SQUARE_PAYMENT', 'This payment is linked to Square. Removing it here would not stick — the Square sync records it again within minutes. Refund or void it in Square first, then ask an admin to reconcile the record.');
+  }
+  // A Square ORDER id is stamped when the checkout link is made, before any
+  // money; a paid link normally also stamps the txn id (refused above). Not
+  // always: a retainer stamped paid FIRST (Mark paid by e-transfer, or the
+  // sync's backstamp) makes the Square webhook skip as "already paid", so the
+  // txn id is never written. The order itself says whether money landed.
+  const squareLink = isRetainer && s(lead.squareRetainerOrderId);
+  if (squareLink && squareOrder && squareOrder.paid) {
+    return refuse('SQUARE_PAYMENT', 'Square shows the payment link for this retainer as PAID. Removing the record here would say the client has not paid when Square says they have. Refund or void it in Square first, then ask an admin to reconcile the record.', { source: 'square-order' });
   }
   if (isRetainer && s(lead.clientMasterItemId) && cmReadError) {
     return refuse('CASE_UNREADABLE', 'Couldn’t read the case from Monday, so it isn’t safe to confirm onboarding hasn’t started. Nothing was changed — try again in a minute.', { error: String(cmReadError).slice(0, 200) });
@@ -188,7 +202,7 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   postPay[i] = after;
   const paymentsText = JSON.stringify(postPay);
   if (paymentsText && paymentsText.length > ms.MAX_PAYMENTS_JSON) {
-    return refuse('PAYMENTS_TOO_LARGE', 'The payment records on this client are too long to update safely. Ask Faran to check the lead.');
+    return refuse('PAYMENTS_TOO_LARGE', 'The payment records on this client are too long to update safely. Ask an admin to check the lead.');
   }
   const postLead = {
     ...lead,
@@ -209,11 +223,19 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
     const drift = recon.classifyDrift(postLead, cm ? cm.paymentStatus : null);
     const unsafe = gateAfter.complete || derived === recon.PAID || drift.action === 'backstamp-lead' ||
       drift.action === 'conflict' || (drift.action === 'upgrade-cm' && drift.to === recon.PAID);
-    if (unsafe) return refuse('INVARIANT', 'This undo would leave the record in a state the payment sync would change back, so nothing was done. Ask Faran to look at this client.', { drift: drift.action, gate: gateAfter.missing });
+    if (unsafe) return refuse('INVARIANT', 'This undo would leave the record in a state the payment sync would change back, so nothing was done. Ask an admin to look at this client.', { drift: drift.action, gate: gateAfter.missing });
   }
 
   const warnings = [];
   const info = [];
+  // The link is unpaid (Square said so), or Square could not be checked: a
+  // reason to look, not to refuse. The Square sweep only re-records a payment
+  // completed in the last 6 hours, so an older one nobody checked stays lost.
+  if (squareLink && squareOrder && !squareOrder.paid) {
+    warnings.push({ code: 'SQUARE_LINK_EXISTS', message: 'A Square payment link was issued for this retainer; Square shows no payment on it yet. If the client pays it later, that payment is recorded automatically.' });
+  } else if (squareLink) {
+    warnings.push({ code: 'SQUARE_LINK_EXISTS', message: 'A Square payment link was issued for this retainer, and Square could not be checked just now. Look in Square for a completed payment before removing this record — one made in the last 6 hours is put back by the Square sweep; an older one is not.' });
+  }
   if (isRetainer && cm && onboardingSignals(cm).length) {
     warnings.push({ code: 'ONBOARDING_RAN_EARLIER', message: `This case looks like it was onboarded before (${onboardingSignals(cm).join('; ')}). Undo corrects the payment record only — it doesn’t unsend emails, remove checklist items or move the case back.` });
   }
@@ -356,12 +378,13 @@ const io = {
     try { c.invalidateDirectRetainerQueue(); } catch (_) { /* cache only */ }
     try { c.invalidateLeadsQueue(); } catch (_) { /* cache only */ }
   },
-  withLeadLock:     (key, fn) => require('./leadMutex').withLeadLock(key, fn),
+  withLeadLockOrSkip: (key, waitMs, fn) => require('./leadMutex').withLeadLockOrSkip(key, waitMs, fn),
   isLeadItem:       async (id) => {
     const d = await mondayApi.query(`query($ids:[ID!]){ items(ids:$ids){ id state board{id} } }`, { ids: [String(id)] });
     const it = d && d.items && d.items[0];
     return !!(it && it.state !== 'deleted' && String((it.board && it.board.id) || '') === String(leadBoardId));
   },
+  readSquareOrder:  (orderId) => require('./squareInvoicesService').retrieveOrderState(orderId),
   findClaimants:    async (cmItemId) => (await leadService.findAllByColumnValue('clientMasterItemId', String(cmItemId)))
     .map((l) => ({ id: String(l.id), name: s(l.fullName) || s(l.name) })),
   caseAssignees:    async (cmItemId) => {
@@ -377,7 +400,8 @@ const io = {
   sleep:            (msec) => new Promise((r) => setTimeout(r, msec)),
 };
 
-async function readState(leadId) {
+/** @param {number} [index]  the milestone being undone — the Square link is checked for the retainer (0) only */
+async function readState(leadId, index = null) {
   let lead;
   try { lead = await io.getLead(leadId); }
   catch (err) { return { error: 'Couldn’t read this client from Monday — nothing was changed. Try again in a minute.', status: 503, code: 'LEAD_UNREADABLE' }; }
@@ -395,7 +419,14 @@ async function readState(leadId) {
   } else {
     claimants = [];
   }
-  return { lead, cm, cmReadError, cmMissing, claimants };
+  // The Square link's own state, when the retainer has one and no txn id says
+  // it was paid (see the planner). A failed read is null: the plan then warns
+  // instead of refusing, and says the check did not happen.
+  let squareOrder = null;
+  if (Number(index) === 0 && s(lead.squareRetainerOrderId) && !s(lead.squareRetainerTxnId)) {
+    try { squareOrder = await io.readSquareOrder(lead.squareRetainerOrderId); } catch (_) { squareOrder = null; }
+  }
+  return { lead, cm, cmReadError, cmMissing, claimants, squareOrder };
 }
 
 /** The WHOLE post-state holds — not just "the row reads unpaid". A retry after a
@@ -479,7 +510,7 @@ function publicPlan(plan) {
 
 /** Read-only: what an undo of milestone `index` would do right now. */
 async function previewMilestonePaidReversal({ leadId, index, actor = null } = {}) {
-  const st = await readState(leadId);
+  const st = await readState(leadId, index);
   if (st.error) return { ok: false, status: st.status, code: st.code, error: st.error };
   const plan = planMilestonePaidReversal({ ...st, index, actor, now: io.nowIso() });
   return {
@@ -508,14 +539,13 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
   const i = Number(index);
   if (_inFlight.has(key)) return { ok: false, status: 409, code: 'BUSY', error: 'An undo for this client is already running — wait a moment, then reload.' };
   _inFlight.add(key);
-  const queuedAt = io.now();
   let outcome;
   try {
-    outcome = await io.withLeadLock(key, async () => {
-      if (io.now() - queuedAt > LOCK_WAIT_MS) {
-        return { ok: false, status: 409, code: 'BUSY', error: 'This client’s record is busy (a signature is being processed). Nothing was changed — try again in a minute.' };
-      }
-      const st = await readState(key);
+    // Behind another holder (an e-sign capture, Mark paid, the sync) the undo
+    // waits LEAD_LOCK_WAIT_MS, then gives up WITHOUT running — nothing is read
+    // or written for a "busy" answer.
+    outcome = await io.withLeadLockOrSkip(key, LEAD_LOCK_WAIT_MS, async () => {
+      const st = await readState(key, i);
       if (st.error) return { ok: false, status: st.status, code: st.code, error: st.error };
       if (reversalHolds(st.lead, i, expect)) {
         return { ok: true, already: true, message: 'This payment has already been removed. Nothing more was needed.' };
@@ -560,13 +590,18 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
   } finally {
     _inFlight.delete(key);
   }
+  if (outcome && outcome.busy === true && Object.keys(outcome).length === 1) {
+    return { ok: false, status: 409, code: 'BUSY', error: BUSY_MESSAGE };
+  }
   if (!outcome.ok || outcome.already) return outcome;
 
   // ── After the lock: the record, the notes and the notifications ──
   const { plan, verified, raced, lead, cm } = outcome;
   const conversion = (outcome.committed && outcome.committed.conversion) || plan.conversionStatus;
   const who = esc(s(actor.name) || s(actor.email));
-  const when = io.nowIso().slice(0, 10);
+  // Toronto, with the zone — the same clock as the row tooltip and the sponsor
+  // notes, so one removal is never dated two different days.
+  const when = `${torontoTime(Date.parse(io.nowIso()))} (Toronto)`;
   const what = `${esc(plan.label)} (${dollars(plan.totalCents)})`;
   // The case note is the one the case team is subscribed to; skip it only when
   // the case row is known to be gone.
@@ -580,15 +615,15 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
 
   const leadBody =
     `↩️ <b>Payment record removed</b> — ${what}, ${removedLine(plan)}.<br>` +
-    `Removed by ${who} on ${when}. <b>Reason:</b> ${esc(s(reason))}<br>` +
+    `Removed by ${who} — ${when}. <b>Reason:</b> ${esc(s(reason))}<br>` +
     `<b>Changed:</b> ${changed.join(' · ') || 'nothing further'}.<br>` +
     `<b>Not changed:</b> signatures, “Retained by”, and anything already sent to the client. No money moved.` +
     (plan.isRetainer ? ' Onboarding starts only once the real payment is recorded and every signature is in.' : '') +
     '<br>If this payment belongs to another client, record it on that client’s file.' +
     (plan.mode === 'milestone' ? `<br><small>Removed record: ${esc(JSON.stringify(plan.before))}</small>` : '');
   const caseBody = plan.mode === 'milestone'
-    ? `↩️ <b>Payment record removed</b> — ${what} had been recorded as paid in error. Removed by ${who} on ${when}. <b>Reason:</b> ${esc(s(reason))}. Details are on the client’s lead record.`
-    : `↩️ <b>Retainer Paid date removed</b> (${esc(plan.expect.retainerPaid)}) — the client’s record said the retainer was paid, but no milestone payment was recorded. Removed by ${who} on ${when}. <b>Reason:</b> ${esc(s(reason))}.`;
+    ? `↩️ <b>Payment record removed</b> — ${what} had been recorded as paid in error. Removed by ${who} — ${when}. <b>Reason:</b> ${esc(s(reason))}. Details are on the client’s lead record.`
+    : `↩️ <b>Retainer Paid date removed</b> (${esc(plan.expect.retainerPaid)}) — the client’s record said the retainer was paid, but no milestone payment was recorded. Removed by ${who} — ${when}. <b>Reason:</b> ${esc(s(reason))}.`;
 
   let notesFailed = false;
   try { await io.postNote(lead.id, leadBody); } catch (_) { notesFailed = true; }
@@ -597,8 +632,8 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
 
   if (raced || !verified.ok) {
     const alarm = raced
-      ? '⚠️ <b>Undo raced with onboarding.</b> The case was marked Paid while this undo ran, so onboarding has started. Within 15 minutes the payment sync will put the payment date back on the client. If the client has NOT paid, set the case’s Payment Status to <b>Not Paid</b> before then, then run Undo again.'
-      : `⚠️ <b>Undo incomplete.</b> Monday didn’t confirm every change (still showing: ${esc(verified.missing.join(', '))}). An admin must check the client’s Retainer Paid date and payment row now — a payment date left behind can start onboarding.`;
+      ? `⚠️ <b>Undo raced with onboarding</b> — ${when}. The case was marked Paid while this undo ran, so onboarding has started. Within 15 minutes the payment sync will put the payment date back on the client. If the client has NOT paid, set the case’s Payment Status to <b>Not Paid</b> before then, then run Undo again.`
+      : `⚠️ <b>Undo incomplete</b> — ${when}. Monday didn’t confirm every change (still showing: ${esc(verified.missing.join(', '))}). An admin must check the client’s Retainer Paid date and payment row now — a payment date left behind can start onboarding.`;
     try { await io.postNote(lead.id, alarm); } catch (_) { /* best-effort */ }
     if (caseItem) { try { await io.postNote(caseItem, alarm); } catch (_) { /* best-effort */ } }
   }
@@ -632,6 +667,13 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
  * admins and the RCIC. Changes NO payment state.
  */
 const _flaggedAt = new Map();   // "leadId#index" → when it was last flagged (per process)
+const _flagsBy   = new Map();   // actor (a Monday sign-in's email, else ONE shared-key bucket) → when their recent flags were sent (per process)
+/** The actor's flags inside the window, oldest dropped. */
+function recentFlagsBy(actorKey, now) {
+  const times = (_flagsBy.get(actorKey) || []).filter((t) => now - t < FLAG_COOLDOWN_MS);
+  if (times.length) _flagsBy.set(actorKey, times); else _flagsBy.delete(actorKey);
+  return times;
+}
 async function flagPaymentError({ leadId, index, actor, note, viewer = null } = {}) {
   const i = Number(index);
   if (!/^\d{3,20}$/.test(s(leadId))) return { ok: false, status: 400, error: 'Unknown client.' };
@@ -645,6 +687,14 @@ async function flagPaymentError({ leadId, index, actor, note, viewer = null } = 
   const last = _flaggedAt.get(flagKey);
   if (last && io.now() - last < FLAG_COOLDOWN_MS) {
     return { ok: false, status: 429, error: 'This payment was flagged a few minutes ago and the admins were alerted then. Nothing new was sent.' };
+  }
+  // One person, many rows: every accepted flag posts notes and alerts every
+  // admin and the RCIC, so a single actor is held to a few per window. Only a
+  // Monday sign-in identifies a person; everyone on the shared key shares one
+  // window, whatever name they type (a new spelling is not a new person).
+  const actorKey = (actor && actor.verified === true && s(actor.email)) ? lower(actor.email) : SHARED_KEY_PLACEHOLDER;
+  if (recentFlagsBy(actorKey, io.now()).length >= FLAG_ACTOR_MAX) {
+    return { ok: false, status: 429, error: `You have flagged ${FLAG_ACTOR_MAX} payments in the last few minutes and the admins were alerted each time. Nothing new was sent — tell an admin directly if more are wrong.` };
   }
 
   const st = await readState(leadId);
@@ -680,6 +730,7 @@ async function flagPaymentError({ leadId, index, actor, note, viewer = null } = 
   catch (_) { return { ok: false, status: 503, error: 'Couldn’t post the flag on Monday — try again in a minute.' }; }
   if (caseItem) { try { await io.postNote(lead.id, body); } catch (_) { /* the case note is the one people see */ } }
   _flaggedAt.set(flagKey, io.now());
+  _flagsBy.set(actorKey, [...recentFlagsBy(actorKey, io.now()), io.now()]);
   const alerted = await notifyPeopleDetailed(lead,
     `Payment flagged as wrong on ${oneLine(lead.fullName) || 'a client'}${st.cm && st.cm.caseRef ? ` (${st.cm.caseRef})` : ''}: ${label}. ${holdCountersign ? 'Please don’t countersign yet. ' : ''}Flagged by ${name}.`,
     caseItem || lead.id, actor && actor.email).catch(() => ({ sent: 0, rcic: false }));
@@ -694,6 +745,6 @@ module.exports = {
   previewMilestonePaidReversal, executeMilestonePaidReversal, flagPaymentError,
   // helpers exported for tests
   entryFingerprint, restoredEntry, conversionFor, onboardingSignals, reversalHolds, readCase, commitReversal,
-  io, AWAITING_PAYMENT, LOCK_WAIT_MS, FLAG_COOLDOWN_MS,
-  _resetFlagThrottle: () => _flaggedAt.clear(),
+  io, AWAITING_PAYMENT, LEAD_LOCK_WAIT_MS, FLAG_COOLDOWN_MS, FLAG_ACTOR_MAX, BUSY_MESSAGE,
+  _resetFlagThrottle: () => { _flaggedAt.clear(); _flagsBy.clear(); },
 };

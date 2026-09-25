@@ -93,4 +93,11 @@ function listRegistered() {
   return Array.from(REGISTRY.values()).map((s) => ({ caseType: s.caseType, subType: s.subType }));
 }
 
-module.exports = { lookup, listRegistered };
+/** Every registered schema of one case type (any sub type) — [] for an unknown type. */
+function listForCaseType(caseType) {
+  const want = String(caseType || '').trim().toLowerCase();
+  if (!want) return [];
+  return Array.from(REGISTRY.values()).filter((s) => String(s.caseType || '').trim().toLowerCase() === want);
+}
+
+module.exports = { lookup, listRegistered, listForCaseType };

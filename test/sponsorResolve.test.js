@@ -188,3 +188,31 @@ test('a very long inviter name is cut to 80 characters (a Monday item name, an e
   const r = resolve('SOWP', 'Outland (Spouse or Child)', { claimants: [LEAD({ inviterName: 'A'.repeat(200) })] });
   assert.equal(r.name.length, 80);
 });
+
+// ─── Ship review (2026-09-25): no schema for the pair → the TYPE decides ───────
+
+test('no schema for the pair: a type no variant of which has a sponsor role is not-applicable whatever the Sub Type reads (the card stays hidden)', () => {
+  for (const [ct, st] of [
+    ['Canadian Experience Class (EE after ITA)', ''], ['Canadian Experience Class (EE after ITA)', 'Typo'],
+    ['OINP', ''], ['OINP', 'Made Up Stream'],
+    ['Study Permit', ''], ['Study Permit', 'Nope'],
+    ['PGWP', ''], ['Federal PR', ''], ['LMIA Based WP', ''],
+    ['LMIA', ''], ['Notary', ''], ['ETA', 'x'],          // not registered at all
+  ]) {
+    const r = resolve(ct, st);
+    assert.equal(r.status, 'none', `${ct}/${st}`);
+    assert.equal(r.reason, 'not-applicable', `${ct}/${st}: ${r.reason}`);
+  }
+  // "Set the Case Sub Type first" only where a variant can carry a sponsor …
+  for (const ct of ['SOWP', 'Supervisa', 'Visitor Visa', 'Visitor Record / Extension', 'Inland Spousal Sponsorship']) {
+    assert.equal(resolve(ct, '').reason, 'sub-type-missing', ct);
+    assert.equal(resolve(ct, 'Made Up Sub Type').reason, 'no-schema', ct);
+  }
+  // … and a one-schema sponsor type with a Sub Type that matches nothing is no-schema, never "set the Sub Type first"
+  for (const ct of ['SCLPC WP', 'Outland Spousal Sponsorship', 'Parents/Grandparents Sponsorship']) {
+    assert.equal(resolve(ct, '').status, 'ok', ct);
+    assert.equal(resolve(ct, 'Nope').reason, 'no-schema', ct);
+  }
+  assert.equal(reg.listForCaseType('sowp').length, 4, 'the registry lists a type without regard to case');
+  assert.deepEqual(reg.listForCaseType(''), []);
+});

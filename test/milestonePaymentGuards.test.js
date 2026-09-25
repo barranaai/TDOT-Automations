@@ -301,3 +301,30 @@ test('advanceCaseToPaid takes the lead lock — it waits for an undo in progress
     assert.equal(writes.length, 1);
   } finally { r0(); r1(); r2(); }
 });
+
+// ─── Ship review (2026-09-25): ALREADY_PAID on the signing path is said out loud ─
+
+test('signing path: when the first-milestone request is withheld as ALREADY_PAID, the lead gets a note naming the date and the undo — fee edits stay quiet', async () => {
+  const retainer2 = require('../src/services/retainerService2');
+  const mail = require('../src/services/microsoftMailService');
+  const notes = [], mails = [], writes = [];
+  const r1 = stub(leadService, 'getLead', async () => LEAD({ retainerSigned: '2026-09-21', retainerPaid: '2026-09-22' }));
+  const r2 = stub(leadService, 'updateLead', async (...a) => { writes.push(a); });
+  const r3 = stub(mondayApi, 'query', async (q, v) => { if (/create_update/.test(q)) notes.push(v.body || v.b); return {}; });
+  const r4 = stub(mail, 'sendEmail', async (m) => { mails.push(m); });
+  try {
+    await retainer2.maybeSendRetainerPaymentLink('555001', { notifyIfMissing: true });   // the signing path
+    assert.equal(mails.length, 0, 'the client is not asked to pay again');
+    assert.equal(writes.length, 0);
+    assert.equal(notes.length, 1, 'one staff note');
+    assert.match(notes[0], /First-milestone e-transfer request NOT sent — the retainer is already recorded as paid on 2026-09-22\./);
+    assert.match(notes[0], /If that date is wrong, an admin can undo it \(Payments → Undo…\) and re-send the request from the panel\./);
+    assert.doesNotMatch(notes[0], /was already emailed/, 'it never claims a request went out');
+
+    notes.length = 0;
+    await retainer2.maybeSendRetainerPaymentLink('555001', { warnIfSent: true });        // a Retainer Fee edit
+    assert.equal(notes.length, 0, 'fee-column edits on a paid lead post nothing — no note spam');
+    await retainer2.maybeSendRetainerPaymentLink('555001');                              // a bare re-fire
+    assert.equal(notes.length, 0);
+  } finally { r1(); r2(); r3(); r4(); }
+});

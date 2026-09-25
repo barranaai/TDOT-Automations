@@ -4,7 +4,7 @@
 
 const test   = require('node:test');
 const assert = require('node:assert/strict');
-const { withLeadLock, withLeadLockOrSkip, holdsLeadLock } = require('../src/services/leadMutex');
+const { withLeadLock, withLeadLockOrSkip, holdsLeadLock, LEAD_LOCK_WAIT_MS, HOLD_WARN_MS } = require('../src/services/leadMutex');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -79,4 +79,78 @@ test('withLeadLockOrSkip: runs when free, gives up (and never runs later) when t
 test('withLeadLockOrSkip inside the holder runs at once — never "busy" against itself', async () => {
   const r = await withLeadLock('S3', () => withLeadLockOrSkip('S3', 10, async () => 'inline'));
   assert.equal(r, 'inline');
+});
+
+// ─── Ship review (2026-09-25): the hold is visible, nested work is waited for ─
+
+test('one shared give-up budget for the callers that must not stall', () => {
+  assert.equal(LEAD_LOCK_WAIT_MS, 20000);
+  assert.equal(HOLD_WARN_MS, 60000);
+});
+
+test('WATCHDOG: a section that holds a lead past the threshold is logged once, naming the lead and the seconds; the timer is cleared on release', async () => {
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  try {
+    await withLeadLock('W1', () => sleep(60), { holdWarnMs: 15 });
+    assert.equal(warned.length, 1, 'exactly one line');
+    assert.match(warned[0], /^\[LeadMutex\] lead W1 held for \d+s$/);
+    await sleep(40);
+    assert.equal(warned.length, 1, 'it does not fire again after release');
+    // a short section never logs — and its timer does not fire later either
+    await withLeadLock('W2', () => sleep(5), { holdWarnMs: 20 });
+    await sleep(40);
+    assert.equal(warned.length, 1);
+  } finally { console.warn = orig; }
+});
+
+test('the watchdog timer never holds the process open (unref) and defaults to the exported threshold', () => {
+  const src = require('fs').readFileSync(require.resolve('../src/services/leadMutex'), 'utf8');
+  assert.match(src, /const watchdog = setTimeout\(\(\) => console\.warn\(`\[LeadMutex\] lead \$\{key\} held for \$\{[^`]+\}s`\), holdWarnMs\);/);
+  assert.match(src, /if \(watchdog && typeof watchdog\.unref === 'function'\) watchdog\.unref\(\);/);
+  assert.match(src, /\{ holdWarnMs = HOLD_WARN_MS \} = \{\}/);
+  assert.match(src, /clearTimeout\(watchdog\);/);
+});
+
+test('NESTED WORK NOT AWAITED: the section does not release until locked work that entered inside it has finished — the next holder waits', async () => {
+  const order = [];
+  const outer = withLeadLock('N1', async () => {
+    order.push('outer');
+    withLeadLock('N1', async () => { await sleep(30); order.push('inner-end'); });   // forgotten await
+    order.push('outer-end');
+  });
+  const next = withLeadLock('N1', async () => { order.push('next'); });
+  await Promise.all([outer, next]);
+  assert.deepEqual(order, ['outer', 'outer-end', 'inner-end', 'next']);
+});
+
+test('nested work that itself starts more nested work is drained too, and a nested failure belongs to its own caller — the outer still succeeds', async () => {
+  const order = [];
+  let innerFailure = null;
+  const outer = withLeadLock('N2', async () => {
+    withLeadLock('N2', async () => {
+      await sleep(10);
+      withLeadLock('N2', async () => { await sleep(20); order.push('grandchild-end'); });   // entered while the outer waits
+      order.push('child-end');
+    });
+    const failing = withLeadLock('N2', async () => { await sleep(5); throw new Error('nested boom'); });
+    failing.catch((e) => { innerFailure = e; });
+    return 'outer-ok';
+  });
+  const next = withLeadLock('N2', async () => { order.push('next'); });
+  assert.equal(await outer, 'outer-ok', 'a nested failure never fails the outer section');
+  await next;
+  assert.deepEqual(order, ['child-end', 'grandchild-end', 'next']);
+  assert.match(String(innerFailure && innerFailure.message), /nested boom/, 'the error reached the nested caller');
+});
+
+test('withLeadLockOrSkip nested in the holder is tracked the same way', async () => {
+  const order = [];
+  const outer = withLeadLock('N3', async () => {
+    withLeadLockOrSkip('N3', 10, async () => { await sleep(25); order.push('skip-inner-end'); });   // forgotten await
+  });
+  const next = withLeadLock('N3', async () => { order.push('next'); });
+  await Promise.all([outer, next]);
+  assert.deepEqual(order, ['skip-inner-end', 'next']);
 });

@@ -1307,6 +1307,7 @@ var FAMILY_TYPES=['Spouse','Dependent Child','Parent','Sibling','Sponsor'];
 // retainer-plan payload). A milestone shows "DUE" when its trigger == CUR_CASE_STAGE.
 var MILE_TRIGGER_STAGES=['Pre-Onboarding','Retainer Confirmed','Document Collection Started','Internal Review','Submission Preparation','Submission Ready','Application Submitted'];
 var CUR_CASE_STAGE='';
+var RP_CASE_REF='';   // the case reference from the retainer-plan payload — the Mark-paid dialog names it (the lead detail has none)
 var RP_BLOCK_FIELDS=['inviterName','inviterAddress','inviterPhone','inviterEmail','empRepName','empCompanyName','empCompanyAddress','empCompanyPhone','empRepPhone','empRepEmail'];
 function rpEl(id){ return document.getElementById(id); }
 function escA(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
@@ -1353,6 +1354,7 @@ function hydrateRetainer(d){
   RP_BLOCK_FIELDS.forEach(function(k){ var el=rpEl('rp-'+k); if(el) el.value=m[k]||''; });
   if(d.milestoneTriggerStages&&d.milestoneTriggerStages.length) MILE_TRIGGER_STAGES=d.milestoneTriggerStages;
   CUR_CASE_STAGE=d.currentCaseStage||'';
+  RP_CASE_REF=d.caseRef||'';
   var cs=rpEl('rp-case-stage'); if(cs) cs.innerHTML=CUR_CASE_STAGE?('· case is at <span class="rp-stage">'+escHtml(CUR_CASE_STAGE)+'</span>'):'';
   rebuildMilestones(plan.milestones||[]);
   if(d.familyMemberTypes&&d.familyMemberTypes.length) FAMILY_TYPES=d.familyMemberTypes;
@@ -1447,7 +1449,7 @@ function renderMilestonePayments(list){
       // to use, and a warning when no request was ever sent (2026-09-22).
       var i=Number(b.getAttribute('data-msp-paid'));
       var row=list.filter(function(r){ return r.index===i; })[0]||{index:i};
-      tdotOpenMarkPaidModal({ clientName: D.name||'', caseRef: D.caseRef||'', m: row, onConfirm: function(ref,by){
+      tdotOpenMarkPaidModal({ clientName: D.name||'', caseRef: RP_CASE_REF, m: row, onConfirm: function(ref,by){
         doAction('markMilestonePaid', JSON.stringify({index:i, reference:ref}), null, by);
       } });
     };

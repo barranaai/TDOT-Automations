@@ -43,8 +43,17 @@ test('subjects and titles, both variants', () => {
 test('the greeting is the sponsor\'s first name; the intro names the client, the case type, the ref and the role', () => {
   const t = textOf(S.buildSponsorEmail(base()).html);
   assert.match(t, /Hi Faheem,/);
-  assert.match(t, /Aisha Khan has retained TDOT Immigration for a SOWP application \(case 2026-SOWP-017\), and you are named on it as the Worker Spouse\./);
+  assert.match(t, /Aisha Khan has retained TDOT Immigration for the SOWP application \(case 2026-SOWP-017\), and you are named on it as the Worker Spouse\./);
   assert.match(t, /Some of the documents and answers have to come from you\./);
+  // No article before the case type: "for a Inland Spousal Sponsorship application" was the first sentence a sponsor read.
+  const iss = textOf(S.buildSponsorEmail(base({ caseType: 'Inland Spousal Sponsorship', sectionMode: 'shared-form' })).html);
+  assert.match(iss, /for the Inland Spousal Sponsorship application \(case 2026-SOWP-017\)/);
+  assert.doesNotMatch(iss, /for an? Inland/);
+  // A documents-only type asks for documents alone — its questionnaire paragraph says there is no section for the sponsor.
+  const docsOnly = textOf(S.buildSponsorEmail(base({ caseType: 'Supervisa', sectionMode: 'documents-only' })).html);
+  assert.match(docsOnly, /Some of the documents have to come from you\. Here is exactly what we need and where to do it\./);
+  assert.doesNotMatch(docsOnly, /documents and answers/);
+  assert.match(textOf(S.buildSponsorEmail(base({ sectionMode: 'shared-form' })).html), /documents and answers have to come from you/);
   const r = textOf(S.buildSponsorEmail(base({ variant: 'resend' })).html);
   assert.match(r, /Here is the portal link for Aisha Khan's SOWP application \(case 2026-SOWP-017\) again\. You are named on it as the Worker Spouse\./);
   assert.ok(!/has retained TDOT Immigration/.test(r), 'no onboarding wording on a resend');

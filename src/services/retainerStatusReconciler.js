@@ -277,8 +277,9 @@ const io = {
   withLeadLockOrSkip: (id, ms, fn) => require('./leadMutex').withLeadLockOrSkip(id, ms, fn),
 };
 // How long the sync waits for a client record another flow is holding (e.g. an
-// e-signature capture) before leaving that client to the next pass.
-const SYNC_LOCK_WAIT_MS = 20000;
+// e-signature capture) before leaving that client to the next pass — the
+// shared budget from leadMutex.
+const SYNC_LOCK_WAIT_MS = require('./leadMutex').LEAD_LOCK_WAIT_MS;
 
 /**
  * Apply one already-classified verdict. Split out so the single-case path and

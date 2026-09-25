@@ -221,12 +221,16 @@ async function onCaseTypeSet({ itemId, caseType }) {
   // has a row of their own where the questionnaire gives them a section
   // ('prepare' never emails; it recognises the intake's Spouse row as the
   // same person), THEN resume any stuck onboarding — so a resumed seeding
-  // sees the renamed folder and every family row.
+  // sees the renamed folder and every family row. When rows were JUST
+  // written, the prepare pass creates nothing: Monday's board search can lag
+  // a create_item by seconds, and a Sponsor row written against a read that
+  // missed the intake's Spouse row would be a second row for one person. The
+  // first questionnaire read seeds from the board later; the DCS pass re-checks.
   renameClientFolderForItem({ itemId, caseRef })
     .catch(err => console.warn(`[CaseRef] OneDrive folder rename skipped for ${caseRef}: ${err.message}`))
     .then(() => require('./familyCompositionService').createFamilyRowsForItem({ itemId, caseRef }))
-    .catch(err => console.warn(`[CaseRef] Family rows skipped for ${caseRef}: ${err.message}`))
-    .then(() => require('./sponsorOnboardingService').ensureSponsor({ itemId, caseRef, mode: 'prepare', trigger: 'case-ref' }))
+    .catch(err => { console.warn(`[CaseRef] Family rows skipped for ${caseRef}: ${err.message}`); return 0; })
+    .then((rows) => require('./sponsorOnboardingService').ensureSponsor({ itemId, caseRef, mode: 'prepare', trigger: 'case-ref', boardJustWritten: Number(rows) > 0 }))
     .catch(err => console.warn(`[CaseRef] Sponsor prepare skipped for ${caseRef}: ${err.message}`))
     .then(() => resumeOnboardingIfStuck({ itemId, caseRef }))
     .catch(err => console.warn(`[CaseRef] Stuck-onboarding check failed for ${caseRef}: ${err.message}`));

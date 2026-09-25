@@ -42,7 +42,8 @@ test('the sponsor route is identity-gated, derives the case server-side and runs
   assert.match(body, /itemId: ctx\.overview\.itemId/, 'the item comes from the resolved case, never the request');
   assert.match(body, /mode: 'staff'/);
   assert.match(body, /trigger: 'staff'/);
-  assert.match(body, /actor: staffActor\(req, staffName\)/, 'records who clicked (Monday identity first)');
+  assert.match(body, /actor: staffActor\(req\)/, 'records who clicked: the Monday sign-in, else the shared-key placeholder');
+  assert.doesNotMatch(body, /staffName/, 'the page sends no typed name, so none is accepted — a body name could put anyone on the note');
   assert.doesNotMatch(body, /findByColumnValue\(/, 'D1: never the first-hit lead — the service takes ALL claimants');
   assert.doesNotMatch(body, /clearKeys/, 'a saved inviter never blanks other lead columns');
   assert.doesNotMatch(body, /req\.body\.leadId|body\.leadId/, 'the route body never carries a leadId');
@@ -74,7 +75,9 @@ test('the sponsor route maps the service answers: 409 shared case, 429 cool-down
   assert.match(body, /catch \(err\) \{[\s\S]{0,300}status\(502\)/, 'a throw from the send → 502');
   assert.match(body, /The email could not be sent — please try again in a moment\./);
   assert.match(body, /r\.reason === 'no-case'[\s\S]{0,40}status\(404\)/);
-  assert.match(body, /if \(r\.sent\) SPONSOR_SEND_COOLDOWN\.set\(caseRef, Date\.now\(\)\)/, 'only a real send starts the cool-down');
+  assert.match(body, /if \(r\.sent\) SPONSOR_SEND_COOLDOWN\.set\(cooldownKey, Date\.now\(\)\)/, 'only a real send starts the cool-down');
+  assert.match(body, /const cooldownKey = caseRef\.toUpperCase\(\);/, 'one slot per case: Monday matches the reference without regard to case, so 2026-sowp-017 and 2026-SOWP-017 are the same case');
+  assert.doesNotMatch(body, /SPONSOR_SEND_COOLDOWN\.(get|set)\(caseRef\b/, 'never keyed on the raw URL param');
   assert.match(body, /res\.json\(\{ ok: true, sent: !!r\.sent, to: r\.to/, 'the 200 shape the card reads');
   assert.match(body, /inviterSaved: !!r\.inviterSaved/, 'the card learns whether the typed sponsor was saved');
 });
@@ -132,6 +135,11 @@ test('webhook: a REAL sub-type arrival also (re)tries the sponsor — inside the
   // The blank-write / same-value guard closes AFTER the sponsor call.
   const closing = branch.indexOf('\n      }', sponsor);
   assert.ok(closing !== -1 && closing > sponsor, 'the sponsor call is inside the if (newSub && newSub !== prevSub) block');
+  // The comment describes the gate that holds (gatesFor, trigger 'sub-type'), not the looser one it replaced.
+  const comment = WEBHOOK.slice(WEBHOOK.indexOf('CASE_SUB_TYPE_COL_ID) {'), WEBHOOK.indexOf("trigger: 'sub-type'"));
+  assert.match(comment, /stage exactly\s*\/\/\s*Document Collection Started, applied exactly No/);
+  assert.match(comment, /a blank legacy case never sends/);
+  assert.doesNotMatch(comment, /applied ≠ Yes/, 'the old "applied ≠ Yes" description is gone');
 });
 
 test('webhook: the Client Email correction branch does NOT email the sponsor (spec 2c)', () => {
@@ -159,7 +167,8 @@ test('caseRefService: prepare after the family rows and before the stuck-onboard
   const resume  = src.indexOf('resumeOnboardingIfStuck({ itemId, caseRef })');
   assert.ok(rows !== -1 && prepare !== -1 && resume !== -1);
   assert.ok(rows < prepare && prepare < resume, 'D5 needs the intake Spouse row to exist first; the resume must see the sponsor row');
-  assert.match(src.slice(prepare - 120, prepare + 160), /ensureSponsor\(\{ itemId, caseRef, mode: 'prepare', trigger: 'case-ref' \}\)[\s\S]{0,10}\)\s*\.catch\(/, 'its own catch — a sponsor failure never stops the resume');
+  assert.match(src.slice(prepare - 160, prepare + 200), /\.then\(\(rows\) => require\('\.\/sponsorOnboardingService'\)\.ensureSponsor\(\{ itemId, caseRef, mode: 'prepare', trigger: 'case-ref', boardJustWritten: Number\(rows\) > 0 \}\)\)\s*\.catch\(/, 'the count of rows just written travels into prepare (no row on a board read that may lag them); its own catch — a sponsor failure never stops the resume');
+  assert.match(src.slice(rows - 40, rows + 260), /\.catch\(err => \{ console\.warn\([^)]*Family rows skipped[\s\S]{0,60}return 0; \}\)/, 'a failed family-rows step counts as none written');
   const fn = src.slice(src.indexOf('async function resumeOnboardingIfStuck'), src.indexOf('async function writePortalLinkForItem'));
   const email = fn.indexOf('emailService.sendIntakeEmail(itemId)');
   const sponsor = fn.indexOf("ensureSponsor({ itemId, caseRef, mode: 'onboard', trigger: 'resume' })");
@@ -295,7 +304,7 @@ test('the sponsor route: "Add sponsor now" / "Save sponsor" send createOnly, the
   assert.match(body, /override: \(name && email\) \? \{ name, email \} : undefined,\n\s+createOnly,\n/, 'passed to ensureSponsor');
   assert.match(body, /r\.reason === 'create-only'[\s\S]{0,40}status\(409\)/);
   assert.match(body, /Nothing to add — the sponsor is already on this case\. Reload the page\./);
-  assert.match(code(SERVICE), /createOnly = false \} = \{\}\) \{/, 'the service takes the flag');
+  assert.match(code(SERVICE), /createOnly = false, boardJustWritten = false \} = \{\}\) \{/, 'the service takes the flag (and the chain\'s just-written flag beside it)');
   assert.match(code(SERVICE), /\} else if \(createOnly\) \{\n\s+skipReason = 'create-only';/, 'planEnsure: never a send with the flag, whatever the gates or the marker');
   const block = PAGE.slice(PAGE.indexOf('function renderSponsor'), PAGE.indexOf('function renderQTab'));
   assert.match(block, /\} else if \(mode === 'add'\) \{\n\s+payload = \{ createOnly: true \};/, 'Add sponsor now');
@@ -331,7 +340,7 @@ test('the case-ref chain and the sponsor onboarding share ONE intake-rows run pe
 
 test('the sponsor route: the cool-down really guards the 429 — the remainder is computed from the service constant and the last send, and the guard wraps the refusal', () => {
   const body = code(routeWindow(SERVER, ROUTE));
-  assert.match(body, /const last = SPONSOR_SEND_COOLDOWN\.get\(caseRef\) \|\| 0;\n\s+const wait = sponsorOnboarding\.STAFF_COOLDOWN_MS - \(Date\.now\(\) - last\);\n\s+if \(wait > 0\) \{\n\s+return res\.status\(429\)/, 'a double-click within the minute is refused, not re-sent');
+  assert.match(body, /const last = SPONSOR_SEND_COOLDOWN\.get\(cooldownKey\) \|\| 0;\n\s+const wait = sponsorOnboarding\.STAFF_COOLDOWN_MS - \(Date\.now\(\) - last\);\n\s+if \(wait > 0\) \{\n\s+return res\.status\(429\)/, 'a double-click within the minute is refused, not re-sent');
   assert.match(body, /try again in \$\{Math\.ceil\(wait \/ 1000\)\}s\./, 'the seconds shown are the real remainder');
   assert.equal(require('../src/services/sponsorOnboardingService').STAFF_COOLDOWN_MS, 60 * 1000);
 });
@@ -342,5 +351,59 @@ test('the cockpit card escapes every server value it prints as HTML — the invi
   assert.doesNotMatch(fn, /' \+ sp\.(name|emailMasked|sectionLabel|roleLabel|replacedFrom|lastError|reason|sendBlockedReason)\b/, 'a raw sp.* concatenated into the card HTML');
   for (const f of ['name', 'emailMasked', 'sectionLabel', 'roleLabel', 'replacedFrom']) assert.ok(fn.includes(`escHtml(sp.${f})`), `escHtml(sp.${f}) is how the card prints it`);
   assert.ok(fn.includes('escHtml(String(sp.lastError).slice(0, 80))'), 'the failure reason is escaped too');
-  assert.ok(fn.includes('escHtml(spWhen(sp.emailedAt))'));
+  assert.ok(fn.includes('escHtml(payWhen(sp.emailedAt))'));
+});
+
+// ─── Ship review (2026-09-25) ─────────────────────────────────────────────────
+
+test('torontoTime is the wording of the notes only — its comment says so, and the pages keep their own en-CA formatter', () => {
+  const i = SERVICE.indexOf("const { torontoTime } = require('../utils/torontoTime');");
+  assert.ok(i > 0, 'the notes’ formatter is the shared util, re-exported by the service');
+  const doc = SERVICE.slice(Math.max(0, i - 400), i);
+  assert.match(doc, /the wording of the Monday notes/);
+  assert.match(doc, /payWhen/);
+  assert.doesNotMatch(doc, /the notes and the cockpit share/);
+  assert.doesNotMatch(PAGE, /torontoTime/);
+});
+
+test('the sponsor card prints "Emailed …" with payWhen from PAYMENT_UI_JS — one Toronto formatter per page, no private copy', () => {
+  assert.doesNotMatch(PAGE, /spWhen/, 'the duplicate helper is gone (it was payWhen byte for byte)');
+  assert.match(PAGE, /escHtml\(payWhen\(sp\.emailedAt\)\)/);
+  const embed = PAGE.indexOf('${PAYMENT_UI_JS}'), card = PAGE.indexOf('function renderSponsor');
+  assert.ok(embed !== -1 && card > embed, 'PAYMENT_UI_JS (where payWhen lives) is emitted before the card script that calls it');
+  assert.doesNotMatch(read('../src/utils/torontoTime.js'), /spWhen/);
+  assert.doesNotMatch(SERVICE, /spWhen/);
+  // The real page: payWhen is a top-level function of the emitted script, so the card can reach it.
+  const html = require('../src/routes/adminCase').buildCockpitHTML('2026-SOWP-017');
+  const script = (html.match(/<script>([\s\S]*?)<\/script>/) || [])[1] || '';
+  assert.match(script, /\n  function payWhen\(iso\)\{/);
+  assert.ok(script.includes('escHtml(payWhen(sp.emailedAt))'));
+});
+
+test('dead code from the first cut is gone: no message for a refusal the service never gives, no "Resend" label while the marker is unreadable', () => {
+  const msgs = SERVER.slice(SERVER.indexOf('const SPONSOR_MESSAGES = {'), SERVER.indexOf('function sponsorPartialSentence'));
+  assert.ok(msgs.length > 200 && msgs.length < 2000, 'the message table is where it was');
+  assert.doesNotMatch(msgs, /same-as-client-blocked/, 'staff mode passes clientEmail: null, so the service never refuses a same-as-client address (the card offers "Send sponsor link anyway")');
+  assert.doesNotMatch(SERVICE, /same-as-client-blocked/, 'and the service never emits it');
+  assert.match(code(SERVICE), /clientEmail: mode === 'staff' \? null : cm\.clientEmail/, 'the rule the removal rests on');
+  // markerUnavailable means the marker was NOT read, so emailedAt is null there by construction (describe()).
+  const fn = PAGE.slice(PAGE.indexOf('function renderSponsor'), PAGE.indexOf('function spAutoEmails'));
+  const branch = code(fn.slice(fn.indexOf('if (sp.markerUnavailable) {'), fn.indexOf('} else if (sp.lastError) {')));
+  assert.ok(branch.length > 50, 'the OneDrive-unavailable branch is where it was');
+  assert.doesNotMatch(branch, /Resend/, 'nothing can say the sponsor was emailed when the marker could not be read');
+  assert.match(branch, /btnLabel = 'Send sponsor link'; btnOff = true;/);
+  const S = require('../src/services/sponsorOnboardingService');
+  const deg = S.describeFromInputs({ claimants: [{ id: '1', inviterName: 'Faheem Khan', inviterEmail: 'faheem@example.com', retainerSigned: '2026-09-01', retainerPaid: '2026-09-02' }], markerUnavailable: true, caseType: 'SOWP', caseSubType: 'Outland (Spouse or Child)', caseStage: 'Document Collection Started', paymentStatus: 'Paid', composition: { members: [] }, qMembers: [] });
+  assert.equal(deg.markerUnavailable, true); assert.equal(deg.emailedAt, null, 'no marker read, no emailedAt');
+  // The route also accepts no typed name: the actor is the sign-in or the shared-key placeholder, never a body field.
+  const body = code(routeWindow(SERVER, ROUTE));
+  assert.doesNotMatch(body, /staffName/);
+});
+
+test('the four automatic callers pass a trigger the service can gate and log by; the retry re-enters with "-retry"', () => {
+  assert.match(code(SERVICE), /const ONE_SHOT_TRIGGERS\s+= new Set\(\['dcs', 'retainer-paid', 'resume'\]\);/);
+  assert.match(code(SERVICE), /trigger: `\$\{trigger\}-retry`/);
+  assert.match(code(SERVICE), /const gates = gatesFor\(\{ mode, cm, claimants, today, trigger \}\);/, 'the trigger reaches the gate');
+  assert.match(code(SERVICE), /if \(trigger === 'sub-type'\) \{/);
+  assert.match(code(SERVICE), /scheduleRetry:\s+\(fn, ms\) => \{ const t = setTimeout\(fn, ms\); if \(t && t\.unref\) t\.unref\(\); \}/, 'the retry timer never holds the process open');
 });

@@ -244,21 +244,23 @@ async function sendMilestoneEtransferRequest(leadId, index) {
   } finally { _reqInFlight.delete(key); }
 }
 
+// A staff click waits this long behind another holder of the lead (the shared
+// budget from leadMutex), then says so — recording nothing.
+const MARK_LOCK_WAIT_MS = require('./leadMutex').LEAD_LOCK_WAIT_MS;
+
 /**
  * Manually reconcile milestone `index` as paid by e-transfer (the "Mark paid"
  * button) — records the reference + date. Idempotent. When it's the FIRST
  * milestone, this IS the retainer payment, so it also flips the client into
  * onboarding (Client Master → Paid / Phase 1), the same as the old Square path.
  */
-const MARK_LOCK_WAIT_MS = 20000;
 async function markMilestonePaid(leadId, index, opts = {}) {
   // Under the lead's lock — the one "Undo mark paid" and the e-signature capture
   // hold — so a mark and an undo on the same lead can never interleave into
-  // "the milestone reads unpaid but Retainer Paid is still stamped". A staff click
-  // waits at most 20 s behind a hung capture, then says so — recording nothing.
+  // "the milestone reads unpaid but Retainer Paid is still stamped".
   const r = await require('./leadMutex').withLeadLockOrSkip(leadId, MARK_LOCK_WAIT_MS, () => _markMilestonePaid(leadId, index, opts));
   if (r && r.busy === true && Object.keys(r).length === 1) {
-    const e = new Error('This client’s record is busy (a signature is being processed). Nothing was recorded — try again in a minute.');
+    const e = new Error('Another change to this client’s record is in progress (a signature, a payment or the status sync). Nothing was recorded — try again in a minute.');
     e.badRequest = true; e.code = 'BUSY'; throw e;
   }
   return r;

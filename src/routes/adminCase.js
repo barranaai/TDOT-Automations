@@ -516,14 +516,8 @@ function docAction(btn) {
 // everything (who the sponsor is, the gates, the once-per-case marker); this
 // only shows the state it reports and asks before sending.
 var SP_LAST_SEND = 0;   // ms of the last successful send from this page — the button rests for 60 s
-// Office time (Toronto) with the zone shown — the same rule as the payment
-// tooltips, so a viewer abroad never reads a different day.
-function spWhen(iso) {
-  var t = new Date(iso);
-  if (isNaN(t.getTime())) return String(iso || '');
-  try { return t.toLocaleString('en-CA', { timeZone: 'America/Toronto', timeZoneName: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
-  catch (e) { return t.toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; }
-}
+// "Emailed …" is printed by payWhen (PAYMENT_UI_JS, embedded above): office
+// time (Toronto) with the zone shown, the same rule as the payment tooltips.
 function renderSponsor(sp, cmUnavailable) {
   var card = document.getElementById('sp-card'), body = document.getElementById('sp-body');
   if (!sp || sp.available === false || sp.reason === 'not-applicable') { card.style.display = 'none'; return; }
@@ -548,13 +542,14 @@ function renderSponsor(sp, cmUnavailable) {
     var replacedLine = (sp.replacedFrom && !sp.emailedAt) ? '<div class="sp-line sp-dim">The earlier sponsor email went to ' + escHtml(sp.replacedFrom) + ' — ' + escHtml(sp.name) + ' has not been emailed.</div>' : '';
     var pill, btnLabel = '', btnMode = 'send', btnOff = resting;
     if (sp.markerUnavailable) {
+      // No marker could be read, so nothing says an email went out: never "Resend" here.
       pill = '<span class="pill amber">Can’t check whether the sponsor was emailed (OneDrive unavailable) — try again in a few minutes</span>';
-      btnLabel = sp.emailedAt ? 'Resend sponsor link' : 'Send sponsor link'; btnOff = true;
+      btnLabel = 'Send sponsor link'; btnOff = true;
     } else if (sp.lastError) {
       pill = '<span class="pill red">Last attempt failed — ' + escHtml(String(sp.lastError).slice(0, 80)) + '</span>';
       btnLabel = sp.emailedAt ? 'Resend sponsor link' : 'Send sponsor link';
     } else if (sp.emailedAt) {
-      pill = '<span class="pill green">Emailed ' + escHtml(spWhen(sp.emailedAt)) + (sp.sentCount > 1 ? ' · sent ' + sp.sentCount + '×' : '') + '</span>';
+      pill = '<span class="pill green">Emailed ' + escHtml(payWhen(sp.emailedAt)) + (sp.sentCount > 1 ? ' · sent ' + sp.sentCount + '×' : '') + '</span>';
       btnLabel = 'Resend sponsor link';
     } else if (sp.sendBlockedReason === 'in-progress') {
       pill = '<span class="pill blue">Being sent right now — reload in a moment</span>'; btnOff = true;

@@ -642,7 +642,7 @@ const PAYMENT_UI_JS = `
     }
     var b = p.before || {};
     var rec = p.mode === 'milestone'
-      ? '<div>' + payEsc(p.label) + '</div><div class="paym-amt">' + payEsc('$' + (Number(p.totalCents||0)/100).toFixed(2)) + ' <span class="paym-muted">scheduled amount</span></div>' +
+      ? '<div>' + payEsc(p.label) + '</div><div class="paym-amt">' + payEsc('$' + (Number(p.totalCents||0)/100).toFixed(2)) + ' <span class="paym-muted">scheduled amount, incl. HST</span></div>' +
         '<div class="paym-muted">Recorded as paid ' + payEsc(b.paidAt || '') + (b.method ? ' by ' + payEsc(b.method) : '') + (b.reference ? ' · ref ' + payEsc(b.reference) : '') + (b.marked && b.marked.by ? ' · by ' + payEsc(b.marked.by) + payTyped(b.marked) : '') + '</div>'
       : '<div>' + payEsc(p.label) + '</div><div class="paym-muted">Retainer Paid date on the client: ' + payEsc(p.expect.retainerPaid) + '</div>';
     d.box.innerHTML = head +

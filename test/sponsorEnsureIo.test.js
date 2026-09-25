@@ -80,7 +80,10 @@ function withFakeIo(fn, { cm = CM(), claimants = [LEAD()], members = [], manifes
     updateLead:      async (...args) => { log('updateLead', ...args); store.leadWrites.push(args); if (hooks.updateLeadThrows) throw new Error('monday down'); Object.assign(store.claimants[0], args[1]); },
     ensureAccessToken: async (id) => { log('ensureAccessToken', id); if (hooks.noToken) throw new Error('monday down'); return 'TDOT-new'; },
     now:             () => (t += 1000),
+    scheduleRetry:   (fn, ms) => { log('scheduleRetry', ms); store.retry = fn; },   // the test fires it by hand
   });
+  S._retried.clear();
+  S._noted.clear();
   const names = () => calls.map((c) => c[0]);
   return Promise.resolve(fn({ store, calls, names })).finally(() => {
     Object.assign(S.io, real);
@@ -89,8 +92,11 @@ function withFakeIo(fn, { cm = CM(), claimants = [LEAD()], members = [], manifes
 }
 
 const onboard = (over = {}) => S.ensureSponsor({ itemId: '4001', mode: 'onboard', trigger: 'dcs', ...over });
-const staff   = (over = {}) => S.ensureSponsor({ itemId: '4001', caseRef: '2026-SOWP-017', mode: 'staff', actor: { name: 'Gauri', email: 'gauri@example.com' }, trigger: 'staff', ...over });
+const staff   = (over = {}) => S.ensureSponsor({ itemId: '4001', caseRef: '2026-SOWP-017', mode: 'staff', actor: { name: 'Gauri', email: 'gauri@example.com', verified: true }, trigger: 'staff', ...over });
 const WRITES  = ['createFamilyRow', 'addMember', 'writeMarker', 'sendEmail', 'postNote', 'updateLead'];
+// The writes that change the CASE (a staff note is a message, not data): a pass
+// that could not send on a one-shot trigger still posts a note saying so.
+const DATA_WRITES = ['createFamilyRow', 'addMember', 'writeMarker', 'sendEmail', 'updateLead'];
 
 /** Everything a pass leaves behind that is not the email itself. */
 const LEAK = /faheem@example\.com|rahim@example\.com|TDOT-abc|TDOT-new/;
@@ -165,14 +171,63 @@ test('two concurrent calls (DCS webhook + sub-type webhook): exactly one send', 
 
 // ─── Failures ─────────────────────────────────────────────────────────────────
 
-test('the send throws: the marker reads failed, no note, and the error is rethrown', () => withFakeIo(async ({ store, names }) => {
+test('the send throws at DCS: the marker reads failed, the error is rethrown — and staff are told on the case, ONE retry is scheduled, and the retry sends exactly once', () => withFakeIo(async ({ store, names, calls }) => {
   await assert.rejects(onboard(), /Graph 503/);
   assert.equal(store.marker.status, 'failed');
   assert.match(store.marker.error, /Graph 503/);
   assert.ok(store.marker.failedAt);
-  assert.ok(!names().includes('postNote'));
   assert.ok(!JSON.stringify(store.marker).includes('faheem@example.com'), 'the failed marker never carries the raw address either');
+  // the outcome is visible: a note on the case, and a retry through the seam
+  const notes = calls.filter((c) => c[0] === 'postNote');
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0][1], '4001');
+  assert.equal(notes[0][2], '🤝 Sponsor portal email could not be sent just now (Graph 503). One more attempt follows in about 90 seconds; if the Sponsor / inviter card still shows "Last attempt failed" after that, send it from the case page (Send sponsor link).');
+  assert.doesNotMatch(notes[0][2], /faheem@example\.com|TDOT-abc/, 'no address, no token in the note');
+  assert.deepEqual(calls.filter((c) => c[0] === 'scheduleRetry').map((c) => c[1]), [90 * 1000]);
+  // Graph is back: the retry sends once (a failed marker is not a lock), as an onboarding email, recorded as auto:dcs-retry
+  S.io.sendEmail = async (msg) => { calls.push(['sendEmail', msg.to, msg.subject, msg.html]); };
+  const before = calls.length;
+  await store.retry();
+  assert.equal(calls.slice(before).filter((c) => c[0] === 'sendEmail').length, 1);
+  assert.equal(store.marker.status, 'sent');
+  assert.equal(store.marker.sends[0].by, 'auto:dcs-retry');
+  assert.equal(store.marker.sends[0].variant, 'onboarding');
+  assert.ok(!names().slice(before).includes('scheduleRetry'), 'a retry never schedules another');
+  // the staff button's failure is unchanged: rethrown, no note, no retry (the route answers 502 and the card shows "Last attempt failed")
+  await withFakeIo(async ({ names: n2 }) => {
+    await assert.rejects(staff(), /Graph 503/);
+    assert.ok(!n2().includes('postNote') && !n2().includes('scheduleRetry'));
+  }, { sendThrows: true });
+  // a send that fails on the RETRY itself, or on the sub-type trigger, logs only
+  await withFakeIo(async ({ names: n3 }) => {
+    await assert.rejects(onboard({ trigger: 'dcs-retry' }), /Graph 503/);
+    await assert.rejects(onboard({ trigger: 'sub-type' }), /Graph 503/);
+    assert.ok(!n3().includes('postNote') && !n3().includes('scheduleRetry'));
+  }, { sendThrows: true });
 }, { sendThrows: true }));
+
+test('a one-shot "not sent" note is posted ONCE per case within ten minutes — a re-drag or a duplicate delivery repeats the log line, not the note', () => withFakeIo(async ({ calls, names }) => {
+  assert.equal((await onboard()).reason, 'no-inviter');
+  assert.equal((await onboard()).reason, 'no-inviter');                              // Monday redelivered the event
+  assert.equal((await onboard({ trigger: 'retainer-paid' })).reason, 'no-inviter');   // another one-shot trigger, same case
+  assert.equal(calls.filter((c) => c[0] === 'postNote').length, 1, 'one note');
+  assert.equal(calls.filter((c) => c[0] === 'readCase').length, 3, 'every pass still ran');
+  // after the window the note may go again (the time is the seam's: age the memory by hand)
+  for (const [k, t] of S._noted) S._noted.set(k, t - S.NOTE_ONCE_MS - 1);
+  assert.equal((await onboard()).reason, 'no-inviter');
+  assert.equal(calls.filter((c) => c[0] === 'postNote').length, 2);
+  // a DIFFERENT note on the same case is not held back by it
+  await withFakeIo(async ({ calls: c2, store: s2 }) => {
+    assert.equal((await onboard()).reason, 'no-inviter');
+    s2.claimants.push(LEAD({ id: '9002' }));
+    assert.equal((await onboard({ trigger: 'retainer-paid' })).reason, 'shared-case', 'the duplicate appeared meanwhile');
+    const posted = c2.filter((c) => c[0] === 'postNote').map((c) => c[2]);
+    assert.equal(posted.length, 2);
+    assert.match(posted[0], /no sponsor \/ inviter email is on the client record/);
+    assert.match(posted[1], /this case is linked to 2 client records/);
+  }, { claimants: [LEAD({ inviterEmail: '' })] });
+  assert.ok(names().length);
+}, { claimants: [LEAD({ inviterEmail: '' })] }));
 
 test('after a failed send the next pass sends (the failed marker is not a lock)', () => withFakeIo(async ({ store, names }) => {
   const r = await onboard();
@@ -183,10 +238,15 @@ test('after a failed send the next pass sends (the failed marker is not a lock)'
 }, { marker: { version: 1, status: 'failed', error: 'Graph 503', startedAt: '2026-09-24T13:00:00Z', failedAt: '2026-09-24T13:00:01Z', sendCount: 0, sends: [] } }));
 
 for (const [label, hooks] of [['the marker', { markerThrows: true }], ['the family board', { compositionThrows: true }], ['the manifest', { manifestThrows: true }], ['the leads', { claimantsThrow: true }], ['the case', { caseThrows: true }]]) {
-  test(`${label} cannot be read → transient: nothing written, nothing sent`, () => withFakeIo(async ({ names }) => {
+  test(`${label} cannot be read → transient: nothing written, nothing sent — staff are told on the case and ONE retry is scheduled`, () => withFakeIo(async ({ names, calls }) => {
     const r = await onboard();
     assert.equal(r.done, false); assert.equal(r.reason, 'transient');
-    assert.deepEqual(names().filter((n) => ['addMember', 'writeMarker', 'sendEmail', 'postNote', 'updateLead'].includes(n)), []);
+    assert.deepEqual(names().filter((n) => ['addMember', 'writeMarker', 'sendEmail', 'updateLead'].includes(n)), []);
+    const note = calls.find((c) => c[0] === 'postNote');
+    assert.ok(note, 'a note on the case');
+    assert.equal(note[1], '4001');
+    assert.match(note[2], /Sponsor portal email not sent automatically — the case could not be read or updated just now \((monday|graph) down\)\. One more attempt follows in about 90 seconds; if the Sponsor \/ inviter card still shows no email after that, send it from the case page \(Send sponsor link\)\./);
+    assert.deepEqual(calls.filter((c) => c[0] === 'scheduleRetry').map((c) => c[1]), [90 * 1000]);
   }, hooks));
 }
 
@@ -229,21 +289,28 @@ test('a missing token is minted through accessTokenService and used in the link'
 
 // ─── Identity + gates ─────────────────────────────────────────────────────────
 
-test('2 claimants (a shared case) → nothing created, nothing sent', () => withFakeIo(async ({ names }) => {
+test('2 claimants (a shared case) → nothing created, nothing sent; at DCS a note tells staff what to fix', () => withFakeIo(async ({ names, calls }) => {
   const r = await onboard();
   assert.equal(r.done, false); assert.equal(r.reason, 'shared-case'); assert.equal(r.claimantCount, 2);
-  assert.deepEqual(names().filter((n) => WRITES.includes(n)), []);
+  assert.deepEqual(names().filter((n) => DATA_WRITES.includes(n)), []);
+  const note = calls.find((c) => c[0] === 'postNote');
+  assert.match(note[2], /Sponsor portal email not sent automatically — this case is linked to 2 client records, so the sponsor can’t be identified safely\. Fix the duplicate on the Consultations page, then send it from the case page \(Send sponsor link\)\./);
+  assert.ok(!names().includes('scheduleRetry'), 'no retry: a duplicate does not fix itself');
 }, { claimants: [LEAD(), LEAD({ id: '9002' })] }));
 
-test('no lead / no inviter / no case ref → nothing', () => withFakeIo(async ({ names }) => {
+test('no lead / no inviter / no case ref → nothing; only the missing inviter gets a note (the others the case page explains)', () => withFakeIo(async ({ names, calls }) => {
   assert.equal((await onboard()).reason, 'no-lead');
+  assert.ok(!names().includes('postNote'), 'no lead: nowhere to store a sponsor, nothing to ask of staff');
   S.io.findClaimants = async () => [LEAD({ inviterEmail: '' })];
   assert.equal((await onboard()).reason, 'no-inviter');
+  const note = calls.find((c) => c[0] === 'postNote');
+  assert.equal(note[2], '🤝 Sponsor portal email not sent automatically — no sponsor / inviter email is on the client record. Add it on the case page (Sponsor / inviter card) and press Send sponsor link.');
   S.io.readCase = async () => CM({ caseRef: '' });
   assert.equal((await onboard()).reason, 'no-case-ref');
   S.io.readCase = async () => null;
   assert.equal((await onboard()).reason, 'no-case');
-  assert.deepEqual(names().filter((n) => WRITES.includes(n)), []);
+  assert.deepEqual(names().filter((n) => DATA_WRITES.includes(n)), []);
+  assert.equal(names().filter((n) => n === 'postNote').length, 1, 'one note, for the missing inviter only');
 }, { claimants: [] }));
 
 test('switch OFF: the automatic path does nothing at all; the staff button ignores the switch', () => withFakeIo(async ({ names }) => {
@@ -871,6 +938,7 @@ test('io.createIntakeRows is the real createFamilyRowsForItem: idempotent on a b
     return { create_update: { id: '6' } };
   };
   leadService.findByColumnValue = async () => ({ id: '9001', hasSpouse: 'Yes', childrenCount: '2' });
+  fam._createdRecently.clear();   // an earlier test created rows for this case ref in this process
   try {
     const [a, b] = await Promise.all([
       S.io.createIntakeRows({ itemId: '4001', caseRef: '2026-SOWP-017' }),
@@ -1058,7 +1126,7 @@ test('the "added" and "sent" notes escape the sponsor name, the section label an
   assert.ok(!/<b>|<script>/.test(added), `raw markup in the note: ${added}`);
   assert.match(added, /Sponsor &lt;b&gt;Faheem&lt;\/b&gt; &lt;script&gt;Khan added to the case by the system — questionnaire section "&lt;b&gt;Faheem&lt;\/b&gt; &lt;script&gt;Khan" created\./);
 
-  const r = await staff({ actor: { name: '<i>Gauri</i>', email: 'gauri@example.com' } });
+  const r = await staff({ actor: { name: '<i>Gauri</i>', email: 'gauri@example.com', verified: true } });
   assert.equal(r.sent, true, JSON.stringify(r));
   const sent = calls.filter((c) => c[0] === 'postNote').pop()[2];
   assert.ok(!/<i>|<b>|<script>/.test(sent), `raw markup in the note: ${sent}`);
@@ -1066,7 +1134,7 @@ test('the "added" and "sent" notes escape the sponsor name, the section label an
 }, { claimants: [LEAD({ inviterName: '<b>Faheem</b> <script>Khan' })] }));
 
 test('the "entered from the case page" note escapes the typed inviter name and the actor name', () => withFakeIo(async ({ calls }) => {
-  const r = await staff({ actor: { name: '<i>Gauri</i>', email: 'gauri@example.com' }, override: { name: '<u>Rahim</u> Ali', email: 'rahim@example.com' } });
+  const r = await staff({ actor: { name: '<i>Gauri</i>', email: 'gauri@example.com', verified: true }, override: { name: '<u>Rahim</u> Ali', email: 'rahim@example.com' } });
   assert.equal(r.sent, true, JSON.stringify(r));
   const entered = calls.find((c) => c[0] === 'postNote')[2];
   assert.ok(!/<u>|<i>/.test(entered), `raw markup in the note: ${entered}`);
@@ -1075,3 +1143,388 @@ test('the "entered from the case page" note escapes the typed inviter name and t
   assert.match(sent, /sent by &lt;i&gt;Gauri&lt;\/i&gt;/);
   assert.match(sent, /Questionnaire section "&lt;u&gt;Rahim&lt;\/u&gt; Ali" created\./);
 }, { claimants: [LEAD({ inviterName: '', inviterEmail: '' })], manifest: PRIMARY() }));
+
+// ─── Ship review (2026-09-25): the automatic path is live ────────────────────
+
+// (1) The Sub Type webhook lands on ANY case, months in. Its gate mirrors the
+// checklist resume beside it: the EXPLICIT 'No' the payment flow writes, at
+// Document Collection Started exactly. The payment-flow triggers keep theirs.
+test("sub-type trigger on a legacy case (applied blank, stage 'Submission Preparation'): nothing created, nothing sent — the checklist resume beside it does nothing either", () => withFakeIo(async ({ names, store }) => {
+  const r = await onboard({ trigger: 'sub-type' });
+  assert.equal(r.done, true); assert.equal(r.sent, false); assert.equal(r.reason, 'stage-not-dcs');
+  assert.deepEqual(names().filter((n) => WRITES.includes(n)), [], 'no row, no section, no marker, no email, no note');
+  assert.equal(store.marker, null);
+  assert.deepEqual(store.composition.members, []);
+}, { cm: CM({ checklistTemplateApplied: '', caseStage: 'Submission Preparation' }) }));
+
+test("sub-type trigger: applied blank at DCS → not-payment-flow; applied 'No' at DCS → sends; the dcs / retainer-paid / resume triggers still send at 'Internal Review' with applied blank", async () => {
+  await withFakeIo(async ({ names }) => {
+    const r = await onboard({ trigger: 'sub-type' });
+    assert.equal(r.sent, false); assert.equal(r.reason, 'not-payment-flow');
+    assert.deepEqual(names().filter((n) => WRITES.includes(n)), []);
+  }, { cm: CM({ checklistTemplateApplied: '' }) });
+  await withFakeIo(async () => {
+    const r = await onboard({ trigger: 'sub-type' });
+    assert.equal(r.sent, true, JSON.stringify(r));
+  }, { cm: CM({ checklistTemplateApplied: 'No' }) });
+  for (const trigger of ['dcs', 'retainer-paid', 'resume']) {
+    await withFakeIo(async () => {
+      const r = await onboard({ trigger });
+      assert.equal(r.sent, true, `${trigger}: ${JSON.stringify(r)}`);
+    }, { cm: CM({ checklistTemplateApplied: '', caseStage: 'Internal Review' }) });
+  }
+  // The pure gate, once per rule.
+  const cm = CM({ checklistTemplateApplied: 'No' });
+  const lead = LEAD();
+  assert.equal(S.gatesFor({ mode: 'onboard', cm, claimants: [lead], today: '2026-09-24', trigger: 'sub-type' }).ok, true);
+  assert.equal(S.gatesFor({ mode: 'onboard', cm: { ...cm, caseStage: 'Internal Review' }, claimants: [lead], today: '2026-09-24', trigger: 'sub-type' }).reason, 'stage-not-dcs');
+  assert.equal(S.gatesFor({ mode: 'onboard', cm: { ...cm, checklistTemplateApplied: '' }, claimants: [lead], today: '2026-09-24', trigger: 'sub-type' }).reason, 'not-payment-flow');
+  assert.equal(S.gatesFor({ mode: 'onboard', cm: { ...cm, checklistTemplateApplied: 'Yes' }, claimants: [lead], today: '2026-09-24', trigger: 'sub-type' }).reason, 'already-onboarded', "'Yes' keeps its permanent reason");
+  assert.equal(S.gatesFor({ mode: 'onboard', cm: { ...cm, checklistTemplateApplied: '', caseStage: 'Internal Review' }, claimants: [lead], today: '2026-09-24', trigger: 'dcs' }).ok, true);
+  assert.equal(S.gatesFor({ mode: 'onboard', cm: { ...cm, checklistTemplateApplied: '', caseStage: 'Internal Review' }, claimants: [lead], today: '2026-09-24' }).ok, true, 'no trigger: the payment-flow rule');
+  assert.equal(S.gatesFor({ mode: 'staff', cm: { ...cm, checklistTemplateApplied: '', caseStage: 'Internal Review' }, claimants: [lead], today: '2026-09-24', trigger: 'sub-type' }).ok, true, 'staff mode is never gated by the trigger');
+});
+
+// (2) Nothing the automatic path could not send is invisible any more.
+function captureLog(fn) {
+  const lines = [];
+  const real = console.log;
+  console.log = (...a) => { lines.push(a.join(' ')); };
+  return Promise.resolve().then(fn).finally(() => { console.log = real; }).then(() => lines);
+}
+
+test('every non-sent automatic pass logs ONE line — except the switch off, a case type with no sponsor, and a link the sponsor already holds', async () => {
+  const notSent = /^\[Sponsor\] 2026-SOWP-017: not sent via /;
+  const caseLog = async (opts, over = {}) => withFakeIo(({ store }) => captureLog(() => onboard(over)).then((lines) => ({ lines: lines.filter((l) => /^\[Sponsor\]/.test(l)), store })), opts);
+  let { lines } = await caseLog({ cm: CM({ paymentStatus: 'Not Paid' }) }, { trigger: 'sub-type' });
+  assert.deepEqual(lines, ['[Sponsor] 2026-SOWP-017: not sent via sub-type (not-started)']);
+  ({ lines } = await caseLog({ claimants: [LEAD({ inviterEmail: '' })] }));
+  assert.deepEqual(lines, ['[Sponsor] 2026-SOWP-017: not sent via dcs (no-inviter)']);
+  ({ lines } = await caseLog({ claimants: [LEAD(), LEAD({ id: '9002' })] }, { trigger: 'retainer-paid' }));
+  assert.deepEqual(lines, ['[Sponsor] 2026-SOWP-017: not sent via retainer-paid (shared-case)']);
+  ({ lines } = await caseLog({ markerThrows: true }, { trigger: 'resume' }));
+  assert.deepEqual(lines, ['[Sponsor] 2026-SOWP-017: not sent via resume (transient)']);
+  ({ lines } = await caseLog({ caseThrows: true }));
+  assert.deepEqual(lines, ['[Sponsor] 4001: not sent via dcs (transient)'], 'before the case is read, the item id names it');
+  ({ lines } = await caseLog({ claimants: [LEAD({ inviterEmail: 'Aisha@Example.com' })] }));
+  assert.deepEqual(lines, ['[Sponsor] 2026-SOWP-017: not sent via dcs (same-as-client)']);
+  ({ lines } = await caseLog({ cm: CM({ accessToken: '' }), noToken: true }));
+  assert.ok(lines.some((l) => notSent.test(l) && /\(no-token\)/.test(l)), lines.join('|'));
+  ({ lines } = await caseLog({ marker: { version: 1, status: 'pending', startedAt: new Date(Date.parse('2026-09-24T15:00:00Z') - 2 * 60 * 1000).toISOString(), sendCount: 0, sends: [] } }));
+  assert.deepEqual(lines, ['[Sponsor] 2026-SOWP-017: not sent via dcs (in-progress)']);
+  // quiet: the switch, the case type, the link already held
+  ({ lines } = await caseLog({ env: null }));
+  assert.deepEqual(lines, []);
+  ({ lines } = await caseLog({ cm: CM({ caseType: 'Canadian Experience Class (EE after ITA)', caseSubType: 'CEC Single Applicant' }) }));
+  assert.deepEqual(lines, []);
+  ({ lines } = await caseLog({ marker: { version: 1, status: 'sent', sentAt: '2026-09-20T10:00:00Z', startedAt: '2026-09-20T09:59:59Z', sendCount: 1, sends: [], sponsor: { name: 'Faheem Khan', emailMasked: 'f***@example.com', emailKey: S.emailKeyOf('faheem@example.com') } }, members: [{ role: 'Sponsor', name: 'Faheem Khan', memberKey: 'sponsor', flags: {} }] }, { trigger: 'sub-type' }));
+  assert.deepEqual(lines.filter((l) => notSent.test(l)), [], 'already-sent is quiet');
+  // a send logs the send, not a "not sent"
+  ({ lines } = await caseLog({}));
+  assert.ok(!lines.some((l) => notSent.test(l)) && lines.some((l) => /Onboarding email sent/.test(l)));
+  // 'prepare' and 'staff' never log a "not sent" line
+  await withFakeIo(async () => {
+    const lines = await captureLog(async () => { await S.ensureSponsor({ itemId: '4001', mode: 'prepare', trigger: 'case-ref' }); await staff(); });
+    assert.deepEqual(lines.filter((l) => notSent.test(l)), []);
+  }, { cm: CM({ paymentStatus: 'Not Paid', caseStage: 'Retainer Signed' }) });
+});
+
+test('a read failure at DCS: the note says so, ONE retry is scheduled (90 s, through the seam) and, when the case reads again, the retry sends — recorded as auto:dcs-retry', () => withFakeIo(async ({ store, calls, names }) => {
+  const r = await onboard();
+  assert.equal(r.reason, 'transient');
+  assert.equal(calls.filter((c) => c[0] === 'scheduleRetry').length, 1);
+  assert.equal(typeof store.retry, 'function');
+  const note = calls.find((c) => c[0] === 'postNote')[2];
+  assert.match(note, /One more attempt follows in about 90 seconds/);
+  // a second transient pass on the SAME case (another one-shot trigger) schedules no second retry, and its note says so
+  const again = await onboard({ trigger: 'retainer-paid' });
+  assert.equal(again.reason, 'transient');
+  assert.equal(calls.filter((c) => c[0] === 'scheduleRetry').length, 1, 'one retry per case per process');
+  const note2 = calls.filter((c) => c[0] === 'postNote').pop()[2];
+  assert.match(note2, /not sent automatically — the case could not be read or updated just now \(graph down\)\. Please send it from the case page \(Send sponsor link\)\./);
+  assert.doesNotMatch(note2, /One more attempt/);
+  // the marker read recovers; the retry fires
+  S.io.readMarker = async () => null;
+  const before = calls.length;
+  await store.retry();
+  const sent = calls.slice(before).find((c) => c[0] === 'sendEmail');
+  assert.ok(sent, 'the retry sent the email');
+  assert.equal(store.marker.status, 'sent');
+  assert.equal(store.marker.sends[0].by, 'auto:dcs-retry');
+  assert.ok(!names().slice(before).includes('scheduleRetry'), 'a retry never schedules another');
+}, { markerThrows: true }));
+
+test('a retry that fails again logs only (no second note, no second retry); the sub-type trigger and the automatic no-lead case post no note', async () => {
+  await withFakeIo(async ({ calls, names }) => {
+    const lines = await captureLog(() => onboard({ trigger: 'dcs-retry' }));
+    assert.deepEqual(lines.filter((l) => /^\[Sponsor\]/.test(l)), ['[Sponsor] 2026-SOWP-017: not sent via dcs-retry (transient)']);
+    assert.ok(!names().includes('postNote') && !names().includes('scheduleRetry'), JSON.stringify(calls.map((c) => c[0])));
+  }, { markerThrows: true });
+  await withFakeIo(async ({ names }) => {
+    const r = await onboard({ trigger: 'sub-type' });
+    assert.equal(r.reason, 'transient');
+    assert.ok(!names().includes('postNote') && !names().includes('scheduleRetry'), 'a Sub Type edit is not a one-shot trigger: staff just edited the case and can see the card');
+  }, { compositionThrows: true });
+  await withFakeIo(async ({ names }) => {
+    const r = await onboard({ trigger: 'sub-type' });
+    assert.equal(r.reason, 'no-inviter');
+    assert.ok(!names().includes('postNote'));
+  }, { claimants: [LEAD({ inviterEmail: '' })] });
+});
+
+test('the "not sent" note reaches the case even when the failure was the case read itself (the item id is known), and a note failure never changes the answer', () => withFakeIo(async ({ calls }) => {
+  const r = await onboard();
+  assert.equal(r.reason, 'transient');
+  const note = calls.find((c) => c[0] === 'postNote');
+  assert.equal(note[1], '4001');
+  assert.match(note[2], /could not be read or updated just now \(monday down\)/);
+  assert.equal(S.notSentNote({ reason: 'not-started' }), '', 'a closed gate is not a failure: no note');
+  assert.equal(S.notSentNote({ reason: 'transient', error: '<b>x</b>', retryScheduled: false }), '🤝 Sponsor portal email not sent automatically — the case could not be read or updated just now (&lt;b&gt;x&lt;/b&gt;). Please send it from the case page (Send sponsor link).');
+  for (const reason of ['no-inviter', 'shared-case', 'transient']) assert.doesNotMatch(S.notSentNote({ reason, claimantCount: 2, retryScheduled: true }), /\b(he|she|his|her)\b/i);
+}, { caseThrows: true, noteThrows: true }));
+
+// (3) A board search that lags the chain's create_item by seconds.
+test('stale board read (the lead says hasSpouse = Yes, the search shows nothing, the intake rows were created moments ago): NO Sponsor row — the intake Spouse row IS this person; the email names that section', () => withFakeIo(async ({ names, calls, store }) => {
+  const r = await onboard();
+  assert.equal(r.sent, true, JSON.stringify(r));
+  assert.deepEqual(r.created, { row: false, member: false });
+  assert.equal(r.sectionLabel, 'Spouse');
+  assert.ok(names().includes('createIntakeRows'), 'the intake rows are still asked for (createFromLead skips them itself when this process just wrote them)');
+  assert.ok(!names().includes('createFamilyRow'), 'never a second row for the spouse');
+  assert.deepEqual(store.composition.members, [], 'nothing written to the board by this pass');
+  assert.match(calls.find((c) => c[0] === 'sendEmail')[3], /section headed "<strong>Spouse<\/strong>" \(marked "Spouse"\)/);
+}, { claimants: [LEAD({ hasSpouse: 'Yes', childrenCount: '1' })] }));
+
+test('a CURATED board (rows present, no Spouse row) is trusted over the lead: the sponsor gets a row of their own, so the manifest never names a member the board lacks', async () => {
+  const child = { role: 'DependentChild', name: 'Child 1 (from intake)', memberKey: 'child-1', flags: {} };
+  const manifest = [...PRIMARY(), { key: 'child-1', type: 'Dependent Child', label: 'Child 1' }];
+  // staff removed the intake's Spouse row; the lead still says hasSpouse = Yes
+  await withFakeIo(async ({ names, store }) => {
+    const r = await onboard();
+    assert.equal(r.sent, true, JSON.stringify(r));
+    assert.deepEqual(r.created, { row: true, member: true });
+    assert.ok(names().includes('createFamilyRow'));
+    assert.deepEqual(store.composition.members.map((m) => m.role), ['DependentChild', 'Sponsor']);
+    assert.deepEqual(store.manifest.map((m) => m.type), ['Principal Applicant', 'Dependent Child', 'Sponsor'], 'board and manifest agree');
+  }, { members: [child], manifest, claimants: [LEAD({ hasSpouse: 'Yes' })] });
+  // 'prepare' on the same board: the row, no section (no manifest yet), never a member without a row
+  await withFakeIo(async ({ names }) => {
+    const p = await S.ensureSponsor({ itemId: '4001', mode: 'prepare', trigger: 'case-ref' });
+    assert.deepEqual(p.created, { row: true, member: false });
+    assert.ok(names().includes('createFamilyRow'));
+  }, { members: [child], claimants: [LEAD({ hasSpouse: 'Yes' })] });
+  // an EMPTY read is still the lag the lead fallback is for
+  await withFakeIo(async ({ names }) => {
+    const r = await onboard();
+    assert.deepEqual(r.created, { row: false, member: false });
+    assert.ok(!names().includes('createFamilyRow'));
+  }, { claimants: [LEAD({ hasSpouse: 'Yes' })] });
+});
+
+test("stale board read with the consultant's family list: the section carries the spouse's real name; a lead with no spouse still gets the Sponsor row; the staff button trusts the board it read", async () => {
+  const retainerFamilyMembers = JSON.stringify([{ type: 'Spouse', name: 'Faheem Khan', accompanying: 'Yes' }]);
+  await withFakeIo(async ({ names, calls }) => {
+    const r = await onboard();
+    assert.equal(r.sent, true); assert.equal(r.sectionLabel, 'Faheem Khan'); assert.deepEqual(r.created, { row: false, member: false });
+    assert.ok(!names().includes('createFamilyRow'));
+    assert.match(calls.find((c) => c[0] === 'sendEmail')[3], /section headed "<strong>Faheem Khan<\/strong>" \(marked "Spouse"\)/);
+  }, { claimants: [LEAD({ hasSpouse: 'No', retainerFamilyMembers })] });
+  await withFakeIo(async ({ names }) => {
+    const r = await onboard();
+    assert.equal(r.sent, true); assert.deepEqual(r.created, { row: true, member: false }, 'children only: the sponsor is a separate person');
+    assert.ok(names().includes('createFamilyRow'));
+  }, { claimants: [LEAD({ hasSpouse: 'No', childrenCount: '2' })] });
+  await withFakeIo(async ({ names }) => {
+    const p = await S.ensureSponsor({ itemId: '4001', mode: 'prepare', trigger: 'case-ref' });
+    assert.deepEqual(p.created, { row: false, member: false }, "'prepare' (the chain, right after the intake rows) asks the lead too");
+    assert.ok(!names().includes('createFamilyRow'));
+    const st = await staff();
+    assert.equal(st.sent, true); assert.deepEqual(st.created, { row: true, member: false }, 'the staff button reads a board nobody wrote to seconds before');
+  }, { claimants: [LEAD({ hasSpouse: 'Yes' })] });
+  // the pure planner
+  const sp = { sponsorIsSpouse: true };
+  assert.deepEqual(S.partnerFromLead(sp, { hasSpouse: 'Yes' }), { role: 'Spouse', name: 'Spouse (from intake)', memberKey: 'spouse', flags: {}, fromLead: true });
+  assert.equal(S.partnerFromLead(sp, { hasSpouse: 'No', childrenCount: '2' }), null);
+  assert.equal(S.partnerFromLead(sp, { hasSpouse: 'Yes', retainerFamilyMembers: JSON.stringify([]) }), null, "the consultant's list is authoritative even when empty");
+  assert.equal(S.partnerFromLead({ sponsorIsSpouse: false }, { hasSpouse: 'Yes' }), null, 'a child in Canada inviting parents: the Spouse row is the applicant\'s spouse');
+  assert.equal(S.partnerFromLead(sp, null), null);
+});
+
+test('createFromLead: rows this process created in the last ten minutes are never created again, whatever the board search says (a lagging read)', async () => {
+  const fam = require('../src/services/familyCompositionService');
+  const compositionAdapter = require('../src/services/compositionAdapter');
+  const mondayApi = require('../src/services/mondayApi');
+  const realRead = compositionAdapter.readForCase, realQuery = mondayApi.query;
+  let creates = 0, fail = false;
+  compositionAdapter.readForCase = async () => ({ caseFlags: {}, members: [] });   // the search never catches up
+  mondayApi.query = async (q, vars) => {
+    if (q.includes('create_item')) { creates++; if (fail && creates === 2) throw new Error('monday 500'); return { create_item: { id: String(creates) } }; }
+    return { create_update: { id: '6' } };
+  };
+  const lead = { hasSpouse: 'Yes', childrenCount: '2' };
+  const lines = [];
+  const realLog = console.log;
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    fam._createdRecently.clear();
+    assert.equal(await fam.createFromLead({ lead, caseRef: '2026-SOWP-900', cmItemId: '4900' }), 3);
+    assert.equal(await fam.createFromLead({ lead, caseRef: '2026-SOWP-900', cmItemId: '4900' }), 0, 'the second run creates nothing');
+    assert.equal(creates, 3);
+    assert.ok(lines.some((l) => /\[Family\] 2026-SOWP-900: rows were created by this process \d+ s ago — intake auto-create skipped/.test(l)), lines.join('|'));
+    assert.equal(await fam.createFamilyRowsForItem.length, 1);
+    // another case is not affected
+    assert.equal(await fam.createFromLead({ lead, caseRef: '2026-SOWP-901', cmItemId: '4901' }), 3);
+    // the SAME reference on a NEW case item (the newest case of a type was careful-deleted and
+    // re-created minutes later, so generateCaseRef reissued it): the new case's rows are created
+    assert.equal(await fam.createFromLead({ lead, caseRef: '2026-SOWP-900', cmItemId: '4950' }), 3, 'a reissued reference is a new case');
+    assert.equal(await fam.createFromLead({ lead, caseRef: '2026-SOWP-900', cmItemId: '4900' }), 0, 'the old item is still remembered');
+    assert.equal(fam.recentKey('4900', '2026-SOWP-900'), '4900:2026-SOWP-900');
+    // the memory expires
+    fam._createdRecently.set(fam.recentKey('4900', '2026-SOWP-900'), Date.now() - fam.RECENT_CREATE_WINDOW_MS - 1);
+    assert.equal(await fam.createFromLead({ lead, caseRef: '2026-SOWP-900', cmItemId: '4900' }), 3, 'after ten minutes the board search is trusted again');
+    // a set that failed half-way is remembered too: the row that landed must not be doubled
+    fam._createdRecently.clear(); creates = 0; fail = true;
+    await assert.rejects(fam.createFromLead({ lead, caseRef: '2026-SOWP-902', cmItemId: '4902' }), /monday 500/);
+    assert.equal(creates, 2);
+    assert.ok(fam._createdRecently.has(fam.recentKey('4902', '2026-SOWP-902')));
+    assert.equal(await fam.createFromLead({ lead, caseRef: '2026-SOWP-902', cmItemId: '4902' }), 0);
+  } finally { compositionAdapter.readForCase = realRead; mondayApi.query = realQuery; console.log = realLog; fam._createdRecently.clear(); }
+});
+
+test("the chain's 'prepare' right after it wrote the intake rows (boardJustWritten): no row, no section, no note — the DCS pass re-checks", () => withFakeIo(async ({ names, store }) => {
+  const p = await S.ensureSponsor({ itemId: '4001', caseRef: '2026-SOWP-017', mode: 'prepare', trigger: 'case-ref', boardJustWritten: true });
+  assert.equal(p.done, true); assert.equal(p.sent, false); assert.equal(p.reason, 'prepare');
+  assert.deepEqual(p.created, { row: false, member: false });
+  assert.deepEqual(names().filter((n) => WRITES.includes(n)), []);
+  assert.deepEqual(store.composition.members, []);
+  const again = await S.ensureSponsor({ itemId: '4001', caseRef: '2026-SOWP-017', mode: 'prepare', trigger: 'case-ref', boardJustWritten: false });
+  assert.deepEqual(again.created, { row: true, member: true }, 'without the flag the pass creates as before (a manifest is on file, so the section too)');
+  // the planner: the flag closes createRow and addMember, nothing else
+  const NOW = Date.parse('2026-09-24T15:00:00Z');
+  const sponsor = { status: 'ok', name: 'Faheem Khan', sectionMode: 'section', role: 'Sponsor', boardMemberType: 'Sponsor', memberKey: 'sponsor', manifestType: 'Sponsor', sponsorIsSpouse: true, emailMasked: 'f***@example.com' };
+  const withFlag = S.planEnsure({ sponsor, composition: { members: [] }, manifest: PRIMARY(), marker: null, mode: 'prepare', now: NOW, boardJustWritten: true });
+  assert.equal(withFlag.createRow, false); assert.equal(withFlag.addMember, false); assert.equal(withFlag.skipReason, 'prepare');
+  const without = S.planEnsure({ sponsor, composition: { members: [] }, manifest: PRIMARY(), marker: null, mode: 'prepare', now: NOW });
+  assert.equal(without.createRow, true); assert.equal(without.addMember, true);
+}, { manifest: PRIMARY(), cm: CM({ paymentStatus: 'Not Paid', caseStage: 'Retainer Signed' }) }));
+
+// (4) The card is hidden on case types no variant of which has a sponsor.
+test('describeFromInputs: a blank or mistyped Sub Type on CEC / OINP / Study Permit is not-applicable (the card stays hidden); "Set the Case Sub Type first" only for a type whose variants carry a sponsor', () => {
+  const base = { claimants: [LEAD()], clientEmail: 'aisha@example.com', caseStage: 'Document Collection Started', paymentStatus: 'Paid', composition: { members: [] }, qMembers: PRIMARY(), now: Date.parse('2026-09-24T15:00:00Z') };
+  for (const [caseType, caseSubType] of [
+    ['Canadian Experience Class (EE after ITA)', ''], ['Canadian Experience Class (EE after ITA)', 'Typo'],
+    ['OINP', ''], ['OINP', 'Human Capital Priorities Streem'],
+    ['Study Permit', ''], ['Study Permit', 'Nope'],
+    ['PGWP', ''], ['LMIA', ''], ['Notary', 'x'], ['', ''],
+  ]) {
+    const r = S.describeFromInputs({ ...base, caseType, caseSubType });
+    assert.equal(r.status, 'none', `${caseType}/${caseSubType}`);
+    assert.equal(r.reason, 'not-applicable', `${caseType}/${caseSubType}: ${r.reason}`);
+  }
+  assert.equal(S.describeFromInputs({ ...base, caseType: 'SOWP', caseSubType: '' }).reason, 'sub-type-missing');
+  assert.equal(S.describeFromInputs({ ...base, caseType: 'Supervisa', caseSubType: '' }).reason, 'sub-type-missing');
+  assert.equal(S.describeFromInputs({ ...base, caseType: 'SOWP', caseSubType: 'Nope' }).reason, 'no-schema');
+  assert.equal(S.describeFromInputs({ ...base, caseType: 'SCLPC WP', caseSubType: 'Nope' }).reason, 'no-schema', 'a sponsor type with one schema and a Sub Type that matches nothing');
+  assert.equal(S.describeFromInputs({ ...base, caseType: 'SCLPC WP', caseSubType: '' }).status, 'ok');
+  assert.equal(S.caseTypeHasSponsor('OINP'), false); assert.equal(S.caseTypeHasSponsor('sowp'), true); assert.equal(S.caseTypeHasSponsor(''), false);
+  assert.equal(S.caseTypeHasSubTypeVariants('SOWP'), true); assert.equal(S.caseTypeHasSubTypeVariants('SCLPC WP'), false); assert.equal(S.caseTypeHasSubTypeVariants('Nope'), false);
+});
+
+test('describe: CEC / OINP / Study Permit with the Sub Type blank read nothing and hide the card', () => withFakeIo(async ({ names }) => {
+  const args = { itemId: '4001', caseRef: '2026-OINP-001', clientName: 'Aisha Khan', clientEmail: 'aisha@example.com', caseStage: 'Document Collection Started', paymentStatus: 'Paid', composition: { members: [] }, qMembers: PRIMARY() };
+  for (const caseType of ['Canadian Experience Class (EE after ITA)', 'OINP', 'Study Permit']) {
+    const r = await S.describe({ ...args, caseType, caseSubType: '' });
+    assert.equal(r.reason, 'not-applicable', caseType);
+  }
+  assert.deepEqual(names(), []);
+  const onboardCec = await S.ensureSponsor({ itemId: '4001', mode: 'onboard', trigger: 'dcs' });
+  assert.equal(onboardCec.reason, 'not-applicable', 'the automatic path agrees');
+}, { cm: CM({ caseType: 'OINP', caseSubType: '' }) }));
+
+// (6) Who sent it, honestly: a typed name is marked as typed, as the payment notes do.
+test('staff notes: a Monday sign-in is named as is; an unverified name reads "(name as typed)"; the shared-key placeholder is printed without the mark', () => withFakeIo(async ({ calls, store }) => {
+  const typed = await staff({ actor: { name: 'Faran', email: '', verified: false }, createOnly: true });
+  assert.deepEqual(typed.created, { row: true, member: true });
+  const added = calls.filter((c) => c[0] === 'postNote').pop()[2];
+  assert.match(added, /Sponsor Faheem Khan added to the case by Faran \(name as typed\) — questionnaire section/);
+  const r = await staff({ actor: { name: 'Faran', email: '', verified: false } });
+  assert.equal(r.sent, true);
+  const sent = calls.filter((c) => c[0] === 'postNote').pop()[2];
+  assert.match(sent, /Sponsor portal email sent by Faran \(name as typed\) to f\*\*\*@example\.com/);
+  assert.equal(store.marker.sends[0].by, 'Faran');
+  const key = await staff({ actor: { name: 'Unidentified (shared admin key)', email: '', verified: false } });
+  assert.equal(key.sent, true);
+  const byKey = calls.filter((c) => c[0] === 'postNote').pop()[2];
+  assert.match(byKey, /re-sent by Unidentified \(shared admin key\) to f\*\*\*@example\.com/);
+  assert.doesNotMatch(byKey, /name as typed/);
+  const signedIn = await staff();
+  assert.match(calls.filter((c) => c[0] === 'postNote').pop()[2], /re-sent by Gauri to f\*\*\*@example\.com/);
+  assert.equal(signedIn.sent, true);
+  assert.equal(S.actorLabel({ name: '<b>X</b>', verified: false }), '&lt;b&gt;X&lt;/b&gt; (name as typed)');
+  assert.equal(S.actorLabel({ name: 'Gauri', verified: true }), 'Gauri');
+  assert.equal(S.actorLabel({ name: 'Gauri' }), 'Gauri (name as typed)', 'no verified flag = not verified');
+}, { manifest: PRIMARY() }));
+
+test('the "entered from the case page" note marks a typed actor too', () => withFakeIo(async ({ calls }) => {
+  const r = await staff({ actor: { name: 'Faran', email: '', verified: false }, override: { name: 'Rahim Ali', email: 'rahim@example.com' } });
+  assert.equal(r.sent, true);
+  assert.match(calls.find((c) => c[0] === 'postNote')[2], /entered from the case page by Faran \(name as typed\) — saved to the client record\./);
+}, { claimants: [LEAD({ inviterName: '', inviterEmail: '' })] }));
+
+// (8) A process that dies between 'pending' and 'sent'.
+test("the pending marker records that the send is next (attemptedAt); a 'sent' clears it", () => withFakeIo(async ({ calls, store }) => {
+  await onboard();
+  const pending = calls.find((c) => c[0] === 'writeMarker' && c[1] === 'pending')[2];
+  assert.ok(pending.attemptedAt, 'written before the send');
+  assert.equal(pending.attemptedAt, pending.startedAt);
+  assert.ok(calls.findIndex((c) => c[0] === 'writeMarker') < calls.findIndex((c) => c[0] === 'sendEmail'));
+  assert.equal(store.marker.status, 'sent');
+  assert.equal(store.marker.attemptedAt, undefined, 'a recorded send needs no "may have reached" mark');
+}));
+
+test("a stale 'pending' that got as far as its send: the next automatic pass sends the link AGAIN (variant resend, never a second Action Required) and the note says the earlier email may have arrived", () => withFakeIo(async ({ calls, store }) => {
+  const r = await onboard();
+  assert.equal(r.sent, true); assert.equal(r.variant, 'resend');
+  const email = calls.find((c) => c[0] === 'sendEmail');
+  assert.match(email[2], /^Your portal link for Aisha Khan's application — 2026-SOWP-017$/);
+  assert.doesNotMatch(email[2], /Action Required/);
+  const note = calls.find((c) => c[0] === 'postNote')[2];
+  assert.match(note, /Sponsor portal email re-sent automatically to f\*\*\*@example\.com \(Worker Spouse\) — .* \(Toronto\)\./);
+  assert.match(note, /An earlier send on 24 Sep 2026, \d{1,2}:\d{2} [ap]m \(Toronto\) was cut short before it could be recorded, so the sponsor may have received that email too — this one is the link again, not a second request\./);
+  assert.equal(store.marker.status, 'sent'); assert.equal(store.marker.sendCount, 1);
+  assert.deepEqual(store.marker.sends.map((x) => x.variant), ['resend']);
+  assert.equal(store.marker.attemptedAt, undefined);
+}, { marker: { version: 1, status: 'pending', startedAt: '2026-09-24T14:40:00Z', attemptedAt: '2026-09-24T14:40:00Z', sendCount: 0, sends: [], sponsor: { name: 'Faheem Khan', emailMasked: 'f***@example.com', emailKey: S.emailKeyOf('faheem@example.com') } }, members: [{ role: 'Sponsor', name: 'Faheem Khan', memberKey: 'sponsor', flags: {} }] }));
+
+test("a stale 'pending' WITHOUT attemptedAt (older marker, or a crash before the send) is still a first onboarding; a fresh one with it is still the lock; a replaced sponsor is never told 'again'", async () => {
+  const base = { version: 1, status: 'pending', sendCount: 0, sends: [], sponsor: { name: 'Faheem Khan', emailMasked: 'f***@example.com', emailKey: S.emailKeyOf('faheem@example.com') } };
+  const members = [{ role: 'Sponsor', name: 'Faheem Khan', memberKey: 'sponsor', flags: {} }];
+  await withFakeIo(async ({ calls }) => {
+    const r = await onboard();
+    assert.equal(r.sent, true); assert.equal(r.variant, 'onboarding');
+    assert.match(calls.find((c) => c[0] === 'sendEmail')[2], /^Action Required/);
+    assert.doesNotMatch(calls.find((c) => c[0] === 'postNote')[2], /earlier send/);
+  }, { marker: { ...base, startedAt: '2026-09-24T14:40:00Z' }, members });
+  await withFakeIo(async ({ names }) => {
+    const r = await onboard();
+    assert.equal(r.sent, false); assert.equal(r.reason, 'in-progress');
+    assert.ok(!names().includes('sendEmail'));
+  }, { marker: { ...base, startedAt: '2026-09-24T14:58:00Z', attemptedAt: '2026-09-24T14:58:00Z' }, members });
+  await withFakeIo(async ({ calls }) => {
+    const r = await onboard();
+    assert.equal(r.sent, true); assert.equal(r.variant, 'onboarding', 'the stale attempt went to someone else');
+    assert.match(calls.find((c) => c[0] === 'sendEmail')[2], /^Action Required/);
+  }, { marker: { ...base, startedAt: '2026-09-24T14:40:00Z', attemptedAt: '2026-09-24T14:40:00Z', sponsor: { name: 'Rahim', emailMasked: 'r***@example.com', emailKey: S.emailKeyOf('rahim@example.com') } }, members });
+  // the planner, once per rule
+  const NOW = Date.parse('2026-09-24T15:00:00Z');
+  const sponsor = { status: 'ok', name: 'Faheem Khan', sectionMode: 'section', role: 'Sponsor', boardMemberType: 'Sponsor', memberKey: 'sponsor', manifestType: 'Sponsor', sponsorIsSpouse: true, emailMasked: 'f***@example.com', emailKey: S.emailKeyOf('faheem@example.com') };
+  const plan = (marker, mode = 'onboard') => S.planEnsure({ sponsor, composition: { members }, manifest: null, marker, mode, now: NOW, gates: { ok: true, reason: null } });
+  const stale = { status: 'pending', startedAt: '2026-09-24T14:40:00Z', attemptedAt: '2026-09-24T14:40:00Z', sendCount: 0 };
+  assert.deepEqual([plan(stale).send, plan(stale).variant, plan(stale).maybeDelivered], [true, 'resend', true]);
+  assert.deepEqual([plan({ ...stale, attemptedAt: undefined }).variant, plan({ ...stale, attemptedAt: undefined }).maybeDelivered], ['onboarding', false]);
+  assert.equal(plan({ ...stale, startedAt: '2026-09-24T14:58:00Z' }).skipReason, 'in-progress');
+  assert.deepEqual([plan(stale, 'staff').send, plan(stale, 'staff').variant], [true, 'resend']);
+  const failedAfter = { status: 'failed', error: 'Graph 503', startedAt: '2026-09-24T14:50:00Z', attemptedAt: '2026-09-24T14:40:00Z', sendCount: 0 };
+  assert.equal(plan(failedAfter).variant, 'resend', 'a resend that failed keeps the earlier attempt on record');
+  assert.equal(plan({ status: 'failed', error: 'Graph 503', startedAt: '2026-09-24T14:50:00Z', sendCount: 0 }).variant, 'onboarding', 'a first send that failed outright is retried as onboarding');
+});

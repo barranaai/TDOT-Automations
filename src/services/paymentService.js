@@ -145,6 +145,11 @@ async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt
   return lead.clientMasterItemId;
 }
 
+// Activation waits longer than a staff click (leadMutex.LEAD_LOCK_WAIT_MS):
+// it runs from webhooks nobody is watching, and a skipped activation is only
+// picked up by the sync's next pass.
+const ADVANCE_LOCK_WAIT_MS = 60000;
+
 /**
  * Client Master → Payment Status "Paid" (+ confirmation date) — the Phase 1
  * onboarding trigger. Called from recordRetainerPaid on the normal signed→paid
@@ -166,7 +171,6 @@ async function advanceCaseToPaid(leadOrId, when, { recheckPaid = true } = {}) {
   }
   return r;
 }
-const ADVANCE_LOCK_WAIT_MS = 60000;
 
 async function _advanceCaseToPaid(lead, when, { recheckPaid }) {
   // IDEMPOTENT: two triggers can race here (a delayed signing webhook after

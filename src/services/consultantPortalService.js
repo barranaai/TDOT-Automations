@@ -42,20 +42,25 @@ const MILESTONE_TRIGGER_STAGES = [
   'Application Submitted',
 ];
 const CM_CASE_STAGE_COL = 'color_mm0x8faa';
+const CM_CASE_REF_COL   = 'text_mm142s49';
 
-/** Read a case's current Case Stage from the Client Master board. Best-effort:
- *  returns '' when the lead isn't linked to a case yet, or on any error (a stage
- *  read must never break the detail page). */
-async function readCaseStage(clientMasterItemId) {
-  if (!clientMasterItemId) return '';
+/** Read a case's current Case Stage and case reference from the Client Master
+ *  board, in one query. Best-effort: both '' when the lead isn't linked to a
+ *  case yet, or on any error (this read must never break the detail page). */
+async function readCaseCells(clientMasterItemId) {
+  const none = { caseStage: '', caseRef: '' };
+  if (!clientMasterItemId) return none;
   try {
     const d = await mondayApi.query(
-      `query($i:[ID!]){ items(ids:$i){ column_values(ids:["${CM_CASE_STAGE_COL}"]){ text } } }`,
+      `query($i:[ID!]){ items(ids:$i){ column_values(ids:["${CM_CASE_STAGE_COL}","${CM_CASE_REF_COL}"]){ id text } } }`,
       { i: [String(clientMasterItemId)] });
-    return (d && d.items && d.items[0] && d.items[0].column_values[0] && d.items[0].column_values[0].text) || '';
+    const cols = (d && d.items && d.items[0] && d.items[0].column_values) || [];
+    // Monday returns the cells in board order, so each is picked by id.
+    const text = (id) => { const c = cols.find((x) => x && x.id === id); return (c && c.text) || ''; };
+    return { caseStage: text(CM_CASE_STAGE_COL), caseRef: text(CM_CASE_REF_COL) };
   } catch (err) {
-    console.warn(`[Portal] readCaseStage(${clientMasterItemId}) failed: ${err.message}`);
-    return '';
+    console.warn(`[Portal] readCaseCells(${clientMasterItemId}) failed: ${err.message}`);
+    return none;
   }
 }
 
@@ -63,9 +68,11 @@ async function readCaseStage(clientMasterItemId) {
  *  we already hold (so the detail page and the /retainer-plan endpoint share it
  *  instead of each doing its own getLead). `extra.currentCaseStage` is the live
  *  Case Stage (when the lead is already a case) so the panel can flag the
- *  milestone whose trigger that stage has reached as due. */
+ *  milestone whose trigger that stage has reached as due; `extra.caseRef` is
+ *  the case reference, so the Mark-paid dialog can name WHICH client. */
 function buildRetainerPlanResponse(lead, extra = {}) {
   return {
+    caseRef:         extra.caseRef || '',
     plan:            buildRetainerPlan(lead, overridesFromLead(lead)),
     saved:           !!lead.selectedTemplate,
     feeSet:          feeToCents(lead.retainerFee) != null,
@@ -173,10 +180,10 @@ async function getConsultationDetail(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
 
-  const [preConsult, intake, currentCaseStage] = await Promise.all([
+  const [preConsult, intake, caseCells] = await Promise.all([
     readLeadJson(lead, 'pre-consult-submission.json'),
     readLeadJson(lead, 'intake-submission.json'),
-    readCaseStage(lead.clientMasterItemId),
+    readCaseCells(lead.clientMasterItemId),
   ]);
 
   const answers = (preConsult && preConsult.answers) || {};
@@ -304,7 +311,7 @@ async function getConsultationDetail(leadId) {
 
     // Retainer plan — folded in so the detail page hydrates the panel without a
     // second getLead round-trip (built from the lead already in hand).
-    retainerPlan: buildRetainerPlanResponse(lead, { currentCaseStage }),
+    retainerPlan: buildRetainerPlanResponse(lead, { currentCaseStage: caseCells.caseStage, caseRef: caseCells.caseRef }),
 
     eligibility,
   };
@@ -1322,8 +1329,8 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
 async function getRetainerPlan(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
-  const currentCaseStage = await readCaseStage(lead.clientMasterItemId);
-  return buildRetainerPlanResponse(lead, { currentCaseStage });
+  const { caseStage, caseRef } = await readCaseCells(lead.clientMasterItemId);
+  return buildRetainerPlanResponse(lead, { currentCaseStage: caseStage, caseRef });
 }
 
 /**

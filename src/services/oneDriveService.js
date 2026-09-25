@@ -19,6 +19,12 @@ const { getAccessToken } = require('./microsoftMailService');
 const DRIVE_USER  = process.env.MS_FROM_EMAIL || 'noreply@tdotimm.com';
 const ROOT_FOLDER = 'Client Documents';
 const GRAPH_BASE  = 'https://graph.microsoft.com/v1.0';
+// Every Graph call is bounded (axios's default is NO timeout): the e-sign
+// capture uploads while holding the lead lock, which Mark paid, Undo and the
+// status sync wait on — one hung socket must not keep a client "busy" until
+// the next deploy. Uploads get longer: a scanned bundle over a slow link.
+const GRAPH_TIMEOUT_MS        = 30000;
+const GRAPH_UPLOAD_TIMEOUT_MS = 120000;
 
 // ─── Token handling ───────────────────────────────────────────────────────────
 
@@ -137,14 +143,14 @@ async function ensureFolder(token, parentPath, folderName) {
     const res = await axios.post(
       childrenUrl(parentPath),
       { name: folderName, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' },
-      { headers }
+      { headers, timeout: GRAPH_TIMEOUT_MS }
     );
     return { id: res.data.id, webUrl: res.data.webUrl };
   } catch (err) {
     if (err.response?.status === 409) {
       // Folder already exists — fetch the existing item
       const fullPath = parentPath ? `${parentPath}/${folderName}` : folderName;
-      const res = await axios.get(itemUrl(fullPath), { headers });
+      const res = await axios.get(itemUrl(fullPath), { headers, timeout: GRAPH_TIMEOUT_MS });
       return { id: res.data.id, webUrl: res.data.webUrl };
     }
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
@@ -160,7 +166,7 @@ async function createOrgLink(token, itemId) {
   const res = await axios.post(
     `${userBase()}/items/${itemId}/createLink`,
     { type: 'edit', scope: 'organization' },
-    { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: GRAPH_TIMEOUT_MS }
   );
   return res.data.link.webUrl;
 }
@@ -252,6 +258,7 @@ async function uploadFile({ clientName, caseRef, category, filename, buffer, mim
         },
         maxContentLength: Infinity,
         maxBodyLength:    Infinity,
+        timeout:          GRAPH_UPLOAD_TIMEOUT_MS,
       });
       console.log(`[OneDrive] Uploaded → ${res.data.webUrl}`);
       return res.data.webUrl;
@@ -285,7 +292,7 @@ async function readFile({ clientName, caseRef, subfolder, filename }) {
       const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
       const url      = `${userBase()}/root:/${encoded}:/content`;
       return withGraphAuth('read', async (token) => {
-        const res = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, responseType: 'arraybuffer' });
+        const res = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, responseType: 'arraybuffer', timeout: GRAPH_TIMEOUT_MS });
         return Buffer.from(res.data);
       });
     });
@@ -309,7 +316,7 @@ async function listChildren({ clientName, caseRef, subfolder = '' }) {
         const out = [];
         let next = firstUrl;
         while (next) {
-          const res = await axios.get(next, { headers: { Authorization: `Bearer ${token}` } });
+          const res = await axios.get(next, { headers: { Authorization: `Bearer ${token}` }, timeout: GRAPH_TIMEOUT_MS });
           for (const it of (res.data?.value || [])) {
             out.push({ name: it.name, size: it.size, lastModifiedDateTime: it.lastModifiedDateTime, isFolder: Boolean(it.folder) });
           }
@@ -346,7 +353,7 @@ async function moveFile({ clientName, caseRef, fromSubfolder, toSubfolder, filen
     return await withGraphAuth('move', async (token) => {
       const headers = { Authorization: `Bearer ${token}` };
       const target  = await ensureFolder(token, casePath, toSubfolder);   // existing folder is returned as-is (409 → fetch)
-      const res = await axios.patch(srcUrl, { parentReference: { id: target.id }, '@microsoft.graph.conflictBehavior': 'rename' }, { headers });
+      const res = await axios.patch(srcUrl, { parentReference: { id: target.id }, '@microsoft.graph.conflictBehavior': 'rename' }, { headers, timeout: GRAPH_TIMEOUT_MS });
       return { webUrl: res.data?.webUrl || '', name: res.data?.name || '' };   // name differs from filename if OneDrive renamed on a clash
     });
   } catch (err) {
@@ -405,7 +412,7 @@ async function findCaseFoldersByRef(caseRef) {
       while (next) {
         let res;
         try {
-          res = await axios.get(next, { headers: { Authorization: `Bearer ${token}` } });
+          res = await axios.get(next, { headers: { Authorization: `Bearer ${token}` }, timeout: GRAPH_TIMEOUT_MS });
         } catch (err) {
           // Only the FIRST request can mean "the root does not exist yet". A
           // 404 on a continuation is a stale skiptoken, and answering [] there
@@ -753,7 +760,7 @@ async function renameDriveItem(itemId, newName) {
     const res = await axios.patch(
       `${userBase()}/items/${itemId}`,
       { name: safeName },
-      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: GRAPH_TIMEOUT_MS }
     );
     console.log(`[OneDrive] Renamed item ${itemId} → "${safeName}"`);
     return { id: res.data.id, name: res.data.name, webUrl: res.data.webUrl };
@@ -775,6 +782,7 @@ async function getClientFolderByName(folderName) {
       try {
         const res = await axios.get(itemUrl(`${ROOT_FOLDER}/${safeName}`), {
           headers: { Authorization: `Bearer ${token}` },
+          timeout: GRAPH_TIMEOUT_MS,
         });
         return { id: res.data.id, name: res.data.name, webUrl: res.data.webUrl };
       } catch (err) {
@@ -801,6 +809,7 @@ async function getDriveItemById(itemId) {
       try {
         const res = await axios.get(`${userBase()}/items/${itemId}?$select=id,name,webUrl,parentReference`, {
           headers: { Authorization: `Bearer ${token}` },
+          timeout: GRAPH_TIMEOUT_MS,
         });
         return {
           id: res.data.id,
@@ -832,6 +841,7 @@ async function deleteDriveItem(itemId) {
       try {
         await axios.delete(`${userBase()}/items/${itemId}`, {
           headers: { Authorization: `Bearer ${token}` },
+          timeout: GRAPH_TIMEOUT_MS,
         });
         console.log(`[OneDrive] Deleted item ${itemId} (moved to recycle bin)`);
         return true;
@@ -862,7 +872,7 @@ async function uploadFileAndLink({ clientName, caseRef, category, filename, buff
   return withGraphAuth('uploadAndLink', async (token) => {
     const res = await axios.put(`${userBase()}/root:/${encoded}:/content`, buffer, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeType || 'application/octet-stream' },
-      maxContentLength: Infinity, maxBodyLength: Infinity,
+      maxContentLength: Infinity, maxBodyLength: Infinity, timeout: GRAPH_UPLOAD_TIMEOUT_MS,
     });
     let url = res.data.webUrl;
     try {
@@ -897,7 +907,7 @@ async function uploadToLeadFolderAndLink({ fullName, leadId, folderId, filename,
       `${userBase()}/items/${id}:/${encodeURIComponent(safeFile)}:/content`,
       buffer,
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeType || 'application/octet-stream' },
-        maxContentLength: Infinity, maxBodyLength: Infinity }
+        maxContentLength: Infinity, maxBodyLength: Infinity, timeout: GRAPH_UPLOAD_TIMEOUT_MS }
     );
     let url = res.data.webUrl;
     try { url = await createOrgLink(token, res.data.id); }
@@ -930,6 +940,7 @@ async function listFileVersions({ clientName, caseRef, subfolder, filename }) {
       return withGraphAuth('versionList', async (token) => {
         const res = await axios.get(`${userBase()}/root:/${encoded}:/versions`, {
           headers: { Authorization: `Bearer ${token}` },
+          timeout: GRAPH_TIMEOUT_MS,
         });
         return (res.data && res.data.value) || [];
       });
@@ -950,7 +961,7 @@ async function readFileVersion({ clientName, caseRef, subfolder, filename, versi
       return withGraphAuth('versionRead', async (token) => {
         const res = await axios.get(
           `${userBase()}/root:/${encoded}:/versions/${encodeURIComponent(versionId)}/content`,
-          { headers: { Authorization: `Bearer ${token}` }, responseType: 'arraybuffer' });
+          { headers: { Authorization: `Bearer ${token}` }, responseType: 'arraybuffer', timeout: GRAPH_TIMEOUT_MS });
         return Buffer.from(res.data);
       });
     });

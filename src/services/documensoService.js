@@ -60,7 +60,9 @@ async function api(path, { method = 'GET', json, form, raw } = {}) {
   let body;
   if (json !== undefined) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(json); }
   else if (form) { body = form; } // fetch sets the multipart boundary itself
-  const res = await fetch(`${c.baseUrl}${path}`, { method, headers, body });
+  // Bounded: the capture calls this while holding the lead lock (which Mark
+  // paid, Undo and the status sync wait on), and undici's own limits are 300 s.
+  const res = await fetch(`${c.baseUrl}${path}`, { method, headers, body, signal: AbortSignal.timeout(60_000) });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     const e = new Error(`Documenso ${method} ${path} → ${res.status}: ${text.slice(0, 300)}`);

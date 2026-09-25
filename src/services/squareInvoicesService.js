@@ -159,4 +159,25 @@ async function retrieveOrderLeadMeta(orderId) {
   }
 }
 
-module.exports = { createConsultInvoice, retrieveInvoice, cancelInvoice, retrieveOrderLeadMeta };
+/**
+ * Whether money has landed on an order — a payment link's order (the retainer
+ * checkout) as much as an invoice's. Square marks a paid order COMPLETED and
+ * lists the payment under tenders; an unpaid link's order stays OPEN with
+ * none. Returns null when Square no longer knows the order; THROWS on a
+ * transient failure (the caller decides what "could not be checked" means).
+ * @returns {Promise<{ paid: boolean, state: string } | null>}
+ */
+async function retrieveOrderState(orderId) {
+  try {
+    const order = (await _get(`/v2/orders/${encodeURIComponent(orderId)}`)).order;
+    if (!order) return null;
+    const tenders = Array.isArray(order.tenders) ? order.tenders : [];
+    const state = String(order.state || '');
+    return { paid: state === 'COMPLETED' || tenders.length > 0, state };
+  } catch (err) {
+    if (err.response && err.response.status === 404) return null;
+    throw err;
+  }
+}
+
+module.exports = { createConsultInvoice, retrieveInvoice, cancelInvoice, retrieveOrderLeadMeta, retrieveOrderState };

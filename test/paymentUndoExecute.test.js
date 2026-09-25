@@ -58,10 +58,12 @@ function withFakeIo(fn, { lead = baseLead(), cm = baseCase(), ...hooks } = {}) {
     consultantFor: () => ({ name: 'Shafoli Kapur', email: 'shafoli@example.com' }),
     adminEmails: () => ['faran@example.com', 'admin2@example.com'],
     invalidateQueues: () => { log('invalidateQueues'); },
-    withLeadLock: async (key, f) => { log('lock', key); if (hooks.lockDelay) t += hooks.lockDelay; return f(); },
+    withLeadLockOrSkip: async (key, waitMs, f) => { log('lock', key, waitMs); if (hooks.lockBusy) return { busy: true }; return f(); },
     isLeadItem: async (id) => { log('isLeadItem', id); if (hooks.isLeadThrows) throw new Error('board read failed'); return hooks.notALead ? false : true; },
     findClaimants: async (id) => { log('findClaimants', id); if (hooks.claimantsThrow) throw new Error('lookup failed'); return hooks.claimants || [{ id: store.lead.id, name: store.lead.fullName }]; },
     caseAssignees: async (id) => { log('caseAssignees', id); if (hooks.assigneesThrow) throw new Error('read failed'); return hooks.assignees || { personIds: [], teamIds: [] }; },
+    // squareOrder: what Square says about the retainer link's order ({ paid }); default an open, unpaid link
+    readSquareOrder: async (orderId) => { log('readSquareOrder', orderId); if (hooks.squareOrderThrows) throw new Error('square down'); return 'squareOrder' in hooks ? hooks.squareOrder : { paid: false }; },
     now: () => t,
     nowIso: () => '2026-09-23T15:04:11.000Z',
     sleep: async () => {},
@@ -186,12 +188,103 @@ test('a HALF-applied reversal is converged on retry, never reported as done', ()
   assert.ok(names().includes('commit'));
 }));
 
-test('a lock held too long (a hung signature capture): nothing changed, "busy"', () => withFakeIo(async ({ names }) => {
+test('a lock held too long (a hung signature capture): the undo gives up WITHOUT running — nothing read, nothing changed, "busy"', () => withFakeIo(async ({ calls, names }) => {
   const pv = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+  const before = calls.length;
   const res = await U.executeMilestonePaidReversal({ leadId: '13108401448', index: 0, confirmText: pv.plan.confirmText, reason: REASON, expect: pv.plan.expect, actor: ACTOR });
   assert.equal(res.code, 'BUSY');
+  assert.equal(res.status, 409);
+  assert.equal(res.error, U.BUSY_MESSAGE);
+  assert.match(res.error, /another change to this client’s record is in progress \(a signature, a payment or the status sync\)/i, 'names what is known — five writers hold this lock, not only a signature');
   assert.ok(!names().includes('commit'));
-}, { lockDelay: U.LOCK_WAIT_MS + 1 }));
+  const lock = calls[before];
+  assert.deepEqual(lock, ['lock', '13108401448', U.LEAD_LOCK_WAIT_MS], 'the lock is taken with the give-up budget, and nothing else happens');
+  assert.equal(calls.length, before + 1, 'a busy answer reads nothing — the section never started');
+}, { lockBusy: true }));
+
+test('the lock is the give-up flavour: the executor never calls the unbounded withLeadLock', () => {
+  const src = require('fs').readFileSync(require.resolve('../src/services/paymentUndoService.js'), 'utf8');
+  assert.match(src, /io\.withLeadLockOrSkip\(key, LEAD_LOCK_WAIT_MS, async \(\) => \{/);
+  assert.doesNotMatch(src, /io\.withLeadLock\(/);
+  assert.doesNotMatch(src, /queuedAt/, 'no elapsed check after the lock is already held — that never gave up');
+  assert.equal(U.LEAD_LOCK_WAIT_MS, require('../src/services/leadMutex').LEAD_LOCK_WAIT_MS, 'one shared budget');
+});
+
+test('the record is dated in Toronto, with the zone — the same clock as the row tooltip and the sponsor notes', () => withFakeIo(async ({ calls }) => {
+  const { res } = await previewThenExecute();
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const leadNote = calls.find((c) => c[0] === 'postNote' && c[1] === '13108401448')[2];
+  const caseNote = calls.find((c) => c[0] === 'postNote' && c[1] === '13108384096')[2];
+  // io.nowIso is 2026-09-23T15:04:11Z → 11:04 am in Toronto (EDT)
+  assert.match(leadNote, /Removed by Faran — 23 Sep 2026, 11:04 am \(Toronto\)\. <b>Reason:<\/b>/);
+  assert.match(caseNote, /Removed by Faran — 23 Sep 2026, 11:04 am \(Toronto\)\./);
+  assert.doesNotMatch(leadNote, /on 2026-09-23/, 'never the UTC calendar date');
+}));
+
+test('after 8 pm Toronto the record still names the Toronto day, and the alarm notes carry the same stamp', () => withFakeIo(async ({ calls }) => {
+  U.io.nowIso = () => '2026-09-24T02:30:00.000Z';   // 10:30 pm on the 23rd in Toronto
+  const pv = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+  const res = await U.executeMilestonePaidReversal({ leadId: '13108401448', index: 0, confirmText: pv.plan.confirmText, reason: REASON, expect: pv.plan.expect, actor: ACTOR });
+  assert.equal(res.code, 'ONBOARDING_STARTED_DURING_UNDO');
+  const notes = calls.filter((c) => c[0] === 'postNote').map((c) => c[2]);
+  assert.ok(notes.some((n) => /Removed by Faran — 23 Sep 2026, 10:30 pm \(Toronto\)/.test(n)), 'the 23rd, not the 24th');
+  assert.ok(notes.some((n) => /Undo raced with onboarding<\/b> — 23 Sep 2026, 10:30 pm \(Toronto\)\./.test(n)), 'the alarm is dated the same way');
+}, { caseAfterCommit: baseCase({ paymentStatus: 'Paid' }) }));
+
+test('an "Undo incomplete" alarm is dated in Toronto too', () => withFakeIo(async ({ calls }) => {
+  const pv = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+  await U.executeMilestonePaidReversal({ leadId: '13108401448', index: 0, confirmText: pv.plan.confirmText, reason: REASON, expect: pv.plan.expect, actor: ACTOR });
+  assert.ok(calls.some((c) => c[0] === 'postNote' && /Undo incomplete<\/b> — 23 Sep 2026, 11:04 am \(Toronto\)\. Monday didn’t confirm/.test(c[2])));
+}, { commitIsNoop: true }));
+
+test('a Square payment LINK alone (order id, no txn id): Square is asked, and an OPEN link is a warning, not a refusal — the undo runs', () => withFakeIo(async ({ store, names, calls }) => {
+  const pv = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+  assert.equal(pv.plan.ok, true, JSON.stringify(pv.plan));
+  assert.deepEqual(calls.filter((c) => c[0] === 'readSquareOrder').map((c) => c[1]), ['ord-legacy-link'], 'the order is read by its id');
+  const w = pv.plan.warnings.find((x) => x.code === 'SQUARE_LINK_EXISTS');
+  assert.ok(w, 'the warning is there');
+  assert.match(w.message, /Square shows no payment on it yet/);
+  const res = await U.executeMilestonePaidReversal({ leadId: '13108401448', index: 0, confirmText: pv.plan.confirmText, reason: REASON, expect: pv.plan.expect, actor: ACTOR });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.ok(names().includes('commit'));
+  assert.equal(store.lead.retainerPaid, '');
+  assert.ok(res.warnings.some((x) => x.code === 'SQUARE_LINK_EXISTS'), 'the warning is carried onto the result');
+  assert.equal(calls.filter((c) => c[0] === 'readSquareOrder').length, 2, 'execute asks Square again — fresh state, like every other read');
+}, { lead: baseLead({ squareRetainerOrderId: 'ord-legacy-link' }) }));
+
+test('a Square link the ORDER says is PAID refuses at preview AND at execute — nothing is written (Mark paid first, then the client paid the link: no txn id anywhere)', () => withFakeIo(async ({ store, names }) => {
+  const pv = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+  assert.equal(pv.plan.ok, false);
+  assert.equal(pv.plan.refusal.code, 'SQUARE_PAYMENT');
+  assert.match(pv.plan.refusal.message, /Square shows the payment link for this retainer as PAID/);
+  // a stale dialog that was opened while the link was still open cannot get past execute either
+  const expect = { mode: 'milestone', entry: U.entryFingerprint(ms.readPayments(store.lead).pay[0]), retainerPaid: D };
+  const res = await U.executeMilestonePaidReversal({ leadId: '13108401448', index: 0, confirmText: '2026-OINP-059', reason: REASON, expect, actor: ACTOR });
+  assert.equal(res.ok, false);
+  assert.equal(res.code, 'SQUARE_PAYMENT');
+  assert.ok(!names().includes('commit') && !names().includes('postNote') && !names().includes('notify'));
+  assert.equal(store.lead.retainerPaid, D);
+}, { lead: baseLead({ squareRetainerOrderId: 'ord-legacy-link' }), squareOrder: { paid: true } }));
+
+test('Square cannot be checked: the undo still runs, and the warning says the check did not happen; a txn id on the lead never asks Square at all', () => withFakeIo(async ({ names, calls }) => {
+  const pv = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+  assert.equal(pv.plan.ok, true, JSON.stringify(pv.plan));
+  assert.match(pv.plan.warnings.find((x) => x.code === 'SQUARE_LINK_EXISTS').message, /Square could not be checked just now/);
+  await withFakeIo(async ({ names: n2 }) => {
+    const p2 = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+    assert.equal(p2.plan.refusal.code, 'SQUARE_PAYMENT');
+    assert.ok(!n2().includes('readSquareOrder'), 'the txn id already says it was paid');
+  }, { lead: baseLead({ squareRetainerOrderId: 'ord-legacy-link', squareRetainerTxnId: 'sq1' }) });
+  await withFakeIo(async ({ names: n3 }) => {
+    await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 1, actor: ACTOR });
+    assert.ok(!n3().includes('readSquareOrder'), 'a later milestone never carried the retainer link');
+  }, { lead: baseLead({ squareRetainerOrderId: 'ord-legacy-link', milestonePayments: JSON.stringify({ 0: { status: 'paid', paidAt: D }, 1: { status: 'paid', paidAt: D } }) }) });
+  await withFakeIo(async ({ names: n4 }) => {
+    await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
+    assert.ok(!n4().includes('readSquareOrder'), 'no link, nothing to ask');
+  });
+  assert.ok(names().includes('readSquareOrder') && calls.length);
+}, { lead: baseLead({ squareRetainerOrderId: 'ord-legacy-link' }), squareOrderThrows: true }));
 
 test('commit fails: an honest error, no notes, nothing changed', () => withFakeIo(async ({ store, names }) => {
   const pv = await U.previewMilestonePaidReversal({ leadId: '13108401448', index: 0, actor: ACTOR });
@@ -376,6 +469,80 @@ test('FLAG: a second flag on the same row within 10 minutes sends nothing new', 
   assert.equal(b.ok, false);
   assert.equal(b.status, 429);
   assert.equal(calls.length, before, 'no read, no note, no alert');
+  U._resetFlagThrottle();
+}));
+
+test('FLAG: one person is held to a few flags per window across every row and client — the sixth is refused', () => withFakeIo(async ({ calls, store }) => {
+  U._resetFlagThrottle();
+  const actor = { name: 'K', email: 'k@example.com', verified: true };
+  // five different rows on the same lead, then a sixth on another client
+  for (let i = 0; i < U.FLAG_ACTOR_MAX; i++) {
+    const r = await U.flagPaymentError({ leadId: '13108401448', index: i, actor, note: 'a proper explanation here' });
+    assert.equal(r.ok, true, `flag ${i + 1}: ${JSON.stringify(r)}`);
+  }
+  const before = calls.length;
+  store.lead.id = '13100000002';
+  const sixth = await U.flagPaymentError({ leadId: '13100000002', index: 0, actor, note: 'a proper explanation here' });
+  assert.equal(sixth.ok, false);
+  assert.equal(sixth.status, 429);
+  assert.match(sixth.error, /flagged 5 payments in the last few minutes/);
+  assert.equal(calls.length, before, 'no read, no note, no alert');
+  // someone else is not held back by it
+  const other = await U.flagPaymentError({ leadId: '13100000002', index: 0, actor: { name: 'Shafoli', email: 'shafoli@example.com', verified: true }, note: 'a proper explanation here' });
+  assert.equal(other.ok, true, JSON.stringify(other));
+  // the same person by a different casing of the address is the same person
+  store.lead.id = '13100000003';
+  const again = await U.flagPaymentError({ leadId: '13100000003', index: 0, actor: { name: 'K', email: 'K@Example.com', verified: true }, note: 'a proper explanation here' });
+  assert.equal(again.status, 429);
+  U._resetFlagThrottle();
+}));
+
+test('FLAG: everyone on the shared admin key shares ONE window — a new typed name (or a typed address) is not a new person; Monday sign-ins are not held back by it', () => withFakeIo(async ({ store }) => {
+  U._resetFlagThrottle();
+  // three flags as "A", two as "B": the sixth is refused whatever name is typed
+  let n = 0;
+  const flag = (actor) => { store.lead.id = String(13100000100 + n); return U.flagPaymentError({ leadId: store.lead.id, index: 0, actor, note: 'a proper explanation here' }).finally(() => n++); };
+  for (const name of ['A', 'A', 'A', 'B', 'B']) assert.equal((await flag({ name })).ok, true, name);
+  assert.equal((await flag({ name: 'C' })).status, 429, 'a sixth spelling opens no sixth window');
+  assert.equal((await flag({ name: 'Unidentified (shared admin key)' })).status, 429, 'nor does the placeholder itself');
+  assert.equal((await flag({ name: 'D', email: 'd@example.com' })).status, 429, 'an address the page typed is not a sign-in (verified is what counts)');
+  assert.equal((await flag({ name: 'D', email: 'd@example.com', verified: false })).status, 429);
+  // a Monday sign-in has a window of their own
+  assert.equal((await flag({ name: 'Shafoli', email: 'shafoli@example.com', verified: true })).ok, true);
+  // …and a sign-in with no address on file lands in the shared window rather than an unbounded one
+  assert.equal((await flag({ name: 'Nameless', email: '', verified: true })).status, 429);
+  U._resetFlagThrottle();
+}));
+
+test('FLAG: the per-person window slides — once the oldest flag is older than the window, one more is allowed', () => withFakeIo(async ({ store }) => {
+  U._resetFlagThrottle();
+  let t = 1000;
+  U.io.now = () => t;
+  const actor = { name: 'Kamalpreet' };   // no sign-in: the shared-key window
+  for (let i = 0; i < U.FLAG_ACTOR_MAX; i++) {
+    t += 1000;
+    assert.equal((await U.flagPaymentError({ leadId: '13108401448', index: i, actor, note: 'a proper explanation here' })).ok, true);
+  }
+  store.lead.id = '13100000002';
+  assert.equal((await U.flagPaymentError({ leadId: '13100000002', index: 0, actor, note: 'a proper explanation here' })).status, 429);
+  t = 2000 + U.FLAG_COOLDOWN_MS;   // the first flag (at 2000) has just aged out
+  const r = await U.flagPaymentError({ leadId: '13100000002', index: 0, actor, note: 'a proper explanation here' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  store.lead.id = '13100000003';
+  assert.equal((await U.flagPaymentError({ leadId: '13100000003', index: 0, actor, note: 'a proper explanation here' })).status, 429, 'and the window is full again');
+  U._resetFlagThrottle();
+}));
+
+test('FLAG: a refused flag never counts against the person, and the row throttle still comes first', () => withFakeIo(async ({ store }) => {
+  U._resetFlagThrottle();
+  const actor = { name: 'K', email: 'k@example.com', verified: true };
+  assert.equal((await U.flagPaymentError({ leadId: '13108401448', index: 0, actor, note: 'a proper explanation here' })).ok, true);
+  for (let n = 0; n < 10; n++) {
+    const r = await U.flagPaymentError({ leadId: '13108401448', index: 0, actor, note: 'a proper explanation here' });
+    assert.match(r.error, /flagged a few minutes ago/, 'the row answer, not the person answer');
+  }
+  store.lead.id = '13100000002';
+  assert.equal((await U.flagPaymentError({ leadId: '13100000002', index: 0, actor, note: 'a proper explanation here' })).ok, true, 'ten refused repeats did not use up the window');
   U._resetFlagThrottle();
 }));
 
