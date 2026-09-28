@@ -153,12 +153,15 @@ router.get('/book/:leadId', async (req, res) => {
     // never a mixed page where one duration shows real calendar availability
     // and the other shows unverified template times.
     const options = routing.consultOptionsFor(consultant);
+    // Both paths offer the same span (12 weeks unless BOOKING_WEEKS_AHEAD says
+    // otherwise) so the static fallback never shows a shorter calendar.
+    const weeks = bookingService.bookingWeeksAhead();
     let sets = null;
     if (bookingService.squareCalendarEnabled()) {
       try {
         sets = await Promise.all(options.map(async (o) => ({
           ...o,
-          slots: await bookingService.getSquareAvailableSlots(4, consultant.teamMemberId, o.variationId),
+          slots: await bookingService.getSquareAvailableSlots(weeks, consultant.teamMemberId, o.variationId),
         })));
       } catch (err) {
         console.warn(`[Book] Live availability failed for lead ${leadId} — consistent static fallback: ${err.message}`);
@@ -167,9 +170,9 @@ router.get('/book/:leadId', async (req, res) => {
     }
     if (!sets) {
       const def = options.find((o) => o.default) || options[0];
-      sets = [{ ...def, slots: await bookingService.getStaticAvailableSlots(lead.tier || 'T2', 4) }];
+      sets = [{ ...def, slots: await bookingService.getStaticAvailableSlots(lead.tier || 'T2', weeks) }];
     }
-    res.type('html').send(buildBookingPageHtml(lead, { sets }, req.query.t, consultant));
+    res.type('html').send(buildBookingPageHtml(lead, { sets, weeksAhead: weeks }, req.query.t, consultant));
   } catch (err) {
     console.error('[Book] GET failed:', err.message);
     res.status(500).type('html').send(buildErrorHtml(err.message));
@@ -332,30 +335,40 @@ router.post('/webhook/square', express.raw({ type: '*/*' }), async (req, res) =>
 });
 
 function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
-  // Input: { sets: [{durationMin, feeCents, slots, default}] } (one per
-  // consultation option) — or a plain slots array (legacy callers/tests),
-  // rendered as a single set with no duration chooser.
+  // Input: { sets: [{durationMin, feeCents, slots, default}], weeksAhead }
+  // (one set per consultation option) — or a plain slots array (legacy
+  // callers/tests), rendered as a single set with no duration chooser.
   const sets = Array.isArray(slotsOrSets)
     ? [{ durationMin: null, feeCents: null, slots: slotsOrSets, default: true }]
     : ((slotsOrSets && slotsOrSets.sets) || []);
+  // The span the empty state quotes — the route passes what it searched.
+  const weeksAhead = (!Array.isArray(slotsOrSets) && slotsOrSets && slotsOrSets.weeksAhead) || bookingService.bookingWeeksAhead();
   const cad = (cents) => (cents / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' }).replace('CA', '');
   // Clients outside Canada are HST-exempt on the consultation (Melanie,
   // 2026-08-24) — the slot pricing shows fee only, no "+ HST".
   const leadHstPct = bookingService.consultHstPctForLead(lead);
 
+  // Day blocks grouped under a month heading ("October 2026") — a 12-week list
+  // is ~36 days long; the month rails keep it scannable on a phone.
   const renderDateBlocks = (slots) => {
     const byDate = {};
     for (const s of slots) (byDate[s.date] = byDate[s.date] || []).push(s);
-    return Object.keys(byDate).sort().map((date) => {
-      const d = new Date(`${date}T12:00:00`);
-      const label = d.toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' });
-      const btns = byDate[date].map((s) =>
-        `<button type="submit" name="pick" value="${s.date}|${s.time}" class="slot">${s.time}</button>`).join('');
-      return `<div class="day"><div class="day-label">${label}</div><div class="slots">${btns}</div></div>`;
+    const byMonth = {};
+    for (const date of Object.keys(byDate).sort()) (byMonth[date.slice(0, 7)] = byMonth[date.slice(0, 7)] || []).push(date);
+    return Object.keys(byMonth).sort().map((month) => {
+      const monthLabel = new Date(`${month}-01T12:00:00`).toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
+      const days = byMonth[month].map((date) => {
+        const d = new Date(`${date}T12:00:00`);
+        const label = d.toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' });
+        const btns = byDate[date].map((s) =>
+          `<button type="submit" name="pick" value="${s.date}|${s.time}" class="slot">${s.time}</button>`).join('');
+        return `<div class="day"><div class="day-label">${label}</div><div class="slots">${btns}</div></div>`;
+      }).join('');
+      return `<div class="month"><div class="month-label">${monthLabel}</div>${days}</div>`;
     }).join('');
   };
 
-  const empty = '<div class="empty">No open times in the next few weeks — we will reach out to schedule.</div>';
+  const empty = `<div class="empty">No open times in the next ${weeksAhead} weeks — we will reach out to schedule.</div>`;
   const multiDuration = sets.length > 1 && sets.every((s) => s.durationMin);
   // Duration chooser (only when the consultant offers a choice) + one slot list
   // per duration; the JS below shows the list matching the selected duration.
@@ -382,6 +395,9 @@ function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
     .container{max-width:640px;margin:0 auto;padding:32px 24px;}
     .header{background:${BRAND.darkPanel};color:${BRAND.textOnDark};padding:28px;border-radius:12px 12px 0 0;text-align:center;}
     .card{background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;box-shadow:0 4px 12px rgba(0,0,0,0.08);}
+    .month{margin-bottom:28px;}
+    /* Sticky so the month stays in view while a long list scrolls under it on a phone. */
+    .month-label{position:sticky;top:0;z-index:1;background:${BRAND.lightCard};font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${BRAND.mutedOnLight};border-bottom:1px solid ${BRAND.border};padding:8px 0 6px;margin:0 0 14px;}
     .day{margin-bottom:20px;} .day-label{font-weight:700;margin-bottom:8px;}
     .slots{display:flex;flex-wrap:wrap;gap:8px;}
     .slot{background:#fff;border:1.5px solid ${BRAND.border};border-radius:8px;padding:10px 16px;font-size:15px;cursor:pointer;

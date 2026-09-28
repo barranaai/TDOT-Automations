@@ -133,9 +133,13 @@ function mapAvailabilities(availabilities, pool) {
 
 // ─── I/O wrappers ─────────────────────────────────────────────────────────────
 
-async function _post(path, body) { return (await axios.post(base() + path, body, { headers: headers() })).data; }
-async function _get(path)         { return (await axios.get(base() + path, { headers: headers() })).data; }
-async function _put(path, body)   { return (await axios.put(base() + path, body, { headers: headers() })).data; }
+// A stalled Square connection must fail fast: the booking page now runs up to
+// three availability searches per duration, and it falls back to the static
+// template only when a call REJECTS — a hang would leave the client waiting.
+const SQUARE_TIMEOUT_MS = 20000;
+async function _post(path, body) { return (await axios.post(base() + path, body, { headers: headers(), timeout: SQUARE_TIMEOUT_MS })).data; }
+async function _get(path)         { return (await axios.get(base() + path, { headers: headers(), timeout: SQUARE_TIMEOUT_MS })).data; }
+async function _put(path, body)   { return (await axios.put(base() + path, body, { headers: headers(), timeout: SQUARE_TIMEOUT_MS })).data; }
 
 /** Read the seller's booking profile — tells us booking_enabled + support_seller_level_writes (≈ paid plan). */
 async function retrieveBusinessBookingProfile() {

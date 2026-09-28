@@ -5,6 +5,7 @@
  * booking is confirmed. Writes ONLY to the Lead Board.
  *
  *   getAvailableSlots(tier, weeksAhead) → tier-filtered open slots
+ *   bookingWeeksAhead()                 → how far ahead the page offers times (env)
  *   holdSlot(leadId, date, time)        → tentatively reserve a slot
  *   releaseExpiredSlots()               → cron: free slots past their hold expiry
  *   createCheckout({...})               → Square payment link (stores order id)
@@ -90,6 +91,65 @@ function ymd(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/**
+ * How far ahead the booking page offers times, in weeks. Owner's floor is 12
+ * (2026-09-28: clients must be able to book "at least the next 12 weeks").
+ * Env BOOKING_WEEKS_AHEAD overrides it, clamped to 1..26 — a value outside the
+ * range is pulled to the nearest edge, a non-number is ignored (default 12).
+ * Read on every call so a Render env change needs no restart of state.
+ */
+const BOOKING_WEEKS_DEFAULT = 12;
+const BOOKING_WEEKS_MIN = 1;
+const BOOKING_WEEKS_MAX = 26;
+function bookingWeeksAhead() {
+  const n = parseInt(process.env.BOOKING_WEEKS_AHEAD, 10);
+  if (!Number.isFinite(n)) return BOOKING_WEEKS_DEFAULT;
+  return Math.min(BOOKING_WEEKS_MAX, Math.max(BOOKING_WEEKS_MIN, n));
+}
+
+/**
+ * Split [startMs, endMs) into contiguous, non-overlapping [startIso, endIso]
+ * chunks of at most `maxDays` each (the last one shorter). Square allows one
+ * availability search to span at most 32 days and one bookings list at most
+ * 31 ("Max query range is 32 days" / "Time range can be at most 31 days in
+ * length", both verified live), so a 12-week span is walked in 28-day steps:
+ * the span is a whole number of weeks minus the 25h lead-in, and 28 divides
+ * 7-day multiples, so the tail chunk is always ≥143h — never under the 24h
+ * minimum a search must span (31-day steps left BOOKING_WEEKS_AHEAD=18 with
+ * a 23h tail). PURE — exported for tests.
+ */
+const SQUARE_MAX_WINDOW_DAYS = 28;
+function availabilityWindows(startMs, endMs, maxDays = SQUARE_MAX_WINDOW_DAYS) {
+  const step = maxDays * 24 * 3600 * 1000;
+  const out = [];
+  for (let s = startMs; s < endMs; s += step) {
+    const e = Math.min(s + step, endMs);
+    out.push([new Date(s).toISOString(), new Date(e).toISOString()]);
+  }
+  return out;
+}
+
+/**
+ * Run `fn` over `items` with at most `limit` in flight, preserving order.
+ * Rejects on the first failure (like Promise.all) — a partial calendar must
+ * never be shown as if it were the whole one — and once one item has failed
+ * no further item is started (the result is discarded anyway; during a
+ * Square outage the remaining chunks would only add to the load).
+ */
+async function mapLimited(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  let failed = false;
+  const worker = async () => {
+    while (next < items.length && !failed) {
+      const i = next++;
+      try { results[i] = await fn(items[i], i); } catch (err) { failed = true; throw err; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 /** Level 1 is active when the flag is on AND a consult service variation is configured. */
 function squareCalendarEnabled() {
   return (process.env.USE_SQUARE_CALENDAR === '1' || process.env.USE_SQUARE_CALENDAR === 'true')
@@ -102,7 +162,7 @@ function squareCalendarEnabled() {
  * otherwise from the static SLOT_TEMPLATE. Any Square error falls back to the
  * template so the booking page never goes dark.
  */
-async function getAvailableSlots(tier, weeksAhead = 4, teamMemberId, serviceVariationId) {
+async function getAvailableSlots(tier, weeksAhead = bookingWeeksAhead(), teamMemberId, serviceVariationId) {
   if (squareCalendarEnabled()) {
     try {
       return await getSquareAvailableSlots(weeksAhead, teamMemberId, serviceVariationId);
@@ -131,16 +191,30 @@ const INACTIVE_BOOKING_STATUSES = new Set(['CANCELLED_BY_CUSTOMER', 'CANCELLED_B
 
 // 30s micro-cache for the conflict re-check's booking list — one page view runs
 // an availability search per duration option, all against the same calendar.
-let _bookingsCache = null;
+// Keyed by the view's full set of chunk windows (a 12-week span is three
+// ≤28-day chunks, see availabilityWindows) and cached as ONE merged list, so
+// a view's bookings are always a single coherent snapshot: chunk windows are
+// cut from the requester's clock, and mixing one view's cached chunk with a
+// later view's fresh neighbour would leave a seconds-wide seam between them
+// that a booking could hide in. Bounded so a slow trickle of page views can't
+// grow it. The in-flight promise is what's cached, so the per-duration
+// searches of one page view (they run concurrently) share a single fetch; a
+// failed fetch is evicted at once so the next view retries instead of
+// skipping the re-check for 30s.
+const _bookingsCache = new Map(); // key → { at, promise }
 const BOOKINGS_CACHE_MS = 30 * 1000;
-async function listBookingsCached(squareBookings, startAtIso, endAtIso) {
-  const key = `${startAtIso.slice(0, 15)}|${endAtIso.slice(0, 15)}`; // same request window (minute granularity)
-  if (_bookingsCache && _bookingsCache.key === key && (Date.now() - _bookingsCache.at) < BOOKINGS_CACHE_MS) {
-    return _bookingsCache.data;
-  }
-  const data = await squareBookings.listBookings({ startAtIso, endAtIso });
-  _bookingsCache = { key, at: Date.now(), data };
-  return data;
+const BOOKINGS_CACHE_MAX = 12;
+function listBookingsCached(squareBookings, windows) {
+  const key = windows.map(([s, e]) => `${s.slice(0, 15)}|${e.slice(0, 15)}`).join(';'); // same request windows (minute granularity)
+  const hit = _bookingsCache.get(key);
+  if (hit && (Date.now() - hit.at) < BOOKINGS_CACHE_MS) return hit.promise;
+  const promise = mapLimited(windows, 3, ([startAtIso, endAtIso]) => squareBookings.listBookings({ startAtIso, endAtIso }))
+    .then((lists) => lists.flat());
+  promise.catch(() => { if (_bookingsCache.get(key)?.promise === promise) _bookingsCache.delete(key); });
+  _bookingsCache.delete(key);
+  _bookingsCache.set(key, { at: Date.now(), promise });
+  while (_bookingsCache.size > BOOKINGS_CACHE_MAX) _bookingsCache.delete(_bookingsCache.keys().next().value);
+  return promise;
 }
 
 function dropBufferConflicts(slots, bookings) {
@@ -177,29 +251,50 @@ function dropBufferConflicts(slots, bookings) {
  * (b) subtract OUR own in-flight holds/bookings so two leads can't grab the
  * same time during the pay window (which Level 1 doesn't yet write back to Square).
  */
-async function getSquareAvailableSlots(weeksAhead = 4, teamMemberId, serviceVariationId) {
+async function getSquareAvailableSlots(weeksAhead = bookingWeeksAhead(), teamMemberId, serviceVariationId) {
   const squareBookings = require('./squareBookingsService');
-  const startAt = new Date(Date.now() + 25 * 3600 * 1000);                 // Square requires ≥24h
-  const maxDays = Math.min(weeksAhead * 7, 31);                            // Square max window is 32 days
-  const endAt = new Date(Date.now() + maxDays * 24 * 3600 * 1000);
-
-  let slots = await squareBookings.searchAvailability({
+  const now = Date.now();
+  const startAt = new Date(now + 25 * 3600 * 1000);                        // Square requires ≥24h
+  const endAt = new Date(now + weeksAhead * 7 * 24 * 3600 * 1000);
+  // Square caps one search at 32 days, so the span is walked in 28-day
+  // chunks — at most 3 in flight per call (the route runs one call per
+  // duration option, so a two-duration view has up to 6 searches out),
+  // all-or-nothing: one failed chunk fails the search (the route then falls
+  // back to the static template as a whole).
+  const windows = availabilityWindows(startAt.getTime(), endAt.getTime());
+  const chunks = await mapLimited(windows, 3, ([startAtIso, endAtIso]) => squareBookings.searchAvailability({
     // Per-duration variation (the client's booking-page choice) or the legacy env default.
     serviceVariationId: serviceVariationId || process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID,
     // The assigned consultant (from routing) scopes the calendar; falls back to
     // the env default, then to any bookable staff on the service.
     teamMemberId: teamMemberId || process.env.SQUARE_CONSULT_TEAM_MEMBER_ID || undefined,
-    startAtIso: startAt.toISOString(),
-    endAtIso: endAt.toISOString(),
+    startAtIso,
+    endAtIso,
     pool: 'consult',
-  });
+  }));
+  // Merge in chunk order; a time offered on a chunk boundary by both sides
+  // appears once; the page relies on date+time order. The staff member is
+  // part of the key: with no team member pinned Square offers the same minute
+  // once per bookable staff, and each must face the buffer filter on its own
+  // (collapsing them would let staff A's booking hide staff B's free time).
+  const slotKey = (s) => `${s.date} ${s.time} ${s.teamMemberId || ''}`;
+  const seen = new Set();
+  let slots = [];
+  for (const s of chunks.flat()) {
+    if (seen.has(slotKey(s))) continue;
+    seen.add(slotKey(s));
+    slots.push(s);
+  }
+  slots.sort((a, b) => slotKey(a).localeCompare(slotKey(b)));
 
   // Best-effort conflict re-check — a listBookings failure must never take the
   // booking page down; we just fall back to trusting Square's availability.
   // Micro-cached (30s): a page view now runs one search PER duration option,
-  // and the booking list is identical across them.
+  // and the booking list is identical across them. Listed per chunk (Square's
+  // bookings list caps at 31 days too), merged into one snapshot per view,
+  // then checked as one calendar.
   try {
-    const bookings = await listBookingsCached(squareBookings, startAt.toISOString(), endAt.toISOString());
+    const bookings = await listBookingsCached(squareBookings, windows);
     const res = dropBufferConflicts(slots, bookings);
     if (res.dropped) console.warn(`[Booking] Dropped ${res.dropped} Square-offered slot(s) that collide with existing bookings + buffer`);
     slots = res.slots;
@@ -216,7 +311,7 @@ async function getSquareAvailableSlots(weeksAhead = 4, teamMemberId, serviceVari
  * weeks, filtered to the lead's tier pools, excluding slots already held
  * (unexpired) or booked by any lead.
  */
-async function getStaticAvailableSlots(tier, weeksAhead = 4) {
+async function getStaticAvailableSlots(tier, weeksAhead = bookingWeeksAhead()) {
   const pools = TIER_TO_POOLS[tier] || ['newClient'];
   const taken = await getTakenSlots();
 
@@ -817,6 +912,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
 
 module.exports = {
   getAvailableSlots, getSquareAvailableSlots, getStaticAvailableSlots, squareCalendarEnabled,
+  bookingWeeksAhead, availabilityWindows,
   holdSlot, releaseExpiredSlots, createCheckout,
   handleSquarePaymentWebhook, confirmSlot, verifySquareSignature, squareNotificationUrls, sendBookingInvite,
   dropBufferConflicts, reconcileConsultOptionWithPayment,
