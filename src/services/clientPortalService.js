@@ -876,14 +876,28 @@ function buildPortalPage(snap, opts) {
       if (label) label.classList[on ? 'add' : 'remove']('busy');
       input.disabled = !!on;
     }
-    function uploadOne(id, file) {
-      inFlight++;
+    function sendOnce(id, file) {
       var fd = new FormData();
       fd.append('file', file, file.name);
       return fetch('/client/' + encodeURIComponent(CASE_REF) + '/document/' + encodeURIComponent(id) + '/upload?t=' + encodeURIComponent(TOKEN), {
         method: 'POST', body: fd
       })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok && j.success, j: j }; }); })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok && j.success, busy: r.status === 503 && !!j.retriable, j: j }; }); });
+    }
+    function uploadOne(id, file) {
+      inFlight++;
+      // The server takes large uploads in turns: when it says "busy", wait and
+      // send again (up to 4 tries) so the client has nothing to do.
+      function attempt(n) {
+        return sendOnce(id, file).then(function (res) {
+          if (res.busy && n < 4) {
+            state(id, 'The server is busy — "' + file.name + '" will be sent again in a moment…');
+            return new Promise(function (resolve) { setTimeout(resolve, 15000); }).then(function () { return attempt(n + 1); });
+          }
+          return res;
+        });
+      }
+      return attempt(1)
       .then(function (res) { settle(); return res.ok ? { ok: true } : { ok: false, error: (res.j && res.j.error) || 'Upload failed — please try again.' }; })
       .catch(function () { settle(); return { ok: false, error: 'Upload failed — please check your connection and try again.' }; });
     }

@@ -998,11 +998,19 @@ async function handleUpload(itemId, caseRef, input) {
     formData.append('file', file);
 
     try {
-      const res  = await fetch(
-        '/documents/' + encodeURIComponent(caseRef) + '/upload/' + itemId,
-        { method: 'POST', body: formData }
-      );
-      const data = await res.json();
+      // The server takes large uploads in turns: when it says "busy", wait
+      // and send again (up to 4 tries) so the client has nothing to do.
+      let res, data;
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        res  = await fetch(
+          '/documents/' + encodeURIComponent(caseRef) + '/upload/' + itemId,
+          { method: 'POST', body: formData }
+        );
+        data = await res.json();
+        if (!(res.status === 503 && data.retriable) || attempt === 4) break;
+        msg.textContent = 'The server is busy. ' + file.name + ' will be sent again in a moment…';
+        await new Promise((resolve) => setTimeout(resolve, 15000));
+      }
 
       if (data.success) {
         succeeded++;

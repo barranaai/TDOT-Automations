@@ -1581,10 +1581,14 @@ app.use((err, req, res, next) => {
   return next(err);
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   webhookManager.ensureWebhookRegistered().catch(err =>
     console.error('[Server] Webhook registration failed:', err.message)
   );
   startScheduler();
 });
+// A client document may be 50 MB on a slow phone connection: allow the request
+// 15 minutes to arrive (Node's default is 5). The 60-second limit on receiving
+// the HEADERS — the guard against idle connections — is left as it is.
+server.requestTimeout = require('./utils/uploadLimits').UPLOAD_REQUEST_TIMEOUT_MS;
