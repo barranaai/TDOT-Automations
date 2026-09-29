@@ -977,6 +977,7 @@ async function handleUpload(itemId, caseRef, input) {
   let succeeded = 0;
   let failed    = 0;
   const failedNames = [];
+  let lastReason = '';   // why the last failure happened — kept on the row, a toast is gone in seconds
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
@@ -990,7 +991,8 @@ async function handleUpload(itemId, caseRef, input) {
     if (file.size > MAX_UPLOAD_BYTES) {
       failed++;
       failedNames.push(file.name);
-      showToast(file.name + ' is ' + Math.ceil(file.size / 1048576) + ' MB. The limit is ' + MAX_UPLOAD_MB + ' MB per file. Split it or scan at a lower quality.', 'error');
+      lastReason = file.name + ' is ' + Math.ceil(file.size / 1048576) + ' MB. The limit is ' + MAX_UPLOAD_MB + ' MB per file. Split it into smaller files or scan at a lower quality.';
+      showToast(lastReason, 'error');
       continue;
     }
 
@@ -999,15 +1001,15 @@ async function handleUpload(itemId, caseRef, input) {
 
     try {
       // The server takes large uploads in turns: when it says "busy", wait
-      // and send again (up to 4 tries) so the client has nothing to do.
+      // and send again (up to 8 tries, two minutes) so the client has nothing to do.
       let res, data;
-      for (let attempt = 1; attempt <= 4; attempt++) {
+      for (let attempt = 1; attempt <= 8; attempt++) {
         res  = await fetch(
           '/documents/' + encodeURIComponent(caseRef) + '/upload/' + itemId,
           { method: 'POST', body: formData }
         );
         data = await res.json();
-        if (!(res.status === 503 && data.retriable) || attempt === 4) break;
+        if (!(res.status === 503 && data.retriable) || attempt === 8) break;
         msg.textContent = 'The server is busy. ' + file.name + ' will be sent again in a moment…';
         await new Promise((resolve) => setTimeout(resolve, 15000));
       }
@@ -1017,7 +1019,8 @@ async function handleUpload(itemId, caseRef, input) {
       } else {
         failed++;
         failedNames.push(file.name);
-        showToast(data.error ? (file.name + ': ' + data.error) : ('Failed: ' + file.name), 'error');
+        lastReason = data.error ? (file.name + ': ' + data.error) : '';
+        showToast(lastReason || ('Failed: ' + file.name), 'error');
       }
     } catch (e) {
       failed++;
@@ -1052,7 +1055,7 @@ async function handleUpload(itemId, caseRef, input) {
 
     showToast(files.length > 1 ? \`\${succeeded} file\${succeeded !== 1 ? 's' : ''} uploaded!\` : 'Document uploaded!');
   } else {
-    msg.textContent = '⚠ All uploads failed. Please try again.';
+    msg.textContent = lastReason ? ('⚠ ' + lastReason) : '⚠ All uploads failed. Please try again.';
     msg.style.color = '#dc2626';
     showToast('Upload failed', 'error');
   }

@@ -8,13 +8,20 @@
  * 50 MB (owner decision 2026-09-29): long scanned PDFs run 20–40 MB. Uploads
  * are buffered in memory on their way to OneDrive, so the size limit comes
  * with a budget on the BYTES in flight at once (by declared Content-Length):
- * many small files pass together, a few very large ones take turns. Past the
+ * many small files pass together, very large ones take turns. Past the
  * budget the page is told to retry (it does so by itself) instead of the
  * server running out of memory.
+ *
+ * The budget is 100 MB — two full-size files, or twenty 5 MB ones. A file
+ * costs up to TWICE its size for a moment (multer's memory storage collects
+ * the chunks, then joins them into one buffer), so 100 MB in flight can peak
+ * near 200 MB on top of the app itself (measured 2026-09-29: two 50 MB files
+ * in flight cost 210 MB); that has to fit the smallest Render instance
+ * (512 MB). Raise it only together with the instance size.
  */
 const MAX_UPLOAD_MB = 50;
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
-const MAX_IN_FLIGHT_BYTES = 200 * 1024 * 1024;
+const MAX_IN_FLIGHT_BYTES = 100 * 1024 * 1024;
 // A request may take this long to arrive in full (Node's default is 5 minutes —
 // too short for 50 MB on a slow phone connection). Applied in server.js.
 const UPLOAD_REQUEST_TIMEOUT_MS = 15 * 60 * 1000;

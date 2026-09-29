@@ -887,10 +887,10 @@ function buildPortalPage(snap, opts) {
     function uploadOne(id, file) {
       inFlight++;
       // The server takes large uploads in turns: when it says "busy", wait and
-      // send again (up to 4 tries) so the client has nothing to do.
+      // send again (up to 8 tries, two minutes) so the client has nothing to do.
       function attempt(n) {
         return sendOnce(id, file).then(function (res) {
-          if (res.busy && n < 4) {
+          if (res.busy && n < 8) {
             state(id, 'The server is busy — "' + file.name + '" will be sent again in a moment…');
             return new Promise(function (resolve) { setTimeout(resolve, 15000); }).then(function () { return attempt(n + 1); });
           }

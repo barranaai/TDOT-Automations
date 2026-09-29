@@ -39,12 +39,12 @@ test('both routes take an upload slot BEFORE multer buffers the body', () => {
 test('uploadSlot: a size budget, not a count — many small files pass together, very large ones take turns', () => {
   const MB = 1024 * 1024;
   const req = (mb) => ({ headers: { 'content-length': String(mb * MB) } });
-  assert.equal(L.MAX_IN_FLIGHT_BYTES, 200 * MB);
-  // 30 small files at once: all admitted
+  assert.equal(L.MAX_IN_FLIGHT_BYTES, 100 * MB, 'two full-size files — peak memory is about twice this');
+  // 10 small files at once: all admitted
   const small = [];
-  for (let i = 0; i < 30; i++) { const res = fakeRes(); let ok = false; L.uploadSlot(req(5), res, () => { ok = true; }); assert.equal(ok, true, `small file ${i + 1}`); small.push(res); }
-  assert.equal(L._inFlightBytes(), 150 * MB);
-  // a 50 MB file still fits (200), the next one does not
+  for (let i = 0; i < 10; i++) { const res = fakeRes(); let ok = false; L.uploadSlot(req(5), res, () => { ok = true; }); assert.equal(ok, true, `small file ${i + 1}`); small.push(res); }
+  assert.equal(L._inFlightBytes(), 50 * MB);
+  // a 50 MB file still fits (100), the next one does not
   const big = fakeRes(); let bigOk = false; L.uploadSlot(req(50), big, () => { bigOk = true; });
   assert.equal(bigOk, true);
   const refused = fakeRes(); let ran = false; L.uploadSlot(req(50), refused, () => { ran = true; });
@@ -52,12 +52,15 @@ test('uploadSlot: a size budget, not a count — many small files pass together,
   assert.equal(refused.statusCode, 503);
   assert.equal(refused.body.retriable, true);
   assert.match(refused.body.error, /try again in a minute/);
-  assert.equal(L._inFlightBytes(), 200 * MB, 'a refused request never counted');
+  assert.equal(L._inFlightBytes(), 100 * MB, 'a refused request never counted');
+  // even a small one waits while the budget is full
+  const tiny = fakeRes(); let tinyRan = false; L.uploadSlot(req(1), tiny, () => { tinyRan = true; });
+  assert.equal(tinyRan, false);
   // finishing frees exactly what was held — once, even when both events fire
   big.emit('finish'); big.emit('close');
-  assert.equal(L._inFlightBytes(), 150 * MB);
+  assert.equal(L._inFlightBytes(), 50 * MB);
   small[0].emit('close');                      // a client that went away mid-upload
-  assert.equal(L._inFlightBytes(), 145 * MB);
+  assert.equal(L._inFlightBytes(), 45 * MB);
   for (const r of small.slice(1)) r.emit('finish');
   assert.equal(L._inFlightBytes(), 0);
 });
@@ -83,12 +86,13 @@ test('a slow connection gets 15 minutes to deliver the file; the header guard is
   assert.doesNotMatch(src, /server\.headersTimeout\s*=/);
 });
 
-test('both pages send a file again by themselves when the server says busy (up to 4 tries)', () => {
+test('both pages send a file again by themselves when the server says busy (up to 8 tries, two minutes)', () => {
   const portal = fs.readFileSync(require.resolve('../src/services/clientPortalService.js'), 'utf8');
   assert.match(portal, /busy: r\.status === 503 && !!j\.retriable/);
-  assert.match(portal, /if \(res\.busy && n < 4\)/);
+  assert.match(portal, /if \(res\.busy && n < 8\)/);
   const docs = fs.readFileSync(require.resolve('../src/routes/documentUploadForm.js'), 'utf8');
-  assert.match(docs, /for \(let attempt = 1; attempt <= 4; attempt\+\+\)/);
+  assert.match(docs, /for \(let attempt = 1; attempt <= 8; attempt\+\+\)/);
+  assert.match(docs, /attempt === 8\) break;/);
   assert.match(docs, /res\.status === 503 && data\.retriable/);
 });
 
@@ -111,7 +115,8 @@ test('the pages tell the client the file size and the limit before sending it', 
   assert.match(portal, /The limit is ' \+ MAX_MB \+ ' MB per file/);
   const docs = fs.readFileSync(require.resolve('../src/routes/documentUploadForm.js'), 'utf8');
   assert.match(docs, /if \(file\.size > MAX_UPLOAD_BYTES\)/);
-  assert.match(docs, /showToast\(data\.error \?/, 'and shows the server\'s reason when an upload is refused');
+  assert.match(docs, /lastReason = data\.error \?/, 'and keeps the server\'s reason when an upload is refused');
+  assert.match(docs, /msg\.textContent = lastReason \? \('⚠ ' \+ lastReason\)/, 'the reason stays on the row — a toast is gone in seconds');
 });
 
 test('the OneDrive upload allows the time a 50 MB file needs', () => {
