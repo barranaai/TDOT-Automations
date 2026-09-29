@@ -28,6 +28,7 @@ const docFormSvc   = require('./documentFormService');
 const htmlQ        = require('./htmlQuestionnaireService');
 const { clientMasterBoardId } = require('../../config/monday');
 const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
+const uploadLimits = require('../utils/uploadLimits');
 
 const BASE_URL = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
 
@@ -856,7 +857,8 @@ function buildPortalPage(snap, opts) {
   (function () {
     var CASE_REF = ${jsLit(snap.caseRef)};
     var TOKEN    = ${jsLit(snap.accessToken || '')};
-    var MAX      = 20 * 1024 * 1024;
+    var MAX      = ${uploadLimits.MAX_UPLOAD_BYTES};
+    var MAX_MB   = ${uploadLimits.MAX_UPLOAD_MB};
     // Reload only when EVERY upload has settled — reloading on the first
     // success would abort any other row's in-flight upload mid-body (silent
     // file loss for someone working down the checklist).
@@ -893,7 +895,7 @@ function buildPortalPage(snap, opts) {
         if (!files.length) return;
         var id = input.getAttribute('data-item');
         var over = files.filter(function (f) { return f.size > MAX; });
-        if (over.length) { state(id, '"' + over[0].name + '" is over 20 MB — please send a smaller copy.', true); input.value = ''; return; }
+        if (over.length) { state(id, '"' + over[0].name + '" is ' + Math.ceil(over[0].size / 1048576) + ' MB. The limit is ' + MAX_MB + ' MB per file. Split it into smaller files or scan at a lower quality.', true); input.value = ''; return; }
         lock(input, true);
         var done = 0, failed = null;
         (function next(i) {

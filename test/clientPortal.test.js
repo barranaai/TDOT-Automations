@@ -341,9 +341,9 @@ function multipartReq(fieldName, bytes) {
   return req;
 }
 
-test('uploadSingle middleware: an over-20MB body becomes friendly 413 JSON, not a 500', async () => {
-  const wrapper = uploadLayer(1);
-  const req = multipartReq('file', Buffer.alloc(20 * 1024 * 1024 + 1024)); // just over the limit
+test('uploadSingle middleware: an over-the-limit body becomes friendly 413 JSON, not a 500', async () => {
+  const wrapper = uploadLayer(2);
+  const req = multipartReq('file', Buffer.alloc(require('../src/utils/uploadLimits').MAX_UPLOAD_BYTES + 1024)); // just over the limit
   const res = fakeRes();
   let nexted = false;
   await new Promise((resolve) => {
@@ -354,11 +354,12 @@ test('uploadSingle middleware: an over-20MB body becomes friendly 413 JSON, not 
   assert.equal(nexted, false, 'oversized upload never reaches the handler');
   assert.equal(res.statusCode, 413);
   assert.equal(res.body.success, false);
-  assert.match(res.body.error, /20 MB/, 'friendly size message the portal script can display');
+  assert.match(res.body.error, /over 50 MB/, 'friendly size message the portal script can display');
+  assert.match(res.body.error, /split it|lower quality/i, 'and it says what to do');
 });
 
 test('uploadSingle middleware: an unexpected multipart field becomes 400 JSON (all multer errors answered as JSON)', async () => {
-  const wrapper = uploadLayer(1);
+  const wrapper = uploadLayer(2);
   const req = multipartReq('wrongfield', Buffer.from('tiny'));
   const res = fakeRes();
   let nexted = false;

@@ -11,10 +11,13 @@ const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT
 
 // ─── File upload config ───────────────────────────────────────────────────────
 
+const uploadLimits = require('../utils/uploadLimits');
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits:  { fileSize: 20 * 1024 * 1024 }, // 20 MB per file
+  limits:  { fileSize: uploadLimits.MAX_UPLOAD_BYTES }, // per file
 });
+// Multer errors (file too big etc.) come back as JSON the page can show.
+const uploadSingle = uploadLimits.friendlyUpload(upload.single('file'), 'DocForm upload');
 
 const ALLOWED_EXTENSIONS = new Set([
   '.pdf', '.doc', '.docx',
@@ -787,6 +790,8 @@ ${flaggedCount > 0 ? `
 
 <script>
 const CASE_REF      = ${JSON.stringify(caseRef)};
+const MAX_UPLOAD_BYTES = ${uploadLimits.MAX_UPLOAD_BYTES};
+const MAX_UPLOAD_MB    = ${uploadLimits.MAX_UPLOAD_MB};
 const TOTAL         = ${total};
 const FIRST_FLAGGED = ${firstFlaggedStep};
 let currentStep   = 0;
@@ -981,6 +986,14 @@ async function handleUpload(itemId, caseRef, input) {
       msg.textContent = \`Uploading \${i + 1} of \${files.length}: \${file.name}\`;
     }
 
+    // Too big: say so before sending 50 MB nobody will accept.
+    if (file.size > MAX_UPLOAD_BYTES) {
+      failed++;
+      failedNames.push(file.name);
+      showToast(file.name + ' is ' + Math.ceil(file.size / 1048576) + ' MB. The limit is ' + MAX_UPLOAD_MB + ' MB per file. Split it or scan at a lower quality.', 'error');
+      continue;
+    }
+
     const formData = new FormData();
     formData.append('file', file);
 
@@ -996,7 +1009,7 @@ async function handleUpload(itemId, caseRef, input) {
       } else {
         failed++;
         failedNames.push(file.name);
-        showToast('Failed: ' + file.name, 'error');
+        showToast(data.error ? (file.name + ': ' + data.error) : ('Failed: ' + file.name), 'error');
       }
     } catch (e) {
       failed++;
@@ -1145,7 +1158,7 @@ router.get('/:caseRef', async (req, res) => {
 });
 
 // File upload handler
-router.post('/:caseRef/upload/:itemId', upload.single('file'), async (req, res) => {
+router.post('/:caseRef/upload/:itemId', uploadLimits.uploadSlot, uploadSingle, async (req, res) => {
   const caseRef = decodeURIComponent(req.params.caseRef).trim();
   const itemId  = req.params.itemId;
   const file    = req.file;
@@ -1232,3 +1245,5 @@ router.post('/:caseRef/complete', (req, res) => {
 });
 
 module.exports = router;
+// For tests only: the page builder, so the emitted <script> can be parsed.
+module.exports._formPage = formPage;

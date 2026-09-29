@@ -28,7 +28,8 @@ function sanitiseCaseRef(s) {
 
 // Upload constraints — identical to the standalone /documents page, so both
 // entry points accept exactly the same files.
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const uploadLimits = require('../utils/uploadLimits');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: uploadLimits.MAX_UPLOAD_BYTES } });
 const ALLOWED_EXTENSIONS = new Set([
   '.pdf', '.doc', '.docx',
   '.jpg', '.jpeg', '.png', '.heic', '.webp',
@@ -44,7 +45,8 @@ function oneStr(v) {
 // Per-IP rate limit (same sliding-window pattern as POST /lead/new, JSON
 // flavour). Multer buffers the whole body into memory BEFORE any in-handler
 // auth can run, so this limiter is the practical guard against
-// unauthenticated 20MB spray.
+// unauthenticated spray of large bodies (uploadSlot below caps how many
+// may be buffered at once).
 //
 // Key on the LAST X-Forwarded-For entry: Render's proxy APPENDS the true
 // peer IP, so the last hop is proxy-attested — the FIRST entry is whatever
@@ -78,17 +80,7 @@ function uploadRateLimit(req, res, next) {
 
 // Multer errors (file too big etc.) must come back as the JSON the portal's
 // upload script expects — not fall through to the global 500 handler.
-function uploadSingle(req, res, next) {
-  upload.single('file')(req, res, (err) => {
-    if (!err) return next();
-    const tooBig = err.code === 'LIMIT_FILE_SIZE';
-    console.warn('[/client upload] multer error:', err.code || err.message);
-    res.status(tooBig ? 413 : 400).json({
-      success: false,
-      error: tooBig ? 'That file is over 20 MB — please compress it or send a smaller scan.' : 'There was a problem with that upload — please try again.',
-    });
-  });
-}
+const uploadSingle = uploadLimits.friendlyUpload(upload.single('file'), '/client upload');
 
 /**
  * GET /client/:caseRef
@@ -250,7 +242,7 @@ const _lastResendAt = new Map();   // itemId → last successful re-send (this p
  *   2. the target item must BELONG to this case — a valid token for your own
  *      case can never push files onto another case's checklist row.
  */
-router.post('/:caseRef/document/:itemId/upload', uploadRateLimit, uploadSingle, async (req, res) => {
+router.post('/:caseRef/document/:itemId/upload', uploadRateLimit, uploadLimits.uploadSlot, uploadSingle, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
   const itemId  = oneStr(req.params.itemId);
   const token   = oneStr(req.query.t) || oneStr(req.body && req.body.t);
