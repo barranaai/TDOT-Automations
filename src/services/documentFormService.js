@@ -3,6 +3,7 @@ const fs        = require('fs');
 const mondayApi = require('./mondayApi');
 const { uploadFile: uploadToOneDrive, ensureCategoryFolderLink } = require('./oneDriveService');
 const { decodeUploadFilename } = require('../utils/uploadFilename');
+const naming = require('../utils/uploadNaming');
 const { clientMasterBoardId } = require('../../config/monday');
 
 // ─── Disclaimer map (keyed by "caseType|subType") ────────────────────────────
@@ -123,27 +124,70 @@ async function getDisclaimerForCase(caseRef) {
 }
 
 /**
+ * The Template Board row behind a template-linked checklist row: its category
+ * and which family member it is for (one query, both columns). Returns null
+ * (not a default) when the id is not a Template item id or the lookup fails,
+ * so the caller's fallback chain decides — never this function. The blank
+ * applicant type defaults the way getCaseDocuments does, so the stored file
+ * name and the page agree.
+ */
+async function getTemplateMeta(intakeId) {
+  if (!isTemplateItemId(intakeId)) return null;
+  try {
+    const data = await mondayApi.query(
+      `query($id: ID!) {
+         items(ids: [$id]) {
+           column_values(ids: ["${TMPL_CATEGORY_COL}", "${TMPL_APPLICANT_TYPE_COL}"]) { id text }
+         }
+       }`,
+      { id: String(intakeId) }
+    );
+    const cols = data?.items?.[0]?.column_values;
+    if (!cols) return null;
+    const tc = (id) => cols.find((c) => c.id === id)?.text?.trim() || '';
+    return { category: tc(TMPL_CATEGORY_COL), applicantType: tc(TMPL_APPLICANT_TYPE_COL) || 'Principal Applicant' };
+  } catch (err) {
+    console.warn(`[DocForm] Template lookup failed for intakeId ${intakeId}: ${err.message}`);
+    return null;
+  }
+}
+
+/**
  * Fetch category from the Template Board using the stored intakeId.
  * Returns '' (not a default) when the id is not a Template item id or the
  * lookup fails, so the caller's fallback chain decides — never this function.
  */
 async function getCategoryFromTemplate(intakeId) {
   if (!isTemplateItemId(intakeId)) return '';
-  try {
-    const data = await mondayApi.query(
-      `query($id: ID!) {
-         items(ids: [$id]) {
-           column_values(ids: ["${TMPL_CATEGORY_COL}"]) { id text }
-         }
-       }`,
-      { id: String(intakeId) }
-    );
-    return data?.items?.[0]?.column_values
-      ?.find((c) => c.id === TMPL_CATEGORY_COL)?.text?.trim() || '';
-  } catch (err) {
-    console.warn(`[DocForm] Template category lookup failed for intakeId ${intakeId}: ${err.message}`);
-    return '';
+  const meta = await getTemplateMeta(intakeId);
+  return meta ? meta.category : '';
+}
+
+/**
+ * Pure. Which family member a checklist row is for — the ONE rule the client
+ * pages display by and the upload names files by, so both always agree:
+ *   • a schema-seeded "code:" row resolves back to its schema role (the
+ *     role's DISPLAY label, e.g. "Inviter (in Canada)" rather than "Sponsor",
+ *     plus the member index for a second child);
+ *   • template-linked rows carry applicantType on the Template row; schema-
+ *     seeded rows have NO Template link, so the execution row's own column is
+ *     read before defaulting. Without that fallback every schema-seeded
+ *     per-member document reads as "Principal Applicant".
+ * @returns {{ resolved: object|null, applicantType: string, applicantLabel: string }}
+ */
+function applicantLabelFor({ intakeId, templateApplicantType = '', execApplicantType = '' }) {
+  const id = String(intakeId || '');
+  let resolved = null;
+  if (id.startsWith('code:')) {
+    // Read-time resolution: already-seeded cases get this with no board rewrite.
+    try { resolved = require('./seedPlanner').resolveDocumentCode(id.slice(5)); }
+    catch (err) { console.warn(`[DocForm] Schema role lookup failed for ${id}: ${err.message}`); }
   }
+  const applicantType = templateApplicantType || execApplicantType || 'Principal Applicant';
+  const applicantLabel = resolved && resolved.role.label
+    ? resolved.role.label + (resolved.memberIndex > 1 ? ` ${resolved.memberIndex}` : '')
+    : applicantType;
+  return { resolved, applicantType, applicantLabel };
 }
 
 /** A Template Board item id is numeric. Schema-seeded rows store "code:<documentCode>" instead. */
@@ -266,27 +310,15 @@ async function getCaseDocuments(caseRef) {
       const intakeId = c(INTAKE_ID_COL);
       const tmpl     = (intakeId && templateMap[intakeId]) || {};
 
-      // Schema-seeded rows carry `code:<documentCode>` instead of a Template
-      // link — resolve the code back to the schema definition so the client
-      // still gets the per-document guidance and the role's DISPLAY label
-      // (e.g. "Inviter (in Canada)" instead of the internal role key
-      // "Sponsor"). Read-time resolution: already-seeded cases get this with
-      // no board rewrite.
-      const resolved = String(intakeId || '').startsWith('code:')
-        ? require('./seedPlanner').resolveDocumentCode(intakeId.slice(5))
-        : null;
-
       // Category: template dropdown → execution text column → mirror → fallback
       const category = tmpl.category || c(CATEGORY_TEXT_COL) || c(CATEGORY_MIRROR_COL) || 'General';
 
-      // Template-linked items carry applicantType on the Template row; schema-
-      // seeded items have NO Template link, so read their member type from the
-      // execution row's own column before defaulting. Without this fallback,
-      // every schema-seeded per-member doc renders as "Principal Applicant".
-      const applicantType = tmpl.applicantType || c(EXEC_APPLICANT_TYPE_COL) || 'Principal Applicant';
-      const applicantLabel = resolved && resolved.role.label
-        ? resolved.role.label + (resolved.memberIndex > 1 ? ` ${resolved.memberIndex}` : '')
-        : applicantType;
+      // Which member the row is for — the same rule the upload names files by
+      // (applicantLabelFor), so a schema-seeded "code:" row shows the role's
+      // DISPLAY label and its per-document guidance.
+      const { resolved, applicantType, applicantLabel } = applicantLabelFor({
+        intakeId, templateApplicantType: tmpl.applicantType || '', execApplicantType: c(EXEC_APPLICANT_TYPE_COL),
+      });
 
       return {
         id:                 item.id,
@@ -452,6 +484,21 @@ async function getCaseSummary(caseRef) {
  * (schema-seeded "code:" rows) → "General".
  *
  * Client name is fetched from the Client Master Board in parallel.
+ *
+ * Stored name — behind UPLOAD_UNIQUE_NAMES (read at call time):
+ *   ON:  "<Document> – <Member> – <YYYY-MM-DD HH-mm> – <client's name>", written
+ *        as a NEW file (uploadFileAsNew) so a re-upload never replaces an
+ *        earlier copy; the note records the name Graph actually kept.
+ *   OFF: today's path exactly — the client's own name, replace-in-place.
+ *
+ * Order: file → folder-link backfill → the ROW note (awaited, so the note that
+ * names the file exists before the status write's webhook pings staff) →
+ * readiness recalc. The caller (the route) then marks the row Received.
+ *
+ * @returns {Promise<{ id, name, webUrl, url, replaced, category, docName, memberLabel, originalName, noteBody, notePosted }>}
+ *   name/id/url are '' on the OFF path (only webUrl is known there); noteBody is
+ *   the row note as posted, notePosted whether it landed — the status-retry job
+ *   needs both when the status write fails after the file is saved.
  */
 async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, rawOriginalName, mimeType) {
   // multipart filenames arrive as UTF-8 bytes read as latin1 (RFC 7578) - repair
@@ -464,7 +511,7 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, rawOriginalName
        items(ids: [$itemId]) {
          id
          name
-         column_values(ids: ["${INTAKE_ID_COL}", "${CATEGORY_MIRROR_COL}", "${CATEGORY_TEXT_COL}", "${DOC_FOLDER_COL}"]) { id text }
+         column_values(ids: ["${INTAKE_ID_COL}", "${CATEGORY_MIRROR_COL}", "${CATEGORY_TEXT_COL}", "${DOC_FOLDER_COL}", "${EXEC_APPLICANT_TYPE_COL}"]) { id text }
        }
      }`,
     { itemId: String(itemId) }
@@ -476,30 +523,47 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, rawOriginalName
   const intakeId   = cols.find((c) => c.id === INTAKE_ID_COL)?.text?.trim()       || '';
   const mirror     = cols.find((c) => c.id === CATEGORY_MIRROR_COL)?.text?.trim() || '';
   const catText    = cols.find((c) => c.id === CATEGORY_TEXT_COL)?.text?.trim()    || '';
+  const execApplicantType = cols.find((c) => c.id === EXEC_APPLICANT_TYPE_COL)?.text?.trim() || '';
   let folderText   = cols.find((c) => c.id === DOC_FOLDER_COL)?.text?.trim()      || '';
 
-  // Parallel: resolve category + get client name
-  const [templateCategory, clientName] = await Promise.all([
-    getCategoryFromTemplate(intakeId),   // '' unless a real Template item id resolves
+  // Parallel: resolve the Template row (category + member) + get client name
+  const [tmplMeta, clientName] = await Promise.all([
+    getTemplateMeta(intakeId),   // null unless a real Template item id resolves
     getClientName(caseRef),
   ]);
+  const templateCategory = tmplMeta ? tmplMeta.category : '';
   const category = resolveUploadCategory({ templateCategory, catText, mirror, schemaCategory: categoryFromSchemaCode(intakeId) });
   if (category === 'General' && (catText || mirror || intakeId)) {
     console.warn(`[DocForm] Category fell back to "General" for item ${itemId} (intakeId="${intakeId}", catText="${catText}", mirror="${mirror}")`);
   }
+  const { resolved, applicantType, applicantLabel } = applicantLabelFor({
+    intakeId, templateApplicantType: tmplMeta ? tmplMeta.applicantType : '', execApplicantType,
+  });
 
   console.log(
     `[DocForm] Uploading "${originalName}" | case ${caseRef} | client "${clientName}" | category "${category}"`
   );
 
-  const webUrl = await uploadToOneDrive({
-    clientName,
-    caseRef,
-    category,
-    filename: originalName,
-    buffer:   fileBuffer,
-    mimeType,
-  });
+  const now    = io.now();
+  const unique = naming.isUniqueNamesEnabled();   // read once per upload, so the file and its note agree
+  let saved, requested = '';
+  if (unique) {
+    requested = naming.buildStoredName({
+      docName, member: naming.memberSegment({ resolved, applicantType, applicantLabel }), originalName, now,
+    });
+    saved = await io.uploadAsNew({ clientName, caseRef, category, filename: requested, buffer: fileBuffer, mimeType });
+    console.log(`[DocForm] stored item=${itemId} case=${caseRef} category="${category}" name="${saved.name}" id=${saved.id} replaced=${saved.replaced}`);
+  } else {
+    const webUrl = await uploadToOneDrive({
+      clientName,
+      caseRef,
+      category,
+      filename: originalName,
+      buffer:   fileBuffer,
+      mimeType,
+    });
+    saved = { name: '', id: '', webUrl, url: '', replaced: false };
+  }
 
   // ── Backfill folder link if the Document Folder column is empty ───────────
   // This covers items created when OneDrive was unavailable at checklist time.
@@ -531,18 +595,29 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, rawOriginalName
   }
 
   // ── Post Monday Updates so the case team is notified ──────────────────────
-  // Fire-and-forget: updates are nice-to-have, must not fail the upload response.
-  postUploadUpdates({
-    itemId,
-    caseRef,
-    clientName,
-    category,
-    docName,
-    filename:  originalName,
-    folderUrl: folderText,
-  }).catch((err) =>
-    console.warn(`[DocForm] Upload update post failed for item ${itemId}:`, err.message)
-  );
+  // The ROW note is awaited (one Monday call) so the note naming the file
+  // exists before the status write's webhook pings the reviewer; the Client
+  // Master note stays fire-and-forget inside. Never fails the upload: the file
+  // is saved, and the status-retry job re-posts a note that did not land.
+  const noteParams = {
+    itemId, caseRef, clientName, category, docName,
+    filename:    saved.name || originalName,
+    originalName,
+    memberLabel: applicantLabel,
+    fileUrl:     saved.url,
+    folderUrl:   folderText,
+    renamed:     !!saved.name && saved.name !== requested,
+    replaced:    saved.replaced,
+    now,
+    unique,
+  };
+  let noteBody = '', notePosted = false;
+  try {
+    ({ noteBody, notePosted } = await postUploadUpdates(noteParams));
+  } catch (err) {
+    try { noteBody = buildUploadNoteBodies(noteParams).docBody; } catch (_) { /* the note is best effort; the file is saved */ }
+    console.warn(`[DocForm] Upload update post failed for item ${itemId}:`, err.message);
+  }
 
   // Fire-and-forget: refresh Documents Uploaded % and Documents Readiness %
   // on Client Master immediately so supervisors see live progress instead of
@@ -553,56 +628,38 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, rawOriginalName
       console.warn(`[DocForm] Live readiness recalc failed for ${caseRef}:`, err.message)
     );
 
-  return webUrl;
+  return { ...saved, category, docName, memberLabel: applicantLabel, originalName, noteBody, notePosted };
 }
 
 /**
- * Post "document uploaded" updates to Monday.com so the case team is notified
- * via Monday's native update subscription (bell + email).
+ * Pure. The two "document uploaded" note bodies.
  *
- *  • Update on the Document Execution item → notifies Assigned Reviewer
- *  • Update on the Client Master item      → notifies Case Manager, Ops Supervisor,
- *                                             Case Support Officer, Stage Owner
+ * Line order is load-bearing: the re-file tool and the phantom-docs audit
+ * parse `File:` up to the next newline OR `Category:`, and `Category:` up to
+ * `Case:` — and Monday collapses newlines into spaces, so a line placed
+ * between them would be swallowed into the captured name. Every line that is
+ * new with unique names therefore sits AFTER `Case:`, the link label is
+ * "Open this upload" (no second `File:` anywhere), and the stored name carries
+ * no ":" (stripped), so it can never contain `Category:`.
+ *
+ * With `unique` false (switch OFF) both bodies are today's, byte for byte.
  */
-async function postUploadUpdates({ itemId, caseRef, clientName, category, docName, filename, folderUrl }) {
-  const uploadedAt = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
+function buildUploadNoteBodies({ caseRef, clientName, category, docName, filename, originalName, memberLabel, fileUrl, folderUrl, renamed, replaced, now, unique }) {
+  const uploadedAt = (now || new Date()).toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
   const clientLine = clientName ? ` (${clientName})` : '';
   const folderLine = folderUrl  ? `\n\n📁 Folder: ${folderUrl}` : '';
   const reviewUrl  = `${BASE_URL}/d/${encodeURIComponent(caseRef)}/review`;
   const reviewLine = `\n\n🔎 Review all documents for this case: ${reviewUrl}`;
 
-  // 1. Document Execution item — reviewer gets notified
-  const docBody =
-    `📄 Document Uploaded by Client\n\n` +
-    `Document: ${docName}\n` +
-    `File: ${filename}\n` +
-    `Category: ${category}\n` +
-    `Case: ${caseRef}${clientLine}\n` +
-    `Uploaded: ${uploadedAt} (Toronto)${folderLine}\n\n` +
-    `Status set to Received — please review.${reviewLine}`;
-
-  await mondayApi.query(
-    `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
-    { itemId: String(itemId), body: docBody }
-  );
-
-  // 2. Client Master item — case team gets notified
-  try {
-    const masterData = await mondayApi.query(
-      `query($boardId: ID!, $caseRef: String!) {
-         items_page_by_column_values(
-           board_id: $boardId, limit: 1,
-           columns: [{ column_id: "${CM_CASE_REF_COL}", column_values: [$caseRef] }]
-         ) { items { id } }
-       }`,
-      { boardId: String(CM_BOARD_ID), caseRef }
-    );
-    const masterItemId = masterData?.items_page_by_column_values?.items?.[0]?.id;
-    if (!masterItemId) {
-      console.warn(`[DocForm] No Client Master item found for case ${caseRef} — skipping master update`);
-      return;
-    }
-
+  if (!unique) {
+    const docBody =
+      `📄 Document Uploaded by Client\n\n` +
+      `Document: ${docName}\n` +
+      `File: ${filename}\n` +
+      `Category: ${category}\n` +
+      `Case: ${caseRef}${clientLine}\n` +
+      `Uploaded: ${uploadedAt} (Toronto)${folderLine}\n\n` +
+      `Status set to Received — please review.${reviewLine}`;
     const masterBody =
       `📄 Client Uploaded Document\n\n` +
       `Document: ${docName}\n` +
@@ -610,31 +667,121 @@ async function postUploadUpdates({ itemId, caseRef, clientName, category, docNam
       `Category: ${category}\n` +
       `Case: ${caseRef}\n` +
       `Uploaded: ${uploadedAt} (Toronto)${folderLine}${reviewLine}`;
-
-    await mondayApi.query(
-      `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
-      { itemId: String(masterItemId), body: masterBody }
-    );
-  } catch (err) {
-    console.warn(`[DocForm] Client Master update failed for case ${caseRef}:`, err.message);
+    return { docBody, masterBody };
   }
+
+  // Monday renders update bodies as HTML — a client's file name must read as
+  // text, never as a tag or a link (the OFF path keeps today's raw name).
+  const namedBy   = String(originalName || '').replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+  const memberLn  = `For: ${memberLabel || 'Principal Applicant'}\n`;
+  const namedLn   = `Named by client: ${namedBy}\n`;
+  const renamedLn = renamed  ? `Note: OneDrive added a number to the name because a file with this name already existed — both files are kept.\n` : '';
+  const replaceLn = replaced ? `Warning: OneDrive replaced a file with this name — the earlier copy is in that file's version history.\n` : '';
+  // The file link on its own line before the folder link; either alone when the other is unknown.
+  const links     = fileUrl
+    ? `\n\n🔗 Open this upload: ${fileUrl}${folderUrl ? `\n📁 Folder: ${folderUrl}` : ''}`
+    : folderLine;
+
+  const docBody =
+    `📄 Document Uploaded by Client\n\n` +
+    `Document: ${docName}\n` +
+    `File: ${filename}\n` +
+    `Category: ${category}\n` +
+    `Case: ${caseRef}${clientLine}\n` +
+    memberLn + namedLn + renamedLn + replaceLn +
+    `Uploaded: ${uploadedAt} (Toronto)${links}\n\n` +
+    `Status set to Received — please review.${reviewLine}`;
+  const masterBody =
+    `📄 Client Uploaded Document\n\n` +
+    `Document: ${docName}\n` +
+    `File: ${filename}\n` +
+    `Category: ${category}\n` +
+    `Case: ${caseRef}\n` +
+    memberLn + namedLn +
+    `Uploaded: ${uploadedAt} (Toronto)${links}${reviewLine}`;
+  return { docBody, masterBody };
+}
+
+/**
+ * Post "document uploaded" updates to Monday.com so the case team is notified
+ * via Monday's native update subscription (bell + email).
+ *
+ *  • Update on the Document Execution item → notifies Assigned Reviewer
+ *    (awaited by the caller; ONE retry only, so a degraded Monday cannot hold
+ *    the 50 MB upload slot for minutes)
+ *  • Update on the Client Master item      → notifies Case Manager, Ops Supervisor,
+ *                                             Case Support Officer, Stage Owner
+ *    (fire-and-forget)
+ *
+ * @returns {Promise<{ noteBody: string, notePosted: boolean }>} the row note and whether it landed
+ */
+async function postUploadUpdates(params) {
+  const { itemId, caseRef } = params;
+  const { docBody, masterBody } = buildUploadNoteBodies(params);
+
+  // 1. Document Execution item — reviewer gets notified
+  let notePosted = false;
+  try {
+    await io.query(
+      `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+      { itemId: String(itemId), body: docBody },
+      1
+    );
+    notePosted = true;
+  } catch (err) {
+    console.warn(`[DocForm] Row upload note failed for item ${itemId}: ${err.message}`);
+  }
+
+  // 2. Client Master item — case team gets notified
+  postMasterUploadNote({ caseRef, masterBody }).catch((err) =>
+    console.warn(`[DocForm] Client Master update failed for case ${caseRef}:`, err.message)
+  );
+
+  return { noteBody: docBody, notePosted };
+}
+
+async function postMasterUploadNote({ caseRef, masterBody }) {
+  const masterData = await io.query(
+    `query($boardId: ID!, $caseRef: String!) {
+       items_page_by_column_values(
+         board_id: $boardId, limit: 1,
+         columns: [{ column_id: "${CM_CASE_REF_COL}", column_values: [$caseRef] }]
+       ) { items { id } }
+     }`,
+    { boardId: String(CM_BOARD_ID), caseRef }
+  );
+  const masterItemId = masterData?.items_page_by_column_values?.items?.[0]?.id;
+  if (!masterItemId) {
+    console.warn(`[DocForm] No Client Master item found for case ${caseRef} — skipping master update`);
+    return;
+  }
+  await io.query(
+    `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+    { itemId: String(masterItemId), body: masterBody }
+  );
 }
 
 /**
  * After a successful upload:
  *  - Set Document Status → Received
- *  - Set Last Upload Date → today
+ *  - Set Last Upload Date → today (the TORONTO date: a 9 pm upload used to be
+ *    dated tomorrow, because the UTC date was written)
  *  - Set Review Required → Yes
+ * No retry of its own: mondayApi.query already retries 429/5xx/network 3×.
+ *
+ * @param {string|number} itemId
+ * @param {{ date?: string }} [opts]  a YYYY-MM-DD to write instead of today (the status-retry job passes the upload's date)
  */
-async function markDocumentReceived(itemId) {
-  const today     = new Date().toISOString().split('T')[0];
+async function markDocumentReceived(itemId, { date } = {}) {
+  const today     = date || naming.torontoDate(io.now());
   const colValues = JSON.stringify({
     [DOC_STATUS_COL]:  { label: 'Received' },
     [UPLOAD_DATE_COL]: { date: today },
     [REVIEW_REQ_COL]:  { label: 'Yes' },
   });
 
-  await mondayApi.query(
+  await io.query(
     `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
        change_multiple_column_values(
          board_id:      $boardId,
@@ -646,13 +793,224 @@ async function markDocumentReceived(itemId) {
   );
 }
 
+// ─── Saved but not marked: the status write is retried in-process ────────────
+//
+// The one upload failure that does not heal by itself: the file reached
+// OneDrive but Monday refused the status write. The client is told the truth
+// (file saved — do not send it again), so the row has to be marked without
+// them. Three attempts in this process, at +1, +5 and +15 minutes; one job per
+// row. A deploy inside that window loses the job — the SAVED-BUT-UNMARKED log
+// line, the ⚠️ row note and the self-describing file name are the manual path.
+//
+// Each attempt, in this order:
+//   1. post every upload note that never landed (the file's record — it can
+//      overwrite nobody's decision, so it goes up whatever happens next);
+//   2. read when the row's status and Review Notes were last changed; stop if
+//      either was after the failed write was ATTEMPTED (staff acted: Reviewed,
+//      Rework Required again, an undo, a fresh note) — their decision stands;
+//   3. write the status, then a recovery note.
+const STATUS_RETRY_DELAYS_MS = [60 * 1000, 5 * 60 * 1000, 15 * 60 * 1000];
+const _statusRetries = new Map();   // itemId → { job, attempt, timer, running }
+
+/**
+ * The route calls this when markDocumentReceived threw after the file was
+ * saved. Schedules the retry (synchronously — never throws) and then posts a
+ * best-effort ⚠️ note on the row so staff can see why it is not Received.
+ *
+ * @param {{ itemId: string|number, caseRef: string, saved: object|undefined, error: string, attemptedAt?: Date|string }} p
+ *   saved = what uploadFileToOneDrive returned (may be undefined when a stub returned nothing);
+ *   attemptedAt = when the route FIRST tried the status write — the write's own
+ *   retries can take two minutes, and a staff decision inside that window (or
+ *   a timed-out write that actually landed) must count as "after the upload"
+ */
+async function onStatusWriteFailed({ itemId, caseRef, saved, error, attemptedAt }) {
+  const s   = saved || {};
+  const at  = attemptedAt ? new Date(attemptedAt) : io.now();
+  const job = {
+    itemId:     String(itemId),
+    caseRef:    String(caseRef || ''),
+    docName:    s.docName || '',
+    storedName: s.name || s.originalName || '',       // OFF path: the client's own name — never an empty File:
+    url:        s.url || s.webUrl || '',
+    date:       naming.torontoDate(at),
+    t:          at.toISOString(),                      // the reference the changed_at guard compares against
+    // Upload notes still to post — this file's, when it never landed, plus any
+    // carried over from an earlier failed upload on the same row.
+    notes:      s.noteBody && s.notePosted !== true ? [s.noteBody] : [],
+    error:      String(error || ''),
+  };
+  scheduleStatusRetry(job);
+
+  const body =
+    `⚠️ File saved, but the status could not be set to Received\n\n` +
+    `Document: ${job.docName || 'Document'}\n` +
+    `File: ${job.storedName}\n` +
+    `Case: ${job.caseRef}\n` +
+    `Saved: ${torontoWhen(at)} (Toronto)\n\n` +
+    (job.url ? `🔗 Open this upload: ${job.url}\n\n` : '') +
+    `Monday refused the status write (${job.error}). The app will try again by itself after 1, 5 and 15 minutes; ` +
+    `the client was told the file is saved and not to send it again. ` +
+    `If this row is still not Received in half an hour, set it by hand.`;
+  try {
+    await postRowNote(job.itemId, body);
+  } catch (err) {
+    console.warn(`[upload] could not post the saved-but-unmarked note on item ${job.itemId}: ${err.message}`);
+  }
+}
+
+/**
+ * One job per row. A second failure on the same row never doubles the job and
+ * never loses a note: an ARMED job (timer pending) is replaced and its unposted
+ * notes move into the new one; a RUNNING job (mid-attempt) is not replaced —
+ * the new upload's notes and status intent are merged into it, so nothing
+ * finishes behind its back and no note is posted twice.
+ */
+function scheduleStatusRetry(job) {
+  const prev = _statusRetries.get(job.itemId);
+  if (prev && prev.running) {
+    prev.job.notes.push(...job.notes);
+    Object.assign(prev.job, { docName: job.docName || prev.job.docName, storedName: job.storedName, url: job.url, date: job.date, t: job.t, error: job.error });
+    return;
+  }
+  if (prev) {
+    if (prev.timer) io.clearTimer(prev.timer);
+    job.notes = [...prev.job.notes, ...job.notes];
+  }
+  const entry = { job, attempt: 0, timer: null, running: false };
+  _statusRetries.set(job.itemId, entry);
+  armStatusRetry(entry);
+}
+
+function armStatusRetry(entry) {
+  const delay = STATUS_RETRY_DELAYS_MS[entry.attempt];
+  entry.timer = io.setTimer(() => {
+    entry.timer = null;
+    runStatusRetry(entry).catch((err) => console.error(`[upload] status retry crashed for item ${entry.job.itemId}: ${err.message}`));
+  }, delay);
+}
+
+/** Forget this row's job — only when it is still ours. */
+function finishStatusRetry(entry) {
+  if (_statusRetries.get(entry.job.itemId) === entry) _statusRetries.delete(entry.job.itemId);
+}
+
+async function runStatusRetry(entry) {
+  const { job } = entry;
+  if (_statusRetries.get(job.itemId) !== entry) return;   // replaced by a newer job for this row
+  entry.attempt++;
+  entry.running = true;
+  // The files' records go up before anything else — and again after every
+  // await, because a second failed upload on this row can merge its note in
+  // while an attempt is mid-flight.
+  const postPendingNotes = async () => {
+    while (job.notes.length) {
+      await postRowNote(job.itemId, job.notes[0]);
+      job.notes.shift();   // after success, so a failure re-posts only what did not land
+    }
+  };
+  try {
+    // 1. The files' records first — whatever the status decision turns out to be.
+    await postPendingNotes();
+    // 2. Has anyone acted on the row since the write was attempted?
+    const changedAt = await readLastStaffChange(job.itemId);
+    await postPendingNotes();
+    if (changedAt && Date.parse(changedAt) > Date.parse(job.t)) {
+      console.warn(`[upload] status retry for item ${job.itemId} (${job.caseRef}) stopped: the row was changed at ${changedAt}, after the failed write attempted at ${job.t}`);
+      finishStatusRetry(entry);
+      return;
+    }
+    // 3. The status.
+    await markDocumentReceived(job.itemId, { date: job.date });
+    await postPendingNotes();
+    finishStatusRetry(entry);
+    const doneAt = io.now();
+    console.log(`[upload] RECOVERED item ${job.itemId} (${job.caseRef}) marked Received on attempt ${entry.attempt}`);
+    try {
+      await postRowNote(job.itemId,
+        `✅ Status set to Received (recovered)\n\n` +
+        `Document: ${job.docName || 'Document'}\n` +
+        `File: ${job.storedName}\n` +
+        `Case: ${job.caseRef}\n\n` +
+        `The status write that failed at ${torontoWhen(new Date(job.t))} succeeded on retry at ${torontoWhen(doneAt)}.`);
+    } catch (err) {
+      console.warn(`[upload] recovered, but the recovery note failed for item ${job.itemId}: ${err.message}`);
+    }
+  } catch (err) {
+    if (entry.attempt >= STATUS_RETRY_DELAYS_MS.length) {
+      console.error(`[upload] UNMARKED-FOR-GOOD item ${job.itemId} case ${job.caseRef} file "${job.storedName}" link ${job.url}: ${err.message} — set the row to Received by hand${job.notes.length ? ` (${job.notes.length} upload note(s) never posted)` : ''}`);
+      finishStatusRetry(entry);
+      return;
+    }
+    console.warn(`[upload] status retry ${entry.attempt}/${STATUS_RETRY_DELAYS_MS.length} failed for item ${job.itemId}: ${err.message} — trying again later`);
+    armStatusRetry(entry);
+  } finally {
+    entry.running = false;
+  }
+}
+
+/**
+ * Monday's own timestamp of the last change to the row's status OR its Review
+ * Notes (ISO), or '' when neither was ever set. A note edited on a row that
+ * is already Rework Required is a staff decision the status column alone
+ * cannot show.
+ */
+async function readLastStaffChange(itemId) {
+  const data = await io.query(
+    `query($ids: [ID!]!) { items(ids: $ids) { column_values(ids: ["${DOC_STATUS_COL}", "${REVIEW_NOTES_COL}"]) { id value } } }`,
+    { ids: [String(itemId)] }
+  );
+  let latest = '';
+  for (const c of data?.items?.[0]?.column_values || []) {
+    if (!c.value) continue;
+    let at = '';
+    try { at = String(JSON.parse(c.value)?.changed_at || ''); } catch (_) { /* unreadable value — no evidence */ }
+    if (at && (!latest || Date.parse(at) > Date.parse(latest))) latest = at;
+  }
+  return latest;
+}
+
+async function postRowNote(itemId, body) {
+  await io.query(
+    `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+    { itemId: String(itemId), body }
+  );
+}
+
+/** "30 Sep 2026, 2:32 pm" — the wording of every other staff note. */
+function torontoWhen(d) { return require('../utils/torontoTime').torontoTime(d instanceof Date ? d.getTime() : d); }
+
+/** Test seam: forget every pending status retry (timers are unref'd, but a test must not leak jobs into the next). */
+function _resetForTests() {
+  for (const e of _statusRetries.values()) if (e.timer) io.clearTimer(e.timer);
+  _statusRetries.clear();
+}
+function pendingStatusRetries() { return [..._statusRetries.keys()]; }
+
+/**
+ * The side effects behind one seam — tests replace these. The load-time
+ * `uploadFile` destructure above stays for the OFF path, so every existing
+ * require.cache harness keeps working; the new writer is looked up at call
+ * time. Timers are unref'd: a pending retry must never keep the process alive.
+ */
+const io = {
+  uploadAsNew: (p) => require('./oneDriveService').uploadFileAsNew(p),
+  query:       (gql, vars, retries) => mondayApi.query(gql, vars, retries),
+  now:         () => new Date(),
+  setTimer:    (fn, ms) => { const t = setTimeout(fn, ms); if (t && typeof t.unref === 'function') t.unref(); return t; },
+  clearTimer:  (t) => clearTimeout(t),
+};
+
 module.exports = {
   getCaseDocuments,
   getCaseSummary,
   getDisclaimerForCase,
   uploadFileToOneDrive,
   markDocumentReceived,
+  onStatusWriteFailed,
+  applicantLabelFor,
+  io,
   normApplicantType, // exported for tests (manifest-filter label matching)
   resolveUploadCategory, isTemplateItemId, categoryFromSchemaCode, // exported for tests (upload folder resolution)
   decodeUploadFilename, // re-exported so the upload tests can reach it through this service
+  buildUploadNoteBodies, pendingStatusRetries, _resetForTests, // exported for tests (upload notes + status retry)
 };

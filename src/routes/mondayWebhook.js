@@ -67,7 +67,7 @@ router.post('/', async (req, res) => {
 
     // ── Document Checklist Execution Board events ─────────────────────────
     if (boardIdStr === DOCUMENT_EXECUTION_BOARD_ID && type === 'update_column_value') {
-      documentReviewService.onColumnChange({ itemId: pulseId, columnId, value }).catch(err =>
+      documentReviewService.onColumnChange({ itemId: pulseId, columnId, value, previousValue: event.previousValue }).catch(err =>
         console.error('[DocReview] Error:', err.message)
       );
 
@@ -77,7 +77,9 @@ router.post('/', async (req, res) => {
         if (label === 'Received') {
           notify.onDocumentReceived(pulseId, itemName).catch(() => {});
         }
-        if (label === 'Rework Required') {
+        // A "Rework Required" re-saved unchanged is not a new flag — don't ping
+        // the case team again. Fails open when Monday sends no previousValue.
+        if (label === 'Rework Required' && event.previousValue?.label?.text !== 'Rework Required') {
           notify.onDocumentReworkRequired(pulseId, itemName).catch(() => {});
         }
       }

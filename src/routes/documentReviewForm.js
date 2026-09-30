@@ -7,6 +7,7 @@
  * Routes
  * ──────
  *   GET  /d/:caseRef/review                       Renders the review page
+ *   GET  /d/:caseRef/review/updates               JSON: { ok, replies, uploads } per row (async enrichment)
  *   POST /d/:caseRef/review/:itemId/status        JSON: { action: 'reviewed' | 'rework', notes? }
  */
 
@@ -109,7 +110,11 @@ router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
   }
 });
 
-// ─── GET /d/:caseRef/review/updates — Client replies (async enrichment) ─────
+// ─── GET /d/:caseRef/review/updates — Client replies + upload trail (async) ─
+//
+// Both come out of the same Monday updates read (one query per 100 rows):
+//   replies — { itemId: [{ body, createdAt, author }] }
+//   uploads — { itemId: [{ storedName, originalName, member, url, createdAt }] }, newest first
 
 router.get('/:caseRef/review/updates', requireStaffAuth, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
@@ -118,11 +123,11 @@ router.get('/:caseRef/review/updates', requireStaffAuth, async (req, res) => {
     if (!(await enforceCaseAccess(req, res, caseRef, { json: true }))) return;
     const summary = await docFormSvc.getCaseSummary(caseRef);
     const items   = summary?.items || [];
-    if (!items.length) return res.json({ ok: true, replies: {} });
+    if (!items.length) return res.json({ ok: true, replies: {}, uploads: {} });
 
     const itemIds = items.map(it => it.id);
-    const replies = await reviewFormSvc.getClientReplies(itemIds);
-    return res.json({ ok: true, replies });
+    const { replies, uploads } = await reviewFormSvc.getRowUpdates(itemIds);
+    return res.json({ ok: true, replies, uploads });
   } catch (err) {
     console.error(`[/d/review/updates] Error for ${caseRef}:`, err.message);
     return res.status(500).json({ ok: false, error: err.message });

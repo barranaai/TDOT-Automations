@@ -7,8 +7,11 @@
  * What it does:
  *   - Renders all documents for a case grouped by Applicant Member → Category
  *   - Each row shows: name, status badge, last upload date, review notes,
+ *     the upload trail (every copy the client sent, newest first, each with
+ *     its own OneDrive link — filled in after load from /review/updates),
  *     "Open in OneDrive" button (links to the category folder), and the
  *     Mark Reviewed / Request Rework actions
+ *   - Each row carries id="doc-<itemId>" so the cockpit can deep-link to it
  *   - Actions post to /d/:caseRef/review/:itemId/status which updates the
  *     Document Status + Review Notes columns on Monday — the existing
  *     webhook handler (documentReviewService.onColumnChange) then fires
@@ -104,19 +107,20 @@ async function getFolderLinks(itemIds) {
   return map;
 }
 
-// ─── Client Replies (Monday Updates) — batched fetch ───────────────────────
+// ─── Row updates (Monday Updates) — one batched fetch, two readers ──────────
+//
+// Every execution row carries its own thread of Monday updates: the client's
+// replies from the upload form AND the "📄 Document Uploaded by Client" note the
+// app posts on every upload. The page wants both, so the fetch is done once and
+// each reader is a pure function over one row's updates (easy to test, no I/O).
+
 /**
- * Fetch client replies (posted via the upload form) as Monday Updates, batched
- * across all execution items in a single GraphQL query.
- *
- * Returns a map: itemId → [{ body, createdAt, author }] (most recent first).
- * Only entries whose text_body begins with "✉️ Client Reply" are included,
- * so we filter out our own auto-posted "Document Uploaded" updates.
+ * Fetch the most recent updates of many execution items in ONE GraphQL query
+ * per chunk. Returns the raw Monday items: [{ id, updates: [...] }].
  */
-async function getClientReplies(itemIds, limitPerItem = 25) {
-  const map = {};
+async function fetchItemUpdates(itemIds, limitPerItem = 25) {
   const ids = (itemIds || []).map(String).filter(Boolean);
-  if (!ids.length) return map;
+  if (!ids.length) return [];
 
   // Same 25-item cap applies here — chunk and pass an explicit items limit
   // alongside the per-item updates limit.
@@ -140,29 +144,96 @@ async function getClientReplies(itemIds, limitPerItem = 25) {
     );
     collected.push(...((data && data.items) || []));
   }
+  return collected;
+}
 
-  const REPLY_PREFIX = '\u2709\ufe0f Client Reply';
-  for (const it of collected) {
-    const replies = (it.updates || [])
-      .filter(u => {
-        const t = (u.text_body || '').trim();
-        return t.startsWith(REPLY_PREFIX) || t.startsWith('Client Reply');
-      })
-      .map(u => {
-        // Extract the quoted reply body — format: ... "<reply>" ...
-        const raw = (u.text_body || '').trim();
-        const m = raw.match(/"([\s\S]+?)"/);
-        return {
-          id:        u.id,
-          body:      (m ? m[1] : raw).trim(),
-          createdAt: u.created_at || '',
-          author:    u.creator?.name || 'Client',
-        };
-      })
-      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-    map[it.id] = replies;
+const REPLY_PREFIX = '\u2709\ufe0f Client Reply';
+function isClientReply(u) {
+  const t = (u.text_body || '').trim();
+  return t.startsWith(REPLY_PREFIX) || t.startsWith('Client Reply');
+}
+
+/**
+ * Client replies (posted via the upload form) out of one row's updates —
+ * [{ id, body, createdAt, author }], most recent first. Only entries whose
+ * text_body begins with "✉️ Client Reply" count, so our own auto-posted
+ * "Document Uploaded" notes are left out.
+ */
+function parseReplies(updates) {
+  return (updates || [])
+    .filter(isClientReply)
+    .map(u => {
+      // Extract the quoted reply body — format: ... "<reply>" ...
+      const raw = (u.text_body || '').trim();
+      const m = raw.match(/"([\s\S]+?)"/);
+      return {
+        id:        u.id,
+        body:      (m ? m[1] : raw).trim(),
+        createdAt: u.created_at || '',
+        author:    u.creator?.name || 'Client',
+      };
+    })
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+// The upload note (documentFormService.postUploadUpdates). Notes from before
+// the unique-name change carry only File: / Category: / Case: / Uploaded:;
+// newer ones add For:, Named by client: and "🔗 Open this upload: <url>".
+// Monday sometimes hands text_body back with the newlines collapsed to spaces,
+// so every capture ends at a newline OR at the label that follows it — the
+// same shape documentRefileService uses to read File:/Category:.
+const UPLOAD_NOTE_RE = /Document Uploaded by Client/i;
+const FILE_RE        = /File:\s*([\s\S]+?)\s*(?:\r?\n|Category:)/;
+const MEMBER_RE      = /For:\s*([\s\S]+?)\s*(?:\r?\n|Named by client:)/;
+const ORIGINAL_RE    = /Named by client:\s*([\s\S]+?)\s*(?:\r?\n|Note:|Warning:|Uploaded:)/;
+const LINK_RE        = /Open this upload:\s*(https:\/\/\S+)/;
+
+/**
+ * The upload trail of one row out of its updates — every copy the client sent,
+ * newest first: [{ id, storedName, originalName, member, url, createdAt }].
+ * An old-format note yields url '' (the file was stored under the client's own
+ * name, which is what File: carried then) and empty member/originalName.
+ * A client reply is never an upload note, whatever the client typed in it.
+ */
+function parseUploadNotes(updates) {
+  const out = [];
+  for (const u of updates || []) {
+    const body = String(u.text_body || '');
+    if (isClientReply(u) || !UPLOAD_NOTE_RE.test(body)) continue;
+    const pick = (re) => { const m = body.match(re); return m ? m[1].trim() : ''; };
+    out.push({
+      id:           u.id,
+      storedName:   pick(FILE_RE),
+      originalName: pick(ORIGINAL_RE),
+      member:       pick(MEMBER_RE),
+      url:          pick(LINK_RE),
+      createdAt:    u.created_at || '',
+    });
   }
+  return out.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+function mapByItem(items, parse) {
+  const map = {};
+  for (const it of items) map[it.id] = parse(it.updates);
   return map;
+}
+
+/**
+ * Client replies for many rows: itemId → [{ body, createdAt, author }]
+ * (most recent first). Kept for callers that want replies alone.
+ */
+async function getClientReplies(itemIds, limitPerItem = 25) {
+  return mapByItem(await fetchItemUpdates(itemIds, limitPerItem), parseReplies);
+}
+
+/**
+ * Replies AND the upload trail for many rows from ONE fetch:
+ * { replies: { itemId → [...] }, uploads: { itemId → [...] } }.
+ */
+async function getRowUpdates(itemIds, limitPerItem = 25) {
+  const items = await fetchItemUpdates(itemIds, limitPerItem);
+  return { replies: mapByItem(items, parseReplies), uploads: mapByItem(items, parseUploadNotes) };
 }
 
 // ─── Server actions called from the page (POST handlers in routes file) ─────
@@ -377,6 +448,10 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, f
     .doc-row:last-child { border-bottom: none; }
     .doc-row[data-status="Reviewed"]        { background: #f0fdf4; }
     .doc-row[data-status="Rework Required"] { background: #fef2f2; }
+    /* A row opened by its #doc-<id> anchor (the cockpit's 📎 Files link) must
+       clear the sticky top bar and stand out for a moment. */
+    .doc-row { scroll-margin-top: 84px; }
+    .doc-row:target { outline: 2px solid #C9A84C; outline-offset: -2px; }
 
     .doc-meta .name {
       font-size: 14px; font-weight: 600; color: #1e293b; line-height: 1.4;
@@ -404,6 +479,19 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, f
       line-height: 1.5; max-width: 600px;
     }
     .doc-meta .review-notes strong { color: #991b1b; }
+    /* Upload trail — every copy the client sent, newest first */
+    .doc-meta .upload-line {
+      margin-top: 6px; font-size: 12px; color: #334155; line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+    .doc-meta .upload-line a { color: #1d4ed8; font-weight: 600; }
+    .doc-meta .upload-line .upload-when, .doc-meta .upload-line .upload-sent { color: #64748b; }
+    .doc-meta .upload-earlier { margin-top: 2px; }
+    .doc-meta .upload-earlier summary {
+      cursor: pointer; font-size: 11px; color: #64748b; font-weight: 600; list-style: none;
+    }
+    .doc-meta .upload-earlier summary::-webkit-details-marker { display: none; }
+    .doc-meta .upload-earlier .upload-line { margin-left: 18px; color: #64748b; }
     .doc-meta .client-reply {
       margin-top: 6px; padding: 8px 10px;
       background: #eff6ff; border-left: 3px solid #93c5fd;
@@ -558,7 +646,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
 
     <div id="replies-status" class="replies-status" style="display:none;">
       <span class="replies-spinner"></span>
-      <span id="replies-status-text">💬 Loading client replies…</span>
+      <span id="replies-status-text">💬 Loading client replies and uploads…</span>
     </div>
 
     ${memberBlocks || '<p style="text-align:center;color:#94a3b8;padding:60px;">No documents found for this case.</p>'}
@@ -796,6 +884,38 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       });
     }
 
+    /* ── Upload trail: every copy the client sent, newest first ──────────
+       Each entry is one "Document Uploaded by Client" note on the row. Only
+       an https link becomes a hyperlink (the old notes carry none — that file
+       is in the folder under the client's own name); every value is escaped. */
+    function uploadLine(u) {
+      var name = escText(u.storedName || '(file name not recorded)');
+      var link = (typeof u.url === 'string' && u.url.indexOf('https://') === 0)
+        ? '<a href="' + escText(u.url) + '" target="_blank" rel="noopener">' + name + '</a>'
+        : name;
+      var when = fmtWhen(u.createdAt);
+      var sentAs = (u.originalName && u.originalName !== u.storedName)
+        ? ' · <span class="upload-sent">sent as ' + escText(u.originalName) + '</span>'
+        : '';
+      return '<div class="upload-line">📎 ' + link +
+        (when ? ' · <span class="upload-when">' + escText(when) + '</span>' : '') + sentAs + '</div>';
+    }
+
+    function renderUploads(uploadsByItem) {
+      document.querySelectorAll('.uploads-slot').forEach(function (slot) {
+        slot.innerHTML = '';
+        var id = slot.getAttribute('data-item-id');
+        var list = (uploadsByItem && uploadsByItem[id]) || [];
+        if (!list.length) return;
+        var html = uploadLine(list[0]);
+        if (list.length > 1) {
+          html += '<details class="upload-earlier"><summary>' + (list.length - 1) +
+            ' earlier ▸</summary>' + list.slice(1).map(uploadLine).join('') + '</details>';
+        }
+        slot.innerHTML = html;
+      });
+    }
+
     function showRepliesError(msg) {
       var bar = document.getElementById('replies-status');
       var txt = document.getElementById('replies-status-text');
@@ -815,7 +935,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
         bar.classList.remove('error');
         bar.style.display = 'inline-flex';
       }
-      if (txt) txt.textContent = '💬 Loading client replies…';
+      if (txt) txt.textContent = '💬 Loading client replies and uploads…';
       showReplyPlaceholders();
       try {
         var res = await fetch('/d/' + encodeURIComponent(CASE_REF) + '/review/updates', {
@@ -824,6 +944,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
         var data = await res.json().catch(function () { return {}; });
         if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
         renderReplies(data.replies || {});
+        renderUploads(data.uploads || {});
         if (bar) bar.style.display = 'none';
       } catch (err) {
         showRepliesError(err && err.message ? err.message : 'Fetch failed');
@@ -862,8 +983,15 @@ function rowHtml(it, folderUrl) {
     ? `<a class="btn btn-onedrive" href="${escHtml(folderUrl)}" target="_blank" rel="noopener">📁 Open in OneDrive</a>`
     : `<button class="btn btn-onedrive" disabled title="No OneDrive folder linked yet">📁 Open in OneDrive</button>`;
 
+  // Review Notes are deliberately NOT cleared when the client uploads again —
+  // the note is the reviewer's yardstick for the new copy. On a Received row
+  // the note therefore predates at least one upload, but which one is not for
+  // the label to claim: the 📎 upload trail under it is the evidence.
+  const noteLabel = status === 'Received'
+    ? '📝 Review note on file (row is Received — see the upload trail below):'
+    : '📝 Existing review note:';
   const noteBlock = it.reviewNotes
-    ? `<div class="review-notes"><strong>📝 Existing review note:</strong> ${escHtml(it.reviewNotes)}</div>`
+    ? `<div class="review-notes"><strong>${noteLabel}</strong> ${escHtml(it.reviewNotes)}</div>`
     : '';
 
   const dateBlock = it.lastUpload
@@ -880,14 +1008,18 @@ function rowHtml(it, folderUrl) {
     ? `<div class="doc-guide">💡 ${require('./instructionFormatter').formatInstructions(it.clientInstructions)}</div>`
     : '';
 
+  // id="doc-<id>" is the anchor the cockpit's "📎 Files" link lands on.
+  // The uploads-slot is filled by renderUploads() once /review/updates answers;
+  // it sits after the note block so "see the upload trail below" holds.
   return `
-    <div class="doc-row" data-item-id="${escHtml(it.id)}" data-status="${escHtml(status)}">
+    <div class="doc-row" id="doc-${escHtml(it.id)}" data-item-id="${escHtml(it.id)}" data-status="${escHtml(status)}">
       <div class="doc-meta">
         <div class="name">${escHtml(it.name)}</div>
         ${descBlock}
         ${guideBlock}
         ${dateBlock}
         ${noteBlock}
+        <div class="uploads-slot" data-item-id="${escHtml(it.id)}"></div>
         <div class="replies-slot" data-item-id="${escHtml(it.id)}"></div>
       </div>
       <div class="status-cell">
@@ -909,6 +1041,10 @@ module.exports = {
   buildReviewPage,
   getFolderLinks,
   getClientReplies,
+  getRowUpdates,
+  fetchItemUpdates,
+  parseReplies,
+  parseUploadNotes,
   markReviewed,
   requestRework,
   reopenDoc,

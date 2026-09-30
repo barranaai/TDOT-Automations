@@ -859,17 +859,25 @@ function buildPortalPage(snap, opts) {
     var TOKEN    = ${jsLit(snap.accessToken || '')};
     var MAX      = ${uploadLimits.MAX_UPLOAD_BYTES};
     var MAX_MB   = ${uploadLimits.MAX_UPLOAD_MB};
-    // Reload only when EVERY upload has settled — reloading on the first
-    // success would abort any other row's in-flight upload mid-body (silent
-    // file loss for someone working down the checklist).
-    var inFlight = 0, wantReload = false;
-    function settle() {
-      inFlight--;
-      if (inFlight <= 0 && wantReload) { setTimeout(function () { window.location.reload(); }, 600); }
+    // Reload only when EVERY pick has finished — reloading while another row's
+    // files are still going would abort them mid-body (silent file loss for
+    // someone working down the checklist). Counted per PICK, not per request:
+    // between the files of one multi-file pick nothing is in flight, so a
+    // request counter read "idle" halfway through and the reload it fired
+    // lost files 2..n of the pick (the 2026-09 "second upload is not there").
+    var activePicks = 0, wantReload = false, holdReload = false, reloadTimer = null;
+    function pickDone(ok) {
+      activePicks--;
+      // A message the client must read (a failure, a file saved but not yet
+      // marked) stays on screen: no reload for the rest of this page's life.
+      if (ok) wantReload = true; else holdReload = true;
+      if (activePicks <= 0 && wantReload && !holdReload) {
+        reloadTimer = setTimeout(function () { window.location.reload(); }, 600);
+      }
     }
-    function state(id, msg, isErr) {
+    function state(id, msg, tone) {
       var el = document.querySelector('[data-state="' + id + '"]');
-      if (el) { el.textContent = msg; el.style.color = isErr ? '#B42318' : '#9AA3AF'; }
+      if (el) { el.textContent = msg; el.style.color = (tone === true || tone === 'err') ? '#B42318' : tone === 'warn' ? '#B54708' : '#9AA3AF'; }
     }
     function lock(input, on) {
       var label = input.closest('label');
@@ -882,10 +890,9 @@ function buildPortalPage(snap, opts) {
       return fetch('/client/' + encodeURIComponent(CASE_REF) + '/document/' + encodeURIComponent(id) + '/upload?t=' + encodeURIComponent(TOKEN), {
         method: 'POST', body: fd
       })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok && j.success, busy: r.status === 503 && !!j.retriable, j: j }; }); });
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok && j.success, busy: r.status === 503 && !!j.retriable, saved: !!j.saved, j: j }; }); });
     }
     function uploadOne(id, file) {
-      inFlight++;
       // The server takes large uploads in turns: when it says "busy", wait and
       // send again (up to 8 tries, two minutes) so the client has nothing to do.
       function attempt(n) {
@@ -897,9 +904,11 @@ function buildPortalPage(snap, opts) {
           return res;
         });
       }
+      // saved: the file landed but the checklist could not be marked — the
+      // server says so in its own words, and those words must reach the client.
       return attempt(1)
-      .then(function (res) { settle(); return res.ok ? { ok: true } : { ok: false, error: (res.j && res.j.error) || 'Upload failed — please try again.' }; })
-      .catch(function () { settle(); return { ok: false, error: 'Upload failed — please check your connection and try again.' }; });
+      .then(function (res) { return res.ok ? { ok: true } : { ok: false, saved: !!res.saved, error: (res.j && res.j.error) || 'Upload failed — please try again.' }; })
+      .catch(function () { return { ok: false, error: 'Upload failed — please check your connection and try again.' }; });
     }
     Array.prototype.forEach.call(document.querySelectorAll('input[type="file"][data-item]'), function (input) {
       input.addEventListener('change', function () {
@@ -908,19 +917,32 @@ function buildPortalPage(snap, opts) {
         var files = Array.prototype.slice.call(input.files || []);
         if (!files.length) return;
         var id = input.getAttribute('data-item');
+        // A pick during the reload grace: the reload waits for this pick too
+        // (an over-limit pick holds it for good — its message must stay readable).
+        if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null; }
         var over = files.filter(function (f) { return f.size > MAX; });
-        if (over.length) { state(id, '"' + over[0].name + '" is ' + Math.ceil(over[0].size / 1048576) + ' MB. The limit is ' + MAX_MB + ' MB per file. Split it into smaller files or scan at a lower quality.', true); input.value = ''; return; }
+        if (over.length) { state(id, '"' + over[0].name + '" is ' + Math.ceil(over[0].size / 1048576) + ' MB. The limit is ' + MAX_MB + ' MB per file. Split it into smaller files or scan at a lower quality.', true); input.value = ''; holdReload = true; return; }
+        activePicks++;
         lock(input, true);
-        var done = 0, failed = null;
+        var done = 0, failedName = null, failedError = null, saved = null, savedCount = 0;
         (function next(i) {
           if (i >= files.length) {
-            if (failed) { state(id, failed, true); lock(input, false); input.value = ''; }
-            else { state(id, files.length > 1 ? ('All ' + files.length + ' files uploaded ✓') : 'Uploaded ✓'); wantReload = true; }
+            lock(input, false); input.value = '';   /* the same file can be picked again on purpose */
+            if (failedName !== null) {
+              // Counted at the end, so "did upload" is the final truth, not the count when the failure happened.
+              // A file that was SAVED but not yet marked is named too, or the client re-sends it.
+              state(id, '"' + failedName + '": ' + failedError + (done ? ' (' + done + ' file(s) did upload)' : '') + (savedCount ? ' (' + savedCount + ' file(s) were saved — please do not send those again)' : ''), 'err');
+              pickDone(false);
+            }
+            else if (saved) { state(id, saved, 'warn'); pickDone(false); }   /* the row's status line is stale by the server's own admission — no reload */
+            else { state(id, files.length > 1 ? ('All ' + files.length + ' files uploaded ✓') : 'Uploaded ✓'); pickDone(true); }
             return;
           }
           state(id, 'Uploading ' + files[i].name + (files.length > 1 ? (' (' + (i + 1) + ' of ' + files.length + ')') : '') + '…');
           uploadOne(id, files[i]).then(function (res) {
-            if (res.ok) { done++; } else if (!failed) { failed = '"' + files[i].name + '": ' + res.error + (done ? ' (' + done + ' file(s) did upload)' : ''); }
+            if (res.ok) { done++; }
+            else if (res.saved) { savedCount++; if (!saved) saved = res.error; }
+            else if (failedName === null) { failedName = files[i].name; failedError = res.error; }
             next(i + 1);
           });
         })(0);

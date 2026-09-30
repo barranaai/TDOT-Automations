@@ -44,8 +44,8 @@ test('idempotent - a repaired name survives a second pass unchanged', () => {
   assert.equal(once, 'Gmail – x.pdf');
 });
 
-test('the upload path repairs the name ONCE, so the OneDrive file and the audit comment agree', async () => {
-  const calls = { uploads: [], updates: [] };
+function uploadHarness() {
+  const calls = { uploads: [], asNew: [], updates: [] };
   const set = (rel, exports) => { const p = require.resolve(rel); require.cache[p] = { id: p, filename: p, loaded: true, exports }; };
   set('../src/services/mondayApi', { query: async (q, vars) => {
     if (q.includes('items_page_by_column_values')) return { items_page_by_column_values: { items: [{ id: '77', name: 'Test Client' }] } };
@@ -54,20 +54,57 @@ test('the upload path repairs the name ONCE, so the OneDrive file and the audit 
     if (q.includes('create_update')) { calls.updates.push(vars.body); return {}; }
     return {};
   } });
-  set('../src/services/oneDriveService', { uploadFile: async (p) => { calls.uploads.push(p); return 'https://web/x'; }, ensureCategoryFolderLink: async () => 'https://f/Employment' });
+  set('../src/services/oneDriveService', {
+    uploadFile:      async (p) => { calls.uploads.push(p); return 'https://web/x'; },
+    uploadFileAsNew: async (p) => { calls.asNew.push(p); return { id: 'i1', name: p.filename, webUrl: 'https://web/x', url: 'https://org/x', replaced: false }; },
+    ensureCategoryFolderLink: async () => 'https://f/Employment',
+  });
   set('../src/services/caseReadinessService', { calculateForCaseRef: async () => {} });
   const p = require.resolve('../src/services/documentFormService');
   delete require.cache[p];
-  const svc = require(p);
+  return { svc: require(p), calls };
+}
 
-  const mangled = 'offre d' + RSQUO_MOJI + 'emploi ' + EN_DASH_MOJI + ' 2024.pdf';
-  await svc.uploadFileToOneDrive('5', '2026-OINP-036', Buffer.from('x'), mangled, 'application/pdf');
-  await new Promise((r) => setTimeout(r, 20));
+async function withSwitch(value, fn) {
+  const saved = process.env.UPLOAD_UNIQUE_NAMES;
+  if (value === undefined) delete process.env.UPLOAD_UNIQUE_NAMES; else process.env.UPLOAD_UNIQUE_NAMES = value;
+  try { return await fn(); }
+  finally { if (saved === undefined) delete process.env.UPLOAD_UNIQUE_NAMES; else process.env.UPLOAD_UNIQUE_NAMES = saved; }
+}
 
-  assert.equal(calls.uploads.length, 1);
-  assert.equal(calls.uploads[0].filename, 'offre d’emploi – 2024.pdf', 'stored under the repaired name');
-  assert.ok(calls.updates.some((b) => String(b).includes('offre d’emploi – 2024.pdf')), 'the audit comment names the same file');
-  assert.ok(!calls.updates.some((b) => String(b).includes(EN_DASH_MOJI)), 'no mojibake left in the comment');
+const MANGLED = 'offre d' + RSQUO_MOJI + 'emploi ' + EN_DASH_MOJI + ' 2024.pdf';
+
+test('the upload path repairs the name ONCE, so the OneDrive file and the audit comment agree (unique names ON)', async () => {
+  await withSwitch('1', async () => {
+    const { svc, calls } = uploadHarness();
+    await svc.uploadFileToOneDrive('5', '2026-OINP-036', Buffer.from('x'), MANGLED, 'application/pdf');
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.equal(calls.uploads.length, 0, 'the replace-in-place writer is not used');
+    assert.equal(calls.asNew.length, 1);
+    const stored = calls.asNew[0].filename;
+    assert.ok(stored.endsWith(' – offre d’emploi – 2024.pdf'), `the client's repaired name ends the stored name (${stored})`);
+    assert.match(stored, /^Job offer – PA – \d{4}-\d{2}-\d{2} \d{2}-\d{2} – offre d’emploi – 2024\.pdf$/);
+    assert.ok(calls.updates.some((b) => String(b).includes(`File: ${stored}`)), 'the audit comment names the stored file');
+    assert.ok(calls.updates.some((b) => String(b).includes('Named by client: offre d’emploi – 2024.pdf')), 'and the name the client chose, repaired');
+    assert.ok(!calls.updates.some((b) => String(b).includes(EN_DASH_MOJI) || String(b).includes(RSQUO_MOJI)), 'no mojibake left in the comment');
+  });
+});
+
+test('the upload path repairs the name ONCE (unique names OFF): the exact old name, today\'s note byte for byte', async () => {
+  await withSwitch('0', async () => {
+    const { svc, calls } = uploadHarness();
+    await svc.uploadFileToOneDrive('5', '2026-OINP-036', Buffer.from('x'), MANGLED, 'application/pdf');
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.equal(calls.asNew.length, 0);
+    assert.equal(calls.uploads.length, 1);
+    assert.equal(calls.uploads[0].filename, 'offre d’emploi – 2024.pdf', 'stored under the repaired name');
+    assert.ok(calls.updates.some((b) => String(b).includes('offre d’emploi – 2024.pdf')), 'the audit comment names the same file');
+    assert.ok(!calls.updates.some((b) => String(b).includes(EN_DASH_MOJI)), 'no mojibake left in the comment');
+    assert.match(calls.updates[0], /^📄 Document Uploaded by Client\n\nDocument: Job offer\nFile: offre d’emploi – 2024\.pdf\nCategory: Employment\nCase: 2026-OINP-036 \(Test Client\)\nUploaded: .+ \(Toronto\)\n\n📁 Folder: Employment Folder - https:\/\/f\/Employment\n\nStatus set to Received — please review\.\n\n🔎 Review all documents for this case: /, 'today\'s note, byte for byte');
+    assert.ok(!calls.updates[0].includes('Named by client:') && !calls.updates[0].includes('For:'), 'none of the new lines on the OFF path');
+  });
 });
 
 test('pins: decoded at one choke point; the public intake digest decodes too', () => {

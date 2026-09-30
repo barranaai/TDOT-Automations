@@ -29,12 +29,62 @@ function harness({ general = [], targets = {}, rows = [], moveFails = false, cas
 
 const upload = (docName, file, category = 'General') => `📄 Document Uploaded by Client\n\nDocument: ${docName}\nFile: ${file}\nCategory: ${category}\nCase: 2026-SPE-013 (Client)\nUploaded: t (Toronto)\n\nStatus set to Received — please review.`;
 
+// The note written with unique names ON (documentFormService §3a, 2026-09-30):
+// the same first lines, then the new lines AFTER Case: — the parser captures
+// File: up to Category: and Category: up to Case:, so nothing new may sit
+// between them.
+const uploadNew = (docName, file, category = 'General', { renamed = false, replaced = false } = {}) =>
+  `📄 Document Uploaded by Client\n\nDocument: ${docName}\nFile: ${file}\nCategory: ${category}\nCase: 2026-SPE-013 (Client)\n` +
+  `For: Spouse / Common-Law Partner\nNamed by client: ${file.split(' – ').pop()}\n` +
+  (renamed  ? 'Note: OneDrive added a number to the name because a file with this name already existed — both files are kept.\n' : '') +
+  (replaced ? 'Warning: OneDrive replaced a file with this name — the earlier copy is in that file\'s version history.\n' : '') +
+  `Uploaded: t (Toronto)\n\n🔗 Open this upload: https://org/f1\n📁 Folder: https://folder/${category}\n\nStatus set to Received — please review.\n\n🔎 Review all documents for this case: https://x/d/2026-SPE-013/review`;
+const NEW_NAME = 'Passport – Spouse – 2026-09-30 14-32 – scan passport.pdf';
+
 test('uploadedFiles parses File + Category from upload comments (newlines kept or collapsed); normFilename mirrors uploadFile storage + case-folds', () => {
   const { svc } = harness();
   assert.deepEqual(svc.uploadedFiles([upload('Passport', 'scan passport.pdf'), 'Retainer signed', '📄 Document Uploaded by Client Document: X File: a b.pdf Category: Identity Case: Y']),
     [{ file: 'scan passport.pdf', category: 'General' }, { file: 'a b.pdf', category: 'Identity' }]);
   assert.equal(svc.normFilename('  Scan: Passport  (1).PDF '), 'scan passport (1).pdf');
   assert.equal(svc.normFilename('scan passport.pdf'), svc.normFilename('SCAN  PASSPORT.pdf'));
+});
+
+test('uploadedFiles reads the unique-names note the same way: the stored name on File:, the category, nothing swallowed from the new lines', () => {
+  const { svc } = harness();
+  for (const [label, body] of [
+    ['newlines kept', uploadNew('Passport', NEW_NAME, 'Identity')],
+    ['newlines collapsed (Monday)', uploadNew('Passport', NEW_NAME, 'Identity').replace(/\n/g, ' ')],
+    ['renamed on a clash', uploadNew('Passport', NEW_NAME.replace('.pdf', ' 1.pdf'), 'Identity', { renamed: true })],
+    ['replaced (warning line)', uploadNew('Passport', NEW_NAME, 'Identity', { replaced: true }).replace(/\n/g, ' ')],
+  ]) {
+    const out = svc.uploadedFiles([body]);
+    assert.equal(out.length, 1, label);
+    assert.ok(out[0].file === NEW_NAME || out[0].file === NEW_NAME.replace('.pdf', ' 1.pdf'), `${label}: File: is the stored name (${out[0].file})`);
+    assert.equal(out[0].category, 'Identity', label);
+    assert.ok(!out[0].file.includes('For:') && !out[0].file.includes('Named by client'), `${label}: nothing after Case: leaks into the name`);
+  }
+  // the link label never reads as a second File: line
+  assert.equal((uploadNew('Passport', NEW_NAME).match(/File:/g) || []).length, 1);
+  // and normFilename leaves the built name alone apart from case
+  assert.equal(svc.normFilename(NEW_NAME), NEW_NAME.toLowerCase());
+});
+
+test('planRefile maps a General file recorded under the unique-names note exactly as under the old one', () => {
+  const { svc } = harness();
+  for (const collapse of [false, true]) {
+    const body = (fn) => collapse ? fn.replace(/\n/g, ' ') : fn;
+    const rows = [
+      { id: '1', name: 'Passport', category: 'Identity',  updates: [body(uploadNew('Passport', NEW_NAME))] },
+      { id: '2', name: 'Bank',     category: 'Financial', updates: [body(upload('Bank', 'statement.pdf'))] },
+    ];
+    const general = [{ name: NEW_NAME }, { name: 'statement.pdf' }, { name: 'stray.pdf' }];
+    const plan = svc.planRefile(general, rows, {});
+    assert.deepEqual(plan.moves, [
+      { file: NEW_NAME, to: 'Identity', rowId: '1', docName: 'Passport' },
+      { file: 'statement.pdf', to: 'Financial', rowId: '2', docName: 'Bank' },
+    ], `both note shapes map (collapsed=${collapse})`);
+    assert.deepEqual(plan.unmapped, ['stray.pdf']);
+  }
 });
 
 test('planRefile: single consistent claimant → move; everything else stays with a reason', () => {

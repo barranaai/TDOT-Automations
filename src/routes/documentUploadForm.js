@@ -3,7 +3,7 @@ const express = require('express');
 const multer  = require('multer');
 const router  = express.Router();
 
-const { getCaseSummary, uploadFileToOneDrive, markDocumentReceived } = require('../services/documentFormService');
+const { getCaseSummary, uploadFileToOneDrive, markDocumentReceived, onStatusWriteFailed } = require('../services/documentFormService');
 const { updateLastActivityDate } = require('../services/clientMasterService');
 const { calculateForCaseRef }   = require('../services/caseReadinessService');
 const mondayApi = require('../services/mondayApi');
@@ -976,6 +976,8 @@ async function handleUpload(itemId, caseRef, input) {
 
   let succeeded = 0;
   let failed    = 0;
+  let savedPending = 0;  // the file is saved, but the checklist could not be marked yet (the server retries by itself)
+  let savedReason  = '';
   const failedNames = [];
   let lastReason = '';   // why the last failure happened — kept on the row, a toast is gone in seconds
 
@@ -1016,6 +1018,11 @@ async function handleUpload(itemId, caseRef, input) {
 
       if (data.success) {
         succeeded++;
+      } else if (data.saved) {
+        // Honest answer from the server: the file IS saved, only the checklist
+        // row could not be marked. Not a failure — the client must not send it again.
+        savedPending++;
+        savedReason = data.error || 'Your file was saved. Please do not upload it again.';
       } else {
         failed++;
         failedNames.push(file.name);
@@ -1037,6 +1044,12 @@ async function handleUpload(itemId, caseRef, input) {
       ? (files.length > 1 ? \`✓ \${uploadLabel} uploaded\` : '✓ Uploaded successfully')
       : \`✓ \${uploadLabel} uploaded, \${failed} failed\`;
     msg.style.color = failed > 0 ? '#d97706' : '#10b981';
+    if (savedPending > 0) {
+      // One of the files was saved but not yet marked — say so here too, or the
+      // client reads "1 file uploaded" and sends the other one again.
+      msg.textContent += ' (' + savedPending + ' other file' + (savedPending === 1 ? ' was' : 's were') + ' saved — please do not send ' + (savedPending === 1 ? 'it' : 'those') + ' again.)';
+      msg.style.color = '#d97706';
+    }
 
     row.dataset.status = 'Received';
     const statusEl = row.querySelector('.doc-status');
@@ -1046,6 +1059,13 @@ async function handleUpload(itemId, caseRef, input) {
       statusEl.style.boxShadow  = '0 0 0 1px rgba(37,99,235,.15)';
       statusEl.innerHTML = '<span style="width:7px;height:7px;border-radius:50%;background:#2563eb;display:inline-block;flex-shrink:0"></span>Received';
     }
+    // The row now says Received, so the "Re-upload Required" badge and the
+    // officer's note (shown only while Rework Required) must not stay on it.
+    const badge = row.querySelector('.badge.action-required');
+    if (badge) badge.remove();
+    const note = document.getElementById('note_' + itemId);
+    if (note) note.style.display = 'none';
+    row.classList.remove('needs-action');
 
     if (!wasAlreadyUploaded) {
       uploadedCount++;
@@ -1054,8 +1074,15 @@ async function handleUpload(itemId, caseRef, input) {
     }
 
     showToast(files.length > 1 ? \`\${succeeded} file\${succeeded !== 1 ? 's' : ''} uploaded!\` : 'Document uploaded!');
+  } else if (savedPending > 0 && failed === 0) {
+    // Saved but not yet marked: amber, the server's own words, no "failed" toast —
+    // the status line is stale by the server's own admission, so it is not
+    // repainted as Received.
+    msg.textContent = '⚠ ' + savedReason;
+    msg.style.color = '#d97706';
   } else {
     msg.textContent = lastReason ? ('⚠ ' + lastReason) : '⚠ All uploads failed. Please try again.';
+    if (savedPending > 0) msg.textContent += ' (' + savedPending + ' other file' + (savedPending === 1 ? ' was' : 's were') + ' saved — please do not send ' + (savedPending === 1 ? 'it' : 'those') + ' again.)';
     msg.style.color = '#dc2626';
     showToast('Upload failed', 'error');
   }
@@ -1194,8 +1221,18 @@ router.post('/:caseRef/upload/:itemId', uploadLimits.uploadSlot, uploadSingle, a
   }
 
   try {
-    await uploadFileToOneDrive(itemId, caseRef, file.buffer, file.originalname, file.mimetype);
-    await markDocumentReceived(itemId);
+    const up = await uploadFileToOneDrive(itemId, caseRef, file.buffer, file.originalname, file.mimetype);
+    const attemptedAt = new Date();   // the status write's own retries can take minutes; the retry job measures from here
+    try {
+      await markDocumentReceived(itemId);
+    } catch (err) {
+      // The file is in OneDrive; only the checklist row could not be marked.
+      // Tell the client the truth — never "try again", which stores a second
+      // copy — and let the service retry the status write by itself.
+      console.error(`[upload] SAVED-BUT-UNMARKED item ${itemId} case ${caseRef} file "${up && up.name}" link ${up && up.url}: ${err.message}`);
+      onStatusWriteFailed({ itemId, caseRef, saved: up, error: err.message, attemptedAt }).catch(() => {});
+      return res.status(200).json({ success: false, saved: true, error: uploadLimits.SAVED_NOT_MARKED_MESSAGE });
+    }
     res.json({ success: true });
 
     // Non-blocking post-upload housekeeping

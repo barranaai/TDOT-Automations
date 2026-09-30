@@ -283,8 +283,18 @@ router.post('/:caseRef/document/:itemId/upload', uploadRateLimit, uploadLimits.u
     const item = (items || []).find((it) => String(it.id) === itemId);
     if (!item) return res.status(404).json({ success: false, error: 'That document is not on this case.' });
 
-    await docSvc.uploadFileToOneDrive(itemId, caseRef, file.buffer, file.originalname, file.mimetype);
-    await docSvc.markDocumentReceived(itemId);
+    const up = await docSvc.uploadFileToOneDrive(itemId, caseRef, file.buffer, file.originalname, file.mimetype);
+    const attemptedAt = new Date();   // the status write's own retries can take minutes; the retry job measures from here
+    try {
+      await docSvc.markDocumentReceived(itemId);
+    } catch (err) {
+      // The file is in OneDrive; only the checklist row could not be marked.
+      // Tell the client the truth — never "try again", which stores a second
+      // copy — and let the service retry the status write by itself.
+      console.error(`[upload] SAVED-BUT-UNMARKED item ${itemId} case ${caseRef} file "${up && up.name}" link ${up && up.url}: ${err.message}`);
+      docSvc.onStatusWriteFailed({ itemId, caseRef, saved: up, error: err.message, attemptedAt }).catch(() => {});
+      return res.status(200).json({ success: false, saved: true, error: uploadLimits.SAVED_NOT_MARKED_MESSAGE });
+    }
     res.json({ success: true });
 
     // Non-blocking post-upload housekeeping (same as /documents).

@@ -457,6 +457,10 @@ function actMsg(id, cls, txt) { var el = document.getElementById(id); if (!el) r
 // flat (no member header). Inline review actions are preserved per row.
 function renderDocRow(it) {
   var acts = '';
+  // "Files" deep-links to this row on the review page, where the upload trail
+  // (every copy the client sent, each with its own OneDrive link) is loaded —
+  // no extra Monday read on the cockpit, which is already the heaviest page.
+  if (it.id) acts += '<a class="sbtn" href="/d/' + encodeURIComponent(CASE_REF) + '/review#doc-' + encodeURIComponent(it.id) + '" target="_blank" rel="noopener" title="Every copy the client uploaded for this document, newest first, with a link to each file">📎 Files</a>';
   if (it.id && it.status === 'Received') acts += '<button class="sbtn" data-doc-act="reviewed" data-doc-id="' + escHtml(it.id) + '">✓ Mark reviewed</button>';
   if (it.id && (it.status === 'Received' || it.status === 'Reviewed')) acts += '<button class="sbtn danger" data-doc-act="rework" data-doc-id="' + escHtml(it.id) + '" data-doc-name="' + escHtml(it.name) + '">⟲ Request rework</button>';
   var note = (it.status === 'Rework Required' && it.reviewNotes) ? '<div class="dnote">Rework note: ' + escHtml(it.reviewNotes) + '</div>' : '';

@@ -217,8 +217,10 @@ async function flushQueue(caseRef) {
 /**
  * Queue a revision notification for a case.
  * type: 'questionnaire' | 'document'
+ * itemId (optional): the row — when given, a second note on the SAME row
+ * updates its line, and a note on another same-named row gets its own line.
  */
-function queueItem(caseRef, itemName, reviewNotes, type) {
+function queueItem(caseRef, itemName, reviewNotes, type, itemId = '') {
   if (!caseRef) return;
 
   let entry = queue.get(caseRef);
@@ -229,9 +231,18 @@ function queueItem(caseRef, itemName, reviewNotes, type) {
   }
 
   const bucket = type === 'document' ? entry.documents : entry.questionnaire;
-  // Avoid duplicates within same batch
-  if (!bucket.find((i) => i.name === itemName)) {
-    bucket.push({ name: itemName, notes: reviewNotes || '' });
+  // Avoid duplicates within same batch; when the same item is queued again
+  // before the flush, the newest non-empty note wins (an officer who edits
+  // the note twice in two minutes means the second one).
+  // Dedup on the ROW when the caller knows it: a case routinely has several
+  // rows with the same name (one per family member), and two officer notes on
+  // two of them are two lines in the email, not one.
+  const id = String(itemId || '');
+  const existing = bucket.find((i) => (id && i.itemId) ? i.itemId === id : i.name === itemName);
+  if (!existing) {
+    bucket.push({ name: itemName, notes: reviewNotes || '', ...(id ? { itemId: id } : {}) });
+  } else if (reviewNotes) {
+    existing.notes = reviewNotes;
   }
 
   entry.timer = setTimeout(() => {

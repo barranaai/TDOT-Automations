@@ -270,6 +270,73 @@ async function uploadFile({ clientName, caseRef, category, filename, buffer, mim
   }
 }
 
+// A path longer than this is close to Graph's ~400-character limit; measured
+// on the DECODED path, which is what the limit is about.
+const PATH_WARN_CHARS = 380;
+
+/**
+ * Upload a buffer as a NEW file: never replaces. On a same-named file Graph
+ * picks a free name ("x 1.pdf") and that name comes back so the caller records
+ * the truth, never the name it asked for. "/" is stripped so a document name
+ * can never become a sub-folder.
+ *
+ * Client checklist uploads only. uploadFile above keeps its replace-in-place
+ * contract: every file the app itself writes (questionnaire JSON/PDF, signed
+ * agreements, sidecars, markers) relies on that plus OneDrive's version history.
+ *
+ * Two separate auth scopes on purpose: the PUT alone lives in the first, so a
+ * 401 retry re-runs only the PUT (a 401 attempt wrote nothing, so the retry
+ * cannot make a second copy). The sharing link lives in its own scope — had
+ * it shared the PUT's, a 401 on the link would re-PUT under "rename" and mint
+ * a spurious duplicate file.
+ *
+ * @param {{ clientName: string, caseRef: string, category: string, filename: string, buffer: Buffer, mimeType: string }} params
+ * @returns {Promise<{ id: string, name: string, webUrl: string, url: string, replaced: boolean }>}
+ *   name = the stored name Graph reports; url = org sharing link (webUrl when the link failed);
+ *   replaced = Graph answered 200 (a file was overwritten) instead of 201 (created) — must never happen
+ */
+async function uploadFileAsNew({ clientName, caseRef, category, filename, buffer, mimeType }) {
+  const safeFile = String(filename || '').replace(/[*:"<>?\\|/]/g, '').replace(/\s+/g, ' ').replace(/^[\s.]+|[\s.]+$/g, '') || 'document';
+  // Resolved BEFORE the write (as uploadFile): a stale cached name must not
+  // mint a second case folder.
+  const safeName = await resolveCaseFolderNameForWrite({ clientName, caseRef });
+  const filePath = `${ROOT_FOLDER}/${safeName}/${category}/${safeFile}`;
+  const encoded  = filePath.split('/').map(encodeURIComponent).join('/');
+  const url      = `${userBase()}/root:/${encoded}:/content?@microsoft.graph.conflictBehavior=rename`;
+  if (filePath.length > PATH_WARN_CHARS) {
+    console.warn(`[OneDrive] path is ${filePath.length} characters (limit ~400): ${filePath}`);
+  }
+
+  // Scope 1: the PUT, and only the PUT.
+  let put;
+  try {
+    put = await withGraphAuth('uploadAsNew', (token) => axios.put(url, buffer, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeType || 'application/octet-stream' },
+      maxContentLength: Infinity, maxBodyLength: Infinity, timeout: GRAPH_UPLOAD_TIMEOUT_MS,
+    }));
+  } catch (err) {
+    console.error(`[OneDrive] Upload (as new) failed (${err.response?.status}): ${err.message}`);
+    throw wrapError('OneDrive upload failed', err);
+  }
+  const { id = '', name = safeFile, webUrl = '' } = put.data || {};
+  const replaced = put.status === 200;   // a create answers 201
+  if (replaced) console.error(`[OneDrive] REPLACED-IN-PLACE ${filePath} — conflictBehavior=rename was not honoured (the earlier copy is in the file's version history)`);
+  if (name !== safeFile) console.log(`[OneDrive] stored as "${name}" (renamed on clash from "${safeFile}")`);
+
+  // Scope 2: the org link staff can open (a bare webUrl in the noreply drive is
+  // not openable from another staff account). Best effort — the file is saved.
+  let link = webUrl;
+  if (id) {
+    try {
+      link = await withGraphAuth('fileLink', (token) => createOrgLink(token, id));
+    } catch (err) {
+      console.warn(`[OneDrive] Org link failed for ${name} (using webUrl): ${err.message}`);
+    }
+  }
+  console.log(`[OneDrive] Uploaded (as new) → ${filePath}${name !== safeFile ? ` as "${name}"` : ''}`);
+  return { id, name, webUrl, url: link, replaced };
+}
+
 /**
  * Read a file from the client's OneDrive folder and return it as a Buffer.
  * Returns null if the file does not exist (404).
@@ -976,4 +1043,5 @@ module.exports = {
   ensureLeadFolder, renameDriveItem, uploadFileAndLink, uploadToLeadFolderAndLink,
   getClientFolderByName, getDriveItemById, deleteDriveItem,
   listFileVersions, readFileVersion,
+  uploadFileAsNew,
 };

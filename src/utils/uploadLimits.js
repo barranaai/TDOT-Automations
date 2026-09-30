@@ -28,6 +28,10 @@ const UPLOAD_REQUEST_TIMEOUT_MS = 15 * 60 * 1000;
 
 const TOO_BIG_MESSAGE = `That file is over ${MAX_UPLOAD_MB} MB. Please split it into smaller files, or scan it at a lower quality, and try again.`;
 const BUSY_MESSAGE = 'Several uploads are in progress right now. Please try again in a minute.';
+// The file reached OneDrive but the checklist row could not be marked. The
+// client must NOT be told to try again: a second upload stores a second copy.
+// The service retries the status write by itself (documentFormService).
+const SAVED_NOT_MARKED_MESSAGE = 'Your file was saved. Our checklist could not be updated just now — it will be marked as received automatically. Please do not upload it again.';
 
 let _inFlightBytes = 0;
 
@@ -72,6 +76,7 @@ function friendlyUpload(multerSingle, tag) {
 
 module.exports = {
   MAX_UPLOAD_MB, MAX_UPLOAD_BYTES, MAX_IN_FLIGHT_BYTES, UPLOAD_REQUEST_TIMEOUT_MS, TOO_BIG_MESSAGE, BUSY_MESSAGE,
+  SAVED_NOT_MARKED_MESSAGE,
   uploadSlot, friendlyUpload, declaredBytes,
   _inFlightBytes: () => _inFlightBytes,
 };

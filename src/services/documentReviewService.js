@@ -17,8 +17,37 @@ const CM_CASE_REF_COL         = 'text_mm142s49';
 const CM_ESCALATION_REQ_COL   = 'color_mm0x7bje';
 const CM_ESCALATION_REASON_COL = 'text_mm0xvpr9';
 
+// Statuses a Review Note may reopen for a new copy (behind REVIEW_NOTE_REOPENS).
+// Reviewed: both client pages hide the upload control. Received: the control is
+// there but the officer's note is hidden until the row is Rework Required.
+// Under Review: never written by code, uploadable on both pages. Never Missing
+// or blank — those rows never had a copy to replace.
+const REOPENABLE_STATUSES = new Set(['Reviewed', 'Received', 'Under Review']);
+
+/**
+ * REVIEW_NOTE_REOPENS — OFF until "1" / "true", read at call time so a Render
+ * env flip takes effect without a code change (same shape as SPONSOR_ONBOARDING).
+ */
+function isReopenEnabled() {
+  const v = String(process.env.REVIEW_NOTE_REOPENS || '').trim().toLowerCase();
+  return v === 'true' || v === '1';
+}
+
+/**
+ * The side effects, behind one seam — the tests replace all of it. Every
+ * Monday call in this file goes through io.query; the client email through
+ * io.queueItem; the readiness recalc through io.recalc.
+ */
+const io = {
+  query:           (gql, vars) => mondayApi.query(gql, vars),
+  queueItem:       (...args) => revisionNotificationService.queueItem(...args),
+  isReopenEnabled,
+  now:             () => new Date(),
+  recalc:          (caseRef) => require('./caseReadinessService').calculateForCaseRef(caseRef),
+};
+
 async function updateCols(itemId, colValues) {
-  await mondayApi.query(
+  await io.query(
     `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
        change_multiple_column_values(
          board_id: $boardId, item_id: $itemId, column_values: $colValues
@@ -36,7 +65,7 @@ async function updateCols(itemId, colValues) {
  */
 async function escalateToClientMaster(caseRef, documentName) {
   try {
-    const data = await mondayApi.query(
+    const data = await io.query(
       `query($boardId: ID!, $colId: String!, $val: String!) {
          items_page_by_column_values(
            limit: 1,
@@ -57,7 +86,7 @@ async function escalateToClientMaster(caseRef, documentName) {
       return;
     }
 
-    await mondayApi.query(
+    await io.query(
       `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
          change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues) { id }
        }`,
@@ -82,7 +111,7 @@ async function escalateToClientMaster(caseRef, documentName) {
  * Set Review Completed Date = today, Review Required = No
  */
 async function onDocumentReviewed({ itemId }) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = io.now().toISOString().split('T')[0];
   await updateCols(itemId, {
     [REVIEW_DATE_COL]:     { date: today },
     [REVIEW_REQUIRED_COL]: { label: 'No' },
@@ -106,7 +135,7 @@ async function onDocumentReviewed({ itemId }) {
  */
 async function postReworkUpdates({ itemId, docName, reviewNotes, reworkCount, caseRef }) {
   try {
-    const flaggedAt = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
+    const flaggedAt = io.now().toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: true });
     const reviewUrl = caseRef ? `${BASE_URL}/d/${encodeURIComponent(caseRef)}/review` : '';
     const reviewLine = reviewUrl ? `\n\n🔎 Open document review: ${reviewUrl}` : '';
     const notesLine  = reviewNotes ? `\n\n📝 Notes for client:\n${reviewNotes}` : '';
@@ -122,14 +151,14 @@ async function postReworkUpdates({ itemId, docName, reviewNotes, reworkCount, ca
       notesLine +
       `\n\nStatus set to Rework Required — client will be emailed.${reviewLine}`;
 
-    await mondayApi.query(
+    await io.query(
       `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
       { itemId: String(itemId), body: docBody }
     );
 
     // 2. Post on the Client Master item (so the case team sees it in the case feed)
     if (!caseRef) return;
-    const masterData = await mondayApi.query(
+    const masterData = await io.query(
       `query($boardId: ID!, $caseRef: String!) {
          items_page_by_column_values(
            board_id: $boardId, limit: 1,
@@ -153,7 +182,7 @@ async function postReworkUpdates({ itemId, docName, reviewNotes, reworkCount, ca
       notesLine +
       `\n\nClient will be emailed in the next batch (≈2 min).${reviewLine}`;
 
-    await mondayApi.query(
+    await io.query(
       `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
       { itemId: String(masterItemId), body: masterBody }
     );
@@ -167,11 +196,15 @@ async function postReworkUpdates({ itemId, docName, reviewNotes, reworkCount, ca
  * Document Status → Rework Required
  * Increment Rework Count, set Escalation Required,
  * and queue revision notification email to client.
+ *
+ * This is the ONLY place the rework side effects live (count, escalation,
+ * client email, rework notes). A Review Note that reopens a document does so
+ * by flipping the status, and the status event lands here exactly once.
  */
 async function onReworkRequired({ itemId }) {
   try {
     // Fetch current count + notification data in one query
-    const data = await mondayApi.query(
+    const data = await io.query(
       `query($itemId: ID!) {
          items(ids: [$itemId]) {
            name
@@ -201,7 +234,7 @@ async function onReworkRequired({ itemId }) {
     );
 
     if (caseRef) {
-      revisionNotificationService.queueItem(caseRef, item.name, reviewNotes, 'document');
+      io.queueItem(caseRef, item.name, reviewNotes, 'document', itemId);
       // Escalate to Client Master — webhook will fire onEscalationRequired notification
       await escalateToClientMaster(caseRef, item.name);
     }
@@ -222,16 +255,77 @@ async function onReworkRequired({ itemId }) {
 }
 
 /**
- * Review Notes column filled in → queue client email immediately.
- * The officer doesn't need to change the status separately.
+ * What a Review Note event should do, from the row as it reads now. Pure.
+ *
+ *   'ignore' — nothing to say (no note, no case ref) or the same text saved
+ *              again on a row that is already Rework Required (the client
+ *              already heard it; today this re-emails).
+ *   'notify' — today's path: queue the client email + escalate. Rework
+ *              Required (the /d and cockpit "Request Rework" button lands
+ *              here: it writes notes + status in one mutation, and by the
+ *              time either event reads the row, both columns are committed),
+ *              Missing and blank, and everything while the switch is OFF.
+ *   'reopen' — flip the status to Rework Required and stop; the status
+ *              event then counts, escalates, emails and posts the notes once.
+ *
+ * The reopen decision comes BEFORE the same-text comparison on purpose: a
+ * document that was reopened, re-uploaded and reviewed again can be
+ * reopened with the same note typed again.
  */
-async function onReviewNotesSet({ itemId }) {
+function decideReviewNote({ notes, previousNotes, caseRef, status, enabled }) {
+  if (!notes || !caseRef) return 'ignore';
+  if (!enabled) return 'notify';
+  if (REOPENABLE_STATUSES.has(status)) return 'reopen';
+  if (status === 'Rework Required' && previousNotes != null
+      && String(previousNotes).trim() === String(notes).trim()) return 'ignore';
+  return 'notify';
+}
+
+/**
+ * The reopen write failed: tell staff in plain words on the row, so the
+ * client's email (which still goes out) does not point at a door that is
+ * shut. Best effort — the email path must not depend on this note.
+ */
+async function postReopenFailedNote({ itemId, docName, caseRef, status, error }) {
   try {
-    const data = await mondayApi.query(
+    const body =
+      `⚠️ Could not reopen this document for a new copy\n\n` +
+      `Document: ${docName}\n` +
+      `Case: ${caseRef}\n\n` +
+      `A Review Note was typed while this document was ${status || '(blank)'}, but its status could not be set to ` +
+      `Rework Required (${error}). The client will still be emailed the note in the next batch (about 2 minutes), ` +
+      `but cannot upload until the row is reopened. Please press Request Rework on the review page: ` +
+      `${BASE_URL}/d/${encodeURIComponent(caseRef)}/review`;
+    await io.query(
+      `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+      { itemId: String(itemId), body }
+    );
+  } catch (err) {
+    console.warn(`[DocReview] Could not post the reopen-failed note for item ${itemId}:`, err.message);
+  }
+}
+
+/**
+ * Review Notes column filled in.
+ *
+ * Switch OFF (today): queue the client email immediately and escalate; the
+ * status is left alone — on a Reviewed row both client pages then hide the
+ * upload control, which is the dead end REVIEW_NOTE_REOPENS fixes.
+ *
+ * Switch ON: a note on a Reviewed / Received / Under Review row writes ONE
+ * column (status → Rework Required) and returns. Nothing is queued or
+ * escalated here — the status event that write fires owns every rework side
+ * effect (onReworkRequired), so the client gets one email and the count
+ * moves once. Never call onReworkRequired directly from here: the write's
+ * own webhook does it, and a direct call would double it.
+ */
+async function onReviewNotesSet({ itemId, previousNotes = null }) {
+  try {
+    const data = await io.query(
       `query($itemId: ID!) {
          items(ids: [$itemId]) {
            name
-           column_values(ids: ["${REVIEW_NOTES_COL}", "${CASE_REF_COL}"]) { id text }
+           column_values(ids: ["${REVIEW_NOTES_COL}", "${CASE_REF_COL}", "${DOC_STATUS_COL}"]) { id text }
          }
        }`,
       { itemId: String(itemId) }
@@ -240,11 +334,37 @@ async function onReviewNotesSet({ itemId }) {
     const col         = (id) => item?.column_values?.find((c) => c.id === id)?.text?.trim() || '';
     const reviewNotes = col(REVIEW_NOTES_COL);
     const caseRef     = col(CASE_REF_COL);
+    const status      = col(DOC_STATUS_COL);
 
-    if (!reviewNotes || !caseRef) return;
+    const decision = decideReviewNote({
+      notes: reviewNotes, previousNotes, caseRef, status, enabled: io.isReopenEnabled(),
+    });
+    if (decision === 'ignore') return;
 
-    revisionNotificationService.queueItem(caseRef, item.name, reviewNotes, 'document');
+    let reopenError = '';
+    if (decision === 'reopen') {
+      try {
+        await updateCols(itemId, { [DOC_STATUS_COL]: { label: 'Rework Required' } });
+        console.log(
+          `[DocReview] Review notes set on a ${status} document — item ${itemId} reopened (Rework Required); ` +
+          `the status event will count, escalate and email for case ${caseRef}`
+        );
+        return;
+      } catch (err) {
+        // The client must still hear the note; staff must know the door is shut.
+        console.error(`[DocReview] Could not reopen item ${itemId} (${status}) — falling back to email only:`, err.message);
+        reopenError = err.message || String(err);
+      }
+    }
+
+    // The queue is in memory and instant — it comes before any further Monday
+    // call, so a Monday outage that broke the reopen cannot also cost the email.
+    io.queueItem(caseRef, item.name, reviewNotes, 'document', itemId);
     console.log(`[DocReview] Review notes set for item ${itemId} — queued client email for case ${caseRef}`);
+
+    if (reopenError) {
+      await postReopenFailedNote({ itemId, docName: item.name, caseRef, status, error: reopenError });
+    }
 
     // Escalate to Client Master directly (don't call onReworkRequired to avoid
     // double escalation and duplicate rework count increment)
@@ -258,12 +378,15 @@ async function onReviewNotesSet({ itemId }) {
  * Main entry point — called from webhook handler when a column changes
  * on the Document Checklist Execution Board.
  */
-async function onColumnChange({ itemId, columnId, value }) {
-  // Review Notes filled in → notify client + set Rework Required status
+async function onColumnChange({ itemId, columnId, value, previousValue }) {
+  // Review Notes filled in → email the client (and, with REVIEW_NOTE_REOPENS
+  // on, reopen a Reviewed / Received / Under Review row so they can upload).
+  // The status is otherwise never touched here.
   if (columnId === REVIEW_NOTES_COL) {
     const notes = value?.text || value?.value || '';
     if (notes) {
-      await onReviewNotesSet({ itemId });
+      const previousNotes = previousValue ? (previousValue.text ?? previousValue.value ?? null) : null;
+      await onReviewNotesSet({ itemId, previousNotes });
     }
     return;
   }
@@ -272,7 +395,16 @@ async function onColumnChange({ itemId, columnId, value }) {
 
   const label = value?.label?.text || '';
 
-  if (label === 'Reviewed') {
+  // A status written to the label it already had (a hand re-save, or two
+  // racing reopen writes) must not count, escalate or email a second time.
+  // Under the switch so OFF is today's handler; fails open when Monday sends
+  // no previousValue.
+  const prevLabel = previousValue?.label?.text;
+  const sameLabel = io.isReopenEnabled() && typeof prevLabel === 'string' && prevLabel === label;
+
+  if (sameLabel) {
+    console.log(`[DocReview] Status "${label}" re-saved unchanged on item ${itemId} — no rework/review side effects`);
+  } else if (label === 'Reviewed') {
     await onDocumentReviewed({ itemId });
   } else if (label === 'Rework Required') {
     await onReworkRequired({ itemId });
@@ -291,7 +423,7 @@ async function onColumnChange({ itemId, columnId, value }) {
  * readiness recalculation on the Client Master Board.
  */
 async function triggerLiveRecalc(itemId) {
-  const data = await mondayApi.query(
+  const data = await io.query(
     `query($id: ID!) {
        items(ids: [$id]) { column_values(ids: ["${CASE_REF_COL}"]) { text } }
      }`,
@@ -299,7 +431,7 @@ async function triggerLiveRecalc(itemId) {
   );
   const caseRef = data?.items?.[0]?.column_values?.[0]?.text?.trim();
   if (!caseRef) return;
-  await require('./caseReadinessService').calculateForCaseRef(caseRef);
+  await io.recalc(caseRef);
 }
 
-module.exports = { onColumnChange };
+module.exports = { onColumnChange, io, decideReviewNote };
