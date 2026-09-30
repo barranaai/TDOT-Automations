@@ -18,6 +18,7 @@ const CM_COLS = {
 // Early stages (before "Document Collection Started") are excluded — the email
 // hasn't been sent yet, so the next normal send will use the corrected address.
 // "Submitted" is excluded — the case is closed and resending serves no purpose.
+let EMAIL_CHANGE_RETRY_MS = 2000;   // one retry of an unreadable held-onboarding check (tests shorten it)
 const STAGES_REQUIRING_RESEND = new Set([
   'Document Collection Started',
   'Internal Review',
@@ -215,9 +216,20 @@ async function onClientEmailChanged(itemId) {
   // if a later hold note appeared — a read error, the switch off) is today's
   // correction resend.
   const resume = require('./onboardingResumeService');
-  const held = resume.isEnabled()
-    ? await resume.resumeIfOwed({ itemId, trigger: 'email-change', dryRun: true })
-    : { action: 'none', code: 'disabled' };
+  const ask = () => resume.resumeIfOwed({ itemId, trigger: 'email-change', dryRun: true });
+  let held = resume.isEnabled() ? await ask() : { action: 'none', code: 'disabled' };
+  if (held.action === 'error') {   // one retry of an unreadable check before today's resend
+    await new Promise((r) => setTimeout(r, EMAIL_CHANGE_RETRY_MS));
+    held = await ask();
+  }
+  if (held.code === 'unreadable') {
+    // Held, fully signed and owed a start, but the last checks couldn't be read:
+    // the 15-minute sync starts it (with its record) and the intake email then
+    // goes to this corrected address. Sending it alone here would leave the
+    // checklist unbuilt behind a "resent" note.
+    console.log(`[Email] Client email corrected for ${label} — held onboarding pending, left to the status sync`);
+    return;
+  }
   if (held.code === 'waiting' && !held.evidence) {
     console.log(`[Email] Client email corrected for ${label} — onboarding is held for signatures, nothing sent now`);
     await mondayApi.query(
@@ -321,4 +333,5 @@ function maskAddr(email) {
 
 // BASE_URL / EMAIL_REPLY_TO / STAGES_REQUIRING_RESEND / maskAddr are shared with
 // sponsorOnboardingService so the sponsor's link and gates are the client's.
-module.exports = { sendIntakeEmail, onClientEmailChanged, BASE_URL, EMAIL_REPLY_TO, STAGES_REQUIRING_RESEND, maskAddr };
+module.exports = { sendIntakeEmail, onClientEmailChanged, BASE_URL, EMAIL_REPLY_TO, STAGES_REQUIRING_RESEND, maskAddr,
+  _setRetryMsForTests: (ms) => { EMAIL_CHANGE_RETRY_MS = ms; } };

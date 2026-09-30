@@ -12,6 +12,7 @@ const ONEDRIVE_ID_COL   = (cmColumns && cmColumns.oneDriveFolderId) || 'text_mm4
 const ONEDRIVE_ROOT_FOLDER = 'Client Documents';   // mirrors oneDriveService.ROOT_FOLDER (ownership check only)
 const CASE_STAGE_COL        = 'color_mm0x8faa';
 const CHECKLIST_APPLIED_COL = 'color_mm0xs7kp';
+const STAGE_START_COL       = 'date_mm0xjm1z';   // the document-chasing clock
 
 const CASE_TYPE_ABBR = {
   'AAIP':                                                          'AAIP',
@@ -366,7 +367,7 @@ async function resumeOnboardingIfStuck({ itemId, caseRef }) {
   _resumeInFlight.add(key);
   try {
     const data = await mondayApi.query(
-      `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_STAGE_COL}", "${CHECKLIST_APPLIED_COL}", "color_mm0x9fnn"]) { id text } } }`,
+      `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${CASE_STAGE_COL}", "${CHECKLIST_APPLIED_COL}", "color_mm0x9fnn", "${STAGE_START_COL}"]) { id text } } }`,
       { id: String(itemId) }
     );
     const cv = {};
@@ -415,6 +416,18 @@ async function resumeOnboardingIfStuck({ itemId, caseRef }) {
     console.log(`[CaseRef] ${caseRef} was Paid before its Case Type was set — resuming onboarding (intake email + checklist)`);
     const emailService     = require('./emailService');     // lazy: avoid require cycles
     const checklistService = require('./checklistService');
+
+    // The document-chasing clock. This start never set one (so these clients
+    // were never chased), and it is also the trace that tells the held-
+    // onboarding service this case WAS started — so it never starts it again.
+    // Same payload as the payment webhook's; only when blank.
+    if (!cv[STAGE_START_COL]) {
+      await mondayApi.query(
+        `mutation($b: ID!, $i: ID!, $c: JSON!){ change_multiple_column_values(board_id: $b, item_id: $i, column_values: $c){ id } }`,
+        { b: String(clientMasterBoardId), i: String(itemId),
+          c: JSON.stringify({ [STAGE_START_COL]: { date: new Date().toISOString().slice(0, 10) }, color_mm1abve4: null, numeric_mm1a4e8r: '0' }) }
+      ).catch((err) => console.warn(`[CaseRef] Resume: chasing clock not started for ${caseRef}: ${err.message}`));
+    }
 
     emailService.sendIntakeEmail(itemId).catch(err =>
       console.error(`[CaseRef] Resume: intake email failed for ${caseRef}:`, err.message)

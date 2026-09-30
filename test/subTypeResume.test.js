@@ -149,8 +149,24 @@ test('held and now fully signed: the held-onboarding service starts the WHOLE on
   const { r, seeded } = await run({}, { held: { action: 'resumed', trigger: 'sub-type' } });
   assert.equal(seeded.length, 0, 'no second seed alongside the resume');
   assert.equal(r.skipped, 'held onboarding started');
-  const rep = await run({}, { held: { action: 'report', code: 'changed' } });
-  assert.equal(rep.seeded.length, 0, 'a held case staff must look at is left to them');
+});
+
+test('held and still OWED a start (a "fix this first" note, or a check that could not settle): no bare seed — the intake email must come with it', async () => {
+  for (const held of [{ action: 'report', code: 'stage' }, { action: 'report', code: 'no-email' }, { action: 'report', code: 'no-case-ref' },
+    { action: 'report', code: 'manual-start' }, { action: 'none', code: 'unreadable' }, { action: 'error', code: 'record-failed' },
+    { action: 'none', code: 'changed-before-start' }, { action: 'none', code: 'resume-pending' }]) {
+    const { seeded, r } = await run({}, { held });
+    assert.equal(seeded.length, 0, JSON.stringify(held));
+    assert.match(r.skipped, /held for signatures/);
+  }
+});
+
+test('held but onboarding already ran another way ("not restarted" verdicts, or waiting with evidence): the checklist is built as before (2026-CEC-PS-064 strand)', async () => {
+  for (const held of [{ action: 'report', code: 'evidence' }, { action: 'report', code: 'changed' }, { action: 'report', code: 'moved-on' },
+    { action: 'report', code: 'unconfirmed' }, { action: 'none', code: 'reported' }, { action: 'none', code: 'waiting', evidence: true }]) {
+    const { seeded } = await run({}, { held });
+    assert.equal(seeded.length, 1, JSON.stringify(held));
+  }
 });
 
 test('anything the held check cannot place seeds exactly as before (not held, no lead, already started, read error)', async () => {

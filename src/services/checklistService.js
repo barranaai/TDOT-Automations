@@ -675,10 +675,18 @@ async function resumeSeedingAfterSubType({ itemId }) {
   // onboarding never started (the payment path held it back). Anything the
   // held check can't place — not held, no linked lead, already started, a read
   // error — is today's strand and seeds as before.
-  // (ONBOARDING_RESUME off = exactly the old behaviour.)
+  // Seeding sends no email, so it goes ahead whenever onboarding is NOT owed:
+  // never held, no linked lead, already started, or it already ran another way
+  // (a "not restarted" verdict). It waits when the case is held and its
+  // onboarding still owed — seeding then would make the case look onboarded and
+  // the intake email would never go — or when the check couldn't settle (the
+  // 15-minute sync retries those). (ONBOARDING_RESUME off = the old behaviour.)
   const held = resumeDeps.enabled() ? await resumeDeps.held({ itemId: id, caseRef }) : { action: 'none', code: 'disabled' };
+  const seedOk = ['disabled', 'not-held', 'no-lead', 'already-resumed', 'reported', 'error'].includes(held.code)
+    || (held.action === 'report' && ['evidence', 'changed', 'moved-on', 'unconfirmed'].includes(held.code))
+    || (held.code === 'waiting' && held.evidence);
   if (held.action === 'resumed') return { skipped: 'held onboarding started' };
-  if (held.action === 'report' || held.code === 'waiting') return { skipped: `held for signatures (${held.code})` };
+  if (!seedOk) return { skipped: `held for signatures (${held.code})` };
 
   console.log(`[ChecklistService] ${caseRef}: Case Sub Type arrived after the payment trigger — resuming checklist seeding`);
   const appliedNow = async () => {

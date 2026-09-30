@@ -71,8 +71,8 @@ test('at most one automatic start per case, ever', () => {
   const started = note(R.RESUMED_NOTE, '2026-09-30T10:00:00Z');
   const sent = note('✉️ <b>Intake email sent</b> ("Your case is ready") to m***@example.com.', '2026-09-30T10:00:05Z');
   assert.equal(decide({ updates: [HOLD_PAID, HOLD_DCS, started, sent] }).code, 'already-resumed');
-  // outcome not noted yet, but the start is recent: still just "started"
-  assert.equal(decide({ updates: [HOLD_PAID, HOLD_DCS, started], now: Date.parse('2026-09-30T10:20:00Z') }).code, 'already-resumed');
+  // outcome not noted yet, but the start is recent: pending (never memoised by the sync)
+  assert.equal(decide({ updates: [HOLD_PAID, HOLD_DCS, started], now: Date.parse('2026-09-30T10:20:00Z') }).code, 'resume-pending');
 });
 
 test('a start whose email outcome was never noted (restart / outage mid-start) is reported once after 30 min — never re-sent', () => {
@@ -116,6 +116,9 @@ test('paper signing (no envelope chain) held for the client signature, then sign
 test('any sign onboarding already ran → a staff note, never an email', () => {
   const ev = (over) => decide(over);
   assert.equal(ev({ cm: cm({ applied: 'Yes' }) }).code, 'evidence');                      // Kapil after his toggle
+  // Stage Start Date: written only by the app, only when onboarding goes ahead (never on a hold) —
+  // Amrit (LMIA, no rows, box No) has one from 09-22; Mehak (held) has none
+  assert.equal(ev({ cm: cm({ stageStart: '2026-09-22' }) }).code, 'evidence');
   assert.equal(ev({ rows: 3 }).code, 'evidence');                                        // checklist rows exist
   for (const text of [
     '7 questionnaire fields were pre-filled from the client\'s intake & pre-consult answers.',
@@ -159,6 +162,7 @@ test('unreadable rows / history: no start and no note (the sync tries again)', (
 
 test('waiting carries whether the case shows signs it was onboarded (the email-change path needs it)', () => {
   assert.equal(decide({ claimants: [lead()] }).evidence, false);
+  assert.equal(decide({ claimants: [lead()], cm: cm({ stageStart: '2026-09-22' }) }).evidence, true, 'Anita-type: onboarded, box reset, clock set');
   assert.equal(decide({ claimants: [lead()], cm: cm({ applied: 'Yes' }) }).evidence, true);
   assert.equal(decide({ claimants: [lead()], updates: [HOLD_PAID, HOLD_DCS, note('8 questionnaire fields were pre-filled')] }).evidence, true);
 });
@@ -430,4 +434,63 @@ test('sweep memo: an aborted or unreadable pass is never memoised (looked at aga
     await R.sweepHeldOnboarding({ leads, cases });
     assert.equal(reads, 2, 'unreadable → not memoised');
   } finally { Object.assign(R.io, io0); R._resetForTests(); }
+});
+
+test('a "fix this first" note never silences a later "it already ran" note (per-kind throttle)', () => {
+  const action = note(R.reportNote('no-case-ref'), '2026-09-30T09:00:00Z');
+  const v = decide({ updates: [HOLD_PAID, HOLD_DCS, action], changes: [{ column: 'color_mm0x9fnn', userId: '79975533', at: HELD_AT + 60000 }] });
+  assert.equal(v.code, 'changed');
+  assert.equal(v.quiet, false);
+  // the same ACTION code again is quiet; a different ACTION code is not
+  assert.equal(decide({ updates: [HOLD_PAID, HOLD_DCS, action], cm: cm({ caseRef: '' }) }).quiet, true);
+  assert.equal(decide({ updates: [HOLD_PAID, HOLD_DCS, action], cm: cm({ clientEmail: '' }) }).quiet, false);
+  // every report note carries its code
+  for (const c of ['evidence', 'changed', 'moved-on', 'stage', 'no-case-ref', 'no-email', 'manual-start', 'unconfirmed']) {
+    assert.match(R.reportNote(c, 'x'), new RegExp(`tdot-onb-report:${c};`), c);
+  }
+});
+
+test('last look: a start that happened meanwhile (clock now set) → nothing sent', () =>
+  withFakeIo(async ({ names }) => {
+    const r = await R.resumeIfOwed({ itemId: ITEM, trigger: 'last-signature' });
+    assert.equal(r.code, 'changed-before-start');
+    assert.ok(!names().includes('postNote') && !names().includes('sendIntakeEmail'));
+  }, { caseOnRecheck: cm({ stageStart: '2026-09-30' }) }));
+
+test('a good send whose "sent" note cannot be posted is NOT reported as "did not go out" (staff would email again)', () =>
+  withFakeIo(async ({ notes, names }) => {
+    const realPost = R.io.postNote;
+    let n = 0;
+    R.io.postNote = async (id, body) => { n++; if (n === 2) throw new Error('500'); return realPost(id, body); };
+    await R.resumeIfOwed({ itemId: ITEM, trigger: 'last-signature' });
+    await flush();
+    assert.ok(names().includes('sendIntakeEmail'));
+    assert.ok(!notes().some((b) => /did not go out/.test(b)), 'no false failure note');
+  }));
+
+test('sweep: a start whose outcome is still pending is not memoised — the "please check" note comes at 30 min, not 6 h', async () => {
+  const cases = new Map([['1', { paymentStatus: 'Paid', stage: 'Document Collection Started', applied: 'No' }]]);
+  const leads = [countersigned({ id: 'L1', clientMasterItemId: '1' })];
+  const started = note(R.RESUMED_NOTE, '2026-09-30T10:00:00Z');
+  const posted = [];
+  const io0 = { ...R.io }, realNow = Date.now;
+  R._resetForTests();
+  Object.assign(R.io, {
+    readCase: async () => cm(),
+    readUpdates: async () => [HOLD_PAID, HOLD_DCS, started, ...posted.map((b) => note(b, '2026-09-30T10:40:30Z'))],
+    postNote: async (id, b) => { posted.push(b); },
+  });
+  try {
+    Date.now = () => Date.parse('2026-09-30T10:10:00Z');
+    await R.sweepHeldOnboarding({ leads, cases });
+    assert.equal(posted.length, 0);
+    Date.now = () => Date.parse('2026-09-30T10:40:00Z');
+    const r = await R.sweepHeldOnboarding({ leads, cases });
+    assert.deepEqual(r.reported.map((x) => x.code), ['unconfirmed']);
+    assert.equal(posted.length, 1);
+    assert.match(posted[0], /automatic onboarding may not have finished/);
+    Date.now = () => Date.parse('2026-09-30T10:55:00Z');
+    await R.sweepHeldOnboarding({ leads, cases });
+    assert.equal(posted.length, 1, 'posted once');
+  } finally { Date.now = realNow; Object.assign(R.io, io0); R._resetForTests(); }
 });

@@ -60,7 +60,8 @@ test('the normal advance (board not Paid yet) writes Paid and does not ask the h
 
 /* ── Case Type set late: caseRefService.resumeOnboardingIfStuck ── */
 
-async function caseRefResume(held, { switchOff = false } = {}) {
+async function caseRefResume(held, { switchOff = false, startDate = '2026-09-29' } = {}) {
+  const clockWrites = [];
   const caseRef = require('../src/services/caseRefService');
   caseRef._setRetryMsForTests(0);
   const saved = process.env.ONBOARDING_RESUME;
@@ -71,8 +72,12 @@ async function caseRefResume(held, { switchOff = false } = {}) {
   const sponsor = require('../src/services/sponsorOnboardingService');
   const did = [], asked = [];
   const restore = [
-    stub(mondayApi, 'query', async () => ({ items: [{ column_values: [
-      { id: 'color_mm0x8faa', text: 'Document Collection Started' }, { id: 'color_mm0xs7kp', text: 'No' }, { id: 'color_mm0x9fnn', text: 'Paid' }] }] })),
+    stub(mondayApi, 'query', async (q, v) => {
+      if (/change_multiple_column_values/.test(q)) { did.push('clock'); clockWrites.push(JSON.parse(v.c)); return {}; }
+      return { items: [{ column_values: [
+        { id: 'color_mm0x8faa', text: 'Document Collection Started' }, { id: 'color_mm0xs7kp', text: 'No' }, { id: 'color_mm0x9fnn', text: 'Paid' },
+        { id: 'date_mm0xjm1z', text: startDate }] }] };
+    }),
     stub(R, 'resumeIfOwed', async (args) => { asked.push(args); return verdicts.length > 1 ? verdicts.shift() : verdicts[0]; }),
     stub(emailService, 'sendIntakeEmail', async () => { did.push('email'); return { sent: true }; }),
     stub(checklistService, 'onDocumentCollectionStarted', async () => { did.push('seed'); }),
@@ -81,12 +86,20 @@ async function caseRefResume(held, { switchOff = false } = {}) {
   try {
     await caseRef.resumeOnboardingIfStuck({ itemId: '9001', caseRef: '2026-SV-021' });
     await flush();
-    return { did, asked };
+    return { did, asked, clockWrites };
   } finally {
     restore.reverse().forEach((x) => x());
     if (saved === undefined) delete process.env.ONBOARDING_RESUME; else process.env.ONBOARDING_RESUME = saved;
   }
 }
+
+test('Case Type set late on a normal case: its start now sets the reminder clock when blank (it never did — and it is the trace the held service reads)', async () => {
+  const { did, clockWrites } = await caseRefResume({ action: 'none', code: 'not-held' }, { startDate: '' });
+  assert.deepEqual(did.sort(), ['clock', 'email', 'seed', 'sponsor']);
+  assert.deepEqual(Object.keys(clockWrites[0]).sort(), ['color_mm1abve4', 'date_mm0xjm1z', 'numeric_mm1a4e8r']);
+  const set = await caseRefResume({ action: 'none', code: 'not-held' }, { startDate: '2026-09-01' });
+  assert.equal(set.clockWrites.length, 0, 'an existing clock is never moved');
+});
 
 test('Case Type set late on a case HELD for signatures: no intake email behind the hold (it used to send with no signature check)', async () => {
   const { did, asked } = await caseRefResume({ action: 'none', code: 'waiting', detail: 'RCIC countersignature' });
@@ -135,6 +148,7 @@ async function emailChanged(verdicts, { switchOff = false } = {}) {
   const saved = process.env.ONBOARDING_RESUME;
   if (switchOff) process.env.ONBOARDING_RESUME = 'off'; else delete process.env.ONBOARDING_RESUME;
   const emailService = require('../src/services/emailService');
+  emailService._setRetryMsForTests(0);
   const mail = require('../src/services/microsoftMailService');
   const notes = [], sent = [], asked = [];
   const row = { items: [{ name: 'Mehak', column_values: [
@@ -180,8 +194,19 @@ test('switch off: the email correction is exactly the old resend (no held check)
   assert.equal(sent.length, 1);
 });
 
+test('email corrected on a held, owed case whose last checks could not be read: nothing sent alone — the sync starts it (to the new address)', async () => {
+  const { sent } = await emailChanged([{ action: 'none', code: 'unreadable' }]);
+  assert.equal(sent.length, 0);
+});
+
+test('email corrected, held check unreadable: retried once — a hold found on the retry sends nothing', async () => {
+  const { sent, asked } = await emailChanged([{ action: 'error', code: 'error' }, { action: 'none', code: 'waiting', detail: 'RCIC countersignature' }]);
+  assert.equal(asked.length, 2);
+  assert.equal(sent.length, 0);
+});
+
 test('email corrected on a normal case: the correction resend works exactly as before', async () => {
-  for (const v of [{ action: 'none', code: 'not-held' }, { action: 'report', code: 'evidence' }, { action: 'none', code: 'already-resumed' }, { action: 'error', code: 'error' }]) {
+  for (const v of [{ action: 'none', code: 'not-held' }, { action: 'report', code: 'evidence' }, { action: 'none', code: 'already-resumed' }]) {
     const { sent, notes } = await emailChanged([v]);
     assert.equal(sent.length, 1, JSON.stringify(v));
     assert.equal(sent[0].to, 'mehak.new@example.com');
@@ -284,9 +309,32 @@ test('the admin "Resend intake email" tool leaves a note the held-onboarding sta
   const src = require('fs').readFileSync(require.resolve('../src/server.js'), 'utf8');
   const route = src.slice(src.indexOf("app.post('/api/resend-intake/:itemId'"), src.indexOf('// Manual re-seed'));
   assert.match(route, /📬 <b>Intake email sent<\/b> \("Your case is ready"\) from the admin tools to \$\{to\}/);
+  assert.match(route, /\.catch\(\(\) => new Promise\(\(r\) => setTimeout\(r, 1500\)\)\.then\(postTrace\)\)/, 'the trace is retried once');
+  assert.match(route, /noteRecorded/, 'and the admin is told when it could not be added');
   assert.match(route, /Portal link email re-sent from the admin tools/);
   const note = '📬 <b>Intake email sent</b> ("Your case is ready") from the admin tools to m***@example.com.';
   assert.deepEqual(R.readNotes([{ created_at: '2026-09-30T10:00:00Z', body: note, text_body: note.replace(/<[^>]+>/g, '') }]).evidence, ['the intake email was already sent']);
   const portal = '📬 Portal link email re-sent from the admin tools to m***@example.com.';
   assert.deepEqual(R.readNotes([{ created_at: '2026-09-30T10:00:00Z', body: portal, text_body: portal }]).evidence, [], 'the portal-link variant is not the intake email');
+});
+
+test('the Paid webhook hold note is retried once — it is the record the held-onboarding start reads', async () => {
+  const retainerService = require('../src/services/retainerService');
+  const notes = [];
+  let fails = 1;
+  const pending = { id: 'L1', clientMasterItemId: '9007', retainerSigned: '2026-09-29', retainerPaid: '2026-09-29',
+    retainerCountersign: JSON.stringify({ clientSignedVia: 'documenso', envelopeId: 'rc1' }) };
+  const restore = [
+    stub(mondayApi, 'query', async (q, v) => {
+      if (/create_update/.test(q)) { if (fails-- > 0) throw new Error('429'); notes.push(v.b); return {}; }
+      if (/column_values\(ids/.test(q)) return { items: [{ column_values: [{ id: 'color_mm0xs7kp', text: 'No' }, { id: 'color_mm0x8faa', text: 'Document Collection Started' }] }] };
+      return {};
+    }),
+    stub(leadService, 'findAllByColumnValue', async () => [pending]),
+  ];
+  try {
+    await retainerService.onRetainerPaid({ itemId: '9007' });
+    assert.equal(notes.length, 1);
+    assert.match(notes[0], /Payment marked, but onboarding is on hold<\/b> — missing: RCIC countersignature/);
+  } finally { restore.reverse().forEach((x) => x()); }
 });

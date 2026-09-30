@@ -81,6 +81,12 @@ const FAILED_TEXT   = 'The client\'s intake email did not go out';
 const ACTION_HEAD      = 'onboarding did not start automatically';
 const FINAL_HEAD       = 'Held onboarding not restarted automatically';
 const UNCONFIRMED_HEAD = 'automatic onboarding may not have finished';
+const FINAL_CODES      = ['evidence', 'changed', 'moved-on'];
+// Each staff note carries its code in a hidden marker, so "already told" is per
+// kind: a "fix this first" note never silences a later "it already ran" note.
+const REPORT_MARKER    = 'tdot-onb-report:';
+const markerOf = (code) => `<span style="display:none">${REPORT_MARKER}${code};</span>`;
+const MARKER_RE = new RegExp(`${REPORT_MARKER}([a-z-]+);`, 'g');
 
 // Signs that onboarding already ran some other way. Each is left ONLY by
 // checklist seeding (which runs alongside the intake email) or by the intake
@@ -112,8 +118,9 @@ const tms = (iso) => { const t = Date.parse(s(iso)); return Number.isFinite(t) ?
 
 /**
  * PURE — read the case's notes. `updates` as Monday returns them (any order).
- * @returns {{ heldAt, resumedAt, confirmed, reportedSinceHeld, finalSinceHeld, unconfirmedReported, evidence: string[] }}
- *   times in ms (0 = none); `confirmed` = the intake email's outcome was noted after the newest start.
+ * @returns {{ heldAt, resumedAt, confirmed, reportedSinceHeld: Set<string>, finalSinceHeld, unconfirmedReported, evidence: string[] }}
+ *   times in ms (0 = none); `confirmed` = the intake email's outcome was noted after the newest start;
+ *   `reportedSinceHeld` = the report codes already posted since the newest hold.
  */
 function readNotes(updates = []) {
   let heldAt = 0, resumedAt = 0;
@@ -122,14 +129,18 @@ function readNotes(updates = []) {
     if (HELD_PATTERNS.some((re) => re.test(t))) heldAt = Math.max(heldAt, at);
     if (t.includes(RESUMED_TEXT)) resumedAt = Math.max(resumedAt, at);
   }
-  let confirmed = false, reportedSinceHeld = false, finalSinceHeld = false, unconfirmedReported = false;
+  let confirmed = false, finalSinceHeld = false, unconfirmedReported = false;
+  const reportedSinceHeld = new Set();
   const evidence = [];
   for (const u of updates) {
     const t = noteText(u), at = tms(u.created_at) || 1;
     if (resumedAt && at >= resumedAt && (t.includes(SENT_TEXT) || t.includes(FAILED_TEXT))) confirmed = true;
-    if (at >= heldAt && (t.includes(ACTION_HEAD) || t.includes(FINAL_HEAD))) reportedSinceHeld = true;
-    if (at >= heldAt && t.includes(FINAL_HEAD)) finalSinceHeld = true;
-    if (resumedAt && at >= resumedAt && t.includes(UNCONFIRMED_HEAD)) unconfirmedReported = true;
+    const codes = [...t.matchAll(MARKER_RE)].map((m) => m[1]);
+    if (at >= heldAt) {
+      for (const c of codes) reportedSinceHeld.add(c);
+      if (t.includes(FINAL_HEAD) || codes.some((c) => FINAL_CODES.includes(c))) finalSinceHeld = true;
+    }
+    if (resumedAt && at >= resumedAt && (t.includes(UNCONFIRMED_HEAD) || codes.includes('unconfirmed'))) unconfirmedReported = true;
     for (const [re, label] of EVIDENCE_NOTES) if (re.test(t) && !evidence.includes(label)) evidence.push(label);
   }
   return { heldAt, resumedAt, confirmed, reportedSinceHeld, finalSinceHeld, unconfirmedReported, evidence };
@@ -162,7 +173,9 @@ function decide(input) {
     // Started once already — never again. If the intake email's outcome never
     // got noted (a restart or an outage between the record and the send), say
     // so once rather than leave a "started" note that nothing followed.
-    if (notes.confirmed || now - notes.resumedAt < UNCONFIRMED_AFTER_MS) return { action: 'none', code: 'already-resumed' };
+    if (notes.confirmed) return { action: 'none', code: 'already-resumed' };
+    // Not settled yet: never memoised, so the 30-minute check below is not missed.
+    if (now - notes.resumedAt < UNCONFIRMED_AFTER_MS) return { action: 'none', code: 'resume-pending' };
     return { action: 'report', code: 'unconfirmed', detail: new Date(notes.resumedAt).toISOString(), quiet: notes.unconfirmedReported };
   }
   if (notes.finalSinceHeld) return { action: 'none', code: 'reported' };
@@ -177,11 +190,17 @@ function decide(input) {
   const gates = claimants.map((l) => gate.signatureGateForLead({ ...l, retainerPaid: s(l && l.retainerPaid) || day }));
   if (!gates.some((g) => g.complete)) {
     return { action: 'none', code: 'waiting', detail: gates[0].missing.join(' and '),
-      evidence: s(cm.applied).toLowerCase() === 'yes' || notes.evidence.length > 0 };
+      evidence: s(cm.applied).toLowerCase() === 'yes' || !!s(cm.stageStart) || notes.evidence.length > 0 };
   }
 
-  const report = (code, detail) => ({ action: 'report', code, detail, quiet: notes.reportedSinceHeld });
+  // A FINAL note is posted once (finalSinceHeld returns 'reported' above on
+  // every later pass); a "fix this first" note once per kind.
+  const report = (code, detail) => ({ action: 'report', code, detail, quiet: !FINAL_CODES.includes(code) && notes.reportedSinceHeld.has(code) });
   if (s(cm.applied).toLowerCase() === 'yes') return report('evidence', 'the document checklist is marked as applied');
+  // Stage Start Date is written only by the app, and only when onboarding goes
+  // ahead (the payment webhook, the Case Stage webhook's start, the case-type
+  // resume, this service) or the case moves on — never on a hold. Set = it ran.
+  if (s(cm.stageStart)) return report('evidence', `onboarding already ran (Stage Start Date ${s(cm.stageStart)})`);
   if (notes.evidence.length) return report('evidence', notes.evidence.join(', '));
   if (s(cm.stage) !== DCS) return report(EARLY_STAGES.includes(s(cm.stage)) ? 'stage' : 'moved-on', s(cm.stage) || 'blank');
   if (!s(cm.caseRef)) return report('no-case-ref');
@@ -216,6 +235,9 @@ const MANUAL_START = 'To start it, set the Case Stage to <b>Pre-Onboarding</b> a
   'the intake email, document checklist and questionnaire then start by themselves. Please don\'t switch the Payment Status off and on (that changes the payment date).';
 
 function reportNote(code, detail) {
+  return _reportText(code, detail) + markerOf(code);
+}
+function _reportText(code, detail) {
   switch (code) {
     case 'evidence':
       return FINAL_PREFIX + `this case already shows signs that onboarding ran (${esc(detail)}).` + FINAL_TAIL;
@@ -260,7 +282,7 @@ const io = {
     const cv = {};
     for (const c of item.column_values || []) cv[c.id] = s(c.text);
     return { paymentStatus: cv[COLS.paymentStatus] || '', stage: cv[COLS.stage] || '', applied: cv[COLS.applied] || '',
-      caseRef: (cv[COLS.caseRef] || '').replace(/\s+/g, ' '), clientEmail: cv[COLS.clientEmail] || '' };
+      caseRef: (cv[COLS.caseRef] || '').replace(/\s+/g, ' '), clientEmail: cv[COLS.clientEmail] || '', stageStart: cv[COLS.stageStart] || '' };
   },
   async readUpdates(itemId) {
     const d = await mondayApi.query(
@@ -356,12 +378,12 @@ async function _resume(id, { trigger, dryRun, caseRef }) {
   if (v.action === 'report') return report(id, v, { trigger, dryRun });
   // action === 'resume'
   if (dryRun) return v;
-  if (!isEnabled()) return report(id, { action: 'report', code: 'manual-start', quiet: readNotes(input.updates).reportedSinceHeld }, { trigger, dryRun });
+  if (!isEnabled()) return report(id, { action: 'report', code: 'manual-start', quiet: readNotes(input.updates).reportedSinceHeld.has('manual-start') }, { trigger, dryRun });
 
   // Last look right before the point of no return: the reads above can be a few
   // seconds old, and a payment recorded in error is un-marked by hand first.
   const now = await io.readCase(id);
-  if (!now || now.paymentStatus !== 'Paid' || now.stage !== DCS || s(now.applied).toLowerCase() === 'yes') {
+  if (!now || now.paymentStatus !== 'Paid' || now.stage !== DCS || s(now.applied).toLowerCase() === 'yes' || s(now.stageStart)) {
     console.log(`[OnboardingResume] ${id} (${trigger}): case changed just before starting — not started`);
     return { action: 'none', code: 'changed-before-start' };
   }
@@ -390,13 +412,18 @@ async function _resume(id, { trigger, dryRun, caseRef }) {
   console.log(`[OnboardingResume] ${now.caseRef || id} (${trigger}): held onboarding starting now`);
   // Same calls, same order as onRetainerPaid's deferred-onboarding branch —
   // fire-and-forget; the checklist setup can take minutes.
+  // The send's outcome and the outcome NOTE are separate failures: a note that
+  // can't be posted after a good send must never read "did not go out" (staff
+  // would email the client again) — it is left to the 30-minute check.
   Promise.resolve()
     .then(() => io.sendIntakeEmail(id))
-    .then((r) => io.postNote(id, r && r.sent ? emailSentNote(require('./emailService').maskAddr(r.to)) : emailFailedNote(r && r.reason)))
-    .catch((err) => {
-      console.error(`[OnboardingResume] ${id}: intake email failed: ${err.message}`);
-      return io.postNote(id, emailFailedNote(err.message)).catch(() => {});
-    });
+    .then(
+      (r) => io.postNote(id, r && r.sent ? emailSentNote(require('./emailService').maskAddr(r.to)) : emailFailedNote(r && r.reason))
+        .catch((err) => console.warn(`[OnboardingResume] ${id}: intake email outcome note failed (${err.message})`)),
+      (err) => {
+        console.error(`[OnboardingResume] ${id}: intake email failed: ${err.message}`);
+        return io.postNote(id, emailFailedNote(err.message)).catch(() => {});
+      });
   Promise.resolve()
     .then(() => io.ensureSponsor({ itemId: id, mode: 'onboard', trigger: 'signature-resume' }))
     .catch((err) => console.error(`[OnboardingResume] ${id}: sponsor onboarding failed: ${err.message}`));
@@ -485,5 +512,5 @@ module.exports = {
   resumeIfOwed, sweepHeldOnboarding, isEnabled,
   decide, readNotes, sweepCandidates, reportNote,          // pure
   io, _resetForTests,
-  RESUMED_TEXT, SENT_TEXT, HELD_PATTERNS, RESUMED_NOTE, EARLY_STAGES,
+  RESUMED_TEXT, SENT_TEXT, HELD_PATTERNS, RESUMED_NOTE, EARLY_STAGES, FINAL_CODES,
 };
