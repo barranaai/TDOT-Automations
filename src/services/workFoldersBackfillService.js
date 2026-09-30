@@ -37,6 +37,23 @@ const DEFAULT_WAIT_S = 10;                  // when Graph gives no Retry-After
 const STOP_AFTER_FAILS_IN_A_ROW = 5;        // then it is not one folder, it is OneDrive — stop and report
 const ATTEMPT_DEADLINE_MS = 120000;         // one folder, one try: never wait longer (a hung login call would freeze the job)
 
+const PREVIEW_VALID_MS = 6 * 3600 * 1000;   // a real run acts on what a preview from the last 6 hours saw — no older
+
+/**
+ * Left out on purpose (Faran, 2026-09-30, after the production preview): these
+ * real clients' case references are ALSO carried by leftover TEST folders, and
+ * the app resolves the case to the test folder. Four more sub-folders there
+ * would only make that wrong choice harder to undo. Take a reference out of
+ * this list once its folder is sorted, and run the job again.
+ */
+const LEAVE_OUT = new Map([
+  ['2026-CEC-PR-002', 'test folder "Kamalpreet - 2026-CEC-PR-002"'],
+  ['2026-VV-008',     'test folder "Praj - 2026-VV-008"'],
+  ['2026-SP-015',     'test folder "TEST CLIENT - E2E 1788536909757 - 2026-SP-015"'],
+  ['2026-SP-004',     'test folders "TEST CLIENT - E2E 1780224413906" / "ZZ Folder E2E"'],
+]);
+const LEFT_OUT_REASON = 'left out: the app resolves it to a leftover test folder (sort that first)';
+
 const CASE_WORK_FOLDERS_ORDER = ['1-Coordinator-Working', '2-Case-Manager-Draft', '3-AW-Analyst-Final-RCIC', '4-Submitted-IRCC'];   // report order; test pins it to oneDriveService.CASE_WORK_FOLDERS
 
 const s = (v) => String(v == null ? '' : v).trim();
@@ -59,6 +76,7 @@ function planBackfill({ cases, rootFolders, pick }) {
     if (c.state && c.state !== 'active') { skipped.push({ caseRef: ref, name: c.name, reason: 'not active' }); continue; }
     if (c.groupId === TEST_GROUP_ID) { skipped.push({ caseRef: ref, name: c.name, reason: 'TEST group' }); continue; }
     if (!ref) { skipped.push({ caseRef: '', name: c.name, reason: 'no case reference' }); continue; }
+    if (LEAVE_OUT.has(ref)) { skipped.push({ caseRef: ref, name: c.name, reason: LEFT_OUT_REASON, detail: LEAVE_OUT.get(ref) }); continue; }
     considered++;
     const suffix = ` - ${ref}`;
     const hits = (rootFolders || []).filter((f) => f.name.endsWith(suffix));
@@ -113,21 +131,34 @@ const io = {
 
 let _job = null;
 let _seq = 0;
+/**
+ * The last COMPLETE preview: which folders it checked, and when. A real run
+ * only touches folders on this list — it does what the preview showed, and a
+ * folder that appeared since (a new split, a new test folder) is reported, not
+ * touched. Lost on a restart, like the report: preview again after a deploy.
+ */
+let _lastPreview = null;
 
 function summary(job, { full = false } = {}) {
   if (!job) return null;
-  const rows = full ? job.rows : job.rows.filter((r) => r.error || r.tries || (r.created && r.created.length) || (r.wouldCreate && r.wouldCreate.length) || r.split);
+  const rows = full ? job.rows : job.rows.filter((r) => r.error || r.tries || r.notInPreview || (r.created && r.created.length) || (r.wouldCreate && r.wouldCreate.length) || r.split);
   return {
     id: job.id, mode: job.dryRun ? 'preview (nothing created)' : 'REAL RUN', state: job.state, by: job.by,
     startedAt: job.startedAt, finishedAt: job.finishedAt || null,
     progress: { done: job.rows.length, of: job.plan ? job.plan.targets.length : null },
     counts: job.plan ? job.plan.counts : null,
     totals: job.totals, error: job.error || null,
+    boundToPreview: job.preview ? job.preview.id : undefined,
+    leftOut: job.plan ? job.plan.skipped.filter((k) => k.reason === LEFT_OUT_REASON) : undefined,
     rows, skipped: full ? (job.plan ? job.plan.skipped : []) : undefined,
   };
 }
 
-function statusOf({ full = false } = {}) { return summary(_job, { full }); }
+function statusOf({ full = false } = {}) {
+  const st = summary(_job, { full });
+  if (st) st.previewOnRecord = _lastPreview ? { id: _lastPreview.id, at: new Date(_lastPreview.at).toISOString(), folders: _lastPreview.folders, checked: _lastPreview.checked.size } : null;
+  return st;
+}
 
 /**
  * Start a job. Returns at once; the job runs in the background (a Render
@@ -139,11 +170,17 @@ function statusOf({ full = false } = {}) { return summary(_job, { full }); }
 function startBackfill({ dryRun = true, confirm = '', by = '' } = {}) {
   if (_job && _job.state === 'running') return { started: false, reason: 'A backfill is already running — check its status, or abort it first.', job: summary(_job) };
   if (!dryRun && confirm !== CONFIRM_TEXT) return { started: false, reason: `A real run needs the confirmation text "${CONFIRM_TEXT}".` };
+  if (!dryRun && !_lastPreview) return { started: false, reason: 'Run a preview first — a real run only does what a complete preview has shown.' };
+  if (!dryRun && io.now().getTime() - _lastPreview.at > PREVIEW_VALID_MS) {
+    return { started: false, reason: `The last preview (${_lastPreview.id}) is more than ${PREVIEW_VALID_MS / 3600000} hours old — run a fresh preview first.` };
+  }
   _job = {
     id: `wf-${++_seq}-${io.now().toISOString()}`, dryRun: !!dryRun, by: s(by) || 'admin', state: 'running',
     startedAt: io.now().toISOString(), finishedAt: null, abort: false, plan: null, rows: [], error: null,
     wake: null, woken: null,
-    totals: { folders: 0, alreadyComplete: 0, foldersToAdd: 0, created: 0, failedFolders: 0 },
+    checked: new Set(),                                    // preview: the folders it checked without an error
+    preview: dryRun ? null : _lastPreview,                 // real run: the preview it is bound to
+    totals: { folders: 0, alreadyComplete: 0, foldersToAdd: 0, created: 0, failedFolders: 0, notInPreview: 0 },
   };
   const job = _job;
   job.woken = new Promise((r) => { job.wake = r; });   // abort resolves it: no wait (a retry pause, a slow folder) outlasts an abort
@@ -212,6 +249,12 @@ async function run(job) {
         break;
       }
       const row = { refs: t.refs, folder: t.folderName, split: t.split || undefined, splitNames: t.split ? t.splitNames : undefined };
+      if (!job.dryRun && !job.preview.checked.has(t.folderId)) {
+        row.notInPreview = true;                             // appeared (or changed) since the preview: never touched unseen
+        job.totals.notInPreview++;
+        job.rows.push(row);
+        continue;
+      }
       // What THIS run added here, across every try: a try that failed half-way
       // still made some (err.created), and a create that timed out may have
       // landed anyway — missing when we tried, there when we looked again.
@@ -220,6 +263,7 @@ async function run(job) {
         try {
           const r = await withinDeadline(io.ensure({ folderId: t.folderId, label: t.refs.join(', '), dryRun: job.dryRun }), io.deadlineMs, job);
           if (job.dryRun) {
+            job.checked.add(t.folderId);
             row.wouldCreate = r.wouldCreate || [];
             if (row.wouldCreate.length) job.totals.foldersToAdd += row.wouldCreate.length; else job.totals.alreadyComplete++;
           } else {
@@ -259,7 +303,10 @@ async function run(job) {
       job.rows.push(row);
       await pause(PACE_MS, job);
     }
-    if (job.state === 'running') job.state = 'done';
+    if (job.state === 'running') job.state = job.abort ? 'aborted' : 'done';   // an abort on the LAST folder is still an abort
+    if (job.dryRun && job.state === 'done') {                // only a COMPLETE preview can license a real run
+      _lastPreview = { id: job.id, at: io.now().getTime(), checked: job.checked, folders: job.plan.targets.length };
+    }
   } catch (err) {
     job.state = 'failed';
     job.error = err.message;
@@ -273,11 +320,16 @@ async function run(job) {
   }
 }
 
-function _resetForTests() { _job = null; }
+function _resetForTests() { _job = null; _lastPreview = null; }
+/** Tests of everything AFTER the preview gate: pretend a complete preview checked these folders (or '*': every folder). */
+function _previewOnRecordForTests(ids = '*') {
+  const all = { has: () => true, size: Infinity };
+  _lastPreview = { id: 'test-preview', at: io.now().getTime(), checked: ids === '*' ? all : new Set(ids), folders: 0 };
+}
 async function _waitForTests() { while (_job && _job.state === 'running') await new Promise((r) => setImmediate(r)); return summary(_job, { full: true }); }
 
 module.exports = {
   planBackfill, startBackfill, abortBackfill, statusOf,   // planBackfill is pure
-  io, CONFIRM_TEXT, TEST_GROUP_ID,
-  _resetForTests, _waitForTests,
+  io, CONFIRM_TEXT, TEST_GROUP_ID, LEAVE_OUT, PREVIEW_VALID_MS,
+  _resetForTests, _waitForTests, _previewOnRecordForTests,
 };

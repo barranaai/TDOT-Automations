@@ -158,9 +158,10 @@ test('plan: two rows carrying the same reference share ONE folder — it is visi
 
 /* ───────────── the job ───────────── */
 
-function jobHarness({ cases, rootFolders, ensure } = {}) {
+function jobHarness({ cases, rootFolders, ensure, preview = '*' } = {}) {
   const s = svc();
   s._resetForTests();
+  if (preview !== null) s._previewOnRecordForTests(preview);   // the gate has its own tests below
   const seen = { ensure: [], sleeps: [] };
   s.io.listCases       = async () => cases || [row('1', 'Ada', '2026-VV-001'), row('2', 'Bo', '2026-VV-002')];
   s.io.listRootFolders = async () => rootFolders || [{ id: 'F1', name: 'Ada - 2026-VV-001', childCount: 3 }, { id: 'F2', name: 'Bo - 2026-VV-002', childCount: 3 }];
@@ -183,7 +184,7 @@ test('a start with no options is a PREVIEW: every folder is asked in preview mod
   assert.equal(st.state, 'done');
   assert.equal(st.mode, 'preview (nothing created)');
   assert.ok(seen.ensure.length === 2 && seen.ensure.every((p) => p.dryRun === true));
-  assert.deepEqual(st.totals, { folders: 2, alreadyComplete: 0, foldersToAdd: 8, created: 0, failedFolders: 0 });
+  assert.deepEqual(st.totals, { folders: 2, alreadyComplete: 0, foldersToAdd: 8, created: 0, failedFolders: 0, notInPreview: 0 });
 }));
 
 test('the REAL run needs the exact confirmation text — otherwise nothing starts and nothing is touched', quiet(async () => {
@@ -230,8 +231,8 @@ test('one job at a time: a second start while one runs is refused and the first 
 }));
 
 test('abort: stops after the folder it is on; the rest are never touched', quiet(async () => {
-  const folders = Array.from({ length: 6 }, (_, i) => ({ id: `F${i}`, name: `C${i} - 2026-VV-00${i}`, childCount: 1 }));
-  const cases = folders.map((f, i) => row(String(i), `C${i}`, `2026-VV-00${i}`));
+  const folders = Array.from({ length: 6 }, (_, i) => ({ id: `F${i}`, name: `C${i} - 2026-ZZ-00${i}`, childCount: 1 }));
+  const cases = folders.map((f, i) => row(String(i), `C${i}`, `2026-ZZ-00${i}`));
   let s;
   const h = jobHarness({ cases, rootFolders: folders, ensure: (p, seen) => { if (seen.ensure.length === 2) s.abortBackfill(); return { created: NAMES, present: [] }; } });
   s = h.s;
@@ -278,8 +279,8 @@ test('a refusal (403) is not retried: that folder is reported with what is missi
 }));
 
 test('five folders failing in a row = OneDrive is down: the job stops and says so, instead of grinding through hundreds', quiet(async () => {
-  const folders = Array.from({ length: 9 }, (_, i) => ({ id: `F${i}`, name: `C${i} - 2026-VV-00${i}`, childCount: 1 }));
-  const cases = folders.map((f, i) => row(String(i), `C${i}`, `2026-VV-00${i}`));
+  const folders = Array.from({ length: 9 }, (_, i) => ({ id: `F${i}`, name: `C${i} - 2026-ZZ-00${i}`, childCount: 1 }));
+  const cases = folders.map((f, i) => row(String(i), `C${i}`, `2026-ZZ-00${i}`));
   const { s, seen } = jobHarness({ cases, rootFolders: folders, ensure: () => { const e = new Error('forbidden'); e.response = { status: 403 }; throw e; } });
   s.startBackfill({ dryRun: false, confirm: 'ADD-WORK-FOLDERS' });
   const st = await s._waitForTests();
@@ -315,7 +316,7 @@ test('the status report: short by default (only folders that need or got somethi
   const full = s.statusOf({ full: true });
   assert.equal(full.rows.length, 2);
   assert.deepEqual(full.skipped, []);
-  assert.deepEqual(short.totals, { folders: 2, alreadyComplete: 1, foldersToAdd: 4, created: 0, failedFolders: 0 });
+  assert.deepEqual(short.totals, { folders: 2, alreadyComplete: 1, foldersToAdd: 4, created: 0, failedFolders: 0, notInPreview: 0 });
 }));
 
 test('the job only ever ADDS: no rename, move or delete call anywhere in it', () => {
@@ -448,8 +449,8 @@ test('abort works even while a folder hangs or the job is waiting out a throttle
 }));
 
 test('server hiccups (503) and dropped connections are retried; a success in between resets the "in a row" count', quiet(async () => {
-  const folders = Array.from({ length: 9 }, (_, i) => ({ id: `F${i}`, name: `C${i} - 2026-VV-00${i}`, childCount: 1 }));
-  const cases = folders.map((f, i) => row(String(i), `C${i}`, `2026-VV-00${i}`));
+  const folders = Array.from({ length: 9 }, (_, i) => ({ id: `F${i}`, name: `C${i} - 2026-ZZ-00${i}`, childCount: 1 }));
+  const cases = folders.map((f, i) => row(String(i), `C${i}`, `2026-ZZ-00${i}`));
   const tries = {};
   const { s } = jobHarness({ cases, rootFolders: folders, ensure: (p) => {
     tries[p.folderId] = (tries[p.folderId] || 0) + 1;
@@ -493,3 +494,98 @@ test('the report order is the four names as the app defines them', () => {
   const m = src.match(/const CASE_WORK_FOLDERS_ORDER = (\[[^\]]+\])/);
   assert.deepEqual(JSON.parse(m[1].replace(/'/g, '"')), NAMES);
 });
+
+/* ───────────── after the production preview (2026-09-30): the leave-out list and the preview gate ───────────── */
+
+test('the four clients whose case resolves to a leftover TEST folder are left out — by name, with the reason, even though a folder exists', quiet(async () => {
+  const { LEAVE_OUT, planBackfill } = svc();
+  assert.deepEqual([...LEAVE_OUT.keys()].sort(), ['2026-CEC-PR-002', '2026-SP-004', '2026-SP-015', '2026-VV-008']);
+  const plan = planBackfill({
+    pick,
+    rootFolders: [
+      { id: 'T1', name: 'Praj - 2026-VV-008', childCount: 7 }, { id: 'R1', name: 'Ameena Begum - 2026-VV-008', childCount: 2 },
+      { id: 'T2', name: 'TEST CLIENT - E2E 1780224413906 - 2026-SP-004', childCount: 5 },
+      { id: 'OK', name: 'Ada - 2026-VV-001', childCount: 3 },
+    ],
+    cases: [row('1', 'Ameena Begum', '2026-VV-008'), row('2', 'Satyatej Koganti (2713)', ' 2026-SP-004 '), row('3', 'Ada', '2026-VV-001')],
+  });
+  assert.deepEqual(plan.targets.map((t) => t.folderId), ['OK']);
+  const left = plan.skipped.filter((k) => /leftover test folder/.test(k.reason));
+  assert.deepEqual(left.map((k) => k.caseRef), ['2026-VV-008', '2026-SP-004']);
+  assert.match(left[0].detail, /Praj - 2026-VV-008/);
+  const { s } = jobHarness({ cases: [row('1', 'Ameena Begum', '2026-VV-008'), row('3', 'Ada', '2026-VV-001')],
+    rootFolders: [{ id: 'T1', name: 'Praj - 2026-VV-008', childCount: 7 }, { id: 'OK', name: 'Ada - 2026-VV-001', childCount: 3 }] });
+  s.startBackfill({});
+  await s._waitForTests();
+  assert.deepEqual(s.statusOf().leftOut.map((k) => k.caseRef), ['2026-VV-008'], 'the short report names what was left out');
+}));
+
+test('a REAL run needs a complete preview first — none on record, or only an aborted one, and it refuses', quiet(async () => {
+  const { s, seen } = jobHarness({ preview: null });
+  const r = s.startBackfill({ dryRun: false, confirm: 'ADD-WORK-FOLDERS' });
+  assert.equal(r.started, false);
+  assert.match(r.reason, /preview first/);
+  // an aborted preview licenses nothing
+  let n = 0;
+  s.io.ensure = async () => { if (++n === 1) s.abortBackfill(); return { created: [], present: [], wouldCreate: NAMES }; };
+  s.startBackfill({});
+  assert.equal((await s._waitForTests()).state, 'aborted');
+  assert.equal(s.startBackfill({ dryRun: false, confirm: 'ADD-WORK-FOLDERS' }).started, false);
+  // a complete one does
+  s.io.ensure = async (p) => { seen.ensure.push(p); return p.dryRun ? { created: [], present: [], wouldCreate: NAMES } : { created: NAMES, present: [] }; };
+  s.startBackfill({});
+  assert.equal((await s._waitForTests()).state, 'done');
+  assert.equal(s.statusOf().previewOnRecord.checked, 2);
+  assert.equal(s.startBackfill({ dryRun: false, confirm: 'ADD-WORK-FOLDERS' }).started, true);
+  const st = await s._waitForTests();
+  assert.equal(st.totals.created, 8);
+  assert.match(st.boundToPreview, /^wf-/);
+}));
+
+test('a preview older than 6 hours does not license a real run', quiet(async () => {
+  const { s } = jobHarness({ preview: null });
+  let now = Date.parse('2026-10-01T10:00:00Z');
+  s.io.now = () => new Date(now);
+  s.startBackfill({});
+  await s._waitForTests();
+  now += 6 * 3600 * 1000 + 1000;
+  const r = s.startBackfill({ dryRun: false, confirm: 'ADD-WORK-FOLDERS' });
+  assert.equal(r.started, false);
+  assert.match(r.reason, /more than 6 hours old/);
+}));
+
+test('the real run does what the preview showed: a folder that appeared since, or one the preview could not check, is reported and NOT touched', quiet(async () => {
+  const folders = [{ id: 'F1', name: 'Ada - 2026-VV-001', childCount: 3 }, { id: 'F2', name: 'Bo - 2026-VV-002', childCount: 3 }];
+  const cases = [row('1', 'Ada', '2026-VV-001'), row('2', 'Bo', '2026-VV-002')];
+  const { s, seen } = jobHarness({ preview: null, cases, rootFolders: folders, ensure: (p) => {
+    if (p.dryRun && p.folderId === 'F2') { const e = new Error('forbidden'); e.response = { status: 403 }; throw e; }
+    return p.dryRun ? { created: [], present: [], wouldCreate: NAMES } : { created: NAMES, present: [] };
+  } });
+  s.startBackfill({});
+  const pv = await s._waitForTests();
+  assert.equal(pv.state, 'done');
+  assert.equal(pv.totals.failedFolders, 1);
+  // after the preview: a new split appears for Ada (the app would now pick the fuller NEW folder) and a new case arrives
+  folders.push({ id: 'F1-NEW', name: 'TEST CLIENT - E2E 1 - 2026-VV-001', childCount: 9 }, { id: 'F3', name: 'Cy - 2026-VV-003', childCount: 1 });
+  cases.push(row('3', 'Cy', '2026-VV-003'));
+  seen.ensure.length = 0;
+  s.startBackfill({ dryRun: false, confirm: 'ADD-WORK-FOLDERS' });
+  const st = await s._waitForTests();
+  assert.deepEqual(seen.ensure.filter((p) => !p.dryRun).map((p) => p.folderId), [], 'nothing the preview did not check is touched');
+  assert.equal(st.totals.notInPreview, 3);
+  assert.deepEqual(s.statusOf().rows.filter((r) => r.notInPreview).map((r) => r.folder).sort(),
+    ['Bo - 2026-VV-002', 'Cy - 2026-VV-003', 'TEST CLIENT - E2E 1 - 2026-VV-001']);
+}));
+
+test('a preview aborted while on its LAST folder is an aborted preview: it licenses nothing', quiet(async () => {
+  const { s } = jobHarness({ preview: null, ensure: (p) => (p.folderId === 'F2' ? new Promise(() => {}) : { created: [], present: [], wouldCreate: NAMES }) });
+  s.startBackfill({});
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(s.abortBackfill().aborted, true);
+  const st = await s._waitForTests();
+  assert.equal(st.state, 'aborted');
+  assert.equal(s.statusOf().previewOnRecord, null);
+  const r = s.startBackfill({ dryRun: false, confirm: 'ADD-WORK-FOLDERS' });
+  assert.equal(r.started, false);
+  assert.match(r.reason, /preview first/);
+}));
