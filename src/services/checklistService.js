@@ -241,7 +241,7 @@ async function seedFromSchema({ schema, caseRef, clientName, clientMasterItemId 
   let categoryLinks = {};
   if (categories.length) {
     try {
-      categoryLinks = await createClientFolders({ clientName, caseRef, categories });
+      categoryLinks = await createClientFolders({ clientName, caseRef, categories, onWorkFoldersFailed: (err) => noteWorkFoldersFailed(clientMasterItemId, err) });
     } catch (err) {
       console.warn(`[ChecklistService] OneDrive folder creation failed (schema path) — continuing: ${err.message}`);
     }
@@ -452,6 +452,7 @@ async function _doOnDocumentCollectionStarted({ itemId, boardId }) {
         clientName: item.name,
         caseRef,
         categories: uniqueCategories,
+        onWorkFoldersFailed: (err) => noteWorkFoldersFailed(itemId, err),
       });
       console.log(`[ChecklistService] OneDrive folders created for ${Object.keys(categoryLinks).length} categories`);
     } catch (err) {
@@ -720,6 +721,19 @@ async function resumeSeedingAfterSubType({ itemId }) {
     console.error(`[ChecklistService] sub-type resume seed failed for ${caseRef}: ${err.message}`);
     return { resumed: true, seeded: false, error: err.message };
   }
+}
+
+/**
+ * A new case folder's staff working folders could not be created while the
+ * checklist was being built — tell staff on the case (best effort), the same
+ * plain-word note the case-reference step posts.
+ */
+async function noteWorkFoldersFailed(itemId, err) {
+  if (!itemId) return;
+  await mondayApi.query(
+    `mutation($i: ID!, $body: String!){ create_update(item_id: $i, body: $body){ id } }`,
+    { i: String(itemId), body: require('./oneDriveService').workFoldersFailedNoteText(err) }
+  ).catch((e) => console.warn(`[ChecklistService] working-folders note failed for item ${itemId}: ${e.message}`));
 }
 
 module.exports = { onDocumentCollectionStarted, reseedByCaseRef, resumeSeedingAfterSubType,

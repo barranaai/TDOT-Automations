@@ -164,11 +164,11 @@ test('(15) uploadFile is untouched: PUTs to :/content with NO query string and r
   assert.equal(h.calls.post.length, 0, 'no link');
 });
 
-test('(16) the export line the re-file test pins is intact; uploadFileAsNew is appended at the end', () => {
+test('(16) the export line the re-file test pins is intact; uploadFileAsNew is exported after it (never spliced into that line)', () => {
   const od = fs.readFileSync(require.resolve('../src/services/oneDriveService.js'), 'utf8');
   assert.match(od, /readFile, listFiles, listChildren, moveFile,/);
   const exp = od.slice(od.lastIndexOf('module.exports = {'));
-  assert.match(exp, /listFileVersions, readFileVersion,\n\s*uploadFileAsNew,\n\};/);
+  assert.match(exp, /listFileVersions, readFileVersion,\n[\s\S]*?\buploadFileAsNew,/);
 });
 
 test('(A14) a path near Graph\'s limit is warned about, measured on the DECODED path', async () => {

@@ -303,6 +303,7 @@ function renameHarness({ caseFolderId = '', leads = [], drive = null }) {
     stub(leadService, 'findAllByColumnValue', async () => leads),
     stub(oneDrive, 'getDriveItemById', async () => drive),
     stub(oneDrive, 'renameDriveItem', async (id, name) => { renamed.push({ id, name }); return { id, name }; }),
+    stub(oneDrive, 'ensureCaseWorkFolders', async () => ({ created: [], present: [] })),   // the working-folders step (its own tests: caseWorkFolders)
   ];
   return { renamed, written, restore: () => restore.reverse().forEach((r) => r()) };
 }

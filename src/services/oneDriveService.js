@@ -145,13 +145,13 @@ async function ensureFolder(token, parentPath, folderName) {
       { name: folderName, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' },
       { headers, timeout: GRAPH_TIMEOUT_MS }
     );
-    return { id: res.data.id, webUrl: res.data.webUrl };
+    return { id: res.data.id, webUrl: res.data.webUrl, created: true, createdAt: res.data.createdDateTime || '' };
   } catch (err) {
     if (err.response?.status === 409) {
       // Folder already exists — fetch the existing item
       const fullPath = parentPath ? `${parentPath}/${folderName}` : folderName;
       const res = await axios.get(itemUrl(fullPath), { headers, timeout: GRAPH_TIMEOUT_MS });
-      return { id: res.data.id, webUrl: res.data.webUrl };
+      return { id: res.data.id, webUrl: res.data.webUrl, created: false, createdAt: res.data.createdDateTime || '' };
     }
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
     console.error(`[OneDrive] Error creating folder "${folderName}" under "${parentPath || 'root'}": ${detail}`);
@@ -171,6 +171,102 @@ async function createOrgLink(token, itemId) {
   return res.data.link.webUrl;
 }
 
+/**
+ * The four staff working folders every NEW case folder carries (Faran,
+ * 2026-10-01). Numbered so they sit at the top of the folder in the order of
+ * the submission flow. Staff-only: the app never writes a client upload or one
+ * of its own files into them, and the client never sees them.
+ *
+ * "New" = a case folder CREATED on or after WORK_FOLDERS_SINCE, whichever code
+ * path minted it (the intake-folder rename, the checklist build, a
+ * questionnaire save, a signed agreement, a raw upload). Every touch of such a
+ * folder through this service adds whatever is still missing, so an outage at
+ * one moment heals on the next touch; a folder that already has all four costs
+ * one listing per process and nothing after. Cases from before that date are
+ * never touched.
+ */
+const CASE_WORK_FOLDERS  = ['1-Coordinator-Working', '2-Case-Manager-Draft', '3-AW-Analyst-Final-RCIC', '4-Submitted-IRCC'];
+const WORK_FOLDERS_SINCE = Date.parse('2026-10-01T00:00:00Z');
+const _workFoldersComplete = new Set();   // folder ids seen with all four present (per process)
+
+/** A case folder this feature applies to: created now, or created since the feature went live. */
+function isNewCaseFolder(folder) {
+  if (!folder) return false;
+  if (folder.created) return true;
+  const t = Date.parse(folder.createdAt || '');
+  return Number.isFinite(t) && t >= WORK_FOLDERS_SINCE;
+}
+
+/**
+ * Make sure the four working folders exist inside a case folder, addressed by
+ * its drive item id (the id survives the rename this runs right after, and a
+ * name cache can lag it). ONE listing first, then only the missing folders are
+ * created. Each folder is tried even if an earlier one failed; the error thrown
+ * at the end names the ones still missing (err.missing) so staff can be told
+ * exactly what to add. A 401 escapes so withGraphAuth can refresh the token
+ * and retry the whole (idempotent) pass.
+ *
+ * @param {{ folderId: string, label?: string }} p  label = the case reference, for the log
+ * @returns {Promise<{ created: string[], present: string[] }>}
+ */
+async function ensureCaseWorkFolders({ folderId, label = '' }) {
+  if (!folderId) throw new Error('ensureCaseWorkFolders: folderId required');
+  return withGraphAuth('ensureCaseWorkFolders', async (token) => {
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const listing = await axios.get(`${userBase()}/items/${encodeURIComponent(folderId)}/children?$select=name,folder&$top=200`, { headers, timeout: GRAPH_TIMEOUT_MS });
+    const have = new Set((listing.data.value || []).filter((c) => c.folder).map((c) => String(c.name)));
+    const created = [], present = [], missing = [];
+    let lastErr = null;
+    for (const name of CASE_WORK_FOLDERS) {
+      if (have.has(name)) { present.push(name); continue; }
+      try {
+        await axios.post(`${userBase()}/items/${encodeURIComponent(folderId)}/children`,
+          { name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }, { headers, timeout: GRAPH_TIMEOUT_MS });
+        created.push(name);
+      } catch (err) {
+        if (err.response?.status === 401) throw err;                          // let withGraphAuth retry the whole pass
+        if (err.response?.status === 409) { present.push(name); continue; }   // made by someone else meanwhile
+        const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+        console.error(`[OneDrive] Could not create working folder "${name}" for ${label || folderId}: ${detail}`);
+        missing.push(name); lastErr = err;
+      }
+    }
+    if (created.length) console.log(`[OneDrive] Working folders created for ${label || folderId}: ${created.join(', ')}`);
+    if (missing.length) {
+      const e = new Error(`working folders not created: ${missing.join(', ')} (${lastErr && lastErr.message})`);
+      e.missing = missing; e.cause = lastErr;
+      throw tagTransient(e);
+    }
+    _workFoldersComplete.add(String(folderId));
+    return { created, present };
+  });
+}
+
+/**
+ * The step every creator of a case folder runs after ensuring it: add the
+ * working folders when the folder is new (see isNewCaseFolder). Never throws
+ * except on a 401 (so the enclosing pass can refresh and retry); any other
+ * refusal is logged and handed to `onFailed` for the caller that can tell staff.
+ */
+async function addWorkFoldersIfNew(folder, caseRef, onFailed) {
+  if (!isNewCaseFolder(folder) || _workFoldersComplete.has(String(folder.id))) return;
+  try {
+    await ensureCaseWorkFolders({ folderId: folder.id, label: caseRef });
+  } catch (err) {
+    if (err.response?.status === 401) throw err;
+    console.warn(`[OneDrive] Working folders not created for ${caseRef}: ${err.message}`);
+    if (typeof onFailed === 'function') { try { await onFailed(err); } catch (_) { /* the caller's note is best effort */ } }
+  }
+}
+
+/** The plain-word staff note when the working folders could not be created — one text, used by every caller. */
+function workFoldersFailedNoteText(err) {
+  const names = (err && Array.isArray(err.missing) && err.missing.length) ? err.missing : CASE_WORK_FOLDERS;
+  const reason = String((err && err.cause && err.cause.message) || (err && err.message) || 'OneDrive refused').replace(/[<>]/g, '');
+  return `⚠ Could not create the working folder${names.length === 1 ? '' : 's'} ${names.join(', ')} in this client's OneDrive folder — ` +
+    `please add ${names.length === 1 ? 'it' : 'them'} by hand. Reason: ${reason}`;
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -184,7 +280,7 @@ async function createOrgLink(token, itemId) {
  * }} params
  * @returns {Promise<{ [category: string]: string }>}
  */
-async function createClientFolders({ clientName, caseRef, categories }) {
+async function createClientFolders({ clientName, caseRef, categories, onWorkFoldersFailed }) {
   if (!categories.length) {
     console.warn('[OneDrive] No categories provided — skipping folder creation');
     return {};
@@ -199,8 +295,9 @@ async function createClientFolders({ clientName, caseRef, categories }) {
     await ensureFolder(token, null, ROOT_FOLDER);
     console.log(`[OneDrive] Root folder ready: ${ROOT_FOLDER}`);
 
-    await ensureFolder(token, ROOT_FOLDER, safeName);
+    const clientFolder = await ensureFolder(token, ROOT_FOLDER, safeName);
     console.log(`[OneDrive] Client folder ready: ${clientPath}`);
+    await addWorkFoldersIfNew(clientFolder, caseRef, onWorkFoldersFailed);
 
     const categoryLinks = {};
 
@@ -754,7 +851,8 @@ async function ensureClientFolder({ clientName, caseRef }) {
 
   await withGraphAuth('ensureClientFolder', async (token) => {
     await ensureFolder(token, null, ROOT_FOLDER);
-    await ensureFolder(token, ROOT_FOLDER, safeName);
+    const folder = await ensureFolder(token, ROOT_FOLDER, safeName);
+    await addWorkFoldersIfNew(folder, caseRef);
   });
   console.log(`[OneDrive] Client folder ensured: ${ROOT_FOLDER}/${safeName}`);
 }
@@ -773,7 +871,8 @@ async function ensureCategoryFolderLink({ clientName, caseRef, category }) {
 
   return withGraphAuth('ensureCategoryFolderLink', async (token) => {
     await ensureFolder(token, null, ROOT_FOLDER);
-    await ensureFolder(token, ROOT_FOLDER, safeName);
+    const folder = await ensureFolder(token, ROOT_FOLDER, safeName);
+    await addWorkFoldersIfNew(folder, caseRef);
     const { id } = await ensureFolder(token, clientPath, category);
     return createOrgLink(token, id);
   });
@@ -1044,4 +1143,6 @@ module.exports = {
   getClientFolderByName, getDriveItemById, deleteDriveItem,
   listFileVersions, readFileVersion,
   uploadFileAsNew,
+  ensureCaseWorkFolders, workFoldersFailedNoteText, CASE_WORK_FOLDERS, WORK_FOLDERS_SINCE,
+  _resetWorkFoldersMemo: () => _workFoldersComplete.clear(),
 };

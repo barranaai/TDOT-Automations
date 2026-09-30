@@ -331,8 +331,10 @@ async function renameClientFolderForItem({ itemId, caseRef }) {
     ).catch((err) => console.warn(`[CaseRef] Folder-id back-fill failed for ${caseRef}: ${err.message}`));
   }
 
+  let renamed = false;
   try {
     await oneDrive.renameDriveItem(folderId, `${item.name} - ${caseRef}`);
+    renamed = true;
     console.log(`[CaseRef] OneDrive folder renamed for ${caseRef}`);
   } catch (err) {
     // If the rename fails (OneDrive down, or a folder with the target name
@@ -344,8 +346,27 @@ async function renameClientFolderForItem({ itemId, caseRef }) {
       `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
       { itemId: String(itemId),
         body: `⚠ Could not rename this client's OneDrive intake folder to "${item.name} - ${caseRef}". ` +
-              `Documents uploaded before today may still be in a folder named "${item.name} - LEAD-…" under Client Documents — please merge them manually.` }
+              `Documents uploaded before today may still be in a folder named "${item.name} - LEAD-…" under Client Documents — please merge them manually, ` +
+              `and create the working folders (${oneDrive.CASE_WORK_FOLDERS.join(', ')}) in the folder you keep.` }
     ).catch(() => {});
+  }
+
+  // The case has its reference now: give ITS folder the four staff working
+  // folders (1-Coordinator-Working … 4-Submitted-IRCC). Only after a successful
+  // rename — after a refused one, this id is the abandoned "LEAD-…" folder and
+  // the note above tells staff which folder to set up. Best effort: if OneDrive
+  // refuses, staff are told once so they can add them by hand (any later touch
+  // of the folder — a questionnaire save, the checklist — adds them too).
+  if (renamed) {
+    try {
+      await oneDrive.ensureCaseWorkFolders({ folderId, label: caseRef });
+    } catch (err) {
+      console.warn(`[CaseRef] Working folders not created for ${caseRef}: ${err.message}`);
+      await mondayApi.query(
+        `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
+        { itemId: String(itemId), body: oneDrive.workFoldersFailedNoteText(err) }
+      ).catch(() => {});
+    }
   }
 }
 
