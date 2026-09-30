@@ -189,6 +189,16 @@ app.post('/api/resend-intake/:itemId', async (req, res) => {
       const reason = (r && r.reason) || 'not sent';
       return res.status(400).json({ status: 'skipped', sent: false, to, reason, error: reason });
     }
+    // A trace on the case. The onboarding variant leaves no other sign it went,
+    // and the held-onboarding start (onboardingResumeService) reads this note as
+    // "the intake email already went" — so a case a person emailed by hand is
+    // never emailed "Your case is ready" a second time automatically.
+    await require('./services/mondayApi').query(
+      `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+      { i: String(itemId), b: resend
+        ? `📬 Portal link email re-sent from the admin tools to ${to}.`
+        : `📬 <b>Intake email sent</b> ("Your case is ready") from the admin tools to ${to}.` }
+    ).catch((err) => console.warn(`[ResendIntake] Case note failed for item ${itemId}: ${err.message}`));
     res.json({ status: 'sent', sent: true, to, caseRef: r.caseRef, variant });
   } catch (err) {
     console.error(`[ResendIntake] Failed for item ${itemId}:`, err.message);   // full detail stays in the log

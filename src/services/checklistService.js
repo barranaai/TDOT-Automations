@@ -625,7 +625,15 @@ async function reseedByCaseRef(caseRef) {
 // double-email the client. Seeding is the only thing that was left undone.
 
 // Seam so tests can drive the guards without the real seeding I/O.
-const resumeDeps = { seed: (args) => onDocumentCollectionStarted(args) };
+const resumeDeps = {
+  seed: (args) => onDocumentCollectionStarted(args),
+  // A case HELD for signatures (Payment Status set to Paid by hand before the
+  // agreement was fully signed) never had its onboarding — seeding it here would
+  // half-onboard it behind the hold. The held-onboarding service owns it: it
+  // starts the whole onboarding once the agreement is complete.
+  held: (args) => require('./onboardingResumeService').resumeIfOwed({ ...args, trigger: 'sub-type' }),
+  enabled: () => require('./onboardingResumeService').isEnabled(),
+};
 
 async function resumeSeedingAfterSubType({ itemId }) {
   const id = String(itemId || '').trim();
@@ -663,6 +671,14 @@ async function resumeSeedingAfterSubType({ itemId }) {
   // managed legacy case that never went through the payment flow — a sub-type
   // EDIT there must not conjure a checklist out of nowhere.
   if (applied !== 'no') return { skipped: applied === 'yes' ? 'checklist already applied' : `applied flag "${applied || 'blank'}" — not a payment-flow case` };
+  // Held for signatures: not the late-sub-type strand but a case whose
+  // onboarding never started (the payment path held it back). Anything the
+  // held check can't place — not held, no linked lead, already started, a read
+  // error — is today's strand and seeds as before.
+  // (ONBOARDING_RESUME off = exactly the old behaviour.)
+  const held = resumeDeps.enabled() ? await resumeDeps.held({ itemId: id, caseRef }) : { action: 'none', code: 'disabled' };
+  if (held.action === 'resumed') return { skipped: 'held onboarding started' };
+  if (held.action === 'report' || held.code === 'waiting') return { skipped: `held for signatures (${held.code})` };
 
   console.log(`[ChecklistService] ${caseRef}: Case Sub Type arrived after the payment trigger — resuming checklist seeding`);
   const appliedNow = async () => {

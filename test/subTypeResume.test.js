@@ -37,16 +37,19 @@ function mondayStub({ pay = 'Paid', stage = 'Document Collection Started', appli
   return { fn, notes };
 }
 
-async function run(state) {
+async function run(state, { held = { action: 'none', code: 'not-held' }, enabled = true } = {}) {
   const m = mondayStub(state);
-  const seeded = [];
+  const seeded = [], heldCalls = [];
   const restores = [
     stub(mondayApi, 'query', m.fn),
     stub(resumeDeps, 'seed', async (args) => seeded.push(args)),
+    // the held-for-signatures check (onboardingResumeService) — "not held" unless a test says otherwise
+    stub(resumeDeps, 'held', async (args) => { heldCalls.push(args); return held; }),
+    stub(resumeDeps, 'enabled', () => enabled),
   ];
   try {
     const r = await checklistService.resumeSeedingAfterSubType({ itemId: '555' });
-    return { r, seeded, notes: m.notes };
+    return { r, seeded, notes: m.notes, heldCalls };
   } finally { restores.forEach((x) => x()); }
 }
 
@@ -129,4 +132,45 @@ test('the resume never sends the intake email (already sent by the payment path)
   const src = require('fs').readFileSync(require.resolve('../src/services/checklistService'), 'utf8');
   const fn = src.slice(src.indexOf('async function resumeSeedingAfterSubType'), src.indexOf('module.exports'));
   assert.ok(!/sendIntakeEmail|emailService/.test(fn), 'no client email from the resume — double-emailing is worse than none');
+});
+
+// Fix 1 (2026-09-30): a case HELD for signatures (Paid set by hand before the
+// agreement was fully signed) never had its onboarding. Seeding it here would
+// half-onboard it behind the hold — and the checklist rows would then read as
+// "already onboarded", so the intake email would never go automatically.
+test('held for signatures: no seeding while the agreement is incomplete', async () => {
+  const { r, seeded, heldCalls } = await run({}, { held: { action: 'none', code: 'waiting', detail: 'RCIC countersignature' } });
+  assert.equal(seeded.length, 0);
+  assert.match(r.skipped, /held for signatures/);
+  assert.deepEqual(heldCalls, [{ itemId: '555', caseRef: '2026-TEST-001' }]);
+});
+
+test('held and now fully signed: the held-onboarding service starts the WHOLE onboarding (it seeds), not a bare seed', async () => {
+  const { r, seeded } = await run({}, { held: { action: 'resumed', trigger: 'sub-type' } });
+  assert.equal(seeded.length, 0, 'no second seed alongside the resume');
+  assert.equal(r.skipped, 'held onboarding started');
+  const rep = await run({}, { held: { action: 'report', code: 'changed' } });
+  assert.equal(rep.seeded.length, 0, 'a held case staff must look at is left to them');
+});
+
+test('anything the held check cannot place seeds exactly as before (not held, no lead, already started, read error)', async () => {
+  for (const held of [{ action: 'none', code: 'not-held' }, { action: 'none', code: 'no-lead' }, { action: 'none', code: 'already-resumed' }, { action: 'error', code: 'error' }]) {
+    const { r, seeded } = await run({}, { held });
+    assert.equal(seeded.length, 1, JSON.stringify(held));
+    assert.deepEqual(r, { resumed: true, seeded: true });
+  }
+});
+
+test('the held check runs only in the stranded state (after every existing guard)', async () => {
+  const { heldCalls } = await run({ applied: 'Yes' });
+  assert.equal(heldCalls.length, 0);
+  const src = require('fs').readFileSync(require.resolve('../src/services/checklistService'), 'utf8');
+  assert.match(src, /held: \(args\) => require\('\.\/onboardingResumeService'\)\.resumeIfOwed\(\{ \.\.\.args, trigger: 'sub-type' \}\)/);
+});
+
+test('switch off (ONBOARDING_RESUME=off): the sub-type resume is exactly the old one — no held check', async () => {
+  const { r, seeded, heldCalls } = await run({}, { held: { action: 'none', code: 'waiting' }, enabled: false });
+  assert.equal(heldCalls.length, 0);
+  assert.equal(seeded.length, 1);
+  assert.deepEqual(r, { resumed: true, seeded: true });
 });

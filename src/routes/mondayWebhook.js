@@ -282,12 +282,19 @@ router.post('/', async (req, res) => {
         // case that has ALREADY been onboarded (checklist applied) is exempt:
         // re-drags of pre-gate cases must never re-defer them. No linked lead
         // = legacy/manual case → passes as before.
+        let startDateBlank = false;   // read alongside the flag — see the chasing restart below
         try {
           const chkData = await mondayApi.query(
-            `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["color_mm0xs7kp"]) { text } } }`,
+            `query($id: ID!) { items(ids: [$id]) { column_values(ids: ["color_mm0xs7kp", "date_mm0xjm1z"]) { id text } } }`,
             { id: String(pulseId) }
           ).catch(() => null);
-          const alreadyOnboarded = ((chkData?.items?.[0]?.column_values?.[0]?.text || '').trim().toLowerCase() === 'yes');
+          const chk = {};
+          for (const c of (chkData?.items?.[0]?.column_values || [])) chk[c.id] = (c.text || '').trim();
+          const alreadyOnboarded = (chk.color_mm0xs7kp || '').toLowerCase() === 'yes';
+          // Only a payment-flow case (the explicit "No" the payment webhook and the
+          // board automation write) — a legacy, manually-managed case (blank) is
+          // never put on the reminder ladder by a re-drag.
+          startDateBlank = !!chkData?.items?.[0] && !chk.date_mm0xjm1z && (chk.color_mm0xs7kp || '').toLowerCase() === 'no';
           if (!alreadyOnboarded) {
             const claimants = await require('../services/leadService').findAllByColumnValue('clientMasterItemId', String(pulseId));
             const caseGate = require('../services/caseGateService');
@@ -296,17 +303,36 @@ router.post('/', async (req, res) => {
             if (claimants.length && !claimants.some((l) => gateOf(l).complete)) {
               const missing = gateOf(claimants[0]).missing;
               console.log(`[Webhook] Item ${pulseId} at DCS but activation gate incomplete (missing: ${missing.join(', ')}) — onboarding DEFERRED`);
-              mondayApi.query(
+              // This note IS the hold's record (onboardingResumeService starts the
+              // case from it when the last signature lands): one retry, loud failure.
+              const postHold = () => mondayApi.query(
                 `mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
                 { itemId: String(pulseId),
                   body: `⛔ <b>Onboarding deferred:</b> missing ${missing.join(' and ')}. ` +
                     'The intake email and checklist start automatically once the agreement is fully executed and paid (meeting rule 2026-08-13).' }
-              ).catch(() => {});
+              );
+              postHold()
+                .catch(() => new Promise((r) => setTimeout(r, 1500)).then(postHold))
+                .catch((err) => console.error(`[Webhook] Item ${pulseId}: the on-hold note could NOT be posted (${err.message}) — this case will not start onboarding by itself when the agreement completes`));
               return;
             }
           }
         } catch (err) {
           console.warn(`[Webhook] Signature-gate read failed for ${pulseId}: ${err.message} — proceeding (payment gate already passed)`);
+        }
+
+        // The document-chasing clock. The payment webhook sets it on a normal
+        // first payment, but a case that was HELD for signatures and is now
+        // started by moving it (back) to this stage never got one — and with
+        // no Stage Start Date the reminders never run. Same payload as the
+        // payment webhook's; only when blank (and the checklist flag reads the
+        // explicit "No"), so no existing clock is moved.
+        if (startDateBlank) {
+          mondayApi.query(
+            `mutation($b: ID!, $i: ID!, $c: JSON!){ change_multiple_column_values(board_id: $b, item_id: $i, column_values: $c){ id } }`,
+            { b: String(boardId), i: String(pulseId),
+              c: JSON.stringify({ date_mm0xjm1z: { date: new Date().toISOString().slice(0, 10) }, color_mm1abve4: null, numeric_mm1a4e8r: '0' }) }
+          ).catch((err) => console.warn(`[Webhook] Chasing clock not started for ${pulseId}: ${err.message}`));
         }
 
         // Fire the intake email immediately — it only needs the case ref and access token,

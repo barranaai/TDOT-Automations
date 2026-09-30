@@ -400,8 +400,9 @@ test('dead code from the first cut is gone: no message for a refusal the service
   assert.doesNotMatch(body, /staffName/);
 });
 
-test('the four automatic callers pass a trigger the service can gate and log by; the retry re-enters with "-retry"', () => {
-  assert.match(code(SERVICE), /const ONE_SHOT_TRIGGERS\s+= new Set\(\['dcs', 'retainer-paid', 'resume'\]\);/);
+test('the automatic callers pass a trigger the service can gate and log by; the retry re-enters with "-retry"', () => {
+  // 'signature-resume' = onboardingResumeService starting a case held for signatures
+  assert.match(code(SERVICE), /const ONE_SHOT_TRIGGERS\s+= new Set\(\['dcs', 'retainer-paid', 'resume', 'signature-resume'\]\);/);
   assert.match(code(SERVICE), /trigger: `\$\{trigger\}-retry`/);
   assert.match(code(SERVICE), /const gates = gatesFor\(\{ mode, cm, claimants, today, trigger \}\);/, 'the trigger reaches the gate');
   assert.match(code(SERVICE), /if \(trigger === 'sub-type'\) \{/);

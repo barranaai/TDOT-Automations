@@ -86,8 +86,10 @@ async function onRetainerPaid({ itemId }) {
   // checklist) against an unexecuted retainer. FIRST-TIME payments now verify
   // the linked lead's signatures (client + RCIC countersign for Documenso
   // signings). No linked lead (legacy/manual cases) passes as before; an
-  // incomplete gate defers — the signing/countersign triggers re-advance later
-  // (advanceCaseToPaid re-writes "Paid", which re-fires this webhook cleanly).
+  // incomplete gate defers. The case is already "Paid", so the later signing /
+  // countersign advance does NOT re-write it (no webhook fires again) — it hands
+  // the held case to onboardingResumeService, which recognises the hold by the
+  // note posted below. Keep that note's wording in step with its HELD_PATTERNS.
   if (isFirstTimePayment) {
     try {
       const leadService = require('./leadService');
@@ -110,11 +112,16 @@ async function onRetainerPaid({ itemId }) {
       if (!pass) {
         const missing = gateOf(claimants[0]).missing;
         console.warn(`[Retainer] Item ${itemId}: Paid flip with activation gate incomplete (missing: ${missing.join(', ')}) — onboarding DEFERRED`);
-        await mondayApi.query(
+        // This note IS the hold's record: onboardingResumeService starts the case
+        // from it when the last signature lands. So one retry, and a loud log.
+        const postHold = () => mondayApi.query(
           `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
           { i: String(itemId), b: `⛔ <b>Payment marked, but onboarding is on hold</b> — missing: ${missing.join(' and ')}. ` +
             'The document checklist and client emails start automatically the moment the agreement is fully executed (meeting rule 2026-08-13: signed by both parties AND the consultant AND paid).' }
-        ).catch(() => {});
+        );
+        await postHold()
+          .catch(() => new Promise((r) => setTimeout(r, 1500)).then(postHold))
+          .catch((err) => console.error(`[Retainer] Item ${itemId}: the on-hold note could NOT be posted (${err.message}) — this case will not start onboarding by itself when the agreement completes`));
         return;
       }
       // Gate passed on a first-time payment — graduate the row from the

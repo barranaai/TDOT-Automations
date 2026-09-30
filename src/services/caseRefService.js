@@ -358,6 +358,7 @@ async function renameClientFolderForItem({ itemId, caseRef }) {
  * Document Collection Started handler in mondayWebhook.js).
  */
 const _resumeInFlight = new Set(); // itemId — collapses near-simultaneous duplicate webhook deliveries
+let CASE_REF_RETRY_MS = 2000;       // one retry of an unreadable held-onboarding check (tests shorten it)
 
 async function resumeOnboardingIfStuck({ itemId, caseRef }) {
   const key = String(itemId);
@@ -381,6 +382,28 @@ async function resumeOnboardingIfStuck({ itemId, caseRef }) {
     if (cv['color_mm0x9fnn'] !== 'Paid') {
       console.log(`[CaseRef] ${caseRef}: onboarding-resume conditions met but Payment Status ≠ Paid — not resuming`);
       return;
+    }
+    // HELD for signatures (Paid set by hand before the agreement was fully
+    // signed): this path used to send the intake email with no signature check.
+    // The held-onboarding service decides instead — it waits for the agreement,
+    // or, if it is already complete, starts onboarding now (once, recorded). A
+    // case it places as NOT held (or with no linked lead) resumes as before. A
+    // read error is retried once, then resumes as before (the case this path
+    // exists for — paid before its Case Type — has no other rescue); but a
+    // start it chose and could not record ("record-failed") is never sent from
+    // here — the status sync retries it with the record.
+    const resumeSvc = require('./onboardingResumeService');
+    if (resumeSvc.isEnabled()) {
+      let held = await resumeSvc.resumeIfOwed({ itemId, trigger: 'case-ref', caseRef });
+      if (held.action === 'error' && held.code !== 'record-failed') {
+        await new Promise((r) => setTimeout(r, CASE_REF_RETRY_MS));
+        held = await resumeSvc.resumeIfOwed({ itemId, trigger: 'case-ref', caseRef });
+      }
+      const fallThrough = held.code === 'not-held' || held.code === 'no-lead' || (held.action === 'error' && held.code !== 'record-failed');
+      if (!fallThrough) {
+        console.log(`[CaseRef] ${caseRef}: onboarding is held for signatures — ${held.action}${held.code ? ` (${held.code})` : ''}; not resuming here`);
+        return;
+      }
     }
 
     // Residual micro-race (documented): if payment lands in the seconds
@@ -442,7 +465,8 @@ async function writePortalLinkForItem({ itemId, caseRef }) {
 }
 
 module.exports = {
-  onCaseTypeSet, generateCaseRef, writePortalLinkForItem, CASE_TYPE_ABBR,
+  onCaseTypeSet, generateCaseRef, writePortalLinkForItem, CASE_TYPE_ABBR, resumeOnboardingIfStuck,
+  _setRetryMsForTests: (ms) => { CASE_REF_RETRY_MS = ms; },
   // Exported for tests: the rename is what keeps a client to ONE folder.
   renameClientFolderForItem, folderIdFromLead,
 };

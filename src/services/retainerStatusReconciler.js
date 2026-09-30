@@ -52,6 +52,7 @@ const CM = {
   paymentConfDate: 'date_mm0xgk76',
   caseRef:         'text_mm142s49',
   caseStage:       'color_mm0x8faa',
+  checklistApplied: 'color_mm0xs7kp',
 };
 
 /**
@@ -105,7 +106,9 @@ function deriveCmPaymentStatus(lead) {
   // signing, the cell is left alone (same reasoning as the unsigned carve-out
   // above). The moment the countersign lands, this same derivation returns
   // PAID and the 15-minute sweep doubles as the resume path for any activation
-  // trigger that lost a race.
+  // trigger that lost a race. That covers a case the board does NOT yet read
+  // Paid; one staff set to Paid by hand while it was held reads "in sync" here,
+  // and is picked up by the held-onboarding step at the end of the sweep.
   if (!require('./caseGateService').signatureGateForLead(lead).complete) return null;
   return PAID;
 }
@@ -173,14 +176,15 @@ function classifyDrift(lead, cmPaymentStatus) {
 // whose column ids simply don't exist there. Read blindly, that comes back as a
 // blank Payment Status and looks exactly like a case needing repair — so every
 // read here is pinned to the Client Master board and anything else is "gone".
-const COLS_Q = `["${CM.paymentStatus}","${CM.caseRef}","${CM.paymentConfDate}"]`;
+const COLS_Q = `["${CM.paymentStatus}","${CM.caseRef}","${CM.paymentConfDate}","${CM.caseStage}","${CM.checklistApplied}"]`;
 
 function parseCaseItem(item) {
   if (!item || (item.state && item.state !== 'active')) return null;
   if (String((item.board && item.board.id) || '') !== String(clientMasterBoardId)) return null;
   const cv = {};
   for (const c of item.column_values || []) cv[c.id] = s(c.text);
-  return { paymentStatus: cv[CM.paymentStatus] || '', caseRef: cv[CM.caseRef] || '', paymentDate: cv[CM.paymentConfDate] || '' };
+  return { paymentStatus: cv[CM.paymentStatus] || '', caseRef: cv[CM.caseRef] || '', paymentDate: cv[CM.paymentConfDate] || '',
+    stage: cv[CM.caseStage] || '', applied: cv[CM.checklistApplied] || '' };
 }
 
 /** Current Payment Status for a Client Master item, or null if it is gone. */
@@ -275,6 +279,7 @@ const io = {
   readCase:        (id)         => readCasePaymentStatus(id),
   moveCaseToActiveGroup: (id)   => require('./caseGateService').moveCaseToActiveGroup(id),
   withLeadLockOrSkip: (id, ms, fn) => require('./leadMutex').withLeadLockOrSkip(id, ms, fn),
+  sweepHeldOnboarding: (args)   => require('./onboardingResumeService').sweepHeldOnboarding(args),
 };
 // How long the sync waits for a client record another flow is holding (e.g. an
 // e-signature capture) before leaving that client to the next pass — the
@@ -539,7 +544,19 @@ async function _doSweep({ dryRun, includeStalled }) {
     }
   }
 
-  return { checked: candidates.length, repaired, wouldRepair, attention, stalled };
+  // Held onboarding: a case staff set to "Paid" by hand before the agreement
+  // was fully signed reads "in sync" above, yet its onboarding waits on a
+  // last-signature cue that can be lost (a restart, a busy client record). The
+  // cases this looks at come from the rows already read — normally none.
+  let onboarding = {};
+  try {
+    onboarding = await io.sweepHeldOnboarding({ leads, cases, dryRun });
+  } catch (err) {
+    console.warn(`[StatusSync] Held-onboarding step failed: ${err.message}`);
+    onboarding = { error: err.message };
+  }
+
+  return { checked: candidates.length, repaired, wouldRepair, attention, stalled, onboarding };
 }
 
 module.exports = {

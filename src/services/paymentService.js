@@ -186,6 +186,20 @@ async function _advanceCaseToPaid(lead, when, { recheckPaid }) {
     if (((cur?.items?.[0]?.column_values?.[0]?.text || '').trim()) === 'Paid') {
       console.log(`[Payment] Client Master ${lead.clientMasterItemId} already Paid — skipping re-write (idempotent advance)`);
       await require('./caseGateService').moveCaseToActiveGroup(lead.clientMasterItemId);
+      // Already "Paid" can mean staff set it by hand BEFORE the agreement was
+      // fully signed: onboarding was held then, and this last signature is its
+      // only cue — no webhook fires again. Start it here, once (the service
+      // proves the case was held and never started). Not awaited: it takes no
+      // lead lock and re-reads Paid itself, so the client record (held here by
+      // the e-sign capture or a staff Mark-paid click) is not kept waiting on
+      // its reads. Its own try: the catch below would otherwise go on to
+      // re-write "Paid".
+      try {
+        require('./onboardingResumeService').resumeIfOwed({ itemId: lead.clientMasterItemId, trigger: 'last-signature' })
+          .catch((err) => console.warn(`[Payment] Held-onboarding check failed for CM ${lead.clientMasterItemId}: ${err.message}`));
+      } catch (err) {
+        console.warn(`[Payment] Held-onboarding check failed for CM ${lead.clientMasterItemId}: ${err.message}`);
+      }
       return lead.clientMasterItemId;
     }
   } catch (err) {

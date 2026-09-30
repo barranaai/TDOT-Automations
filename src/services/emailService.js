@@ -207,6 +207,32 @@ async function onClientEmailChanged(itemId) {
     return;
   }
 
+  // HELD for signatures (Payment Status set to Paid by hand before the
+  // agreement was fully signed): the intake email has not gone out yet, and a
+  // corrected address must not send it early. If the agreement IS complete and
+  // onboarding is still owed, start it now — the intake email then goes to the
+  // corrected address, once. Anything else (never held, already onboarded — even
+  // if a later hold note appeared — a read error, the switch off) is today's
+  // correction resend.
+  const resume = require('./onboardingResumeService');
+  const held = resume.isEnabled()
+    ? await resume.resumeIfOwed({ itemId, trigger: 'email-change', dryRun: true })
+    : { action: 'none', code: 'disabled' };
+  if (held.code === 'waiting' && !held.evidence) {
+    console.log(`[Email] Client email corrected for ${label} — onboarding is held for signatures, nothing sent now`);
+    await mondayApi.query(
+      `mutation($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`,
+      { itemId: String(itemId),
+        body: `Client email updated to ${newEmail}. Onboarding is on hold (waiting for the ${held.detail || 'signatures'}), so nothing was sent now — the intake email goes to this address when onboarding starts.` }
+    ).catch((err) => console.warn(`[Email] held-case note failed for ${label}: ${err.message}`));
+    return;
+  }
+  if (held.action === 'resume') {
+    const r = await resume.resumeIfOwed({ itemId, trigger: 'email-change' });
+    console.log(`[Email] Client email corrected for ${label} — held onboarding: ${r.action}${r.code ? ` (${r.code})` : ''}`);
+    return;
+  }
+
   console.log(`[Email] Client email corrected for ${label} (stage: "${caseStage}") — resending intake email to ${newEmail}`);
 
   const r = await sendIntakeEmail(itemId);

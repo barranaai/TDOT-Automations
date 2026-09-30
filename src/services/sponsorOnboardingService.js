@@ -63,7 +63,7 @@ const TRANSIENT_RETRY_MS      = 90 * 1000;                // one in-process retr
 const NOTE_ONCE_MS            = 10 * 60 * 1000;           // the same "not sent" note is not posted on a case twice within this
 // The triggers that fire once per case: a sponsor email they could not send
 // is told to staff on the case (and a read failure is retried once).
-const ONE_SHOT_TRIGGERS       = new Set(['dcs', 'retainer-paid', 'resume']);
+const ONE_SHOT_TRIGGERS       = new Set(['dcs', 'retainer-paid', 'resume', 'signature-resume']);
 // Non-sent outcomes the automatic path does NOT log: the switch is off, the
 // case type has no sponsor, or the sponsor already holds the link.
 const QUIET_REASONS           = new Set(['disabled', 'not-applicable', 'already-sent', 'sent']);
