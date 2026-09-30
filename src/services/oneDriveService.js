@@ -205,42 +205,62 @@ function isNewCaseFolder(folder) {
  * created. Each folder is tried even if an earlier one failed; the error thrown
  * at the end names the ones still missing (err.missing) so staff can be told
  * exactly what to add. A 401 escapes so withGraphAuth can refresh the token
- * and retry the whole (idempotent) pass.
+ * and retry the whole (idempotent) pass. `created` is everything THIS call
+ * made, across that retry; an error carries the same as err.created.
  *
- * @param {{ folderId: string, label?: string }} p  label = the case reference, for the log
- * @returns {Promise<{ created: string[], present: string[] }>}
+ * @param {{ folderId: string, label?: string, dryRun?: boolean }} p  label = the case reference, for the log;
+ *   dryRun = list only, create nothing (the backfill's preview)
+ * @returns {Promise<{ created: string[], present: string[], wouldCreate?: string[] }>}
  */
-async function ensureCaseWorkFolders({ folderId, label = '' }) {
+async function ensureCaseWorkFolders({ folderId, label = '', dryRun = false }) {
   if (!folderId) throw new Error('ensureCaseWorkFolders: folderId required');
-  return withGraphAuth('ensureCaseWorkFolders', async (token) => {
-    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-    const listing = await axios.get(`${userBase()}/items/${encodeURIComponent(folderId)}/children?$select=name,folder&$top=200`, { headers, timeout: GRAPH_TIMEOUT_MS });
-    const have = new Set((listing.data.value || []).filter((c) => c.folder).map((c) => String(c.name)));
-    const created = [], present = [], missing = [];
-    let lastErr = null;
-    for (const name of CASE_WORK_FOLDERS) {
-      if (have.has(name)) { present.push(name); continue; }
-      try {
-        await axios.post(`${userBase()}/items/${encodeURIComponent(folderId)}/children`,
-          { name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }, { headers, timeout: GRAPH_TIMEOUT_MS });
-        created.push(name);
-      } catch (err) {
-        if (err.response?.status === 401) throw err;                          // let withGraphAuth retry the whole pass
-        if (err.response?.status === 409) { present.push(name); continue; }   // made by someone else meanwhile
-        const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-        console.error(`[OneDrive] Could not create working folder "${name}" for ${label || folderId}: ${detail}`);
-        missing.push(name); lastErr = err;
+  // What THIS call made, across withGraphAuth's re-run after a 401: the second
+  // pass lists the first pass's folders as already there, and the caller must
+  // still hear that this call created them (the backfill's report counts them).
+  const made = [];
+  try {
+    return await withGraphAuth('ensureCaseWorkFolders', async (token) => {
+      const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+      const have = new Set();   // lower-cased: OneDrive names ignore case, so "1-coordinator-working" IS the folder
+      let next = `${userBase()}/items/${encodeURIComponent(folderId)}/children?$select=name,folder&$top=200`;
+      while (next) {   // every page: a working folder on page two is still there
+        const listing = await axios.get(next, { headers, timeout: GRAPH_TIMEOUT_MS });
+        for (const c of (listing.data.value || [])) if (c.folder) have.add(String(c.name).toLowerCase());
+        next = listing.data['@odata.nextLink'] || null;
       }
-    }
-    if (created.length) console.log(`[OneDrive] Working folders created for ${label || folderId}: ${created.join(', ')}`);
-    if (missing.length) {
-      const e = new Error(`working folders not created: ${missing.join(', ')} (${lastErr && lastErr.message})`);
-      e.missing = missing; e.cause = lastErr;
-      throw tagTransient(e);
-    }
-    _workFoldersComplete.add(String(folderId));
-    return { created, present };
-  });
+      const isThere = (n) => have.has(n.toLowerCase());
+      if (dryRun) {
+        return { created: [], present: CASE_WORK_FOLDERS.filter(isThere), wouldCreate: CASE_WORK_FOLDERS.filter((n) => !isThere(n)) };
+      }
+      const created = [], present = [], missing = [];
+      let lastErr = null;
+      for (const name of CASE_WORK_FOLDERS) {
+        if (isThere(name)) { if (!made.includes(name)) present.push(name); continue; }
+        try {
+          await axios.post(`${userBase()}/items/${encodeURIComponent(folderId)}/children`,
+            { name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }, { headers, timeout: GRAPH_TIMEOUT_MS });
+          created.push(name); made.push(name);
+        } catch (err) {
+          if (err.response?.status === 401) throw err;                          // let withGraphAuth retry the whole pass
+          if (err.response?.status === 409) { present.push(name); continue; }   // made by someone else meanwhile
+          const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+          console.error(`[OneDrive] Could not create working folder "${name}" for ${label || folderId}: ${detail}`);
+          missing.push(name); lastErr = err;
+        }
+      }
+      if (created.length) console.log(`[OneDrive] Working folders created for ${label || folderId}: ${created.join(', ')}`);
+      if (missing.length) {
+        const e = new Error(`working folders not created: ${missing.join(', ')} (${lastErr && lastErr.message})`);
+        e.missing = missing; e.cause = lastErr;
+        throw tagTransient(e);
+      }
+      _workFoldersComplete.add(String(folderId));
+      return { created: [...made], present };
+    });
+  } catch (err) {
+    if (err && typeof err === 'object' && !Array.isArray(err.created)) err.created = [...made];   // made before the failure
+    throw err;
+  }
 }
 
 /**
@@ -598,6 +618,42 @@ async function findCaseFoldersByRef(caseRef) {
     });
   } catch (err) {
     throw wrapError('OneDrive folder-by-ref lookup failed', err);
+  }
+}
+
+/**
+ * EVERY folder directly under "Client Documents": { id, name, childCount,
+ * createdAt }. Read-only; pages the whole root listing. Same care as
+ * findCaseFoldersByRef: only the FIRST page may answer "no root yet" — a 404
+ * on a continuation is a stale skiptoken and must fail the whole listing,
+ * never return a partial one (a partial listing would read as "this case has
+ * no folder"). Used by the working-folders backfill to match every case to its
+ * folder in ONE enumeration instead of one per case.
+ */
+async function listCaseFoldersInRoot() {
+  try {
+    return await withGraphAuth('listCaseFoldersInRoot', async (token) => {
+      const out = [];
+      let next = `${childrenUrl(ROOT_FOLDER)}?$select=id,name,folder,createdDateTime&$top=200`;
+      let firstPage = true;
+      while (next) {
+        let res;
+        try {
+          res = await axios.get(next, { headers: { Authorization: `Bearer ${token}` }, timeout: GRAPH_TIMEOUT_MS });
+        } catch (err) {
+          if (err.response?.status === 404 && firstPage) return [];
+          throw err;
+        }
+        firstPage = false;
+        for (const it of (res.data?.value || [])) {
+          if (it.folder) out.push({ id: it.id, name: String(it.name || ''), childCount: it.folder.childCount, createdAt: it.createdDateTime || '' });
+        }
+        next = res.data?.['@odata.nextLink'] || null;
+      }
+      return out;
+    });
+  } catch (err) {
+    throw wrapError('OneDrive root listing failed', err);
   }
 }
 
@@ -1145,5 +1201,7 @@ module.exports = {
   listFileVersions, readFileVersion,
   uploadFileAsNew,
   ensureCaseWorkFolders, workFoldersFailedNoteText, CASE_WORK_FOLDERS, WORK_FOLDERS_SINCE,
+  listCaseFoldersInRoot, pickCaseFolder,
   _resetWorkFoldersMemo: () => _workFoldersComplete.clear(),
+  _workFoldersMemoHas:   (id) => _workFoldersComplete.has(String(id)),
 };

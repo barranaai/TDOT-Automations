@@ -1286,6 +1286,31 @@ app.get('/admin/onedrive/list', async (req, res) => {
 
 // Re-file a case's "General" uploads into their category folders (ADMIN ONLY,
 // dry-run by default). Only OneDrive moves — never deletes, never Monday.
+// One-off: add the four staff working folders (1-Coordinator-Working …
+// 4-Submitted-IRCC) to every EXISTING case folder (see
+// workFoldersBackfillService). Admin only. POST starts a job in the background
+// — a preview unless { dryRun: false, confirm: "ADD-WORK-FOLDERS" } — and
+// answers at once; GET reports progress and the result (?full=1 for every row
+// and every skipped case); POST …/abort stops it after the folder it is on.
+app.post('/admin/onedrive/work-folders-backfill', express.json(), (req, res) => {
+  const viewer = resolveAdminOrReject(req, res, 'Only an admin can add folders to every case.');
+  if (!viewer) return;
+  const body = req.body || {};
+  const r = require('./services/workFoldersBackfillService').startBackfill({
+    dryRun: body.dryRun !== false, confirm: String(body.confirm || ''), by: viewer.email || 'admin-key',
+  });
+  res.status(r.started ? 202 : 409).json(r);
+});
+app.get('/admin/onedrive/work-folders-backfill', (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can see this.')) return;
+  const status = require('./services/workFoldersBackfillService').statusOf({ full: req.query.full === '1' });
+  res.json(status || { state: 'idle', message: 'No backfill has run since the server started.' });
+});
+app.post('/admin/onedrive/work-folders-backfill/abort', (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can stop this.')) return;
+  res.json(require('./services/workFoldersBackfillService').abortBackfill());
+});
+
 // See documentRefileService; driven per case by scripts/refile-general-uploads.js.
 app.post('/admin/onedrive/refile-general', express.json(), async (req, res) => {
   const viewer = resolveAdminOrReject(req, res, 'Only an admin can re-file case documents.');
