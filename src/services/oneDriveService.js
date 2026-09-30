@@ -177,7 +177,8 @@ async function createOrgLink(token, itemId) {
  * the submission flow. Staff-only: the app never writes a client upload or one
  * of its own files into them, and the client never sees them.
  *
- * "New" = a case folder CREATED on or after WORK_FOLDERS_SINCE, whichever code
+ * "New" = a case folder CREATED on or after WORK_FOLDERS_SINCE (the hour the
+ * feature went live, 2026-09-30 16:00 Toronto), whichever code
  * path minted it (the intake-folder rename, the checklist build, a
  * questionnaire save, a signed agreement, a raw upload). Every touch of such a
  * folder through this service adds whatever is still missing, so an outage at
@@ -186,7 +187,7 @@ async function createOrgLink(token, itemId) {
  * never touched.
  */
 const CASE_WORK_FOLDERS  = ['1-Coordinator-Working', '2-Case-Manager-Draft', '3-AW-Analyst-Final-RCIC', '4-Submitted-IRCC'];
-const WORK_FOLDERS_SINCE = Date.parse('2026-10-01T00:00:00Z');
+const WORK_FOLDERS_SINCE = Date.parse('2026-09-30T20:00:00Z');   // the feature went live 2026-09-30 16:27 Toronto
 const _workFoldersComplete = new Set();   // folder ids seen with all four present (per process)
 
 /** A case folder this feature applies to: created now, or created since the feature went live. */

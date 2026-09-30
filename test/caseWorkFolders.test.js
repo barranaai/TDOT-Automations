@@ -3,7 +3,7 @@
 // Every NEW case folder carries four staff working folders from the moment its
 // case reference is assigned (Faran, 2026-10-01): 1-Coordinator-Working,
 // 2-Case-Manager-Draft, 3-AW-Analyst-Final-RCIC, 4-Submitted-IRCC. Two moments
-// "New" = a case folder created on or after 2026-10-01, whichever code path
+// "New" = a case folder created on or after the go-live hour (2026-09-30 20:00 UTC), whichever code path
 // minted it: the rename of the lead's intake folder adds them at once, and every
 // later touch of a new folder through the OneDrive service (the checklist build,
 // a questionnaire save, a signed agreement) adds whatever is still missing — so
@@ -123,7 +123,7 @@ test('createClientFolders: a case folder created FRESH gets the working folders;
   const fresh = driveHarness();
   await fresh.svc.createClientFolders({ clientName: 'Ada', caseRef: '2026-VV-001', categories: ['Identity'] });
   assert.deepEqual(fresh.posted, NAMES);
-  const old = driveHarness({ caseFolderExists: true, folderCreatedAt: '2026-09-30T23:59:59Z' });
+  const old = driveHarness({ caseFolderExists: true, folderCreatedAt: '2026-09-30T19:59:59Z' });
   await old.svc.createClientFolders({ clientName: 'Ada', caseRef: '2026-VV-001', categories: ['Identity'] });
   assert.deepEqual(old.posted, [], 'nothing added to a folder that predates the feature');
   assert.ok(!old.calls.get.some((u) => /\/items\/CASE-1\/children/.test(u)), 'not even listed');
@@ -145,9 +145,9 @@ test('a NEW case folder minted by another path (a questionnaire save, a signed a
   assert.deepEqual(complete.posted, []);
 });
 
-test('the cut-over is the folder\'s own creation date: 2026-10-01 00:00 UTC', () => {
+test('the cut-over is the folder\'s own creation date: the hour the feature went live (2026-09-30 16:00 Toronto = 20:00 UTC)', () => {
   const { svc } = driveHarness();
-  assert.equal(svc.WORK_FOLDERS_SINCE, Date.parse('2026-10-01T00:00:00Z'));
+  assert.equal(svc.WORK_FOLDERS_SINCE, Date.parse('2026-09-30T20:00:00Z'));
 });
 
 test('createClientFolders: OneDrive refusing a working folder never breaks the checklist folders, and the caller\'s note hook is told what is missing', async () => {
