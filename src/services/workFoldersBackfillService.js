@@ -70,6 +70,15 @@ const normRef = (r) => s(r).replace(/\s+/g, ' ');
 function planBackfill({ cases, rootFolders, pick }) {
   const skipped = [];
   const byFolder = new Map();   // folderId → target (two rows sharing one reference share one folder)
+  // The folder the Cases board links for a reference — only when its rows agree
+  // on ONE folder (the live app's rule, caseFolderLinkService.linkedFolderIds).
+  const linksByRef = new Map();
+  for (const c of cases || []) {
+    const ref = normRef(c.caseRef);
+    if (!ref || !c.folderId) continue;
+    if (!linksByRef.has(ref)) linksByRef.set(ref, new Set());
+    linksByRef.get(ref).add(c.folderId);
+  }
   let considered = 0;
   for (const c of cases || []) {
     const ref = normRef(c.caseRef);
@@ -81,8 +90,10 @@ function planBackfill({ cases, rootFolders, pick }) {
     const suffix = ` - ${ref}`;
     const hits = (rootFolders || []).filter((f) => f.name.endsWith(suffix));
     if (!hits.length) { skipped.push({ caseRef: ref, name: c.name, reason: 'no case folder in OneDrive' }); continue; }
-    // Two folders: the one the case's Monday row links wins, as in the live app (oneDriveService.chooseCaseFolder).
-    const linked = hits.length > 1 && c.folderId ? hits.find((h) => h.id === c.folderId) : null;
+    // Two folders: the one the Cases board links wins, as in the live app (oneDriveService.chooseCaseFolderWithReason).
+    const links = linksByRef.get(ref);
+    const linkId = links && links.size === 1 ? [...links][0] : '';
+    const linked = hits.length > 1 && linkId ? hits.find((h) => h.id === linkId) : null;
     const chosen = hits.length === 1 ? hits[0] : (linked || pick(hits, ref));
     let t = byFolder.get(chosen.id);
     if (!t) {

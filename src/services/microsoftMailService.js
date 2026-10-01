@@ -19,6 +19,7 @@ const axios = require('axios');
 
 // ─── Token cache ──────────────────────────────────────────────────────────────
 
+const TOKEN_TIMEOUT_MS = 15000;   // the Microsoft sign-in request
 let _cachedToken  = null;
 let _tokenExpiry  = 0;   // Unix timestamp ms
 
@@ -47,10 +48,13 @@ async function getAccessToken() {
     scope:         'https://graph.microsoft.com/.default',
   });
 
+  // Bounded like every other Microsoft call: a sign-in request that never
+  // answers must fail (and be retried by the caller), not hang everything
+  // waiting on a token — case numbering waits on it inside its one-at-a-time lock.
   const response = await axios.post(
     `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
     params.toString(),
-    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: TOKEN_TIMEOUT_MS }
   );
 
   _cachedToken = response.data.access_token;

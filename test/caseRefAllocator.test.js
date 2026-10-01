@@ -165,16 +165,14 @@ function serviceHarness({ existingRef = '', existingAfterLock = '', allocate, du
   return { svc, calls, alloc };
 }
 
-test('assignment: the number comes from the allocator, is written once, remembered, and double-checked; the old "board + 1" code is gone', quiet(async () => {
-  const { svc, calls } = serviceHarness();
-  const r = await svc.generateCaseRef('Visitor Visa');
-  assert.match(r, /^\d{4}-VV-009$/);
+test('assignment code: the old "board + 1" rule and the unlocked generateCaseRef are gone; the number is reserved BEFORE the Monday write, inside the lock', () => {
   const src = fs.readFileSync(require.resolve('../src/services/caseRefService'), 'utf8');
-  assert.doesNotMatch(src, /getAllCaseRefs|maxSeq \+ 1/, 'the board-only rule is gone');
+  assert.doesNotMatch(src, /getAllCaseRefs|maxSeq \+ 1|generateCaseRef/, 'nothing can allocate outside the lock');
   assert.match(src, /allocator\.withAllocationLock\(async \(\) => \{\s*const again = await getItemCaseRef\(itemId\);/, 'the "already has one?" check is repeated inside the lock');
-  assert.match(src, /allocator\.recordAssigned\(a\.ref\)/);
-  assert.equal(calls.writes.length, 0);
-}));
+  const rec = src.indexOf('a.markSaved = await allocator.recordAssigned(a.ref);');
+  const write = src.indexOf('change_column_value(', src.indexOf('allocator.withAllocationLock'));
+  assert.ok(rec !== -1 && write !== -1 && rec < write, 'reserved before written: a failed write burns the number, never reuses it');
+});
 
 test('checkAssignedRef: another row with the same number → a note on the case; OneDrive unchecked → a note; all clear → no note', quiet(async () => {
   const h1 = serviceHarness({ dupRows: [{ id: '222', name: 'Someone Else' }] });
@@ -322,14 +320,6 @@ test('numbers handed out are remembered for the life of the process (not one hou
   assert.equal((await h.a.allocate('2026-VV-')).ref, '2026-VV-003');
 }));
 
-test('onCaseTypeSet saves the mark inside the lock, after the Monday write', () => {
-  const src = fs.readFileSync(require.resolve('../src/services/caseRefService'), 'utf8');
-  const i = src.indexOf('change_column_value(');
-  const j = src.indexOf('a.markSaved = await allocator.recordAssigned(a.ref);');
-  assert.ok(i !== -1 && j > i, 'recorded after the write');
-  assert.ok(src.slice(src.indexOf('allocator.withAllocationLock'), j).includes('allocate(prefixFor(caseType))'));
-});
-
 test('the mark lives OUTSIDE "Client Documents" (no case listing or backfill ever sees it)', () => {
   const { MARK_PATH } = fresh();
   assert.equal(MARK_PATH, 'TDOT System/case-number-high-water.json');
@@ -346,38 +336,48 @@ test('audit shows the high-water mark per prefix and counts it in the next numbe
   assert.ok(!r.prefixes.some((p) => p.prefix === 'updatedAt'));
 }));
 
-test('readJsonFile / writeJsonFile: read with the eTag; write only over that version (If-Match) or only when absent (If-None-Match: *); a 412 is a conflict; no file → null', async () => {
+test('readJsonFile / writeJsonFile: read with the eTag; write over that version only (If-Match) or create only (conflictBehavior=fail); 409/412 = conflict; anything not a JSON object = damaged; no file → null', async () => {
   const set = (rel, exports) => { const p = require.resolve(rel); require.cache[p] = { id: p, filename: p, loaded: true, exports }; };
-  const calls = [];
-  let exists = true;
+  const puts = [];
+  let exists = true, content = '{"2026-VV-":12}';
   set('axios', {
-    get: async (url, cfg) => {
-      calls.push(['get', decodeURIComponent(url)]);
-      if (/root:\/TDOT System\/case-number-high-water.json:\?\$select=id,eTag/.test(decodeURIComponent(url))) { if (!exists) { const e = new Error('nf'); e.response = { status: 404 }; throw e; } return { data: { id: 'F', eTag: '"v7"' } }; }
-      if (/\/items\/F\/content$/.test(url)) return { data: '{"2026-VV-":12}' };
-      throw new Error('unexpected ' + url);
+    get: async (url) => {
+      const u = decodeURIComponent(url);
+      if (/root:\/TDOT System\/case-number-high-water\.json:\?\$select=id,eTag$/.test(u)) { if (!exists) { const e = new Error('nf'); e.response = { status: 404 }; throw e; } return { data: { id: 'F', eTag: '"v7"' } }; }
+      if (/\/items\/F\/content$/.test(u)) return { data: content };
+      throw new Error('unexpected GET ' + u);
     },
     put: async (url, body, cfg) => {
-      calls.push(['put', decodeURIComponent(url), cfg.headers['If-Match'], cfg.headers['If-None-Match'], body]);
+      const u = decodeURIComponent(url);
+      if (!/\/drive\/root:\/TDOT System\/case-number-high-water\.json:\/content(\?@microsoft\.graph\.conflictBehavior=fail)?$/.test(u)) throw new Error('unexpected PUT ' + u);
+      puts.push({ url: u, ifMatch: cfg.headers['If-Match'], ifNoneMatch: cfg.headers['If-None-Match'], body: JSON.parse(body) });
       if (cfg.headers['If-Match'] === '"stale"') { const e = new Error('pre'); e.response = { status: 412 }; throw e; }
-      return { data: { eTag: '"v8"' } };
+      if (!cfg.headers['If-Match'] && exists) { const e = new Error('exists'); e.response = { status: 409 }; throw e; }
+      return { status: cfg.headers['If-Match'] ? 200 : 201, data: { eTag: '"v8"' } };
     },
   });
   set('../src/services/microsoftMailService', { getAccessToken: async () => 'tok', invalidateAccessToken: () => {} });
   const p = require.resolve('../src/services/oneDriveService');
   delete require.cache[p];
   const od = require(p);
-  assert.deepEqual(await od.readJsonFile('TDOT System/case-number-high-water.json'), { data: { '2026-VV-': 12 }, etag: '"v7"' });
-  assert.deepEqual(await od.writeJsonFile('TDOT System/case-number-high-water.json', { '2026-VV-': 13 }, { etag: '"v7"' }), { etag: '"v8"' });
-  assert.deepEqual(calls.at(-1).slice(1, 4), ['https://graph.microsoft.com/v1.0/users/' + calls.at(-1)[1].split('/users/')[1].split('/')[0] + '/drive/root:/TDOT System/case-number-high-water.json:/content', '"v7"', undefined].map((x, i) => (i === 0 ? calls.at(-1)[1] : x)));
-  await od.writeJsonFile('TDOT System/case-number-high-water.json', { a: 1 });
-  assert.deepEqual(calls.at(-1).slice(2, 4), [undefined, '*'], 'first creation: only if absent');
-  await assert.rejects(() => od.writeJsonFile('TDOT System/case-number-high-water.json', { a: 1 }, { etag: '"stale"' }), (e) => e.conflict === true);
+  const PATH = 'TDOT System/case-number-high-water.json';
+  assert.deepEqual(await od.readJsonFile(PATH), { data: { '2026-VV-': 12 }, etag: '"v7"' });
+  assert.deepEqual(await od.writeJsonFile(PATH, { '2026-VV-': 13 }, { etag: '"v7"' }), { etag: '"v8"', created: false });
+  assert.equal(puts.at(-1).ifMatch, '"v7"');
+  assert.ok(!puts.at(-1).url.includes('conflictBehavior'), 'an update is conditional on the version, not create-only');
+  await assert.rejects(() => od.writeJsonFile(PATH, { a: 1 }), (e) => e.conflict === true && !e.transient, 'create-only over an existing file: a conflict, not an outage');
+  assert.match(puts.at(-1).url, /\?@microsoft\.graph\.conflictBehavior=fail$/);
+  assert.equal(puts.at(-1).ifNoneMatch, undefined, 'the documented create-only form, not If-None-Match');
+  await assert.rejects(() => od.writeJsonFile(PATH, { a: 1 }, { etag: '"stale"' }), (e) => e.conflict === true && !e.transient);
   exists = false;
-  assert.equal(await od.readJsonFile('TDOT System/case-number-high-water.json'), null);
+  assert.equal(await od.readJsonFile(PATH), null);
+  assert.deepEqual(await od.writeJsonFile(PATH, { a: 1 }), { etag: '"v8"', created: true });
+  exists = true;
+  for (const bad of ['', '[]', 'null', '"x"', '{"a":1,']) {
+    content = bad;
+    await assert.rejects(() => od.readJsonFile(PATH), (e) => e.corrupt === true && !e.transient && e.etag === '"v7"' && e.raw === bad, `damaged: ${JSON.stringify(bad)}`);
+  }
 });
-
-/* ───────────── review round 2 ───────────── */
 
 test('seeding: the first allocation after deploy writes the board and folder maximums for EVERY prefix, so a number handed out before the file existed is protected too', quiet(async () => {
   const h = harness({ board: ['2026-SV-020', '2026-VV-007', 'Supervisa'], folders: ['Old - 2026-SP-031', 'ZZ (was 2026-VV-009)'] });
@@ -462,3 +462,139 @@ test('careful delete is never blocked by a damaged record: recordAssigned rebuil
   assert.equal(await h.a.recordAssigned('2026-LMIA-020'), true, 'the rebuilt file works normally afterwards');
   assert.equal(h.seen.file().data['2026-LMIA-'], 20);
 }));
+
+/* ───────────── audit round (2026-10-01): behaviour tests the reviewers asked for ───────────── */
+
+test('onCaseTypeSet RUNS the duplicate check: another row carrying the new number → a note on the case', quiet(async () => {
+  const h = flowHarness({ board: [] });
+  // a second row already carries the number this case is about to get (typed by hand elsewhere)
+  const y = new Date().getFullYear();
+  h.writes.push(['999', `${y}-SP-001`]);
+  const alloc = require('../src/services/caseRefAllocator');
+  alloc.io.boardRefs = async () => [];   // the board read misses it (lag) — only the post-write search sees it
+  await h.svc.onCaseTypeSet({ itemId: '111', caseType: 'Study Permit' });
+  await settle();
+  assert.equal(h.writes.filter((w) => w[0] === '111').length, 1);
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0], /is ALSO on "case 999" \(item 999\)/);
+}));
+
+test('a failed numbering is never silent: the case gets a note saying how to retry, the error is logged with the item, and nothing is written', async () => {
+  const h = flowHarness({ board: [] });
+  const alloc = require('../src/services/caseRefAllocator');
+  alloc.io.refInUse = async () => { throw new Error('Monday complexity budget exhausted'); };
+  const logs = [];
+  const o = [console.log, console.warn, console.error];
+  console.log = console.warn = () => {}; console.error = (...a) => logs.push(a.join(' '));
+  try {
+    await assert.rejects(() => h.svc.onCaseTypeSet({ itemId: '111', caseType: 'Study Permit' }), /complexity budget/);
+  } finally { [console.log, console.warn, console.error] = o; }
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0], /No case number could be assigned \(Monday complexity budget exhausted\)\. Clear the Primary Case Type and select it again to retry/);
+  assert.ok(logs.some((l) => /item 111 \(Study Permit\)/.test(l)), 'the log names the item and the case type');
+  const hook = fs.readFileSync(require.resolve('../src/routes/mondayWebhook'), 'utf8');
+  assert.match(hook, /Error assigning case ref to item \$\{pulseId\} \(\$\{caseType\}\)/);
+});
+
+test('the record is reserved before the Monday write: if the write fails, the number is burned (recorded), never reused', quiet(async () => {
+  const h = flowHarness({ board: [] });
+  const mon = require('../src/services/mondayApi');
+  const realQuery = mon.query;
+  mon.query = async (q, v) => { if (/change_column_value[\s\S]*text_mm142s49/.test(q)) throw new Error('Monday 500'); return realQuery(q, v); };
+  await assert.rejects(() => h.svc.onCaseTypeSet({ itemId: '111', caseType: 'Study Permit' }), /Monday 500/);
+  const y = new Date().getFullYear();
+  assert.equal(h.mark().data[`${y}-SP-`], 1, 'SP-001 is recorded although it was never written');
+  mon.query = realQuery;
+  await h.svc.onCaseTypeSet({ itemId: '222', caseType: 'Study Permit' });
+  await settle();
+  assert.deepEqual(h.writes.find((w) => w[0] === '222'), ['222', `${y}-SP-002`], 'the burned number is not handed out');
+}));
+
+test('the record file deleted by hand: what this process read is written back — never lost, never lowered', quiet(async () => {
+  const h = harness({ board: ['2026-VV-003'], mark: { '2026-VV-': 12 } });
+  assert.equal((await h.a.allocate('2026-VV-')).ref, '2026-VV-013');
+  h.seen.setFile(null);   // someone deleted it in OneDrive
+  const r = await h.a.allocate('2026-VV-');
+  assert.equal(r.markCheck, 'missing');
+  assert.equal(r.ref, '2026-VV-013', 'the 12 this process knew still counts');
+  assert.equal(h.seen.file().data['2026-VV-'], 12, 'recreated with it');
+}));
+
+test('the production probe: create, refused re-create, write over the current version, refused write over the old one — on a scratch file, never the record', quiet(async () => {
+  const a = fresh();
+  const od = require('../src/services/oneDriveService');
+  const files = new Map();
+  const saved = { r: od.readJsonFile, w: od.writeJsonFile };
+  od.readJsonFile = async (path) => (files.has(path) ? { data: files.get(path).data, etag: files.get(path).etag } : null);
+  od.writeJsonFile = async (path, data, { etag = '' } = {}) => {
+    const cur = files.get(path);
+    if ((etag && (!cur || cur.etag !== etag)) || (!etag && cur)) { const e = new Error('c'); e.conflict = true; throw e; }
+    const n = { data, etag: 'v' + Math.random() }; files.set(path, n); return { etag: n.etag, created: !etag };
+  };
+  try {
+    const r = await a.probeRecordWrites();
+    assert.equal(r.ok, true, JSON.stringify(r.steps));
+    assert.match(r.file, /^TDOT System\/case-number-high-water\.probe-.+\.json$/);
+    assert.ok(!files.has(a.MARK_PATH), 'the record itself is never touched');
+    // a OneDrive that ignored the conditions would be caught:
+    files.clear();
+    od.writeJsonFile = async (path, data) => { files.set(path, { data, etag: 'x' }); return { etag: 'x', created: true }; };
+    const bad = await a.probeRecordWrites();
+    assert.equal(bad.ok, false);
+    assert.ok(bad.steps.some((st) => !st.ok && /refused/.test(st.step)));
+  } finally { od.readJsonFile = saved.r; od.writeJsonFile = saved.w; }
+}));
+
+test('the probe route is admin-only', () => {
+  const src = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
+  const i = src.indexOf("app.post('/admin/case-refs/probe-record'");
+  assert.ok(i !== -1);
+  assert.ok(src.slice(i, i + 300).includes('resolveAdminOrReject'));
+});
+
+test('the Microsoft sign-in request is bounded (15 s) — numbering waits on it inside its lock', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/microsoftMailService'), 'utf8');
+  assert.match(src, /const TOKEN_TIMEOUT_MS = 15000;/);
+  assert.match(src, /oauth2\/v2\.0\/token`,[\s\S]{0,120}timeout: TOKEN_TIMEOUT_MS/);
+});
+
+test('a failed numbering whose note ALSO cannot be posted is still logged with the item', async () => {
+  const h = flowHarness({ board: [] });
+  const alloc = require('../src/services/caseRefAllocator');
+  alloc.io.refInUse = async () => { throw new Error('Monday down'); };
+  const mon = require('../src/services/mondayApi');
+  const realQuery = mon.query;
+  mon.query = async (q, v) => { if (/create_update/.test(q)) throw new Error('note refused'); return realQuery(q, v); };
+  const logs = [];
+  const o = [console.log, console.warn, console.error];
+  console.log = console.warn = () => {}; console.error = (...a) => logs.push(a.join(' '));
+  try {
+    await assert.rejects(() => h.svc.onCaseTypeSet({ itemId: '111', caseType: 'Study Permit' }), /Monday down/);
+  } finally { [console.log, console.warn, console.error] = o; mon.query = realQuery; }
+  assert.ok(logs.some((l) => /the note about it could not be posted on item 111: note refused/.test(l)));
+});
+
+
+test('the record file deleted by hand, then a careful delete records ANOTHER prefix: the re-created file still holds everything this process knew', quiet(async () => {
+  const h = harness({ board: ['2026-VV-003'], mark: { '2026-VV-': 12, '2026-SP-': 1 } });
+  await h.a.allocate('2026-VV-');                      // this process now knows VV 12, SP 1
+  h.seen.setFile(null);                                // deleted in OneDrive
+  assert.equal(await h.a.recordAssigned('2026-SP-002'), true);
+  assert.deepEqual({ vv: h.seen.file().data['2026-VV-'], sp: h.seen.file().data['2026-SP-'] }, { vv: 12, sp: 2 }, 'VV 12 survived the re-creation');
+  assert.equal((await h.a.allocate('2026-VV-')).ref, '2026-VV-013');
+}));
+
+test('a failed first "already has a number?" read also leaves the staff note', async () => {
+  const h = flowHarness({ board: [] });
+  const mon = require('../src/services/mondayApi');
+  const realQuery = mon.query;
+  mon.query = async (q, v) => { if (/items\(ids: \[\$itemId\]\)[\s\S]*text_mm142s49/.test(q)) throw new Error('Monday 503'); return realQuery(q, v); };
+  const o = [console.log, console.warn, console.error];
+  console.log = console.warn = console.error = () => {};
+  try {
+    await assert.rejects(() => h.svc.onCaseTypeSet({ itemId: '111', caseType: 'Study Permit' }), /Monday 503/);
+  } finally { [console.log, console.warn, console.error] = o; mon.query = realQuery; }
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0], /No case number could be assigned \(Monday 503\)/);
+});

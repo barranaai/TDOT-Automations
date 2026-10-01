@@ -141,9 +141,9 @@ async function createFamilyRow({ caseRef, cmItemId, row }) {
 const RECENT_CREATE_WINDOW_MS = 10 * 60 * 1000;
 const _createdRecently = new Map();   // "cmItemId:caseRef" → ms when THIS process last created rows for it
 /** The memory's key: the case ITEM as well as the reference — a reference is
- *  reissued when the newest case of a type is deleted and made again minutes
- *  later (generateCaseRef hands out max + 1; a recycled row is not listed), and
- *  the new case must not inherit the old one's "rows already written". */
+ *  could be reissued (before 2026-10-01, "highest on the board + 1" gave a
+ *  deleted case's number to the next client; caseRefAllocator no longer does),
+ *  and a new case must never inherit an old one's "rows already written". */
 function recentKey(cmItemId, caseRef) { return `${String(cmItemId || '')}:${String(caseRef)}`; }
 
 async function createFromLead({ lead, caseRef, cmItemId }) {

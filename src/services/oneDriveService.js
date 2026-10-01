@@ -822,49 +822,62 @@ async function orgLinkById(itemId) {
 /**
  * A small JSON file anywhere in the drive (NOT under "Client Documents"), read
  * with its eTag so a later write can refuse to overwrite a newer one.
+ * A file that is not a JSON object (not JSON, empty, [], null) throws with
+ * err.corrupt (and its eTag and text, so it can be repaired).
  * @returns {Promise<null | { data: object, etag: string }>}  null = no such file
  */
 async function readJsonFile(path) {
+  // The verdict "damaged" is decided OUTSIDE the auth wrapper, so it is never
+  // mistaken for a passing outage (the wrapper marks its errors transient).
+  let got;
   try {
-    return await withGraphAuth('readJsonFile', async (token) => {
+    got = await withGraphAuth('readJsonFile', async (token) => {
       const headers = { Authorization: `Bearer ${token}` };
       let meta;
       try { meta = await axios.get(`${itemUrl(path)}?$select=id,eTag`, { headers, timeout: GRAPH_TIMEOUT_MS }); }
       catch (err) { if (err.response?.status === 404) return null; throw err; }
       const body = await axios.get(`${userBase()}/items/${encodeURIComponent(meta.data.id)}/content`, { headers, timeout: GRAPH_TIMEOUT_MS, responseType: 'text', transformResponse: [(x) => x] });
-      let data = {};
-      try { data = JSON.parse(String(body.data || '{}')); }
-      catch (_) { const e = new Error(`${path} is not valid JSON`); e.corrupt = true; e.etag = meta.data.eTag || ''; e.raw = String(body.data || ''); throw e; }
-      return { data, etag: meta.data.eTag || '' };
+      return { raw: String(body.data == null ? '' : body.data), etag: meta.data.eTag || '' };
     });
   } catch (err) {
-    if (err.corrupt) throw err;
     throw wrapError('OneDrive JSON read failed', err);
   }
+  if (!got) return null;
+  let data;
+  try { data = JSON.parse(got.raw); } catch (_) { data = undefined; }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    const e = new Error(`${path} is not a JSON object`); e.corrupt = true; e.etag = got.etag; e.raw = got.raw;
+    throw e;
+  }
+  return { data, etag: got.etag };
 }
 
 /**
- * Write a small JSON file. With `etag`: only if the file is still that
- * version (If-Match) — a newer one makes it throw with err.conflict. Without:
- * only if there is no file yet (If-None-Match: *) — an existing one is a conflict.
+ * Write a small JSON file. With `etag`: only over that version (If-Match) —
+ * a newer one is a conflict. Without: only when there is no file yet
+ * (@microsoft.graph.conflictBehavior=fail, the documented create-only form) —
+ * an existing one is a conflict. A conflict throws with err.conflict.
  */
 async function writeJsonFile(path, data, { etag = '' } = {}) {
+  let conflict = false;
+  let res;
   try {
-    return await withGraphAuth('writeJsonFile', async (token) => {
-      const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(etag ? { 'If-Match': etag } : { 'If-None-Match': '*' }) };
+    res = await withGraphAuth('writeJsonFile', async (token) => {
+      const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(etag ? { 'If-Match': etag } : {}) };
+      const url = `${itemUrl(path)}/content${etag ? '' : '?@microsoft.graph.conflictBehavior=fail'}`;
       try {
-        const res = await axios.put(`${itemUrl(path)}/content`, JSON.stringify(data, null, 1), { headers, timeout: GRAPH_UPLOAD_TIMEOUT_MS });
-        return { etag: res.data?.eTag || '' };
+        return await axios.put(url, JSON.stringify(data, null, 1), { headers, timeout: GRAPH_UPLOAD_TIMEOUT_MS });
       } catch (err) {
         const st = err.response?.status;
-        if (st === 412 || st === 409) { const e = new Error(`${path} changed meanwhile`); e.conflict = true; throw e; }
+        if (st === 412 || st === 409) { conflict = true; return null; }
         throw err;
       }
     });
   } catch (err) {
-    if (err.conflict) throw err;
     throw wrapError('OneDrive JSON write failed', err);
   }
+  if (conflict) { const e = new Error(`${path} changed meanwhile`); e.conflict = true; throw e; }
+  return { etag: (res && res.data && res.data.eTag) || '', created: !!(res && res.status === 201) };
 }
 
 /** Forget what the process remembers about a case's folder (after a repair renamed or merged folders). */
@@ -912,12 +925,6 @@ async function listCaseFoldersInRoot() {
 }
 
 /**
- * Choose between folders that all carry the case reference. The one holding the
- * documents wins; a tie keeps the shortest name (the original, before a suffix
- * was appended). Always logged - a split case is a data-hygiene problem someone
- * should fix at the source.
- */
-/**
  * The lookup that says which folder a case's Monday row links (set once at
  * startup by server.js — caseFolderLinkService.linkedFolderIds). Unset (tests,
  * scripts) = no lookup: the tie-break below decides, exactly as before.
@@ -930,6 +937,8 @@ function setCaseFolderLinkLookup(fn) { _linkedFolderLookup = typeof fn === 'func
  * case's Monday row LINKS wins (a leftover test folder beside the client's
  * real one must never win on item count — 2026-10-01); without a usable link,
  * pickCaseFolder's tie-break. Only consulted when there are two or more.
+ * Returns { chosen, linked, uncertain } — uncertain = the link could not be
+ * read, so the choice is a guess (cached only briefly).
  */
 async function chooseCaseFolderWithReason(hits, caseRef) {
   if (hits.length === 1) return { chosen: hits[0], linked: false };
@@ -948,8 +957,14 @@ async function chooseCaseFolderWithReason(hits, caseRef) {
   }
   return { chosen: pickCaseFolder(hits, caseRef), linked: false };
 }
-async function chooseCaseFolder(hits, caseRef) { return (await chooseCaseFolderWithReason(hits, caseRef)).chosen; }
 
+/**
+ * The tie-break between folders that all carry the case reference, when no
+ * Monday link decides (chooseCaseFolderWithReason): the one holding the
+ * documents wins; a tie keeps the shortest name (the original, before a suffix
+ * was appended). Always logged - a split case is a data-hygiene problem someone
+ * should fix at the source.
+ */
 function pickCaseFolder(hits, caseRef) {
   if (hits.length === 1) return hits[0];
   const sorted = [...hits].sort((a, b) => (b.childCount || 0) - (a.childCount || 0) || a.name.length - b.name.length);
@@ -1072,7 +1087,7 @@ async function withCaseFolder({ clientName, caseRef }, run) {
     const heal = async (why) => {
       dropCaseFolderName(ref, name);           // ...only if nobody else healed it first
       console.warn(`[OneDrive] case ${ref}: ${why} - re-resolving by case reference`);
-      const mine = await followKnownFolder(ref, before.id);
+      const mine = await followKnownFolder(ref, knownIdOf(before));
       if (mine) {
         if (mine === name) throw err;
         return run(mine);
@@ -1132,6 +1147,14 @@ function confirmCaseFolder(ref, name) {
  * the SHORTER name, so it would win the split-case tie-break and the real
  * documents would go quiet.
  */
+/**
+ * The folder id a heal may follow: only one the cache KNEW. A "brief" entry is
+ * a guess the tie-break made while the Monday link could not be read — it is
+ * no evidence of where the documents are, and following it would turn a
+ * 30-second guess into a 10-minute pin.
+ */
+function knownIdOf(entry) { return entry && !entry.brief ? entry.id : ''; }
+
 function followKnownFolder(ref, knownId) {
   if (!knownId) return Promise.resolve('');
   // Deduped like every other root-paging lookup here: a burst of reads or
@@ -1180,13 +1203,13 @@ async function resolveCaseFolderNameForWrite({ clientName, caseRef }) {
     // Identity first, exactly as the mismatch branch below and the read heal do.
     // A probe that could not answer is no reason to hand a split case back to
     // pickCaseFolder, which a non-empty impostor under the OLD name wins.
-    return (await followKnownFolder(ref, before.id)) || resolveCaseFolderName({ clientName, caseRef });
+    return (await followKnownFolder(ref, knownIdOf(before))) || resolveCaseFolderName({ clientName, caseRef });
   }
   if (stillThere && (!before.id || stillThere.id === before.id)) return name;
 
   dropCaseFolderName(ref, name);
   console.warn(`[OneDrive] case ${ref}: cached folder "${name}" is no longer the item holding the documents - re-resolving before writing`);
-  return (await followKnownFolder(ref, before.id)) || resolveCaseFolderName({ clientName, caseRef });
+  return (await followKnownFolder(ref, knownIdOf(before))) || resolveCaseFolderName({ clientName, caseRef });
 }
 
 /** Test seam: forget the resolved folder names. */
@@ -1497,7 +1520,7 @@ module.exports = {
   listFileVersions, readFileVersion,
   uploadFileAsNew,
   ensureCaseWorkFolders, workFoldersFailedNoteText, CASE_WORK_FOLDERS, WORK_FOLDERS_SINCE,
-  listCaseFoldersInRoot, pickCaseFolder, chooseCaseFolder, setCaseFolderLinkLookup, listRootFolderTree, readJsonFile, writeJsonFile, moveItemById, copyItemById, renameItemById, ensureSubfolderById, forgetCaseFolder, orgLinkById, holdCaseFolder, releaseCaseFolder,
+  listCaseFoldersInRoot, pickCaseFolder, chooseCaseFolderWithReason, setCaseFolderLinkLookup, resolveCaseFolderNameForWrite, listRootFolderTree, readJsonFile, writeJsonFile, moveItemById, copyItemById, renameItemById, ensureSubfolderById, forgetCaseFolder, orgLinkById, holdCaseFolder, releaseCaseFolder,
   _resetWorkFoldersMemo: () => _workFoldersComplete.clear(),
   _workFoldersMemoHas:   (id) => _workFoldersComplete.has(String(id)),
   _seedCaseFolderCacheForTests: (ref, entry) => _caseFolderName.set(String(ref), entry),

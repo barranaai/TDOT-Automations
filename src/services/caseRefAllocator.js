@@ -103,7 +103,7 @@ const io = {
 };
 
 /* ───────────────────────────── state ───────────────────────────── */
-const _recent = new Map();          // ref → when this process handed it out (kept for the life of the process: tiny)
+const _recent = new Set();          // numbers this process handed out (kept for the life of the process: tiny)
 let _markCache = null;              // { data } — the last high-water mark read, for when OneDrive is down
 let _folderScan = null;             // { at, names } — the last successful root listing
 let _lockTail = Promise.resolve();
@@ -116,7 +116,7 @@ function withAllocationLock(fn) {
 }
 
 /** Remember a number this process just handed out (the board read may not show it for a few seconds). */
-function noteAssigned(ref) { _recent.set(String(ref), io.now()); }
+function noteAssigned(ref) { _recent.add(String(ref)); }
 
 /**
  * The high-water marks ({ "2026-VV-": 12, … }). One retry. When it still
@@ -129,12 +129,18 @@ async function readMarks() {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const r = await io.readMark();
-      const data = (r && r.data && typeof r.data === 'object' && !Array.isArray(r.data)) ? r.data : {};
+      if (!r && _markCache) {
+        // The file is gone (deleted or moved by hand) but this process read it
+        // before: what it held is not lost — the seed writes it back.
+        console.error(`[CaseRef] The case-number high-water file is missing — it will be recreated from what this process knows`);
+        return { marks: _markCache.data, markCheck: 'missing', exists: false, etag: '' };
+      }
+      const data = r ? r.data : {};   // readJsonFile only answers JSON objects (anything else is "corrupt")
       _markCache = { data };
       return { marks: data, markCheck: 'ok', exists: !!r, etag: r ? r.etag : '' };
     } catch (err) {
       if (err.corrupt) {
-        console.error(`[CaseRef] The case-number high-water file is not valid JSON — it will be rebuilt (a copy of it is kept)`);
+        console.error(`[CaseRef] The case-number high-water file is damaged (not a JSON object) — it will be rebuilt (a copy of it is kept)`);
         // the numbers still readable in it count NOW (a rebuild must never lower a mark)
         return { marks: mergeMax(salvageMarks(err.raw), _markCache ? _markCache.data : {}), markCheck: 'corrupt', exists: true, etag: err.etag || '', raw: err.raw || '' };
       }
@@ -190,8 +196,8 @@ function prefixesIn(strings) {
  * Best effort: a failure here never stops an allocation.
  */
 async function seedMarks(refs, names, marks) {
-  if (marks.markCheck !== 'ok' && marks.markCheck !== 'corrupt') return;
-  const base = marks.markCheck === 'ok' ? { ...marks.marks } : { ...marks.marks };
+  if (!['ok', 'corrupt', 'missing'].includes(marks.markCheck)) return;
+  const base = { ...marks.marks };
   let raised = 0;
   for (const p of prefixesIn([...refs, ...names])) {
     const v = Math.max(maxSeq(refs, p), maxSeq(names, p));
@@ -206,7 +212,7 @@ async function seedMarks(refs, names, marks) {
     base.updatedAt = new Date(io.now()).toISOString();
     await io.writeMark(base, marks.exists ? marks.etag : '');
     _markCache = { data: base };
-    console.log(`[CaseRef] High-water file ${marks.markCheck === 'corrupt' ? 'rebuilt' : (marks.exists ? 'brought up to date' : 'created')} (${raised} prefix(es) raised)`);
+    console.log(`[CaseRef] High-water file ${marks.markCheck === 'missing' ? 'recreated' : (marks.exists ? 'brought up to date' : 'created')} (${raised} prefix(es) raised)`);
   } catch (err) {
     console.warn(`[CaseRef] Could not ${marks.markCheck === 'corrupt' ? 'rebuild' : 'seed'} the high-water file: ${err.message}`);
   }
@@ -228,12 +234,14 @@ async function recordAssigned(ref) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const cur = await io.readMark();
-      const data = (cur && cur.data && typeof cur.data === 'object') ? { ...cur.data } : {};
-      if ((Number(data[prefix]) || 0) >= seq) { _markCache = { data }; return true; }
+      // No file (deleted by hand?): start from everything this process knows —
+      // a re-created record must never hold less than the one it replaces.
+      const data = cur ? { ...cur.data } : mergeMax(_markCache ? _markCache.data : {});
+      if ((Number(data[prefix]) || 0) >= seq) { _markCache = { data: mergeMax(_markCache ? _markCache.data : {}, data) }; return true; }
       data[prefix] = seq;
       data.updatedAt = new Date(io.now()).toISOString();
       await io.writeMark(data, cur ? cur.etag : '');
-      _markCache = { data };
+      _markCache = { data: mergeMax(_markCache ? _markCache.data : {}, data) };   // never shrink what this process knows
       return true;
     } catch (err) {
       if (err.conflict) continue;   // someone else wrote it meanwhile: read again
@@ -279,7 +287,7 @@ async function allocate(prefix) {
   const from = {
     board:   maxSeq(refs, prefix),
     folders: maxSeq(folders.names, prefix),
-    recent:  maxSeq([..._recent.keys()], prefix),
+    recent:  maxSeq([..._recent], prefix),
     mark:    Number(marks.marks[prefix]) || 0,
   };
   let seq = Math.max(from.board, from.folders, from.recent, from.mark) + 1;
@@ -293,6 +301,33 @@ async function allocate(prefix) {
     seq++;
   }
   throw new Error(`no free case number found after ${MAX_PROBES} tries above ${prefix}${from.board} — every one is already used on a board`);
+}
+
+/**
+ * Prove — on a scratch file beside the record, never the record itself — that
+ * OneDrive honours the two conditions the record relies on: create-only and
+ * "only over this version". Admin-triggered (POST /admin/case-refs/probe-record).
+ * Leaves the small scratch file behind (nothing is ever deleted).
+ * @returns {Promise<{ ok: boolean, steps: Array<{ step: string, expected: string, got: string, ok: boolean }> }>}
+ */
+async function probeRecordWrites() {
+  const od = require('./oneDriveService');
+  const path = MARK_PATH.replace(/\.json$/, `.probe-${new Date(io.now()).toISOString().replace(/[:.]/g, '-')}.json`);
+  const steps = [];
+  const step = async (name, expected, fn) => {
+    let got;
+    try { const r = await fn(); got = r === undefined ? 'ok' : r; } catch (err) { got = err.conflict ? 'conflict' : `error: ${err.message}`; }
+    steps.push({ step: name, expected, got: String(typeof got === 'object' ? JSON.stringify(got) : got), ok: String(got).startsWith(expected) });
+    return got;
+  };
+  await step('create a new file', 'created', async () => ((await od.writeJsonFile(path, { probe: 1 })).created ? 'created' : 'written-but-not-201'));
+  await step('create it again (must be refused)', 'conflict', async () => { await od.writeJsonFile(path, { probe: 2 }); return 'overwritten'; });
+  const cur = await od.readJsonFile(path).catch(() => null);
+  await step('write over the current version', 'ok', async () => { await od.writeJsonFile(path, { probe: 3 }, { etag: cur ? cur.etag : 'missing' }); });
+  await step('write over the OLD version (must be refused)', 'conflict', async () => { await od.writeJsonFile(path, { probe: 4 }, { etag: cur ? cur.etag : 'missing' }); return 'overwritten'; });
+  const end = await od.readJsonFile(path).catch((e) => ({ data: { error: e.message } }));
+  steps.push({ step: 'the file holds the last good write', expected: '3', got: String(end && end.data && end.data.probe), ok: !!(end && end.data && end.data.probe === 3) });
+  return { ok: steps.every((x) => x.ok), file: path, steps };
 }
 
 /** Read-only report for the admin audit page: per prefix, where the next number would come from. */
@@ -316,4 +351,4 @@ async function audit() {
 
 function _resetForTests() { _recent.clear(); _folderScan = null; _markCache = null; _lockTail = Promise.resolve(); }
 
-module.exports = { allocate, withAllocationLock, noteAssigned, recordAssigned, audit, maxSeq, salvageMarks, io, MARK_PATH, _resetForTests };
+module.exports = { allocate, withAllocationLock, noteAssigned, recordAssigned, audit, probeRecordWrites, maxSeq, salvageMarks, io, MARK_PATH, _resetForTests };

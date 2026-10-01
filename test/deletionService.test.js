@@ -368,3 +368,25 @@ test('execute (case): the case number is recorded as used BEFORE anything is del
     assert.equal(no.dropped.length, 0, 'no folder was deleted');
   } finally { allocator.recordAssigned = saved; no.restore.forEach((x) => x()); }
 });
+
+
+test('careful delete refuses a case number that two cases carry — it would delete the other client\'s rows too (2026-CEC-EE-086)', async () => {
+  const m = mondayStub({
+    cm: { id: '900', name: 'RUCHIKA', caseRef: '2026-CEC-EE-086', oneDriveFolderId: '' },
+    rowsByBoard: { [CM_BOARD]: [{ id: '900', name: 'RUCHIKA' }, { id: '901', name: 'Chander Sharma' }], [EXEC]: [{ id: '1', name: 'Passport' }], [QEXEC]: [], [FAMILY]: [] },
+  });
+  const restore = [
+    stub(mondayApi, 'query', m.fn),
+    stub(leadService, 'findAllByColumnValue', async () => ([])),
+    stub(clientMaster, 'findItemByCaseRef', async () => '900'),
+    stub(oneDrive, 'getDriveItemById', async () => null),
+    stub(oneDrive, 'getClientFolderByName', async () => null),
+    stub(oneDrive, 'deleteDriveItem', async () => true),
+  ];
+  try {
+    await assert.rejects(() => deletion.previewDeletion({ caseRef: '2026-CEC-EE-086' }),
+      (e) => e.badRequest === true && /is on 2 cases \("RUCHIKA", "Chander Sharma"\)/.test(e.message), 'refused at the PREVIEW already');
+    await assert.rejects(() => deletion.executeDeletion({ caseRef: '2026-CEC-EE-086', confirmText: '2026-CEC-EE-086', expectedKind: 'case' }), /is on 2 cases/);
+    assert.equal(m.deleted.length, 0);
+  } finally { restore.forEach((x) => x()); }
+});

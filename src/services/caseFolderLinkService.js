@@ -6,9 +6,9 @@
  * reference, to pick the one Monday points at (2026-10-01: a leftover test
  * folder beside the client's real one used to win on item count alone).
  * Filled for cases created since 2026-09-08; older cases answer [] and the
- * old tie-break applies. Cached briefly; a failed read answers the last good
- * answer (or [] when there is none: the tie-break then decides, as before) —
- * never blocks an upload.
+ * old tie-break applies. Cached 5 minutes. A failed read answers the last good
+ * answer; with none, null ("unknown") — the caller then lets the tie-break
+ * guess and keeps that guess only 30 s. Never blocks an upload.
  */
 const mondayApi = require('./mondayApi');
 const { clientMasterBoardId, cmColumns } = require('../../config/monday');

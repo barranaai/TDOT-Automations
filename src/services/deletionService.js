@@ -138,6 +138,17 @@ async function resolveFolders({ folderId, nameCandidates }) {
 /** The full deletion graph for a CASE, rooted at the Client Master item. */
 async function caseGraph(cm) {
   const caseRef = cm.caseRef;
+  // Every child row below is found by the case NUMBER. If two cases carry it
+  // (2026-CEC-EE-086, found 2026-10-01), deleting "one" would delete the other
+  // client's checklist, questionnaire and family rows too — so refuse, here,
+  // before the preview even shows a count.
+  if (caseRef) {
+    const carriers = await rowsByCaseRef(clientMasterBoardId, CM_CASE_REF_COL, caseRef);
+    if (carriers.length > 1) {
+      bad(`Case number ${caseRef} is on ${carriers.length} cases (${carriers.map((c) => `"${c.name}"`).join(', ')}). ` +
+        'Give all but one of them a new number first — deleting now would also delete the other client\'s checklist, questionnaire and family rows.');
+    }
+  }
   const [execRows, qexecRows, familyRows, leads] = await Promise.all([
     caseRef ? rowsByCaseRef(EXEC_BOARD_ID, EXEC_CASE_REF_COL, caseRef) : [],
     caseRef ? rowsByCaseRef(QEXEC_BOARD_ID, QEXEC_CASE_REF_COL, caseRef) : [],

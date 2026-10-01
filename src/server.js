@@ -1299,6 +1299,19 @@ app.get('/admin/case-refs/audit', async (req, res) => {
   }
 });
 
+// Prove on production that OneDrive honours the two write conditions the
+// used-numbers record relies on (create-only; only over this version) — on a
+// scratch file beside the record, never the record itself. Admin only.
+app.post('/admin/case-refs/probe-record', async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can run this.')) return;
+  try {
+    res.json(await require('./services/caseRefAllocator').probeRecordWrites());
+  } catch (err) {
+    console.error('[CaseRefProbe] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // READ-ONLY: one root folder under "Client Documents" by its EXACT name, with
 // every file (who/when) in it and its sub-folders — for looking into a folder
 // the app does not resolve a case to (see oneDriveService.listRootFolderTree).

@@ -149,3 +149,70 @@ test('right after a restart, a failed Monday read makes the tie-break a GUESS: k
     assert.equal(await m.resolveCaseFolderName({ clientName: 'Ameena Begum', caseRef: '2026-VV-008' }), 'Ameena Begum - 2026-VV-008', 'asked again after 30 s');
   } finally { Date.now = realNow; }
 }));
+
+/* ───────────── audit round (2026-10-01) ───────────── */
+
+test('a GUESS (link unreadable) is never followed by a heal path: a failed folder check re-asks instead of pinning the guessed folder for 10 minutes', quiet(async () => {
+  const set = (rel, exports) => { const p = require.resolve(rel); require.cache[p] = { id: p, filename: p, loaded: true, exports }; };
+  let confirmFails = true;
+  set('axios', { get: async (url) => {
+    const u = decodeURIComponent(url);
+    if (/root:\/Client Documents:\/children/.test(u)) return { data: { value: SPLIT.map((f) => ({ id: f.id, name: f.name, folder: { childCount: f.childCount } })) } };
+    if (/root:\/Client Documents\/Praj - 2026-VV-008:$/.test(u) || /root:\/Client Documents\/Praj - 2026-VV-008:\?/.test(u)) { if (confirmFails) { const e = new Error('503'); e.response = { status: 503 }; throw e; } return { data: { id: 'TEST', name: 'Praj - 2026-VV-008' } }; }
+    throw new Error('unexpected ' + u);
+  } });
+  set('../src/services/microsoftMailService', { getAccessToken: async () => 'tok', invalidateAccessToken: () => {} });
+  const p = require.resolve('../src/services/oneDriveService');
+  delete require.cache[p];
+  const m = require(p);
+  m._clearCaseFolderCache();
+  let linkUp = false;
+  m.setCaseFolderLinkLookup(async () => (linkUp ? ['REAL'] : null));
+  assert.equal(await m.resolveCaseFolderName({ clientName: 'Ameena Begum', caseRef: '2026-VV-008' }), 'Praj - 2026-VV-008', 'the guess');
+  linkUp = true;   // Monday answers again
+  const name = await m.resolveCaseFolderNameForWrite({ clientName: 'Ameena Begum', caseRef: '2026-VV-008' });
+  assert.equal(name, 'Ameena Begum - 2026-VV-008', 'the heal re-asked (and the link won) instead of following the guessed folder');
+}));
+
+test('a guess made by findCaseFolderByRef also expires after 30 s', quiet(async () => {
+  const m = od(SPLIT);
+  let up = false, now = Date.now();
+  const realNow = Date.now; Date.now = () => now;
+  try {
+    m.setCaseFolderLinkLookup(async () => (up ? ['REAL'] : null));
+    assert.equal((await m.findCaseFolderByRef('2026-VV-008')).id, 'TEST');
+    up = true; now += 31 * 1000;
+    assert.equal(await m.resolveCaseFolderName({ clientName: 'Ameena Begum', caseRef: '2026-VV-008' }), 'Ameena Begum - 2026-VV-008');
+  } finally { Date.now = realNow; }
+}));
+
+test('linkedFolderIds reads the RIGHT board and columns through Monday, with one retry at most (an upload never waits long on it)', async () => {
+  const set = (rel, exports) => { const q = require.resolve(rel); require.cache[q] = { id: q, filename: q, loaded: true, exports }; };
+  const calls = [];
+  set('../src/services/mondayApi', { query: async (q, v, retries) => { calls.push({ q, v, retries }); return { items_page_by_column_values: { items: [{ id: '1', column_values: [{ text: 'REAL' }] }] } }; } });
+  const p = require.resolve('../src/services/caseFolderLinkService');
+  delete require.cache[p];
+  const s = require(p);
+  assert.deepEqual(await s.linkedFolderIds('2026-VV-008'), ['REAL']);
+  const c = calls[0];
+  assert.equal(c.v.b, String(require('../config/monday').clientMasterBoardId));
+  assert.equal(c.v.v, '2026-VV-008');
+  assert.match(c.q, /column_id:"text_mm142s49"/);
+  assert.match(c.q, /column_values\(ids:\["text_mm47y540"\]\)/);
+  assert.equal(c.retries, 1);
+  delete require.cache[require.resolve('../src/services/mondayApi')];
+});
+
+test('the planner uses the link only when the Cases rows agree on ONE folder — like the live app', () => {
+  const p = require.resolve('../src/services/workFoldersBackfillService');
+  delete require.cache[p];
+  const { planBackfill } = require(p);
+  const pick = (hits) => [...hits].sort((a, b) => (b.childCount || 0) - (a.childCount || 0))[0];
+  const row = (id, caseRef, folderId) => ({ id, name: 'x' + id, state: 'active', groupId: 'g', caseRef, folderId });
+  // two rows, one ref, linking DIFFERENT folders: no authority → the tie-break, ONE target
+  const plan = planBackfill({ pick, rootFolders: SPLIT, cases: [row('1', '2026-VV-008', 'REAL'), row('2', '2026-VV-008', 'TEST')] });
+  assert.deepEqual(plan.targets.map((t) => t.folderId), ['TEST']);
+  // two rows agreeing (one blank): the link wins
+  const plan2 = planBackfill({ pick, rootFolders: SPLIT, cases: [row('1', '2026-VV-008', 'REAL'), row('2', '2026-VV-008', '')] });
+  assert.deepEqual(plan2.targets.map((t) => t.folderId), ['REAL']);
+});

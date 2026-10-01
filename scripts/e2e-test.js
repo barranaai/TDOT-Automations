@@ -7,7 +7,7 @@
  *
  *   Step 1  — Create test item on Client Master Board
  *   Step 2  — Assign Access Token (onItemCreated)
- *   Step 3  — Set Case Type → generate Case Reference Number
+ *   Step 3  — Set Case Type → the server assigns the Case Reference Number (waited for, never assigned here)
  *   Step 4  — Trigger Retainer Paid → Document Collection Started
  *   Step 5  — Trigger Document Checklist creation (checklistService)
  *   Step 6  — Trigger Questionnaire Execution creation (questionnaireService)
@@ -40,7 +40,6 @@ require('dotenv').config();
 
 const mondayApi = require('../src/services/mondayApi');
 const { onItemCreated: assignToken } = require('../src/services/accessTokenService');
-const { onCaseTypeSet }              = require('../src/services/caseRefService');
 const { onRetainerPaid }             = require('../src/services/retainerService');
 const { onDocumentCollectionStarted } = require('../src/services/checklistService');
 const { onDocumentCollectionStarted: onQStarted } = require('../src/services/questionnaireService');
@@ -252,13 +251,13 @@ async function main() {
     );
     info(`Case Type column set to "${TEST_CASE_TYPE}"`);
 
-    // Now trigger the case ref service
-    await onCaseTypeSet({ itemId: testItemId, caseType: TEST_CASE_TYPE });
-
-    await sleep(800);
-
-    const cols = await fetchItemColumns(testItemId, [CM.caseRef]);
-    testCaseRef = cols[CM.caseRef];
+    // The LIVE server assigns the number (the Case Type webhook) — this script
+    // must not allocate one itself: two processes allocating at once is how
+    // two cases ended up sharing 2026-CEC-EE-086. Wait for the server's number.
+    for (let waited = 0; waited < 60000 && !testCaseRef; waited += 2000) {
+      await sleep(2000);
+      testCaseRef = (await fetchItemColumns(testItemId, [CM.caseRef]))[CM.caseRef] || null;
+    }
 
     if (testCaseRef && /^\d{4}-\w+-\d{3}$/.test(testCaseRef)) {
       record('Step 3 — Case Reference generated', true, testCaseRef);

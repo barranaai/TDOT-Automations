@@ -92,17 +92,6 @@ function prefixFor(caseType) {
   return `${new Date().getFullYear()}-${CASE_TYPE_ABBR[caseType] || 'MISC'}-`;
 }
 
-/**
- * The next case number for a case type — never one handed out before
- * (caseRefAllocator: board + OneDrive folder names + this process's recent
- * numbers, then checked against every board that carries references).
- * Callers that WRITE the number must hold caseRefAllocator.withAllocationLock
- * from here until the write, and call noteAssigned after it (onCaseTypeSet does).
- * @returns {Promise<string>}
- */
-async function generateCaseRef(caseType) {
-  return (await require('./caseRefAllocator').allocate(prefixFor(caseType))).ref;
-}
 
 async function updateSubTypeHint(itemId, caseType) {
   const subTypes = SUB_TYPES_BY_CASE[caseType] || [];
@@ -137,39 +126,54 @@ async function onCaseTypeSet({ itemId, caseType }) {
     console.error('[CaseRef] Error updating sub type hint:', err.message)
   );
 
-  // Only assign a Case Ref if the item doesn't already have one
-  const existing = await getItemCaseRef(itemId);
-  if (existing) {
-    console.log(`[CaseRef] Item ${itemId} already has ref "${existing}", skipping`);
-    return;
-  }
-
   // One allocation at a time, from choosing the number until it is written —
   // and the "already has one?" question asked again INSIDE the lock, so a
   // webhook delivered twice cannot give one case two numbers.
   const allocator = require('./caseRefAllocator');
-  const assigned = await allocator.withAllocationLock(async () => {
-    const again = await getItemCaseRef(itemId);
-    if (again) return { already: again };
-    const a = await allocator.allocate(prefixFor(caseType));
-    await mondayApi.query(
-      `mutation($itemId: ID!, $boardId: ID!, $value: JSON!) {
-         change_column_value(
-           item_id:   $itemId,
-           board_id:  $boardId,
-           column_id: "${CASE_REF_COL}",
-           value:     $value
-         ) { id }
-       }`,
-      {
-        itemId:  String(itemId),
-        boardId: String(clientMasterBoardId),
-        value:   JSON.stringify(a.ref),
-      }
-    );
-    a.markSaved = await allocator.recordAssigned(a.ref);   // the high-water mark: best effort, the number stands either way
-    return a;
-  });
+  let assigned;
+  try {
+    // Only assign a Case Ref if the item doesn't already have one (a quick
+    // answer for the common case, before queueing for the lock).
+    const existing = await getItemCaseRef(itemId);
+    if (existing) {
+      console.log(`[CaseRef] Item ${itemId} already has ref "${existing}", skipping`);
+      return;
+    }
+    assigned = await allocator.withAllocationLock(async () => {
+      const again = await getItemCaseRef(itemId);
+      if (again) return { already: again };
+      const a = await allocator.allocate(prefixFor(caseType));
+      // Reserved BEFORE it is written: if the write fails (or half-succeeds),
+      // the number is simply never used — burning one is harmless, reusing one is not.
+      a.markSaved = await allocator.recordAssigned(a.ref);   // best effort: the number stands either way
+      await mondayApi.query(
+        `mutation($itemId: ID!, $boardId: ID!, $value: JSON!) {
+           change_column_value(
+             item_id:   $itemId,
+             board_id:  $boardId,
+             column_id: "${CASE_REF_COL}",
+             value:     $value
+           ) { id }
+         }`,
+        {
+          itemId:  String(itemId),
+          boardId: String(clientMasterBoardId),
+          value:   JSON.stringify(a.ref),
+        }
+      );
+      return a;
+    });
+  } catch (err) {
+    // A case with no number stalls everything after it (portal link, folder,
+    // checklist) — staff must see why and how to retry, not a blank column.
+    console.error(`[CaseRef] Could not assign a case number to item ${itemId} (${caseType}): ${err.message}`);
+    await mondayApi.query(`mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`, {
+      itemId: String(itemId),
+      body: `⚠ No case number could be assigned (${String(err.message || err).replace(/[<>]/g, '').slice(0, 200)}). ` +
+        `Clear the Primary Case Type and select it again to retry — if it keeps failing, tell an admin.`,
+    }).catch((e) => console.error(`[CaseRef] …and the note about it could not be posted on item ${itemId}: ${e.message}`));
+    throw err;
+  }
   if (assigned.already) {
     console.log(`[CaseRef] Item ${itemId} got ref "${assigned.already}" meanwhile, skipping`);
     return;
@@ -442,11 +446,6 @@ async function resumeOnboardingIfStuck({ itemId, caseRef }) {
 }
 
 /**
- * Write the Client Portal Link column on the Client Master row.
- * Pulls (or generates) the access token first so the URL is fully usable.
- * Idempotent — safe to run multiple times for the same item.
- */
-/**
  * After a number is written: tell staff when it could not be checked against
  * OneDrive, or when another Cases-board row carries the same number (a number
  * typed by hand, or one given out by something other than this process).
@@ -476,6 +475,11 @@ async function checkAssignedRef({ itemId, caseRef, assigned }) {
   }
 }
 
+/**
+ * Write the Client Portal Link column on the Client Master row.
+ * Pulls (or generates) the access token first so the URL is fully usable.
+ * Idempotent — safe to run multiple times for the same item.
+ */
 async function writePortalLinkForItem({ itemId, caseRef }) {
   const accessToken = await ensureAccessToken(itemId).catch(() => '');
   if (!accessToken) {
@@ -504,7 +508,7 @@ async function writePortalLinkForItem({ itemId, caseRef }) {
 }
 
 module.exports = {
-  onCaseTypeSet, generateCaseRef, prefixFor, checkAssignedRef, writePortalLinkForItem, CASE_TYPE_ABBR, resumeOnboardingIfStuck,
+  onCaseTypeSet, prefixFor, checkAssignedRef, writePortalLinkForItem, CASE_TYPE_ABBR, resumeOnboardingIfStuck,
   _setRetryMsForTests: (ms) => { CASE_REF_RETRY_MS = ms; },
   // Exported for tests: the rename is what keeps a client to ONE folder.
   renameClientFolderForItem, folderIdFromLead,

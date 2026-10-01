@@ -223,7 +223,7 @@ router.post('/', async (req, res) => {
       if (caseType) {
         console.log(`[Webhook] Primary Case Type set to "${caseType}" for item ${pulseId}`);
         caseRefService.onCaseTypeSet({ itemId: pulseId, caseType }).catch(err =>
-          console.error('[CaseRef] Error assigning case ref:', err.message)
+          console.error(`[CaseRef] Error assigning case ref to item ${pulseId} (${caseType}):`, err.message)
         );
       }
     }
