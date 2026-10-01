@@ -1284,6 +1284,23 @@ app.get('/admin/onedrive/list', async (req, res) => {
   }
 });
 
+// READ-ONLY: one root folder under "Client Documents" by its EXACT name, with
+// every file (who/when) in it and its sub-folders — for looking into a folder
+// the app does not resolve a case to (see oneDriveService.listRootFolderTree).
+app.get('/admin/onedrive/folder-tree', async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can list a folder.')) return;
+  const name = String(req.query.name || '').trim();
+  if (!name || name.length > 200 || /[/\\]/.test(name)) return res.status(400).json({ error: 'name required (the exact folder name, no slashes)' });
+  try {
+    const tree = await require('./services/oneDriveService').listRootFolderTree(name);
+    if (!tree) return res.status(404).json({ error: 'no folder with that name', name });
+    res.json(tree);
+  } catch (err) {
+    console.error(`[OneDriveTree] failed for "${name}":`, err.message);
+    res.status(err.transient ? 503 : 500).json({ error: err.transient ? 'OneDrive temporarily unavailable' : err.message });
+  }
+});
+
 // Re-file a case's "General" uploads into their category folders (ADMIN ONLY,
 // dry-run by default). Only OneDrive moves — never deletes, never Monday.
 // One-off: add the four staff working folders (1-Coordinator-Working …

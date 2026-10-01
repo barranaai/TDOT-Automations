@@ -622,6 +622,56 @@ async function findCaseFoldersByRef(caseRef) {
 }
 
 /**
+ * READ-ONLY: one root folder under "Client Documents" by its EXACT name, with
+ * every file in it and in each of its sub-folders — who created and last
+ * changed each file, and when. For looking into a folder the app does NOT
+ * resolve a case to (a client's real folder beside a leftover test folder):
+ * the case-based listings only ever show the folder the app picks.
+ * Returns null when no folder has that name. Never writes.
+ *
+ * @returns {Promise<null | { folder: {id,name,webUrl,createdAt}, rootFiles: object[], folders: Array<{ id, name, createdAt, files: object[] }> }>}
+ */
+async function listRootFolderTree(folderName) {
+  const safeName = String(folderName || '').replace(/[*:"<>?/\\|]/g, '').trim();
+  if (!safeName) return null;
+  const SELECT = '$select=id,name,size,file,folder,createdDateTime,lastModifiedDateTime,createdBy,lastModifiedBy&$top=200';
+  const who = (by) => (by && by.user && (by.user.displayName || by.user.email)) || (by && by.application && by.application.displayName) || '';
+  const entry = (it) => ({ id: it.id, name: String(it.name || ''), size: it.size, isFolder: Boolean(it.folder),
+    createdAt: it.createdDateTime || '', modifiedAt: it.lastModifiedDateTime || '', createdBy: who(it.createdBy), modifiedBy: who(it.lastModifiedBy) });
+  try {
+    return await withGraphAuth('listRootFolderTree', async (token) => {
+      const headers = { Authorization: `Bearer ${token}` };
+      const page = async (firstUrl) => {
+        const out = []; let next = firstUrl;
+        while (next) {
+          const res = await axios.get(next, { headers, timeout: GRAPH_TIMEOUT_MS });
+          for (const it of (res.data?.value || [])) out.push(entry(it));
+          next = res.data?.['@odata.nextLink'] || null;
+        }
+        return out;
+      };
+      let top;
+      try {
+        top = await axios.get(`${itemUrl(`${ROOT_FOLDER}/${safeName}`)}?$select=id,name,webUrl,createdDateTime`, { headers, timeout: GRAPH_TIMEOUT_MS });
+      } catch (err) {
+        if (err.response?.status === 404) return null;
+        throw err;
+      }
+      const folder = { id: top.data.id, name: top.data.name, webUrl: top.data.webUrl, createdAt: top.data.createdDateTime || '' };
+      const kids = await page(`${userBase()}/items/${encodeURIComponent(folder.id)}/children?${SELECT}`);
+      const folders = [];
+      for (const k of kids.filter((x) => x.isFolder)) {
+        const files = (await page(`${userBase()}/items/${encodeURIComponent(k.id)}/children?${SELECT}`)).filter((x) => !x.isFolder);
+        folders.push({ id: k.id, name: k.name, createdAt: k.createdAt, files });
+      }
+      return { folder, rootFiles: kids.filter((x) => !x.isFolder), folders };
+    });
+  } catch (err) {
+    throw wrapError('OneDrive folder tree listing failed', err);
+  }
+}
+
+/**
  * EVERY folder directly under "Client Documents": { id, name, childCount,
  * createdAt }. Read-only; pages the whole root listing. Same care as
  * findCaseFoldersByRef: only the FIRST page may answer "no root yet" — a 404
@@ -1201,7 +1251,7 @@ module.exports = {
   listFileVersions, readFileVersion,
   uploadFileAsNew,
   ensureCaseWorkFolders, workFoldersFailedNoteText, CASE_WORK_FOLDERS, WORK_FOLDERS_SINCE,
-  listCaseFoldersInRoot, pickCaseFolder,
+  listCaseFoldersInRoot, pickCaseFolder, listRootFolderTree,
   _resetWorkFoldersMemo: () => _workFoldersComplete.clear(),
   _workFoldersMemoHas:   (id) => _workFoldersComplete.has(String(id)),
 };
