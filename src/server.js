@@ -1301,6 +1301,28 @@ app.get('/admin/onedrive/folder-tree', async (req, res) => {
   }
 });
 
+// Repair: a case whose reference sits on a leftover test folder AND the
+// client's real folder (see caseFolderMergeService). Admin only; a preview
+// unless { dryRun: false, confirm: "MOVE-CASE-FILES" }. Moves files, renames
+// the emptied folder; never deletes.
+app.post('/admin/onedrive/merge-case-folders', express.json(), async (req, res) => {
+  const viewer = resolveAdminOrReject(req, res, 'Only an admin can move a client\'s files.');
+  if (!viewer) return;
+  const b = req.body || {};
+  try {
+    const report = await require('./services/caseFolderMergeService').mergeCaseFolders({
+      from: b.from, to: b.to, keep: b.keep === undefined ? [] : b.keep, renameFromTo: b.renameFromTo,
+      dryRun: b.dryRun !== false, confirm: String(b.confirm || ''), by: viewer.email || 'admin-key', note: b.note !== false,
+      finish: b.finish === true,
+    });
+    res.json(report);
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    console.error('[FolderMerge] failed:', err.stack || err.message);
+    res.status(err.transient ? 503 : 500).json({ error: err.transient ? 'OneDrive temporarily unavailable' : err.message });
+  }
+});
+
 // Re-file a case's "General" uploads into their category folders (ADMIN ONLY,
 // dry-run by default). Only OneDrive moves — never deletes, never Monday.
 // One-off: add the four staff working folders (1-Coordinator-Working …

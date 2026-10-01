@@ -107,6 +107,7 @@ function wrapError(prefix, err) {
   const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
   const wrapped = new Error(`${prefix}: ${detail}`);
   if (err.transient === true) wrapped.transient = true;
+  if (err.held === true) wrapped.held = true;
   return wrapped;
 }
 
@@ -568,6 +569,24 @@ const _caseFolderInFlight = new Map();      // caseRef -> Promise, so N callers 
 const _caseFolderConfirm  = new Map();      // `ref\nname` -> Promise, so a burst of absent-file probes costs one lookup
 const _caseFolderFollow   = new Map();      // `ref\nid`   -> Promise, so a burst healing one rename pages the root once
 const CASE_FOLDER_TTL_MS     = 10 * 60 * 1000;   // a rename mid-process heals within this
+/**
+ * Cases whose folder is being REPAIRED right now (caseFolderMergeService):
+ * between "the test folder comes off the reference" and "every file is in the
+ * real folder", a lookup would land on the real folder and find files missing
+ * — a page view then seeds a blank questionnaire there. So while a case is
+ * held, every resolution throws a transient error: callers answer 503 "try
+ * again shortly" and the client engine freezes its writes. Seconds, once.
+ */
+const _caseFolderHold = new Map();           // caseRef -> { since, why }
+function holdCaseFolder(caseRef, why = 'folder repair in progress') { _caseFolderHold.set(String(caseRef || '').trim(), { since: Date.now(), why }); }
+function releaseCaseFolder(caseRef) { _caseFolderHold.delete(String(caseRef || '').trim()); }
+function assertNotHeld(ref) {
+  const h = _caseFolderHold.get(ref);
+  if (!h) return;
+  const e = new Error(`case ${ref}: ${h.why} — try again in a minute`);
+  e.transient = true; e.held = true;
+  throw e;
+}
 const CASE_FOLDER_MISS_TTL_MS = 30 * 1000;       // a case with no folder yet re-checks soon after setup
 
 /** The folder a case's documents live in: "<client name> - <case ref>", sanitised. */
@@ -588,6 +607,7 @@ function caseFolderName({ clientName, caseRef }) {
 async function findCaseFoldersByRef(caseRef) {
   const ref = String(caseRef || '').trim();
   if (!ref) return [];
+  assertNotHeld(ref);
   const suffix = ` - ${ref}`;
   try {
     return await withGraphAuth('foldersByRef', async (token) => {
@@ -629,7 +649,8 @@ async function findCaseFoldersByRef(caseRef) {
  * the case-based listings only ever show the folder the app picks.
  * Returns null when no folder has that name. Never writes.
  *
- * @returns {Promise<null | { folder: {id,name,webUrl,createdAt}, rootFiles: object[], folders: Array<{ id, name, createdAt, files: object[] }> }>}
+ * Folders nested inside a sub-folder are listed as `nested` (not descended into) so nothing is invisible.
+ * @returns {Promise<null | { folder: {id,name,webUrl,createdAt}, rootFiles: object[], folders: Array<{ id, name, createdAt, files: object[], nested: Array<{id,name}> }> }>}
  */
 async function listRootFolderTree(folderName) {
   const safeName = String(folderName || '').replace(/[*:"<>?/\\|]/g, '').trim();
@@ -661,14 +682,89 @@ async function listRootFolderTree(folderName) {
       const kids = await page(`${userBase()}/items/${encodeURIComponent(folder.id)}/children?${SELECT}`);
       const folders = [];
       for (const k of kids.filter((x) => x.isFolder)) {
-        const files = (await page(`${userBase()}/items/${encodeURIComponent(k.id)}/children?${SELECT}`)).filter((x) => !x.isFolder);
-        folders.push({ id: k.id, name: k.name, createdAt: k.createdAt, files });
+        const inside = await page(`${userBase()}/items/${encodeURIComponent(k.id)}/children?${SELECT}`);
+        folders.push({ id: k.id, name: k.name, createdAt: k.createdAt, files: inside.filter((x) => !x.isFolder), nested: inside.filter((x) => x.isFolder).map((x) => ({ id: x.id, name: x.name })) });
       }
       return { folder, rootFiles: kids.filter((x) => !x.isFolder), folders };
     });
   } catch (err) {
     throw wrapError('OneDrive folder tree listing failed', err);
   }
+}
+
+/**
+ * Move ONE item (by id) into a folder (by id). A same-named file there keeps
+ * both (conflictBehavior=rename) — nothing is ever replaced or deleted.
+ * Returns the stored name after the move (differs only on a clash) and webUrl.
+ */
+async function moveItemById({ itemId, toFolderId }) {
+  if (!itemId || !toFolderId) throw new Error('moveItemById: itemId and toFolderId required');
+  try {
+    return await withGraphAuth('moveById', async (token) => {
+      const res = await axios.patch(`${userBase()}/items/${encodeURIComponent(itemId)}`,
+        { parentReference: { id: toFolderId }, '@microsoft.graph.conflictBehavior': 'rename' },
+        { headers: { Authorization: `Bearer ${token}` }, timeout: GRAPH_TIMEOUT_MS });
+      return { id: res.data?.id || itemId, name: res.data?.name || '', webUrl: res.data?.webUrl || '' };
+    });
+  } catch (err) {
+    throw wrapError('OneDrive move failed', err);
+  }
+}
+
+/** Rename ONE item (by id). conflictBehavior=fail: a folder already called that stops it. */
+async function renameItemById({ itemId, newName }) {
+  const safe = String(newName || '').replace(/[*:"<>?/\\|]/g, '').trim();
+  if (!itemId || !safe) throw new Error('renameItemById: itemId and newName required');
+  if (safe !== String(newName).trim()) { const e = new Error(`renameItemById: "${newName}" contains characters OneDrive does not allow`); e.badRequest = true; throw e; }
+  try {
+    return await withGraphAuth('renameById', async (token) => {
+      const res = await axios.patch(`${userBase()}/items/${encodeURIComponent(itemId)}`,
+        { name: safe, '@microsoft.graph.conflictBehavior': 'fail' },
+        { headers: { Authorization: `Bearer ${token}` }, timeout: GRAPH_TIMEOUT_MS });
+      return { id: res.data?.id || itemId, name: res.data?.name || safe, webUrl: res.data?.webUrl || '' };
+    });
+  } catch (err) {
+    throw wrapError('OneDrive rename failed', err);
+  }
+}
+
+/** Make sure a sub-folder exists inside a folder (by id); the existing one is returned as-is. */
+async function ensureSubfolderById({ parentId, name }) {
+  const safe = String(name || '').replace(/[*:"<>?/\\|]/g, '').trim();
+  if (!parentId || !safe) throw new Error('ensureSubfolderById: parentId and name required');
+  try {
+    return await withGraphAuth('ensureSubfolderById', async (token) => {
+      const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+      try {
+        const res = await axios.post(`${userBase()}/items/${encodeURIComponent(parentId)}/children`,
+          { name: safe, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }, { headers, timeout: GRAPH_TIMEOUT_MS });
+        return { id: res.data.id, name: res.data.name, created: true };
+      } catch (err) {
+        if (err.response?.status !== 409) throw err;
+        const res = await axios.get(`${userBase()}/items/${encodeURIComponent(parentId)}/children?$select=id,name,folder&$top=200`, { headers, timeout: GRAPH_TIMEOUT_MS });
+        const hit = (res.data?.value || []).find((c) => c.folder && String(c.name).toLowerCase() === safe.toLowerCase());
+        if (!hit) throw err;
+        return { id: hit.id, name: hit.name, created: false };
+      }
+    });
+  } catch (err) {
+    throw wrapError('OneDrive sub-folder failed', err);
+  }
+}
+
+/** A staff-openable (organisation) link to an item, by id. */
+async function orgLinkById(itemId) {
+  if (!itemId) throw new Error('orgLinkById: itemId required');
+  try { return await withGraphAuth('orgLinkById', (token) => createOrgLink(token, itemId)); }
+  catch (err) { throw wrapError('OneDrive link failed', err); }
+}
+
+/** Forget what the process remembers about a case's folder (after a repair renamed or merged folders). */
+function forgetCaseFolder(caseRef) {
+  const ref = String(caseRef || '').trim();
+  _caseFolderName.delete(ref); _caseFolderInFlight.delete(ref);
+  for (const k of [..._caseFolderConfirm.keys()]) if (k.startsWith(ref + '\n')) _caseFolderConfirm.delete(k);
+  for (const k of [..._caseFolderFollow.keys()])  if (k.startsWith(ref + '\n')) _caseFolderFollow.delete(k);
 }
 
 /**
@@ -731,6 +827,7 @@ function pickCaseFolder(hits, caseRef) {
  */
 async function findCaseFolderByRef(caseRef) {
   const ref = String(caseRef || '').trim();
+  assertNotHeld(ref);
   const hits = await findCaseFoldersByRef(ref);
   if (!hits.length) return null;
   // An identity that was FOLLOWED - traced to the driveItem known to hold this
@@ -765,6 +862,7 @@ function liveCaseFolderEntry(ref) {
 
 async function resolveCaseFolderName({ clientName, caseRef }) {
   const ref = String(caseRef || '').trim();
+  assertNotHeld(ref);
   const expected = caseFolderName({ clientName, caseRef });
   const hit = liveCaseFolderEntry(ref);
   if (hit) return hit.name || expected;
@@ -804,6 +902,7 @@ async function resolveCaseFolderName({ clientName, caseRef }) {
  */
 async function withCaseFolder({ clientName, caseRef }, run) {
   const ref = String(caseRef || '').trim();
+  assertNotHeld(ref);
   // Read the cache BEFORE resolving: whether the name was already known is a
   // fact, not something to infer afterwards from how long the call took. (It
   // used to be "the entry is at least 1ms old", which a real Graph round-trip
@@ -919,6 +1018,7 @@ function followKnownFolder(ref, knownId) {
  */
 async function resolveCaseFolderNameForWrite({ clientName, caseRef }) {
   const ref = String(caseRef || '').trim();
+  assertNotHeld(ref);
   const before = liveCaseFolderEntry(ref);
   const name = await resolveCaseFolderName({ clientName, caseRef });
   // Resolved in THIS call, or resolved to nothing (no folder yet - this write
@@ -1251,7 +1351,9 @@ module.exports = {
   listFileVersions, readFileVersion,
   uploadFileAsNew,
   ensureCaseWorkFolders, workFoldersFailedNoteText, CASE_WORK_FOLDERS, WORK_FOLDERS_SINCE,
-  listCaseFoldersInRoot, pickCaseFolder, listRootFolderTree,
+  listCaseFoldersInRoot, pickCaseFolder, listRootFolderTree, moveItemById, renameItemById, ensureSubfolderById, forgetCaseFolder, orgLinkById, holdCaseFolder, releaseCaseFolder,
   _resetWorkFoldersMemo: () => _workFoldersComplete.clear(),
   _workFoldersMemoHas:   (id) => _workFoldersComplete.has(String(id)),
+  _seedCaseFolderCacheForTests: (ref, entry) => _caseFolderName.set(String(ref), entry),
+  _caseFolderCacheHasForTests:  (ref) => _caseFolderName.has(String(ref)),
 };
