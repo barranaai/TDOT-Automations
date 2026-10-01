@@ -547,6 +547,12 @@
       <li>Questionnaire is set up</li>
       <li>Intake email is sent to the client</li>
     </ul>
+    <p><strong>Exceptions</strong> (the app does all of this itself — the Monday board automation on "Paid" is no longer needed):</p>
+    <ul>
+      <li>If the agreement is not yet fully signed, onboarding is <strong>on hold</strong> (a ⛔ note says so). The case moves to Document Collection Started and waits; everything starts by itself the moment the last signature lands.</li>
+      <li>If the case is <strong>already past Document Collection</strong> (for example Internal Review), marking Paid only records the payment date. The case stays where it is and nothing is sent — a 💵 note on the case says what to do if the client never had their checklist or portal email.</li>
+      <li>A second "Paid" on a case that was already set up only refreshes the payment date — except while the case is at Document Collection Started, where it also restarts the document-reminder clock (Stage Start Date, Chasing Stage, Reminder Count), so avoid toggling Paid on a client who is being chased.</li>
+    </ul>
 
     <div class="subhead">When Client Email is Corrected</div>
     <p>If the email column is updated while the case is active (Document Collection Started through Submission Preparation), the intake email is automatically re-sent to the new address. No action needed.</p>
@@ -711,7 +717,7 @@
     <div class="subhead">Stage lifecycle</div>
     <div class="stage-flow">
       <span class="stage-name">[Intake]</span><br>
-      &nbsp;&nbsp;&nbsp;↓ <span class="stage-note">Retainer marked Paid — automatic</span><br>
+      &nbsp;&nbsp;&nbsp;↓ <span class="stage-note">Retainer marked Paid — automatic (unless the case is already past Document Collection)</span><br>
       <span class="stage-name">[Document Collection Started]</span><br>
       &nbsp;&nbsp;&nbsp;↓ <span class="stage-note">Readiness ≥ threshold + no blocking items — automatic, next morning</span><br>
       <span class="stage-name">[Internal Review]</span><br>

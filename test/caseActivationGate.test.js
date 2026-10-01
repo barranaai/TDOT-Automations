@@ -148,7 +148,17 @@ test('manual board-flip (onRetainerPaid): incomplete gate defers onboarding with
   ];
   try {
     await retainerService.onRetainerPaid({ itemId: '9005' });
-    assert.equal(stageWrites.length, 0, 'no stage/flag writes on an unsigned case');
+    // 2026-10-02: the app now does the held-case setup the Monday board
+    // automation used to do (stage → Document Collection Started, flags No,
+    // payment date) — but NEVER the Stage Start Date, the "onboarding ran" marker.
+    assert.equal(stageWrites.length, 1, 'one setup write on a held case');
+    const w = JSON.parse(stageWrites[0]);
+    assert.deepEqual(w.color_mm0x8faa, { label: 'Document Collection Started' });
+    assert.deepEqual(w.color_mm0xs7kp, { label: 'No' });
+    assert.deepEqual(w.color_mm0x3tpw, { label: 'No' });
+    assert.deepEqual(w.color_mm0x3x1x, { label: 'No' });
+    assert.ok(w.date_mm0xgk76, 'payment date written');
+    assert.equal(w.date_mm0xjm1z, undefined, 'Stage Start Date is NOT written on a hold');
     assert.ok(notes.some((n) => /on hold/i.test(n) && /client signature/i.test(n)), 'deferral note posted');
   } finally { restore.reverse().forEach((x) => x()); }
 });

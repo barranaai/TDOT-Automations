@@ -10,9 +10,27 @@ const COLS = {
   automationLock:           'color_mm0x3x1x',
   chasingStage:             'color_mm1abve4',
   reminderCount:            'numeric_mm1a4e8r',
+  paymentStatus:            'color_mm0x9fnn',
 };
 
-async function onRetainerPaid({ itemId }) {
+// Stages a case sits in BEFORE onboarding (same list as onboardingResumeService):
+// a first payment at any other stage means staff moved the case on by hand.
+const EARLY_STAGES = ['', 'Not Started', 'Pre-Onboarding', 'Retainer Confirmed'];
+const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function writeCols(itemId, cols) {
+  return mondayApi.query(
+    `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
+       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues) { id }
+     }`,
+    { boardId: String(clientMasterBoardId), itemId: String(itemId), colValues: JSON.stringify(cols) }
+  );
+}
+
+const UNREADABLE_RETRY_MS = 3 * 60 * 1000;
+const _unreadableRetry = new Set();   // item ids with a retry pending (one per case per process)
+
+async function onRetainerPaid({ itemId, _retryOfUnreadable = false }) {
   const today = new Date().toISOString().split('T')[0];
 
   // ── Idempotency guard ──────────────────────────────────────────────────────
@@ -31,6 +49,9 @@ async function onRetainerPaid({ itemId }) {
   // untouched. First-time payments still get the full setup as before.
   let isFirstTimePayment = true;
   let stageAlreadyStarted = false;
+  let currentStage = '';
+  let currentPayment = '';
+  let stateRead = false;   // the state read succeeded (the guard below trusts only a real read)
   {
     // The read decides between a harmless date-refresh and a FULL RESET that
     // clears both "Applied" flags and re-fires onboarding (intake email
@@ -48,7 +69,7 @@ async function onRetainerPaid({ itemId }) {
         const data = await mondayApi.query(
           `query($itemId: ID!) {
              items(ids: [$itemId]) {
-               column_values(ids: ["${COLS.checklistTemplateApplied}", "${COLS.caseStage}"]) { id text }
+               column_values(ids: ["${COLS.checklistTemplateApplied}", "${COLS.caseStage}", "${COLS.paymentStatus}"]) { id text }
              }
            }`,
           { itemId: String(itemId) }
@@ -58,8 +79,11 @@ async function onRetainerPaid({ itemId }) {
         if ((cv[COLS.checklistTemplateApplied] || '').toLowerCase() === 'yes') {
           isFirstTimePayment = false;
         }
-        stageAlreadyStarted = cv[COLS.caseStage] === 'Document Collection Started';
+        currentStage = cv[COLS.caseStage] || '';
+        currentPayment = cv[COLS.paymentStatus] || '';
+        stageAlreadyStarted = currentStage === 'Document Collection Started';
         readOk = true;
+        stateRead = true;
       } catch (err) {
         lastErr = err;
         console.warn(`[Retainer] State read attempt ${attempt} failed for item ${itemId}: ${err.message}`);
@@ -70,13 +94,77 @@ async function onRetainerPaid({ itemId }) {
       isFirstTimePayment = false;   // fail CLOSED: date refresh only, never a blind reset
       stageAlreadyStarted = false;
       console.error(`[Retainer] State unreadable for item ${itemId} after retries (${lastErr && lastErr.message}) — treating as re-payment; NOT resetting flags`);
-      mondayApi.query(
+      // The board automation used to cover this gap (it moved the stage anyway).
+      // Now the app owns it: one more try in a few minutes, by the same path,
+      // which proceeds only when the fresh read shows a genuine first payment
+      // at an early stage (a case at Document Collection or later is left to
+      // the stage webhook / staff — a second start there could double-email).
+      if (!_retryOfUnreadable && !_unreadableRetry.has(String(itemId))) {   // never a retry of a retry
+        _unreadableRetry.add(String(itemId));
+        const t = setTimeout(() => {
+          _unreadableRetry.delete(String(itemId));
+          onRetainerPaid({ itemId, _retryOfUnreadable: true }).catch((err) => console.error(`[Retainer] Item ${itemId}: retry after unreadable state failed: ${err.message}`));
+        }, UNREADABLE_RETRY_MS);
+        if (t && t.unref) t.unref();
+      }
+      if (!_retryOfUnreadable) mondayApi.query(
         `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
         { i: String(itemId),
-          b: '⚠️ <b>Payment recorded, but the case state could not be read.</b> To be safe, nothing was reset and no onboarding was re-triggered. ' +
-             'If this is a FIRST-TIME payment and the checklist/intake never started, flip <b>Re-seed Checklist → Run</b> (and resend the intake email if needed).' }
+          b: '⚠️ <b>Payment recorded, but the case state could not be read.</b> To be safe, nothing was reset and no onboarding was re-triggered; the app tries once more in a few minutes. ' +
+             'If this is a FIRST-TIME payment and the checklist/intake still has not started after that, set the Case Stage to <b>Document Collection Started</b> (away and back if it is already there).' }
       ).catch(() => {});
     }
+  }
+
+  // A retry after an unreadable state proceeds to a full start only from an
+  // early stage; anywhere else it is a date refresh (the stage webhook or
+  // staff own the case there — a second start could double-email).
+  if (_retryOfUnreadable) {
+    if (!stateRead) { console.warn(`[Retainer] Item ${itemId}: state still unreadable on retry — payment date only`); await writeCols(itemId, { [COLS.paymentDate]: { date: today } }).catch(() => {}); return; }
+    // The flip may have been reverted in the meantime (a payment marked in
+    // error is un-marked first): a case that is not Paid now gets nothing.
+    if (currentPayment !== 'Paid') { console.log(`[Retainer] Item ${itemId}: retry after unreadable state — Payment Status is now "${currentPayment || 'blank'}", nothing written`); return; }
+    if (isFirstTimePayment && stageAlreadyStarted) {
+      // Already at Document Collection: the stage webhook / staff own the start
+      // (a second start here could double-email). Record the payment, and the
+      // explicit "No" the stage webhook's reminder-clock rule keys on, so a
+      // restart from the stage still puts the client on the reminder ladder.
+      console.log(`[Retainer] Item ${itemId}: retry after unreadable state — already at Document Collection, payment date + flag only`);
+      await writeCols(itemId, { [COLS.paymentDate]: { date: today }, [COLS.checklistTemplateApplied]: { label: 'No' } }).catch((err) => console.warn(`[Retainer] Item ${itemId}: retry write failed (${err.message})`));
+      return;
+    }
+    // Past Document Collection: the stage guard below records the payment and
+    // tells staff (the same as a readable first pass would have).
+    console.log(`[Retainer] Item ${itemId}: retry after unreadable state — ${isFirstTimePayment ? 'first payment, proceeding' : 're-payment, date only'}`);
+  }
+
+  // ── Past Document Collection: never pulled back (2026-10-02) ──────────────
+  // The Monday board automation used to move ANY case to Document Collection
+  // Started on a Paid flip, and this handler did the same for a case whose
+  // checklist flag was not "Yes" (a legacy case, or one whose flag the
+  // automation had just cleared). Thirteen Internal Review cases went
+  // backwards in six weeks, and the stage webhook then re-sent "Your case is
+  // ready". A case that staff have moved past Document Collection is theirs:
+  // record the payment date, tell them how to start onboarding if it never
+  // ran, and touch nothing else.
+  if (isFirstTimePayment && stateRead && currentStage && !EARLY_STAGES.includes(currentStage) && !stageAlreadyStarted) {
+    console.log(`[Retainer] Item ${itemId}: Paid while at "${currentStage}" — payment date only, the case stays where it is`);
+    await writeCols(itemId, { [COLS.paymentDate]: { date: today } });
+    // Still graduate the row from the pending group when the agreement is
+    // complete (the same rule as a normal first payment; lead-less rows pass).
+    try {
+      const caseGate = require('./caseGateService');
+      const claimants = await require('./leadService').findAllByColumnValue('clientMasterItemId', String(itemId));
+      const gateOf = (l) => caseGate.signatureGateForLead({ ...l, retainerPaid: (l.retainerPaid && String(l.retainerPaid).trim()) || today });
+      if (!claimants.length || claimants.some((l) => gateOf(l).complete)) await caseGate.moveCaseToActiveGroup(itemId);
+    } catch (err) { console.warn(`[Retainer] Item ${itemId}: group move skipped (${err.message})`); }
+    mondayApi.query(
+      `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+      { i: String(itemId),
+        b: `💵 <b>Payment marked while the case is at "${esc(currentStage)}".</b> The case stays at this stage — nothing was reset and no email was sent. ` +
+           'If this client never had their document checklist and portal email, flip <b>Re-seed Checklist → Run</b> and use <b>Resend portal access</b> on the client page.' }
+    ).catch((err) => console.warn(`[Retainer] Item ${itemId}: stage-guard note failed (${err.message})`));
+    return;
   }
 
   // ── Manual-flip signature gate (meeting 2026-08-13) ────────────────────────
@@ -112,12 +200,38 @@ async function onRetainerPaid({ itemId }) {
       if (!pass) {
         const missing = gateOf(claimants[0]).missing;
         console.warn(`[Retainer] Item ${itemId}: Paid flip with activation gate incomplete (missing: ${missing.join(', ')}) — onboarding DEFERRED`);
+        // The case is held, not onboarded — but it must still LOOK paid and sit
+        // at Document Collection Started, which is where the held-onboarding
+        // service starts it from when the last signature lands. The Monday
+        // board automation used to do these writes (2026-10-02: the app owns
+        // them now, so the board automation can be switched off). Same values
+        // as a first payment, minus the Stage Start Date: that date is the
+        // "onboarding ran" marker and is set only when onboarding really starts.
+        // Written BEFORE the hold note, so the resume service's "someone
+        // changed the stage after the hold" check never trips on our own write.
+        const held = {
+          [COLS.paymentDate]:              { date: today },
+          [COLS.checklistTemplateApplied]: { label: 'No' },
+          [COLS.questionnaireApplied]:     { label: 'No' },
+          [COLS.automationLock]:           { label: 'No' },
+        };
+        if (!stageAlreadyStarted) held[COLS.caseStage] = { label: 'Document Collection Started' };
+        // As load-bearing as the note (nothing re-does this write later): one
+        // retry after a beat; if it still fails, the hold note tells staff.
+        let setupFailed = '';
+        try { await writeCols(itemId, held); }
+        catch (e1) {
+          await new Promise((r) => setTimeout(r, 1500));
+          try { await writeCols(itemId, held); }
+          catch (e2) { setupFailed = e2.message; console.error(`[Retainer] Item ${itemId}: held-case setup write failed twice (${e2.message}) — stage/flags/payment date NOT written; the hold note tells staff`); }
+        }
         // This note IS the hold's record: onboardingResumeService starts the case
         // from it when the last signature lands. So one retry, and a loud log.
         const postHold = () => mondayApi.query(
           `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
           { i: String(itemId), b: `⛔ <b>Payment marked, but onboarding is on hold</b> — missing: ${missing.join(' and ')}. ` +
-            'The document checklist and client emails start automatically the moment the agreement is fully executed (meeting rule 2026-08-13: signed by both parties AND the consultant AND paid).' }
+            'The document checklist and client emails start automatically the moment the agreement is fully executed (meeting rule 2026-08-13: signed by both parties AND the consultant AND paid).' +
+            (setupFailed ? ' ⚠ The case setup (stage, checklist flags, payment date) could not be written just now — once the agreement is signed, set <b>Checklist Template Applied</b> to No and the Case Stage to <b>Document Collection Started</b> by hand.' : '') }
         );
         await postHold()
           .catch(() => new Promise((r) => setTimeout(r, 1500)).then(postHold))
@@ -159,22 +273,27 @@ async function onRetainerPaid({ itemId }) {
     cols[COLS.chasingStage]   = null;       // clear → ladder starts fresh
     cols[COLS.reminderCount]  = '0';
   }
-  const colValues = JSON.stringify(cols);
-
-  await mondayApi.query(
-    `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
-       change_multiple_column_values(
-         board_id:      $boardId,
-         item_id:       $itemId,
-         column_values: $colValues
-       ) { id }
-     }`,
-    {
-      boardId:   String(clientMasterBoardId),
-      itemId:    String(itemId),
-      colValues,
+  // The board automation used to write the stage and flags independently of
+  // this write; now it is the only one (2026-10-02). One retry after a beat;
+  // on a double failure a loud note says what to do — and nothing below runs
+  // (a start whose record never landed must not email the client).
+  try { await writeCols(itemId, cols); }
+  catch (e1) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try { await writeCols(itemId, cols); }
+    catch (e2) {
+      console.error(`[Retainer] Item ${itemId}: ${isFirstTimePayment ? 'first-payment setup' : 'payment date'} write failed twice (${e2.message}) — nothing started`);
+      if (isFirstTimePayment) {
+        await mondayApi.query(
+          `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+          { i: String(itemId),
+            b: '⚠️ <b>Payment recorded, but the case setup could not be written</b> (Monday did not accept the change). Nothing was started and no email was sent. ' +
+               'Please set the Case Stage to <b>Document Collection Started</b> (away and back if it is already there) — the intake email, document checklist and questionnaire then start by themselves.' }
+        ).catch(() => {});
+      }
+      return;
     }
-  );
+  }
 
   if (isFirstTimePayment) {
     console.log(`[Retainer] Payment confirmed for item ${itemId} — stage set to Document Collection Started`);
@@ -204,4 +323,4 @@ async function onRetainerPaid({ itemId }) {
   }
 }
 
-module.exports = { onRetainerPaid };
+module.exports = { onRetainerPaid, EARLY_STAGES, UNREADABLE_RETRY_MS, _unreadableRetry };

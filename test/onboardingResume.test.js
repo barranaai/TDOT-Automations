@@ -173,6 +173,12 @@ test('after the hold, a staff Paid flip or stage move means "can\'t tell" → re
   assert.equal(decide({ changes: [{ column: PAY, userId: '79975533', at: after }] }).code, 'changed');
   assert.equal(decide({ changes: [{ column: STAGE, userId: '79975533', at: after }] }).code, 'changed');
   assert.equal(decide({ changes: [{ column: STAGE, userId: '-4', at: after }] }).action, 'resume');
+  // 2026-10-02: the app itself writes stage + flags right BEFORE posting the hold note. Monday times a
+  // note to the second and a change to the millisecond, so a change inside the note's own second is the
+  // hold's own setup — never a person's action.
+  assert.equal(decide({ changes: [{ column: STAGE, userId: '98668063', at: HELD_AT + 800 }] }).action, 'resume');
+  assert.equal(decide({ changes: [{ column: STAGE, userId: '98668063', at: HELD_AT + 999 }] }).action, 'resume');
+  assert.equal(decide({ changes: [{ column: STAGE, userId: '98668063', at: HELD_AT + 1000 }] }).code, 'changed');
   // changes at or before the newest hold were themselves held again (Mehak: her Paid flip precedes both notes)
   assert.equal(decide({ changes: [{ column: PAY, userId: '79975533', at: HELD_AT - 5000 }] }).action, 'resume');
   // every path reads the history — including the last signature (a start made in the countersign

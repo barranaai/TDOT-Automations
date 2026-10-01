@@ -293,8 +293,8 @@ router.post('/', async (req, res) => {
           const chk = {};
           for (const c of (chkData?.items?.[0]?.column_values || [])) chk[c.id] = (c.text || '').trim();
           const alreadyOnboarded = (chk.color_mm0xs7kp || '').toLowerCase() === 'yes';
-          // Only a payment-flow case (the explicit "No" the payment webhook and the
-          // board automation write) — a legacy, manually-managed case (blank) is
+          // Only a payment-flow case (the explicit "No" the payment webhook writes
+          // on a first payment and on a hold) — a legacy, manually-managed case (blank) is
           // never put on the reminder ladder by a re-drag.
           startDateBlank = !!chkData?.items?.[0] && !chk.date_mm0xjm1z && (chk.color_mm0xs7kp || '').toLowerCase() === 'no';
           if (!alreadyOnboarded) {

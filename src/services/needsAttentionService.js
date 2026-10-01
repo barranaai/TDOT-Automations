@@ -110,6 +110,7 @@ const NOTE = {
   stateUnreadable:  /Payment recorded, but the case state could not be read/i,
   hold:             /Payment marked, but onboarding is on hold|Onboarding deferred:\s*missing\b/i,
   paymentUnverified:/Onboarding NOT started:\s*the payment status could not be verified/i,
+  paidPastDocs:     /Payment marked while the case is at/i,          // retainerService stage guard (2026-10-02)
   started:          /Onboarding started automatically/i,
   actionReport:     /Fully signed and paid, but onboarding did not start automatically/i,
   finalReport:      /Held onboarding not restarted automatically/i,
@@ -446,7 +447,7 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
   /** The case has no document checklist: say why, once. */
   function checklistProblem(c, notes) {
     const family = [NOTE.hold, NOTE.started, NOTE.finalReport, NOTE.actionReport, NOTE.subtypeMissing, NOTE.subtypeWrong,
-      NOTE.seedFailed, NOTE.reseedFailed, NOTE.stateUnreadable, NOTE.paymentUnverified, NOTE.checklistOk];
+      NOTE.seedFailed, NOTE.reseedFailed, NOTE.stateUnreadable, NOTE.paymentUnverified, NOTE.checklistOk, NOTE.paidPastDocs];
     let latest = notes.find((n) => family.some((re) => re.test(n.text))) || null;
     // A re-seed that failed for want of a usable Sub Type ("No code schema
     // registered"): the Sub Type note still says what to do (and keeps its key).
@@ -458,6 +459,17 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
     const t = latest ? latest.text : '';
     const fp = (tag) => `${c.id}|${tag}|${latest ? latest.id : ''}`;
 
+    if (latest && NOTE.paidPastDocs.test(t)) {
+      // Marked Paid after staff moved the case past Document Collection: the
+      // app never onboarded it (by design — it is staff's), and it has no checklist.
+      if (!isPaid(c)) return;
+      add('no-checklist', c, fp('paid-past-docs'), {
+        since: latest.at,
+        why: `Marked Paid on ${dateWord(latest.at)} while the case was already at "${c.stage}" — the app did not start onboarding, and the case has no document checklist.`,
+        todo: 'If the agreement is fully signed and the client still has documents to send, flip Re-seed Checklist → Run, and use Resend portal access on the case page if they never got "Your case is ready". Otherwise mark this handled.',
+      });
+      return;
+    }
     if (latest && NOTE.hold.test(t)) {
       if (!isPaid(c)) return;                                  // no longer paid: nothing waits on signatures
       const missing = heldFor(t) || 'the signatures';
@@ -533,7 +545,7 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
 /** Which refs need a Documents-board check (the rest are never asked). */
 function refsNeedingChecklist(cases) {
   const family = [NOTE.hold, NOTE.finalReport, NOTE.actionReport, NOTE.subtypeMissing, NOTE.subtypeWrong,
-    NOTE.seedFailed, NOTE.reseedFailed, NOTE.stateUnreadable, NOTE.paymentUnverified, NOTE.started];
+    NOTE.seedFailed, NOTE.reseedFailed, NOTE.stateUnreadable, NOTE.paymentUnverified, NOTE.started, NOTE.paidPastDocs];
   const refs = new Set();
   for (const c of cases) {
     if (!c.ref || isTestCase(c) || isClosed(c)) continue;

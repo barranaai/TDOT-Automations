@@ -8,9 +8,10 @@
  * ------------------------------------------------------------------------
  * Staff record e-transfers by setting Payment Status = "Paid" by hand, and
  * sometimes do it before the agreement is fully executed. The Paid webhook
- * (retainerService.onRetainerPaid) and the Case Stage webhook (the board
- * automation moves the stage to Document Collection Started on the same
- * change) both correctly HOLD onboarding and post a note saying it "starts
+ * (retainerService.onRetainerPaid) and the Case Stage webhook (the Paid
+ * webhook itself moves the stage to Document Collection Started on a hold —
+ * since 2026-10-02; a board automation did before) both correctly HOLD
+ * onboarding and post a note saying it "starts
  * automatically" once the agreement is fully signed. But the last signature
  * lands in paymentService.advanceCaseToPaid, which finds the case already
  * "Paid" and — to never write "Paid" twice — does nothing more. No webhook
@@ -216,11 +217,16 @@ function decide(input) {
   // hold). Without a trace we can't tell whether the intake email already went,
   // so a person decides. A change made WHILE held always leaves a newer hold
   // note (the Paid flip and the move back to Document Collection are both held
-  // again), and the board automation's own stage moves (user -4) follow a Paid
-  // flip and say nothing new.
+  // again), and a board automation's own stage moves (user -4; the "Paid →
+  // Document Collection" one wrote them until 2026-10-02, when the app took
+  // that over — kept for the history already on the boards) say nothing new.
   if (changes === undefined) return { action: 'need', what: 'changes', since: notes.heldAt };
   if (changes === null) return { action: 'none', code: 'unreadable', detail: 'the change history could not be read' };
-  const acted = changes.filter((c) => c.at > notes.heldAt
+  // Monday reports a note's created_at to the SECOND, the change history to the
+  // millisecond: a change inside the hold note's own second is the hold's own
+  // setup (retainerService writes stage + flags right before posting the note)
+  // — nobody changes a stage by hand within the second the app posts its note.
+  const acted = changes.filter((c) => c.at >= notes.heldAt + 1000
     && (c.column === COLS.paymentStatus || (c.column === COLS.stage && s(c.userId) !== AUTOMATION_USER_ID)));
   if (acted.length) return report('changed');
   return { action: 'resume' };
