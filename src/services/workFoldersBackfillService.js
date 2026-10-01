@@ -40,17 +40,16 @@ const ATTEMPT_DEADLINE_MS = 120000;         // one folder, one try: never wait l
 const PREVIEW_VALID_MS = 6 * 3600 * 1000;   // a real run acts on what a preview from the last 6 hours saw — no older
 
 /**
- * Left out on purpose (Faran, 2026-09-30, after the production preview): these
- * real clients' case references are ALSO carried by leftover TEST folders, and
- * the app resolves the case to the test folder. Four more sub-folders there
+ * Left out on purpose (Faran, 2026-09-30, after the production preview): a
+ * real client's case reference that is ALSO carried by a leftover TEST folder,
+ * so the app resolves the case to the test folder. Four more sub-folders there
  * would only make that wrong choice harder to undo. Take a reference out of
  * this list once its folder is sorted, and run the job again.
  */
 const LEAVE_OUT = new Map([
-  ['2026-CEC-PR-002', 'test folder "Kamalpreet - 2026-CEC-PR-002"'],
-  ['2026-VV-008',     'test folder "Praj - 2026-VV-008"'],
-  ['2026-SP-015',     'test folder "TEST CLIENT - E2E 1788536909757 - 2026-SP-015"'],
-  ['2026-SP-004',     'test folders "TEST CLIENT - E2E 1780224413906" / "ZZ Folder E2E"'],
+  // 2026-CEC-PR-002, 2026-VV-008 and 2026-SP-015 were repaired on 2026-10-01 (caseFolderMergeService: the test
+  // folders were renamed off the reference, the clients' files copied into their real folders) and are back in.
+  ['2026-SP-004',     'test folders "TEST CLIENT - E2E 1780224413906" / "ZZ Folder E2E" — the client has no real folder'],
 ]);
 const LEFT_OUT_REASON = 'left out: the app resolves it to a leftover test folder (sort that first)';
 

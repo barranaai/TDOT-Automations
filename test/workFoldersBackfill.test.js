@@ -497,27 +497,27 @@ test('the report order is the four names as the app defines them', () => {
 
 /* ───────────── after the production preview (2026-09-30): the leave-out list and the preview gate ───────────── */
 
-test('the four clients whose case resolves to a leftover TEST folder are left out — by name, with the reason, even though a folder exists', quiet(async () => {
+test('a client whose case resolves to a leftover TEST folder is left out — by name, with the reason, even though a folder exists; the three repaired ones are back in', quiet(async () => {
   const { LEAVE_OUT, planBackfill } = svc();
-  assert.deepEqual([...LEAVE_OUT.keys()].sort(), ['2026-CEC-PR-002', '2026-SP-004', '2026-SP-015', '2026-VV-008']);
+  assert.deepEqual([...LEAVE_OUT.keys()].sort(), ['2026-SP-004'], 'PR-002, VV-008 and SP-015 were repaired on 2026-10-01 and are back in');
   const plan = planBackfill({
     pick,
     rootFolders: [
-      { id: 'T1', name: 'Praj - 2026-VV-008', childCount: 7 }, { id: 'R1', name: 'Ameena Begum - 2026-VV-008', childCount: 2 },
+      { id: 'R1', name: 'Ameena Begum - 2026-VV-008', childCount: 5 },                      // repaired: back in
       { id: 'T2', name: 'TEST CLIENT - E2E 1780224413906 - 2026-SP-004', childCount: 5 },
       { id: 'OK', name: 'Ada - 2026-VV-001', childCount: 3 },
     ],
     cases: [row('1', 'Ameena Begum', '2026-VV-008'), row('2', 'Satyatej Koganti (2713)', ' 2026-SP-004 '), row('3', 'Ada', '2026-VV-001')],
   });
-  assert.deepEqual(plan.targets.map((t) => t.folderId), ['OK']);
+  assert.deepEqual(plan.targets.map((t) => t.folderId).sort(), ['OK', 'R1']);
   const left = plan.skipped.filter((k) => /leftover test folder/.test(k.reason));
-  assert.deepEqual(left.map((k) => k.caseRef), ['2026-VV-008', '2026-SP-004']);
-  assert.match(left[0].detail, /Praj - 2026-VV-008/);
-  const { s } = jobHarness({ cases: [row('1', 'Ameena Begum', '2026-VV-008'), row('3', 'Ada', '2026-VV-001')],
-    rootFolders: [{ id: 'T1', name: 'Praj - 2026-VV-008', childCount: 7 }, { id: 'OK', name: 'Ada - 2026-VV-001', childCount: 3 }] });
+  assert.deepEqual(left.map((k) => k.caseRef), ['2026-SP-004']);
+  assert.match(left[0].detail, /TEST CLIENT - E2E 1780224413906/);
+  const { s } = jobHarness({ cases: [row('2', 'Satyatej Koganti (2713)', '2026-SP-004'), row('3', 'Ada', '2026-VV-001')],
+    rootFolders: [{ id: 'T2', name: 'TEST CLIENT - E2E 1780224413906 - 2026-SP-004', childCount: 5 }, { id: 'OK', name: 'Ada - 2026-VV-001', childCount: 3 }] });
   s.startBackfill({});
   await s._waitForTests();
-  assert.deepEqual(s.statusOf().leftOut.map((k) => k.caseRef), ['2026-VV-008'], 'the short report names what was left out');
+  assert.deepEqual(s.statusOf().leftOut.map((k) => k.caseRef), ['2026-SP-004'], 'the short report names what was left out');
 }));
 
 test('a REAL run needs a complete preview first — none on record, or only an aborted one, and it refuses', quiet(async () => {
