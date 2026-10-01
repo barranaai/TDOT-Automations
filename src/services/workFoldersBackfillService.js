@@ -31,6 +31,7 @@ const { clientMasterBoardId } = require('../../config/monday');
 const CONFIRM_TEXT   = 'ADD-WORK-FOLDERS';
 const TEST_GROUP_ID  = 'group_mm3842s';     // the Cases board's TEST group
 const CASE_REF_COL   = 'text_mm142s49';
+const FOLDER_ID_COL  = 'text_mm47y540';   // the folder the case's Monday row links
 const PACE_MS        = 250;                 // between folders — a few Graph calls each, well under throttling
 const MAX_RETRIES    = 2;                   // per folder, after a throttle / transient failure
 const DEFAULT_WAIT_S = 10;                  // when Graph gives no Retry-After
@@ -80,7 +81,9 @@ function planBackfill({ cases, rootFolders, pick }) {
     const suffix = ` - ${ref}`;
     const hits = (rootFolders || []).filter((f) => f.name.endsWith(suffix));
     if (!hits.length) { skipped.push({ caseRef: ref, name: c.name, reason: 'no case folder in OneDrive' }); continue; }
-    const chosen = hits.length === 1 ? hits[0] : pick(hits, ref);
+    // Two folders: the one the case's Monday row links wins, as in the live app (oneDriveService.chooseCaseFolder).
+    const linked = hits.length > 1 && c.folderId ? hits.find((h) => h.id === c.folderId) : null;
+    const chosen = hits.length === 1 ? hits[0] : (linked || pick(hits, ref));
     let t = byFolder.get(chosen.id);
     if (!t) {
       t = { folderId: chosen.id, folderName: chosen.name, refs: [], cases: [], split: hits.length > 1, splitNames: hits.length > 1 ? hits.map((h) => h.name) : [] };
@@ -102,7 +105,7 @@ function planBackfill({ cases, rootFolders, pick }) {
 
 const io = {
   async listCases() {
-    const ITEMS = `cursor items{ id name state group{ id title } column_values(ids:["${CASE_REF_COL}"]){ id text } }`;
+    const ITEMS = `cursor items{ id name state group{ id title } column_values(ids:["${CASE_REF_COL}","${FOLDER_ID_COL}"]){ id text } }`;
     const all = []; let cursor = null;
     do {
       const d = cursor
@@ -112,7 +115,8 @@ const io = {
       if (!page) throw new Error('Cases board listing came back empty');
       for (const it of page.items || []) {
         all.push({ id: String(it.id), name: it.name || '', state: it.state || 'active', groupId: (it.group && it.group.id) || '', groupTitle: (it.group && it.group.title) || '',
-          caseRef: ((it.column_values || [])[0] || {}).text || '' });
+          caseRef: ((it.column_values || []).find((c) => c.id === CASE_REF_COL) || {}).text || '',
+          folderId: (((it.column_values || []).find((c) => c.id === FOLDER_ID_COL) || {}).text || '').trim() });
       }
       cursor = page.cursor;
     } while (cursor);

@@ -314,6 +314,15 @@ async function executeDeletion({ leadId, caseRef, confirmText, expectedKind, act
       bad(`Confirmation text does not match — type "${expected}" exactly to delete.`);
     }
 
+    // The case number must stay used after its case is gone (nothing of the
+    // case is left for the allocator to find, and restoring it from the
+    // recycle bins must never collide with a new client): record it in the
+    // high-water mark FIRST — and refuse to delete when that cannot be done.
+    if (g.kind === 'case' && g.caseRef && /^\d{4}-[A-Z]+(?:-[A-Z]+)*-\d+$/.test(g.caseRef)) {
+      const saved = await require('./caseRefAllocator').recordAssigned(g.caseRef).catch(() => false);
+      if (!saved) bad(`Could not record case number ${g.caseRef} as used in OneDrive ("TDOT System/case-number-high-water.json") — nothing was deleted. Try again in a minute; if it keeps failing, OneDrive is unavailable.`);
+    }
+
     const failures = [];
     const deleted = { checklistRows: 0, questionnaireRows: 0, familyMemberRows: 0, clientMasterRow: 0, leadRows: 0, oneDriveFolders: 0, squareAppointmentsCancelled: 0 };
 

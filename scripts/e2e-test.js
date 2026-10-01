@@ -20,7 +20,15 @@
  *   Step 13 — Cleanup: archive test item
  *
  * Run from repo root:
- *   node scripts/e2e-test.js
+ *   node scripts/e2e-test.js --allow-production
+ *
+ * THIS RUNS AGAINST THE LIVE BOARDS AND THE LIVE ONEDRIVE (there are no test
+ * boards), so it refuses to start without --allow-production. Its case is
+ * created in the Cases board's TEST group, and its clean-up renames its
+ * OneDrive folder off the case number ("ZZ-TEST E2E <ts> (was <ref>)") — a
+ * leftover "TEST CLIENT - E2E … - <ref>" folder is what filed two real
+ * clients' documents into test folders (2026-09-30). The number itself is
+ * never handed out again (caseRefAllocator counts folder names too).
  *
  * Options:
  *   --no-cleanup   Skip deleting test items at the end (manual inspection)
@@ -51,6 +59,8 @@ const {
 // ─── Parse CLI flags ──────────────────────────────────────────────────────────
 const args        = process.argv.slice(2);
 const NO_CLEANUP  = args.includes('--no-cleanup');
+const ALLOW_PRODUCTION = args.includes('--allow-production');
+const TEST_GROUP_ID = 'group_mm3842s';   // the Cases board's TEST group
 const caseTypeArg = (() => {
   const i = args.indexOf('--case-type');
   return i !== -1 ? args[i + 1] : null;
@@ -170,6 +180,10 @@ async function main() {
   info(`Exec Board: ${EXEC_BOARD_ID}`);
   info(`Q Board: ${Q_BOARD_ID}`);
   info(`Cleanup: ${NO_CLEANUP ? 'DISABLED (--no-cleanup)' : 'enabled'}`);
+  if (!ALLOW_PRODUCTION) {
+    fail('Refusing to run: this test writes to the LIVE Monday boards and the LIVE OneDrive. Re-run with --allow-production if that is really what you want.');
+    process.exit(2);
+  }
 
   // ── Step 1: Create test item ──────────────────────────────────────────────
   step(1, 'Create test item on Client Master Board');
@@ -178,12 +192,10 @@ async function main() {
     const groups = await getBoardGroups(CM_BOARD_ID);
     info(`Available groups: ${groups.map(g => g.title).join(', ')}`);
 
-    // Pick first group (or a group named "Active" / "Clients")
-    const targetGroup = groups.find(g =>
-      /active|client|lead|new/i.test(g.title)
-    ) || groups[0];
+    // Always the TEST group — never a live group staff work from.
+    const targetGroup = groups.find(g => g.id === TEST_GROUP_ID);
 
-    if (!targetGroup) throw new Error('No groups found on Client Master Board');
+    if (!targetGroup) throw new Error(`The TEST group (${TEST_GROUP_ID}) is not on the Client Master Board — refusing to create a test case anywhere else`);
     info(`Using group: "${targetGroup.title}" (${targetGroup.id})`);
 
     // Also set a test client email at creation time using column_values
@@ -264,6 +276,8 @@ async function main() {
   try {
     // Call the service directly (as the webhook would when Retainer Status → Paid)
     await onRetainerPaid({ itemId: testItemId });
+    // Paid moves a case into the live active group — put the test case straight back in TEST.
+    await require('../src/services/caseGateService').moveCaseToGroup(testItemId, TEST_GROUP_ID, 'TEST group');
 
     await sleep(800);
 
@@ -493,6 +507,16 @@ async function main() {
     record('Step 12 — Final state verified', false, err.message);
   }
 
+  // ── The test case must have stayed in the TEST group ─────────────────────
+  try {
+    const g = await mondayApi.query(`query($i:[ID!]){ items(ids:$i, limit:1){ group{ id } } }`, { i: [String(testItemId)] });
+    const gid = g?.items?.[0]?.group?.id;
+    record('Test case stayed in the TEST group', gid === TEST_GROUP_ID, `group: ${gid}`);
+    if (gid && gid !== TEST_GROUP_ID) await require('../src/services/caseGateService').moveCaseToGroup(testItemId, TEST_GROUP_ID, 'TEST group');
+  } catch (err) {
+    record('Test case stayed in the TEST group', false, err.message);
+  }
+
   // ── Step 13: Cleanup ──────────────────────────────────────────────────────
   step(13, `Cleanup test item${NO_CLEANUP ? ' (SKIPPED — --no-cleanup flag)' : ''}`);
 
@@ -522,6 +546,23 @@ async function main() {
         `mutation($itemId: ID!) { delete_item(item_id: $itemId) { id } }`,
         { itemId: String(testItemId) }
       );
+
+      // Take the test's OneDrive folder OFF the case number (renamed, never
+      // deleted): a folder ending " - <ref>" is what the app files a case's
+      // documents into, and this one is only the test's.
+      if (testCaseRef) {
+        try {
+          const oneDrive = require('../src/services/oneDriveService');
+          const hits = await oneDrive.findCaseFoldersByRef(testCaseRef);
+          for (const h of hits.filter((x) => String(x.name).startsWith('TEST CLIENT - E2E'))) {
+            const stamp = (String(h.name).match(/E2E (\d+)/) || [])[1] || Date.now();
+            const r = await oneDrive.renameItemById({ itemId: h.id, newName: `ZZ-TEST E2E ${stamp} (was ${testCaseRef})` });
+            info(`OneDrive folder "${h.name}" renamed to "${r.name}"`);
+          }
+        } catch (e) {
+          warn(`Could not rename the test's OneDrive folder for ${testCaseRef}: ${e.message} — rename it by hand so it no longer ends with " - ${testCaseRef}"`);
+        }
+      }
 
       record('Step 13 — Cleanup', true, `Deleted test item ${testItemId} and execution items`);
     } catch (err) {

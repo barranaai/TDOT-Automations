@@ -23,6 +23,8 @@ const clientMasterService = require('./services/clientMasterService');
 const boardService = require('./services/boardService');
 const webhookManager  = require('./services/webhookManager');
 const { startScheduler } = require('./services/scheduler');
+// When two folders carry one case reference, the one the case's Monday row links wins (2026-10-01).
+require('./services/oneDriveService').setCaseFolderLinkLookup(require('./services/caseFolderLinkService').linkedFolderIds);
 const caseReadinessService = require('./services/caseReadinessService');
 const caseAccess = require('./services/caseAccessService');
 const { tryStaffAuth } = require('./middleware/staffAuth');
@@ -1281,6 +1283,19 @@ app.get('/admin/onedrive/list', async (req, res) => {
   } catch (err) {
     console.error(`[OneDriveList] failed for ${caseRef}/${subfolder}:`, err.message);
     res.status(err.transient ? 503 : (/not found/i.test(err.message || '') ? 404 : 500)).json({ error: err.transient ? 'OneDrive temporarily unavailable' : err.message });
+  }
+});
+
+// READ-ONLY: case numbers — per case type, the highest number on the Cases
+// board and in OneDrive folder names, the next number now (it never reuses one
+// a leftover folder still holds), and any number carried by two rows.
+app.get('/admin/case-refs/audit', async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can see this.')) return;
+  try {
+    res.json(await require('./services/caseRefAllocator').audit());
+  } catch (err) {
+    console.error('[CaseRefAudit] failed:', err.message);
+    res.status(err.transient ? 503 : 500).json({ error: err.transient ? 'Temporarily unavailable' : err.message });
   }
 });
 

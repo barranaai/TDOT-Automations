@@ -819,6 +819,54 @@ async function orgLinkById(itemId) {
   catch (err) { throw wrapError('OneDrive link failed', err); }
 }
 
+/**
+ * A small JSON file anywhere in the drive (NOT under "Client Documents"), read
+ * with its eTag so a later write can refuse to overwrite a newer one.
+ * @returns {Promise<null | { data: object, etag: string }>}  null = no such file
+ */
+async function readJsonFile(path) {
+  try {
+    return await withGraphAuth('readJsonFile', async (token) => {
+      const headers = { Authorization: `Bearer ${token}` };
+      let meta;
+      try { meta = await axios.get(`${itemUrl(path)}?$select=id,eTag`, { headers, timeout: GRAPH_TIMEOUT_MS }); }
+      catch (err) { if (err.response?.status === 404) return null; throw err; }
+      const body = await axios.get(`${userBase()}/items/${encodeURIComponent(meta.data.id)}/content`, { headers, timeout: GRAPH_TIMEOUT_MS, responseType: 'text', transformResponse: [(x) => x] });
+      let data = {};
+      try { data = JSON.parse(String(body.data || '{}')); }
+      catch (_) { const e = new Error(`${path} is not valid JSON`); e.corrupt = true; e.etag = meta.data.eTag || ''; e.raw = String(body.data || ''); throw e; }
+      return { data, etag: meta.data.eTag || '' };
+    });
+  } catch (err) {
+    if (err.corrupt) throw err;
+    throw wrapError('OneDrive JSON read failed', err);
+  }
+}
+
+/**
+ * Write a small JSON file. With `etag`: only if the file is still that
+ * version (If-Match) — a newer one makes it throw with err.conflict. Without:
+ * only if there is no file yet (If-None-Match: *) — an existing one is a conflict.
+ */
+async function writeJsonFile(path, data, { etag = '' } = {}) {
+  try {
+    return await withGraphAuth('writeJsonFile', async (token) => {
+      const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(etag ? { 'If-Match': etag } : { 'If-None-Match': '*' }) };
+      try {
+        const res = await axios.put(`${itemUrl(path)}/content`, JSON.stringify(data, null, 1), { headers, timeout: GRAPH_UPLOAD_TIMEOUT_MS });
+        return { etag: res.data?.eTag || '' };
+      } catch (err) {
+        const st = err.response?.status;
+        if (st === 412 || st === 409) { const e = new Error(`${path} changed meanwhile`); e.conflict = true; throw e; }
+        throw err;
+      }
+    });
+  } catch (err) {
+    if (err.conflict) throw err;
+    throw wrapError('OneDrive JSON write failed', err);
+  }
+}
+
 /** Forget what the process remembers about a case's folder (after a repair renamed or merged folders). */
 function forgetCaseFolder(caseRef) {
   const ref = String(caseRef || '').trim();
@@ -869,6 +917,39 @@ async function listCaseFoldersInRoot() {
  * was appended). Always logged - a split case is a data-hygiene problem someone
  * should fix at the source.
  */
+/**
+ * The lookup that says which folder a case's Monday row links (set once at
+ * startup by server.js — caseFolderLinkService.linkedFolderIds). Unset (tests,
+ * scripts) = no lookup: the tie-break below decides, exactly as before.
+ */
+let _linkedFolderLookup = null;
+function setCaseFolderLinkLookup(fn) { _linkedFolderLookup = typeof fn === 'function' ? fn : null; }
+
+/**
+ * Choose between folders that all carry the case reference: the one the
+ * case's Monday row LINKS wins (a leftover test folder beside the client's
+ * real one must never win on item count — 2026-10-01); without a usable link,
+ * pickCaseFolder's tie-break. Only consulted when there are two or more.
+ */
+async function chooseCaseFolderWithReason(hits, caseRef) {
+  if (hits.length === 1) return { chosen: hits[0], linked: false };
+  if (_linkedFolderLookup) {
+    try {
+      const ids = await _linkedFolderLookup(caseRef);
+      // null = the link could not be read (and was never read before): the
+      // tie-break's answer is a guess — kept only briefly, then asked again.
+      if (ids === null) return { chosen: pickCaseFolder(hits, caseRef), linked: false, uncertain: true };
+      const linked = hits.find((h) => ids.includes(h.id));
+      if (linked) {
+        console.warn(`[OneDrive] case ${caseRef} has ${hits.length} folders: ${hits.map((h) => `"${h.name}"`).join(', ')} - using "${linked.name}", the one the case's Monday row links. Merge them.`);
+        return { chosen: linked, linked: true };
+      }
+    } catch (_) { return { chosen: pickCaseFolder(hits, caseRef), linked: false, uncertain: true }; }
+  }
+  return { chosen: pickCaseFolder(hits, caseRef), linked: false };
+}
+async function chooseCaseFolder(hits, caseRef) { return (await chooseCaseFolderWithReason(hits, caseRef)).chosen; }
+
 function pickCaseFolder(hits, caseRef) {
   if (hits.length === 1) return hits[0];
   const sorted = [...hits].sort((a, b) => (b.childCount || 0) - (a.childCount || 0) || a.name.length - b.name.length);
@@ -897,12 +978,16 @@ async function findCaseFolderByRef(caseRef) {
   // correctable, or the FIRST folder to be cached would pin the case forever.
   const live   = liveCaseFolderEntry(ref);
   const known  = (live && live.followed && live.id) ? hits.find((h) => h.id === live.id) : null;
-  const chosen = known || pickCaseFolder(hits, ref);
+  const choice = known ? { chosen: known, linked: false } : await chooseCaseFolderWithReason(hits, ref);
+  const chosen = choice.chosen;
   // Re-affirming keeps the original `at`: renewing it on every lookup would
-  // stop even a wrong entry from ever ageing out.
+  // stop even a wrong entry from ever ageing out. A folder chosen because the
+  // case's Monday row LINKS it carries the same authority as a followed one —
+  // a later lookup whose Monday read fails must not swap it for the tie-break.
   _caseFolderName.set(ref, known
     ? { name: chosen.name, id: chosen.id || '', at: live.at, followed: true }
-    : { name: chosen.name, id: chosen.id || '', at: Date.now() });
+    : (choice.linked ? { name: chosen.name, id: chosen.id || '', at: Date.now(), followed: true }
+                     : { name: chosen.name, id: chosen.id || '', at: Date.now(), ...(choice.uncertain ? { brief: true } : {}) }));
   return chosen;
 }
 
@@ -916,7 +1001,7 @@ async function findCaseFolderByRef(caseRef) {
 function liveCaseFolderEntry(ref) {
   const hit = _caseFolderName.get(ref);
   if (!hit) return null;
-  const ttl = hit.name ? CASE_FOLDER_TTL_MS : CASE_FOLDER_MISS_TTL_MS;
+  const ttl = (hit.name && !hit.brief) ? CASE_FOLDER_TTL_MS : CASE_FOLDER_MISS_TTL_MS;   // a guess made while the Monday link could not be read: asked again soon
   return (Date.now() - hit.at) < ttl ? hit : null;
 }
 
@@ -932,12 +1017,13 @@ async function resolveCaseFolderName({ clientName, caseRef }) {
   const lookup = (async () => {
     const hits = await findCaseFoldersByRef(ref);
     if (!hits.length) { _caseFolderName.set(ref, { name: null, id: '', at: Date.now() }); return null; }
-    const chosen = pickCaseFolder(hits, ref);
+    const { chosen, linked, uncertain } = await chooseCaseFolderWithReason(hits, ref);
     if (chosen.name !== expected) {
       console.warn(`[OneDrive] case ${ref}: documents live in "${chosen.name}" but the client name now yields "${expected}" - using the folder that carries the case reference`);
     }
     // The ID is what identifies the folder later; the name is only how it is addressed today.
-    _caseFolderName.set(ref, { name: chosen.name, id: chosen.id || '', at: Date.now() });
+    _caseFolderName.set(ref, linked ? { name: chosen.name, id: chosen.id || '', at: Date.now(), followed: true }
+                                    : { name: chosen.name, id: chosen.id || '', at: Date.now(), ...(uncertain ? { brief: true } : {}) });
     return chosen.name;
   })();
   _caseFolderInFlight.set(ref, lookup);
@@ -1411,7 +1497,7 @@ module.exports = {
   listFileVersions, readFileVersion,
   uploadFileAsNew,
   ensureCaseWorkFolders, workFoldersFailedNoteText, CASE_WORK_FOLDERS, WORK_FOLDERS_SINCE,
-  listCaseFoldersInRoot, pickCaseFolder, listRootFolderTree, moveItemById, copyItemById, renameItemById, ensureSubfolderById, forgetCaseFolder, orgLinkById, holdCaseFolder, releaseCaseFolder,
+  listCaseFoldersInRoot, pickCaseFolder, chooseCaseFolder, setCaseFolderLinkLookup, listRootFolderTree, readJsonFile, writeJsonFile, moveItemById, copyItemById, renameItemById, ensureSubfolderById, forgetCaseFolder, orgLinkById, holdCaseFolder, releaseCaseFolder,
   _resetWorkFoldersMemo: () => _workFoldersComplete.clear(),
   _workFoldersMemoHas:   (id) => _workFoldersComplete.has(String(id)),
   _seedCaseFolderCacheForTests: (ref, entry) => _caseFolderName.set(String(ref), entry),

@@ -17,6 +17,12 @@ const clientMaster = require('../src/services/clientMasterService');
 
 function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; }
 
+// Careful delete records the case number as used before deleting (caseRefAllocator.recordAssigned —
+// OneDrive in production). Here: an in-memory record; the refusal when it cannot be saved has its own test.
+const allocator = require('../src/services/caseRefAllocator');
+const _recorded = [];
+allocator.recordAssigned = async (ref) => { _recorded.push(ref); return true; };
+
 const LEAD_BOARD = '18416845157', CM_BOARD = '18401523447';
 const EXEC = '18401875593', QEXEC = '18402117488', FAMILY = '18415615177';
 const ROOT = '/drive/root:/Client Documents';
@@ -321,4 +327,44 @@ test('folder lookup failure degrades to a warning — the Monday delete still pr
     assert.equal(p.targets.clientMasterRow, 1);
     assert.ok(p.warnings.some((w) => /manual removal/.test(w)), 'warns that the folder needs manual cleanup');
   } finally { restore.forEach((x) => x()); }
+});
+
+
+test('execute (case): the case number is recorded as used BEFORE anything is deleted; if that cannot be done, NOTHING is deleted', async () => {
+  const src = require('fs').readFileSync(require.resolve('../src/services/deletionService'), 'utf8');
+  assert.ok(src.indexOf('recordAssigned(g.caseRef)') < src.indexOf('await deleteMondayRows(rows, countKey);'), 'recorded first');
+  const setup = () => {
+    const m = mondayStub({
+      cm: { id: '900', name: 'Full Client', caseRef: '2026-VV-042', oneDriveFolderId: 'od-cm-1' },
+      rowsByBoard: { [EXEC]: [{ id: '1', name: 'Passport' }], [QEXEC]: [], [FAMILY]: [] },
+    });
+    const dropped = [];
+    const restore = [
+      stub(mondayApi, 'query', m.fn),
+      stub(leadService, 'findAllByColumnValue', async () => ([])),
+      stub(clientMaster, 'findItemByCaseRef', async () => '900'),
+      stub(oneDrive, 'getDriveItemById', async () => ({ id: 'od-cm-1', name: 'Full Client - 2026-VV-042', parentPath: ROOT })),
+      stub(oneDrive, 'getClientFolderByName', async () => null),
+      stub(oneDrive, 'deleteDriveItem', async (id) => { dropped.push(id); return true; }),
+    ];
+    return { m, dropped, restore };
+  };
+  // it works: the number is recorded, then the delete goes ahead
+  _recorded.length = 0;
+  const ok = setup();
+  try {
+    const r = await deletion.executeDeletion({ caseRef: '2026-VV-042', confirmText: '2026-VV-042', expectedKind: 'case' });
+    assert.equal(r.ok, true);
+    assert.deepEqual(_recorded, ['2026-VV-042']);
+  } finally { ok.restore.forEach((x) => x()); }
+  // it cannot be recorded: refused, nothing touched
+  const saved = allocator.recordAssigned;
+  allocator.recordAssigned = async () => false;
+  const no = setup();
+  try {
+    await assert.rejects(() => deletion.executeDeletion({ caseRef: '2026-VV-042', confirmText: '2026-VV-042', expectedKind: 'case' }),
+      (e) => e.badRequest === true && /Could not record case number 2026-VV-042 as used .* nothing was deleted/.test(e.message));
+    assert.equal(no.m.deleted.length, 0, 'no Monday row was deleted');
+    assert.equal(no.dropped.length, 0, 'no folder was deleted');
+  } finally { allocator.recordAssigned = saved; no.restore.forEach((x) => x()); }
 });

@@ -75,48 +75,6 @@ const CASE_TYPE_ABBR = {
   'Visitor Visa':                                                  'VV',
 };
 
-async function getAllCaseRefs() {
-  let allRefs = [];
-  let cursor  = null;
-
-  do {
-    let data;
-    if (cursor) {
-      data = await mondayApi.query(
-        `query($cursor: String!) {
-           boards(ids: ["${clientMasterBoardId}"]) {
-             items_page(limit: 200, cursor: $cursor) {
-               cursor
-               items { column_values(ids: ["${CASE_REF_COL}"]) { text } }
-             }
-           }
-         }`,
-        { cursor }
-      );
-    } else {
-      data = await mondayApi.query(
-        `{
-           boards(ids: ["${clientMasterBoardId}"]) {
-             items_page(limit: 200) {
-               cursor
-               items { column_values(ids: ["${CASE_REF_COL}"]) { text } }
-             }
-           }
-         }`
-      );
-    }
-
-    const page = data.boards[0].items_page;
-    for (const item of page.items) {
-      const ref = item.column_values[0]?.text?.trim();
-      if (ref) allRefs.push(ref);
-    }
-    cursor = page.cursor || null;
-  } while (cursor);
-
-  return allRefs;
-}
-
 async function getItemCaseRef(itemId) {
   const data = await mondayApi.query(
     `query($itemId: ID!) {
@@ -129,22 +87,21 @@ async function getItemCaseRef(itemId) {
   return (data.items[0]?.column_values[0]?.text || '').trim();
 }
 
+/** "2026-VV-" for a case type (unknown types → MISC). */
+function prefixFor(caseType) {
+  return `${new Date().getFullYear()}-${CASE_TYPE_ABBR[caseType] || 'MISC'}-`;
+}
+
+/**
+ * The next case number for a case type — never one handed out before
+ * (caseRefAllocator: board + OneDrive folder names + this process's recent
+ * numbers, then checked against every board that carries references).
+ * Callers that WRITE the number must hold caseRefAllocator.withAllocationLock
+ * from here until the write, and call noteAssigned after it (onCaseTypeSet does).
+ * @returns {Promise<string>}
+ */
 async function generateCaseRef(caseType) {
-  const year  = new Date().getFullYear();
-  const abbr  = CASE_TYPE_ABBR[caseType] || 'MISC';
-  const prefix = `${year}-${abbr}-`;
-
-  const allRefs = await getAllCaseRefs();
-
-  let maxSeq = 0;
-  for (const ref of allRefs) {
-    if (ref.startsWith(prefix)) {
-      const seq = parseInt(ref.slice(prefix.length), 10);
-      if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
-    }
-  }
-
-  return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
+  return (await require('./caseRefAllocator').allocate(prefixFor(caseType))).ref;
 }
 
 async function updateSubTypeHint(itemId, caseType) {
@@ -187,25 +144,43 @@ async function onCaseTypeSet({ itemId, caseType }) {
     return;
   }
 
-  const caseRef = await generateCaseRef(caseType);
+  // One allocation at a time, from choosing the number until it is written —
+  // and the "already has one?" question asked again INSIDE the lock, so a
+  // webhook delivered twice cannot give one case two numbers.
+  const allocator = require('./caseRefAllocator');
+  const assigned = await allocator.withAllocationLock(async () => {
+    const again = await getItemCaseRef(itemId);
+    if (again) return { already: again };
+    const a = await allocator.allocate(prefixFor(caseType));
+    await mondayApi.query(
+      `mutation($itemId: ID!, $boardId: ID!, $value: JSON!) {
+         change_column_value(
+           item_id:   $itemId,
+           board_id:  $boardId,
+           column_id: "${CASE_REF_COL}",
+           value:     $value
+         ) { id }
+       }`,
+      {
+        itemId:  String(itemId),
+        boardId: String(clientMasterBoardId),
+        value:   JSON.stringify(a.ref),
+      }
+    );
+    a.markSaved = await allocator.recordAssigned(a.ref);   // the high-water mark: best effort, the number stands either way
+    return a;
+  });
+  if (assigned.already) {
+    console.log(`[CaseRef] Item ${itemId} got ref "${assigned.already}" meanwhile, skipping`);
+    return;
+  }
+  const caseRef = assigned.ref;
 
-  await mondayApi.query(
-    `mutation($itemId: ID!, $boardId: ID!, $value: JSON!) {
-       change_column_value(
-         item_id:   $itemId,
-         board_id:  $boardId,
-         column_id: "${CASE_REF_COL}",
-         value:     $value
-       ) { id }
-     }`,
-    {
-      itemId:  String(itemId),
-      boardId: String(clientMasterBoardId),
-      value:   JSON.stringify(caseRef),
-    }
-  );
-
-  console.log(`[CaseRef] Assigned ${caseRef} to item ${itemId}`);
+  console.log(`[CaseRef] Assigned ${caseRef} to item ${itemId}` +
+    (assigned.from.folders > assigned.from.board ? ` (a leftover OneDrive folder holds ${assigned.from.folders} — the board alone would have reused it)` : '') +
+    (assigned.skipped.length ? ` (skipped ${assigned.skipped.join(', ')}: already on a board)` : ''));
+  checkAssignedRef({ itemId, caseRef, assigned }).catch((err) =>
+    console.warn(`[CaseRef] Could not double-check ${caseRef}: ${err.message}`));
 
   // Fire-and-forget: write the unified Client Portal link column.
   // Failures here MUST NOT break the case-ref assignment flow — the case can
@@ -471,6 +446,36 @@ async function resumeOnboardingIfStuck({ itemId, caseRef }) {
  * Pulls (or generates) the access token first so the URL is fully usable.
  * Idempotent — safe to run multiple times for the same item.
  */
+/**
+ * After a number is written: tell staff when it could not be checked against
+ * OneDrive, or when another Cases-board row carries the same number (a number
+ * typed by hand, or one given out by something other than this process).
+ * Best effort — the number stays either way.
+ */
+async function checkAssignedRef({ itemId, caseRef, assigned }) {
+  const notes = [];
+  if (assigned.folderCheck === 'unavailable') {
+    notes.push(`⚠ Case number ${caseRef} was assigned while OneDrive could not be checked (${assigned.folderError || 'OneDrive unavailable'}). ` +
+      `If a folder in "Client Documents" already ends with " - ${caseRef}" and belongs to someone else, tell an admin before any documents arrive.`);
+  }
+  if (assigned.folderCheck !== 'unavailable' && (assigned.markCheck === 'unavailable' || assigned.markSaved === false)) {
+    notes.push(`⚠ Case number ${caseRef} is fine, but it could not be ${assigned.markSaved === false ? 'saved to' : 'checked against'} the record of numbers already used ("TDOT System/case-number-high-water.json" in OneDrive). ` +
+      `Until that works again, a number freed by a careful delete could be given out twice — tell an admin.`);
+  }
+  const d = await mondayApi.query(
+    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:10, board_id:$b, columns:[{column_id:"${CASE_REF_COL}", column_values:[$v]}]){ items{ id name } } }`,
+    { b: String(clientMasterBoardId), v: caseRef });
+  const others = ((d.items_page_by_column_values || {}).items || []).filter((it) => String(it.id) !== String(itemId));
+  if (others.length) {
+    notes.push(`⚠ Case number ${caseRef} is ALSO on ${others.map((o) => `"${o.name}" (item ${o.id})`).join(', ')}. ` +
+      `Two cases must never share a number — tell an admin before any documents arrive.`);
+    console.error(`[CaseRef] ${caseRef} assigned to item ${itemId} is also on ${others.map((o) => o.id).join(', ')}`);
+  }
+  for (const body of notes) {
+    await mondayApi.query(`mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`, { itemId: String(itemId), body });
+  }
+}
+
 async function writePortalLinkForItem({ itemId, caseRef }) {
   const accessToken = await ensureAccessToken(itemId).catch(() => '');
   if (!accessToken) {
@@ -499,7 +504,7 @@ async function writePortalLinkForItem({ itemId, caseRef }) {
 }
 
 module.exports = {
-  onCaseTypeSet, generateCaseRef, writePortalLinkForItem, CASE_TYPE_ABBR, resumeOnboardingIfStuck,
+  onCaseTypeSet, generateCaseRef, prefixFor, checkAssignedRef, writePortalLinkForItem, CASE_TYPE_ABBR, resumeOnboardingIfStuck,
   _setRetryMsForTests: (ms) => { CASE_REF_RETRY_MS = ms; },
   // Exported for tests: the rename is what keeps a client to ONE folder.
   renameClientFolderForItem, folderIdFromLead,
