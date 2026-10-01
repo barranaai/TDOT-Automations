@@ -179,6 +179,18 @@ function startScheduler() {
     require('./teamsTranscriptService').findTeamsTranscripts().catch((err) =>
       console.error('[Scheduler] Teams transcript fetch failed:', err.message)));
   console.log('[Scheduler] Post-consult jobs registered — nudge (15 min) + Teams recordings (30 min) + transcripts (30 min)');
+
+  // ── "Needs attention" on the Summary page: fresh before the team starts,
+  // 07:00 TORONTO (the server's clock is UTC). An hourly tick that acts only in
+  // Toronto's 7 o'clock hour — node-cron 4's own timezone option skips the run
+  // on the days the clocks change. Read-only on the boards.
+  cron.schedule('0 * * * *', () => {
+    const na = require('./needsAttentionService');
+    if (!na.isTorontoHour(7)) return;
+    na.refresh({ reason: 'daily 07:00' }).catch((err) =>
+      console.error('[Scheduler] Needs-attention check failed:', err.message));
+  });
+  console.log('[Scheduler] Job registered — needs-attention list daily 07:00 Toronto');
 }
 
 module.exports = { startScheduler };

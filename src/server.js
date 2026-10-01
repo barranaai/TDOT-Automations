@@ -592,6 +592,40 @@ app.get('/admin/dashboard-stats', async (req, res) => {
   }
 });
 
+// "Needs attention" — the list at the top of the Summary page (worked out at
+// 07:00 Toronto and on "Check now"; see needsAttentionService). Same viewers as
+// the dashboard: a staffer limited to their own cases sees only those items.
+const SUMMARY_LOGIN_URL = '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard%2Fsummary';
+app.get('/admin/needs-attention', (req, res) => {
+  const viewer = resolveViewer(req);
+  if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: SUMMARY_LOGIN_URL });
+  res.json(require('./services/needsAttentionService').view(viewer, { ensure: true }));
+});
+
+app.post('/admin/needs-attention/refresh', (req, res) => {
+  const viewer = resolveViewer(req);
+  if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: SUMMARY_LOGIN_URL });
+  res.json(require('./services/needsAttentionService').requestRefresh());
+});
+
+// "Mark handled": a note on the case (the lasting record), and off the list.
+// The item is looked up in the server's own list by its key — nothing the page
+// sends is written to Monday except that key.
+app.post('/admin/needs-attention/handled', express.json(), async (req, res) => {
+  const viewer = resolveViewer(req);
+  if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: SUMMARY_LOGIN_URL });
+  const key = String((req.body && req.body.key) || '').trim();
+  if (!/^NA-[0-9a-f]{10}$/.test(key)) return res.status(400).json({ error: 'Unknown item.' });
+  try {
+    const actor = viewer.name || (viewer.isAdmin ? 'an admin (team key)' : 'staff');
+    res.json(await require('./services/needsAttentionService').markHandled({ key, viewer, actor }));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('[NeedsAttention] Mark handled failed:', err.stack || err.message);
+    res.status(502).json({ error: 'The note could not be saved on the case in Monday. Please try again.' });
+  }
+});
+
 // Retainer/payment status audit — does every case's Payment Status agree with
 // its lead's retainer dates? Read-only by default; ?repair=1 applies the same
 // non-destructive fixes the 15-minute sync job makes, on demand.

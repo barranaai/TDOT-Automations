@@ -63,10 +63,12 @@ const SHARED_CSS_VARS = `
 //  destinations — the Dashboard + Engine Controls links were retired so the
 //  portal reads as a consultants-only tool. Those pages still render this bar
 //  and remain reachable by direct URL (/admin/dashboard, /admin/engines).
-//  activePage: 'leads' | 'consultations' | 'dashboard' (Cases) (others render the bar without an active link)
+//  activePage: 'leads' | 'consultations' | 'dashboard' (Cases) | 'summary' (others render the bar without an active link)
 function buildNavHeader(activePage) {
   const isConsult = activePage === 'consultations';
   const isLeads   = activePage === 'leads';
+  // The dashboard's Summary view (needs-attention list + figures and charts).
+  const isSummary = activePage === 'summary';
   // The dashboard is the firm-wide Cases hub; the per-case cockpit also passes
   // 'dashboard', so "Cases" stays highlighted while viewing a single case.
   const isCases   = activePage === 'dashboard';
@@ -78,19 +80,22 @@ function buildNavHeader(activePage) {
     </div>
     <div class="admin-divider"></div>
     <nav class="admin-nav">
-      <a href="/admin/leads" class="nav-lnk${isLeads ? ' active' : ''}">
-        <span class="nav-icon">📥</span> Leads
+      <a href="/admin/leads" class="nav-lnk${isLeads ? ' active' : ''}" title="Leads"${isLeads ? ' aria-current="page"' : ''}>
+        <span class="nav-icon" aria-hidden="true">📥</span> <span class="nav-txt">Leads</span>
       </a>
-      <a href="/admin/consultations" class="nav-lnk${isConsult ? ' active' : ''}">
-        <span class="nav-icon">🗓️</span> Consultations
+      <a href="/admin/consultations" class="nav-lnk${isConsult ? ' active' : ''}" title="Consultations"${isConsult ? ' aria-current="page"' : ''}>
+        <span class="nav-icon" aria-hidden="true">🗓️</span> <span class="nav-txt">Consultations</span>
       </a>
-      <a href="/admin/dashboard" class="nav-lnk${isCases ? ' active' : ''}">
-        <span class="nav-icon">🗂️</span> Cases
+      <a href="/admin/dashboard" class="nav-lnk${isCases ? ' active' : ''}" title="Cases"${isCases ? ' aria-current="page"' : ''}>
+        <span class="nav-icon" aria-hidden="true">🗂️</span> <span class="nav-txt">Cases</span>
+      </a>
+      <a href="/admin/dashboard/summary" class="nav-lnk${isSummary ? ' active' : ''}" title="Summary"${isSummary ? ' aria-current="page"' : ''}>
+        <span class="nav-icon" aria-hidden="true">📊</span> <span class="nav-txt">Summary</span>
       </a>
     </nav>
   </div>
   <div class="admin-hdr-right">
-    <div class="status-pill" id="status-pill">
+    <div class="status-pill" id="status-pill" role="status">
       <div class="status-dot pulse" id="sys-dot"></div>
       <span id="sys-text">Checking…</span>
     </div>
@@ -214,10 +219,35 @@ const NAV_CSS = `
     border-color: rgba(255,255,255,.3);
   }
 
-  @media (max-width: 700px) {
+  /* Four tabs, the status pill and Sign Out must never push the bar past the
+     screen: the clock goes first, then the spacing tightens, then (phones) the
+     tabs show icons only and the pill its dot only (it keeps a title). */
+  .admin-hdr-left { min-width: 0; }
+  .admin-nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .admin-nav::-webkit-scrollbar { display: none; }
+  .sign-out-btn { white-space: nowrap; }
+  @media (max-width: 1100px) {
     .hdr-clock { display: none; }
-    .admin-hdr { padding: 0 16px; }
-    .nav-lnk span.nav-icon ~ * { display: none; }
+  }
+  @media (max-width: 900px) {
+    .admin-brand { padding-right: 12px; }
+    .admin-divider { margin-right: 10px; }
+    .nav-lnk { padding: 7px 10px; }
+    .admin-hdr-right { gap: 8px; }
+    #sys-text { display: none; }
+  }
+  @media (max-width: 700px) {
+    .admin-hdr { padding: 0 12px; }
+    .nav-lnk .nav-txt { display: none; }   /* each link keeps its title */
+    .nav-lnk { padding: 7px 8px; }
+    .admin-brand { padding-right: 8px; }
+    .admin-divider { margin-right: 6px; }
+    .admin-hdr-right { gap: 6px; }
+    .status-pill { padding: 5px 8px; }
+    .sign-out-btn { padding: 6px 10px; }
+  }
+  @media (max-width: 400px) {   /* the smallest phones: the tabs win over the status dot */
+    .status-pill, .admin-divider { display: none; }
   }
 `;
 
@@ -261,17 +291,22 @@ const SHARED_AUTH_JS = `
     if (!key) return;
     var dot = document.getElementById('sys-dot');
     var txt = document.getElementById('sys-text');
+    var pill = document.getElementById('status-pill');
+    // The pill's text is hidden on narrow screens: its title says it instead.
+    var say = function(t) { if (pill) { pill.title = t; pill.setAttribute('aria-label', t); } };
     fetch('/api/monday-test', { headers: { 'X-Api-Key': key } })
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.connected) {
           dot.className = 'status-dot pulse';
           txt.textContent = 'Online';
+          say('Monday API online');
         } else { throw new Error(); }
       })
       .catch(function() {
         if (dot) { dot.className = 'status-dot offline'; }
         if (txt) { txt.textContent = 'Monday API Offline'; }
+        say('Monday API offline');
       });
   }
 `;

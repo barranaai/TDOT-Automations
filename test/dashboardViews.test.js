@@ -24,7 +24,9 @@ function renderRoute(path) {
 
 const CASES_ONLY   = ['all-cases-body', 'search-box', 'filter-stage', 'filter-health', 'filter-manager', 'table-count', 'pagination'];
 const SUMMARY_ONLY = ['kpi-total', 'kpi-red', 'act-count-deadline', 'act-list-behind', 'chart-health', 'chart-stage',
-                      'chart-readiness-target', 'readiness-overall', 'mgr-grid', 'atrisk-body'];
+                      'chart-readiness-target', 'readiness-overall', 'mgr-grid', 'atrisk-body',
+                      // the needs-attention list (2026-10-01) sits at the top of the summary
+                      'na-panel', 'na-body', 'na-check', 'na-total', 'na-note'];
 const SHARED       = ['loading', 'error-msg', 'content', 'hdr-updated', 'refresh-btn'];
 
 test('both dashboard routes exist and emit parseable client JS', async () => {
@@ -112,4 +114,27 @@ test('dashboardService requests and maps the Monday created_at', () => {
   const src = fs.readFileSync(require.resolve('../src/services/dashboardService'), 'utf8');
   assert.match(src, /id name created_at/, 'created_at is selected in the items query');
   assert.match(src, /createdAt:\s+item\.created_at/, 'and mapped onto the case object');
+});
+
+test('the top bar has a Summary tab; it is the active one on the summary view, Cases on the cases view', async () => {
+  const active = (html) => [...html.matchAll(/<a href="([^"]+)" class="nav-lnk active"/g)].map((m) => m[1]);
+  const summary = await renderRoute('/summary');
+  const cases = await renderRoute('/');
+  for (const html of [summary, cases]) assert.match(html, /<a href="\/admin\/dashboard\/summary" class="nav-lnk[^"]*"[^>]*>[\s\S]{0,120}Summary<\/span>/);
+  assert.deepEqual(active(summary), ['/admin/dashboard/summary']);
+  assert.deepEqual(active(cases), ['/admin/dashboard']);
+});
+
+test('the needs-attention list loads with the summary page and only there, and sits above the KPI figures', async () => {
+  const summary = await renderRoute('/summary');
+  assert.ok(summary.indexOf('id="na-panel"') < summary.indexOf('id="kpi-total"'), 'the list comes first');
+  // Outside #content (hidden until the figures load, and again on every Refresh):
+  // the list comes from the server's memory and must show even when they fail.
+  assert.ok(summary.indexOf('id="na-panel"') < summary.indexOf('id="content"'), 'the list is not inside #content');
+  assert.ok(summary.indexOf('class="dash-header"') < summary.indexOf('id="na-panel"'), 'under the page title');
+  assert.match(summary, /if \(VIEW === 'summary'\) naLoad\(\);/);
+  assert.match(summary, /fetch\('\/admin\/needs-attention'/);
+  // Every value from the server goes through escHtml before innerHTML.
+  const fn = summary.slice(summary.indexOf('function naItemHtml'), summary.indexOf('function naRender'));
+  for (const field of ['e.caseRef', 'e.client', 'e.why', 'e.todo', 'e.key']) assert.match(fn, new RegExp('escHtml\\(' + field.replace('.', '\\.')), field + ' is escaped');
 });

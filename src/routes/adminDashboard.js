@@ -239,6 +239,24 @@ const SUMMARY_BODY_HTML = `
     </div>
 `;
 
+// The needs-attention list (needsAttentionService: 07:00 Toronto daily + "Check
+// now"). Summary view only, and OUTSIDE #content: it comes from the server's
+// memory, so it shows even while the figures below load slowly or fail.
+const NEEDS_ATTENTION_HTML = `
+  <section class="na" id="na-panel" aria-labelledby="na-title">
+    <div class="na-hd">
+      <div>
+        <h2 class="na-title" id="na-title" tabindex="-1">Needs attention <span class="na-total" id="na-total" hidden></span></h2>
+        <p class="na-sub" id="na-sub">Cases where a step was missed. Checked every morning at 7:00.</p>
+        <p class="na-flash" id="na-flash" role="status" aria-live="polite"></p>
+      </div>
+      <button type="button" class="na-check" id="na-check" onclick="naCheckNow()">Check now</button>
+    </div>
+    <div role="status" aria-live="polite"><div class="na-note" id="na-note" hidden></div></div>
+    <div class="na-body" id="na-body"><div class="na-empty">Loading…</div></div>
+  </section>
+`;
+
 const ALL_CASES_BODY_HTML = `
     <!-- ── All Cases Table ── -->
     <div class="sec-hd">📋 All Cases</div>
@@ -453,6 +471,91 @@ function buildDashboardHTML(view = 'cases') {
       text-transform: uppercase; letter-spacing: .9px;
       color: #94a3b8;
     }
+
+    /* ── Needs attention (top of the Summary view) ────────────────── */
+    .na {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+      margin-bottom: 32px; overflow: hidden;
+    }
+    .na-hd { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 22px 14px; border-bottom: 1px solid #f1f5f9; }
+    .na-title { margin: 0; font-size: 17px; font-weight: 800; color: var(--navy); letter-spacing: -.3px; display: flex; align-items: center; gap: 10px; }
+    .na-total { font-size: 12px; font-weight: 800; padding: 2px 10px; border-radius: 20px; background: #fef2f2; color: #b91c1c; font-variant-numeric: tabular-nums; }
+    .na-total.zero { background: #f0fdf4; color: #15803d; }
+    .na-sub { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
+    .na-flash { margin: 0; font-size: 12.5px; font-weight: 600; color: #15803d; }
+    .na-flash:not(:empty) { margin-top: 4px; }   /* stays rendered when empty: it is a live region */
+    .na-flash.err { color: #b91c1c; }
+    .na-title:focus { outline: none; }
+    .na-check {
+      flex-shrink: 0; min-height: 36px; padding: 0 16px; border-radius: 8px;
+      border: 1px solid #cbd5e1; background: #fff; color: var(--navy);
+      font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+    }
+    .na-check:hover:not(:disabled) { background: #f8fafc; border-color: #94a3b8; }
+    .na-check:disabled { opacity: .55; cursor: default; }
+    .na-note { margin: 12px 22px 0; padding: 10px 14px; border-radius: 8px; font-size: 12.5px; line-height: 1.5; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+    .na-note.err { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+    .na-body { padding: 6px 0 2px; }
+    .na-empty { padding: 28px 22px; text-align: center; color: var(--muted); font-size: 13px; }
+    .na-empty.all-clear { color: #15803d; font-weight: 600; }
+    .na-group { border-top: 1px solid #f1f5f9; }
+    .na-group:first-child { border-top: none; }
+    .na-group-hd { display: flex; align-items: center; gap: 10px; padding: 11px 22px; border-left: 4px solid #94a3b8; background: #f8fafc; }
+    .na-group.sev-high   .na-group-hd { border-left-color: #dc2626; background: linear-gradient(135deg,#fff5f5,#fff); }
+    .na-group.sev-medium .na-group-hd { border-left-color: #d97706; background: linear-gradient(135deg,#fffbeb,#fff); }
+    .na-sev { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; padding: 2px 8px; border-radius: 4px; background: #e2e8f0; color: #334155; }
+    .na-group.sev-high   .na-sev { background: #fee2e2; color: #991b1b; }
+    .na-group.sev-medium .na-sev { background: #fef3c7; color: #92400e; }
+    .na-group-title { margin: 0; font-size: 13.5px; font-weight: 700; color: var(--navy); flex: 1; min-width: 0; }
+    .na-count { font-size: 12px; font-weight: 800; color: #475569; font-variant-numeric: tabular-nums; }
+    .na-list { list-style: none; margin: 0; padding: 0; }
+    .na-item {
+      display: grid; grid-template-columns: minmax(170px, 230px) 1fr minmax(150px, auto);
+      gap: 6px 20px; padding: 14px 22px; border-top: 1px solid #f1f5f9; align-items: start;
+      transition: opacity .2s ease;
+    }
+    .na-list .na-item:first-child { border-top: none; }
+    .na-item.gone { opacity: 0; }
+    .na-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .na-ref { font-size: 13px; font-weight: 800; color: #1d4ed8; text-decoration: none; font-variant-numeric: tabular-nums; align-self: flex-start; }
+    .na-ref:hover { text-decoration: underline; }
+    .na-noref { font-size: 11px; font-weight: 800; color: #9a3412; text-transform: uppercase; letter-spacing: .04em; }
+    .na-client { font-size: 13px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+    .na-meta { font-size: 11.5px; color: var(--muted); }
+    .na-text p { margin: 0; font-size: 13px; line-height: 1.55; color: #334155; max-width: 80ch; overflow-wrap: anywhere; }
+    .na-text .na-todo { margin-top: 6px; color: var(--text); }
+    .na-todo-lbl { font-weight: 700; color: var(--navy); }
+    .na-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; text-align: right; }
+    .na-since { font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .na-since b { color: #334155; font-weight: 700; }
+    .na-act { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+    .na-btn {
+      min-height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid #cbd5e1;
+      background: #fff; color: #334155; font: inherit; font-size: 12px; font-weight: 700;
+      cursor: pointer; white-space: nowrap;
+    }
+    .na-btn:hover:not(:disabled) { background: #f1f5f9; }
+    .na-btn.primary { background: var(--navy); border-color: var(--navy); color: #fff; }
+    .na-btn.primary:hover:not(:disabled) { background: var(--navy-light); }
+    .na-btn:disabled { opacity: .55; cursor: default; }
+    .na-confirm-q { font-size: 11.5px; color: #475569; max-width: 230px; line-height: 1.4; }
+    .na-confirm-row { display: flex; gap: 6px; }
+    .na-err { font-size: 11.5px; color: #b91c1c; max-width: 240px; line-height: 1.4; }
+    .na-more {
+      display: block; width: 100%; padding: 10px 22px; border: none; border-top: 1px solid #f1f5f9;
+      background: #fafbfc; color: #1d4ed8; font: inherit; font-size: 12.5px; font-weight: 700;
+      text-align: left; cursor: pointer;
+    }
+    .na-more:hover { background: #f1f5f9; }
+    .na-check:focus-visible, .na-btn:focus-visible, .na-more:focus-visible, .na-ref:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+    @media (max-width: 860px) {
+      .na-hd { flex-direction: column; }
+      .na-item { grid-template-columns: 1fr; }
+      .na-side { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; text-align: left; }
+      .na-act { align-items: flex-start; }
+    }
+    @media (prefers-reduced-motion: reduce) { .na-item { transition: none; } }
 
     /* ── Section header ──────────────────────────────────────────── */
     .sec-hd {
@@ -785,7 +888,7 @@ function buildDashboardHTML(view = 'cases') {
 </head>
 <body>
 
-${buildNavHeader('dashboard')}
+${buildNavHeader(isSummary ? 'summary' : 'dashboard')}
 
 <!-- ── Refresh bar ──────────────────────────────────────────────── -->
 <div class="refresh-bar">
@@ -802,6 +905,19 @@ ${buildNavHeader('dashboard')}
 <!-- ── MAIN ───────────────────────────────────────────────────────── -->
 <main class="wrap">
 
+  <!-- ── Page Header (shown at once, not only after the figures load) ── -->
+  <div class="dash-header">
+    <div>
+      <h1 class="dash-title">${isSummary ? 'Summary' : 'All Cases'}</h1>
+      <p class="dash-subtitle">${isSummary
+        ? 'Portfolio overview, workload and cases needing attention · TDOT Immigration Platform'
+        : 'Every case, searchable and sortable · TDOT Immigration Platform'}</p>
+    </div>
+    <a class="view-switch" href="${isSummary ? '/admin/dashboard' : '/admin/dashboard/summary'}">${isSummary ? '📋 All Cases' : '📊 Summary'}</a>
+  </div>
+
+  ${isSummary ? NEEDS_ATTENTION_HTML : ''}
+
   <!-- Loading -->
   <div id="loading">
     <div class="spinner"></div>
@@ -813,17 +929,6 @@ ${buildNavHeader('dashboard')}
 
   <!-- Content -->
   <div id="content">
-
-    <!-- ── Page Header ── -->
-    <div class="dash-header">
-      <div>
-        <h1 class="dash-title">${isSummary ? 'Summary' : 'All Cases'}</h1>
-        <p class="dash-subtitle">${isSummary
-          ? 'Portfolio overview, workload and cases needing attention · TDOT Immigration Platform'
-          : 'Every case, searchable and sortable · TDOT Immigration Platform'}</p>
-      </div>
-      <a class="view-switch" href="${isSummary ? '/admin/dashboard' : '/admin/dashboard/summary'}">${isSummary ? '📋 All Cases' : '📊 Summary'}</a>
-    </div>
 
     ${isSummary ? SUMMARY_BODY_HTML : ALL_CASES_BODY_HTML}
 
@@ -875,6 +980,7 @@ ${SHARED_AUTH_JS}
 /* ── Load data ───────────────────────────────────────────────────── */
 function loadData() {
   var key = getKey();
+  if (VIEW === 'summary') naLoad();   // the needs-attention list loads on its own
   var btn = document.getElementById('refresh-btn');
   btn.textContent = '↻ Loading…';
   btn.disabled = true;
@@ -1717,6 +1823,333 @@ function shortType(t) {
   // Fallback: truncate then HTML-escape so raw case type can't inject markup
   var s = t.length > 22 ? t.slice(0, 20) + '…' : t;
   return escHtml(s);
+}
+
+/* ── Needs attention (Summary view only) ──────────────────────────── */
+// The list is worked out on the server (07:00 Toronto daily, or "Check now");
+// this only shows it. No backslashes, backticks or dollar-braces in here: the
+// whole script sits inside the page's template literal.
+var _na = null, _naTimer = null, _naShowAll = {}, _naFlashTimer = null;
+var _naBusy = {};      // keys with an open "Mark handled" confirm: a poll never redraws over them
+var _naDone = {};      // keys marked handled on this page (kept off the list until the server agrees)
+var _naSig = '';       // the list last drawn (check time + keys): an unchanged poll leaves the rows alone
+var _naDirty = false;  // a redraw is waiting for the open confirm to close
+var NA_SEV = { high: 'Urgent', medium: 'To do', low: 'Check' };
+
+function naHeaders(json) {
+  var k = peekKey();
+  var h = k ? { 'X-Api-Key': k } : {};
+  if (json) h['Content-Type'] = 'application/json';
+  return h;
+}
+
+function naBusyCount() {
+  var n = 0;
+  for (var k in _naBusy) if (_naBusy[k]) n++;
+  return n;
+}
+
+function naLoad() {
+  if (_naTimer) { clearTimeout(_naTimer); _naTimer = null; }
+  return fetch('/admin/needs-attention', { headers: naHeaders(false), credentials: 'same-origin' })
+    .then(function(r) {
+      if (r.status === 401) throw new Error('please sign in again');
+      if (!r.ok) throw new Error('the server answered ' + r.status);
+      return r.json();
+    })
+    .then(function(d) {
+      d.entries = (d.entries || []).filter(function(e) { return !_naDone[e.key]; });
+      _na = d;
+      naRender(false);
+      if (d.running) _naTimer = setTimeout(naLoad, 5000);
+    })
+    .catch(function(e) {
+      var btn = document.getElementById('na-check');
+      if (btn) { btn.disabled = false; btn.textContent = 'Check now'; }
+      naSetNote('err', ['The list could not be loaded (' + e.message + '). Press Refresh to try again.']);
+      if (!_na) document.getElementById('na-body').innerHTML = '<div class="na-empty">No list yet.</div>';
+    });
+}
+
+// Only touches the DOM when the text changes, so a screen reader is not told
+// the same thing every five seconds while a check runs.
+function naSetNote(kind, lines) {
+  var el = document.getElementById('na-note');
+  if (!el) return;
+  var html = lines.map(function(l) { return '<div>' + escHtml(l) + '</div>'; }).join('');
+  var cls = 'na-note' + (kind ? ' ' + kind : '');
+  if (el.innerHTML === html && el.className === cls && el.hidden === !lines.length) return;
+  el.className = cls;
+  el.innerHTML = html;
+  el.hidden = !lines.length;
+}
+
+function naFlash(text, kind) {
+  var el = document.getElementById('na-flash');
+  if (!el) return;
+  el.className = 'na-flash' + (kind === 'err' ? ' err' : '');
+  el.textContent = text;
+  if (_naFlashTimer) clearTimeout(_naFlashTimer);
+  _naFlashTimer = null;
+  if (kind !== 'err') _naFlashTimer = setTimeout(function() { el.textContent = ''; }, 8000);
+}
+
+function naDay(d) { return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'America/Toronto' }); }
+// Whole Toronto calendar days since 1970 (so "yesterday at 23:30" is 1 day ago, not "today").
+function naDayNumber(d) {
+  var p = d.toLocaleDateString('en-CA', { timeZone: 'America/Toronto' }).split('-');
+  return Math.round(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])) / 86400000);
+}
+
+function naWhen(iso) {
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  var time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Toronto' });
+  return (naDayNumber(d) === naDayNumber(new Date()) ? 'today' : naDay(d)) + ' at ' + time;
+}
+
+function naSince(iso) {
+  var t = Date.parse(iso || '');
+  if (!t) return null;
+  var d = new Date(t);
+  var days = naDayNumber(new Date()) - naDayNumber(d);
+  return {
+    day: naDay(d),
+    full: d.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'America/Toronto' }) + ' (Toronto)',
+    age: days <= 0 ? 'today' : (days === 1 ? '1 day' : days + ' days')
+  };
+}
+
+function naItemHtml(e) {
+  var who = e.caseRef
+    ? '<a class="na-ref" href="/admin/case/' + encodeURIComponent(e.caseRef) + '" title="Open the case page">' + escHtml(e.caseRef) + '</a>'
+    : '<span class="na-noref">No case number</span>';
+  var meta = [];
+  if (e.stage) meta.push(e.stage);
+  if (e.manager) meta.push('Case manager: ' + e.manager);
+  var since = naSince(e.since);
+  return '<li class="na-item" data-na-key="' + escHtml(e.key) + '">' +
+    '<div class="na-who">' + who + '<span class="na-client">' + escHtml(e.client) + '</span>' +
+      (meta.length ? '<span class="na-meta">' + escHtml(meta.join(' · ')) + '</span>' : '') + '</div>' +
+    '<div class="na-text"><p class="na-why">' + escHtml(e.why) + '</p>' +
+      '<p class="na-todo"><span class="na-todo-lbl">What to do:</span> ' + escHtml(e.todo) + '</p></div>' +
+    '<div class="na-side">' +
+      (since ? '<span class="na-since" title="' + escHtml(since.full) + '">Since <b>' + escHtml(since.day) + '</b> · ' + escHtml(since.age) + '</span>' : '') +
+      '<span class="na-act"><button type="button" class="na-btn" onclick="naAskHandled(this)">Mark handled</button></span>' +
+    '</div>' +
+  '</li>';
+}
+
+// The header, the note and the Check now button: safe to redraw on every poll.
+function naRenderStatus(d) {
+  var btn = document.getElementById('na-check');
+  var total = document.getElementById('na-total');
+  var entries = d.entries || [];
+  var when = d.checkedAt ? naWhen(d.checkedAt) : '';
+  btn.disabled = !!d.running;
+  btn.textContent = d.running ? 'Checking…' : 'Check now';
+  document.getElementById('na-sub').textContent = d.checkedAt
+    ? 'Checked ' + when + ' across ' + d.casesChecked + ' cases. Checked again every morning at 7:00.'
+    : 'Cases where a step was missed. Checked every morning at 7:00.';
+
+  var lines = [], kind = '';
+  if (d.running) {
+    lines.push((d.error ? 'The previous check did not finish; checking every case again now.' : 'Checking every case.') +
+      ' This takes about a minute and a half' + (d.checkedAt ? '; the list below is from the last check.' : '.'));
+  } else if (d.error) {
+    kind = 'err';
+    lines.push('The last check did not finish (' + d.error.message + ').' +
+      (d.checkedAt ? ' The list below is from ' + when + '.' : '') + ' You can press Check now to try again.');
+  }
+  if (d.partial && d.partial.length) lines.push('Not everything could be checked: ' + d.partial.join(' '));
+  naSetNote(kind, lines);
+
+  if (d.checkedAt) {
+    total.hidden = false;
+    total.textContent = entries.length;
+    total.className = 'na-total' + (entries.length ? '' : ' zero');
+  } else {
+    total.hidden = true;
+  }
+}
+
+// The rows. Not redrawn while someone has a "Mark handled" confirm open, and
+// not redrawn at all when a poll brings the same list.
+function naRender(force) {
+  var d = _na;
+  if (!d) return;
+  naRenderStatus(d);
+  var sig = (d.checkedAt || '') + '|' + (d.running ? 'r' : '') + '|' + (d.entries || []).map(function(e) { return e.key; }).join(',');
+  if (!force && sig === _naSig) return;
+  if (!force && naBusyCount()) { _naDirty = true; return; }
+  // Every row is redrawn: no confirm stays open (a save in flight finishes on its own).
+  _naBusy = {};
+  _naSig = sig;
+  _naDirty = false;
+  naRenderBody(d);
+}
+
+function naRenderBody(d) {
+  var body = document.getElementById('na-body');
+  var entries = d.entries || [];
+  if (!d.checkedAt) {
+    body.innerHTML = '<div class="na-empty">' + (d.running ? 'Checking…' : 'No list yet.') + '</div>';
+    return;
+  }
+  if (!entries.length) {
+    body.innerHTML = '<div class="na-empty all-clear">Nothing needs attention right now.</div>';
+    return;
+  }
+  var kinds = d.kinds || {}, groups = {}, order = [];
+  entries.forEach(function(e) {
+    if (!groups[e.kind]) { groups[e.kind] = []; order.push(e.kind); }
+    groups[e.kind].push(e);
+  });
+  order.sort(function(a, b) { return ((kinds[a] || {}).order || 99) - ((kinds[b] || {}).order || 99); });
+  body.innerHTML = order.map(function(kind) {
+    var k = kinds[kind] || { label: kind, severity: 'low' };
+    // Longest-waiting first; an item without a date goes last.
+    var list = groups[kind].slice().sort(function(a, b) { return (a.since || 'z') < (b.since || 'z') ? -1 : 1; });
+    var shown = _naShowAll[kind] ? list : list.slice(0, 5);
+    return '<div class="na-group sev-' + escHtml(k.severity) + '" data-na-kind="' + escHtml(kind) + '">' +
+      '<div class="na-group-hd"><span class="na-sev">' + escHtml(NA_SEV[k.severity] || 'Check') + '</span>' +
+        '<h3 class="na-group-title">' + escHtml(k.label) + '</h3><span class="na-count">' + list.length + '</span></div>' +
+      '<ul class="na-list">' + shown.map(naItemHtml).join('') + '</ul>' +
+      (list.length > shown.length ? '<button type="button" class="na-more" onclick="naShowAll(this)">Show all ' + list.length + '</button>' : '') +
+    '</div>';
+  }).join('');
+}
+
+function naShowAll(btn) {
+  var group = btn.closest('.na-group');
+  var kind = group.getAttribute('data-na-kind');
+  _naShowAll[kind] = true;
+  naRender(true);
+  // Keyboard users carry on at the first item that was hidden.
+  var items = document.querySelectorAll('.na-group[data-na-kind="' + kind + '"] .na-item');
+  var next = items[5] && (items[5].querySelector('.na-ref') || items[5].querySelector('.na-btn'));
+  if (next) next.focus();
+}
+
+function naCheckNow() {
+  var btn = document.getElementById('na-check');
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  fetch('/admin/needs-attention/refresh', { method: 'POST', headers: naHeaders(true), credentials: 'same-origin', body: '{}' })
+    .then(function(r) {
+      if (r.status === 401) throw new Error('please sign in again');
+      if (!r.ok) throw new Error('the server answered ' + r.status);
+      return r.json();
+    })
+    .then(function(j) {
+      if (j.retryInSec) {
+        naFlash(j.lastFailed
+          ? 'The last check failed a moment ago. You can try again in ' + j.retryInSec + ' seconds.'
+          : 'Checked a moment ago. You can check again in ' + j.retryInSec + ' seconds.');
+      } else {
+        naFlash('');
+      }
+      return naLoad();
+    })
+    .catch(function(e) {
+      btn.disabled = false;
+      btn.textContent = 'Check now';
+      naFlash('The check could not start (' + e.message + ').', 'err');
+    });
+}
+
+function naAskHandled(btn) {
+  var act = btn.closest('.na-act');
+  var li = btn.closest('.na-item');
+  var refEl = li.querySelector('.na-ref');
+  _naBusy[li.getAttribute('data-na-key')] = true;
+  act.innerHTML = '<span class="na-confirm-q">Adds a note on ' + escHtml(refEl ? refEl.textContent : 'the case') +
+      ' in Monday and takes it off this list.</span>' +
+    '<span class="na-confirm-row"><button type="button" class="na-btn primary" onclick="naMarkHandled(this)">Mark handled</button>' +
+      '<button type="button" class="na-btn" onclick="naCancelHandled(this)">Cancel</button></span>';
+  act.querySelector('.primary').focus();
+}
+
+function naCancelHandled(btn) {
+  var li = btn.closest('.na-item');
+  var key = li.getAttribute('data-na-key');
+  delete _naBusy[key];
+  if (_naDirty && !naBusyCount()) {
+    var focusKey = naFocusAfter(key);
+    naRender(true);
+    var again = document.querySelector('[data-na-key="' + key + '"] .na-btn') ||
+      (focusKey && document.querySelector('[data-na-key="' + focusKey + '"] .na-btn'));
+    (again || document.getElementById('na-title')).focus();
+    return;
+  }
+  var act = btn.closest('.na-act');
+  act.innerHTML = '<button type="button" class="na-btn" onclick="naAskHandled(this)">Mark handled</button>';
+  act.querySelector('button').focus();
+}
+
+// Where focus goes once an item leaves the list: the next item, else the one
+// before, else the list's heading.
+function naFocusAfter(key) {
+  var all = Array.prototype.slice.call(document.querySelectorAll('.na-item'));
+  var i = all.map(function(li) { return li.getAttribute('data-na-key'); }).indexOf(key);
+  var to = all[i + 1] || all[i - 1];
+  return to ? to.getAttribute('data-na-key') : '';
+}
+
+function naMarkHandled(btn) {
+  var li = btn.closest('.na-item');
+  var act = btn.closest('.na-act');
+  var key = li.getAttribute('data-na-key');
+  var refEl = li.querySelector('.na-ref');
+  var buttons = act.querySelectorAll('button');
+  for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
+  btn.textContent = 'Saving…';
+  var old = act.querySelector('.na-err');
+  if (old) old.parentNode.removeChild(old);
+  // The item leaves this page's list (saved, or already gone on the server).
+  var drop = function(message) {
+    var focusKey = naFocusAfter(key);
+    _naDone[key] = true;
+    delete _naBusy[key];
+    _na.entries = (_na.entries || []).filter(function(e) { return e.key !== key; });
+    li.classList.add('gone');
+    setTimeout(function() {
+      naRender(true);
+      var next = focusKey && document.querySelector('[data-na-key="' + focusKey + '"] .na-btn');
+      (next || document.getElementById('na-title')).focus();
+      naFlash(message);
+    }, 200);
+  };
+  fetch('/admin/needs-attention/handled', { method: 'POST', headers: naHeaders(true), credentials: 'same-origin', body: JSON.stringify({ key: key }) })
+    .then(function(r) {
+      return r.json().catch(function() { return {}; }).then(function(j) {
+        if (r.status === 503) naLoad();   // the server restarted: it is working the list out again
+        if (r.status === 404) { var gone = new Error(j.error || 'gone'); gone.gone = true; throw gone; }
+        if (!r.ok) throw new Error(j.error || ('The server answered ' + r.status + '.'));
+        return j;
+      });
+    })
+    .then(function() {
+      drop('Marked handled' + (refEl ? '. A note was added to ' + refEl.textContent + '.' : '.'));
+    })
+    .catch(function(e) {
+      if (e.gone) {   // no longer on the server's list: nothing was written; show the current list
+        drop('That item is no longer on the list, so no note was added.');
+        naLoad();
+        return;
+      }
+      if (!document.body.contains(li)) {   // the list was redrawn meanwhile: say it where it can be seen
+        naFlash('The note for ' + (refEl ? refEl.textContent : 'that item') + ' could not be saved (' + e.message + ').', 'err');
+        return;
+      }
+      btn.textContent = 'Mark handled';
+      for (var i = 0; i < buttons.length; i++) buttons[i].disabled = false;
+      var err = document.createElement('span');
+      err.className = 'na-err';
+      err.setAttribute('role', 'alert');
+      err.textContent = e.message;
+      act.appendChild(err);
+    });
 }
 
 /* ── Boot ─────────────────────────────────────────────────────────── */
