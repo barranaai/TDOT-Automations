@@ -1313,7 +1313,7 @@ app.post('/admin/onedrive/merge-case-folders', express.json(), async (req, res) 
     const report = await require('./services/caseFolderMergeService').mergeCaseFolders({
       from: b.from, to: b.to, keep: b.keep === undefined ? [] : b.keep, renameFromTo: b.renameFromTo,
       dryRun: b.dryRun !== false, confirm: String(b.confirm || ''), by: viewer.email || 'admin-key', note: b.note !== false,
-      finish: b.finish === true,
+      finish: b.finish === true, copy: b.copy === true,
     });
     res.json(report);
   } catch (err) {

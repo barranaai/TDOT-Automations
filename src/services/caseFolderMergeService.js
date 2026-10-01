@@ -7,6 +7,13 @@
  * client's files into the real folder, leave the test run's own files behind,
  * rename the test folder so it no longer carries the reference; never delete.
  *
+ * COPY mode (Faran, 2026-10-01 00:30: "do not remove the files from test
+ * folders yet"): the same run, but every file is COPIED — the originals stay
+ * in the renamed test folder until a separate clean-up; a file already in the
+ * real folder with the same name, size and date is skipped, so a run can be
+ * repeated. After the copies, the real folder is re-listed and every expected
+ * file must be there.
+ *
  * One call = one case. Preview by default: it lists every file with where it
  * would go, what stays, the rename, and anything that would stop a real run —
  * and changes nothing. The real run needs the confirmation text.
@@ -51,6 +58,8 @@ const DOC_FOLDER_COL = 'link_mm1yrnz1';   // Documents board: "Open in OneDrive"
 const RECENT_MS      = 15 * 60 * 1000;
 const MOVE_RETRIES   = 2;
 
+const _inProgress = new Set();   // case refs with a run in flight: a second call for the same case is refused
+
 const SANITISE = (v) => String(v == null ? '' : v).replace(/[*:"<>?/\\|]/g, '').trim();
 const refOf = (folderName) => { const m = /\s-\s(\S+)$/.exec(String(folderName || '').trim()); return m ? m[1] : ''; };
 const clean = (v) => String(v == null ? '' : v).trim();
@@ -59,6 +68,7 @@ const clean = (v) => String(v == null ? '' : v).trim();
 const io = {
   tree:        (name) => require('./oneDriveService').listRootFolderTree(name),
   move:        (p) => require('./oneDriveService').moveItemById(p),
+  copy:        (p) => require('./oneDriveService').copyItemById(p),
   rename:      (p) => require('./oneDriveService').renameItemById(p),
   subfolder:   (p) => require('./oneDriveService').ensureSubfolderById(p),
   forget:      (ref) => require('./oneDriveService').forgetCaseFolder(ref),
@@ -105,8 +115,11 @@ function planMerge({ from, to, keep = [], now = Date.now() }) {
     if (keepSet.has(path)) { stays.push({ path, id: f.id }); return; }
     const dest = sub ? toSubs.get(sub.name.toLowerCase()) : null;
     const existing = sub ? (dest && dest.files.get(f.name.toLowerCase())) : toRoot.get(f.name.toLowerCase());
-    const m = { id: f.id, path, name: f.name, size: f.size, modifiedAt: f.modifiedAt, subfolder: sub ? sub.name : '', destSubfolderId: dest ? dest.id : null, destSubfolderMissing: !!sub && !dest };
-    if (existing) {
+    const m = { id: f.id, path, name: f.name, size: f.size, hash: f.hash || '', modifiedAt: f.modifiedAt, subfolder: sub ? sub.name : '', destSubfolderId: dest ? dest.id : null, destSubfolderMissing: !!sub && !dest };
+    const sameContent = existing && ((existing.hash && f.hash) ? existing.hash === f.hash : (existing.size === f.size && existing.modifiedAt === f.modifiedAt));
+    if (sameContent) {
+      m.alreadyThere = true;   // the same file (a copy from an earlier run): nothing to do
+    } else if (existing) {
       // the NEWER file keeps the name; the older one is set aside (never replaced)
       m.clash = { existingId: existing.id, existingModifiedAt: existing.modifiedAt, movingIsNewer: String(f.modifiedAt) > String(existing.modifiedAt) };
     }
@@ -120,7 +133,7 @@ function planMerge({ from, to, keep = [], now = Date.now() }) {
     // The whole sub-folder goes in ONE step when the real folder has none of that
     // name, nothing in it stays and nothing is nested: no window in which the
     // real folder has the sub-folder but not yet its files.
-    const whole = !toSubs.has(d.name.toLowerCase()) && !(d.nested || []).length && !d.files.some((f) => keepSet.has(`${d.name}/${f.name}`));
+    const whole = !toSubs.has(d.name.toLowerCase()) && !(d.nested || []).length && !d.files.some((f) => keepSet.has(`${d.name}/${f.name}`));   // (a sub-folder already in `to` is never whole, so alreadyThere files are only ever per-file)
     if (whole) {
       folderMoves.push({ id: d.id, name: d.name, files: d.files.length });
       for (const m of moves) if (m.subfolder === d.name) { m.viaFolder = true; m.destSubfolderMissing = false; }
@@ -135,7 +148,9 @@ function planMerge({ from, to, keep = [], now = Date.now() }) {
  * @param {{ from: string, to: string, keep?: string[], renameFromTo: string, dryRun?: boolean, confirm?: string, by?: string, note?: boolean, finish?: boolean }} p
  *   finish = true only to finish a run that left files behind: from = the RENAMED name (= renameFromTo), same keep list
  */
-async function mergeCaseFolders({ from, to, keep = [], renameFromTo, dryRun = true, confirm = '', by = '', note = true, finish = false }) {
+async function mergeCaseFolders({ from, to, keep = [], renameFromTo, dryRun = true, confirm = '', by = '', note = true, finish = false, copy = false }) {
+  const verb = copy ? 'copied' : 'moved';
+  const transfer = copy ? io.copy : io.move;
   from = clean(from); to = clean(to);
   const newName = SANITISE(renameFromTo);
   if (!from || !to) throw bad('from and to (exact root folder names) are required');
@@ -152,6 +167,7 @@ async function mergeCaseFolders({ from, to, keep = [], renameFromTo, dryRun = tr
   if (!alreadyRenamed && from === newName) throw bad(`"${from}" is the renamed name — to finish an earlier run send finish: true`);
   if (!alreadyRenamed && refOf(from) !== ref) throw bad(`from must end with the SAME case reference as to (" - ${ref}"); got "${from}"`);
   if (!dryRun && confirm !== CONFIRM_TEXT) throw bad(`A real run needs the confirmation text "${CONFIRM_TEXT}".`);
+  if (!dryRun && _inProgress.has(ref)) throw bad(`a run for ${ref} is still in progress — wait for it (see the server log) before running again`);
 
   const [fromTree, toTree] = await Promise.all([io.tree(from), io.tree(to)]);
   if (!fromTree) throw bad(`no folder named "${from}"`);
@@ -169,24 +185,25 @@ async function mergeCaseFolders({ from, to, keep = [], renameFromTo, dryRun = tr
   if (!caseItems.length) plan.blockers.push(`no Cases-board row carries ${ref}`);
 
   const report = {
-    mode: dryRun ? 'preview (nothing changed)' : 'REAL RUN', caseRef: ref, by: clean(by) || 'admin', startedAt: new Date(now).toISOString(),
+    mode: dryRun ? 'preview (nothing changed)' : 'REAL RUN', action: copy ? 'COPY (originals stay)' : 'MOVE', caseRef: ref, by: clean(by) || 'admin', startedAt: new Date(now).toISOString(),
     from: { name: fromTree.folder.name, id: fromTree.folder.id }, to: { name: toTree.folder.name, id: toTree.folder.id, webUrl: toTree.folder.webUrl },
     renameFromTo: newName, alreadyRenamed, caseRows: caseItems.map((c) => `${c.id} ${c.name}`),
     folderMoves: plan.folderMoves.map((d) => `${d.name}/ (${d.files} file${d.files === 1 ? '' : 's'}) — the whole sub-folder, in one step`),
     moves: plan.moves.map((m) => ({ path: m.path, to: `${toTree.folder.name}/${m.path}`, size: m.size, modifiedAt: m.modifiedAt,
-      note: m.viaFolder ? 'moves with its whole sub-folder' : m.clash ? (m.clash.movingIsNewer
+      note: m.alreadyThere ? 'already there (same name, size and date) — skipped' : m.viaFolder ? `${copy ? 'copies' : 'moves'} with its whole sub-folder` : m.clash ? (m.clash.movingIsNewer
           ? `a file with this name is already there (changed ${m.clash.existingModifiedAt}) — this one is newer and keeps the name; the older is set aside as "(before merge …)"`
           : `a file with this name is already there (changed ${m.clash.existingModifiedAt}) and is NEWER — it keeps the name; this one is stored with a suffix`)
         : (m.destSubfolderMissing ? 'sub-folder will be created' : '') })),
     stays: plan.stays.map((s) => s.path), emptySubfoldersLeft: plan.emptySubfoldersLeft, blockers: plan.blockers,
-    counts: { toMove: plan.moves.length, toStay: plan.stays.length, clashes: plan.moves.filter((m) => m.clash).length },
-    renamed: null, moved: [], failed: [], setAside: [], leftBehind: null, foldersCarryingRef: null, rowLinks: null, noted: [], outcome: null,
+    counts: { toMove: plan.moves.filter((m) => !m.alreadyThere).length, alreadyThere: plan.moves.filter((m) => m.alreadyThere).length, toStay: plan.stays.length, clashes: plan.moves.filter((m) => m.clash).length },
+    renamed: null, moved: [], skipped: [], failed: [], setAside: [], leftBehind: null, missingInTarget: null, foldersCarryingRef: null, rowLinks: null, noted: [], outcome: null,
   };
   if (dryRun) { report.outcome = plan.blockers.length ? 'a real run would be REFUSED — see blockers' : 'ready'; return report; }
   if (plan.blockers.length) throw bad(`refused: ${plan.blockers.join(' | ')}`);
 
-  console.log(`[FolderMerge] REAL RUN ${ref}: "${from}" → "${to}", ${plan.moves.length} file(s), by ${report.by}`);
+  console.log(`[FolderMerge] REAL RUN (${report.action}) ${ref}: "${from}" → "${to}", ${report.counts.toMove} file(s), by ${report.by}`);
   const unexpectedNames = [];
+  _inProgress.add(ref);
   try {
     // 2. the case goes on hold, then the test folder comes OFF the reference
     io.hold(ref);
@@ -204,30 +221,49 @@ async function mergeCaseFolders({ from, to, keep = [], renameFromTo, dryRun = tr
     }
     try { io.forget(ref); } catch (_) { /* best effort */ }
 
+    // In copy mode a transfer Graph has ACCEPTED is never sent again (that would
+    // make a second copy): on such a failure the target is re-listed to see
+    // whether the copy landed — found: done; not found: reported, finish later.
+    const landed = async (subfolderName, fileName, hash) => {
+      const t = await io.tree(toTree.folder.name);
+      if (!t) return null;
+      if (!fileName) return t.folders.find((x) => x.name.toLowerCase() === subfolderName.toLowerCase()) || null;
+      const d = subfolderName ? t.folders.find((x) => x.name.toLowerCase() === subfolderName.toLowerCase()) : null;
+      const files = subfolderName ? (d ? d.files : []) : t.rootFiles;
+      return files.find((f) => f.name.toLowerCase() === fileName.toLowerCase() && (!hash || !f.hash || f.hash === hash)) || null;
+    };
+    const settle = async (err, subfolderName, fileName, hash) => {   // → { name } when the accepted copy is there, else null
+      if (!copy || !err.copyAccepted) return null;
+      try { const hit = await landed(subfolderName, fileName, hash); return hit ? { name: hit.name, webUrl: '' } : null; } catch (_) { return null; }
+    };
     // 3a. whole sub-folders, Questionnaire first
     const viaFolderDone = new Set();
     for (const d of plan.folderMoves) {
       let lastErr = null;
       for (let attempt = 0; attempt <= MOVE_RETRIES; attempt++) {
         try {
-          const r = await io.move({ itemId: d.id, toFolderId: toTree.folder.id });
-          if (r.name !== d.name) unexpectedNames.push(`sub-folder "${d.name}" was stored as "${r.name}" — something made a "${d.name}" in the real folder during the run`);
+          let r;
+          try { r = await transfer({ itemId: d.id, toFolderId: toTree.folder.id }); }
+          catch (err) { r = await settle(err, d.name, null, null); if (!r) throw err; }
+          if (r.name !== d.name) unexpectedNames.push(`sub-folder "${d.name}" was stored as "${r.name}" — a "${d.name}" already existed in the real folder${copy ? ' (an earlier copy?)' : ' — something made it during the run'}`);
           for (const m of plan.moves) if (m.viaFolder && m.subfolder === d.name) { report.moved.push({ path: m.path, storedAs: m.name, withFolder: r.name }); viaFolderDone.add(m.id); }
-          console.log(`[FolderMerge] ${ref}: moved sub-folder "${d.name}" (${d.files} file(s)) → "${r.name}"`);
+          console.log(`[FolderMerge] ${ref}: ${verb} sub-folder "${d.name}" (${d.files} file(s)) → "${r.name}"`);
           lastErr = null;
           break;
         } catch (err) {
           lastErr = err;
+          if (copy && err.copyAccepted) { lastErr = Object.assign(new Error(`copy was started but could not be confirmed (${err.message}) — look in the folder, then finish later`), { copyAccepted: true }); break; }
           if (attempt < MOVE_RETRIES) { console.warn(`[FolderMerge] ${ref}: sub-folder "${d.name}" — ${err.message}; trying again`); await io.sleep(3000 * (attempt + 1)); }
         }
       }
-      if (lastErr) for (const m of plan.moves) if (m.viaFolder && m.subfolder === d.name) { report.failed.push({ path: m.path, error: `with its sub-folder: ${lastErr.message}` }); console.error(`[FolderMerge] ${ref}: could not move sub-folder "${d.name}": ${lastErr.message}`); }
+      if (lastErr) for (const m of plan.moves) if (m.viaFolder && m.subfolder === d.name) { report.failed.push({ path: m.path, error: `with its sub-folder: ${lastErr.message}` }); console.error(`[FolderMerge] ${ref}: could not ${copy ? 'copy' : 'move'} sub-folder "${d.name}": ${lastErr.message}`); }
     }
 
     // 3b. the rest, file by file
     const subIds = new Map(plan.moves.filter((m) => m.destSubfolderId).map((m) => [m.subfolder.toLowerCase(), m.destSubfolderId]));
     for (const m of plan.moves) {
     if (m.viaFolder) continue;
+    if (m.alreadyThere) { report.skipped.push(m.path); continue; }
     let lastErr = null;
     for (let attempt = 0; attempt <= MOVE_RETRIES; attempt++) {
       try {
@@ -242,21 +278,25 @@ async function mergeCaseFolders({ from, to, keep = [], renameFromTo, dryRun = tr
           m.clash.asideDone = true;
           report.setAside.push({ path: `${m.subfolder ? m.subfolder + '/' : ''}${m.name}`, storedAs: aside });
         }
-        const r = await io.move({ itemId: m.id, toFolderId });
+        let r;
+        try { r = await transfer({ itemId: m.id, toFolderId }); }
+        catch (err) { r = await settle(err, m.subfolder, m.name, m.hash); if (!r) throw err; }
         report.moved.push({ path: m.path, storedAs: r.name, webUrl: r.webUrl });
-        if (r.name !== m.name && !(m.clash && !m.clash.movingIsNewer)) unexpectedNames.push(`"${m.path}" was stored as "${r.name}" — a file of that name appeared in the real folder during the run`);
-        console.log(`[FolderMerge] ${ref}: moved "${m.path}" → "${r.name}"`);
+        if (r.name !== m.name && !(m.clash && !m.clash.movingIsNewer)) unexpectedNames.push(`"${m.path}" was stored as "${r.name}" — a file of that name already existed in the real folder${copy ? ' (an earlier copy?)' : ' — it appeared during the run'}`);
+        console.log(`[FolderMerge] ${ref}: ${verb} "${m.path}" → "${r.name}"`);
         lastErr = null;
         break;
       } catch (err) {
         lastErr = err;
+        if (copy && err.copyAccepted) { lastErr = new Error(`copy was started but could not be confirmed (${err.message}) — look in the folder, then finish later`); break; }
         if (attempt < MOVE_RETRIES) { console.warn(`[FolderMerge] ${ref}: "${m.path}" — ${err.message}; trying again`); await io.sleep(3000 * (attempt + 1)); }
       }
     }
-    if (lastErr) { report.failed.push({ path: m.path, error: lastErr.message }); console.error(`[FolderMerge] ${ref}: could not move "${m.path}": ${lastErr.message}`); }
+    if (lastErr) { report.failed.push({ path: m.path, error: lastErr.message }); console.error(`[FolderMerge] ${ref}: could not ${copy ? 'copy' : 'move'} "${m.path}": ${lastErr.message}`); }
     }
   } finally {
     io.release(ref);   // the files are where they are going to be; the app may look again
+    _inProgress.delete(ref);
   }
 
   // 4. the checks
@@ -265,9 +305,19 @@ async function mergeCaseFolders({ from, to, keep = [], renameFromTo, dryRun = tr
     if (!after) report.leftBehind = [`could not find "${newName}" to re-list — look before doing anything else`];
     else {
       const left = [...after.rootFiles.map((f) => f.name), ...after.folders.flatMap((d) => [...d.files.map((f) => `${d.name}/${f.name}`), ...(d.nested || []).map((n) => `${d.name}/${n.name}/`)])];
-      report.leftBehind = left.filter((p) => !plan.stays.some((s) => s.path === p));
+      // move: only the kept files may remain; copy: the kept files AND the originals — anything else arrived during the run
+      const expected = new Set([...plan.stays.map((x) => x.path), ...(copy ? plan.moves.map((m) => m.path) : [])]);
+      report.leftBehind = left.filter((p) => !expected.has(p));
     }
   } catch (err) { report.leftBehind = [`could not re-list "${newName}": ${err.message}`]; }
+  if (copy) {
+    // every copy must now be in the real folder
+    try {
+      const target = await io.tree(toTree.folder.name);
+      const have = new Set(target ? [...target.rootFiles.map((f) => f.name.toLowerCase()), ...target.folders.flatMap((d) => d.files.map((f) => `${d.name}/${f.name}`.toLowerCase()))] : []);
+      report.missingInTarget = report.moved.filter((x) => !have.has(`${x.withFolder ? x.withFolder + '/' : (x.path.includes('/') ? x.path.slice(0, x.path.indexOf('/') + 1) : '')}${x.storedAs}`.toLowerCase())).map((x) => x.path);
+    } catch (err) { report.missingInTarget = [`could not re-list "${toTree.folder.name}": ${err.message}`]; }
+  }
   try {
     const hits = await io.foldersByRef(ref);
     report.foldersCarryingRef = hits.map((h) => h.name);
@@ -293,12 +343,13 @@ async function mergeCaseFolders({ from, to, keep = [], renameFromTo, dryRun = tr
   if (note) {
     let folderLink = toTree.folder.webUrl;
     try { folderLink = await io.orgLink(toTree.folder.id); } catch (_) { /* the plain url then */ }
-    const body = `📁 Files moved into this client's own folder (${report.moved.length} file${report.moved.length === 1 ? '' : 's'}, by ${report.by}).\n\n` +
+    const body = `📁 Files ${verb} into this client's own folder (${report.moved.length} file${report.moved.length === 1 ? '' : 's'}, by ${report.by}).\n\n` +
       `They had been filed in "${fromTree.folder.name}", a leftover test folder that carried this case reference. That folder is now named "${newName}"` +
-      (plan.stays.length ? ` and holds only the test run's own files (${plan.stays.length}).` : ' and holds nothing of this client\'s.') +
-      (report.failed.length ? `\n\n⚠ ${report.failed.length} file(s) could NOT be moved and are still in "${newName}": ${report.failed.map((f) => f.path).join('; ')} (kept there on purpose: ${keep.length ? keep.join('; ') : 'nothing'})` : '') +
+      (copy ? ` and still holds the originals (to be cleaned up separately)${plan.stays.length ? ` plus the test run's own files (${plan.stays.length})` : ''}.`
+            : (plan.stays.length ? ` and holds only the test run's own files (${plan.stays.length}).` : ' and holds nothing of this client\'s.')) +
+      (report.failed.length ? `\n\n⚠ ${report.failed.length} file(s) could NOT be ${verb} and are only in "${newName}": ${report.failed.map((f) => f.path).join('; ')} (kept there on purpose: ${keep.length ? keep.join('; ') : 'nothing'})` : '') +
       (report.setAside.length ? `\n\nSet aside (an older copy with the same name): ${report.setAside.map((x) => `${x.path} → ${x.storedAs}`).join('; ')}` : '') +
-      `\n\nMoved: ${report.moved.map((x) => (x.storedAs && !x.path.endsWith(x.storedAs) ? `${x.path} (now "${x.storedAs}")` : x.path)).join('; ')}` +
+      `\n\n${copy ? 'Copied' : 'Moved'}: ${report.moved.map((x) => (x.storedAs && !x.path.endsWith(x.storedAs) ? `${x.path} (now "${x.storedAs}")` : x.path)).join('; ')}` +
       `\n\nThe folder: ${folderLink}`;
     for (const it of caseItems) {
       try { await io.note(it.id, body); report.noted.push(it.id); } catch (err) { report.noteError = err.message; }
@@ -306,11 +357,12 @@ async function mergeCaseFolders({ from, to, keep = [], renameFromTo, dryRun = tr
   }
 
   const problems = [];
-  if (report.failed.length) problems.push(`${report.failed.length} file(s) could not be moved — they are still in "${newName}", which no longer carries the reference; to finish, run again with finish: true, from = "${newName}" and the SAME keep list ${JSON.stringify(keep)}`);
+  if (report.failed.length) problems.push(`${report.failed.length} file(s) could not be ${verb} — they are only in "${newName}", which no longer carries the reference; to finish, run again with finish: true, from = "${newName}" and the SAME keep list ${JSON.stringify(keep)}`);
+  if (report.missingInTarget && report.missingInTarget.length) problems.push(`not found in "${toTree.folder.name}" after the copy: ${report.missingInTarget.join('; ')}`);
   if (unexpectedNames.length) { report.unexpectedNames = unexpectedNames; problems.push(unexpectedNames.join('; ')); }
   if (report.leftBehind && report.leftBehind.length) problems.push(`unexpected item(s) left in "${newName}": ${report.leftBehind.join('; ')}`);
   if (splitAgain) problems.push(`the reference is NOT on exactly the real folder now: ${JSON.stringify(report.foldersCarryingRef)} — look before doing anything else`);
-  report.outcome = problems.length ? `done WITH PROBLEMS: ${report.moved.length} file(s) moved. ${problems.join('. ')}` : `done: ${report.moved.length} file(s) moved; "${fromTree.folder.name}" is now "${newName}"; the reference is only on "${toTree.folder.name}"`;
+  report.outcome = problems.length ? `done WITH PROBLEMS: ${report.moved.length} file(s) ${verb}. ${problems.join('. ')}` : `done: ${report.moved.length} file(s) ${verb}${report.skipped.length ? `, ${report.skipped.length} already there` : ''}; "${fromTree.folder.name}" is now "${newName}"${copy ? ' and still holds the originals' : ''}; the reference is only on "${toTree.folder.name}"`;
   (problems.length ? console.error : console.log)(`[FolderMerge] ${ref}: ${report.outcome}`);
   return report;
 }
@@ -323,4 +375,4 @@ function asideName(name, now) {
 
 function bad(msg) { const e = new Error(msg); e.badRequest = true; return e; }
 
-module.exports = { mergeCaseFolders, planMerge, io, CONFIRM_TEXT, refOf, asideName };
+module.exports = { mergeCaseFolders, planMerge, io, CONFIRM_TEXT, refOf, asideName, _inProgress };

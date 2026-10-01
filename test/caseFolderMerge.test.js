@@ -14,7 +14,7 @@ const fs     = require('fs');
 
 const svc = () => { const p = require.resolve('../src/services/caseFolderMergeService'); delete require.cache[p]; return require(p); };
 const NOW = Date.parse('2026-09-30T23:40:00Z');
-const file = (id, name, extra = {}) => ({ id, name, size: 100, isFolder: false, createdAt: '2026-09-17T10:00:00Z', modifiedAt: '2026-09-17T10:00:00Z', createdBy: 'SharePoint App', modifiedBy: 'SharePoint App', ...extra });
+const file = (id, name, extra = {}) => ({ id, name, size: 100, hash: 'h-' + name, isFolder: false, createdAt: '2026-09-17T10:00:00Z', modifiedAt: '2026-09-17T10:00:00Z', createdBy: 'SharePoint App', modifiedBy: 'SharePoint App', ...extra });
 
 /** Praj's test folder as it really is, and Ameena's real folder with one same-named (older) file. */
 function trees() {
@@ -27,7 +27,7 @@ function trees() {
     { id: 'p-other', name: 'Other',       files: [], nested: [] },
   ] };
   const to = { folder: { id: 'AMEENA', name: 'Ameena Begum - 2026-VV-008', webUrl: 'https://w/ameena' }, rootFiles: [], folders: [
-    { id: 'a-ret', name: 'Retainer', files: [file('ar1', 'retainer-agreement-SIGNED.pdf', { modifiedAt: '2026-09-12T12:36:00Z' })], nested: [] },
+    { id: 'a-ret', name: 'Retainer', files: [file('ar1', 'retainer-agreement-SIGNED.pdf', { modifiedAt: '2026-09-12T12:36:00Z', hash: 'h-older-content' })], nested: [] },   // a same-named, DIFFERENT file already there
   ] };
   return { from, to };
 }
@@ -40,7 +40,7 @@ function harness(opts = {}) {
   const s = svc();
   const t = trees();
   const from = opts.from || t.from, to = opts.to || t.to;
-  const seen = { moves: [], movedOk: [], renames: [], subfolders: [], notes: [], forgets: [], treeCalls: [], rowLinks: [], catLinks: [], holds: [], releases: [] };
+  const seen = { moves: [], movedOk: [], copies: [], renames: [], subfolders: [], notes: [], forgets: [], treeCalls: [], rowLinks: [], catLinks: [], holds: [], releases: [] };
   let renamedName = null;
   s.io.now = () => new Date(NOW);
   s.io.sleep = async () => {};
@@ -49,10 +49,22 @@ function harness(opts = {}) {
     const gone = (d) => ({ ...d, files: d.files.filter((f) => !seen.movedOk.includes(f.id)) });
     if (name === from.folder.name && !renamedName) return seen.movedOk.length ? (opts.afterTree ? opts.afterTree(seen) : { ...from, folders: from.folders.filter((d) => !seen.movedOk.includes(d.id)).map(gone) }) : from;
     if (renamedName && name === renamedName) return opts.afterTree ? opts.afterTree(seen) : { ...from, folder: { ...from.folder, name: renamedName }, folders: from.folders.filter((d) => !seen.movedOk.includes(d.id)).map(gone) };
-    if (name === to.folder.name) return to;
+    if (name === to.folder.name) return { ...to, folders: [...to.folders.map((d) => ({ ...d, files: [...d.files, ...copiedInto.files.filter((x) => x.sub === d.name).map((x) => x.file)] })), ...copiedInto.folders.map((d) => ({ ...d, files: [...d.files, ...copiedInto.files.filter((x) => x.sub === d.name).map((x) => x.file)] }))] };
     return null;
   };
   const nameOf = new Map([...from.folders.map((d) => [d.id, d.name]), ...from.rootFiles.map((f) => [f.id, f.name]), ...from.folders.flatMap((d) => d.files.map((f) => [f.id, f.name]))]);
+  const copiedInto = { folders: [], files: [] };   // what the copies add to the target listing
+  s.io.copy = async (p) => {
+    seen.copies.push(p); const f = opts.copyFails && opts.copyFails(p, seen); if (f) throw (f instanceof Error ? f : new Error(f));
+    const folder = from.folders.find((d) => d.id === p.itemId);
+    if (folder) { copiedInto.folders.push({ ...folder, id: 'copy-' + folder.id, files: folder.files.map((x) => ({ ...x, id: 'copy-' + x.id })) }); return { id: 'copy-' + folder.id, name: folder.name, webUrl: 'https://w/copy-' + folder.id }; }
+    const d = from.folders.find((x) => x.files.some((y) => y.id === p.itemId));
+    const file0 = d && d.files.find((y) => y.id === p.itemId);
+    const toSub = [...to.folders, ...copiedInto.folders].find((x) => x.id === p.toFolderId);
+    const stored = opts.copyStoredAs ? opts.copyStoredAs(p) : file0.name;
+    if (toSub) copiedInto.files.push({ sub: toSub.name, file: { ...file0, id: 'copy-' + file0.id, name: stored } });
+    return { id: 'copy-' + p.itemId, name: stored, webUrl: 'https://w/copy-' + p.itemId };
+  };
   s.io.move = async (p) => { seen.moves.push(p); const f = opts.moveFails && opts.moveFails(p, seen); if (f) throw new Error(f); seen.movedOk.push(p.itemId); const custom = opts.storedAs && opts.storedAs(p); return { id: p.itemId, name: custom || nameOf.get(p.itemId) || p.itemId, webUrl: 'https://w/' + p.itemId }; };
   s.io.rename = async (p) => { seen.renames.push(p); if (opts.renameFails && opts.renameFails(p)) throw new Error(opts.renameFails(p)); if (p.itemId === from.folder.id) renamedName = p.newName; return { id: p.itemId, name: p.newName }; };
   s.io.subfolder = async (p) => { seen.subfolders.push(p); return { id: 'new-' + p.name, name: p.name, created: true }; };
@@ -82,7 +94,7 @@ test('preview: every file with where it goes, the kept files, clashes (who is ne
   assert.equal(r.moves.find((m) => m.path.startsWith('Financial/')).note, 'moves with its whole sub-folder');
   assert.deepEqual(r.folderMoves, ['Questionnaire/ (1 file) — the whole sub-folder, in one step', 'Financial/ (2 files) — the whole sub-folder, in one step', 'Other/ (0 files) — the whole sub-folder, in one step'], 'Questionnaire first; Consultation and Intake hold kept files so they stay; Retainer exists in the real folder so its file goes alone');
   assert.deepEqual(r.emptySubfoldersLeft, []);
-  assert.deepEqual(r.counts, { toMove: 4, toStay: 3, clashes: 1 });
+  assert.deepEqual(r.counts, { toMove: 4, alreadyThere: 0, toStay: 3, clashes: 1 });
   assert.deepEqual(r.caseRows, ['13027739210 Ameena Begum']);
   assert.deepEqual(r.blockers, []);
   assert.equal(seen.moves.length + seen.renames.length + seen.subfolders.length + seen.notes.length + seen.forgets.length + seen.rowLinks.length, 0);
@@ -150,7 +162,7 @@ test('a move that keeps failing: retried, then reported; the test folder is ALRE
   assert.deepEqual(r.renamed, { from: 'Praj - 2026-VV-008', to: NEW });
   assert.deepEqual(seen.releases.length, 1);
   assert.deepEqual(r.leftBehind.sort(), ['Financial/Balance Certificate visit.pdf', 'Financial/Notice of assessment 2024.pdf']);
-  assert.match(seen.notes[0][1], /could NOT be moved and are still in "ZZ-TEST Praj \(was 2026-VV-008\)": .*\(kept there on purpose: Consultation\/consultation-agreement-SIGNED.pdf; Intake/);
+  assert.match(seen.notes[0][1], /could NOT be moved and are only in "ZZ-TEST Praj \(was 2026-VV-008\)": .*\(kept there on purpose: Consultation\/consultation-agreement-SIGNED.pdf; Intake/);
   assert.match(r.outcome, /done WITH PROBLEMS.*finish: true, from = "ZZ-TEST Praj \(was 2026-VV-008\)" and the SAME keep list \["Consultation\/consultation-agreement-SIGNED.pdf"/);
 }));
 
@@ -289,7 +301,9 @@ test('the refusals are "bad request" errors (the route answers 400); the route i
 
 test('the service never deletes: no delete call in it or in the by-id helpers; a move keeps both on a clash; a rename never replaces', () => {
   const merge = fs.readFileSync(require.resolve('../src/services/caseFolderMergeService'), 'utf8');
-  assert.doesNotMatch(merge.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ''), /delete|remove|trash/i);
+  const code = merge.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  assert.doesNotMatch(code, /axios\.|deleteItem|removeItem|trash|\/delete|io\.delete|io\.remove/i, 'no Graph delete, no io delete — only a Set entry is ever "deleted"');
+  assert.ok(!Object.keys(svc().io).some((k) => /delete|remove|trash/i.test(k)), 'the io seam has no delete');
   const od = fs.readFileSync(require.resolve('../src/services/oneDriveService'), 'utf8');
   for (const fn of ['moveItemById', 'renameItemById', 'ensureSubfolderById', 'orgLinkById']) {
     const i = od.indexOf(`async function ${fn}`); const j = od.indexOf('\nasync function ', i + 10);
@@ -378,3 +392,172 @@ test('while a case is on hold, every folder resolution in the app answers a tran
   od.releaseCaseFolder('2026-VV-008');
   assert.equal(await od.resolveCaseFolderName({ clientName: 'Ameena Begum', caseRef: '2026-VV-008' }), 'Ameena Begum - 2026-VV-008');
 });
+
+/* ───────────── COPY mode (Faran 2026-10-01: "do not remove the files from test folders yet") ───────────── */
+const COPY = { ...REAL, copy: true };
+
+test('copy mode: the same run, but every file is COPIED and the originals stay; the real folder is re-listed and every copy must be there; the note says so', quiet(async () => {
+  const { s, seen } = harness();
+  const r = await s.mergeCaseFolders(COPY);
+  assert.equal(r.action, 'COPY (originals stay)');
+  assert.equal(seen.moves.length, 0, 'nothing is moved');
+  assert.deepEqual(seen.copies.map((c) => [c.itemId, c.toFolderId]), [['p-q', 'AMEENA'], ['p-fin', 'AMEENA'], ['p-other', 'AMEENA'], ['r1', 'a-ret']], 'Questionnaire first, whole folders, then the lone file');
+  assert.deepEqual(seen.renames.map((x) => x.itemId), ['PRAJ', 'ar1'], 'the test folder still comes off the reference; the older same-named file is still set aside');
+  assert.equal(r.moved.length, 4); assert.equal(r.failed.length, 0);
+  assert.deepEqual(r.leftBehind, [], 'the originals are expected to remain — not "left behind"');
+  assert.deepEqual(r.missingInTarget, []);
+  assert.deepEqual(seen.holds.length, 1); assert.deepEqual(seen.releases.length, 1);
+  assert.match(seen.notes[0][1], /Files copied into this client's own folder \(4 files/);
+  assert.match(seen.notes[0][1], /still holds the originals \(to be cleaned up separately\) plus the test run's own files \(3\)/);
+  assert.match(seen.notes[0][1], /\n\nCopied: /);
+  assert.match(r.outcome, /^done: 4 file\(s\) copied; "Praj - 2026-VV-008" is now "ZZ-TEST Praj \(was 2026-VV-008\)" and still holds the originals; the reference is only on "Ameena Begum - 2026-VV-008"/);
+}));
+
+test('copy mode: a copy that is not in the real folder afterwards is a PROBLEM, never "done"', quiet(async () => {
+  const { s } = harness({ copyStoredAs: (p) => (p.itemId === 'r1' ? 'retainer-agreement-SIGNED.pdf' : null) });
+  s.io.tree = ((orig) => async (name) => { const t = await orig(name); if (t && name === 'Ameena Begum - 2026-VV-008') t.folders = t.folders.filter((d) => d.name !== 'Retainer'); return t; })(s.io.tree);
+  const r = await s.mergeCaseFolders(COPY);
+  assert.deepEqual(r.missingInTarget, ['Retainer/retainer-agreement-SIGNED.pdf']);
+  assert.match(r.outcome, /done WITH PROBLEMS.*not found in "Ameena Begum - 2026-VV-008" after the copy: Retainer\/retainer-agreement-SIGNED.pdf/);
+}));
+
+test('copy mode run twice: files already in the real folder (same name and size) are skipped, nothing is copied again, nothing is set aside again', quiet(async () => {
+  const t = trees();
+  // after a first copy run: the real folder already holds Financial/ and Questionnaire/ copies and the Retainer copy
+  t.to.folders = [
+    { id: 'a-ret', name: 'Retainer', files: [file('ar1', 'retainer-agreement-SIGNED (before merge 2026-09-30).pdf', { modifiedAt: '2026-09-12T12:36:00Z', hash: 'h-older-content' }), file('cr1', 'retainer-agreement-SIGNED.pdf', { modifiedAt: '2026-10-01T04:40:00Z' })], nested: [] },
+    { id: 'c-fin', name: 'Financial', files: [file('cf1', 'Notice of assessment 2024.pdf'), file('cf2', 'Balance Certificate visit.pdf')], nested: [] },
+    { id: 'c-q', name: 'Questionnaire', files: [file('cq1', 'questionnaire-2026-VV-008-primary.json')], nested: [] },
+    { id: 'c-other', name: 'Other', files: [], nested: [] },   // the (empty) sub-folder copied whole by the first run
+  ];
+  const from = { ...t.from, folder: { ...t.from.folder, name: NEW } };
+  const { s, seen } = harness({ from, to: t.to });
+  const p = await s.mergeCaseFolders({ ...ARGS, from: NEW, finish: true, copy: true });
+  assert.equal(p.counts.toMove, 0); assert.equal(p.counts.alreadyThere, 4);
+  assert.ok(p.moves.every((m) => m.note === 'already there (same name, size and date) — skipped'));
+  const r = await s.mergeCaseFolders({ ...COPY, from: NEW, finish: true });
+  assert.equal(seen.copies.length, 0); assert.equal(seen.renames.length, 0);
+  assert.deepEqual(r.skipped.sort(), ['Financial/Balance Certificate visit.pdf', 'Financial/Notice of assessment 2024.pdf', 'Questionnaire/questionnaire-2026-VV-008-primary.json', 'Retainer/retainer-agreement-SIGNED.pdf']);
+  assert.match(r.outcome, /^done: 0 file\(s\) copied, 4 already there/);
+}));
+
+test('copy mode: a failing copy is retried, then reported, and the originals are of course still there', quiet(async () => {
+  const { s, seen } = harness({ copyFails: (p) => (p.itemId === 'p-fin' ? 'HTTP 503' : null) });
+  const r = await s.mergeCaseFolders(COPY);
+  assert.equal(seen.copies.filter((c) => c.itemId === 'p-fin').length, 3);
+  assert.deepEqual(r.failed.map((f) => f.path).sort(), ['Financial/Balance Certificate visit.pdf', 'Financial/Notice of assessment 2024.pdf']);
+  assert.deepEqual(r.leftBehind, []);
+  assert.match(r.outcome, /2 file\(s\) could not be copied — they are only in "ZZ-TEST Praj \(was 2026-VV-008\)"/);
+}));
+
+test('the route passes copy only when the body says copy: true', () => {
+  const src = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
+  const i = src.indexOf("app.post('/admin/onedrive/merge-case-folders'");
+  assert.ok(src.slice(i, i + 1300).includes('copy: b.copy === true'));
+});
+
+test('copyItemById: asks Graph to copy (keeping both on a clash), polls the monitor URL without auth until completed (a bad poll is just polled past), looks the copy up in its OWN auth scope — a 401 there never re-sends the copy; a failed copy is an error; a copy still running at the cap is "accepted but not confirmed"', async () => {
+  const p = require.resolve('../src/services/oneDriveService');
+  const set = (rel, exports) => { const q = require.resolve(rel); require.cache[q] = { id: q, filename: q, loaded: true, exports }; };
+  const calls = [];
+  let polls = 0, lookups = 0, tokens = 0;
+  const axios = {
+    get: async (url, cfg) => {
+      calls.push(['get', url, cfg && cfg.headers && cfg.headers.Authorization]);
+      if (/\/drive\?\$select=id$/.test(url)) return { data: { id: 'DRIVE' } };
+      if (url === 'https://monitor/1') { polls++; if (polls === 1) throw new Error('socket hang up'); return { data: polls < 3 ? { status: 'inProgress', percentageComplete: 50 } : { status: 'completed', resourceId: 'NEWID' } }; }
+      if (url === 'https://monitor/failed') return { data: { status: 'failed', error: { message: 'nameAlreadyExists' } } };
+      if (url === 'https://monitor/never') return { data: { status: 'inProgress' } };
+      if (/\/items\/NEWID\?/.test(url)) { lookups++; if (lookups === 1) { const e = new Error('expired'); e.response = { status: 401 }; throw e; } return { data: { id: 'NEWID', name: 'Questionnaire', webUrl: 'https://w/new' } }; }
+      throw new Error('unexpected GET ' + url);
+    },
+    post: async (url, body) => {
+      calls.push(['post', decodeURIComponent(url), body]);
+      const which = body.parentReference.id;
+      return { status: 202, headers: { location: which === 'FAIL' ? 'https://monitor/failed' : which === 'NEVER' ? 'https://monitor/never' : 'https://monitor/1' }, data: '' };
+    },
+    patch: async () => { throw new Error('must not patch'); }, delete: async () => { throw new Error('must not delete'); }, put: async () => { throw new Error('must not put'); },
+  };
+  set('axios', axios);
+  set('../src/services/microsoftMailService', { getAccessToken: async () => 'tok' + (++tokens), invalidateAccessToken: () => {} });
+  delete require.cache[p];
+  const od = require(p);
+  od._copyPollForTests(1, 50);
+  const r = await od.copyItemById({ itemId: 'p-q', toFolderId: 'AMEENA' });
+  assert.deepEqual(r, { id: 'NEWID', name: 'Questionnaire', webUrl: 'https://w/new' });
+  const posts = calls.filter((c) => c[0] === 'post');
+  assert.equal(posts.length, 1, 'ONE copy, even though the lookup hit a 401 and was retried');
+  assert.match(posts[0][1], /\/items\/p-q\/copy\?@microsoft.graph.conflictBehavior=rename$/);
+  assert.deepEqual(posts[0][2], { parentReference: { driveId: 'DRIVE', id: 'AMEENA' } });
+  assert.ok(calls.filter((c) => c[1] === 'https://monitor/1').every((c) => c[2] === undefined), 'the monitor URL is polled without the bearer');
+  assert.equal(polls, 3, 'the failed first poll was simply polled past');
+  assert.equal(lookups, 2);
+  await assert.rejects(() => od.copyItemById({ itemId: 'x', toFolderId: 'FAIL' }), (e) => /copy failed: nameAlreadyExists/.test(e.message) && !e.copyAccepted);
+  await assert.rejects(() => od.copyItemById({ itemId: 'x', toFolderId: 'NEVER' }), (e) => e.copyAccepted === true && e.transient === true && e.monitor === 'https://monitor/never' && /still not finished/.test(e.message));
+});
+
+test('"already there" means the SAME content (OneDrive hash), not just the same name — a different file with the same name is a clash; without hashes, size and date decide', () => {
+  const { planMerge } = svc();
+  const from = { folder: { id: 'F', name: 'X - 2026-VV-001' }, rootFiles: [], folders: [{ id: 's', name: 'Retainer', files: [file('a', 'r.pdf', { hash: 'A' }), file('b', 'q.pdf', { hash: '', size: 7, modifiedAt: '2026-01-01T00:00:00Z' }), file('c', 'z.pdf', { hash: '', size: 7, modifiedAt: '2026-01-01T00:00:00Z' })], nested: [] }] };
+  const to = { folder: { id: 'T', name: 'Y - 2026-VV-001' }, rootFiles: [], folders: [{ id: 't', name: 'Retainer', files: [file('a2', 'r.pdf', { hash: 'B', modifiedAt: '2026-10-01T00:00:00Z' }), file('b2', 'q.pdf', { hash: '', size: 7, modifiedAt: '2026-01-01T00:00:00Z' }), file('c2', 'z.pdf', { hash: '', size: 8, modifiedAt: '2026-01-01T00:00:00Z' })], nested: [] }] };
+  const plan = planMerge({ from, to, keep: [], now: NOW });
+  const by = Object.fromEntries(plan.moves.map((m) => [m.path, m]));
+  assert.ok(by['Retainer/r.pdf'].clash && !by['Retainer/r.pdf'].alreadyThere, 'same name, different hash → clash');
+  assert.equal(by['Retainer/q.pdf'].alreadyThere, true, 'no hashes, same size and date → already there');
+  assert.ok(by['Retainer/z.pdf'].clash, 'no hashes, different size → clash');
+});
+
+test('listRootFolderTree carries each file\'s content hash (what "already there" is decided on)', async () => {
+  const p = require.resolve('../src/services/oneDriveService');
+  const set = (rel, exports) => { const q = require.resolve(rel); require.cache[q] = { id: q, filename: q, loaded: true, exports }; };
+  set('axios', { get: async (url) => {
+    const u = decodeURIComponent(url);
+    if (/root:\/Client Documents\/A - 1:\?/.test(u)) return { data: { id: 'A', name: 'A - 1' } };
+    if (/\/items\/A\/children/.test(u)) return { data: { value: [{ id: 'f', name: 'q.json', size: 5, file: { hashes: { quickXorHash: 'QX==' } } }] } };
+    throw new Error('unexpected ' + u);
+  } });
+  set('../src/services/microsoftMailService', { getAccessToken: async () => 'tok', invalidateAccessToken: () => {} });
+  delete require.cache[p];
+  const t = await require(p).listRootFolderTree('A - 1');
+  assert.equal(t.rootFiles[0].hash, 'QX==');
+});
+
+test('copy mode: a copy OneDrive accepted but could not confirm is never sent again — the real folder is looked at: landed → counted as done; not there → reported for a later finish; either way ONE copy', quiet(async () => {
+  const accepted = () => { const e = new Error('OneDrive copy accepted but not confirmed: still not finished after 240s'); e.copyAccepted = true; e.transient = true; return e; };
+  // landed: the whole-folder copy of Questionnaire reports "not confirmed" but IS in the real folder
+  const h1 = harness({ copyFails: (p, seen) => { if (p.itemId === 'p-q') { seen.landedAnyway = true; return accepted(); } return null; } });
+  const origCopy = h1.s.io.copy;
+  h1.s.io.copy = async (p) => { try { return await origCopy(p); } catch (e) { if (p.itemId === 'p-q') { h1.seen.copiesLanded = (h1.seen.copiesLanded || 0) + 1; h1.seen.__landQ = true; } throw e; } };
+  const t1 = h1.s.io.tree;
+  h1.s.io.tree = async (name) => { const t = await t1(name); if (t && name === 'Ameena Begum - 2026-VV-008' && h1.seen.__landQ) t.folders = [...t.folders, { id: 'copy-p-q', name: 'Questionnaire', files: [file('cq', 'questionnaire-2026-VV-008-primary.json')], nested: [] }]; return t; };
+  const r1 = await h1.s.mergeCaseFolders(COPY);
+  assert.equal(h1.seen.copies.filter((c) => c.itemId === 'p-q').length, 1, 'not sent again');
+  assert.equal(r1.failed.length, 0);
+  assert.ok(r1.moved.some((m) => m.path === 'Questionnaire/questionnaire-2026-VV-008-primary.json' && m.withFolder === 'Questionnaire'));
+  assert.match(r1.outcome, /^done: 4 file\(s\) copied/);
+  // not landed: reported, not retried
+  const h2 = harness({ copyFails: (p) => (p.itemId === 'p-fin' ? accepted() : null) });
+  const r2 = await h2.s.mergeCaseFolders(COPY);
+  assert.equal(h2.seen.copies.filter((c) => c.itemId === 'p-fin').length, 1, 'not retried');
+  assert.deepEqual(r2.failed.map((f) => f.path).sort(), ['Financial/Balance Certificate visit.pdf', 'Financial/Notice of assessment 2024.pdf']);
+  assert.match(r2.failed[0].error, /copy was started but could not be confirmed .* look in the folder, then finish later/);
+  assert.match(r2.outcome, /done WITH PROBLEMS/);
+  // a plain refusal (the copy was never accepted) is still retried as before
+  const h3 = harness({ copyFails: (p) => (p.itemId === 'p-fin' ? 'HTTP 503' : null) });
+  await h3.s.mergeCaseFolders(COPY);
+  assert.equal(h3.seen.copies.filter((c) => c.itemId === 'p-fin').length, 3);
+}));
+
+test('one run per case at a time: a second real run for the same case while one is in flight is refused; after it ends, allowed again', quiet(async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { s } = harness();
+  s.io.copy = ((orig) => async (p) => { if (p.itemId === 'p-q') await gate; return orig(p); })(s.io.copy);
+  const first = s.mergeCaseFolders(COPY);
+  await new Promise((r) => setTimeout(r, 5));
+  await assert.rejects(() => s.mergeCaseFolders({ ...COPY, from: NEW, finish: true }), /a run for 2026-VV-008 is still in progress/);
+  release();
+  const r = await first;
+  assert.equal(r.failed.length, 0);
+  assert.equal(s._inProgress.size, 0);
+}));

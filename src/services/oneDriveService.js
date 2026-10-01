@@ -657,7 +657,7 @@ async function listRootFolderTree(folderName) {
   if (!safeName) return null;
   const SELECT = '$select=id,name,size,file,folder,createdDateTime,lastModifiedDateTime,createdBy,lastModifiedBy&$top=200';
   const who = (by) => (by && by.user && (by.user.displayName || by.user.email)) || (by && by.application && by.application.displayName) || '';
-  const entry = (it) => ({ id: it.id, name: String(it.name || ''), size: it.size, isFolder: Boolean(it.folder),
+  const entry = (it) => ({ id: it.id, name: String(it.name || ''), size: it.size, isFolder: Boolean(it.folder), hash: (it.file && it.file.hashes && it.file.hashes.quickXorHash) || '',
     createdAt: it.createdDateTime || '', modifiedAt: it.lastModifiedDateTime || '', createdBy: who(it.createdBy), modifiedBy: who(it.lastModifiedBy) });
   try {
     return await withGraphAuth('listRootFolderTree', async (token) => {
@@ -710,6 +710,66 @@ async function moveItemById({ itemId, toFolderId }) {
     throw wrapError('OneDrive move failed', err);
   }
 }
+
+/**
+ * COPY one item (a file, or a whole folder with everything in it) into a
+ * folder, by id. The original is untouched. Graph copies asynchronously: the
+ * call answers 202 with a monitor URL, polled (no auth, as Graph specifies)
+ * until it reports completed or failed. A same-named item in the target keeps
+ * both (conflictBehavior=rename). Returns the copy's id, stored name, webUrl.
+ *
+ * Once Graph has ACCEPTED the copy, nothing here starts another: a failure
+ * after that point (a poll that keeps failing, the job still running at the
+ * cap, the final lookup refused) is thrown with err.copyAccepted = true, so a
+ * caller can look whether the copy landed instead of copying again. The final
+ * lookup runs in its own auth scope, so a 401 there cannot re-run the request.
+ */
+async function copyItemById({ itemId, toFolderId, name, maxWaitMs = COPY_MAX_WAIT_MS }) {
+  if (!itemId || !toFolderId) throw new Error('copyItemById: itemId and toFolderId required');
+  let monitor;
+  try {
+    monitor = await withGraphAuth('copyById', async (token) => {
+      const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+      const drive = await axios.get(`${userBase()}?$select=id`, { headers, timeout: GRAPH_TIMEOUT_MS });
+      const body = { parentReference: { driveId: drive.data.id, id: toFolderId } };
+      if (name) body.name = name;
+      const res = await axios.post(`${userBase()}/items/${encodeURIComponent(itemId)}/copy?@microsoft.graph.conflictBehavior=rename`, body,
+        { headers, timeout: GRAPH_TIMEOUT_MS, validateStatus: (st) => st === 202 });
+      const loc = res.headers && (res.headers.location || res.headers.Location);
+      if (!loc) throw new Error('copy accepted but no monitor URL came back');
+      return loc;
+    });
+  } catch (err) {
+    throw wrapError('OneDrive copy failed', err);
+  }
+  // From here on the copy is Graph's job: never start it twice.
+  const accepted = (err) => { const e = wrapError('OneDrive copy accepted but not confirmed', err); e.copyAccepted = true; e.monitor = monitor; e.transient = true; return e; };
+  let resourceId = null;
+  const deadline = Date.now() + maxWaitMs;
+  let lastPollErr = null;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, COPY_POLL_MS));
+    let d;
+    try {
+      const st = await axios.get(monitor, { timeout: GRAPH_TIMEOUT_MS, validateStatus: () => true });
+      d = st.data || {};
+      lastPollErr = null;
+    } catch (err) { lastPollErr = err; continue; }   // one bad poll is not a failed copy: keep asking until the cap
+    if (d.status === 'completed') { resourceId = d.resourceId; break; }
+    if (d.status === 'failed' || d.status === 'deleteFailed') { const e = new Error(`copy failed: ${(d.error && d.error.message) || JSON.stringify(d).slice(0, 200)}`); e.copyFailed = true; throw wrapError('OneDrive copy failed', e); }
+  }
+  if (!resourceId) throw accepted(lastPollErr || new Error(`copy still not finished after ${Math.round(maxWaitMs / 1000)}s`));
+  try {
+    return await withGraphAuth('copyById:lookup', async (token) => {
+      const item = await axios.get(`${userBase()}/items/${encodeURIComponent(resourceId)}?$select=id,name,webUrl`, { headers: { Authorization: `Bearer ${token}` }, timeout: GRAPH_TIMEOUT_MS });
+      return { id: item.data.id, name: item.data.name || '', webUrl: item.data.webUrl || '' };
+    });
+  } catch (err) {
+    const e = accepted(err); e.resourceId = resourceId; throw e;
+  }
+}
+let COPY_MAX_WAIT_MS = 4 * 60 * 1000;   // one copy job (a folder with files takes seconds; SharePoint can queue it for a while)
+let COPY_POLL_MS     = 1000;
 
 /** Rename ONE item (by id). conflictBehavior=fail: a folder already called that stops it. */
 async function renameItemById({ itemId, newName }) {
@@ -1351,9 +1411,10 @@ module.exports = {
   listFileVersions, readFileVersion,
   uploadFileAsNew,
   ensureCaseWorkFolders, workFoldersFailedNoteText, CASE_WORK_FOLDERS, WORK_FOLDERS_SINCE,
-  listCaseFoldersInRoot, pickCaseFolder, listRootFolderTree, moveItemById, renameItemById, ensureSubfolderById, forgetCaseFolder, orgLinkById, holdCaseFolder, releaseCaseFolder,
+  listCaseFoldersInRoot, pickCaseFolder, listRootFolderTree, moveItemById, copyItemById, renameItemById, ensureSubfolderById, forgetCaseFolder, orgLinkById, holdCaseFolder, releaseCaseFolder,
   _resetWorkFoldersMemo: () => _workFoldersComplete.clear(),
   _workFoldersMemoHas:   (id) => _workFoldersComplete.has(String(id)),
   _seedCaseFolderCacheForTests: (ref, entry) => _caseFolderName.set(String(ref), entry),
+  _copyPollForTests: (ms, maxWaitMs) => { COPY_POLL_MS = ms; COPY_MAX_WAIT_MS = maxWaitMs; },
   _caseFolderCacheHasForTests:  (ref) => _caseFolderName.has(String(ref)),
 };
