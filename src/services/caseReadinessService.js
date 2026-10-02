@@ -264,9 +264,9 @@ function calcDocMetrics(items) {
 
     // A document staff marked "Not Applicable" (2026-10-02) does not exist for
     // this client: it is out of every count — not countable, not reviewed, not
-    // uploaded, not missing. (Always on: a row marked before any switch flip
-    // must never count as missing again.) A blocking row is the one exception
-    // below — N/A never silently clears a blocking item.
+    // uploaded, not missing, and (Faran, 2026-10-02) not blocking either: a
+    // document that does not exist cannot hold the case at a stage gate.
+    // (Always on: a row marked before any switch flip must never count again.)
     const notApplicable = status === 'Not Applicable';
 
     if (counts === 'yes' && !notApplicable) {
@@ -274,7 +274,7 @@ function calcDocMetrics(items) {
       if (status === 'Reviewed') reviewed++;
       if (inPipeline.has(status)) inPipelineCount++;
     }
-    if (isBlocking && status !== 'Reviewed') blocking++;
+    if (isBlocking && status !== 'Reviewed' && !notApplicable) blocking++;
 
     // "Missing Required Documents" = Mandatory docs that count toward readiness
     // AND haven't entered the pipeline at all (no upload from the client yet).

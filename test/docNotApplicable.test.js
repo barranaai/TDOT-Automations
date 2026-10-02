@@ -103,6 +103,15 @@ test('calcDocMetrics: an N/A row is out of every count — total, uploaded, revi
   const rec = [...Array(2).fill('Received'), 'Not Applicable'].map(row);
   applySchemaDefaults(rec);
   assert.deepEqual(calcDocMetrics(rec), { readinessPct: 0, uploadedPct: 100, blockingCount: 0, missingRequired: 0, totalCountable: 2 });
+  // a BLOCKING (legacy Template-board) row marked N/A no longer holds the stage gate (Faran, 2026-10-02)
+  const D2 = { ...D };
+  const blockingRow = (status) => ({ id: 'b', column_values: [
+    { id: D2.intakeId, text: '18401624999' }, { id: D2.status, text: status },
+    { id: D2.counts, text: 'Yes' }, { id: D2.blocking, text: 'Yes' }, { id: D2.required, text: 'Mandatory' } ] });
+  assert.equal(calcDocMetrics([blockingRow('Missing')]).blockingCount, 1, 'a missing blocking document blocks');
+  assert.equal(calcDocMetrics([blockingRow('Received')]).blockingCount, 1, 'until it is reviewed');
+  assert.equal(calcDocMetrics([blockingRow('Not Applicable')]).blockingCount, 0, 'a document that does not exist cannot block');
+  assert.equal(calcDocMetrics([blockingRow('Not Applicable')]).missingRequired, 0);
   // every row N/A → nothing countable, not a division by zero
   const all = ['Not Applicable', 'Not Applicable'].map(row);
   applySchemaDefaults(all);
