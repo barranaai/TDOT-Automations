@@ -294,7 +294,7 @@ test('cockpit renderDocRow emits a "📎 Files" link to /d/<ref>/review#doc-<id>
   const fn = script.slice(a, b);
   const out = vm.runInNewContext(
     "function escHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}\n" +
-    'var DOC_DOT = {}; var CASE_REF = "2026-CEC-EE-065";\n' + fn + '\nrenderDocRow(ROW);',
+    'var DOC_DOT = {}; var NA_ENABLED = false; var CASE_REF = "2026-CEC-EE-065";\n' + fn + '\nrenderDocRow(ROW);',
     { ROW: { id: '9001', name: 'Passport', status: 'Received', lastUpload: '2026-09-30', reviewNotes: '' }, encodeURIComponent }
   );
   assert.ok(out.includes('<a class="sbtn" href="/d/2026-CEC-EE-065/review#doc-9001" target="_blank" rel="noopener"'), out);

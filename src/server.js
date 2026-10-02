@@ -692,6 +692,12 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
     if (!viewer.isAdmin && !caseAccess.viewerCanSee(overview.assignees, viewer)) {
       return res.status(403).json({ error: 'not-assigned', message: 'You are not assigned to this case, so you cannot view it.' });
     }
+    // "Not applicable" needs a NAME on the decision: the buttons show only to
+    // Monday-signed-in staff (the shared admin key would get a 401 on the click).
+    if (overview.documents) {
+      const staff = tryStaffAuth(req);
+      overview.documents.notApplicableEnabled = !!(overview.documents.notApplicableEnabled && staff && (staff.name || staff.email));
+    }
     res.json(overview);
   } catch (err) {
     const notFound = /not found/i.test(err.message || '');
@@ -856,17 +862,33 @@ app.post('/admin/case-action/:caseRef/document/:itemId/status', express.json(), 
   const ctx = await resolveCaseForWrite(req, res, (req.params.caseRef || '').trim());
   if (!ctx) return;
   const itemId = String(req.params.itemId || '').replace(/\D/g, '');
-  const { action, notes } = req.body || {};
+  const { action, notes, reason } = req.body || {};
+  const caseRef = (req.params.caseRef || '').trim();
   if (!itemId) return res.status(400).json({ ok: false, error: 'Invalid item id' });
-  if (action !== 'reviewed' && action !== 'rework') return res.status(400).json({ ok: false, error: 'action must be "reviewed" or "rework"' });
+  const ACTIONS = ['reviewed', 'rework', 'not_applicable', 'applies_again'];
+  if (!ACTIONS.includes(action)) return res.status(400).json({ ok: false, error: 'action must be one of ' + ACTIONS.map((a) => `"${a}"`).join(', ') });
   if (action === 'rework' && !(typeof notes === 'string' && notes.trim())) return res.status(400).json({ ok: false, error: 'notes are required for rework' });
+  // "Not applicable" (2026-10-02): a decision that must carry a NAME — the
+  // shared admin key does not say who you are, so these two need a Monday sign-in.
+  let actor = null;
+  if (action === 'not_applicable' || action === 'applies_again') {
+    if (!require('./services/documentNotApplicable').isReady()) return res.status(400).json({ ok: false, error: '"Not applicable" is switched off.' });
+    const staff = tryStaffAuth(req);
+    if (!staff || !(staff.name || staff.email)) return res.status(401).json({ ok: false, error: 'Sign in with Monday to mark a document not applicable — the shared admin key does not say who you are.', loginUrl: '/q/auth/monday' });
+    actor = require('./utils/staffIdentity').actorFromStaff(staff).name;
+    if (action === 'not_applicable' && !(typeof reason === 'string' && reason.trim())) return res.status(400).json({ ok: false, error: 'A reason is required to mark a document not applicable.' });
+  }
   try {
     const reviewFormSvc = require('./services/documentReviewFormService');
-    if (action === 'reviewed') await reviewFormSvc.markReviewed(itemId);
-    else await reviewFormSvc.requestRework(itemId, notes.trim());
-    console.log(`[Cockpit] doc ${itemId} (${(req.params.caseRef || '').trim()}) ${action} by ${ctx.viewer.email || 'admin'}`);
-    res.json({ ok: true });
+    let result = { ok: true };
+    if (action === 'reviewed') await reviewFormSvc.markReviewed(itemId, caseRef);
+    else if (action === 'rework') await reviewFormSvc.requestRework(itemId, notes.trim(), caseRef);
+    else if (action === 'not_applicable') await reviewFormSvc.markNotApplicable(itemId, reason, actor, caseRef);
+    else result = { ok: true, ...(await reviewFormSvc.clearNotApplicable(itemId, actor, caseRef)) };
+    console.log(`[Cockpit] doc ${itemId} (${caseRef}) ${action} by ${actor || ctx.viewer.email || 'admin'}`);
+    res.json(result);
   } catch (err) {
+    if (err.badRequest) return res.status(400).json({ ok: false, error: err.message });
     console.error('[Cockpit] identity doc action failed:', err.message);
     res.status(500).json({ ok: false, error: 'Internal server error' });
   }
@@ -1025,11 +1047,13 @@ app.post('/api/case/:caseRef/document/:itemId/status', async (req, res) => {
   }
   try {
     const reviewFormSvc = require('./services/documentReviewFormService');
-    if (action === 'reviewed') await reviewFormSvc.markReviewed(itemId);
-    else await reviewFormSvc.requestRework(itemId, notes.trim());
-    console.log(`[Cockpit] document ${itemId} (${(req.params.caseRef || '').trim()}): ${action}`);
+    const caseRef = (req.params.caseRef || '').trim();
+    if (action === 'reviewed') await reviewFormSvc.markReviewed(itemId, caseRef);
+    else await reviewFormSvc.requestRework(itemId, notes.trim(), caseRef);
+    console.log(`[Cockpit] document ${itemId} (${caseRef}): ${action}`);
     res.json({ ok: true });
   } catch (err) {
+    if (err.badRequest) return res.status(400).json({ ok: false, error: err.message });
     console.error(`[Cockpit] document action ${action} failed for ${itemId}:`, err.message);
     res.status(500).json({ ok: false, error: 'Internal server error' });
   }

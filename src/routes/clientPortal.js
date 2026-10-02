@@ -282,6 +282,9 @@ router.post('/:caseRef/document/:itemId/upload', uploadRateLimit, uploadLimits.u
     const items = await docSvc.getCaseDocuments(caseRef);
     const item = (items || []).find((it) => String(it.id) === itemId);
     if (!item) return res.status(404).json({ success: false, error: 'That document is not on this case.' });
+    // Staff said this document does not exist for the client: an upload must
+    // not undo that decision from the client's side (review 2026-10-02).
+    if (item.status === 'Not Applicable') return res.status(409).json({ success: false, error: docSvc.NOT_APPLICABLE_UPLOAD_MESSAGE });
 
     const up = await docSvc.uploadFileToOneDrive(itemId, caseRef, file.buffer, file.originalname, file.mimetype);
     const attemptedAt = new Date();   // the status write's own retries can take minutes; the retry job measures from here

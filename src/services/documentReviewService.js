@@ -107,6 +107,64 @@ async function escalateToClientMaster(caseRef, documentName) {
 }
 
 /**
+ * Document Status → Not Applicable (2026-10-02). Review Required = No; when the
+ * reason column is empty the label was set by hand in Monday — record that in
+ * the column and ask for a reason in a row note. Nothing else happens.
+ */
+async function onDocumentNotApplicable({ itemId }) {
+  const na = require('./documentNotApplicable');
+  const cols = { [REVIEW_REQUIRED_COL]: { label: 'No' } };
+  const reasonCol = na.reasonColumnId();
+  let needsReason = false;
+  if (reasonCol) {
+    try {
+      const d = await io.query(`query($ids:[ID!]){ items(ids:$ids, limit:1){ column_values(ids:["${reasonCol}","${DOC_STATUS_COL}"]){ id text } } }`, { ids: [String(itemId)] });
+      const item = d?.items?.[0];
+      const cv = Object.fromEntries((item?.column_values || []).map((c) => [c.id, (c.text || '').trim()]));
+      // A late or re-delivered event for a row that has since left Not
+      // Applicable (the app's undo, a hand change) must not re-arm it.
+      if (item && cv[DOC_STATUS_COL] !== 'Not Applicable') { console.log(`[DocReview] stale Not Applicable event for item ${itemId} (row reads "${cv[DOC_STATUS_COL] || 'Missing'}") — ignored`); return; }
+      // Only a row that WAS returned with an empty reason is a hand-set label.
+      // An empty read (Monday hiccup) must never overwrite the app's own reason.
+      if (!item) console.warn(`[DocReview] N/A reason read returned no row for item ${itemId} — leaving the reason alone`);
+      else if (!cv[reasonCol]) { needsReason = true; cols[reasonCol] = na.reasonText('(set directly in Monday — no reason recorded)', 'Monday'); }
+    } catch (err) { console.warn(`[DocReview] could not read the N/A reason for item ${itemId}: ${err.message}`); }
+  }
+  await updateCols(itemId, cols);
+  if (needsReason) {
+    await io.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+      { i: String(itemId), b: '⛔ This document was marked Not Applicable directly in Monday. Please add the reason in the "Not Applicable Reason" column (what makes it not apply to this client).' }).catch(() => {});
+  }
+  console.log(`[DocReview] Document not applicable for item ${itemId}${needsReason ? ' (set by hand — reason requested)' : ''}`);
+}
+
+/**
+ * A status that is not "Not Applicable" arrived: if the reason column still
+ * holds a reason, the row LEFT Not Applicable by a hand change in Monday or a
+ * client upload (the app's own undo clears the reason in its write, so it
+ * reads empty here and nothing happens). Reads the live row first — never
+ * trusts the event's previousValue (Monday sometimes omits it) and leaves a
+ * row that still reads Not Applicable alone (out-of-order delivery).
+ */
+async function onDocumentAppliesAgain({ itemId, newLabel }) {
+  const na = require('./documentNotApplicable');
+  const reasonCol = na.reasonColumnId();
+  if (!reasonCol) return;
+  const d = await io.query(`query($ids:[ID!]){ items(ids:$ids, limit:1){ column_values(ids:["${reasonCol}","${DOC_STATUS_COL}"]){ id text } } }`, { ids: [String(itemId)] });
+  const item = d?.items?.[0];
+  if (!item) return;
+  const cv = Object.fromEntries((item.column_values || []).map((c) => [c.id, (c.text || '').trim()]));
+  if (!cv[reasonCol] || cv[DOC_STATUS_COL] === 'Not Applicable') return;
+  const current = cv[DOC_STATUS_COL] || newLabel || 'Missing';
+  await updateCols(itemId, { [reasonCol]: '' });
+  // No guess about WHY (a hand change and a client upload look the same here).
+  const how = current === 'Received' ? ' (the uploaded file goes back to the reviewer)' : '';
+  await io.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+    { i: String(itemId), b: `↩️ Document applies again${how} — it is back on the checklist as "${current}".` }).catch(() => {});
+  console.log(`[DocReview] Document applies again for item ${itemId} → "${current}"`);
+}
+
+/**
  * Document Status → Reviewed
  * Set Review Completed Date = today, Review Required = No
  */
@@ -274,6 +332,9 @@ async function onReworkRequired({ itemId }) {
  */
 function decideReviewNote({ notes, previousNotes, caseRef, status, enabled }) {
   if (!notes || !caseRef) return 'ignore';
+  // A note typed on a "Not Applicable" row must never email "please re-upload"
+  // — decided before the switch, so it holds with REVIEW_NOTE_REOPENS off too.
+  if (status === 'Not Applicable') return 'ignore';
   if (!enabled) return 'notify';
   if (REOPENABLE_STATUSES.has(status)) return 'reopen';
   if (status === 'Rework Required' && previousNotes != null
@@ -408,6 +469,20 @@ async function onColumnChange({ itemId, columnId, value, previousValue }) {
     await onDocumentReviewed({ itemId });
   } else if (label === 'Rework Required') {
     await onReworkRequired({ itemId });
+  } else if (label === 'Not Applicable') {
+    // Staff said this document does not exist for the client (2026-10-02):
+    // nothing to review, no email, no escalation, no rework count. The app's
+    // own write carries the reason; a label set by hand in Monday has none.
+    await onDocumentNotApplicable({ itemId }).catch((err) =>
+      console.warn(`[DocReview] not-applicable handling failed for item ${itemId}:`, err.message));
+  }
+  // Any other label: if a reason is still recorded, the row LEFT "Not
+  // Applicable" by a hand change in Monday or a client upload — clear it and
+  // say so (idempotent; the app's own undo already cleared it). Not keyed on
+  // previousValue, which Monday sometimes omits.
+  if (label !== 'Not Applicable' && !sameLabel) {
+    await onDocumentAppliesAgain({ itemId, newLabel: label }).catch((err) =>
+      console.warn(`[DocReview] applies-again clean-up failed for item ${itemId}:`, err.message));
   }
 
   // Any document-status change (Received → Reviewed, Reviewed → Rework, etc.)
@@ -434,4 +509,4 @@ async function triggerLiveRecalc(itemId) {
   await io.recalc(caseRef);
 }
 
-module.exports = { onColumnChange, io, decideReviewNote };
+module.exports = { onColumnChange, io, decideReviewNote, onDocumentNotApplicable, onDocumentAppliesAgain };

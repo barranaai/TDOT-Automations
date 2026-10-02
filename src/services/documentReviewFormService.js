@@ -32,6 +32,9 @@ const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT
 const EXEC_BOARD_ID    = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
 const DOC_STATUS_COL   = 'color_mm0zwgvr';
 const REVIEW_NOTES_COL = 'long_text_mm0zbpr';
+const UPLOAD_DATE_COL     = 'date_mm0zyw0m';     // Last Upload Date — "was a file ever uploaded?"
+const CASE_REF_COL     = 'text_mm0z2cck';     // the row's own case — the case note goes nowhere else
+const REVIEW_REQUIRED_COL = 'color_mm0z796e';
 const DOC_FOLDER_COL   = 'link_mm1yrnz1';
 
 // ─── Lightweight HTML escaping ───────────────────────────────────────────────
@@ -54,6 +57,7 @@ const STATUS_STYLE = {
   'Under Review':    { bg: '#eff6ff', fg: '#1e40af', border: '#bfdbfe' },
   'Reviewed':        { bg: '#f0fdf4', fg: '#166534', border: '#bbf7d0' },
   'Rework Required': { bg: '#fef2f2', fg: '#991b1b', border: '#fca5a5' },
+  'Not Applicable':  { bg: '#f1f5f9', fg: '#475569', border: '#cbd5e1' },
 };
 
 function statusBadge(status) {
@@ -244,7 +248,8 @@ async function getRowUpdates(itemIds, limitPerItem = 25) {
  * documentReviewService.onColumnChange picks it up, posts notifications,
  * and triggers a live readiness recalc.
  */
-async function markReviewed(itemId) {
+async function markReviewed(itemId, caseRef = '') {
+  await refuseIfNotApplicable(itemId, caseRef);
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
        change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
@@ -265,10 +270,11 @@ async function markReviewed(itemId) {
  * and triggers (a) escalation to Client Master, (b) queued client revision
  * email, (c) increment of Rework Count, (d) live readiness recalc.
  */
-async function requestRework(itemId, notes) {
+async function requestRework(itemId, notes, caseRef = '') {
   if (!notes || !notes.trim()) {
     throw new Error('Review notes are required when requesting rework.');
   }
+  await refuseIfNotApplicable(itemId, caseRef);
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
        change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
@@ -290,7 +296,8 @@ async function requestRework(itemId, notes) {
  * the client: the status webhook only recalculates readiness for a "Received"
  * change (no client notification, unlike Rework). Silent, internal correction.
  */
-async function reopenDoc(itemId) {
+async function reopenDoc(itemId, caseRef = '') {
+  await refuseIfNotApplicable(itemId, caseRef);
   await mondayApi.query(
     `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
        change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
@@ -301,6 +308,115 @@ async function reopenDoc(itemId) {
       cols:    JSON.stringify({ [DOC_STATUS_COL]: { label: 'Received' } }),
     }
   );
+}
+
+/**
+ * Mark a document "Not Applicable" (2026-10-02): staff say it does not exist
+ * for this client. Reason REQUIRED; label + reason + Review Required = No go in
+ * ONE write, so the status webhook always finds the reason present. The row is
+ * never hidden or deleted; a note on the row and on the case records who/why.
+ */
+/**
+ * A Not Applicable row must come back through "Applies again" first — never
+ * be overwritten by Mark Reviewed / Request Rework / Undo from a page that was
+ * loaded before a colleague marked it (review 2026-10-02). Reads the live
+ * status; when the read itself fails the writer proceeds as it always has.
+ */
+async function refuseIfNotApplicable(itemId, caseRef = '') {
+  let cv = null;
+  try {
+    const d = await mondayApi.query(`query($ids:[ID!]){ items(ids:$ids, limit:1){ column_values(ids:["${DOC_STATUS_COL}","${CASE_REF_COL}"]){ id text } } }`, { ids: [String(itemId)] });
+    const item = d?.items?.[0];
+    if (!item) console.warn(`[DocReview] status pre-read returned no row for item ${itemId} — proceeding unguarded`);
+    else cv = Object.fromEntries((item.column_values || []).map((c) => [c.id, (c.text || '').trim()]));
+  } catch (err) { console.warn(`[DocReview] status pre-read failed for item ${itemId}: ${err.message}`); }
+  if (!cv) return;
+  // A row that names ANOTHER case is refused; a blank ref (legacy row) passes.
+  if (caseRef && cv[CASE_REF_COL] && cv[CASE_REF_COL] !== String(caseRef).trim()) {
+    throw Object.assign(new Error('That document is not on this case.'), { badRequest: true });
+  }
+  if (cv[DOC_STATUS_COL] === 'Not Applicable') {
+    throw Object.assign(new Error('This document is marked Not Applicable — press "Applies again" first, then reload the page.'), { badRequest: true });
+  }
+}
+
+/** The row's own case must be the case the caller named — the case note goes nowhere else. */
+function assertRowOnCase(rowRef, caseRef) {
+  if (!caseRef || String(rowRef || '').trim() !== String(caseRef).trim()) {
+    throw Object.assign(new Error('That document is not on this case.'), { badRequest: true });
+  }
+}
+
+async function markNotApplicable(itemId, reason, staffName, caseRef) {
+  const na = require('./documentNotApplicable');
+  if (!na.isReady()) throw Object.assign(new Error('"Not applicable" is switched off.'), { badRequest: true });
+  const r = String(reason == null ? '' : reason).replace(/\s+/g, ' ').trim();
+  if (!r) throw Object.assign(new Error('A reason is required to mark a document not applicable.'), { badRequest: true });
+  if (r.length > 300) throw Object.assign(new Error('Keep the reason under 300 characters.'), { badRequest: true });
+  // Current status decides: a Rework Required row carries an open escalation and
+  // a queued client email — undo first; a Reviewed row is a finished decision.
+  const d = await mondayApi.query(`query($ids:[ID!]){ items(ids:$ids, limit:1){ name column_values(ids:["${DOC_STATUS_COL}","${CASE_REF_COL}"]){ id text } } }`, { ids: [String(itemId)] });
+  const item = d?.items?.[0];
+  if (!item) throw Object.assign(new Error('Document row not found.'), { badRequest: true });
+  const cv0 = Object.fromEntries((item.column_values || []).map((c) => [c.id, (c.text || '').trim()]));
+  assertRowOnCase(cv0[CASE_REF_COL], caseRef);
+  const status = cv0[DOC_STATUS_COL] || 'Missing';
+  if (status === 'Rework Required') throw Object.assign(new Error('Press Undo first — this document has an open rework request.'), { badRequest: true });
+  if (status === 'Reviewed') throw Object.assign(new Error('This document is already reviewed. Press Undo first if it really does not apply.'), { badRequest: true });
+  if (status === na.LABEL) return { already: true };
+  await mondayApi.query(
+    `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+     }`,
+    { boardId: String(EXEC_BOARD_ID), itemId: String(itemId),
+      cols: JSON.stringify({ [DOC_STATUS_COL]: { label: na.LABEL }, [na.reasonColumnId()]: na.reasonText(r, staffName), [REVIEW_REQUIRED_COL]: { label: 'No' } }) });
+  await postDecisionNotes({ itemId, caseRef, docName: item.name, body: `⛔ <b>Document marked Not Applicable</b> — ${escNote(item.name)} — by ${escNote(staffName || 'staff')}, ${escNote(require('../utils/torontoTime').torontoTime(Date.now()))} (Toronto).<br>Reason: ${escNote(r)}${status === 'Received' ? '<br>(A file had been uploaded to this document; it stays in the folder.)' : ''}` });
+  return { ok: true };
+}
+
+/**
+ * "Applies again": undo a Not Applicable. Back to Received when a file was
+ * ever uploaded (the reviewer looks again), else the literal "Missing" (the
+ * label is on the board and every reader treats it as blank). Clears the
+ * reason in the SAME write and posts its own row note, so it never depends
+ * on the webhook (whose clean-up is for hand changes and client uploads, and
+ * is idempotent: an empty reason means nothing to do).
+ */
+async function clearNotApplicable(itemId, staffName, caseRef) {
+  const na = require('./documentNotApplicable');
+  if (!na.isReady()) throw Object.assign(new Error('"Not applicable" is switched off.'), { badRequest: true });
+  const d = await mondayApi.query(`query($ids:[ID!]){ items(ids:$ids, limit:1){ name column_values(ids:["${DOC_STATUS_COL}","${UPLOAD_DATE_COL}","${CASE_REF_COL}"]){ id text } } }`, { ids: [String(itemId)] });
+  const item = d?.items?.[0];
+  if (!item) throw Object.assign(new Error('Document row not found.'), { badRequest: true });
+  const cv = Object.fromEntries((item.column_values || []).map((c) => [c.id, (c.text || '').trim()]));
+  assertRowOnCase(cv[CASE_REF_COL], caseRef);
+  if (cv[DOC_STATUS_COL] !== na.LABEL) return { already: true, status: cv[DOC_STATUS_COL] || 'Missing' };
+  const back = cv[UPLOAD_DATE_COL] ? 'Received' : 'Missing';
+  const cols = { [DOC_STATUS_COL]: { label: back }, [na.reasonColumnId()]: '' };
+  if (back === 'Received') cols[REVIEW_REQUIRED_COL] = { label: 'Yes' };
+  await mondayApi.query(
+    `mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+       change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) { id }
+     }`,
+    { boardId: String(EXEC_BOARD_ID), itemId: String(itemId), cols: JSON.stringify(cols) });
+  await postDecisionNotes({ itemId, caseRef, docName: item.name, body: `↩️ <b>Document applies again</b> — ${escNote(item.name)} — by ${escNote(staffName || 'staff')}, ${escNote(require('../utils/torontoTime').torontoTime(Date.now()))} (Toronto). It is back on the checklist as "${back}"${back === 'Received' ? ' (the file uploaded earlier goes back to the reviewer)' : ''}.` });
+  return { ok: true, status: back };
+}
+
+const escNote = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/** One note on the CASE (and, unless rowNote:false, one on the row). Best effort. */
+async function postDecisionNotes({ itemId, caseRef, body, rowNote = true }) {
+  const post = (id) => mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`, { i: String(id), b: body });
+  if (rowNote) await post(itemId).catch((err) => console.warn(`[DocReview] N/A row note failed for ${itemId}: ${err.message}`));
+  if (caseRef) {
+    try {
+      const cm = await mondayApi.query(
+        `query($b:ID!,$v:String!){ items_page_by_column_values(limit:5, board_id:$b, columns:[{column_id:"text_mm142s49", column_values:[$v]}]){ items{ id } } }`,
+        { b: String(require('../../config/monday').clientMasterBoardId), v: caseRef });
+      for (const it of (cm?.items_page_by_column_values?.items || [])) await post(it.id).catch(() => {});
+    } catch (err) { console.warn(`[DocReview] N/A case note failed for ${caseRef}: ${err.message}`); }
+  }
 }
 
 // ─── HTML page builder ───────────────────────────────────────────────────────
@@ -326,15 +442,17 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, f
 
   // Counters for the summary strip
   const total      = items.length;
-  const counts     = { received: 0, reviewed: 0, rework: 0, missing: 0, underReview: 0 };
+  const counts     = { received: 0, reviewed: 0, rework: 0, missing: 0, underReview: 0, na: 0 };
   for (const it of items) {
     const s = it.status || 'Missing';
     if (s === 'Received')        counts.received++;
     else if (s === 'Reviewed')   counts.reviewed++;
     else if (s === 'Rework Required') counts.rework++;
     else if (s === 'Under Review')    counts.underReview++;
+    else if (s === 'Not Applicable')  counts.na++;
     else                         counts.missing++;
   }
+  const naReady = require('./documentNotApplicable').isReady();
 
   const memberOrder = Object.keys(groups).sort((a, b) =>
     a === 'Principal Applicant' ? -1 : b === 'Principal Applicant' ? 1 : a.localeCompare(b)
@@ -345,7 +463,7 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, f
     const catKeys = Object.keys(cats).sort();
 
     const catBlocks = catKeys.map(cat => {
-      const rows = cats[cat].map(it => rowHtml(it, folderLinks[it.id] || '')).join('');
+      const rows = cats[cat].map(it => rowHtml(it, folderLinks[it.id] || '', { naReady })).join('');
       return `
         <div class="category-block">
           <div class="category-heading">${escHtml(cat)} <span class="cat-count">${cats[cat].length} doc${cats[cat].length === 1 ? '' : 's'}</span></div>
@@ -404,6 +522,15 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, f
     .summary-stat.reviewed .num { color: #166534; }
     .summary-stat.rework   .num { color: #8B0000; }
     .summary-stat.missing  .num { color: #6B7280; }
+    .summary-stat.na       .num { color: #94a3b8; }
+    .doc-row[data-status="Not Applicable"] { opacity: .72; }
+    .doc-row[data-status="Not Applicable"] .name { color: #64748b; }
+    .na-reason { margin-top: 6px; font-size: 12px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 10px; }
+    .btn-na { background: #fff; color: #475569; border: 1px solid #cbd5e1; }
+    .btn-na:hover:not(:disabled) { background: #f1f5f9; }
+    .btn-applies { background: #fff; color: #1d4ed8; border: 1px solid #93c5fd; }
+    .btn-applies:hover:not(:disabled) { background: #eff6ff; }
+    #na-modal textarea { width: 100%; min-height: 72px; }
     .summary-divider { width: 1px; height: 36px; background: #E7E2D6; }
 
     /* Filter strip */
@@ -634,6 +761,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       <div class="summary-stat reviewed"><div class="num">${counts.reviewed}</div><div class="lbl">Reviewed</div></div>
       <div class="summary-stat rework"><div class="num">${counts.rework}</div><div class="lbl">Rework</div></div>
       <div class="summary-stat missing"><div class="num">${counts.missing + counts.underReview}</div><div class="lbl">Pending</div></div>
+      <div class="summary-stat na"><div class="num">${counts.na}</div><div class="lbl">N/A</div></div>
     </div>
 
     <div class="filter-strip">
@@ -642,6 +770,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       <button class="filter-btn" data-filter="Reviewed">Reviewed (${counts.reviewed})</button>
       <button class="filter-btn" data-filter="Rework Required">Rework (${counts.rework})</button>
       <button class="filter-btn" data-filter="Missing">Missing (${counts.missing})</button>
+      <button class="filter-btn" data-filter="Not Applicable">N/A (${counts.na})</button>
     </div>
 
     <div id="replies-status" class="replies-status" style="display:none;">
@@ -652,6 +781,20 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
     ${memberBlocks || '<p style="text-align:center;color:#94a3b8;padding:60px;">No documents found for this case.</p>'}
 
   </main>
+
+  ${naReady ? `<!-- Not Applicable modal (staff only; reason required) -->
+  <div class="modal-bg" id="na-modal">
+    <div class="modal">
+      <h3>Mark as Not Applicable</h3>
+      <p class="sub" id="na-modal-sub"></p>
+      <p class="sub">Only for a document that does not exist for this client (e.g. "client is single", "no previous refusal"). A file received by email is uploaded into the row instead. The client sees the document as "not needed".</p>
+      <textarea id="na-reason" placeholder="Reason (required, shown to staff on the row)" maxlength="300"></textarea>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" onclick="closeNaModal()">Cancel</button>
+        <button class="btn btn-na" id="na-confirm-btn" onclick="confirmNotApplicable()">⊘ Mark Not Applicable</button>
+      </div>
+    </div>
+  </div>` : ''}
 
   <!-- Rework modal -->
   <div class="modal-bg" id="modal-bg">
@@ -711,7 +854,8 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       'Reviewed':        { bg: '#f0fdf4', fg: '#166534', border: '#bbf7d0' },
       'Rework Required': { bg: '#fef2f2', fg: '#991b1b', border: '#fca5a5' },
       'Received':        { bg: '#fffbeb', fg: '#92400e', border: '#fde68a' },
-      'Missing':         { bg: '#f1f5f9', fg: '#475569', border: '#cbd5e1' }
+      'Missing':         { bg: '#f1f5f9', fg: '#475569', border: '#cbd5e1' },
+      'Not Applicable':  { bg: '#f1f5f9', fg: '#475569', border: '#cbd5e1' }
     };
     function setRowStatus(row, status) {
       if (!row) return;
@@ -722,11 +866,68 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
         pill.textContent = status;
         pill.style.background = c.bg; pill.style.color = c.fg; pill.style.borderColor = c.border;
       }
-      var isReviewed = status === 'Reviewed', isRework = status === 'Rework Required', noUpload = status === 'Missing';
+      var isNA = status === 'Not Applicable';
+      var isReviewed = status === 'Reviewed', isRework = status === 'Rework Required', noUpload = status === 'Missing' || isNA;
       var rv = row.querySelector('.btn-reviewed'), rw = row.querySelector('.btn-rework'), ud = row.querySelector('.btn-undo');
       if (rv) rv.disabled = isReviewed || noUpload;
       if (rw) rw.disabled = isRework   || noUpload;
       if (ud) ud.disabled = !(isReviewed || isRework);
+      var na = row.querySelector('.btn-na'), ap = row.querySelector('.btn-applies');
+      if (na) na.disabled = !(status === 'Missing' || status === 'Received');
+      if (ap) ap.disabled = !isNA;
+    }
+
+    /* ── Not Applicable: reason required, staff only (2026-10-02) ── */
+    var _naItemId = null;
+    function openNaModal(btn) {
+      _naItemId = btn.getAttribute('data-id');
+      document.getElementById('na-reason').value = '';
+      document.getElementById('na-modal-sub').textContent = 'Document: ' + (btn.getAttribute('data-name') || '');
+      document.getElementById('na-modal').classList.add('open');
+      setTimeout(function () { document.getElementById('na-reason').focus(); }, 60);
+    }
+    function closeNaModal() {
+      document.getElementById('na-modal').classList.remove('open');
+      _naItemId = null;
+    }
+    async function confirmNotApplicable() {
+      if (!_naItemId) return;
+      var reason = document.getElementById('na-reason').value.trim();
+      if (!reason) { showToast('A reason is required.', true); return; }
+      var b = document.getElementById('na-confirm-btn');
+      b.disabled = true; b.textContent = 'Saving…';
+      try {
+        var res = await fetch('/d/' + encodeURIComponent(CASE_REF) + '/review/' + encodeURIComponent(_naItemId) + '/status', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'not_applicable', reason: reason })
+        });
+        var data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Failed');
+        closeNaModal();
+        location.reload();   // the row's reason block, buttons and counts come from the server
+      } catch (err) {
+        showToast('✗ ' + (err.message || 'Failed'), true);
+      } finally {
+        b.disabled = false; b.textContent = '⊘ Mark Not Applicable';
+      }
+    }
+    async function appliesAgain(btn) {
+      var itemId = btn.getAttribute('data-id');
+      if (!window.confirm('Put this document back on the checklist? The client will see it as needed again (no email is sent).')) return;
+      btn.disabled = true;
+      try {
+        var res = await fetch('/d/' + encodeURIComponent(CASE_REF) + '/review/' + encodeURIComponent(itemId) + '/status', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'applies_again' })
+        });
+        var data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Failed');
+        showToast('↩ Back on the checklist as ' + (data.status || 'Missing'));
+        location.reload();
+      } catch (err) {
+        btn.disabled = false;
+        showToast('✗ ' + (err.message || 'Failed'), true);
+      }
     }
 
     /* ── Undo / reopen to pending — reverts to Received, NO client email ── */
@@ -771,10 +972,10 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
     }
 
     /* ── Open Rework Modal ── */
-    function openRework(itemId, docName) {
-      _modalItemId = itemId;
+    function openRework(btn) {
+      _modalItemId = btn.getAttribute('data-id');
       document.getElementById('rework-notes').value = '';
-      document.getElementById('modal-sub').textContent = 'Document: ' + docName;
+      document.getElementById('modal-sub').textContent = 'Document: ' + (btn.getAttribute('data-name') || '');
       document.getElementById('modal-bg').classList.add('open');
       setTimeout(function () { document.getElementById('rework-notes').focus(); }, 60);
     }
@@ -830,8 +1031,11 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
     document.getElementById('modal-bg').addEventListener('click', function (e) {
       if (e.target.id === 'modal-bg') closeModal();
     });
+    var naModal = document.getElementById('na-modal');
+    function naSaving() { var b = document.getElementById('na-confirm-btn'); return !!(b && b.disabled); }   // never discard a reason mid-save
+    if (naModal) naModal.addEventListener('click', function (e) { if (e.target.id === 'na-modal' && !naSaving()) closeNaModal(); });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') closeModal();
+      if (e.key === 'Escape') { closeModal(); if (naModal && !naSaving()) closeNaModal(); }
     });
 
     /* ── Client replies (progressive enrichment) ────────────────────────── */
@@ -966,18 +1170,31 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
 /**
  * Render a single document row.
  */
-function rowHtml(it, folderUrl) {
+function rowHtml(it, folderUrl, { naReady = false } = {}) {
   const status = it.status || 'Missing';
   // Buttons disabled when in a terminal state OR when there's nothing to review
   const isReviewed = status === 'Reviewed';
   const isRework   = status === 'Rework Required';
-  const noUpload   = status === 'Missing';
+  const isNA       = status === 'Not Applicable';
+  const noUpload   = status === 'Missing' || isNA;
 
   const reviewedDisabled = isReviewed || noUpload ? 'disabled' : '';
   const reworkDisabled   = isRework   || noUpload ? 'disabled' : '';
   // Undo is available only once a decision has been made (Reviewed / Rework);
   // it reverts to "Received" without emailing the client — a silent mis-click fix.
   const undoDisabled     = (isReviewed || isRework) ? '' : 'disabled';
+  // "Doesn't apply": Missing or Received rows only (a Rework row has an open
+  // escalation + a queued client email — Undo first; Reviewed is a decision).
+  const naDisabled       = (status === 'Missing' || status === 'Received') ? '' : 'disabled';
+  const na = require('./documentNotApplicable');
+  const naBlock = isNA
+    ? `<div class="na-reason">⊘ <strong>Not applicable:</strong> ${escHtml(na.reasonOnly(it.naReason) || '(no reason recorded — please add one in Monday)')}${na.reasonBy(it.naReason) ? ` <span style="color:#94a3b8">— ${escHtml(na.reasonBy(it.naReason))}</span>` : ''}</div>`
+    : '';
+  const naButtons = naReady
+    ? (isNA
+      ? `<button class="btn btn-applies" data-id="${escHtml(it.id)}" onclick="appliesAgain(this)" title="Put this document back on the checklist (no email to the client)">↩ Applies again</button>`
+      : `<button class="btn btn-na" ${naDisabled} data-id="${escHtml(it.id)}" data-name="${escHtml(it.name)}" onclick="openNaModal(this)" title="This document does not exist for this client — a reason is required">⊘ Doesn't apply</button>`)
+    : '';
 
   const folderBtn = folderUrl
     ? `<a class="btn btn-onedrive" href="${escHtml(folderUrl)}" target="_blank" rel="noopener">📁 Open in OneDrive</a>`
@@ -1018,6 +1235,7 @@ function rowHtml(it, folderUrl) {
         ${descBlock}
         ${guideBlock}
         ${dateBlock}
+        ${naBlock}
         ${noteBlock}
         <div class="uploads-slot" data-item-id="${escHtml(it.id)}"></div>
         <div class="replies-slot" data-item-id="${escHtml(it.id)}"></div>
@@ -1029,10 +1247,11 @@ function rowHtml(it, folderUrl) {
         ${folderBtn}
         <button class="btn btn-reviewed" ${reviewedDisabled}
                 onclick="markReviewed('${escJs(it.id)}', this)">✓ Mark Reviewed</button>
-        <button class="btn btn-rework" ${reworkDisabled}
-                onclick="openRework('${escJs(it.id)}', '${escJs(it.name)}')">⟲ Request Rework</button>
+        <button class="btn btn-rework" ${reworkDisabled} data-id="${escHtml(it.id)}" data-name="${escHtml(it.name)}"
+                onclick="openRework(this)">⟲ Request Rework</button>
         <button class="btn btn-undo" ${undoDisabled}
                 onclick="undoReview('${escJs(it.id)}', this)" title="Revert to pending review (no email sent to the client)">↺ Undo</button>
+        ${naButtons}
       </div>
     </div>`;
 }
@@ -1048,4 +1267,6 @@ module.exports = {
   markReviewed,
   requestRework,
   reopenDoc,
+  markNotApplicable,
+  clearNotApplicable,
 };

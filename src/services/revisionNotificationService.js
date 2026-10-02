@@ -173,11 +173,35 @@ function buildRevisionEmailHtml({ clientName, caseRef, accessToken, questionnair
 
 // ─── Send ────────────────────────────────────────────────────────────────────
 
+/**
+ * Rows staff marked "Not Applicable" after the note was queued are dropped
+ * (review 2026-10-02): the client must never be told to re-upload a document
+ * the firm said does not exist. A failed read sends the batch as queued.
+ */
+async function dropNotApplicable(documents) {
+  const ids = documents.map((d) => d.itemId).filter(Boolean);
+  if (!ids.length) return documents;
+  try {
+    const d = await mondayApi.query(
+      `query($ids: [ID!], $lim: Int!) { items(ids: $ids, limit: $lim) { id column_values(ids: ["color_mm0zwgvr"]) { text } } }`,
+      { ids, lim: ids.length });
+    if (!Array.isArray(d?.items)) return documents;
+    const na = new Set(d.items.filter((it) => (it.column_values?.[0]?.text || '').trim() === 'Not Applicable').map((it) => String(it.id)));
+    if (!na.size) return documents;
+    console.log(`[RevisionNotify] ${na.size} document(s) now Not Applicable — dropped from the batch`);
+    return documents.filter((x) => !na.has(String(x.itemId)));
+  } catch (err) {
+    console.warn(`[RevisionNotify] N/A check failed — sending the batch as queued: ${err.message}`);
+    return documents;
+  }
+}
+
 async function flushQueue(caseRef) {
   const entry = queue.get(caseRef);
   if (!entry) return;
 
-  const { questionnaire, documents } = entry;
+  const { questionnaire } = entry;
+  const documents = await dropNotApplicable(entry.documents);
   if (!questionnaire.length && !documents.length) {
     queue.delete(caseRef);
     persistQueue();

@@ -262,7 +262,14 @@ function calcDocMetrics(items) {
     const isBlocking = col(D_COLS.blockingDoc).toLowerCase() === 'yes';
     const required   = col(D_COLS.requiredType);
 
-    if (counts === 'yes') {
+    // A document staff marked "Not Applicable" (2026-10-02) does not exist for
+    // this client: it is out of every count — not countable, not reviewed, not
+    // uploaded, not missing. (Always on: a row marked before any switch flip
+    // must never count as missing again.) A blocking row is the one exception
+    // below — N/A never silently clears a blocking item.
+    const notApplicable = status === 'Not Applicable';
+
+    if (counts === 'yes' && !notApplicable) {
       countable++;
       if (status === 'Reviewed') reviewed++;
       if (inPipeline.has(status)) inPipelineCount++;
@@ -272,7 +279,7 @@ function calcDocMetrics(items) {
     // "Missing Required Documents" = Mandatory docs that count toward readiness
     // AND haven't entered the pipeline at all (no upload from the client yet).
     // "Rework Required" is excluded: the client did upload, it's in review cycle.
-    if (required === 'Mandatory' && counts === 'yes' && !inPipeline.has(status)) missingRequired++;
+    if (required === 'Mandatory' && counts === 'yes' && !notApplicable && !inPipeline.has(status)) missingRequired++;
   }
 
   const readinessPct = countable > 0 ? Math.round((reviewed / countable) * 100) : 0;

@@ -114,3 +114,101 @@ test('two same-named rows (one per family member) in one batch are two lines; a 
     assert.match(sent[0].html, />b</);
     assert.equal(rowsIn(sent[0].html), 3);
   }));
+
+
+// ─── "Not Applicable" (2026-10-02): a queued rework line for a row staff have since marked N/A is dropped ───
+
+test('a document marked Not Applicable after its rework was queued is dropped from the email; the batch still goes out for the others', () =>
+  withQueueSandbox(async ({ fire }) => {
+    sent.length = 0;
+    const monday = require('../src/services/mondayApi');
+    const base = monday.query;
+    monday.query = async (q, v) => {
+      if (/items\(ids: \$ids, limit: \$lim\)/.test(q)) {
+        assert.deepEqual(v, { ids: ['701', '702'], lim: 2 }, 'one read, explicit limit (the 25-row cap)');
+        return { items: [{ id: '701', column_values: [{ text: 'Not Applicable' }] }, { id: '702', column_values: [{ text: 'Rework Required' }] }] };
+      }
+      return base(q, v);
+    };
+    try {
+      svc.queueItem('R1', 'Marriage certificate', 'please re-upload', 'document', '701');
+      svc.queueItem('R1', 'Bank statement', 'May is missing', 'document', '702');
+      await fire();
+      assert.equal(sent.length, 1);
+      assert.match(sent[0].subject, /1 item needs your attention/);
+      assert.ok(!/Marriage certificate/.test(sent[0].html), 'the N/A row is not in the email');
+      assert.match(sent[0].html, /Bank statement/);
+      assert.equal(rowsIn(sent[0].html), 1);
+    } finally { monday.query = base; }
+  }));
+
+test('every queued document now Not Applicable → no email at all', () =>
+  withQueueSandbox(async ({ fire }) => {
+    sent.length = 0;
+    const monday = require('../src/services/mondayApi');
+    const base = monday.query;
+    monday.query = async (q, v) => /items\(ids: \$ids/.test(q) ? { items: [{ id: '703', column_values: [{ text: 'Not Applicable' }] }] } : base(q, v);
+    try {
+      svc.queueItem('R1', 'Marriage certificate', 'please re-upload', 'document', '703');
+      await fire();
+      assert.equal(sent.length, 0, 'nothing to tell the client');
+    } finally { monday.query = base; }
+  }));
+
+test('a failed status read sends the batch as queued (never silences a rework email)', () =>
+  withQueueSandbox(async ({ fire }) => {
+    sent.length = 0;
+    const monday = require('../src/services/mondayApi');
+    const base = monday.query;
+    monday.query = async (q, v) => { if (/items\(ids: \$ids/.test(q)) throw new Error('503'); return base(q, v); };
+    try {
+      svc.queueItem('R1', 'Passport', 'blurry', 'document', '704');
+      await fire();
+      assert.equal(sent.length, 1);
+      assert.match(sent[0].html, /Passport/);
+    } finally { monday.query = base; }
+  }));
+
+test('a batch mixing lines with and without an item id: only the ids are read; the N/A line is dropped, the id-less line stays', () =>
+  withQueueSandbox(async ({ fire }) => {
+    sent.length = 0;
+    const monday = require('../src/services/mondayApi');
+    const base = monday.query;
+    monday.query = async (q, v) => {
+      if (/items\(ids: \$ids/.test(q)) { assert.deepEqual(v, { ids: ['701'], lim: 1 }); return { items: [{ id: '701', column_values: [{ text: 'Not Applicable' }] }] }; }
+      return base(q, v);
+    };
+    try {
+      svc.queueItem('R1', 'Marriage certificate', 'x', 'document', '701');
+      svc.queueItem('R1', 'Photo', 'blurry', 'document');
+      await fire();
+      assert.equal(sent.length, 1);
+      assert.match(sent[0].html, /Photo/);
+      assert.ok(!/Marriage certificate/.test(sent[0].html));
+      assert.equal(rowsIn(sent[0].html), 1);
+    } finally { monday.query = base; }
+  }));
+
+test('after a drop-all flush the entry is gone: the next note for the same case starts a fresh batch without the dropped line', () =>
+  withQueueSandbox(async ({ fire }) => {
+    sent.length = 0;
+    const monday = require('../src/services/mondayApi');
+    const base = monday.query;
+    monday.query = async (q, v) => /items\(ids: \$ids/.test(q) ? { items: v.ids.map((id) => ({ id, column_values: [{ text: id === '706' ? 'Not Applicable' : 'Rework Required' }] })) } : base(q, v);
+    try {
+      svc.queueItem('R1', 'Marriage certificate', 'x', 'document', '706');
+      await fire();
+      assert.equal(sent.length, 0);
+    } finally { monday.query = base; }
+  }).then(() => withQueueSandbox(async ({ fire }) => {
+    const monday = require('../src/services/mondayApi');
+    const base = monday.query;
+    monday.query = async (q, v) => /items\(ids: \$ids/.test(q) ? { items: v.ids.map((id) => ({ id, column_values: [{ text: 'Rework Required' }] })) } : base(q, v);
+    try {
+      svc.queueItem('R1', 'Bank statement', 'May', 'document', '707');
+      await fire();
+      assert.equal(sent.length, 1);
+      assert.equal(rowsIn(sent[0].html), 1);
+      assert.ok(!/Marriage certificate/.test(sent[0].html), 'the dropped line did not survive in the entry');
+    } finally { monday.query = base; }
+  })));

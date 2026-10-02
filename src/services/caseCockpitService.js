@@ -106,7 +106,8 @@ async function readClientMaster(itemId) {
 }
 
 function summariseDocuments(items) {
-  const counts = { total: items.length, received: 0, reviewed: 0, rework: 0, missing: 0 };
+  const na = require('./documentNotApplicable');
+  const counts = { total: items.length, received: 0, reviewed: 0, rework: 0, missing: 0, na: 0 };
   const rework = [];
   const catMap = new Map();
   const memMap = new Map(); // applicantType (member) → (category → items[])
@@ -116,6 +117,7 @@ function summariseDocuments(items) {
     if (s === 'Received')             counts.received++;
     else if (s === 'Reviewed')        counts.reviewed++;
     else if (s === 'Rework Required') { counts.rework++; rework.push(it); }
+    else if (s === 'Not Applicable')  counts.na++;
     else                              counts.missing++;
 
     const cat = it.category || 'Other';
@@ -129,6 +131,9 @@ function summariseDocuments(items) {
       applicantType: member,
       lastUpload:    it.lastUpload || '',
       reviewNotes:   it.reviewNotes || '',
+      // the reason split server-side: the cockpit script may carry no backslash
+      naReason:      na.reasonOnly(it.naReason),
+      naBy:          na.reasonBy(it.naReason),
     };
     if (!catMap.has(cat)) catMap.set(cat, []);
     catMap.get(cat).push(row);
@@ -147,7 +152,8 @@ function summariseDocuments(items) {
   const byMember = [...memMap.entries()]
     .sort((a, b) => memberRank(a[0]) - memberRank(b[0]) || a[0].localeCompare(b[0]))
     .map(([member, cm]) => ({ member, categories: [...cm.entries()].map(([category, list]) => ({ category, items: list })) }));
-  return { counts, byCategory, byMember, rework: rework.map((r) => ({ name: r.name, applicantType: r.applicantType })) };
+  return { counts, byCategory, byMember, rework: rework.map((r) => ({ name: r.name, applicantType: r.applicantType })),
+    notApplicableEnabled: na.isReady() };
 }
 
 // ─── Lead link + derived timeline ────────────────────────────────────────────

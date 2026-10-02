@@ -4,6 +4,7 @@ const multer  = require('multer');
 const router  = express.Router();
 
 const { getCaseSummary, uploadFileToOneDrive, markDocumentReceived, onStatusWriteFailed } = require('../services/documentFormService');
+const { getDocumentRow, NOT_APPLICABLE_UPLOAD_MESSAGE } = require('../services/documentFormService');   // "Not Applicable" rows (2026-10-02)
 const { updateLastActivityDate } = require('../services/clientMasterService');
 const { calculateForCaseRef }   = require('../services/caseReadinessService');
 const mondayApi = require('../services/mondayApi');
@@ -65,6 +66,13 @@ const STATUS_STYLE = {
   'Received':        { bg: '#eff6ff', color: '#2563eb', dot: '#2563eb', ring: 'rgba(37,99,235,.15)'  },
   'Reviewed':        { bg: '#f0fdf4', color: '#16a34a', dot: '#16a34a', ring: 'rgba(22,163,74,.15)'  },
   'Rework Required': { bg: '#fff7ed', color: '#ea580c', dot: '#ea580c', ring: 'rgba(234,88,12,.15)'  },
+  'Not Applicable':  { bg: '#f1f5f9', color: '#475569', dot: '#94a3b8', ring: 'rgba(100,116,139,.15)' },
+};
+// "Not Applicable" rows (staff confirmed the document does not exist for this
+// client, 2026-10-02) are out of every "X of Y uploaded" count on this page.
+const countsForClient = (items) => {
+  const applicable = items.filter((i) => i.status !== 'Not Applicable');
+  return { total: applicable.length, uploaded: applicable.filter((i) => i.status !== 'Missing').length };
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -263,9 +271,10 @@ input[type=text]:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--bran
 
 function docRowHtml(doc, caseRef) {
   const st        = STATUS_STYLE[doc.status] || STATUS_STYLE['Missing'];
-  const canUpload = doc.status !== 'Reviewed';
+  const isNA      = doc.status === 'Not Applicable';
+  const canUpload = doc.status !== 'Reviewed' && !isNA;
   return `
-        <div class="doc-row${doc.status === 'Rework Required' ? ' needs-action' : ''}"
+        <div class="doc-row${doc.status === 'Rework Required' ? ' needs-action' : ''}"${isNA ? ' style="opacity:.6"' : ''}
              id="doc_${doc.id}"
              data-status="${esc(doc.status)}">
           <div class="doc-info">
@@ -290,8 +299,9 @@ function docRowHtml(doc, caseRef) {
           <div class="doc-actions">
             <span class="doc-status" style="background:${st.bg};color:${st.color};box-shadow:0 0 0 1px ${st.ring}">
               <span style="width:7px;height:7px;border-radius:50%;background:${st.dot};display:inline-block;flex-shrink:0"></span>
-              ${esc(doc.status)}
+              ${isNA ? 'Not needed' : esc(doc.status)}
             </span>
+            ${isNA ? '<div class="upload-hint">Confirmed by your case officer — nothing to upload</div>' : ''}
             ${canUpload ? `
             <label class="btn-upload" for="file_${doc.id}">
               ${doc.status === 'Missing' ? '⬆ Upload' : '🔄 Re-upload'}
@@ -300,7 +310,7 @@ function docRowHtml(doc, caseRef) {
               accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.heic,.webp,.xlsx,.xls,.csv,.zip"
               onchange="handleUpload('${esc(doc.id)}', '${esc(caseRef)}', this)">
             <div class="upload-hint">Multiple files allowed</div>
-            ` : '<span class="reviewed-tag">✓ Reviewed</span>'}
+            ` : (isNA ? '' : '<span class="reviewed-tag">✓ Reviewed</span>')}
             <div class="upload-progress" id="prog_${doc.id}" style="display:none">
               <div class="progress-bar-inner" id="pbar_${doc.id}"></div>
             </div>
@@ -323,8 +333,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
   // Flatten all items for global counts (across all phases)
   const allPhaseMembers = phases ? phases.flatMap(p => p.members) : members;
   const allItems     = allPhaseMembers.flatMap((m) => m.sections.flatMap((s) => s.items));
-  const totalDocs    = allItems.length;
-  const uploadedDocs = allItems.filter((i) => i.status !== 'Missing').length;
+  const { total: totalDocs, uploaded: uploadedDocs } = countsForClient(allItems);
   const pct          = totalDocs ? Math.round((uploadedDocs / totalDocs) * 100) : 0;
 
   // ── Build the step list ──
@@ -415,7 +424,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
   const stepPills = steps
     .map((step, idx) => {
       const hasFlagged = step.items.some((i) => i.status === 'Rework Required');
-      const uploaded   = step.items.filter((i) => i.status !== 'Missing').length;
+      const { uploaded, total: stepTotal } = countsForClient(step.items);
 
       // Insert a phase divider before the first step of each phase
       const phaseLabel = phaseBoundaryMap[idx];
@@ -428,7 +437,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
       // ahead and who is still missing documents without having to click
       // through every tab.
       const countBadge = step.isMember
-        ? `<span class="pill-count" id="pcount_${idx}">${uploaded}/${step.items.length}</span>`
+        ? `<span class="pill-count" id="pcount_${idx}">${uploaded}/${stepTotal}</span>`
         : '';
 
       const pillClass = step.isMember ? 'step-pill member-pill' : 'step-pill';
@@ -444,12 +453,12 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
   function renderCategorySections(sections) {
     return sections.map((sec) => {
       const catIcon = CATEGORY_ICONS[sec.category] || '📋';
-      const catUpl  = sec.items.filter((i) => i.status !== 'Missing').length;
+      const { uploaded: catUpl, total: catTotal } = countsForClient(sec.items);
       return `
       <div class="cat-group">
         <div class="cat-header">
           <span class="cat-title">${catIcon} ${esc(sec.category)}</span>
-          <span class="cat-count">${catUpl} / ${sec.items.length}</span>
+          <span class="cat-count">${catUpl} / ${catTotal}</span>
         </div>
         ${sec.items.map((doc) => docRowHtml(doc, caseRef)).join('')}
       </div>`;
@@ -459,7 +468,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
   const panels = steps
     .map((step, idx) => {
       const isLast   = idx === total - 1;
-      const uploaded = step.items.filter((i) => i.status !== 'Missing').length;
+      const { uploaded, total: stepTotal } = countsForClient(step.items);
 
       // Body construction depends on the step kind:
       //   • Member step with multiple phases → render Profile Creation +
@@ -476,8 +485,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
           const phaseLabel = phaseName || 'Submission';
           const phaseColor = phaseName === 'Profile Creation' ? '#2563eb' : '#7c3aed';
           const phaseBg    = phaseName === 'Profile Creation' ? '#eff6ff' : '#f5f3ff';
-          const phaseUpl   = sections.flatMap(s => s.items).filter(i => i.status !== 'Missing').length;
-          const phaseTotal = sections.flatMap(s => s.items).length;
+          const { uploaded: phaseUpl, total: phaseTotal } = countsForClient(sections.flatMap(s => s.items));
           const headerHtml = `
         <div class="phase-section-header" style="background:${phaseBg};border-left:3px solid ${phaseColor};color:${phaseColor}">
           <span class="phase-section-title">${phaseIcon} ${esc(phaseLabel)} Phase</span>
@@ -502,7 +510,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
     <div class="panel" id="panel_${idx}" style="display:none">
       <div class="panel-header">
         <div class="panel-title">${step.icon} ${esc(step.label)}${phaseTag}</div>
-        <div class="panel-meta" id="pmeta_${idx}">${uploaded} of ${step.items.length} uploaded</div>
+        <div class="panel-meta" id="pmeta_${idx}">${uploaded} of ${stepTotal} uploaded</div>
       </div>
       <div class="panel-body">${bodyHtml}</div>
       <div class="panel-footer">
@@ -1092,14 +1100,18 @@ async function handleUpload(itemId, caseRef, input) {
   input.value = '';
 }
 
+// Rows marked "Not Applicable" by staff are out of every count on this page.
+function applicableRows(nodeList) {
+  return Array.prototype.filter.call(nodeList, (r) => r.dataset.status !== 'Not Applicable');
+}
+function isUploadedRow(r) { return !!r.dataset.status && r.dataset.status !== 'Missing'; }
+
 function updatePanelMeta(idx) {
   const panel = document.getElementById('panel_' + idx);
   if (!panel) return;
-  const rows     = panel.querySelectorAll('.doc-row');
+  const rows     = applicableRows(panel.querySelectorAll('.doc-row'));
   let   uploaded = 0;
-  rows.forEach((r) => {
-    if (r.dataset.status && r.dataset.status !== 'Missing') uploaded++;
-  });
+  rows.forEach((r) => { if (isUploadedRow(r)) uploaded++; });
   const meta = document.getElementById('pmeta_' + idx);
   if (meta) meta.textContent = uploaded + ' of ' + rows.length + ' uploaded';
 
@@ -1115,9 +1127,9 @@ function updatePanelMeta(idx) {
     let phUpl = 0, phTotal = 0;
     while (n && !n.classList.contains('phase-section-header')) {
       if (n.classList.contains('cat-group')) {
-        n.querySelectorAll('.doc-row').forEach((r) => {
+        applicableRows(n.querySelectorAll('.doc-row')).forEach((r) => {
           phTotal++;
-          if (r.dataset.status && r.dataset.status !== 'Missing') phUpl++;
+          if (isUploadedRow(r)) phUpl++;
         });
       }
       n = n.nextElementSibling;
@@ -1128,9 +1140,9 @@ function updatePanelMeta(idx) {
 
   // Also update cat-count badges inside member panels
   panel.querySelectorAll('.cat-group').forEach((grp) => {
-    const grpRows = grp.querySelectorAll('.doc-row');
+    const grpRows = applicableRows(grp.querySelectorAll('.doc-row'));
     let grpUpl = 0;
-    grpRows.forEach((r) => { if (r.dataset.status && r.dataset.status !== 'Missing') grpUpl++; });
+    grpRows.forEach((r) => { if (isUploadedRow(r)) grpUpl++; });
     const badge = grp.querySelector('.cat-count');
     if (badge) badge.textContent = grpUpl + ' / ' + grpRows.length;
   });
@@ -1221,6 +1233,17 @@ router.post('/:caseRef/upload/:itemId', uploadLimits.uploadSlot, uploadSingle, a
   }
 
   try {
+    // One row read (review 2026-10-02): staff said this document does not
+    // exist for the client — an upload must not undo that; and a row that
+    // names ANOTHER case is not this client's. Refused only on a positive
+    // read — an empty or failed read is logged and keeps today's behaviour.
+    try {
+      const row = await getDocumentRow(itemId);
+      if (!row.found) console.warn(`[upload] row ${itemId} not returned by Monday — upload proceeds unverified (${caseRef})`);
+      else if (row.caseRef && row.caseRef !== caseRef) return res.status(404).json({ success: false, error: 'That document is not on this case.' });
+      else if (row.status === 'Not Applicable') return res.status(409).json({ success: false, error: NOT_APPLICABLE_UPLOAD_MESSAGE });
+    } catch (err) { console.warn(`[upload] N/A pre-read failed for ${caseRef}/${itemId}: ${err.message}`); }
+
     const up = await uploadFileToOneDrive(itemId, caseRef, file.buffer, file.originalname, file.mimetype);
     const attemptedAt = new Date();   // the status write's own retries can take minutes; the retry job measures from here
     try {

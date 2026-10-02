@@ -66,6 +66,9 @@ const FETCH_COLS = [
   CATEGORY_MIRROR_COL,
   CATEGORY_TEXT_COL,
   EXEC_APPLICANT_TYPE_COL,
+  // the "Not Applicable Reason" column (2026-10-02) — present only once the
+  // one-off script has created it; '' until then
+  ...(require('./documentNotApplicable').reasonColumnId() ? [require('./documentNotApplicable').reasonColumnId()] : []),
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -333,6 +336,7 @@ async function getCaseDocuments(caseRef) {
         clientInstructions: tmpl.clientInstructions || (resolved && resolved.doc.guidance) || '',
         checklistPhase:     tmpl.checklistPhase     || '',
         reviewNotes:        c(REVIEW_NOTES_COL)     || '',
+        naReason:           require('./documentNotApplicable').reasonColumnId() ? (c(require('./documentNotApplicable').reasonColumnId()) || '') : '',
         intakeId,
       };
     })
@@ -1000,7 +1004,27 @@ const io = {
   clearTimer:  (t) => clearTimeout(t),
 };
 
+/**
+ * One checklist row's status + case ref (the legacy /documents upload route
+ * checks "Not Applicable" and ownership with one small read, not a checklist
+ * scan). { found:false } when Monday returns no row.
+ */
+async function getDocumentRow(itemId) {
+  const d = await mondayApi.query(
+    `query($ids: [ID!]) { items(ids: $ids, limit: 1) { column_values(ids: ["${DOC_STATUS_COL}", "${CASE_REF_COL}"]) { id text } } }`,
+    { ids: [String(itemId)] });
+  const item = d?.items?.[0];
+  if (!item) return { found: false, status: '', caseRef: '' };
+  const cv = Object.fromEntries((item.column_values || []).map((c) => [c.id, (c.text || '').trim()]));
+  return { found: true, status: cv[DOC_STATUS_COL] || 'Missing', caseRef: cv[CASE_REF_COL] || '' };
+}
+
+// Staff marked the row "Not Applicable": the client's upload is refused with this (both upload routes).
+const NOT_APPLICABLE_UPLOAD_MESSAGE = 'Your case officer confirmed this document is not needed for your application. If you believe it applies, please contact them.';
+
 module.exports = {
+  NOT_APPLICABLE_UPLOAD_MESSAGE,
+  getDocumentRow,
   getCaseDocuments,
   getCaseSummary,
   getDisclaimerForCase,

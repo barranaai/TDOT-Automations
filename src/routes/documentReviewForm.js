@@ -139,29 +139,44 @@ router.get('/:caseRef/review/updates', requireStaffAuth, async (req, res) => {
 router.post('/:caseRef/review/:itemId/status', requireStaffAuth, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
   const itemId  = sanitiseItemId(req.params.itemId);
-  const { action, notes } = req.body || {};
+  const { action, notes, reason } = req.body || {};
 
   if (!itemId) return res.status(400).json({ ok: false, error: 'Invalid item id' });
-  if (action !== 'reviewed' && action !== 'rework' && action !== 'received') {
-    return res.status(400).json({ ok: false, error: 'action must be "reviewed", "rework", or "received"' });
+  const ACTIONS = ['reviewed', 'rework', 'received', 'not_applicable', 'applies_again'];
+  if (!ACTIONS.includes(action)) {
+    return res.status(400).json({ ok: false, error: 'action must be one of ' + ACTIONS.map((a) => `"${a}"`).join(', ') });
   }
   if (action === 'rework' && !(notes && notes.trim())) {
     return res.status(400).json({ ok: false, error: 'notes are required for rework' });
   }
+  // "Not applicable" (2026-10-02): behind the switch; a reason is required.
+  if ((action === 'not_applicable' || action === 'applies_again') && !require('../services/documentNotApplicable').isReady()) {
+    return res.status(400).json({ ok: false, error: '"Not applicable" is switched off.' });
+  }
+  if (action === 'not_applicable' && !(typeof reason === 'string' && reason.trim())) {
+    return res.status(400).json({ ok: false, error: 'A reason is required to mark a document not applicable.' });
+  }
 
   try {
     if (!(await enforceCaseAccess(req, res, caseRef, { json: true }))) return;
+    const staffName = req.staff?.name || req.staff?.email || 'Staff';
+    let result = { ok: true };
     if (action === 'reviewed') {
-      await reviewFormSvc.markReviewed(itemId);
+      await reviewFormSvc.markReviewed(itemId, caseRef);
     } else if (action === 'rework') {
-      await reviewFormSvc.requestRework(itemId, notes);
+      await reviewFormSvc.requestRework(itemId, notes, caseRef);
+    } else if (action === 'not_applicable') {
+      await reviewFormSvc.markNotApplicable(itemId, reason, staffName, caseRef);
+    } else if (action === 'applies_again') {
+      result = { ok: true, ...(await reviewFormSvc.clearNotApplicable(itemId, staffName, caseRef)) };
     } else {
-      await reviewFormSvc.reopenDoc(itemId); // 'received' — undo / reopen to pending
+      await reviewFormSvc.reopenDoc(itemId, caseRef); // 'received' — undo / reopen to pending
     }
 
-    console.log(`[/d/review] ${req.staff?.name || 'Staff'} → item ${itemId} (${caseRef}): ${action}`);
-    return res.json({ ok: true });
+    console.log(`[/d/review] ${staffName} → item ${itemId} (${caseRef}): ${action}`);
+    return res.json(result);
   } catch (err) {
+    if (err.badRequest) return res.status(400).json({ ok: false, error: err.message });
     console.error(`[/d/review] Action ${action} failed for item ${itemId}:`, err.message);
     return res.status(500).json({ ok: false, error: err.message });
   }

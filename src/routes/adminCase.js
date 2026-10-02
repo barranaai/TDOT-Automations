@@ -101,7 +101,7 @@ function buildCockpitHTML(caseRef) {
     .status-tag.none { background:#f1f5f9; color:#94a3b8; }
 
     /* Doc counts strip */
-    .doc-strip { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:6px; }
+    .doc-strip { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:6px; }
     .doc-stat { text-align:center; background:#f8fafc; border-radius:8px; padding:12px 6px; }
     .doc-stat .n { font-size:22px; font-weight:800; letter-spacing:-1px; }
     .doc-stat .l { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; margin-top:2px; }
@@ -352,7 +352,8 @@ function statusTag(s) {
   return '<span class="status-tag none">Not started</span>';
 }
 
-var DOC_DOT = { Reviewed:'#16a34a', Received:'#2563eb', 'Rework Required':'#dc2626', Missing:'#cbd5e1' };
+var DOC_DOT = { Reviewed:'#16a34a', Received:'#2563eb', 'Rework Required':'#dc2626', Missing:'#cbd5e1', 'Not Applicable':'#94a3b8' };
+var NA_ENABLED = false;   // "Not applicable" buttons — set per load from the server's switch
 
 function render(d) {
   document.getElementById('c-name').textContent = d.clientName || d.caseRef;
@@ -395,8 +396,11 @@ function render(d) {
   var db = document.getElementById('d-bar'); db.style.width = dd + '%'; db.style.background = pctColor(dd);
   document.getElementById('q-sub').textContent =
     (d.questionnaire.submitted || 0) + ' of ' + (d.questionnaire.total || 0) + ' member section(s) submitted';
+  // "Not applicable" documents (2026-10-02) do not count: N of (total − N/A)
+  var docNa = d.documents.counts.na || 0;
   document.getElementById('d-sub').textContent =
-    (d.documents.counts.received + d.documents.counts.reviewed) + ' of ' + d.documents.counts.total + ' document(s) in' +
+    (d.documents.counts.received + d.documents.counts.reviewed) + ' of ' + (d.documents.counts.total - docNa) + ' document(s) in' +
+    (docNa ? ' · ' + docNa + ' not applicable' : '') +
     (d.documents.counts.reviewed ? ' · ' + d.documents.counts.reviewed + ' reviewed' :
       (d.docReviewedPct ? ' · ' + d.docReviewedPct + '% reviewed' : ''));
 
@@ -423,7 +427,7 @@ function render(d) {
   document.getElementById('doc-total').textContent = c.total + ' total';
   document.getElementById('doc-strip').innerHTML =
     [['Missing', c.missing, '#94a3b8'], ['Received', c.received, '#2563eb'], ['Reviewed', c.reviewed, '#16a34a'],
-     ['Rework', c.rework, '#dc2626'], ['Total', c.total, '#1a3558']]
+     ['Rework', c.rework, '#dc2626'], ['N/A', c.na || 0, '#94a3b8'], ['Total', c.total, '#1a3558']]
     .map(function(s) { return '<div class="doc-stat"><div class="n" style="color:' + s[2] + '">' + s[1] + '</div><div class="l">' + s[0] + '</div></div>'; }).join('');
 
   var cats = d.documents.byCategory || [];
@@ -463,7 +467,13 @@ function renderDocRow(it) {
   if (it.id) acts += '<a class="sbtn" href="/d/' + encodeURIComponent(CASE_REF) + '/review#doc-' + encodeURIComponent(it.id) + '" target="_blank" rel="noopener" title="Every copy the client uploaded for this document, newest first, with a link to each file">📎 Files</a>';
   if (it.id && it.status === 'Received') acts += '<button class="sbtn" data-doc-act="reviewed" data-doc-id="' + escHtml(it.id) + '">✓ Mark reviewed</button>';
   if (it.id && (it.status === 'Received' || it.status === 'Reviewed')) acts += '<button class="sbtn danger" data-doc-act="rework" data-doc-id="' + escHtml(it.id) + '" data-doc-name="' + escHtml(it.name) + '">⟲ Request rework</button>';
+  // "Doesn't apply" / "Applies again" (2026-10-02): staff only, reason required; behind the switch
+  if (it.id && NA_ENABLED) {
+    if (it.status === 'Not Applicable') acts += '<button class="sbtn" data-doc-act="applies_again" data-doc-id="' + escHtml(it.id) + '" title="Put this document back on the checklist (no email)">↩ Applies again</button>';
+    else if (it.status === 'Missing' || it.status === 'Received') acts += '<button class="sbtn" data-doc-act="not_applicable" data-doc-id="' + escHtml(it.id) + '" data-doc-name="' + escHtml(it.name) + '" title="This document does not exist for this client — a reason is required">⊘ Does not apply</button>';
+  }
   var note = (it.status === 'Rework Required' && it.reviewNotes) ? '<div class="dnote">Rework note: ' + escHtml(it.reviewNotes) + '</div>' : '';
+  if (it.status === 'Not Applicable') note += '<div class="dnote">Not applicable: ' + escHtml(it.naReason || '(no reason recorded)') + (it.naBy ? ' <span class="muted">— ' + escHtml(it.naBy) + '</span>' : '') + '</div>';
   return '<div class="drow"><span class="dotc" style="background:' + (DOC_DOT[it.status] || '#cbd5e1') + '"></span>' +
     '<span class="dn">' + escHtml(it.name) + '</span>' +
     '<span class="dmeta">' + escHtml(it.status) + (it.lastUpload ? (' · uploaded ' + escHtml(it.lastUpload)) : '') + '</span>' +
@@ -473,6 +483,7 @@ function renderDocCat(cat) {
   return '<div class="cat-block"><div class="cat-head">' + escHtml(cat.category) + '</div>' + cat.items.map(renderDocRow).join('') + '</div>';
 }
 function renderDocsTab(d) {
+  NA_ENABLED = !!d.documents.notApplicableEnabled;
   var byMember = d.documents.byMember || [];
   var html;
   if (byMember.length <= 1) {
@@ -494,23 +505,36 @@ function renderDocsTab(d) {
 }
 function docAction(btn) {
   var act = btn.getAttribute('data-doc-act'), id = btn.getAttribute('data-doc-id');
-  var notes = '';
+  var notes = '', reason = '';
   if (act === 'rework') {
     notes = window.prompt('What needs fixing on "' + (btn.getAttribute('data-doc-name') || 'this document') + '"? The client sees this note.');
     if (notes == null) return;
     if (!notes.trim()) { actMsg('doc-act-msg', 'err', 'A note is required for rework.'); return; }
+  } else if (act === 'not_applicable') {
+    reason = window.prompt('Why does "' + (btn.getAttribute('data-doc-name') || 'this document') + '" not apply to this client? (e.g. "client is single"). Only for a document that does not exist for the client — a file received by email is uploaded instead.');
+    if (reason == null) return;
+    if (!reason.trim()) { actMsg('doc-act-msg', 'err', 'A reason is required.'); return; }
+  } else if (act === 'applies_again') {
+    if (!window.confirm('Put this document back on the checklist? The client will see it as needed again (no email is sent).')) return;
   } else if (!window.confirm('Mark this document as reviewed?')) { return; }
   var key = peekKey();
   var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
   btn.disabled = true; actMsg('doc-act-msg', 'info', 'Working…');
   fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/document/' + encodeURIComponent(id) + '/status', {
     method: 'POST', headers: headers, credentials: 'same-origin',
-    body: JSON.stringify({ action: act, notes: notes })
+    body: JSON.stringify({ action: act, notes: notes, reason: reason })
   })
   .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
   .then(function(res) {
-    if (res.ok) { actMsg('doc-act-msg', 'ok', act === 'reviewed' ? '✓ Marked reviewed.' : '✓ Rework requested — the client will see your note.'); loadCase(); }
-    else { btn.disabled = false; actMsg('doc-act-msg', 'err', res.status === 403 ? 'You are not assigned to this case.' : res.status === 401 ? 'Please sign in again.' : ((res.j && res.j.error) || 'Action failed.')); }
+    if (res.ok) { actMsg('doc-act-msg', 'ok', act === 'reviewed' ? '✓ Marked reviewed.' : act === 'not_applicable' ? '⊘ Marked not applicable.' : act === 'applies_again' ? '↩ Back on the checklist.' : '✓ Rework requested — the client will see your note.'); loadCase(); }
+    else if (res.status === 401) {
+      btn.disabled = false;
+      var em = document.getElementById('doc-act-msg');
+      var login = (res.j && res.j.loginUrl) || '/q/auth/monday';
+      if (login.indexOf('?') === -1) login += '?returnTo=' + encodeURIComponent(location.pathname + location.search);   // come back to this case
+      if (em) { em.className = 'act-msg err'; em.innerHTML = escHtml((res.j && res.j.error) || 'Please sign in again.') + ' <a href="' + escHtml(login) + '">Sign in with Monday</a>'; }
+    }
+    else { btn.disabled = false; actMsg('doc-act-msg', 'err', res.status === 403 ? 'You are not assigned to this case.' : ((res.j && res.j.error) || 'Action failed.')); }
   })
   .catch(function(e) { btn.disabled = false; actMsg('doc-act-msg', 'err', 'Failed: ' + e.message); });
 }

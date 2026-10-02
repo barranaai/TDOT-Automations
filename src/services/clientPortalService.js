@@ -251,12 +251,13 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
 
   // 3. Compute document counts
   const docItems = docSummary?.items || [];
-  const docCounts = { total: docItems.length, received: 0, reviewed: 0, rework: 0, missing: 0 };
+  const docCounts = { total: docItems.length, received: 0, reviewed: 0, rework: 0, missing: 0, na: 0 };
   for (const it of docItems) {
     const s = it.status || 'Missing';
     if (s === 'Received')          docCounts.received++;
     else if (s === 'Reviewed')     docCounts.reviewed++;
     else if (s === 'Rework Required') docCounts.rework++;
+    else if (s === 'Not Applicable')  docCounts.na++;   // staff confirmed it does not apply (2026-10-02)
     else                           docCounts.missing++;
   }
 
@@ -361,7 +362,10 @@ function buildPortalPage(snap, opts) {
     : (qDone ? 'Review Your Answers →' : (qStarted ? 'Continue Filling →' : 'Start Questionnaire →'));
 
   // Doc card status
-  const docTotal      = snap.docCounts.total;
+  // Documents staff marked "not applicable" are out of the count: a client who
+  // sent everything that applies sees 100%, not a demand they cannot meet.
+  const docNa         = snap.docCounts.na || 0;
+  const docTotal      = snap.docCounts.total - docNa;
   const docDone       = docTotal > 0 ? (snap.docCounts.received + snap.docCounts.reviewed) : 0;
   const docPct        = docTotal > 0 ? Math.round(docDone / docTotal * 100) : 0;
   // (client mode links to the standalone page inline under the checklist, so
@@ -512,8 +516,11 @@ function buildPortalPage(snap, opts) {
       // Uploads stay open until the team marks the item Reviewed — matching the
       // full upload page, so a client with several files (bank statements etc.)
       // can keep adding them here instead of hunting for the other page.
-      const uploadable = !isStaff && it.status !== 'Reviewed';
-      const statusLine = it.status === 'Missing'
+      const isNA = it.status === 'Not Applicable';
+      const uploadable = !isStaff && it.status !== 'Reviewed' && !isNA;
+      const statusLine = isNA
+        ? (isStaff ? 'Not applicable — confirmed by staff' : 'Not needed for your application — confirmed by your case officer')
+        : it.status === 'Missing'
         ? 'Not uploaded yet'
         : `${escHtml(it.status === 'Rework Required' ? 'Needs a new copy' : it.status)}${it.lastUpload ? ` · uploaded ${escHtml(it.lastUpload)}` : ''}`;
       const note = (it.status === 'Rework Required' && it.reviewNotes)
@@ -524,8 +531,8 @@ function buildPortalPage(snap, opts) {
         ? `<div class="doc-instr">${require('./instructionFormatter').formatInstructions(it.clientInstructions)}</div>` : '';
       const right = uploadable
         ? `<span class="up-wrap"><label class="up-btn${it.status === 'Rework Required' ? '' : ' re'}">${it.status === 'Rework Required' ? 'Upload new copy' : (it.status === 'Missing' ? 'Upload' : 'Add more files')}<input type="file" multiple data-item="${escHtml(it.id)}" aria-label="Upload ${escHtml(it.name)}"></label><span class="up-state" data-state="${escHtml(it.id)}"></span></span>`
-        : `<span class="doc-ok">${it.status === 'Reviewed' ? '✓ Reviewed' : (it.status === 'Received' ? '✓ Received' : '')}</span>`;
-      return `<div class="doc-row"><span class="doc-dot" style="background:${DOC_DOT[it.status] || '#C9CDD4'}"></span>
+        : `<span class="doc-ok">${it.status === 'Reviewed' ? '✓ Reviewed' : (it.status === 'Received' ? '✓ Received' : (isNA ? 'Not needed' : ''))}</span>`;
+      return `<div class="doc-row"${isNA ? ' style="opacity:.6"' : ''}><span class="doc-dot" style="background:${DOC_DOT[it.status] || '#C9CDD4'}"></span>
         <div class="doc-main">
           <div class="doc-name">${escHtml(it.name)}${showTag ? `<span class="doc-tag">${escHtml(it.applicantLabel || it.applicantType)}</span>` : ''}</div>
           <div class="doc-meta">${statusLine}</div>
@@ -766,8 +773,8 @@ function buildPortalPage(snap, opts) {
         <div>
           <h3>📂 Documents</h3>
           <div class="sub">${isStaff
-            ? `${docTotal} document${docTotal === 1 ? '' : 's'} on this case — open the review page to mark them as reviewed or request rework.`
-            : `${docTotal} document${docTotal === 1 ? '' : 's'} requested for this case.`}</div>
+            ? `${docTotal} document${docTotal === 1 ? '' : 's'} on this case${docNa ? ` (${docNa} not applicable)` : ''} — open the review page to mark them as reviewed or request rework.`
+            : `${docTotal} document${docTotal === 1 ? '' : 's'} requested for this case.${docNa ? ` ${docNa} marked as not needed.` : ''}`}</div>
         </div>
         <span class="badge ${snap.docCounts.rework > 0 ? 'badge-warn' : (docPct === 100 ? 'badge-ok' : (docDone > 0 ? 'badge-prog' : 'badge-todo'))}">${docPct}% uploaded</span>
       </div>
@@ -853,7 +860,7 @@ function buildPortalPage(snap, opts) {
     });
   })();
   </script>` : ''}
-  ${!isStaff && (snap.docItems || []).some((d) => d.status !== 'Reviewed') ? `<script>
+  ${!isStaff && (snap.docItems || []).some((d) => d.status !== 'Reviewed' && d.status !== 'Not Applicable') ? `<script>
   (function () {
     var CASE_REF = ${jsLit(snap.caseRef)};
     var TOKEN    = ${jsLit(snap.accessToken || '')};
