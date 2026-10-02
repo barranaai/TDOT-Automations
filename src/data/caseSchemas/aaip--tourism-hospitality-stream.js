@@ -29,7 +29,7 @@ module.exports = {
         guidance: 'Complete marksheets and certificates plus an Educational Credential Assessment (ECA) report comparing your foreign education to Canadian standards, from a designated organization (CES, ICAS, ICES, IQAS or WES). More information: https://www.canada.ca/en/immigration-refugees-citizenship/corporate/partners-service-providers/immigrant-serving-organizations/best-practices/foreign-educational-credential-assessment.html.' },
       { code: 'RESUME', name: 'Resume', category: 'Other',
         guidance: 'Provide a detailed resume with a short written description of all your education, qualifications, and previous and current jobs.' },
-      { code: 'LMIA', name: 'Labour Market Impact Assessment (if applicable)', category: 'Financial',
+      { code: 'LMIA', name: 'Labour Market Impact Assessment (if applicable)', category: 'Financial', optional: true,
         guidance: 'If you have an approved LMIA, provide a complete scan of the approval letter received from ESDC.' },
       { code: 'EMPDECL', name: 'Employer Declaration and Authorization Form', category: 'Forms',
         guidance: 'The form must be complete, dated and signed by an authorized signing official of your Alberta employer to be accepted for processing. Download the form: https://cfr.forms.gov.ab.ca/Form/AINP13484.' },

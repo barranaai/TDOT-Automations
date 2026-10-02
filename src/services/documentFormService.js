@@ -48,6 +48,7 @@ const TMPL_INSTRUCTIONS_COL   = 'long_text_mm0z10mg'; // Client-Facing Instructi
 const TMPL_CATEGORY_COL       = 'dropdown_mm0x41zm';  // Document Category
 const TMPL_APPLICANT_TYPE_COL = 'dropdown_mm261bn6';  // Applicant Type (which member)
 const TMPL_PHASE_COL          = 'dropdown_mm297t2e';  // Checklist Phase ("Profile Creation" / "Submission")
+const TMPL_REQUIRED_TYPE_COL  = 'dropdown_mm0x9v5q';  // Required Type (Mandatory / Conditional / Optional) — optional rows, cut 2
 
 // Client Master Board columns
 const CM_CASE_REF_COL  = 'text_mm142s49';    // Case Reference Number
@@ -287,7 +288,8 @@ async function getCaseDocuments(caseRef) {
              "${TMPL_INSTRUCTIONS_COL}",
              "${TMPL_CATEGORY_COL}",
              "${TMPL_APPLICANT_TYPE_COL}",
-             "${TMPL_PHASE_COL}"
+             "${TMPL_PHASE_COL}",
+             "${TMPL_REQUIRED_TYPE_COL}"
            ]) { id text }
          }
        }`,
@@ -302,11 +304,14 @@ async function getCaseDocuments(caseRef) {
         category:           tc(TMPL_CATEGORY_COL),
         applicantType:      tc(TMPL_APPLICANT_TYPE_COL) || 'Principal Applicant',
         checklistPhase:     tc(TMPL_PHASE_COL) || '',
+        requiredType:       tc(TMPL_REQUIRED_TYPE_COL),
       };
     }
   }
 
   // ── Step 3: Merge and return ──────────────────────────────────────────────
+  const opt = require('./documentOptional');
+  const optionalRule = opt.isEnabled();
   return items
     .map((item) => {
       const c        = (id) => col(item.column_values, id);
@@ -337,6 +342,9 @@ async function getCaseDocuments(caseRef) {
         checklistPhase:     tmpl.checklistPhase     || '',
         reviewNotes:        c(REVIEW_NOTES_COL)     || '',
         naReason:           require('./documentNotApplicable').reasonColumnId() ? (c(require('./documentNotApplicable').reasonColumnId()) || '') : '',
+        // Optional document (cut 2): the template's Required Type, or the
+        // schema definition's flag — only while DOC_OPTIONAL is on.
+        optional:           optionalRule && (tmpl.requiredType ? opt.isOptionalRequiredType(tmpl.requiredType) : Boolean(resolved && opt.isOptionalDoc(resolved.doc))),
         intakeId,
       };
     })

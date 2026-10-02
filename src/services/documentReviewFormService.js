@@ -442,9 +442,10 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, f
 
   // Counters for the summary strip
   const total      = items.length;
-  const counts     = { received: 0, reviewed: 0, rework: 0, missing: 0, underReview: 0, na: 0 };
+  const counts     = { received: 0, reviewed: 0, rework: 0, missing: 0, underReview: 0, na: 0, optionalOpen: 0 };
   for (const it of items) {
     const s = it.status || 'Missing';
+    if (it.optional === true && s === 'Missing') counts.optionalOpen++;   // optional, not sent (cut 2)
     if (s === 'Received')        counts.received++;
     else if (s === 'Reviewed')   counts.reviewed++;
     else if (s === 'Rework Required') counts.rework++;
@@ -531,6 +532,7 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, f
     .btn-applies { background: #fff; color: #1d4ed8; border: 1px solid #93c5fd; }
     .btn-applies:hover:not(:disabled) { background: #eff6ff; }
     #na-modal textarea { width: 100%; min-height: 72px; }
+    .opt-pill { display: inline-block; font-size: 10px; font-weight: 700; color: #475569; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }
     .summary-divider { width: 1px; height: 36px; background: #E7E2D6; }
 
     /* Filter strip */
@@ -760,7 +762,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       <div class="summary-stat received"><div class="num">${counts.received}</div><div class="lbl">Received</div></div>
       <div class="summary-stat reviewed"><div class="num">${counts.reviewed}</div><div class="lbl">Reviewed</div></div>
       <div class="summary-stat rework"><div class="num">${counts.rework}</div><div class="lbl">Rework</div></div>
-      <div class="summary-stat missing"><div class="num">${counts.missing + counts.underReview}</div><div class="lbl">Pending</div></div>
+      <div class="summary-stat missing"><div class="num">${counts.missing + counts.underReview - counts.optionalOpen}</div><div class="lbl">Pending${counts.optionalOpen ? ` · +${counts.optionalOpen} optional` : ''}</div></div>
       <div class="summary-stat na"><div class="num">${counts.na}</div><div class="lbl">N/A</div></div>
     </div>
 
@@ -1231,7 +1233,7 @@ function rowHtml(it, folderUrl, { naReady = false } = {}) {
   return `
     <div class="doc-row" id="doc-${escHtml(it.id)}" data-item-id="${escHtml(it.id)}" data-status="${escHtml(status)}">
       <div class="doc-meta">
-        <div class="name">${escHtml(it.name)}</div>
+        <div class="name">${escHtml(it.name)}${it.optional ? ' <span class="opt-pill" title="Optional document — counts toward the % only once uploaded">Optional</span>' : ''}</div>
         ${descBlock}
         ${guideBlock}
         ${dateBlock}

@@ -396,13 +396,7 @@ function render(d) {
   var db = document.getElementById('d-bar'); db.style.width = dd + '%'; db.style.background = pctColor(dd);
   document.getElementById('q-sub').textContent =
     (d.questionnaire.submitted || 0) + ' of ' + (d.questionnaire.total || 0) + ' member section(s) submitted';
-  // "Not applicable" documents (2026-10-02) do not count: N of (total − N/A)
-  var docNa = d.documents.counts.na || 0;
-  document.getElementById('d-sub').textContent =
-    (d.documents.counts.received + d.documents.counts.reviewed) + ' of ' + (d.documents.counts.total - docNa) + ' document(s) in' +
-    (docNa ? ' · ' + docNa + ' not applicable' : '') +
-    (d.documents.counts.reviewed ? ' · ' + d.documents.counts.reviewed + ' reviewed' :
-      (d.docReviewedPct ? ' · ' + d.docReviewedPct + '% reviewed' : ''));
+  document.getElementById('d-sub').textContent = docSubtitle(d.documents.counts, d.docReviewedPct);
 
   // Family
   var fam = d.family || [];
@@ -424,9 +418,9 @@ function render(d) {
 
   // Documents
   var c = d.documents.counts;
-  document.getElementById('doc-total').textContent = c.total + ' total';
+  document.getElementById('doc-total').textContent = c.total + ' total' + (c.optionalOpen ? ' · ' + c.optionalOpen + ' optional not sent' : '');
   document.getElementById('doc-strip').innerHTML =
-    [['Missing', c.missing, '#94a3b8'], ['Received', c.received, '#2563eb'], ['Reviewed', c.reviewed, '#16a34a'],
+    [['Missing', c.missing - (c.optionalOpen || 0), '#94a3b8'], ['Received', c.received, '#2563eb'], ['Reviewed', c.reviewed, '#16a34a'],
      ['Rework', c.rework, '#dc2626'], ['N/A', c.na || 0, '#94a3b8'], ['Total', c.total, '#1a3558']]
     .map(function(s) { return '<div class="doc-stat"><div class="n" style="color:' + s[2] + '">' + s[1] + '</div><div class="l">' + s[0] + '</div></div>'; }).join('');
 
@@ -459,6 +453,16 @@ function actMsg(id, cls, txt) { var el = document.getElementById(id); if (!el) r
 // Grouped by family member (Principal Applicant first, then spouse/children) so a
 // consultant sees each member's documents together. Single-applicant cases render
 // flat (no member header). Inline review actions are preserved per row.
+// "Not applicable" documents (2026-10-02) and optional documents not yet sent
+// do not count: N of (total − N/A − optional open). Pure — tested on its own.
+function docSubtitle(c, reviewedPct) {
+  var na = c.na || 0, opt = c.optionalOpen || 0;
+  return (c.received + c.reviewed) + ' of ' + (c.total - na - opt) + ' document(s) in' +
+    (na ? ' · ' + na + ' not applicable' : '') +
+    (opt ? ' · ' + opt + ' optional not sent' : '') +
+    (c.reviewed ? ' · ' + c.reviewed + ' reviewed' : (reviewedPct ? ' · ' + reviewedPct + '% reviewed' : ''));
+}
+
 function renderDocRow(it) {
   var acts = '';
   // "Files" deep-links to this row on the review page, where the upload trail
@@ -475,7 +479,7 @@ function renderDocRow(it) {
   var note = (it.status === 'Rework Required' && it.reviewNotes) ? '<div class="dnote">Rework note: ' + escHtml(it.reviewNotes) + '</div>' : '';
   if (it.status === 'Not Applicable') note += '<div class="dnote">Not applicable: ' + escHtml(it.naReason || '(no reason recorded)') + (it.naBy ? ' <span class="muted">— ' + escHtml(it.naBy) + '</span>' : '') + '</div>';
   return '<div class="drow"><span class="dotc" style="background:' + (DOC_DOT[it.status] || '#cbd5e1') + '"></span>' +
-    '<span class="dn">' + escHtml(it.name) + '</span>' +
+    '<span class="dn">' + escHtml(it.name) + (it.optional ? ' <span class="muted">(optional)</span>' : '') + '</span>' +
     '<span class="dmeta">' + escHtml(it.status) + (it.lastUpload ? (' · uploaded ' + escHtml(it.lastUpload)) : '') + '</span>' +
     '<span class="dacts">' + acts + '</span>' + note + '</div>';
 }

@@ -460,6 +460,7 @@ test('seam: getPortalSnapshot output renders docs, payments and timeline through
     stub(docSvc, 'getCaseSummary', async () => ({ items: [
       { id: '71', name: 'Passport', status: 'Missing', category: 'Identity', applicantType: 'Principal Applicant', reviewNotes: '', clientInstructions: 'Colour scan, all pages.', lastUpload: '' },
       { id: '72', name: 'IELTS', status: 'Reviewed', category: 'Language', applicantType: 'Principal Applicant', reviewNotes: '', clientInstructions: '', lastUpload: '2026-07-10' },
+      { id: '73', name: 'Urgent Travel Proof (if applicable)', status: 'Missing', category: 'Travel', applicantType: 'Principal Applicant', reviewNotes: '', clientInstructions: '', lastUpload: '', optional: true },
     ] })),
     stub(htmlQ, 'loadMembers', async () => [{ label: 'Principal Applicant', submittedAt: '' }]),
     stub(htmlQ, 'getMemberStatuses', async ({ members }) => members.map((m) => ({ ...m, status: 'In Progress', hasData: true, completionPct: 55 }))),
@@ -481,5 +482,10 @@ test('seam: getPortalSnapshot output renders docs, payments and timeline through
     assert.ok(html.includes('TDOT-99-M1') && html.includes('$2260.00'), 'payments card renders the milestone with its reference');
     assert.ok(html.includes('class="journey"'), 'journey stepper renders');
     assert.ok(!html.includes('Document Collection Started'), 'raw ops stage still never leaks');
+    // the optional row (cut 2) flows through the REAL snapshot: counted as open-optional, tagged, out of "X of Y"
+    assert.equal(snapReal.docCounts.optionalOpen, 1);
+    assert.equal(snapReal.docItems.find((d) => d.id === '73').optional, true);
+    assert.ok(html.includes('<span class="doc-tag doc-tag-opt">Optional</span>'));
+    assert.match(html, /1 of 2 ready/, 'Passport (Missing) + IELTS (Reviewed) count; the open optional row does not');
   } finally { restore.forEach((r) => r()); }
 });

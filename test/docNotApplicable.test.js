@@ -540,7 +540,7 @@ test('cockpit summariseDocuments: counts.na, naReason on the row, and the page-l
   const restoreNa = naState();
   try {
     const out = summariseDocuments(DOCS);
-    assert.deepEqual(out.counts, { total: 3, received: 0, reviewed: 1, rework: 0, missing: 1, na: 1 });
+    assert.deepEqual(out.counts, { total: 3, received: 0, reviewed: 1, rework: 0, missing: 1, na: 1, optionalOpen: 0 });
     const identity = out.byCategory.find((c) => c.category === 'Identity');
     const row = identity.items.find((i) => i.id === '13');
     assert.equal(row.naReason, 'client is single', 'reason line only — the cockpit script never splits');
@@ -600,7 +600,7 @@ test('legacy /documents page: N/A rows are greyed, read-only, and out of every c
   let n = 0;
   for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) { n++; assert.doesNotThrow(() => new Function(m[1])); }
   assert.ok(n >= 1);
-  assert.match(html, /function applicableRows\(/, 'the live counters skip N/A rows too');
+  assert.match(html, /function countRows\(nodeList\)[\s\S]*?if \(r\.dataset\.status === 'Not Applicable'\) return;/, 'the live counters skip N/A rows too');
 });
 
 test('review page: "Doesn\'t apply" only on Missing/Received rows and only when ready; "Applies again" on N/A rows; the script parses', () => {

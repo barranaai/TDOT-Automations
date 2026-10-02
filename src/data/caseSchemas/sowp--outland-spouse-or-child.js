@@ -46,7 +46,7 @@ module.exports = {
         guidance: 'Only a Panel Physician approved by IRCC can do this exam — find one at https://secure.cic.gc.ca/PanelPhysicianMedecinDesigne/en/Home. Do an upfront medical exam from which you don’t need any letter from IRCC asking for it. More information: https://www.canada.ca/en/immigration-refugees-citizenship/services/application/medical-police/medical-exams/requirements-temporary-residents.html' },
       { code: 'BIRTHCERT', name: 'Birth Certificate', category: 'Identity',
         guidance: 'Issued by the government and showing the parents’ names.' },
-      { code: 'STUDENTDOCS', name: 'If student (current grade marksheets, tuition fee receipt, enrollment letter, school ID, parents income proof)', category: 'Academic',
+      { code: 'STUDENTDOCS', name: 'If student (current grade marksheets, tuition fee receipt, enrollment letter, school ID, parents income proof)', category: 'Academic', optional: true,
         guidance: 'Current grade marksheets; tuition fee receipt; letter from the school/college confirming current enrollment with the start and end dates of the program; school/college identity card; supporting income proof from the parents based on their current employment status.' },
     ] },
     { role: 'Sponsor', label: 'Worker Spouse', required: true, documents: [
@@ -54,7 +54,7 @@ module.exports = {
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Other',
         guidance: 'Attach all permits ever issued to you in Canada as a visitor, student or worker.' },
-      { code: 'CANEDU', name: 'Canadian Education Documents (for each program if studied here)', category: 'Academic',
+      { code: 'CANEDU', name: 'Canadian Education Documents (for each program if studied here)', category: 'Academic', optional: true,
         guidance: 'Official marksheet or transcript showing the grades obtained in each subject for every year or semester of the program, plus degree certificates from the institution verifying completion of the course, degree, diploma or other qualifications.' },
       { code: 'INCOME', name: 'Proof/source of Income - Mandatory for Worker Spouse', category: 'Financial',
         guidance: 'Job letter from your current employer on company letterhead stating start date, job title, salary, hours worked and job duties — hand-signed, or electronic closely matching the original, or done through DocuSign (typed names are not acceptable); at least 3 pay slips; T4 issued by the employer; bank statement for the last 3 months with good funds.' },

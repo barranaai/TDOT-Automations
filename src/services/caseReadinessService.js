@@ -162,10 +162,17 @@ async function fetchExecutionItems(boardId, caseRefColId, fetchColIds, caseRef) 
  */
 function applySchemaDefaults(dItems) {
   let applied = 0;
-  const DEFAULTS = { [D_COLS.countsTowardReady]: 'Yes', [D_COLS.blockingDoc]: 'No', [D_COLS.requiredType]: 'Mandatory' };
+  // Optional documents (cut 2, 2026-10-02): with DOC_OPTIONAL on, a schema
+  // document flagged `optional: true` resolves to Required Type "Optional"
+  // (recovered from its code at read time — no board column, no reseed); an
+  // unresolvable code stays Mandatory, as today. OFF: every row Mandatory.
+  const optional = require('./documentOptional');
+  const optionalRule = optional.isEnabled();
   for (const item of dItems) {
     const intakeId = item.column_values.find((c) => c.id === D_COLS.intakeItemId)?.text?.trim() || '';
     if (!intakeId.startsWith('code:')) continue;
+    const required = (optionalRule && optional.isOptionalCode(intakeId.slice(5))) ? 'Optional' : 'Mandatory';
+    const DEFAULTS = { [D_COLS.countsTowardReady]: 'Yes', [D_COLS.blockingDoc]: 'No', [D_COLS.requiredType]: required };
     for (const [colId, dflt] of Object.entries(DEFAULTS)) {
       const cv = item.column_values.find((c) => c.id === colId);
       if (cv && (!cv.text || cv.text === 'null' || cv.text.trim() === '')) { cv.text = dflt; applied++; }
@@ -242,7 +249,7 @@ function calcQMetrics() {
 
 // ─── Calculate document readiness metrics ────────────────────────────────────
 
-function calcDocMetrics(items) {
+function calcDocMetrics(items, { optionalCountsWhenPresent = require('./documentOptional').isEnabled() } = {}) {
   let countable       = 0;
   let reviewed        = 0;
   let inPipelineCount = 0;
@@ -268,18 +275,31 @@ function calcDocMetrics(items) {
     // document that does not exist cannot hold the case at a stage gate.
     // (Always on: a row marked before any switch flip must never count again.)
     const notApplicable = status === 'Not Applicable';
+    const present       = inPipeline.has(status);
+    // In the % denominator? (cut 2, 2026-10-02)
+    //   - Not Applicable: never.
+    //   - Optional / Conditional with DOC_OPTIONAL on: once the client has
+    //     uploaded it, whatever Counts Toward Readiness says ("counts when
+    //     present" — the Template board's Counts = No on soft-named items was
+    //     the old way of saying "optional").
+    //   - otherwise: Counts = Yes, as today. OFF keeps today's denominator.
+    const optionalRow = required === 'Optional' || required === 'Conditional';
+    const counted = !notApplicable && ((optionalCountsWhenPresent && optionalRow) ? present : counts === 'yes');
 
-    if (counts === 'yes' && !notApplicable) {
+    if (counted) {
       countable++;
       if (status === 'Reviewed') reviewed++;
-      if (inPipeline.has(status)) inPipelineCount++;
+      if (present) inPipelineCount++;
     }
     if (isBlocking && status !== 'Reviewed' && !notApplicable) blocking++;
 
     // "Missing Required Documents" = Mandatory docs that count toward readiness
     // AND haven't entered the pipeline at all (no upload from the client yet).
     // "Rework Required" is excluded: the client did upload, it's in review cycle.
-    if (required === 'Mandatory' && counts === 'yes' && !notApplicable && !inPipeline.has(status)) missingRequired++;
+    // Mandatory only — an Optional / Conditional document is never "missing
+    // required" (the switch and the Template-board tool are one change; the
+    // rollback is both the switch OFF and the tool's --undo).
+    if (required === 'Mandatory' && counts === 'yes' && !notApplicable && !present) missingRequired++;
   }
 
   const readinessPct = countable > 0 ? Math.round((reviewed / countable) * 100) : 0;

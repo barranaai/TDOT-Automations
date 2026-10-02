@@ -38,7 +38,7 @@ const CHILD_DOCUMENTS = [
     guidance: 'Must meet IRCC temporary-resident photo specifications (see canada.ca photo specifications page).' },
   { code: 'GOVTID',        category: 'Identity',  name: 'Government issued Identity documents',
     guidance: 'Aadhar card, or any other government-issued document showing your full name, date of birth, photograph and signature.' },
-  { code: 'STUDENTDOCS',   category: 'Other',     name: 'If student: academic documents (marksheets, enrolment letter, school ID)',
+  { code: 'STUDENTDOCS',   category: 'Other',     name: 'If student: academic documents (marksheets, enrolment letter, school ID)', optional: true,
     guidance: 'Current grade marksheets; a letter from the school/college confirming current enrolment with program start and end dates; school/college identity card; plus supporting proof-of-income documents from the parents based on their current employment status.' },
   { code: 'BIRTHCERT',     category: 'Identity',  name: 'Birth Certificate',
     guidance: 'Government-issued and showing the parents’ names. A 10th/12th marksheet can be accepted as an alternative (not preferred).' },

@@ -68,12 +68,11 @@ const STATUS_STYLE = {
   'Rework Required': { bg: '#fff7ed', color: '#ea580c', dot: '#ea580c', ring: 'rgba(234,88,12,.15)'  },
   'Not Applicable':  { bg: '#f1f5f9', color: '#475569', dot: '#94a3b8', ring: 'rgba(100,116,139,.15)' },
 };
-// "Not Applicable" rows (staff confirmed the document does not exist for this
-// client, 2026-10-02) are out of every "X of Y uploaded" count on this page.
-const countsForClient = (items) => {
-  const applicable = items.filter((i) => i.status !== 'Not Applicable');
-  return { total: applicable.length, uploaded: applicable.filter((i) => i.status !== 'Missing').length };
-};
+// "X of Y uploaded" on this page: "Not Applicable" rows are out entirely and an
+// optional row counts only once uploaded — the ONE helper both client pages use.
+const { clientProgress: countsForClient } = require('../services/documentOptional');
+// A group whose rows are all optional (not sent) or all not applicable has nothing to count.
+const countLabel = (uploaded, total, rowsLen, sep) => (total === 0 && rowsLen > 0) ? 'nothing required' : `${uploaded}${sep}${total}`;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -276,11 +275,12 @@ function docRowHtml(doc, caseRef) {
   return `
         <div class="doc-row${doc.status === 'Rework Required' ? ' needs-action' : ''}"${isNA ? ' style="opacity:.6"' : ''}
              id="doc_${doc.id}"
-             data-status="${esc(doc.status)}">
+             data-status="${esc(doc.status)}"${doc.optional ? ' data-optional="1"' : ''}>
           <div class="doc-info">
             <div class="doc-top">
               <span class="doc-code">${esc(doc.documentCode)}</span>
               ${doc.status === 'Rework Required' ? '<span class="badge action-required">⚠️ Re-upload Required</span>' : ''}
+              ${doc.optional ? '<span class="badge optional" title="Only if it applies to you — it counts once uploaded">Optional</span>' : ''}
             </div>
             <div class="doc-name">${esc(doc.name)}</div>
             ${doc.status === 'Rework Required' ? `
@@ -333,7 +333,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
   // Flatten all items for global counts (across all phases)
   const allPhaseMembers = phases ? phases.flatMap(p => p.members) : members;
   const allItems     = allPhaseMembers.flatMap((m) => m.sections.flatMap((s) => s.items));
-  const { total: totalDocs, uploaded: uploadedDocs } = countsForClient(allItems);
+  const { total: totalDocs, uploaded: uploadedDocs, optionalOpen: optionalOpenDocs } = countsForClient(allItems);
   const pct          = totalDocs ? Math.round((uploadedDocs / totalDocs) * 100) : 0;
 
   // ── Build the step list ──
@@ -437,7 +437,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
       // ahead and who is still missing documents without having to click
       // through every tab.
       const countBadge = step.isMember
-        ? `<span class="pill-count" id="pcount_${idx}">${uploaded}/${stepTotal}</span>`
+        ? `<span class="pill-count" id="pcount_${idx}">${countLabel(uploaded, stepTotal, step.items.length, '/')}</span>`
         : '';
 
       const pillClass = step.isMember ? 'step-pill member-pill' : 'step-pill';
@@ -458,7 +458,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
       <div class="cat-group">
         <div class="cat-header">
           <span class="cat-title">${catIcon} ${esc(sec.category)}</span>
-          <span class="cat-count">${catUpl} / ${catTotal}</span>
+          <span class="cat-count">${countLabel(catUpl, catTotal, sec.items.length, ' / ')}</span>
         </div>
         ${sec.items.map((doc) => docRowHtml(doc, caseRef)).join('')}
       </div>`;
@@ -489,7 +489,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
           const headerHtml = `
         <div class="phase-section-header" style="background:${phaseBg};border-left:3px solid ${phaseColor};color:${phaseColor}">
           <span class="phase-section-title">${phaseIcon} ${esc(phaseLabel)} Phase</span>
-          <span class="phase-section-count">${phaseUpl} / ${phaseTotal}</span>
+          <span class="phase-section-count">${countLabel(phaseUpl, phaseTotal, sections.flatMap(s => s.items).length, ' / ')}</span>
         </div>`;
           return headerHtml + renderCategorySections(sections);
         }).join('');
@@ -510,7 +510,7 @@ function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], 
     <div class="panel" id="panel_${idx}" style="display:none">
       <div class="panel-header">
         <div class="panel-title">${step.icon} ${esc(step.label)}${phaseTag}</div>
-        <div class="panel-meta" id="pmeta_${idx}">${uploaded} of ${stepTotal} uploaded</div>
+        <div class="panel-meta" id="pmeta_${idx}">${stepTotal === 0 && step.items.length ? 'nothing required yet' : `${uploaded} of ${stepTotal} uploaded`}</div>
       </div>
       <div class="panel-body">${bodyHtml}</div>
       <div class="panel-footer">
@@ -621,6 +621,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 .doc-code{font-size:.65rem;color:var(--gray-400);font-family:'SF Mono',SFMono-Regular,Consolas,monospace;letter-spacing:.06em;background:var(--gray-100);padding:.1rem .38rem;border-radius:4px}
 .badge{font-size:.6rem;font-weight:700;padding:.15rem .52rem;border-radius:5px;text-transform:uppercase;letter-spacing:.06em}
 .badge.action-required{background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange-border)}
+.badge.optional{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;text-transform:none;letter-spacing:0}
 .doc-name{font-size:.93rem;font-weight:600;color:var(--gray-900);line-height:1.45}
 .doc-desc{font-size:.8rem;color:var(--gray-500);margin-top:.32rem;line-height:1.55}
 .doc-instructions{font-size:.79rem;color:#92400e;background:var(--amber-bg);border:1px solid var(--amber-border);border-left:3px solid #f59e0b;padding:.5rem .75rem;border-radius:var(--radius-sm);margin-top:.45rem;line-height:1.6}
@@ -772,7 +773,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sa
 </div>
 
 <div class="progress-wrap">
-  <div class="progress-text" id="progressLabel">${uploadedDocs} of ${totalDocs} documents uploaded (${pct}%)</div>
+  <div class="progress-text" id="progressLabel">${totalDocs === 0 && allItems.length
+    ? (optionalOpenDocs ? 'No documents required right now — the optional ones only if they apply to you' : 'Nothing to upload right now — your case officer confirmed these documents are not needed')
+    : `${uploadedDocs} of ${totalDocs} documents uploaded (${pct}%)`}</div>
   <div class="progress-track"><div class="progress-fill" id="progressFill" style="width:${pct}%"></div></div>
 </div>
 
@@ -1077,6 +1080,7 @@ async function handleUpload(itemId, caseRef, input) {
 
     if (!wasAlreadyUploaded) {
       uploadedCount++;
+      if (row.dataset.optional === '1') totalCount++;   // an optional row joins the count once uploaded
       updateProgress();
       updatePanelMeta(currentStep);
     }
@@ -1100,51 +1104,56 @@ async function handleUpload(itemId, caseRef, input) {
   input.value = '';
 }
 
-// Rows marked "Not Applicable" by staff are out of every count on this page.
-function applicableRows(nodeList) {
-  return Array.prototype.filter.call(nodeList, (r) => r.dataset.status !== 'Not Applicable');
-}
+// The same rule as the server's clientProgress: "Not Applicable" rows are out,
+// an optional row counts only once uploaded.
 function isUploadedRow(r) { return !!r.dataset.status && r.dataset.status !== 'Missing'; }
+function countRows(nodeList) {
+  let total = 0, uploaded = 0, rows = 0;
+  Array.prototype.forEach.call(nodeList, (r) => {
+    rows++;
+    if (r.dataset.status === 'Not Applicable') return;
+    const up = isUploadedRow(r);
+    if (r.dataset.optional === '1' && !up) return;
+    total++; if (up) uploaded++;
+  });
+  return { total: total, uploaded: uploaded, rows: rows };
+}
+function countLabel(c, sep) { return (c.total === 0 && c.rows > 0) ? 'nothing required' : c.uploaded + sep + c.total; }
 
 function updatePanelMeta(idx) {
   const panel = document.getElementById('panel_' + idx);
   if (!panel) return;
-  const rows     = applicableRows(panel.querySelectorAll('.doc-row'));
-  let   uploaded = 0;
-  rows.forEach((r) => { if (isUploadedRow(r)) uploaded++; });
+  const c = countRows(panel.querySelectorAll('.doc-row'));
+  const uploaded = c.uploaded;
   const meta = document.getElementById('pmeta_' + idx);
-  if (meta) meta.textContent = uploaded + ' of ' + rows.length + ' uploaded';
+  if (meta) meta.textContent = (c.total === 0 && c.rows > 0) ? 'nothing required yet' : uploaded + ' of ' + c.total + ' uploaded';
 
   // Member-pill progress badge (only present on member-level pills)
   const pillCount = document.getElementById('pcount_' + idx);
-  if (pillCount) pillCount.textContent = uploaded + '/' + rows.length;
+  if (pillCount) pillCount.textContent = countLabel(c, '/');
 
   // Phase sub-section count badges (member panel with dual-phase content)
   panel.querySelectorAll('.phase-section-header').forEach((hdr) => {
     // The next siblings until the next phase-section-header are the
     // category groups that belong to this phase.
     let n = hdr.nextElementSibling;
-    let phUpl = 0, phTotal = 0;
+    let phUpl = 0, phTotal = 0, phRows = 0;
     while (n && !n.classList.contains('phase-section-header')) {
       if (n.classList.contains('cat-group')) {
-        applicableRows(n.querySelectorAll('.doc-row')).forEach((r) => {
-          phTotal++;
-          if (isUploadedRow(r)) phUpl++;
-        });
+        const pc = countRows(n.querySelectorAll('.doc-row'));
+        phTotal += pc.total; phUpl += pc.uploaded; phRows += pc.rows;
       }
       n = n.nextElementSibling;
     }
     const cnt = hdr.querySelector('.phase-section-count');
-    if (cnt) cnt.textContent = phUpl + ' / ' + phTotal;
+    if (cnt) cnt.textContent = countLabel({ total: phTotal, uploaded: phUpl, rows: phRows }, ' / ');
   });
 
   // Also update cat-count badges inside member panels
   panel.querySelectorAll('.cat-group').forEach((grp) => {
-    const grpRows = applicableRows(grp.querySelectorAll('.doc-row'));
-    let grpUpl = 0;
-    grpRows.forEach((r) => { if (isUploadedRow(r)) grpUpl++; });
+    const gc = countRows(grp.querySelectorAll('.doc-row'));
     const badge = grp.querySelector('.cat-count');
-    if (badge) badge.textContent = grpUpl + ' / ' + grpRows.length;
+    if (badge) badge.textContent = countLabel(gc, ' / ');
   });
 }
 

@@ -251,15 +251,7 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
 
   // 3. Compute document counts
   const docItems = docSummary?.items || [];
-  const docCounts = { total: docItems.length, received: 0, reviewed: 0, rework: 0, missing: 0, na: 0 };
-  for (const it of docItems) {
-    const s = it.status || 'Missing';
-    if (s === 'Received')          docCounts.received++;
-    else if (s === 'Reviewed')     docCounts.reviewed++;
-    else if (s === 'Rework Required') docCounts.rework++;
-    else if (s === 'Not Applicable')  docCounts.na++;   // staff confirmed it does not apply (2026-10-02)
-    else                           docCounts.missing++;
-  }
+  const docCounts = countDocItems(docItems);
 
   // 3b. Client-shaped checklist rows for the portal's Documents card — the id
   //     powers the token-gated per-document upload endpoint.
@@ -273,6 +265,7 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
     reviewNotes:    it.reviewNotes || '',
     clientInstructions: it.clientInstructions || '',
     lastUpload:     it.lastUpload || '',
+    optional:       it.optional === true,
   }));
 
   // 4. Questionnaire status — submitted member count from manifest
@@ -322,6 +315,21 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
  * @param {'client'|'staff'} [opts.mode='client']  — which role the page is for
  * @param {string} [opts.staffName]                — shown in the staff badge when mode=staff
  */
+/** PURE: the portal's document counts — N/A and optional-not-sent are counted so the card can leave them out. */
+function countDocItems(docItems) {
+  const docCounts = { total: (docItems || []).length, received: 0, reviewed: 0, rework: 0, missing: 0, na: 0, optionalOpen: 0 };
+  for (const it of docItems || []) {
+    const s = it.status || 'Missing';
+    if (it.optional === true && s === 'Missing') docCounts.optionalOpen++;   // optional and not uploaded: not asked of the client (cut 2)
+    if (s === 'Received')          docCounts.received++;
+    else if (s === 'Reviewed')     docCounts.reviewed++;
+    else if (s === 'Rework Required') docCounts.rework++;
+    else if (s === 'Not Applicable')  docCounts.na++;   // staff confirmed it does not apply (2026-10-02)
+    else                           docCounts.missing++;
+  }
+  return docCounts;
+}
+
 function buildPortalPage(snap, opts) {
   const mode      = (opts && opts.mode === 'staff') ? 'staff' : 'client';
   const staffName = (opts && opts.staffName) || '';
@@ -365,9 +373,11 @@ function buildPortalPage(snap, opts) {
   // Documents staff marked "not applicable" are out of the count: a client who
   // sent everything that applies sees 100%, not a demand they cannot meet.
   const docNa         = snap.docCounts.na || 0;
-  const docTotal      = snap.docCounts.total - docNa;
+  const docOptOpen    = snap.docCounts.optionalOpen || 0;   // optional rows count only once uploaded (cut 2)
+  const docTotal      = snap.docCounts.total - docNa - docOptOpen;
   const docDone       = docTotal > 0 ? (snap.docCounts.received + snap.docCounts.reviewed) : 0;
   const docPct        = docTotal > 0 ? Math.round(docDone / docTotal * 100) : 0;
+  const docNothing    = docTotal === 0 && snap.docCounts.total > 0;   // every row optional-not-sent or N/A: nothing is asked
   // (client mode links to the standalone page inline under the checklist, so
   // only the staff button needs a label)
   const docBtnText    = 'Open Document Review →';
@@ -521,7 +531,7 @@ function buildPortalPage(snap, opts) {
       const statusLine = isNA
         ? (isStaff ? 'Not applicable — confirmed by staff' : 'Not needed for your application — confirmed by your case officer')
         : it.status === 'Missing'
-        ? 'Not uploaded yet'
+        ? (it.optional ? (isStaff ? 'Optional — counts once uploaded' : 'Optional — only if it applies to you') : 'Not uploaded yet')
         : `${escHtml(it.status === 'Rework Required' ? 'Needs a new copy' : it.status)}${it.lastUpload ? ` · uploaded ${escHtml(it.lastUpload)}` : ''}`;
       const note = (it.status === 'Rework Required' && it.reviewNotes)
         ? `<div class="doc-note"><strong>From your case officer:</strong> ${escHtml(it.reviewNotes)}</div>` : '';
@@ -534,7 +544,7 @@ function buildPortalPage(snap, opts) {
         : `<span class="doc-ok">${it.status === 'Reviewed' ? '✓ Reviewed' : (it.status === 'Received' ? '✓ Received' : (isNA ? 'Not needed' : ''))}</span>`;
       return `<div class="doc-row"${isNA ? ' style="opacity:.6"' : ''}><span class="doc-dot" style="background:${DOC_DOT[it.status] || '#C9CDD4'}"></span>
         <div class="doc-main">
-          <div class="doc-name">${escHtml(it.name)}${showTag ? `<span class="doc-tag">${escHtml(it.applicantLabel || it.applicantType)}</span>` : ''}</div>
+          <div class="doc-name">${escHtml(it.name)}${showTag ? `<span class="doc-tag">${escHtml(it.applicantLabel || it.applicantType)}</span>` : ''}${it.optional ? '<span class="doc-tag doc-tag-opt">Optional</span>' : ''}</div>
           <div class="doc-meta">${statusLine}</div>
           ${instructions}
           ${note}
@@ -609,6 +619,7 @@ function buildPortalPage(snap, opts) {
     .doc-main { flex:1; min-width:0; }
     .doc-name { font-size:13.5px; font-weight:700; color:#0B1D32; }
     .doc-tag { display:inline-block; font-size:10px; font-weight:700; color:#8A7B57; background:#F6F1E4; border-radius:999px; padding:1px 8px; margin-left:6px; vertical-align:middle; }
+    .doc-tag-opt { color:#475569; background:#f1f5f9; border:1px solid #cbd5e1; }
     .doc-meta { font-size:11.5px; color:#9AA3AF; margin-top:1px; }
     .doc-note { font-size:12px; color:#7f1d1d; background:#fef2f2; border-left:3px solid #fca5a5; border-radius:6px; padding:7px 10px; margin-top:6px; }
     .doc-instr { font-size:12px; color:#6B7280; background:#F8F6F0; border-left:3px solid #E2D9C3; border-radius:6px; padding:7px 10px; margin-top:6px; line-height:1.55; }
@@ -773,15 +784,17 @@ function buildPortalPage(snap, opts) {
         <div>
           <h3>📂 Documents</h3>
           <div class="sub">${isStaff
-            ? `${docTotal} document${docTotal === 1 ? '' : 's'} on this case${docNa ? ` (${docNa} not applicable)` : ''} — open the review page to mark them as reviewed or request rework.`
-            : `${docTotal} document${docTotal === 1 ? '' : 's'} requested for this case.${docNa ? ` ${docNa} marked as not needed.` : ''}`}</div>
+            ? `${docTotal} document${docTotal === 1 ? '' : 's'} on this case${docNa ? ` (${docNa} not applicable)` : ''}${docOptOpen ? ` (${docOptOpen} optional, not sent)` : ''} — open the review page to mark them as reviewed or request rework.`
+            : docNothing
+            ? (docOptOpen ? `No documents required right now — ${docOptOpen} optional, only if ${docOptOpen === 1 ? 'it applies' : 'they apply'} to you.` : 'Nothing to upload right now — your case officer confirmed these documents are not needed.')
+            : `${docTotal} document${docTotal === 1 ? '' : 's'} requested for this case.${docNa ? ` ${docNa} marked as not needed.` : ''}${docOptOpen ? ` ${docOptOpen} optional — only if ${docOptOpen === 1 ? 'it applies' : 'they apply'} to you.` : ''}`}</div>
         </div>
-        <span class="badge ${snap.docCounts.rework > 0 ? 'badge-warn' : (docPct === 100 ? 'badge-ok' : (docDone > 0 ? 'badge-prog' : 'badge-todo'))}">${docPct}% uploaded</span>
+        <span class="badge ${snap.docCounts.rework > 0 ? 'badge-warn' : ((docPct === 100 || docNothing) ? 'badge-ok' : (docDone > 0 ? 'badge-prog' : 'badge-todo'))}">${docNothing ? 'Nothing required' : `${docPct}% uploaded`}</span>
       </div>
       <div class="progress-row">
         <div class="progress-bar"><div class="progress-fill" style="width:${docPct}%;background:${snap.docCounts.rework > 0 ? '#8B0000' : '#0B1D32'};"></div></div>
         <div class="progress-meta">
-          <span>${docDone} of ${docTotal} ready</span>
+          <span>${docNothing ? 'Nothing required' : `${docDone} of ${docTotal} ready`}</span>
           ${snap.docCounts.rework > 0 ? `<span style="color:#991b1b;font-weight:700;">${snap.docCounts.rework} need re-upload</span>` : ''}
         </div>
       </div>
@@ -995,6 +1008,7 @@ module.exports = {
   toClientTimeline,
   maskEmail,
   // pure — exported for tests
+  countDocItems,
   clientStage,
   toClientTimeline,
 };

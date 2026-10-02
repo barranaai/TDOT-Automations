@@ -24,7 +24,7 @@ const PA_DOCUMENTS = [
     guidance: 'Aadhar card, PAN card, or any other government-issued document showing your full name, date of birth, photograph and signature.' },
   { code: 'INCOME',        category: 'Financial', name: 'Proof/source of Income (highly recommended)',
     guidance: 'Highly recommended. If salaried: job letter on letterhead (start date, title, salary, hours, duties — hand-signed), at least 3 pay slips, Form 16 or other tax proof. If self-employed: business establishment proof, tax payment proof, 3 months business bank statements. If pensioner/unemployed: pension confirmation and bank statement, or support documents from immediate family apart from the inviter.' },
-  { code: 'FINDOCS',       category: 'Financial', name: 'Financial Documents (optional — case-manager decision)',
+  { code: 'FINDOCS',       category: 'Financial', name: 'Financial Documents (optional — case-manager decision)', optional: true,
     guidance: 'Optional — your case manager will decide when preparing your application. Higher funds raise approval chances. At least 3 months bank statements with no sudden deposits; investment proof in your name; property/gold evaluation reports; net-worth (CA) certificate; notarized support affidavit if the assets belong to supporting family members.' },
 ];
 

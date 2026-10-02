@@ -80,7 +80,7 @@ module.exports = {
         guidance: 'Must be done by an IRCC-approved Panel Physician (find one: https://secure.cic.gc.ca/PanelPhysicianMedecinDesigne/en/Home). Do the exam upfront so you don’t need a letter from IRCC asking for it. More information: https://www.canada.ca/en/immigration-refugees-citizenship/services/application/medical-police/medical-exams/requirements-temporary-residents.html' },
       { code: 'BIRTHCERT', name: 'Birth Certificate', category: 'Identity',
         guidance: 'Issued by the government and showing the parents’ names.' },
-      { code: 'STUDENTDOCS', name: 'If student - school documents (marksheets, fee receipt, enrolment letter, ID card, parent income proof)', category: 'Academic',
+      { code: 'STUDENTDOCS', name: 'If student - school documents (marksheets, fee receipt, enrolment letter, ID card, parent income proof)', category: 'Academic', optional: true,
         guidance: 'If student: current grade marksheets; tuition fee receipt; letter from the school/college confirming he/she is currently studying/enrolled with the program start and end dates; school/college identity card; supporting proof-of-income documents from the parents based on their current employment status.' },
     ] },
   ],

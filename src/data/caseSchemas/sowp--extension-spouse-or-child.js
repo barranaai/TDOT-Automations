@@ -18,7 +18,7 @@ module.exports = {
         guidance: 'Attach all permits ever issued to you in Canada as a visitor, student or worker.' },
       { code: 'PHOTO', name: 'Digital photo as per specifications of Temporary Residents', category: 'Identity',
         guidance: 'Must meet IRCC temporary-resident photo specifications: https://www.canada.ca/en/immigration-refugees-citizenship/services/application/application-forms-guides/temporary-resident-visa-application-photograph-specifications.html' },
-      { code: 'EDUDOCS', name: 'Canadian Education Documents- (For each program if studied here)', category: 'Academic',
+      { code: 'EDUDOCS', name: 'Canadian Education Documents- (For each program if studied here)', category: 'Academic', optional: true,
         guidance: 'Official marksheet or transcript showing the grades obtained in each subject for every year or semester of the program, plus degree certificates from the institution verifying completion of the course, degree, diploma or other qualifications.' },
       { code: 'IDCIVIL', name: 'Identity and Civil Documents', category: 'Identity',
         guidance: 'Legal name or date-of-birth change documents; common-law declaration IMM5409; marriage certificate, final divorce or annulment certificate (from each marriage if more than one); death certificate of former spouse or common-law partner; birth certificates of children — whichever apply.' },

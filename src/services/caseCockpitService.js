@@ -107,13 +107,14 @@ async function readClientMaster(itemId) {
 
 function summariseDocuments(items) {
   const na = require('./documentNotApplicable');
-  const counts = { total: items.length, received: 0, reviewed: 0, rework: 0, missing: 0, na: 0 };
+  const counts = { total: items.length, received: 0, reviewed: 0, rework: 0, missing: 0, na: 0, optionalOpen: 0 };
   const rework = [];
   const catMap = new Map();
   const memMap = new Map(); // applicantType (member) → (category → items[])
 
   for (const it of items) {
     const s = it.status || 'Missing';
+    if (it.optional === true && s === 'Missing') counts.optionalOpen++;   // optional, not sent: not asked of the client (cut 2)
     if (s === 'Received')             counts.received++;
     else if (s === 'Reviewed')        counts.reviewed++;
     else if (s === 'Rework Required') { counts.rework++; rework.push(it); }
@@ -132,6 +133,7 @@ function summariseDocuments(items) {
       lastUpload:    it.lastUpload || '',
       reviewNotes:   it.reviewNotes || '',
       // the reason split server-side: the cockpit script may carry no backslash
+      optional:      it.optional === true,   // "Optional" tag (cut 2)
       naReason:      na.reasonOnly(it.naReason),
       naBy:          na.reasonBy(it.naReason),
     };

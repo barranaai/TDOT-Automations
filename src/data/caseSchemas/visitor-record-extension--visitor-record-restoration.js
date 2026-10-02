@@ -24,7 +24,7 @@ module.exports = {
         guidance: 'If you or the supporting family member are salaried: job letter on company letterhead (start date, title, salary, hours, duties — hand-signed), at least 3 pay slips, T4/Form 16 or other tax proof. If self-employed: business establishment/incorporation proof, 3 months business bank statements, documents proving the business is legal and genuine.' },
       { code: 'FINANCIALDOCS', name: 'Financial Documents (bank statements, investments, support affidavit)', category: 'Financial',
         guidance: 'Higher funds raise approval chances. At least 3 months bank statements with good funds and no sudden deposits; investment proof in your name; notarized support affidavit if the assets belong to supporting immediate family members (we can share a template).' },
-      { code: 'ADDITIONALDOCS', name: 'Additional documents (Optional)', category: 'Other',
+      { code: 'ADDITIONALDOCS', name: 'Additional documents (Optional)', category: 'Other', optional: true,
         guidance: 'Any other documents that support and justify why we need to apply for the extension of stay.' }
     ] },
     { role: 'Sponsor', label: 'Inviter / Sponsor', required: true, documents: [
@@ -38,7 +38,7 @@ module.exports = {
         guidance: 'Legal name/date-of-birth change documents; common-law declaration IMM5409; marriage certificate, final divorce or annulment certificate (from each marriage if more than one); death certificate of former spouse/common-law partner; birth certificates of children — whichever apply.' },
       { code: 'PROOFLIVINGCANADA', name: 'Proof of living in Canada (any 1)', category: 'Identity',
         guidance: 'Any one of: driver’s licence (front and back), most recent credit card statement, most recent utility bill (electricity/gas), or provincial ID card.' },
-      { code: 'INCOMEPROOF', name: 'Proof/source of Income (If you will support the applicant)', category: 'Financial',
+      { code: 'INCOMEPROOF', name: 'Proof/source of Income (If you will support the applicant)', category: 'Financial', optional: true,
         guidance: 'Notice of Assessment for the last year and bank statement for the last 3 months with good funds. If salaried: job letter from your current employer (start date, title, salary, hours, duties), at least 3 pay slips, T4. If self-employed: business establishment/incorporation proof, 3 months business bank statements, documents proving the business is legal and genuine.' },
       { code: 'ADDITIONALFUNDS', name: 'Additional proof of Funds/investments/assets', category: 'Financial',
         guidance: 'Any funds, investments or assets that increase your net worth — disclose them with supporting documentation.' }

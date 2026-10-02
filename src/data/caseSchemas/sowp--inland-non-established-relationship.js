@@ -28,7 +28,7 @@ module.exports = {
         guidance: 'Pages with your photo, name, signature, date/place of birth, place of issue and address — plus old and current passports showing entry/exit immigration stamps from countries you travelled to.' },
       { code: 'PERMITS', name: 'All Permits ever held in Canada', category: 'Identity',
         guidance: 'Include all permits ever issued to you in Canada, such as visitor, student or worker permits.' },
-      { code: 'CANEDU', name: 'Canadian Education Documents (for each program if studied here)', category: 'Academic',
+      { code: 'CANEDU', name: 'Canadian Education Documents (for each program if studied here)', category: 'Academic', optional: true,
         guidance: 'Official marksheet or transcript showing the grades obtained in each subject for every year or semester of the program, plus degree certificates from the institution verifying completion of the course, degree, diploma or other qualifications.' },
       { code: 'INCOME', name: 'Proof/source of Income - Mandatory for Worker Spouse', category: 'Financial',
         guidance: 'Job letter from your current employer on company letterhead stating start date, job title, salary, hours worked and job duties — hand-signed, or electronic closely matching the original, or done through DocuSign (typed names are not acceptable); at least 3 pay slips; T4 issued by the employer; bank statement for the last 3 months with good funds.' },
