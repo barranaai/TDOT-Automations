@@ -66,6 +66,13 @@ const inGroups = (c, list) => list.some((g) => c.groupId === g.id || g.title.tes
 const ACCOMPANYING_RE = /\baccompanying\b/i, NON_ACCOMPANYING_RE = /\bnon[\s-]?accompanying\b/i;   // "Non Accompanying Spouse" (space) on the board
 const saysAccompanying = (subType) => ACCOMPANYING_RE.test(String(subType || '')) && !NON_ACCOMPANYING_RE.test(String(subType || ''));
 const ACCOMPANYING_TYPES = ['Spouse', 'Dependent Child'];
+// A checklist row's / questionnaire member's type, normalised the way the
+// client's document list matches them (documentFormService.normApplicantType):
+// "Spouse / Common-Law Partner" → spouse, "Dependent Child 2" → dependent child.
+// Exact — "Non Accompanying Spouse", "Worker Spouse" and "Sponsor" are not the
+// accompanying family.
+const normMemberType = (t) => String(t || '').toLowerCase().replace(/\s*\/.*$/, '').replace(/\s+\d+$/, '').trim();
+const isAccompanyingType = (t) => ['spouse', 'common-law partner', 'dependent child'].includes(normMemberType(t));
 const NOTES_LIMIT = 50;                          // notes read per case (newest first)
 const DEEP_NOTES_LIMIT = 200;                    // for a case whose window may hide a "handled" note
 
@@ -240,7 +247,7 @@ function needsFamilyCheck(c) {
   return !!c.ref && !isTestCase(c) && !isClosed(c) && !isLegacy(c) && isPaid(c) && !BEFORE_CHECKLIST.includes(c.stage) && saysAccompanying(c.subType);
 }
 
-function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), now }) {
+function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), checklistFamily = new Map(), manifestFamily = new Map(), now }) {
   const out = [];
   const live = cases.filter((c) => !isTestCase(c));
   const add = (kind, rowsIn, fingerprint, { since = 0, why, todo }) => {
@@ -293,10 +300,34 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
     const types = family.get(c.ref);
     if (!(types instanceof Set)) continue;                         // not read (an outage) — no claim
     if (ACCOMPANYING_TYPES.some((t) => types.has(t))) continue;
+    // the checklist (an old Template-board checklist lists spouse/child rows
+    // whatever the board says); unread → no claim
+    const clTypes = checklistFamily.get(c.ref);
+    if (!(clTypes instanceof Set)) continue;
+    const mTypes = manifestFamily.get(c.ref);                      // the questionnaire's member types; not a Set = unread
+    const qHasFamily = mTypes instanceof Set && [...mTypes].some(isAccompanyingType);
+    if ([...clTypes].some(isAccompanyingType)) {
+      // …then it is the questionnaire list that decides: with no spouse/child
+      // section there, the client's page shows neither their questions nor
+      // their document rows (the document list follows the questionnaire list)
+      if (!(mTypes instanceof Set)) continue;                    // unread → no claim
+      if (qHasFamily) continue;
+      // its own key: a "handled" note on the other wording never hides this one
+      add('family-missing', c, `${c.id}|${norm(c.subType)}|unseen`, {
+        since: c.paidDate || c.created,
+        why: `The Case Sub Type is "${c.subType}" and the document checklist lists spouse/child documents, but neither the Family Members board nor the questionnaire has a spouse or child — so the client sees neither the family's questions nor their documents.`,
+        todo: 'On the case page, use "➕ Add family member" (Family card) for each accompanying spouse or child — it adds the questionnaire section; the documents already on the checklist then show to the client (the checklist is left as it is). If the client is in fact applying alone, correct the Case Sub Type.',
+      });
+      continue;
+    }
     add('family-missing', c, `${c.id}|${norm(c.subType)}`, {
       since: c.paidDate || c.created,
-      why: `The Case Sub Type is "${c.subType}" — the family comes along — but the Family Members board has no spouse or child for this case, so the questionnaire and the document checklist cover the main applicant only.`,
-      todo: 'On the case page, use "➕ Add family member" (Family card) for each accompanying spouse or child — it adds the questionnaire section and the document rows. If the client is in fact applying alone, correct the Case Sub Type and then flip Re-seed Checklist → Run so the document list matches it.',
+      why: qHasFamily
+        ? `The Case Sub Type is "${c.subType}" and the questionnaire has a spouse/child section, but the Family Members board and the document checklist have no spouse or child — so the client answers the family's questions but sees none of their documents.`
+        : `The Case Sub Type is "${c.subType}" — the family comes along — but the Family Members board has no spouse or child for this case, so ${mTypes instanceof Set ? 'the questionnaire and the document checklist cover' : 'the document checklist covers'} the main applicant only.`,
+      todo: qHasFamily
+        ? 'On the case page, use "➕ Add family member" (Family card) for each spouse or child the questionnaire already has — it matches their section and adds their document rows. If the client is in fact applying alone, correct the Case Sub Type and then flip Re-seed Checklist → Run so the document list matches it.'
+        : 'On the case page, use "➕ Add family member" (Family card) for each accompanying spouse or child — it adds the questionnaire section and the document rows. If the client is in fact applying alone, correct the Case Sub Type and then flip Re-seed Checklist → Run so the document list matches it.',
     });
   }
 
@@ -670,6 +701,24 @@ const io = {
     const rows = (d && d.items_page_by_column_values && d.items_page_by_column_values.items) || [];
     return new Set(rows.map((r) => s(r.column_values && r.column_values[0] && r.column_values[0].text)).filter(Boolean));
   },
+  /**
+   * The member types on the case's questionnaire list (a Set; EMPTY when the
+   * case has no list yet — the questionnaire then shows the board's members,
+   * and this is only asked for a case whose board has no spouse/child). READ
+   * only: never seeds or saves a list. A failed read throws.
+   */
+  async manifestMemberTypes(ref, clientName) {
+    const members = await require('./htmlQuestionnaireService').readMembersManifest({ clientName, caseRef: ref });
+    return new Set((members || []).filter((m) => m && m.key !== 'primary').map((m) => s(m.type)).filter(Boolean));
+  },
+  /** The member types on the case's document checklist (Applicant Type of each row) — a Set; empty when it has none. */
+  async checklistMemberTypes(ref) {
+    const d = await mondayApi.query(
+      'query($b:ID!,$v:String!){ items_page_by_column_values(limit:500, board_id:$b, columns:[{column_id:"' + EXEC_REF_COL + '", column_values:[$v]}]){ items{ column_values(ids:["text_mm26jcv7"]){ text } } } }',
+      { b: String(executionBoardId), v: ref });
+    const rows = (d && d.items_page_by_column_values && d.items_page_by_column_values.items) || [];
+    return new Set(rows.map((r) => s(r.column_values && r.column_values[0] && r.column_values[0].text)).filter(Boolean));
+  },
   async hasChecklist(ref) {
     const d = await mondayApi.query(
       'query($b:ID!,$v:String!){ items_page_by_column_values(limit:1, board_id:$b, columns:[{column_id:"' + EXEC_REF_COL + '", column_values:[$v]}]){ items{ id } } }',
@@ -739,6 +788,20 @@ async function buildSnapshot() {
   const famAnswers = await eachLimited(famRefs, 4, (ref) => io.familyTypes(ref));
   let famUnknown = 0;
   famRefs.forEach((ref, i) => { family.set(ref, famAnswers[i].ok ? famAnswers[i].value : null); if (!famAnswers[i].ok) famUnknown++; });
+  // …and for those with no spouse/child on the board, does the CHECKLIST have
+  // them anyway? (A checklist built the old Template-board way lists every
+  // member type whatever the board says — those cases are not missing family.)
+  const checklistFamily = new Map();
+  const noFamRefs = famRefs.filter((ref) => family.get(ref) instanceof Set && !ACCOMPANYING_TYPES.some((t) => family.get(ref).has(t)));
+  const clAnswers = await eachLimited(noFamRefs, 4, (ref) => io.checklistMemberTypes(ref));
+  noFamRefs.forEach((ref, i) => { checklistFamily.set(ref, clAnswers[i].ok ? clAnswers[i].value : null); if (!clAnswers[i].ok) famUnknown++; });
+  // …and does the questionnaire? (it decides the wording, and whether a
+  // checklist that lists the family is seen by the client at all)
+  const manifestFamily = new Map();
+  const mfRefs = noFamRefs.filter((ref) => checklistFamily.get(ref) instanceof Set);
+  const nameOf = (ref) => { const c = cases.find((x) => x.ref === ref && !isTestCase(x)); return c ? c.name : ''; };
+  const mfAnswers = await eachLimited(mfRefs, 3, (ref) => io.manifestMemberTypes(ref, nameOf(ref)));
+  mfRefs.forEach((ref, i) => { manifestFamily.set(ref, mfAnswers[i].ok ? mfAnswers[i].value : null); if (!mfAnswers[i].ok) famUnknown++; });
   if (famUnknown) partial.push(`${famUnknown} case${famUnknown === 1 ? '' : 's'} could not be checked for family members.`);
 
   // A re-seed failure on a case that has a checklist: was the checklist built after it?
@@ -750,7 +813,7 @@ async function buildSnapshot() {
   const rfAnswers = await eachLimited(rfRefs, 3, (ref) => io.newestChecklistRowAt(ref));
   rfRefs.forEach((ref, i) => checklistNewest.set(ref, rfAnswers[i].ok ? rfAnswers[i].value : null));
 
-  const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, family, now: io.now() });
+  const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, family, checklistFamily, manifestFamily, now: io.now() });
 
   // "Handled" notes: from the notes read, plus a deeper read for an item on a
   // case whose notes were not read far back yet (an older handled note must count).

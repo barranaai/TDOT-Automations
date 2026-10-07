@@ -167,26 +167,19 @@ async function createFromLead({ lead, caseRef, cmItemId }) {
   }
   _createdRecently.delete(key);
 
-  // Never duplicate a row staff (or the client) already put on the board:
-  // skip each planned row whose key or singleton type is there, keep the rest
-  // (a staff-added spouse must not cost the consultant's children).
+  // Never pollute a board staff already curated for this case — any row means
+  // staff (or "Add family member") own it now; a hand-deleted row must not
+  // come back and a keyless hand-added row must not get a twin.
   const compositionAdapter = require('./compositionAdapter');
   const existing = await compositionAdapter.readForCase(caseRef);
-  const have = (existing && existing.members) || [];
-  const haveKeys = new Set(have.map((m) => String(m.memberKey || '').trim()).filter(Boolean));
-  const haveRoles = new Set(have.map((m) => m.role));
-  const ROLE_OF = { 'Spouse': 'Spouse', 'Dependent Child': 'DependentChild', 'Parent': 'Parent', 'Sibling': 'Sibling', 'Sponsor': 'Sponsor', 'Worker Spouse': 'WorkerSpouse' };
-  const SINGLE = new Set(['Spouse', 'Worker Spouse', 'Sponsor']);
-  const todo = planned.filter((row) => !haveKeys.has(row.memberKey) && !(SINGLE.has(row.memberType) && haveRoles.has(ROLE_OF[row.memberType])));
-  if (!todo.length) {
-    console.log(`[Family] ${caseRef} already has ${have.length} member row(s) covering the ${planned.length} planned — intake auto-create skipped`);
+  if (existing && existing.members && existing.members.length > 0) {
+    console.log(`[Family] ${caseRef} already has ${existing.members.length} member row(s) — intake auto-create skipped`);
     return 0;
   }
-  if (todo.length < planned.length) console.log(`[Family] ${caseRef}: ${planned.length - todo.length} planned row(s) already on the board — creating the other ${todo.length}`);
 
   let created = 0;
   try {
-    for (const row of todo) {
+    for (const row of planned) {
       await createFamilyRow({ caseRef, cmItemId, row });
       created++;
     }

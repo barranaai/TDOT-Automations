@@ -332,7 +332,7 @@ async function refuseIfNotApplicable(itemId, caseRef = '') {
   } catch (err) { console.warn(`[DocReview] status pre-read failed for item ${itemId}: ${err.message}`); }
   if (!cv) return;
   // A row that names ANOTHER case is refused; a blank ref (legacy row) passes.
-  if (caseRef && cv[CASE_REF_COL] && cv[CASE_REF_COL] !== String(caseRef).trim()) {
+  if (caseRef && cv[CASE_REF_COL] && cv[CASE_REF_COL].toUpperCase() !== String(caseRef).trim().toUpperCase()) {
     throw Object.assign(new Error('That document is not on this case.'), { badRequest: true });
   }
   if (cv[DOC_STATUS_COL] === 'Not Applicable') {
@@ -342,7 +342,7 @@ async function refuseIfNotApplicable(itemId, caseRef = '') {
 
 /** The row's own case must be the case the caller named — the case note goes nowhere else. */
 function assertRowOnCase(rowRef, caseRef) {
-  if (!caseRef || String(rowRef || '').trim() !== String(caseRef).trim()) {
+  if (!caseRef || String(rowRef || '').trim().toUpperCase() !== String(caseRef).trim().toUpperCase()) {
     throw Object.assign(new Error('That document is not on this case.'), { badRequest: true });
   }
 }
@@ -360,6 +360,7 @@ async function markNotApplicable(itemId, reason, staffName, caseRef) {
   if (!item) throw Object.assign(new Error('Document row not found.'), { badRequest: true });
   const cv0 = Object.fromEntries((item.column_values || []).map((c) => [c.id, (c.text || '').trim()]));
   assertRowOnCase(cv0[CASE_REF_COL], caseRef);
+  caseRef = cv0[CASE_REF_COL];   // the row's own spelling — the case note is found by it
   const status = cv0[DOC_STATUS_COL] || 'Missing';
   if (status === 'Rework Required') throw Object.assign(new Error('Press Undo first — this document has an open rework request.'), { badRequest: true });
   if (status === 'Reviewed') throw Object.assign(new Error('This document is already reviewed. Press Undo first if it really does not apply.'), { badRequest: true });
@@ -390,6 +391,7 @@ async function clearNotApplicable(itemId, staffName, caseRef) {
   if (!item) throw Object.assign(new Error('Document row not found.'), { badRequest: true });
   const cv = Object.fromEntries((item.column_values || []).map((c) => [c.id, (c.text || '').trim()]));
   assertRowOnCase(cv[CASE_REF_COL], caseRef);
+  caseRef = cv[CASE_REF_COL];    // the row's own spelling — the case note is found by it
   if (cv[DOC_STATUS_COL] !== na.LABEL) return { already: true, status: cv[DOC_STATUS_COL] || 'Missing' };
   const back = cv[UPLOAD_DATE_COL] ? 'Received' : 'Missing';
   const cols = { [DOC_STATUS_COL]: { label: back }, [na.reasonColumnId()]: '' };

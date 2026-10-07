@@ -13,7 +13,8 @@ const path   = require('path');
 // Fakes BEFORE the service loads: it requires the mail and Monday modules at load.
 const set = (rel, exports) => { const p = require.resolve(rel); require.cache[p] = { id: p, filename: p, loaded: true, exports }; };
 const sent = [];
-set('../src/services/microsoftMailService', { sendEmail: async (m) => { sent.push(m); } });
+let duringSend = null;   // a test hook: runs while the email is "being sent" (the await window)
+set('../src/services/microsoftMailService', { sendEmail: async (m) => { if (duringSend) { const f = duringSend; duringSend = null; await f(); } sent.push(m); } });
 set('../src/services/mondayApi', {
   query: async () => ({ items_page_by_column_values: { items: [{ name: 'Ada Client', column_values: [
     { id: 'text_mm0xw6bp', text: 'ada@example.com' }, { id: 'text_mm142s49', text: 'R1' }, { id: 'text_mm0x6haq', text: 'tok' },
@@ -212,3 +213,17 @@ test('after a drop-all flush the entry is gone: the next note for the same case 
       assert.ok(!/Marriage certificate/.test(sent[0].html), 'the dropped line did not survive in the entry');
     } finally { monday.query = base; }
   })));
+
+
+test('a rework queued WHILE a batch is being sent is kept and goes out with the next batch (never lost)', () =>
+  withQueueSandbox(async ({ fire }) => {
+    sent.length = 0;
+    svc.queueItem('R1', 'Passport', 'blurry', 'document', '801');
+    duringSend = async () => { svc.queueItem('R1', 'Bank statement', 'May is missing', 'document', '802'); };
+    await fire();
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].html, /Passport/); assert.ok(!/Bank statement/.test(sent[0].html), 'the late item was not in this email');
+    await fire();   // the late item armed its own timer
+    assert.equal(sent.length, 2, 'the late item is sent with the next batch');
+    assert.match(sent[1].html, /Bank statement/); assert.ok(!/Passport/.test(sent[1].html), 'nothing is sent twice');
+  }));

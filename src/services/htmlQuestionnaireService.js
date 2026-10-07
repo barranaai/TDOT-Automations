@@ -1786,42 +1786,52 @@ const SEED_CACHE_TTL_MS = 60 * 1000;
  * persist — persisting at DCS would freeze the manifest and drop family added to
  * the board later). Returns null when the board has no accompanying members.
  */
-const PLACEHOLDER_NAME_RE = /\((from intake|added by (?:staff|client))\)/i;
+const { isPlaceholderName } = require('../utils/memberNames');
 
 function buildManifestFromBoard(boardMembers) {
   const extras = (boardMembers || []).filter((m) => ROLE_TO_PORTAL_TYPE[m.role]);
   if (extras.length === 0) return null;
   const members = defaultMembers();
+  const wellFormed = (k) => /^[a-z][a-z0-9-]{0,40}$/.test(k) && k !== 'primary';
+  // Every board key is spoken for before any key is generated, so a row
+  // without a key never takes a later row's own key (and no two members
+  // ever share one).
+  const reserved = new Set(extras.map((bm) => (bm.memberKey || '').trim()).filter(wellFormed));
   for (const bm of extras) {
     const type  = ROLE_TO_PORTAL_TYPE[bm.role];
     const count = members.filter((m) => m.type === type).length + 1;
     // Reuse the board's memberKey when it's well-formed and free — it
     // matches generateMemberKey's convention by construction at intake.
     const boardKey = (bm.memberKey || '').trim();
-    const keyOk    = /^[a-z][a-z0-9-]{0,40}$/.test(boardKey)
-                     && boardKey !== 'primary'
-                     && !members.some((m) => m.key === boardKey);
-    const key = keyOk ? boardKey : generateMemberKey(type, members);
+    const keyOk    = wellFormed(boardKey) && !members.some((m) => m.key === boardKey);
+    let key = keyOk ? boardKey : generateMemberKey(type, members);
+    if (!keyOk) {
+      const base = key.replace(/-\d+$/, '');
+      for (let n = 1; members.some((m) => m.key === key) || reserved.has(key); n++) key = (n === 1 && base === key) ? `${base}-2` : `${base}-${n}`;
+    }
     // Placeholder row names ("Spouse (from intake)", "Child 2 (added by staff)") stay out of labels.
     const name  = (bm.name || '').trim();
-    const label = name && !PLACEHOLDER_NAME_RE.test(name) ? name : memberLabel(type, count);
+    const label = name && !isPlaceholderName(name) ? name : memberLabel(type, count);
     members.push({ key, type, label, addedAt: new Date().toISOString(), source: 'family-board' });
   }
   return members;
 }
 
 /**
- * Create the manifest from board rows the CALLER already holds (plus the one it
- * just added) — familyMemberService uses this when no manifest exists yet, so a
- * board search that lags Monday by seconds can never persist a list without
- * the new member. Writes only when no manifest file exists.
+ * Create the manifest from board rows the CALLER already holds —
+ * familyMemberService uses this when no manifest exists yet, BEFORE it picks
+ * the new member's key, so a board search that lags Monday by seconds can
+ * never persist a list without a member, and every board member has its key
+ * first. Writes only when no manifest file exists.
+ * @returns {{ members: object[], created: boolean }} created = false when a
+ *   list was already there (another writer got in first) — it is returned as is.
  */
 async function createManifestFromBoard({ clientName, caseRef, boardMembers }) {
   const existing = await readMembersManifest({ clientName, caseRef });
-  if (existing) return existing;
+  if (existing) return { members: existing, created: false };
   const members = buildManifestFromBoard(boardMembers) || defaultMembers();
   await saveMembers({ clientName, caseRef, members });
-  return members;
+  return { members, created: true };
 }
 
 async function seedMembersFromBoard({ clientName, caseRef }) {
@@ -6299,6 +6309,7 @@ module.exports = {
   // Member manifest management
   readMembersManifest,
   createManifestFromBoard,
+  buildManifestFromBoard,
   loadMembers,
   seedMembersFromBoard,
   addMember,

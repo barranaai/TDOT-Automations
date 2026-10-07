@@ -196,23 +196,36 @@ async function dropNotApplicable(documents) {
   }
 }
 
+/**
+ * Take the items this flush handled out of the queue entry — and only those.
+ * A rework queued while the flush was awaiting Monday or the mail server is
+ * still in the entry (same array objects) and goes out with the next batch.
+ */
+function settle(caseRef, handledQ, handledD) {
+  const cur = queue.get(caseRef);
+  if (!cur) return;
+  cur.questionnaire = cur.questionnaire.filter((x) => !handledQ.includes(x));
+  cur.documents     = cur.documents.filter((x) => !handledD.includes(x));
+  if (!cur.questionnaire.length && !cur.documents.length) { clearTimeout(cur.timer); queue.delete(caseRef); }
+  persistQueue();
+}
+
 async function flushQueue(caseRef) {
   const entry = queue.get(caseRef);
   if (!entry) return;
 
-  const { questionnaire } = entry;
-  const documents = await dropNotApplicable(entry.documents);
+  const questionnaire = entry.questionnaire.slice();
+  const queuedDocs    = entry.documents.slice();
+  const documents     = await dropNotApplicable(queuedDocs);
   if (!questionnaire.length && !documents.length) {
-    queue.delete(caseRef);
-    persistQueue();
+    settle(caseRef, questionnaire, queuedDocs);
     return;
   }
 
   const client = await getClientByCaseRef(caseRef);
   if (!client?.clientEmail) {
     console.warn(`[RevisionNotify] No client email found for case ${caseRef} — skipping`);
-    queue.delete(caseRef);
-    persistQueue();
+    settle(caseRef, questionnaire, queuedDocs);
     return;
   }
 
@@ -227,8 +240,7 @@ async function flushQueue(caseRef) {
   });
 
   // Only remove from queue AFTER successful send — prevents data loss on failure
-  queue.delete(caseRef);
-  persistQueue();
+  settle(caseRef, questionnaire, queuedDocs);
 
   console.log(
     `[RevisionNotify] Sent to ${client.clientEmail} for case ${caseRef} — ` +
@@ -266,7 +278,9 @@ function queueItem(caseRef, itemName, reviewNotes, type, itemId = '') {
   if (!existing) {
     bucket.push({ name: itemName, notes: reviewNotes || '', ...(id ? { itemId: id } : {}) });
   } else if (reviewNotes) {
-    existing.notes = reviewNotes;
+    // REPLACE, never mutate: a batch being sent right now holds the old object
+    // and removes only that one, so the edited note goes out with the next batch.
+    bucket[bucket.indexOf(existing)] = { ...existing, notes: reviewNotes };
   }
 
   entry.timer = setTimeout(() => {

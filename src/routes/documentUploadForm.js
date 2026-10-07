@@ -293,7 +293,7 @@ function docRowHtml(doc, caseRef) {
                 </button>
               </div>
             </div>` : ''}
-            ${doc.clientInstructions ? `<div class="doc-instructions">💡 ${formatInstructions(doc.clientInstructions)}</div>` : ''}
+            ${doc.clientInstructions && !isNA ? `<div class="doc-instructions">💡 ${formatInstructions(doc.clientInstructions)}</div>` : ''}
             ${doc.lastUpload ? `<div class="doc-meta">Last uploaded: ${esc(doc.lastUpload)}</div>` : ''}
           </div>
           <div class="doc-actions">
@@ -1218,7 +1218,7 @@ router.get('/:caseRef', async (req, res) => {
 
 // File upload handler
 router.post('/:caseRef/upload/:itemId', uploadLimits.uploadSlot, uploadSingle, async (req, res) => {
-  const caseRef = decodeURIComponent(req.params.caseRef).trim();
+  let caseRef = decodeURIComponent(req.params.caseRef).trim();
   const itemId  = req.params.itemId;
   const file    = req.file;
 
@@ -1249,8 +1249,9 @@ router.post('/:caseRef/upload/:itemId', uploadLimits.uploadSlot, uploadSingle, a
     try {
       const row = await getDocumentRow(itemId);
       if (!row.found) console.warn(`[upload] row ${itemId} not returned by Monday — upload proceeds unverified (${caseRef})`);
-      else if (row.caseRef && row.caseRef !== caseRef) return res.status(404).json({ success: false, error: 'That document is not on this case.' });
+      else if (row.caseRef && row.caseRef.toUpperCase() !== caseRef.toUpperCase()) return res.status(404).json({ success: false, error: 'That document is not on this case.' });
       else if (row.status === 'Not Applicable') return res.status(409).json({ success: false, error: NOT_APPLICABLE_UPLOAD_MESSAGE });
+      else if (row.caseRef) caseRef = row.caseRef;   // the row's own spelling — the client's OneDrive folder is found by an exact ' - <ref>' ending
     } catch (err) { console.warn(`[upload] N/A pre-read failed for ${caseRef}/${itemId}: ${err.message}`); }
 
     const up = await uploadFileToOneDrive(itemId, caseRef, file.buffer, file.originalname, file.mimetype);

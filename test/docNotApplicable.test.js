@@ -313,11 +313,11 @@ test('webhook: switch OFF — an already-marked row is still handled (reading N/
 /* ───────────────────────────── 5. the writers ───────────────────────────── */
 
 function writerHarness({ status = 'Missing', uploadDate = '', name = 'Marriage certificate', rowCase = '2026-X-001' } = {}) {
-  const calls = { writes: [], notes: [] };
+  const calls = { writes: [], notes: [], lookups: [] };
   const restoreQ = stub(mondayApi, 'query', async (q, v) => {
     if (/change_multiple_column_values/.test(q)) { calls.writes.push({ boardId: String(v.boardId), itemId: String(v.itemId), cols: JSON.parse(v.cols) }); return { change_multiple_column_values: { id: v.itemId } }; }
     if (/create_update/.test(q)) { calls.notes.push({ itemId: String(v.i), body: v.b }); return { create_update: { id: 'u' } }; }
-    if (/items_page_by_column_values/.test(q)) { assert.equal(String(v.b), CM_BOARD); return { items_page_by_column_values: { items: [{ id: 'CM9' }] } }; }
+    if (/items_page_by_column_values/.test(q)) { assert.equal(String(v.b), CM_BOARD); calls.lookups.push(v.v); return { items_page_by_column_values: { items: [{ id: 'CM9' }] } }; }
     if (/items\(ids:/.test(q)) {
       const ids = [...q.matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1]);
       const cols = { [STATUS]: status, [UPLOAD]: uploadDate, [REF]: rowCase };
@@ -512,7 +512,7 @@ test('client upload routes refuse an N/A row server-side (409, one shared messag
   assert.match(portal, /if \(item\.status === 'Not Applicable'\) return res\.status\(409\)\.json\(\{ success: false, error: docSvc\.NOT_APPLICABLE_UPLOAD_MESSAGE \}\);/);
   assert.ok(portal.indexOf("item.status === 'Not Applicable'") < portal.indexOf('docSvc.uploadFileToOneDrive('), 'portal: refused BEFORE the file is stored');
   assert.match(legacy, /else if \(row\.status === 'Not Applicable'\) return res\.status\(409\)\.json\(\{ success: false, error: NOT_APPLICABLE_UPLOAD_MESSAGE \}\);/);
-  assert.match(legacy, /else if \(row\.caseRef && row\.caseRef !== caseRef\) return res\.status\(404\)/, 'legacy: a row naming another case is refused');
+  assert.match(legacy, /else if \(row\.caseRef && row\.caseRef\.toUpperCase\(\) !== caseRef\.toUpperCase\(\)\) return res\.status\(404\)/, 'legacy: a row naming another case is refused (letter case ignored)');
   assert.ok(legacy.indexOf("row.status === 'Not Applicable'") < legacy.indexOf('await uploadFileToOneDrive(itemId, caseRef'), 'legacy: refused BEFORE the file is stored');
   assert.match(legacy, /const row = await getDocumentRow\(itemId\);/, 'one row read, not a checklist scan');
   const { NOT_APPLICABLE_UPLOAD_MESSAGE } = require('../src/services/documentFormService');
@@ -727,4 +727,32 @@ test('documentFormService.getDocumentRow: status + case ref from one read; found
   try { assert.deepEqual(await getDocumentRow('42'), { found: false, status: '', caseRef: '' }); } finally { restore(); }
   restore = stub(mondayApi, 'query', async () => ({ items: [{ column_values: [{ id: STATUS, text: '' }, { id: REF, text: '' }] }] }));
   try { assert.deepEqual(await getDocumentRow('42'), { found: true, status: 'Missing', caseRef: '' }, 'a blank status reads Missing'); } finally { restore(); }
+});
+
+
+test('case references are compared case-insensitively (Monday\'s own match is): a lower-case URL ref never blocks a staff action or the client upload', async () => {
+  const S = svcForm();
+  const h = writerHarness({ status: 'Missing', rowCase: '2026-X-001' });
+  try {
+    await S.markNotApplicable('5101', 'client is single', 'G', '2026-x-001'); assert.equal(h.calls.writes.length, 1);
+    assert.deepEqual(h.calls.lookups, ['2026-X-001'], 'the case note is found by the ROW\'s spelling, not the URL\'s');
+  } finally { h.restore(); }
+  const h3 = writerHarness({ status: 'Not Applicable', rowCase: '2026-X-001' });
+  try { await S.clearNotApplicable('5103', 'G', '2026-x-001'); assert.deepEqual(h3.calls.lookups, ['2026-X-001']); } finally { h3.restore(); }
+  const h2 = writerHarness({ status: 'Received', rowCase: '2026-X-001' });
+  try { await S.markReviewed('5102', ' 2026-x-001 '); assert.equal(h2.calls.writes.length, 1); } finally { h2.restore(); }
+  const legacy = fs.readFileSync(require.resolve('../src/routes/documentUploadForm.js'), 'utf8');
+  assert.match(legacy, /row\.caseRef\.toUpperCase\(\) !== caseRef\.toUpperCase\(\)/);
+  // …and the upload then goes on under the row's own spelling: the client's OneDrive folder is found by an exact-case ending
+  assert.match(legacy, /else if \(row\.caseRef\) caseRef = row\.caseRef;/);
+  assert.match(legacy, /let caseRef = decodeURIComponent\(req\.params\.caseRef\)\.trim\(\);\n  const itemId  = req\.params\.itemId;/);
+});
+
+test('legacy /documents page: a Not Applicable row shows no upload tips (there is nothing to upload)', () => {
+  const { _formPage } = require('../src/routes/documentUploadForm');
+  const html = _formPage('2026-TEST-001', 'Test Client', [{ memberType: 'Principal Applicant', sections: [{ category: 'Identity', items: [
+    { id: '1', name: 'Marriage certificate', status: 'Not Applicable', documentName: 'Marriage certificate', clientInstructions: 'Colour scan of every page' },
+    { id: '2', name: 'Passport', status: 'Missing', documentName: 'Passport', clientInstructions: 'All stamped pages' } ] }] }], false, [], null);
+  assert.ok(!html.includes('Colour scan of every page'), 'no tip on the N/A row');
+  assert.ok(html.includes('All stamped pages'), 'tips stay on rows the client can upload to');
 });

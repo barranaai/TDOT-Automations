@@ -240,7 +240,7 @@ function sectionLabelFor(sponsor, composition, manifest) {
   const partner = existingPartner(sponsor, composition);
   if (partner) {
     const name = s(partner.name);
-    if (name && !/\(from intake\)/i.test(name)) return name;
+    if (name && !require('../utils/memberNames').isPlaceholderName(name)) return name;
     return ROLE_GENERIC_LABEL[partner.role] || sponsor.boardMemberType;
   }
   return sponsor.name;

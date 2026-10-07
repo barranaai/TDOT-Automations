@@ -514,6 +514,10 @@ function famAdd() {
       var rs = res.j.reseed || {};
       var docs = rs.error ? 'Checklist re-seed failed — press Re-seed Checklist on the case.'
         : rs.unknown ? 'The checklist state could not be read — press Re-seed Checklist on the case if its checklist exists.'
+        : rs.manual === 'template' ? 'No document rows added: this checklist was built the old Template way — check that the documents of this member are on it and add any missing ones by hand.'
+        : rs.manual === 'subtype' ? 'No document rows added: the Sub Type changed after the checklist was built — press Re-seed Checklist on the case.'
+        : rs.manual === 'casetype' ? 'No document rows added: the checklist was built for another Case Type — see the note on the case (do not add the member again).'
+        : rs.manual === 'no-schema' ? 'No document rows added: this case type has no automatic checklist — add the documents of this member by hand.'
         : rs.deferred ? 'Document rows come with the checklist at Document Collection (the case is at "' + (res.j.stage || 'Not Started') + '").'
         : ((rs.created || 0) + ' document row(s) added.' + (rs.failed ? ' ' + rs.failed + ' row(s) failed — press Re-seed Checklist.' : ''));
       actMsg('fam-msg', 'ok', '✓ Added. ' + docs + (res.j.manifest === 'adopted' ? ' The section the client already had is now complete.' : ' Questionnaire section added.') + (res.j.hint ? ' ' + res.j.hint : ''));

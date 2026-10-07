@@ -12,7 +12,12 @@
  *      added), fed the composition this call already holds (board rows + the
  *      new member — Monday's search can lag a create by seconds, so the
  *      re-seed never re-searches), and only when the case's checklist exists
- *      (Checklist Template Applied = Yes); otherwise the rows come with the
+ *      (Checklist Template Applied = Yes) AND was built from the case's
+ *      current schema: every document key starts with the Case Type + Sub
+ *      Type it was built for, so a checklist made the old Template-board way,
+ *      or under an earlier Case Type or Sub Type (with rows still open), would
+ *      get a second full checklist laid beside it — then nothing is seeded and
+ *      the note says what staff do instead. Otherwise the rows come with the
  *      normal seed at Document Collection.
  * Case 2026-CEC-EE-070 arrived without a lead, so no family rows were ever
  * created and the questionnaire + checklist covered the main applicant only.
@@ -45,6 +50,7 @@ const NAME_MAX  = 80;
 const RECENT_ROWS_MS = 10 * 60 * 1000;   // rows this process wrote count as on the board for this long
 const TRANSIENT_MSG = 'The questionnaire member list could not be read just now — please try again in a few minutes.';
 // A Case Sub Type that says the family comes along (the same test the Summary tab uses).
+const { isPlaceholderName } = require('../utils/memberNames');
 const SAYS_ACCOMPANYING = (sub) => /\baccompanying\b/i.test(String(sub || '')) && !/\bnon[\s-]?accompanying\b/i.test(String(sub || ''));
 
 const badRequest = (msg) => Object.assign(new Error(msg), { badRequest: true });
@@ -55,10 +61,22 @@ function nextMemberKey(boardType, { boardRows = [], manifestMembers = [] } = {})
   const base = KEY_BASE[boardType];
   if (!base) return null;
   const taken = new Set([...boardRows.map((r) => r.memberKey), ...manifestMembers.map((m) => m.key)].map((k) => String(k || '').trim()).filter(Boolean));
-  const sameType = boardRows.filter((r) => r.boardType === boardType).length;
-  if (SINGLETON.has(boardType)) return (taken.has(base) || sameType > 0) ? null : base;
+  const sameType = boardRows.filter((r) => r.boardType === boardType);
+  if (SINGLETON.has(boardType)) return (taken.has(base) || sameType.length > 0) ? null : base;
+  // The numbers the checklist seeder gives this type's board members are theirs
+  // — a row with NO key holds one too — so the new member never takes one (it
+  // would inherit that member's document rows on the re-seed).
+  for (const n of seedIndices(sameType.map((r) => r.memberKey))) taken.add(`${base}-${n}`);
   for (let i = 1; i < 100; i++) { const k = `${base}-${i}`; if (!taken.has(k)) return k; }
   return null;
+}
+
+/** PURE: the document-row number seedPlanner gives each member of one role, in order — the key's own number when free, else the lowest unused. */
+function seedIndices(keys) {
+  const used = new Set();
+  const preferred = keys.map((k) => { const m = String(k || '').match(/(\d+)$/); const n = m ? Number(m[1]) : null; if (n != null && !used.has(n)) { used.add(n); return n; } return null; });
+  let free = 1;
+  return preferred.map((p) => { if (p != null) return p; while (used.has(free)) free++; used.add(free); return free; });
 }
 
 /**
@@ -73,6 +91,28 @@ function adoptableMember(boardType, { boardRows = [], manifestMembers = [] } = {
   const unkeyed = boardRows.filter((r) => r.boardType === boardType && !String(r.memberKey || '').trim()).length;
   const candidates = manifestMembers.filter((m) => m && m.type === portal && m.key && m.key !== 'primary' && !onBoard.has(m.key));
   return candidates[unkeyed] || null;
+}
+
+/**
+ * PURE: the case's schema checklist rows split into the case's CURRENT variant
+ * (Case Type + Sub Type) and STALE ones built for another. A row belongs to the
+ * registered variant whose code prefix is the LONGEST it starts with — one Sub
+ * Type's name can be the start of another's ("Visitor Record" / "Visitor
+ * Record Restoration"). A row no registered variant claims is stale.
+ */
+function splitByVariant(schemaRows, { caseType, subType }, registered = require('./caseSchemaService').listRegistered()) {
+  const { slugUpper } = require('./seedPlanner')._internal;
+  const prefixOf = (ct, st) => `${slugUpper(ct)}-${slugUpper(st)}-`;
+  const variants = registered.map((s) => ({ caseType: s.caseType, subType: s.subType || '', prefix: prefixOf(s.caseType, s.subType) }))
+    .sort((a, b) => b.prefix.length - a.prefix.length);
+  const mine = prefixOf(caseType, subType);
+  // a variant since retired or renamed: the row's own Sub Type column, when the
+  // code starts with the case's Case Type + that Sub Type
+  const ownerOf = (r) => variants.find((v) => String(r.code || '').startsWith(v.prefix))
+    || (String(r.code || '').startsWith(prefixOf(caseType, r.subType)) ? { caseType, subType: r.subType || '', prefix: prefixOf(caseType, r.subType) } : null);
+  const rows = (schemaRows || []).map((r) => ({ ...r, owner: ownerOf(r) }));
+  const stale = rows.filter((r) => !r.owner || r.owner.prefix !== mine);
+  return { stale, current: rows.length - stale.length };
 }
 
 /** PURE: the row's name when none was given — a placeholder the manifest never shows as a label. */
@@ -102,13 +142,31 @@ const io = {
   addManifestMember: (args) => require('./htmlQuestionnaireService').addMember(args),
   createManifest: (args) => require('./htmlQuestionnaireService').createManifestFromBoard(args),
   createRow: (args) => require('./familyCompositionService').createFamilyRow(args),
-  /** { stage, payment, checklistApplied } of the case — "Yes" = a checklist exists to re-seed. */
+  /** { stage, payment, checklistApplied, caseType, subType } of the case — "Yes" = a checklist exists. */
   caseState: async (cmItemId) => {
-    const d = await require('./mondayApi').query(`query($ids:[ID!]){ items(ids:$ids, limit:1){ column_values(ids:["color_mm0x8faa","color_mm0x9fnn","color_mm0xs7kp"]){ id text } } }`, { ids: [String(cmItemId)] });
+    const d = await require('./mondayApi').query(`query($ids:[ID!]){ items(ids:$ids, limit:1){ column_values(ids:["color_mm0x8faa","color_mm0x9fnn","color_mm0xs7kp","dropdown_mm0xd1qn","dropdown_mm0x4t91"]){ id text } } }`, { ids: [String(cmItemId)] });
     const item = d && d.items && d.items[0];
     if (!item) throw new Error('case not returned');
     const cv = Object.fromEntries((item.column_values || []).map((c) => [c.id, (c.text || '').trim()]));
-    return { stage: cv.color_mm0x8faa || '', payment: cv.color_mm0x9fnn || '', checklistApplied: cv.color_mm0xs7kp || '' };
+    return { stage: cv.color_mm0x8faa || '', payment: cv.color_mm0x9fnn || '', checklistApplied: cv.color_mm0xs7kp || '', caseType: cv.dropdown_mm0xd1qn || '', subType: cv.dropdown_mm0x4t91 || '' };
+  },
+  /**
+   * How the case's checklist was built. Schema rows carry "code:<documentCode>"
+   * (the code starts with the Case Type + Sub Type it was built for); Template
+   * rows carry the numeric Template item id; a row added by hand has neither
+   * and is ignored.
+   */
+  checklistShape: async (caseRef) => {
+    const d = await require('./mondayApi').query(`query($v:String!){ items_page_by_column_values(limit:500, board_id:"${process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593'}", columns:[{column_id:"text_mm0z2cck", column_values:[$v]}]){ items{ column_values(ids:["text_mm0zfsp1","text_mm17zdy7","color_mm0zwgvr"]){ id text } } } }`, { v: String(caseRef) });
+    const rows = ((d && d.items_page_by_column_values && d.items_page_by_column_values.items) || []).map((r) => {
+      const c = Object.fromEntries((r.column_values || []).map((x) => [x.id, String(x.text || '').trim()]));
+      return { intake: c.text_mm0zfsp1 || '', subType: c.text_mm17zdy7 || '', status: c.color_mm0zwgvr || '' };
+    });
+    return {
+      rows: rows.length,
+      templateRows: rows.filter((r) => /^\d+$/.test(r.intake)).length,
+      schema: rows.filter((r) => r.intake.startsWith('code:')).map((r) => ({ code: r.intake.slice(5), subType: r.subType, status: r.status })),
+    };
   },
   /** The re-seed, fed the composition this call holds — never a fresh board search. */
   reseed: (caseRef, composition) => require('./checklistService').reseedByCaseRef(caseRef, { prune: false, composition }),
@@ -144,11 +202,16 @@ function recentRows(key) {
 async function addFamilyMember(p) {
   const key = String(p && p.caseRef || '').trim().toUpperCase();
   if (!key) throw badRequest('caseRef and cmItemId are required.');
-  // A queue, not a gate: every add on this case runs strictly after the one before it.
+  // A queue, not a gate: every add on this case runs strictly after the one
+  // before it — INCLUDING that one's re-seed when it runs in the background,
+  // so two re-seeds of one case never overlap.
   const prev = _inFlight.get(key) || Promise.resolve();
-  const run = prev.catch(() => {}).then(() => addOne(p));
-  _inFlight.set(key, run);
-  try { return await run; } finally { if (_inFlight.get(key) === run) _inFlight.delete(key); }
+  const step = prev.catch(() => {}).then(() => addOne(p));            // → { result, done }
+  const tail = step.then((o) => o.done, () => {}).catch(() => {});    // the queue waits for the re-seed too
+  _inFlight.set(key, tail);
+  tail.then(() => { if (_inFlight.get(key) === tail) _inFlight.delete(key); });
+  const o = await step;
+  return o.result;
 }
 
 async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', source = 'staff', actor = null, reseedMode = 'await', caseSubType = '' }) {
@@ -172,84 +235,149 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
   let manifest = null;
   try { manifest = await io.manifest({ clientName, caseRef }); }
   catch (_) { throw transient(TRANSIENT_MSG); }
+  if (SINGLETON.has(boardType) && !manifest && boardRows.some((r) => r.boardType === boardType)) {
+    throw badRequest(`A ${SHORT[boardType].toLowerCase()} is already on this case.`);
+  }
+  // No member list yet: build it NOW from the board rows held (never a later,
+  // lagging board read), so every board member — named or not — has its key
+  // before this member's key is chosen.
+  let listCreated = false;
+  if (!manifest) {
+    let made;
+    try { made = await io.createManifest({ clientName, caseRef, boardMembers: adapterMembers }); }
+    catch (_) { throw transient(TRANSIENT_MSG); }
+    manifest = (made && Array.isArray(made.members)) ? made.members : [];
+    listCreated = !!(made && made.created);   // false: another writer's list — adopted / completed / refused below like any other
+  }
 
   // The member the client already has on the questionnaire but not on the
   // board: complete it instead of refusing (the EE-070 drift, healed).
   const adopt = adoptableMember(boardType, { boardRows, manifestMembers: manifest || [] });
-  if (SINGLETON.has(boardType) && boardRows.some((r) => r.boardType === boardType)) {
+  // The mirror: a spouse / worker spouse / sponsor ON the board (with a key)
+  // that the questionnaire list lacks — give them their section, no new row.
+  // A row without a key gets the type's plain key for its section (the board
+  // row is left as it is — one spouse needs no number on the checklist).
+  let complete = null;
+  if (!adopt && SINGLETON.has(boardType) && !manifest.some((mm) => mm.type === portalType)) {
+    const r = boardRows.find((x) => x.boardType === boardType);
+    if (r) {
+      const boardKey = String(r.memberKey || '').trim();
+      const key = /^[a-z][a-z0-9-]{0,40}$/.test(boardKey) && boardKey !== 'primary' && !manifest.some((mm) => mm.key === boardKey) ? boardKey
+        : manifest.some((mm) => mm.key === KEY_BASE[boardType]) ? '' : KEY_BASE[boardType];
+      if (key) complete = { ...r, memberKey: key, boardKey };
+    }
+  }
+  if (!complete && SINGLETON.has(boardType) && boardRows.some((r) => r.boardType === boardType)) {
     throw badRequest(`A ${SHORT[boardType].toLowerCase()} is already on this case.`);
   }
-  const memberKey = adopt ? adopt.key : nextMemberKey(boardType, { boardRows, manifestMembers: manifest || [] });
+  const memberKey = adopt ? adopt.key : complete ? complete.memberKey : nextMemberKey(boardType, { boardRows, manifestMembers: manifest || [] });
   if (!memberKey) throw badRequest(`A ${SHORT[boardType].toLowerCase()} is already on this case.`);
-  const rowName = label || (adopt && !/\((from intake|added by (?:staff|client))\)/i.test(adopt.label || '') && cleanName(adopt.label)) || placeholderName(boardType, memberKey, source);
+  const realName = (n) => { const c = cleanName(n); return c && !isPlaceholderName(c) ? c : ''; };
+  const rowName = label || realName(adopt && adopt.label) || (complete && cleanName(complete.name)) || placeholderName(boardType, memberKey, source);
   const newMember = { role: BOARD_TO_ROLE[boardType], name: rowName, memberKey, flags: {} };
+  let sectionLabel = '';   // what the questionnaire shows — never a placeholder
 
   // 1. the questionnaire section FIRST (a failure here leaves nothing behind)
   let manifestState;
   try {
-    if (adopt) manifestState = 'adopted';
-    else if (manifest) { await io.addManifestMember({ clientName, caseRef, memberType: portalType, label: label || undefined, key: memberKey }); manifestState = 'added'; }
+    if (adopt) { manifestState = 'adopted'; sectionLabel = adopt.label || ''; }
     else {
-      // no manifest yet: build it from the rows we hold plus this member — never
-      // from a later board read that may lag Monday's search
-      await io.createManifest({ clientName, caseRef, boardMembers: [...adapterMembers, newMember] });
-      manifestState = 'created';
+      const sectionName = label || realName(complete && complete.name) || undefined;
+      const added = await io.addManifestMember({ clientName, caseRef, memberType: portalType, label: sectionName, key: memberKey });
+      manifestState = complete ? 'completed' : listCreated ? 'created' : 'added';
+      sectionLabel = (added && added.label) || sectionName || '';
     }
   } catch (err) {
     if (err.badRequest || /already been added|already used|Invalid member key/.test(err.message || '')) throw badRequest(err.message);
     throw transient(TRANSIENT_MSG);
   }
 
-  // 2. the board row (the composition the checklist seeds from)
-  let rowId;
-  try { rowId = await io.createRow({ caseRef, cmItemId, row: { name: rowName, memberType: boardType, memberKey } }); }
+  // 2. the board row (the composition the checklist seeds from) — unless the
+  //    member was ON the board already (a completed section)
+  let rowId = '';
+  if (!complete) try { rowId = await io.createRow({ caseRef, cmItemId, row: { name: rowName, memberType: boardType, memberKey } }); }
   catch (err) {
     await io.postNote(cmItemId, `⚠ <b>Family member half-added</b> — ${esc(boardType)} "${esc(rowName)}" by ${esc(who)}: the questionnaire section exists, but the Family Members row could not be created (${esc(err.message)}). Press ➕ Add family member on the case page again — it completes the row and the document rows.`).catch(() => {});
     const e = transient(`The questionnaire section was added, but the Family Members row could not be created (${err.message}). Press Add family member again in a minute — it completes the row.`);
-    e.member = { key: memberKey, type: portalType, label: rowName }; e.manifestAdded = true;
+    e.member = { key: memberKey, type: portalType, label: sectionLabel || portalType.split(' / ')[0] }; e.manifestAdded = true;
     throw e;
   }
-  _recentRows.set(memKey, [...recentRows(memKey), { boardType, memberKey, name: rowName, at: io.now() }]);
+  if (!complete) _recentRows.set(memKey, [...recentRows(memKey), { boardType, memberKey, name: rowName, at: io.now() }]);
 
   // 3. the checklist — only when one exists (Checklist Template Applied = Yes);
   //    fed the composition we hold, so the new member is in the plan whatever
   //    Monday's search says in the next seconds; rows are only ever added.
-  const composition = require('./compositionAdapter').withMember({ members: adapterMembers }, newMember);
+  const adapter = require('./compositionAdapter');
+  const composition = complete
+    ? { caseFlags: adapter.deriveCaseFlags(adapterMembers), members: adapterMembers.slice() }   // the member is on the board (and in this list) already
+    : adapter.withMember({ members: adapterMembers }, newMember);
   let state = null;
   try { state = await io.caseState(cmItemId); } catch (err) { console.warn(`[Family] case state unreadable for ${caseRef}: ${err.message}`); }
-  const result = { ok: true, key: memberKey, boardType, portalType, rowId, rowName, manifest: manifestState, stage: (state && state.stage) || '', reseed: null, hint: '' };
+  const result = { ok: true, key: memberKey, boardType, portalType, rowId, rowName, label: sectionLabel || (isPlaceholderName(rowName) ? '' : rowName), manifest: manifestState, stage: (state && state.stage) || '', reseed: null, hint: '' };
+  const norm = (v) => String(v || '').trim().toLowerCase();
   const finish = async () => {
     if (!state) result.reseed = { unknown: true };
     else if (state.checklistApplied !== 'Yes') result.reseed = { deferred: true };
     else {
-      try { const r = await io.reseed(caseRef, composition); result.reseed = { created: r.created, skipped: r.skipped, failed: r.failed, pruned: r.pruned || 0 }; }
-      catch (err) { result.reseed = { error: err.message }; }
-      if (result.reseed.created === 0 && caseSubType && !SAYS_ACCOMPANYING(caseSubType)) {
-        result.hint = `The Case Sub Type "${caseSubType}" has no documents for a ${SHORT[boardType].toLowerCase()} — change it to the accompanying variant and press Re-seed Checklist.`;
+      let shape = null;
+      try { shape = await io.checklistShape(caseRef); } catch (err) { console.warn(`[Family] checklist shape unreadable for ${caseRef}: ${err.message}`); }
+      // Every schema key starts with the Case Type + Sub Type it was built for
+      // (seedPlanner): rows of another variant would not match the re-seed's
+      // keys. Leftover rows the client already uploaded to are harmless (the
+      // Re-seed button keeps them too); OPEN ones mean a second checklist.
+      const { stale, current } = shape ? splitByVariant(shape.schema, state) : { stale: [], current: 0 };
+      const staleOpen = stale.filter((r) => ['', 'missing'].includes(norm(r.status)));   // as the Re-seed clean-up (selectStaleRows) reads "not uploaded"
+      if (!shape) result.reseed = { unknown: true };
+      else if (shape.templateRows > 0) result.reseed = { manual: 'template' };
+      else if (stale.length && (current === 0 || staleOpen.length > 0)) {
+        const sameType = stale.every((r) => r.owner && norm(r.owner.caseType) === norm(state.caseType));
+        result.reseed = sameType
+          ? { manual: 'subtype', from: [...new Set(stale.map((r) => r.owner.subType || r.subType))].join(', ') || '(another variant)', to: state.subType }
+          : { manual: 'casetype', from: [...new Set(stale.map((r) => (r.owner ? r.owner.caseType : '')).filter(Boolean))].join(', ') || '(another case type)', to: state.caseType };
+      } else {
+        try { const r = await io.reseed(caseRef, composition); result.reseed = { created: r.created, skipped: r.skipped, failed: r.failed, pruned: r.pruned || 0 }; }
+        catch (err) { result.reseed = err.code === 'NO_SCHEMA' ? { manual: 'no-schema' } : { error: err.message }; }
+        // the hint only when the checklist's schema has no place for this member at all
+        if (result.reseed.created === 0) {
+          const css = require('./caseSchemaService');
+          const covers = (s) => require('./seedPlanner').findOrphanMembers({ schema: s, composition: { members: [newMember] } }).length === 0;
+          const schema = css.lookup(state.caseType, state.subType);
+          if (schema && !covers(schema)) {
+            const elsewhere = css.listForCaseType(state.caseType).some((s) => s !== schema && covers(s));
+            result.hint = elsewhere
+              ? `The Case Sub Type "${state.subType || caseSubType}" has no documents for a ${SHORT[boardType].toLowerCase()} — change it to the variant with family and press Re-seed Checklist.`
+              : `This case type's checklist has no documents for a ${SHORT[boardType].toLowerCase()} — add any they need by hand.`;
+          }
+        }
       }
     }
     await io.postNote(cmItemId, note({ caseRef, boardType, rowName, who, manifestState, reseed: result.reseed, stage: result.stage, hint: result.hint })).catch((err) => console.warn(`[Family] note failed for ${caseRef}: ${err.message}`));
     console.log(`[Family] ${caseRef}: ${boardType} "${rowName}" (${memberKey}) added by ${source}; manifest ${manifestState}; reseed ${JSON.stringify(result.reseed)}`);
   };
   if (reseedMode === 'background') {
-    finish().catch((err) => console.warn(`[Family] background finish failed for ${caseRef}: ${err.message}`));
-    return { ...result, reseed: { pending: true } };   // a snapshot: the caller never sees the job finish under it
+    const done = finish().catch((err) => console.warn(`[Family] background finish failed for ${caseRef}: ${err.message}`));
+    return { result: { ...result, reseed: { pending: true } }, done };   // a snapshot: the caller never sees the job finish under it
   }
   await finish();
-  return result;
+  return { result, done: Promise.resolve() };
 }
 
 function note({ caseRef, boardType, rowName, who, manifestState, reseed, stage, hint }) {
-  const q = manifestState === 'added'   ? 'questionnaire section added on the client\'s existing link'
-          : manifestState === 'adopted' ? 'the questionnaire section the client already had is now matched by a row'
-          : manifestState === 'created' ? 'questionnaire member list created with this member'
+  const q = manifestState === 'added'     ? 'questionnaire section added on the client\'s existing link'
+          : manifestState === 'adopted'   ? 'the questionnaire section the client already had is now matched by a row'
+          : manifestState === 'completed' ? 'the member was on the Family Members board already — their questionnaire section is now added'
+          : manifestState === 'created'   ? 'questionnaire member list created with this member'
           : 'questionnaire section added';
   const d = !reseed ? 'checklist not re-seeded'
+          : reseed.manual === 'template' ? 'no document rows added — this case\'s checklist was built from the Template board (it uses different document keys, so an automatic re-seed would lay a second checklist beside it); check that the member\'s documents are on the checklist and add any missing ones by hand'
+          : reseed.manual === 'subtype' ? `no document rows added — the checklist was built for Sub Type "${esc(reseed.from)}" and the case now says "${esc(reseed.to)}"; press Re-seed Checklist on the case (it replaces the old variant\'s empty rows and adds this member\'s)`
+          : reseed.manual === 'casetype' ? `no document rows added — the checklist was built for Case Type "${esc(reseed.from)}" and the case now says "${esc(reseed.to || 'nothing')}" (an automatic re-seed would lay a second checklist beside it); the member\'s Family Members row and questionnaire section are in place, so do not add them again; if the Case Type is wrong, correct it and press Re-seed Checklist on the case (it adds this member\'s documents), otherwise ask an admin to rebuild the checklist`
+          : reseed.manual === 'no-schema' ? 'no document rows added — this case type has no automatic checklist; add the member\'s documents by hand'
           : reseed.unknown ? 'the checklist state could not be read — press Re-seed Checklist on the case if its checklist exists'
           : reseed.deferred ? `no document rows yet — the checklist has not been created (the case is at "${esc(stage || 'Not Started')}"); they come with the checklist at Document Collection`
           : reseed.error ? `checklist re-seed FAILED (${esc(reseed.error)}) — press Re-seed Checklist on the case`
           : `checklist re-seeded (rows only added, never removed): ${reseed.created} new document row(s), ${reseed.skipped} existing left as they were${reseed.failed ? `, ${reseed.failed} failed — press Re-seed Checklist` : ''}`;
-  return `👪 <b>Family member added</b> — ${esc(boardType)} "${esc(rowName)}" — by ${esc(who)}, ${esc(require('../utils/torontoTime').torontoTime(Date.now()))} (Toronto). Family Members row created; ${q}; ${d}.${hint ? ' ' + esc(hint) : ''} (${esc(caseRef)})`;
+  return `👪 <b>Family member added</b> — ${esc(boardType)} "${esc(rowName)}" — by ${esc(who)}, ${esc(require('../utils/torontoTime').torontoTime(Date.now()))} (Toronto). ${manifestState === 'completed' ? '' : 'Family Members row created; '}${q}; ${d}.${hint ? ' ' + esc(hint) : ''} (${esc(caseRef)})`;
 }
 
-module.exports = { addFamilyMember, nextMemberKey, adoptableMember, placeholderName, cleanName, PORTAL_TO_BOARD, BOARD_TO_PORTAL, ROLE_TO_BOARD, SINGLETON, NAME_MAX, RECENT_ROWS_MS, io, _inFlight, _recentRows };
+module.exports = { addFamilyMember, nextMemberKey, seedIndices, adoptableMember, splitByVariant, placeholderName, cleanName, PORTAL_TO_BOARD, BOARD_TO_PORTAL, ROLE_TO_BOARD, SINGLETON, NAME_MAX, RECENT_ROWS_MS, io, _inFlight, _recentRows };

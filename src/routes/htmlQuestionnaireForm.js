@@ -974,7 +974,7 @@ router.post('/:caseRef/add-member', async (req, res) => {
       if (err.manifestAdded && err.member) { console.warn(`[/q/add-member] ${caseRef}: section added, row failed: ${err.message}`); return res.json({ ok: true, member: err.member }); }
       throw err;
     }
-    return res.json({ ok: true, member: { key: r.key, type: r.portalType, label: r.rowName } });
+    return res.json({ ok: true, member: { key: r.key, type: r.portalType, label: r.label || r.portalType.split(' / ')[0] } });
   } catch (err) {
     console.error(`[/q/add-member] Error for ${caseRef}:`, err.message);
     if (err.transient) return res.status(503).json({ error: 'Temporarily unavailable — please try again in a few minutes.', retriable: true });
