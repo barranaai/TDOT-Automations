@@ -221,8 +221,11 @@ async function markChecklistApplied(itemId) {
  * board, computes the exact doc list from the schema, creates OneDrive folders,
  * and reconciles the Execution Board (idempotent — adds missing rows only).
  */
-async function seedFromSchema({ schema, caseRef, clientName, clientMasterItemId }) {
-  const composition = await compositionAdapter.readForCase(caseRef);
+async function seedFromSchema({ schema, caseRef, clientName, clientMasterItemId, prune = true, composition: compositionIn = null }) {
+  // A caller that just wrote a Family Members row passes the composition it
+  // holds: Monday's search can lag a create by seconds and would plan without
+  // that member (familyMemberService, 2026-10-07).
+  const composition = compositionIn || await compositionAdapter.readForCase(caseRef);
   console.log(
     `[ChecklistService] SCHEMA path for ${caseRef} (${schema.caseType}/${schema.subType}) — ` +
     `${composition.members.length} member(s): ${composition.members.map((m) => m.role).join(', ') || 'none on board'}`
@@ -248,6 +251,7 @@ async function seedFromSchema({ schema, caseRef, clientName, clientMasterItemId 
   }
 
   const result = await reconcileExecutionRows({
+    prune,
     caseRef,
     caseSubType:        schema.subType,
     clientMasterItemId: String(clientMasterItemId),
@@ -540,7 +544,7 @@ async function markQuestionnaireApplied({ itemId, caseType, caseSubType }) {
  * @returns {Promise<{ ok, caseRef, caseType, subType, members, created, skipped, failed }>}
  * @throws  {Error} with .code 'NOT_FOUND' | 'NO_SCHEMA' for clean HTTP mapping.
  */
-async function reseedByCaseRef(caseRef) {
+async function reseedByCaseRef(caseRef, { prune = true, composition: compositionIn = null } = {}) {
   const ref = String(caseRef || '').trim();
   if (!ref) { const e = new Error('caseRef required'); e.code = 'BAD_REQUEST'; throw e; }
 
@@ -584,8 +588,8 @@ async function reseedByCaseRef(caseRef) {
     try { await _dcsInFlight.get(flightKey); } catch (_) { /* its failure is its own report */ }
   }
   const run = (async () => {
-    const composition = await compositionAdapter.readForCase(ref);
-    const result = await seedFromSchema({ schema, caseRef: ref, clientName: item.name, clientMasterItemId: item.id });
+    const composition = compositionIn || await compositionAdapter.readForCase(ref);
+    const result = await seedFromSchema({ schema, caseRef: ref, clientName: item.name, clientMasterItemId: item.id, prune, composition });
     await markChecklistApplied(item.id);
     // Recovery must restore the questionnaire prefill too, not just the documents —
     // a case that failed its original auto-seed also missed its prefill, so a
@@ -603,7 +607,7 @@ async function reseedByCaseRef(caseRef) {
     caseRef: ref,
     caseType, subType,
     members: composition.members.map((m) => m.role),
-    created: result.created, skipped: result.skipped, failed: result.failed,
+    created: result.created, skipped: result.skipped, failed: result.failed, pruned: result.pruned || 0,
   };
 }
 

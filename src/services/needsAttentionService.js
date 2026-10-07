@@ -59,6 +59,13 @@ const NOT_CASE_GROUPS = [
 // number" or "payment not marked" says nothing about them.
 const LEGACY_GROUPS = [{ id: 'group_mm3t4kda', title: /before may 2026/i }];   // Retainers before May 2026
 const inGroups = (c, list) => list.some((g) => c.groupId === g.id || g.title.test(c.groupTitle || ''));
+// A Case Sub Type that says the family comes along ("CEC Accompanying Spouse &
+// Child") — not "Non-Accompanying Spouse". The checklist and questionnaire are
+// built per family member, so such a case with no spouse/child on the Family
+// Members board covers the main applicant only (2026-10-07, 2026-CEC-EE-070).
+const ACCOMPANYING_RE = /\baccompanying\b/i, NON_ACCOMPANYING_RE = /\bnon[\s-]?accompanying\b/i;   // "Non Accompanying Spouse" (space) on the board
+const saysAccompanying = (subType) => ACCOMPANYING_RE.test(String(subType || '')) && !NON_ACCOMPANYING_RE.test(String(subType || ''));
+const ACCOMPANYING_TYPES = ['Spouse', 'Dependent Child'];
 const NOTES_LIMIT = 50;                          // notes read per case (newest first)
 const DEEP_NOTES_LIMIT = 200;                    // for a case whose window may hide a "handled" note
 
@@ -87,6 +94,7 @@ const KINDS = {
   'subtype':       { order: 40, severity: 'high',   label: 'Case Sub Type needed for the checklist' },
   'no-checklist':  { order: 41, severity: 'high',   label: 'Paid, but no document checklist' },
   'not-started':   { order: 42, severity: 'high',   label: 'Signed and paid, but onboarding did not start' },
+  'family-missing':{ order: 43, severity: 'high',   label: 'Accompanying family not recorded' },
   'on-hold':       { order: 50, severity: 'medium', label: 'Paid, onboarding waiting for signatures' },
   'intake-email':  { order: 60, severity: 'medium', label: '"Your case is ready" email not confirmed' },
   'sponsor-email': { order: 61, severity: 'medium', label: 'Sponsor email not sent' },
@@ -224,7 +232,15 @@ function todoForActionReport(text) {
  * @returns {object[]} entries { key, kind, itemIds, caseRef, client, stage, payment, manager, rows, since, why, todo }
  *   rows = [{ id, name, manager, assignees }] — who may see the item is decided per row (see view)
  */
-function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), now }) {
+/** A live case whose sub type says the family comes along — the board must show a spouse or child. */
+// Before Document Collection the checklist and questionnaire do not exist yet
+// (the lead bridge and the retainer panel still have their turn).
+const BEFORE_CHECKLIST = ['', 'Not Started', 'Pre-Onboarding', 'Retainer Confirmed'];
+function needsFamilyCheck(c) {
+  return !!c.ref && !isTestCase(c) && !isClosed(c) && !isLegacy(c) && isPaid(c) && !BEFORE_CHECKLIST.includes(c.stage) && saysAccompanying(c.subType);
+}
+
+function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), now }) {
   const out = [];
   const live = cases.filter((c) => !isTestCase(c));
   const add = (kind, rowsIn, fingerprint, { since = 0, why, todo }) => {
@@ -264,6 +280,23 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
       since: c.created,
       why: 'No Primary Case Type is set, so the case has no case number (and no portal or folder yet).',
       todo: 'Set the Primary Case Type on the Cases board — the case number is then created automatically.',
+    });
+  }
+
+  // ── 1b. Accompanying family not on the board ─────────────────────────────
+  for (const c of live) {
+    // Only once the family matters: a paid case (the checklist and questionnaire
+    // are built at Document Collection); the lead bridge and the retainer
+    // panel have until then. Grace from the paid day, like "no checklist".
+    if (!needsFamilyCheck(c) || !isPaid(c)) continue;
+    if (c.paidDate ? now - c.paidDate < GRACE_PAID_DAY_MS : now - c.created < GRACE_SETUP_MS) continue;
+    const types = family.get(c.ref);
+    if (!(types instanceof Set)) continue;                         // not read (an outage) — no claim
+    if (ACCOMPANYING_TYPES.some((t) => types.has(t))) continue;
+    add('family-missing', c, `${c.id}|${norm(c.subType)}`, {
+      since: c.paidDate || c.created,
+      why: `The Case Sub Type is "${c.subType}" — the family comes along — but the Family Members board has no spouse or child for this case, so the questionnaire and the document checklist cover the main applicant only.`,
+      todo: 'On the case page, use "➕ Add family member" (Family card) for each accompanying spouse or child — it adds the questionnaire section and the document rows. If the client is in fact applying alone, correct the Case Sub Type and then flip Re-seed Checklist → Run so the document list matches it.',
     });
   }
 
@@ -628,6 +661,15 @@ const io = {
     const rows = (d && d.items_page_by_column_values && d.items_page_by_column_values.items) || [];
     return rows.reduce((m, r) => Math.max(m, tms(r.created_at)), 0);
   },
+  /** The Member Types on the Family Members board for a case (a Set; empty when none). */
+  async familyTypes(ref) {
+    const fm = require('../data/familyMembersBoard.json');
+    const d = await mondayApi.query(
+      'query($b:ID!,$v:String!){ items_page_by_column_values(limit:100, board_id:$b, columns:[{column_id:"' + fm.columns.caseReference + '", column_values:[$v]}]){ items{ column_values(ids:["' + fm.columns.memberType + '"]){ text } } } }',
+      { b: String(fm.boardId), v: ref });
+    const rows = (d && d.items_page_by_column_values && d.items_page_by_column_values.items) || [];
+    return new Set(rows.map((r) => s(r.column_values && r.column_values[0] && r.column_values[0].text)).filter(Boolean));
+  },
   async hasChecklist(ref) {
     const d = await mondayApi.query(
       'query($b:ID!,$v:String!){ items_page_by_column_values(limit:1, board_id:$b, columns:[{column_id:"' + EXEC_REF_COL + '", column_values:[$v]}]){ items{ id } } }',
@@ -691,6 +733,14 @@ async function buildSnapshot() {
   const wfAnswers = await eachLimited(wfTargets, 3, (t) => io.workFoldersPresent(t.folderId));
   wfTargets.forEach((t, i) => workFolders.set(t.ref, wfAnswers[i].ok ? wfAnswers[i].value : null));
 
+  // Accompanying-family sub types: who is on the Family Members board?
+  const family = new Map();
+  const famRefs = [...new Set(cases.filter((c) => needsFamilyCheck(c)).map((c) => c.ref))];
+  const famAnswers = await eachLimited(famRefs, 4, (ref) => io.familyTypes(ref));
+  let famUnknown = 0;
+  famRefs.forEach((ref, i) => { family.set(ref, famAnswers[i].ok ? famAnswers[i].value : null); if (!famAnswers[i].ok) famUnknown++; });
+  if (famUnknown) partial.push(`${famUnknown} case${famUnknown === 1 ? '' : 's'} could not be checked for family members.`);
+
   // A re-seed failure on a case that has a checklist: was the checklist built after it?
   const checklistNewest = new Map();
   const rfRefs = [...new Set(cases.filter((c) => c.ref && !isTestCase(c) && !isClosed(c) && checklist.get(c.ref) === true && (() => {
@@ -700,7 +750,7 @@ async function buildSnapshot() {
   const rfAnswers = await eachLimited(rfRefs, 3, (ref) => io.newestChecklistRowAt(ref));
   rfRefs.forEach((ref, i) => checklistNewest.set(ref, rfAnswers[i].ok ? rfAnswers[i].value : null));
 
-  const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, now: io.now() });
+  const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, family, now: io.now() });
 
   // "Handled" notes: from the notes read, plus a deeper read for an item on a
   // case whose notes were not read far back yet (an older handled note must count).

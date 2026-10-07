@@ -167,7 +167,9 @@ function cockpitStubs({ sponsorDescribe } = {}) {
 }
 
 const OVERVIEW_KEYS = [
-  'caseRef', 'itemId', 'clientName', 'caseType', 'caseSubType', 'accessToken', 'cmUnavailable', 'clientEmail', 'manager', 'assignees',
+  'caseRef', 'itemId', 'clientName', 'caseType', 'caseSubType',
+  'familyAddTypes',   // the member types the case page may add (2026-10-07)
+  'accessToken', 'cmUnavailable', 'clientEmail', 'manager', 'assignees',
   'paymentStatus', 'caseStage', 'health', 'slaRisk', 'deadline', 'qReadinessPct', 'docReadinessPct', 'docReviewedPct', 'portalLink', 'folderLink',
   'family', 'questionnaire', 'documents', 'lead', 'payments', 'timeline',
 ];
@@ -177,6 +179,7 @@ test('getCaseOverview: keys unchanged apart from the new sponsor key, which the 
   const restore = cockpitStubs();
   try {
     const o = await cockpit.getCaseOverview('2026-SOWP-017');
+    assert.deepEqual(o.familyAddTypes, require('../config/questionnaireFormMap').resolveMemberTypes(o.caseType, o.caseSubType), 'the Family card offers exactly the questionnaire\'s member types for this case');
     const keys = Object.keys(o);
     assert.ok(keys.includes('sponsor'));
     assert.deepEqual(keys.filter((k) => k !== 'sponsor'), OVERVIEW_KEYS, 'no other key changes (the client portal and the cockpit page read these)');

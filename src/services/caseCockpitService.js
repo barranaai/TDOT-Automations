@@ -335,6 +335,8 @@ async function getCaseOverview(caseRef) {
     clientName,
     caseType:    caseType || '—',
     caseSubType: caseSubType || null,
+    // the member types the "Add family member" form may offer (the questionnaire's own list)
+    familyAddTypes: require('../../config/questionnaireFormMap').resolveMemberTypes(caseType, caseSubType),
     accessToken,
     // When the Client Master read transiently failed, do NOT present fabricated
     // 'Unpaid / Not Started' defaults as if authoritative — flag it so the

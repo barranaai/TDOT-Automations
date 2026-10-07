@@ -244,6 +244,8 @@ ${buildNavHeader('dashboard')}
         <div class="card">
           <div class="card-title">👪 Family on this case <span class="cnt" id="fam-cnt"></span></div>
           <div id="fam-list"></div>
+          <div id="fam-add"></div>
+          <div class="act-msg" id="fam-msg"></div>
         </div>
         <div class="card">
           <div class="card-title">🧾 Questionnaire members <span class="cnt" id="qm-cnt"></span></div>
@@ -407,6 +409,17 @@ function render(d) {
       flags + '<span class="mtype">' + escHtml(ROLE_LABEL[m.role] || m.role) + '</span></div>';
   }).join('') : '<div class="muted">No family members recorded on the board.</div>';
   document.getElementById('fam-list').innerHTML = famHtml;
+  // "Add family member" (2026-10-07): one click adds the board row, the
+  // questionnaire section and the document rows. Types from the server.
+  var fat = d.familyAddTypes || [];
+  document.getElementById('fam-add').innerHTML = fat.length
+    ? '<div class="sp-form" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+      '<select id="fam-type" class="sbtn" style="cursor:pointer">' + fat.map(function(t) { return '<option value="' + escHtml(t) + '">' + escHtml(t.split(' / ')[0]) + '</option>'; }).join('') + '</select>' +
+      '<input id="fam-name" placeholder="Name (optional)" maxlength="80" style="flex:1;min-width:140px">' +
+      '<button class="sbtn" id="fam-add-btn" title="Adds the Family Members row, the questionnaire section on the client portal link, and the document rows">➕ Add family member</button></div>'
+    : '';
+  var fab = document.getElementById('fam-add-btn');
+  if (fab) fab.addEventListener('click', famAdd);
 
   // Questionnaire members
   var qm = d.questionnaire.members || [];
@@ -486,6 +499,33 @@ function renderDocRow(it) {
 function renderDocCat(cat) {
   return '<div class="cat-block"><div class="cat-head">' + escHtml(cat.category) + '</div>' + cat.items.map(renderDocRow).join('') + '</div>';
 }
+function famAdd() {
+  var typeEl = document.getElementById('fam-type'), nameEl = document.getElementById('fam-name'), btn = document.getElementById('fam-add-btn');
+  if (!typeEl || !btn) return;
+  var memberType = typeEl.value, name = (nameEl && nameEl.value || '').trim();
+  if (!window.confirm('Add ' + (name || memberType.split(' / ')[0]) + ' to this case? This adds the Family Members row, the questionnaire section on the client portal link, and the document rows. No email is sent.')) return;
+  btn.disabled = true;
+  var key = peekKey();
+  var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
+  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/family/add', { method: 'POST', headers: headers, credentials: 'same-origin', body: JSON.stringify({ memberType: memberType, name: name }) })
+  .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
+  .then(function(res) {
+    if (res.ok) {
+      var rs = res.j.reseed || {};
+      var docs = rs.error ? 'Checklist re-seed failed — press Re-seed Checklist on the case.'
+        : rs.unknown ? 'The checklist state could not be read — press Re-seed Checklist on the case if its checklist exists.'
+        : rs.deferred ? 'Document rows come with the checklist at Document Collection (the case is at "' + (res.j.stage || 'Not Started') + '").'
+        : ((rs.created || 0) + ' document row(s) added.' + (rs.failed ? ' ' + rs.failed + ' row(s) failed — press Re-seed Checklist.' : ''));
+      actMsg('fam-msg', 'ok', '✓ Added. ' + docs + (res.j.manifest === 'adopted' ? ' The section the client already had is now complete.' : ' Questionnaire section added.') + (res.j.hint ? ' ' + res.j.hint : ''));
+      loadCase();
+    } else {
+      btn.disabled = false;
+      actMsg('fam-msg', 'err', res.status === 403 ? 'You are not assigned to this case.' : res.status === 401 ? 'Please sign in again.' : ((res.j && res.j.error) || 'Could not add the member.'));
+    }
+  })
+  .catch(function(e) { btn.disabled = false; actMsg('fam-msg', 'err', 'Failed: ' + e.message); });
+}
+
 function renderDocsTab(d) {
   NA_ENABLED = !!d.documents.notApplicableEnabled;
   var byMember = d.documents.byMember || [];

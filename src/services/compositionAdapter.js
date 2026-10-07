@@ -78,9 +78,13 @@ function mapRowsToComposition(rows) {
     });
   }
 
-  // Case-level flags are DERIVED from member presence — no separate board field.
-  const has = (r) => members.some((m) => m.role === r);
-  const caseFlags = {
+  return { caseFlags: deriveCaseFlags(members), members };
+}
+
+/** PURE. Case-level flags are DERIVED from member presence — no separate board field. */
+function deriveCaseFlags(members) {
+  const has = (r) => (members || []).some((m) => m.role === r);
+  return {
     spouseIncluded:    has('Spouse'),
     childrenIncluded:  has('DependentChild'),
     parentsIncluded:   has('Parent'),
@@ -91,8 +95,17 @@ function mapRowsToComposition(rows) {
     // editor) turns the supporter document set on.
     supporterIncluded: has('Sponsor'),
   };
+}
 
-  return { caseFlags, members };
+/**
+ * PURE. The composition with one more member (a row just written — Monday's
+ * search may not return it for seconds), flags re-derived. A member whose key
+ * is already present is not added twice.
+ */
+function withMember(composition, member) {
+  const members = [...((composition && composition.members) || [])];
+  if (!members.some((m) => m.memberKey && member.memberKey && m.memberKey === member.memberKey)) members.push({ flags: {}, ...member });
+  return { caseFlags: deriveCaseFlags(members), members };
 }
 
 /**
@@ -140,5 +153,7 @@ async function readForCase(caseRef) {
 module.exports = {
   readForCase,
   mapRowsToComposition,
+  deriveCaseFlags,
+  withMember,
   _maps: { MEMBER_TYPE_TO_ROLE, FLAG_LABEL_TO_KEY },
 };

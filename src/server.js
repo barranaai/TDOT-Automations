@@ -955,6 +955,42 @@ function sponsorPartialSentence(r) {
   if (c.row || c.member) parts.push(parts.length ? 'the questionnaire section was created' : 'The questionnaire section was created');
   return parts.join(' and ');
 }
+// ─── Add a family member (2026-10-07) ───────────────────────────────────────
+// One click: Family Members row + the questionnaire section + the checklist
+// re-seed, so the three never disagree. Types come from the questionnaire's
+// own allowed list for this case type; the name is optional.
+app.post('/admin/case-action/:caseRef/family/add', express.json(), async (req, res) => {
+  const caseRef = (req.params.caseRef || '').trim();
+  const ctx = await resolveCaseForWrite(req, res, caseRef);
+  if (!ctx) return;
+  const { resolveMemberTypes } = require('../config/questionnaireFormMap');
+  const fam = require('./services/familyMemberService');
+  const body = req.body || {};
+  const memberType = String(body.memberType || '').trim();
+  const allowed = resolveMemberTypes(ctx.overview.caseType, ctx.overview.caseSubType);
+  if (!allowed.includes(memberType)) {
+    return res.status(400).json({ ok: false, error: allowed.length ? `Choose one of: ${allowed.join(', ')}.` : 'This case type has no separate family sections.' });
+  }
+  if (String(body.name == null ? '' : body.name).trim().length > fam.NAME_MAX) return res.status(400).json({ ok: false, error: `The name is too long (max ${fam.NAME_MAX} characters).` });
+  try {
+    // The service reads the case's own state (stage, Checklist Template
+    // Applied) live — the overview's copy is a placeholder when the Client
+    // Master read failed, and a wrong "no checklist yet" would defer the rows.
+    const r = await fam.addFamilyMember({
+      caseRef: ctx.overview.caseRef || caseRef, cmItemId: ctx.overview.itemId, clientName: ctx.overview.clientName,
+      boardType: fam.PORTAL_TO_BOARD[memberType], name: fam.cleanName(body.name), source: 'staff', actor: staffActor(req),
+      caseSubType: ctx.overview.caseSubType || '',
+    });
+    console.log(`[Family] ${caseRef}: ${memberType} added by ${staffActor(req).name}`);
+    res.json(r);
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ ok: false, error: err.message });
+    if (err.transient) return res.status(503).json({ ok: false, error: err.message });
+    console.error(`[Family] add failed for ${caseRef}:`, err.message);
+    res.status(500).json({ ok: false, error: 'Internal server error' });
+  }
+});
+
 app.post('/admin/case-action/:caseRef/sponsor', express.json(), async (req, res) => {
   const caseRef = (req.params.caseRef || '').trim();
   const ctx = await resolveCaseForWrite(req, res, caseRef);

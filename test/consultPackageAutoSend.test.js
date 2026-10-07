@@ -34,7 +34,10 @@ function withFlag(v, fn) {
 // in the background, and that guard is the first thing it checks. Without it a
 // test reaches the PRODUCTION Square calendar (config/monday.js loads .env on
 // import) — this happened once, on 2026-09-13.
-const lead = (extra = {}) => ({ id: String(extra.id || '77'), fullName: 'Walk In', email: 'w@i.co', residentialAddress: '1 Main St', bookingStatus: 'Booked', bookedSlot: '2026-10-02 14:30', meetingType: 'Virtual', squareBookingId: 'test-never-square', ...extra });
+// The default consultation is TOMORROW (a fixed date went into the past on
+// 2026-10-07 and every "sent" expectation read "expired").
+const TOMORROW_SLOT = `${new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10)} 14:30`;
+const lead = (extra = {}) => ({ id: String(extra.id || '77'), fullName: 'Walk In', email: 'w@i.co', residentialAddress: '1 Main St', bookingStatus: 'Booked', bookedSlot: TOMORROW_SLOT, meetingType: 'Virtual', squareBookingId: 'test-never-square', ...extra });
 const squareBookings = require('../src/services/squareBookingsService');
 
 /** A harness around autoSend: counts sends, records notes and writes. */

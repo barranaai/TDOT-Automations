@@ -199,7 +199,7 @@ async function createRow({ caseRef, caseSubType, clientMasterItemId, row, unique
  * }} args
  * @returns {Promise<{ created: number, skipped: number, failed: number }>}
  */
-async function reconcileExecutionRows({ caseRef, caseSubType, clientMasterItemId, plan, categoryLinks = {} }) {
+async function reconcileExecutionRows({ caseRef, caseSubType, clientMasterItemId, plan, categoryLinks = {}, prune = true }) {
   const existingKeys = await getExistingUniqueKeys(caseRef);
   const { toCreate, toSkip } = diffPlan({ plan, existingKeys, caseRef });
 
@@ -221,7 +221,9 @@ async function reconcileExecutionRows({ caseRef, caseSubType, clientMasterItemId
   // Prune rows left over from a PREVIOUS sub-type so a Sub Type change re-seeds
   // clean (this is the fix for the multi-sub-type duplicate pile-up). Runs after
   // create so the current-sub-type rows are already in place; best-effort.
-  const pruned = await pruneStaleSubTypeRows({ caseRef, keepSubType: caseSubType });
+  // prune:false — a caller that only ever ADDS rows (adding a family member)
+  // must never delete another sub type's rows under staff's feet.
+  const pruned = prune ? await pruneStaleSubTypeRows({ caseRef, keepSubType: caseSubType }) : 0;
 
   console.log(`[ExecSeeder] ${caseRef}: created ${created}, skipped ${toSkip.length}, failed ${failed}, pruned ${pruned}`);
   return { created, skipped: toSkip.length, failed, pruned };

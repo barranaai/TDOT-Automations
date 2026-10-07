@@ -951,7 +951,7 @@ router.post('/:caseRef/add-member', async (req, res) => {
   }
 
   try {
-    const { clientName, caseType, caseSubType } = await svc.validateAccess(caseRef, token);
+    const { clientName, caseType, caseSubType, itemId } = await svc.validateAccess(caseRef, token);
 
     // Validate that this member type is allowed for this case type
     const allowedTypes = resolveMemberTypes(caseType, caseSubType);
@@ -962,13 +962,24 @@ router.post('/:caseRef/add-member', async (req, res) => {
       });
     }
 
-    const newMember = await svc.addMember({ clientName, caseRef, memberType });
-    return res.json({ ok: true, member: newMember });
+    // One path for staff and client (2026-10-07): the questionnaire section,
+    // the Family Members row and the document rows — or the checklist never
+    // follows. The section is written first; if only the board row fails the
+    // client still has the section and the case carries a note to finish it.
+    const fam = require('../services/familyMemberService');
+    let r;
+    try {
+      r = await fam.addFamilyMember({ caseRef, cmItemId: itemId, clientName, boardType: fam.PORTAL_TO_BOARD[memberType], source: 'client', reseedMode: 'background', caseSubType: caseSubType || '' });
+    } catch (err) {
+      if (err.manifestAdded && err.member) { console.warn(`[/q/add-member] ${caseRef}: section added, row failed: ${err.message}`); return res.json({ ok: true, member: err.member }); }
+      throw err;
+    }
+    return res.json({ ok: true, member: { key: r.key, type: r.portalType, label: r.rowName } });
   } catch (err) {
     console.error(`[/q/add-member] Error for ${caseRef}:`, err.message);
     if (err.transient) return res.status(503).json({ error: 'Temporarily unavailable — please try again in a few minutes.', retriable: true });
     const status = err.message.includes('token') ? 403
-                 : err.message.includes('already been added') ? 409
+                 : (err.badRequest || err.message.includes('already been added') || err.message.includes('already on this case')) ? 409
                  : 500;
     return res.status(status).json({ error: err.message });
   }

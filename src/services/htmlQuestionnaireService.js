@@ -1786,6 +1786,8 @@ const SEED_CACHE_TTL_MS = 60 * 1000;
  * persist — persisting at DCS would freeze the manifest and drop family added to
  * the board later). Returns null when the board has no accompanying members.
  */
+const PLACEHOLDER_NAME_RE = /\((from intake|added by (?:staff|client))\)/i;
+
 function buildManifestFromBoard(boardMembers) {
   const extras = (boardMembers || []).filter((m) => ROLE_TO_PORTAL_TYPE[m.role]);
   if (extras.length === 0) return null;
@@ -1800,11 +1802,25 @@ function buildManifestFromBoard(boardMembers) {
                      && boardKey !== 'primary'
                      && !members.some((m) => m.key === boardKey);
     const key = keyOk ? boardKey : generateMemberKey(type, members);
-    // Placeholder row names ("Spouse (from intake)") stay out of labels.
+    // Placeholder row names ("Spouse (from intake)", "Child 2 (added by staff)") stay out of labels.
     const name  = (bm.name || '').trim();
-    const label = name && !/\(from intake\)/i.test(name) ? name : memberLabel(type, count);
+    const label = name && !PLACEHOLDER_NAME_RE.test(name) ? name : memberLabel(type, count);
     members.push({ key, type, label, addedAt: new Date().toISOString(), source: 'family-board' });
   }
+  return members;
+}
+
+/**
+ * Create the manifest from board rows the CALLER already holds (plus the one it
+ * just added) — familyMemberService uses this when no manifest exists yet, so a
+ * board search that lags Monday by seconds can never persist a list without
+ * the new member. Writes only when no manifest file exists.
+ */
+async function createManifestFromBoard({ clientName, caseRef, boardMembers }) {
+  const existing = await readMembersManifest({ clientName, caseRef });
+  if (existing) return existing;
+  const members = buildManifestFromBoard(boardMembers) || defaultMembers();
+  await saveMembers({ clientName, caseRef, members });
   return members;
 }
 
@@ -1934,7 +1950,7 @@ async function saveMembers({ clientName, caseRef, members }) {
  *               is the generic "Spouse" / "Sponsor" / "Child 2" label
  * @returns {{ key, type, label }} The newly added member
  */
-async function addMember({ clientName, caseRef, memberType, label: labelIn }) {
+async function addMember({ clientName, caseRef, memberType, label: labelIn, key: keyIn }) {
   const members = await loadMembers({ clientName, caseRef });
 
   // Validate: don't allow duplicate singletons (spouse, worker-spouse, sponsor)
@@ -1946,7 +1962,12 @@ async function addMember({ clientName, caseRef, memberType, label: labelIn }) {
     }
   }
 
-  const key   = generateMemberKey(memberType, members);
+  // An explicit key (the Family Members row's, chosen across board + manifest
+  // by familyMemberService) keeps the two in step; it must be well-formed and free.
+  const wanted = String(keyIn || '').trim();
+  if (wanted && !(/^[a-z][a-z0-9-]{0,40}$/.test(wanted) && wanted !== 'primary')) throw new Error(`Invalid member key "${wanted}".`);
+  if (wanted && members.some((m) => m.key === wanted)) throw new Error(`Member key "${wanted}" is already used on this case.`);
+  const key   = wanted || generateMemberKey(memberType, members);
   const count = members.filter(m => m.type === memberType).length + 1;
   const label = (typeof labelIn === 'string' && labelIn.trim()) ? labelIn.trim() : memberLabel(memberType, count);
 
@@ -6277,6 +6298,7 @@ module.exports = {
   markAllSubmitted,
   // Member manifest management
   readMembersManifest,
+  createManifestFromBoard,
   loadMembers,
   seedMembersFromBoard,
   addMember,
