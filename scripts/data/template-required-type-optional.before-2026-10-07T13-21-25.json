@@ -1,0 +1,1467 @@
+{
+  "boardId": "18401624183",
+  "column": "dropdown_mm0x9v5q",
+  "writtenAt": "2026-10-07T13:21:25.193Z",
+  "items": [
+    {
+      "id": "11662044037",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662034205",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662044130",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662048279",
+      "name": "If student",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662059169",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662077030",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662056426",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662056154",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662079338",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11688693505",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11688693631",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11688749762",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11688717926",
+      "name": "If student",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11688703622",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11688703732",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11688769880",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662022291",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662043087",
+      "name": "Additional documents (Optional)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662047036",
+      "name": "Proof/source of Income (If you will support the applicant)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662043127",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662033519",
+      "name": "Additional documents (Optional)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662033749",
+      "name": "Proof/source of Income (If you will support the applicant)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662043513",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662033498",
+      "name": "Additional documents (Optional)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662047174",
+      "name": "Proof/source of Income (If you will support the applicant)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689004090",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11688990908",
+      "name": "Additional documents (Optional)",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689003816",
+      "name": "Proof/source of Income (If you will support the applicant)",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11688999657",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689002430",
+      "name": "Additional documents (Optional)",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689004834",
+      "name": "Proof/source of Income (If you will support the applicant)",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689002709",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689005063",
+      "name": "Additional documents (Optional)",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689005026",
+      "name": "Proof/source of Income (If you will support the applicant)",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650137371",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689000382",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650128546",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687948553",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687940951",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650106179",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650120055",
+      "name": "If student",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662000453",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662020807",
+      "name": "Canadian Education Documents- (For each program if studied here)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662021311",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662004030",
+      "name": "Canadian Education Documents- (For each program if studied here)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662021472",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662022305",
+      "name": "If student",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662019625",
+      "name": "Canadian Education Documents- (For each program if studied here)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662022140",
+      "name": "Canadian Education Documents- (For each program if studied here)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662019898",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11718118679",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11718112278",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717554013",
+      "name": "Sibling - Proof of living in Canada (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650118269",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717528916",
+      "name": "Sibling - Proof of living in Canada (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650100890",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687941359",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717533377",
+      "name": "Sibling - Proof of living in Canada (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650068727",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650069038",
+      "name": "Urgent Travel Proof (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687954938",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687946823",
+      "name": "Urgent Travel Proof (if applicable)",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650068580",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650066780",
+      "name": "Urgent Travel Proof (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687967880",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687930674",
+      "name": "Urgent Travel Proof (if applicable)",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650072052",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687937629",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687937472",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687954783",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650058381",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650013513",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11661955673",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11661955448",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11661974369",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11661992719",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11661976015",
+      "name": "If you or your spouse or common-law partner has a relative who is a Canadian citizen or a permanent resident of Canada",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11661995780",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11661983481",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11661983643",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689057952",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689028648",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689038966",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689037397",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689060212",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689040743",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689060726",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717648480",
+      "name": "Sibling - Proof of living in Canada (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11650008049",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689032774",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717648300",
+      "name": "Sibling - Proof of living in Canada (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717544418",
+      "name": "Sibling - Proof of living in Canada (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649981331",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687954464",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649962629",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649962976",
+      "name": "Experience Documents- Provide all relevant experience documents from previous employers if any.",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687925697",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687918148",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11662008812",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11661999957",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649978322",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687921843",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687922265",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687968402",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717533354",
+      "name": "Sibling - Proof of living in Canada (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649939177",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649939178",
+      "name": "Experience Documents- Provide all relevant experience documents from previous employers if any.",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649931418",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689016254",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649951573",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649978204",
+      "name": "Language Test Report (if you are 18 to 54 years of age)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687981377",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687981425",
+      "name": "Language Test Report (if you are 18 to 54 years of age)",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649912748",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687388981",
+      "name": "Sibling- Proof of living in Canada- if applicable",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687356428",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687477076",
+      "name": "Sibling- Proof of living in Canada- if applicable",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687356422",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717540965",
+      "name": "Sibling - Proof of living in Canada (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717642877",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649916361",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687362324",
+      "name": "Sibling- Proof of living in Canada- if applicable",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687375065",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687384768",
+      "name": "Sibling- Proof of living in Canada- if applicable",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687387654",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717539090",
+      "name": "Sibling - Proof of living in Canada (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717635416",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649904232",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687361391",
+      "name": "Sibling- Proof of living in Canada- if applicable",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687388958",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687364366",
+      "name": "Sibling- Proof of living in Canada- if applicable",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687370885",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717636850",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649898630",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11687962654",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649886149",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689016878",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717529030",
+      "name": "Sibling - Proof of living in Canada (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649836884",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649877427",
+      "name": "Labour Market Impact Assessment (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11649901406",
+      "name": "Relative in Alberta- Parents/ Siblings/ Children (applicable only if you were drawn based on having a family",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689020557",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689035290",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689013345",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11689027932",
+      "name": "One and same name affidavit if name /surname changed",
+      "previous": {
+        "required": ""
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    },
+    {
+      "id": "11717544547",
+      "name": "Sibling - Proof of living in Canada (if applicable)",
+      "previous": {
+        "required": "Mandatory"
+      },
+      "writes": {
+        "required": "Optional"
+      }
+    }
+  ]
+}
