@@ -47,13 +47,40 @@ const NEVER_OPTIONAL_NAMES = [
   // the income proof is always required; only the academic-docs part depends on being a student
   'Proof/source of Income (incl. academic docs if student)',
 ].map(loose);
+/**
+ * Documents that are REQUIRED whatever their wording (Faran, 2026-10-07):
+ * "Identity and Civil Documents" — most clients hold at least one of these
+ * papers (marriage, divorce, children's birth certificates, name change), so
+ * the app keeps chasing it everywhere; a client with none is marked
+ * "Not Applicable" by staff. The 2 LMIA-extension checklists word it
+ * "(…, if applicable)" — required there too, like in the other 89 entries.
+ */
+const NEVER_OPTIONAL_PREFIXES = ['Identity and Civil Documents'].map(loose);
+/**
+ * Documents that are OPTIONAL whatever their wording (Faran, 2026-10-07):
+ * the sibling's proof of living in Canada — only a client with a brother or
+ * sister in Canada can send it, so it is optional on every checklist, not
+ * only where the name says "(if applicable)".
+ */
+const ALWAYS_OPTIONAL_RES = [/\bsibling\b[\s\S]*\bproof of living in canada\b/i];
 
 /** The Template-board affidavit has no name-change gate (schemas gate it on nameChanged), so there it is optional. */
 const AFFIDAVIT_RE = /one and same name affidavit/i;
 
-/** Does this NAME read as optional / conditional (and is not on the exception list)? */
-function isSoftNamed(name) {
-  return classify(name).anySoft && !NEVER_OPTIONAL_NAMES.includes(loose(name));
+function neverOptional(name) {
+  const k = loose(name);
+  return NEVER_OPTIONAL_NAMES.includes(k) || NEVER_OPTIONAL_PREFIXES.some((p) => k.startsWith(p));
+}
+function alwaysOptional(name) {
+  return ALWAYS_OPTIONAL_RES.some((re) => re.test(String(name || '')));
 }
 
-module.exports = { MARKERS, SOFT, classify, normName, loose, NEVER_OPTIONAL_NAMES, AFFIDAVIT_RE, isSoftNamed };
+/** Is this document optional by its NAME — the wording, plus the two explicit decisions above? */
+function isOptionalName(name) {
+  if (neverOptional(name)) return false;
+  return classify(name).anySoft || alwaysOptional(name);
+}
+/** @deprecated name kept for callers — same as isOptionalName. */
+const isSoftNamed = isOptionalName;
+
+module.exports = { MARKERS, SOFT, classify, normName, loose, NEVER_OPTIONAL_NAMES, NEVER_OPTIONAL_PREFIXES, ALWAYS_OPTIONAL_RES, AFFIDAVIT_RE, neverOptional, alwaysOptional, isOptionalName, isSoftNamed };

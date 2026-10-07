@@ -33,7 +33,7 @@
 require('dotenv').config();
 const fs   = require('fs');
 const path = require('path');
-const { isSoftNamed, AFFIDAVIT_RE, normName } = require('../src/utils/documentNameMarkers');
+const { isOptionalName, AFFIDAVIT_RE, normName } = require('../src/utils/documentNameMarkers');
 
 const BOARD_ID     = '18401624183';
 const REQ_COL      = 'dropdown_mm0x9v5q';   // Required Type
@@ -60,7 +60,7 @@ function planTemplateWrites(items) {
     const counts   = String(it.counts || '').trim();
     const blocking = String(it.blocking || '').trim();
     if (!(required === '' || required === 'Mandatory')) continue;
-    if (!(isSoftNamed(name) || AFFIDAVIT_RE.test(name))) continue;
+    if (!(isOptionalName(name) || AFFIDAVIT_RE.test(name))) continue;
     if (blocking === 'Yes') { plan.push({ id: String(it.id), name, skipped: 'Blocking Flag = Yes — an optional blocking document is a contradiction; decide by hand' }); continue; }
     plan.push({ id: String(it.id), name, counts, previous: { required }, writes: { required: LABEL } });
   }

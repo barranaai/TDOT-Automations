@@ -74,15 +74,23 @@ function everySchemaDoc() {
   return out;
 }
 
-// The 32 (file | role | code) flagged on 2026-10-02 — change this list only with a decision.
+// The 36 (file | role | code) flagged — change this list only with a decision.
+// 2026-10-02: the 32 text-only soft-named documents. 2026-10-07 (Faran): the 2
+// LMIA-extension "Identity and Civil Documents (…, if applicable)" back to
+// REQUIRED (like the other 89 entries); the sibling's proof of living in
+// Canada OPTIONAL everywhere (+6: the CEC single-applicant and Federal PR ones).
 const FLAGGED = [
   'aaip--express-entry-stream.js|PrincipalApplicant|RELATIVEAB', 'aaip--express-entry-stream.js|Spouse|RELATIVEAB',
   'aaip--opportunity-stream.js|PrincipalApplicant|LMIA', 'aaip--rural-renewal-stream.js|PrincipalApplicant|LMIA', 'aaip--rural-renewal-stream.js|Spouse|LMIA', 'aaip--tourism-hospitality-stream.js|PrincipalApplicant|LMIA',
   'canadian-experience-class-ee-after-ita--cec-accompanying-spouse-child.js|PrincipalApplicant|SIBLINGPROOF', 'canadian-experience-class-ee-after-ita--cec-accompanying-spouse-child.js|Spouse|SIBLINGPROOF',
   'canadian-experience-class-profile-ita-submission--cec-accompanying-spouse-child.js|PrincipalApplicant|SIBLINGPROOF',
   'canadian-experience-class-profile-recreation-ita-submission--cec-accompanying-spouse-child.js|PrincipalApplicant|SIBLINGPROOF',
+  'canadian-experience-class-ee-after-ita--cec-single-applicant.js|PrincipalApplicant|SIBLINGPROOF',
+  'canadian-experience-class-profile-ita-submission--cec-single-applicant.js|PrincipalApplicant|SIBLINGPROOF',
+  'canadian-experience-class-profile-recreation-ita-submission--cec-single-applicant.js|PrincipalApplicant|SIBLINGPROOF',
+  'federal-pr--non-express-entry-accompanying-spouse-child.js|PrincipalApplicant|SIBLINGPROOF', 'federal-pr--non-express-entry-accompanying-spouse-child.js|Spouse|SIBLINGPROOF',
+  'federal-pr--non-express-entry-non-accompanying-spouse.js|PrincipalApplicant|SIBLINGPROOF',
   'citizenship--default.js|PrincipalApplicant|LANGTEST',
-  'lmia-based-wp--extension-inside-canada.js|PrincipalApplicant|IDCIVILDOCS', 'lmia-based-wp--extension-inside-canada.js|Spouse|IDCIVILDOCS',
   'lmia-based-wp--inside-canada.js|PrincipalApplicant|EXPERIENCEDOCS',
   'pr-card-renewal--default.js|PrincipalApplicant|URGENTTRAVEL', 'pr-card-renewal--default.js|Spouse|URGENTTRAVEL', 'prtd--default.js|PrincipalApplicant|URGENTTRAVEL', 'prtd--default.js|Spouse|URGENTTRAVEL',
   'sowp--extension-spouse-or-child.js|PrincipalApplicant|EDUDOCS', 'sowp--inland-established-relationship.js|Spouse|CANEDU', 'sowp--inland-non-established-relationship.js|Spouse|CANEDU',
@@ -95,15 +103,24 @@ const FLAGGED = [
   'visitor-visa-spousal-sponsorship-in-process.js|PrincipalApplicant|FINDOCS',
 ].sort();
 
-test('schemas: optional:true sits on exactly the classifier\'s text-only set (minus the exception) — the 32 pinned here; always a literal boolean; never on a name-change-gated document', () => {
+test('schemas: optional:true sits on exactly the classifier\'s set (wording + the two explicit decisions) — the 36 pinned here; always a literal boolean; never on a member-flag-gated document', () => {
   const docs = everySchemaDoc();
   const flagged = docs.filter((d) => 'optional' in d.doc);
   for (const d of flagged) assert.equal(d.doc.optional, true, `${d.file}:${d.code} optional must be the boolean true`);
-  const expected = docs.filter((d) => !(d.doc.includeWhen && d.doc.includeWhen.memberFlag) && markers.isSoftNamed(d.name)).map((d) => `${d.file}|${d.role}|${d.code}`).sort();
+  const expected = docs.filter((d) => !(d.doc.includeWhen && d.doc.includeWhen.memberFlag) && markers.isOptionalName(d.name)).map((d) => `${d.file}|${d.role}|${d.code}`).sort();
   const actual = flagged.map((d) => `${d.file}|${d.role}|${d.code}`).sort();
   assert.deepEqual(actual, expected, 'the flags equal the classifier\'s verdict on every schema document');
-  assert.deepEqual(actual, FLAGGED, 'the pinned list of 32');
-  assert.equal(actual.length, 32);
+  assert.deepEqual(actual, FLAGGED, 'the pinned list of 36');
+  assert.equal(actual.length, 36);
+  // the two decisions of 2026-10-07, on the schemas themselves
+  const idc = docs.filter((d) => /^identity and civil documents/i.test(d.name));
+  assert.ok(idc.length >= 90, 'every Identity and Civil Documents entry is checked');
+  assert.ok(idc.every((d) => !('optional' in d.doc)), 'Identity and Civil Documents is REQUIRED on every checklist, whatever its wording');
+  const sib = docs.filter((d) => /\bsibling\b[\s\S]*proof of living in canada/i.test(d.name));
+  assert.deepEqual(sib.filter((d) => !d.doc.optional).map((d) => `${d.file}|${d.code}|${JSON.stringify(d.doc.includeWhen || null)}`).sort(),
+    ['oinp--workforce-priority-stream-cec-profile-new-client.js|SIBLINGPROOF|{"memberFlag":"hasCanadianSibling"}', 'oinp--workforce-priority-stream-existing-client.js|SIBLINGPROOF|{"memberFlag":"hasCanadianSibling"}'],
+    'the sibling proof is optional everywhere except where it only appears for a client who HAS a sibling in Canada');
+  assert.ok(!docs.some((d) => /^proof of living in canada/i.test(d.name) && d.doc.optional), 'the applicant\'s / inviter\'s own "Proof of living in Canada" is a different document — untouched');
   for (const d of docs) if (d.doc.includeWhen && d.doc.includeWhen.memberFlag) assert.ok(!('optional' in d.doc), `${d.file}:${d.code} is gated on a member flag — when it seeds it is required`);
   assert.ok(!docs.some((d) => /one and same name affidavit/i.test(d.name) && d.doc.optional), 'the affidavit is never optional on the schema path (it only seeds when the name changed)');
   assert.ok(docs.some((d) => /incl\. academic docs if student/.test(d.name) && !('optional' in d.doc)), 'the exception stays mandatory');
@@ -317,9 +334,12 @@ test('template tool plan: soft-named items + the name affidavit when Required Ty
     { id: '8', name: 'Proof/source of Income (incl. academic docs if student)', requiredType: '', counts: 'Yes' },
     { id: '9', name: 'Proof of language proficiency (IELTS-G/CELPIP-G)', requiredType: '', counts: 'Yes' },
     { id: '10', name: 'Sibling- Proof of living in Canada- if applicable', requiredType: 'Mandatory', counts: 'No', blocking: 'Yes' },
+    { id: '11', name: 'Sibling- Proof of living in Canada', requiredType: 'Mandatory', counts: 'Yes' },
+    { id: '12', name: 'Identity and Civil Documents (…, if applicable)', requiredType: 'Mandatory', counts: 'Yes' },
+    { id: '13', name: 'Proof of living in Canada (any 1)', requiredType: '', counts: 'Yes' },
   ];
   const plan = tool.planTemplateWrites(items);
-  assert.deepEqual(plan.map((p) => p.id), ['1', '2', '3', '4', '10']);
+  assert.deepEqual(plan.map((p) => p.id), ['1', '2', '3', '4', '10', '11'], 'the sibling proof without "if applicable" is selected; Identity and Civil and the plain "Proof of living in Canada" are not');
   assert.deepEqual(plan[0], { id: '1', name: 'Urgent Travel Proof (if applicable)', counts: 'Yes', previous: { required: '' }, writes: { required: 'Optional' } });
   assert.deepEqual(plan[1].writes, { required: 'Optional' }, 'Required Type is the ONLY column written — Counts stays as it is');
   assert.deepEqual(plan[1].previous, { required: 'Mandatory' }); assert.equal(plan[1].counts, 'No', 'Counts is read for the report only');
@@ -521,4 +541,44 @@ test('portal: a checklist whose every row is optional-not-sent (or N/A) says "No
   assert.ok(!opt.includes('0 of 0 ready') && !opt.includes('0% uploaded'));
   const na = page([{ id: '13', name: 'X', status: 'Not Applicable', category: 'Identity', applicantType: 'Principal Applicant', reviewNotes: '', clientInstructions: '', lastUpload: '' }], { total: 1, received: 0, reviewed: 0, rework: 0, missing: 0, na: 1, optionalOpen: 0 });
   assert.ok(na.includes('Nothing to upload right now — your case officer confirmed these documents are not needed.'));
+});
+
+
+/* ───────────────────────── 9. the two decisions of 2026-10-07 ───────────────────────── */
+
+test('Identity and Civil Documents is REQUIRED whatever its wording; the sibling\'s proof of living in Canada is OPTIONAL whatever its wording', () => {
+  for (const name of [
+    'Identity and Civil Documents',
+    'Identity and Civil Documents (name/DOB change, common law declaration imm5409, marriage/divorce/annulment certificates, death certificate of former spouse, birth certificate of children, if applicable)',
+    'Identity and Civil Documents (incl. Common-Law declaration IMM5409)',
+    'IDENTITY AND CIVIL DOCUMENTS (Optional)',            // even worded "optional", any case
+  ]) {
+    assert.equal(markers.isOptionalName(name), false, name);
+    assert.equal(markers.neverOptional(name), true, name);
+  }
+  for (const name of ['Sibling - Proof of living in Canada', 'Sibling- Proof of living in Canada', 'Sibling — Proof of living in Canada', 'Sibling- Proof of living in Canada- if applicable', 'Sibling - Proof of living in Canada (if applicable)']) {
+    assert.equal(markers.isOptionalName(name), true, name);
+  }
+  for (const name of ['Proof of living in Canada', 'Proof of living in Canada (any 1)', 'Passport with all stamped pages']) {
+    assert.equal(markers.isOptionalName(name), false, name);
+  }
+  assert.equal(markers.isSoftNamed, markers.isOptionalName, 'the old name is the same rule');
+});
+
+test('the engine follows the schema at read time: an LMIA-extension Identity and Civil row counts as REQUIRED again; a CEC single-applicant sibling row is OPTIONAL', () => {
+  const { slugUpper } = planner._internal;
+  const code = (caseType, subType, role, doc) => `${slugUpper(caseType)}-${slugUpper(subType)}-${slugUpper(role)}-${doc}-001`;
+  const idc = code('LMIA Based WP', 'Extension (Inside Canada)', 'PrincipalApplicant', 'IDCIVILDOCS');
+  const sib = code('Canadian Experience Class (EE after ITA)', 'CEC Single Applicant', 'PrincipalApplicant', 'SIBLINGPROOF');
+  const ri = planner.resolveDocumentCode(idc), rs = planner.resolveDocumentCode(sib);
+  assert.ok(ri && /^Identity and Civil Documents/.test(ri.doc.name), `resolves ${idc}`);
+  assert.ok(rs && /Sibling/.test(rs.doc.name), `resolves ${sib}`);
+  assert.equal(optional.isOptionalCode(idc), false);
+  assert.equal(optional.isOptionalCode(sib), true);
+  withSwitch(true, () => {
+    const items = [row({ intakeId: 'code:' + idc, status: '' }), row({ intakeId: 'code:' + sib, status: '' }), row({ intakeId: 'code:' + MAND_CODE, status: 'Received' })];
+    applySchemaDefaults(items);
+    assert.deepEqual(items.map(req), ['Mandatory', 'Optional', 'Mandatory']);
+    assert.deepEqual(calcDocMetrics(items), { readinessPct: 0, uploadedPct: 50, blockingCount: 0, missingRequired: 1, totalCountable: 2 }, 'the identity row is missing-required again; the open sibling row is out of the count');
+  });
 });
