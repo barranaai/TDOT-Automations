@@ -969,7 +969,8 @@ router.post('/:caseRef/add-member', async (req, res) => {
     const fam = require('../services/familyMemberService');
     let r;
     try {
-      r = await fam.addFamilyMember({ caseRef, cmItemId: itemId, clientName, boardType: fam.PORTAL_TO_BOARD[memberType], source: 'client', reseedMode: 'background', caseSubType: caseSubType || '' });
+      r = await fam.addFamilyMember({ caseRef, cmItemId: itemId, clientName, boardType: fam.PORTAL_TO_BOARD[memberType], source: 'client', reseedMode: 'background', caseSubType: caseSubType || '',
+        forms: require('../../config/questionnaireFormMap').resolveForm(caseType, caseSubType) || null });
     } catch (err) {
       if (err.manifestAdded && err.member) { console.warn(`[/q/add-member] ${caseRef}: section added, row failed: ${err.message}`); return res.json({ ok: true, member: err.member }); }
       throw err;

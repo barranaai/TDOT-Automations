@@ -33,11 +33,14 @@
  * Forms whose principal page embeds ONE "Dependent (If Accompany)" block (the
  * Express Entry profile forms F6 / F19) do not say whose it is. That block is
  * copied to the SPOUSE only when it is proven to be hers: EVERY word of the
- * Given Name typed in the block (its own family-name words aside) is a word of
- * the spouse's name — the name staff give, or the spouse's name the principal
- * gave in their own answers ("Spouse's Given Name") — and the principal did
- * not answer "No" to "Accompany to the Application?". Otherwise it is
- * reported, never guessed. The visitor / work-permit forms' "Dependent
+ * Given Name typed in the block (its own family-name words aside, a leading
+ * honorific aside) is a word of the spouse's GIVEN name — from the name staff
+ * give (minus its family word) and the spouse's name the principal gave in
+ * their own answers ("Spouse's Given Name"); the block's Family Name shares a
+ * word with the spouse's family name when both are known (a son named after
+ * his grandfather carries the family's words, never this pair); and the
+ * principal did not answer "No" to "Accompany to the Application?". Otherwise
+ * it is reported, never guessed. The visitor / work-permit forms' "Dependent
  * Applicant" block is never copied (those forms repeat the spouse's name under
  * a previous marriage, so a name proves nothing there).
  *
@@ -134,8 +137,10 @@ function rekeyTableCell(f, memberKey) {
   return memberTableKey(section2, `${memberKey}-${tblM[1]}`, Number(rowM[1]), header);
 }
 
-/** PURE: the words of a person's name, lower-cased. */
-const nameTokens = (s) => String(s || '').toLowerCase().replace(/[^a-z\u00c0-\u024f\s'-]/g, ' ').split(/\s+/).filter((w) => w.length > 1);
+/** PURE: the words of a person's name, lower-cased (hyphens and apostrophes split words: "Abdul-Rahman" = Abdul Rahman). */
+const nameTokens = (s) => String(s || '').toLowerCase().replace(/[^a-z\u00c0-\u024f]+/g, ' ').split(/\s+/).filter((w) => w.length > 1);
+/** A leading name word that is a title rather than a name in this client base — dropped from the block's words when another word remains. */
+const HONORIFICS = new Set(['mohamed', 'mohammed', 'muhammad', 'muhammed', 'mohd', 'md', 'fathima', 'fatima', 'abdul', 'syed', 'syeda', 'bin', 'binti', 'al']);
 /** PURE: the principal's OWN answer (never a dependent section's) to the first label matching `re`. */
 function principalAnswer(fields, re) {
   const f = (Array.isArray(fields) ? fields : []).find((x) => x && !/^dependent/i.test(topOf(x.section)) && hasValue(x) && re.test(String(x.label || '').trim()));
@@ -224,11 +229,18 @@ function planCarryOver({ sourceFields = [], sourceSetAside = [], memberType, mem
     if (block.some(hasValue)) {
       const given = block.find((f) => /^given name/i.test(f.label) && !ROW_RE.test(f.label) && hasValue(f));
       const family = block.find((f) => /^family name/i.test(f.label) && !ROW_RE.test(f.label) && hasValue(f));
-      const familyWords = new Set(nameTokens(family && family.value));
-      const words = given ? nameTokens(given.value).filter((w) => !familyWords.has(w)) : [];
-      const wanted = new Set([...(spec.kind === 'spouse' ? nameTokens(typedName) : []), ...nameTokens(spouseNameFromPrincipal(sourceFields))]);
+      const blockFamily = nameTokens(family && family.value);
+      let words = given ? nameTokens(given.value).filter((w) => !blockFamily.includes(w)) : [];
+      if (words.length > 1 && HONORIFICS.has(words[0])) words = words.slice(1);
+      // the spouse's names as known: given words from the principal's answer and the typed name; the family name from the principal, else the typed name's last word
+      const spouseGiven = nameTokens(principalAnswer(sourceFields, /^spouse[’']s given name/i));
+      const spouseFamily = nameTokens(principalAnswer(sourceFields, /^spouse[’']s family name/i));
+      const typed = spec.kind === 'spouse' ? nameTokens(typedName) : [];
+      const familyKnown = spouseFamily.length ? spouseFamily : (typed.length > 1 ? [typed[typed.length - 1]] : []);
+      const wanted = new Set([...spouseGiven, ...typed.filter((w) => !familyKnown.includes(w))]);
+      const familyOk = !(blockFamily.length && familyKnown.length) || blockFamily.some((w) => familyKnown.includes(w));
       const accompany = principalAnswer(sourceFields, /^accompany/i);
-      if (words.length && wanted.size && words.every((w) => wanted.has(w)) && !/^no\b/i.test(accompany)) {
+      if (words.length && wanted.size && words.every((w) => wanted.has(w)) && familyOk && !/^no\b/i.test(accompany)) {
         attributedBlock = true;
         if (spec.kind === 'spouse') {
           givenName = String(given.value).trim();
@@ -348,8 +360,8 @@ const io = {
  * @param {boolean} [p.dryRun=false]
  * @returns {Promise<object>} { copied, total, bySection, unmapped, skippedSharedTable, ambiguousDependent, written, recopied, skipped?, existing?, slots[] }
  */
-async function carryEmbeddedAnswers({ clientName, caseRef, itemId, memberKey, memberType, memberName = '', dryRun = false }) {
-  const none = { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: '', unmatched: false, childNames: [], attributedBlock: false, written: false, recopied: false, slots: [] };
+async function carryEmbeddedAnswers({ clientName, caseRef, itemId, memberKey, memberType, memberName = '', forms = null, dryRun = false }) {
+  const none = { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: '', unmatched: false, childNames: [], attributedBlock: false, written: false, recopied: false, slots: [], crossForm: null };
   if (!EMBEDDED[memberType]) return { ...none, skipped: 'type' };
   if (!clientName || !caseRef || !memberKey) { const e = new Error('clientName, caseRef and memberKey are required.'); e.badRequest = true; throw e; }
   const memberIndex = memberIndexOf(memberKey);
@@ -384,10 +396,27 @@ async function carryEmbeddedAnswers({ clientName, caseRef, itemId, memberKey, me
     const recopied = held.some((f) => isCarried(f) && hasValue(f));
     const fields = mergeOverPrefill(plan.fields.map((f) => ({ ...f, source: CARRY_TAG })), held);
     work.push({ ...info, plan, fields, formFile: String(src.formFile || ''), recopied });
+
+    // The spouse's APPLICATION-form section, pre-filled from these profile-form
+    // answers (questionnaireCrossFormPrefill) — planned now, written after the
+    // copy, only when that file does not exist yet.
+    if (slot === 'primary' && memberType === 'Spouse / Common-Law Partner' && plan.attributedBlock) {
+      const cross = require('./questionnaireCrossFormPrefill');
+      const cp = await cross.crossFormPrefill({ clientName, caseRef, itemId, memberKey, memberFields: plan.fields, principalFields: src.fields, forms, dryRun: true });   // reads only; says why when it does not apply
+      result.crossForm = cp;
+      if (!cp.skipped) work.push({ cross: true, cp, memberFields: plan.fields, principalFields: src.fields });
+    }
   }
 
   // 2. write (or report, on a dry run)
   for (const w of work) {
+    if (w.cross) {
+      if (!dryRun) {
+        const cross = require('./questionnaireCrossFormPrefill');
+        result.crossForm = await cross.crossFormPrefill({ clientName, caseRef, itemId, memberKey, memberFields: w.memberFields, principalFields: w.principalFields, forms });
+      }
+      continue;
+    }
     if (!dryRun) {
       await io.save({ clientName, caseRef, itemId, formKey: w.target, fields: w.fields, completionPct: w.plan.pct, formFile: w.formFile });
       console.log(`[CarryOver] ${caseRef}: copied ${w.plan.copied} embedded answer(s) (${w.plan.total} boxes) from ${w.source} into ${w.target}${w.recopied ? ' (replacing an earlier copy)' : ''}`);

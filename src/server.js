@@ -980,6 +980,7 @@ app.post('/admin/case-action/:caseRef/family/add', express.json(), async (req, r
       caseRef: ctx.overview.caseRef || caseRef, cmItemId: ctx.overview.itemId, clientName: ctx.overview.clientName,
       boardType: fam.PORTAL_TO_BOARD[memberType], name: fam.cleanName(body.name), source: 'staff', actor: staffActor(req),
       caseSubType: ctx.overview.caseSubType || '',
+      forms: require('../config/questionnaireFormMap').resolveForm(ctx.overview.caseType, ctx.overview.caseSubType) || null,
     });
     console.log(`[Family] ${caseRef}: ${memberType} added by ${staffActor(req).name}`);
     res.json(r);
@@ -1508,12 +1509,12 @@ app.post('/admin/questionnaire/:caseRef/carry-over', express.json(), async (req,
     const dryRun = true;
     const memberKey = sanitiseFormKeyParam(body.memberKey);
     if (!memberKey || memberKey === 'primary') return res.status(400).json({ error: 'memberKey is required (e.g. "spouse", "child-1")' });
-    const { clientName, itemId } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const { clientName, itemId, caseType, caseSubType } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
     const manifest = await svc.readMembersManifest({ clientName, caseRef });
     const member = (manifest || []).find((m) => m && m.key === memberKey) || null;
     const memberType = member ? member.type : String(body.memberType || '').trim();
     if (!carry.EMBEDDED[memberType]) return res.status(400).json({ error: `memberType must be one of ${Object.keys(carry.EMBEDDED).map((t) => `"${t}"`).join(', ')}${member ? '' : ' (the member is not on the questionnaire list yet, so pass memberType)'}` });
-    const r = await carry.carryEmbeddedAnswers({ clientName, caseRef, itemId, memberKey, memberType, memberName: String(body.memberName || (member && member.label) || '').trim(), dryRun });
+    const r = await carry.carryEmbeddedAnswers({ clientName, caseRef, itemId, memberKey, memberType, memberName: String(body.memberName || (member && member.label) || '').trim(), forms: svc.resolveForm(caseType, caseSubType) || null, dryRun });
     res.json({ caseRef, memberKey, memberType, dryRun, ...r });
   } catch (err) {
     if (err.badRequest) return res.status(400).json({ error: err.message });

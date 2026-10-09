@@ -565,6 +565,15 @@ test('F6: the one "Dependent (If Accompany)" block is copied to the SPOUSE only 
   assert.equal(plan({ blockGiven: 'Ayaan Rauf' }, { memberName: 'Mohamed Sabri Rauf' }).attributedBlock, false);
   assert.equal(plan({ accompany: 'No' }, { memberName: 'Mohamed Sabri Rauf' }).attributedBlock, false, 'the principal said the spouse is not accompanying: the block is someone else\'s');
   assert.equal(plan({ accompany: '' }, { memberName: 'Mohamed Sabri Rauf' }).attributedBlock, true, 'a blank answer never refuses');
+  // REFUSED: a son who carries the family's words (named after his grandfather; the father's given name as his family name)
+  const son = (blockGiven, blockFamily, opts) => { const f = f6Primary({ blockGiven }); f.fields = f.fields.map((x) => (x.label === 'Family Name (Surname)' && /^Dependent/.test(x.section)) ? { ...x, value: blockFamily } : x); return carry.planCarryOver({ sourceFields: f.fields, memberType: 'Spouse / Common-Law Partner', memberKey: 'spouse', ...opts }); };
+  assert.equal(son('Mohamed Rauf', 'Sabri', { memberName: 'Mohamed Sabri Rauf' }).attributedBlock, false, '"rauf" is the spouse\'s family word, never a given-name match');
+  assert.equal(son('Mohamed', 'Sabri', { memberName: 'Mohamed Sabri Rauf' }).attributedBlock, false, 'an honorific alone, and the family names differ');
+  assert.equal(son('Rauf', 'Sabri', {}).attributedBlock, false);
+  // STILL ATTRIBUTED: the passport-style full given name in the block, a leading honorific, a hyphenated spelling
+  assert.equal(son('Mohamed Sabri', 'Rauf', { memberName: 'Sabri Rauf' }).attributedBlock, true, 'the block holds the full given name; staff typed the short one');
+  const hy = carry.planCarryOver({ sourceFields: f6Primary({ spouseGiven: 'Abdul Rahman', spouseFamily: 'Khan', blockGiven: 'Abdul-Rahman' }).fields.map((x) => (x.label === 'Family Name (Surname)' && /^Dependent/.test(x.section)) ? { ...x, value: 'Khan' } : x), memberType: 'Spouse / Common-Law Partner', memberKey: 'spouse', memberName: 'Abdul Rahman Khan' });
+  assert.equal(hy.attributedBlock, true, 'a hyphen is a space');
   const child = carry.planCarryOver({ sourceFields: src, memberType: 'Dependent Child', memberKey: 'child-1', memberName: 'Sabri' });
   assert.equal(child.total, 0, 'a child never gets the adult-shaped block');
   assert.equal(child.attributedBlock, true, '…but learns it is the spouse\'s (no warning for it)');

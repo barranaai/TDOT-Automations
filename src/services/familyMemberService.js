@@ -222,7 +222,7 @@ async function addFamilyMember(p) {
   return o.result;
 }
 
-async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', source = 'staff', actor = null, reseedMode = 'await', caseSubType = '' }) {
+async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', source = 'staff', actor = null, reseedMode = 'await', caseSubType = '', forms = null }) {
   if (!PORTAL_TO_BOARD[BOARD_TO_PORTAL[boardType]]) throw badRequest(`Unknown member type "${boardType}".`);
   if (!caseRef || !cmItemId) throw badRequest('caseRef and cmItemId are required.');
   const portalType = BOARD_TO_PORTAL[boardType];
@@ -295,7 +295,7 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
   // its section yet, so every page that will is loaded after the copy.
   if (!adopt && CARRY_TYPES.has(boardType) && carrySvc.isEnabled()) {
     try {
-      carry = await io.carryOver({ clientName, caseRef, itemId: cmItemId, memberKey, memberType: portalType, memberName: label });
+      carry = await io.carryOver({ clientName, caseRef, itemId: cmItemId, memberKey, memberType: portalType, memberName: label, forms });
     } catch (err) {
       if (err.badRequest) throw err;
       throw transient(`The client's questionnaire could not be read to copy their answers into the new section (${err.message}). Nothing was changed — try again in a minute.`);
@@ -338,7 +338,7 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
     : adapter.withMember({ members: adapterMembers }, newMember);
   let state = null;
   try { state = await io.caseState(cmItemId); } catch (err) { console.warn(`[Family] case state unreadable for ${caseRef}: ${err.message}`); }
-  const result = { ok: true, key: memberKey, boardType, portalType, rowId, rowName, label: sectionLabel || (isPlaceholderName(rowName) ? '' : rowName), manifest: manifestState, stage: (state && state.stage) || '', reseed: null, hint: '', carry: carry && { copied: carry.copied, total: carry.total, bySection: carry.bySection, unmapped: carry.unmapped, skippedSharedTable: carry.skippedSharedTable, ambiguousDependent: carry.ambiguousDependent || 0, givenName: carry.givenName || '', unmatched: !!carry.unmatched, childNames: carry.childNames || [], attributedBlock: !!carry.attributedBlock, skipped: carry.skipped || '', written: !!carry.written } };
+  const result = { ok: true, key: memberKey, boardType, portalType, rowId, rowName, label: sectionLabel || (isPlaceholderName(rowName) ? '' : rowName), manifest: manifestState, stage: (state && state.stage) || '', reseed: null, hint: '', carry: carry && { copied: carry.copied, total: carry.total, bySection: carry.bySection, unmapped: carry.unmapped, skippedSharedTable: carry.skippedSharedTable, ambiguousDependent: carry.ambiguousDependent || 0, givenName: carry.givenName || '', unmatched: !!carry.unmatched, childNames: carry.childNames || [], attributedBlock: !!carry.attributedBlock, skipped: carry.skipped || '', written: !!carry.written, crossForm: carry.crossForm && carry.crossForm.written ? { copied: carry.crossForm.copied, unmapped: carry.crossForm.unmapped || [] } : null } };
   const norm = (v) => String(v || '').trim().toLowerCase();
   const finish = async () => {
     let shape = null;
@@ -395,14 +395,16 @@ function carrySentence(c) {
   const n = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
   const tbl = c.skippedSharedTable ? ` The children's shared history table in the client's own form (${n(c.skippedSharedTable, 'answer')}) was not copied — one table for all children; it leaves the client's page now, so check it with the client.` : '';
   const amb = c.ambiguousDependent ? ` The client's own form has a "Dependent" block whose name could not be matched to the spouse (${n(c.ambiguousDependent, 'answer')}) — not copied; it leaves the client's page now, so check it with the client.`
+    : (c.attributedBlock && !c.written && c.skipped === 'has-answers') ? ' The "Dependent" block in the client\'s own form is the spouse\'s, but it was NOT copied over the answers already in the new section — it leaves the client\'s page now, so check it with the client.'
     : (c.attributedBlock && !c.written) ? ' The "Dependent" block in the client\'s own form is the spouse\'s (the name there matches) — nothing in it for this member.' : '';
-  return carryCore(c) + tbl + amb;
+  const x = c.crossForm ? ` Also pre-filled ${n(c.crossForm.copied, 'answer')} from the profile form into the member's APPLICATION-form section — the client must review them there${c.crossForm.unmapped && c.crossForm.unmapped.length ? ` (${c.crossForm.unmapped.length} profile-form answer${c.crossForm.unmapped.length === 1 ? ' has' : 's have'} no box on the application form: ${c.crossForm.unmapped.join(', ')})` : ''}.` : '';
+  return carryCore(c) + tbl + amb + x;
 }
 
 function carryCore(c) {
   if (c.written) {
     const parts = Object.entries(c.bySection || {}).map(([s, k]) => `${s} ${k}`).join(', ');
-    return ` Copied ${c.copied} answer${c.copied === 1 ? '' : 's'} the client had typed ${c.givenName ? `for ${c.givenName} ` : 'for this member '}${c.attributedBlock ? 'in the "Dependent" block of their own form (the name there matches)' : 'inside their own form'} into the new section${parts ? ` (${parts})` : ''}` +
+    return ` Copied ${c.copied} answer${c.copied === 1 ? '' : 's'} the client had typed ${c.givenName ? `for ${c.givenName} ` : 'for this member '}inside their own form${c.attributedBlock ? ' (the "Dependent" block\'s name matches)' : ''} into the new section${parts ? ` (${parts})` : ''}` +
       `${c.unmapped && c.unmapped.length ? `; no box in the new section for: ${[...new Set(c.unmapped)].join(', ')} (kept aside)` : ''}.`;
   }
   if (c.unmatched) return ` The client's own form lists ${c.childNames && c.childNames.length ? `children named ${c.childNames.join(', ')}` : 'children'}; none matched the name given (or more than one did), so nothing was copied into this section.`;

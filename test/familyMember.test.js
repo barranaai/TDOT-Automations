@@ -685,7 +685,7 @@ test('client route POST /q/:caseRef/add-member: one service call; ok with the me
     fam.addFamilyMember = async (a) => { calls.push(a); return { ok: true, key: 'child-1', portalType: 'Dependent Child', rowName: 'Child 1 (added by client)', label: 'Child', reseed: { pending: true } }; };
     let res = fakeRes(); await handler({ params: { caseRef: '2026-CEC-EE-070' }, body: { token: 't', memberType: 'Dependent Child' } }, res);
     assert.equal(res.statusCode, 200); assert.deepEqual(res.body, { ok: true, member: { key: 'child-1', type: 'Dependent Child', label: 'Child' } }, 'the client is told the questionnaire label, never the board placeholder');
-    assert.deepEqual(calls[0], { caseRef: '2026-CEC-EE-070', cmItemId: '12961158283', clientName: 'Shaveenu Singla', boardType: 'Dependent Child', source: 'client', reseedMode: 'background', caseSubType: 'CEC Accompanying Spouse & Child' });
+    assert.deepEqual(calls[0], { caseRef: '2026-CEC-EE-070', cmItemId: '12961158283', clientName: 'Shaveenu Singla', boardType: 'Dependent Child', source: 'client', reseedMode: 'background', caseSubType: 'CEC Accompanying Spouse & Child', forms: { primary: '1. Express Entry - PNP - PR Application -  Questionnaire - August 2026.html', additional: null, memberTypes: ['Spouse / Common-Law Partner', 'Dependent Child'] } });
     fam.addFamilyMember = async () => { const e = new Error('row failed'); e.transient = true; e.manifestAdded = true; e.member = { key: 'spouse', type: 'Spouse / Common-Law Partner', label: 'Spouse' }; throw e; };
     res = fakeRes(); await handler({ params: { caseRef: '2026-CEC-EE-070' }, body: { token: 't', memberType: 'Spouse / Common-Law Partner' } }, res);
     assert.equal(res.statusCode, 200); assert.equal(res.body.ok, true); assert.equal(res.body.member.key, 'spouse');
@@ -742,8 +742,8 @@ test('carry-over: runs BEFORE anything is written, only for a Spouse / Dependent
   try {
     const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff', actor: { name: 'G' } });
     assert.equal(h.calls.seq[0], 'carry');
-    assert.deepEqual(h.calls.carries, [{ clientName: BASE.clientName, caseRef: BASE.caseRef, itemId: BASE.cmItemId, memberKey: 'spouse', memberType: 'Spouse / Common-Law Partner', memberName: '' }]);
-    assert.deepEqual(r.carry, { copied: 12, total: 20, bySection: { 'Personal Details': 7, 'Marital Status': 5 }, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: '', unmatched: false, childNames: [], attributedBlock: false, skipped: '', written: true });
+    assert.deepEqual(h.calls.carries, [{ clientName: BASE.clientName, caseRef: BASE.caseRef, itemId: BASE.cmItemId, memberKey: 'spouse', memberType: 'Spouse / Common-Law Partner', memberName: '', forms: null }]);
+    assert.deepEqual(r.carry, { copied: 12, total: 20, bySection: { 'Personal Details': 7, 'Marital Status': 5 }, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: '', unmatched: false, childNames: [], attributedBlock: false, skipped: '', written: true, crossForm: null });
     assert.match(h.calls.notes[0].body, /Copied 12 answers the client had typed for this member inside their own form into the new section \(Personal Details 7, Marital Status 5\)\./);
   } finally { h.restore(); }
   const child = harness({ carry: { copied: 3, total: 9, bySection: { 'Personal Details': 3 }, unmapped: ['Date of Birth'], skippedSharedTable: 2, pct: 33, source: 'primary', target: 'child-1', written: true } });
@@ -785,7 +785,16 @@ test('carry-over: the staff-typed name reaches the copy (a child is chosen by it
 
 test('carry-over note: an F6 block attributed by name reads so', async () => {
   const h = harness({ carry: { copied: 36, total: 40, bySection: { 'Section 1 — Profile Details': 12 }, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: 'Sabri', unmatched: false, childNames: [], attributedBlock: true, written: true } });
-  try { await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', name: 'Mohamed Sabri Rauf', source: 'staff' }); assert.match(h.calls.notes[0].body, /Copied 36 answers the client had typed for Sabri in the &quot;Dependent&quot; block of their own form \(the name there matches\) into the new section/); } finally { h.restore(); }
+  try { await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', name: 'Mohamed Sabri Rauf', source: 'staff' }); assert.match(h.calls.notes[0].body, /Copied 36 answers the client had typed for Sabri inside their own form \(the &quot;Dependent&quot; block&#39;s name matches\) into the new section/); } finally { h.restore(); }
+  const re = harness({ carry: { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: 'Sabri', unmatched: false, childNames: [], attributedBlock: true, written: false, skipped: 'has-answers', existing: 3 } });
+  try { await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', name: 'Mohamed Sabri Rauf', source: 'staff' }); assert.match(re.calls.notes[0].body, /The &quot;Dependent&quot; block in the client&#39;s own form is the spouse&#39;s, but it was NOT copied over the answers already in the new section — it leaves the client&#39;s page now, so check it with the client\./); assert.doesNotMatch(re.calls.notes[0].body, /nothing in it for this member/); } finally { re.restore(); }
+  const xf = harness({ carry: { copied: 36, total: 40, bySection: { 'Section 1 — Profile Details': 12 }, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: 'Sabri', unmatched: false, childNames: [], attributedBlock: true, written: true, crossForm: { target: 'spouse-additional', copied: 16, unmapped: ['Status in Current Country (Visitor, Student, Worker, Citizen)', 'Residential Address Postal Code'], written: true } } });
+  try {
+    const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', name: 'Mohamed Sabri Rauf', source: 'staff', forms: { primary: 'F6', additional: 'F1' } });
+    assert.deepEqual(xf.calls.carries[0].forms, { primary: 'F6', additional: 'F1' });
+    assert.deepEqual(r.carry.crossForm, { copied: 16, unmapped: ['Status in Current Country (Visitor, Student, Worker, Citizen)', 'Residential Address Postal Code'] });
+    assert.match(xf.calls.notes[0].body, /Also pre-filled 16 answers from the profile form into the member&#39;s APPLICATION-form section — the client must review them there \(2 profile-form answers have no box on the application form: Status in Current Country \(Visitor, Student, Worker, Citizen\), Residential Address Postal Code\)\./);
+  } finally { xf.restore(); }
 });
 
 test('carry-over: a storage failure ABORTS the add before any write (transient, retry later); a "client may still be typing" refusal reaches staff as it is', async () => {
@@ -832,6 +841,7 @@ test('the cockpit tells staff what was copied (plain quotes only in the template
   const src = fs.readFileSync(require.resolve('../src/routes/adminCase.js'), 'utf8');
   assert.match(src, /var cy = res\.j\.carry \|\| null;/);
   assert.match(src, /Copied ' \+ cy\.copied \+ ' answer\(s\) the client had typed for this member in their own form into the new section\./);
+  assert.match(src, /if \(cy && cy\.crossForm\) carried \+= ' Also pre-filled ' \+ cy\.crossForm\.copied \+ ' answer\(s\) into the application form section - the client must review them\.';/);
   assert.match(src, /The new section already had answers, so nothing was copied over it\./);
   const server = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
   assert.match(server, /app\.post\('\/admin\/questionnaire\/:caseRef\/carry-over'/);
