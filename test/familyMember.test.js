@@ -743,7 +743,7 @@ test('carry-over: runs BEFORE anything is written, only for a Spouse / Dependent
     const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff', actor: { name: 'G' } });
     assert.equal(h.calls.seq[0], 'carry');
     assert.deepEqual(h.calls.carries, [{ clientName: BASE.clientName, caseRef: BASE.caseRef, itemId: BASE.cmItemId, memberKey: 'spouse', memberType: 'Spouse / Common-Law Partner', memberName: '' }]);
-    assert.deepEqual(r.carry, { copied: 12, total: 20, bySection: { 'Personal Details': 7, 'Marital Status': 5 }, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: '', unmatched: false, childNames: [], skipped: '', written: true });
+    assert.deepEqual(r.carry, { copied: 12, total: 20, bySection: { 'Personal Details': 7, 'Marital Status': 5 }, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: '', unmatched: false, childNames: [], attributedBlock: false, skipped: '', written: true });
     assert.match(h.calls.notes[0].body, /Copied 12 answers the client had typed for this member inside their own form into the new section \(Personal Details 7, Marital Status 5\)\./);
   } finally { h.restore(); }
   const child = harness({ carry: { copied: 3, total: 9, bySection: { 'Personal Details': 3 }, unmapped: ['Date of Birth'], skippedSharedTable: 2, pct: 33, source: 'primary', target: 'child-1', written: true } });
@@ -763,8 +763,13 @@ test('carry-over note: a dual-form main form\'s unattributed dependent block is 
   const h = harness({ carry: { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 3, written: false, skipped: 'nothing' } });
   try {
     await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
-    assert.match(h.calls.notes[0].body, /The client&#39;s own form has a &quot;Dependent&quot; block that does not say whose it is \(3 answers\) — not copied; it leaves the client&#39;s page now, so check it with the client\./);
+    assert.match(h.calls.notes[0].body, /The client&#39;s own form has a &quot;Dependent&quot; block whose name could not be matched to the spouse \(3 answers\) — not copied; it leaves the client&#39;s page now, so check it with the client\./);
   } finally { h.restore(); }
+  const kid = harness({ carry: { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: '', unmatched: false, childNames: [], attributedBlock: true, written: false, skipped: 'nothing' } });
+  try {
+    await fam.addFamilyMember({ ...BASE, boardType: 'Dependent Child', name: 'Ayaan', source: 'staff' });
+    assert.match(kid.calls.notes[0].body, /The &quot;Dependent&quot; block in the client&#39;s own form is the spouse&#39;s \(the name there matches\) — nothing in it for this member\./);
+  } finally { kid.restore(); }
 });
 
 test('carry-over: the staff-typed name reaches the copy (a child is chosen by it); a name that matches no single child copies nothing and says so', async () => {
@@ -776,6 +781,11 @@ test('carry-over: the staff-typed name reaches the copy (a child is chosen by it
   } finally { h.restore(); }
   const ok = harness({ carry: { copied: 4, total: 9, bySection: { 'Personal Details': 4 }, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: 'Diya', unmatched: false, childNames: ['Aarav', 'Diya'], written: true } });
   try { await fam.addFamilyMember({ ...BASE, boardType: 'Dependent Child', name: 'Diya', source: 'staff' }); assert.match(ok.calls.notes[0].body, /Copied 4 answers the client had typed for Diya inside their own form/); } finally { ok.restore(); }
+});
+
+test('carry-over note: an F6 block attributed by name reads so', async () => {
+  const h = harness({ carry: { copied: 36, total: 40, bySection: { 'Section 1 — Profile Details': 12 }, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: 'Sabri', unmatched: false, childNames: [], attributedBlock: true, written: true } });
+  try { await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', name: 'Mohamed Sabri Rauf', source: 'staff' }); assert.match(h.calls.notes[0].body, /Copied 36 answers the client had typed for Sabri in the &quot;Dependent&quot; block of their own form \(the name there matches\) into the new section/); } finally { h.restore(); }
 });
 
 test('carry-over: a storage failure ABORTS the add before any write (transient, retry later); a "client may still be typing" refusal reaches staff as it is', async () => {

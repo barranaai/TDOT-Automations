@@ -120,7 +120,7 @@ test('a table row the client REMOVED from a table still on his page is not broug
   assert.equal(flipped.live, 0, 'nothing live: the page no longer shows these boxes');
 });
 
-test('a dual-form main form\'s "Dependent (If Accompany)" block is counted as unattributed, never planned for a member', () => {
+test('a dual-form main form\'s "Dependent (If Accompany)" block is counted as unattributed and NOT planned for a member when nothing names the spouse (no staff-typed name, no "Spouse’s Given Name" in the principal\'s answers)', () => {
   const f6 = [F('Dependent (If Accompany) › Section 1 — Profile Details', 'Given Name', 'k', 'Priya'), F('Dependent (If Accompany) › Section 1 — Profile Details', 'Height', 'k2', '')];
   assert.equal(carry.countAmbiguousDependent(f6), 1);
   assert.equal(carry.planCarryOver({ sourceFields: f6, memberType: 'Spouse / Common-Law Partner' }).total, 0);
@@ -418,7 +418,7 @@ test('a storage failure throws (err.transient) — an outage never reads as "not
   finally { restore(); w.restore(); }
 });
 
-test('dual-form case: F1 in primary-additional goes to <member>-additional; the main form\'s unattributed "Dependent (If Accompany)" block is counted, never copied', async () => {
+test('dual-form case: F1 in primary-additional goes to <member>-additional; the main form\'s "Dependent (If Accompany)" block is counted, not copied when nothing names the spouse', async () => {
   const F6 = { fields: [F('Main Applicant › Section 1 — Profile Details', 'Given Name', 'k1', 'Rizwan'), F('Dependent (If Accompany) › Section 1 — Profile Details', 'Given Name', 'k2', 'Priya'), F('Dependent (If Accompany) › Section 1 — Profile Details', 'Height', 'k3', '')], completionPct: 1, savedAt: '2026-10-01T00:00:00Z' };
   const w = world({ primary: F6, 'primary-additional': { ...PRIMARY, savedAt: '2026-10-01T00:00:00Z' } });
   try {
@@ -518,6 +518,98 @@ test('the children\'s shared history table and any unattributed "Dependent" bloc
 
 test('the shared save path carries NO carry-over special case (every page that shows a member section was loaded after the copy)', () => {
   assert.doesNotMatch(ENGINE_SRC, /carriedHeld|carry-over'.*kept: true/);
+});
+
+/* ───────────────────────── the Express Entry profile forms (F6 / F19): one "Dependent (If Accompany)" block ───────────────────────── */
+
+const F6 = '6. Express Entry Profile - PNP Profile Creation - Questionnair - July 2025.html';
+const DEP = 'Dependent (If Accompany)';
+const f6Primary = ({ spouseGiven = 'Mohamed Sabri', spouseFamily = 'Rauf', blockGiven = 'Sabri', accompany = 'Yes' } = {}) => ({
+  fields: [
+    F(`${MA} › Section 1 — Profile Details`, 'Given Name', 'main-applicant-section-1-profile-details-given-name', 'Fathima Bushra'),
+    F(`${MA} › Section 1 — Profile Details`, 'Current Marital Status', 'main-applicant-section-1-profile-details-current-marital-status', 'Married'),
+    F(`${MA} › Section 1 — Profile Details`, 'Accompany to the Application? (If yes, please provide details in dependent section)', 'main-applicant-section-1-profile-details-accompany-to-the-application-if-yes-please-provide', accompany),
+    F(`${MA} › Section 1 — Profile Details`, 'Spouse’s Given Name', 'main-applicant-section-1-profile-details-spouse-s-given-name', spouseGiven),
+    F(`${MA} › Section 1 — Profile Details`, 'Spouse’s Family Name', 'main-applicant-section-1-profile-details-spouse-s-family-name', spouseFamily),
+    F(`${DEP} › Section 1 — Profile Details`, 'Family Name (Surname)', 'dependent-if-accompany-section-1-profile-details-family-name-surname', 'Rauf'),
+    F(`${DEP} › Section 1 — Profile Details`, 'Given Name', 'dependent-if-accompany-section-1-profile-details-given-name', blockGiven),
+    F(`${DEP} › Section 1 — Profile Details`, 'Height', 'dependent-if-accompany-section-1-profile-details-height', ''),
+    F(`${DEP} › Section 2 — Education › Table`, 'Course / Program Name — Row 1', 'dependent-if-accompany-section-2-education-tbl-dep-education-r1-course-program-name', 'Bachelor of Science'),
+    F(`${DEP} › Section 2 — Employment History › Table`, 'Company Name — Row 2', 'dependent-if-accompany-section-2-employment-history-tbl-dep-employment-r2-company-name', 'Bhasha Lanka'),
+  ],
+  completionPct: 98, savedAt: '2026-09-30T11:33:22Z', formFile: F6,
+});
+
+test('F6: the one "Dependent (If Accompany)" block is copied to the SPOUSE only when EVERY word of its Given Name is a word of the spouse\'s name (staff-typed or the principal\'s own answer) and the spouse accompanies; tables re-keyed; nothing for a child', () => {
+  const src = f6Primary().fields;
+  const typed = carry.planCarryOver({ sourceFields: src, memberType: 'Spouse / Common-Law Partner', memberKey: 'spouse', memberName: 'Mohamed Sabri Rauf' });
+  assert.equal(typed.attributedBlock, true); assert.equal(typed.givenName, 'Sabri'); assert.equal(typed.copied, 4); assert.equal(typed.total, 5);
+  assert.deepEqual(typed.fields.map((f) => [f.section, f.label, f.key]), [
+    ['Section 1 — Profile Details', 'Family Name (Surname)', 'dependent-if-accompany-section-1-profile-details-family-name-surname'],
+    ['Section 1 — Profile Details', 'Given Name', 'dependent-if-accompany-section-1-profile-details-given-name'],
+    ['Section 1 — Profile Details', 'Height', 'dependent-if-accompany-section-1-profile-details-height'],
+    ['Section 2 — Education › Table', 'Course / Program Name — Row 1', 'section-2-education-tbl-spouse-dep-education-r1-course-program-name'],
+    ['Section 2 — Employment History › Table', 'Company Name — Row 2', 'section-2-employment-history-tbl-spouse-dep-employment-r2-company-name'],
+  ]);
+  const byPrincipal = carry.planCarryOver({ sourceFields: src, memberType: 'Spouse / Common-Law Partner', memberKey: 'spouse' });
+  assert.equal(byPrincipal.attributedBlock, true, 'no name typed: the principal\'s own "Spouse’s Given Name = Mohamed Sabri" shares the word Sabri');
+  const plan = (over, opts) => carry.planCarryOver({ sourceFields: f6Primary(over).fields, memberType: 'Spouse / Common-Law Partner', memberKey: 'spouse', ...opts });
+  assert.equal(plan({ spouseGiven: '', spouseFamily: '' }, { memberName: 'Fatima Noor' }).attributedBlock, false, 'a typed name that shares nothing, and no clue from the principal');
+  assert.equal(plan({ spouseGiven: '', spouseFamily: '' }, {}).attributedBlock, false, 'nothing to match against: never a guess');
+  assert.equal(plan({}, { memberName: 'Mohamed Rauf' }).attributedBlock, true, 'staff omitted "Sabri": the principal\'s own "Spouse’s Given Name = Mohamed Sabri" still proves it (the two names are joined)');
+  assert.equal(plan({}, { memberName: 'Spouse' }).attributedBlock, true, 'a placeholder "name" is no name: the principal\'s answer decides');
+  // REFUSED: a block that is someone else's, even when a word is shared
+  assert.equal(plan({ blockGiven: 'Mohamed Ayaan' }, { memberName: 'Mohamed Sabri Rauf' }).attributedBlock, false, 'a son named after the father: "ayaan" is not a word of the spouse\'s name');
+  assert.equal(plan({ blockGiven: 'Mohamed Ayaan' }, {}).attributedBlock, false);
+  assert.equal(plan({ blockGiven: 'Rauf' }, { memberName: 'Mohamed Sabri Rauf' }).attributedBlock, false, 'only the family name: proves nothing');
+  assert.equal(plan({ blockGiven: 'Ayaan Rauf' }, { memberName: 'Mohamed Sabri Rauf' }).attributedBlock, false);
+  assert.equal(plan({ accompany: 'No' }, { memberName: 'Mohamed Sabri Rauf' }).attributedBlock, false, 'the principal said the spouse is not accompanying: the block is someone else\'s');
+  assert.equal(plan({ accompany: '' }, { memberName: 'Mohamed Sabri Rauf' }).attributedBlock, true, 'a blank answer never refuses');
+  const child = carry.planCarryOver({ sourceFields: src, memberType: 'Dependent Child', memberKey: 'child-1', memberName: 'Sabri' });
+  assert.equal(child.total, 0, 'a child never gets the adult-shaped block');
+  assert.equal(child.attributedBlock, true, '…but learns it is the spouse\'s (no warning for it)');
+  const f3 = [F(`${MA} › Section 1 — Profile Details › Marital Status`, 'Spouse’s Given Name', 'ms-prev', 'Rizwan'), F('Dependent Applicant › Section 1 — Profile Details', 'Given Name', 'dep-given', 'Rizwan'), F('Dependent Applicant › Section 1 — Profile Details', 'Height', 'dep-h', '120')];
+  assert.equal(carry.planCarryOver({ sourceFields: f3, memberType: 'Spouse / Common-Law Partner', memberKey: 'spouse', memberName: 'Rizwan Khan' }).attributedBlock, false, 'the visitor / work-permit forms\' "Dependent Applicant" is never attributed by name');
+  assert.deepEqual(carry.nameTokens('Mohamed Sabri Rauf'), ['mohamed', 'sabri', 'rauf']);
+  assert.equal(carry.spouseNameFromPrincipal(src), 'Mohamed Sabri Rauf');
+});
+
+test('F6 I/O (a case like 2026-CEC-PS-100): the spouse add copies the block, tagged, into questionnaire-<ref>-spouse.json with no "unattributed" warning; a child add copies nothing and warns only when the block is nobody\'s', async () => {
+  const w = world({ primary: f6Primary() });
+  try {
+    const r = await carry.carryEmbeddedAnswers({ ...base(w), memberName: 'Mohamed Sabri Rauf' });
+    assert.equal(r.written, true); assert.equal(r.attributedBlock, true); assert.equal(r.ambiguousDependent, 0); assert.equal(r.copied, 4); assert.equal(r.givenName, 'Sabri');
+    assert.deepEqual(w.uploads, [`questionnaire-${w.caseRef}-spouse.json`]);
+    const sp = w.file('spouse');
+    assert.equal(sp.formFile, F6); assert.ok(sp.fields.every((f) => f.source === 'carry-over'));
+    assert.deepEqual(w.file('primary'), f6Primary(), 'the principal\'s file untouched');
+  } finally { w.restore(); }
+  const c = world({ primary: f6Primary() });
+  try {
+    const r = await carry.carryEmbeddedAnswers({ ...base(c), memberKey: 'child-1', memberType: 'Dependent Child', memberName: 'Ayaan' });
+    assert.equal(r.skipped, 'nothing'); assert.equal(r.ambiguousDependent, 0, 'the block is the spouse\'s by the principal\'s own answer: no warning on a child add'); assert.equal(r.attributedBlock, true); assert.deepEqual(c.uploads, []);
+    const unknown = world({ primary: f6Primary({ spouseGiven: '', spouseFamily: '' }) });
+    try { const u = await carry.carryEmbeddedAnswers({ ...base(unknown), memberKey: 'child-1', memberType: 'Dependent Child' }); assert.equal(u.ambiguousDependent, 4, 'no clue whose it is: reported'); } finally { unknown.restore(); }
+  } finally { c.restore(); }
+});
+
+test('REAL F6 FORM: the block\'s sub-sections and tables are what the member section stores (top header stripped; table ids dep-education / dep-employment / dep-vacation prefixed with the member key)', () => {
+  const html = fs.readFileSync(path.join(FORMS_DIR, F6), 'utf8');
+  const start = html.indexOf('Dependent (If Accompany)');
+  assert.ok(start > 0);
+  const block = html.slice(start);
+  const subs = [...block.matchAll(/<div class="sub-accordion-header"[^>]*onclick="toggleSub\(this\)">([\s\S]*?)<\/div>/g)].map((m) => decode(m[1]));
+  assert.deepEqual(subs.slice(0, 3), ['Section 1 — Profile Details', 'Section 2 — Education', 'Section 2 — Employment History']);
+  const tables = [...block.matchAll(/<table class="dynamic-table" id="([a-z0-9-]+)">/g)].map((m) => m[1]);
+  assert.deepEqual(tables, ['dep-education', 'dep-employment', 'dep-vacation']);
+  // the page's own section-name code on an F6-shaped DOM
+  const single = spouseDom({ headerText: DEP });
+  const multi = spouseDom({ memberKey: 'spouse', headerText: '💍  Mohamed Sabri Rauf' });
+  const e1 = sectionEngine(false, single.body), e2 = sectionEngine(true, multi.body);
+  const sub = 'Personal Details';   // spouseDom's first sub-section stands in for "Section 1 — Profile Details"
+  assert.equal(e1.getSectionContext(single.inputs[sub]), `${DEP} › ${sub}`);
+  assert.equal(e2.getSectionContext(multi.inputs[sub]), sub);
+  assert.equal(carry.rekeyTableCell(F('Section 2 — Education › Table', 'Course / Program Name — Row 1', 'dependent-if-accompany-section-2-education-tbl-dep-education-r1-course-program-name', 'x'), 'spouse'), carry.memberTableKey('Section 2 — Education', 'spouse-dep-education', 1, 'Course / Program Name'));
 });
 
 /* ───────────────────────── the save path ───────────────────────── */

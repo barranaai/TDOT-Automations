@@ -30,6 +30,17 @@
  *   - value: unchanged; empties included, so the order of repeated labels
  *     (table rows, child blocks) is preserved.
  *
+ * Forms whose principal page embeds ONE "Dependent (If Accompany)" block (the
+ * Express Entry profile forms F6 / F19) do not say whose it is. That block is
+ * copied to the SPOUSE only when it is proven to be hers: EVERY word of the
+ * Given Name typed in the block (its own family-name words aside) is a word of
+ * the spouse's name — the name staff give, or the spouse's name the principal
+ * gave in their own answers ("Spouse's Given Name") — and the principal did
+ * not answer "No" to "Accompany to the Application?". Otherwise it is
+ * reported, never guessed. The visitor / work-permit forms' "Dependent
+ * Applicant" block is never copied (those forms repeat the spouse's name under
+ * a previous marriage, so a name proves nothing there).
+ *
  * WHEN it runs (scope — the safety of the whole feature rests on it): only
  * while a member is being ADDED and is not yet on the questionnaire list. No
  * page anywhere shows that member's section yet, so every page that will ever
@@ -60,6 +71,7 @@
  */
 
 const htmlQ = require('./htmlQuestionnaireService');
+const { isPlaceholderName } = require('../utils/memberNames');
 
 const SEP = ' › ';
 const RECENT_SAVE_MS = 10 * 60 * 1000;
@@ -87,8 +99,10 @@ const hasValue  = (f) => !!f && String(f.value == null ? '' : f.value).trim() !=
 const topOf     = (section) => String(section || '').split(SEP)[0].trim();
 const restOf    = (section) => { const s = String(section || ''); const i = s.indexOf(SEP); return i < 0 ? '' : s.slice(i + SEP.length); };
 const ROW_RE    = /\s—\sRow\s\d+$/;
-/** ONE dependent block that does not say whose it is — F6/F19 "Dependent (If Accompany…)", F3/F8 "Dependent Applicant": never copied (a guess between spouse and child), only reported. */
+/** ONE dependent block that does not say whose it is — F6/F19 "Dependent (If Accompany…)", F3/F8 "Dependent Applicant": reported; copied only when attributed to the spouse by name (F6/F19 only, see planCarryOver). */
 const AMBIGUOUS_DEPENDENT = (top) => /^dependent\s+(\(if accompany|applicant\b)/i.test(top);
+/** Only the F6/F19 block may be attributed by name: those forms name the spouse ONCE. F3/F8 repeat "Spouse's Given Name" inside the previous-marriage block. */
+const ACCOMPANY_DEPENDENT = (top) => /^dependent\s+\(if accompany/i.test(top);
 
 /* The client engine's own slug rules (htmlQuestionnaireService client script:
    slugify / slugifyFull — the "replace(/^-+|-+$/, '')" WITHOUT the g flag is
@@ -120,6 +134,18 @@ function rekeyTableCell(f, memberKey) {
   return memberTableKey(section2, `${memberKey}-${tblM[1]}`, Number(rowM[1]), header);
 }
 
+/** PURE: the words of a person's name, lower-cased. */
+const nameTokens = (s) => String(s || '').toLowerCase().replace(/[^a-z\u00c0-\u024f\s'-]/g, ' ').split(/\s+/).filter((w) => w.length > 1);
+/** PURE: the principal's OWN answer (never a dependent section's) to the first label matching `re`. */
+function principalAnswer(fields, re) {
+  const f = (Array.isArray(fields) ? fields : []).find((x) => x && !/^dependent/i.test(topOf(x.section)) && hasValue(x) && re.test(String(x.label || '').trim()));
+  return f ? String(f.value).trim() : '';
+}
+/** PURE: the spouse's given/family name the principal gave in their OWN answers (F6 "Spouse’s Given Name" …). */
+function spouseNameFromPrincipal(fields) {
+  return `${principalAnswer(fields, /^spouse[’']s given name/i)} ${principalAnswer(fields, /^spouse[’']s family name/i)}`.trim();
+}
+
 /** PURE: the index a key like "child-2" names (1 for "child-1" / "spouse"). */
 function memberIndexOf(memberKey) {
   const m = /-(\d+)$/.exec(String(memberKey || ''));
@@ -144,7 +170,7 @@ function childBlockOf(f) {
  */
 function planCarryOver({ sourceFields = [], sourceSetAside = [], memberType, memberIndex = 1, memberKey = '', memberName = '' } = {}) {
   const spec = EMBEDDED[memberType];
-  const empty = { fields: [], copied: 0, total: 0, live: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, pct: 0, givenName: '', unmatched: false, childNames: [] };
+  const empty = { fields: [], copied: 0, total: 0, live: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, pct: 0, givenName: '', unmatched: false, childNames: [], attributedBlock: false };
   if (!spec) return empty;
   const seen = new Set();
   const pick = [];
@@ -173,6 +199,44 @@ function planCarryOver({ sourceFields = [], sourceSetAside = [], memberType, mem
   const unmapped = [];
   let skippedSharedTable = 0;
   let givenName = '', unmatched = false, childNames = [];
+  let attributedBlock = false;
+  const typedName = isPlaceholderName(memberName) ? '' : String(memberName || '');   // "Spouse", "Child 2 (added by staff)" … are no name
+  if (pick.length === 0) {
+    // No section of this member's own on this form: is the ONE "Dependent (If
+    // Accompany)" block the SPOUSE's? Proven when every word of the Given Name
+    // typed there (its family-name words aside) is a word of the spouse's name
+    // — the name staff typed for a spouse, or the spouse's name the principal
+    // gave — and the principal did not say the spouse is not accompanying.
+    // Copied only on a spouse add; a child add only learns it is not theirs.
+    const block = [];
+    for (const f of Array.isArray(sourceFields) ? sourceFields : []) {
+      if (!f || isPrefill(f) || !ACCOMPANY_DEPENDENT(topOf(f.section))) continue;
+      block.push({ section: String(f.section || ''), label: String(f.label || ''), key: String(f.key || ''), value: f.value == null ? '' : String(f.value), live: true });
+    }
+    const blockLive = new Set(block.map((f) => f.section));
+    for (const f of Array.isArray(sourceSetAside) ? sourceSetAside : []) {
+      if (!f || isPrefill(f) || !hasValue(f) || !ACCOMPANY_DEPENDENT(topOf(f.section))) continue;
+      if (ROW_RE.test(String(f.label || '')) && blockLive.has(String(f.section || ''))) continue;
+      const sig = `${f.section}\u0000${f.label}\u0000${f.key}`;
+      if (block.some((b) => `${b.section}\u0000${b.label}\u0000${b.key}` === sig)) continue;
+      block.push({ section: String(f.section || ''), label: String(f.label || ''), key: String(f.key || ''), value: String(f.value), live: false });
+    }
+    if (block.some(hasValue)) {
+      const given = block.find((f) => /^given name/i.test(f.label) && !ROW_RE.test(f.label) && hasValue(f));
+      const family = block.find((f) => /^family name/i.test(f.label) && !ROW_RE.test(f.label) && hasValue(f));
+      const familyWords = new Set(nameTokens(family && family.value));
+      const words = given ? nameTokens(given.value).filter((w) => !familyWords.has(w)) : [];
+      const wanted = new Set([...(spec.kind === 'spouse' ? nameTokens(typedName) : []), ...nameTokens(spouseNameFromPrincipal(sourceFields))]);
+      const accompany = principalAnswer(sourceFields, /^accompany/i);
+      if (words.length && wanted.size && words.every((w) => wanted.has(w)) && !/^no\b/i.test(accompany)) {
+        attributedBlock = true;
+        if (spec.kind === 'spouse') {
+          givenName = String(given.value).trim();
+          for (const b of block) { if (b.live) live++; seen.add(`${b.section}\u0000${b.label}\u0000${b.key}`); pick.push({ section: b.section, label: b.label, key: b.key, value: b.value }); }
+        }
+      }
+    }
+  }
   if (spec.kind === 'spouse') {
     out = pick.map((f) => {
       const g = { section: restOf(f.section), label: f.label, key: f.key, value: f.value };
@@ -199,7 +263,7 @@ function planCarryOver({ sourceFields = [], sourceSetAside = [], memberType, mem
     }
     childNames = [...blocks.values()];
     let n = Math.max(1, Number(memberIndex) || 1);
-    const want = firstWord(memberName);
+    const want = firstWord(typedName);   // a placeholder "name" is no name
     if (want && blocks.size) {
       const hits = [...blocks.entries()].filter(([, g]) => firstWord(g) === want);
       if (hits.length !== 1) unmatched = true;
@@ -232,10 +296,10 @@ function planCarryOver({ sourceFields = [], sourceSetAside = [], memberType, mem
   // A child's section holds far more boxes than its 9 embedded labels: no %
   // for a child (the page computes the real one on the client's next save).
   const pct = (spec.kind === 'spouse' && total) ? Math.round(100 * copied / total) : 0;
-  return { fields: out, copied, total, live, bySection, unmapped, skippedSharedTable, pct, givenName, unmatched: false, childNames };
+  return { fields: out, copied, total, live, bySection, unmapped, skippedSharedTable, pct, givenName, unmatched: false, childNames, attributedBlock };
 }
 
-/** PURE: answered fields in a dual-form main form's unattributed dependent block (reported, never copied). */
+/** PURE: answered fields in an unattributed dependent block (reported; copied only when attributed to the spouse by name). */
 function countAmbiguousDependent(fields) {
   return (Array.isArray(fields) ? fields : []).filter((f) => f && !isPrefill(f) && hasValue(f) && AMBIGUOUS_DEPENDENT(topOf(f.section))).length;
 }
@@ -285,7 +349,7 @@ const io = {
  * @returns {Promise<object>} { copied, total, bySection, unmapped, skippedSharedTable, ambiguousDependent, written, recopied, skipped?, existing?, slots[] }
  */
 async function carryEmbeddedAnswers({ clientName, caseRef, itemId, memberKey, memberType, memberName = '', dryRun = false }) {
-  const none = { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: '', unmatched: false, childNames: [], written: false, recopied: false, slots: [] };
+  const none = { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: '', unmatched: false, childNames: [], attributedBlock: false, written: false, recopied: false, slots: [] };
   if (!EMBEDDED[memberType]) return { ...none, skipped: 'type' };
   if (!clientName || !caseRef || !memberKey) { const e = new Error('clientName, caseRef and memberKey are required.'); e.badRequest = true; throw e; }
   const memberIndex = memberIndexOf(memberKey);
@@ -296,8 +360,9 @@ async function carryEmbeddedAnswers({ clientName, caseRef, itemId, memberKey, me
   for (const slot of ['primary', 'primary-additional']) {
     const src = await io.readSource({ clientName, caseRef, formKey: slot });    // throws transient
     if (!src) continue;
-    result.ambiguousDependent += countAmbiguousDependent(src.fields);
     const plan = planCarryOver({ sourceFields: src.fields, sourceSetAside: src.setAside, memberType, memberIndex, memberKey, memberName });
+    if (!plan.attributedBlock) result.ambiguousDependent += countAmbiguousDependent(src.fields);
+    else result.attributedBlock = true;
     const target = slot === 'primary-additional' ? `${memberKey}-additional` : memberKey;
     const info = { source: slot, target, copied: plan.copied, total: plan.total };
     result.skippedSharedTable += plan.skippedSharedTable;   // reported whether or not anything is copied
@@ -345,4 +410,4 @@ async function carryEmbeddedAnswers({ clientName, caseRef, itemId, memberKey, me
   return result;
 }
 
-module.exports = { planCarryOver, mergeOverPrefill, carryEmbeddedAnswers, countAmbiguousDependent, memberIndexOf, childBlockOf, memberTableKey, rekeyTableCell, slugifyFull, isEnabled, isCarried, io, EMBEDDED, CHILD_LABEL_MAP, CHILD_NO_BOX, RECENT_SAVE_MS, CARRY_TAG };
+module.exports = { planCarryOver, mergeOverPrefill, carryEmbeddedAnswers, countAmbiguousDependent, spouseNameFromPrincipal, principalAnswer, nameTokens, memberIndexOf, childBlockOf, memberTableKey, rekeyTableCell, slugifyFull, isEnabled, isCarried, io, EMBEDDED, CHILD_LABEL_MAP, CHILD_NO_BOX, RECENT_SAVE_MS, CARRY_TAG };
