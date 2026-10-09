@@ -792,9 +792,11 @@ test('carry-over note: an F6 block attributed by name reads so', async () => {
   try {
     const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', name: 'Mohamed Sabri Rauf', source: 'staff', forms: { primary: 'F6', additional: 'F1' } });
     assert.deepEqual(xf.calls.carries[0].forms, { primary: 'F6', additional: 'F1' });
-    assert.deepEqual(r.carry.crossForm, { copied: 16, unmapped: ['Status in Current Country (Visitor, Student, Worker, Citizen)', 'Residential Address Postal Code'] });
+    assert.deepEqual(r.carry.crossForm, { copied: 16, unmapped: ['Status in Current Country (Visitor, Student, Worker, Citizen)', 'Residential Address Postal Code'], skipped: '' });
     assert.match(xf.calls.notes[0].body, /Also pre-filled 16 answers from the profile form into the member&#39;s APPLICATION-form section — the client must review them there \(2 profile-form answers have no box on the application form: Status in Current Country \(Visitor, Student, Worker, Citizen\), Residential Address Postal Code\)\./);
   } finally { xf.restore(); }
+  const old = harness({ carry: { copied: 36, total: 40, bySection: { 'Section 1 — Profile Details': 12 }, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: 'Sabri', unmatched: false, childNames: [], attributedBlock: true, written: true, crossForm: { target: 'spouse-additional', copied: 0, unmapped: [], written: false, skipped: 'legacy-edition' } } });
+  try { await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', name: 'Mohamed Sabri Rauf', source: 'staff', forms: { primary: 'F6', additional: 'F1' } }); assert.match(old.calls.notes[0].body, /The application form on this case is an older edition, so nothing was pre-filled there from the profile form\./); } finally { old.restore(); }
 });
 
 test('carry-over: a storage failure ABORTS the add before any write (transient, retry later); a "client may still be typing" refusal reaches staff as it is', async () => {
@@ -841,7 +843,7 @@ test('the cockpit tells staff what was copied (plain quotes only in the template
   const src = fs.readFileSync(require.resolve('../src/routes/adminCase.js'), 'utf8');
   assert.match(src, /var cy = res\.j\.carry \|\| null;/);
   assert.match(src, /Copied ' \+ cy\.copied \+ ' answer\(s\) the client had typed for this member in their own form into the new section\./);
-  assert.match(src, /if \(cy && cy\.crossForm\) carried \+= ' Also pre-filled ' \+ cy\.crossForm\.copied \+ ' answer\(s\) into the application form section - the client must review them\.';/);
+  assert.match(src, /if \(cy && cy\.crossForm && cy\.crossForm\.copied\) carried \+= ' Also pre-filled ' \+ cy\.crossForm\.copied \+ ' answer\(s\) into the application form section - the client must review them\.';/);
   assert.match(src, /The new section already had answers, so nothing was copied over it\./);
   const server = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
   assert.match(server, /app\.post\('\/admin\/questionnaire\/:caseRef\/carry-over'/);

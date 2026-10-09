@@ -66,8 +66,10 @@ test('REAL FORMS: every mapped source question exists in the profile form\'s dep
     }
   }
   for (const l of cross.NO_TARGET) assert.ok(dep.some((q) => q.label === l), `"${l}" is a profile-form question`);
+  for (const [sec, l] of cross.MAP_SIBLINGS.from) assert.ok(has(dep, sec, l), `profile form has "${l}"`);
+  assert.ok(has(sp, cross.MAP_SIBLINGS.to[0], cross.MAP_SIBLINGS.to[1]));
   // nothing answered in the block is silently forgotten: every box label is mapped or listed as having no target
-  const mapped = new Set([...cross.MAP_BOXES.map(([[, l]]) => l), ...cross.NO_TARGET]);
+  const mapped = new Set([...cross.MAP_BOXES.map(([[, l]]) => l), ...cross.MAP_SIBLINGS.from.map(([, l]) => l), ...cross.NO_TARGET]);
   for (const q of dep.filter((q) => q.label)) assert.ok(mapped.has(q.label), `"${q.label}" is mapped or listed`);
 });
 
@@ -115,14 +117,41 @@ test('the plan: boxes by exact question, the spouse\'s "Marital Status" from the
   assert.equal(by['Section 4 — Education and Employment › Table | Course / Program — Row 1'], 'Bachelor of Science');
   assert.equal(by['Section 4 — Education and Employment › Table | Institute — Row 1'], 'University of Colombo');
   assert.equal(by['Section 4 — Education and Employment › Table | Country — Row 1'], 'Sri Lanka', 'the country is the part after the last comma');
+  assert.equal(by['Section 4 — Education and Employment › Table | City (Address with Postal Code) — Row 1'], 'Colombo', 'no campus address typed: the city is the part before the comma');
   assert.equal(by['Section 5 — Personal History › Table | Job Title / Education — Row 2'], 'Cook');
   assert.equal(by['Section 5 — Personal History › Table | Company / School — Row 2'], 'Bhasha Lanka');
   assert.equal(by['Section 5 — Personal History › Table | City & Country (Address with Postal Code) — Row 2'], 'Toronto, Canada');
-  assert.equal(p.copied, 16);
+  assert.equal(p.copied, 17);
   assert.ok(p.fields.every((f) => f.source === 'prefill'), 'every pre-filled answer is tagged for review');
   const cell = p.fields.find((f) => f.label === 'Course / Program — Row 1');
   assert.equal(cell.key, carry.memberTableKey('Section 4 — Education and Employment', 'spouse-sp-education', 1, 'Course / Program'), 'the box\'s own key');
-  assert.deepEqual(p.unmapped, ['Status in Current Country (Visitor, Student, Worker, Citizen)', 'Residential Address Postal Code', 'Start Date (DD/MM/YYYY)'], 'answered on the profile form, no box on the application form (the vacation table included)');
+  assert.deepEqual(p.unmapped, ['Status in Current Country (Visitor, Student, Worker, Citizen)', 'Residential Address Postal Code', 'vacation table: Start Date (DD/MM/YYYY)'], 'answered on the profile form, no box on the application form (the vacation table named as such)');
+  // the siblings question: yes/no + province become one answer; a campus address wins over the city; no comma → no country
+  const q = cross.planCrossFormPrefill({ memberKey: 'spouse', memberFields: [
+    F('Section 1 — Profile Details', 'Do you have siblings in Canada as a Permanent Resident?', 'k-sib', 'yes'),
+    F('Section 1 — Profile Details', 'If yes, in which province he/she resides', 'k-prov', 'Ontario'),
+    F('Section 2 — Education › Table', 'Campus Address with Postal Code — Row 1', 'section-2-education-tbl-spouse-dep-education-r1-campus-address-with-postal-code', '12 Main St, Colombo 00100'),
+    F('Section 2 — Education › Table', 'City, Country — Row 1', 'section-2-education-tbl-spouse-dep-education-r1-city-country', 'Colombo'),
+  ] });
+  const qb = Object.fromEntries(q.fields.map((f) => [f.label, f.value]));
+  assert.equal(qb['Siblings in Canada who are Permanent Residents?'], 'Yes — Ontario');
+  assert.equal(qb['City (Address with Postal Code) — Row 1'], '12 Main St, Colombo 00100', 'the campus address wins');
+  assert.equal(qb['Country — Row 1'], undefined, 'a lone word in "City, Country" is not guessed to be the country');
+  assert.deepEqual(q.unmapped, ['education table: City, Country'], 'the lone word landed nowhere, so it is reported');
+  // a lone word with no address either: neither cell is guessed (city? country?), the cell is reported
+  const lone = cross.planCrossFormPrefill({ memberKey: 'spouse', memberFields: [
+    F('Section 2 — Education › Table', 'Education Institute — Row 1', 'section-2-education-tbl-spouse-dep-education-r1-education-institute', 'Seneca'),
+    F('Section 2 — Education › Table', 'City, Country — Row 1', 'section-2-education-tbl-spouse-dep-education-r1-city-country', 'Canada'),
+  ] });
+  assert.deepEqual(lone.fields.map((f) => [f.label, f.value]), [['Institute — Row 1', 'Seneca']]);
+  assert.deepEqual(lone.unmapped, ['education table: City, Country']);
+  // the province box is hidden for "no" on the profile form but still saved: a stale province never joins a "No"
+  const stale = cross.planCrossFormPrefill({ memberKey: 'spouse', memberFields: [
+    F('Section 1 — Profile Details', 'Do you have siblings in Canada as a Permanent Resident?', 'k-sib', 'no'),
+    F('Section 1 — Profile Details', 'If yes, in which province he/she resides', 'k-prov', 'Ontario'),
+  ] });
+  assert.deepEqual(stale.fields.map((f) => [f.label, f.value]), [['Siblings in Canada who are Permanent Residents?', 'No']]);
+  assert.deepEqual(stale.unmapped, []);
   assert.ok(!p.fields.some((f) => f.label === 'Explanation'), 'an empty answer is never pre-filled');
   assert.equal(cross.planCrossFormPrefill({ memberFields: [], principalFields: [], memberKey: 'spouse' }).copied, 0);
 });
@@ -146,7 +175,8 @@ function world(files) {
     stub(oneDrive, 'readFile', async (a) => (store[a.filename] != null ? Buffer.from(store[a.filename]) : null)),
     stub(oneDrive, 'uploadFile', async (a) => { uploads.push(a.filename); store[a.filename] = a.buffer.toString('utf8'); }),
     stub(oneDrive, 'ensureClientFolder', async () => {}),
-    stub(cross.io, 'servedForms', async ({ formFiles }) => ({ ...formFiles, additional: 'SERVED-' + formFiles.additional })),
+    // what production returns for a case on the current edition: the forms unchanged (an older edition comes back as the April file name)
+    stub(cross.io, 'servedForms', async ({ formFiles }) => ({ ...formFiles })),
   ];
   return { caseRef, store, uploads, file: (k) => JSON.parse(store[`questionnaire-${caseRef}-${k}.json`]), restore: () => restores.forEach((r) => r()) };
 }
@@ -156,12 +186,12 @@ test('writes the spouse\'s application-form file ONLY when it does not exist, re
   const w = world({});
   try {
     const d = await cross.crossFormPrefill(args(w, { dryRun: true }));
-    assert.equal(d.dryRun, true); assert.equal(d.copied, 16); assert.deepEqual(w.uploads, []);
+    assert.equal(d.dryRun, true); assert.equal(d.copied, 17); assert.deepEqual(w.uploads, []);
     const r = await cross.crossFormPrefill(args(w));
-    assert.equal(r.written, true); assert.equal(r.target, 'spouse-additional'); assert.equal(r.formFile, 'SERVED-' + F1);
+    assert.equal(r.written, true); assert.equal(r.target, 'spouse-additional'); assert.equal(r.formFile, F1);
     assert.deepEqual(w.uploads, [`questionnaire-${w.caseRef}-spouse-additional.json`]);
     const f = w.file('spouse-additional');
-    assert.equal(f.formFile, 'SERVED-' + F1); assert.equal(f.completionPct, 0); assert.equal(f.fields.length, 16);
+    assert.equal(f.formFile, F1, 'records the current application-form edition — the only one the mapping is for'); assert.equal(f.completionPct, 0); assert.equal(f.fields.length, 17);
     const again = await cross.crossFormPrefill(args(w));
     assert.equal(again.skipped, 'has-file'); assert.equal(again.written, false); assert.equal(w.uploads.length, 1);
   } finally { w.restore(); }
@@ -169,6 +199,10 @@ test('writes the spouse\'s application-form file ONLY when it does not exist, re
   try { const r = await cross.crossFormPrefill(args(seeded)); assert.equal(r.skipped, 'has-file', 'never over an existing file, not even a pre-fill'); assert.deepEqual(seeded.uploads, []); } finally { seeded.restore(); }
   const other = world({});
   try { const r = await cross.crossFormPrefill(args(other, { forms: { primary: F1, additional: null } })); assert.equal(r.skipped, 'not-this-form-pair'); assert.deepEqual(other.uploads, []); } finally { other.restore(); }
+  // a case served an OLDER application-form edition: its questions differ, so nothing is pre-filled (and the note says so)
+  const legacy = world({});
+  const r3 = stub(cross.io, 'servedForms', async () => ({ primary: F6, additional: '1. Express Entry - PNP - PR Application -  Questionnaire - April 2025.html' }));
+  try { const r = await cross.crossFormPrefill(args(legacy)); assert.equal(r.skipped, 'legacy-edition'); assert.equal(r.written, false); assert.deepEqual(legacy.uploads, []); } finally { r3(); legacy.restore(); }
 });
 
 test('a storage failure throws (err.transient); the served-edition read failing throws too — nothing written', async () => {
@@ -200,7 +234,7 @@ test('through the carry-over: a spouse add on an Express Entry case copies the p
       ['Marital Status', 'Current Marital Status', 'Married'], ['Marital Status', 'Date of Marriage', '18/02/2018'],
     ]);
     assert.ok(x.fields.some((f) => f.label === 'Course / Program — Row 1' && f.value === 'Bachelor of Science'));
-    assert.equal(x.formFile, 'SERVED-' + F1);
+    assert.equal(x.formFile, F1);
     // dry run reports the same without writing
     const w2 = world({ primary: PRIMARY });
     try { const d = await carry.carryEmbeddedAnswers({ clientName: 'Fathima', caseRef: w2.caseRef, itemId: '1', memberKey: 'spouse', memberType: 'Spouse / Common-Law Partner', memberName: 'Mohamed Sabri Rauf', forms: FORMS, dryRun: true }); assert.equal(d.crossForm.copied, x.fields.length); assert.deepEqual(w2.uploads, []); } finally { w2.restore(); }

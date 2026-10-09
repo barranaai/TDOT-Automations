@@ -522,7 +522,7 @@ function famAdd() {
         : ((rs.created || 0) + ' document row(s) added.' + (rs.failed ? ' ' + rs.failed + ' row(s) failed — press Re-seed Checklist.' : ''));
       var cy = res.j.carry || null;
       var carried = cy && cy.written ? ' Copied ' + cy.copied + ' answer(s) the client had typed for this member in their own form into the new section.' : (cy && cy.unmatched) ? ' No answers copied: the child named did not match exactly one child in the client form (see the note).' : (cy && cy.skipped === 'has-answers') ? ' The new section already had answers, so nothing was copied over it.' : '';
-      if (cy && cy.crossForm) carried += ' Also pre-filled ' + cy.crossForm.copied + ' answer(s) into the application form section - the client must review them.';
+      if (cy && cy.crossForm && cy.crossForm.copied) carried += ' Also pre-filled ' + cy.crossForm.copied + ' answer(s) into the application form section - the client must review them.';
       actMsg('fam-msg', 'ok', '✓ Added. ' + docs + (res.j.manifest === 'adopted' ? ' The section the client already had is now complete.' : ' Questionnaire section added.') + carried + (res.j.hint ? ' ' + res.j.hint : ''));
       loadCase();
     } else {

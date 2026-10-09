@@ -25,7 +25,9 @@
  * Rules:
  *   - written ONLY when the member's application-form file does not exist yet
  *     (never over anything — not even an intake pre-fill);
- *   - the file records the application-form edition the case is SERVED;
+ *   - the file records the application-form edition the case is SERVED, and
+ *     the mapping is for the CURRENT edition only: a case served an older
+ *     edition (its questions differ) gets nothing pre-filled, and says so;
  *   - no Monday column, no email, no PDF.
  */
 
@@ -53,11 +55,13 @@ const MAP_BOXES = [
   [['Section 1 — Profile Details', 'Native Language'],                                            ['Personal Details', 'Native Language']],
   [['Section 1 — Profile Details', 'Email Address'],                                              ['Personal Details', 'Email Address']],
   [['Section 1 — Profile Details', 'Mobile Number'],                                              ['Personal Details', 'Phone Number']],
-  [['Section 1 — Profile Details', 'Do you have siblings in Canada as a Permanent Resident?'],    ['Personal Details', 'Siblings in Canada who are Permanent Residents?']],
   [['Section 2 — Employment History', 'Have you declared your international experience in any of your previous IRCC applications (e.g., Study Permit, Work Permit, Visitor Visa, PNP, etc.)? – YES or NO. If NO, please provide an explanation.'],
                                                                                                   ['Section 5 — Personal History', 'Have you declared your international experience in any of your previous IRCC applications (e.g., Study Permit, Work Permit, Visitor Visa, PNP, etc.)? If NO, please provide an explanation.']],
   [['Section 2 — Employment History', 'Explanation'],                                             ['Section 5 — Personal History', 'Explanation']],
 ];
+
+/* Two profile-form answers that become ONE application-form answer ("Yes — Ontario"). */
+const MAP_SIBLINGS = { from: [['Section 1 — Profile Details', 'Do you have siblings in Canada as a Permanent Resident?'], ['Section 1 — Profile Details', 'If yes, in which province he/she resides']], to: ['Personal Details', 'Siblings in Canada who are Permanent Residents?'] };
 
 /* The spouse's "Marital Status" on the application form asks about the PRINCIPAL — from the principal's own profile-form answers. */
 const MAP_MARITAL = [
@@ -74,8 +78,12 @@ const MAP_TABLES = [
     ['End Date (DD/MM/YYYY)', 'End Date'],
     ['Course / Program Name', 'Course / Program'],
     ['Education Institute', 'Institute'],
+    // the application form asks the city WITH the address; the profile form asked the address and "City, Country" apart.
+    // The address wins; else the city is the part before the last comma. A lone word ("Canada"? "Colombo"?) is not
+    // guessed either way — it is reported instead (first entry to fill a target column wins).
     ['Campus Address with Postal Code', 'City (Address with Postal Code)'],
-    [['City, Country'], 'Country', (v) => { const s = String(v[0] || '').trim(); const i = s.lastIndexOf(','); return i >= 0 ? s.slice(i + 1).trim() : s; }],
+    [['City, Country'], 'City (Address with Postal Code)', (v) => { const s = String(v[0] || '').trim(); const i = s.lastIndexOf(','); return i >= 0 ? s.slice(0, i).trim() : ''; }],
+    [['City, Country'], 'Country', (v) => { const s = String(v[0] || '').trim(); const i = s.lastIndexOf(','); return i >= 0 ? s.slice(i + 1).trim() : ''; }],
   ] },
   { from: 'dep-employment', fromSection: 'Section 2 — Employment History › Table', to: 'sp-history', toSection: 'Section 5 — Personal History', columns: [
     ['Start Date (DD/MM/YYYY)', 'Start Date'],
@@ -87,7 +95,7 @@ const MAP_TABLES = [
   ] },
 ];
 /* Profile-form questions with NO question on the application form (reported when answered). */
-const NO_TARGET = ['Status in Current Country (Visitor, Student, Worker, Citizen)', 'Residential Address Postal Code', 'If yes, in which province he/she resides', 'Do you have valid language test results?',
+const NO_TARGET = ['Status in Current Country (Visitor, Student, Worker, Citizen)', 'Residential Address Postal Code', 'Do you have valid language test results?',
   'Did you complete at least 50% of the study or training program’s courses through in-person learning? – If Yes, please provide the duration of Online program.'];
 
 const boxKey = (section, label) => `prefill__xform-${slug(section)}-${slug(label)}`.slice(0, 90);
@@ -117,6 +125,16 @@ function planCrossFormPrefill({ memberFields = [], principalFields = [], memberK
     used.add(f);
     push(toSec, toLabel, f.value);
   }
+  // siblings in Canada: the yes/no and the province become one answer. The province box only shows for "yes" on the
+  // profile form, but the engine saves it hidden too — so a province next to a "no" is a stale leftover, not an answer.
+  {
+    const [sel, prov] = MAP_SIBLINGS.from.map(([sec, lab]) => mem.find((x) => strip(x.section) === sec && String(x.label || '').trim() === lab));
+    if (sel && hasValue(sel)) {
+      used.add(sel); if (prov) used.add(prov);
+      const yn = String(sel.value).trim(); const cap = yn.charAt(0).toUpperCase() + yn.slice(1);
+      push(MAP_SIBLINGS.to[0], MAP_SIBLINGS.to[1], /^yes/i.test(yn) && prov && hasValue(prov) ? `${cap} — ${String(prov.value).trim()}` : cap);
+    }
+  }
   // marital status, from the principal's own answers
   const own = (Array.isArray(principalFields) ? principalFields : []).filter((x) => x && !/^dependent/i.test(String(x.section || '').split(SEP)[0]) && hasValue(x));
   for (const [fromLabel, [toSec, toLabel]] of MAP_MARITAL) {
@@ -127,21 +145,30 @@ function planCrossFormPrefill({ memberFields = [], principalFields = [], memberK
   for (const t of MAP_TABLES) {
     const cells = mem.filter((x) => strip(x.section) === t.fromSection && ROW_RE.test(String(x.label || '')) && new RegExp(`-tbl-(?:[a-z0-9]+-)?${t.from}-r\\d+-`).test(String(x.key || '')));
     const rows = new Map();
-    for (const c of cells) { const n = Number(ROW_RE.exec(c.label)[1]); const header = String(c.label).replace(ROW_RE, ''); if (!rows.has(n)) rows.set(n, new Map()); rows.get(n).set(header, c.value); used.add(c); }
+    for (const c of cells) { const n = Number(ROW_RE.exec(c.label)[1]); const header = String(c.label).replace(ROW_RE, ''); if (!rows.has(n)) rows.set(n, new Map()); rows.get(n).set(header, c); used.add(c); }
     for (const [n, cols] of [...rows.entries()].sort((a, b) => a[0] - b[0])) {
+      const filled = new Set();   // target columns already written for this row (first entry wins)
+      const placed = new Set();   // source cells that landed somewhere
       for (const [from, toHeader, fn] of t.columns) {
-        const srcs = Array.isArray(from) ? from : [from];
-        const vals = srcs.map((h) => cols.get(h));
-        if (!vals.some((v) => String(v == null ? '' : v).trim())) continue;
+        if (filled.has(toHeader)) continue;
+        const srcs = (Array.isArray(from) ? from : [from]).map((h) => cols.get(h)).filter((c) => c && hasValue(c));
+        if (!srcs.length) continue;
+        const vals = (Array.isArray(from) ? from : [from]).map((h) => { const c = cols.get(h); return c ? c.value : ''; });
         const value = fn ? fn(vals) : vals[0];
+        if (String(value == null ? '' : value).trim() === '') continue;
         push(`${t.toSection}${SEP}Table`, `${toHeader} — Row ${n}`, value, memberTableKey(t.toSection, `${memberKey}-${t.to}`, n, toHeader));
+        filled.add(toHeader); srcs.forEach((c) => placed.add(c));
       }
+      // a typed cell that landed nowhere (a lone word in "City, Country") is reported, not guessed
+      for (const [header, c] of cols) { if (hasValue(c) && !placed.has(c)) { const label = `${t.from.replace(/^dep-/, '')} table: ${header}`; if (!unmapped.includes(label)) unmapped.push(label); } }
     }
   }
-  // answered but nowhere to go
+  // answered but nowhere to go (a table cell is named with its table, so "Start Date" of the vacation table is not read as the job dates)
   for (const f of mem) {
     if (used.has(f) || !hasValue(f)) continue;
-    const label = String(f.label || '').replace(ROW_RE, '').trim();
+    let label = String(f.label || '').replace(ROW_RE, '').trim();
+    const tm = /-tbl-(?:[a-z0-9]+-)?([a-z0-9-]+?)-r\d+-/.exec(String(f.key || ''));
+    if (tm && ROW_RE.test(String(f.label || ''))) label = `${tm[1].replace(/^dep-/, '')} table: ${label}`;
     if (!unmapped.includes(label)) unmapped.push(label);
   }
   const bySection = {};
@@ -168,10 +195,12 @@ async function crossFormPrefill({ clientName, caseRef, itemId, memberKey, member
   if (!isProfileToApplication(forms)) return { ...base, skipped: 'not-this-form-pair' };
   const existing = await io.readTarget({ clientName, caseRef, formKey: target });      // throws transient
   if (existing && existing.fields && existing.fields.length) return { ...base, skipped: 'has-file', existing: existing.fields.length };
-  const plan = planCrossFormPrefill({ memberFields, principalFields, memberKey });
-  if (plan.copied === 0) return { ...base, unmapped: plan.unmapped, skipped: 'nothing' };
+  // the edition this case is SERVED — the mapping names the current edition's questions; an older edition gets nothing
   const served = await io.servedForms({ clientName, caseRef, formFiles: forms });   // throws transient
   const formFile = String((served && served.additional) || forms.additional || '');
+  if (formFile !== String(forms.additional)) return { ...base, formFile, skipped: 'legacy-edition' };
+  const plan = planCrossFormPrefill({ memberFields, principalFields, memberKey });
+  if (plan.copied === 0) return { ...base, unmapped: plan.unmapped, skipped: 'nothing' };
   const result = { ...base, copied: plan.copied, bySection: plan.bySection, unmapped: plan.unmapped, formFile };
   if (dryRun) return { ...result, dryRun: true };
   await io.save({ clientName, caseRef, itemId, formKey: target, fields: plan.fields, completionPct: 0, formFile });
@@ -179,4 +208,4 @@ async function crossFormPrefill({ clientName, caseRef, itemId, memberKey, member
   return { ...result, written: true };
 }
 
-module.exports = { planCrossFormPrefill, crossFormPrefill, isProfileToApplication, io, MAP_BOXES, MAP_MARITAL, MAP_TABLES, NO_TARGET };
+module.exports = { planCrossFormPrefill, crossFormPrefill, isProfileToApplication, io, MAP_BOXES, MAP_SIBLINGS, MAP_MARITAL, MAP_TABLES, NO_TARGET };
