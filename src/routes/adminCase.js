@@ -520,7 +520,9 @@ function famAdd() {
         : rs.manual === 'no-schema' ? 'No document rows added: this case type has no automatic checklist — add the documents of this member by hand.'
         : rs.deferred ? 'Document rows come with the checklist at Document Collection (the case is at "' + (res.j.stage || 'Not Started') + '").'
         : ((rs.created || 0) + ' document row(s) added.' + (rs.failed ? ' ' + rs.failed + ' row(s) failed — press Re-seed Checklist.' : ''));
-      actMsg('fam-msg', 'ok', '✓ Added. ' + docs + (res.j.manifest === 'adopted' ? ' The section the client already had is now complete.' : ' Questionnaire section added.') + (res.j.hint ? ' ' + res.j.hint : ''));
+      var cy = res.j.carry || null;
+      var carried = cy && cy.written ? ' Copied ' + cy.copied + ' answer(s) the client had typed for this member in their own form into the new section.' : (cy && cy.unmatched) ? ' No answers copied: the child named did not match exactly one child in the client form (see the note).' : (cy && cy.skipped === 'has-answers') ? ' The new section already had answers, so nothing was copied over it.' : '';
+      actMsg('fam-msg', 'ok', '✓ Added. ' + docs + (res.j.manifest === 'adopted' ? ' The section the client already had is now complete.' : ' Questionnaire section added.') + carried + (res.j.hint ? ' ' + res.j.hint : ''));
       loadCase();
     } else {
       btn.disabled = false;

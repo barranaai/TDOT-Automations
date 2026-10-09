@@ -73,14 +73,21 @@ const ACC = 'CEC Accompanying Spouse & Child', CEC_EE = 'Canadian Experience Cla
 const { slugUpper } = require('../src/services/seedPlanner')._internal;
 const codes = (caseType, subType, n, status = '') => Array.from({ length: n }, (_, i) => ({ code: `${slugUpper(caseType)}-${slugUpper(subType)}-PRINCIPAL-APPLICANT-DOC${i}-001`, subType, status }));
 const shapeOf = (schema, templateRows = 0) => ({ rows: schema.length + templateRows, templateRows, schema });
-function harness({ boardRows = [], manifest = [{ key: 'primary', type: 'Principal Applicant' }], manifestFails = false, reseed = { created: 11, skipped: 11, failed: 0, pruned: 0 }, reseedFails = false, reseedError = null, rowFails = false, manifestAddFails = false, caseState = { stage: 'Document Collection Started', payment: 'Paid', checklistApplied: 'Yes', caseType: CEC_EE, subType: ACC }, stateFails = false, boardLags = false, now = 1_000_000, shape = shapeOf(codes(CEC_EE, ACC, 11)), shapeFails = false, createManifestReturns = null, reseedDelayMs = 0 } = {}) {
-  const calls = { seq: [], rows: [], manifestAdds: [], manifestCreates: [], reseeds: [], notes: [], stateReads: 0, maxConcurrentReseeds: 0 };
+function harness({ boardRows = [], manifest = [{ key: 'primary', type: 'Principal Applicant' }], manifestFails = false, reseed = { created: 11, skipped: 11, failed: 0, pruned: 0 }, reseedFails = false, reseedError = null, rowFails = false, manifestAddFails = false, caseState = { stage: 'Document Collection Started', payment: 'Paid', checklistApplied: 'Yes', caseType: CEC_EE, subType: ACC }, stateFails = false, boardLags = false, now = 1_000_000, shape = shapeOf(codes(CEC_EE, ACC, 11)), shapeFails = false, createManifestReturns = null, reseedDelayMs = 0, carry = { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, pct: 0, source: '', target: '', written: false, skipped: 'nothing' }, carryFails = false, carryRefuses = false } = {}) {
+  const calls = { seq: [], rows: [], manifestAdds: [], manifestCreates: [], reseeds: [], notes: [], carries: [], stateReads: 0, maxConcurrentReseeds: 0 };
   let liveReseeds = 0;
   let list = manifest ? manifest.map((x) => ({ ...x })) : null;   // the questionnaire member list, as the real one: adds are remembered
   const rows = boardRows.slice();
   const real = { ...fam.io };
   fam._recentRows.clear();
   Object.assign(fam.io, {
+    // the carry-over of embedded answers (its own tests: questionnaireCarryOver.test.js)
+    carryOver: async (a) => {
+      calls.seq.push('carry'); calls.carries.push(a);
+      if (carryFails) { const e = new Error('Graph 503'); e.transient = true; throw e; }
+      if (carryRefuses) { const e = new Error('The client saved their questionnaire 3 minutes ago and may still be typing. Try again in a few minutes.'); e.badRequest = true; e.code = 'RECENT_SAVE'; throw e; }
+      return carry;
+    },
     // boardLags: the search never shows rows written in this test (Monday's lag)
     boardRows: async () => { const seen = boardLags ? boardRows : rows; return { rows: seen.slice(), members: seen.map((r) => ({ role: ADAPTER[r.boardType] || r.boardType, name: r.name || '', memberKey: r.memberKey || '', flags: {} })) }; },
     manifest: async () => { if (manifestFails) throw new Error('OneDrive down'); return list ? list.map((x) => ({ ...x })) : null; },
@@ -123,7 +130,7 @@ test('staff adds a spouse: questionnaire section FIRST, then the board row (same
   const h = harness();
   try {
     const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff', actor: { name: 'Gauri Berde' } });
-    assert.deepEqual(h.calls.seq, ['manifest', 'row', 'reseed'], 'manifest before the row — a manifest failure leaves nothing behind');
+    assert.deepEqual(h.calls.seq, ['carry', 'manifest', 'row', 'reseed'], 'the copy of embedded answers, then the manifest before the row — a manifest failure leaves nothing behind');
     assert.deepEqual(h.calls.manifestAdds, [{ clientName: BASE.clientName, caseRef: BASE.caseRef, memberType: 'Spouse / Common-Law Partner', label: undefined, key: 'spouse' }]);
     assert.deepEqual(h.calls.rows, [{ caseRef: BASE.caseRef, cmItemId: BASE.cmItemId, row: { name: 'Spouse (added by staff)', memberType: 'Spouse', memberKey: 'spouse' } }]);
     assert.equal(h.calls.reseeds.length, 1); assert.equal(h.calls.reseeds[0].ref, BASE.caseRef);
@@ -155,7 +162,7 @@ test('no manifest yet: it is CREATED from the board rows just read (never left t
     assert.equal(h.calls.manifestCreates.length, 1);
     assert.deepEqual(h.calls.manifestCreates[0].boardMembers.map((m) => `${m.role}:${m.memberKey}`), ['DependentChild:child-1'], 'the board as held — the new member is added next, with the key chosen against this list');
     assert.deepEqual(h.calls.manifestAdds.map((a) => a.key), ['spouse']);
-    assert.deepEqual(h.calls.seq, ['manifest-create', 'manifest', 'row', 'reseed']);
+    assert.deepEqual(h.calls.seq, ['manifest-create', 'carry', 'manifest', 'row', 'reseed'], 'the list (primary only) exists before the copy; the copy before the member joins it');
     assert.match(h.calls.notes[0].body, /questionnaire member list created with this member/);
   } finally { h.restore(); }
 });
@@ -183,7 +190,7 @@ test('a spouse already on the BOARD is refused before any write; a spouse only o
   try {
     const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff', actor: { name: 'G' } });
     assert.equal(r.manifest, 'adopted'); assert.equal(r.key, 'spouse');
-    assert.deepEqual(h2.calls.seq, ['row', 'reseed']);
+    assert.deepEqual(h2.calls.seq, ['row', 'reseed'], 'adopted: the member is already on the list — never carried into (a page may show its section)');
     assert.equal(h2.calls.rows[0].row.memberKey, 'spouse');
     assert.match(h2.calls.notes[0].body, /the questionnaire section the client already had is now matched by a row/);
   } finally { h2.restore(); }
@@ -209,7 +216,7 @@ test('the client path takes the same route: manifest add, row, re-seed in the ba
 
 test('no checklist yet (Checklist Template Applied ≠ Yes, whatever the stage): row + section only, the note says the rows come with the checklist at Document Collection', async () => {
   for (const [stage, applied] of [['Not Started', ''], ['Retainer Confirmed', 'No'], ['Stuck', ''], ['Document Collection Started', '']]) {
-    const h = harness({ caseState: { stage, payment: 'Paid', checklistApplied: applied } });
+    const h = harness({ caseState: { stage, payment: 'Paid', checklistApplied: applied }, shape: shapeOf([]) });   // no document rows either
     try {
       const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff', actor: { name: 'G' } });
       assert.deepEqual(r.reseed, { deferred: true }, `${stage}/${applied}`); assert.equal(r.stage, stage);
@@ -433,7 +440,7 @@ test('a member list that appeared between the read and the create (another write
   try {
     const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
     assert.equal(r.manifest, 'added');
-    assert.deepEqual(h.calls.seq.slice(0, 2), ['manifest-create', 'manifest']);
+    assert.deepEqual(h.calls.seq.slice(0, 3), ['manifest-create', 'carry', 'manifest']);
     assert.equal(h.calls.manifestAdds[0].key, 'spouse');
   } finally { h.restore(); }
 });
@@ -726,6 +733,100 @@ test('cockpit page: the form offers the questionnaire\'s types, the message elem
   assert.match(html, /rs\.unknown \? 'The checklist state could not be read/);
   assert.match(html, /res\.j\.hint \? ' ' \+ res\.j\.hint : ''/);
   assert.ok(!/\\u20/.test(html), 'no escape sequences in the template-literal script');
+});
+
+/* ───────────────────────── the carry-over of embedded answers ───────────────────────── */
+
+test('carry-over: runs BEFORE anything is written, only for a Spouse / Dependent Child, with the member key and type; its counts reach the result, the note and nothing else', async () => {
+  const h = harness({ carry: { copied: 12, total: 20, bySection: { 'Personal Details': 7, 'Marital Status': 5 }, unmapped: [], skippedSharedTable: 0, pct: 60, source: 'primary', target: 'spouse', written: true } });
+  try {
+    const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff', actor: { name: 'G' } });
+    assert.equal(h.calls.seq[0], 'carry');
+    assert.deepEqual(h.calls.carries, [{ clientName: BASE.clientName, caseRef: BASE.caseRef, itemId: BASE.cmItemId, memberKey: 'spouse', memberType: 'Spouse / Common-Law Partner', memberName: '' }]);
+    assert.deepEqual(r.carry, { copied: 12, total: 20, bySection: { 'Personal Details': 7, 'Marital Status': 5 }, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: '', unmatched: false, childNames: [], skipped: '', written: true });
+    assert.match(h.calls.notes[0].body, /Copied 12 answers the client had typed for this member inside their own form into the new section \(Personal Details 7, Marital Status 5\)\./);
+  } finally { h.restore(); }
+  const child = harness({ carry: { copied: 3, total: 9, bySection: { 'Personal Details': 3 }, unmapped: ['Date of Birth'], skippedSharedTable: 2, pct: 33, source: 'primary', target: 'child-1', written: true } });
+  try {
+    await fam.addFamilyMember({ ...BASE, boardType: 'Dependent Child', source: 'client', reseedMode: 'background' });
+    assert.equal(child.calls.carries[0].memberKey, 'child-1'); assert.equal(child.calls.carries[0].memberType, 'Dependent Child');
+    await settle();
+    assert.match(child.calls.notes[0].body, /no box in the new section for: Date of Birth \(kept aside\)\. The children&#39;s shared history table in the client&#39;s own form \(2 answers\) was not copied/);
+  } finally { child.restore(); }
+  for (const boardType of ['Parent', 'Sibling']) {
+    const p = harness();
+    try { await fam.addFamilyMember({ ...BASE, boardType, source: 'staff' }); assert.equal(p.calls.carries.length, 0, boardType + ': the single-member form embeds no section for them'); } finally { p.restore(); }
+  }
+});
+
+test('carry-over note: a dual-form main form\'s unattributed dependent block is reported, never silently left behind', async () => {
+  const h = harness({ carry: { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 3, written: false, skipped: 'nothing' } });
+  try {
+    await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
+    assert.match(h.calls.notes[0].body, /The client&#39;s own form has a &quot;Dependent&quot; block that does not say whose it is \(3 answers\) — not copied; it leaves the client&#39;s page now, so check it with the client\./);
+  } finally { h.restore(); }
+});
+
+test('carry-over: the staff-typed name reaches the copy (a child is chosen by it); a name that matches no single child copies nothing and says so', async () => {
+  const h = harness({ carry: { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: '', unmatched: true, childNames: ['Aarav', 'Diya'], written: false, skipped: 'unmatched' } });
+  try {
+    await fam.addFamilyMember({ ...BASE, boardType: 'Dependent Child', name: 'Kabir Singla', source: 'staff' });
+    assert.equal(h.calls.carries[0].memberName, 'Kabir Singla');
+    assert.match(h.calls.notes[0].body, /The client&#39;s own form lists children named Aarav, Diya; none matched the name given \(or more than one did\), so nothing was copied into this section\./);
+  } finally { h.restore(); }
+  const ok = harness({ carry: { copied: 4, total: 9, bySection: { 'Personal Details': 4 }, unmapped: [], skippedSharedTable: 0, ambiguousDependent: 0, givenName: 'Diya', unmatched: false, childNames: ['Aarav', 'Diya'], written: true } });
+  try { await fam.addFamilyMember({ ...BASE, boardType: 'Dependent Child', name: 'Diya', source: 'staff' }); assert.match(ok.calls.notes[0].body, /Copied 4 answers the client had typed for Diya inside their own form/); } finally { ok.restore(); }
+});
+
+test('carry-over: a storage failure ABORTS the add before any write (transient, retry later); a "client may still be typing" refusal reaches staff as it is', async () => {
+  const f = harness({ carryFails: true });
+  try {
+    await assert.rejects(fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }), (e) => e.transient === true && /could not be read to copy their answers into the new section/.test(e.message) && /Nothing was changed/.test(e.message));
+    assert.deepEqual(f.calls.seq, ['carry']); assert.equal(f.calls.manifestAdds.length, 0); assert.equal(f.calls.rows.length, 0); assert.equal(f.calls.notes.length, 0);
+  } finally { f.restore(); }
+  const r = harness({ carryRefuses: true });
+  try {
+    await assert.rejects(fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }), (e) => e.badRequest === true && /may still be typing/.test(e.message));
+    assert.deepEqual(r.calls.seq, ['carry']); assert.equal(r.calls.notes.length, 0);
+  } finally { r.restore(); }
+});
+
+test('carry-over: nothing to copy, or a section that already holds answers → the add goes on; the note says so only in the second case; the switch turns it off', async () => {
+  const none = harness();
+  try { const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.equal(r.carry.written, false); assert.doesNotMatch(none.calls.notes[0].body, /Copied|nothing was copied/); } finally { none.restore(); }
+  const has = harness({ carry: { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, pct: 0, source: 'primary', target: 'spouse', written: false, skipped: 'has-answers', existing: 4 } });
+  try { await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.match(has.calls.notes[0].body, /The new section already holds answers, so nothing was copied over it\./); } finally { has.restore(); }
+  const prev = process.env.QUESTIONNAIRE_CARRY_OVER; process.env.QUESTIONNAIRE_CARRY_OVER = '0';
+  const off = harness();
+  try { const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.equal(off.calls.carries.length, 0); assert.equal(r.carry, null); assert.deepEqual(off.calls.seq, ['manifest', 'row', 'reseed']); }
+  finally { off.restore(); if (prev === undefined) delete process.env.QUESTIONNAIRE_CARRY_OVER; else process.env.QUESTIONNAIRE_CARRY_OVER = prev; }
+});
+
+test('a checklist whose "Applied" flag was reset to No (the old Monday automation) but whose rows exist is an existing checklist: the re-seed runs; with NO rows the add still defers', async () => {
+  const flagNo = { stage: 'Internal Review', payment: 'Paid', checklistApplied: 'No', caseType: CEC_EE, subType: ACC };
+  const h = harness({ caseState: flagNo });
+  try {
+    const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
+    assert.equal(h.calls.reseeds.length, 1); assert.equal(r.reseed.created, 11);
+    assert.doesNotMatch(h.calls.notes[0].body, /the checklist has not been created/);
+  } finally { h.restore(); }
+  const empty = harness({ caseState: flagNo, shape: shapeOf([]) });
+  try { const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.deepEqual(r.reseed, { deferred: true }); assert.equal(empty.calls.reseeds.length, 0); } finally { empty.restore(); }
+  const hand = harness({ caseState: flagNo, shape: { rows: 1, templateRows: 0, schema: [] } });
+  try { const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.deepEqual(r.reseed, { deferred: true }, 'a row added by hand is not a checklist'); assert.equal(hand.calls.reseeds.length, 0); } finally { hand.restore(); }
+  const unread = harness({ caseState: flagNo, shapeFails: true });
+  try { const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.deepEqual(r.reseed, { deferred: true }, 'flag No and the rows unreadable: no claim that a checklist exists'); } finally { unread.restore(); }
+});
+
+test('the cockpit tells staff what was copied (plain quotes only in the template script)', () => {
+  const src = fs.readFileSync(require.resolve('../src/routes/adminCase.js'), 'utf8');
+  assert.match(src, /var cy = res\.j\.carry \|\| null;/);
+  assert.match(src, /Copied ' \+ cy\.copied \+ ' answer\(s\) the client had typed for this member in their own form into the new section\./);
+  assert.match(src, /The new section already had answers, so nothing was copied over it\./);
+  const server = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
+  assert.match(server, /app\.post\('\/admin\/questionnaire\/:caseRef\/carry-over'/);
+  assert.match(server, /if \(body\.dryRun === false\) return res\.status\(400\)/, 'the route only previews — a real copy happens only inside Add family member');
+  assert.doesNotMatch(server, /fallbackFormFile/, 'the copy never records a guessed edition');
 });
 
 /* ───────────────────────── the Summary-tab rule ───────────────────────── */

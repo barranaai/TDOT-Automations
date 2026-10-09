@@ -1491,6 +1491,38 @@ app.post('/admin/onedrive/refile-general', express.json(), async (req, res) => {
   }
 });
 
+// Carry-over of the answers a client typed for a spouse / child INSIDE their
+// own single-member form into that member's own section (see
+// questionnaireCarryOverService). Add family member runs it by itself, before
+// the member joins the questionnaire list. This route is a DRY RUN only — what
+// the add would copy: a copy written while a page already shows the member's
+// section could be overwritten by that page. Admin only.
+app.post('/admin/questionnaire/:caseRef/carry-over', express.json(), async (req, res) => {
+  const caseRef = String(req.params.caseRef || '').trim();
+  if (!resolveAdminOrReject(req, res, 'Only an admin can run the carry-over.')) return;
+  try {
+    const svc = require('./services/htmlQuestionnaireService');
+    const carry = require('./services/questionnaireCarryOverService');
+    const body = req.body || {};
+    if (body.dryRun === false) return res.status(400).json({ error: 'This route only previews. The copy happens when staff use Add family member on the case page.' });
+    const dryRun = true;
+    const memberKey = sanitiseFormKeyParam(body.memberKey);
+    if (!memberKey || memberKey === 'primary') return res.status(400).json({ error: 'memberKey is required (e.g. "spouse", "child-1")' });
+    const { clientName, itemId } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const manifest = await svc.readMembersManifest({ clientName, caseRef });
+    const member = (manifest || []).find((m) => m && m.key === memberKey) || null;
+    const memberType = member ? member.type : String(body.memberType || '').trim();
+    if (!carry.EMBEDDED[memberType]) return res.status(400).json({ error: `memberType must be one of ${Object.keys(carry.EMBEDDED).map((t) => `"${t}"`).join(', ')}${member ? '' : ' (the member is not on the questionnaire list yet, so pass memberType)'}` });
+    const r = await carry.carryEmbeddedAnswers({ clientName, caseRef, itemId, memberKey, memberType, memberName: String(body.memberName || (member && member.label) || '').trim(), dryRun });
+    res.json({ caseRef, memberKey, memberType, dryRun, ...r });
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    if (err.transient) return res.status(503).json({ error: err.message });
+    console.error(`[CarryOver] ${caseRef}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/admin/questionnaire/:caseRef/restore', express.json(), async (req, res) => {
   const caseRef = String(req.params.caseRef || '').trim();
   // Restore OVERWRITES the live questionnaire file — a destructive write, so

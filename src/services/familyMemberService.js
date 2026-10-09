@@ -12,7 +12,7 @@
  *      added), fed the composition this call already holds (board rows + the
  *      new member — Monday's search can lag a create by seconds, so the
  *      re-seed never re-searches), and only when the case's checklist exists
- *      (Checklist Template Applied = Yes) AND was built from the case's
+ *      (Checklist Template Applied = Yes, or document rows exist) AND was built from the case's
  *      current schema: every document key starts with the Case Type + Sub
  *      Type it was built for, so a checklist made the old Template-board way,
  *      or under an earlier Case Type or Sub Type (with rows still open), would
@@ -45,6 +45,7 @@ const ROLE_TO_BOARD = { Spouse: 'Spouse', DependentChild: 'Dependent Child', Par
 const BOARD_TO_ROLE = Object.fromEntries(Object.entries(ROLE_TO_BOARD).map(([r, b]) => [b, r]));
 const KEY_BASE  = { 'Spouse': 'spouse', 'Dependent Child': 'child', 'Parent': 'parent', 'Sibling': 'sibling', 'Sponsor': 'sponsor', 'Worker Spouse': 'worker-spouse' };
 const SINGLETON = new Set(['Spouse', 'Worker Spouse', 'Sponsor']);
+const CARRY_TYPES = new Set(['Spouse', 'Dependent Child']);   // the single-member form embeds sections for these
 const SHORT     = { 'Spouse': 'Spouse', 'Dependent Child': 'Child', 'Parent': 'Parent', 'Sibling': 'Sibling', 'Sponsor': 'Sponsor', 'Worker Spouse': 'Worker spouse' };
 const NAME_MAX  = 80;
 const RECENT_ROWS_MS = 10 * 60 * 1000;   // rows this process wrote count as on the board for this long
@@ -168,6 +169,13 @@ const io = {
       schema: rows.filter((r) => r.intake.startsWith('code:')).map((r) => ({ code: r.intake.slice(5), subType: r.subType, status: r.status })),
     };
   },
+  /**
+   * Before a Spouse / Dependent Child section is added: copy the answers the
+   * client typed for them INSIDE the principal's single-member form into the
+   * member's own file (questionnaireCarryOverService) — those boxes vanish
+   * from his page the moment the list has two members.
+   */
+  carryOver: (args) => require('./questionnaireCarryOverService').carryEmbeddedAnswers(args),
   /** The re-seed, fed the composition this call holds — never a fresh board search. */
   reseed: (caseRef, composition) => require('./checklistService').reseedByCaseRef(caseRef, { prune: false, composition }),
   postNote: async (itemId, body) => {
@@ -277,7 +285,24 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
   const newMember = { role: BOARD_TO_ROLE[boardType], name: rowName, memberKey, flags: {} };
   let sectionLabel = '';   // what the questionnaire shows — never a placeholder
 
-  // 1. the questionnaire section FIRST (a failure here leaves nothing behind)
+  // 0. the client's embedded answers for this member, copied into the member's
+  //    own file BEFORE the list changes. A refusal or a read failure writes
+  //    nothing; a copy that was written stays if a later step fails, and the
+  //    retry replaces it (the copy is tagged until the client saves over it).
+  let carry = null;
+  const carrySvc = require('./questionnaireCarryOverService');
+  // Only for a member NOT yet on the list ("adopted" ones are): no page shows
+  // its section yet, so every page that will is loaded after the copy.
+  if (!adopt && CARRY_TYPES.has(boardType) && carrySvc.isEnabled()) {
+    try {
+      carry = await io.carryOver({ clientName, caseRef, itemId: cmItemId, memberKey, memberType: portalType, memberName: label });
+    } catch (err) {
+      if (err.badRequest) throw err;
+      throw transient(`The client's questionnaire could not be read to copy their answers into the new section (${err.message}). Nothing was changed — try again in a minute.`);
+    }
+  }
+
+  // 1. the questionnaire section (a failure here leaves no section, no row)
   let manifestState;
   try {
     if (adopt) { manifestState = 'adopted'; sectionLabel = adopt.label || ''; }
@@ -313,14 +338,17 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
     : adapter.withMember({ members: adapterMembers }, newMember);
   let state = null;
   try { state = await io.caseState(cmItemId); } catch (err) { console.warn(`[Family] case state unreadable for ${caseRef}: ${err.message}`); }
-  const result = { ok: true, key: memberKey, boardType, portalType, rowId, rowName, label: sectionLabel || (isPlaceholderName(rowName) ? '' : rowName), manifest: manifestState, stage: (state && state.stage) || '', reseed: null, hint: '' };
+  const result = { ok: true, key: memberKey, boardType, portalType, rowId, rowName, label: sectionLabel || (isPlaceholderName(rowName) ? '' : rowName), manifest: manifestState, stage: (state && state.stage) || '', reseed: null, hint: '', carry: carry && { copied: carry.copied, total: carry.total, bySection: carry.bySection, unmapped: carry.unmapped, skippedSharedTable: carry.skippedSharedTable, ambiguousDependent: carry.ambiguousDependent || 0, givenName: carry.givenName || '', unmatched: !!carry.unmatched, childNames: carry.childNames || [], skipped: carry.skipped || '', written: !!carry.written } };
   const norm = (v) => String(v || '').trim().toLowerCase();
   const finish = async () => {
+    let shape = null;
+    if (state) { try { shape = await io.checklistShape(caseRef); } catch (err) { console.warn(`[Family] checklist shape unreadable for ${caseRef}: ${err.message}`); } }
     if (!state) result.reseed = { unknown: true };
-    else if (state.checklistApplied !== 'Yes') result.reseed = { deferred: true };
+    // "No checklist yet" only when the flag says so AND no row a checklist build
+    // made (schema "code:" or Template-id rows — never a hand-added row) exists:
+    // a Monday automation used to reset the flag on cases whose rows were there.
+    else if (state.checklistApplied !== 'Yes' && !(shape && (shape.schema.length + shape.templateRows) > 0)) result.reseed = { deferred: true };
     else {
-      let shape = null;
-      try { shape = await io.checklistShape(caseRef); } catch (err) { console.warn(`[Family] checklist shape unreadable for ${caseRef}: ${err.message}`); }
       // Every schema key starts with the Case Type + Sub Type it was built for
       // (seedPlanner): rows of another variant would not match the re-seed's
       // keys. Leftover rows the client already uploaded to are harmless (the
@@ -351,7 +379,7 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
         }
       }
     }
-    await io.postNote(cmItemId, note({ caseRef, boardType, rowName, who, manifestState, reseed: result.reseed, stage: result.stage, hint: result.hint })).catch((err) => console.warn(`[Family] note failed for ${caseRef}: ${err.message}`));
+    await io.postNote(cmItemId, note({ caseRef, boardType, rowName, who, manifestState, reseed: result.reseed, stage: result.stage, hint: result.hint, carry: result.carry })).catch((err) => console.warn(`[Family] note failed for ${caseRef}: ${err.message}`));
     console.log(`[Family] ${caseRef}: ${boardType} "${rowName}" (${memberKey}) added by ${source}; manifest ${manifestState}; reseed ${JSON.stringify(result.reseed)}`);
   };
   if (reseedMode === 'background') {
@@ -362,7 +390,26 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
   return { result, done: Promise.resolve() };
 }
 
-function note({ caseRef, boardType, rowName, who, manifestState, reseed, stage, hint }) {
+function carrySentence(c) {
+  if (!c) return '';
+  const n = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
+  const tbl = c.skippedSharedTable ? ` The children's shared history table in the client's own form (${n(c.skippedSharedTable, 'answer')}) was not copied — one table for all children; it leaves the client's page now, so check it with the client.` : '';
+  const amb = c.ambiguousDependent ? ` The client's own form has a "Dependent" block that does not say whose it is (${n(c.ambiguousDependent, 'answer')}) — not copied; it leaves the client's page now, so check it with the client.` : '';
+  return carryCore(c) + tbl + amb;
+}
+
+function carryCore(c) {
+  if (c.written) {
+    const parts = Object.entries(c.bySection || {}).map(([s, k]) => `${s} ${k}`).join(', ');
+    return ` Copied ${c.copied} answer${c.copied === 1 ? '' : 's'} the client had typed ${c.givenName ? `for ${c.givenName} ` : 'for this member '}inside their own form into the new section${parts ? ` (${parts})` : ''}` +
+      `${c.unmapped && c.unmapped.length ? `; no box in the new section for: ${[...new Set(c.unmapped)].join(', ')} (kept aside)` : ''}.`;
+  }
+  if (c.unmatched) return ` The client's own form lists ${c.childNames && c.childNames.length ? `children named ${c.childNames.join(', ')}` : 'children'}; none matched the name given (or more than one did), so nothing was copied into this section.`;
+  if (c.skipped === 'has-answers') return ' The new section already holds answers, so nothing was copied over it.';
+  return '';
+}
+
+function note({ caseRef, boardType, rowName, who, manifestState, reseed, stage, hint, carry }) {
   const q = manifestState === 'added'     ? 'questionnaire section added on the client\'s existing link'
           : manifestState === 'adopted'   ? 'the questionnaire section the client already had is now matched by a row'
           : manifestState === 'completed' ? 'the member was on the Family Members board already — their questionnaire section is now added'
@@ -377,7 +424,7 @@ function note({ caseRef, boardType, rowName, who, manifestState, reseed, stage, 
           : reseed.deferred ? `no document rows yet — the checklist has not been created (the case is at "${esc(stage || 'Not Started')}"); they come with the checklist at Document Collection`
           : reseed.error ? `checklist re-seed FAILED (${esc(reseed.error)}) — press Re-seed Checklist on the case`
           : `checklist re-seeded (rows only added, never removed): ${reseed.created} new document row(s), ${reseed.skipped} existing left as they were${reseed.failed ? `, ${reseed.failed} failed — press Re-seed Checklist` : ''}`;
-  return `👪 <b>Family member added</b> — ${esc(boardType)} "${esc(rowName)}" — by ${esc(who)}, ${esc(require('../utils/torontoTime').torontoTime(Date.now()))} (Toronto). ${manifestState === 'completed' ? '' : 'Family Members row created; '}${q}; ${d}.${hint ? ' ' + esc(hint) : ''} (${esc(caseRef)})`;
+  return `👪 <b>Family member added</b> — ${esc(boardType)} "${esc(rowName)}" — by ${esc(who)}, ${esc(require('../utils/torontoTime').torontoTime(Date.now()))} (Toronto). ${manifestState === 'completed' ? '' : 'Family Members row created; '}${q}; ${d}.${esc(carrySentence(carry))}${hint ? ' ' + esc(hint) : ''} (${esc(caseRef)})`;
 }
 
-module.exports = { addFamilyMember, nextMemberKey, seedIndices, adoptableMember, splitByVariant, placeholderName, cleanName, PORTAL_TO_BOARD, BOARD_TO_PORTAL, ROLE_TO_BOARD, SINGLETON, NAME_MAX, RECENT_ROWS_MS, io, _inFlight, _recentRows };
+module.exports = { addFamilyMember, nextMemberKey, seedIndices, adoptableMember, splitByVariant, carrySentence, CARRY_TYPES, placeholderName, cleanName, PORTAL_TO_BOARD, BOARD_TO_PORTAL, ROLE_TO_BOARD, SINGLETON, NAME_MAX, RECENT_ROWS_MS, io, _inFlight, _recentRows };

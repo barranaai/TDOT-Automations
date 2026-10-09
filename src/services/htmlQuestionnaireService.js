@@ -540,6 +540,20 @@ const _asideId   = (f) => ((f && f.key) ? `k:${f.key}` : `l:${(f && f.section) |
    the section and label are already implied by the key, and an entry carried
    twice still matches itself. */
 const _asideSig  = (f) => `${_asideId(f)}\u0002${(f && f.section) || ''}\u0001${(f && f.label) || ''}\u0002${_asideText(f && f.value)}`;
+/* The same spot without the top-level heading — but never a dependent's
+   heading. When the questionnaire list gains a second member the page drops the
+   principal's own top heading ("Main Applicant › …") from every section and
+   key; his answers are still on the page, in the same boxes, and must not be
+   kept aside as if they were gone. A dependent section embedded in his form
+   ("Dependent Spouse / Common-Law Partner › …") is NOT his box. */
+const _DEP_TOP = /^(dependent|accompanying)\b/i;
+const _asideSpotSansTop = (f) => {
+  const s = String((f && f.section) || '');
+  const i = s.indexOf(' › ');
+  if (i < 0 || _DEP_TOP.test(s.slice(0, i).trim())) return null;
+  return _asideSpot({ section: s.slice(i + 3), label: f && f.label });
+};
+const _onPageSansTop = (onPage, f) => { const alt = _asideSpotSansTop(f); return !!alt && onPage.has(`${alt}\u0002${_asideText(f && f.value)}`); };
 
 function computeSetAside({ previousFields, previousSetAside, incomingFields, fromFormFile, now }) {
   const at = now || new Date().toISOString();
@@ -557,6 +571,7 @@ function computeSetAside({ previousFields, previousSetAside, incomingFields, fro
     const id = _asideId(e);
     if (incoming.has(id) && incoming.get(id) === _asideText(e.value)) continue;   // the answer is back in its box
     if (onPage.has(`${_asideSpot(e)}\u0002${_asideText(e.value)}`)) continue;   // …or back in the same column
+    if (_onPageSansTop(onPage, e)) continue;          // …or back after a single→multi flip dropped the principal's heading
     const sig = _asideSig(e);
     if (seen.has(sig)) continue;                     // carried twice (e.g. a restore merged two lists)
     seen.add(sig);
@@ -569,6 +584,7 @@ function computeSetAside({ previousFields, previousSetAside, incomingFields, fro
     const id = _asideId(f);
     if (incoming.has(id)) continue;                  // its box is on the page — kept, edited or cleared by the client
     if (onPage.has(`${_asideSpot(f)}\u0002${_asideText(f.value)}`)) continue;   // still on the page, in the same column
+    if (_onPageSansTop(onPage, f)) continue;          // still on the page — a single→multi flip only dropped the principal's heading
     const sig = _asideSig(f);
     if (seen.has(sig)) continue;
     seen.add(sig);
@@ -1244,10 +1260,10 @@ async function _readFileForSave({ clientName, caseRef, formKey }) {
   if (!buf) return null;
   let obj = null;
   try { obj = JSON.parse(buf.toString('utf8')); } catch (_) { obj = null; }
-  if (Array.isArray(obj)) return { fields: obj, formFile: '', setAside: [] };
+  if (Array.isArray(obj)) return { fields: obj, formFile: '', setAside: [], savedAt: '' };
   if (obj && typeof obj === 'object') {
     return { fields: Array.isArray(obj.fields) ? obj.fields : [], formFile: String(obj.formFile || ''),
-      setAside: Array.isArray(obj.setAside) ? obj.setAside : [] };
+      setAside: Array.isArray(obj.setAside) ? obj.setAside : [], savedAt: String(obj.savedAt || '') };
   }
   console.warn(`[HtmlQ] ${caseRef}/${formKey}: the saved file is not readable JSON — saving without carrying answers aside (version history keeps the old copy)`);
   return null;
@@ -6279,6 +6295,7 @@ module.exports = {
   validSaveFormFile,
   loadFormFile,
   loadFormFileMeta,
+  readFormFileFull: _readFileForSave,   // { fields, formFile, setAside, savedAt } | null; throws err.transient (the carry-over reads the principal's file through it)
   saveFormData,
   // Progress → Monday on every save + the case-level derivation the portal/cockpit share
   syncProgressToMonday,
