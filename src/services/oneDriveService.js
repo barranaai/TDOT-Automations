@@ -580,6 +580,8 @@ const CASE_FOLDER_TTL_MS     = 10 * 60 * 1000;   // a rename mid-process heals w
 const _caseFolderHold = new Map();           // caseRef -> { since, why }
 function holdCaseFolder(caseRef, why = 'folder repair in progress') { _caseFolderHold.set(String(caseRef || '').trim(), { since: Date.now(), why }); }
 function releaseCaseFolder(caseRef) { _caseFolderHold.delete(String(caseRef || '').trim()); }
+/** True while the case's folder is being repaired (see holdCaseFolder) — for a check that must not answer "no folder" then. */
+function isCaseFolderHeld(caseRef) { return _caseFolderHold.has(String(caseRef || '').trim()); }
 function assertNotHeld(ref) {
   const h = _caseFolderHold.get(ref);
   if (!h) return;
@@ -1234,6 +1236,32 @@ async function ensureClientFolder({ clientName, caseRef }) {
 }
 
 /**
+ * ensureClientFolder that says WHAT it made — for the staff "Create case folder"
+ * action, which records the folder on the case row and so needs its id. Same
+ * name resolution (a folder that already carries the reference is reused, never
+ * duplicated) and the same create (conflictBehavior fail → 409 → the existing
+ * item). The working folders are NOT added here: the caller adds them itself so
+ * a failure reaches staff instead of a log line.
+ * `created` is true only when THIS call made the folder — remembered across the
+ * 401 re-run, which would otherwise find its own new folder "already there".
+ *
+ * @param {{ clientName: string, caseRef: string }} params
+ * @returns {Promise<{ id: string, name: string, webUrl: string, created: boolean, createdAt: string }>}
+ */
+async function createCaseFolder({ clientName, caseRef }) {
+  const safeName = await resolveCaseFolderNameForWrite({ clientName, caseRef });   // throws while the case is held
+  let made = false;
+  const folder = await withGraphAuth('createCaseFolder', async (token) => {
+    await ensureFolder(token, null, ROOT_FOLDER);
+    const f = await ensureFolder(token, ROOT_FOLDER, safeName);
+    if (f.created) made = true;
+    return f;
+  });
+  console.log(`[OneDrive] Case folder ${made ? 'created' : 'found'}: ${ROOT_FOLDER}/${safeName}`);
+  return { id: folder.id, name: safeName, webUrl: folder.webUrl || '', created: made, createdAt: folder.createdAt || '' };
+}
+
+/**
  * Ensure a single category subfolder exists under the client root and return
  * an organisation-scoped sharing link.  Used to backfill the Document Folder
  * column on execution items that were created before OneDrive folders existed.
@@ -1521,6 +1549,7 @@ module.exports = {
   uploadFileAsNew,
   ensureCaseWorkFolders, workFoldersFailedNoteText, CASE_WORK_FOLDERS, WORK_FOLDERS_SINCE,
   listCaseFoldersInRoot, pickCaseFolder, chooseCaseFolderWithReason, setCaseFolderLinkLookup, resolveCaseFolderNameForWrite, listRootFolderTree, readJsonFile, writeJsonFile, moveItemById, copyItemById, renameItemById, ensureSubfolderById, forgetCaseFolder, orgLinkById, holdCaseFolder, releaseCaseFolder,
+  createCaseFolder, isCaseFolderHeld,
   _resetWorkFoldersMemo: () => _workFoldersComplete.clear(),
   _workFoldersMemoHas:   (id) => _workFoldersComplete.has(String(id)),
   _seedCaseFolderCacheForTests: (ref, entry) => _caseFolderName.set(String(ref), entry),

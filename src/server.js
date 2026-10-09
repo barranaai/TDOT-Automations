@@ -1069,6 +1069,51 @@ app.post('/admin/case-action/:caseRef/sponsor', express.json(), async (req, res)
   res.json({ ok: true, sent: !!r.sent, to: r.to || '', emailedAt: r.emailedAt || null, variant: r.variant || null, created, inviterSaved: !!r.inviterSaved, sectionLabel: r.sectionLabel || '', reason: r.sent ? null : (r.reason || null) });
 });
 
+// ─── Create case folder (2026-10-10) ────────────────────────────────────────
+// For a case that has NO OneDrive folder (an old client added after the ITA,
+// never a lead): the folder + the four working folders, linked on the case row,
+// one note. Nothing else. GET checks (read-only); POST creates after a confirm.
+// Deliberately NOT through resolveCaseForWrite: its case overview can create
+// the folder itself (the members-file seed) — unrecorded — before this checks.
+function caseFolderViewer(req, res) {
+  const viewer = resolveViewer(req);
+  if (!viewer) { res.status(401).json({ ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday' }); return null; }
+  return { viewer, canSee: (assignees) => viewer.isAdmin || caseAccess.viewerCanSee(assignees, viewer) };
+}
+function caseFolderError(res, caseRef, err) {
+  if (err.badRequest) return res.status(400).json({ ok: false, error: err.message });
+  if (err.forbidden)  return res.status(403).json({ ok: false, error: err.message });
+  if (err.refused)    return res.status(err.reason === 'not-found' ? 404 : 409).json({ ok: false, reason: err.reason, error: err.message });
+  if (err.partial)    return res.status(502).json({ ok: false, partial: true, reason: err.reason, error: err.message });
+  if (err.transient)  return res.status(503).json({ ok: false, error: err.message });
+  if (err.createFailed) return res.status(502).json({ ok: false, error: err.message });
+  console.error(`[CaseFolder] ${caseRef} failed:`, err.message);
+  return res.status(500).json({ ok: false, error: 'Internal server error' });
+}
+app.get('/admin/case-action/:caseRef/folder', async (req, res) => {
+  const caseRef = (req.params.caseRef || '').trim();
+  const who = caseFolderViewer(req, res);
+  if (!who) return;
+  const svc = require('./services/caseFolderCreateService');
+  try {
+    const f = await svc.check({ caseRef, canSee: who.canSee });
+    if (f.state === 'not-found') return res.status(404).json({ ok: false, reason: f.state, error: f.message });
+    res.json(svc.publicView(f));
+  } catch (err) { caseFolderError(res, caseRef, err); }
+});
+app.post('/admin/case-action/:caseRef/folder', express.json(), async (req, res) => {
+  const caseRef = (req.params.caseRef || '').trim();
+  const who = caseFolderViewer(req, res);
+  if (!who) return;
+  const body = req.body || {};
+  const expectName = String(body.expectName == null ? '' : body.expectName).trim();
+  if (!expectName || expectName.length > 300) return res.status(400).json({ ok: false, error: 'Check the folder first (reload the page).' });
+  try {
+    const r = await require('./services/caseFolderCreateService').createCaseFolder({ caseRef, expectName, actor: staffActor(req), canSee: who.canSee });
+    res.json(r);
+  } catch (err) { caseFolderError(res, caseRef, err); }
+});
+
 // Cockpit Documents tab — inline mark-reviewed / request-rework. Same service
 // functions the /d/:caseRef/review page uses, but behind the cockpit's
 // ADMIN_API_KEY (the /d page uses the separate Monday-OAuth staff cookie).

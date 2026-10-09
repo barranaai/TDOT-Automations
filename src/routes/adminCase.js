@@ -55,6 +55,8 @@ function buildCockpitHTML(caseRef) {
     .act-btn:hover { border-color:var(--navy); background:#f0f4f8; }
     .act-btn.primary { background:var(--navy); color:white; border-color:var(--navy); }
     .act-btn.primary:hover { background:var(--navy-light); }
+    button.act-btn { font-family:inherit; cursor:pointer; }
+    button.act-btn:disabled { opacity:.55; cursor:default; }
 
     .pill-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:16px; }
     .pill { display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border-radius:20px; font-size:11px; font-weight:700; letter-spacing:.2px; }
@@ -206,6 +208,7 @@ ${buildNavHeader('dashboard')}
         <div class="case-actions" id="c-actions"></div>
       </div>
       <div class="pill-row" id="c-pills"></div>
+      <div class="act-msg" id="folder-msg"></div>
     </div>
 
     <!-- Tabs -->
@@ -366,11 +369,17 @@ function render(d) {
   var acts = '';
   if (d.portalLink) acts += '<a class="act-btn" href="' + escHtml(d.portalLink) + '" target="_blank" rel="noopener">🏠 Client portal</a>';
   if (d.folderLink) acts += '<a class="act-btn" href="' + escHtml(d.folderLink) + '" target="_blank" rel="noopener">📁 OneDrive</a>';
+  // No folder linked on the row: offer the check-then-create action. Most older
+  // cases HAVE a folder that is just not linked — the server checks first and
+  // says so; it creates only when the case truly has none.
+  else if (!d.cmUnavailable) acts += '<button type="button" class="act-btn" id="folder-btn" title="Checks OneDrive for this case’s folder; if it has none, creates it with the four working folders. Nothing is sent to the client.">📁 Case folder…</button>';
   if (d.clientEmail) acts += '<a class="act-btn" href="mailto:' + escHtml(d.clientEmail) + '">✉ Email client</a>';
   // New application for the SAME client — opens the direct-client modal
   // pre-filled from this case's profile (staff review + confirm everything).
   acts += '<a class="act-btn" href="/admin/consultations?newAppFrom=' + encodeURIComponent(CASE_REF) + '" title="Start a new application for this client — identity and family carried over for review; the current case stays untouched">➕ New application</a>';
   document.getElementById('c-actions').innerHTML = acts;
+  var fbtn = document.getElementById('folder-btn');
+  if (fbtn) fbtn.addEventListener('click', caseFolder);
 
   // Pills
   var healthCls = d.health === 'Red' ? 'red' : (d.health === 'Orange' ? 'amber' : (d.health === 'Green' ? 'green' : 'grey'));
@@ -531,6 +540,42 @@ function famAdd() {
     }
   })
   .catch(function(e) { btn.disabled = false; actMsg('fam-msg', 'err', 'Failed: ' + e.message); });
+}
+
+// Create case folder (2026-10-10): check first (read-only), confirm, then create.
+function folderErr(res) {
+  return res.status === 403 ? 'You are not assigned to this case.' : res.status === 401 ? 'Please sign in again.' : ((res.j && (res.j.error || res.j.message)) || 'Could not create the folder.');
+}
+function caseFolder() {
+  var btn = document.getElementById('folder-btn');
+  if (btn) btn.disabled = true;
+  var again = function() { var b = document.getElementById('folder-btn'); if (b) b.disabled = false; };
+  actMsg('folder-msg', 'info', 'Checking OneDrive for this case’s folder…');
+  var key = peekKey();
+  var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
+  var url = '/admin/case-action/' + encodeURIComponent(CASE_REF) + '/folder';
+  var asJson = function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); };
+  fetch(url, { headers: headers, credentials: 'same-origin' })
+  .then(asJson)
+  .then(function(res) {
+    if (!res.ok) { again(); actMsg('folder-msg', 'err', folderErr(res)); return null; }
+    var j = res.j;
+    if (!j.canCreate) { again(); actMsg('folder-msg', 'info', j.message); return null; }
+    var q = j.mode === 'finish'
+      ? 'Link the folder “Client Documents/' + j.name + '” to this case? It was made a moment ago and is not linked yet.'
+      : j.mode === 'link'
+      ? 'Add the staff link to this case’s folder “Client Documents/' + j.name + '”? It is recorded on the case but has no link yet.'
+      : 'Create the OneDrive folder “Client Documents/' + j.name + '” with the four working folders (' + (j.workFolders || []).join(', ') + ')?';
+    if (!window.confirm(q + ' Nothing is sent to the client; the checklist, stage and payment are not changed.')) { again(); actMsg('folder-msg', 'info', 'Nothing was changed.'); return null; }
+    actMsg('folder-msg', 'info', j.mode === 'create' ? 'Creating the folder…' : 'Linking the folder…');
+    return fetch(url, { method: 'POST', headers: headers, credentials: 'same-origin', body: JSON.stringify({ expectName: j.name }) }).then(asJson);
+  })
+  .then(function(res) {
+    if (!res) return;
+    if (res.ok) { actMsg('folder-msg', 'ok', res.j.message); loadCase(); }
+    else { again(); actMsg('folder-msg', 'err', folderErr(res)); }
+  })
+  .catch(function(e) { again(); actMsg('folder-msg', 'err', 'Failed: ' + e.message + ' — reload the page and press again; if the folder was made, that links it.'); });
 }
 
 function renderDocsTab(d) {
