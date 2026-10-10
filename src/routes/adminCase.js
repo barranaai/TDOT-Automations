@@ -429,6 +429,7 @@ function render(d) {
     : '';
   var fab = document.getElementById('fam-add-btn');
   if (fab) fab.addEventListener('click', famAdd);
+  if (fab && (FAM_JOB || FAM_PENDING)) fab.disabled = true;   // an add is on its way or running in the background
 
   // Questionnaire members
   var qm = d.questionnaire.members || [];
@@ -514,32 +515,125 @@ function famAdd() {
   var memberType = typeEl.value, name = (nameEl && nameEl.value || '').trim();
   if (!window.confirm('Add ' + (name || memberType.split(' / ')[0]) + ' to this case? This adds the Family Members row, the questionnaire section on the client portal link, and the document rows. No email is sent.')) return;
   btn.disabled = true;
+  FAM_PENDING = true;   // re-renders keep the button off until the answer is in
   var key = peekKey();
   var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
-  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/family/add', { method: 'POST', headers: headers, credentials: 'same-origin', body: JSON.stringify({ memberType: memberType, name: name }) })
+  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/family/add', { method: 'POST', headers: headers, credentials: 'same-origin', body: JSON.stringify({ memberType: memberType, name: name, background: true }) })
   .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
   .then(function(res) {
-    if (res.ok) {
-      var rs = res.j.reseed || {};
-      var docs = rs.error ? 'Checklist re-seed failed — press Re-seed Checklist on the case.'
-        : rs.unknown ? 'The checklist state could not be read — press Re-seed Checklist on the case if its checklist exists.'
-        : rs.manual === 'template' ? 'No document rows added: this checklist was built the old Template way — check that the documents of this member are on it and add any missing ones by hand.'
-        : rs.manual === 'subtype' ? 'No document rows added: the Sub Type changed after the checklist was built — press Re-seed Checklist on the case.'
-        : rs.manual === 'casetype' ? 'No document rows added: the checklist was built for another Case Type — see the note on the case (do not add the member again).'
-        : rs.manual === 'no-schema' ? 'No document rows added: this case type has no automatic checklist — add the documents of this member by hand.'
-        : rs.deferred ? 'Document rows come with the checklist at Document Collection (the case is at "' + (res.j.stage || 'Not Started') + '").'
-        : ((rs.created || 0) + ' document row(s) added.' + (rs.failed ? ' ' + rs.failed + ' row(s) failed — press Re-seed Checklist.' : ''));
-      var cy = res.j.carry || null;
-      var carried = cy && cy.written ? ' Copied ' + cy.copied + ' answer(s) the client had typed for this member in their own form into the new section.' : (cy && cy.unmatched) ? ' No answers copied: the child named did not match exactly one child in the client form (see the note).' : (cy && cy.skipped === 'has-answers') ? ' The new section already had answers, so nothing was copied over it.' : '';
-      if (cy && cy.crossForm && cy.crossForm.copied) carried += ' Also pre-filled ' + cy.crossForm.copied + ' answer(s) into the application form section - the client must review them.';
-      actMsg('fam-msg', 'ok', '✓ Added. ' + docs + (res.j.manifest === 'adopted' ? ' The section the client already had is now complete.' : ' Questionnaire section added.') + carried + (res.j.hint ? ' ' + res.j.hint : ''));
-      loadCase();
-    } else {
-      btn.disabled = false;
-      actMsg('fam-msg', 'err', res.status === 403 ? 'You are not assigned to this case.' : res.status === 401 ? 'Please sign in again.' : ((res.j && res.j.error) || 'Could not add the member.'));
+    FAM_PENDING = false;
+    // The add runs in the background (it takes about a minute): track it until it ends.
+    if (res.status === 202 && res.j && res.j.jobId) return famTrack(res.j.jobId, 'Adding… this usually takes about a minute. You can stay on this page and keep working.', '');
+    if (res.status === 409 && res.j && res.j.jobId) {
+      // THIS tab's own add, still running (followed here already, or remembered after "lost contact")
+      if (res.j.jobId === FAM_JOB) return;
+      if (res.j.jobId === famRecalled()) return famTrack(res.j.jobId, 'Your earlier add on this case is still running — its result shows here when it ends.', '');
+      // someone else's add: THIS add was not made — follow theirs only to say when to press again
+      var asked = name || memberType.split(' / ')[0];
+      return famTrack(res.j.jobId, (res.j.error || 'Another add on this case is running.') + ' Your add of ' + asked + ' was NOT made — this says when the other add ends.', asked);
     }
+    famFinish(res);
   })
-  .catch(function(e) { btn.disabled = false; actMsg('fam-msg', 'err', 'Failed: ' + e.message); });
+  .catch(function(e) { FAM_PENDING = false; actMsg('fam-msg', 'err', 'Failed: ' + e.message + ' — reload the page and check the Family list before adding again.'); });
+}
+
+// The outcome of an add — the same messages the one-request add showed.
+function famFinish(res) {
+  var btn = document.getElementById('fam-add-btn');
+  if (res.ok) {
+    var rs = res.j.reseed || {};
+    var docs = rs.error ? 'Checklist re-seed failed — press Re-seed Checklist on the case.'
+      : rs.unknown ? 'The checklist state could not be read — press Re-seed Checklist on the case if its checklist exists.'
+      : rs.manual === 'template' ? 'No document rows added: this checklist was built the old Template way — check that the documents of this member are on it and add any missing ones by hand.'
+      : rs.manual === 'subtype' ? 'No document rows added: the Sub Type changed after the checklist was built — press Re-seed Checklist on the case.'
+      : rs.manual === 'casetype' ? 'No document rows added: the checklist was built for another Case Type — see the note on the case (do not add the member again).'
+      : rs.manual === 'no-schema' ? 'No document rows added: this case type has no automatic checklist — add the documents of this member by hand.'
+      : rs.deferred ? 'Document rows come with the checklist at Document Collection (the case is at "' + (res.j.stage || 'Not Started') + '").'
+      : ((rs.created || 0) + ' document row(s) added.' + (rs.failed ? ' ' + rs.failed + ' row(s) failed — press Re-seed Checklist.' : ''));
+    var cy = res.j.carry || null;
+    var carried = cy && cy.written ? ' Copied ' + cy.copied + ' answer(s) the client had typed for this member in their own form into the new section.' : (cy && cy.unmatched) ? ' No answers copied: the child named did not match exactly one child in the client form (see the note).' : (cy && cy.skipped === 'has-answers') ? ' The new section already had answers, so nothing was copied over it.' : '';
+    if (cy && cy.crossForm && cy.crossForm.copied) carried += ' Also pre-filled ' + cy.crossForm.copied + ' answer(s) into the application form section - the client must review them.';
+    actMsg('fam-msg', 'ok', '✓ Added. ' + docs + (res.j.manifest === 'adopted' ? ' The section the client already had is now complete.' : ' Questionnaire section added.') + carried + (res.j.hint ? ' ' + res.j.hint : ''));
+    loadCase();
+  } else {
+    if (btn) btn.disabled = false;
+    actMsg('fam-msg', 'err', res.status === 403 ? 'You are not assigned to this case.' : res.status === 401 ? 'Please sign in again.' : ((res.j && res.j.error) || 'Could not add the member.'));
+  }
+}
+
+// Background add tracking (2026-10-10). FAM_JOB keeps the Add button disabled
+// across re-renders (loadCase rebuilds it); the job id survives a reload in
+// sessionStorage. Never retried by itself: an add is not repeatable (a second
+// child would be added) — when the outcome cannot be known, staff check first.
+var FAM_JOB = '';
+var FAM_FOREIGN = '';   // set while following SOMEONE ELSE's add: what this staffer asked for (not made)
+var FAM_PENDING = false; // an add request is on its way
+var FAM_POLL_MS = 3000, FAM_MAX_MS = 5 * 60 * 1000, FAM_MAX_FAILS = 10;
+function famStoreKey() { return 'tdot_fam_job:' + CASE_REF; }
+function famRemember(id) { try { if (id) sessionStorage.setItem(famStoreKey(), id); else sessionStorage.removeItem(famStoreKey()); } catch (e) {} }
+function famRecalled() { try { return sessionStorage.getItem(famStoreKey()) || ''; } catch (e) { return ''; } }
+function famTrack(jobId, msg, foreign) {
+  FAM_JOB = jobId; FAM_FOREIGN = foreign || '';
+  if (!FAM_FOREIGN) famRemember(jobId);
+  var btn = document.getElementById('fam-add-btn'); if (btn) btn.disabled = true;
+  actMsg('fam-msg', 'info', msg);
+  var started = Date.now();   // the 5-minute limit counts from here, not from the first answer
+  setTimeout(function() { famPoll(jobId, started, 0); }, FAM_POLL_MS);
+}
+// keep: the add may still be running ("lost contact", "still working") — a reload follows it again.
+// Someone else's add is never remembered here, so ending it leaves this tab's own remembered add alone.
+function famEnd(keep) { var foreign = FAM_FOREIGN; FAM_JOB = ''; FAM_FOREIGN = ''; if (!keep && !foreign) famRemember(''); }
+function famPoll(jobId, startedAt, fails) {
+  if (FAM_JOB !== jobId) return;
+  var key = peekKey();
+  var headers = {}; if (key) headers['X-Api-Key'] = key;
+  var again = function(n) {
+    if (Date.now() - startedAt > FAM_MAX_MS) {
+      var asked = FAM_FOREIGN; famEnd(true);
+      actMsg('fam-msg', 'err', asked ? 'The other add on this case is still running. Your add of ' + asked + ' was NOT made — reload later and press Add family member once the other add shows in the Family list.'
+        : 'Still working after 5 minutes. Reload the page later — the note on the case says when it finished. Do not add the member again until the Family list shows them.');
+      return;
+    }
+    setTimeout(function() { famPoll(jobId, startedAt, n); }, FAM_POLL_MS);
+  };
+  var lost = function(n) {
+    if (n >= FAM_MAX_FAILS) {
+      var asked = FAM_FOREIGN; famEnd(true);
+      actMsg('fam-msg', 'err', asked ? 'Lost contact with the server. Your add of ' + asked + ' was NOT made — reload the page, check the Family list, then press Add family member if it is still needed.'
+        : 'Lost contact with the server. Reload the page and check the Family list and the case notes before adding again.');
+      return;
+    }
+    again(n);
+  };
+  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/family/add/' + encodeURIComponent(jobId), { headers: headers, credentials: 'same-origin', cache: 'no-store' })
+  .then(function(r) { return r.json().then(function(j) { return { status: r.status, j: j }; }, function() { return { status: r.status, j: null }; }); })
+  .then(function(res) {
+    if (FAM_JOB !== jobId) return;
+    var j = res.j;
+    if (res.status === 200 && j && j.state === 'running') return again(0);
+    if (res.status === 200 && j && (j.state === 'done' || j.state === 'failed') && FAM_FOREIGN) {
+      var asked = FAM_FOREIGN; famEnd();
+      actMsg('fam-msg', 'info', 'The other add on this case (' + String(j.memberType || 'a family member').split(' / ')[0] + (j.by ? ', started by ' + j.by : '') + ') has ' + (j.state === 'done' ? 'finished' : 'ended') + '. Your add of ' + asked + ' was NOT made — press Add family member again if it is still needed.');
+      loadCase(); return;
+    }
+    if (res.status === 200 && j && j.state === 'done') { famEnd(); return famFinish({ ok: true, status: 200, j: j.result || {} }); }
+    if (res.status === 200 && j && j.state === 'failed') { famEnd(); return famFinish({ ok: false, status: j.code, j: { error: j.error } }); }
+    if (res.status === 404) { famEnd(); actMsg('fam-msg', 'err', (j && j.error) || 'The server no longer knows this add. Reload the page and check the Family list before adding again.'); loadCase(); return; }
+    if (res.status === 401 || res.status === 403) {
+      if (FAM_FOREIGN) { famEnd(); return famFinish({ ok: false, status: res.status, j: j || {} }); }
+      // THIS tab's add keeps running on the server: keep it remembered and the button off — a reload after signing in shows its result
+      famEnd(true);
+      actMsg('fam-msg', 'err', res.status === 401 ? 'Please sign in again, then reload this page — the add keeps running and its result shows after the reload. Do not add the member again until the Family list shows them.'
+        : 'This add can no longer be followed with your sign-in. Reload the page and check the Family list and the case notes before adding again.');
+      return;
+    }
+    lost(fails + 1);   // a hiccup (a proxy page, a 5xx): keep asking a little longer
+  })
+  .catch(function() { if (FAM_JOB === jobId) lost(fails + 1); });
+}
+function famResume() {
+  var id = famRecalled();
+  if (id && !FAM_JOB) famTrack(id, 'Checking on the family member being added…', '');
 }
 
 // Create case folder (2026-10-10): check first (read-only), confirm, then create.
@@ -1023,6 +1117,7 @@ document.getElementById('tabbar').addEventListener('click', function(e) {
 startClock();
 if (peekKey()) checkApiStatus();  // status pill uses the admin key; skip for cookie-only staff
 loadCase();
+famResume();   // an add started before a reload is still followed
 </script>
 </body>
 </html>`;

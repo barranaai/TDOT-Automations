@@ -708,12 +708,26 @@ test('cockpit route: the case-write gate, the questionnaire\'s type list, who cl
   assert.match(body, /const ctx = await resolveCaseForWrite\(req, res, caseRef\);/);
   assert.match(body, /resolveMemberTypes\(ctx\.overview\.caseType, ctx\.overview\.caseSubType\)/);
   assert.match(body, /if \(!allowed\.includes\(memberType\)\)/);
-  assert.match(body, /actor: staffActor\(req\)/);
+  assert.match(body, /const actor = staffActor\(req\);/);
+  assert.match(body, /source: 'staff', actor,/, 'who clicked, from the sign-in (no typed name)');
   assert.match(body, /caseRef: ctx\.overview\.caseRef \|\| caseRef/);
   assert.ok(!/caseState:/.test(body), 'the service reads the case state live — the overview\'s copy is a placeholder during a Client Master outage');
   assert.match(body, /caseSubType: ctx\.overview\.caseSubType \|\| ''/);
-  assert.match(body, /err\.badRequest\) return res\.status\(400\)/);
-  assert.match(body, /err\.transient\) return res\.status\(503\)/);
+  // the add runs as a background job (2026-10-10): validation answers at once, the add itself never inside the request
+  assert.match(body, /require\('\.\/services\/familyAddJobs'\)\.start\(\{ caseRef: args\.caseRef, assignees: ctx\.overview\.assignees, by: actor\.name, memberType, run: \(\) => fam\.addFamilyMember\(args\) \}\)/);
+  assert.ok(!/await fam\.addFamilyMember/.test(body), 'the request never waits for the add');
+  assert.match(body, /res\.status\(202\)\.json\(\{ ok: true, jobId: r\.job\.id, state: 'running' \}\)/);
+  assert.match(body, /return res\.status\(409\)\.json\(\{ ok: false, jobId: r\.job\.id, reason: 'in-progress'/, 'a second press gets the running add, never a second add');
+  assert.ok(body.indexOf('if (!allowed.includes(memberType))') < body.indexOf('familyAddJobs'), 'a wrong type is refused before any job starts');
+  // a case page from before the background add would read 202 as "✓ Added": refused with "reload", nothing started
+  assert.match(body, /if \(body\.background !== true\) return res\.status\(409\)\.json\(\{ ok: false, reason: 'stale-page', error: 'This page is out of date — reload it, then add the member\.' \}\);/);
+  assert.ok(body.indexOf("reason: 'stale-page'") < body.indexOf('familyAddJobs'));
+  assert.match(body, /reason: 'in-progress', memberType: r\.job\.memberType, by: r\.job\.by,/);
+  // the old route's error answers live on in the job, unchanged
+  const jobs = fs.readFileSync(require.resolve('../src/services/familyAddJobs.js'), 'utf8');
+  assert.match(jobs, /if \(e\.badRequest\) Object\.assign\(job, \{ state: 'failed', code: 400, error: e\.message \}\);/);
+  assert.match(jobs, /else if \(e\.transient\) Object\.assign\(job, \{ state: 'failed', code: 503, error: e\.message \}\);/);
+  assert.match(jobs, /Object\.assign\(job, \{ state: 'failed', code: 500, error: 'Internal server error' \}\);/);
 });
 
 test('cockpit page: the form offers the questionnaire\'s types, the message element survives the re-render, the script parses and carries no escape sequences', () => {
@@ -727,6 +741,7 @@ test('cockpit page: the form offers the questionnaire\'s types, the message elem
   assert.match(html, /<div id="fam-add"><\/div>\s*<div class="act-msg" id="fam-msg"><\/div>/, 'the message lives outside the re-rendered form');
   assert.ok(!/id="fam-msg" style/.test(html), 'and not inside it');
   assert.match(html, /function famAdd\(\)/);
+  assert.match(html, /function famFinish\(res\)/);
   assert.match(html, /\/family\/add/);
   assert.match(html, /rs\.deferred \? 'Document rows come with the checklist at Document Collection/);
   assert.match(html, /rs\.failed \? ' ' \+ rs\.failed \+ ' row\(s\) failed — press Re-seed Checklist\.' : ''/);

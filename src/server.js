@@ -959,6 +959,10 @@ function sponsorPartialSentence(r) {
 // One click: Family Members row + the questionnaire section + the checklist
 // re-seed, so the three never disagree. Types come from the questionnaire's
 // own allowed list for this case type; the name is optional.
+// Runs in the BACKGROUND (2026-10-10, familyAddJobs): an add takes ~60-90 s,
+// longer than an answer survives the way back to the browser — three adds that
+// worked showed staff an error. The route answers 202 + a job id at once; the
+// page asks GET …/family/add/:jobId for the outcome. One running add per case.
 app.post('/admin/case-action/:caseRef/family/add', express.json(), async (req, res) => {
   const caseRef = (req.params.caseRef || '').trim();
   const ctx = await resolveCaseForWrite(req, res, caseRef);
@@ -966,30 +970,42 @@ app.post('/admin/case-action/:caseRef/family/add', express.json(), async (req, r
   const { resolveMemberTypes } = require('../config/questionnaireFormMap');
   const fam = require('./services/familyMemberService');
   const body = req.body || {};
+  // A case page loaded before the background add went live would read the 202
+  // as a finished add ("✓ Added", the button back on): it is told to reload.
+  if (body.background !== true) return res.status(409).json({ ok: false, reason: 'stale-page', error: 'This page is out of date — reload it, then add the member.' });
   const memberType = String(body.memberType || '').trim();
   const allowed = resolveMemberTypes(ctx.overview.caseType, ctx.overview.caseSubType);
   if (!allowed.includes(memberType)) {
     return res.status(400).json({ ok: false, error: allowed.length ? `Choose one of: ${allowed.join(', ')}.` : 'This case type has no separate family sections.' });
   }
   if (String(body.name == null ? '' : body.name).trim().length > fam.NAME_MAX) return res.status(400).json({ ok: false, error: `The name is too long (max ${fam.NAME_MAX} characters).` });
-  try {
-    // The service reads the case's own state (stage, Checklist Template
-    // Applied) live — the overview's copy is a placeholder when the Client
-    // Master read failed, and a wrong "no checklist yet" would defer the rows.
-    const r = await fam.addFamilyMember({
-      caseRef: ctx.overview.caseRef || caseRef, cmItemId: ctx.overview.itemId, clientName: ctx.overview.clientName,
-      boardType: fam.PORTAL_TO_BOARD[memberType], name: fam.cleanName(body.name), source: 'staff', actor: staffActor(req),
-      caseSubType: ctx.overview.caseSubType || '',
-      forms: require('../config/questionnaireFormMap').resolveForm(ctx.overview.caseType, ctx.overview.caseSubType) || null,
-    });
-    console.log(`[Family] ${caseRef}: ${memberType} added by ${staffActor(req).name}`);
-    res.json(r);
-  } catch (err) {
-    if (err.badRequest) return res.status(400).json({ ok: false, error: err.message });
-    if (err.transient) return res.status(503).json({ ok: false, error: err.message });
-    console.error(`[Family] add failed for ${caseRef}:`, err.message);
-    res.status(500).json({ ok: false, error: 'Internal server error' });
+  // The service reads the case's own state (stage, Checklist Template
+  // Applied) live — the overview's copy is a placeholder when the Client
+  // Master read failed, and a wrong "no checklist yet" would defer the rows.
+  const actor = staffActor(req);
+  const args = {
+    caseRef: ctx.overview.caseRef || caseRef, cmItemId: ctx.overview.itemId, clientName: ctx.overview.clientName,
+    boardType: fam.PORTAL_TO_BOARD[memberType], name: fam.cleanName(body.name), source: 'staff', actor,
+    caseSubType: ctx.overview.caseSubType || '',
+    forms: require('../config/questionnaireFormMap').resolveForm(ctx.overview.caseType, ctx.overview.caseSubType) || null,
+  };
+  const r = require('./services/familyAddJobs').start({ caseRef: args.caseRef, assignees: ctx.overview.assignees, by: actor.name, memberType, run: () => fam.addFamilyMember(args) });
+  if (!r.started) {
+    return res.status(409).json({ ok: false, jobId: r.job.id, reason: 'in-progress', memberType: r.job.memberType, by: r.job.by, error: `A family member is being added to this case right now (started by ${r.job.by || 'staff'}) — wait for it to finish.` });
   }
+  res.status(202).json({ ok: true, jobId: r.job.id, state: 'running' });
+});
+// The outcome of a background add. Cheap on purpose (polled every few seconds):
+// no case read — the job carries its case and the assignees it started with.
+app.get('/admin/case-action/:caseRef/family/add/:jobId', (req, res) => {
+  const viewer = resolveViewer(req);
+  if (!viewer) return res.status(401).json({ ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday' });
+  const jobs = require('./services/familyAddJobs');
+  const job = jobs.get(req.params.jobId, (req.params.caseRef || '').trim());
+  res.set('Cache-Control', 'no-store');
+  if (!job) return res.status(404).json({ ok: false, reason: 'unknown-job', error: 'The server no longer knows this add (it may have restarted). Reload the page and check the Family list and the case notes before adding again.' });
+  if (!viewer.isAdmin && !caseAccess.viewerCanSee(job.assignees, viewer)) return res.status(403).json({ ok: false, error: 'You are not assigned to this case.' });
+  res.json(jobs.view(job));
 });
 
 app.post('/admin/case-action/:caseRef/sponsor', express.json(), async (req, res) => {
