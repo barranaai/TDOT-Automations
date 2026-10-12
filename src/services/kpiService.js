@@ -11,6 +11,7 @@
 
 'use strict';
 
+const { torontoWallClock } = require('../utils/torontoTime');
 const leadService = require('./leadService');
 
 function consultFeeDollars() {
@@ -24,7 +25,7 @@ function consultFeeDollars() {
  * 'YYYY-MM-DD HH:MM' slot (both already Toronto); '' if unparseable.
  */
 function monthKey(dateStr) {
-  const m = require('../utils/torontoTime').torontoWallClock(dateStr).match(/^(\d{4})-(\d{2})/);
+  const m = torontoWallClock(dateStr).match(/^(\d{4})-(\d{2})/);
   return m ? `${m[1]}-${m[2]}` : '';
 }
 function feeToNum(v) { const n = parseFloat(String(v || '').replace(/[^\d.]/g, '')); return Number.isFinite(n) ? n : 0; }

@@ -21,6 +21,8 @@ function torontoTime(ms) {
 // An instant written WITH its zone: Monday's created_at ('2026-10-01T01:30:00Z'), a
 // new Date().toISOString() stamp ('…T01:30:00.123Z'), an offset ('…T21:30:00-04:00').
 const ZONED_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+// Built ONCE: the KPI converts every lead's arrival on every request (a formatter per call cost ~80x).
+const TORONTO_PARTS = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
 /**
  * 'YYYY-MM-DD HH:MM' in Toronto (the booked-slot shape) for an instant that
@@ -39,7 +41,7 @@ function torontoWallClock(v) {
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return s;
   const p = {};
-  for (const x of new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d)) p[x.type] = x.value;
+  for (const x of TORONTO_PARTS.formatToParts(d)) p[x.type] = x.value;
   return `${p.year}-${p.month}-${p.day} ${p.hour === '24' ? '00' : p.hour}:${p.minute}`;
 }
 
