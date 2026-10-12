@@ -20,6 +20,7 @@
 
 'use strict';
 
+const { statusText } = require('../utils/mondayStatus');
 const mondayApi   = require('./mondayApi');
 const { leadBoardId } = require('../../config/monday');
 const C = require('../data/newLeadsBoard.json').columns;
@@ -64,7 +65,7 @@ async function getBookedLeadsFull() {
       id: it.id,
       fullName: cv[C.fullName]?.text || it.name,
       bookedSlot: cv[C.bookedSlot]?.text || '',
-      outcome: cv[C.outcome]?.text || '',
+      outcome: statusText(cv[C.outcome]),   // EMPTY reads '' — the reminder needs to know no outcome was set
       recordingUrl, meetingUrl,
       updates: it.updates.map((u) => u.body || ''),
     };

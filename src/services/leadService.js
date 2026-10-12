@@ -12,6 +12,7 @@
 
 'use strict';
 
+const { statusText } = require('../utils/mondayStatus');
 const mondayApi        = require('./mondayApi');
 const leadTokenService = require('./leadTokenService');
 const { leadBoardId }  = require('../../config/monday');
@@ -313,6 +314,9 @@ function parseItem(item) {
       try { url = JSON.parse(cv.value || '{}').url || ''; }
       catch (err) { console.warn(`[Lead] Link column parse failed for item ${item.id} col ${cv.id}: ${err.message}`); }
       lead[key] = url;
+    } else if (COL_TYPE[key] === 'status') {
+      // An EMPTY status cell reads '' — never the label Monday shows on empty cells (utils/mondayStatus).
+      lead[key] = statusText(cv);
     } else {
       lead[key] = cv.text || '';
     }

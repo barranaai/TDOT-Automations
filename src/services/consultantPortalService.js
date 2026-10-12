@@ -26,6 +26,7 @@ const { buildRetainerPlan, overridesFromLead } = require('./retainerPlanBuilder'
 const { ANNEXES } = require('../../config/annexCatalogue');
 const { feeToCents, centsToMoney } = require('../utils/money');
 const { torontoDay, torontoWallClock } = require('../utils/torontoTime');
+const { statusText } = require('../utils/mondayStatus');
 const consultAgreementService = require('./consultAgreementService');
 
 // Curated lifecycle Case Stages offered as milestone payment triggers. These are
@@ -107,7 +108,7 @@ async function getConsultationQueue() {
     `query($boardId: ID!, $colId: String!, $val: String!) {
        items_page_by_column_values(limit: 200, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) {
          cursor
-         items { id name column_values(ids: [${ids}]) { id text } }
+         items { id name column_values(ids: [${ids}]) { id text value } }
        }
      }`,
     { boardId: String(leadBoardId), colId: C.bookingStatus, val: 'Booked' }
@@ -120,7 +121,7 @@ async function getConsultationQueue() {
       `query($cursor: String!) {
          next_items_page(limit: 200, cursor: $cursor) {
            cursor
-           items { id name column_values(ids: [${ids}]) { id text } }
+           items { id name column_values(ids: [${ids}]) { id text value } }
          }
        }`,
       { cursor }
@@ -130,7 +131,9 @@ async function getConsultationQueue() {
   }
   if (cursor) console.warn('[Portal] getConsultationQueue hit the pagination guard with pages remaining — list is PARTIAL.');
   const items = rawItems.map((it) => {
-    const cv = {}; it.column_values.forEach((c) => { cv[c.id] = (c.text || '').trim(); });
+    // Status cells: an EMPTY cell reads '' (not the label Monday shows on empty cells — utils/mondayStatus).
+    const STATUS_IDS = new Set([C.tier, C.outcome, C.preConsultSubmitted]);
+    const cv = {}; it.column_values.forEach((c) => { cv[c.id] = (STATUS_IDS.has(c.id) ? statusText(c) : (c.text || '')).trim(); });
     return {
       id:                 it.id,
       name:               it.name,
