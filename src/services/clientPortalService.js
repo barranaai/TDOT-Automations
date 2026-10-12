@@ -490,7 +490,7 @@ function buildPortalPage(snap, opts) {
       <div class="card-head">
         <div>
           <h3>🕓 Your case journey</h3>
-          <div class="sub">Everything that has happened on your file so far.</div>
+          <div class="sub">Everything that has happened on your file so far. Times are Toronto (Eastern) time.</div>
         </div>
       </div>
       <div class="ctl">

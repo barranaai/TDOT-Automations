@@ -129,7 +129,7 @@ ${buildNavHeader('leads')}
     </div>
     <div class="card">
       <table>
-        <thead><tr><th>Lead</th><th>Service</th><th>Created</th><th>Tier</th><th>Priority</th><th>Booking</th><th>Invite</th><th></th></tr></thead>
+        <thead><tr><th>Lead</th><th>Service</th><th title="The day the lead arrived, Toronto time">Received</th><th>Tier</th><th>Priority</th><th>Booking</th><th>Invite</th><th></th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div>
@@ -145,7 +145,7 @@ function statusPill(s){
   if(s==='Abandoned') return qpill('grey','Abandoned');
   return qpill('amber', s||'Not Yet');
 }
-function createdOf(r){ return String(r.createdAt||'').slice(0,10); }
+function createdOf(r){ return String(r.createdDay||''); }   // the Toronto day the lead arrived (server-made)
 function invitePill(c){
   if(!c.inviteSent) return '<span class="pill grey">—</span>';
   return qpill('green', c.inviteSentAt?('Sent '+String(c.inviteSentAt).slice(0,10)):'Sent');
@@ -172,7 +172,7 @@ function renderRows(rows){
     tr.onclick=function(){ window.location.href='/admin/lead/'+encodeURIComponent(tr.getAttribute('data-id')); };
   });
 }
-function monthOf(r){ var m=String(r.createdAt||'').match(/^(\\d{4}-\\d{2})/); return m?m[1]:''; }
+function monthOf(r){ return String(r.createdDay||'').slice(0,7); }   // the Toronto month
 function distinctVals(rows,fn){ var s={}; rows.forEach(function(r){ var v=fn(r); if(v) s[v]=1; }); return Object.keys(s).sort(); }
 function fillSel(id,vals,label){ var el=document.getElementById(id); var cur=el.value; el.innerHTML='<option value="">'+label+'</option>'+vals.map(function(v){return '<option value="'+escHtml(v)+'">'+escHtml(v)+'</option>';}).join(''); el.value=cur; }
 function populateFilters(rows){
@@ -505,7 +505,7 @@ function render(d){
   document.getElementById('c-acts').innerHTML=acts;
 
   var pills='';
-  pills+='<span class="chip grey">'+ICONS.clock+'<span class="pk">Created</span> '+escHtml(String(d.createdAt||'').slice(0,10)||'—')+'</span>';
+  pills+='<span class="chip grey">'+ICONS.clock+'<span class="pk">Received</span> '+escHtml(d.createdWhen ? d.createdWhen+' (Toronto)' : '—')+'</span>';
   var bs=d.bookingStatus||'Not Yet';
   pills+='<span class="chip '+(bs==='Booked'?'green':bs==='Slot Held'?'blue':bs==='Abandoned'?'grey':'amber')+'"><span class="pk">Booking</span> '+escHtml(bs)+'</span>';
   if(d.tier) pills+='<span class="chip blue"><span class="pk">Tier</span> '+escHtml(d.tier)+'</span>';

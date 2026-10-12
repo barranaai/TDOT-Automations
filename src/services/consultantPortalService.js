@@ -25,6 +25,7 @@ const { validateMilestones } = require('./retainerPlanService');
 const { buildRetainerPlan, overridesFromLead } = require('./retainerPlanBuilder');
 const { ANNEXES } = require('../../config/annexCatalogue');
 const { feeToCents, centsToMoney } = require('../utils/money');
+const { torontoDay, torontoWallClock } = require('../utils/torontoTime');
 const consultAgreementService = require('./consultAgreementService');
 
 // Curated lifecycle Case Stages offered as milestone payment triggers. These are
@@ -487,7 +488,8 @@ async function getLeadsQueue() {
     && (l.sourceChannel || '').trim() !== DIRECT_SOURCE).map((l) => ({
     id:            l.id,
     name:          l.fullName || l.name,
-    createdAt:     l.createdAt || '',
+    createdAt:     l.createdAt || '',                     // raw UTC instant — the sort below needs it
+    createdDay:    torontoDay(l.createdAt),               // what the page shows: the Toronto day it arrived
     service:       l.confirmedCaseType || l.serviceRequired || '',
     tier:          l.tier || '',
     priority:      l.priority || '',
@@ -564,6 +566,7 @@ async function getLeadDetail(leadId) {
     phone:    lead.phone || '',
     address:  lead.residentialAddress || '', // convert-to-direct-retainer prefill
     createdAt: lead.createdAt || '',
+    createdWhen: torontoWallClock(lead.createdAt),   // 'YYYY-MM-DD HH:MM' Toronto — when the lead arrived
     // Pre-invite consultant override (2026-08-17): the auto-routing suggestion
     // + the pickable registry names. `consultant` (below) is the pinned value.
     routedConsultant: (() => {
@@ -599,10 +602,10 @@ async function getLeadDetail(leadId) {
     inviteSentAt: lead.inviteSentAt || '',
 
     hasIntakeArchive: Boolean(intake),
-    intakeSubmittedAt: (intake && intake.submittedAt) || '',
+    intakeSubmittedAt: torontoWallClock(intake && intake.submittedAt),   // shown as a Toronto date
     attachments: ((intake && intake.uploadedFiles) || [])
       .map((u) => (typeof u === 'string' ? u : String((u && (u.filename || u.name)) || ''))).filter(Boolean),
-    consentsAt: (intake && intake.consents && intake.consents.at) || '',
+    consentsAt: torontoWallClock(intake && intake.consents && intake.consents.at),
 
     flags,
     sections,

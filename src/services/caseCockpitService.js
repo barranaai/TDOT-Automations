@@ -31,6 +31,7 @@ const htmlQ              = require('./htmlQuestionnaireService');
 const documentFormSvc    = require('./documentFormService');
 const compositionAdapter = require('./compositionAdapter');
 const { clientMasterBoardId } = require('../../config/monday');
+const { torontoWallClock } = require('../utils/torontoTime');
 
 // Client Master columns this aggregator reads. IDs verified against the live
 // readers in chasingLoopService / dashboardService / config (single source).
@@ -200,8 +201,10 @@ function pickLeadFields(lead) {
  */
 function buildTimeline({ lead, milestones = [], qMembers = [], docItems = [] } = {}) {
   const ev = [];
+  // Instants (the lead's arrival, a questionnaire submit) become Toronto wall-clock,
+  // like every other date here, so the timeline shows Toronto time and sorts right.
   const push = (date, title, detail, kind) => {
-    const d = String(date || '').trim();
+    const d = torontoWallClock(date);
     if (d) ev.push({ date: d, title, detail: detail || '', kind });
   };
   const L = lead || {};
@@ -366,7 +369,7 @@ async function getCaseOverview(caseRef) {
       flags:     Object.keys(m.flags || {}),
     })),
     questionnaire: {
-      members:   qMembers.map((m) => ({ key: m.key, type: m.type, label: m.label, status: m.status, hasData: !!m.hasData, submittedAt: m.submittedAt || '' })),
+      members:   qMembers.map((m) => ({ key: m.key, type: m.type, label: m.label, status: m.status, hasData: !!m.hasData, submittedAt: torontoWallClock(m.submittedAt) })),
       submitted: qMembers.filter((m) => m.status === 'Submitted').length,
       total:     qMembers.length,
     },

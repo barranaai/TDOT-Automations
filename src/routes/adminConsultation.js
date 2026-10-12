@@ -212,7 +212,7 @@ ${SHARED_AUTH_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 var ALLROWS=[];
 function qpill(cls,txt){ return '<span class="pill '+cls+'">'+escHtml(txt)+'</span>'; }
-function todayStr(){ return (new Date()).toISOString().slice(0,10); }
+function todayStr(){ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto'}).format(new Date()); }   // the Toronto day
 function renderRows(rows){
   var tb=document.getElementById('qbody');
   if(!rows.length){ tb.innerHTML='<tr><td colspan="10" class="empty">'+(ALLROWS.length?'No consultations match your filters.':'No booked consultations right now.')+'</td></tr>'; return; }
@@ -586,7 +586,7 @@ function fillMonths(months, sel){
 }
 function loadKpis(month){
   var key=getKey(); if(!key) return;
-  var m = (month===undefined) ? (new Date()).toISOString().slice(0,7) : month;
+  var m = (month===undefined) ? new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto',year:'numeric',month:'2-digit'}).format(new Date()) : month;   // the Toronto month
   document.getElementById('kpi-body').innerHTML='<div class="muted">Loading KPIs…</div>';
   fetch('/api/kpis'+(m?('?month='+encodeURIComponent(m)):''),{headers:{'X-Api-Key':key}})
    .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } return r.json(); })

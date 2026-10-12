@@ -18,9 +18,13 @@ function consultFeeDollars() {
   catch (_) { return 200; }
 }
 
-/** 'YYYY-MM' from an ISO date, a 'YYYY-MM-DD HH:MM' slot, or '' if unparseable. */
+/**
+ * 'YYYY-MM' — the TORONTO month — from an ISO instant (a lead's createdAt: an
+ * evening lead is the next day in UTC), a 'YYYY-MM-DD' date or a
+ * 'YYYY-MM-DD HH:MM' slot (both already Toronto); '' if unparseable.
+ */
 function monthKey(dateStr) {
-  const m = String(dateStr || '').trim().match(/^(\d{4})-(\d{2})/);
+  const m = require('../utils/torontoTime').torontoWallClock(dateStr).match(/^(\d{4})-(\d{2})/);
   return m ? `${m[1]}-${m[2]}` : '';
 }
 function feeToNum(v) { const n = parseFloat(String(v || '').replace(/[^\d.]/g, '')); return Number.isFinite(n) ? n : 0; }

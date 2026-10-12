@@ -315,7 +315,7 @@ ${buildNavHeader('dashboard')}
     <div class="tab-panel" id="panel-timeline">
       <div class="card">
         <div class="card-title">🕓 Case timeline <span class="cnt" id="tl-cnt"></span></div>
-        <div class="muted" style="margin-bottom:12px">Built from the dates the system records — inquiry, invite, consultation, retainer, payments, submissions and document uploads.</div>
+        <div class="muted" style="margin-bottom:12px">Built from the dates the system records — inquiry, invite, consultation, retainer, payments, submissions and document uploads. Times are Toronto (Eastern) time.</div>
         <div id="tl-list"></div>
       </div>
     </div>
