@@ -641,7 +641,7 @@ const PAYMENT_UI_JS = `
       if (balance > 0 && cents === balance) return { cls: 'ok', text: 'Settles this milestone' + (paidSoFar > 0 ? ' (' + payDollars(paidSoFar + cents) + ' received in total)' : '') + '.' };
       if (balance > 0) return { cls: 'ok', text: 'Part-payment — ' + payDollars(balance - cents) + ' will remain on this milestone. It stays "part-paid" until the balance is in.' +
         /* Milestone 1: the first part-payment starts the case (team rule, 2026-10-13). */
-        (m.index === 0 ? (o.started ? ' The case has already started — collect the balance before submission.' : ' This part-payment STARTS THE CASE, the same as a full payment — collect the balance before submission.') : '') };
+        (m.index === 0 ? (o.started ? ' An earlier payment on this milestone already started the case (or holds it until the signatures are in) — this one starts nothing new. Collect the balance before submission.' : ' This part-payment STARTS THE CASE, the same as a full payment — collect the balance before submission.') : '') };
       return { cls: 'ok', text: '' };
     }
     d.box.innerHTML =

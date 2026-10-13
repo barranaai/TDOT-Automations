@@ -556,7 +556,7 @@ test('REVIEW 2: client portal — a part-paid milestone the plan now covers asks
 /* ── the case starts on a milestone-1 part-payment (team rule, 2026-10-13) ── */
 
 test('START: only the FIRST part-payment starts the case; a second one (Retainer Paid date on file) starts nothing; milestones 2+ never start anything', async () => {
-  const w = world({ pay: JSON.stringify({ 0: { status: 'partial', method: 'e-transfer', l: [L1] } }), lead: { retainerPaid: '2026-10-13' } });
+  const w = world({ pay: JSON.stringify({ 0: { status: 'partial', method: 'e-transfer', l: [L1] } }), lead: { retainerPaid: '2026-10-13', retainerSigned: '2026-10-01' } });
   try {
     const r = await ms.markMilestonePaid('555001', 0, { amountCents: 10000, reference: 'C9', actor: ACTOR });
     assert.deepEqual([r.settled, r.caseStart], [false, 'already']);
@@ -689,9 +689,20 @@ test('START: the client timeline shows the part-payment once (no "first payment 
   assert.deepEqual(client, ['Part-payment received — M1 — thank you']);
   const js = require('../src/routes/adminShared').PAYMENT_UI_JS;
   assert.ok(!/[`\\]|\$\{/.test(js), 'plain template text');
-  assert.ok(js.includes("(m.index === 0 ? (o.started ? ' The case has already started — collect the balance before submission.' : ' This part-payment STARTS THE CASE, the same as a full payment — collect the balance before submission.') : '')"));
+  assert.ok(js.includes("(m.index === 0 ? (o.started ? ' An earlier payment on this milestone already started the case (or holds it until the signatures are in) — this one starts nothing new. Collect the balance before submission.' : ' This part-payment STARTS THE CASE, the same as a full payment — collect the balance before submission.') : '')"));
   const consult = fs.readFileSync(require.resolve('../src/routes/adminConsultation'), 'utf8');
   const cockpit = fs.readFileSync(require.resolve('../src/routes/adminCase'), 'utf8');
   assert.ok(consult.includes("started: !!(D.retainerPaid&&String(D.retainerPaid).trim()), onConfirm: function(ref,by,amountCents,settle){"));
   assert.ok(cockpit.includes("started: !!(L.retainerPaid && String(L.retainerPaid).trim()), onConfirm: function(ref, by, amountCents, settle) {"));
+});
+
+test('REVIEW 3: a later part-payment on a case still HELD for a signature says "held until …", never "already started"', async () => {
+  const cps = require('../src/services/consultantPortalService');
+  const w = world({ pay: JSON.stringify({ 0: { status: 'partial', method: 'e-transfer', l: [L1] } }), lead: { retainerPaid: '2026-10-13', retainerSigned: '' } });
+  try {
+    const a = await cps.applyAction({ leadId: '555001', action: 'markMilestonePaid', value: JSON.stringify({ index: 0, amountCents: 10000, reference: 'C9' }), staffName: 'Asmita' });
+    assert.equal(w.retainerPaidCalls, 0, 'nothing new is started');
+    assert.match(a.message, /The case will start on this payment once the client signature is in/);
+    assert.ok(!/already started/.test(a.message) && !/already started/.test(w.notes[0]));
+  } finally { w.restore(); }
 });

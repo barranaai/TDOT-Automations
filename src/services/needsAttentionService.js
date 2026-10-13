@@ -84,8 +84,10 @@ const CLOSED_STAGES = ['Application Submitted', 'Submitted', 'Approved', 'Refuse
   'Withdrawn', 'Cancelled', 'Archived', 'Task Done'];
 // A part-paid milestone is collected before submission (team rule, 2026-10-13: a
 // part-payment on milestone 1 starts the case). From Submission Preparation on, any
-// balance still owed is listed — on a submitted case too, until it is paid.
-const BALANCE_STAGES = ['Submission Preparation', 'Submission Ready', 'Application Submitted', 'Submitted'];
+// balance still owed is listed — on a submitted case too, until it is paid. The
+// board's own labels (census 2026-10-12): an LMIA case goes to "LMIA Submitted"; a
+// submitted case can move on to "ADR" or "Reconsideration". ("Submitted" kept as an alias.)
+const BALANCE_STAGES = ['Submission Preparation', 'Submission Ready', 'Application Submitted', 'LMIA Submitted', 'ADR', 'Reconsideration', 'Submitted'];
 const needsBalanceCheck = (c) => !isTestCase(c) && BALANCE_STAGES.includes(c.stage);
 
 const GRACE_NEW_CASE_MS = 30 * 60 * 1000;        // a brand-new case is still being set up

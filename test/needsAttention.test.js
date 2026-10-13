@@ -708,3 +708,12 @@ test('BALANCE: the read seam lists only part-paid milestones with a balance, fro
     assert.deepEqual(out, [{ leadId: '1', index: 0, label: 'Milestone 1 – Admin Fee (Non-Refundable)', paidCents: 56500, totalCents: 113000, balanceCents: 56500, lastPaidAt: '2026-10-13' }]);
   } finally { leadService.findAllByColumnValue = orig; }
 });
+
+test('BALANCE: every post-submission label on the live board counts (census 2026-10-12) — LMIA Submitted, ADR, Reconsideration; pre-submission labels never', () => {
+  const owed = [{ leadId: '1', index: 0, label: 'M1', paidCents: 56500, totalCents: 113000, balanceCents: 56500, lastPaidAt: '2026-10-01' }];
+  const LABELS = ['Document Collection Started', 'Internal Review', 'Stuck', 'Retainer Confirmed', 'Submission Preparation', 'Application Submitted', 'Submission Ready',
+    'Cancelled', 'Profile Created', 'Task Done', 'Ads posted', 'Pre-Onboarding', 'Profile Linked', 'Reconsideration', 'LMIA Submitted', 'ADR', 'Profile Reviewed but not linked', 'Profile Updated'];
+  const cases = LABELS.map((stage, n) => parse(item({ id: `s${n}`, ref: `R-${n}`, stage })));
+  const out = NA.detect({ cases, checklist: new Map(cases.map((c) => [c.ref, true])), balances: new Map(cases.map((c) => [c.id, owed])), now: NOW }).filter((e) => e.kind === 'balance-owed');
+  assert.deepEqual(out.map((e) => e.stage).sort(), ['ADR', 'Application Submitted', 'LMIA Submitted', 'Reconsideration', 'Submission Preparation', 'Submission Ready']);
+});

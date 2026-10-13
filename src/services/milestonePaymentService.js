@@ -485,8 +485,12 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
     // 'started' | 'held' (a signature still missing) | 'no-case' | 'failed' | 'already' | null.
     let caseStart = null, missing = [];
     if (Number(index) === 0) {
-      if (String(lead.retainerPaid || '').trim()) caseStart = 'already';
-      else {
+      if (String(lead.retainerPaid || '').trim()) {
+        // Started on an earlier payment — or held there for a signature: say which.
+        const gate = require('./caseGateService').signatureGateForLead(lead);
+        if (gate.complete) caseStart = 'already';
+        else { caseStart = 'held'; missing = gate.missing; }
+      } else {
         const gate = require('./caseGateService').signatureGateForLead({ ...lead, retainerPaid: when });
         missing = gate.complete ? [] : gate.missing;
         try {
