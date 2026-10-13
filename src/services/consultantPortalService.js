@@ -1000,7 +1000,16 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       const r = await require('./milestonePaymentService').markMilestonePaid(leadId, v.normalized.index, { reference: v.normalized.reference, actor: by, amountCents: v.normalized.amountCents, settle: v.normalized.settle });
       if (r.already) return { ok: true, message: `Already recorded as paid (${r.existingOn}) — nothing changed.` };
       const $ = (c) => (Math.round(c) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
-      if (r.settled === false) return { ok: true, message: `Recorded — ${$(r.amountCents)} toward ${r.label || 'the milestone'} by e-transfer. Paid so far ${$(r.paidCents)} of ${$(r.totalCents)}; balance ${$(r.balanceCents)}. The milestone is not paid until the balance is in.` };
+      if (r.settled === false) {
+        // Milestone 1: the first part-payment starts the case (team rule 2026-10-13).
+        const start = r.caseStart === 'started' ? ' The case has been started on this payment — collect the balance before submission.'
+          : r.caseStart === 'held' ? ` The case will start on this payment once the ${(r.missing || []).join(' and ')} ${(r.missing || []).length > 1 ? 'are' : 'is'} in — collect the balance before submission.`
+          : r.caseStart === 'no-case' ? ' No case is linked yet — it starts on this payment when the case is opened.'
+          : r.caseStart === 'failed' ? ' Starting the case did not finish — check the case’s Payment Status in a few minutes and tell an admin if it is not Paid. Do not record the payment again.'
+          : r.caseStart === 'already' ? ' The case has already started — collect the balance before submission.'
+          : '';
+        return { ok: true, message: `Recorded — ${$(r.amountCents)} toward ${r.label || 'the milestone'} by e-transfer. Paid so far ${$(r.paidCents)} of ${$(r.totalCents)}; balance ${$(r.balanceCents)}. The milestone is not paid until the balance is in.${start}` };
+      }
       if (r.settled && r.amountCents === 0) return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked settled: the ${$(r.paidCents)} already on file covers it; no new payment was received.` };
       if (r.settled && r.paidCents > r.amountCents) return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked paid by e-transfer (this ${$(r.amountCents)} settles it; ${$(r.paidCents)} received in total).` };
       return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked paid by e-transfer.` };

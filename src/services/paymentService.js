@@ -66,7 +66,7 @@ function extractCompletedPayment(event) {
  * flips the Client Master Payment Status to "Paid" (the Phase 1 trigger). Idempotent.
  * @param {string|object} leadOrId  a leadId or an already-loaded lead
  */
-async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt = '' } = {}) {
+async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt = '', keepMilestoneRow = false } = {}) {
   const lead = (leadOrId && typeof leadOrId === 'object') ? leadOrId : await leadService.getLead(leadOrId);
   if (!lead) return null;
   const when = paidAt || todayISO();
@@ -101,8 +101,15 @@ async function recordRetainerPaid(leadOrId, { txnId = '', reference = '', paidAt
   // Best-effort, but never silent: when this fails the client portal goes on
   // showing their first milestone as unpaid even though the payment landed, and
   // a swallowed error left nobody able to see why.
-  try { await require('./milestonePaymentService').patchPayment(lead.id, 0, { status: 'paid', paidAt: when, ...(txnId ? { txnId } : {}), ...(reference ? { reference, method: 'e-transfer' } : {}) }); }
-  catch (e) { console.warn(`[Payment] Milestone 0 "paid" patch failed for lead ${lead.id} (${e.message}) — the client portal will still show it unpaid`); }
+  // keepMilestoneRow: the case starts on a PART-payment (team rule 2026-10-13 —
+  // the balance is collected before submission). The caller has just written the
+  // 'partial' row with its ledger; marking it paid here would erase the balance.
+  // Decided by the caller's flag, never by re-reading the row (a read straight
+  // after a write can lag, and a stale 'requested' would let 'paid' through).
+  if (!keepMilestoneRow) {
+    try { await require('./milestonePaymentService').patchPayment(lead.id, 0, { status: 'paid', paidAt: when, ...(txnId ? { txnId } : {}), ...(reference ? { reference, method: 'e-transfer' } : {}) }); }
+    catch (e) { console.warn(`[Payment] Milestone 0 "paid" patch failed for lead ${lead.id} (${e.message}) — the client portal will still show it unpaid`); }
+  }
 
   // Signed + paid ⇒ Retained. Best-effort (never block the payment record / Phase-1
   // trigger below). Placed BEFORE the clientMasterItemId guard so a signed+paid lead

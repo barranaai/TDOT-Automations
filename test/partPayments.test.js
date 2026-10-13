@@ -3,9 +3,11 @@
 // Part-payments (2026-10-13, Asmita: a client e-transferred half of milestone 1).
 // A milestone keeps a ledger of the payments received for it. It reads
 // 'partial' — never 'paid' — until the balance reaches zero: no "paid" note,
-// no paidAt, and for milestone 1 none of the retainer-paid chain (Retained,
-// countersign, onboarding). The payment that settles it writes exactly what
-// "Mark paid" wrote before. Undo removes one part-payment at a time.
+// no paidAt. Milestone 1's FIRST part-payment starts the case (team rule,
+// 2026-10-13: the balance is collected before submission) — the retainer-paid
+// chain runs with keepMilestoneRow, so the row stays 'partial'. The payment that
+// settles it writes exactly what "Mark paid" wrote before. Undo removes one
+// part-payment at a time, and keeps a started case started while money remains.
 
 const test   = require('node:test');
 const assert = require('node:assert/strict');
@@ -27,21 +29,22 @@ const LEAD = (over = {}) => ({ id: '555001', fullName: 'Sanjeev Kumar', email: '
 const ACTOR = { name: 'Asmita', verified: false };
 
 /** A fake Monday for one lead: the stored payments JSON, every note, every lead write; the retainer-paid chain trapped. */
-function world({ pay = '{}', lead = {} } = {}) {
+function world({ pay = '{}', lead = {}, startReturns = '13108384096' } = {}) {
   let stored = pay;
   const notes = [], writes = [], mails = [];
   let retainerPaidCalls = 0;
+  const retainerPaidArgs = [];
   const restores = [
     stub(leadService, 'getLead', async () => LEAD({ milestonePayments: stored, ...lead })),
     stub(leadService, 'updateLead', async (id, f) => { writes.push(f); if (f.milestonePayments != null) stored = f.milestonePayments; }),
     stub(mondayApi, 'query', async (q, v) => { if (/create_update/.test(q)) notes.push(v.b != null ? v.b : v.body); return {}; }),
-    stub(paymentService, 'recordRetainerPaid', async () => { retainerPaidCalls++; return { ok: true }; }),
+    stub(paymentService, 'recordRetainerPaid', async (id, o) => { retainerPaidCalls++; retainerPaidArgs.push(o); return startReturns; }),
     stub(mail, 'sendEmail', async (m) => { mails.push(m); }),
   ];
-  return { notes, writes, mails, get stored() { return stored; }, row: (i) => JSON.parse(stored)[i], get retainerPaidCalls() { return retainerPaidCalls; }, restore: () => restores.forEach((r) => r()) };
+  return { notes, writes, mails, get stored() { return stored; }, row: (i) => JSON.parse(stored)[i], get retainerPaidCalls() { return retainerPaidCalls; }, retainerPaidArgs, restore: () => restores.forEach((r) => r()) };
 }
 
-test('a part-payment: on file as "partial", no paidAt, no "paid" note, and milestone 1 does NOT start the retainer-paid chain', async () => {
+test('a part-payment: on file as "partial", no paidAt, no "paid" note — and milestone 1 STARTS THE CASE (keepMilestoneRow: the row stays part-paid)', async () => {
   const w = world();
   try {
     const r = await ms.markMilestonePaid('555001', 0, { amountCents: 56500, reference: 'C1AeUbQTRwZy', actor: ACTOR });
@@ -53,9 +56,12 @@ test('a part-payment: on file as "partial", no paidAt, no "paid" note, and miles
     assert.deepEqual(e.l.map((x) => [x.a, x.r, x.b, x.v]), [[56500, 'C1AeUbQTRwZy', 'Asmita', false]]);
     assert.equal(e.l[0].t, undefined === e.l[0].t ? undefined : e.l[0].t);
     assert.match(e.l[0].d, /^\d{4}-\d{2}-\d{2}$/);
-    assert.equal(w.retainerPaidCalls, 0, 'the retainer is NOT paid');
+    assert.equal(w.retainerPaidCalls, 1, 'the case starts on it — once');
+    assert.equal(w.retainerPaidArgs[0].keepMilestoneRow, true, 'the start never marks the row paid');
+    assert.match(w.retainerPaidArgs[0].paidAt, /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(r.caseStart, 'started');
     assert.equal(w.notes.length, 1);
-    assert.match(w.notes[0], /^💵 <b>Part-payment received<\/b> — Milestone 1 – Admin Fee \(Non-Refundable\): \$565\.00 of \$1,130\.00 \(e-transfer, ref C1AeUbQTRwZy\)\. <b>Balance \$565\.00<\/b> — the milestone is not paid until the balance is in\. Recorded by Asmita \(name as typed — not signed in with Monday\)\.$/);
+    assert.match(w.notes[0], /^💵 <b>Part-payment received<\/b> — Milestone 1 – Admin Fee \(Non-Refundable\): \$565\.00 of \$1,130\.00 \(e-transfer, ref C1AeUbQTRwZy\)\. <b>Balance \$565\.00<\/b> — the milestone is not paid until the balance is in\. <b>This part-payment starts the case<\/b> \(team rule: the balance is collected before submission\)\. Recorded by Asmita \(name as typed — not signed in with Monday\)\.$/);
     assert.ok(!/Payment received/.test(w.notes[0]));
     assert.equal(w.mails.length, 0, 'receipts are a switch, off by default');
   } finally { w.restore(); }
@@ -290,7 +296,7 @@ test('undo plan, a part-paid row: removes the LAST part-payment only; the rest s
   assert.equal(p2.after.l, undefined);
 });
 
-test('undo plan, a milestone settled by a part-payment: goes back to part-paid with the earlier payments, the payment date cleared, Retained corrected', () => {
+test('undo plan, a milestone settled by a part-payment: goes back to part-paid with the earlier payments; the case STAYS started on them (date and Retained kept)', () => {
   const lead = PLAN_LEAD({ 0: { status: 'paid', paidAt: '2026-10-14', method: 'e-transfer', reference: 'C2', requestedAt: '2026-10-01', amountCents: 113000, marked: { by: 'Gauri Berde', at: '2026-10-14T10:00Z', verified: true }, l: [L1, { ...L2, a: 56500 }] } }, { retainerPaid: '2026-10-14', conversionStatus: 'Retained' });
   const p = U.planMilestonePaidReversal({ lead, index: 0, cm: CASE, actor: UNDO_ACTOR, now: '2026-10-15T15:04:11.000Z' });
   assert.equal(p.ok, true, JSON.stringify(p.refusal));
@@ -298,8 +304,10 @@ test('undo plan, a milestone settled by a part-payment: goes back to part-paid w
   assert.equal(p.after.status, 'partial');
   assert.deepEqual(p.after.l, [L1]);
   assert.equal(p.after.paidAt, undefined);
-  assert.deepEqual(p.clearKeys, ['retainerPaid']);
-  assert.deepEqual(p.conversionStatus, { from: 'Retained', to: 'Retained — Awaiting Payment' });
+  assert.deepEqual(p.clearKeys, [], 'money stays on file — the case stays started');
+  assert.equal(p.conversionStatus, null);
+  assert.equal(p.keepStart, true);
+  assert.ok(p.info.some((x) => x.code === 'CASE_STAYS_STARTED'));
   assert.equal(p.partsBefore, 2);
   assert.deepEqual(p.willChange[0], 'Milestone goes back to “part-paid ($565.00 of $1,130.00 on file)”');
   assert.ok(!['milestone', 'retainer-date', 'partial-entry'].includes('x'));
@@ -535,7 +543,7 @@ test('REVIEW 2: dates are the Toronto day — a payment at 8:30 pm Toronto is da
     freeze('2026-10-14T00:30:00.000Z');   // 8:30 pm Toronto, the same evening
     assert.equal(ms.todayISO(), '2026-10-13');
     await assert.rejects(ms.markMilestonePaid('555001', 0, { amountCents: 56500, actor: ACTOR }), (e) => e.code === 'DUPLICATE_PART');
-    assert.equal(w.retainerPaidCalls, 0);
+    assert.equal(w.retainerPaidCalls, 1, 'the first payment started the case; the duplicate starts nothing');
   } finally { global.Date = RealDate; w.restore(); }
 });
 
@@ -543,4 +551,147 @@ test('REVIEW 2: client portal — a part-paid milestone the plan now covers asks
   const src = fs.readFileSync(require.resolve('../src/services/clientPortalService'), 'utf8');
   assert.ok(src.includes('we received covers this milestone. Our team will confirm it shortly.'));
   assert.ok(src.includes('Use “Mark settled” on the payment row.'));
+});
+
+/* ── the case starts on a milestone-1 part-payment (team rule, 2026-10-13) ── */
+
+test('START: only the FIRST part-payment starts the case; a second one (Retainer Paid date on file) starts nothing; milestones 2+ never start anything', async () => {
+  const w = world({ pay: JSON.stringify({ 0: { status: 'partial', method: 'e-transfer', l: [L1] } }), lead: { retainerPaid: '2026-10-13' } });
+  try {
+    const r = await ms.markMilestonePaid('555001', 0, { amountCents: 10000, reference: 'C9', actor: ACTOR });
+    assert.deepEqual([r.settled, r.caseStart], [false, 'already']);
+    assert.equal(w.retainerPaidCalls, 0);
+    assert.match(w.notes[0], /The case has already started — collect the balance before submission\./);
+    const r2 = await ms.markMilestonePaid('555001', 1, { amountCents: 10000, reference: 'C10', actor: ACTOR });
+    assert.deepEqual([r2.settled, r2.caseStart], [false, null]);
+    assert.equal(w.retainerPaidCalls, 0, 'milestone 2 is not the retainer');
+    assert.ok(!/starts the case|already started/.test(w.notes[1]));
+  } finally { w.restore(); }
+});
+
+test('START: held until a signature is in — the note and the message say which; no case linked yet; a failed start says so and never claims it started', async () => {
+  const cps = require('../src/services/consultantPortalService');
+  let w = world({ startReturns: null, lead: { retainerSigned: '' } });
+  try {
+    const a = await cps.applyAction({ leadId: '555001', action: 'markMilestonePaid', value: JSON.stringify({ index: 0, amountCents: 56500, reference: 'C1' }), staffName: 'Asmita' });
+    assert.match(w.notes[0], /<b>This part-payment starts the case<\/b> once the client signature is in/);
+    assert.match(a.message, /The case will start on this payment once the client signature is in — collect the balance before submission\.$/);
+  } finally { w.restore(); }
+  w = world({ startReturns: null, lead: { retainerSigned: '2026-10-01' } });
+  try {
+    const r = await ms.markMilestonePaid('555001', 0, { amountCents: 56500, reference: 'C1', actor: ACTOR });
+    assert.equal(r.caseStart, 'no-case');
+    assert.match(w.notes[0], /no case is linked yet, so the case starts when it is opened/);
+  } finally { w.restore(); }
+  w = world({ lead: { retainerSigned: '2026-10-01' } });
+  const boom = stub(paymentService, 'recordRetainerPaid', async () => { throw new Error('Monday 500'); });
+  try {
+    const r = await ms.markMilestonePaid('555001', 0, { amountCents: 56500, reference: 'C1', actor: ACTOR });
+    assert.equal(r.caseStart, 'failed');
+    assert.equal(w.row(0).status, 'partial', 'the payment itself is on file');
+    assert.match(w.notes[0], /⚠ Starting the case on this payment did not finish — check the case’s Payment Status in a few minutes and tell an admin if it is not Paid\. Do not record the payment again\./);
+    assert.ok(!/This part-payment starts the case/.test(w.notes[0]));
+  } finally { boom(); w.restore(); }
+  const src = fs.readFileSync(require.resolve('../src/services/consultantPortalService'), 'utf8');
+  assert.ok(src.includes("r.caseStart === 'started' ? ' The case has been started on this payment — collect the balance before submission.'"));
+});
+
+test('START: recordRetainerPaid with keepMilestoneRow stamps the date but NEVER writes milestone 1 (the part-paid row and its balance survive); without it, it still does', async () => {
+  const lead = { id: '555001', fullName: 'Sanjeev Kumar', retainerSigned: '', retainerPaid: '', clientMasterItemId: '' };
+  const patches = [], updates = [];
+  const r = [
+    stub(leadService, 'getLead', async () => ({ ...lead })),
+    stub(leadService, 'updateLead', async (id, f) => { updates.push(f); }),
+    stub(mondayApi, 'query', async () => ({})),
+    stub(ms, 'patchPayment', async (...a) => { patches.push(a); }),
+  ];
+  try {
+    await paymentService.recordRetainerPaid('555001', { reference: 'C1', paidAt: '2026-10-13', keepMilestoneRow: true });
+    assert.deepEqual(updates[0], { retainerPaid: '2026-10-13' });
+    assert.equal(patches.length, 0, 'milestone 1 untouched');
+    await paymentService.recordRetainerPaid('555001', { reference: 'C1', paidAt: '2026-10-13' });
+    assert.equal(patches.length, 1);
+    assert.deepEqual([patches[0][1], patches[0][2].status], [0, 'paid']);
+  } finally { r.forEach((f) => f()); }
+});
+
+test('START: the settling payment after a part-payment start writes "paid" and goes through the already-paid branch (no second start)', async () => {
+  const w = world({ pay: JSON.stringify({ 0: { status: 'partial', method: 'e-transfer', reference: 'TDOT-55001-M1', l: [L1] } }), lead: { retainerPaid: '2026-10-13', retainerSigned: '2026-10-01' } });
+  try {
+    const r = await ms.markMilestonePaid('555001', 0, { amountCents: 56500, reference: 'C2', actor: ACTOR });
+    assert.equal(r.settled, true);
+    assert.equal(w.row(0).status, 'paid');
+    assert.equal(w.retainerPaidCalls, 1, 'called as before — recordRetainerPaid itself returns early on the date already on file');
+    assert.equal(w.retainerPaidArgs[0].keepMilestoneRow, undefined);
+  } finally { w.restore(); }
+});
+
+test('START + UNDO: removing one part-payment of several keeps a started case started — allowed even after onboarding (case Paid); the date and Retained stay; the last money cannot be removed once onboarding started', () => {
+  const PAID_CASE = { ...CASE, paymentStatus: 'Paid', caseStage: 'Document Collection Started', checklistApplied: 'Yes' };
+  const lead = PLAN_LEAD({ 0: { status: 'partial', method: 'e-transfer', reference: 'TDOT-01448-M1', requestedAt: '2026-10-01', amountCents: 113000, l: [L1, L2] } }, { retainerPaid: '2026-10-13', conversionStatus: 'Retained' });
+  const p = U.planMilestonePaidReversal({ lead, index: 0, cm: PAID_CASE, actor: UNDO_ACTOR, now: '2026-10-15T15:04:11.000Z' });
+  assert.equal(p.ok, true, JSON.stringify(p.refusal));
+  assert.deepEqual([p.mode, p.keepStart, p.keptCents, p.clearKeys, p.conversionStatus], ['partial-entry', true, 56500, [], null]);
+  assert.deepEqual(p.after.l, [L1]);
+  assert.ok(p.info.some((x) => x.code === 'CASE_STAYS_STARTED' && /stays started on the remaining \$565\.00/.test(x.message)));
+  assert.ok(!p.warnings.some((x) => x.code === 'ACTIVATION_IMMINENT'));
+  assert.ok(p.willNotChange.some((x) => /The case stays started — Retainer Paid date \(2026-10-13\)/.test(x)));
+  // the only part-payment left: removing it would stop a started case → refused like a full payment
+  const last = PLAN_LEAD({ 0: { status: 'partial', l: [L1] } }, { retainerPaid: '2026-10-13', conversionStatus: 'Retained' });
+  const p2 = U.planMilestonePaidReversal({ lead: last, index: 0, cm: PAID_CASE, actor: UNDO_ACTOR, now: '2026-10-15T15:04:11.000Z' });
+  assert.equal(p2.ok, false); assert.equal(p2.refusal.code, 'ONBOARDING_STARTED');
+  // …and before onboarding (held), removing it clears the start as today
+  const p3 = U.planMilestonePaidReversal({ lead: last, index: 0, cm: CASE, actor: UNDO_ACTOR, now: '2026-10-15T15:04:11.000Z' });
+  assert.equal(p3.ok, true, JSON.stringify(p3.refusal));
+  assert.deepEqual([p3.keepStart, p3.clearKeys], [false, ['retainerPaid']]);
+});
+
+test('START + UNDO execute: a kept start on a Paid case — one commit, no "raced" alarm, the date stays, the message says the case stays started; a retry reads as already done', async () => {
+  const PAID_CASE = { ...CASE, paymentStatus: 'Paid', caseStage: 'Document Collection Started', checklistApplied: 'Yes' };
+  const lead = PLAN_LEAD({ 0: { status: 'partial', method: 'e-transfer', reference: 'TDOT-01448-M1', requestedAt: '2026-10-01', amountCents: 113000, l: [L1, L2] } }, { retainerPaid: '2026-10-13', conversionStatus: 'Retained' });
+  const store = { lead: { ...lead } };
+  const calls = [];
+  const real = { ...U.io };
+  U._resetFlagThrottle();
+  Object.assign(U.io, {
+    getLead: async () => ({ ...store.lead }), readCase: async () => ({ ...PAID_CASE }),
+    commit: async (plan) => { calls.push(['commit', plan.clearKeys, plan.keepStart]); const pay = ms.readPayments(store.lead).pay; pay[plan.index] = plan.after; store.lead.milestonePayments = JSON.stringify(pay); if (plan.clearKeys.includes('retainerPaid')) store.lead.retainerPaid = ''; return { conversion: null }; },
+    writeLeadFields: async (id, f) => { calls.push(['writeLeadFields', f]); Object.assign(store.lead, f); },
+    postNote: async (item, body) => { calls.push(['postNote', item, body]); }, notify: async () => { calls.push(['notify']); },
+    resolveUserId: async () => null, consultantFor: () => null, adminEmails: () => [], invalidateQueues: () => {},
+    withLeadLockOrSkip: async (k, w, f) => f(), isLeadItem: async () => true, findClaimants: async () => [{ id: lead.id, name: lead.fullName }], caseAssignees: async () => ({ personIds: [], teamIds: [] }),
+    readSquareOrder: async () => ({ paid: false }), now: () => 1000, nowIso: () => '2026-10-15T15:04:11.000Z', sleep: async () => {},
+  });
+  try {
+    const pv = await U.previewMilestonePaidReversal({ leadId: lead.id, index: 0, actor: UNDO_ACTOR });
+    assert.equal(pv.ok, true, JSON.stringify(pv));
+    const req = { leadId: lead.id, index: 0, confirmText: pv.plan.confirmText, reason: 'The second e-transfer was from another client', expect: pv.plan.expect, actor: UNDO_ACTOR };
+    const res = await U.executeMilestonePaidReversal(req);
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(res.message, 'Removed the $300.00 part-payment. Milestone 1 – Admin Fee (Non-Refundable) now reads “part-paid”. The case stays started on the remaining $565.00.');
+    assert.deepEqual(calls.filter((c) => c[0] === 'commit'), [['commit', [], true]]);
+    assert.equal(store.lead.retainerPaid, '2026-10-13');
+    assert.ok(!calls.some((c) => c[0] === 'postNote' && /Undo raced with onboarding|Undo incomplete/.test(c[2])), 'no false alarm');
+    const leadNote = calls.find((c) => c[0] === 'postNote' && c[1] === lead.id)[2];
+    assert.match(leadNote, /The case stays started on the remaining \$565\.00 — collect the balance before submission\./);
+    assert.ok(!/Retainer Paid date .* cleared/.test(leadNote));
+    const again = await U.executeMilestonePaidReversal(req);
+    assert.deepEqual([again.ok, again.already], [true, true], JSON.stringify(again));
+  } finally { Object.assign(U.io, real); U._resetFlagThrottle(); }
+});
+
+test('START: the client timeline shows the part-payment once (no "first payment received" twice); the dialog warns that it starts the case; both panels tell it whether the case started', () => {
+  const { toClientTimeline } = require('../src/services/clientPortalService');
+  const client = toClientTimeline([
+    { date: '2026-10-13', title: 'First retainer payment recorded', detail: '', kind: 'payment' },
+    { date: '2026-10-13', title: 'Part-payment — M1', detail: '$565.00', kind: 'payment' },
+  ], '2026-10-20').map((e) => e.title);
+  assert.deepEqual(client, ['Part-payment received — M1 — thank you']);
+  const js = require('../src/routes/adminShared').PAYMENT_UI_JS;
+  assert.ok(!/[`\\]|\$\{/.test(js), 'plain template text');
+  assert.ok(js.includes("(m.index === 0 ? (o.started ? ' The case has already started — collect the balance before submission.' : ' This part-payment STARTS THE CASE, the same as a full payment — collect the balance before submission.') : '')"));
+  const consult = fs.readFileSync(require.resolve('../src/routes/adminConsultation'), 'utf8');
+  const cockpit = fs.readFileSync(require.resolve('../src/routes/adminCase'), 'utf8');
+  assert.ok(consult.includes("started: !!(D.retainerPaid&&String(D.retainerPaid).trim()), onConfirm: function(ref,by,amountCents,settle){"));
+  assert.ok(cockpit.includes("started: !!(L.retainerPaid && String(L.retainerPaid).trim()), onConfirm: function(ref, by, amountCents, settle) {"));
 });

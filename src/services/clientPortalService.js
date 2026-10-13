@@ -164,11 +164,12 @@ function torontoToday() {
  *  - a future consultation slot reads as upcoming ("is scheduled"), past ones
  *    as "was booked";
  *  - the generic first-payment event is dropped whenever a milestone "Paid"
- *    event exists — they describe the same money and rendered as a duplicate.
+ *    or "Part-payment" event exists — they describe the same money and rendered
+ *    as a duplicate (a part-payment on milestone 1 starts the case, 2026-10-13).
  */
 function toClientTimeline(events, today = torontoToday()) {
   const list = events || [];
-  const hasMilestonePaid = list.some((ev) => /^Paid — /.test(ev.title || ''));
+  const hasMilestonePaid = list.some((ev) => /^(Paid|Part-payment) — /.test(ev.title || ''));
   const out = [];
   for (const ev of list) {
     const staffTitle = ev.title || '';

@@ -291,7 +291,7 @@ test('the handled note carries the key, is read back, and reads as none of the a
   }
 });
 
-function harness({ items, checklist = {}, folders = [], deep = new Map(), deepFail = [], newestRow = {} }) {
+function harness({ items, checklist = {}, folders = [], deep = new Map(), deepFail = [], newestRow = {}, balances = {} }) {
   const calls = { readCases: 0, notes: [], deep: [], hasChecklist: [] };
   NA.io.readCases = async () => { calls.readCases++; return items(); };
   NA.io.hasChecklist = async (ref) => { calls.hasChecklist.push(ref); if (checklist[ref] instanceof Error) throw checklist[ref]; return !!checklist[ref]; };
@@ -300,6 +300,7 @@ function harness({ items, checklist = {}, folders = [], deep = new Map(), deepFa
   NA.io.readDeepNotes = async (ids) => { calls.deep.push(ids); return { notes: new Map([...deep].filter(([id]) => ids.includes(id) && !deepFail.includes(id))), failed: ids.filter((id) => deepFail.includes(id)) }; };
   NA.io.newestChecklistRowAt = async (ref) => newestRow[ref] || 0;
   NA.io.postNote = async (itemId, body) => { calls.notes.push({ itemId, body }); };
+  NA.io.leadBalances = async (id) => { calls.balances = (calls.balances || []).concat(id); if (balances[id] instanceof Error) throw balances[id]; return balances[id] || []; };
   return calls;
 }
 
@@ -659,4 +660,51 @@ test('a case whose older notes fail in both reads is counted once', async () => 
   harness({ items: () => [item({ id: 'x', ref: 'X1', payment: 'Paid', updates: filler })], checklist: { X1: false }, deepFail: ['x'] });
   const snap = await NA.buildSnapshot();
   assert.match(snap.partial.join(' '), /Older notes on 1 case could not be read/);
+});
+
+// ── Balance owed before submission (team rule 2026-10-13: a part-payment on milestone 1 starts the case) ──
+// The real read seam, captured before any test's harness replaces it.
+const REAL_LEAD_BALANCES = NA.io.leadBalances;
+
+test('BALANCE: a part-paid milestone is listed from Submission Preparation on — also on a submitted case — never earlier; keyed on what is on file', () => {
+  const owed = (paid) => [{ leadId: '555001', index: 0, label: 'Milestone 1 – Admin Fee (Non-Refundable)', paidCents: paid, totalCents: 113000, balanceCents: 113000 - paid, lastPaidAt: '2026-09-20' }];
+  const at = (stage, id) => item({ id, ref: `R-${id}`, stage, payment: 'Paid' });
+  const cases = [at('Internal Review', 'a'), at('Submission Preparation', 'b'), at('Submitted', 'c'), at('Submission Ready', 'd')].map(parse);
+  const balances = new Map([['a', owed(56500)], ['b', owed(56500)], ['c', owed(56500)], ['d', null]]);
+  const out = NA.detect({ cases, checklist: new Map(cases.map((c) => [c.ref, true])), balances, now: NOW }).filter((e) => e.kind === 'balance-owed');
+  assert.deepEqual(out.map((e) => e.caseRef).sort(), ['R-b', 'R-c'], 'not before Submission Preparation; unknown (null) is not "nothing owed" but is not guessed either');
+  assert.equal(out[0].why, 'Milestone 1 – Admin Fee (Non-Refundable): $565.00 of $1,130.00 received — $565.00 is still owed, and the case is at ' + out[0].stage + '.');
+  assert.match(out[0].todo, /Collect the balance from the client before the application is submitted/);
+  assert.equal(NA.KINDS['balance-owed'].severity, 'high');
+  // a new part-payment changes the key (a "handled" mark covers one state)
+  const again = NA.detect({ cases, checklist: new Map(cases.map((c) => [c.ref, true])), balances: new Map([['b', owed(80000)]]), now: NOW }).filter((e) => e.kind === 'balance-owed');
+  assert.notEqual(again[0].key, out.find((e) => e.caseRef === 'R-b').key);
+  // test cases never
+  const t = item({ id: 't', ref: 'R-t', stage: 'Submission Preparation', group: 'group_mm3842s', groupTitle: 'TEST' });
+  assert.equal(NA.detect({ cases: [parse(t)], balances: new Map([['t', owed(1)]]), now: NOW }).length, 0);
+});
+
+test('BALANCE: the snapshot asks only cases at Submission Preparation or later, reads only, and says when one could not be checked', async () => {
+  const calls = harness({
+    items: () => [item({ id: 'a', ref: 'R-A', stage: 'Internal Review' }), item({ id: 'b', ref: 'R-B', stage: 'Submission Preparation' }), item({ id: 'c', ref: 'R-C', stage: 'Submitted' })],
+    balances: { b: [{ leadId: '1', index: 0, label: 'M1', paidCents: 100, totalCents: 1000, balanceCents: 900, lastPaidAt: '2026-09-30' }], c: new Error('Monday 500') },
+  });
+  const snap = await NA.buildSnapshot();
+  assert.deepEqual(calls.balances.sort(), ['b', 'c']);
+  assert.deepEqual(snap.entries.filter((e) => e.kind === 'balance-owed').map((e) => e.caseRef), ['R-B']);
+  assert.match(snap.partial.join(' '), /1 case at submission could not be checked for a balance still owed/);
+  assert.equal(calls.notes.length, 0);
+});
+
+test('BALANCE: the read seam lists only part-paid milestones with a balance, from the leads linked to the case', async () => {
+  const leadService = require('../src/services/leadService');
+  const MS = JSON.stringify([{ label: 'Milestone 1 – Admin Fee (Non-Refundable)', amountCents: 100000, locked: true }, { label: 'Milestone 2', amountCents: 50000 }]);
+  const orig = leadService.findAllByColumnValue;
+  leadService.findAllByColumnValue = async (key, val) => { assert.deepEqual([key, val], ['clientMasterItemId', '777']); return [
+    { id: '1', confirmedCaseType: 'Study permit', retainerFee: '1500', retainerHstRate: '13', retainerMilestones: MS, milestonePayments: JSON.stringify({ 0: { status: 'partial', l: [{ a: 56500, d: '2026-10-13' }] }, 1: { status: 'paid', paidAt: '2026-10-01' } }) },
+  ]; };
+  try {
+    const out = await REAL_LEAD_BALANCES('777');
+    assert.deepEqual(out, [{ leadId: '1', index: 0, label: 'Milestone 1 – Admin Fee (Non-Refundable)', paidCents: 56500, totalCents: 113000, balanceCents: 56500, lastPaidAt: '2026-10-13' }]);
+  } finally { leadService.findAllByColumnValue = orig; }
 });

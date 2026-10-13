@@ -82,6 +82,11 @@ const BEFORE_DOCS = ['', 'Not Started', 'Pre-Onboarding', 'Retainer Confirmed', 
 // Finished cases: nothing on them is "stuck" any more (folder and number problems still count).
 const CLOSED_STAGES = ['Application Submitted', 'Submitted', 'Approved', 'Refused', 'Closed',
   'Withdrawn', 'Cancelled', 'Archived', 'Task Done'];
+// A part-paid milestone is collected before submission (team rule, 2026-10-13: a
+// part-payment on milestone 1 starts the case). From Submission Preparation on, any
+// balance still owed is listed — on a submitted case too, until it is paid.
+const BALANCE_STAGES = ['Submission Preparation', 'Submission Ready', 'Application Submitted', 'Submitted'];
+const needsBalanceCheck = (c) => !isTestCase(c) && BALANCE_STAGES.includes(c.stage);
 
 const GRACE_NEW_CASE_MS = 30 * 60 * 1000;        // a brand-new case is still being set up
 const GRACE_NO_TYPE_MS = 2 * 24 * 3600 * 1000;   // a case without a type yet, before it counts
@@ -98,6 +103,7 @@ const KINDS = {
   'ref-missing':   { order: 11, severity: 'high',   label: 'No case number' },
   'folder-test':   { order: 20, severity: 'high',   label: 'A leftover test folder has this case number' },
   'payment-noted': { order: 30, severity: 'high',   label: 'Payment noted, but not marked Paid' },
+  'balance-owed':  { order: 31, severity: 'high',   label: 'Balance owed before submission' },
   'subtype':       { order: 40, severity: 'high',   label: 'Case Sub Type needed for the checklist' },
   'no-checklist':  { order: 41, severity: 'high',   label: 'Paid, but no document checklist' },
   'not-started':   { order: 42, severity: 'high',   label: 'Signed and paid, but onboarding did not start' },
@@ -247,7 +253,7 @@ function needsFamilyCheck(c) {
   return !!c.ref && !isTestCase(c) && !isClosed(c) && !isLegacy(c) && isPaid(c) && !BEFORE_CHECKLIST.includes(c.stage) && saysAccompanying(c.subType);
 }
 
-function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), checklistFamily = new Map(), manifestFamily = new Map(), now }) {
+function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), checklistFamily = new Map(), manifestFamily = new Map(), balances = new Map(), now }) {
   const out = [];
   const live = cases.filter((c) => !isTestCase(c));
   const add = (kind, rowsIn, fingerprint, { since = 0, why, todo }) => {
@@ -360,6 +366,24 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
           todo: 'Ask an admin to merge them into one folder.',
         });
       }
+    }
+  }
+
+  // ── 2b. A balance still owed at submission (part-paid milestones) ────────
+  // balances: case id → [{ leadId, index, label, paidCents, totalCents, balanceCents, lastPaidAt }]
+  // (null = could not be read — reported as a partial check, never as "nothing owed").
+  const money = (c) => (Math.round(Number(c) || 0) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+  for (const c of live) {
+    if (!needsBalanceCheck(c)) continue;
+    const owed = balances.get(c.id);
+    if (!Array.isArray(owed)) continue;
+    for (const b of owed) {
+      // Keyed on what is on file: a new part-payment shows it again (a "handled" mark covers one state).
+      add('balance-owed', c, `${c.id}|balance|${b.leadId}|${b.index}|${b.paidCents}`, {
+        since: b.lastPaidAt ? tms(`${String(b.lastPaidAt).slice(0, 10)}T12:00:00Z`) : 0,
+        why: `${b.label}: ${money(b.paidCents)} of ${money(b.totalCents)} received — ${money(b.balanceCents)} is still owed, and the case is at ${c.stage}.`,
+        todo: 'Collect the balance from the client before the application is submitted, then record it on the case page (Payments → Record balance / part-payment). If it was agreed otherwise, mark this handled.',
+      });
     }
   }
 
@@ -719,6 +743,20 @@ const io = {
     const rows = (d && d.items_page_by_column_values && d.items_page_by_column_values.items) || [];
     return new Set(rows.map((r) => s(r.column_values && r.column_values[0] && r.column_values[0].text)).filter(Boolean));
   },
+  /** Part-paid milestones with a balance on the leads linked to a case (READ only). */
+  async leadBalances(itemId) {
+    const ms = require('./milestonePaymentService');
+    const leads = await require('./leadService').findAllByColumnValue('clientMasterItemId', String(itemId));
+    const out = [];
+    for (const lead of leads) {
+      for (const m of ms.milestoneStates(lead, '', [])) {
+        if (m.status !== 'partial' || !(m.balanceCents > 0)) continue;
+        const last = (m.payments || [])[(m.payments || []).length - 1];
+        out.push({ leadId: s(lead.id), index: m.index, label: m.label || `Milestone ${m.index + 1}`, paidCents: m.paidCents, totalCents: m.totalCents, balanceCents: m.balanceCents, lastPaidAt: last ? last.paidAt : '' });
+      }
+    }
+    return out;
+  },
   async hasChecklist(ref) {
     const d = await mondayApi.query(
       'query($b:ID!,$v:String!){ items_page_by_column_values(limit:1, board_id:$b, columns:[{column_id:"' + EXEC_REF_COL + '", column_values:[$v]}]){ items{ id } } }',
@@ -813,7 +851,15 @@ async function buildSnapshot() {
   const rfAnswers = await eachLimited(rfRefs, 3, (ref) => io.newestChecklistRowAt(ref));
   rfRefs.forEach((ref, i) => checklistNewest.set(ref, rfAnswers[i].ok ? rfAnswers[i].value : null));
 
-  const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, family, checklistFamily, manifestFamily, now: io.now() });
+  // Balances still owed at submission: the leads of cases from Submission Preparation on (few).
+  const balances = new Map();
+  const balTargets = cases.filter(needsBalanceCheck);
+  const balAnswers = await eachLimited(balTargets, 4, (c) => io.leadBalances(c.id));
+  let balUnknown = 0;
+  balTargets.forEach((c, i) => { balances.set(c.id, balAnswers[i].ok ? balAnswers[i].value : null); if (!balAnswers[i].ok) balUnknown++; });
+  if (balUnknown) partial.push(`${balUnknown} case${balUnknown === 1 ? '' : 's'} at submission could not be checked for a balance still owed.`);
+
+  const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, family, checklistFamily, manifestFamily, balances, now: io.now() });
 
   // "Handled" notes: from the notes read, plus a deeper read for an item on a
   // case whose notes were not read far back yet (an older handled note must count).

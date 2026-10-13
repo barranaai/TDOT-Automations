@@ -20,10 +20,16 @@
  *   l: [{ a: cents, d: 'YYYY-MM-DD', r: 'bank ref', b: 'who recorded', v: verified, t: 'ISO-minute Z' }]
  * (short keys: the whole column must stay under MAX_PAYMENTS_JSON). While the
  * ledger is short of the milestone's total the row reads status 'partial' —
- * NOT 'paid': paidAt, marked, the "paid" note, and for milestone 1 the whole
- * retainer-paid chain (Retained, countersign, onboarding) happen only on the
- * payment that brings the balance to zero. The ledger is kept after that, so
- * the statement shows every payment.
+ * NOT 'paid': paidAt, marked and the "paid" note happen only on the payment that
+ * brings the balance to zero. The ledger is kept after that, so the statement
+ * shows every payment.
+ *
+ * MILESTONE 1 STARTS THE CASE ON A PART-PAYMENT (team rule, 2026-10-13: "we can
+ * take half of the payment before submission"; Faran: automatically, any amount).
+ * The first part-payment runs the retainer-paid chain exactly like a full payment
+ * (Retainer Paid date, Retained, countersign gate, onboarding) — but the row stays
+ * 'partial' with its balance (recordRetainerPaid keepMilestoneRow). The balance is
+ * collected before submission: the Summary flags it from Submission Preparation on.
  */
 
 'use strict';
@@ -471,14 +477,39 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
   }
 
   if (!settled) {
-    // A part-payment: on file, NOT paid — nothing downstream may read it as paid.
+    // A part-payment: on file, NOT paid — the row never reads paid until the balance is in.
     await patchPayment(leadId, index, { status: 'partial', method }, { appendLedger: entry });
+    // Milestone 1: the FIRST part-payment starts the case, exactly like a full payment,
+    // while the row stays 'partial' (keepMilestoneRow). Once the case has its Retainer
+    // Paid date, later part-payments start nothing. caseStart, for the note/message:
+    // 'started' | 'held' (a signature still missing) | 'no-case' | 'failed' | 'already' | null.
+    let caseStart = null, missing = [];
+    if (Number(index) === 0) {
+      if (String(lead.retainerPaid || '').trim()) caseStart = 'already';
+      else {
+        const gate = require('./caseGateService').signatureGateForLead({ ...lead, retainerPaid: when });
+        missing = gate.complete ? [] : gate.missing;
+        try {
+          const cm = await require('./paymentService').recordRetainerPaid(leadId, { reference: entry.r, paidAt: when, keepMilestoneRow: true });
+          caseStart = cm ? 'started' : (gate.complete ? 'no-case' : 'held');
+        } catch (e) {
+          console.warn(`[Milestone] case start on part-payment failed for ${leadId}: ${e.message}`);
+          caseStart = 'failed';
+        }
+      }
+    }
+    const startLine = caseStart === 'started' ? ' <b>This part-payment starts the case</b> (team rule: the balance is collected before submission).'
+      : caseStart === 'held' ? ` <b>This part-payment starts the case</b> once the ${esc(missing.join(' and '))} ${missing.length > 1 ? 'are' : 'is'} in (team rule: the balance is collected before submission).`
+      : caseStart === 'no-case' ? ' The payment date is recorded; no case is linked yet, so the case starts when it is opened (team rule: the balance is collected before submission).'
+      : caseStart === 'failed' ? ' ⚠ Starting the case on this payment did not finish — check the case’s Payment Status in a few minutes and tell an admin if it is not Paid. Do not record the payment again.'
+      : caseStart === 'already' ? ' The case has already started — collect the balance before submission.'
+      : '';
     const receipt = await _emailReceipt(lead, { label, amountCents: paidNow, paidCents: paidAfter, totalCents, reference: entry.r, paidAt: when, settled: false, payReference: existing.reference || paymentReference(leadId, index) });
     await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
       { i: String(leadId), b: `💵 <b>Part-payment received</b> — ${esc(label)}: ${esc(dollarsCAD(paidNow))} of ${esc(dollarsCAD(totalCents))} (${esc(method)}${entry.r ? `, ref ${esc(entry.r)}` : ''}). ` +
-        `<b>Balance ${esc(dollarsCAD(totalCents - paidAfter))}</b> — the milestone is not paid until the balance is in. ${whoLine}${receipt ? ' Receipt emailed to the client.' : ''}` });
-    console.log(`[Milestone] ${leadId}#${index} part-payment ${paidNow} of ${totalCents} (${method}${entry.r ? ` ref ${entry.r}` : ''})`);
-    return { ok: true, label, settled: false, amountCents: paidNow, paidCents: paidAfter, balanceCents: totalCents - paidAfter, totalCents };
+        `<b>Balance ${esc(dollarsCAD(totalCents - paidAfter))}</b> — the milestone is not paid until the balance is in.${startLine} ${whoLine}${receipt ? ' Receipt emailed to the client.' : ''}` });
+    console.log(`[Milestone] ${leadId}#${index} part-payment ${paidNow} of ${totalCents} (${method}${entry.r ? ` ref ${entry.r}` : ''})${caseStart ? ` — case ${caseStart}` : ''}`);
+    return { ok: true, label, settled: false, amountCents: paidNow, paidCents: paidAfter, balanceCents: totalCents - paidAfter, totalCents, caseStart, missing };
   }
 
   // The ledger exists only where part-payments happened: a plain full payment writes exactly what it always did.

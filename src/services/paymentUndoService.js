@@ -176,6 +176,12 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   const removeAt = mode === 'partial-entry' ? ledger.length - 1 : mode === 'milestone' ? ms.settlingIndexOf(before) : -1;
   const removing = removeAt >= 0 ? ledger[removeAt] : null;
   const restLedger = removeAt >= 0 ? rawLedger.slice(0, removeAt) : rawLedger;
+  // A part-payment on milestone 1 starts the case (team rule, 2026-10-13). While money
+  // stays on file after this removal, the case STAYS started: the Retainer Paid date and
+  // "Retained" are kept, and the removal is allowed even after onboarding began. Only
+  // removing the last money on file stops the case (refused once onboarding started).
+  const keepStart = isRetainer && !!retainerPaid && (mode === 'partial-entry' || mode === 'milestone') && restLedger.length > 0;
+  const keptCents = restLedger.reduce((t, x) => t + Math.round(Number(x.a) || 0), 0);
 
   if ((before && s(before.txnId)) || (isRetainer && s(lead.squareRetainerTxnId))) {
     return refuse('SQUARE_PAYMENT', 'This payment is linked to Square. Removing it here would not stick — the Square sync records it again within minutes. Refund or void it in Square first, then ask an admin to reconcile the record.');
@@ -192,7 +198,7 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   if (isRetainer && s(lead.clientMasterItemId) && cmReadError) {
     return refuse('CASE_UNREADABLE', 'Couldn’t read the case from Monday, so it isn’t safe to confirm onboarding hasn’t started. Nothing was changed — try again in a minute.', { error: String(cmReadError).slice(0, 200) });
   }
-  if (isRetainer && cm && lower(cm.paymentStatus) === 'paid') {
+  if (isRetainer && cm && lower(cm.paymentStatus) === 'paid' && !keepStart) {
     const signals = onboardingSignals(cm);
     return refuse('ONBOARDING_STARTED',
       'Onboarding has already started for this case (Payment Status reads Paid), so emails may have gone to the client. ' +
@@ -215,8 +221,8 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   const after = mode === 'milestone' ? (restLedger.length ? { ...priorState(), status: 'partial', l: restLedger } : priorState())
     : mode === 'partial-entry' ? (restLedger.length ? { ...before, l: restLedger, undone } : (() => { const r = priorState(); delete r.l; return r; })())
     : (before ? { ...before, undone } : { status: 'pending', undone });
-  const clearKeys = (isRetainer && retainerPaid) ? ['retainerPaid'] : [];
-  const conversionStatus = conversionFor(lead, i);
+  const clearKeys = (isRetainer && retainerPaid && !keepStart) ? ['retainerPaid'] : [];
+  const conversionStatus = keepStart ? null : conversionFor(lead, i);
 
   const postPay = { ...pay };
   postPay[i] = after;
@@ -237,7 +243,15 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
 
   // INVARIANT (index 0): after the reversal nothing may be able to start
   // onboarding, and the 15-minute sync must have nothing to put back.
-  if (isRetainer) {
+  // keepStart: the case is MEANT to stay started — then money must remain on file and
+  // the sync must see exactly what it saw before (only the payments column changes).
+  if (isRetainer && keepStart) {
+    const driftNow = recon.classifyDrift(lead, cm ? cm.paymentStatus : null);
+    const driftAfter = recon.classifyDrift(postLead, cm ? cm.paymentStatus : null);
+    if (!(keptCents > 0) || clearKeys.length || driftNow.action !== driftAfter.action || s(postLead.retainerPaid) !== retainerPaid) {
+      return refuse('INVARIANT', 'This undo would leave the record in a state the payment sync would change back, so nothing was done. Ask an admin to look at this client.', { drift: driftAfter.action, keepStart: true });
+    }
+  } else if (isRetainer) {
     const gateAfter = caseGate.signatureGateForLead(postLead);
     const derived = recon.deriveCmPaymentStatus(postLead);
     const drift = recon.classifyDrift(postLead, cm ? cm.paymentStatus : null);
@@ -275,7 +289,9 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   if (otherPaid.length) {
     warnings.push({ code: 'OTHER_PAID', message: `${otherPaid.map((k) => `Milestone ${Number(k) + 1}`).join(', ')} ${otherPaid.length > 1 ? 'are' : 'is'} also recorded as paid. Undo ${otherPaid.length > 1 ? 'them' : 'it'} separately if ${otherPaid.length > 1 ? 'they were' : 'it was'} also wrong.` });
   }
-  if (isRetainer && gateBefore.complete && !(cm && lower(cm.paymentStatus) === 'paid')) {
+  if (keepStart) {
+    info.push({ code: 'CASE_STAYS_STARTED', message: `The case stays started on the remaining ${dollars(keptCents)} (a part-payment on milestone 1 starts the case). The Retainer Paid date and “Retained” are not changed — collect the balance before submission.` });
+  } else if (isRetainer && gateBefore.complete && !(cm && lower(cm.paymentStatus) === 'paid')) {
     warnings.push({ code: 'ACTIVATION_IMMINENT', message: 'Every signature and the payment are in, but the case isn’t marked Paid yet — the 15-minute sync would start onboarding. Undoing stops that.' });
   } else if (isRetainer && gateBefore.missing.length === 1 && gateBefore.missing[0] === 'RCIC countersignature') {
     info.push({ code: 'COUNTERSIGN_ARMED', message: 'The RCIC countersignature is still pending. While this payment stands, countersigning would start onboarding for this client. Undoing removes that trigger.' });
@@ -304,13 +320,14 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   if (clearKeys.length) willChange.push(`Retainer Paid date (${retainerPaid}) is cleared`);
   if (conversionStatus) willChange.push(`Conversion Status changes from “${conversionStatus.from}” to “${conversionStatus.to}”`);
   const willNotChange = ['No money moves, and nothing is sent to the client', 'Signatures (client and RCIC) and “Retained by”', 'Emails already sent, and Monday history'];
-  if (isRetainer && cm) willNotChange.push('The case’s Payment Status — the 15-minute sync may change “Already Sent” to “Signed (Unpaid)”');
+  if (keepStart) willNotChange.push(`The case stays started — Retainer Paid date (${retainerPaid}), “Retained” and the case’s Payment Status`);
+  else if (isRetainer && cm) willNotChange.push('The case’s Payment Status — the 15-minute sync may change “Already Sent” to “Signed (Unpaid)”');
 
   return {
     ok: true,
     leadId: s(lead.id), index: i, mode, isRetainer, label, totalCents: row.totalCents || 0,
     before, after, clearKeys, conversionStatus, paymentsText,
-    removing, partsBefore: ledger.length,
+    removing, partsBefore: ledger.length, keepStart, keptCents,
     cm, warnings, info, willChange, willNotChange,
     expect: { mode, entry: entryFingerprint(before), retainerPaid },
     confirmText: confirmTextFor(lead, cm, shared),
@@ -375,7 +392,7 @@ async function commitReversal(plan) {
     if (s(fresh.retainerPaid) !== plan.expect.retainerPaid) {
       throw codeError('CHANGED_SINCE_PREVIEW', 'The client’s payment date changed while the undo was being prepared — nothing was changed. Close the dialog and open it again.');
     }
-    const conversion = conversionFor(fresh, plan.index);
+    const conversion = plan.keepStart ? null : conversionFor(fresh, plan.index);
     const fields = {};
     pay[plan.index] = plan.after;                                   // the reversal (milestone) or just the marker (retainer-date)
     fields.milestonePayments = ms.serializePayments(plan.leadId, pay);
@@ -464,7 +481,8 @@ function reversalHolds(lead, index, expect) {
   const e = ms.readPayments(lead).pay[index] || {};
   if (e.status === 'paid') return false;
   if ((expect.mode === 'milestone' || expect.mode === 'partial-entry') && !(e.undone && e.undone.was === expect.entry)) return false;
-  if (Number(index) === 0) {
+  // A kept start (money still on the row after the removal) keeps the date and "Retained" by design.
+  if (Number(index) === 0 && !ms.ledgerOf(e).length) {
     if (s(lead.retainerPaid)) return false;
     if (conversionFor(lead, index)) return false;
   }
@@ -611,11 +629,11 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
           return { ok: false, status: 503, code: err.code || 'COMMIT_FAILED',
             error: err.code ? err.message : 'Monday didn’t accept the change — nothing was changed. Try again in a minute.' };
         }
-        committed = { conversion: conversionFor(st.lead, i), recovered: true };
+        committed = { conversion: plan.keepStart ? null : conversionFor(st.lead, i), recovered: true };
       }
       const verified = await verifyReversal(plan);
       let raced = false;
-      if (plan.isRetainer && s(st.lead.clientMasterItemId)) {
+      if (plan.isRetainer && !plan.keepStart && s(st.lead.clientMasterItemId)) {
         try { const now = await io.readCase(st.lead.clientMasterItemId); raced = !!(now && lower(now.paymentStatus) === 'paid'); }
         catch (_) { /* nothing to add — the refusal already checked before the write */ }
       }
@@ -653,7 +671,8 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
     `Removed by ${who} — ${when}. <b>Reason:</b> ${esc(s(reason))}<br>` +
     `<b>Changed:</b> ${changed.join(' · ') || 'nothing further'}.<br>` +
     `<b>Not changed:</b> signatures, “Retained by”, and anything already sent to the client. No money moved.` +
-    (plan.isRetainer ? ' Onboarding starts only once the real payment is recorded and every signature is in.' : '') +
+    (plan.keepStart ? ` The case stays started on the remaining ${esc(dollars(plan.keptCents))} — collect the balance before submission.`
+      : plan.isRetainer ? ' Onboarding starts only once the real payment is recorded and every signature is in.' : '') +
     '<br>If this payment belongs to another client, record it on that client’s file.' +
     (plan.mode === 'milestone' ? `<br><small>Removed record: ${esc(JSON.stringify(plan.before))}</small>` : plan.mode === 'partial-entry' ? `<br><small>Removed entry: ${esc(JSON.stringify(plan.removing))}</small>` : '');
   const caseBody = plan.mode === 'milestone'
@@ -689,9 +708,9 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
   return {
     ok: true,
     message: plan.mode === 'milestone'
-      ? `Removed. ${plan.label} now reads “${backLabel}”.`
+      ? `Removed. ${plan.label} now reads “${backLabel}”.${plan.keepStart ? ` The case stays started on the remaining ${dollars(plan.keptCents)}.` : ''}`
       : plan.mode === 'partial-entry'
-      ? `Removed the ${dollars(plan.removing.amountCents)} part-payment. ${plan.label} now reads “${backLabel}”.`
+      ? `Removed the ${dollars(plan.removing.amountCents)} part-payment. ${plan.label} now reads “${backLabel}”.${plan.keepStart ? ` The case stays started on the remaining ${dollars(plan.keptCents)}.` : ''}`
       : `Removed the Retainer Paid date (${plan.expect.retainerPaid}). The milestone row was not paid and is unchanged.`,
     undone: { index: plan.index, mode: plan.mode, before: plan.before, after: plan.after, clearedRetainerPaid: !!plan.clearKeys.length, conversionStatus: conversion || null },
     removed: plan.mode === 'partial-entry' && plan.removing

@@ -1012,7 +1012,7 @@ function msAction(btn) {
   // Mark paid: a dialog showing WHICH client, the amount, the reference they were
   // asked to use, and a warning when no request was ever sent (2026-09-22).
   var row = ((LAST_D && LAST_D.payments && LAST_D.payments.milestones) || []).filter(function(r) { return r.index === i; })[0] || { index: i };
-  tdotOpenMarkPaidModal({ clientName: (LAST_D && LAST_D.clientName) || '', caseRef: CASE_REF, m: row, onConfirm: function(ref, by, amountCents, settle) {
+  tdotOpenMarkPaidModal({ clientName: (LAST_D && LAST_D.clientName) || '', caseRef: CASE_REF, m: row, started: !!(L.retainerPaid && String(L.retainerPaid).trim()), onConfirm: function(ref, by, amountCents, settle) {
     msSend(btn, { action: 'markMilestonePaid', value: JSON.stringify({ index: i, reference: ref, amountCents: amountCents, settle: settle === true }), staffName: by });
   } });
 }
