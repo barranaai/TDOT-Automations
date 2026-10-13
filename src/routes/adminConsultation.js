@@ -1454,8 +1454,8 @@ function renderMilestonePayments(list){
       // to use, and a warning when no request was ever sent (2026-09-22).
       var i=Number(b.getAttribute('data-msp-paid'));
       var row=list.filter(function(r){ return r.index===i; })[0]||{index:i};
-      tdotOpenMarkPaidModal({ clientName: D.name||'', caseRef: RP_CASE_REF, m: row, onConfirm: function(ref,by,amountCents){
-        doAction('markMilestonePaid', JSON.stringify({index:i, reference:ref, amountCents:amountCents}), null, by);
+      tdotOpenMarkPaidModal({ clientName: D.name||'', caseRef: RP_CASE_REF, m: row, onConfirm: function(ref,by,amountCents,settle){
+        doAction('markMilestonePaid', JSON.stringify({index:i, reference:ref, amountCents:amountCents, settle:settle===true}), null, by);
       } });
     };
   });

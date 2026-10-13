@@ -681,7 +681,8 @@ const PAYMENT_UI_JS = `
       if (!by) { d.box.querySelector('.paym-err').textContent = 'Enter your name — it is recorded with the payment.'; return; }
       if (byEl) paySaveName(by);
       d.close();
-      o.onConfirm(ref, by, cents);
+      /* settle = "Mark settled": explicit, so the server can refuse it if a balance exists again. */
+      o.onConfirm(ref, by, cents, nothingOwed);
     };
     setTimeout(function(){ var f = amtEl || d.box.querySelector('.paym-ref'); if (f) { f.focus(); if (f.select) f.select(); } }, 30);
   }

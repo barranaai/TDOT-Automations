@@ -776,7 +776,8 @@ function validateAction(action, value) {
         if (!Number.isInteger(a) || a <= 0 || a > 20000000) return { ok: false, error: 'Enter the amount received, in dollars and cents (up to $200,000).' };
         amountCents = a;
       }
-      return { ok: true, normalized: { index: i, reference, amountCents } };
+      // settle: "Mark settled" — close a part-paid milestone that the money on file already covers (no amount).
+      return { ok: true, normalized: { index: i, reference, amountCents, settle: !!(o && o.settle === true) } };
     }
     case 'saveAttribution': {
       let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid payload.' }; }
@@ -996,7 +997,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
     case 'markMilestonePaid': {
       // Who recorded it — shown on the row's tooltip and in the note.
       const by = actor || (staffName ? { name: staffName, verified: false } : null);
-      const r = await require('./milestonePaymentService').markMilestonePaid(leadId, v.normalized.index, { reference: v.normalized.reference, actor: by, amountCents: v.normalized.amountCents });
+      const r = await require('./milestonePaymentService').markMilestonePaid(leadId, v.normalized.index, { reference: v.normalized.reference, actor: by, amountCents: v.normalized.amountCents, settle: v.normalized.settle });
       if (r.already) return { ok: true, message: `Already recorded as paid (${r.existingOn}) — nothing changed.` };
       const $ = (c) => (Math.round(c) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
       if (r.settled === false) return { ok: true, message: `Recorded — ${$(r.amountCents)} toward ${r.label || 'the milestone'} by e-transfer. Paid so far ${$(r.paidCents)} of ${$(r.totalCents)}; balance ${$(r.balanceCents)}. The milestone is not paid until the balance is in.` };

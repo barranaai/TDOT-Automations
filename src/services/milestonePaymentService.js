@@ -31,7 +31,9 @@
 const leadService = require('./leadService');
 const mondayApi   = require('./mondayApi');
 
-function todayISO() { return new Date().toISOString().split('T')[0]; }
+// The Toronto calendar day: a payment recorded at 8:30 pm Toronto is dated that
+// evening, not tomorrow (UTC) — and "the same amount, the same day" means one day.
+function todayISO() { return require('../utils/torontoTime').torontoDay(new Date().toISOString()); }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 // The retainer + every milestone are collected by Interac e-transfer (NOT Square —
@@ -49,23 +51,28 @@ function ledgerOf(entry) {
   return l.filter((x) => x && typeof x === 'object' && Number.isFinite(Number(x.a)) && Number(x.a) > 0)
     .map((x) => ({ amountCents: Math.round(Number(x.a)), paidAt: String(x.d || ''), reference: String(x.r || ''), by: String(x.b || ''), verified: x.v === true, at: String(x.t || '') }));
 }
-/** Cents received so far on a row: the ledger's sum; a paid row counts as AT LEAST its total
- *  (older records and Square have no ledger — and a Square payment landing over part-payments
- *  writes 'paid' without adding itself to the ledger). */
+/** A paid row whose ledger is the whole story: the payment that settled it was written to the
+ *  ledger in the same click as the paid mark (its stamp equals the mark's). Not so for older
+ *  records and Square (no ledger), a Square payment landing over part-payments (writes 'paid'
+ *  without adding itself), or a row settled on money already on file ("Mark settled"). */
+function ledgerComplete(entry) {
+  if (!entry || entry.status !== 'paid') return false;
+  const l = ledgerOf(entry);
+  return !!(l.length && entry.marked && entry.marked.at && l[l.length - 1].at === String(entry.marked.at));
+}
+/** Cents received so far on a row: the ledger's sum. A paid row whose ledger is NOT the whole
+ *  story counts as at least its total (the money that paid it was never written down here). */
 function paidCentsOf(entry, totalCents) {
   const l = ledgerOf(entry);
   const sum = l.reduce((s, x) => s + x.amountCents, 0);
-  if (entry && entry.status === 'paid') return Math.max(sum, Math.round(Number(totalCents) || 0));
+  if (entry && entry.status === 'paid' && !ledgerComplete(entry)) return Math.max(sum, Math.round(Number(totalCents) || 0));
   return sum;
 }
-/** Which ledger entry settled a paid row (its index), or -1: the last one, but only when the
- *  ledger adds up to the total — a row Square (or an older record) marked paid over
- *  part-payments has no settling entry in its ledger, and every entry is a real part-payment. */
-function settlingIndexOf(entry, totalCents) {
-  if (!entry || entry.status !== 'paid') return -1;
-  const l = ledgerOf(entry);
-  if (!l.length) return -1;
-  return l.reduce((s, x) => s + x.amountCents, 0) >= Math.round(Number(totalCents) || 0) ? l.length - 1 : -1;
+/** Which ledger entry settled a paid row (its index), or -1 when none did: every entry is then a
+ *  real part-payment (Square over part-payments; a row settled on money already on file) —
+ *  readers list them all, and an undo keeps them all. */
+function settlingIndexOf(entry) {
+  return ledgerComplete(entry) ? ledgerOf(entry).length - 1 : -1;
 }
 // At most this many payments on one milestone — the whole column must stay under MAX_PAYMENTS_JSON.
 const LEDGER_MAX = 6;
@@ -175,7 +182,7 @@ function milestoneStates(lead, currentCaseStage, orderedStages = []) {
       balanceCents: Math.max(0, Math.round(r.totalCents || 0) - paidCentsOf(p, r.totalCents)),
       payments: ledgerOf(p),
       // The entry that settled a paid row (-1: none — a plain full payment, or paid by Square over part-payments).
-      settlingIndex: settlingIndexOf(p, r.totalCents),
+      settlingIndex: settlingIndexOf(p),
     };
   });
 }
@@ -358,7 +365,7 @@ function actorStamp(actor) {
   return { by, at: new Date().toISOString().slice(0, 16) + 'Z', verified: a.verified === true };
 }
 
-async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', method = 'e-transfer', txnId = '', actor = null, amountCents = null } = {}) {
+async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', method = 'e-transfer', txnId = '', actor = null, amountCents = null, settle = false } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) return { ok: false };
   const existing = parsePayments(lead)[index] || {};
@@ -372,19 +379,29 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
   // after they were recorded): nothing more is owed — "Mark settled" closes it
   // without an amount, and an amount is refused rather than recorded over it.
   const nothingOwed = existing.status === 'partial' && totalCents > 0 && before >= totalCents;
-  let amount = null;   // null = the whole balance (today's "Mark paid")
+  const nothingOwedError = () => { const e = new Error(`Nothing more is owed on this milestone — the ${dollarsCAD(before)} already on file covers its ${dollarsCAD(totalCents)}. Nothing was recorded. Use “Mark settled” to close it; if the client sent more, record it on the next milestone.`); e.badRequest = true; e.code = 'NOTHING_OWED'; return e; };
+  // "Mark settled" is explicit (settle: true) and only valid while nothing is owed: a dialog
+  // opened before the plan was amended back up must never settle on a balance that exists again.
+  if (settle === true && !nothingOwed && existing.status !== 'paid') {
+    const e = new Error('The balance on this milestone changed since you opened this — nothing was recorded. Reload the page and enter the amount received.');
+    e.badRequest = true; e.code = 'SETTLE_STALE'; throw e;
+  }
+  let amount = null;   // null = the whole balance (today's "Mark paid", rows with no part-payments)
   if (amountCents != null) {
     const n = Number(amountCents);
     if (!Number.isInteger(n) || n <= 0) { const e = new Error('Enter the amount received, in dollars and cents. Nothing was recorded.'); e.badRequest = true; e.code = 'BAD_AMOUNT'; throw e; }
-    if (nothingOwed) {
-      const e = new Error(`Nothing more is owed on this milestone — the ${dollarsCAD(before)} already on file covers its ${dollarsCAD(totalCents)}. Nothing was recorded. Use “Mark settled” to close it; if the client sent more, record it on the next milestone.`);
-      e.badRequest = true; e.code = 'NOTHING_OWED'; throw e;
-    }
+    if (nothingOwed) throw nothingOwedError();
     if (existing.status !== 'paid' && totalCents > 0 && n > balanceCents) {
       const e = new Error(`That is more than the ${dollarsCAD(balanceCents)} still owed on this milestone. Nothing was recorded. Record the balance here and the rest on the next milestone.`);
       e.badRequest = true; e.code = 'AMOUNT_OVER_BALANCE'; throw e;
     }
     amount = n;
+  } else if (settle !== true && existing.status === 'partial' && ledgerOf(existing).length) {
+    // No amount on a part-paid row: the dialog always sends one, so this is a stale page
+    // or a raw call — never silently record "the whole balance" over real part-payments.
+    if (nothingOwed) throw nothingOwedError();
+    const e = new Error(`This milestone is part-paid (${dollarsCAD(before)} of ${dollarsCAD(totalCents)} on file) — enter the amount received. Nothing was recorded.`);
+    e.badRequest = true; e.code = 'AMOUNT_REQUIRED'; throw e;
   }
   if (existing.status === 'paid') {
     // Never swallow a payment silently. A row that already reads paid is either
@@ -438,8 +455,10 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
     }
   }
 
-  if (nothingOwed) {
-    // Settle on what is on file: no new money, no ledger entry, no receipt.
+  if (settle === true) {
+    // "Mark settled" (nothingOwed, checked above): settle on what is on file — no new money,
+    // no ledger entry, no receipt. The ledger stays incomplete on purpose (its last stamp is
+    // older than the mark), so readers list every part-payment and an undo keeps them all.
     await patchPayment(leadId, index, { status: 'paid', paidAt: when, method, reference: ref, marked });
     await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
       { i: String(leadId), b: `✅ <b>Milestone settled</b> — ${esc(label)}: the ${esc(dollarsCAD(before))} already on file covers its ${esc(dollarsCAD(totalCents))} (the plan was amended). No new payment was received. ${whoLine}` });
@@ -501,5 +520,5 @@ module.exports = {
   // pure-ish (exported for tests)
   parsePayments, scheduleRows,
   // part-payments (2026-10-13)
-  ledgerOf, paidCentsOf, settlingIndexOf, paymentReceiptHtml, paymentReceiptsEnabled, LEDGER_MAX,
+  ledgerOf, paidCentsOf, settlingIndexOf, ledgerComplete, todayISO, paymentReceiptHtml, paymentReceiptsEnabled, LEDGER_MAX,
 };

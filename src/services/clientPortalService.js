@@ -457,7 +457,12 @@ function buildPortalPage(snap, opts) {
         const bal = Math.max(0, (m.totalCents || 0) - paidOf(m));
         badge = '<span class="pay-badge partial">Part-paid</span>';
         when = `<span class="pay-when">${escHtml(money(paidOf(m)))} received</span>`;
-        how = isStaff
+        how = bal <= 0
+          // The plan was amended below what is on file: nothing more to ask the client for.
+          ? (isStaff
+            ? `<div class="howpay">Part-paid — the ${escHtml(money(paidOf(m)))} received covers this milestone (plan amended). Use “Mark settled” on the payment row.</div>`
+            : `<div class="howpay">Thank you — the <b>${escHtml(money(paidOf(m)))}</b> we received covers this milestone. Our team will confirm it shortly.</div>`)
+          : isStaff
           ? `<div class="howpay">Part-paid — ${escHtml(money(paidOf(m)))} received, <b>${escHtml(money(bal))}</b> outstanding${m.reference ? ` (ref <b>${escHtml(m.reference)}</b>)` : ''}.</div>`
           : `<div class="howpay">Thank you — we received <b>${escHtml(money(paidOf(m)))}</b> toward this milestone. Balance remaining: <b>${escHtml(money(bal))}</b>. Please e-Transfer it to <b>${escHtml(pay.etransferEmail || '')}</b>${m.reference
                ? ` and include the reference <span class="refcode">${escHtml(m.reference)}</span> in the message`

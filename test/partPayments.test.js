@@ -174,10 +174,10 @@ test('the receipt email: off by default; when on, a part-payment receipt shows p
 test('the action: the amount is validated, the messages say paid-so-far and balance, the pinned "already" line is unchanged', async () => {
   const cps = require('../src/services/consultantPortalService');
   const src = fs.readFileSync(require.resolve('../src/services/consultantPortalService'), 'utf8');
-  assert.match(src, /markMilestonePaid\(leadId, v\.normalized\.index, \{ reference: v\.normalized\.reference, actor: by, amountCents: v\.normalized\.amountCents \}\)/);
+  assert.match(src, /markMilestonePaid\(leadId, v\.normalized\.index, \{ reference: v\.normalized\.reference, actor: by, amountCents: v\.normalized\.amountCents, settle: v\.normalized\.settle \}\)/);
   assert.match(src, /if \(r\.already\) return \{ ok: true, message: `Already recorded as paid \(\$\{r\.existingOn\}\) — nothing changed\.` \};/);
   const v = await cps.validateAction('markMilestonePaid', JSON.stringify({ index: 0, reference: 'R', amountCents: 56500 }));
-  assert.deepEqual(v.normalized, { index: 0, reference: 'R', amountCents: 56500 });
+  assert.deepEqual(v.normalized, { index: 0, reference: 'R', amountCents: 56500, settle: false });
   assert.equal((await cps.validateAction('markMilestonePaid', JSON.stringify({ index: 0 }))).normalized.amountCents, null, 'absent = the whole balance');
   for (const bad of [0, -1, 1.5, 'abc', 20000001]) assert.equal((await cps.validateAction('markMilestonePaid', JSON.stringify({ index: 0, amountCents: bad }))).ok, false, String(bad));
   const w = world();
@@ -204,7 +204,7 @@ test('the dialog: an amount box (default = the balance), the hint, the pinned "s
   const mark = js.slice(js.indexOf('function tdotOpenMarkPaidModal('), js.indexOf('function payList('));
   assert.ok(mark.includes("payAmount(m) + ' <span class=\"paym-muted\">scheduled amount, incl. HST</span>"), 'the pinned label line');
   assert.ok(mark.includes('<input id="paym-amt" class="paym-amt-in" type="text" inputmode="decimal" autocomplete="off" value="\' + (balance/100).toFixed(2) + \'">'));
-  assert.ok(mark.includes("o.onConfirm(ref, by, cents);"));
+  assert.ok(mark.includes("o.onConfirm(ref, by, cents, nothingOwed);"));
   assert.ok(mark.includes("Record the balance here and the rest on the next milestone."));
   assert.ok(mark.includes("Part-payment — ' + payDollars(balance - cents) + ' will remain on this milestone."));
   // the amount parser, run here
@@ -214,10 +214,10 @@ test('the dialog: an amount box (default = the balance), the hint, the pinned "s
   assert.equal(fn.payBalanceCents({ totalCents: 113000, status: 'paid' }), 0, 'an older paid row with no paidCents');
   assert.equal(fn.payBalanceCents({ totalCents: 113000, status: 'requested' }), 113000);
   const consult = fs.readFileSync(require.resolve('../src/routes/adminConsultation'), 'utf8');
-  assert.match(consult, /onConfirm: function\(ref,by,amountCents\)\{\s*doAction\('markMilestonePaid', JSON\.stringify\(\{index:i, reference:ref, amountCents:amountCents\}\), null, by\);/);
+  assert.match(consult, /onConfirm: function\(ref,by,amountCents,settle\)\{\s*doAction\('markMilestonePaid', JSON\.stringify\(\{index:i, reference:ref, amountCents:amountCents, settle:settle===true\}\), null, by\);/);
   assert.match(consult, /<span class="ms-badge partial">Part-paid<\/span>/);
   const cockpit = fs.readFileSync(require.resolve('../src/routes/adminCase'), 'utf8');
-  assert.match(cockpit, /onConfirm: function\(ref, by, amountCents\) \{\s*msSend\(btn, \{ action: 'markMilestonePaid', value: JSON\.stringify\(\{ index: i, reference: ref, amountCents: amountCents \}\), staffName: by \}\);/);
+  assert.match(cockpit, /onConfirm: function\(ref, by, amountCents, settle\) \{\s*msSend\(btn, \{ action: 'markMilestonePaid', value: JSON\.stringify\(\{ index: i, reference: ref, amountCents: amountCents, settle: settle === true \}\), staffName: by \}\);/);
   assert.match(cockpit, /<span class="pill amber">PART-PAID<\/span>/);
   // the request-button conditions both pages pin elsewhere are untouched
   assert.match(consult, /\(\(\(m\.status==='pending'&&\(m\.due\|\|\(m\.index===0&&signed\)\)\)\|\|m\.legacySent\)&&!\(m\.index===0&&D\.retainerPaid\)\)/);
@@ -369,7 +369,7 @@ test('REVIEW: an e-transfer request on a part-paid milestone is refused (PART_PA
 });
 
 test('REVIEW: the same e-transfer recorded twice is refused (DUPLICATE_PART) — same bank reference, or same amount on the same day without one; the request reference does not count; a distinct reference is accepted', async () => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = ms.todayISO();
   const w = world({ pay: JSON.stringify({ 0: { status: 'partial', method: 'e-transfer', reference: 'TDOT-55001-M1', requestedAt: '2026-10-01', amountCents: 113000, l: [{ a: 56500, d: today, r: 'C1AeUbQTRwZy', b: 'Asmita', v: false, t: '2026-10-13T16:47Z' }] } }) });
   try {
     // the same reference — even though the amount would "settle" the milestone
@@ -395,8 +395,9 @@ test('REVIEW: the plan amended below what is on file — an amount is refused (N
     const st = ms.milestoneStates(LEAD({ milestonePayments: w.stored, retainerFee: '1500', retainerMilestones: AMENDED }), '', []);
     assert.deepEqual([st[0].status, st[0].totalCents, st[0].paidCents, st[0].balanceCents], ['partial', 56500, 56500, 0]);
     for (const n of [1, 100, 56500]) await assert.rejects(ms.markMilestonePaid('555001', 0, { amountCents: n, actor: ACTOR }), (e) => e.code === 'NOTHING_OWED' && /\$565\.00 already on file covers its \$565\.00/.test(e.message) && /Mark settled/.test(e.message));
+    await assert.rejects(ms.markMilestonePaid('555001', 0, { actor: ACTOR }), (e) => e.code === 'NOTHING_OWED', 'no amount and no explicit settle: refused too');
     assert.equal(w.writes.length, 0);
-    const r = await ms.markMilestonePaid('555001', 0, { actor: { name: 'Gauri Berde', email: 'g@x.com', verified: true } });
+    const r = await ms.markMilestonePaid('555001', 0, { settle: true, actor: { name: 'Gauri Berde', email: 'g@x.com', verified: true } });
     assert.deepEqual([r.settled, r.amountCents, r.paidCents, r.balanceCents, r.totalCents], [true, 0, 56500, 0, 56500]);
     const e = w.row(0);
     assert.equal(e.status, 'paid');
@@ -410,10 +411,10 @@ test('REVIEW: the plan amended below what is on file — an amount is refused (N
     assert.equal(w.mails.length, 0);
     // the action's message for it (the dialog sends no amount)
     const cps = require('../src/services/consultantPortalService');
-    assert.equal((await cps.validateAction('markMilestonePaid', JSON.stringify({ index: 0, reference: '', amountCents: null }))).normalized.amountCents, null);
+    assert.deepEqual((await cps.validateAction('markMilestonePaid', JSON.stringify({ index: 0, reference: '', amountCents: null, settle: true }))).normalized, { index: 0, reference: '', amountCents: null, settle: true });
     const r3 = stub(ms, 'markMilestonePaid', async () => ({ ok: true, label: 'M1', settled: true, amountCents: 0, paidCents: 56500, balanceCents: 0, totalCents: 56500 }));
     try {
-      const a = await cps.applyAction({ leadId: '555001', action: 'markMilestonePaid', value: JSON.stringify({ index: 0, amountCents: null }), staffName: 'Asmita' });
+      const a = await cps.applyAction({ leadId: '555001', action: 'markMilestonePaid', value: JSON.stringify({ index: 0, amountCents: null, settle: true }), staffName: 'Asmita' });
       assert.equal(a.message, 'Recorded — M1 marked settled: the $565.00 already on file covers it; no new payment was received.');
     } finally { r3(); }
   } finally { w.restore(); }
@@ -422,11 +423,14 @@ test('REVIEW: the plan amended below what is on file — an amount is refused (N
 test('REVIEW: a row Square marked paid over part-payments — counts as paid in full, every part-payment stays visible (tooltip, timeline), and undo keeps them all', () => {
   const sq = { status: 'paid', paidAt: '2026-10-14', txnId: 'SQ1', l: [{ a: 56500, d: '2026-10-13', r: 'C1', b: 'Asmita' }] };
   assert.equal(ms.paidCentsOf(sq, 113000), 113000, 'a paid row is at least its total');
-  assert.equal(ms.settlingIndexOf(sq, 113000), -1, 'no ledger entry settled it');
-  assert.equal(ms.settlingIndexOf({ status: 'paid', l: [{ a: 56500 }, { a: 56500 }] }, 113000), 1, 'settled by parts: the last entry');
-  assert.equal(ms.settlingIndexOf({ status: 'partial', l: [{ a: 56500 }] }, 113000), -1);
-  assert.equal(ms.settlingIndexOf({ status: 'paid', paidAt: '2026-10-01' }, 113000), -1);
-  const st = ms.milestoneStates(LEAD({ milestonePayments: JSON.stringify({ 0: sq, 1: { status: 'paid', l: [{ a: 56500 }, { a: 56500 }] } }) }), '', []);
+  assert.equal(ms.settlingIndexOf(sq), -1, 'no ledger entry settled it');
+  const byParts = { status: 'paid', marked: { by: 'G', at: '2026-10-14T10:00Z' }, l: [{ a: 56500, t: '2026-10-13T16:47Z' }, { a: 56500, t: '2026-10-14T10:00Z' }] };
+  assert.equal(ms.settlingIndexOf(byParts), 1, 'settled by parts: the entry written with the mark');
+  assert.equal(ms.settlingIndexOf({ status: 'partial', l: [{ a: 56500 }] }), -1);
+  assert.equal(ms.settlingIndexOf({ status: 'paid', paidAt: '2026-10-01' }), -1);
+  assert.equal(ms.paidCentsOf(byParts, 135600), 113000, 'a complete ledger is the truth even after the plan is amended up');
+  assert.equal(ms.paidCentsOf(byParts, 100000), 113000, 'and after it is amended down');
+  const st = ms.milestoneStates(LEAD({ milestonePayments: JSON.stringify({ 0: sq, 1: byParts }) }), '', []);
   assert.deepEqual([st[0].paidCents, st[0].balanceCents, st[0].settlingIndex, st[1].settlingIndex], [113000, 0, -1, 1]);
   const { buildTimeline } = require('../src/services/caseCockpitService');
   const ev = buildTimeline({ lead: {}, milestones: [{ index: 0, label: 'M1', status: 'paid', paidAt: '2026-10-14', payments: st[0].payments, settlingIndex: -1 }] }).map((e) => `${e.date} ${e.title}`);
@@ -442,6 +446,7 @@ test('REVIEW: a row Square marked paid over part-payments — counts as paid in 
   assert.equal(p.ok, true, JSON.stringify(p.refusal));
   assert.deepEqual([p.mode, p.removing, p.after.status, p.after.l], ['milestone', null, 'partial', [L1]]);
   assert.deepEqual(p.willChange[0], 'Milestone goes back to “part-paid ($565.00 of $1,130.00 on file)”');
+  assert.ok(!p.willChange.some((x) => /that settled it is removed/.test(x)));
 });
 
 test('REVIEW: "Flag as wrong" on a part-paid row says what is on file and which part-payment came last; the RCIC is not asked to hold', async () => {
@@ -477,4 +482,65 @@ test('REVIEW: the dialog — nothing owed: no amount box, "Mark settled", the se
   assert.ok(mark.includes('Nothing more is owed — the <b>'));
   assert.ok(mark.includes("if (amtEl) { amtEl.oninput = refreshHint; refreshHint(); }"));
   new Function(js);
+});
+
+test('REVIEW 2: "Mark settled" then undo — the real part-payment is kept (the settling entry is known by the mark, not the sum); readers list it; a stale "Mark settled" with a balance again is refused; no amount on a part-paid row is refused', async () => {
+  const AMENDED = JSON.stringify([{ label: 'Milestone 1 – Admin Fee (Non-Refundable)', amountCents: 50000, trigger: 'Retainer Confirmed', locked: true }, { label: 'Milestone 2 – Before Submission', amountCents: 100000, trigger: 'Internal Review' }]);
+  const w = world({ pay: JSON.stringify({ 0: { status: 'partial', method: 'e-transfer', reference: 'TDOT-55001-M1', requestedAt: '2026-10-01', amountCents: 113000, l: [L1] } }), lead: { retainerFee: '1500', retainerMilestones: AMENDED } });
+  let settledRow;
+  try {
+    await ms.markMilestonePaid('555001', 0, { settle: true, actor: { name: 'Gauri Berde', email: 'g@x.com', verified: true } });
+    settledRow = w.row(0);
+    assert.equal(settledRow.status, 'paid'); assert.deepEqual(settledRow.l, [L1]);
+    assert.equal(ms.ledgerComplete(settledRow), false, 'the ledger is not the whole story — nothing was written with the mark');
+    assert.equal(ms.settlingIndexOf(settledRow), -1);
+    assert.equal(ms.paidCentsOf(settledRow, 56500), 56500);
+    const st = ms.milestoneStates(LEAD({ milestonePayments: w.stored, retainerFee: '1500', retainerMilestones: AMENDED }), '', []);
+    assert.deepEqual([st[0].status, st[0].paidCents, st[0].balanceCents, st[0].settlingIndex], ['paid', 56500, 0, -1]);
+    const { buildTimeline } = require('../src/services/caseCockpitService');
+    const ev = buildTimeline({ lead: {}, milestones: [{ ...st[0], label: 'M1' }] }).map((e) => e.title);
+    assert.ok(ev.includes('Part-payment — M1') && ev.includes('Paid — M1'), ev.join(' | '));
+  } finally { w.restore(); }
+  // undo (milestone mode): the paid mark comes off, the $565 stays, the row goes back to part-paid
+  const lead = PLAN_LEAD({ 0: settledRow }, { retainerFee: '1500', retainerMilestones: AMENDED, retainerPaid: settledRow.paidAt, conversionStatus: 'Retained' });
+  const p = U.planMilestonePaidReversal({ lead, index: 0, cm: CASE, actor: UNDO_ACTOR, now: '2026-10-15T15:04:11.000Z' });
+  assert.equal(p.ok, true, JSON.stringify(p.refusal));
+  assert.deepEqual([p.mode, p.removing, p.after.status, p.after.l], ['milestone', null, 'partial', [L1]]);
+  assert.equal(p.willChange[0], 'Milestone goes back to “part-paid ($565.00 of $565.00 on file)”');
+  // settled by parts: undo removes exactly the entry written with the mark, and says so
+  const byParts = PLAN_LEAD({ 0: { status: 'paid', paidAt: '2026-10-14', method: 'e-transfer', reference: 'C2', requestedAt: '2026-10-01', amountCents: 113000, marked: { by: 'Gauri Berde', at: '2026-10-14T10:00Z', verified: true }, l: [L1, { ...L2, a: 56500 }] } }, { retainerPaid: '2026-10-14', conversionStatus: 'Retained' });
+  const p2 = U.planMilestonePaidReversal({ lead: byParts, index: 0, cm: CASE, actor: UNDO_ACTOR, now: '2026-10-15T15:04:11.000Z' });
+  assert.equal(p2.removing.reference, 'C2'); assert.deepEqual(p2.after.l, [L1]);
+  assert.ok(p2.willChange.includes('The $565.00 payment of 2026-10-14 that settled it is removed from the record; the earlier part-payments stay'), p2.willChange.join(' | '));
+  // a stale "Mark settled" (the plan is back at $1,130, so a balance exists) is refused; so is "no amount" on a part-paid row
+  const w2 = world({ pay: JSON.stringify({ 0: { status: 'partial', method: 'e-transfer', reference: 'TDOT-55001-M1', l: [L1] } }) });
+  try {
+    await assert.rejects(ms.markMilestonePaid('555001', 0, { settle: true, actor: ACTOR }), (e) => e.code === 'SETTLE_STALE' && /changed since you opened this/.test(e.message));
+    await assert.rejects(ms.markMilestonePaid('555001', 0, { actor: ACTOR }), (e) => e.code === 'AMOUNT_REQUIRED' && /enter the amount received/.test(e.message));
+    assert.equal(w2.writes.length, 0); assert.equal(w2.retainerPaidCalls, 0);
+    // a row with no part-payments keeps today's no-amount "Mark paid"
+    assert.equal((await ms.markMilestonePaid('555001', 1, { reference: 'B', actor: ACTOR })).settled, true);
+  } finally { w2.restore(); }
+});
+
+test('REVIEW 2: dates are the Toronto day — a payment at 8:30 pm Toronto is dated that evening; the same amount an hour apart across UTC midnight is one day, so a duplicate', async () => {
+  const RealDate = Date;
+  const freeze = (iso) => { const T = RealDate.parse(iso); global.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [T])); } static now() { return T; } }; };
+  const w = world();
+  try {
+    freeze('2026-10-13T23:30:00.000Z');   // 7:30 pm Toronto (EDT)
+    assert.equal(ms.todayISO(), '2026-10-13');
+    await ms.markMilestonePaid('555001', 0, { amountCents: 56500, actor: ACTOR });
+    assert.equal(w.row(0).l[0].d, '2026-10-13');
+    freeze('2026-10-14T00:30:00.000Z');   // 8:30 pm Toronto, the same evening
+    assert.equal(ms.todayISO(), '2026-10-13');
+    await assert.rejects(ms.markMilestonePaid('555001', 0, { amountCents: 56500, actor: ACTOR }), (e) => e.code === 'DUPLICATE_PART');
+    assert.equal(w.retainerPaidCalls, 0);
+  } finally { global.Date = RealDate; w.restore(); }
+});
+
+test('REVIEW 2: client portal — a part-paid milestone the plan now covers asks the client for nothing', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/clientPortalService'), 'utf8');
+  assert.ok(src.includes('we received covers this milestone. Our team will confirm it shortly.'));
+  assert.ok(src.includes('Use “Mark settled” on the payment row.'));
 });

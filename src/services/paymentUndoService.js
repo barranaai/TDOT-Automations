@@ -171,10 +171,9 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   // milestone: the entry that settled the row — none when the ledger does not add
   // up to the total (Square paid over part-payments): then the paid mark comes off
   // and EVERY part-payment stays.
-  const rowTotal = Math.round(((ms.scheduleRows(lead)[i] || {}).totalCents) || 0);
   const ledger = before ? ms.ledgerOf(before) : [];
   const rawLedger = (before && Array.isArray(before.l)) ? before.l.filter((x) => x && Number(x.a) > 0) : [];
-  const removeAt = mode === 'partial-entry' ? ledger.length - 1 : mode === 'milestone' ? ms.settlingIndexOf(before, rowTotal) : -1;
+  const removeAt = mode === 'partial-entry' ? ledger.length - 1 : mode === 'milestone' ? ms.settlingIndexOf(before) : -1;
   const removing = removeAt >= 0 ? ledger[removeAt] : null;
   const restLedger = removeAt >= 0 ? rawLedger.slice(0, removeAt) : rawLedger;
 
@@ -300,6 +299,7 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   const backTo = () => after.status === 'partial' ? `part-paid (${dollars(after.l.reduce((t, x) => t + Math.round(Number(x.a) || 0), 0))} of ${dollars(row.totalCents || 0)} on file)`
     : after.status === 'requested' ? 'requested' : after.status === 'sent' ? 'requested (old Square link)' : 'not requested';
   if (mode === 'milestone') willChange.push(`Milestone goes back to “${backTo()}”`);
+  if (mode === 'milestone' && removing) willChange.push(`The ${dollars(removing.amountCents)} payment${removing.paidAt ? ` of ${removing.paidAt}` : ''} that settled it is removed from the record${restLedger.length ? '; the earlier part-payments stay' : ''}`);
   if (mode === 'partial-entry') willChange.push(`The ${dollars(removing.amountCents)} part-payment${removing.paidAt ? ` of ${removing.paidAt}` : ''} is removed; the milestone goes back to “${backTo()}”`);
   if (clearKeys.length) willChange.push(`Retainer Paid date (${retainerPaid}) is cleared`);
   if (conversionStatus) willChange.push(`Conversion Status changes from “${conversionStatus.from}” to “${conversionStatus.to}”`);
