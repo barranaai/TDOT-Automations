@@ -769,7 +769,14 @@ function validateAction(action, value) {
       const i = parseInt(o && o.index, 10);
       if (!Number.isInteger(i) || i < 0 || i > 20) return { ok: false, error: 'Invalid milestone.' };
       const reference = String((o && o.reference) || '').trim().slice(0, 120);
-      return { ok: true, normalized: { index: i, reference } };
+      // Part-payments (2026-10-13): the amount received, in cents. Absent = the whole balance (today's Mark paid).
+      let amountCents = null;
+      if (o && o.amountCents != null && o.amountCents !== '') {
+        const a = Number(o.amountCents);
+        if (!Number.isInteger(a) || a <= 0 || a > 20000000) return { ok: false, error: 'Enter the amount received, in dollars and cents (up to $200,000).' };
+        amountCents = a;
+      }
+      return { ok: true, normalized: { index: i, reference, amountCents } };
     }
     case 'saveAttribution': {
       let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid payload.' }; }
@@ -989,8 +996,11 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
     case 'markMilestonePaid': {
       // Who recorded it — shown on the row's tooltip and in the note.
       const by = actor || (staffName ? { name: staffName, verified: false } : null);
-      const r = await require('./milestonePaymentService').markMilestonePaid(leadId, v.normalized.index, { reference: v.normalized.reference, actor: by });
+      const r = await require('./milestonePaymentService').markMilestonePaid(leadId, v.normalized.index, { reference: v.normalized.reference, actor: by, amountCents: v.normalized.amountCents });
       if (r.already) return { ok: true, message: `Already recorded as paid (${r.existingOn}) — nothing changed.` };
+      const $ = (c) => (Math.round(c) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+      if (r.settled === false) return { ok: true, message: `Recorded — ${$(r.amountCents)} toward ${r.label || 'the milestone'} by e-transfer. Paid so far ${$(r.paidCents)} of ${$(r.totalCents)}; balance ${$(r.balanceCents)}. The milestone is not paid until the balance is in.` };
+      if (r.settled && r.paidCents > r.amountCents) return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked paid by e-transfer (this ${$(r.amountCents)} settles it; ${$(r.paidCents)} received in total).` };
       return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked paid by e-transfer.` };
     }
 

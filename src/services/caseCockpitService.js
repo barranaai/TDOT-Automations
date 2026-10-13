@@ -222,6 +222,12 @@ function buildTimeline({ lead, milestones = [], qMembers = [], docItems = [] } =
   for (const m of milestones) {
     const label = m.label || `Milestone ${Number(m.index) + 1}`;
     push(m.requestedAt, `e-Transfer requested — ${label}`, m.reference ? `ref ${m.reference}` : '', 'payment');
+    // Part-payments on file (the one that settled the milestone is the "Paid" event below).
+    const parts = Array.isArray(m.payments) ? m.payments : [];
+    parts.forEach((x, n) => {
+      if (m.status === 'paid' && n === parts.length - 1) return;
+      push(x.paidAt, `Part-payment — ${label}`, `$${(Math.round(x.amountCents || 0) / 100).toFixed(2)}${x.reference ? ` · ref ${x.reference}` : ''}`, 'payment');
+    });
     push(m.paidAt,      `Paid — ${label}`,                 m.reference ? `ref ${m.reference}` : '', 'payment');
   }
   for (const q of qMembers) {

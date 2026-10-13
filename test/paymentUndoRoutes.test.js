@@ -68,7 +68,7 @@ test('every Mark paid now records who clicked — from both pages', () => {
   const consult = SRC.slice(SRC.indexOf("app.post('/api/consultation/:leadId/action'"), SRC.indexOf("app.post('/api/consultation/:leadId/action'") + 1400);
   assert.match(consult, /actor: staffActor\(req, staffName\)/);
   const portal = fs.readFileSync(require.resolve('../src/services/consultantPortalService.js'), 'utf8');
-  assert.match(portal, /markMilestonePaid\(leadId, v\.normalized\.index, \{ reference: v\.normalized\.reference, actor: by \}\)/);
+  assert.match(portal, /markMilestonePaid\(leadId, v\.normalized\.index, \{ reference: v\.normalized\.reference, actor: by, amountCents: v\.normalized\.amountCents \}\)/);
 });
 
 test('THE COCKPIT BUG: its milestone route reads the lead id the cockpit actually provides', () => {

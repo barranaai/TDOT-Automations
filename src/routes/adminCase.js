@@ -960,7 +960,8 @@ function renderPaymentsTab(d) {
   // Corrections (Undo… / Flag as wrong) depend on who is looking — load that
   // once, then render. The server enforces every rule; this only decides what to offer.
   if (!TDOT_PAY.viewer) { tdotPayViewer(function() { renderPaymentsTab(LAST_D || d); }); }
-  document.getElementById('pay-cnt').textContent = ms.length ? (ms.filter(function(m) { return m.status === 'paid'; }).length + ' of ' + ms.length + ' paid') : '';
+  var recv = ms.reduce(function(s, m) { return s + payPaidCents(m); }, 0), sched = ms.reduce(function(s, m) { return s + Number(m.totalCents || 0); }, 0);
+  document.getElementById('pay-cnt').textContent = ms.length ? (ms.filter(function(m) { return m.status === 'paid'; }).length + ' of ' + ms.length + ' paid' + (recv > 0 && recv < sched ? ' · ' + payDollars(recv) + ' of ' + payDollars(sched) + ' received' : '')) : '';
   if (!ms.length) {
     html += '<div class="muted">No milestone schedule yet — build the retainer plan on the consultation page first.</div>';
   } else {
@@ -969,6 +970,7 @@ function renderPaymentsTab(d) {
       var amt = '$' + ((m.totalCents || 0) / 100).toFixed(2);
       var st;
       if (m.status === 'paid') st = '<span class="pill green">PAID</span><span class="ms-meta">' + escHtml(m.paidAt || '') + (m.reference ? (' · ref ' + escHtml(m.reference)) : '') + '</span>' + tdotPayAuditHtml(m);
+      else if (m.status === 'partial') st = '<span class="pill amber">PART-PAID</span><span class="ms-meta">paid ' + payDollars(m.paidCents) + ' of ' + amt + ' · <b>balance ' + payDollars(m.balanceCents) + '</b>' + (m.reference ? (' · ref ' + escHtml(m.reference)) : '') + '</span>';
       else if (m.status === 'requested') st = '<span class="pill blue">REQUESTED</span><span class="ms-meta">' + (m.reference ? ('ref ' + escHtml(m.reference)) : '') + '</span>';
       else st = '<span class="pill grey">PENDING</span>';
       if (m.status !== 'paid') st += tdotPayAuditHtml(m);   // shows who removed an earlier record, if anyone did
@@ -985,7 +987,7 @@ function renderPaymentsTab(d) {
           acts += '<button class="sbtn" data-ms-act="request" data-ms-i="' + m.index + '">' +
                   (m.legacySent ? 'Send e-Transfer details' : 'Send e-Transfer request') + '</button>';
         }
-        acts += '<button class="sbtn primary" data-ms-act="paid" data-ms-i="' + m.index + '">Mark paid</button>';
+        acts += '<button class="sbtn primary" data-ms-act="paid" data-ms-i="' + m.index + '">' + (m.status === 'partial' ? 'Record balance / part-payment' : 'Record payment') + '</button>';
       }
       if (TDOT_PAY.viewer) acts += tdotPayRowActions(m, { retainerPaid: L.retainerPaid, casePaid: d.paymentStatus === 'Paid' }, 'sbtn');
       return '<div class="ms-row"><span class="ms-label">' + escHtml(m.label || ('Milestone ' + (m.index + 1))) + '</span>' +
@@ -1010,8 +1012,8 @@ function msAction(btn) {
   // Mark paid: a dialog showing WHICH client, the amount, the reference they were
   // asked to use, and a warning when no request was ever sent (2026-09-22).
   var row = ((LAST_D && LAST_D.payments && LAST_D.payments.milestones) || []).filter(function(r) { return r.index === i; })[0] || { index: i };
-  tdotOpenMarkPaidModal({ clientName: (LAST_D && LAST_D.clientName) || '', caseRef: CASE_REF, m: row, onConfirm: function(ref, by) {
-    msSend(btn, { action: 'markMilestonePaid', value: JSON.stringify({ index: i, reference: ref }), staffName: by });
+  tdotOpenMarkPaidModal({ clientName: (LAST_D && LAST_D.clientName) || '', caseRef: CASE_REF, m: row, onConfirm: function(ref, by, amountCents) {
+    msSend(btn, { action: 'markMilestonePaid', value: JSON.stringify({ index: i, reference: ref, amountCents: amountCents }), staffName: by });
   } });
 }
 function msSend(btn, payload) {

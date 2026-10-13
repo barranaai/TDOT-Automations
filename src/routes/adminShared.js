@@ -508,6 +508,8 @@ const PAYMENT_UI_CSS = `
   .paym-btn.danger { background:#dc2626; border-color:#dc2626; color:#fff; }
   .paym-btn:disabled { opacity:.4; cursor:not-allowed; }
   .paym-err { color:#dc2626; font-size:12.5px; min-height:16px; margin-top:8px; }
+  .paym .paym-hint { font-size:12px; color:#475569; margin-top:4px; min-height:14px; }
+  .paym .paym-ledger { font-size:12px; color:#475569; margin-top:6px; }
   .paym-ok { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 12px; font-size:13px; color:#166534; margin-top:10px; }
 `;
 
@@ -526,6 +528,12 @@ const PAYMENT_UI_JS = `
   function payTyped(stamp){ return (stamp && !stamp.verified && !/^Unidentified/.test(String(stamp.by || ''))) ? ' (name as typed)' : ''; }
   function payFirst(n){ var t = String(n||'').trim().split(' ')[0]; return t || 'this client'; }
   function payAmount(m){ return '$' + (Number(m.totalCents||0)/100).toFixed(2); }
+  function payDollars(c){ return '$' + (Number(c||0)/100).toFixed(2); }
+  /* What is on file for a row: paidCents from the server (older rows: a paid row counts as its total). */
+  function payPaidCents(m){ return (m.paidCents != null) ? Number(m.paidCents) : (m.status === 'paid' ? Number(m.totalCents||0) : 0); }
+  function payBalanceCents(m){ return Math.max(0, Number(m.totalCents||0) - payPaidCents(m)); }
+  /* "565.00" / "$565" / "1,130.00" → cents, or NaN. */
+  function payParseCents(v){ var s = String(v==null?'':v).replace(/[^0-9.]/g,''); if (!s) return NaN; var n = Number(s); if (!isFinite(n)) return NaN; return Math.round(n * 100); }
   function payTypedName(){ try { return localStorage.getItem('tdot_staff_name') || ''; } catch(e){ return ''; } }
   function paySaveName(n){ try { if (n) localStorage.setItem('tdot_staff_name', n); } catch(e){} }
 
@@ -548,6 +556,13 @@ const PAYMENT_UI_JS = `
   function tdotPayAuditText(m){
     var lines = [];
     if (m.status === 'paid' && m.markedBy) lines.push('Marked paid by ' + m.markedBy + payTyped({ by: m.markedBy, verified: m.markedVerified }) + (m.markedAt ? ' · ' + payWhen(m.markedAt) : ''));
+    /* Each part-payment on file (the settling one is the "Marked paid" line above). */
+    var parts = (m.payments || []);
+    for (var i = 0; i < parts.length; i++) {
+      var x = parts[i];
+      if (m.status === 'paid' && i === parts.length - 1) continue;
+      lines.push('Part-payment ' + payDollars(x.amountCents) + (x.paidAt ? ' on ' + x.paidAt : '') + (x.reference ? ' · ref ' + x.reference : '') + (x.by ? ' · by ' + x.by + payTyped({ by: x.by, verified: x.verified }) : ''));
+    }
     if (m.undoneBy) lines.push('A payment record was removed by ' + m.undoneBy + (m.undoneAt ? ' · ' + payWhen(m.undoneAt) : ''));
     return lines.join(TDOT_PAY_NL);
   }
@@ -560,8 +575,8 @@ const PAYMENT_UI_JS = `
   function tdotPayRowActions(m, ctx, btnClass){
     var v = TDOT_PAY.viewer || {};
     var html = '';
-    if (m.status === 'paid') {
-      if (v.canUndo) html += '<button type="button" class="' + btnClass + '" data-pay-undo="' + m.index + '" title="Remove this payment record (admins only)">Undo…</button>';
+    if (m.status === 'paid' || m.status === 'partial') {
+      if (v.canUndo) html += '<button type="button" class="' + btnClass + '" data-pay-undo="' + m.index + '" title="' + (m.status === 'partial' ? 'Remove the last part-payment recorded on this milestone (admins only)' : 'Remove this payment record (admins only)') + '">' + (m.status === 'partial' ? 'Undo last part-payment…' : 'Undo…') + '</button>';
       else {
         html += '<button type="button" class="' + btnClass + '" data-pay-flag="' + m.index + '" title="Alert the admins that this payment was recorded in error">Flag as wrong</button>';
         if (v.adminsConfigured && !v.signedIn) html += '<a class="pay-signin" href="' + payEsc((v.signInUrl || '/q/auth/monday') + '?returnTo=' + encodeURIComponent(location.pathname + location.search + location.hash)) + '">Admin? Sign in with Monday to undo</a>';
@@ -612,16 +627,30 @@ const PAYMENT_UI_JS = `
   function tdotOpenMarkPaidModal(o){
     var m = o.m, v = TDOT_PAY.viewer || {};
     var d = payOverlay();
-    var never = !(m.status === 'requested' || m.legacySent);
-    var expected = (m.status === 'requested' && m.reference) ? m.reference : '';
+    var never = !(m.status === 'requested' || m.status === 'partial' || m.legacySent);
+    var expected = ((m.status === 'requested' || m.status === 'partial') && m.reference) ? m.reference : '';
+    /* Part-payments: what is on file, and the balance this payment is measured against. */
+    var paidSoFar = payPaidCents(m), balance = payBalanceCents(m);
+    var ledgerHtml = (m.payments || []).length ? '<div class="paym-ledger">' + (m.payments || []).map(function(x){ return payDollars(x.amountCents) + (x.paidAt ? ' on ' + payEsc(x.paidAt) : '') + (x.reference ? ' · ref ' + payEsc(x.reference) : ''); }).join('<br>') + '</div>' : '';
+    function amtHint(cents){
+      if (isNaN(cents) || cents <= 0) return { cls: 'err', text: 'Enter the amount received — up to ' + payDollars(balance) + ' (the balance on this milestone).' };
+      if (balance > 0 && cents > balance) return { cls: 'err', text: 'That is more than the ' + payDollars(balance) + ' balance on this milestone. Record the balance here and the rest on the next milestone.' };
+      if (balance > 0 && cents === balance) return { cls: 'ok', text: 'Settles this milestone' + (paidSoFar > 0 ? ' (' + payDollars(paidSoFar + cents) + ' received in total)' : '') + '.' };
+      if (balance > 0) return { cls: 'ok', text: 'Part-payment — ' + payDollars(balance - cents) + ' will remain on this milestone. It stays "part-paid" until the balance is in.' };
+      return { cls: 'ok', text: '' };
+    }
     d.box.innerHTML =
       payTitle('Record a payment') +
       '<div class="paym-client">For <b>' + payEsc(o.clientName || 'this client') + '</b>' + (o.caseRef ? ' · ' + payEsc(o.caseRef) : '') + '</div>' +
       '<div class="paym-rec"><div>' + payEsc(m.label || ('Milestone ' + (m.index + 1))) + '</div>' +
         '<div class="paym-amt">' + payAmount(m) + ' <span class="paym-muted">scheduled amount, incl. HST</span></div>' +
+        (paidSoFar > 0 ? '<div class="paym-muted">Paid so far <b>' + payDollars(paidSoFar) + '</b> · balance <b>' + payDollars(balance) + '</b></div>' + ledgerHtml : '') +
         (expected ? '<div class="paym-muted">The client was asked to put <b>' + payEsc(expected) + '</b> in the e-transfer message.</div>' : '') +
       '</div>' +
       (never ? '<div class="paym-warn">No payment request was ever sent for this milestone. Before recording it, check the e-transfer really came from <b>' + payEsc(o.clientName || 'this client') + '</b>.</div>' : '') +
+      '<label for="paym-amt">Amount received <span class="paym-muted">(CAD, incl. HST)</span></label>' +
+      '<input id="paym-amt" class="paym-amt-in" type="text" inputmode="decimal" autocomplete="off" value="' + (balance/100).toFixed(2) + '">' +
+      '<div class="paym-hint" id="paym-amt-hint"></div>' +
       '<label for="paym-ref">Reference from the bank notification <span class="paym-muted">(optional)</span></label>' +
       '<input id="paym-ref" class="paym-ref" type="text" maxlength="120" autocomplete="off">' +
       (v.signedIn
@@ -631,16 +660,22 @@ const PAYMENT_UI_JS = `
       '<div class="paym-actions"><button type="button" class="paym-btn" data-x>Cancel</button>' +
       '<button type="button" class="paym-btn primary" data-go>Record payment for ' + payEsc(payFirst(o.clientName)) + '</button></div>';
     d.box.querySelector('[data-x]').onclick = d.close;
+    var amtEl = d.box.querySelector('.paym-amt-in'), hintEl = d.box.querySelector('#paym-amt-hint');
+    function refreshHint(){ var h = amtHint(payParseCents(amtEl.value)); hintEl.textContent = h.text; hintEl.style.color = h.cls === 'err' ? '#dc2626' : '#475569'; }
+    amtEl.oninput = refreshHint; refreshHint();
     d.box.querySelector('[data-go]').onclick = function(){
       var ref = d.box.querySelector('.paym-ref').value.trim();
       var byEl = d.box.querySelector('.paym-by');
       var by = byEl ? byEl.value.trim() : (v.name || '');
+      var cents = payParseCents(amtEl.value);
+      var h = amtHint(cents);
+      if (h.cls === 'err') { d.box.querySelector('.paym-err').textContent = h.text; amtEl.focus(); return; }
       if (!by) { d.box.querySelector('.paym-err').textContent = 'Enter your name — it is recorded with the payment.'; return; }
       if (byEl) paySaveName(by);
       d.close();
-      o.onConfirm(ref, by);
+      o.onConfirm(ref, by, cents);
     };
-    setTimeout(function(){ var el = d.box.querySelector('.paym-ref'); if (el) el.focus(); }, 30);
+    setTimeout(function(){ if (amtEl) { amtEl.focus(); amtEl.select(); } }, 30);
   }
 
   function payList(title, items, cls){
@@ -675,10 +710,14 @@ const PAYMENT_UI_JS = `
       d.box.querySelector('[data-x]').onclick = d.close;
       return;
     }
-    var b = p.before || {};
-    var rec = p.mode === 'milestone'
+    var b = p.before || {}, rm = p.removing || null;
+    var rec = p.mode === 'partial-entry'
       ? '<div>' + payEsc(p.label) + '</div><div class="paym-amt">' + payEsc('$' + (Number(p.totalCents||0)/100).toFixed(2)) + ' <span class="paym-muted">scheduled amount, incl. HST</span></div>' +
-        '<div class="paym-muted">Recorded as paid ' + payEsc(b.paidAt || '') + (b.method ? ' by ' + payEsc(b.method) : '') + (b.reference ? ' · ref ' + payEsc(b.reference) : '') + (b.marked && b.marked.by ? ' · by ' + payEsc(b.marked.by) + payTyped(b.marked) : '') + '</div>'
+        '<div class="paym-muted">Removing the last part-payment: <b>' + payDollars(rm ? rm.amountCents : 0) + '</b>' + (rm && rm.paidAt ? ' on ' + payEsc(rm.paidAt) : '') + (rm && rm.reference ? ' · ref ' + payEsc(rm.reference) : '') + (rm && rm.by ? ' · by ' + payEsc(rm.by) + payTyped({ by: rm.by, verified: rm.verified }) : '') + '</div>'
+      : p.mode === 'milestone'
+      ? '<div>' + payEsc(p.label) + '</div><div class="paym-amt">' + payEsc('$' + (Number(p.totalCents||0)/100).toFixed(2)) + ' <span class="paym-muted">scheduled amount, incl. HST</span></div>' +
+        '<div class="paym-muted">Recorded as paid ' + payEsc(b.paidAt || '') + (b.method ? ' by ' + payEsc(b.method) : '') + (b.reference ? ' · ref ' + payEsc(b.reference) : '') + (b.marked && b.marked.by ? ' · by ' + payEsc(b.marked.by) + payTyped(b.marked) : '') + '</div>' +
+        (rm && (p.partsBefore || 0) > 0 ? '<div class="paym-muted">The settling payment was <b>' + payDollars(rm.amountCents) + '</b>; the earlier part-payments stay on file.</div>' : '')
       : '<div>' + payEsc(p.label) + '</div><div class="paym-muted">Retainer Paid date on the client: ' + payEsc(p.expect.retainerPaid) + '</div>';
     d.box.innerHTML = head +
       '<div class="paym-rec">' + rec + '</div>' +

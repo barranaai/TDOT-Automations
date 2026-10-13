@@ -145,6 +145,7 @@ const CLIENT_TITLE_MAP = [
   [/^First retainer payment recorded$/,  () => 'Your first payment was received — thank you'],
   [/^e-Transfer requested — (.+)$/,      (m) => `Payment requested — ${m[1]}`],
   [/^Paid — (.+)$/,                      (m) => `Payment received — ${m[1]} — thank you`],
+  [/^Part-payment — (.+)$/,              (m) => `Part-payment received — ${m[1]} — thank you`],
   [/^Document received — (.+)$/,         (m) => `We received your document: ${m[1]}`],
   [/^Questionnaire submitted — (.+)$/,   (m) => `Questionnaire submitted — ${m[1]}`],
 ];
@@ -442,7 +443,9 @@ function buildPortalPage(snap, opts) {
   let paymentsHtml = '';
   if (payMilestones.length) {
     const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
-    const paidCents = payMilestones.filter((m) => m.status === 'paid').reduce((s, m) => s + (m.totalCents || 0), 0);
+    // Paid so far counts part-payments too (paidCents from the server; older rows: a paid row = its total).
+    const paidOf = (m) => (m.paidCents != null ? Number(m.paidCents) : (m.status === 'paid' ? (m.totalCents || 0) : 0));
+    const paidCents = payMilestones.reduce((s, m) => s + paidOf(m), 0);
     const totalCents = payMilestones.reduce((s, m) => s + (m.totalCents || 0), 0);
     const rows = payMilestones.map((m) => {
       const label = m.label || `Milestone ${Number(m.index) + 1}`;
@@ -450,6 +453,15 @@ function buildPortalPage(snap, opts) {
       if (m.status === 'paid') {
         badge = '<span class="pay-badge paid">✓ Paid</span>';
         when = `<span class="pay-when">${escHtml(m.paidAt || '')}${m.reference ? ' · ref ' + escHtml(m.reference) : ''}</span>`;
+      } else if (m.status === 'partial') {
+        const bal = Math.max(0, (m.totalCents || 0) - paidOf(m));
+        badge = '<span class="pay-badge partial">Part-paid</span>';
+        when = `<span class="pay-when">${escHtml(money(paidOf(m)))} received</span>`;
+        how = isStaff
+          ? `<div class="howpay">Part-paid — ${escHtml(money(paidOf(m)))} received, <b>${escHtml(money(bal))}</b> outstanding${m.reference ? ` (ref <b>${escHtml(m.reference)}</b>)` : ''}.</div>`
+          : `<div class="howpay">Thank you — we received <b>${escHtml(money(paidOf(m)))}</b> toward this milestone. Balance remaining: <b>${escHtml(money(bal))}</b>. Please e-Transfer it to <b>${escHtml(pay.etransferEmail || '')}</b>${m.reference
+               ? ` and include the reference <span class="refcode">${escHtml(m.reference)}</span> in the message`
+               : ` and include your case reference <span class="refcode">${escHtml(snap.caseRef)}</span> in the message`}.</div>`;
       } else if (m.status === 'requested') {
         badge = '<span class="pay-badge duenow">Due now</span>';
         how = isStaff
@@ -646,6 +658,7 @@ function buildPortalPage(snap, opts) {
     .pay-badge.paid { background:#EAF6EF; color:#1F7A4D; }
     .pay-badge.duenow { background:#FDEBE7; color:#B42318; }
     .pay-badge.soon { background:#F6F1E4; color:#8A7B57; }
+    .pay-badge.partial { background:#FFF1E3; color:#9A4B12; }
     .pay-when { font-size:11.5px; color:#9AA3AF; white-space:nowrap; }
     .howpay { flex-basis:100%; background:#FBF7EC; border:1px solid #EAD9A8; border-left:4px solid #C9A84C; border-radius:8px; padding:11px 14px; margin-top:6px; font-size:13px; color:#5C4716; line-height:1.55; }
     .howpay b { color:#3F3110; }

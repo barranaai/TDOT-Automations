@@ -14,6 +14,16 @@
  * Each milestone charges its TOTAL (amount + HST — per the fee schedule / Annex B).
  * Square correlates a milestone payment back via the payment note
  * "milestone-<leadId>-<index>" (see bookingService.handleSquarePaymentWebhook).
+ *
+ * PART-PAYMENTS (2026-10-13, Asmita: a client e-transferred half of milestone 1).
+ * Each milestone keeps a small ledger `l` of the payments received for it:
+ *   l: [{ a: cents, d: 'YYYY-MM-DD', r: 'bank ref', b: 'who recorded', v: verified, t: 'ISO-minute Z' }]
+ * (short keys: the whole column must stay under MAX_PAYMENTS_JSON). While the
+ * ledger is short of the milestone's total the row reads status 'partial' —
+ * NOT 'paid': paidAt, marked, the "paid" note, and for milestone 1 the whole
+ * retainer-paid chain (Retained, countersign, onboarding) happen only on the
+ * payment that brings the balance to zero. The ledger is kept after that, so
+ * the statement shows every payment.
  */
 
 'use strict';
@@ -32,6 +42,23 @@ const ETRANSFER_EMAIL = (process.env.ETRANSFER_EMAIL || 'admstdot@gmail.com').tr
  *  can match it to the right milestone (e.g. TDOT-13635-M2). */
 function paymentReference(leadId, index) { return `TDOT-${String(leadId).slice(-5)}-M${Number(index) + 1}`; }
 function dollarsCAD(cents) { return (Math.round(cents) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' }); }
+
+/** The payments recorded against one milestone row (the ledger), oldest first. */
+function ledgerOf(entry) {
+  const l = entry && Array.isArray(entry.l) ? entry.l : [];
+  return l.filter((x) => x && typeof x === 'object' && Number.isFinite(Number(x.a)) && Number(x.a) > 0)
+    .map((x) => ({ amountCents: Math.round(Number(x.a)), paidAt: String(x.d || ''), reference: String(x.r || ''), by: String(x.b || ''), verified: x.v === true, at: String(x.t || '') }));
+}
+/** Cents received so far on a row: the ledger's sum; a paid row with no ledger (older records, Square) counts as its total. */
+function paidCentsOf(entry, totalCents) {
+  const l = ledgerOf(entry);
+  if (l.length) return l.reduce((s, x) => s + x.amountCents, 0);
+  return entry && entry.status === 'paid' ? Math.round(Number(totalCents) || 0) : 0;
+}
+// At most this many payments on one milestone — the whole column must stay under MAX_PAYMENTS_JSON.
+const LEDGER_MAX = 6;
+// Receipts to the client are a switch (PAYMENT_RECEIPT_EMAILS=1 on Render) — ships OFF.
+function paymentReceiptsEnabled() { return /^(true|1)$/i.test(String(process.env.PAYMENT_RECEIPT_EMAILS || '').trim()); }
 
 // Monday cuts long text written through the API at 2,000 characters, and a cut
 // payments value no longer parses — every milestone would then read "pending".
@@ -131,6 +158,10 @@ function milestoneStates(lead, currentCaseStage, orderedStages = []) {
       markedBy: (p.marked && p.marked.by) || '', markedAt: (p.marked && p.marked.at) || '',
       markedVerified: !!(p.marked && p.marked.verified),
       undoneBy: (p.undone && p.undone.by) || '', undoneAt: (p.undone && p.undone.at) || '',
+      // Part-payments: what has been received on this row and what is still owed.
+      paidCents: paidCentsOf(p, r.totalCents),
+      balanceCents: Math.max(0, Math.round(r.totalCents || 0) - paidCentsOf(p, r.totalCents)),
+      payments: ledgerOf(p),
     };
   });
 }
@@ -147,19 +178,24 @@ function withPaymentWriteQueue(leadId, fn) {
   _patchQueue.set(k, next.catch(() => {}));
   return next;
 }
-async function patchPayment(leadId, index, patch) {
-  return withPaymentWriteQueue(leadId, () => _doPatchPayment(leadId, index, patch));
+async function patchPayment(leadId, index, patch, opts = {}) {
+  return withPaymentWriteQueue(leadId, () => _doPatchPayment(leadId, index, patch, opts));
 }
 /** Read-modify-write a per-index payment patch. Never downgrades a milestone
  *  already marked 'paid' (a late "sent" patch racing the webhook must not un-pay it)
  *  — undoing a payment is a deliberate admin act with its own path
- *  (paymentUndoService), never a patch. */
-async function _doPatchPayment(leadId, index, patch) {
+ *  (paymentUndoService), never a patch. A 'partial' row is protected the same
+ *  way from a late request patch (money is on file). `opts.appendLedger` adds
+ *  one ledger entry from the FRESH read, so two part-payments never lose one. */
+async function _doPatchPayment(leadId, index, patch, opts = {}) {
   const lead = await leadService.getLead(leadId);
   const { pay, unreadable } = readPayments(lead);
   if (unreadable) throw paymentsUnreadableError(leadId);
-  const merged = { ...(pay[index] || {}), ...patch };
-  if ((pay[index] || {}).status === 'paid') merged.status = 'paid';
+  const existing = pay[index] || {};
+  const merged = { ...existing, ...patch };
+  if (existing.status === 'paid') merged.status = 'paid';
+  else if (existing.status === 'partial' && merged.status !== 'paid') merged.status = 'partial';
+  if (opts.appendLedger) merged.l = [...(Array.isArray(existing.l) ? existing.l : []), opts.appendLedger];
   pay[index] = merged;
   await leadService.updateLead(leadId, { milestonePayments: serializePayments(leadId, pay) });
   return pay;
@@ -181,6 +217,34 @@ function etransferInstructionsHtml({ firstName, label, dollars, reference }) {
         <p style="margin:4px 0;font-size:15px"><b>${esc(reference)}</b></p>
       </div>
       <p style="font-size:13px;color:${BRAND.mutedOnLight}">Once we receive your e-transfer we'll confirm it and send your receipt. Questions? Just reply to this email.</p>
+    </div></div>`;
+}
+
+/**
+ * The client's receipt for one payment — a part-payment or the one that settles
+ * the milestone — with the running statement (scheduled, paid so far, balance)
+ * and, while a balance remains, how to pay it with the same reference.
+ */
+function paymentReceiptHtml({ firstName, label, amountCents, paidCents, totalCents, reference, paidAt, settled, payReference }) {
+  const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
+  const balance = Math.max(0, totalCents - paidCents);
+  const row = (k, v, strong) => `<tr><td style="padding:4px 0;color:${BRAND.mutedOnLight}">${esc(k)}</td><td style="padding:4px 0;text-align:right;${strong ? 'font-weight:700' : ''}">${esc(v)}</td></tr>`;
+  return `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
+    <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
+      <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">${settled ? 'Payment received' : 'Part-payment received'} — ${esc(label)}</h1></div>
+    <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
+      <p>Hi ${esc(firstName)},</p>
+      <p>Thank you — we received your e-transfer of <b>${esc(dollarsCAD(amountCents))}</b>${paidAt ? ` on ${esc(paidAt)}` : ''}${reference ? ` (reference ${esc(reference)})` : ''} toward <b>${esc(label)}</b>.</p>
+      <table style="width:100%;border-collapse:collapse;margin:14px 0;font-size:14px">
+        ${row('Scheduled (incl. HST)', dollarsCAD(totalCents))}${row('Paid so far', dollarsCAD(paidCents))}${row('Balance', dollarsCAD(balance), true)}
+      </table>
+      ${settled
+        ? `<p>This milestone is now <b>paid in full</b>.</p>`
+        : `<div style="background:#eef3fb;border:1px solid ${BRAND.border};border-radius:8px;padding:14px 16px;margin:16px 0">
+        <p style="margin:0 0 8px"><b>Balance remaining: ${esc(dollarsCAD(balance))}</b></p>
+        <p style="margin:4px 0">When you are ready, please send an Interac e-Transfer of <b>${esc(dollarsCAD(balance))}</b> to <b>${esc(ETRANSFER_EMAIL)}</b>${payReference ? ` with the reference <b>${esc(payReference)}</b> in the message` : ''}.</p>
+      </div>`}
+      <p style="font-size:13px;color:${BRAND.mutedOnLight}">This is your receipt — please keep it for your records. Questions? Just reply to this email.</p>
     </div></div>`;
 }
 
@@ -273,11 +337,26 @@ function actorStamp(actor) {
   return { by, at: new Date().toISOString().slice(0, 16) + 'Z', verified: a.verified === true };
 }
 
-async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', method = 'e-transfer', txnId = '', actor = null } = {}) {
+async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', method = 'e-transfer', txnId = '', actor = null, amountCents = null } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) return { ok: false };
   const existing = parsePayments(lead)[index] || {};
   const when = paidAt || todayISO();
+  // Part-payments: how much is on file for this row, and what this payment leaves.
+  const row = scheduleRows(lead)[index] || null;
+  const totalCents = row ? Math.round(row.totalCents || 0) : 0;
+  const before = paidCentsOf(existing, totalCents);
+  const balanceCents = Math.max(0, totalCents - before);
+  let amount = null;   // null = the whole balance (today's "Mark paid")
+  if (amountCents != null) {
+    const n = Number(amountCents);
+    if (!Number.isInteger(n) || n <= 0) { const e = new Error('Enter the amount received, in dollars and cents. Nothing was recorded.'); e.badRequest = true; e.code = 'BAD_AMOUNT'; throw e; }
+    if (existing.status !== 'paid' && totalCents > 0 && n > balanceCents) {
+      const e = new Error(`That is more than the ${dollarsCAD(balanceCents)} still owed on this milestone. Nothing was recorded. Record the balance here and the rest on the next milestone.`);
+      e.badRequest = true; e.code = 'AMOUNT_OVER_BALANCE'; throw e;
+    }
+    amount = n;
+  }
   if (existing.status === 'paid') {
     // Never swallow a payment silently. A row that already reads paid is either
     // a double-click (same or no reference — harmless) or a SECOND payment being
@@ -297,13 +376,40 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
   // Keep the request-time reference when staff mark paid without entering one.
   const ref = reference || existing.reference || '';
   const marked = actorStamp(actor);
-  await patchPayment(leadId, index, { status: 'paid', paidAt: when, method, reference: ref, marked, ...(txnId ? { txnId } : {}) });
-  const label = (scheduleRows(lead)[index] || {}).label || `Milestone ${index + 1}`;
+  const label = (row || {}).label || `Milestone ${index + 1}`;
+  const whoLine = /^Unidentified/.test(marked.by)
+    ? 'Recorded with the shared admin key — nobody was identified (not signed in with Monday).'
+    : `Recorded by ${esc(marked.by)}${marked.verified ? '' : ' (name as typed — not signed in with Monday)'}.`;
+  // This payment, as the ledger keeps it (short keys and short values — the column is small).
+  const paidNow = amount != null ? amount : (totalCents > 0 ? balanceCents : 0);
+  const entry = { a: paidNow, d: when, r: String(reference || '').trim().slice(0, 24), b: String(marked.by).slice(0, 24), v: marked.verified === true, t: marked.at };
+  const paidAfter = before + paidNow;
+  const settled = totalCents <= 0 || paidAfter >= totalCents;   // no schedule to compare with (older plans) → as today: paid
+  const partsOnFile = ledgerOf(existing).length;
+  if (partsOnFile >= LEDGER_MAX && !settled) {
+    const e = new Error(`This milestone already has ${LEDGER_MAX} part-payments on file — the most the record can hold. Nothing was recorded. Record the balance as ONE payment once it is all in, or ask an admin.`);
+    e.badRequest = true; e.code = 'LEDGER_FULL'; throw e;
+  }
+
+  if (!settled) {
+    // A part-payment: on file, NOT paid — nothing downstream may read it as paid.
+    await patchPayment(leadId, index, { status: 'partial', method }, { appendLedger: entry });
+    const receipt = await _emailReceipt(lead, { label, amountCents: paidNow, paidCents: paidAfter, totalCents, reference: entry.r, paidAt: when, settled: false, payReference: existing.reference || paymentReference(leadId, index) });
+    await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+      { i: String(leadId), b: `💵 <b>Part-payment received</b> — ${esc(label)}: ${esc(dollarsCAD(paidNow))} of ${esc(dollarsCAD(totalCents))} (${esc(method)}${entry.r ? `, ref ${esc(entry.r)}` : ''}). ` +
+        `<b>Balance ${esc(dollarsCAD(totalCents - paidAfter))}</b> — the milestone is not paid until the balance is in. ${whoLine}${receipt ? ' Receipt emailed to the client.' : ''}` });
+    console.log(`[Milestone] ${leadId}#${index} part-payment ${paidNow} of ${totalCents} (${method}${entry.r ? ` ref ${entry.r}` : ''})`);
+    return { ok: true, label, settled: false, amountCents: paidNow, paidCents: paidAfter, balanceCents: totalCents - paidAfter, totalCents };
+  }
+
+  // The ledger exists only where part-payments happened: a plain full payment writes exactly what it always did.
+  const settlesParts = before > 0;
+  await patchPayment(leadId, index, { status: 'paid', paidAt: when, method, reference: ref, marked, ...(txnId ? { txnId } : {}) }, settlesParts ? { appendLedger: entry } : {});
+  const receipt = totalCents > 0 ? await _emailReceipt(lead, { label, amountCents: paidNow, paidCents: paidAfter, totalCents, reference: entry.r, paidAt: when, settled: true }) : false;
   await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
     { i: String(leadId), b: `✅ <b>Payment received</b> — ${esc(label)} (${esc(method)}${ref ? `, ref ${esc(ref)}` : ''}). ` +
-      (/^Unidentified/.test(marked.by)
-        ? 'Recorded with the shared admin key — nobody was identified (not signed in with Monday).'
-        : `Recorded by ${esc(marked.by)}${marked.verified ? '' : ' (name as typed — not signed in with Monday)'}.`) });
+      (settlesParts ? `This ${esc(dollarsCAD(paidNow))} payment settles it — ${esc(dollarsCAD(paidAfter))} received in total. ` : '') +
+      whoLine + (receipt ? ' Receipt emailed to the client.' : '') });
   console.log(`[Milestone] ${leadId}#${index} marked paid (${method}${ref ? ` ref ${ref}` : ''})`);
 
   // The first milestone paid = retainer paid → start onboarding (Phase 1).
@@ -311,7 +417,21 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
     try { await require('./paymentService').recordRetainerPaid(leadId, { reference: ref, paidAt: when }); }
     catch (e) { console.warn(`[Milestone] retainer-paid onboarding trigger failed for ${leadId}: ${e.message}`); }
   }
-  return { ok: true, label };
+  return { ok: true, label, settled: true, amountCents: paidNow, paidCents: paidAfter, balanceCents: 0, totalCents };
+}
+
+/** The client's receipt — best-effort, only when the switch is on; true when it went. */
+async function _emailReceipt(lead, p) {
+  if (!paymentReceiptsEnabled() || !lead || !lead.email) return false;
+  try {
+    await require('./microsoftMailService').sendEmail({
+      to: lead.email,
+      subject: `Your TDOT Immigration payment receipt — ${p.label}`,
+      html: paymentReceiptHtml({ firstName: (lead.fullName || 'there').split(' ')[0], ...p }),
+      replyTo: process.env.EMAIL_REPLY_TO || undefined,
+    });
+    return true;
+  } catch (err) { console.warn(`[Milestone] receipt email failed for ${lead.id}: ${err.message}`); return false; }
 }
 
 module.exports = {
@@ -320,4 +440,6 @@ module.exports = {
   ETRANSFER_EMAIL, paymentReference, MAX_PAYMENTS_JSON,
   // pure-ish (exported for tests)
   parsePayments, scheduleRows,
+  // part-payments (2026-10-13)
+  ledgerOf, paidCentsOf, paymentReceiptHtml, paymentReceiptsEnabled, LEDGER_MAX,
 };

@@ -74,8 +74,11 @@ function dollars(cents) { return (Math.round(Number(cents) || 0) / 100).toLocale
  */
 function entryFingerprint(entry) {
   if (!entry || typeof entry !== 'object') return '';
+  // The ledger too (part-payments): a stale dialog must never remove a different entry.
+  const l = Array.isArray(entry.l) ? entry.l : [];
+  const last = l[l.length - 1] || {};
   const key = [entry.status, entry.paidAt, entry.reference, entry.method, entry.txnId,
-    entry.marked && entry.marked.at, entry.undone && entry.undone.at].map((x) => s(x)).join('|');
+    entry.marked && entry.marked.at, entry.undone && entry.undone.at, l.length, last.a, last.d, last.r, last.t].map((x) => s(x)).join('|');
   return crypto.createHash('sha1').update(key).digest('hex').slice(0, 12);
 }
 
@@ -156,11 +159,19 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
 
   let mode;
   if (before && before.status === 'paid') mode = 'milestone';
+  // Part-payments: a 'partial' row has money on file but is not paid — undo
+  // removes the LAST part-payment recorded (one at a time, newest first).
+  else if (before && before.status === 'partial' && ms.ledgerOf(before).length) mode = 'partial-entry';
   // The first milestone reads unpaid, yet the lead still carries a payment date —
   // the case board was set to Paid by hand (the sync then stamps the lead), or an
   // earlier undo was only half applied. Same correction, minus the entry.
   else if (isRetainer && retainerPaid) mode = 'retainer-date';
   else return refuse('NOT_PAID', 'This milestone isn’t recorded as paid, so there is nothing to undo. Reload the page — someone may already have undone it.');
+  // The part-payment being removed (both modes with a ledger), and what stays.
+  const ledger = before ? ms.ledgerOf(before) : [];
+  const rawLedger = (before && Array.isArray(before.l)) ? before.l.filter((x) => x && Number(x.a) > 0) : [];
+  const removing = ledger.length ? ledger[ledger.length - 1] : null;
+  const restLedger = rawLedger.slice(0, -1);
 
   if ((before && s(before.txnId)) || (isRetainer && s(lead.squareRetainerTxnId))) {
     return refuse('SQUARE_PAYMENT', 'This payment is linked to Square. Removing it here would not stick — the Square sync records it again within minutes. Refund or void it in Square first, then ask an admin to reconcile the record.');
@@ -190,10 +201,15 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   const undone = { by, at: at.slice(0, 16) + 'Z', was: entryFingerprint(before) };
   if (before && before.marked && s(before.marked.by)) { undone.prevBy = oneLine(before.marked.by).slice(0, 60); undone.prevAt = s(before.marked.at); }
 
-  // milestone mode: the row goes back to its prior state, with the marker.
+  // milestone mode: the row goes back to its prior state, with the marker —
+  // or, when earlier part-payments are on file, back to 'partial' with them.
+  // partial-entry mode: the last part-payment comes off; the row stays 'partial'
+  // with the rest, or goes back to its prior state when none is left.
   // retainer-date mode: the row keeps its status — it only gains the marker, so
   // the "i" still shows who removed the payment date and when.
-  const after = mode === 'milestone' ? { ...restoredEntry(lead.id, i, before), undone }
+  const priorState = () => ({ ...restoredEntry(lead.id, i, before), undone });
+  const after = mode === 'milestone' ? (restLedger.length ? { ...priorState(), status: 'partial', l: restLedger } : priorState())
+    : mode === 'partial-entry' ? (restLedger.length ? { ...before, l: restLedger, undone } : (() => { const r = priorState(); delete r.l; return r; })())
     : (before ? { ...before, undone } : { status: 'pending', undone });
   const clearKeys = (isRetainer && retainerPaid) ? ['retainerPaid'] : [];
   const conversionStatus = conversionFor(lead, i);
@@ -263,8 +279,12 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   if (mode === 'retainer-date') {
     info.push({ code: 'RETAINER_DATE_ONLY', message: `The milestone row isn’t marked paid, but the client still has a Retainer Paid date (${retainerPaid}) — usually because the case board was set to Paid by hand. Undo clears that date${conversionStatus ? ' and the “Retained” status' : ''}.` });
   }
-  if (mode === 'milestone' && after.status === 'pending' && (!isRetainer || s(lead.retainerSigned))) {
+  if ((mode === 'milestone' || mode === 'partial-entry') && after.status === 'pending' && (!isRetainer || s(lead.retainerSigned))) {
     info.push({ code: 'NEVER_REQUESTED', message: 'The client has never been sent the e-Transfer request for this milestone. Use “Send e-Transfer request” when you’re ready — the client’s portal may say the details are on their way.' });
+  }
+  if (removing && restLedger.length) {
+    const kept = restLedger.reduce((t, x) => t + Math.round(Number(x.a) || 0), 0);
+    info.push({ code: 'PARTS_STAY', message: `The earlier part-payment${restLedger.length > 1 ? 's' : ''} (${dollars(kept)} in total) stay${restLedger.length > 1 ? '' : 's'} on file. Undo again to remove ${restLedger.length > 1 ? 'the next one' : 'it'} too.` });
   }
 
   const rows = ms.scheduleRows(lead);
@@ -272,7 +292,10 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   const label = s(require('./retainerPlanService').displayMilestoneLabel(row.label)) || `Milestone ${i + 1}`;
 
   const willChange = [];
-  if (mode === 'milestone') willChange.push(`Milestone goes back to “${after.status === 'requested' ? 'requested' : after.status === 'sent' ? 'requested (old Square link)' : 'not requested'}”`);
+  const backTo = () => after.status === 'partial' ? `part-paid (${dollars(after.l.reduce((t, x) => t + Math.round(Number(x.a) || 0), 0))} of ${dollars(row.totalCents || 0)} on file)`
+    : after.status === 'requested' ? 'requested' : after.status === 'sent' ? 'requested (old Square link)' : 'not requested';
+  if (mode === 'milestone') willChange.push(`Milestone goes back to “${backTo()}”`);
+  if (mode === 'partial-entry') willChange.push(`The ${dollars(removing.amountCents)} part-payment${removing.paidAt ? ` of ${removing.paidAt}` : ''} is removed; the milestone goes back to “${backTo()}”`);
   if (clearKeys.length) willChange.push(`Retainer Paid date (${retainerPaid}) is cleared`);
   if (conversionStatus) willChange.push(`Conversion Status changes from “${conversionStatus.from}” to “${conversionStatus.to}”`);
   const willNotChange = ['No money moves, and nothing is sent to the client', 'Signatures (client and RCIC) and “Retained by”', 'Emails already sent, and Monday history'];
@@ -282,6 +305,7 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
     ok: true,
     leadId: s(lead.id), index: i, mode, isRetainer, label, totalCents: row.totalCents || 0,
     before, after, clearKeys, conversionStatus, paymentsText,
+    removing, partsBefore: ledger.length,
     cm, warnings, info, willChange, willNotChange,
     expect: { mode, entry: entryFingerprint(before), retainerPaid },
     confirmText: confirmTextFor(lead, cm, shared),
@@ -297,7 +321,7 @@ function validateUndoRequest({ leadId, index, confirmText, reason, expect, actor
   if (r.length < REASON_MIN) return `Give a reason of at least ${REASON_MIN} characters — it goes on the record.`;
   if (r.length > REASON_MAX) return `Keep the reason under ${REASON_MAX} characters.`;
   if (typeof confirmText !== 'string' || confirmText.length > 60) return 'Type the confirmation shown in the dialog.';
-  if (!expect || typeof expect !== 'object' || !['milestone', 'retainer-date'].includes(expect.mode) ||
+  if (!expect || typeof expect !== 'object' || !['milestone', 'retainer-date', 'partial-entry'].includes(expect.mode) ||
       typeof expect.entry !== 'string' || expect.entry.length > 20 ||
       typeof expect.retainerPaid !== 'string' || expect.retainerPaid.length > 20) return 'This dialog is out of date — close it and open it again.';
   if (!actor || !s(actor.email)) return 'Sign in with Monday to undo a payment.';
@@ -434,7 +458,7 @@ async function readState(leadId, index = null) {
 function reversalHolds(lead, index, expect) {
   const e = ms.readPayments(lead).pay[index] || {};
   if (e.status === 'paid') return false;
-  if (expect.mode === 'milestone' && !(e.undone && e.undone.was === expect.entry)) return false;
+  if ((expect.mode === 'milestone' || expect.mode === 'partial-entry') && !(e.undone && e.undone.was === expect.entry)) return false;
   if (Number(index) === 0) {
     if (s(lead.retainerPaid)) return false;
     if (conversionFor(lead, index)) return false;
@@ -449,6 +473,7 @@ async function verifyReversal(plan) {
     const out = [];
     const e = ms.readPayments(lead).pay[plan.index] || {};
     if (plan.mode === 'milestone' && e.status === 'paid') out.push('milestone');
+    if (plan.mode === 'partial-entry' && entryFingerprint(e) === plan.expect.entry) out.push('milestone');
     if (plan.clearKeys.length && s(lead.retainerPaid)) out.push('retainerPaid');
     // After a lost response, "landed" means OUR write is there — the marker we planned.
     if (plan._readOnly && !(e.undone && e.undone.at === plan.after.undone.at && e.undone.was === plan.expect.entry)) out.push('marker');
@@ -522,6 +547,10 @@ async function previewMilestonePaidReversal({ leadId, index, actor = null } = {}
 
 function removedLine(plan) {
   const b = plan.before || {};
+  if (plan.mode === 'partial-entry' && plan.removing) {
+    const r = plan.removing;
+    return `a part-payment of ${esc(dollars(r.amountCents))} recorded on ${esc(r.paidAt || '?')}${r.reference ? `, ref ${esc(r.reference)}` : ''}${r.by ? ` by ${esc(oneLine(r.by))}${typedMark({ by: r.by, verified: r.verified })}` : ''}`;
+  }
   return b.status === 'paid'
     ? `recorded as paid on ${esc(b.paidAt || '?')} (${esc(b.method || 'e-transfer')}${b.reference ? `, ref ${esc(b.reference)}` : ''})${b.marked && b.marked.by ? ` by ${esc(oneLine(b.marked.by))}${typedMark(b.marked)}` : ''}`
     : `a Retainer Paid date of ${esc(plan.expect.retainerPaid)} with no paid milestone row`;
@@ -609,7 +638,8 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
   const warnings = [...plan.warnings];
 
   const changed = [];
-  if (plan.mode === 'milestone') changed.push(`milestone set back to “${plan.after.status === 'pending' ? 'not requested' : 'requested'}”`);
+  const backLabel = plan.after.status === 'partial' ? 'part-paid' : plan.after.status === 'pending' ? 'not requested' : 'requested';
+  if (plan.mode === 'milestone' || plan.mode === 'partial-entry') changed.push(`milestone set back to “${backLabel}”`);
   if (plan.clearKeys.length) changed.push(`Retainer Paid date (${esc(plan.expect.retainerPaid)}) cleared`);
   if (conversion) changed.push(`Conversion Status changed from “${esc(conversion.from)}” to “${esc(conversion.to)}”`);
 
@@ -620,9 +650,11 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
     `<b>Not changed:</b> signatures, “Retained by”, and anything already sent to the client. No money moved.` +
     (plan.isRetainer ? ' Onboarding starts only once the real payment is recorded and every signature is in.' : '') +
     '<br>If this payment belongs to another client, record it on that client’s file.' +
-    (plan.mode === 'milestone' ? `<br><small>Removed record: ${esc(JSON.stringify(plan.before))}</small>` : '');
+    (plan.mode === 'milestone' ? `<br><small>Removed record: ${esc(JSON.stringify(plan.before))}</small>` : plan.mode === 'partial-entry' ? `<br><small>Removed entry: ${esc(JSON.stringify(plan.removing))}</small>` : '');
   const caseBody = plan.mode === 'milestone'
     ? `↩️ <b>Payment record removed</b> — ${what} had been recorded as paid in error. Removed by ${who} — ${when}. <b>Reason:</b> ${esc(s(reason))}. Details are on the client’s lead record.`
+    : plan.mode === 'partial-entry'
+    ? `↩️ <b>Part-payment record removed</b> — ${esc(plan.label)}: ${esc(dollars(plan.removing.amountCents))} had been recorded in error. Removed by ${who} — ${when}. <b>Reason:</b> ${esc(s(reason))}. Details are on the client’s lead record.`
     : `↩️ <b>Retainer Paid date removed</b> (${esc(plan.expect.retainerPaid)}) — the client’s record said the retainer was paid, but no milestone payment was recorded. Removed by ${who} — ${when}. <b>Reason:</b> ${esc(s(reason))}.`;
 
   let notesFailed = false;
@@ -652,10 +684,14 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
   return {
     ok: true,
     message: plan.mode === 'milestone'
-      ? `Removed. ${plan.label} now reads “${plan.after.status === 'pending' ? 'not requested' : 'requested'}”.`
+      ? `Removed. ${plan.label} now reads “${backLabel}”.`
+      : plan.mode === 'partial-entry'
+      ? `Removed the ${dollars(plan.removing.amountCents)} part-payment. ${plan.label} now reads “${backLabel}”.`
       : `Removed the Retainer Paid date (${plan.expect.retainerPaid}). The milestone row was not paid and is unchanged.`,
     undone: { index: plan.index, mode: plan.mode, before: plan.before, after: plan.after, clearedRetainerPaid: !!plan.clearKeys.length, conversionStatus: conversion || null },
-    removed: plan.mode === 'milestone' && plan.before
+    removed: plan.mode === 'partial-entry' && plan.removing
+      ? { reference: plan.removing.reference || '', paidAt: plan.removing.paidAt || '', amount: dollars(plan.removing.amountCents) }
+      : plan.mode === 'milestone' && plan.before
       ? { reference: plan.before.reference || '', paidAt: plan.before.paidAt || '', amount: dollars(plan.totalCents) }
       : { retainerPaidDate: plan.expect.retainerPaid },
     warnings, notified, next,

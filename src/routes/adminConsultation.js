@@ -761,6 +761,7 @@ ${REMARKS_CSS}
   .ms-badge.sent { background:#eff6ff; color:#2563eb; }
   .ms-badge.due { background:#fffbeb; color:#d97706; }
   .ms-badge.pending { background:#f1f5f9; color:#64748b; }
+  .ms-badge.partial { background:#fff7ed; color:#c2410c; }
   .ms-meta { font-size:11px; color:#64748b; font-variant-numeric:tabular-nums; }
   .ms-row button { padding:6px 12px; font-size:12px; }
 
@@ -1427,15 +1428,19 @@ function renderMilestonePayments(list){
   var signed=!!(D.retainerSigned&&String(D.retainerSigned).trim());
   el.innerHTML=list.map(function(m){
     var badge = m.status==='paid' ? '<span class="ms-badge paid">Paid</span>'
+              : m.status==='partial' ? '<span class="ms-badge partial">Part-paid</span>'
               : m.status==='requested' ? '<span class="ms-badge sent">Requested</span>'
               : (m.due ? '<span class="ms-badge due">Due</span>' : '<span class="ms-badge pending">Pending</span>');
     var amt='$'+(Number(m.totalCents||0)/100).toFixed(2);
+    var lastPart=(m.payments||[]).slice(-1)[0]||null;
     var meta = (m.status==='paid'
         ? '<span class="ms-meta">paid '+escHtml(m.paidAt||'')+(m.reference?(' · ref '+escHtml(m.reference)):'')+'</span>'
+        : m.status==='partial'
+        ? '<span class="ms-meta">paid '+payDollars(m.paidCents)+' of '+amt+' · <b>balance '+payDollars(m.balanceCents)+'</b>'+(lastPart?(' · last '+escHtml(lastPart.paidAt||'')+(lastPart.reference?(' ref '+escHtml(lastPart.reference)):'')):'')+(m.reference?(' · ref '+escHtml(m.reference)):'')+'</span>'
         : (m.status==='requested'&&m.reference ? '<span class="ms-meta">ref '+escHtml(m.reference)+'</span>' : '')) + tdotPayAuditHtml(m);
     // Milestone 1 is due at signing even while the case is still Pre-Onboarding.
     var reqBtn=(((m.status==='pending'&&(m.due||(m.index===0&&signed)))||m.legacySent)&&!(m.index===0&&D.retainerPaid))?'<button class="btn" type="button" data-msp-req="'+m.index+'">'+ICONS.mail+' '+(m.legacySent?'Send e-transfer details':'Send e-transfer request')+'</button>':'';
-    var paidBtn=(m.status!=='paid')?'<button class="btn primary" type="button" data-msp-paid="'+m.index+'">'+ICONS.check+' Mark paid</button>':'';
+    var paidBtn=(m.status!=='paid')?'<button class="btn primary" type="button" data-msp-paid="'+m.index+'">'+ICONS.check+' '+(m.status==='partial'?'Record balance / part-payment':'Record payment')+'</button>':'';
     var fixBtn=TDOT_PAY.viewer?tdotPayRowActions(m,{ retainerPaid: D.retainerPaid },'btn'):'';
     return '<div class="ms-row"><span class="ms-label">'+escHtml(m.label||('Milestone '+(m.index+1)))+'</span><span class="ms-amt">'+amt+'</span>'+badge+meta+reqBtn+paidBtn+fixBtn+'</div>';
   }).join('');
@@ -1449,8 +1454,8 @@ function renderMilestonePayments(list){
       // to use, and a warning when no request was ever sent (2026-09-22).
       var i=Number(b.getAttribute('data-msp-paid'));
       var row=list.filter(function(r){ return r.index===i; })[0]||{index:i};
-      tdotOpenMarkPaidModal({ clientName: D.name||'', caseRef: RP_CASE_REF, m: row, onConfirm: function(ref,by){
-        doAction('markMilestonePaid', JSON.stringify({index:i, reference:ref}), null, by);
+      tdotOpenMarkPaidModal({ clientName: D.name||'', caseRef: RP_CASE_REF, m: row, onConfirm: function(ref,by,amountCents){
+        doAction('markMilestonePaid', JSON.stringify({index:i, reference:ref, amountCents:amountCents}), null, by);
       } });
     };
   });
