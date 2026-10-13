@@ -556,11 +556,12 @@ const PAYMENT_UI_JS = `
   function tdotPayAuditText(m){
     var lines = [];
     if (m.status === 'paid' && m.markedBy) lines.push('Marked paid by ' + m.markedBy + payTyped({ by: m.markedBy, verified: m.markedVerified }) + (m.markedAt ? ' · ' + payWhen(m.markedAt) : ''));
-    /* Each part-payment on file (the settling one is the "Marked paid" line above). */
+    /* Each part-payment on file (the settling one is the "Marked paid" line above; a row Square paid over part-payments has none). */
     var parts = (m.payments || []);
+    var settlingAt = (m.settlingIndex != null) ? Number(m.settlingIndex) : (m.status === 'paid' ? parts.length - 1 : -1);
     for (var i = 0; i < parts.length; i++) {
       var x = parts[i];
-      if (m.status === 'paid' && i === parts.length - 1) continue;
+      if (i === settlingAt) continue;
       lines.push('Part-payment ' + payDollars(x.amountCents) + (x.paidAt ? ' on ' + x.paidAt : '') + (x.reference ? ' · ref ' + x.reference : '') + (x.by ? ' · by ' + x.by + payTyped({ by: x.by, verified: x.verified }) : ''));
     }
     if (m.undoneBy) lines.push('A payment record was removed by ' + m.undoneBy + (m.undoneAt ? ' · ' + payWhen(m.undoneAt) : ''));
@@ -629,8 +630,10 @@ const PAYMENT_UI_JS = `
     var d = payOverlay();
     var never = !(m.status === 'requested' || m.status === 'partial' || m.legacySent);
     var expected = ((m.status === 'requested' || m.status === 'partial') && m.reference) ? m.reference : '';
-    /* Part-payments: what is on file, and the balance this payment is measured against. */
+    /* Part-payments: what is on file, and the balance this payment is measured against.
+       Nothing owed (the plan was amended below what is on file): no amount — "Mark settled". */
     var paidSoFar = payPaidCents(m), balance = payBalanceCents(m);
+    var nothingOwed = m.status === 'partial' && paidSoFar > 0 && balance === 0;
     var ledgerHtml = (m.payments || []).length ? '<div class="paym-ledger">' + (m.payments || []).map(function(x){ return payDollars(x.amountCents) + (x.paidAt ? ' on ' + payEsc(x.paidAt) : '') + (x.reference ? ' · ref ' + payEsc(x.reference) : ''); }).join('<br>') + '</div>' : '';
     function amtHint(cents){
       if (isNaN(cents) || cents <= 0) return { cls: 'err', text: 'Enter the amount received — up to ' + payDollars(balance) + ' (the balance on this milestone).' };
@@ -648,9 +651,11 @@ const PAYMENT_UI_JS = `
         (expected ? '<div class="paym-muted">The client was asked to put <b>' + payEsc(expected) + '</b> in the e-transfer message.</div>' : '') +
       '</div>' +
       (never ? '<div class="paym-warn">No payment request was ever sent for this milestone. Before recording it, check the e-transfer really came from <b>' + payEsc(o.clientName || 'this client') + '</b>.</div>' : '') +
-      '<label for="paym-amt">Amount received <span class="paym-muted">(CAD, incl. HST)</span></label>' +
-      '<input id="paym-amt" class="paym-amt-in" type="text" inputmode="decimal" autocomplete="off" value="' + (balance/100).toFixed(2) + '">' +
-      '<div class="paym-hint" id="paym-amt-hint"></div>' +
+      (nothingOwed
+        ? '<div class="paym-info">Nothing more is owed — the <b>' + payDollars(paidSoFar) + '</b> on file covers this milestone (' + payAmount(m) + '). Mark it settled; if the client sent more, record that on the next milestone.</div>'
+        : '<label for="paym-amt">Amount received <span class="paym-muted">(CAD, incl. HST)</span></label>' +
+          '<input id="paym-amt" class="paym-amt-in" type="text" inputmode="decimal" autocomplete="off" value="' + (balance/100).toFixed(2) + '">' +
+          '<div class="paym-hint" id="paym-amt-hint"></div>') +
       '<label for="paym-ref">Reference from the bank notification <span class="paym-muted">(optional)</span></label>' +
       '<input id="paym-ref" class="paym-ref" type="text" maxlength="120" autocomplete="off">' +
       (v.signedIn
@@ -658,24 +663,27 @@ const PAYMENT_UI_JS = `
         : '<label for="paym-by">Your name</label><input id="paym-by" class="paym-by" type="text" maxlength="60" value="' + payEsc(payTypedName()) + '">') +
       '<div class="paym-err" role="alert"></div>' +
       '<div class="paym-actions"><button type="button" class="paym-btn" data-x>Cancel</button>' +
-      '<button type="button" class="paym-btn primary" data-go>Record payment for ' + payEsc(payFirst(o.clientName)) + '</button></div>';
+      '<button type="button" class="paym-btn primary" data-go>' + (nothingOwed ? 'Mark settled for ' : 'Record payment for ') + payEsc(payFirst(o.clientName)) + '</button></div>';
     d.box.querySelector('[data-x]').onclick = d.close;
     var amtEl = d.box.querySelector('.paym-amt-in'), hintEl = d.box.querySelector('#paym-amt-hint');
-    function refreshHint(){ var h = amtHint(payParseCents(amtEl.value)); hintEl.textContent = h.text; hintEl.style.color = h.cls === 'err' ? '#dc2626' : '#475569'; }
-    amtEl.oninput = refreshHint; refreshHint();
+    function refreshHint(){ if (!amtEl) return; var h = amtHint(payParseCents(amtEl.value)); hintEl.textContent = h.text; hintEl.style.color = h.cls === 'err' ? '#dc2626' : '#475569'; }
+    if (amtEl) { amtEl.oninput = refreshHint; refreshHint(); }
     d.box.querySelector('[data-go]').onclick = function(){
       var ref = d.box.querySelector('.paym-ref').value.trim();
       var byEl = d.box.querySelector('.paym-by');
       var by = byEl ? byEl.value.trim() : (v.name || '');
-      var cents = payParseCents(amtEl.value);
-      var h = amtHint(cents);
-      if (h.cls === 'err') { d.box.querySelector('.paym-err').textContent = h.text; amtEl.focus(); return; }
+      /* No amount box = settle on what is on file (the server records no new money). */
+      var cents = amtEl ? payParseCents(amtEl.value) : null;
+      if (amtEl) {
+        var h = amtHint(cents);
+        if (h.cls === 'err') { d.box.querySelector('.paym-err').textContent = h.text; amtEl.focus(); return; }
+      }
       if (!by) { d.box.querySelector('.paym-err').textContent = 'Enter your name — it is recorded with the payment.'; return; }
       if (byEl) paySaveName(by);
       d.close();
       o.onConfirm(ref, by, cents);
     };
-    setTimeout(function(){ if (amtEl) { amtEl.focus(); amtEl.select(); } }, 30);
+    setTimeout(function(){ var f = amtEl || d.box.querySelector('.paym-ref'); if (f) { f.focus(); if (f.select) f.select(); } }, 30);
   }
 
   function payList(title, items, cls){

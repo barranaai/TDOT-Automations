@@ -1000,6 +1000,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       if (r.already) return { ok: true, message: `Already recorded as paid (${r.existingOn}) — nothing changed.` };
       const $ = (c) => (Math.round(c) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
       if (r.settled === false) return { ok: true, message: `Recorded — ${$(r.amountCents)} toward ${r.label || 'the milestone'} by e-transfer. Paid so far ${$(r.paidCents)} of ${$(r.totalCents)}; balance ${$(r.balanceCents)}. The milestone is not paid until the balance is in.` };
+      if (r.settled && r.amountCents === 0) return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked settled: the ${$(r.paidCents)} already on file covers it; no new payment was received.` };
       if (r.settled && r.paidCents > r.amountCents) return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked paid by e-transfer (this ${$(r.amountCents)} settles it; ${$(r.paidCents)} received in total).` };
       return { ok: true, message: `Recorded — ${r.label || 'milestone'} marked paid by e-transfer.` };
     }

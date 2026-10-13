@@ -49,11 +49,23 @@ function ledgerOf(entry) {
   return l.filter((x) => x && typeof x === 'object' && Number.isFinite(Number(x.a)) && Number(x.a) > 0)
     .map((x) => ({ amountCents: Math.round(Number(x.a)), paidAt: String(x.d || ''), reference: String(x.r || ''), by: String(x.b || ''), verified: x.v === true, at: String(x.t || '') }));
 }
-/** Cents received so far on a row: the ledger's sum; a paid row with no ledger (older records, Square) counts as its total. */
+/** Cents received so far on a row: the ledger's sum; a paid row counts as AT LEAST its total
+ *  (older records and Square have no ledger — and a Square payment landing over part-payments
+ *  writes 'paid' without adding itself to the ledger). */
 function paidCentsOf(entry, totalCents) {
   const l = ledgerOf(entry);
-  if (l.length) return l.reduce((s, x) => s + x.amountCents, 0);
-  return entry && entry.status === 'paid' ? Math.round(Number(totalCents) || 0) : 0;
+  const sum = l.reduce((s, x) => s + x.amountCents, 0);
+  if (entry && entry.status === 'paid') return Math.max(sum, Math.round(Number(totalCents) || 0));
+  return sum;
+}
+/** Which ledger entry settled a paid row (its index), or -1: the last one, but only when the
+ *  ledger adds up to the total — a row Square (or an older record) marked paid over
+ *  part-payments has no settling entry in its ledger, and every entry is a real part-payment. */
+function settlingIndexOf(entry, totalCents) {
+  if (!entry || entry.status !== 'paid') return -1;
+  const l = ledgerOf(entry);
+  if (!l.length) return -1;
+  return l.reduce((s, x) => s + x.amountCents, 0) >= Math.round(Number(totalCents) || 0) ? l.length - 1 : -1;
 }
 // At most this many payments on one milestone — the whole column must stay under MAX_PAYMENTS_JSON.
 const LEDGER_MAX = 6;
@@ -162,6 +174,8 @@ function milestoneStates(lead, currentCaseStage, orderedStages = []) {
       paidCents: paidCentsOf(p, r.totalCents),
       balanceCents: Math.max(0, Math.round(r.totalCents || 0) - paidCentsOf(p, r.totalCents)),
       payments: ledgerOf(p),
+      // The entry that settled a paid row (-1: none — a plain full payment, or paid by Square over part-payments).
+      settlingIndex: settlingIndexOf(p, r.totalCents),
     };
   });
 }
@@ -252,7 +266,7 @@ function paymentReceiptHtml({ firstName, label, amountCents, paidCents, totalCen
  * Email the client the e-transfer instructions for milestone `index` (the one-time
  * "Send e-transfer request" button) — amount + HST, the e-transfer address, and a
  * reference to quote. Marks the milestone 'requested'. Refuses if already
- * requested or paid. Payment itself is reconciled manually via markMilestonePaid.
+ * requested, part-paid or paid. Payment itself is reconciled manually via markMilestonePaid.
  */
 // Serialize concurrent requests for the same milestone in this process so a
 // double-click can't send two emails / two 'requested' patches.
@@ -270,6 +284,13 @@ async function sendMilestoneEtransferRequest(leadId, index) {
     const existing = parsePayments(lead)[index] || {};
     if (existing.status === 'paid') { const e = new Error('That milestone is already paid.'); e.badRequest = true; throw e; }
     if (existing.status === 'requested') { const e = new Error('An e-transfer request for that milestone was already sent to the client.'); e.badRequest = true; throw e; }
+    // Money is already on file: the client owes the balance, never the full amount
+    // again. (The signing / fee-edit auto-request lands here too — it logs and skips.)
+    if (existing.status === 'partial') {
+      const onFile = paidCentsOf(existing, Math.round(row.totalCents || 0));
+      const e = new Error(`A part-payment is already on file for that milestone (${dollarsCAD(onFile)} of ${dollarsCAD(row.totalCents || 0)}) — the client owes the balance, not the full amount, so no request was sent. Record the balance when it arrives.`);
+      e.badRequest = true; e.code = 'PART_PAID'; throw e;
+    }
     // The client's record already says the retainer is paid (Square, or the case
     // set to Paid) — never ask them to pay it again.
     if (Number(index) === 0 && String(lead.retainerPaid || '').trim()) {
@@ -347,10 +368,18 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
   const totalCents = row ? Math.round(row.totalCents || 0) : 0;
   const before = paidCentsOf(existing, totalCents);
   const balanceCents = Math.max(0, totalCents - before);
+  // Part-payments on file already cover the milestone (the plan was amended down
+  // after they were recorded): nothing more is owed — "Mark settled" closes it
+  // without an amount, and an amount is refused rather than recorded over it.
+  const nothingOwed = existing.status === 'partial' && totalCents > 0 && before >= totalCents;
   let amount = null;   // null = the whole balance (today's "Mark paid")
   if (amountCents != null) {
     const n = Number(amountCents);
     if (!Number.isInteger(n) || n <= 0) { const e = new Error('Enter the amount received, in dollars and cents. Nothing was recorded.'); e.badRequest = true; e.code = 'BAD_AMOUNT'; throw e; }
+    if (nothingOwed) {
+      const e = new Error(`Nothing more is owed on this milestone — the ${dollarsCAD(before)} already on file covers its ${dollarsCAD(totalCents)}. Nothing was recorded. Use “Mark settled” to close it; if the client sent more, record it on the next milestone.`);
+      e.badRequest = true; e.code = 'NOTHING_OWED'; throw e;
+    }
     if (existing.status !== 'paid' && totalCents > 0 && n > balanceCents) {
       const e = new Error(`That is more than the ${dollarsCAD(balanceCents)} still owed on this milestone. Nothing was recorded. Record the balance here and the rest on the next milestone.`);
       e.badRequest = true; e.code = 'AMOUNT_OVER_BALANCE'; throw e;
@@ -385,10 +414,41 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
   const entry = { a: paidNow, d: when, r: String(reference || '').trim().slice(0, 24), b: String(marked.by).slice(0, 24), v: marked.verified === true, t: marked.at };
   const paidAfter = before + paidNow;
   const settled = totalCents <= 0 || paidAfter >= totalCents;   // no schedule to compare with (older plans) → as today: paid
-  const partsOnFile = ledgerOf(existing).length;
-  if (partsOnFile >= LEDGER_MAX && !settled) {
+  const parts = ledgerOf(existing);
+  if (parts.length >= LEDGER_MAX && !settled) {
     const e = new Error(`This milestone already has ${LEDGER_MAX} part-payments on file — the most the record can hold. Nothing was recorded. Record the balance as ONE payment once it is all in, or ask an admin.`);
     e.badRequest = true; e.code = 'LEDGER_FULL'; throw e;
+  }
+  // The same e-transfer recorded twice (two people reading one bank notification,
+  // a stale page) must never add up to "paid" — and for milestone 1, to onboarding.
+  // A bank reference is unique, so the same reference is the same transfer; the
+  // milestone's own request reference (what the client was asked to write) is not
+  // distinguishing. Without a distinguishing reference, the same amount on the
+  // same day is taken as the same transfer — a genuine second one needs its own.
+  if (parts.length && paidNow > 0) {
+    const requestRef = String(existing.reference || paymentReference(leadId, index)).trim().slice(0, 24);
+    const distinct = entry.r && entry.r !== requestRef ? entry.r : '';
+    const same = parts.find((x) => (distinct ? x.reference === distinct : (x.amountCents === paidNow && x.paidAt === when)));
+    if (same) {
+      const onFile = `${dollarsCAD(same.amountCents)} on ${same.paidAt || '?'}${same.reference ? `, ref ${same.reference}` : ''}${same.by ? `, by ${same.by}` : ''}`;
+      const e = new Error(distinct
+        ? `A payment with reference ${distinct} is already on file for this milestone (${onFile}). Nothing was recorded — the same e-transfer cannot be recorded twice. If that record is wrong, undo it first (admins).`
+        : `A ${dollarsCAD(paidNow)} payment is already on file for this milestone today (${onFile}). Nothing was recorded — it looks like the same e-transfer. If the client really sent a second ${dollarsCAD(paidNow)}, enter that transfer's own bank reference.`);
+      e.badRequest = true; e.code = 'DUPLICATE_PART'; throw e;
+    }
+  }
+
+  if (nothingOwed) {
+    // Settle on what is on file: no new money, no ledger entry, no receipt.
+    await patchPayment(leadId, index, { status: 'paid', paidAt: when, method, reference: ref, marked });
+    await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+      { i: String(leadId), b: `✅ <b>Milestone settled</b> — ${esc(label)}: the ${esc(dollarsCAD(before))} already on file covers its ${esc(dollarsCAD(totalCents))} (the plan was amended). No new payment was received. ${whoLine}` });
+    console.log(`[Milestone] ${leadId}#${index} settled on part-payments already on file (${before} ≥ ${totalCents})`);
+    if (Number(index) === 0) {
+      try { await require('./paymentService').recordRetainerPaid(leadId, { reference: ref, paidAt: when }); }
+      catch (e) { console.warn(`[Milestone] retainer-paid onboarding trigger failed for ${leadId}: ${e.message}`); }
+    }
+    return { ok: true, label, settled: true, amountCents: 0, paidCents: before, balanceCents: 0, totalCents };
   }
 
   if (!settled) {
@@ -441,5 +501,5 @@ module.exports = {
   // pure-ish (exported for tests)
   parsePayments, scheduleRows,
   // part-payments (2026-10-13)
-  ledgerOf, paidCentsOf, paymentReceiptHtml, paymentReceiptsEnabled, LEDGER_MAX,
+  ledgerOf, paidCentsOf, settlingIndexOf, paymentReceiptHtml, paymentReceiptsEnabled, LEDGER_MAX,
 };

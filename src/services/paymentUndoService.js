@@ -167,11 +167,16 @@ function planMilestonePaidReversal({ lead, index, cm = null, cmReadError = null,
   // earlier undo was only half applied. Same correction, minus the entry.
   else if (isRetainer && retainerPaid) mode = 'retainer-date';
   else return refuse('NOT_PAID', 'This milestone isn’t recorded as paid, so there is nothing to undo. Reload the page — someone may already have undone it.');
-  // The part-payment being removed (both modes with a ledger), and what stays.
+  // The part-payment being removed, and what stays. partial-entry: the last one.
+  // milestone: the entry that settled the row — none when the ledger does not add
+  // up to the total (Square paid over part-payments): then the paid mark comes off
+  // and EVERY part-payment stays.
+  const rowTotal = Math.round(((ms.scheduleRows(lead)[i] || {}).totalCents) || 0);
   const ledger = before ? ms.ledgerOf(before) : [];
   const rawLedger = (before && Array.isArray(before.l)) ? before.l.filter((x) => x && Number(x.a) > 0) : [];
-  const removing = ledger.length ? ledger[ledger.length - 1] : null;
-  const restLedger = rawLedger.slice(0, -1);
+  const removeAt = mode === 'partial-entry' ? ledger.length - 1 : mode === 'milestone' ? ms.settlingIndexOf(before, rowTotal) : -1;
+  const removing = removeAt >= 0 ? ledger[removeAt] : null;
+  const restLedger = removeAt >= 0 ? rawLedger.slice(0, removeAt) : rawLedger;
 
   if ((before && s(before.txnId)) || (isRetainer && s(lead.squareRetainerTxnId))) {
     return refuse('SQUARE_PAYMENT', 'This payment is linked to Square. Removing it here would not stick — the Square sync records it again within minutes. Refund or void it in Square first, then ask an admin to reconcile the record.');
@@ -755,11 +760,17 @@ async function flagPaymentError({ leadId, index, actor, note, viewer = null } = 
     (entry.status === 'paid' || !!s(lead.retainerPaid));
   const recorded = entry.status === 'paid'
     ? `recorded as paid on ${esc(entry.paidAt || '?')}${entry.reference ? `, ref ${esc(entry.reference)}` : ''}${entry.marked && entry.marked.by ? ` by ${esc(oneLine(entry.marked.by))}${typedMark(entry.marked)}` : ''}`
+    : entry.status === 'partial' && ms.ledgerOf(entry).length
+    ? (() => {
+      // Part-paid: say what is on file and which part-payment came last — the one "Undo last part-payment…" removes.
+      const l = ms.ledgerOf(entry); const last = l[l.length - 1];
+      return `recorded as part-paid — ${dollars(ms.paidCentsOf(entry, row.totalCents))} on file (last: ${dollars(last.amountCents)} on ${esc(last.paidAt || '?')}${last.reference ? `, ref ${esc(last.reference)}` : ''}${last.by ? ` by ${esc(oneLine(last.by))}${typedMark({ by: last.by, verified: last.verified })}` : ''})`;
+    })()
     : (i === 0 && s(lead.retainerPaid) ? `not recorded as paid, but the client has a Retainer Paid date (${esc(lead.retainerPaid)})` : 'not recorded as paid');
   const body =
     `🚩 <b>Payment flagged as recorded in error</b> — ${esc(label)} (${dollars(row.totalCents)}), ${recorded}.<br>` +
     `Flagged by ${esc(name)}${actor && actor.verified ? '' : ' (name as typed)'}: ${esc(n)}<br>` +
-    '<b>Admins:</b> please review, and use “Undo…” on the payment row if it is wrong.' +
+    `<b>Admins:</b> please review, and use “${entry.status === 'partial' ? 'Undo last part-payment…' : 'Undo…'}” on the payment row if it is wrong.` +
     (holdCountersign ? '<br><b>RCIC:</b> please don’t countersign this retainer until an admin has confirmed — countersigning now would start onboarding.' : '');
   const caseItem = s(lead.clientMasterItemId) && !st.cmMissing ? s(lead.clientMasterItemId) : '';
   try { await io.postNote(caseItem || lead.id, body); }

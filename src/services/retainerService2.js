@@ -755,7 +755,11 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
           `ℹ First-milestone e-transfer request NOT sent — the retainer is already recorded as paid on ${String(lead.retainerPaid || '').trim() || 'an earlier date'}. ` +
           'If that date is wrong, an admin can undo it (Payments → Undo…) and re-send the request from the panel.');
       }
-      if (warnIfSent && e.code !== 'ALREADY_PAID') {
+      // Money is already on file (a part-payment): the client owes the balance,
+      // so no request for the full amount goes out — at signing or on a fee edit.
+      if (e.code === 'PART_PAID' && (notifyIfMissing || warnIfSent)) {
+        await postLeadNote(leadId, `ℹ First-milestone e-transfer request NOT sent — ${e.message}`);
+      } else if (warnIfSent && e.code !== 'ALREADY_PAID') {
         await postLeadNote(leadId,
           'ℹ The first-milestone e-transfer request was already emailed to this client — changing the Retainer Fee does not resend it.');
       }
