@@ -129,6 +129,7 @@ function buildQueueHTML() {
   .attn { border-color:#fde68a; }
   .attn .attn-h { background:#fffbeb; color:#92400e; font-size:12.5px; font-weight:700; padding:9px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
   .attn .attn-h .muted { color:#b45309; font-weight:500; }
+  .attn-h > span:last-child { flex:none; white-space:nowrap; margin-left:12px; }
   .fold .attn-h { background:#f8fafc; color:#64748b; }
   .fold table { display:none; } .fold.open table { display:table; }
   .time { font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:600; color:var(--navy); }
