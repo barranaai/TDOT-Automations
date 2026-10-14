@@ -120,6 +120,19 @@ function escapeHtml(s) {
 }
 
 
+/** The chosen time was taken a moment ago (or could not be checked) — back to the picker. */
+function buildSlotUnavailableHtml(leadId, token, reason) {
+  const back = `/book/${encodeURIComponent(String(leadId))}?t=${encodeURIComponent(String(token || ''))}`;
+  const msg = reason === 'taken'
+    ? 'Sorry — another client has just chosen that time. Please go back and pick a different time.'
+    : 'We could not confirm that this time is still free. Please go back and try again in a minute.';
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Please choose another time</title></head>
+  <body style="font-family:-apple-system,sans-serif;padding:48px 24px;color:${BRAND.textOnLight};max-width:560px;margin:0 auto;">
+  <h1 style="font-size:22px">Please choose another time</h1><p>${msg}</p>
+  <p><a href="${back}" style="display:inline-block;padding:10px 18px;border-radius:8px;background:${BRAND.darkPanel};color:${BRAND.textOnDark};text-decoration:none">Back to the booking page</a></p>
+  <p style="font-size:13px;color:${BRAND.mutedOnLight}">Nothing has been charged.</p></body></html>`;
+}
+
 function buildErrorHtml(message) {
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title></head>
   <body style="font-family:-apple-system,sans-serif;padding:48px;color:${BRAND.textOnLight};">
@@ -161,7 +174,7 @@ router.get('/book/:leadId', async (req, res) => {
       try {
         sets = await Promise.all(options.map(async (o) => ({
           ...o,
-          slots: await bookingService.getSquareAvailableSlots(weeks, consultant.teamMemberId, o.variationId),
+          slots: await bookingService.getSquareAvailableSlots(weeks, consultant.teamMemberId, o.variationId, { excludeLeadId: leadId }),
         })));
       } catch (err) {
         console.warn(`[Book] Live availability failed for lead ${leadId} — consistent static fallback: ${err.message}`);
@@ -170,7 +183,7 @@ router.get('/book/:leadId', async (req, res) => {
     }
     if (!sets) {
       const def = options.find((o) => o.default) || options[0];
-      sets = [{ ...def, slots: await bookingService.getStaticAvailableSlots(lead.tier || 'T2', weeks) }];
+      sets = [{ ...def, slots: await bookingService.getStaticAvailableSlots(lead.tier || 'T2', weeks, { excludeLeadId: leadId }) }];
     }
     res.type('html').send(buildBookingPageHtml(lead, { sets, weeksAhead: weeks }, req.query.t, consultant));
   } catch (err) {
@@ -198,13 +211,21 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
       const [bd, bt] = String(lead.bookedSlot || '').split(' ');
       return res.type('html').send(buildBookingDoneHtml(lead, bd || slotDate, bt || slotTime));
     }
-    await bookingService.holdSlot(leadId, slotDate, slotTime);
+    const routing = require('../../config/consultantRouting');
+    const consultant = routing.resolveConsultant(lead);   // pinned override wins (2026-08-17)
+    // Hold the time only if no other client holds or has booked it with this
+    // consultant — checked against the whole Lead Board at this moment (2026-10-14:
+    // two clients got the same Friday slot). A read that fails refuses rather than
+    // guesses; the client is asked to pick again / try again.
+    const held = await bookingService.holdSlotIfFree(leadId, slotDate, slotTime, consultant && consultant.name);
+    if (!held.ok) {
+      return res.status(held.reason === 'taken' ? 409 : 503).type('html')
+        .send(buildSlotUnavailableHtml(leadId, req.query.t, held.reason));
+    }
 
     // Resolve the chosen consultation option (duration ↔ fee ↔ Square variation)
     // against the ROUTED consultant's list — the posted value is untrusted.
     // Missing/invalid → the consultant's default option.
-    const routing = require('../../config/consultantRouting');
-    const consultant = routing.resolveConsultant(lead);   // pinned override wins (2026-08-17)
     const options = routing.consultOptionsFor(consultant);
     const wantedDur = parseInt(req.body.durationMin, 10);
     const option = options.find((o) => o.durationMin === wantedDur)

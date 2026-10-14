@@ -22,7 +22,9 @@ const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
 const RENDER_URL = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
 const CONSULT_DURATION = `${parseInt(process.env.CONSULT_DURATION_MINS, 10) || 30} minutes`;
 
-function todayISO() { return new Date().toISOString().split('T')[0]; }
+// The Toronto calendar day: the agreement date and the Sent/countersign stamps of
+// a payment made at 8:30 pm Toronto are that evening's, not tomorrow's (UTC).
+function todayISO() { return require('../utils/torontoTime').torontoDay(new Date().toISOString()); }
 
 /**
  * Where a signature field goes on the consultation agreement.

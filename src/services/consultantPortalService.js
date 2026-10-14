@@ -289,8 +289,9 @@ async function getConsultationDetail(leadId) {
         signed:   lead.consultAgreementSigned || '',
         countersign: { sentAt: cs.sentAt || '', signedAt: cs.signedAt || '' },
         warnings: consultAgreementService.buildConsultAgreementData(lead).warnings,
-        // point 08: the automatic package — 'blank-address' while it is HELD
-        // for a missing residential address (entering the address releases it).
+        // point 08: the automatic package — WHY it is HELD: 'blank-address'
+        // (entering the address releases it), 'slot-clash' or 'late-payment'
+        // (a person decides; "Review & send").
         held:     cs.packageHeld || '',
         stalled:  cs.packageStalled || '',
         emailedAt: cs.packageEmailedAt || '',

@@ -249,8 +249,8 @@ test('/book route: both the live and the static path use bookingWeeksAhead() —
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'phase2.js'), 'utf8');
   const route = src.slice(src.indexOf("router.get('/book/:leadId'"), src.indexOf("router.post('/book/:leadId'"));
   assert.match(route, /const weeks = bookingService\.bookingWeeksAhead\(\);/);
-  assert.match(route, /getSquareAvailableSlots\(weeks, consultant\.teamMemberId, o\.variationId\)/);
-  assert.match(route, /getStaticAvailableSlots\(lead\.tier \|\| 'T2', weeks\)/);
+  assert.match(route, /getSquareAvailableSlots\(weeks, consultant\.teamMemberId, o\.variationId, \{ excludeLeadId: leadId \}\)/);
+  assert.match(route, /getStaticAvailableSlots\(lead\.tier \|\| 'T2', weeks, \{ excludeLeadId: leadId \}\)/);
   assert.match(route, /buildBookingPageHtml\(lead, \{ sets, weeksAhead: weeks \}/, 'the page is told the span it should quote');
   assert.ok(!/AvailableSlots\([^)]*\b4\b/.test(route), 'no hard-coded 4-week horizon left in the route');
 });

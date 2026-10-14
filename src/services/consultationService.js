@@ -15,6 +15,7 @@ const mondayApi          = require('./mondayApi');
 const { leadBoardId }    = require('../../config/monday');
 const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
 const { CURRENT_STATUS } = require('../../config/optionLists');
+const { torontoDay }     = require('../utils/torontoTime');   // record dates are the Toronto day (an evening payment is not "tomorrow")
 
 // ─── Pre-consultation form option lists (eligibility profile, per TDOT spec) ──
 const PC_ENTRY_VISA   = ['Visitor visa', 'Study permit', 'Work permit', 'eTA', 'Other', 'Not applicable'];
@@ -68,8 +69,12 @@ const PACKAGE_RECENT_MS = 15 * 60 * 1000;
  *     if this lead was put on hold by a 'payment' trigger — so entering an
  *     address on any pre-existing lead never sends anything.
  *   overrides: values written moments ago that a re-read may not show yet
- *     (the Teams join link, the meeting type, the address just saved).
- * @returns {Promise<{status: 'sent'|'held'|'already'|'not-held'|'disabled'|'failed', reason?: string}>}
+ *     (the Teams join link, the meeting type, the address just saved, the
+ *     consultation option the payment reconcile recorded).
+ *   hold: 'slot-clash' | 'late-payment' (payment trigger only) — the booking
+ *     needs a person first (another client has the same time / the client paid
+ *     after the hold ran out): HELD with a note; only "Review & send" sends it.
+ * @returns {Promise<{status: 'sent'|'held'|'already'|'not-held'|'disabled'|'failed'|'expired', reason?: string}>}
  */
 async function autoSendConsultationPackage(leadId, opts = {}) {
   const key = String(leadId);
@@ -105,8 +110,9 @@ async function autoSendConsultationPackage(leadId, opts = {}) {
  */
 const PACKAGE_STALE_MS     = 10 * 60 * 1000;
 const PACKAGE_MAX_ATTEMPTS = 3;
-const PAST_SLOT_GRACE_MS   = 24 * 60 * 60 * 1000;
 const BOOKED_PAGE          = 200;
+// Holds that only a person can clear ("Review & send"): never released by an address.
+const PERSON_HOLDS = ['slot-clash', 'late-payment'];
 
 async function sweepConsultPackages() {
   if (!consultPackageAutoSendEnabled()) return { swept: 0 };
@@ -133,7 +139,7 @@ async function sweepConsultPackages() {
       }
       continue;
     }
-    if (cs.packageHeld && !cs.packageExpired && String(lead.residentialAddress || '').trim() && (cs.packageAttempts || 0) < PACKAGE_MAX_ATTEMPTS) {
+    if (cs.packageHeld === 'blank-address' && !cs.packageExpired && String(lead.residentialAddress || '').trim() && (cs.packageAttempts || 0) < PACKAGE_MAX_ATTEMPTS) {
       released++;
       // Via module.exports — the same stub seam every other caller in this file uses.
       const r = await module.exports.autoSendConsultationPackage(lead.id, { trigger: 'address' }).catch((err) => ({ status: 'failed', reason: err.message }));
@@ -143,15 +149,17 @@ async function sweepConsultPackages() {
   return { swept: released + stalled, released, stalled };
 }
 
-/** True when the booked consultation is already more than a day in the past. */
-function slotIsPast(lead) {
+/** True once the booked consultation time has begun — booking details and the
+ *  "complete these before your consultation" steps must never arrive after it.
+ *  (2026-10-14: was a day after the start; staff often add the address on the call.) */
+function slotHasStarted(lead) {
   const slot = String(lead.bookedSlot || '').trim();
   if (!slot) return false;
   const ms = require('./postConsultService').torontoSlotToUTC(slot);
-  return Number.isFinite(ms) && (Date.now() - ms) > PAST_SLOT_GRACE_MS;
+  return Number.isFinite(ms) && Date.now() >= ms;
 }
 
-async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overrides = {} } = {}) {
+async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overrides = {}, hold = '' } = {}) {
   if (!consultPackageAutoSendEnabled()) {
     console.log(`[Consult] Automatic package is OFF (CONSULT_PACKAGE_AUTO_SEND) — lead ${leadId} awaits the team's "Review & send"`);
     return { status: 'disabled' };
@@ -166,17 +174,35 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
   const state = consultAgreementSvc.parseCountersign(lead);
 
   if (String(lead.consultAgreementSent || '').trim() || state.packageEmailedAt) return { status: 'already' };
-  if (trigger === 'address' && !state.packageHeld) return { status: 'not-held' };
+  // An address releases only a hold placed for a missing address — a hold that
+  // needs a person (same time / late payment) is cleared by "Review & send".
+  if (trigger === 'address' && state.packageHeld !== 'blank-address') return { status: 'not-held' };
 
-  // A release months after the consultation (an address entered for the
-  // retainer, say) must not email booking details for a date long gone.
-  if (slotIsPast(lead)) {
+  // Never booking details for a time already begun or gone (an address entered
+  // on the call, or for the retainer months later).
+  if (slotHasStarted(lead)) {
     if (!state.packageExpired) {
       const { packageHeld, packageHeldAt, packagePending, ...rest } = state;   // terminal: the hold is retired
       await leadService.updateLead(leadId, { consultCountersign: JSON.stringify({ ...rest, packageExpired: new Date().toISOString() }) }).catch(() => {});
-      await postLeadNote(leadId, '⚠ <b>Consultation package not sent</b> — the booked consultation date has already passed. If it is still needed, use "Review &amp; send" on the consultation page.');
+      await postLeadNote(leadId, '⚠ <b>Consultation package not sent</b> — the booked consultation time has already passed or begun. If it is still needed, use "Review &amp; send" on the consultation page.');
     }
     return { status: 'expired' };
+  }
+
+  // Held for a person: another client is booked for the same time, or the
+  // client paid after the hold ran out (the time may have gone to someone else).
+  if (trigger === 'payment' && PERSON_HOLDS.includes(hold)) {
+    if (!state.packageHeld) {
+      const { packagePending, ...rest } = state;
+      await leadService.updateLead(leadId, {
+        consultCountersign: JSON.stringify({ ...rest, packageHeld: hold, packageHeldAt: new Date().toISOString() }),
+      }).catch((err) => console.error(`[Consult] package-held marker failed for lead ${leadId}: ${err.message}`));
+      await postLeadNote(leadId, hold === 'slot-clash'
+        ? '⚠ <b>Consultation package HELD — another client is booked for the same time.</b> The package (booking details, pre-consultation form and agreement) has NOT been emailed. Sort out the time with the clients (see the note above), then use "Review &amp; send" on the consultation page.'
+        : '⚠ <b>Consultation package HELD — the client paid after their slot hold had expired.</b> The package has NOT been emailed. Confirm the time with the client (it may have been given to someone else), then use "Review &amp; send" on the consultation page.');
+      console.log(`[Consult] Package HELD for lead ${leadId} — ${hold}`);
+    }
+    return { status: 'held', reason: hold };
   }
 
   if (!String(lead.residentialAddress || '').trim()) {
@@ -199,22 +225,25 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
     return { status: 'held', reason: 'blank-address' };
   }
 
+  // A pending marker already on the lead means another run is sending right now
+  // (a second app instance during a deploy) — or one was cut short, which the
+  // sweep hands to staff. Either way this run must not send a second package.
+  if (state.packagePending) return { status: 'already', reason: 'in-progress' };
+
   // Durable "in progress" BEFORE the slow work (PDF render, Documenso, mail):
   // the Square webhook was acked and Booked is already written, so a restart in
   // here would otherwise leave no trace. The sweep turns a stale marker into a
   // staff note — it never re-sends on it. Written onto `state` itself so the
   // post-send clear below sees exactly what is in the column.
   const wasHeld = state.packageHeld || '';
-  if (!state.packagePending) {
-    // A release in progress is no longer a hold: drop the held marker here so an
-    // interrupted release reads as "pending" (handed to staff), never as a hold
-    // the sweep would drive again. A CLEAN failure below restores it, so a
-    // release that failed for a fixable reason is retried up to the cap.
-    delete state.packageHeld; delete state.packageHeldAt;
-    state.packagePending = new Date().toISOString();
-    await leadService.updateLead(leadId, { consultCountersign: JSON.stringify(state) })
-      .catch((err) => console.warn(`[Consult] package-pending marker failed for lead ${leadId}: ${err.message}`));
-  }
+  // A release in progress is no longer a hold: drop the held marker here so an
+  // interrupted release reads as "pending" (handed to staff), never as a hold
+  // the sweep would drive again. A CLEAN failure below restores it, so a
+  // release that failed for a fixable reason is retried up to the cap.
+  delete state.packageHeld; delete state.packageHeldAt;
+  state.packagePending = new Date().toISOString();
+  await leadService.updateLead(leadId, { consultCountersign: JSON.stringify(state) })
+    .catch((err) => console.warn(`[Consult] package-pending marker failed for lead ${leadId}: ${err.message}`));
 
   const markers = (cs) => Object.fromEntries(Object.entries(cs).filter(([k]) => !k.startsWith('package')));
   try {
@@ -240,7 +269,7 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
         ...(sent.envelopeId ? { clientEnvelopeId: sent.envelopeId, clientItemId: sent.envelopeItemId || '' } : {}),
         packageEmailedAt: new Date().toISOString(),
       }) }).catch((err) => console.warn(`[Consult] emailed-marker write failed for lead ${leadId}: ${err.message}`));
-      await leadService.updateLead(leadId, { consultAgreementSent: new Date().toISOString().split('T')[0] }).catch(() => {});
+      await leadService.updateLead(leadId, { consultAgreementSent: torontoDay(new Date().toISOString()) }).catch(() => {});
       await postLeadNote(leadId,
         `ℹ️ <b>Consultation package emailed to the client</b>${sent.via === 'documenso' ? ' and the signing request is out' : ''}, but the record could not be saved in Monday (${escapeHtml(sent.stampFailed)}). ` +
         'Please set "Consult Agreement Sent" to today by hand. Do NOT re-send.');
@@ -292,7 +321,15 @@ const PROVIDER_LABEL = { zoom: 'Zoom', teams: 'Microsoft Teams' };
 const OFFICE_ADDRESS = '20 De Boers Dr, Suite 321, North York, ON M3J 0H1';
 
 // ─── Entry point: called by bookingService after payment ─────────────────────
-async function onSlotConfirmed(leadId, meetingTypeOverride) {
+/**
+ * @param {string} leadId
+ * @param {string} [meetingTypeOverride]  the POST's choice (free path)
+ * @param {{ consultOption?: string, wasAbandoned?: boolean, slotClash?: string[] }} [extra]
+ *   from confirmSlot: the option the payment reconcile just recorded (a re-read
+ *   may not show it yet), whether the client paid after the hold ran out, and
+ *   the other leads already booked for the same time (if any).
+ */
+async function onSlotConfirmed(leadId, meetingTypeOverride, extra = {}) {
   try {
     const lead = await leadService.getLead(leadId);
     if (!lead) return;
@@ -313,7 +350,7 @@ async function onSlotConfirmed(leadId, meetingTypeOverride) {
 
     // The client's booking-page choice (duration ↔ fee ↔ Square variation),
     // persisted by POST /book. Absent on legacy/env-fallback leads.
-    const consultOpt = parseConsultOption(lead);
+    const consultOpt = parseConsultOption(extra.consultOption ? { ...lead, consultOption: extra.consultOption } : lead);
     const durationMin = (consultOpt && consultOpt.durationMin)
       || parseInt(process.env.SQUARE_CONSULT_DURATION_MIN, 10) || 30;
 
@@ -358,7 +395,12 @@ async function onSlotConfirmed(leadId, meetingTypeOverride) {
     // switch is off this logs and the team's "Review & send" remains the way.
     await module.exports.autoSendConsultationPackage(leadId, {
       trigger: 'payment',
-      overrides: { meetingType, ...(meeting && meeting.joinUrl ? { meetingLink: meeting.joinUrl } : {}) },
+      overrides: {
+        meetingType,
+        ...(meeting && meeting.joinUrl ? { meetingLink: meeting.joinUrl } : {}),
+        ...(extra.consultOption ? { consultOption: extra.consultOption } : {}),
+      },
+      hold: (extra.slotClash && extra.slotClash.length) ? 'slot-clash' : (extra.wasAbandoned ? 'late-payment' : ''),
     });
   } catch (err) {
     console.error(`[Consult] onSlotConfirmed failed for lead ${leadId}:`, err.message);
@@ -624,7 +666,7 @@ async function _sendConsultationPackage(leadId, { overrides = {} } = {}) {
   // review-link fallback path here.
   let stampFailed = (esign && esign.stampFailed) || '';
   if (!viaEsign && !alreadySigned) {
-    try { await leadService.updateLead(leadId, { consultAgreementSent: new Date().toISOString().split('T')[0] }); }
+    try { await leadService.updateLead(leadId, { consultAgreementSent: torontoDay(new Date().toISOString()) }); }
     catch (err) { stampFailed = err.message; console.warn(`[Consult] Sent-date stamp failed for lead ${leadId} (the package IS delivered): ${err.message}`); }
   }
   console.log(`[Consult] Consultation package sent to ${lead.email} for lead ${leadId} (agreement via ${viaEsign ? 'documenso e-sign' : alreadySigned ? 'already-signed copy' : 'review link'})`);

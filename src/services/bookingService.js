@@ -251,7 +251,7 @@ function dropBufferConflicts(slots, bookings) {
  * (b) subtract OUR own in-flight holds/bookings so two leads can't grab the
  * same time during the pay window (which Level 1 doesn't yet write back to Square).
  */
-async function getSquareAvailableSlots(weeksAhead = bookingWeeksAhead(), teamMemberId, serviceVariationId) {
+async function getSquareAvailableSlots(weeksAhead = bookingWeeksAhead(), teamMemberId, serviceVariationId, { excludeLeadId = '' } = {}) {
   const squareBookings = require('./squareBookingsService');
   const now = Date.now();
   const startAt = new Date(now + 25 * 3600 * 1000);                        // Square requires ≥24h
@@ -302,7 +302,12 @@ async function getSquareAvailableSlots(weeksAhead = bookingWeeksAhead(), teamMem
     console.warn(`[Booking] Conflict re-check skipped (listBookings failed): ${err.message}`);
   }
 
-  const taken = await getTakenSlots();
+  // Our own holds and bookings for THIS consultant (another consultant's hold
+  // at the same minute does not take this one's time); the client's own hold
+  // stays visible to them.
+  const routing = require('../../config/consultantRouting');
+  const cName = (Object.values(routing.CONSULTANTS || {}).find((c) => c.teamMemberId && c.teamMemberId === teamMemberId) || {}).name || '';
+  const taken = takenSlotKeys(await readSlotClaims(), { consultant: cName, excludeLeadId });
   return slots.filter((s) => !taken.has(`${s.date} ${s.time}`));
 }
 
@@ -311,9 +316,9 @@ async function getSquareAvailableSlots(weeksAhead = bookingWeeksAhead(), teamMem
  * weeks, filtered to the lead's tier pools, excluding slots already held
  * (unexpired) or booked by any lead.
  */
-async function getStaticAvailableSlots(tier, weeksAhead = bookingWeeksAhead()) {
+async function getStaticAvailableSlots(tier, weeksAhead = bookingWeeksAhead(), { excludeLeadId = '' } = {}) {
   const pools = TIER_TO_POOLS[tier] || ['newClient'];
-  const taken = await getTakenSlots();
+  const taken = takenSlotKeys(await readSlotClaims(), { excludeLeadId });   // one template for everyone: any claim blocks
 
   const slots = [];
   const today = new Date();
@@ -336,38 +341,123 @@ async function getStaticAvailableSlots(tier, weeksAhead = bookingWeeksAhead()) {
 }
 
 /** Collect slot keys ("YYYY-MM-DD HH:MM") already booked or held (unexpired). */
-async function getTakenSlots() {
-  const taken = new Set();
+/**
+ * Every lead that holds (unexpired) or has booked a consultation time — read
+ * from the WHOLE Lead Board, page by page. (2026-10-14: the old read took only
+ * the first 200 of ~680 rows and skipped the filter when it failed; two clients
+ * got Fri 16 Oct 15:00 with Shermin because the first hold sat beyond row 200.)
+ * @param {{ strict?: boolean }} [opts]  strict: a failed read THROWS — the hold
+ *   step must never guess that a time is free. Otherwise the failure is logged
+ *   and what was read is returned, so the booking page stays up (the hold step
+ *   re-checks strictly).
+ * @returns {Promise<Array<{ leadId: string, name: string, slot: string, consultant: string, status: 'Booked'|'Slot Held' }>>}
+ */
+async function readSlotClaims({ strict = false } = {}) {
+  const C = require('../data/newLeadsBoard.json').columns;
+  const { leadBoardId } = require('../../config/monday');
+  const mondayApi = require('./mondayApi');
+  const claims = [];
   try {
-    const C = require('../data/newLeadsBoard.json').columns;
-    const { leadBoardId } = require('../../config/monday');
-    const mondayApi = require('./mondayApi');
-    const data = await mondayApi.query(
-      `query($boardId: ID!) {
-         boards(ids: [$boardId]) {
-           items_page(limit: 200) {
-             items { column_values(ids: ["${C.bookedSlot}", "${C.slotHeldUntil}", "${C.bookingStatus}"]) { id text } }
+    let cursor = null, pages = 0;
+    do {
+      const data = await mondayApi.query(
+        `query($boardId: ID!, $cursor: String) {
+           boards(ids: [$boardId]) {
+             items_page(limit: 500, cursor: $cursor) {
+               cursor
+               items { id name column_values(ids: ["${C.bookedSlot}", "${C.slotHeldUntil}", "${C.bookingStatus}", "${C.assignedConsultant}"]) { id text } }
+             }
            }
-         }
-       }`,
-      { boardId: String(leadBoardId) }
-    );
-    const items = data?.boards?.[0]?.items_page?.items || [];
-    for (const it of items) {
-      const cv = {}; it.column_values.forEach((c) => { cv[c.id] = c.text || ''; });
-      const status = cv[C.bookingStatus];
-      const booked = cv[C.bookedSlot];          // "YYYY-MM-DD HH:MM" or "YYYY-MM-DD"
-      const heldUntil = cv[C.slotHeldUntil];
-      if (status === 'Booked' && booked) taken.add(booked.trim());
-      if (status === 'Slot Held' && booked && heldUntil) {
-        // only block if the hold hasn't expired
-        if (new Date(heldUntil).getTime() > Date.now()) taken.add(booked.trim());
+         }`,
+        { boardId: String(leadBoardId), cursor }
+      );
+      const page = data?.boards?.[0]?.items_page;
+      if (!page) throw new Error('the Lead Board could not be read');
+      for (const it of page.items || []) {
+        const cv = {}; (it.column_values || []).forEach((c) => { cv[c.id] = c.text || ''; });
+        const status = cv[C.bookingStatus];
+        const slot = String(cv[C.bookedSlot] || '').trim();          // "YYYY-MM-DD HH:MM" (or a hand-typed date)
+        if (!slot) continue;
+        const heldUntil = cv[C.slotHeldUntil];
+        const live = status === 'Booked' || (status === 'Slot Held' && heldUntil && Date.parse(heldUntil) > Date.now());
+        if (live) claims.push({ leadId: String(it.id), name: String(it.name || ''), slot, consultant: String(cv[C.assignedConsultant] || '').trim(), status });
       }
-    }
+      cursor = page.cursor || null;
+      if (++pages > 50) throw new Error('the Lead Board listing did not end');
+    } while (cursor);
   } catch (err) {
-    console.warn('[Booking] getTakenSlots failed — proceeding without conflict filter:', err.message);
+    if (strict) throw err;
+    console.warn(`[Booking] Reading held/booked times failed — showing times without our own holds filtered (the hold step re-checks): ${err.message}`);
   }
-  return taken;
+  return claims;
+}
+
+/**
+ * The claims that take `slot` away from a client of `consultant`: another lead's
+ * hold or booking at that minute for the same consultant. A claim with no
+ * consultant recorded (a hand entry) blocks everyone, and so does every claim
+ * when no consultant is asked (the one-template fallback). PURE.
+ */
+function claimsOnSlot(claims, slot, { consultant = '', excludeLeadId = '' } = {}) {
+  const want = String(slot || '').trim();
+  const me = String(excludeLeadId || '');
+  return (claims || []).filter((c) => c.slot === want && (!me || c.leadId !== me)
+    && (!consultant || !c.consultant || c.consultant === consultant));
+}
+
+/** The "YYYY-MM-DD HH:MM" times taken away from a client of `consultant`. PURE. */
+function takenSlotKeys(claims, { consultant = '', excludeLeadId = '' } = {}) {
+  const me = String(excludeLeadId || '');
+  const out = new Set();
+  for (const c of claims || []) {
+    if (me && c.leadId === me) continue;
+    if (consultant && c.consultant && c.consultant !== consultant) continue;
+    out.add(c.slot);
+  }
+  return out;
+}
+
+// One check-and-hold at a time per consultant + time in this process, and the
+// holds made in the last minutes remembered here — a Monday read straight after
+// a write can lag, and two clients clicking the same time together must not
+// both pass the check.
+const _slotHoldLocks = new Map();     // key → Promise
+const _recentHolds   = new Map();     // key → { leadId, at }
+const RECENT_HOLD_MS = 5 * 60 * 1000;
+
+/**
+ * Hold a time ONLY if no other lead holds or has booked it for the same
+ * consultant — checked against the whole board, strictly (a failed read
+ * refuses: the client is asked to try again, never booked on a guess).
+ * @returns {Promise<{ ok: true } | { ok: false, reason: 'taken'|'unverified', claim?: object }>}
+ */
+async function holdSlotIfFree(leadId, slotDate, slotTime, consultantName = '') {
+  const slot = `${slotDate} ${slotTime}`;
+  const consultant = String(consultantName || '').trim();
+  const key = `${consultant}|${slot}`;
+  while (_slotHoldLocks.has(key)) await _slotHoldLocks.get(key).catch(() => {});
+  const run = (async () => {
+    const recent = _recentHolds.get(key);
+    if (recent && recent.leadId !== String(leadId) && (Date.now() - recent.at) < RECENT_HOLD_MS) {
+      return { ok: false, reason: 'taken', claim: { leadId: recent.leadId, slot, consultant } };
+    }
+    let claims;
+    try { claims = await readSlotClaims({ strict: true }); }
+    catch (err) {
+      console.warn(`[Booking] Could not confirm ${slot} is free for lead ${leadId} — refused, the client is asked to try again: ${err.message}`);
+      return { ok: false, reason: 'unverified' };
+    }
+    const other = claimsOnSlot(claims, slot, { consultant, excludeLeadId: leadId });
+    if (other.length) {
+      console.warn(`[Booking] ${slot}${consultant ? ` (${consultant})` : ''} is already ${other[0].status === 'Booked' ? 'booked' : 'held'} by lead ${other[0].leadId} — lead ${leadId} asked to pick another time`);
+      return { ok: false, reason: 'taken', claim: other[0] };
+    }
+    await holdSlot(leadId, slotDate, slotTime);
+    _recentHolds.set(key, { leadId: String(leadId), at: Date.now() });
+    return { ok: true };
+  })();
+  _slotHoldLocks.set(key, run);
+  try { return await run; } finally { if (_slotHoldLocks.get(key) === run) _slotHoldLocks.delete(key); }
 }
 
 /** Tentatively reserve a slot with an expiry based on how far out it is. */
@@ -703,23 +793,24 @@ async function reconcileConsultOptionWithPayment(lead, paidCents) {
   if (stored && matchesFee(stored.feeCents)) {
     // Recorded option is right — just remember the ACTUAL total collected
     // (the consult agreement states the amount paid; $226 must not print $200).
+    const next = JSON.stringify({ ...stored, paidCents });
     if (Number(stored.paidCents) !== paidCents) {
-      await leadService.updateLead(lead.id, { consultOption: JSON.stringify({ ...stored, paidCents }) });
+      await leadService.updateLead(lead.id, { consultOption: next });
     }
-    return;
+    return next;
   }
 
   const routing = require('../../config/consultantRouting');
   const consultant = routing.resolveConsultant(lead);   // pinned override wins (2026-08-17)
   const paidOption = routing.consultOptionsFor(consultant).find((o) => matchesFee(o.feeCents));
   if (paidOption) {
-    await leadService.updateLead(lead.id, {
-      consultOption: JSON.stringify({
-        durationMin: paidOption.durationMin, feeCents: paidOption.feeCents,
-        variationId: paidOption.variationId, consultant: consultant.name, paidCents,
-      }),
+    const next = JSON.stringify({
+      durationMin: paidOption.durationMin, feeCents: paidOption.feeCents,
+      variationId: paidOption.variationId, consultant: consultant.name, paidCents,
     });
+    await leadService.updateLead(lead.id, { consultOption: next });
     console.warn(`[Booking] Lead ${lead.id}: paid ${paidCents}c = the ${paidOption.durationMin}-min option — recorded option corrected (was ${stored ? `${stored.durationMin}min/${stored.feeCents}c` : 'none'})`);
+    return next;
   } else if (stored) {
     console.warn(`[Booking] Lead ${lead.id}: paid ${paidCents}c matches NO option (stored ${stored.durationMin}min/${stored.feeCents}c) — keeping stored, flagging staff`);
     await postInviteNote(lead.id,
@@ -729,17 +820,45 @@ async function reconcileConsultOptionWithPayment(lead, paidCents) {
   }
 }
 
+// One confirmation at a time per lead in this process, and the ones done in the
+// last minutes remembered: two Square deliveries for one payment (or the 5-min
+// reconciler overlapping the webhook) must not both get past the "Booked" check
+// while a Monday read still lags the write — that made two Teams meetings.
+const _confirmInFlight = new Map();   // leadId → Promise
+const _recentConfirm   = new Map();   // leadId → { txnId, at }
+const RECENT_CONFIRM_MS = 15 * 60 * 1000;
+
+/** Best-effort note on a lead (never blocks the booking flow). */
+async function postBookingNote(leadId, body) {
+  try {
+    await require('./mondayApi').query(
+      `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
+      { i: String(leadId), b: body });
+  } catch (e) { console.error(`[Booking] staff note failed for ${leadId}: ${e.message}`); }
+}
+const escNote = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
 /** Mark a booking confirmed after the consultation fee is paid. */
 async function confirmSlot(leadId, txnId, meetingType, amountCents) {
+  const key = String(leadId);
+  while (_confirmInFlight.has(key)) await _confirmInFlight.get(key).catch(() => {});
+  const p = _confirmSlot(key, txnId, meetingType, amountCents);
+  _confirmInFlight.set(key, p);
+  try { return await p; } finally { if (_confirmInFlight.get(key) === p) _confirmInFlight.delete(key); }
+}
+
+async function _confirmSlot(leadId, txnId, meetingType, amountCents) {
   const lead = await leadService.getLead(leadId);
-  if (lead && lead.bookingStatus === 'Booked') {
+  const recent = _recentConfirm.get(leadId);
+  const recentTxn = (recent && (Date.now() - recent.at) < RECENT_CONFIRM_MS) ? recent.txnId : '';
+  if ((lead && lead.bookingStatus === 'Booked') || recentTxn) {
     // Same txn replayed (webhook retries) = benign. A DIFFERENT completed
     // payment on an already-booked lead is a probable DOUBLE PAYMENT — the
     // stale-tab / outstanding-invoice class. Never absorb it silently: the
     // client's money deserves a loud staff note ('verify and refund').
-    const knownTxn = String(lead.squareConsultTxnId || '').trim();
+    const knownTxn = String((lead && lead.squareConsultTxnId) || '').trim() || recentTxn;
+    const paid = Number.isFinite(amountCents) ? ` for $${(amountCents / 100).toFixed(2)}` : '';
     if (txnId && knownTxn && txnId !== knownTxn && txnId !== 'free-config') {
-      const paid = Number.isFinite(amountCents) ? ` for $${(amountCents / 100).toFixed(2)}` : '';
       console.warn(`[Booking] SECOND payment ${txnId}${paid} on already-booked lead ${leadId} (first: ${knownTxn}) — flagging for staff`);
       try {
         await require('./mondayApi').query(
@@ -747,16 +866,39 @@ async function confirmSlot(leadId, txnId, meetingType, amountCents) {
           { i: String(leadId), b: `🚨 <b>Possible DOUBLE PAYMENT on the consultation</b> — a second completed Square payment (<code>${txnId}</code>${paid}) arrived for a booking already paid by <code>${knownTxn}</code>. Please verify in Square and refund the duplicate if confirmed.` }
         );
       } catch (e) { console.error(`[Booking] double-payment staff note failed for ${leadId}: ${e.message}`); }
+    } else if (txnId && !knownTxn && txnId !== 'free-config') {
+      // The booking was set to "Booked" BY HAND while the app's payment link was
+      // still open, and the client has now paid it (2026-10-14: about half of all
+      // bookings are set by hand). Record the payment and say so. The automatic
+      // steps (meeting link, Square appointment, package) are NOT run now — a
+      // hand booking may already have its own, and a second one would confuse
+      // the client.
+      if (Number.isFinite(amountCents) && amountCents > 0) {
+        try { await reconcileConsultOptionWithPayment(lead, amountCents); }
+        catch (err) { console.warn(`[Booking] consultOption reconcile failed for ${leadId}: ${err.message}`); }
+      }
+      await leadService.updateLead(leadId, { squareConsultTxnId: txnId });
+      _recentConfirm.set(leadId, { txnId: String(txnId), at: Date.now() });
+      console.warn(`[Booking] Payment ${txnId}${paid} on lead ${leadId}, which was set to Booked by hand — recorded, staff told`);
+      const slot = String(lead.bookedSlot || '').trim();
+      await postBookingNote(leadId,
+        `💳 <b>Consultation payment received on a booking set to "Booked" by hand</b>${escNote(paid)} — Square payment <code>${escNote(txnId)}</code>. ` +
+        `Because the booking was set by hand, the app's automatic steps did NOT run for it: no meeting link, no Square appointment and no consultation package were created. ` +
+        `Please check the time${slot ? ` (${escNote(slot)})` : ''} and the Square calendar, and use "Review &amp; send" on the consultation page if the client has not had the package.`);
     } else {
       console.log(`[Booking] Lead ${leadId} already booked — skipping (idempotent)`);
     }
     return;
   }
+  // The hold had run out (Abandoned) and the client paid an old link anyway:
+  // the time was released and may have been given to someone else.
+  const wasAbandoned = !!lead && lead.bookingStatus === 'Abandoned';
   // Align the recorded option with the amount actually paid BEFORE anything
-  // downstream reads it (onSlotConfirmed re-reads the lead). Best-effort — a
-  // reconcile failure must not lose a real payment.
+  // downstream reads it — and hand it on, since a re-read may not show it yet.
+  // Best-effort — a reconcile failure must not lose a real payment.
+  let consultOption = '';
   if (lead && Number.isFinite(amountCents) && amountCents > 0) {
-    try { await reconcileConsultOptionWithPayment(lead, amountCents); }
+    try { consultOption = (await reconcileConsultOptionWithPayment(lead, amountCents)) || ''; }
     catch (err) { console.warn(`[Booking] consultOption reconcile failed for ${leadId}: ${err.message}`); }
   }
   await leadService.updateLead(leadId, {
@@ -764,12 +906,44 @@ async function confirmSlot(leadId, txnId, meetingType, amountCents) {
     squareConsultTxnId: txnId,
     conversionStatus:   'Booked',
   });
+  _recentConfirm.set(leadId, { txnId: String(txnId || ''), at: Date.now() });
   console.log(`[Booking] Confirmed booking for lead ${leadId} (txn ${txnId})`);
+
+  // Two clients booked for the same time with the same consultant? The hold
+  // check makes it rare; a hand booking or a late payment can still collide.
+  // Said on BOTH leads, whatever the package switch says.
+  let slotClash = [];
+  const slot = String((lead && lead.bookedSlot) || '').trim();
+  if (slot) {
+    try {
+      const consultant = String(lead.assignedConsultant || '').trim();
+      slotClash = claimsOnSlot(await readSlotClaims(), slot, { consultant, excludeLeadId: leadId }).filter((c) => c.status === 'Booked');
+    } catch (err) { console.warn(`[Booking] same-time check failed for ${leadId}: ${err.message}`); }
+    if (slotClash.length) {
+      const who = String(lead.assignedConsultant || '').trim() || 'the consultant';
+      const others = slotClash.map((c) => `${escNote(c.name || 'a client')} (lead ${escNote(c.leadId)})`).join(', ');
+      console.warn(`[Booking] Lead ${leadId} paid for ${slot} (${who}) — already booked by ${slotClash.map((c) => c.leadId).join(', ')}`);
+      await postBookingNote(leadId,
+        `🚨 <b>Two clients are booked for the same time</b> — ${escNote(slot)} with ${escNote(who)}: this client has just paid, and ${others} ${slotClash.length > 1 ? 'are' : 'is'} already booked. Please contact one of them to move the time.`);
+      for (const c of slotClash) {
+        await postBookingNote(c.leadId,
+          `🚨 <b>Two clients are booked for the same time</b> — ${escNote(slot)} with ${escNote(who)}: ${escNote((lead && lead.fullName) || 'another client')} (lead ${escNote(leadId)}) has just paid for the same time. Please contact one of them to move the time.`);
+      }
+    }
+  }
+  if (wasAbandoned) {
+    await postBookingNote(leadId,
+      `💳 <b>Paid after the slot hold had expired</b> — the time${slot ? ` (${escNote(slot)})` : ''} was released when the hold ran out, and the client paid afterwards. Please confirm the time with the client before the consultation.`);
+  }
 
   // Hook for WS4 (Zoom + invite). Safe no-op until consultationService exists.
   try {
     const consultationService = require('./consultationService');
-    if (consultationService.onSlotConfirmed) await consultationService.onSlotConfirmed(leadId, meetingType);
+    if (consultationService.onSlotConfirmed) {
+      await consultationService.onSlotConfirmed(leadId, meetingType, {
+        consultOption, wasAbandoned, slotClash: slotClash.map((c) => c.leadId),
+      });
+    }
   } catch (_) { /* WS4 not built yet */ }
 }
 
@@ -913,7 +1087,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
 module.exports = {
   getAvailableSlots, getSquareAvailableSlots, getStaticAvailableSlots, squareCalendarEnabled,
   bookingWeeksAhead, availabilityWindows,
-  holdSlot, releaseExpiredSlots, createCheckout,
+  holdSlot, holdSlotIfFree, readSlotClaims, claimsOnSlot, takenSlotKeys, releaseExpiredSlots, createCheckout,
   handleSquarePaymentWebhook, confirmSlot, verifySquareSignature, squareNotificationUrls, sendBookingInvite,
   dropBufferConflicts, reconcileConsultOptionWithPayment,
   CONSULT_FEE_CENTS, CONSULT_HST_PCT, consultTotalWithTax,

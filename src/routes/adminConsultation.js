@@ -1092,7 +1092,9 @@ function render(d){
     ca.sent?('· sent '+ca.sent):
     ca.emailedAt?'· emailed to the client, but the Sent date could not be saved — set "Consult Agreement Sent" by hand; do NOT re-send':
     ca.stalled?'· automatic send was interrupted — check the client\\'s inbox and Documenso, then "Review & send" if needed':
-    (ca.held&&ca.expired)?'· was HELD for a missing address and the consultation date has passed — "Review & send" if still needed':
+    ca.expired?'· not sent automatically — the consultation time had already passed or begun; "Review & send" if still needed':
+    (ca.held==='slot-clash')?'· HELD — another client is booked for the same time; sort out the time, then "Review & send"':
+    (ca.held==='late-payment')?'· HELD — the client paid after the slot hold expired; confirm the time with the client, then "Review & send"':
     (ca.held&&ca.attempts>=3)?'· HELD — the automatic release failed 3 times; use "Review & send"':
     ca.held?(ca.autoSend?'· HELD — no residential address; enter it below and the package sends itself':'· HELD by the automatic package, which is now switched off — use "Review & send"'):
     (ca.autoSend&&d.bookingStatus!=='Booked')?'· not sent yet — sends automatically when the consultation is paid':
