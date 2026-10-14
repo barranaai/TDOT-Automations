@@ -62,8 +62,9 @@ test('snapshot: invalidate() makes the next read wait for fresh data (a deleted 
     const s = await snap.getLeadSnapshot();
     assert.deepEqual([s.stale, s.leads.length], [true, 1], 'a failed plain read: the copy, flagged stale');
     snap.invalidate();
-    await assert.rejects(snap.leads(), /Monday 503/, 'invalidated + failed: no copy is shown');
-    await assert.rejects(snap.leads({ fresh: true }), /Monday 503/);
+    const s2 = await snap.getLeadSnapshot();
+    assert.deepEqual([s2.stale, s2.leads.length], [true, 1], 'invalidated + failed: still the copy, flagged stale (the page says Monday could not be read)');
+    await assert.rejects(snap.leads({ fresh: true }), /Monday 503/, 'only a caller that insists on fresh data gets the error');
   } finally { restore.forEach((r) => r()); snap._reset(); }
 });
 
@@ -237,4 +238,94 @@ test('cases board: ids listed cheaply, rows fetched in parallel batches of 100 W
     await dash.fetchAllItems();
     assert.ok(calls.length > n, 'invalidated: read again');
   } finally { restore.forEach((r) => r()); dash.invalidateCases(); }
+});
+
+/* ── review of f09e491 ── */
+
+test('REVIEW: an invalidation during an in-flight read is never lost — the reload after a delete waits for a read that began AFTER the delete (even when a background refresh was running)', async () => {
+  snap._reset();
+  let now = 9_000_000, rows = [L(1), L(2)], reads = 0;
+  const pending = [];                                  // deferred reads: resolved by the test
+  const restore = [stub(snap.io, 'now', () => now), stub(snap.io, 'fetchLeads', () => { reads++; const snapshotRows = rows.slice(); return new Promise((res) => pending.push(() => res(snapshotRows))); })];
+  try {
+    const first = snap.leads(); pending.shift()(); assert.equal((await first).length, 2);
+    now += snap.TTL_MS + 1000;                         // the copy ages: the next view starts a background refresh of the OLD rows
+    const view = await snap.getLeadSnapshot();
+    assert.equal(view.leads.length, 2); assert.equal(reads, 2, 'background read #2 in flight (pre-delete rows captured)');
+    rows = [L(1)];                                     // the delete lands
+    snap.invalidate();
+    const reload = snap.getLeadSnapshot({ fresh: true });
+    pending.shift()();                                 // read #2 completes with the pre-delete rows
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(reads, 3, 'the reload started a third read after the delete');
+    pending.shift()();
+    const got = await reload;
+    assert.deepEqual(got.leads.map((l) => l.id), ['1'], 'the deleted lead is gone on the reload');
+    assert.deepEqual((await snap.leads()).map((l) => l.id), ['1'], 'and on the next plain read');
+    assert.equal(reads, 3);
+    // the scheduler's warm() in flight + a staff create: same rule
+    const warm = snap.warm();
+    rows = [L(1), L(5)]; snap.invalidate();
+    const after = snap.leads();
+    pending.shift()();                                 // the warm read completes (pre-create rows)
+    await new Promise((r) => setTimeout(r, 5)); pending.shift()();
+    await warm;
+    assert.deepEqual((await after).map((l) => l.id), ['1', '5'], 'the created lead is on the list that loads right after');
+  } finally { restore.forEach((r) => r()); snap._reset(); }
+});
+
+test('REVIEW: every lead write marks the snapshot (updateLead / createLead), a new direct client marks it, the Cases copy is marked on a case created or deleted', async () => {
+  const leadService = require('../src/services/leadService');
+  const mondayApi = require('../src/services/mondayApi');
+  snap._reset();
+  const restore = [stub(mondayApi, 'query', async () => ({ change_multiple_column_values: { id: '1' } })), stub(snap.io, 'fetchLeads', async () => [L(1)])];
+  try {
+    await snap.leads();
+    const before = snap._state();
+    await leadService.updateLead('1', { outcome: 'Retain' });
+    assert.ok(snap._state().invalidatedAt > before.invalidatedAt, 'updateLead marked the snapshot');
+    await leadService.updateLead('1', {});
+    assert.equal(snap._state().invalidatedAt, snap._state().invalidatedAt, 'a no-op write is fine');
+  } finally { restore.forEach((r) => r()); snap._reset(); }
+  const ls = fs.readFileSync(require.resolve('../src/services/leadService'), 'utf8');
+  assert.ok((ls.match(/_snapshotChanged\(\);/g) || []).length >= 2, 'updateLead and createLead both mark it');
+  const cps = fs.readFileSync(require.resolve('../src/services/consultantPortalService'), 'utf8');
+  assert.match(cps, /const leadId = created\.id;\n  invalidateDirectRetainerQueue\(\);/);
+  const server = fs.readFileSync(require.resolve('../src/server'), 'utf8');
+  assert.match(server, /consultantPortalService\.invalidateLeadsQueue\(\);[^\n]*\n\s*dashboardService\.invalidateCases\(\);/);
+  const ho = fs.readFileSync(require.resolve('../src/services/handoffService'), 'utf8');
+  assert.match(ho, /create_item returned no id for lead \$\{leadId\}`\);\n  try \{ require\('\.\/dashboardService'\)\.invalidateCases\(\); \}/);
+});
+
+test('REVIEW: the Cases copy — a delete during an in-flight refresh is not lost either', async () => {
+  const dash = require('../src/services/dashboardService');
+  const mondayApi = require('../src/services/mondayApi');
+  let ids = ['1', '2'];
+  const pending = [];
+  const restore = [stub(mondayApi, 'query', (q, v) => {
+    if (/items_page\(limit: 500/.test(q)) { const snapshotIds = ids.slice(); return new Promise((res) => pending.push(() => res({ boards: [{ items_page: { cursor: null, items: snapshotIds.map((id) => ({ id })) } }] }))); }
+    return Promise.resolve({ items: v.ids.map((id) => ({ id, name: 'C' + id, created_at: '', column_values: [] })) });
+  })];
+  try {
+    dash.invalidateCases();
+    const first = dash.fetchAllItems(); pending.shift()(); assert.equal((await first).length, 2);
+    const bg = dash.fetchAllItems({ fresh: true });  // a read in flight (old ids captured)
+    ids = ['1']; dash.invalidateCases();              // the case is deleted meanwhile
+    const reload = dash.fetchAllItems();
+    pending.shift()(); await new Promise((r) => setTimeout(r, 5)); pending.shift()();
+    await bg;
+    assert.deepEqual((await reload).map((c) => c.id), ['1'], 'the reload after the delete does not list the deleted case');
+  } finally { restore.forEach((r) => r()); dash.invalidateCases(); }
+});
+
+test('REVIEW: the page — the warning header keeps its colour; a due follow-up is a cue on the row and a filter; a failed read is said, not shown as an empty list', () => {
+  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+  assert.ok(css.indexOf('.fold .attn-h {') < css.indexOf('.fold.attn .attn-h {'), 'the amber rule comes later AND is more specific');
+  assert.ok(css.includes('.fold.attn .attn-h { background:#fffbeb; color:#92400e; }'));
+  assert.ok(html.includes('<select id="f-followup">') && html.includes('<option value="due">Due (today or earlier)</option>'));
+  assert.ok(html.includes("if(c.followUpDate) oc+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);"));
+  assert.ok(html.includes("if(fu==='due' && !(r.followUpDate && r.followUpDate<=t)) return false;"));
+  assert.ok(html.includes("if(!r.ok){ return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); }"));
+  for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
 });

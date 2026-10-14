@@ -767,6 +767,7 @@ app.post('/admin/delete/execute', express.json(), async (req, res) => {
     });
     consultantPortalService.invalidateDirectRetainerQueue(); // deleted clients must drop off the Direct section immediately
     consultantPortalService.invalidateLeadsQueue();          // …and off the funnel-leads queue (was showing deleted leads as alive)
+    dashboardService.invalidateCases();                      // …and off the Cases page (its 60 s copy must not list a deleted case)
     res.json(result);
   } catch (err) {
     if (err.badRequest) return res.status(400).json({ error: err.message });

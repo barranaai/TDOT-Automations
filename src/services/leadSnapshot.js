@@ -16,9 +16,12 @@
  * (leadService.getLead / listAllLeads) — a list may be a few minutes behind.
  *
  * Freshness: a copy younger than TTL_MS is served as is; older, it is served AND
- * refreshed in the background; invalidate() (after a staff create/delete/convert,
- * a hold, a booking) makes the next read wait for fresh data so the page the
- * staff member reloads shows the change.
+ * refreshed in the background. invalidate() — every lead write goes through
+ * leadService.updateLead / createLead, which call it — makes the next read wait
+ * for data read AFTER the write: an invalidation is stamped with a generation,
+ * and a read that began before it never satisfies it (review 2026-10-15: a
+ * deleted lead was served alive by the page's own reload while a background
+ * refresh that began before the delete was in flight).
  */
 
 const leadService = require('./leadService');
@@ -43,9 +46,10 @@ const SNAPSHOT_KEYS = [
 ];
 const SNAPSHOT_IDS = SNAPSHOT_KEYS.map((k) => COLS[k]).filter(Boolean);
 
-let _copy = null;        // { leads, at }
-let _inFlight = null;    // Promise<{ leads, at }>
-let _invalidated = false;
+let _copy = null;          // { leads, at, gen }  gen: the invalidation generation the read began at
+let _inFlight = null;      // { promise, gen }
+let _gen = 0;              // bumped by every invalidate()
+let _invalidatedAt = 0;    // the generation of the latest invalidation (0 = none outstanding)
 
 /** The side effects behind one seam (tests replace fetchLeads). */
 const io = {
@@ -77,28 +81,46 @@ const io = {
   now: () => Date.now(),
 };
 
+/** Start a read (or join the one in flight). The read is stamped with the generation it began at. */
 function _refresh() {
-  if (_inFlight) return _inFlight;
-  const started = io.now();
-  _inFlight = io.fetchLeads()
-    .then((leads) => { _copy = { leads, at: io.now() }; _invalidated = false; console.log(`[LeadSnapshot] ${leads.length} leads in ${io.now() - started} ms`); return _copy; })
-    .finally(() => { _inFlight = null; });
-  return _inFlight;
+  if (_inFlight) return _inFlight.promise;
+  const gen = _gen, started = io.now();
+  const promise = io.fetchLeads()
+    .then((leads) => {
+      _copy = { leads, at: io.now(), gen };
+      // Only a read that began at (or after) the latest invalidation satisfies it.
+      if (_invalidatedAt <= gen) _invalidatedAt = 0;
+      console.log(`[LeadSnapshot] ${leads.length} leads in ${io.now() - started} ms`);
+      return _copy;
+    })
+    .finally(() => { if (_inFlight && _inFlight.promise === promise) _inFlight = null; });
+  _inFlight = { promise, gen };
+  return promise;
+}
+
+/** A read that began after the current generation — waits out an older in-flight read first. */
+async function _freshRead() {
+  while (_inFlight && _inFlight.gen < _gen) await _inFlight.promise.catch(() => {});
+  return _refresh();
 }
 
 /**
- * The snapshot. `fresh: true` always waits for a new read.
- * @returns {Promise<{ leads: object[], at: number, ageMs: number }>}
+ * The snapshot. `fresh: true` always waits for a read that began after the call.
+ * @returns {Promise<{ leads: object[], at: number, ageMs: number, stale?: true }>}
  */
 async function getLeadSnapshot({ fresh = false } = {}) {
+  if (fresh) _gen++;
   const age = _copy ? io.now() - _copy.at : Infinity;
-  const mustWait = fresh || _invalidated || !_copy || age > HARD_MAX_MS;
+  const outstanding = _invalidatedAt > 0 && !(_copy && _copy.gen >= _invalidatedAt);
+  const mustWait = fresh || outstanding || !_copy || age > HARD_MAX_MS;
   if (mustWait) {
-    try { const c = await _refresh(); return { leads: c.leads, at: c.at, ageMs: io.now() - c.at }; }
+    try { const c = await _freshRead(); return { leads: c.leads, at: c.at, ageMs: io.now() - c.at }; }
     catch (err) {
-      // A read that fails: an old copy is better than no page — unless it was
-      // invalidated (it would show a deleted lead alive / hide a new one).
-      if (_copy && !_invalidated && !fresh) { console.warn(`[LeadSnapshot] refresh failed, serving the copy from ${Math.round(age / 1000)} s ago: ${err.message}`); return { leads: _copy.leads, at: _copy.at, ageMs: age, stale: true }; }
+      // A read that fails: an old copy, flagged stale (the page says Monday could
+      // not be read), is better than no page — even after a write, where the copy
+      // may still show the old state. Only a caller that insisted on fresh data,
+      // or no copy at all, gets the error.
+      if (_copy && !fresh) { console.warn(`[LeadSnapshot] refresh failed, serving the copy from ${Math.round(age / 1000)} s ago: ${err.message}`); return { leads: _copy.leads, at: _copy.at, ageMs: age, stale: true }; }
       throw err;
     }
   }
@@ -109,8 +131,8 @@ async function getLeadSnapshot({ fresh = false } = {}) {
 /** Just the leads (the common call). */
 async function leads(opts) { return (await getLeadSnapshot(opts)).leads; }
 
-/** The next read waits for fresh data (after a write the lists must show). */
-function invalidate() { _invalidated = true; }
+/** After a lead write: the next read waits for data read after this moment. */
+function invalidate() { _gen++; _invalidatedAt = _gen; }
 
 /** Scheduler: keep it warm — a refresh in the background, never a throw. */
 async function warm() {
@@ -118,6 +140,7 @@ async function warm() {
 }
 
 /** For tests only. */
-function _reset() { _copy = null; _inFlight = null; _invalidated = false; }
+function _reset() { _copy = null; _inFlight = null; _gen = 0; _invalidatedAt = 0; }
+function _state() { return { gen: _gen, invalidatedAt: _invalidatedAt, copyGen: _copy ? _copy.gen : null, inFlight: !!_inFlight }; }
 
-module.exports = { getLeadSnapshot, leads, invalidate, warm, io, SNAPSHOT_KEYS, SNAPSHOT_IDS, TTL_MS, HARD_MAX_MS, _reset };
+module.exports = { getLeadSnapshot, leads, invalidate, warm, io, SNAPSHOT_KEYS, SNAPSHOT_IDS, TTL_MS, HARD_MAX_MS, _reset, _state };

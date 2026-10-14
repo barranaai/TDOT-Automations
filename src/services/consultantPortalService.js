@@ -1743,7 +1743,7 @@ async function createDirectClient(payload = {}) {
       : 'Direct retainer client — entered at the retainer stage, no consultation.',
   }, { groupId: directGroupId });
   const leadId = created.id;
-  _directQueueCache = { at: 0, rows: null }; // the new client must show in the Direct section immediately
+  invalidateDirectRetainerQueue(); // the new client must show on the Retainers tab at once (the shared snapshot too)
   const wiring = {
     sourceChannel:      DIRECT_SOURCE,
     confirmedCaseType:  caseType,

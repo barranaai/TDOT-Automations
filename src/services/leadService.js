@@ -200,6 +200,7 @@ async function createLead(formData, { groupId } = {}) {
 
   const id = result?.create_item?.id;
   if (!id) throw new Error('Lead create_item returned no ID');
+  _snapshotChanged();   // the Leads page's next load must show the new lead
 
   // Best-effort phone write (non-fatal).
   if (formData.phone) {
@@ -254,7 +255,12 @@ async function updateLead(leadId, fields, opts = {}) {
      }`,
     { boardId: String(leadBoardId), itemId: String(leadId), cols: JSON.stringify(cols) }
   );
+  // The list pages read a shared copy of the board (leadSnapshot): after any lead
+  // write their next load waits for data read after it — an outcome just set, a
+  // retainer just sent, a consultant just pinned must not read as before.
+  _snapshotChanged();
 }
+function _snapshotChanged() { try { require('./leadSnapshot').invalidate(); } catch (_) { /* the copy is a convenience */ } }
 
 /**
  * Find a lead by the value of one of its columns (e.g. a Square order id).

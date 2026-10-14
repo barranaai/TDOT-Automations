@@ -50,8 +50,9 @@ const FETCH_IDS = [...new Set([...Object.values(COLS), ...caseAccess.PEOPLE_COLU
 const CASES_CACHE_MS   = 60 * 1000;
 const CASES_BATCH      = 100;
 const CASES_PARALLEL   = 4;
-let _casesCache = { at: 0, items: null };
-let _casesInFlight = null;
+let _casesCache = { at: 0, items: null, gen: 0 };
+let _casesInFlight = null;     // { promise, gen }
+let _casesGen = 0, _casesInvalidatedAt = 0;
 
 async function _fetchAllItemsFresh() {
   // 1. every item id (name + created_at come with it; no column values yet)
@@ -92,22 +93,32 @@ async function _fetchAllItemsFresh() {
 }
 
 function _refreshCases() {
-  if (_casesInFlight) return _casesInFlight;
-  _casesInFlight = _fetchAllItemsFresh()
-    .then((items) => { _casesCache = { at: Date.now(), items }; return items; })
-    .finally(() => { _casesInFlight = null; });
-  return _casesInFlight;
+  if (_casesInFlight) return _casesInFlight.promise;
+  const gen = _casesGen;
+  const promise = _fetchAllItemsFresh()
+    .then((items) => { _casesCache = { at: Date.now(), items, gen }; if (_casesInvalidatedAt <= gen) _casesInvalidatedAt = 0; return items; })
+    .finally(() => { if (_casesInFlight && _casesInFlight.promise === promise) _casesInFlight = null; });
+  _casesInFlight = { promise, gen };
+  return promise;
+}
+// A read that began after the latest invalidation (an older one in flight is waited out first).
+async function _freshCases() {
+  while (_casesInFlight && _casesInFlight.gen < _casesGen) await _casesInFlight.promise.catch(() => {});
+  return _refreshCases();
 }
 
-/** The raw Cases rows: served from the short cache, refreshed in the background once it ages. */
+/** The raw Cases rows: served from the short cache, refreshed in the background once it ages;
+ *  after invalidateCases() (a case deleted or created) the next read waits for data read after it. */
 async function fetchAllItems({ fresh = false } = {}) {
+  if (fresh) _casesGen++;
   const age = _casesCache.items ? Date.now() - _casesCache.at : Infinity;
-  if (fresh || !_casesCache.items || age > 20 * 60 * 1000) return _refreshCases();
+  const outstanding = _casesInvalidatedAt > 0 && !(_casesCache.items && _casesCache.gen >= _casesInvalidatedAt);
+  if (fresh || outstanding || !_casesCache.items || age > 20 * 60 * 1000) return _freshCases();
   if (age > CASES_CACHE_MS) _refreshCases().catch((err) => console.warn(`[Dashboard] background refresh failed: ${err.message}`));
   return _casesCache.items;
 }
-/** After a write that the Cases page must show at once. */
-function invalidateCases() { _casesCache = { at: 0, items: null }; }
+/** After a write the Cases page must show at once (a case deleted or created). */
+function invalidateCases() { _casesGen++; _casesInvalidatedAt = _casesGen; }
 
 function toNum(text) {
   const n = parseFloat((text || '').replace(/[^0-9.-]/g, ''));

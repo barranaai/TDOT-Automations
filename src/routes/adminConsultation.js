@@ -127,10 +127,10 @@ function buildQueueHTML() {
   .range .lbl { font-size:13px; font-weight:700; color:var(--navy); margin-left:6px; }
   .sec-sub { font-size:12px; color:#94a3b8; margin:0 0 10px; }
   .attn { border-color:#fde68a; }
-  .attn .attn-h { background:#fffbeb; color:#92400e; font-size:12.5px; font-weight:700; padding:9px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
-  .attn .attn-h .muted { color:#b45309; font-weight:500; }
+  .fold .attn-h { background:#f8fafc; color:#64748b; font-size:12.5px; font-weight:700; padding:9px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
+  .fold.attn .attn-h { background:#fffbeb; color:#92400e; }
+  .fold.attn .attn-h .muted { color:#b45309; font-weight:500; }
   .attn-h > span:last-child { flex:none; white-space:nowrap; margin-left:12px; }
-  .fold .attn-h { background:#f8fafc; color:#64748b; }
   .fold table { display:none; } .fold.open table { display:table; }
   .time { font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:600; color:var(--navy); }
   .time .d { font-weight:500; color:#64748b; }
@@ -193,6 +193,7 @@ ${buildNavHeader('consultations')}
           <select id="f-mode"><option value="">Any mode</option><option>In-person</option><option>Virtual</option><option>Phone Call</option></select>
           <select id="f-paid"><option value="">Paid: any</option><option value="app">Paid (app)</option><option value="none">Not paid via app</option></select>
           <select id="f-agree"><option value="">Agreement: any</option><option value="signed">Signed</option><option value="sent">Sent, not signed</option><option value="none">Not sent</option></select>
+          <select id="f-followup"><option value="">Follow-up: any</option><option value="due">Due (today or earlier)</option><option value="has">Has a follow-up date</option></select>
           <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
         </div>
       </div>
@@ -299,6 +300,8 @@ function timeCell(c){
 function rowHtml(c){
   var pc=c.preConsultSubmitted?qpill('green','Submitted'):qpill('amber','Pending');
   var oc=c.outcome?qpill('blue',c.outcome):'<span class="pill grey">—</span>';
+  /* a follow-up date on the row: amber once it is due (today or earlier) */
+  if(c.followUpDate) oc+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);
   var ag=c.agreementSigned?qpill('green','Signed '+c.agreementSigned):c.agreementSent?qpill('blue','Sent '+c.agreementSent):'<span class="pill grey">—</span>';
   var pd=c.paid==='app'?qpill('green','Paid (app)'+(c.paidCents!=null?' $'+(c.paidCents/100).toFixed(0):'')):'<span class="pill grey">—</span>';
   return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
@@ -613,11 +616,13 @@ function passesCommon(r,q,con){
 }
 function applyFilters(){
   var q=(document.getElementById('f-search').value||'').toLowerCase().trim();
-  var con=document.getElementById('f-consultant').value, mode=document.getElementById('f-mode').value, paid=document.getElementById('f-paid').value, ag=document.getElementById('f-agree').value;
+  var con=document.getElementById('f-consultant').value, mode=document.getElementById('f-mode').value, paid=document.getElementById('f-paid').value, ag=document.getElementById('f-agree').value, fu=document.getElementById('f-followup').value;
   var t=todayStr();
   var keep=ALLROWS.filter(function(r){
     if(!passesCommon(r,q,con)) return false;
     if(mode && r.meetingType!==mode) return false;
+    if(fu==='due' && !(r.followUpDate && r.followUpDate<=t)) return false;
+    if(fu==='has' && !r.followUpDate) return false;
     if(paid==='app' && r.paid!=='app') return false;
     if(paid==='none' && r.paid==='app') return false;
     if(ag==='signed' && !r.agreementSigned) return false;
@@ -673,7 +678,7 @@ function showAge(d){
 function load(force){
   var key=getKey(); if(!key) return;
   fetch('/api/consultations-board'+(force?'?fresh=1':''),{headers:{'X-Api-Key':key}})
-   .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } return r.json(); })
+   .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); } return r.json(); })
    .then(function(d){
      ALLROWS=(d.consultations||[]); RETAINERS=(d.retainers||[]);
      populateFilters(); applyFilters(); renderRetainers(); showAge(d);
@@ -684,7 +689,7 @@ function load(force){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
-['f-search','f-consultant','f-mode','f-paid','f-agree'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
+['f-search','f-consultant','f-mode','f-paid','f-agree','f-followup'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
 ['rf-search','rf-consultant','rf-stage','rf-kind'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', renderRetainers); });
 Array.prototype.forEach.call(document.querySelectorAll('.tab[data-tab]'),function(b){ b.onclick=function(){ setTab(b.getAttribute('data-tab'),true); }; });
 Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.onclick=function(){ setRange(b.getAttribute('data-range')); }; });

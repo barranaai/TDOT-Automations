@@ -520,6 +520,7 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
   );
   const newId = result?.create_item?.id;
   if (!newId) throw new Error(`create_item returned no id for lead ${leadId}`);
+  try { require('./dashboardService').invalidateCases(); } catch (_) { /* the Cases page copy is a convenience */ }
 
   // Post-create reconciliation: did another call persist a different item first?
   const reread = await leadService.getLead(leadId);
