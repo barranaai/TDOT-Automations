@@ -292,12 +292,16 @@ async function executeAmountCorrection({ leadId, index, amountCents, confirmText
   if (caseItem) { try { await U.io.postNote(caseItem, caseBody); } catch (_) { notesFailed = true; } }
   if (notesFailed) warnings.push({ code: 'NOTES_FAILED', message: 'The amount was corrected, but posting the note on Monday failed — add a short note by hand.' });
   const notified = await U.notifyPeople(lead,
-    `Payment amount corrected for ${s(lead.fullName) || 'a client'}${(cm && cm.caseRef) ? ` (${cm.caseRef})` : ''}: ${plan.label} ${dollars(plan.wasCents)} → ${dollars(plan.newAmountCents)}. By ${s(actor.name) || s(actor.email)} — ${s(reason).slice(0, 120)}`,
+    `${unconfirmed ? 'NOT CONFIRMED — check the payment row: ' : ''}Payment amount corrected for ${s(lead.fullName) || 'a client'}${(cm && cm.caseRef) ? ` (${cm.caseRef})` : ''}: ${plan.label} ${dollars(plan.wasCents)} → ${dollars(plan.newAmountCents)}. By ${s(actor.name) || s(actor.email)} — ${s(reason).slice(0, 120)}`,
     caseItem || lead.id, actor.email).catch(() => 0);
   try { U.io.invalidateQueues(); } catch (_) { /* cache only */ }
   if (unconfirmed) {
+    // Say only what happened: the route returns just this text on a failure.
+    const record = notesFailed
+      ? 'The note could NOT be posted on Monday either — add a note by hand with the reason, and tell the other admins.'
+      : `The note with the reason is on the client’s record${notified ? ', and the other admins were alerted' : ' (nobody could be alerted automatically — tell the other admins)'}.`;
     return { ok: false, status: 503, code: 'NOT_CONFIRMED', warnings, notified,
-      error: 'Monday didn’t confirm the change in time. The record and the alerts were posted — reload the page and check the payment row before doing anything else.' };
+      error: `Monday didn’t confirm the change in time. ${record} Reload the page and check the payment row before doing anything else.` };
   }
   return {
     ok: true,

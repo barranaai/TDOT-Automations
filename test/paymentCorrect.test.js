@@ -181,7 +181,7 @@ test('execute refuses: a changed row (stale dialog), a wrong confirmation, an ou
     const req = await request(h);
     const r = await C.executeAmountCorrection(req);
     assert.deepEqual([r.ok, r.code], [false, 'NOT_CONFIRMED']);
-    assert.match(r.error, /The record and the alerts were posted — reload the page and check the payment row/);
+    assert.match(r.error, /^Monday didn’t confirm the change in time\. The note with the reason is on the client’s record, and the other admins were alerted\. Reload the page and check the payment row before doing anything else\.$/);
     // REVIEW: a correction Monday may have taken is never left with no reason on record
     const notes = h.calls.filter((c) => c[0] === 'postNote');
     assert.equal(notes.length, 2);
@@ -296,4 +296,18 @@ test('routes and page: admin-only preview + execute; "Correct amount…" only fo
   assert.match(fn.audit({ status: 'partial', fixedBy: 'Faran', fixedFrom: 113000, fixedTo: 56500, payments: [] }), /^Amount corrected by Faran: \$1130\.00 → \$565\.00/);
   assert.ok(js.includes("'/correct-preview?amountCents=' + encodeURIComponent(cents)"));
   assert.ok(js.includes("body: JSON.stringify({ amountCents: p.newAmountCents, confirmText: conf.value.trim(), reason: why.value.trim(), expect: p.expect })"));
+});
+
+test('REVIEW 2: not confirmed AND the notes could not be posted — the message says so (never "the record was posted"); the alert says NOT CONFIRMED', async () => {
+  const h = harness({ readBackNever: true });
+  const alerts = [];
+  U.io.postNote = async () => { throw new Error('Monday 503'); };
+  U.io.notify = async (id, text) => { alerts.push(text); };
+  try {
+    const r = await C.executeAmountCorrection(await request(h));
+    assert.deepEqual([r.ok, r.code], [false, 'NOT_CONFIRMED']);
+    assert.match(r.error, /The note could NOT be posted on Monday either — add a note by hand with the reason, and tell the other admins\./);
+    assert.ok(!/is on the client’s record/.test(r.error));
+    assert.ok(alerts.length && alerts.every((x) => /^NOT CONFIRMED — check the payment row: Payment amount corrected/.test(x)));
+  } finally { h.restore(); }
 });
