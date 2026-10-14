@@ -343,3 +343,32 @@ test('5. the consultation page says WHY a package is held, and an expired one re
   assert.ok(!/ca\.held&&ca\.expired/.test(js), 'the label that could never show is gone');
   const vm = require('vm'); for (const m of js.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
 });
+
+/* ── review of ccb953f ── */
+
+test('REVIEW: a client who moves to another time frees the first one at once (the recent-hold memory follows the lead); the hold carries its consultant in the same write', async () => {
+  const writes = [];
+  const restore = [
+    stub(mondayApi, 'query', async (q, v) => board([[]]).query(q, v)),                 // Monday lags: shows no holds at all
+    stub(leadService, 'updateLead', async (id, f) => { writes.push({ id, f }); }),
+  ];
+  try {
+    assert.equal((await bookingService.holdSlotIfFree('511', '2026-10-30', '15:00', SHERMIN)).ok, true);
+    assert.deepEqual(writes[0].f.assignedConsultant, SHERMIN, 'the consultant is written with the hold');
+    assert.equal((await bookingService.holdSlotIfFree('511', '2026-10-30', '15:30', SHERMIN)).ok, true, 'the same client changes their mind');
+    assert.equal((await bookingService.holdSlotIfFree('533', '2026-10-30', '15:00', SHERMIN)).ok, true, 'the time they left is free for the next client right away');
+    assert.equal((await bookingService.holdSlotIfFree('544', '2026-10-30', '15:30', SHERMIN)).reason, 'taken', 'the time they now hold is still theirs');
+  } finally { restore.forEach((r) => r()); }
+});
+
+test('REVIEW: at payment, a lead with a blank consultant is judged by its routing — another consultant\'s client at the same minute is not a clash', async () => {
+  // Visitor visa routes to Shermin; the only other booking at 15:00 is a Shafoli client
+  const w = confirmWorld({ lead: LEAD({ id: '520', assignedConsultant: '', caseTypeInterest: 'Visitor Visa', serviceRequired: 'Visitor visa' }),
+    boardRows: [row('521', { status: 'Booked', consultant: SHAFOLI })] });
+  try {
+    assert.equal(require('../config/consultantRouting').resolveConsultant({ assignedConsultant: '', serviceRequired: 'Visitor visa' }).name, SHERMIN);
+    await bookingService.confirmSlot('520', 'SQ-20', undefined, 12000);
+    assert.ok(!w.notes.some((n) => /Two clients are booked for the same time/.test(n.body)), 'no false alarm on a Shafoli client\'s lead');
+    assert.deepEqual(w.slotCalls[0].extra.slotClash, []);
+  } finally { w.restore(); }
+});

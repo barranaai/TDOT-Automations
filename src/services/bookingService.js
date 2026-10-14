@@ -452,7 +452,11 @@ async function holdSlotIfFree(leadId, slotDate, slotTime, consultantName = '') {
       console.warn(`[Booking] ${slot}${consultant ? ` (${consultant})` : ''} is already ${other[0].status === 'Booked' ? 'booked' : 'held'} by lead ${other[0].leadId} — lead ${leadId} asked to pick another time`);
       return { ok: false, reason: 'taken', claim: other[0] };
     }
-    await holdSlot(leadId, slotDate, slotTime);
+    await holdSlot(leadId, slotDate, slotTime, consultant);
+    // A lead holds one time at a time (holdSlot overwrites bookedSlot): the time
+    // this client held before is free again — forget it, or the next client would
+    // be refused a time the page offers them.
+    for (const [k, v] of _recentHolds) if (v.leadId === String(leadId) && k !== key) _recentHolds.delete(k);
     _recentHolds.set(key, { leadId: String(leadId), at: Date.now() });
     return { ok: true };
   })();
@@ -460,8 +464,10 @@ async function holdSlotIfFree(leadId, slotDate, slotTime, consultantName = '') {
   try { return await run; } finally { if (_slotHoldLocks.get(key) === run) _slotHoldLocks.delete(key); }
 }
 
-/** Tentatively reserve a slot with an expiry based on how far out it is. */
-async function holdSlot(leadId, slotDate, slotTime) {
+/** Tentatively reserve a slot with an expiry based on how far out it is.
+ *  consultantName (optional) is written in the SAME write, so a hold never exists
+ *  without its consultant — a hold with none blocks every consultant's clients. */
+async function holdSlot(leadId, slotDate, slotTime, consultantName = '') {
   const dt = new Date(`${slotDate}T00:00:00`);
   const expHours = getExpirationHours(dt);
   const heldUntil = new Date(Date.now() + expHours * 3600 * 1000);
@@ -472,6 +478,7 @@ async function holdSlot(leadId, slotDate, slotTime) {
     bookingStatus: 'Slot Held',
     bookedSlot:    `${slotDate} ${slotTime}`,
     slotHeldUntil: heldUntil.toISOString(),
+    ...(String(consultantName || '').trim() ? { assignedConsultant: String(consultantName).trim() } : {}),
   });
   console.log(`[Booking] Held ${slotDate} ${slotTime} for lead ${leadId} (expires in ${expHours}h)`);
 }
@@ -915,12 +922,15 @@ async function _confirmSlot(leadId, txnId, meetingType, amountCents) {
   let slotClash = [];
   const slot = String((lead && lead.bookedSlot) || '').trim();
   if (slot) {
+    // The same consultant the hold step judged by: the saved one, else the routing
+    // (a blank cell must not make every consultant's client at that minute a clash).
+    let consultant = String(lead.assignedConsultant || '').trim();
+    if (!consultant) { try { consultant = String(require('../../config/consultantRouting').resolveConsultant(lead).name || ''); } catch (_) { /* none */ } }
     try {
-      const consultant = String(lead.assignedConsultant || '').trim();
       slotClash = claimsOnSlot(await readSlotClaims(), slot, { consultant, excludeLeadId: leadId }).filter((c) => c.status === 'Booked');
     } catch (err) { console.warn(`[Booking] same-time check failed for ${leadId}: ${err.message}`); }
     if (slotClash.length) {
-      const who = String(lead.assignedConsultant || '').trim() || 'the consultant';
+      const who = consultant || 'the consultant';
       const others = slotClash.map((c) => `${escNote(c.name || 'a client')} (lead ${escNote(c.leadId)})`).join(', ');
       console.warn(`[Booking] Lead ${leadId} paid for ${slot} (${who}) — already booked by ${slotClash.map((c) => c.leadId).join(', ')}`);
       await postBookingNote(leadId,
