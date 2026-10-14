@@ -840,6 +840,40 @@ app.post('/admin/retainer/:leadId/milestone/:index/undo', express.json(), async 
   }
 });
 
+// "Correct amount" (2026-10-13): a named admin fixes the AMOUNT of a milestone's
+// latest payment (it happened, for a different amount) — nothing else changes.
+app.get('/admin/retainer/:leadId/milestone/:index/correct-preview', async (req, res) => {
+  const actor = resolveNamedAdminOrReject(req, res);
+  if (!actor) return;
+  const { leadId, index } = _msParams(req);
+  if (!/^\d{3,20}$/.test(leadId)) return res.status(400).json({ error: 'Unknown client.' });
+  const amountCents = Number(req.query.amountCents);
+  try {
+    const r = await require('./services/paymentCorrectService').previewAmountCorrection({ leadId, index, amountCents, actor });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, code: r.code });
+    res.json(r);
+  } catch (err) {
+    console.error('[PaymentCorrect] preview failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/admin/retainer/:leadId/milestone/:index/correct', express.json(), async (req, res) => {
+  const actor = resolveNamedAdminOrReject(req, res);
+  if (!actor) return;
+  const { leadId, index } = _msParams(req);
+  const { amountCents, confirmText, reason, expect } = req.body || {};
+  try {
+    const r = await require('./services/paymentCorrectService').executeAmountCorrection({ leadId, index, amountCents, confirmText, reason, expect, actor });
+    console.log(`[PaymentCorrect] lead ${leadId}#${index} by ${actor.email}: ${r.ok ? (r.already ? 'already corrected' : `corrected ${r.corrected.from}→${r.corrected.to}`) : r.code}`);
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, code: r.code, refusal: r.refusal });
+    res.json(r);
+  } catch (err) {
+    console.error('[PaymentCorrect] execute failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error — check the client’s record before retrying.' });
+  }
+});
+
 // Any signed-in staffer (key or Monday) can FLAG a payment as wrong — it writes
 // nothing to payment state; it posts a note and alerts the admins and the RCIC.
 app.post('/admin/retainer/:leadId/milestone/:index/flag-error', express.json(), async (req, res) => {

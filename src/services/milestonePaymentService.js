@@ -183,6 +183,10 @@ function milestoneStates(lead, currentCaseStage, orderedStages = []) {
       markedBy: (p.marked && p.marked.by) || '', markedAt: (p.marked && p.marked.at) || '',
       markedVerified: !!(p.marked && p.marked.verified),
       undoneBy: (p.undone && p.undone.by) || '', undoneAt: (p.undone && p.undone.at) || '',
+      // "Correct amount" (admins): who corrected the latest payment, when, from → to (cents).
+      fixedBy: (p.fixed && p.fixed.by) || '', fixedAt: (p.fixed && p.fixed.at) || '',
+      fixedFrom: p.fixed && Number.isFinite(Number(p.fixed.from)) ? Number(p.fixed.from) : null,
+      fixedTo: p.fixed && Number.isFinite(Number(p.fixed.to)) ? Number(p.fixed.to) : null,
       // Part-payments: what has been received on this row and what is still owed.
       paidCents: paidCentsOf(p, r.totalCents),
       balanceCents: Math.max(0, Math.round(r.totalCents || 0) - paidCentsOf(p, r.totalCents)),

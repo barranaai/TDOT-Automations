@@ -155,7 +155,7 @@ test('dialogs: labelled for screen readers, focus returns to the button, and a f
   assert.match(js, /opener\.focus\(\)/, 'focus goes back to what opened the dialog');
   const overlay = js.slice(js.indexOf('function payOverlay(){'), js.indexOf('function payTitle('));
   assert.match(overlay, /if \(d\.onClose\)/, 'Escape, the backdrop and Done all run the same close — and its refresh');
-  assert.equal((js.match(/d\.onClose = o\.onDone \|\| null/g) || []).length, 2, 'set once the undo and once the flag has succeeded');
+  assert.equal((js.match(/d\.onClose = o\.onDone \|\| null/g) || []).length, 3, 'set once the undo, the flag and the amount correction have succeeded');
   assert.match(js, /role="alert"/, 'errors are announced');
   assert.match(js, /at least 10 characters/, 'the reason minimum is stated up front');
 });

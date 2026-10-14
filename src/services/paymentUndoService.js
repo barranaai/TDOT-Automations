@@ -809,8 +809,9 @@ async function flagPaymentError({ leadId, index, actor, note, viewer = null } = 
 module.exports = {
   planMilestonePaidReversal, validateUndoRequest,
   previewMilestonePaidReversal, executeMilestonePaidReversal, flagPaymentError,
-  // helpers exported for tests
+  // helpers exported for tests (and the "Correct amount" service, which shares the reads, gates and notices)
   entryFingerprint, restoredEntry, conversionFor, onboardingSignals, reversalHolds, readCase, commitReversal,
+  readState, confirmTextFor, notifyPeople, typedMark, REASON_MIN, REASON_MAX, MAX_INDEX, VERIFY_READS, VERIFY_GAP_MS,
   io, AWAITING_PAYMENT, LEAD_LOCK_WAIT_MS, FLAG_COOLDOWN_MS, FLAG_ACTOR_MAX, BUSY_MESSAGE,
   _resetFlagThrottle: () => { _flaggedAt.clear(); _flagsBy.clear(); },
 };
