@@ -311,3 +311,12 @@ test('REVIEW 2: not confirmed AND the notes could not be posted — the message 
     assert.ok(alerts.length && alerts.every((x) => /^NOT CONFIRMED — check the payment row: Payment amount corrected/.test(x)));
   } finally { h.restore(); }
 });
+
+test('the named-admin gate speaks for both Undo and Correct amount ("change a payment record")', () => {
+  const { namedAdminCheck } = require('../src/utils/staffIdentity');
+  const none = namedAdminCheck(null, () => true);
+  assert.deepEqual([none.status, none.error], [401, 'Sign in with Monday to change a payment record — the shared admin key doesn’t say who you are.']);
+  const notAdmin = namedAdminCheck({ email: 'k@example.com', name: 'K' }, () => false);
+  assert.deepEqual([notAdmin.status, notAdmin.error], [403, 'Only admins can change a payment record. Use “Flag as wrong” to alert them.']);
+  assert.equal(namedAdminCheck({ email: 'f@example.com', name: 'Faran' }, () => true).ok, true);
+});

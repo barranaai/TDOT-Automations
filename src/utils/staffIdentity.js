@@ -28,8 +28,9 @@ function actorFromStaff(staff, typedName) {
 }
 
 /**
- * Undo is for NAMED admins only: signed in with Monday AND listed in
- * ADMIN_EMAILS. The shared admin key is deliberately not enough.
+ * Undo and "Correct amount" are for NAMED admins only: signed in with Monday AND
+ * listed in ADMIN_EMAILS. The shared admin key is deliberately not enough. The
+ * wording names both actions ("change a payment record") — both routes share it.
  * @param {?{name?:string,email?:string}} staff  tryStaffAuth(req) result
  * @param {(email:string)=>boolean} isAdminEmail
  * @returns {{ok:true, actor:object} | {ok:false, status:number, error:string, loginUrl?:string}}
@@ -37,10 +38,10 @@ function actorFromStaff(staff, typedName) {
 function namedAdminCheck(staff, isAdminEmail) {
   if (!staff || !staff.email) {
     return { ok: false, status: 401, loginUrl: '/q/auth/monday',
-      error: 'Sign in with Monday to undo a payment — the shared admin key doesn’t say who you are.' };
+      error: 'Sign in with Monday to change a payment record — the shared admin key doesn’t say who you are.' };
   }
   if (!isAdminEmail(staff.email)) {
-    return { ok: false, status: 403, error: 'Only admins can undo a payment. Use “Flag as wrong” to alert them.' };
+    return { ok: false, status: 403, error: 'Only admins can change a payment record. Use “Flag as wrong” to alert them.' };
   }
   return { ok: true, actor: { name: oneLine(staff.name || staff.email).slice(0, 60), email: String(staff.email), verified: true } };
 }
