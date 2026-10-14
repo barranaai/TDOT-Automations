@@ -468,7 +468,7 @@ async function sendConfirmation(body) {
       <div style="background:#fff;padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
         <p>Hi ${first},</p>
         <p>Thank you for sharing your details with TDOT Immigration. Our team will review your information and reach out to schedule your consultation.</p>
-        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Anything to add? Just reply to this email.</p>
+        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Anything to add? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
       </div></div>`;
   await microsoftMail.sendEmail({ to: body.email, subject: 'We received your TDOT Immigration consultation request', html });
 }

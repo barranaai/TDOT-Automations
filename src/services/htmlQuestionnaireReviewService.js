@@ -431,7 +431,7 @@ function buildConsolidatedCorrectionEmailHtml({ clientName, caseRef, caseType, m
         </table>
 
         <p style="font-size:13px;color:#94a3b8;line-height:1.6;margin:0;">
-          If you have questions, please reply to this email or contact your consultant directly.
+          If you have questions, please ${require('../utils/clientContact').EMAIL_US} or contact your consultant directly. ${require('../utils/clientContact').NO_REPLY}
           Please include your Case Reference Number in any correspondence.
         </p>
       </td></tr>
@@ -537,7 +537,7 @@ function buildCorrectionEmailHtml({ clientName, caseRef, caseType, flaggedItems,
         </table>
 
         <p style="font-size:13px;color:#94a3b8;line-height:1.6;margin:0;">
-          If you have questions, please reply to this email or contact your consultant directly.
+          If you have questions, please ${require('../utils/clientContact').EMAIL_US} or contact your consultant directly. ${require('../utils/clientContact').NO_REPLY}
           Please include your Case Reference Number in any correspondence.
         </p>
       </td></tr>

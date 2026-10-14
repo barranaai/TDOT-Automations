@@ -162,7 +162,7 @@ function buildRevisionEmailHtml({ clientName, caseRef, accessToken, questionnair
       ${qSection}
       ${dSection}
       <p style="margin:24px 0 0;font-size:.82rem;color:#94a3b8;border-top:1px solid #f1f5f9;padding-top:16px;">
-        If you have any questions please reply to this email or contact your case manager.
+        If you have any questions please ${require('../utils/clientContact').EMAIL_US} or contact your case manager. ${require('../utils/clientContact').NO_REPLY}
         <br>TDOT Immigration Services
       </p>
     </div>

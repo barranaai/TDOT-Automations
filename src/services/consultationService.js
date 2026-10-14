@@ -645,7 +645,7 @@ async function _sendConsultationPackage(leadId, { overrides = {} } = {}) {
           ? `<b>Please complete the pre-consultation form at least 24 hours before your scheduled consultation.</b> If it is not completed in time, your consultation may be cancelled.`
           : `<b>Please complete both steps at least 24 hours before your scheduled consultation.</b> If they are not completed in time, your consultation may be cancelled.`}
       </div>
-      <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:20px">Any questions? Just reply to this email.</p>
+      <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:20px">Any questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
     </div></div>`;
 
   try {

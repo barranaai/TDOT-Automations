@@ -847,7 +847,7 @@ function buildPortalPage(snap, opts) {
     <p class="footer">
       ${isStaff
         ? `Linked from the Client Master Board · ${escHtml(snap.caseRef)}<br>This portal mirrors the live state — every load queries Monday + OneDrive.`
-        : `If you have questions, simply reply to the email your case officer sent you.<br>Please include your <strong>Case Reference Number</strong> in any correspondence.`}<br>
+        : `If you have questions, please ${require('../utils/clientContact').EMAIL_US} or contact your case officer.<br>Please include your <strong>Case Reference Number</strong> in any correspondence.`}<br>
       <span class="footer-brand">TDOT IMMIGRATION SERVICES</span>
     </p>
 

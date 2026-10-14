@@ -53,7 +53,7 @@ const jsLit = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
 
 // Team roster for the attribution dropdowns (lead owner / booked-by / reviewer).
 // Env-overridable so the list can change without a deploy.
-const PORTAL_STAFF = (process.env.PORTAL_STAFF || 'Gauri,Kamal,Asmita,Prajwal,Melini,Diksha')
+const PORTAL_STAFF = (process.env.PORTAL_STAFF || 'Gauri,Kamal,Asmita,Prajwal,Melanie,Diksha')
   .split(',').map((s) => s.trim()).filter(Boolean);
 const STAFF_OPTS = '<option value="">—</option>' +
   PORTAL_STAFF.map((s) => `<option value="${s.replace(/"/g, '&quot;')}">${s.replace(/</g, '&lt;')}</option>`).join('');
@@ -279,6 +279,29 @@ function dcSubtypes(){
 /* ── Warn-and-link: surface existing records for this email/phone ── */
 var DC_MATCHES=null;
 function dcRenderMatches(m){
+  // Converting a lead (Leads page, Convert to direct retainer): THAT lead is the
+  // record being kept, so it is never shown as a duplicate of itself (Gauri
+  // 2026-10-08: the "already exists, merge?" prompt about the very lead being
+  // converted). A client account for the same person is expected. Anything else
+  // found (another lead, an open case) is shown as a note only; the conversion
+  // stays linked to this lead and no choice is asked for.
+  if(m && DC_CONVERT_LEAD_ID){
+    var conv=String(DC_CONVERT_LEAD_ID);
+    var otherLeads=(m.leads||[]).filter(function(l){ return String(l.id)!==conv; });
+    var cbox=dcEl('dc-matches');
+    DC_MATCHES=null;
+    if(!otherLeads.length && !(m.cases&&m.cases.length)){ cbox.style.display='none'; cbox.innerHTML=''; return; }
+    var notes=[];
+    (m.cases||[]).forEach(function(c){
+      notes.push('<div class="dcm-info">Open case: <a href="/admin/case/'+encodeURIComponent(c.caseRef)+'" target="_blank" rel="noopener">'+escHtml(c.caseRef||'(ref pending)')+'</a> — '+escHtml(c.name)+(c.caseStage?' · '+escHtml(c.caseStage):'')+'. If this is the same matter, work in the case instead.</div>');
+    });
+    otherLeads.forEach(function(l){
+      notes.push('<div class="dcm-info">Another lead: '+escHtml(l.name)+(l.email?' &middot; '+escHtml(l.email):'')+(l.sourceChannel?' ('+escHtml(l.sourceChannel)+')':'')+'</div>');
+    });
+    cbox.innerHTML='<div class="dcm-title">This email/phone also appears below — check it is not the same matter. The conversion keeps lead '+escHtml(conv)+' as the one record.</div>'+notes.join('');
+    cbox.style.display='block';
+    return;
+  }
   DC_MATCHES=m;
   var box=dcEl('dc-matches');
   var any=m && ((m.leads&&m.leads.length)||(m.cases&&m.cases.length)||(m.clients&&m.clients.length));

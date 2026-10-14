@@ -98,7 +98,7 @@ test('the case-details box: reference, type, principal applicant, role — and N
     assert.match(textOf(html), /You and Aisha share one portal for this case\./);
     assert.match(textOf(html), /This is the same portal link Aisha received\./);
     assert.match(textOf(html), /Please do not forward this email\. The link opens Aisha's application as well as your part of it\./);
-    assert.match(textOf(html), /reply to this email \(quoting the case reference 2026-SOWP-017\) or contact the assigned consultant\./);
+    assert.match(textOf(html), /please email us at info@tdotimm\.com \(quoting the case reference 2026-SOWP-017\) or contact the assigned consultant\. Please don't reply to this email — this inbox isn't monitored\./);
     assert.match(textOf(html), /This email was sent to you because you are named on Aisha Khan's application\./);
   }
 });

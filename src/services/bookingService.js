@@ -1058,7 +1058,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
           ${bodyHtml}
           <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Choose your consultation time</a></p>
           <p>You'll see our real-time availability and can pick whatever works for you. ${feeLine}</p>
-          <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it. Questions? Just reply to this email.</p>
+          <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it. Questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
         </div></div>`,
     });
   } catch (err) {

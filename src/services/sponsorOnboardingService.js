@@ -478,8 +478,8 @@ ${docItems}
         </table>
 
         <p style="font-size:14px;color:#64748b;line-height:1.65;margin:0;">
-          If you have any questions, please reply to this email (quoting the case reference <strong>${ref}</strong>)
-          or contact the assigned consultant.
+          If you have any questions, please ${require('../utils/clientContact').EMAIL_US} (quoting the case reference <strong>${ref}</strong>)
+          or contact the assigned consultant. ${require('../utils/clientContact').NO_REPLY}
         </p>
 
       </td></tr>

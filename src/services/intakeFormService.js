@@ -341,7 +341,7 @@ async function sendIntakeAcknowledgement({ fullName, email }) {
         <p>Hi ${first},</p>
         <p>Thank you for contacting TDOT Immigration. Your inquiry has been received and our team is reviewing the details you shared.</p>
         <p>We will get back to you soon with the next steps for your case.</p>
-        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">If anything changes in the meantime, or you have documents to add, just reply to this email.</p>
+        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">If anything changes in the meantime, or you have documents to add, ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
       </div></div>`,
   });
   console.log(`[Intake] Acknowledgement emailed to ${email}`);

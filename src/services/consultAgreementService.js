@@ -471,7 +471,7 @@ async function recordCountersignComplete(lead, { signedPdf, stored } = {}) {
       <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
         <p>Hi ${esc((lead.fullName || 'there').split(' ')[0])},</p>
         <p>Your initial consultation agreement has now been signed by both you and your consultant. Your copy of the fully signed agreement is attached to this email for your records.</p>
-        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Any questions? Just reply to this email.</p>
+        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Any questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
       </div></div>`;
     try {
       await require('./microsoftMailService').sendEmail({
@@ -517,7 +517,7 @@ async function sendConsultAgreement(leadId) {
         <p>Hi ${esc((lead.fullName || 'there').split(' ')[0])},</p>
         <p>Thank you for booking your initial consultation with TDOT Immigration. Please review your consultation agreement:</p>
         <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">View &amp; download your agreement (PDF)</a></p>
-        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Any questions? Just reply to this email.</p>
+        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Any questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
       </div></div>`;
 
   await require('./microsoftMailService').sendEmail({

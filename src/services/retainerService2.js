@@ -542,10 +542,10 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false, 
         <div style="background:#eef3fb;border:1px solid ${BRAND.border};border-radius:8px;padding:14px 16px;margin:20px 0 6px">
           <p style="margin:0 0 8px"><b>Your next steps</b></p>
           <p style="margin:6px 0"><b>1. Review &amp; sign</b> your retainer agreement (above).</p>
-          <p style="margin:6px 0"><b>2. Email the signed copy back to us</b> (just reply to this email with it attached).</p>
+          <p style="margin:6px 0"><b>2. Email the signed copy to us</b> at <a href="mailto:${require('../utils/clientContact').CLIENT_CONTACT_EMAIL}">${require('../utils/clientContact').CLIENT_CONTACT_EMAIL}</a>, with the signed agreement attached (not as a reply — this inbox isn't monitored).</p>
           <p style="margin:6px 0"><b>3. Make your payment by Interac e-Transfer</b> to <b>${esc(etransferEmail)}</b>, as set out in the "Method of Payment" section of your agreement. We will email you the exact amount and reference for your first payment.</p>
         </div>
-        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:20px">Questions about the fee? Just reply to this email.</p>
+        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:20px">Questions about the fee? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
       </div></div>`;
   try {
     await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration retainer agreement', html });

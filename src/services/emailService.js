@@ -130,7 +130,7 @@ function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl,
         </table>
 
         <p style="font-size:14px;color:#64748b;line-height:1.65;margin:0;">
-          If you have any questions, please reply to this email or contact your assigned consultant directly.
+          If you have any questions, please ${require('../utils/clientContact').EMAIL_US} or contact your assigned consultant directly. ${require('../utils/clientContact').NO_REPLY}
           Please include your <strong>Case Reference Number</strong> in any correspondence.
         </p>
 

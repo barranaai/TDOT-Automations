@@ -503,7 +503,7 @@ function buildClientEmailHtml(bodyText, caseRef, clientName, isFinal = false) {
   </div>
   <hr>
   <p style="font-size:.84rem;color:#4b5563">
-    Need help? Reply to this email or contact your case officer directly.<br>
+    Need help? Please ${require('../utils/clientContact').EMAIL_US} or contact your case officer directly. ${require('../utils/clientContact').NO_REPLY}<br>
     Case Reference: <strong>${caseRef}</strong>
   </p>
   <p class="footer">TDOT Immigration &nbsp;|&nbsp; This email was sent regarding your active immigration case.</p>

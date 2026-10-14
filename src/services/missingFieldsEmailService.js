@@ -173,7 +173,7 @@ function buildEmailHtml({ clientName, caseRef, formUrl, missingByMember, totalMi
     </div>
 
     <p style="font-size:12px; color:#6B7280; margin-top:22px; line-height:1.5;">
-      If you have any questions, simply reply to this email and your case officer will get back to you.
+      If you have any questions, please ${require('../utils/clientContact').EMAIL_US} and your case officer will get back to you. ${require('../utils/clientContact').NO_REPLY}
     </p>
     </div>
   </div>

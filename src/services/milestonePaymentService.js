@@ -247,7 +247,7 @@ function etransferInstructionsHtml({ firstName, label, dollars, reference }) {
         <p style="margin:10px 0 0">In the e-transfer <b>message/memo</b>, please include this reference so we can match your payment:</p>
         <p style="margin:4px 0;font-size:15px"><b>${esc(reference)}</b></p>
       </div>
-      <p style="font-size:13px;color:${BRAND.mutedOnLight}">Once we receive your e-transfer we'll confirm it and send your receipt. Questions? Just reply to this email.</p>
+      <p style="font-size:13px;color:${BRAND.mutedOnLight}">Once we receive your e-transfer we'll confirm it and send your receipt. Questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
     </div></div>`;
 }
 
@@ -275,7 +275,7 @@ function paymentReceiptHtml({ firstName, label, amountCents, paidCents, totalCen
         <p style="margin:0 0 8px"><b>Balance remaining: ${esc(dollarsCAD(balance))}</b></p>
         <p style="margin:4px 0">When you are ready, please send an Interac e-Transfer of <b>${esc(dollarsCAD(balance))}</b> to <b>${esc(ETRANSFER_EMAIL)}</b>${payReference ? ` with the reference <b>${esc(payReference)}</b> in the message` : ''}.</p>
       </div>`}
-      <p style="font-size:13px;color:${BRAND.mutedOnLight}">This is your receipt — please keep it for your records. Questions? Just reply to this email.</p>
+      <p style="font-size:13px;color:${BRAND.mutedOnLight}">This is your receipt — please keep it for your records. Questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
     </div></div>`;
 }
 
