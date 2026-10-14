@@ -44,7 +44,7 @@ const MAX_CENTS = 20000000;   // $200,000 — the same ceiling as Record payment
  * PURE. What correcting the latest payment on milestone `index` to `newAmountCents` would write.
  * @returns {{ok:false, refusal:{code,message}} | {ok:true, ...plan}}
  */
-function planAmountCorrection({ lead, index, cm = null, cmMissing = false, claimants, newAmountCents, actor = null, now = null } = {}) {
+function planAmountCorrection({ lead, index, cm = null, cmMissing = false, claimants, squareOrder = null, newAmountCents, actor = null, now = null } = {}) {
   const refuse = (code, message) => ({ ok: false, refusal: { code, message } });
   const i = Number(index);
   if (!Number.isInteger(i) || i < 0 || i > U.MAX_INDEX) return refuse('BAD_INDEX', 'That milestone does not exist.');
@@ -60,6 +60,11 @@ function planAmountCorrection({ lead, index, cm = null, cmMissing = false, claim
   if (!(total > 0)) return refuse('NO_SCHEDULE', 'This milestone has no scheduled amount on the retainer plan, so a corrected amount can’t be checked against it.');
   if (s(before.txnId) || (i === 0 && s(lead.squareRetainerTxnId))) {
     return refuse('SQUARE_PAYMENT', 'This payment is linked to Square — correct it in Square (refund the difference), not here.');
+  }
+  // A retainer stamped paid first can carry a Square link Square reports as PAID with no txn id (as Undo).
+  const squareLink = i === 0 && s(lead.squareRetainerOrderId);
+  if (squareLink && squareOrder && squareOrder.paid) {
+    return refuse('SQUARE_PAYMENT', 'Square shows the payment link for this retainer as PAID, so Square holds the money — correct it in Square, not here.');
   }
   const ledger = ms.ledgerOf(before);
   const raw = Array.isArray(before.l) ? before.l.filter((x) => x && typeof x === 'object' && Number.isFinite(Number(x.a)) && Number(x.a) > 0) : [];
@@ -80,13 +85,18 @@ function planAmountCorrection({ lead, index, cm = null, cmMissing = false, claim
   if (!Number.isInteger(n) || n <= 0 || n > MAX_CENTS) return refuse('BAD_AMOUNT', 'Enter the amount actually received, in dollars and cents.');
   if (n === wasCents) return refuse('SAME_AMOUNT', `That payment is already recorded as ${dollars(n)} — nothing to correct.`);
   const newSum = otherCents + n;
+  // Lowering a payment while what is on file still covers the milestone (the plan was
+  // amended down): nothing would be owed either way — that is "Mark settled", not this.
+  if (newSum >= total && n < wasCents) {
+    return refuse('COVERED', `Even at ${dollars(n)}, the payments on file (${dollars(newSum)}) cover this milestone (${dollars(total)}) — nothing would be owed. Nothing was changed. Use “Mark settled” on the payment row instead.`);
+  }
   if (newSum > total) {
     return refuse('OVER_TOTAL', otherCents > 0
       ? `That is more than this milestone allows: ${dollars(otherCents)} is on file from earlier payments, and the milestone is ${dollars(total)}. Nothing was changed. Record anything extra on the next milestone.`
       : `That is more than the milestone (${dollars(total)}). Nothing was changed. Record anything extra on the next milestone.`);
   }
   if (newSum === total) {
-    return refuse('WOULD_SETTLE', `That would make the milestone fully paid. A correction never marks a milestone paid — record the missing ${dollars(n - wasCents)} with “Record balance / part-payment” instead. Nothing was changed.`);
+    return refuse('WOULD_SETTLE', `That would make the milestone fully paid. A correction never marks a milestone paid — record the missing ${dollars(total - (otherCents + wasCents))} with “Record balance / part-payment” instead. Nothing was changed.`);
   }
 
   const at = s(now) || new Date().toISOString();
@@ -125,6 +135,7 @@ function planAmountCorrection({ lead, index, cm = null, cmMissing = false, claim
   else if (claimants === null && s(lead.clientMasterItemId)) info.push({ code: 'CLAIMANTS_UNKNOWN', message: 'Couldn’t check whether another client record shares this case — make sure this is the right client.' });
   if (s(lead.clientMasterItemId) && cmMissing) warnings.push({ code: 'CASE_MISSING', message: 'The case this client points at no longer exists on the Cases board. The correction changes the client’s record only.' });
   if (cm && cm.archived) warnings.push({ code: 'CASE_ARCHIVED', message: 'This client’s case is archived.' });
+  if (squareLink && !squareOrder) warnings.push({ code: 'SQUARE_LINK_EXISTS', message: 'A Square payment link was issued for this retainer, and Square could not be checked just now. Look in Square for a completed payment before correcting this amount.' });
   info.push({ code: 'BALANCE', message: i === 0
     ? `The ${dollars(balance)} balance is collected before submission — the Summary lists it once the case reaches Submission Preparation.`
     : `The ${dollars(balance)} balance stays on this milestone until it is recorded.` });
@@ -134,15 +145,21 @@ function planAmountCorrection({ lead, index, cm = null, cmMissing = false, claim
     `The payment${when}${latest.reference ? ` (ref ${latest.reference})` : ''} is recorded as ${dollars(n)} — it was ${dollars(wasCents)}`,
     `${label} reads “part-paid”: ${dollars(newSum)} of ${dollars(total)} on file — balance ${dollars(balance)}`,
   ];
+  // Milestone 1: is the case started, or held for a signature? (Say only what is true.)
+  const gate = require('./caseGateService').signatureGateForLead(lead);
+  const caseState = (i !== 0 || !retainerPaid) ? null
+    : ((cm && s(cm.paymentStatus).toLowerCase() === 'paid') || gate.complete) ? 'started' : 'held';
+  const retained = U.RETAINED_LABELS.includes(s(lead.conversionStatus).toLowerCase());
   const willNotChange = ['No money moves, and nothing is sent to the client'];
-  if (i === 0 && retainerPaid) willNotChange.push(`The case stays started — Retainer Paid date (${retainerPaid}), “Retained”, and the case’s Payment Status and stage`);
+  if (caseState === 'started') willNotChange.push(`The case stays started — Retainer Paid date (${retainerPaid})${retained ? ', “Retained”' : ''}, and the case’s Payment Status and stage`);
+  else if (caseState === 'held') willNotChange.push(`The Retainer Paid date (${retainerPaid}) — the case still starts on the money on file once the ${gate.missing.join(' and ')} ${gate.missing.length > 1 ? 'are' : 'is'} in`);
   else if (i === 0) willNotChange.push('The client’s Retainer Paid date and the case');
   willNotChange.push('Signatures, “Retained by”, emails already sent, and Monday history');
 
   return {
     ok: true,
     leadId: s(lead.id), index: i, label, totalCents: total, mode,
-    before, after, wasCents, newAmountCents: n, newSumCents: newSum, balanceCents: balance, latest,
+    before, after, wasCents, newAmountCents: n, newSumCents: newSum, balanceCents: balance, latest, caseState, retained, missing: caseState === 'held' ? gate.missing : [],
     warnings, info, willChange, willNotChange, paymentsText,
     expect: { entry: U.entryFingerprint(before), amountCents: n },
     confirmText: U.confirmTextFor(lead, cm, shared),
@@ -221,21 +238,30 @@ async function executeAmountCorrection({ leadId, index, amountCents, confirmText
         return { ok: false, status: 409, code: 'CHANGED_SINCE_PREVIEW', error: 'This payment changed since you opened the dialog. Close it and open it again.' };
       }
       if (s(confirmText) !== plan.confirmText) return { ok: false, status: 400, code: 'CONFIRM_MISMATCH', error: `Type ${plan.confirmText} exactly to confirm.` };
+      let commitErr = null;
       try { await io.commit(plan); }
       catch (err) {
         if (err.code === 'CHANGED_SINCE_PREVIEW') return { ok: false, status: 409, code: err.code, error: err.message };
-        // A lost response may still have landed — the read-back below decides.
-        if (err.code) return { ok: false, status: 503, code: err.code, error: err.message };
+        if (U.OWN_COMMIT_CODES.includes(err.code)) return { ok: false, status: 503, code: err.code, error: err.message };
+        // A transport error (ECONNABORTED, a 504 …) may hide a write that landed — the read-back decides.
+        commitErr = err;
       }
       // Hold the lock until the correction reads back (whoever takes it next must see it).
-      const want = U.entryFingerprint(plan.after);
-      let verified = false;
-      for (let k = 0; k < U.VERIFY_READS && !verified; k++) {
+      const want = U.entryFingerprint(plan.after), was = U.entryFingerprint(plan.before);
+      let seen = 'unread';
+      for (let k = 0; k < U.VERIFY_READS && seen !== 'after'; k++) {
         if (k) await U.io.sleep(U.VERIFY_GAP_MS);
-        try { const l = await U.io.getLead(key); verified = !!l && U.entryFingerprint(ms.readPayments(l).pay[i]) === want; } catch (_) { /* read again */ }
+        try {
+          const l = await U.io.getLead(key);
+          const fp = l ? U.entryFingerprint(ms.readPayments(l).pay[i]) : '';
+          seen = fp === want ? 'after' : fp === was ? 'before' : 'other';
+        } catch (_) { /* read again */ }
       }
-      if (!verified) return { ok: false, status: 503, code: 'NOT_CONFIRMED', error: 'Monday didn’t confirm the change. Reload the page and look at the payment row before trying again.' };
-      return { ok: true, plan, lead: st.lead, cm: st.cm, cmMissing: st.cmMissing };
+      // The write failed and the row still reads as before: nothing changed — nothing to record.
+      if (commitErr && seen === 'before') return { ok: false, status: 503, code: 'COMMIT_FAILED', error: 'Monday didn’t accept the change — nothing was changed. Try again in a minute.' };
+      // Landed but not confirmed in time (or unreadable): still record it and alert — an
+      // admin-only money change must never be left with no reason on record.
+      return { ok: true, plan, lead: st.lead, cm: st.cm, cmMissing: st.cmMissing, unconfirmed: seen !== 'after' };
     });
   } finally {
     _inFlight.delete(key);
@@ -244,18 +270,21 @@ async function executeAmountCorrection({ leadId, index, amountCents, confirmText
   if (!outcome.ok || outcome.already) return outcome;
 
   // ── After the lock: the record and the alerts ──
-  const { plan, lead, cm } = outcome;
+  const { plan, lead, cm, unconfirmed } = outcome;
   const who = esc(s(actor.name) || s(actor.email));
   const when = `${torontoTime(Date.parse(U.io.nowIso()))} (Toronto)`;
-  const started = plan.index === 0 && s(lead.retainerPaid);
+  const started = plan.caseState === 'started';
+  const held = plan.caseState === 'held';
+  const heldLine = held ? `the Retainer Paid date stays — the case still starts on the money on file once the ${(plan.missing || []).join(' and ')} ${(plan.missing || []).length > 1 ? 'are' : 'is'} in` : '';
+  const alarm = unconfirmed ? '<br>⚠️ <b>Monday did not confirm this change in time</b> — an admin must check the payment row now. If it still shows the old amount, the correction did not land.' : '';
   const what = `the payment${plan.latest.paidAt ? ` of ${esc(plan.latest.paidAt)}` : ''}${plan.latest.reference ? ` (ref ${esc(plan.latest.reference)})` : ''}`;
   const head = `✏️ <b>Payment amount corrected</b> — ${esc(plan.label)}: ${what} is now recorded as <b>${esc(dollars(plan.newAmountCents))}</b> (it was ${esc(dollars(plan.wasCents))}). ` +
     `${esc(plan.label)} reads “part-paid”: ${esc(dollars(plan.newSumCents))} of ${esc(dollars(plan.totalCents))} on file — <b>balance ${esc(dollars(plan.balanceCents))}</b>.`;
   const leadBody = `${head}<br>Corrected by ${who} — ${when}. <b>Reason:</b> ${esc(s(reason))}<br>` +
-    `<b>Not changed:</b> ${started ? 'the case stays started (Retainer Paid date, “Retained”, Payment Status and stage); ' : ''}signatures, and anything already sent to the client. No money moved.` +
-    (plan.index === 0 ? ' Collect the balance before submission.' : '') +
+    `<b>Not changed:</b> ${started ? `the case stays started (Retainer Paid date, ${plan.retained ? '“Retained”, ' : ''}Payment Status and stage); ` : held ? `${esc(heldLine)}; ` : ''}signatures, and anything already sent to the client. No money moved.` +
+    (plan.index === 0 ? ' Collect the balance before submission.' : '') + alarm +
     `<br><small>Before: ${esc(JSON.stringify(plan.before))}</small>`;
-  const caseBody = `${head} Corrected by ${who} — ${when}. <b>Reason:</b> ${esc(s(reason))}.${started ? ' The case stays started.' : ''} Details are on the client’s lead record.`;
+  const caseBody = `${head} Corrected by ${who} — ${when}. <b>Reason:</b> ${esc(s(reason))}.${started ? ' The case stays started.' : ''} Details are on the client’s lead record.${alarm}`;
   const caseItem = (s(lead.clientMasterItemId) && !outcome.cmMissing) ? s(lead.clientMasterItemId) : '';
   const warnings = [...plan.warnings];
   let notesFailed = false;
@@ -266,9 +295,13 @@ async function executeAmountCorrection({ leadId, index, amountCents, confirmText
     `Payment amount corrected for ${s(lead.fullName) || 'a client'}${(cm && cm.caseRef) ? ` (${cm.caseRef})` : ''}: ${plan.label} ${dollars(plan.wasCents)} → ${dollars(plan.newAmountCents)}. By ${s(actor.name) || s(actor.email)} — ${s(reason).slice(0, 120)}`,
     caseItem || lead.id, actor.email).catch(() => 0);
   try { U.io.invalidateQueues(); } catch (_) { /* cache only */ }
+  if (unconfirmed) {
+    return { ok: false, status: 503, code: 'NOT_CONFIRMED', warnings, notified,
+      error: 'Monday didn’t confirm the change in time. The record and the alerts were posted — reload the page and check the payment row before doing anything else.' };
+  }
   return {
     ok: true,
-    message: `Corrected. ${plan.label} now reads “part-paid”: ${dollars(plan.newSumCents)} of ${dollars(plan.totalCents)} — balance ${dollars(plan.balanceCents)}.${started ? ' The case stays started — collect the balance before submission.' : ''}`,
+    message: `Corrected. ${plan.label} now reads “part-paid”: ${dollars(plan.newSumCents)} of ${dollars(plan.totalCents)} — balance ${dollars(plan.balanceCents)}.${started ? ' The case stays started — collect the balance before submission.' : held ? ` The case still starts on the money on file once the ${(plan.missing || []).join(' and ')} ${(plan.missing || []).length > 1 ? 'are' : 'is'} in.` : ''}`,
     corrected: { index: plan.index, from: plan.wasCents, to: plan.newAmountCents, balanceCents: plan.balanceCents },
     warnings, notified,
   };

@@ -373,6 +373,8 @@ async function readCase(cmItemId) {
 }
 
 function codeError(code, message) { const e = new Error(message); e.code = code; return e; }
+// The refusals a commit throws itself — nothing was written. Any other error may hide a write that landed.
+const OWN_COMMIT_CODES = ['CHANGED_SINCE_PREVIEW', 'NO_LEAD', 'PAYMENTS_UNREADABLE'];
 
 /**
  * The reversal, as ONE lead mutation, inside the payment-write queue so no
@@ -624,10 +626,13 @@ async function executeMilestonePaidReversal({ leadId, index, confirmText, reason
         if (err.code === 'CHANGED_SINCE_PREVIEW') return { ok: false, status: 409, code: err.code, error: err.message };
         // A write whose response was lost may still have landed. Read back: if it
         // did, carry on as a success so the record and the alerts are not lost.
-        const landed = err.code ? { ok: false } : await verifyReversal({ ...plan, _readOnly: true });
+        // Only OUR refusals mean "nothing was written". A transport error carries a code
+        // too (ECONNABORTED, ERR_BAD_RESPONSE …) and may hide a write that landed.
+        const ownRefusal = OWN_COMMIT_CODES.includes(err.code);
+        const landed = ownRefusal ? { ok: false } : await verifyReversal({ ...plan, _readOnly: true });
         if (!landed.ok) {
           return { ok: false, status: 503, code: err.code || 'COMMIT_FAILED',
-            error: err.code ? err.message : 'Monday didn’t accept the change — nothing was changed. Try again in a minute.' };
+            error: ownRefusal ? err.message : 'Monday didn’t accept the change — nothing was changed. Try again in a minute.' };
         }
         committed = { conversion: plan.keepStart ? null : conversionFor(st.lead, i), recovered: true };
       }
@@ -811,7 +816,7 @@ module.exports = {
   previewMilestonePaidReversal, executeMilestonePaidReversal, flagPaymentError,
   // helpers exported for tests (and the "Correct amount" service, which shares the reads, gates and notices)
   entryFingerprint, restoredEntry, conversionFor, onboardingSignals, reversalHolds, readCase, commitReversal,
-  readState, confirmTextFor, notifyPeople, typedMark, REASON_MIN, REASON_MAX, MAX_INDEX, VERIFY_READS, VERIFY_GAP_MS,
+  readState, confirmTextFor, notifyPeople, typedMark, REASON_MIN, REASON_MAX, MAX_INDEX, VERIFY_READS, VERIFY_GAP_MS, OWN_COMMIT_CODES, RETAINED_LABELS,
   io, AWAITING_PAYMENT, LEAD_LOCK_WAIT_MS, FLAG_COOLDOWN_MS, FLAG_ACTOR_MAX, BUSY_MESSAGE,
   _resetFlagThrottle: () => { _flaggedAt.clear(); _flagsBy.clear(); },
 };

@@ -181,8 +181,79 @@ test('execute refuses: a changed row (stale dialog), a wrong confirmation, an ou
     const req = await request(h);
     const r = await C.executeAmountCorrection(req);
     assert.deepEqual([r.ok, r.code], [false, 'NOT_CONFIRMED']);
-    assert.equal(h.calls.filter((c) => c[0] === 'postNote').length, 0, 'no record of a change that did not land');
+    assert.match(r.error, /The record and the alerts were posted — reload the page and check the payment row/);
+    // REVIEW: a correction Monday may have taken is never left with no reason on record
+    const notes = h.calls.filter((c) => c[0] === 'postNote');
+    assert.equal(notes.length, 2);
+    for (const n of notes) assert.match(n[2], /⚠️ <b>Monday did not confirm this change in time<\/b> — an admin must check the payment row now\. If it still shows the old amount, the correction did not land\./);
+    assert.ok(h.calls.some((c) => c[0] === 'notify'));
   } finally { h.restore(); }
+});
+
+test('REVIEW: a lost response (a transport error with a code) is read back — landed → recorded and alerted as a success; not landed → "nothing was changed", no record', async () => {
+  const axiosLike = (code) => Object.assign(new Error('timeout of 30000ms exceeded'), { code });
+  let h = harness({ commitThrows: null });
+  const realCommit = C.io.commit;
+  C.io.commit = async (p) => { await realCommitInto(h, p); throw axiosLike('ECONNABORTED'); };
+  try {
+    const r = await C.executeAmountCorrection(await request(h));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(h.calls.filter((c) => c[0] === 'postNote').length, 2);
+    assert.ok(!h.calls.some((c) => c[0] === 'postNote' && /did not confirm/.test(c[2])));
+  } finally { C.io.commit = realCommit; h.restore(); }
+  h = harness();
+  C.io.commit = async () => { throw axiosLike('ERR_BAD_RESPONSE'); };
+  try {
+    const r = await C.executeAmountCorrection(await request(h));
+    assert.deepEqual([r.ok, r.code], [false, 'COMMIT_FAILED']);
+    assert.match(r.error, /nothing was changed/);
+    assert.equal(h.calls.filter((c) => c[0] === 'postNote').length, 0);
+  } finally { C.io.commit = realCommit; h.restore(); }
+});
+function realCommitInto(h, p) { const pay = ms.readPayments(h.store.lead).pay; pay[p.index] = p.after; h.store.lead.milestonePayments = JSON.stringify(pay); }
+
+test('REVIEW: a milestone-1 case HELD for a signature is never called "started"; "Retained" only when it reads Retained; a Square link Square reports PAID is refused, an unchecked one warns; lowering a payment that still covers the milestone points to Mark settled', () => {
+  const held = C.planAmountCorrection({ lead: LEAD({ 0: SANJEEV_ROW }, { retainerSigned: '', conversionStatus: '' }), index: 0, cm: { ...CASE, paymentStatus: 'Already Sent' }, claimants: [], newAmountCents: 56500, actor: ADMIN, now: NOW });
+  assert.equal(held.ok, true, JSON.stringify(held.refusal));
+  assert.equal(held.caseState, 'held');
+  assert.ok(held.willNotChange.includes('The Retainer Paid date (2026-10-13) — the case still starts on the money on file once the client signature is in'));
+  assert.ok(!held.willNotChange.some((x) => /stays started|“Retained”/.test(x)), 'not started, not Retained (“Retained by” is a different line)');
+  const notRetained = plan({ 0: SANJEEV_ROW }, 56500, { conversionStatus: 'Retained — Awaiting Payment' });
+  assert.ok(notRetained.willNotChange.some((x) => /^The case stays started — Retainer Paid date \(2026-10-13\), and the case’s Payment Status and stage$/.test(x)));
+  const sq = C.planAmountCorrection({ lead: LEAD({ 0: SANJEEV_ROW }, { squareRetainerOrderId: 'ORD-1' }), index: 0, cm: CASE, claimants: [], squareOrder: { paid: true }, newAmountCents: 56500, actor: ADMIN, now: NOW });
+  assert.equal(sq.refusal.code, 'SQUARE_PAYMENT');
+  const unchecked = C.planAmountCorrection({ lead: LEAD({ 0: SANJEEV_ROW }, { squareRetainerOrderId: 'ORD-1' }), index: 0, cm: CASE, claimants: [], squareOrder: null, newAmountCents: 56500, actor: ADMIN, now: NOW });
+  assert.ok(unchecked.ok && unchecked.warnings.some((x) => x.code === 'SQUARE_LINK_EXISTS'));
+  const covered = { 0: { status: 'partial', l: [{ ...L1, a: 60000 }, { ...L2, a: 63000 }] } };
+  for (const n of [53000, 55000]) {
+    const r = plan(covered, n);
+    assert.equal(r.refusal.code, 'COVERED', String(n));
+    assert.match(r.refusal.message, /cover this milestone \(\$1,130\.00\) — nothing would be owed\. Nothing was changed\. Use “Mark settled”/);
+  }
+  assert.ok(!/-\$/.test(plan(covered, 53000).refusal.message), 'never a negative amount');
+  assert.match(plan({ 0: { status: 'partial', l: [L1, L2] } }, 56500).refusal.message, /record the missing \$265\.00/);
+});
+
+test('REVIEW: the undo reads back after a transport error too — a reversal that landed is recorded, not reported as "nothing was changed"', async () => {
+  const lead = LEAD({ 0: { status: 'partial', method: 'e-transfer', reference: 'TDOT-17769-M1', requestedAt: '2026-10-01', l: [L1, L2] } });
+  const store = { lead: { ...lead } };
+  const calls = [];
+  const real = { ...U.io };
+  U._resetFlagThrottle();
+  Object.assign(U.io, {
+    getLead: async () => ({ ...store.lead }), readCase: async () => ({ ...CASE }),
+    commit: async (p) => { const pay = ms.readPayments(store.lead).pay; pay[p.index] = p.after; store.lead.milestonePayments = JSON.stringify(pay); throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }); },
+    writeLeadFields: async (id, f) => { calls.push(['writeLeadFields', f]); }, postNote: async (item, body) => { calls.push(['postNote', item, body]); }, notify: async () => {},
+    resolveUserId: async () => null, consultantFor: () => null, adminEmails: () => [], invalidateQueues: () => {},
+    withLeadLockOrSkip: async (k, w, f) => f(), isLeadItem: async () => true, findClaimants: async () => [{ id: lead.id, name: lead.fullName }], caseAssignees: async () => ({ personIds: [], teamIds: [] }),
+    readSquareOrder: async () => ({ paid: false }), now: () => 1000, nowIso: () => NOW, sleep: async () => {},
+  });
+  try {
+    const pv = await U.previewMilestonePaidReversal({ leadId: lead.id, index: 0, actor: ADMIN });
+    const res = await U.executeMilestonePaidReversal({ leadId: lead.id, index: 0, confirmText: pv.plan.confirmText, reason: 'The second e-transfer was from another client', expect: pv.plan.expect, actor: ADMIN });
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.ok(calls.some((c) => c[0] === 'postNote' && /Part-payment record removed|Payment record removed/.test(c[2])));
+  } finally { Object.assign(U.io, real); U._resetFlagThrottle(); }
 });
 
 test('the real write: ONE lead mutation carrying only the payments column; compare-and-swap refuses a row that changed', async () => {
