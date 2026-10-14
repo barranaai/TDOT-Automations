@@ -41,36 +41,74 @@ const caseAccess = require('./caseAccessService');
 const FETCH_IDS = [...new Set([...Object.values(COLS), ...caseAccess.PEOPLE_COLUMNS])];
 
 // ─── Fetch all items with cursor-based pagination ─────────────────────────────
-async function fetchAllItems() {
-  const items  = [];
-  let   cursor = null;
+// The Cases board read is the slow part of the Cases page (~15 s, 100 rows a
+// page, one page at a time, on EVERY view). Now: the ids are listed cheaply,
+// the rows are fetched in parallel batches by id (always with a limit — the
+// 25-row trap), and the RAW rows are cached for a short while and refreshed in
+// the background. Only the raw rows are cached, never a viewer's filtered list
+// (the access filter runs after, per viewer).
+const CASES_CACHE_MS   = 60 * 1000;
+const CASES_BATCH      = 100;
+const CASES_PARALLEL   = 4;
+let _casesCache = { at: 0, items: null };
+let _casesInFlight = null;
 
+async function _fetchAllItemsFresh() {
+  // 1. every item id (name + created_at come with it; no column values yet)
+  const ids = [];
+  let cursor = null, pages = 0;
   do {
     const data = await mondayApi.query(
       `query($boardId: ID!, $cursor: String) {
-         boards(ids: [$boardId]) {
-           items_page(limit: 100, cursor: $cursor) {
-             cursor
-             items {
-               id name created_at
-               column_values(ids: [${FETCH_IDS.map((id) => `"${id}"`).join(',')}]) { id text value }
-             }
-           }
-         }
+         boards(ids: [$boardId]) { items_page(limit: 500, cursor: $cursor) { cursor items { id } } }
        }`,
       { boardId: String(clientMasterBoardId), cursor: cursor || undefined }
     );
-
     const page = data?.boards?.[0]?.items_page;
     if (!page) break;
-    items.push(...(page.items || []));
+    for (const it of page.items || []) ids.push(String(it.id));
     cursor = page.cursor || null;
+    if (++pages > 40) throw new Error('the Cases board listing did not end');
   } while (cursor);
-
-  return items;
+  // 2. the rows, in parallel batches
+  const cols = FETCH_IDS.map((id) => `"${id}"`).join(',');
+  const batches = [];
+  for (let i = 0; i < ids.length; i += CASES_BATCH) batches.push(ids.slice(i, i + CASES_BATCH));
+  const items = new Array(ids.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < batches.length) {
+      const b = next++;
+      const data = await mondayApi.query(
+        `query($ids: [ID!]) { items(ids: $ids, limit: ${CASES_BATCH}) { id name created_at column_values(ids: [${cols}]) { id text value } } }`,
+        { ids: batches[b] }
+      );
+      const got = new Map((data?.items || []).map((it) => [String(it.id), it]));
+      batches[b].forEach((id, k) => { items[b * CASES_BATCH + k] = got.get(id) || null; });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CASES_PARALLEL, batches.length) }, worker));
+  return items.filter(Boolean);   // an item deleted between the two steps simply drops out
 }
 
-// ─── Parse one Monday item into a clean object ────────────────────────────────
+function _refreshCases() {
+  if (_casesInFlight) return _casesInFlight;
+  _casesInFlight = _fetchAllItemsFresh()
+    .then((items) => { _casesCache = { at: Date.now(), items }; return items; })
+    .finally(() => { _casesInFlight = null; });
+  return _casesInFlight;
+}
+
+/** The raw Cases rows: served from the short cache, refreshed in the background once it ages. */
+async function fetchAllItems({ fresh = false } = {}) {
+  const age = _casesCache.items ? Date.now() - _casesCache.at : Infinity;
+  if (fresh || !_casesCache.items || age > 20 * 60 * 1000) return _refreshCases();
+  if (age > CASES_CACHE_MS) _refreshCases().catch((err) => console.warn(`[Dashboard] background refresh failed: ${err.message}`));
+  return _casesCache.items;
+}
+/** After a write that the Cases page must show at once. */
+function invalidateCases() { _casesCache = { at: 0, items: null }; }
+
 function toNum(text) {
   const n = parseFloat((text || '').replace(/[^0-9.-]/g, ''));
   return isNaN(n) ? 0 : n;
@@ -304,4 +342,5 @@ async function getDashboardStats(viewer) {
   };
 }
 
-module.exports = { getDashboardStats };
+module.exports = {
+  fetchAllItems, invalidateCases, _casesIo: { refresh: _refreshCases }, getDashboardStats };

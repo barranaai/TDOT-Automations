@@ -229,7 +229,8 @@ test('recordRetainerPaid: normal signed→paid order still advances the case imm
 // ─── portal surfaces ──────────────────────────────────────────────────────────
 
 test('getLeadsQueue: direct retainer clients never appear among leads', async () => {
-  const restore = stub(leadService, 'listAllLeads', async () => [
+  const snap = require('../src/services/leadSnapshot'); snap._reset();
+  const restore = stub(snap.io, 'fetchLeads', async () => [
     { id: '1', fullName: 'Normal Lead', bookingStatus: 'Not Yet', sourceChannel: 'Website', createdAt: '2026-07-30' },
     { id: '2', fullName: 'Direct Client', bookingStatus: 'Not Yet', sourceChannel: 'Direct Retainer', createdAt: '2026-07-30' },
   ]);
@@ -237,11 +238,12 @@ test('getLeadsQueue: direct retainer clients never appear among leads', async ()
     const rows = await portal.getLeadsQueue();
     assert.ok(rows.some((r) => r.id === '1'));
     assert.ok(!rows.some((r) => r.id === '2'), 'direct client hidden from the Leads tab');
-  } finally { restore(); }
+  } finally { restore(); snap._reset(); }
 });
 
 test('getDirectRetainerQueue: lists in-progress direct clients, drops Retained ones', async () => {
-  const restore = stub(leadService, 'listAllLeads', async () => [
+  const snap = require('../src/services/leadSnapshot'); snap._reset();
+  const restore = stub(snap.io, 'fetchLeads', async () => [
     { id: '3', fullName: 'In Progress', sourceChannel: 'Direct Retainer', conversionStatus: 'Qualified',
       retainerFee: 2000, retainerSent: '2026-07-30', clientMasterItemId: 'CM1', createdAt: '2026-07-30' },
     { id: '4', fullName: 'Done', sourceChannel: 'Direct Retainer', conversionStatus: 'Retained', createdAt: '2026-07-29' },
@@ -253,7 +255,7 @@ test('getDirectRetainerQueue: lists in-progress direct clients, drops Retained o
     assert.equal(rows[0].id, '3');
     assert.equal(rows[0].retainerStatus, 'Sent');
     assert.equal(rows[0].caseOpen, true);
-  } finally { restore(); }
+  } finally { restore(); snap._reset(); }
 });
 
 // ─── createDirectClient: group + immediate case ───────────────────────────────

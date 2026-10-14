@@ -66,8 +66,9 @@ test('case timeline: the inquiry and the questionnaire submit are Toronto wall-c
 test('Leads queue: each row carries the Toronto day it arrived; the raw instant stays for sorting', async () => {
   const portal = require('../src/services/consultantPortalService');
   const leadService = require('../src/services/leadService');
-  const orig = leadService.listAllLeads;
-  leadService.listAllLeads = async () => ([
+  const snap = require('../src/services/leadSnapshot'); snap._reset();
+  const orig = snap.io.fetchLeads;
+  snap.io.fetchLeads = async () => ([
     { id: '1', fullName: 'Evening Lead', createdAt: '2026-10-01T01:30:00Z' },
     { id: '2', fullName: 'Morning Lead', createdAt: '2026-09-30T14:00:00Z' },
     { id: '3', fullName: 'Legacy Lead' },
@@ -79,7 +80,7 @@ test('Leads queue: each row carries the Toronto day it arrived; the raw instant 
     assert.equal(r('2').createdDay, '2026-09-30');
     assert.equal(r('3').createdDay, '', 'no date → empty, never "Invalid"');
     assert.deepEqual(rows.map((x) => x.id), ['1', '2', '3'], 'newest first, by the raw instant');
-  } finally { leadService.listAllLeads = orig; }
+  } finally { snap.io.fetchLeads = orig; snap._reset(); }
 });
 
 test('lead detail: when it arrived (Toronto, with the time) and the intake/consent stamps as Toronto days', () => {

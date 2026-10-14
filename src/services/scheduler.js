@@ -158,6 +158,13 @@ function startScheduler() {
         'no document reminders are going out for them: ' + rows.map((r) => r.caseRef || r.cmId).join(', ')); })
       .catch((err) => console.error('[Scheduler] Stalled-case scan failed:', err.message)));
   console.log('[Scheduler] Jobs registered — retainer/payment status sync every 15 min, stalled-case report hourly');
+  // The shared Lead Board snapshot behind the Leads / Consultations / Retainers
+  // tabs, the KPIs and the booking page's taken-times check: warm at boot, then
+  // refreshed every 3 minutes so a page view never pays for the board read.
+  const leadSnapshot = require('./leadSnapshot');
+  setTimeout(() => leadSnapshot.warm(), 5000);
+  cron.schedule('*/3 * * * *', () => leadSnapshot.warm());
+  console.log('[Scheduler] Lead Board snapshot — warmed at boot, refreshed every 3 min');
 
   // ── Case-type canon guard: the Client Master board's Primary Case Type list
   // is the approved standard. Daily, sync followers (Lead Board dropdown) and

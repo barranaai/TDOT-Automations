@@ -297,10 +297,15 @@ app.get('/api/kpis', async (req, res) => {
   }
 });
 
+// Every admin page pings this on load (the status pill): one Monday call per
+// minute is plenty — a page view must not add a round trip to Monday.
+let _mondayTestCache = { at: 0, body: null };
 app.get('/api/monday-test', async (req, res) => {
   try {
+    if (_mondayTestCache.body && (Date.now() - _mondayTestCache.at) < 60 * 1000) return res.json(_mondayTestCache.body);
     const data = await mondayApi.query('query { me { id name email } }');
-    res.json({ connected: true, account: data.me });
+    _mondayTestCache = { at: Date.now(), body: { connected: true, account: data.me } };
+    res.json(_mondayTestCache.body);
   } catch (err) {
     res.status(500).json({
       connected: false,
@@ -1759,6 +1764,17 @@ app.get('/api/consultation/client-matches', async (req, res) => {
     res.json(matches);
   } catch (err) {
     console.error('[Consultant] client-matches failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// The Consultations page's tabs (Gauri point 4): Consultations + Retainers, from
+// the shared board snapshot — one read for both, a few minutes old at most.
+app.get('/api/consultations-board', async (req, res) => {
+  try {
+    res.json(await consultantPortalService.getConsultationsBoard({ fresh: String(req.query.fresh || '') === '1' }));
+  } catch (err) {
+    console.error('[Consultant] Board failed:', err.stack || err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

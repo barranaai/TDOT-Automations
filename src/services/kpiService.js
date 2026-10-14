@@ -2,7 +2,7 @@
  * kpiService — automatic reporting/KPIs computed from the Lead Board.
  *
  * computeKpis() is PURE (leads array → metrics) so it's fully testable; getKpis()
- * paginates the whole board (leadService.listAllLeads), caches it briefly, and
+ * reads the shared Lead Board snapshot (leadSnapshot — one cached copy for every list) and
  * computes for a given month. Windowing is by the event's own date: consultations
  * by bookedSlot, "held" by consultationHeld, retainer sent/signed/paid by their
  * dates, leads by createdAt. Consultation revenue = a fixed fee per PAID consult
@@ -12,7 +12,6 @@
 'use strict';
 
 const { torontoWallClock } = require('../utils/torontoTime');
-const leadService = require('./leadService');
 
 function consultFeeDollars() {
   try { return (Number(require('./bookingService').CONSULT_FEE_CENTS) || 20000) / 100; }
@@ -127,16 +126,10 @@ function computeKpis(leads = [], month = '') {
   return K;
 }
 
-// The board scan is heavy — cache it briefly so month-switching / reloads don't
-// re-paginate the whole board on every request.
-const CACHE_MS = 60 * 1000;
-let _cache = { at: 0, leads: null };
-async function loadLeads() {
-  if (!_cache.leads || (Date.now() - _cache.at) > CACHE_MS) {
-    _cache = { at: Date.now(), leads: await leadService.listAllLeads() };
-  }
-  return _cache.leads;
-}
+// The shared Lead Board snapshot (leadSnapshot): one cached copy for every list
+// page and the KPIs, refreshed in the background — the KPIs no longer page the
+// whole board on their own.
+async function loadLeads() { return require('./leadSnapshot').leads(); }
 
 /** Fetch (cached) + compute. Returns the KPI bundle plus the months that have data. */
 async function getKpis(month = '') {

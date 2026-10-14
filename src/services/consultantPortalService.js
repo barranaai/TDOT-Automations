@@ -478,18 +478,35 @@ function buildIntakeSections(f, lead) {
 const LEADS_QUEUE_CACHE_MS = 20 * 1000;
 let _leadsQueueCache = { at: 0, rows: null };
 /** Drop the funnel-leads queue cache — after a staff create/delete/convert so
-    the refreshed list never shows a deleted lead alive or hides a new one. */
-function invalidateLeadsQueue() { _leadsQueueCache = { at: 0, rows: null }; }
+    the refreshed list never shows a deleted lead alive or hides a new one.
+    The shared board snapshot is marked too: every list reads it. */
+function invalidateLeadsQueue() { _leadsQueueCache = { at: 0, rows: null }; require('./leadSnapshot').invalidate(); }
+
+/**
+ * Where a Lead Board row belongs (Gauri point 4, 2026-10-15): ONE rule for every
+ * tab, so a row lands on exactly one of Leads / Consultations / Retainers — or
+ * on none ('gone': retained, so a case on the Cases page). PURE.
+ *   retainer     — a direct-retainer client, or a retainer sent/signed/paid, or
+ *                  the consultant's outcome is Retain (the retainer team's turn)
+ *   consultation — booked, still at the consultation stage
+ *   lead         — everything before a booking (Not Yet / Slot Held / Abandoned)
+ */
+function classifyLead(l) {
+  const s = (v) => String(v == null ? '' : v).trim();
+  if (s(l.conversionStatus) === 'Retained') return 'gone';
+  if (s(l.sourceChannel) === DIRECT_SOURCE || s(l.retainerSent) || s(l.retainerSigned) || s(l.retainerPaid) || s(l.outcome) === 'Retain') return 'retainer';
+  if (s(l.bookingStatus) === 'Booked') return 'consultation';
+  return 'lead';
+}
 
 async function getLeadsQueue() {
   if (_leadsQueueCache.rows && (Date.now() - _leadsQueueCache.at) < LEADS_QUEUE_CACHE_MS) {
     return _leadsQueueCache.rows;
   }
-  const leads = await leadService.listAllLeads();
-  // Direct retainer clients are CASES, not funnel leads — they never appear here
-  // (their home is the Consultations page's Direct section + the case cockpit).
-  const rows = leads.filter((l) => (l.bookingStatus || '').trim() !== 'Booked'
-    && (l.sourceChannel || '').trim() !== DIRECT_SOURCE).map((l) => ({
+  const leads = await require('./leadSnapshot').leads();
+  // One row, one tab: booked leads are on Consultations, direct-retainer clients
+  // and leads with a retainer under way on Retainers, retained clients on Cases.
+  const rows = leads.filter((l) => classifyLead(l) === 'lead').map((l) => ({
     id:            l.id,
     name:          l.fullName || l.name,
     createdAt:     l.createdAt || '',                     // raw UTC instant — the sort below needs it
@@ -1848,11 +1865,11 @@ async function findClientMatches({ email, phone } = {}) {
  * graduate to the normal case views and drop off this list.
  */
 let _directQueueCache = { at: 0, rows: null };
-/** Drop the direct-retainer queue cache (e.g. after a client is deleted). */
-function invalidateDirectRetainerQueue() { _directQueueCache = { at: 0, rows: null }; }
+/** Drop the direct-retainer queue cache (e.g. after a client is deleted); the shared snapshot too. */
+function invalidateDirectRetainerQueue() { _directQueueCache = { at: 0, rows: null }; require('./leadSnapshot').invalidate(); }
 async function getDirectRetainerQueue() {
   if (_directQueueCache.rows && (Date.now() - _directQueueCache.at) < 60 * 1000) return _directQueueCache.rows;
-  const leads = await leadService.listAllLeads();
+  const leads = await require('./leadSnapshot').leads();
   const rows = leads
     .filter((l) => (l.sourceChannel || '').trim() === DIRECT_SOURCE
       && String(l.conversionStatus || '').trim() !== 'Retained')
@@ -1870,6 +1887,59 @@ async function getDirectRetainerQueue() {
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || Number(b.id) - Number(a.id));
   _directQueueCache = { at: Date.now(), rows };
   return rows;
+}
+
+/**
+ * The Consultations page (Gauri point 4): the Consultations and Retainers tabs,
+ * from the shared snapshot, one row per lead by classifyLead. Dates are passed
+ * as stored (Toronto 'YYYY-MM-DD[ HH:MM]'); the page does Today/Week/Month in
+ * Toronto. Never a client's email or phone — a list, not a record.
+ */
+async function getConsultationsBoard({ fresh = false } = {}) {
+  const snap = await require('./leadSnapshot').getLeadSnapshot({ fresh });
+  const s = (v) => String(v == null ? '' : v).trim();
+  const consultations = [], retainers = [];
+  for (const l of snap.leads) {
+    const kind = classifyLead(l);
+    if (kind === 'consultation') {
+      let paidCents = null;
+      try { const o = JSON.parse(l.consultOption || ''); if (o && Number.isFinite(Number(o.paidCents))) paidCents = Number(o.paidCents); } catch (_) { /* legacy / none */ }
+      consultations.push({
+        id: l.id, name: l.fullName || l.name,
+        service: s(l.confirmedCaseType) || s(l.serviceRequired),
+        consultant: s(l.assignedConsultant),
+        bookedSlot: s(l.bookedSlot),
+        meetingType: s(l.meetingType),
+        preConsultSubmitted: s(l.preConsultSubmitted) === 'Yes',
+        agreementSent: s(l.consultAgreementSent), agreementSigned: s(l.consultAgreementSigned),
+        // paid: 'app' when the app's own payment landed (txn id); otherwise unknown here
+        paid: s(l.squareConsultTxnId) ? 'app' : '', paidCents,
+        outcome: s(l.outcome), followUpDate: s(l.followUpDate),
+        consultationHeld: s(l.consultationHeld), hasMeeting: !!s(l.meetingLink),
+        tier: s(l.tier), createdAt: l.createdAt || '',
+      });
+    } else if (kind === 'retainer') {
+      retainers.push({
+        id: l.id, name: l.fullName || l.name,
+        kind: s(l.sourceChannel) === DIRECT_SOURCE ? 'direct' : 'booked',
+        caseType: s(l.confirmedCaseType) || s(l.caseTypeInterest) || s(l.serviceRequired),
+        consultant: s(l.assignedConsultant),
+        fee: s(l.retainerFee),
+        retainerSent: s(l.retainerSent), retainerSigned: s(l.retainerSigned), retainerPaid: s(l.retainerPaid),
+        // one stage, most advanced first
+        stage: s(l.retainerPaid) ? 'Paid' : s(l.retainerSigned) ? 'Signed' : s(l.retainerSent) ? 'Sent' : s(l.retainerFee) ? 'Fee set' : s(l.outcome) === 'Retain' ? 'Retain' : 'New',
+        caseOpen: !!s(l.clientMasterItemId), clientMasterItemId: s(l.clientMasterItemId),
+        bookedSlot: s(l.bookedSlot), outcome: s(l.outcome), createdAt: l.createdAt || '',
+      });
+    }
+  }
+  // Consultations: earliest time first (today on top), blanks last.
+  consultations.sort((a, b) => (a.bookedSlot && b.bookedSlot) ? a.bookedSlot.localeCompare(b.bookedSlot) : a.bookedSlot ? -1 : b.bookedSlot ? 1 : Number(b.id) - Number(a.id));
+  // Retainers: by stage (the ones waiting on us first), then oldest first within a stage.
+  const STAGE_ORDER = { Paid: 0, Signed: 1, Sent: 2, 'Fee set': 3, Retain: 4, New: 5 };
+  const stageDate = (r) => r.retainerPaid || r.retainerSigned || r.retainerSent || r.createdAt || '';
+  retainers.sort((a, b) => (STAGE_ORDER[a.stage] - STAGE_ORDER[b.stage]) || stageDate(a).localeCompare(stageDate(b)) || Number(a.id) - Number(b.id));
+  return { consultations, retainers, at: snap.at, ageMs: snap.ageMs, stale: !!snap.stale };
 }
 
 /** Option lists for the direct-client form (case types → sub-types, consultants). */
@@ -1892,4 +1962,5 @@ module.exports = {
   createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, findClientMatches, DIRECT_SOURCE,
   createStaffLead, STAFF_LEAD_SOURCES,
   invalidateLeadsQueue,
+  classifyLead, getConsultationsBoard,
 };

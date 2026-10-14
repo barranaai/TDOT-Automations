@@ -18,8 +18,9 @@ const { buildLeadsQueueHTML, buildLeadDetailHTML } = require('../src/routes/admi
 const BOOKING = 'Book consultation';
 
 test('getLeadsQueue rows carry wantsTo from the intake intent', async () => {
-  const orig = leadService.listAllLeads;
-  leadService.listAllLeads = async () => ([
+  const snap = require('../src/services/leadSnapshot'); snap._reset();
+  const orig = snap.io.fetchLeads;
+  snap.io.fetchLeads = async () => ([
     { id: '1', fullName: 'Quote Seeker', whatDoYouWant: 'Request quote' },
     { id: '2', fullName: 'Booker',       whatDoYouWant: BOOKING },
     { id: '3', fullName: 'Legacy Lead' },                       // pre-dates the question
@@ -29,7 +30,7 @@ test('getLeadsQueue rows carry wantsTo from the intake intent', async () => {
     assert.equal(rows.find((r) => r.id === '1').wantsTo, 'Request quote');
     assert.equal(rows.find((r) => r.id === '2').wantsTo, BOOKING);
     assert.equal(rows.find((r) => r.id === '3').wantsTo, '', 'missing intent → empty, never undefined');
-  } finally { leadService.listAllLeads = orig; }
+  } finally { snap.io.fetchLeads = orig; snap._reset(); }
 });
 
 test('queue page: amber intent pill only for non-booking intents', () => {

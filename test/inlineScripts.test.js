@@ -116,7 +116,7 @@ test('emitted page scripts carry no backslash-mangled regex literals', () => {
   const detail = consult.buildDetailHTML('1');
   assert.ok(detail.includes('[^\\s@]+@[^\\s@]+\\.[^\\s@]+'), 'co-signer email regex emits with real \\s');
   const queue = consult.buildQueueHTML();
-  assert.ok(queue.includes('(\\d{4}-\\d{2})'), 'month filter emits with real \\d');
+  assert.ok(queue.includes('(\\d{4})-(\\d{2})-(\\d{2})'), 'the date helper emits with real \\d');
 });
 
 // ─── questionnaire engines (coverage hole found 2026-08-21) ─────────────────

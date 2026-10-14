@@ -357,6 +357,30 @@ async function readSlotClaims({ strict = false } = {}) {
   const { leadBoardId } = require('../../config/monday');
   const mondayApi = require('./mondayApi');
   const claims = [];
+  // The booking page (not strict) reads the shared board snapshot — a whole-board
+  // read per page view cost ~5 s — plus the holds this process made in the last
+  // minutes (the snapshot may be a few minutes behind). The hold step itself is
+  // strict: a fresh read of every row, at that moment.
+  if (!strict) {
+    try {
+      const leads = await require('./leadSnapshot').leads();
+      for (const l of leads) {
+        const status = String(l.bookingStatus || '').trim();
+        const slot = String(l.bookedSlot || '').trim();
+        if (!slot) continue;
+        const live = status === 'Booked' || (status === 'Slot Held' && l.slotHeldUntil && Date.parse(l.slotHeldUntil) > Date.now());
+        if (live) claims.push({ leadId: String(l.id), name: String(l.fullName || l.name || ''), slot, consultant: String(l.assignedConsultant || '').trim(), status });
+      }
+      for (const [key, v] of _recentHolds) {
+        if ((Date.now() - v.at) >= RECENT_HOLD_MS || claims.some((c) => c.leadId === v.leadId && c.slot === key.slice(key.indexOf('|') + 1))) continue;
+        claims.push({ leadId: v.leadId, name: '', slot: key.slice(key.indexOf('|') + 1), consultant: key.slice(0, key.indexOf('|')), status: 'Slot Held' });
+      }
+      return claims;
+    } catch (err) {
+      console.warn(`[Booking] Reading held/booked times from the snapshot failed — showing times without our own holds filtered (the hold step re-checks): ${err.message}`);
+      return claims;
+    }
+  }
   try {
     let cursor = null, pages = 0;
     do {
@@ -480,6 +504,7 @@ async function holdSlot(leadId, slotDate, slotTime, consultantName = '') {
     slotHeldUntil: heldUntil.toISOString(),
     ...(String(consultantName || '').trim() ? { assignedConsultant: String(consultantName).trim() } : {}),
   });
+  require('./leadSnapshot').invalidate();
   console.log(`[Booking] Held ${slotDate} ${slotTime} for lead ${leadId} (expires in ${expHours}h)`);
 }
 
@@ -529,6 +554,7 @@ async function releaseExpiredSlots() {
       }
       await leadService.updateLead(it.id, { bookingStatus: 'Abandoned' });
       released++;
+      require('./leadSnapshot').invalidate();
     }
   }
   if (released) console.log(`[Booking] Released ${released} expired slot hold(s)`);
@@ -914,6 +940,7 @@ async function _confirmSlot(leadId, txnId, meetingType, amountCents) {
     conversionStatus:   'Booked',
   });
   _recentConfirm.set(leadId, { txnId: String(txnId || ''), at: Date.now() });
+  require('./leadSnapshot').invalidate();   // the Consultations tab must show the booking on its next load
   console.log(`[Booking] Confirmed booking for lead ${leadId} (txn ${txnId})`);
 
   // Two clients booked for the same time with the same consultant? The hold
