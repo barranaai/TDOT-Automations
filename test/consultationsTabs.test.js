@@ -375,7 +375,7 @@ test('getConsultationsBoard: Follow-Up / Newsletter / Not Wanted consultations w
     const r6 = b.retainers.find((r) => r.id === '6');
     assert.deepEqual([r6.paid, r6.paidCents], ['app', 22600]);
     const r5 = b.retainers.find((r) => r.id === '5');
-    assert.deepEqual([r5.paid, r5.paidCents], ['', null], 'a direct client had no consultation fee');
+    assert.deepEqual([r5.paid, r5.paidCents], ['cash', 100], 'a fee staff recorded for a direct client still shows (the page says n/a only when there is none)');
     const r4 = b.retainers.find((r) => r.id === '4');
     assert.deepEqual([r4.paid, r4.paidCents], ['', null], 'nothing recorded yet');
     const ids = [...b.consultations, ...b.retainers].map((r) => r.id);
@@ -404,8 +404,9 @@ test('page: the Retainers quick filters — one button per outcome plus All, cou
   for (const s of ['<div class="quick" id="r-quick" role="group" aria-label="Show by outcome"></div>',
     '<th>Consultant</th><th>Outcome</th><th>Consult fee</th><th>Retainer fee</th>', '<select id="rf-followup">', '<select id="rf-paid"',
     "['rf-search','rf-consultant','rf-stage','rf-kind','rf-followup','rf-paid'].forEach(",
-    "if(paid && (r.kind==='direct' || !paidMatch(r,paid))) return false;", "if(!paidMatch(r,paid)) return false;",
-    "(c.kind==='direct'?'<span class=\"pill grey\" title=\"Direct retainer client — no consultation\">n/a</span>':paidPill(c))",
+    "if(paid && ((r.kind==='direct' && !r.paid) || !paidMatch(r,paid))) return false;", "if(!paidMatch(r,paid)) return false;",
+    "((c.kind==='direct' && !c.paid)?'<span class=\"pill grey\" title=\"Direct retainer client — no consultation\">n/a</span>':paidPill(c))",
+    "setTab(qs.get('tab')||(qs.get('outcome')!==null?'retainers':'')||lsGet('tdot_consult_tab')||'consultations', false);",
     "u.searchParams.set('tab','retainers');",
     "btn('','All',base.length,!ROUT.length)", 'aria-pressed="', "var rows=ROUT.length?base.filter(function(r){ return ROUT.indexOf(retGroup(r))>=0; }):base;",
     "u.searchParams.set('outcome',ROUT.join(','))", "lsSet('tdot_ret_outcomes',ROUT.join(','))",

@@ -2210,8 +2210,9 @@ async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
       const oc = canonicalOutcome(l.outcome);
       const direct = s(l.sourceChannel) === DIRECT_SOURCE;
       // the CONSULTATION fee (not the retainer's): a client who had one keeps its
-      // paid state on this tab, so an unrecorded fee is still found (review 2026-10-16)
-      const ps = direct ? null : consultPayment.paidState(l);
+      // paid state on this tab, so an unrecorded fee is still found (review 2026-10-16).
+      // A direct client had no consultation, but a fee staff recorded for one still shows.
+      const ps = consultPayment.paidState(l);
       retainers.push({
         id: l.id, name: l.fullName || l.name,
         kind: direct ? 'direct' : 'booked',
@@ -2229,7 +2230,7 @@ async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
         outcomeGroup: oc || OUTCOME_RETAIN,
         caseOpen: !!s(l.clientMasterItemId), clientMasterItemId: s(l.clientMasterItemId),
         bookedSlot: s(l.bookedSlot), outcome: oc || s(l.outcome), followUpDate: s(l.followUpDate), createdAt: l.createdAt || '',
-        paid: ps ? ps.paid : '', paidCents: ps ? ps.paidCents : null, paidBy: ps ? ps.by : '', paidOn: ps ? ps.on : '', paidVerified: ps ? ps.verified : false,
+        paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
       });
     }
   }

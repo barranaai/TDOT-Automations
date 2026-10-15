@@ -136,11 +136,11 @@ function buildQueueHTML() {
   section[hidden] { display:none; }
   /* Retainers quick filters (Faran 2026-10-16, in place of grouping by outcome): toggle buttons, none on = all */
   .quick { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
-  .quick .ql { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#64748b; margin-right:2px; }
+  .quick .ql { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#475569; margin-right:2px; }
   .quick button { display:inline-flex; align-items:center; gap:6px; min-height:32px; padding:5px 12px; border:1px solid #e2e8f0; border-radius:16px; background:#fff; color:var(--navy); font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
   .quick button:hover { border-color:#94a3b8; }
   .quick button:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
-  .quick button .qn { min-width:18px; padding:0 6px; border-radius:10px; background:#f1f5f9; color:#64748b; font-size:11px; font-weight:700; text-align:center; font-variant-numeric:tabular-nums; }
+  .quick button .qn { min-width:18px; padding:0 6px; border-radius:10px; background:#f1f5f9; color:#475569; font-size:11px; font-weight:700; text-align:center; font-variant-numeric:tabular-nums; }
   .quick button[aria-pressed="true"] { background:var(--navy); border-color:var(--navy); color:#fff; }
   .quick button[aria-pressed="true"] .qn { background:rgba(255,255,255,.18); color:#fff; }
   .quick button.zero:not([aria-pressed="true"]) { color:#64748b; border-style:dashed; }
@@ -225,7 +225,7 @@ ${buildNavHeader('consultations')}
     <section id="tab-retainers" role="tabpanel" hidden>
       <div class="q-head">
         <div><h2 class="sec-h">Retainers <span id="r-count" class="muted" style="font-weight:500"></span></h2>
-          <p class="sec-sub">Clients after their consultation — once it has happened and an outcome is set — and direct retainer clients. A client drops off once retained (the case is on the Cases page).</p></div>
+          <p class="sec-sub">Clients after their consultation and direct retainer clients. Retain moves a client here at once; Follow-Up, Newsletter and Not Wanted move here the day after the consultation. A client drops off once retained (the case is on the Cases page).</p></div>
         <div class="q-filters">
           <input id="rf-search" type="text" placeholder="Search client…">
           <select id="rf-consultant"><option value="">All consultants</option></select>
@@ -736,7 +736,7 @@ function renderRetainers(){
     if(!passesCommon(r,q,con)) return false; if(st && r.stage!==st) return false; if(kind && r.kind!==kind) return false;
     if(fu==='due' && !(r.followUpDate && r.followUpDate<=t)) return false;
     if(fu==='has' && !r.followUpDate) return false;
-    if(paid && (r.kind==='direct' || !paidMatch(r,paid))) return false;   // a direct client had no consultation fee
+    if(paid && ((r.kind==='direct' && !r.paid) || !paidMatch(r,paid))) return false;   // a direct client had no consultation: "Not paid" never lists one
     return true;
   });
   renderQuick(base);
@@ -754,7 +754,7 @@ function renderRetainers(){
       '<td style="color:var(--muted)">'+escHtml(c.caseType||'—')+'</td>'+
       '<td>'+escHtml(c.consultant||'—')+'</td>'+
       '<td>'+outcomeCell(c)+'</td>'+
-      '<td>'+(c.kind==='direct'?'<span class="pill grey" title="Direct retainer client — no consultation">n/a</span>':paidPill(c))+'</td>'+
+      '<td>'+((c.kind==='direct' && !c.paid)?'<span class="pill grey" title="Direct retainer client — no consultation">n/a</span>':paidPill(c))+'</td>'+
       '<td>'+(c.fee?'$'+escHtml(c.fee):'—')+'</td>'+
       '<td>'+(c.retainerSent?escHtml(c.retainerSent)+(c.retainerSigned?'':age(c.retainerSent)):'—')+'</td>'+
       '<td>'+(c.retainerSigned?escHtml(c.retainerSigned):'—')+'</td>'+
@@ -843,7 +843,7 @@ function loadKpis(month){
 ${DELETE_UI_JS}
 tdotBindDelete(function(){ load(true); });
 startClock(); checkApiStatus();
-setTab(new URLSearchParams(window.location.search).get('tab')||lsGet('tdot_consult_tab')||'consultations', false);
+(function(){ var qs=new URLSearchParams(window.location.search); setTab(qs.get('tab')||(qs.get('outcome')!==null?'retainers':'')||lsGet('tdot_consult_tab')||'consultations', false); })();   // an ?outcome= link opens Retainers
 setRange(lsGet('tdot_consult_range')||'today');
 (function(){ var p=new URLSearchParams(window.location.search).get('outcome'); setRout(String(p!==null?p:lsGet('tdot_ret_outcomes')).split(','), false, p!==null); })();
 load();
