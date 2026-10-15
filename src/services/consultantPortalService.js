@@ -279,6 +279,19 @@ async function getConsultationDetail(leadId) {
     bookedBy:          lead.bookedBy || '',
     paymentReviewedBy: lead.paymentReviewedBy || '',
 
+    // The consultation fee (point 4 part 2): paid 'app' = through the booking link;
+    // a kind = recorded by staff (cash / e-transfer / invoice / other / waived); '' =
+    // nothing yet. alsoRecorded: a staff record that an app payment then outranked.
+    consultPayment: (() => {
+      const cp = require('./consultPaymentService');
+      const ps = cp.paidState(lead);
+      return {
+        paid: ps.paid, paidCents: ps.paidCents, on: ps.on, by: ps.by, verified: ps.verified,
+        reference: ps.reference, note: ps.note, at: ps.at, feeCents: ps.feeCents,
+        alsoRecorded: ps.paid === 'app' && ps.record ? cp.describe(ps.record) : '',
+      };
+    })(),
+
     // Initial Consultation agreement (consultant-sent). countersign = the RCIC's
     // signature over the client-signed copy: sentAt when the countersign envelope
     // went out, signedAt once fully signed (client + consultant).
@@ -855,6 +868,9 @@ function validateAction(action, value) {
       if (msg.length > 2000) return { ok: false, error: 'Invite message is too long (max 2000 characters).' };
       return { ok: true, normalized: msg };
     }
+    // Gauri point 4 part 2: a consultation fee settled outside the booking link (or waived).
+    case 'recordConsultPayment':
+      return require('./consultPaymentService').validateRecord(value);
     case 'saveInviteMessage': {
       if (value != null && typeof value !== 'string') return { ok: false, error: 'Invite message must be text.' };
       const msg = String(value == null ? '' : value).trim();
@@ -1038,6 +1054,42 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       await leadService.updateLead(leadId, { followUpDate: n.followUpDate, leadOwner: n.leadOwner, bookedBy: n.bookedBy, paymentReviewedBy: n.paymentReviewedBy });
       await postPortalNote(leadId, `Attribution saved — owner: ${n.leadOwner || '—'}, booked by: ${n.bookedBy || '—'}, payment reviewed by: ${n.paymentReviewedBy || '—'}, follow-up: ${n.followUpDate || '—'}.`);
       return { ok: true, message: 'Attribution saved.' };
+    }
+
+    // Gauri point 4 part 2 (2026-10-15): the fee was paid by cash / e-transfer / an
+    // invoice the team sent / another way, or waived — a RECORD on the lead, so the
+    // Consultations list and the KPIs count it. Nothing else runs from it: no email,
+    // no consultation package, no booking step. A fee paid through the booking link
+    // is recorded by the app itself and cannot be overwritten here.
+    case 'recordConsultPayment': {
+      const cp = require('./consultPaymentService');
+      const n = v.normalized;
+      const verified = !!(actor && actor.verified);
+      const name = verified ? String(actor.name || '').trim().slice(0, 60) : who;
+      if (!name) { const e = new Error('Enter your name — it is recorded with the payment.'); e.badRequest = true; throw e; }
+      const state = cp.paidState(lead);
+      if (state.paid === 'app') {
+        const e = new Error(`This consultation was paid through the booking link${state.paidCents != null ? ` (${(state.paidCents / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })} incl. HST)` : ''} — there is nothing to record here. A refund is done in Square.`);
+        e.badRequest = true; throw e;
+      }
+      const before = state.record;
+      const signed = verified ? '' : ' (name as typed)';
+      if (n.kind === 'clear') {
+        if (!before) { const e = new Error('No consultation payment is recorded on this lead.'); e.badRequest = true; throw e; }
+        await leadService.updateLead(leadId, { consultPayment: '' }, { clearKeys: ['consultPayment'] });
+        await postPortalNote(leadId, `🗑 Consultation fee record removed by ${escHtmlNote(name)}${signed} — was: ${escHtmlNote(cp.describe(before))}.`);
+        return { ok: true, message: 'The consultation payment record was removed.', consultPayment: null };
+      }
+      const rec = { kind: n.kind, amountCents: n.amountCents, on: n.on, reference: n.reference, note: n.note, by: name, at: new Date().toISOString(), verified };
+      await leadService.updateLead(leadId, { consultPayment: JSON.stringify(rec) });
+      await postPortalNote(leadId, `${rec.kind === 'waived' ? '🆓 Consultation fee waived' : '💳 Consultation fee recorded as paid'} — ${escHtmlNote(cp.describe(rec))}.${before ? ` Replaces: ${escHtmlNote(cp.describe(before))}.` : ''} A record only — no email or automatic step runs from it.`);
+      return {
+        ok: true,
+        message: rec.kind === 'waived'
+          ? 'Recorded — the consultation fee is waived.'
+          : `Recorded — ${cp.KINDS[rec.kind]} ${(rec.amountCents / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })} received ${rec.on}.${before ? ' The earlier record was replaced.' : ''}`,
+        consultPayment: rec,
+      };
     }
 
     case 'saveResidentialAddress': {
@@ -1899,11 +1951,14 @@ async function getConsultationsBoard({ fresh = false } = {}) {
   const snap = await require('./leadSnapshot').getLeadSnapshot({ fresh });
   const s = (v) => String(v == null ? '' : v).trim();
   const consultations = [], retainers = [];
+  const consultPayment = require('./consultPaymentService');
   for (const l of snap.leads) {
     const kind = classifyLead(l);
     if (kind === 'consultation') {
-      let paidCents = null;
-      try { const o = JSON.parse(l.consultOption || ''); if (o && Number.isFinite(Number(o.paidCents))) paidCents = Number(o.paidCents); } catch (_) { /* legacy / none */ }
+      // paid: 'app' (the booking link's Square payment, paidCents incl. HST) | a kind
+      // staff recorded (cash / e-transfer / invoice / other, paidCents before HST;
+      // waived = 0) | '' (nothing yet). paidBy/paidOn only for a staff record.
+      const ps = consultPayment.paidState(l);
       consultations.push({
         id: l.id, name: l.fullName || l.name,
         service: s(l.confirmedCaseType) || s(l.serviceRequired),
@@ -1912,8 +1967,7 @@ async function getConsultationsBoard({ fresh = false } = {}) {
         meetingType: s(l.meetingType),
         preConsultSubmitted: s(l.preConsultSubmitted) === 'Yes',
         agreementSent: s(l.consultAgreementSent), agreementSigned: s(l.consultAgreementSigned),
-        // paid: 'app' when the app's own payment landed (txn id); otherwise unknown here
-        paid: s(l.squareConsultTxnId) ? 'app' : '', paidCents,
+        paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
         outcome: s(l.outcome), followUpDate: s(l.followUpDate),
         consultationHeld: s(l.consultationHeld), hasMeeting: !!s(l.meetingLink),
         tier: s(l.tier), createdAt: l.createdAt || '',

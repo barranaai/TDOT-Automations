@@ -5,13 +5,17 @@
  * reads the shared Lead Board snapshot (leadSnapshot — one cached copy for every list) and
  * computes for a given month. Windowing is by the event's own date: consultations
  * by bookedSlot, "held" by consultationHeld, retainer sent/signed/paid by their
- * dates, leads by createdAt. Consultation revenue = a fixed fee per PAID consult
- * (squareConsultTxnId present); retainer value = summed retainerFee of signed cases.
+ * dates, leads by createdAt. Consultation revenue = the fee (before HST) of each PAID
+ * consult: the booking link's own payment (squareConsultTxnId; the per-booking fee or
+ * the flat fee) plus the fees staff recorded as paid another way (consultPaymentService:
+ * cash / e-transfer / invoice / other; waived counts separately, adds nothing);
+ * retainer value = summed retainerFee of signed cases.
  */
 
 'use strict';
 
 const { torontoWallClock } = require('../utils/torontoTime');
+const consultPayment = require('./consultPaymentService');
 
 function consultFeeDollars() {
   try { return (Number(require('./bookingService').CONSULT_FEE_CENTS) || 20000) / 100; }
@@ -66,7 +70,7 @@ function computeKpis(leads = [], month = '') {
   const K = {
     month: month || 'all',
     totalLeads: leads.length,
-    consultations: { booked: 0, held: 0, revenue: 0, virtual: 0, inPerson: 0, phone: 0, newClients: 0, existingClients: 0, byConsultant: {}, byLeadOwner: {} },
+    consultations: { booked: 0, held: 0, revenue: 0, paidByStaff: 0, waived: 0, virtual: 0, inPerson: 0, phone: 0, newClients: 0, existingClients: 0, byConsultant: {}, byLeadOwner: {} },
     retainers: { sent: 0, signed: 0, paid: 0, tr: 0, pr: 0, feeValue: 0, byConsultant: {} },
     funnel: { leads: 0, booked: 0, consulted: 0, retained: 0, retainedDirect: 0, paid: 0 },
   };
@@ -81,6 +85,7 @@ function computeKpis(leads = [], month = '') {
     // Direct clients never enter the booking funnel — they'd deflate the
     // booked-from-leads rate. totalLeads still counts them.
     if (inM(l.createdAt) && !isDirect(l)) K.funnel.leads++;
+    const ps = consultPayment.paidState(l);
     if (inM(l.bookedSlot)) {
       K.consultations.booked++; K.funnel.booked++;
       inc(K.consultations.byConsultant, l.assignedConsultant || 'Unassigned');
@@ -89,7 +94,7 @@ function computeKpis(leads = [], month = '') {
       else if (/phone/i.test(l.meetingType || '')) K.consultations.phone++;
       else if (String(l.meetingType || '').trim()) K.consultations.virtual++;
       if (isExistingClient(l)) K.consultations.existingClients++; else K.consultations.newClients++;
-      if (String(l.squareConsultTxnId || '').trim()) {
+      if (ps.paid === 'app') {
         // Per-lead fee (the booking-page duration choice) when recorded; the
         // flat env fee covers legacy leads booked before per-duration pricing.
         let f = fee;
@@ -99,6 +104,15 @@ function computeKpis(leads = [], month = '') {
         } catch (_) { /* legacy lead */ }
         K.consultations.revenue += f;
       }
+    }
+    // A fee recorded by staff (cash / e-transfer / invoice / other, the fee before
+    // HST as entered; waived = nothing) counts in the consultation's month — or, for
+    // a consultation with no booked time (the page's "No date" list: hand-booked
+    // consults, exactly the ones paid outside the app), in the month it was received
+    // (review 2026-10-15: those were never counted at all).
+    if (ps.paid && ps.paid !== 'app' && inM(l.bookedSlot || ps.on)) {
+      if (ps.paid === 'waived') K.consultations.waived++;
+      else { K.consultations.paidByStaff++; if (ps.paidCents != null) K.consultations.revenue += ps.paidCents / 100; }
     }
     if (inM(l.consultationHeld)) { K.consultations.held++; K.funnel.consulted++; }
     if (inM(l.retainerSent)) K.retainers.sent++;

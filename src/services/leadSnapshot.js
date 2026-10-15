@@ -40,7 +40,7 @@ const SNAPSHOT_KEYS = [
   'bookingStatus', 'slotHeldUntil', 'bookedSlot', 'squareConsultTxnId', 'squareBookingId',
   'preConsultSubmitted', 'consultationHeld', 'zoomMeetingId', 'meetingLink', 'meetingType',
   'outcome', 'followUpDate', 'consultAgreementSent', 'consultAgreementSigned', 'consultOption',
-  'retainerSent', 'retainerSigned', 'retainerPaid', 'retainerFee', 'clientMasterItemId', 'conversionStatus',
+  'retainerSent', 'retainerSigned', 'retainerPaid', 'retainerFee', 'clientMasterItemId', 'conversionStatus', 'consultPayment',
   'confirmedCaseType', 'serviceRequired', 'whatDoYouWant', 'deadlineDate', 'removalOrder', 'enforcementLetter',
   'relationshipWithTdot', 'existingFileType', 'assignedConsultant', 'leadOwner', 'bookingInvite', 'inviteSentAt',
 ];

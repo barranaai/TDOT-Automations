@@ -191,7 +191,7 @@ ${buildNavHeader('consultations')}
           <input id="f-search" type="text" placeholder="Search client…">
           <select id="f-consultant"><option value="">All consultants</option></select>
           <select id="f-mode"><option value="">Any mode</option><option>In-person</option><option>Virtual</option><option>Phone Call</option></select>
-          <select id="f-paid"><option value="">Paid: any</option><option value="app">Paid (app)</option><option value="none">Not paid via app</option></select>
+          <select id="f-paid"><option value="">Paid: any</option><option value="paid">Paid (any way)</option><option value="app">Paid (app)</option><option value="staff">Paid — recorded by staff</option><option value="waived">Waived</option><option value="none">Not paid</option></select>
           <select id="f-agree"><option value="">Agreement: any</option><option value="signed">Signed</option><option value="sent">Sent, not signed</option><option value="none">Not sent</option></select>
           <select id="f-followup"><option value="">Follow-up: any</option><option value="due">Due (today or earlier)</option><option value="has">Has a follow-up date</option></select>
           <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
@@ -297,13 +297,24 @@ function timeCell(c){
   var d=slot.slice(0,10), t=slot.slice(11,16);
   return '<span class="time">'+(RANGE==='today'?'':'<span class="d">'+escHtml(dLabel(d,d.slice(0,4)!==todayStr().slice(0,4)))+' · </span>')+escHtml(t||'')+'</span>';
 }
+/* Paid: the booking link's own payment ("app", incl. HST), or what staff recorded on the
+   consultation page — cash / e-transfer / invoice / other (the fee before HST) or waived. */
+var PAID_LABELS={cash:'Cash','e-transfer':'E-transfer',invoice:'Invoice',other:'Paid (other)',waived:'Waived'};
+function paidPill(c){
+  var amt=(c.paidCents!=null&&c.paidCents>0)?' $'+(c.paidCents/100).toFixed(0):'';
+  if(c.paid==='app') return qpill('green','Paid (app)'+amt);
+  if(!c.paid) return '<span class="pill grey">—</span>';
+  var label=Object.prototype.hasOwnProperty.call(PAID_LABELS,c.paid)?PAID_LABELS[c.paid]:String(c.paid);
+  var who=c.paidBy?(' · recorded by '+c.paidBy+(c.paidVerified?'':' (name as typed)')+(c.paidOn?(' on '+c.paidOn):'')):'';
+  return '<span class="pill '+(c.paid==='waived'?'grey':'green')+'" title="'+escHtml(label+who)+'">'+escHtml(label+amt)+'</span>';
+}
 function rowHtml(c){
   var pc=c.preConsultSubmitted?qpill('green','Submitted'):qpill('amber','Pending');
   var oc=c.outcome?qpill('blue',c.outcome):'<span class="pill grey">—</span>';
   /* a follow-up date on the row: amber once it is due (today or earlier) */
   if(c.followUpDate) oc+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);
   var ag=c.agreementSigned?qpill('green','Signed '+c.agreementSigned):c.agreementSent?qpill('blue','Sent '+c.agreementSent):'<span class="pill grey">—</span>';
-  var pd=c.paid==='app'?qpill('green','Paid (app)'+(c.paidCents!=null?' $'+(c.paidCents/100).toFixed(0):'')):'<span class="pill grey">—</span>';
+  var pd=paidPill(c);
   return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
     '<td>'+timeCell(c)+'</td>'+
     '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+'</td>'+
@@ -623,8 +634,11 @@ function applyFilters(){
     if(mode && r.meetingType!==mode) return false;
     if(fu==='due' && !(r.followUpDate && r.followUpDate<=t)) return false;
     if(fu==='has' && !r.followUpDate) return false;
+    if(paid==='paid' && !(r.paid && r.paid!=='waived')) return false;
     if(paid==='app' && r.paid!=='app') return false;
-    if(paid==='none' && r.paid==='app') return false;
+    if(paid==='staff' && !(r.paid && r.paid!=='app' && r.paid!=='waived')) return false;
+    if(paid==='waived' && r.paid!=='waived') return false;
+    if(paid==='none' && r.paid) return false;
     if(ag==='signed' && !r.agreementSigned) return false;
     if(ag==='sent' && !(r.agreementSent && !r.agreementSigned)) return false;
     if(ag==='none' && r.agreementSent) return false;
@@ -703,7 +717,7 @@ function renderKpis(d){
   var c=d.consultations||{}, r=d.retainers||{}, f=d.funnel||{}, rt=(f.rates||{});
   var cards = kpiCard('Consultations booked', c.booked||0, (c.virtual||0)+' virtual · '+(c.inPerson||0)+' in-person'+((c.phone||0)?' · '+c.phone+' phone':''))
     + kpiCard('Consultations held', c.held||0, '')
-    + kpiCard('Consultation revenue', kpiMoney(c.revenue||0), 'paid consults')
+    + kpiCard('Consultation revenue', kpiMoney(c.revenue||0), 'paid consults, fees before HST'+((c.paidByStaff||0)?' · '+c.paidByStaff+' recorded by staff':'')+((c.waived||0)?' · '+c.waived+' waived':''))
     + kpiCard('Retainers signed', r.signed||0, (r.sent||0)+' sent · '+(r.paid||0)+' paid')
     + kpiCard('Retainer value', kpiMoney(r.feeValue||0), 'signed this period')
     + kpiCard('New / existing', (c.newClients||0)+' / '+(c.existingClients||0), 'clients booked');
@@ -993,6 +1007,17 @@ ${buildNavHeader('consultations')}
           </div>
           <div class="frow" style="margin-top:12px"><button class="btn primary" id="btn-attr-save">${I.save} Save attribution</button></div>
         </div>
+        <!-- Consultation fee (Gauri point 4, part 2): the booking link records its own payment; a fee paid
+             another way (cash, e-transfer, an invoice the team sent) or waived is recorded here — a record
+             only, so the Consultations list and the KPIs count it. No email or automatic step runs from it. -->
+        <div class="card actions">
+          <div class="card-t">${I.dollar} Consultation fee <span class="muted" id="cp-state" style="margin-left:auto;font-weight:500"></span></div>
+          <div id="cp-body" class="kvgrid"></div>
+          <div class="frow" style="margin-top:12px">
+            <button class="btn" id="btn-cp-record" title="The fee was paid by cash, e-transfer, an invoice the team sent, or another way — or waived">${I.dollar} Record payment / Waived</button>
+            <button class="btn" id="btn-cp-clear" style="display:none" title="Remove a record made by mistake (the lead keeps a note)">Remove record</button>
+          </div>
+        </div>
         <div class="card"><div class="card-t">${I.flag} Case status</div><div id="c-status" class="kvgrid"></div></div>
       </div>
     </div>
@@ -1132,7 +1157,7 @@ ${UPDATES_WIDGET_JS}
 var OUTCOMES=${jsLit(OUTCOME_LABELS)};
 var REMARKS=${jsLit(REMARK_PRESETS)};
 ${REMARKS_JS}
-var ICONS=${jsLit({ video: I.video, file: I.file, disc: I.disc, mail: I.mail, userCheck: I.userCheck, clock: I.clock, check: I.check })};
+var ICONS=${jsLit({ video: I.video, file: I.file, disc: I.disc, mail: I.mail, userCheck: I.userCheck, clock: I.clock, check: I.check, dollar: I.dollar })};
 ${SHARED_AUTH_JS}
 ${PAYMENT_UI_JS}
 tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/updates/' + encodeURIComponent(LEAD_ID), itemId: LEAD_ID });
@@ -1177,6 +1202,96 @@ function hydrateAttribution(d){
   var fu=document.getElementById('at-followup'); if(fu) fu.value=d.followUpDate||'';
   setAttrSel('at-owner', d.leadOwner||''); setAttrSel('at-bookedby', d.bookedBy||''); setAttrSel('at-reviewer', d.paymentReviewedBy||'');
 }
+// ── Consultation fee (Gauri point 4, part 2) ──────────────────────────────
+// paid 'app' = the booking link's Square payment (nothing to record, no button);
+// a kind = staff recorded it (change / remove); '' = the record button.
+var CP_LABELS={cash:'Cash','e-transfer':'E-transfer',invoice:'Invoice sent by the team',other:'Other',waived:'Waived'};
+function cpMoney(c){ return '$'+(Number(c||0)/100).toFixed(2); }
+function cpTodayStr(){ try { return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); } catch(e){ return new Date().toISOString().slice(0,10); } }
+function hydrateConsultPayment(d){
+  var cp=d.consultPayment||{};
+  var body=document.getElementById('cp-body'), st=document.getElementById('cp-state'), rec=document.getElementById('btn-cp-record'), clr=document.getElementById('btn-cp-clear');
+  if(!body||!st||!rec||!clr) return;
+  var h='';
+  if(cp.paid==='app'){
+    st.textContent='Paid through the booking link';
+    h+=kv('Paid','Through the booking link (Square)'+(cp.paidCents!=null?' · '+cpMoney(cp.paidCents)+' incl. HST':''));
+    if(cp.alsoRecorded) h+=kv('Also recorded by staff',cp.alsoRecorded);
+    h+='<div class="muted" style="font-size:12px;margin-top:6px">Nothing to record here. A refund is done in Square.</div>';
+    rec.style.display='none'; clr.style.display='none';
+  } else if(cp.paid){
+    st.textContent=cp.paid==='waived'?'Waived':('Paid — '+(CP_LABELS[cp.paid]||cp.paid));
+    h+=kv('How',CP_LABELS[cp.paid]||cp.paid);
+    if(cp.paid!=='waived') h+=kv('Fee received',(cp.paidCents!=null?cpMoney(cp.paidCents):'amount not recorded')+' (before HST)');
+    h+=kv(cp.paid==='waived'?'Waived on':'Received on',cp.on)+kv('Recorded by',(cp.by||'')+(cp.by&&!cp.verified?' (name as typed)':''))+kv('Reference',cp.reference)+kv('Note',cp.note);
+    rec.style.display=''; rec.innerHTML=ICONS.dollar+' Change record'; clr.style.display='';
+  } else {
+    st.textContent='Not recorded';
+    h+='<div class="muted" style="font-size:12px">The booking link records its own payment. Paid another way — cash, e-transfer, an invoice the team sent — or waived? Record it here so the Consultations list and the KPIs count it. A record only: no email or automatic step runs from it.</div>';
+    rec.style.display=''; rec.innerHTML=ICONS.dollar+' Record payment / Waived'; clr.style.display='none';
+  }
+  body.innerHTML=h;
+}
+function openConsultPaymentModal(d, clear){
+  tdotPayViewer(function(v){
+    var cp=(d&&d.consultPayment)||{};
+    var cur=(cp.paid&&cp.paid!=='app')?cp:null;
+    if(clear&&!cur) return;
+    var dlg=payOverlay();
+    var feeDefault=(cur&&cur.paid!=='waived'&&cur.paidCents)?cur.paidCents:(cp.feeCents||null);
+    var kinds=[['cash','Cash'],['e-transfer','E-transfer'],['invoice','Invoice sent by the team (not the booking link)'],['other','Other'],['waived','Waived — no fee']];
+    var h=payTitle(clear?'Remove the payment record':(cur?'Change the consultation payment record':'Record the consultation payment'), clear)+
+      '<div class="paym-client">For <b>'+payEsc(d.name||'this client')+'</b>'+(d.bookedSlot?' · consultation '+payEsc(d.bookedSlot):'')+'</div>';
+    if(clear){
+      h+='<div class="paym-warn">This removes the record that the fee was '+(cur.paid==='waived'?'waived':('paid — '+payEsc(CP_LABELS[cur.paid]||cur.paid)+(cur.paidCents?' '+cpMoney(cur.paidCents):'')))+'. The lead keeps a note of it. Use this for a record made by mistake.</div>';
+    } else {
+      h+='<div class="paym-info">A record only — the client gets no email and no automatic step runs. A payment made through the booking link records itself.</div>'+
+        '<label for="cp-kind">How was the fee settled?</label>'+
+        '<select id="cp-kind" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit;box-sizing:border-box">'+
+          kinds.map(function(k){ return '<option value="'+k[0]+'"'+(((cur?cur.paid:'cash')===k[0])?' selected':'')+'>'+payEsc(k[1])+'</option>'; }).join('')+
+        '</select>'+
+        '<div id="cp-amt-wrap"><label for="cp-amt">Fee received <span class="paym-muted">(CAD, before HST — the way the KPIs count booking-link payments)</span></label>'+
+        '<input id="cp-amt" type="text" inputmode="decimal" autocomplete="off" value="'+(feeDefault?(feeDefault/100).toFixed(2):'')+'"><div class="paym-hint" id="cp-amt-hint"></div></div>'+
+        '<label for="cp-on">Date received</label><input id="cp-on" type="date" max="'+cpTodayStr()+'" value="'+payEsc((cur&&cur.on)?cur.on:cpTodayStr())+'">'+
+        '<label for="cp-ref">Reference <span class="paym-muted">(optional — e-transfer or invoice number)</span></label><input id="cp-ref" type="text" maxlength="120" autocomplete="off" value="'+payEsc(cur?(cur.reference||''):'')+'">'+
+        '<label for="cp-note">Note <span class="paym-muted">(optional — e.g. why the fee was waived)</span></label><input id="cp-note" type="text" maxlength="200" autocomplete="off" value="'+payEsc(cur?(cur.note||''):'')+'">';
+    }
+    h+=(v.signedIn
+        ? '<div class="paym-muted" style="margin-top:10px">Recorded as <b>'+payEsc(v.name)+'</b> (signed in with Monday).</div>'
+        : '<label for="cp-by">Your name</label><input id="cp-by" type="text" maxlength="60" value="'+payEsc(payTypedName())+'">')+
+      '<div class="paym-err" role="alert"></div>'+
+      '<div class="paym-actions"><button type="button" class="paym-btn" data-x>Cancel</button>'+
+      '<button type="button" class="paym-btn '+(clear?'danger':'primary')+'" data-go>'+(clear?'Remove record':(cur?'Save change':'Record'))+'</button></div>';
+    dlg.box.innerHTML=h;
+    dlg.box.querySelector('[data-x]').onclick=dlg.close;
+    var kindEl=dlg.box.querySelector('#cp-kind'), amtWrap=dlg.box.querySelector('#cp-amt-wrap'), amtEl=dlg.box.querySelector('#cp-amt'), hint=dlg.box.querySelector('#cp-amt-hint');
+    function syncKind(){ if(!kindEl||!amtWrap) return; amtWrap.style.display=(kindEl.value==='waived')?'none':''; }
+    function refreshHint(){
+      if(!amtEl||!hint) return;
+      var c=payParseCents(amtEl.value);
+      hint.textContent=(isNaN(c)||c<=0)?'Enter the fee received, before HST.':((cp.feeCents&&c!==cp.feeCents)?('The booking fee for this consultation is '+cpMoney(cp.feeCents)+'.'):'');
+    }
+    if(kindEl){ kindEl.onchange=syncKind; syncKind(); }
+    if(amtEl){ amtEl.oninput=refreshHint; refreshHint(); }
+    dlg.box.querySelector('[data-go]').onclick=function(){
+      var err=dlg.box.querySelector('.paym-err');
+      var byEl=dlg.box.querySelector('#cp-by'); var by=byEl?byEl.value.trim():(v.name||'');
+      if(!by){ err.textContent='Enter your name — it is recorded with the payment.'; if(byEl) byEl.focus(); return; }
+      var payload;
+      if(clear){ payload={kind:'clear'}; }
+      else {
+        var kind=kindEl.value, cents=null;
+        if(kind!=='waived'){ cents=payParseCents(amtEl.value); if(isNaN(cents)||cents<=0){ err.textContent='Enter the fee received, in dollars and cents.'; amtEl.focus(); return; } }
+        var on=dlg.box.querySelector('#cp-on').value; if(!on){ err.textContent='Enter the date received.'; return; }
+        payload={kind:kind, amountCents:cents, on:on, reference:dlg.box.querySelector('#cp-ref').value.trim(), note:dlg.box.querySelector('#cp-note').value.trim()};
+      }
+      if(byEl) paySaveName(by);
+      dlg.close();
+      doAction('recordConsultPayment', JSON.stringify(payload), null, by);
+    };
+    setTimeout(function(){ var f=kindEl||dlg.box.querySelector('#cp-by')||dlg.box.querySelector('[data-go]'); if(f) f.focus(); },30);
+  });
+}
 var LAST_DETAIL=null; // the detail last rendered — the send button's confirm text reads the package state from it
 function render(d){
   LAST_DETAIL=d;
@@ -1214,6 +1329,7 @@ function render(d){
 
   highlightOutcome(d.outcome||'');
   hydrateAttribution(d);
+  hydrateConsultPayment(d);
   var fee=document.getElementById('fee'); if(fee && !fee.value && d.retainerFee) fee.value=d.retainerFee;
   // Hydrate the retainer panel from the detail payload ONCE (saves a second
   // getLead round-trip); later renders (after an action) keep in-progress edits.
@@ -1921,6 +2037,9 @@ function initActions(){
   document.getElementById('btn-attr-save').onclick=function(){
     doAction('saveAttribution', JSON.stringify({ followUpDate: document.getElementById('at-followup').value, leadOwner: document.getElementById('at-owner').value, bookedBy: document.getElementById('at-bookedby').value, paymentReviewedBy: document.getElementById('at-reviewer').value }), null);
   };
+  // Consultation fee: record / change / remove — the dialog collects the facts, doAction posts them.
+  document.getElementById('btn-cp-record').onclick=function(){ openConsultPaymentModal(LAST_DETAIL||{}, false); };
+  document.getElementById('btn-cp-clear').onclick=function(){ openConsultPaymentModal(LAST_DETAIL||{}, true); };
   // Address box: typed-but-unsaved text survives the re-render every other action
   // triggers (same guard as the invite draft); cleared once the save succeeds.
   document.getElementById('ca-address').addEventListener('input',function(){ ADDR_DIRTY=true; });

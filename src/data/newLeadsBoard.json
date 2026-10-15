@@ -111,6 +111,7 @@
     "retainerCountersign": "text_mm5say4s",
     "clientAccountId": "text_mm5x5dab",
     "previousCaseRef": "text_mm5xdsxe",
-    "advertisementFee": "numeric_mm67q8re"
+    "advertisementFee": "numeric_mm67q8re",
+    "consultPayment": "text_mm8533r9"
   }
 }
