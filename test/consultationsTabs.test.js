@@ -436,3 +436,12 @@ test('page: one consultation-fee rule for both tabs (paidMatch)', () => {
   assert.deepEqual(['app', 'cash', 'waived', ''].map((p) => paidMatch(R(p), 'waived')), [false, false, true, false]);
   assert.deepEqual(['app', 'cash', 'waived', ''].map((p) => paidMatch(R(p), '')), [true, true, true, true]);
 });
+
+test('page: the tab is "Retainers & follow-ups" — a Follow-Up client is someone the team calls back, never shown as retained (Faran 2026-10-16)', () => {
+  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  assert.ok(html.includes('data-tab="retainers">Retainers &amp; follow-ups <span class="tab-n" id="tn-ret"></span></button>'));
+  assert.ok(html.includes('<h2 class="sec-h">Retainers &amp; follow-ups <span id="r-count"'));
+  assert.ok(html.includes('<b>Follow-Up</b>: call the client back (not retained)'));
+  assert.ok(html.includes("'Follow-Up':'The team calls the client back — not retained'"));
+  assert.ok(!html.includes('No clients at the retainer stage') && !html.includes('No retainer clients match'));
+});

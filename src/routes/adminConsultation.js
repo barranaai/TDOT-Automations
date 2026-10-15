@@ -181,7 +181,7 @@ ${buildNavHeader('consultations')}
     <div class="tabs" role="tablist" aria-label="Views">
       <a class="tab" href="/admin/leads" role="tab">Leads</a>
       <button class="tab" type="button" role="tab" data-tab="consultations">Consultations <span class="tab-n" id="tn-consult"></span></button>
-      <button class="tab" type="button" role="tab" data-tab="retainers">Retainers <span class="tab-n" id="tn-ret"></span></button>
+      <button class="tab" type="button" role="tab" data-tab="retainers">Retainers &amp; follow-ups <span class="tab-n" id="tn-ret"></span></button>
       <button class="tab" type="button" role="tab" data-tab="reporting">Reporting</button>
       <span class="age" id="snap-age"></span>
     </div>
@@ -224,8 +224,8 @@ ${buildNavHeader('consultations')}
 
     <section id="tab-retainers" role="tabpanel" hidden>
       <div class="q-head">
-        <div><h2 class="sec-h">Retainers <span id="r-count" class="muted" style="font-weight:500"></span></h2>
-          <p class="sec-sub">Clients after their consultation, and direct retainer clients. A client moves here as soon as an outcome is set for their consultation — Retain at any time; Follow-Up, Newsletter or Not Wanted once the consultation day has come. A client drops off once retained (the case is on the Cases page).</p></div>
+        <div><h2 class="sec-h">Retainers &amp; follow-ups <span id="r-count" class="muted" style="font-weight:500"></span></h2>
+          <p class="sec-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation, and drops off once retained (the case is on the Cases page).</p></div>
         <div class="q-filters">
           <input id="rf-search" type="text" placeholder="Search client…">
           <select id="rf-consultant"><option value="">All consultants</option></select>
@@ -713,7 +713,7 @@ function toggleRout(v){
 function renderQuick(base){
   var box=document.getElementById('r-quick'); if(!box) return;
   var n={}; base.forEach(function(r){ var g=retGroup(r); n[g]=(n[g]||0)+1; });
-  var hint={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set' };
+  var hint={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set', 'Follow-Up':'The team calls the client back — not retained', 'Newsletter':'Nothing to do now — the client gets the newsletter', 'Not Wanted':'On the Not Wanted list — staff are warned if they come back' };
   function btn(v,label,count,on){ return '<button type="button" data-rout="'+escHtml(v)+'" aria-pressed="'+(on?'true':'false')+'"'+(count?'':' class="zero"')+(hint[v]?' title="'+escHtml(hint[v])+'"':'')+'>'+escHtml(label)+' <span class="qn">'+count+'</span></button>'; }
   box.innerHTML='<span class="ql">Show</span>'+btn('','All',base.length,!ROUT.length)+RET_OUTCOMES.map(function(o){ return btn(o,o,n[o]||0,ROUT.indexOf(o)>=0); }).join('');
   var focusV=box.getAttribute('data-focus'); box.removeAttribute('data-focus');
@@ -744,7 +744,7 @@ function renderRetainers(){
   document.getElementById('r-count').textContent='('+rows.length+(rows.length!==RETAINERS.length?(' of '+RETAINERS.length):'')+')';
   document.getElementById('tn-ret').textContent=String(RETAINERS.length);
   var tb=document.getElementById('rbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="12" class="empty">'+(!RETAINERS.length?'No clients at the retainer stage right now.':(ROUT.length && base.length)?'Nobody under '+escHtml(ROUT.join(' or '))+(base.length!==RETAINERS.length?' with these filters':'')+' right now.':'No retainer clients match your filters.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="12" class="empty">'+(!RETAINERS.length?'Nobody here right now.':(ROUT.length && base.length)?'Nobody under '+escHtml(ROUT.join(' or '))+(base.length!==RETAINERS.length?' with these filters':'')+' right now.':'No clients match your filters.')+'</td></tr>'; return; }
   function age(d){ var p=dParts(d); if(!p||!tp) return ''; var days=Math.round((Date.UTC(tp[0],tp[1]-1,tp[2])-Date.UTC(p[0],p[1]-1,p[2]))/86400000); return days>0?' <span class="muted">('+days+'d)</span>':''; }
   tb.innerHTML=rows.map(function(c){
     var stc=c.stage==='Paid'?'green':(c.stage==='Signed'||c.stage==='Sent')?'blue':'amber';
