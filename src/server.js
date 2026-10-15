@@ -816,6 +816,92 @@ app.get('/admin/payments/viewer', (req, res) => {
 // The Not Wanted list (Gauri point 5): only a NAMED admin removes someone; the
 // entry is kept as Removed with who/when/why. Adding happens through the
 // outcome "Not Wanted" (any staff member, with a reason), never here.
+// TEMPORARY — the live test of the automatic consultation package before the switch
+// goes on (Faran 2026-10-15, "do point 1 carefully"). Admin key only; ONE allow-listed
+// test lead; every write is to that lead; nothing is sent while the switch is OFF
+// unless armed here, and then only to the inbox the test set. Removed after the test.
+//   state         — the test lead's fields (read-only)
+//   setup         — { email, bookedSlot }: the lead becomes a hand-booked, in-person
+//                   consultation ≥ 48 h ahead, with a BLANK address (to test the hold)
+//   trigger       — { expectEmail }: arms 60 min and runs the payment trigger
+//   void-envelope — cancels the test signing request in Documenso
+//   restore       — { email, residentialAddress }: puts the lead back; disarms
+app.post('/admin/test/consult-package/:leadId', express.json(), async (req, res) => {
+  const viewer = resolveViewer(req);
+  if (!viewer || !viewer.isAdmin) return res.status(401).json({ error: 'admin key required' });
+  const cs = require('./services/consultationService');
+  const leadService = require('./services/leadService');
+  const leadId = String(req.params.leadId || '').trim();
+  if (!cs.PACKAGE_TEST_LEADS.has(leadId)) return res.status(403).json({ error: 'not the package test lead' });
+  const { action, expectEmail, fields = {} } = req.body || {};
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const note = (b) => require('./services/mondayApi').query('mutation($id: ID!, $b: String!){ create_update(item_id: $id, body: $b){ id } }', { id: leadId, b: `🧪 <b>[Package switch-on test]</b> ${b}` }).catch(() => {});
+  const slotAhead = (slot) => { const ms = require('./services/postConsultService').torontoSlotToUTC(String(slot || '')); return Number.isFinite(ms) ? ms - Date.now() : NaN; };
+  try {
+    const lead = await leadService.getLead(leadId);
+    if (!lead) return res.status(404).json({ error: 'lead not found' });
+    const cAgree = require('./services/consultAgreementService');
+    const state = () => ({ bookingStatus: lead.bookingStatus || '', bookedSlot: lead.bookedSlot || '', meetingType: lead.meetingType || '',
+      addressSet: !!String(lead.residentialAddress || '').trim(), squareConsultTxnId: lead.squareConsultTxnId || '',
+      consultAgreementSent: lead.consultAgreementSent || '', consultCountersign: cAgree.parseCountersign(lead) });
+    if (action === 'state') return res.json({ ok: true, state: state() });
+    if (action === 'setup') {
+      const email = String(fields.email || '').trim();
+      if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'setup needs fields.email' });
+      if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(String(fields.bookedSlot || '')) || !(slotAhead(fields.bookedSlot) >= 48 * 3600000)) return res.status(400).json({ error: 'setup needs fields.bookedSlot (YYYY-MM-DD HH:MM, at least 48 h ahead)' });
+      if (lead.squareConsultTxnId || lead.consultAgreementSent || Object.keys(cAgree.parseCountersign(lead)).length) return res.status(409).json({ error: 'the test lead is not clean (payment / agreement / countersign on file)', state: state() });
+      // Never a time a real client holds or could be told clashes (review): refuse any live claim on that minute.
+      const bs = require('./services/bookingService');
+      const clash = bs.claimsOnSlot(await bs.readSlotClaims({ strict: true }), fields.bookedSlot, { consultant: String(lead.assignedConsultant || '').trim(), excludeLeadId: leadId });
+      if (clash.length) return res.status(409).json({ error: `another lead holds ${fields.bookedSlot} — pick an off-grid time`, leads: clash.map((c) => c.leadId) });
+      await leadService.updateLead(leadId, { email, bookingStatus: 'Booked', bookedSlot: fields.bookedSlot, meetingType: 'In-person', residentialAddress: '' }, { clearKeys: ['residentialAddress'] });
+      await note(`Set up as a hand-booked in-person consultation on ${fields.bookedSlot}, address blank, email pointed at the test inbox. Will be restored after the test.`);
+      return res.json({ ok: true });
+    }
+    if (action === 'trigger') {
+      const want = String(expectEmail || '').trim().toLowerCase();
+      if (!want || String(lead.email || '').trim().toLowerCase() !== want) return res.status(409).json({ error: 'the lead email is not the expected test inbox' });
+      if (String(lead.bookingStatus || '').trim() !== 'Booked' || lead.squareConsultTxnId || String(lead.meetingType || '').trim() !== 'In-person' || !(slotAhead(lead.bookedSlot) >= 24 * 3600000)) return res.status(409).json({ error: 'not set up (hand-booked, in-person, slot at least 24 h ahead)', state: state() });
+      cs.armPackageTest(leadId, want);
+      const result = await cs.autoSendConsultationPackage(leadId, { trigger: 'payment' });
+      return res.json({ ok: true, result });
+    }
+    // Signed or submitted = real follow-ups ran (the consultant's countersign request, OneDrive
+    // files): stop and say what needs undoing by hand (review).
+    const csNow = cAgree.parseCountersign(lead);
+    const manual = [
+      String(lead.consultAgreementSigned || '').trim() ? 'the agreement was SIGNED (consultAgreementSigned set; a signed PDF went to OneDrive)' : '',
+      String(csNow.envelopeId || '').trim() ? `a consultant countersign envelope ${csNow.envelopeId} exists (void it in Documenso)` : '',
+      String(lead.preConsultSubmitted || '').trim() === 'Yes' ? 'the pre-consultation form was SUBMITTED (preConsultSubmitted / preConsultPdf, OneDrive files)' : '',
+    ].filter(Boolean);
+    if ((action === 'void-envelope' || action === 'restore') && manual.length) return res.status(409).json({ error: 'manual cleanup needed first', manual });
+    if (action === 'void-envelope') {
+      const envelopeId = String(csNow.clientEnvelopeId || '').trim();
+      if (!envelopeId) return res.status(400).json({ error: 'no envelope on the test lead' });
+      const documenso = require('./services/documensoService');
+      const env = await documenso.getEnvelope(envelopeId).catch((e) => ({ readError: e.message }));
+      const status = String((env && env.status) || '').toUpperCase();
+      if (status.includes('COMPLET')) return res.status(409).json({ error: `envelope ${envelopeId} is COMPLETED (signed) — manual cleanup`, status });
+      await documenso.deleteEnvelope(envelopeId);
+      await note(`Test signing request ${envelopeId} cancelled in Documenso (status before: ${status || 'unread'}).`);
+      return res.json({ ok: true, envelopeId, statusBefore: status || (env && env.readError ? `unread: ${env.readError}` : '') });
+    }
+    if (action === 'restore') {
+      const email = String(fields.email || '').trim();
+      if (!EMAIL_RE.test(email) || !String(fields.residentialAddress || '').trim()) return res.status(400).json({ error: 'restore needs fields.email and fields.residentialAddress' });
+      cs.disarmPackageTest(leadId);
+      await leadService.updateLead(leadId, { email, residentialAddress: String(fields.residentialAddress), bookingStatus: '', bookedSlot: '', meetingType: '', consultAgreementSent: '', consultCountersign: '' },
+        { clearKeys: ['bookingStatus', 'bookedSlot', 'meetingType', 'consultAgreementSent', 'consultCountersign'] });
+      await note('Restored after the test (email, address; booking, agreement and package fields cleared).');
+      return res.json({ ok: true });
+    }
+    return res.status(400).json({ error: 'unknown action' });
+  } catch (err) {
+    console.error('[PackageTest] failed:', err.stack || err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/admin/blacklist/:entryId/remove', express.json(), async (req, res) => {
   const r = require('./utils/staffIdentity').namedAdminCheck(tryStaffAuth(req), caseAccess.isAdminEmail,
     { what: 'remove someone from the Not Wanted list', hint: 'Ask an admin to do it.' });

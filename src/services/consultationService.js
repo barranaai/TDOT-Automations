@@ -55,6 +55,22 @@ function consultPackageAutoSendEnabled() {
   return /^(true|1)$/i.test(String(process.env.CONSULT_PACKAGE_AUTO_SEND || '').trim());
 }
 
+// TEMPORARY — the live test before the switch goes on (Faran 2026-10-15, "do point 1
+// carefully"). With the switch OFF, ONE allow-listed test lead may run the automatic
+// package, and only while ARMED by the admin test route: for 60 minutes, and only
+// to the exact inbox it was armed with. Removed again after the test.
+const PACKAGE_TEST_LEADS = new Set(['12641191022']);
+const _packageTestArm = new Map();     // leadId → { email, until }
+function armPackageTest(leadId, email, ms = 60 * 60 * 1000) {
+  const id = String(leadId);
+  if (!PACKAGE_TEST_LEADS.has(id)) throw new Error('not a package test lead');
+  const e = String(email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) throw new Error('no inbox to arm');
+  _packageTestArm.set(id, { email: e, until: Date.now() + ms });
+}
+function disarmPackageTest(leadId) { _packageTestArm.delete(String(leadId)); }
+function _testArmFor(leadId) { const a = _packageTestArm.get(String(leadId)); return a && a.until > Date.now() ? a : null; }
+
 const _packageInFlight  = new Map();   // leadId → Promise: overlapping triggers (two Square deliveries, a reconciler sweep) collapse to one
 const _packageSentAt    = new Map();   // leadId → ms: a trigger arriving AFTER completion must not trust a stale Monday read
 const PACKAGE_RECENT_MS = 15 * 60 * 1000;
@@ -160,7 +176,8 @@ function slotHasStarted(lead) {
 }
 
 async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overrides = {}, hold = '' } = {}) {
-  if (!consultPackageAutoSendEnabled()) {
+  const testArm = consultPackageAutoSendEnabled() ? null : _testArmFor(leadId);
+  if (!consultPackageAutoSendEnabled() && !testArm) {
     console.log(`[Consult] Automatic package is OFF (CONSULT_PACKAGE_AUTO_SEND) — lead ${leadId} awaits the team's "Review & send"`);
     return { status: 'disabled' };
   }
@@ -169,6 +186,11 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
 
   const stored = await leadService.getLead(leadId);
   if (!stored) return { status: 'failed', reason: 'lead not found' };
+  // TEMPORARY test run: never to any inbox but the one the test was armed with.
+  if (testArm && String(stored.email || '').trim().toLowerCase() !== testArm.email) {
+    console.warn(`[Consult] TEST package refused for lead ${leadId} — its email is not the armed test inbox`);
+    return { status: 'disabled', reason: 'test inbox mismatch' };
+  }
   const lead = { ...stored, ...overrides };
   const consultAgreementSvc = require('./consultAgreementService');
   const state = consultAgreementSvc.parseCountersign(lead);
@@ -1325,6 +1347,7 @@ module.exports = {
   onSlotConfirmed, createZoomMeeting, getZoomAccessToken, parseConsultOption,
   buildPreConsultFormHtml, savePreConsultData, resendConsultationLinks, sendConsultationPackage,
   autoSendConsultationPackage, consultPackageAutoSendEnabled, sweepConsultPackages,
+  PACKAGE_TEST_LEADS, armPackageTest, disarmPackageTest,   // TEMPORARY — the switch-on test (2026-10-15)
   _resetSentMemory: () => _packageSentAt.clear(),   // test seam
   send24hReminders, send1hReminders, sendPreConsultReminders,
   // exported for tests
