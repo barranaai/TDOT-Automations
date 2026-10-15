@@ -2161,6 +2161,8 @@ async function getDirectRetainerQueue() {
  *     to an earlier consultation and must not take today's meeting off the
  *     day's list (review 2026-10-16). Unknown when it was set: stays today;
  *   - an earlier day, or no date at all: moves (the outcome says it happened).
+ * Retain (or a retainer under way) never gets here: classifyLead sends it to
+ * Retainers at once, whatever the date — by design (f09e491).
  *
  * @param {object} l      the lead (snapshot row; outcomeChangedAt = Monday's changed_at)
  * @param {string} today  the Toronto day, 'YYYY-MM-DD'

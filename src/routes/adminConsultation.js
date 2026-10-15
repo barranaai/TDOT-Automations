@@ -225,7 +225,7 @@ ${buildNavHeader('consultations')}
     <section id="tab-retainers" role="tabpanel" hidden>
       <div class="q-head">
         <div><h2 class="sec-h">Retainers <span id="r-count" class="muted" style="font-weight:500"></span></h2>
-          <p class="sec-sub">Clients after their consultation and direct retainer clients. A client moves here as soon as the outcome is set (a consultation on a later day stays on Consultations). A client drops off once retained (the case is on the Cases page).</p></div>
+          <p class="sec-sub">Clients after their consultation, and direct retainer clients. A client moves here as soon as an outcome is set for their consultation — Retain at any time; Follow-Up, Newsletter or Not Wanted once the consultation day has come. A client drops off once retained (the case is on the Cases page).</p></div>
         <div class="q-filters">
           <input id="rf-search" type="text" placeholder="Search client…">
           <select id="rf-consultant"><option value="">All consultants</option></select>
