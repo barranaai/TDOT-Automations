@@ -57,9 +57,20 @@ function buildConsultAgreementData(lead = {}) {
   // 2026-08-14). Legacy leads without it keep the pre-tax fee — which is what
   // those clients really paid.
   const paidCents = (opt && Number.isFinite(Number(opt.paidCents)) && Number(opt.paidCents) > 0) ? Number(opt.paidCents) : null;
-  const amountPaidText = paidCents != null
-    ? `${centsToMoney(paidCents)}${paidCents > feeCents ? ' (incl. HST)' : ''}`
-    : centsToMoney(feeCents);
+  // Not paid through the link: what staff recorded (2026-10-15) — cash / e-transfer / an
+  // invoice the team sent / other: the fee (before HST) plus the HST FIXED when it was
+  // recorded (none outside Canada; a record without one prints the fee alone — never a
+  // claim it cannot prove); waived says so. No record → the legacy fee.
+  let amountPaidText;
+  if (paidCents != null) amountPaidText = `${centsToMoney(paidCents)}${paidCents > feeCents ? ' (incl. HST)' : ''}`;
+  else {
+    const ps = require('./consultPaymentService').paidState(lead);
+    if (ps.paid === 'waived') amountPaidText = 'nothing (the consultation fee was waived)';
+    else if (ps.paid && ps.paid !== 'app' && ps.paidCents != null) {
+      const hst = (ps.record && Number.isInteger(ps.record.hstCents)) ? ps.record.hstCents : 0;
+      amountPaidText = `${centsToMoney(ps.paidCents + hst)}${hst > 0 ? ' (incl. HST)' : ''}`;
+    } else amountPaidText = centsToMoney(feeCents);
+  }
   const data = {
     agreementDate:       formatAgreementDate(todayISO()),
     paName:              lead.fullName || lead.name || '',

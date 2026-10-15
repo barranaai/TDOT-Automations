@@ -103,11 +103,11 @@ test('apply: writes ONE text column as JSON naming who recorded it, posts a note
   try {
     const r = await portal.applyAction({ leadId: '555', action: 'recordConsultPayment', value: { kind: 'cash', amountCents: 20000, on: '2026-10-14', reference: 'till 3', note: '' }, staffName: 'Melanie', actor: { name: 'Melanie', email: '', verified: false } });
     assert.equal(r.ok, true);
-    assert.equal(r.message, 'Recorded — Cash $200.00 received 2026-10-14.');
+    assert.equal(r.message, 'Recorded — Cash $200.00 received 2026-10-14. The consultation agreement states $226.00 incl. HST.');
     assert.equal(w.writes.length, 1);
     assert.deepEqual(Object.keys(w.writes[0].fields), ['consultPayment'], 'only the payment column');
     const stored = JSON.parse(w.writes[0].fields.consultPayment);
-    assert.deepEqual({ ...stored, at: undefined }, { kind: 'cash', amountCents: 20000, on: '2026-10-14', reference: 'till 3', note: '', by: 'Melanie', verified: false, at: undefined });
+    assert.deepEqual({ ...stored, at: undefined }, { kind: 'cash', amountCents: 20000, hstCents: 2600, on: '2026-10-14', reference: 'till 3', note: '', by: 'Melanie', verified: false, at: undefined }, 'the HST is fixed at record time');
     assert.ok(!Number.isNaN(Date.parse(stored.at)), 'stamped');
     assert.equal(w.notes.length, 1);
     assert.match(w.notes[0], /💳 Consultation fee recorded as paid — Cash \$200\.00 received 2026-10-14 by Melanie \(name as typed\) · ref till 3\./);
@@ -122,7 +122,7 @@ test('apply: a signed-in staff member is recorded by their Monday name (verified
   const w = world({ lead: { consultPayment: JSON.stringify({ kind: 'cash', amountCents: 20000, on: '2026-10-14', by: 'Melanie', verified: false, at: '2026-10-14T15:00:00Z' }) }, signedIn: true });
   try {
     const r = await portal.applyAction({ leadId: '555', action: 'recordConsultPayment', value: JSON.stringify({ kind: 'e-transfer', amountCents: 20000, on: '2026-10-14', reference: 'C1A2B3' }), staffName: 'Someone Else', actor: w.actor });
-    assert.match(r.message, /^Recorded — E-transfer \$200\.00 received 2026-10-14\. The earlier record was replaced\.$/);
+    assert.match(r.message, /^Recorded — E-transfer \$200\.00 received 2026-10-14\. The earlier record was replaced\. The consultation agreement states \$226\.00 incl\. HST\.$/);
     const stored = JSON.parse(w.writes[0].fields.consultPayment);
     assert.equal(stored.by, 'Gauri Berde', 'the Monday identity, never the typed name'); assert.equal(stored.verified, true);
     assert.match(w.notes[0], /by Gauri Berde · ref C1A2B3\. Replaces: Cash \$200\.00 received 2026-10-14 by Melanie \(name as typed\)\./);

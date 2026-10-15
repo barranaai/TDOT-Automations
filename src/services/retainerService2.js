@@ -145,7 +145,18 @@ const _agreementInFlight = new Map(); // leadId → Promise
 
 /** Public entry from the Outcome=Retain webhook — notifies if the fee is missing. */
 async function onOutcomeRetain(leadId) {
-  return maybeSendRetainerAgreement(leadId, { notifyIfMissing: true });
+  // A signature already on record that onRetainerSigned held back because the outcome
+  // was not Retain (review 2026-10-15): Retain now opens the case with that signed date.
+  // No new agreement — the client has signed (the send would refuse a signed lead anyway).
+  // Only a lead the gate actually held (its marker) — never any old signed lead
+  // without a case link (round-2 review: that could open a second case).
+  const lead = await leadService.getLead(leadId).catch(() => null);
+  if (lead && String(lead.retainerSigned || '').trim() && !String(lead.clientMasterItemId || '').trim()
+      && require('./retainerCountersignService').parseRetainerCountersign(lead).signedHeld) {
+    return onRetainerSigned(leadId);
+  }
+  // Via module.exports — the tests' seam (proves no second agreement goes to a signed client).
+  return module.exports.maybeSendRetainerAgreement(leadId, { notifyIfMissing: true });
 }
 
 /**
@@ -202,6 +213,9 @@ async function _doVoidAndReissue(leadId) {
     return { status: 'already-signed' };
   }
   if (!lead.retainerSent) return { status: 'not-sent' };
+  // The fresh send needs Retain (the gate in _doMaybeSendRetainerAgreement). Refuse BEFORE
+  // voiding anything, or the client is left with no agreement at all (review 2026-10-15).
+  if (String(lead.outcome || '').trim() !== 'Retain') return { status: 'not-retain', outcome: String(lead.outcome || '').trim() };
 
   const rc = rcSvc.parseRetainerCountersign(lead);
   const envId = String(rc.clientEnvelopeId || '').trim();
@@ -644,6 +658,36 @@ function buildRetainerPdf(lead) {
 async function onRetainerSigned(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) return;
+  // A date typed in Monday on a lead whose outcome is a decision NOT to retain
+  // (Follow-Up / Newsletter / Not Wanted) must not open a case or send the
+  // payment link (review 2026-10-15). The date is KEPT as the record of the
+  // signature (clearing it would let a later Retain email a second agreement);
+  // setting Retain then opens the case through onOutcomeRetain. Exempt: a real
+  // e-signature (the Not Wanted note says it still opens the case), a direct-
+  // retainer client (retained by definition), a case already open, Retained,
+  // and a blank outcome (legacy hand-sent retainers).
+  const outcome = String(lead.outcome || '').trim();
+  const signedViaDocumenso = require('./retainerCountersignService').parseRetainerCountersign(lead).clientSignedVia === 'documenso';
+  if (outcome && outcome !== 'Retain' && !signedViaDocumenso
+      && String(lead.sourceChannel || '').trim() !== 'Direct Retainer'
+      && !String(lead.clientMasterItemId || '').trim() && String(lead.conversionStatus || '').trim() !== 'Retained') {
+    const typed = String(lead.retainerSigned || '').trim();
+    // A durable marker: Retain resumes exactly these leads, and the payment link waits.
+    // Written under the lead lock from a fresh read (other writers share this JSON).
+    let fresh = false;
+    await require('./leadMutex').withLeadLock(String(leadId), async () => {
+      const cur = await leadService.getLead(leadId);
+      const rc = require('./retainerCountersignService').parseRetainerCountersign(cur || {});
+      if (rc.signedHeld && rc.signedHeld.date === typed) return;   // already held for this date — no repeat note
+      fresh = true;
+      await leadService.updateLead(leadId, { retainerCountersign: JSON.stringify({ ...rc, signedHeld: { date: typed, outcome, at: new Date().toISOString() } }) });
+    }).catch((err) => { fresh = true; console.warn(`[Retainer2] hold marker write failed for ${leadId}: ${err.message}`); });
+    if (fresh) {
+      await postLeadNote(leadId, `⚠ <b>Retainer Signed${typed ? ` (${esc(typed)})` : ''} is recorded, but the outcome is “${esc(outcome)}”</b> — no case was opened and no payment link was sent. If the client really signed, set the outcome to Retain: the case then opens with this signed date, and no new agreement is sent.`);
+    }
+    console.warn(`[Retainer2] Retainer Signed held for lead ${leadId} — outcome is "${outcome}"`);
+    return { status: 'not-retain', outcome };
+  }
   if (!lead.retainerSigned) {
     await leadService.updateLead(leadId, { retainerSigned: todayISO() });
   }
@@ -723,6 +767,13 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
   const lead = await leadService.getLead(leadId);
   if (!lead) return;
   if (!lead.retainerSigned) return; // fee set early — wait for signing
+  // Held: signed while the outcome was not Retain (onRetainerSigned's gate) — the payment
+  // request waits until Retain opens the case (round-2 review: a fee edit used to send it).
+  if (require('./retainerCountersignService').parseRetainerCountersign(lead).signedHeld
+      && !String(lead.clientMasterItemId || '').trim() && String(lead.outcome || '').trim() !== 'Retain') {
+    console.log(`[Retainer2] Payment request for lead ${leadId} waits — the signature is held until the outcome is Retain`);
+    return;
+  }
 
   // The retainer is collected by e-transfer, milestone-by-milestone. At signing we
   // email the client the FIRST milestone's e-transfer request (amount + HST, the

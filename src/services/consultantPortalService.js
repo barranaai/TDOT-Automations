@@ -1204,17 +1204,26 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       if (n.kind === 'clear') {
         if (!before) { const e = new Error('No consultation payment is recorded on this lead.'); e.badRequest = true; throw e; }
         await leadService.updateLead(leadId, { consultPayment: '' }, { clearKeys: ['consultPayment'] });
+        try { consultAgreementService.evictCache(leadId); } catch (_) { /* best-effort */ }
         await postPortalNote(leadId, `🗑 Consultation fee record removed by ${escHtmlNote(name)}${signed} — was: ${escHtmlNote(cp.describe(before))}.`);
         return { ok: true, message: 'The consultation payment record was removed.', consultPayment: null };
       }
-      const rec = { kind: n.kind, amountCents: n.amountCents, on: n.on, reference: n.reference, note: n.note, by: name, at: new Date().toISOString(), verified };
+      // The HST on top of the fee, fixed NOW from where the client is (none outside Canada) —
+      // the consultation agreement prints fee + this; a later location edit never changes it.
+      // An edit of the SAME amount keeps the HST fixed when it was first recorded (round-2 review).
+      const hstCents = (before && before.amountCents === n.amountCents && Number.isInteger(before.hstCents) && n.kind !== 'waived') ? before.hstCents : rec0HstCents(n, lead);
+      const rec = { kind: n.kind, amountCents: n.amountCents, hstCents, on: n.on, reference: n.reference, note: n.note, by: name, at: new Date().toISOString(), verified };
       await leadService.updateLead(leadId, { consultPayment: JSON.stringify(rec) });
-      await postPortalNote(leadId, `${rec.kind === 'waived' ? '🆓 Consultation fee waived' : '💳 Consultation fee recorded as paid'} — ${escHtmlNote(cp.describe(rec))}.${before ? ` Replaces: ${escHtmlNote(cp.describe(before))}.` : ''} A record only — no email or automatic step runs from it.`);
+      try { consultAgreementService.evictCache(leadId); } catch (_) { /* the agreement's "has paid" line changes — drop the cached copy */ }
+      const signedAgreement = !!String(lead.consultAgreementSigned || '').trim();
+      const agreementLine = signedAgreement ? ' The signed consultation agreement keeps the earlier amount.'
+        : String(lead.consultAgreementSent || '').trim() ? ' The consultation agreement already sent for signature keeps the earlier amount; its preview link now shows the new one.' : '';
+      await postPortalNote(leadId, `${rec.kind === 'waived' ? '🆓 Consultation fee waived' : '💳 Consultation fee recorded as paid'} — ${escHtmlNote(cp.describe(rec))}.${before ? ` Replaces: ${escHtmlNote(cp.describe(before))}.` : ''} A record only — no email or automatic step runs from it.${agreementLine}`);
       return {
         ok: true,
         message: rec.kind === 'waived'
-          ? 'Recorded — the consultation fee is waived.'
-          : `Recorded — ${cp.KINDS[rec.kind]} ${(rec.amountCents / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })} received ${rec.on}.${before ? ' The earlier record was replaced.' : ''}`,
+          ? `Recorded — the consultation fee is waived.${agreementLine}`
+          : `Recorded — ${cp.KINDS[rec.kind]} ${(rec.amountCents / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })} received ${rec.on}.${before ? ' The earlier record was replaced.' : ''}${hstCents > 0 ? ` The consultation agreement states ${((rec.amountCents + hstCents) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })} incl. HST.` : ''}${agreementLine}`,
         consultPayment: rec,
       };
     }
@@ -1514,6 +1523,10 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         e.badRequest = true; throw e;
       }
       const r = (await require('./retainerService2').voidAndReissueRetainer(leadId)) || {};
+      if (r.status === 'not-retain' && !r.reissued) {
+        const e = new Error(`Nothing was voided — the outcome is ${r.outcome ? `“${r.outcome}”` : 'not set'}, and a fresh agreement goes out only for “Retain”. If the client is being retained, set the Outcome to Retain on the Lead Board in Monday (no new agreement is sent — one is already on record), then re-issue.`);
+        e.badRequest = true; throw e;
+      }
       switch (r.status) {
         case 'sent':
           await postPortalNote(leadId, '🔄 Retainer agreement re-issued — the old envelope was voided and a fresh agreement emailed.');
@@ -2032,6 +2045,12 @@ async function createDirectClient(payload = {}) {
   await noteBlacklist(leadId, 'Staff saw the warning and created this direct retainer client anyway.');
   console.log(`[Consultant] Direct retainer client created — lead ${leadId} (${fullName}, ${caseType}, ${consultant}, caseOpened=${caseOpened})`);
   return { ok: true, leadId, caseOpened, blacklist };
+}
+
+/** HST on a staff-recorded consultation fee, fixed when it is recorded (none when waived or outside Canada). */
+function rec0HstCents(n, lead) {
+  if (!n || n.kind === 'waived' || !(n.amountCents > 0)) return 0;
+  return require('./bookingService').consultTotalWithTaxForLead(n.amountCents, lead) - n.amountCents;
 }
 
 /** The 409 body for a create conflict: the duplicates AND the Not Wanted warning travel together. */

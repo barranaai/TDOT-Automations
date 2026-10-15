@@ -47,6 +47,7 @@ function parseConsultPayment(lead) {
     return {
       kind: o.kind,
       amountCents: o.kind === 'waived' ? 0 : (Number.isInteger(a) && a > 0 ? a : 0),
+      hstCents: (typeof o.hstCents === 'number' && Number.isInteger(o.hstCents) && o.hstCents >= 0) ? o.hstCents : null,   // fixed at record time; null on older records
       on: DAY_RE.test(String(o.on || '')) ? String(o.on) : '',
       reference: oneLine(o.reference).slice(0, MAX_REF),
       note: oneLine(o.note).slice(0, MAX_NOTE),
