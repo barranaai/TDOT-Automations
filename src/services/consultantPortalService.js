@@ -2152,22 +2152,22 @@ async function getDirectRetainerQueue() {
 }
 
 /**
- * A booked consultation that has HAPPENED and has an outcome (Gauri point 4:
- * "once an outcome is set, the client moves to the Retainers view"). An
- * upcoming booking stays on Consultations whatever its outcome — a client who
- * re-booked after a Follow-Up must not drop off the day's list. A slot with no
- * time on today, or no date at all, counts as happened: the outcome says so.
+ * A booked consultation whose DAY HAS PASSED and that has an outcome (Gauri
+ * point 4: "once an outcome is set, the client moves to the Retainers view").
+ * The move waits for the next Toronto day, never the start time: nothing clears
+ * an outcome when a client is re-booked, so an outcome left from an earlier
+ * consultation would take today's meeting off the day's list while it runs
+ * (review 2026-10-16). Today's and upcoming bookings stay on Consultations
+ * whatever their outcome. A booked row with no date counts as past: the
+ * outcome says the consultation happened.
  *
- * @param {object} l        the lead (snapshot row)
- * @param {string} nowWall  Toronto now, 'YYYY-MM-DD HH:MM'
+ * @param {object} l      the lead (snapshot row)
+ * @param {string} today  the Toronto day, 'YYYY-MM-DD'
  */
-function consultationDone(l, nowWall) {
+function consultationDone(l, today) {
   if (!canonicalOutcome(l.outcome)) return false;
-  const m = String(l.bookedSlot == null ? '' : l.bookedSlot).trim().match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?/);
-  if (!m) return true;
-  const today = nowWall.slice(0, 10);
-  if (m[1] !== today) return m[1] < today;
-  return !m[2] || m[2] <= nowWall.slice(11, 16);
+  const m = String(l.bookedSlot == null ? '' : l.bookedSlot).trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return !m || m[1] < today;
 }
 
 /**
@@ -2184,10 +2184,10 @@ async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
   const s = (v) => String(v == null ? '' : v).trim();
   const consultations = [], retainers = [];
   const consultPayment = require('./consultPaymentService');
-  const nowWall = torontoWallClock(now.toISOString());
+  const today = torontoDay(now.toISOString());
   for (const l of snap.leads) {
     let kind = classifyLead(l);
-    if (kind === 'consultation' && consultationDone(l, nowWall)) kind = 'retainer';
+    if (kind === 'consultation' && consultationDone(l, today)) kind = 'retainer';
     if (kind === 'consultation') {
       // paid: 'app' (the booking link's Square payment, paidCents incl. HST) | a kind
       // staff recorded (cash / e-transfer / invoice / other, paidCents before HST;
@@ -2208,9 +2208,13 @@ async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
       });
     } else if (kind === 'retainer') {
       const oc = canonicalOutcome(l.outcome);
+      const direct = s(l.sourceChannel) === DIRECT_SOURCE;
+      // the CONSULTATION fee (not the retainer's): a client who had one keeps its
+      // paid state on this tab, so an unrecorded fee is still found (review 2026-10-16)
+      const ps = direct ? null : consultPayment.paidState(l);
       retainers.push({
         id: l.id, name: l.fullName || l.name,
-        kind: s(l.sourceChannel) === DIRECT_SOURCE ? 'direct' : 'booked',
+        kind: direct ? 'direct' : 'booked',
         originalChannel: s(l.originalChannel),
         caseType: s(l.confirmedCaseType) || s(l.caseTypeInterest) || s(l.serviceRequired),
         consultant: s(l.assignedConsultant),
@@ -2225,6 +2229,7 @@ async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
         outcomeGroup: oc || OUTCOME_RETAIN,
         caseOpen: !!s(l.clientMasterItemId), clientMasterItemId: s(l.clientMasterItemId),
         bookedSlot: s(l.bookedSlot), outcome: oc || s(l.outcome), followUpDate: s(l.followUpDate), createdAt: l.createdAt || '',
+        paid: ps ? ps.paid : '', paidCents: ps ? ps.paidCents : null, paidBy: ps ? ps.by : '', paidOn: ps ? ps.on : '', paidVerified: ps ? ps.verified : false,
       });
     }
   }

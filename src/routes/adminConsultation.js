@@ -136,14 +136,14 @@ function buildQueueHTML() {
   section[hidden] { display:none; }
   /* Retainers quick filters (Faran 2026-10-16, in place of grouping by outcome): toggle buttons, none on = all */
   .quick { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
-  .quick .ql { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; margin-right:2px; }
+  .quick .ql { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#64748b; margin-right:2px; }
   .quick button { display:inline-flex; align-items:center; gap:6px; min-height:32px; padding:5px 12px; border:1px solid #e2e8f0; border-radius:16px; background:#fff; color:var(--navy); font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
   .quick button:hover { border-color:#94a3b8; }
   .quick button:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
   .quick button .qn { min-width:18px; padding:0 6px; border-radius:10px; background:#f1f5f9; color:#64748b; font-size:11px; font-weight:700; text-align:center; font-variant-numeric:tabular-nums; }
   .quick button[aria-pressed="true"] { background:var(--navy); border-color:var(--navy); color:#fff; }
   .quick button[aria-pressed="true"] .qn { background:rgba(255,255,255,.18); color:#fff; }
-  .quick button.zero:not([aria-pressed="true"]) { color:#94a3b8; }
+  .quick button.zero:not([aria-pressed="true"]) { color:#64748b; border-style:dashed; }
   #dc-overlay { position:fixed; inset:0; background:rgba(15,23,42,.45); display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px; }
   #dc-modal { background:#fff; border-radius:14px; padding:22px 24px; width:100%; max-width:460px; max-height:90vh; overflow-y:auto; box-shadow:0 20px 50px rgba(2,6,23,.35); }
   #dc-modal h3 { margin:0 0 4px; font-size:17px; color:var(--navy); }
@@ -203,7 +203,6 @@ ${buildNavHeader('consultations')}
           <select id="f-mode"><option value="">Any mode</option><option>In-person</option><option>Virtual</option><option>Phone Call</option></select>
           <select id="f-paid"><option value="">Paid: any</option><option value="paid">Paid (any way)</option><option value="app">Paid (app)</option><option value="staff">Paid — recorded by staff</option><option value="waived">Waived</option><option value="none">Not paid</option></select>
           <select id="f-agree"><option value="">Agreement: any</option><option value="signed">Signed</option><option value="sent">Sent, not signed</option><option value="none">Not sent</option></select>
-          <select id="f-followup"><option value="">Follow-up: any</option><option value="due">Due (today or earlier)</option><option value="has">Has a follow-up date</option></select>
           <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
         </div>
       </div>
@@ -233,12 +232,13 @@ ${buildNavHeader('consultations')}
           <select id="rf-stage"><option value="">Any stage</option><option>Paid</option><option>Signed</option><option>Sent</option><option>Fee set</option><option>Retain</option><option>New</option></select>
           <select id="rf-kind"><option value="">Direct + booked</option><option value="direct">Direct retainer clients</option><option value="booked">After a consultation</option></select>
           <select id="rf-followup"><option value="">Follow-up: any</option><option value="due">Due (today or earlier)</option><option value="has">Has a follow-up date</option></select>
+          <select id="rf-paid" title="The consultation fee — direct retainer clients had no consultation"><option value="">Consult fee: any</option><option value="paid">Paid (any way)</option><option value="app">Paid (app)</option><option value="staff">Paid — recorded by staff</option><option value="waived">Waived</option><option value="none">Not paid</option></select>
         </div>
       </div>
       <div class="quick" id="r-quick" role="group" aria-label="Show by outcome"></div>
       <div class="card">
         <table>
-          <thead><tr><th>Client</th><th>Case type</th><th>Consultant</th><th>Outcome</th><th>Fee</th><th>Sent</th><th>Signed</th><th>Paid</th><th>Stage</th><th>Case</th><th></th></tr></thead>
+          <thead><tr><th>Client</th><th>Case type</th><th>Consultant</th><th>Outcome</th><th>Consult fee</th><th>Retainer fee</th><th>Sent</th><th>Signed</th><th>Paid</th><th>Stage</th><th>Case</th><th></th></tr></thead>
           <tbody id="rbody"></tbody>
         </table>
       </div>
@@ -654,6 +654,16 @@ function populateFilters(){
   fillSel('f-consultant', distinctVals(ALLROWS,function(r){return r.consultant;}), 'All consultants', '<option value="__none">Unassigned</option>');
   fillSel('rf-consultant', distinctVals(RETAINERS,function(r){return r.consultant;}), 'All consultants', '<option value="__none">Unassigned</option>');
 }
+/* The consultation-fee filter, one rule for both tabs: paid (any way) | app | staff | waived | none */
+function paidMatch(r,paid){
+  if(!paid) return true;
+  if(paid==='paid') return !!(r.paid && r.paid!=='waived');
+  if(paid==='app') return r.paid==='app';
+  if(paid==='staff') return !!(r.paid && r.paid!=='app' && r.paid!=='waived');
+  if(paid==='waived') return r.paid==='waived';
+  if(paid==='none') return !r.paid;
+  return true;
+}
 function passesCommon(r,q,con){
   if(q && String(r.name||'').toLowerCase().indexOf(q)<0) return false;
   if(con==='__none'){ if(r.consultant) return false; } else if(con && r.consultant!==con) return false;
@@ -661,18 +671,12 @@ function passesCommon(r,q,con){
 }
 function applyFilters(){
   var q=(document.getElementById('f-search').value||'').toLowerCase().trim();
-  var con=document.getElementById('f-consultant').value, mode=document.getElementById('f-mode').value, paid=document.getElementById('f-paid').value, ag=document.getElementById('f-agree').value, fu=document.getElementById('f-followup').value;
+  var con=document.getElementById('f-consultant').value, mode=document.getElementById('f-mode').value, paid=document.getElementById('f-paid').value, ag=document.getElementById('f-agree').value;
   var t=todayStr();
   var keep=ALLROWS.filter(function(r){
     if(!passesCommon(r,q,con)) return false;
     if(mode && r.meetingType!==mode) return false;
-    if(fu==='due' && !(r.followUpDate && r.followUpDate<=t)) return false;
-    if(fu==='has' && !r.followUpDate) return false;
-    if(paid==='paid' && !(r.paid && r.paid!=='waived')) return false;
-    if(paid==='app' && r.paid!=='app') return false;
-    if(paid==='staff' && !(r.paid && r.paid!=='app' && r.paid!=='waived')) return false;
-    if(paid==='waived' && r.paid!=='waived') return false;
-    if(paid==='none' && r.paid) return false;
+    if(!paidMatch(r,paid)) return false;
     if(ag==='signed' && !r.agreementSigned) return false;
     if(ag==='sent' && !(r.agreementSent && !r.agreementSigned)) return false;
     if(ag==='none' && r.agreementSent) return false;
@@ -696,9 +700,10 @@ function applyFilters(){
    and in the address (?outcome=Follow-Up,Newsletter) so a link can open a view. */
 function retGroup(r){ return RET_OUTCOMES.indexOf(r.outcomeGroup)>=0?r.outcomeGroup:RET_OUTCOMES[0]; }
 function cleanOutcomes(list){ var out=[]; (list||[]).forEach(function(v){ v=String(v||'').trim(); if(RET_OUTCOMES.indexOf(v)>=0 && out.indexOf(v)<0) out.push(v); }); return out; }
-function setRout(list,push){
-  ROUT=cleanOutcomes(list); lsSet('tdot_ret_outcomes',ROUT.join(','));
-  if(push){ try { var u=new URL(window.location.href); if(ROUT.length) u.searchParams.set('outcome',ROUT.join(',')); else u.searchParams.delete('outcome'); history.replaceState(null,'',u.toString()); } catch(e){} }
+function setRout(list,push,keep){
+  ROUT=cleanOutcomes(list);
+  if(!keep) lsSet('tdot_ret_outcomes',ROUT.join(','));   // keep: a link's choice is shown, not saved over the viewer's own
+  if(push){ try { var u=new URL(window.location.href); u.searchParams.set('tab','retainers'); if(ROUT.length) u.searchParams.set('outcome',ROUT.join(',')); else u.searchParams.delete('outcome'); history.replaceState(null,'',u.toString()); } catch(e){} }
 }
 function toggleRout(v){
   if(!v){ setRout([],true); }
@@ -725,12 +730,13 @@ function outcomeCell(c){
 }
 function renderRetainers(){
   var q=(document.getElementById('rf-search').value||'').toLowerCase().trim();
-  var con=document.getElementById('rf-consultant').value, st=document.getElementById('rf-stage').value, kind=document.getElementById('rf-kind').value, fu=document.getElementById('rf-followup').value;
+  var con=document.getElementById('rf-consultant').value, st=document.getElementById('rf-stage').value, kind=document.getElementById('rf-kind').value, fu=document.getElementById('rf-followup').value, paid=document.getElementById('rf-paid').value;
   var t=todayStr(), tp=dParts(t);
   var base=RETAINERS.filter(function(r){
     if(!passesCommon(r,q,con)) return false; if(st && r.stage!==st) return false; if(kind && r.kind!==kind) return false;
     if(fu==='due' && !(r.followUpDate && r.followUpDate<=t)) return false;
     if(fu==='has' && !r.followUpDate) return false;
+    if(paid && (r.kind==='direct' || !paidMatch(r,paid))) return false;   // a direct client had no consultation fee
     return true;
   });
   renderQuick(base);
@@ -738,7 +744,7 @@ function renderRetainers(){
   document.getElementById('r-count').textContent='('+rows.length+(rows.length!==RETAINERS.length?(' of '+RETAINERS.length):'')+')';
   document.getElementById('tn-ret').textContent=String(RETAINERS.length);
   var tb=document.getElementById('rbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="11" class="empty">'+(!RETAINERS.length?'No clients at the retainer stage right now.':(ROUT.length && base.length)?'Nobody under '+escHtml(ROUT.join(' or '))+(base.length!==RETAINERS.length?' with these filters':'')+' right now.':'No retainer clients match your filters.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="12" class="empty">'+(!RETAINERS.length?'No clients at the retainer stage right now.':(ROUT.length && base.length)?'Nobody under '+escHtml(ROUT.join(' or '))+(base.length!==RETAINERS.length?' with these filters':'')+' right now.':'No retainer clients match your filters.')+'</td></tr>'; return; }
   function age(d){ var p=dParts(d); if(!p||!tp) return ''; var days=Math.round((Date.UTC(tp[0],tp[1]-1,tp[2])-Date.UTC(p[0],p[1]-1,p[2]))/86400000); return days>0?' <span class="muted">('+days+'d)</span>':''; }
   tb.innerHTML=rows.map(function(c){
     var stc=c.stage==='Paid'?'green':(c.stage==='Signed'||c.stage==='Sent')?'blue':'amber';
@@ -748,6 +754,7 @@ function renderRetainers(){
       '<td style="color:var(--muted)">'+escHtml(c.caseType||'—')+'</td>'+
       '<td>'+escHtml(c.consultant||'—')+'</td>'+
       '<td>'+outcomeCell(c)+'</td>'+
+      '<td>'+(c.kind==='direct'?'<span class="pill grey" title="Direct retainer client — no consultation">n/a</span>':paidPill(c))+'</td>'+
       '<td>'+(c.fee?'$'+escHtml(c.fee):'—')+'</td>'+
       '<td>'+(c.retainerSent?escHtml(c.retainerSent)+(c.retainerSigned?'':age(c.retainerSent)):'—')+'</td>'+
       '<td>'+(c.retainerSigned?escHtml(c.retainerSigned):'—')+'</td>'+
@@ -777,8 +784,8 @@ function load(force){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
-['f-search','f-consultant','f-mode','f-paid','f-agree','f-followup'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
-['rf-search','rf-consultant','rf-stage','rf-kind','rf-followup'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', renderRetainers); });
+['f-search','f-consultant','f-mode','f-paid','f-agree'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
+['rf-search','rf-consultant','rf-stage','rf-kind','rf-followup','rf-paid'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', renderRetainers); });
 Array.prototype.forEach.call(document.querySelectorAll('.tab[data-tab]'),function(b){ b.onclick=function(){ setTab(b.getAttribute('data-tab'),true); }; });
 Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.onclick=function(){ setRange(b.getAttribute('data-range')); }; });
 Array.prototype.forEach.call(document.querySelectorAll('#range .nav'),function(b){ b.onclick=function(){ shiftRange(Number(b.getAttribute('data-nav'))); }; });
@@ -838,7 +845,7 @@ tdotBindDelete(function(){ load(true); });
 startClock(); checkApiStatus();
 setTab(new URLSearchParams(window.location.search).get('tab')||lsGet('tdot_consult_tab')||'consultations', false);
 setRange(lsGet('tdot_consult_range')||'today');
-(function(){ var p=new URLSearchParams(window.location.search).get('outcome'); setRout(String(p!==null?p:lsGet('tdot_ret_outcomes')).split(','), false); })();
+(function(){ var p=new URLSearchParams(window.location.search).get('outcome'); setRout(String(p!==null?p:lsGet('tdot_ret_outcomes')).split(','), false, p!==null); })();
 load();
 </script></body></html>`;
 }

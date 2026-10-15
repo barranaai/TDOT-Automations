@@ -234,7 +234,7 @@ test('pages: the Paid filter has the new choices, the row pill reads the kind, t
   const q = buildQueueHTML(), d = buildDetailHTML('555');
   for (const html of [q, d]) for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   for (const s of ['<option value="paid">Paid (any way)</option>', '<option value="app">Paid (app)</option>', '<option value="staff">Paid — recorded by staff</option>', '<option value="waived">Waived</option>', '<option value="none">Not paid</option>',
-    'function paidPill(c){', "(c.paidVerified?'':' (name as typed)')", "if(paid==='staff' && !(r.paid && r.paid!=='app' && r.paid!=='waived')) return false;", "if(paid==='none' && r.paid) return false;",
+    'function paidPill(c){', "(c.paidVerified?'':' (name as typed)')", "if(paid==='staff') return !!(r.paid && r.paid!=='app' && r.paid!=='waived');", "if(paid==='none') return !r.paid;", "if(!paidMatch(r,paid)) return false;",
     "' recorded by staff'", "' waived'"]) assert.ok(q.includes(s), s);
   assert.ok(!q.includes('Not paid via app'), 'the old wording is gone');
   for (const s of ['id="cp-state"', 'id="cp-body"', 'id="btn-cp-record"', 'id="btn-cp-clear"', 'function hydrateConsultPayment(d){', 'function openConsultPaymentModal(d, clear){',
