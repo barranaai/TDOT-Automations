@@ -15,7 +15,7 @@ const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const router  = express.Router();
-const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS } = require('./adminShared');
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS, STAFF_OPTS, COUNTRY_OPTS } = require('./adminShared');
 
 // ─── Inline icon set (same conventions as adminConsultation.js) ───────────────
 const _svg = (p) => `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex:none;vertical-align:-.15em">${p}</svg>`;
@@ -56,6 +56,9 @@ function buildLeadsQueueHTML() {
   .page-h { font-size:22px; font-weight:800; color:var(--navy); letter-spacing:-.5px; margin:0 0 4px; }
   .page-sub { font-size:12px; color:#94a3b8; margin:0 0 20px; font-weight:500; }
   .al-l { display:block; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:#64748b; margin:10px 0 4px; font-weight:600; }
+  .al-yn { display:flex; gap:18px; font-size:13.5px; margin:2px 0; }
+  .al-yn label { display:flex; gap:6px; align-items:center; cursor:pointer; }
+  .al-hint { font-size:12px; color:#64748b; margin-top:3px; }
   #al-overlay input, #al-overlay select, #al-overlay textarea { width:100%; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px; font:inherit; box-sizing:border-box; }
   #al-overlay { overflow-y:auto; }
   #al-overlay > div { max-height:calc(100vh - 96px); overflow-y:auto; }
@@ -103,6 +106,12 @@ ${buildNavHeader('leads')}
         <label class="al-l" for="al-email">Email *</label><input id="al-email" type="email" maxlength="200" autocomplete="off">
         <label class="al-l" for="al-phone">Phone *</label><input id="al-phone" type="tel" maxlength="40" autocomplete="off">
         <label class="al-l" for="al-address">Residential address *</label><input id="al-address" type="text" maxlength="500" autocomplete="off" placeholder="Street, city, province/state, postal code, country">
+        <div class="al-l" id="al-incanada-l">In Canada now? *</div>
+        <div class="al-yn" role="radiogroup" aria-labelledby="al-incanada-l"><label><input type="radio" name="al-incanada" value="Yes"> Yes</label><label><input type="radio" name="al-incanada" value="No"> No</label></div>
+        <div class="al-hint">Decides the HST on the consultation fee — no HST for clients outside Canada.</div>
+        <div id="al-country-row" style="display:none"><label class="al-l" for="al-country">Which country? *</label><select id="al-country">${COUNTRY_OPTS}</select></div>
+        <div id="al-addedby-row"><label class="al-l" for="al-addedby">Added by *</label><select id="al-addedby">${STAFF_OPTS}</select><div class="al-hint">Becomes the lead owner. Signed in with Monday? Your name is filled in for you.</div></div>
+        <div id="al-signedin" class="al-hint" style="display:none;margin-top:10px"></div>
         <label class="al-l" for="al-source">How they reached us</label>
         <select id="al-source"><option>Phone</option><option>WhatsApp</option><option>Email</option><option>Instagram</option><option>Other</option></select>
         <label class="al-l" for="al-casetype">Case type interest (optional)</label>
@@ -131,7 +140,7 @@ ${buildNavHeader('leads')}
     </div>
     <div class="card">
       <table>
-        <thead><tr><th>Lead</th><th>Service</th><th title="The day the lead arrived, Toronto time">Received</th><th>Tier</th><th>Priority</th><th>Booking</th><th>Invite</th><th></th></tr></thead>
+        <thead><tr><th>Lead</th><th>Service</th><th title="How they reached us · who owns the lead">Source</th><th title="The day the lead arrived, Toronto time">Received</th><th>Tier</th><th>Priority</th><th>Booking</th><th>Invite</th><th></th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div>
@@ -154,7 +163,7 @@ function invitePill(c){
 }
 function renderRows(rows){
   var tb=document.getElementById('qbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="8" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="9" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.')+'</td></tr>'; return; }
   tb.innerHTML=rows.map(function(c){
     var urgent=c.urgent?(' '+qpill('red','URGENT')):'';
     // Non-booking intent ("Request quote", "Existing file update", …) — visible
@@ -163,6 +172,7 @@ function renderRows(rows){
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
       '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+urgent+wants+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
+      '<td>'+escHtml(c.source||'—')+(c.owner?'<div class="muted" style="font-size:11.5px">'+escHtml(c.owner)+'</div>':'')+'</td>'+
       '<td>'+escHtml(createdOf(c)||'—')+'</td>'+
       '<td class="tier">'+escHtml(c.tier||'—')+'</td>'+
       '<td>'+(c.priority?qpill(c.priority==='Critical'?'red':c.priority==='High'?'amber':'grey',c.priority):'<span class="pill grey">—</span>')+'</td>'+
@@ -220,11 +230,24 @@ function load(){
 }
 ['f-search','f-status','f-service','f-month','f-urgent','f-invite'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
 /* ── Add lead (staff phone-in — meeting 2026-08-13 "direct leads") ── */
-var AL_ALLOW=false;
+var AL_ALLOW=false, AL_SIGNED=false;
 function alEl(id){ return document.getElementById(id); }
+function alLoc(){ var r=document.querySelector('input[name="al-incanada"]:checked'); return r?r.value:''; }
 function alOpen(){
   AL_ALLOW=false; alEl('al-err').textContent='';
   var m=alEl('al-matches'); m.style.display='none'; m.innerHTML='';
+  /* Where the client is + who is adding them: asked fresh each time (a shared front-desk PC must not credit the last person). */
+  Array.prototype.forEach.call(document.querySelectorAll('input[name="al-incanada"]'),function(r){ r.checked=false; });
+  alEl('al-country').value=''; alEl('al-country-row').style.display='none'; alEl('al-addedby').value='';
+  TDOT_BL.viewer=null;   /* re-check the Monday sign-in every time (the session lasts 8 h; the page may be open longer) */
+  AL_SIGNED=false; alEl('al-addedby-row').style.display=''; alEl('al-signedin').style.display='none';
+  tdotBlViewer(function(v){
+    var signed=!!(v&&v.signedIn&&v.name);
+    alEl('al-addedby-row').style.display=signed?'none':'';
+    var s=alEl('al-signedin'); s.style.display=signed?'block':'none';
+    s.textContent=signed?('Added by '+v.name+' (signed in with Monday) — you become the lead owner.'):'';
+    AL_SIGNED=signed;
+  });
   alEl('al-overlay').style.display='flex'; alEl('al-name').focus();
   var sel=alEl('al-casetype');
   if(sel.options.length<=1){ var key=getKey(); if(!key) return;
@@ -239,13 +262,17 @@ function alSubmit(){
   var err=alEl('al-err'); err.textContent='';
   var body={ fullName:alEl('al-name').value, email:alEl('al-email').value, phone:alEl('al-phone').value,
     residentialAddress:alEl('al-address').value,
-    sourceChannel:alEl('al-source').value, caseTypeInterest:alEl('al-casetype').value, note:alEl('al-note').value };
+    sourceChannel:alEl('al-source').value, caseTypeInterest:alEl('al-casetype').value, note:alEl('al-note').value,
+    inCanada:alLoc(), currentCountry:alEl('al-country').value, addedBy:alEl('al-addedby').value };
   /* Immediate feedback for the mandatory fields; the server enforces them too. */
   if(!body.fullName.trim() || !body.email.trim() || !body.phone.trim() || !body.residentialAddress.trim()){
     err.textContent='Name, email, phone and residential address are all required.';
     (!body.fullName.trim()?alEl('al-name'):!body.email.trim()?alEl('al-email'):!body.phone.trim()?alEl('al-phone'):alEl('al-address')).focus();
     return;
   }
+  if(!body.inCanada){ err.textContent='Answer "In Canada now?" — it decides the HST on the consultation fee.'; return; }
+  if(body.inCanada==='No' && !body.currentCountry){ err.textContent='Choose the country the client is in now.'; alEl('al-country').focus(); return; }
+  if(!AL_SIGNED && !body.addedBy){ err.textContent='Choose your name in "Added by".'; alEl('al-addedby').focus(); return; }
   if(AL_ALLOW) body.allowDuplicate=true;
   var key=getKey(); if(!key) return;
   var btn=alEl('al-create'); btn.disabled=true; btn.textContent='Creating…';
@@ -266,7 +293,11 @@ function alSubmit(){
         box.style.display='block';
         return;
       }
-      if(res.s>=400){ err.textContent=res.j.error||('HTTP '+res.s); return; }
+      if(res.s>=400){
+        /* The sign-in ran out while the form was open: show "Added by" again so it can be picked without retyping. */
+        if(/Added by/.test(String(res.j.error||''))){ AL_SIGNED=false; TDOT_BL.viewer=null; alEl('al-addedby-row').style.display=''; alEl('al-signedin').style.display='none'; }
+        err.textContent=res.j.error||('HTTP '+res.s); return;
+      }
       window.location.href='/admin/lead/'+encodeURIComponent(res.j.leadId);
     })
     .catch(function(){ err.textContent='Network error — the lead may or may not have been created. Check the leads list before retrying to avoid a duplicate.'; })
@@ -274,6 +305,7 @@ function alSubmit(){
 }
 (function(){
   var b=document.getElementById('btn-add-lead'); if(b) b.onclick=alOpen;
+  Array.prototype.forEach.call(document.querySelectorAll('input[name="al-incanada"]'),function(r){ r.addEventListener('change',function(){ alEl('al-country-row').style.display=(alLoc()==='No')?'':'none'; }); });
   var c=document.getElementById('al-cancel'); if(c) c.onclick=alClose;
   var s=document.getElementById('al-create'); if(s) s.onclick=alSubmit;
   var o=document.getElementById('al-overlay'); if(o) o.addEventListener('click',function(e){ if(e.target===o) alClose(); });
@@ -297,6 +329,9 @@ function buildLeadDetailHTML(leadId) {
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TDOT — Lead</title><style>
+  .al-l { display:block; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:#64748b; margin:10px 0 4px; font-weight:600; }
+  .al-yn { display:flex; gap:18px; font-size:13.5px; margin:2px 0; }
+  .al-yn label { display:flex; gap:6px; align-items:center; cursor:pointer; }
   ${SHARED_CSS_VARS}
   ${NAV_CSS}
   body { background:var(--bg); }
@@ -407,6 +442,18 @@ ${buildNavHeader('leads')}
           <div style="margin-top:8px"><button class="btn" id="btn-lead-addr">Save address</button></div>
           <div id="lead-addr-msg" class="act-msg"></div>
         </div>
+        <!-- Add-lead group (2026-10-15): the lead owner (who follows it up — anyone can hand it on) and where the client
+             is now (it sets the HST on the consultation fee: none outside Canada). -->
+        <div class="card"><div class="card-t">${I.user} Owner &amp; where the client is</div>
+          <label class="al-l" for="lead-owner">Lead owner <span style="text-transform:none;letter-spacing:0;font-weight:400">(follows up on this lead)</span></label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><select id="lead-owner" style="border:1px solid #e2e8f0;border-radius:8px;padding:7px 10px;font:inherit;min-width:200px">${STAFF_OPTS}</select><button class="btn" id="btn-lead-owner">Save owner</button></div>
+          <div id="lead-owner-msg" class="act-msg"></div>
+          <div class="al-l" id="lead-incanada-l" style="margin-top:14px">In Canada now? <span style="text-transform:none;letter-spacing:0;font-weight:400">(sets the HST on the consultation fee)</span></div>
+          <div class="al-yn" role="radiogroup" aria-labelledby="lead-incanada-l"><label><input type="radio" name="lead-incanada" value="Yes"> Yes</label><label><input type="radio" name="lead-incanada" value="No"> No</label></div>
+          <div id="lead-country-row" style="display:none;margin-top:6px"><select id="lead-country" style="border:1px solid #e2e8f0;border-radius:8px;padding:7px 10px;font:inherit;min-width:200px">${COUNTRY_OPTS}</select></div>
+          <div style="margin-top:8px"><button class="btn" id="btn-lead-loc">Save location</button></div>
+          <div id="lead-loc-msg" class="act-msg"></div>
+        </div>
         <div id="c-sections"></div>
         <div class="card" id="c-attach-card" style="display:none"><div class="card-t">${I.file} Attachments <span class="muted">(OneDrive · Intake)</span></div><div id="c-attach"></div></div>
       </div>
@@ -505,6 +552,7 @@ function render(d){
   WANTS_TO=d.wantsTo||'';
   var la=document.getElementById('lead-address');
   if(la && !ADDR_DIRTY && document.activeElement!==la) la.value=d.address||'';   // never overwrite what the staffer is typing
+  hydrateOwnerLocation(d);
   var iw=document.getElementById('invite-warn');
   if(iw){
     if(WANTS_TO && WANTS_TO!=='Book consultation'){
@@ -572,7 +620,11 @@ function render(d){
   if(d.outcome) st+=kv('Outcome', d.outcome);
   Array.prototype.forEach.call(document.querySelectorAll('.obtn'),function(b){ b.classList.toggle('active', b.getAttribute('data-outcome')===(d.outcome||'')); });
   if(d.consultant) st+=kv('Consultant', d.consultant);
-  st+=kv('Intake archive', d.hasIntakeArchive?('Submitted '+String(d.intakeSubmittedAt||'').slice(0,10)):'Not found');
+  st+=kv('How they reached us', d.sourceChannel||'—');
+  if(d.originalChannel) st+=kv('Original channel', d.originalChannel);
+  st+=kv('Lead owner', d.leadOwner||'Not set');
+  if(d.caseTypeInterest && d.caseTypeInterest!==d.service) st+=kv('Case type interest', d.caseTypeInterest);
+  st+=kv('Intake archive', d.hasIntakeArchive?('Submitted '+String(d.intakeSubmittedAt||'').slice(0,10)):(d.staffAdded?'None — added by staff':'Not found'));
   if(d.consentsAt) st+=kv('Consents', String(d.consentsAt).slice(0,10));
   if(d.email) st+=kv('Email', d.email);
   if(d.phone) st+=kv('Phone', d.phone);
@@ -729,6 +781,43 @@ if(_addrBtn) _addrBtn.onclick=function(){
     if(res&&res.ok&&res.j&&res.j.residentialAddress){ ADDR_DIRTY=false; _addrEl.value=res.j.residentialAddress; load(); }
   });
 };
+// Owner + where the client is: unsaved choices survive any re-render (same guard as the address).
+var OWNER_DIRTY=false, LOC_DIRTY=false;
+function leadLoc(){ var r=document.querySelector('input[name="lead-incanada"]:checked'); return r?r.value:''; }
+function hydrateOwnerLocation(d){
+  var os=document.getElementById('lead-owner');
+  if(os && !OWNER_DIRTY){
+    var val=d.leadOwner||'';
+    if(val && ![].some.call(os.options,function(o){ return o.value===val; })){ var o=document.createElement('option'); o.value=val; o.textContent=val; os.appendChild(o); }
+    os.value=val;
+  }
+  if(!LOC_DIRTY){
+    var yn=d.insideCanada||(d.country?(d.country==='Canada'?'Yes':'No'):'');
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="lead-incanada"]'),function(r){ r.checked=(r.value===yn); });
+    var cs=document.getElementById('lead-country'); var c=(yn==='No')?(d.country||''):'';
+    if(c && ![].some.call(cs.options,function(o){ return o.value===c; })){ var o2=document.createElement('option'); o2.value=c; o2.textContent=c; cs.appendChild(o2); }
+    cs.value=c;
+    document.getElementById('lead-country-row').style.display=(yn==='No')?'':'none';
+  }
+}
+(function(){
+  var os=document.getElementById('lead-owner'), ob=document.getElementById('btn-lead-owner');
+  if(os) os.addEventListener('change',function(){ OWNER_DIRTY=true; });
+  if(ob) ob.onclick=function(){
+    var p=doAction(ob,'saveLeadOwner',null,os.value,'lead-owner-msg'); if(!p) return;
+    p.then(function(res){ if(res&&res.ok){ OWNER_DIRTY=false; load(); var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r(); } });
+  };
+  Array.prototype.forEach.call(document.querySelectorAll('input[name="lead-incanada"]'),function(r){ r.addEventListener('change',function(){ LOC_DIRTY=true; document.getElementById('lead-country-row').style.display=(leadLoc()==='No')?'':'none'; }); });
+  var cs=document.getElementById('lead-country'); if(cs) cs.addEventListener('change',function(){ LOC_DIRTY=true; });
+  var lb=document.getElementById('btn-lead-loc');
+  if(lb) lb.onclick=function(){
+    var yn=leadLoc(), c=document.getElementById('lead-country').value;
+    if(!yn){ actMsg('lead-loc-msg','err','Answer "In Canada now?" first.'); return; }
+    if(yn==='No' && !c){ actMsg('lead-loc-msg','err','Choose the country.'); return; }
+    var p=doAction(lb,'saveLocation',null,JSON.stringify({ inCanada: yn, country: c }),'lead-loc-msg'); if(!p) return;
+    p.then(function(res){ if(res&&res.ok){ LOC_DIRTY=false; load(); var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r(); } });
+  };
+})();
 startClock(); checkApiStatus(); load();
 </script></body></html>`;
 }

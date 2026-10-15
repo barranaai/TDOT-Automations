@@ -52,12 +52,9 @@ const I = {
 // NOT escape `</script>`, so neutralise every `<` to its < escape.
 const jsLit = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
 
-// Team roster for the attribution dropdowns (lead owner / booked-by / reviewer).
-// Env-overridable so the list can change without a deploy.
-const PORTAL_STAFF = (process.env.PORTAL_STAFF || 'Gauri,Kamal,Asmita,Prajwal,Melanie,Diksha')
-  .split(',').map((s) => s.trim()).filter(Boolean);
-const STAFF_OPTS = '<option value="">—</option>' +
-  PORTAL_STAFF.map((s) => `<option value="${s.replace(/"/g, '&quot;')}">${s.replace(/</g, '&lt;')}</option>`).join('');
+// Team roster for the attribution dropdowns (lead owner / booked-by / reviewer):
+// config/portalStaff.js (PORTAL_STAFF on Render + the consultants), built in adminShared.
+const { STAFF_OPTS } = require('./adminShared');
 
 // ─── Queue page ────────────────────────────────────────────────────────────────
 function buildQueueHTML() {
@@ -696,7 +693,7 @@ function renderRetainers(){
     var stc=c.stage==='Paid'?'green':(c.stage==='Signed'||c.stage==='Sent')?'blue':'amber';
     var cs=c.caseOpen?qpill('green','Open'):qpill('grey','Pending');
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
-      '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+(c.kind==='direct'?' <span class="pill grey" title="Walk-in / referral — no consultation">direct</span>':'')+'</td>'+
+      '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+(c.kind==='direct'?(c.originalChannel?' <span class="pill grey" title="Converted from a '+escHtml(c.originalChannel)+' lead — no consultation">direct · '+escHtml(c.originalChannel)+'</span>':' <span class="pill grey" title="Walk-in / referral — no consultation">direct</span>'):'')+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.caseType||'—')+'</td>'+
       '<td>'+escHtml(c.consultant||'—')+'</td>'+
       '<td>'+(c.fee?'$'+escHtml(c.fee):'—')+'</td>'+

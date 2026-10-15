@@ -87,7 +87,8 @@ function pick(ctx, ...keys) {
 function residenceCountry(ctx) {
   const inside = firstNonEmpty(ctx.lead && ctx.lead.insideCanada, pick(ctx, 'insideCanada')).toLowerCase();
   if (inside === 'yes') return 'Canada';
-  return pick(ctx, 'currentCountry', 'country');
+  // The lead's column first: staff can correct the country on the lead page (2026-10-15).
+  return firstNonEmpty(ctx.lead && String(ctx.lead.country || '').trim() !== 'Canada' ? ctx.lead.country : '', pick(ctx, 'currentCountry', 'country'));
 }
 
 /** Accompanying-spouse answer: explicit accompaniment first, else spouse presence. */

@@ -795,7 +795,7 @@ async function buildPreConsultFormHtml(lead) {
         <label>Full name</label>${txt('pc_fullName', A('fullName', 'fullName'))}
         <label>Age</label>${txt('pc_age', '', 'number')}
         <label>Complete address</label><textarea name="pc_address" rows="2">${e(A('residentialAddress'))}</textarea>
-        <label>Are you currently in Canada?</label>${radio('pc_inCanada', A('insideCanada', 'insideCanada'))}
+        <label>Are you currently in Canada?</label>${radio('pc_inCanada', String(lead.insideCanada || '').trim() || A('insideCanada', 'insideCanada'))}
         <div class="cond" id="c-incanada">
           <label>When did you enter Canada?</label>${txt('pc_entryDate', '', 'date')}
           <label>What type of visa / permit did you use to enter Canada?</label>${sel('pc_entryVisa', PC_ENTRY_VISA, '')}
@@ -1031,8 +1031,9 @@ function buildDossierSections(lead, a, f, fBlock) {
   add('Email', pick('email'));
   add('Phone', pick('phone'));
   add('Residential address', pick('residentialAddress'));
-  add('Inside Canada', pick('insideCanada'));
-  add('Country', pick('insideCanada') === 'Yes' ? 'Canada' : (a.currentCountry || lead.country));
+  // The lead's columns first: staff can correct where the client is on the lead page (it sets the HST).
+  add('Inside Canada', String(lead.insideCanada || '').trim() || pick('insideCanada'));
+  add('Country', String(lead.country || '').trim() || (pick('insideCanada') === 'Yes' ? 'Canada' : a.currentCountry));
 
   add = sec('Inquiry (from intake form)');
   add('Relationship with TDOT', pick('relationshipWithTdot'));

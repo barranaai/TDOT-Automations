@@ -67,6 +67,7 @@ const COL_TYPE = {
   empCompanyPhone: 'text', empRepPhone: 'text', empRepEmail: 'text',
   consultAgreementSent: 'date', consultAgreementSigned: 'date',
   consultOption: 'text', // JSON: the booking-page choice {durationMin, feeCents, variationId, consultant}
+  originalChannel: 'text', // how a lead first reached us — kept when it is converted to a direct-retainer client (Source Channel then reads "Direct Retainer")
   consultPayment: 'text', // JSON: a consultation fee settled outside the booking link (cash / e-transfer / invoice / waived), who recorded it — consultPaymentService alone writes it
   consultCountersign: 'text', // JSON: consult e-sign envelope state {clientEnvelopeId, clientItemId, envelopeId, itemId, signUrl, sentAt, signedAt}
   retainerCountersign: 'text', // JSON: retainer e-sign envelope state (same shape as consultCountersign)
@@ -149,6 +150,7 @@ async function createLead(formData, { groupId } = {}) {
     residentialAddress:   formData.residentialAddress,
     howHeard:             formData.howHeard,
     sourceChannel:        formData.sourceChannel || 'Website',
+    leadOwner:            formData.leadOwner,   // staff-added leads: who added it (Add-lead group, 2026-10-15)
     conversionStatus:     'New',
   };
 

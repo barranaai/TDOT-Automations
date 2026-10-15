@@ -1024,7 +1024,14 @@ const BLACKLIST_UI_JS = `
   }
 `;
 
+// Option lists built on the server (never in a page script): the staff roster
+// (Added by / lead owner / attribution) and the countries (where the client is).
+const _optEsc = (v) => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const STAFF_OPTS = '<option value="">—</option>' + require('../../config/portalStaff').staffRoster().map((n) => `<option value="${_optEsc(n)}">${_optEsc(n)}</option>`).join('');
+const COUNTRY_OPTS = '<option value="">— choose —</option>' + require('../../config/countries').COUNTRIES.map((n) => `<option value="${_optEsc(n)}">${_optEsc(n)}</option>`).join('');
+
 module.exports = {
+  STAFF_OPTS, COUNTRY_OPTS,
   BLACKLIST_UI_CSS, BLACKLIST_UI_JS,
   PAYMENT_UI_CSS, PAYMENT_UI_JS,
   TDOT_LOGO_SVG,

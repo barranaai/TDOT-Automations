@@ -1692,7 +1692,8 @@ app.post('/admin/questionnaire/:caseRef/restore', express.json(), async (req, re
 
 app.post('/api/leads/create', express.json(), async (req, res) => {
   try {
-    res.json(await consultantPortalService.createStaffLead(req.body || {}));
+    // Who added it: the Monday sign-in when there is one, else the name picked in the form (Add-lead group, 2026-10-15).
+    res.json(await consultantPortalService.createStaffLead(req.body || {}, { actor: staffActor(req, (req.body || {}).addedBy) }));
   } catch (err) {
     if (err.conflict)   return res.status(409).json(consultantPortalService.conflictBody(err));
     if (err.badRequest) return res.status(400).json({ error: err.message });

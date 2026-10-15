@@ -400,8 +400,9 @@ function buildIntakeSections(f, lead) {
     // Column FIRST: the address is editable on the lead page, so a correction
     // must show here too (the archive keeps what the client originally typed).
     row('Residential address', String(lead.residentialAddress || '').trim() || A('residentialAddress')),
-    row('Inside Canada', A('insideCanada')),
-    row('Country', A('insideCanada') === 'Yes' ? 'Canada' : A('currentCountry', 'country')),
+    // Column first: staff can correct where the client is on the lead page (it sets the consultation HST).
+    row('Inside Canada', String(lead.insideCanada || '').trim() || A('insideCanada')),
+    row('Country', String(lead.country || '').trim() || (A('insideCanada') === 'Yes' ? 'Canada' : A('currentCountry', 'country'))),
   ]);
 
   const kids = A('childrenCount');
@@ -528,7 +529,9 @@ async function getLeadsQueue() {
     name:          l.fullName || l.name,
     createdAt:     l.createdAt || '',                     // raw UTC instant — the sort below needs it
     createdDay:    torontoDay(l.createdAt),               // what the page shows: the Toronto day it arrived
-    service:       l.confirmedCaseType || l.serviceRequired || '',
+    service:       l.confirmedCaseType || l.serviceRequired || l.caseTypeInterest || '',
+    source:        (l.sourceChannel || '').trim(),      // how they reached us
+    owner:         (l.leadOwner || '').trim(),          // who added / owns it
     tier:          l.tier || '',
     priority:      l.priority || '',
     bookingStatus: l.bookingStatus || 'Not Yet',
@@ -624,8 +627,16 @@ async function getLeadDetail(leadId) {
     })(),
     tier:     lead.tier || '',
     priority: lead.priority || '',
-    service:  lead.confirmedCaseType || lead.serviceRequired || '',
+    service:  lead.confirmedCaseType || lead.serviceRequired || lead.caseTypeInterest || '',
     situationDescription: lead.situationDescription || (typeof f.situationDescription === 'string' ? f.situationDescription : '') || '',
+    // Add-lead group (2026-10-15)
+    sourceChannel:    (lead.sourceChannel || '').trim(),
+    originalChannel:  (lead.originalChannel || '').trim(),
+    caseTypeInterest: (lead.caseTypeInterest || '').trim(),
+    leadOwner:        (lead.leadOwner || '').trim(),
+    staffAdded:       STAFF_LEAD_SOURCES.includes((lead.sourceChannel || '').trim()),
+    insideCanada:     (lead.insideCanada || '').trim(),
+    country:          (lead.country || '').trim(),
 
     bookingStatus: lead.bookingStatus || 'Not Yet',
     bookedSlot:    lead.bookedSlot || '',
@@ -891,6 +902,17 @@ function validateAction(action, value) {
       if (msg.length > 2000) return { ok: false, error: 'Invite message is too long (max 2000 characters).' };
       return { ok: true, normalized: msg };
     }
+    // Add-lead group (2026-10-15): where the client is now (sets the consultation HST); the lead owner.
+    case 'saveLocation': {
+      let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid location.' }; }
+      const r = normalizeLeadLocation(o || {});
+      return r.ok ? { ok: true, normalized: { insideCanada: r.insideCanada, country: r.country } } : r;
+    }
+    case 'saveLeadOwner': {
+      const n = String(value == null ? '' : value).trim();
+      if (n && !require('../../config/portalStaff').onRoster(n)) return { ok: false, error: 'Choose an owner from the list.' };
+      return { ok: true, normalized: n };
+    }
     // Gauri point 4 part 2: a consultation fee settled outside the booking link (or waived).
     case 'recordConsultPayment':
       return require('./consultPaymentService').validateRecord(value);
@@ -1127,6 +1149,38 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       await leadService.updateLead(leadId, { followUpDate: n.followUpDate, leadOwner: n.leadOwner, bookedBy: n.bookedBy, paymentReviewedBy: n.paymentReviewedBy });
       await postPortalNote(leadId, `Attribution saved — owner: ${n.leadOwner || '—'}, booked by: ${n.bookedBy || '—'}, payment reviewed by: ${n.paymentReviewedBy || '—'}, follow-up: ${n.followUpDate || '—'}.`);
       return { ok: true, message: 'Attribution saved.' };
+    }
+
+    case 'saveLocation': {
+      const n = v.normalized;
+      const before = { insideCanada: String(lead.insideCanada || '').trim(), country: String(lead.country || '').trim() };
+      if (before.insideCanada === n.insideCanada && before.country === n.country) return { ok: true, message: 'No change.' };
+      await leadService.updateLead(leadId, { insideCanada: n.insideCanada, country: n.country });
+      const byName = (actor && actor.verified && String(actor.name || '').trim()) ? String(actor.name).trim().slice(0, 60) : who;
+      const hst = n.insideCanada === 'Yes' ? 'HST applies to the consultation fee' : 'no HST on the consultation fee';
+      // What a client may still pay at the OLD price (review 2026-10-15): a held slot's payment
+      // page / invoice, or a hand-booked consultation whose app link was never paid. Said first,
+      // always, and kept on the note so whoever sees a later payment knows the location changed.
+      const paid = require('./consultPaymentService').paidState(lead).paid;
+      const status = String(lead.bookingStatus || '').trim();
+      let opt = null; try { opt = JSON.parse(lead.consultOption || ''); } catch (_) { /* none */ }
+      const openPage = !paid && (status === 'Slot Held' || status === 'Booked'
+        || !!String(lead.squareConsultOrderId || '').trim() || !!(opt && opt.invoiceId));
+      const lines = [];
+      if (paid) lines.push('The amount already paid does not change; any refund is done in Square.');
+      if (openPage) lines.push('A payment page or invoice at the OLD price may still be open and payable — cancel it in Square (or let the hold expire) before re-sending.');
+      if (!paid && (lead.bookingInvite || '') === 'Sent' && status !== 'Booked') lines.push('The invite email quoted the old price — use "Send booking invite" to re-send it.');
+      await postPortalNote(leadId, `Where the client is now: ${n.insideCanada === 'Yes' ? 'in Canada' : `outside Canada (${escHtmlNote(n.country)})`}${byName ? ` — set by ${escHtmlNote(byName)}` : ''}${before.country ? ` (was: ${escHtmlNote(before.country)})` : ''}. ${hst}.${openPage ? ' ⚠ A payment page or invoice at the old price may still be open.' : ''}`);
+      return { ok: true, message: `Saved — ${hst}.${lines.length ? ' ' + lines.join(' ') : ''}` };
+    }
+
+    case 'saveLeadOwner': {
+      const before = String(lead.leadOwner || '').trim();
+      if (before === v.normalized) return { ok: true, message: 'No change.', leadOwner: before };
+      await leadService.updateLead(leadId, { leadOwner: v.normalized }, { clearKeys: v.normalized ? [] : ['leadOwner'] });
+      const byName = (actor && actor.verified && String(actor.name || '').trim()) ? String(actor.name).trim().slice(0, 60) : who;
+      await postPortalNote(leadId, `Lead owner ${v.normalized ? `set to ${escHtmlNote(v.normalized)}` : 'cleared'}${before ? ` (was ${escHtmlNote(before)})` : ''}${byName ? ` by ${escHtmlNote(byName)}` : ''}.`);
+      return { ok: true, message: v.normalized ? `Lead owner: ${v.normalized}.` : 'Lead owner cleared.', leadOwner: v.normalized };
     }
 
     // Gauri point 4 part 2 (2026-10-15): the fee was paid by cash / e-transfer / an
@@ -1581,7 +1635,23 @@ const DIRECT_SOURCE = 'Direct Retainer';
 // Source options are the EXISTING board labels only (no label minting).
 const STAFF_LEAD_SOURCES = ['Phone', 'Email', 'WhatsApp', 'Instagram', 'Other'];
 
-async function createStaffLead(payload = {}) {
+/**
+ * Where the client is now (Add-lead group, 2026-10-15): it decides the HST on
+ * the consultation fee (no HST for a non-blank, non-Canada country). Stored the
+ * same way as the public intake form: Yes → country 'Canada'; No → a country
+ * from the list. Used by Add lead and the lead page.
+ * @returns {{ok:true, insideCanada:'Yes'|'No', country:string} | {ok:false, error:string}}
+ */
+function normalizeLeadLocation({ inCanada, country } = {}) {
+  const yn = String(inCanada == null ? '' : inCanada).trim();
+  if (yn !== 'Yes' && yn !== 'No') return { ok: false, error: 'Answer "In Canada now?" — it decides whether HST is charged on the consultation fee. (Reload the page if you don\u2019t see the question.)' };
+  if (yn === 'Yes') return { ok: true, insideCanada: 'Yes', country: 'Canada' };
+  const c = String(country == null ? '' : country).trim();
+  if (!require('../../config/countries').isListedCountry(c)) return { ok: false, error: 'Choose the country the client is in now from the list.' };
+  return { ok: true, insideCanada: 'No', country: c };
+}
+
+async function createStaffLead(payload = {}, { actor = null } = {}) {
   const clean = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
   const fullName         = clean(payload.fullName, 120);
   const email            = clean(payload.email, 200);
@@ -1604,6 +1674,17 @@ async function createStaffLead(payload = {}) {
     const canon = await directCaseTypeLabels();
     if (!canon.caseTypes.includes(caseTypeInterest)) bad(`"${caseTypeInterest}" is not a canonical case type — pick one from the list.`);
   }
+  // Where the client is now — it sets the HST on the consultation fee (Melanie's
+  // rule, 2026-08-24). Asked before any duplicate / Not Wanted stop, so a missing
+  // answer is the first thing staff see.
+  const loc = normalizeLeadLocation({ inCanada: payload.inCanada, country: payload.currentCountry });
+  if (!loc.ok) bad(loc.error);
+  // Who added it → the Lead Owner (Faran 2026-10-15): the Monday sign-in when
+  // there is one (matched to the roster name), else the name picked in the form.
+  const roster = require('../../config/portalStaff');
+  const signedIn = !!(actor && actor.verified && String(actor.name || '').trim());
+  const addedBy = signedIn ? roster.rosterNameFor(actor.name) : clean(payload.addedBy, 60);
+  if (!signedIn && !roster.onRoster(addedBy)) bad('Choose your name in "Added by" (or sign in with Monday and it is filled in for you).');
 
   // The Not Wanted list (point 5): checked on EVERY submit, including "create
   // anyway" — a warning, never a block. First submit with a hit → 409 so staff
@@ -1625,6 +1706,8 @@ async function createStaffLead(payload = {}) {
   const lead = await leadService.createLead({
     fullName, email, phone, sourceChannel,
     residentialAddress: address,   // written AT creation — a mandatory field must never be missing
+    country: loc.country,          // text column, AT creation: an invite sent at once already prices the HST right
+    leadOwner: addedBy,
     ...(note ? { situationDescription: note } : {}),
   });
   // The interest dropdown's board vocabulary is the intake's coarse label set —
@@ -1632,12 +1715,12 @@ async function createStaffLead(payload = {}) {
   // so a canon pick inside createLead would fail the whole creation. Carry it
   // in a follow-up updateLead instead, whose mutation auto-creates labels —
   // the SAME sanctioned path createDirectClient uses for confirmedCaseType.
-  if (caseTypeInterest) {
-    await leadService.updateLead(lead.id, { caseTypeInterest })
-      .catch((err) => console.warn(`[Leads] caseTypeInterest write failed for staff lead ${lead.id}: ${err.message} — the lead itself is created`));
-  }
+  // Status / dropdown values follow via updateLead (create_item mints no labels).
+  await leadService.updateLead(lead.id, { insideCanada: loc.insideCanada, ...(caseTypeInterest ? { caseTypeInterest } : {}) })
+    .catch((err) => console.warn(`[Leads] follow-up write (In Canada / case type) failed for staff lead ${lead.id}: ${err.message} — the lead itself is created`));
   await postPortalNote(lead.id,
-    `Lead added by staff (${sourceChannel.toLowerCase()} intake)${caseTypeInterest ? ` — interested in ${caseTypeInterest}` : ''}. ` +
+    `Lead added by ${escHtmlNote(addedBy)}${signedIn ? ' (signed in with Monday)' : ''} (${sourceChannel.toLowerCase()} intake)${caseTypeInterest ? ` — interested in ${escHtmlNote(caseTypeInterest)}` : ''}. ` +
+    `${loc.insideCanada === 'Yes' ? 'In Canada now — HST applies to the consultation fee.' : `Outside Canada now (${escHtmlNote(loc.country)}) — no HST on the consultation fee.`} ` +
     'Next: send the booking invite from this page when they are ready.');
   if (blacklist.hit) await require('./blacklistService').noteOnLead(lead.id, blacklist, 'Staff saw the warning and added this lead anyway.');
   invalidateLeadsQueue(); // the new lead must appear on the next queue load
@@ -1805,6 +1888,10 @@ async function createDirectClient(payload = {}) {
       ...reuseExtras,
     };
     if (chosenAccountId) linkWiring.clientAccountId = chosenAccountId;
+    // Keep how they first reached us (Add-lead group, 2026-10-15): Source Channel must read
+    // "Direct Retainer" (it drives the Retainers tab, the KPIs, the direct group), so the
+    // original goes to its own column — once, never overwritten.
+    if (priorChannel && priorChannel !== DIRECT_SOURCE && !String(existing.originalChannel || '').trim()) linkWiring.originalChannel = priorChannel;
     await leadService.updateLead(String(linkLeadId), linkWiring);
     _directQueueCache = { at: 0, rows: null };
     invalidateLeadsQueue(); // the lead just left the funnel — drop it from the funnel queue too
@@ -2080,6 +2167,7 @@ async function getConsultationsBoard({ fresh = false } = {}) {
       retainers.push({
         id: l.id, name: l.fullName || l.name,
         kind: s(l.sourceChannel) === DIRECT_SOURCE ? 'direct' : 'booked',
+        originalChannel: s(l.originalChannel),
         caseType: s(l.confirmedCaseType) || s(l.caseTypeInterest) || s(l.serviceRequired),
         consultant: s(l.assignedConsultant),
         fee: s(l.retainerFee),
@@ -2121,5 +2209,5 @@ module.exports = {
   createStaffLead, STAFF_LEAD_SOURCES,
   invalidateLeadsQueue,
   classifyLead, getConsultationsBoard,
-  conflictBody,
+  conflictBody, normalizeLeadLocation,
 };

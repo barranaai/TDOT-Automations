@@ -14,7 +14,7 @@ const mondayApi   = require('../src/services/mondayApi');
 function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; }
 
 const VALID = { fullName: 'Phone Caller', email: 'caller@x.com', phone: '4165550001', sourceChannel: 'Phone',
-                residentialAddress: '12 King St W, Toronto, ON M5H 1A1, Canada' };
+                residentialAddress: '12 King St W, Toronto, ON M5H 1A1, Canada', inCanada: 'Yes', addedBy: 'Melanie' };
 
 test('validation: name/email/phone/address required; junk source falls back to Phone; case type must be canonical', async () => {
   const restore = [stub(svc, 'findClientMatches', async () => ({ clients: [], cases: [], leads: [] }))];

@@ -278,7 +278,7 @@ test('Add lead: a hit answers 409 with the warning (no duplicate needed); "creat
     stub(leadService, 'createLead', async (f) => { created.push(f); return { id: '9100', ...f }; }),
     stub(mondayApi, 'query', async (q, vars) => { if (/create_update/.test(q)) notes.push(vars.b); return {}; }),
   ];
-  const VALID = { fullName: 'Phone Caller', email: 'Caller@x.com', phone: '4165550001', sourceChannel: 'Phone', residentialAddress: '12 King St W, Toronto' };
+  const VALID = { fullName: 'Phone Caller', email: 'Caller@x.com', phone: '4165550001', sourceChannel: 'Phone', residentialAddress: '12 King St W, Toronto', inCanada: 'Yes', addedBy: 'Melanie' };
   try {
     await assert.rejects(portal.createStaffLead(VALID), (e) => e.conflict === true && e.blacklist.hit === true && e.blacklist.matchedOn === 'email' && e.matches.leads.length === 0 && /Not Wanted list/.test(e.message));
     assert.equal(created.length, 0);

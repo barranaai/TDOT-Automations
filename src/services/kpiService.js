@@ -84,7 +84,8 @@ function computeKpis(leads = [], month = '') {
   for (const l of leads) {
     // Direct clients never enter the booking funnel — they'd deflate the
     // booked-from-leads rate. totalLeads still counts them.
-    if (inM(l.createdAt) && !isDirect(l)) K.funnel.leads++;
+    // A lead CONVERTED to a direct retainer was a lead first (Faran 2026-10-15): it still counts.
+    if (inM(l.createdAt) && !(isDirect(l) && !String(l.originalChannel || '').trim())) K.funnel.leads++;
     const ps = consultPayment.paidState(l);
     if (inM(l.bookedSlot)) {
       K.consultations.booked++; K.funnel.booked++;
