@@ -179,6 +179,9 @@ function startScheduler() {
   cron.schedule('*/15 * * * *', () =>      // "set the Outcome" nudge once the slot has passed
     require('./postConsultService').sendPostConsultNudges().catch((err) =>
       console.error('[Scheduler] Post-consult nudge failed:', err.message)));
+  cron.schedule('3,18,33,48 * * * *', () => // Not Wanted list backstop (point 5): every Not Wanted lead has an entry
+    require('./blacklistService').sweep().catch((err) =>
+      console.error('[Scheduler] Not Wanted list sweep failed:', err.message)));
   cron.schedule('*/30 * * * *', () =>      // Teams recording discovery in the recorder's OneDrive
     require('./postConsultService').findTeamsRecordings().catch((err) =>
       console.error('[Scheduler] Teams recording discovery failed:', err.message)));

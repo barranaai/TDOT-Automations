@@ -52,7 +52,10 @@ const COLUMNS = [
   { key: 'preConsultSubmitted', title: 'Pre-Consult Submitted',     type: 'status',   labels: ['No', 'Yes'] },
   { key: 'consultationHeld',    title: 'Consultation Held',         type: 'date' },
   { key: 'zoomMeetingId',       title: 'Zoom Meeting ID',           type: 'text' },
-  { key: 'outcome',             title: 'Outcome',                   type: 'status',   labels: ['Retain', 'Don’t Retain — Ineligible', 'Don’t Retain — Not Wanted', 'Newsletter', 'Follow-Up'] },
+  // The live column (color_mm448h89) is NOT this list any more: four labels since 2026-10-15
+  // (config/outcomes.js) and id 5 must stay BLANK (an empty cell shows id 5's label). Never
+  // re-create it from here — this script is for a brand-new board only.
+  { key: 'outcome',             title: 'Outcome',                   type: 'status',   labels: require('../config/outcomes').OUTCOME_LABELS },
   // RETAINER
   { key: 'retainerSent',        title: 'Retainer Sent',             type: 'date' },
   { key: 'adobeSignAgreementId',title: 'Adobe Sign Agreement ID',   type: 'text' },

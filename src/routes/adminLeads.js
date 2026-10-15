@@ -13,8 +13,9 @@ const express = require('express');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
+const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const router  = express.Router();
-const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS } = require('./adminShared');
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS } = require('./adminShared');
 
 // ─── Inline icon set (same conventions as adminConsultation.js) ───────────────
 const _svg = (p) => `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex:none;vertical-align:-.15em">${p}</svg>`;
@@ -81,6 +82,7 @@ function buildLeadsQueueHTML() {
   .q-filters input, .q-filters select { padding:7px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:12.5px; font-family:inherit; background:#fff; color:var(--navy); }
   .q-filters input { width:150px; }
   ${DELETE_UI_CSS}
+  ${BLACKLIST_UI_CSS}
 </style></head><body>
 ${buildNavHeader('leads')}
 <main class="wrap">
@@ -257,7 +259,10 @@ function alSubmit(){
         (m.cases||[]).forEach(function(c){ rows.push('Open case: <a href="/admin/case/'+encodeURIComponent(c.caseRef||'')+'" target="_blank" rel="noopener">'+escHtml(c.caseRef||'(ref pending)')+'</a> — '+escHtml(c.name||'')); });
         (m.clients||[]).forEach(function(c){ rows.push('Client account: '+escHtml(c.name||'')); });
         var box=alEl('al-matches');
-        box.innerHTML='<b>Already in the system:</b><br>'+rows.join('<br>')+'<br><br>If this is a different person or a new matter, click <b>Create lead</b> again to add them anyway.';
+        /* The Not Wanted list (point 5): the warning comes with the 409 — a warning only; "Create lead" again adds them. */
+        var bl=tdotBlacklistHtml(res.j.blacklist,{leadLinks:true});
+        box.innerHTML=bl+(rows.length?'<b>Already in the system:</b><br>'+rows.join('<br>')+'<br><br>':'')+
+          (bl?'To add this person anyway, click <b>Create lead</b> again.':'If this is a different person or a new matter, click <b>Create lead</b> again to add them anyway.');
         box.style.display='block';
         return;
       }
@@ -280,6 +285,7 @@ function alSubmit(){
     if(AL_ALLOW){ AL_ALLOW=false; var m=alEl('al-matches'); if(m){ m.style.display='none'; m.innerHTML=''; } }
   }); });
 })();
+${BLACKLIST_UI_JS}
 ${DELETE_UI_JS}
 tdotBindDelete(function(){ load(); });
 startClock(); checkApiStatus(); load();
@@ -328,6 +334,7 @@ function buildLeadDetailHTML(leadId) {
   .chip .pk { font-weight:600; opacity:.65; }
 
   /* urgency banner */
+  ${BLACKLIST_UI_CSS}
   .alert { background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; border-radius:var(--r); padding:12px 16px; font-size:13px; font-weight:700; margin-bottom:14px; display:flex; gap:9px; align-items:flex-start; }
   .alert svg { font-size:16px; flex:none; margin-top:1px; }
 
@@ -388,6 +395,7 @@ ${buildNavHeader('leads')}
     </div>
 
     <div id="c-alert"></div>
+    <div id="bl-banner"></div>
 
     <div class="cols">
       <div class="col">
@@ -455,7 +463,9 @@ ${buildNavHeader('leads')}
 ${SHARED_AUTH_JS}
 var LEAD_ID=${jsLit(String(leadId))};
 var OUTCOMES=${jsLit(OUTCOME_LABELS)};
+var OUTCOME_NOT_WANTED=${jsLit(OUTCOME_NOT_WANTED)};
 var REMARKS=${jsLit(REMARK_PRESETS)};
+${BLACKLIST_UI_JS}
 ${REMARKS_JS}
 ${UPDATES_WIDGET_JS}
 tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/updates/' + encodeURIComponent(LEAD_ID), itemId: LEAD_ID });
@@ -468,13 +478,19 @@ tdotRemarksMount({ prefix:'rmk', leadId: LEAD_ID, presets: REMARKS, updatesPrefi
     if(label==='Retain') return;
     var b=document.createElement('button'); b.type='button'; b.className='obtn'; b.textContent=label; b.setAttribute('data-outcome',label);
     b.onclick=function(){
-      var p=doAction(this,'outcome',null,label,'oc-msg');
-      if(!p) return;
-      p.then(function(res){
-        if(!res||!res.ok) return;                 // failure: nothing highlighted, message already shown
-        load();                                   // re-render from the server's truth (Outcome row + .active)
-        var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r();
-      });
+      var self=this;
+      var run=function(value){
+        var p=doAction(self,'outcome',null,value,'oc-msg');
+        if(!p) return;
+        p.then(function(res){
+          if(!res||!res.ok) return;                 // failure: nothing highlighted, message already shown
+          load();                                   // re-render from the server's truth (Outcome row + .active)
+          var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r();
+        });
+      };
+      // "Not Wanted" asks for the reason first — it goes on the lead and on the Not Wanted list.
+      if(label===OUTCOME_NOT_WANTED){ tdotOpenNotWantedModal({ name:document.getElementById('c-name').textContent||'', onConfirm:function(reason){ run(JSON.stringify({label:label, reason:reason})); } }); return; }
+      run(label);
     };
     box.appendChild(b);
   });
@@ -517,6 +533,19 @@ function render(d){
 
   document.getElementById('c-alert').innerHTML=(d.flags||[]).length
     ? '<div class="alert">'+ICONS.flag+'<div>'+d.flags.map(function(f){return escHtml(f);}).join(' · ')+' — review urgently</div></div>' : '';
+
+  // The Not Wanted list (point 5): the staff-only warning under the header; named admins get "Remove from the list…".
+  (function(){
+    var el=document.getElementById('bl-banner'); if(!el) return;
+    var r=d.blacklist;
+    if(!r||(r.checked!==false&&!r.hit)){ el.innerHTML=''; return; }
+    el.innerHTML=tdotBlacklistHtml(r,{leadLinks:true});
+    tdotBlViewer(function(v){
+      if(!(v&&v.canUndo)) return;
+      el.innerHTML=tdotBlacklistHtml(r,{leadLinks:true, canRemove:true});
+      tdotBlacklistBind(el,function(){ load(); var rr=window.tdotUpdatesReload_updw; if(typeof rr==='function') rr(); });
+    });
+  })();
 
   document.getElementById('c-inquiry').innerHTML = d.situationDescription
     ? '<div class="longtext">'+escHtml(d.situationDescription)+'</div>'

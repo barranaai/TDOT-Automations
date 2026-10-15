@@ -813,6 +813,25 @@ app.get('/admin/payments/viewer', (req, res) => {
   });
 });
 
+// The Not Wanted list (Gauri point 5): only a NAMED admin removes someone; the
+// entry is kept as Removed with who/when/why. Adding happens through the
+// outcome "Not Wanted" (any staff member, with a reason), never here.
+app.post('/admin/blacklist/:entryId/remove', express.json(), async (req, res) => {
+  const r = require('./utils/staffIdentity').namedAdminCheck(tryStaffAuth(req), caseAccess.isAdminEmail,
+    { what: 'remove someone from the Not Wanted list', hint: 'Ask an admin to do it.' });
+  if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.loginUrl ? { loginUrl: r.loginUrl } : {}) });
+  try {
+    const out = await require('./services/blacklistService').remove({ entryId: req.params.entryId, reason: (req.body || {}).reason, actor: r.actor });
+    res.json({ ok: true, entryId: out.entryId, name: out.name, message: `${out.name || 'This person'} was removed from the Not Wanted list.` });
+  } catch (err) {
+    if (err.badRequest) return res.status(400).json({ error: err.message });
+    if (err.notFound)   return res.status(404).json({ error: err.message });
+    if (err.dormant)    return res.status(503).json({ error: err.message });
+    console.error('[Blacklist] remove failed:', err.stack || err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 const _msParams = (req) => ({ leadId: String(req.params.leadId || '').trim(), index: Number(req.params.index) });
 
 app.get('/admin/retainer/:leadId/milestone/:index/undo-preview', async (req, res) => {
@@ -1675,7 +1694,7 @@ app.post('/api/leads/create', express.json(), async (req, res) => {
   try {
     res.json(await consultantPortalService.createStaffLead(req.body || {}));
   } catch (err) {
-    if (err.conflict)   return res.status(409).json({ error: err.message, matches: err.matches });
+    if (err.conflict)   return res.status(409).json(consultantPortalService.conflictBody(err));
     if (err.badRequest) return res.status(400).json({ error: err.message });
     console.error('[Leads] Staff lead create failed:', err.stack || err.message);
     res.status(500).json({ error: 'Internal server error' });
@@ -1731,7 +1750,7 @@ app.post('/api/consultation/direct-client', express.json(), async (req, res) => 
     const result = await consultantPortalService.createDirectClient(req.body || {});
     res.json(result);
   } catch (err) {
-    if (err.conflict) return res.status(409).json({ error: err.message, matches: err.matches });
+    if (err.conflict) return res.status(409).json(consultantPortalService.conflictBody(err));
     if (err.badRequest) return res.status(400).json({ error: err.message });
     console.error('[Consultant] Direct client create failed:', err.stack || err.message);
     res.status(500).json({ error: 'Internal server error' });
@@ -1758,11 +1777,12 @@ app.get('/api/consultation/client-profile', async (req, res) => {
 // accounts, open cases, leads) — feeds the duplicate panel in the modal.
 app.get('/api/consultation/client-matches', async (req, res) => {
   try {
-    const matches = await consultantPortalService.findClientMatches({
-      email: (req.query.email || '').trim(),
-      phone: (req.query.phone || '').trim(),
-    });
-    res.json(matches);
+    const email = (req.query.email || '').trim(), phone = (req.query.phone || '').trim();
+    const [matches, blacklist] = await Promise.all([
+      consultantPortalService.findClientMatches({ email, phone }),
+      require('./services/blacklistService').check({ email, phone }),   // point 5: shown in the modal BEFORE the case opens
+    ]);
+    res.json({ ...matches, blacklist });
   } catch (err) {
     console.error('[Consultant] client-matches failed:', err.stack || err.message);
     res.status(500).json({ error: 'Internal server error' });

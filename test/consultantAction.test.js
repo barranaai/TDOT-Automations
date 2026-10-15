@@ -9,15 +9,23 @@ const assert = require('node:assert/strict');
 
 const { validateAction, parseSelections, OUTCOME_LABELS } = require('../src/services/consultantPortalService');
 
-test('outcome accepts only the exact board labels', () => {
+test('outcome accepts only the exact board labels (four since 2026-10-15); "Not Wanted" needs a reason', () => {
   for (const label of OUTCOME_LABELS) {
-    assert.deepEqual(validateAction('outcome', label), { ok: true, normalized: label });
+    if (label === 'Not Wanted') continue;
+    assert.deepEqual(validateAction('outcome', label), { ok: true, normalized: label, reason: '' });
   }
+  assert.deepEqual(OUTCOME_LABELS, ['Retain', 'Follow-Up', 'Newsletter', 'Not Wanted']);
+  assert.equal(validateAction('outcome', 'Not Wanted').ok, false, 'no reason → refused');
+  assert.deepEqual(validateAction('outcome', { label: 'Not Wanted', reason: ' rude  to staff ' }), { ok: true, normalized: 'Not Wanted', reason: 'rude to staff' });
 });
 
-test('outcome rejects near-matches (straight quote / hyphen) that would mint junk labels', () => {
-  assert.equal(validateAction('outcome', "Don't Retain — Ineligible").ok, false); // straight apostrophe
-  assert.equal(validateAction('outcome', 'Don’t Retain - Ineligible').ok, false);  // hyphen not em-dash
+test('outcome rejects near-matches and the retired labels that would mint junk labels', () => {
+  assert.equal(validateAction('outcome', 'Not wanted').ok, false);                    // case
+  assert.equal(validateAction('outcome', 'Not Wanted ').ok, false);                   // trailing space
+  assert.equal(validateAction('outcome', 'Follow-up').ok, false);                     // case
+  assert.equal(validateAction('outcome', 'Follow–Up').ok, false);                     // en dash
+  assert.equal(validateAction('outcome', 'Don’t Retain — Ineligible').ok, false);     // retired 2026-10-15 (read as Follow-Up, never written)
+  assert.equal(validateAction('outcome', 'Don’t Retain — Not Wanted').ok, false);     // retired 2026-10-15 (read as Not Wanted, never written)
   assert.equal(validateAction('outcome', 'retain').ok, false);
   assert.equal(validateAction('outcome', '').ok, false);
 });

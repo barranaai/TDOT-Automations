@@ -667,6 +667,13 @@ router.post('/webhook/lead', express.json(), async (req, res) => {
       if (outcome === 'Retain') {
         retainerService2.onOutcomeRetain(String(event.pulseId)).catch((e) =>
           console.error('[Lead Webhook] onOutcomeRetain:', e.message));
+      } else if (require('../../config/outcomes').isNotWanted(outcome)) {
+        // Set by hand in Monday (point 5): the person goes on the Not Wanted list.
+        // The webhook is unauthenticated, so the lead is re-read first and added
+        // only if its outcome really is Not Wanted; no reason is known here.
+        require('../services/blacklistService').addFromLeadId(String(event.pulseId), { source: 'monday' })
+          .then((r) => console.log(`[Lead Webhook] Not Wanted for lead ${event.pulseId} → list: ${r.result}`))
+          .catch((e) => console.error('[Lead Webhook] Not Wanted list add failed (the 15-minute sweep retries):', e.message));
       } else {
         console.log(`[Lead Webhook] Outcome '${outcome}' for lead ${event.pulseId} — no Phase 2 v1 action`);
       }

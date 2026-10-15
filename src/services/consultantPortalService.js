@@ -184,10 +184,11 @@ async function getConsultationDetail(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
 
-  const [preConsult, intake, caseCells] = await Promise.all([
+  const [preConsult, intake, caseCells, blacklist] = await Promise.all([
     readLeadJson(lead, 'pre-consult-submission.json'),
     readLeadJson(lead, 'intake-submission.json'),
     readCaseCells(lead.clientMasterItemId),
+    require('./blacklistService').check({ email: lead.email, phone: lead.phone }),   // point 5: the staff-only warning (never throws)
   ]);
 
   const answers = (preConsult && preConsult.answers) || {};
@@ -278,6 +279,9 @@ async function getConsultationDetail(leadId) {
     leadOwner:         lead.leadOwner || '',
     bookedBy:          lead.bookedBy || '',
     paymentReviewedBy: lead.paymentReviewedBy || '',
+
+    // The Not Wanted list (point 5): { checked, hit, matchedOn, entries[] } — a staff warning, never a block.
+    blacklist,
 
     // The consultation fee (point 4 part 2): paid 'app' = through the booking link;
     // a kind = recorded by staff (cash / e-transfer / invoice / other / waived); '' =
@@ -593,8 +597,12 @@ async function getLeadDetail(leadId) {
     }
   }
 
+  // The Not Wanted list (point 5): a staff-only warning on the page, never a block; never throws.
+  const blacklist = await require('./blacklistService').check({ email: lead.email, phone: lead.phone });
+
   return {
     leadId:   lead.id,
+    blacklist,
     name:     lead.fullName || lead.name,
     email:    lead.email || '',
     phone:    lead.phone || '',
@@ -666,10 +674,11 @@ function normaliseRows(x) {
 // those service functions directly, so there is no double-fire. 'resendLinks'
 // is the only direct call (no column triggers it).
 //
-// Outcome labels are the EXACT strings on the board (curly apostrophe + em
-// dash) — writing a near-match would mint a junk label via
-// create_labels_if_missing, so they must match byte-for-byte.
-const OUTCOME_LABELS = ['Retain', 'Don’t Retain — Ineligible', 'Don’t Retain — Not Wanted', 'Newsletter', 'Follow-Up'];
+// Outcome labels are the EXACT strings on the board — writing a near-match
+// would mint a junk label via create_labels_if_missing, so they must match
+// byte-for-byte. Four since 2026-10-15 (Gauri point 5): config/outcomes.js.
+const { OUTCOME_LABELS, OUTCOME_NOT_WANTED, OUTCOME_RETAIN } = require('../../config/outcomes');
+const NOT_WANTED_REASON_MIN = 3;
 // One-click remark presets (consultant note #8) — config/leadRemarks.js
 const { REMARK_PRESETS } = require('../../config/leadRemarks');
 const escHtmlNote = (str) => String(str == null ? '' : str).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
@@ -774,10 +783,24 @@ function validateAction(action, value) {
       if (!mc.ok) return { ok: false, error: mc.errors[0] };
       return { ok: true, normalized: sel };
     }
-    case 'outcome':
-      return OUTCOME_LABELS.includes(value)
-        ? { ok: true, normalized: value }
-        : { ok: false, error: 'Invalid outcome value.' };
+    case 'outcome': {
+      // A label, or { label, reason }. "Not Wanted" needs the consultant's reason —
+      // it goes on the lead's note and on the Not Wanted list (point 5).
+      let label = value, reason = '';
+      if (value && typeof value === 'object') { label = value.label; reason = value.reason; }
+      else if (typeof value === 'string' && value.trim().startsWith('{')) {
+        try { const o = JSON.parse(value); label = o && o.label; reason = o && o.reason; } catch (_) { return { ok: false, error: 'Invalid outcome value.' }; }
+      }
+      if (!OUTCOME_LABELS.includes(label)) return { ok: false, error: 'Invalid outcome value.' };
+      reason = String(reason == null ? '' : reason).replace(/\s+/g, ' ').trim();
+      if (label === OUTCOME_NOT_WANTED) {
+        if (reason.length < NOT_WANTED_REASON_MIN) return { ok: false, error: 'Give the reason this person is not wanted — it is recorded on the lead and on the Not Wanted list.' };
+        if (reason.length > require('./blacklistService').MAX_REASON) return { ok: false, error: `Keep the reason under ${require('./blacklistService').MAX_REASON} characters.` };
+      } else {
+        reason = '';
+      }
+      return { ok: true, normalized: label, reason };
+    }
     case 'remark': {
       // { preset?: key, text?: string } — a preset alone is a one-click remark; text alone is free-form.
       let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid remark payload.' }; }
@@ -996,16 +1019,66 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
   const feeSet = require('./retainerService2').feeToCents(lead.retainerFee);
 
   switch (action) {
-    case 'outcome':
+    case 'outcome': {
+      // Who: the Monday sign-in when there is one (verified), else the typed name.
+      const byName = (actor && actor.verified && String(actor.name || '').trim()) ? String(actor.name).trim().slice(0, 60) : who;
+      const isNotWanted = v.normalized === OUTCOME_NOT_WANTED;
+
+      // Not Wanted (point 5): the person goes on the Not Wanted list BEFORE the
+      // outcome is written — the write echoes back through the Lead Board webhook,
+      // which then finds this lead on the list instead of adding a second,
+      // reason-less row (review 2026-10-15). A failed add never stops the outcome.
+      const bl = require('./blacklistService');
+      const listActor = { name: byName, verified: !!(actor && actor.verified) };
+      let listResult = null, listError = null;
+      const tryList = async () => {
+        try { listResult = await bl.addFromLead({ lead, reason: v.reason, actor: listActor, source: 'portal' }); listError = null; }
+        catch (err) { listError = err; console.warn(`[Consultant] Not Wanted list add failed for lead ${leadId}: ${err.message}`); }
+      };
+      if (isNotWanted && bl.enabled()) await tryList();
+
       await leadService.updateLead(leadId, { outcome: v.normalized });
-      await postPortalNote(leadId, `Outcome set to “${v.normalized}”${who ? ` by ${escHtmlNote(who)}` : ''}.`);
-      await module.exports.notifyOutcomeChange({ leadId, lead, from: lead.outcome, to: v.normalized, staffName: who });
-      if (v.normalized === 'Retain') {
+      await postPortalNote(leadId, `Outcome set to “${v.normalized}”${byName ? ` by ${escHtmlNote(byName)}` : ''}${isNotWanted ? ` — reason: ${escHtmlNote(v.reason)}` : ''}.`);
+      await module.exports.notifyOutcomeChange({ leadId, lead, from: lead.outcome, to: v.normalized, staffName: byName });
+      if (v.normalized === OUTCOME_RETAIN) {
         return { ok: true, message: feeSet
           ? 'Outcome recorded as Retain — the retainer agreement (stating the fee) is being emailed to the client.'
           : 'Outcome recorded as Retain. The agreement states the fee, so it will be emailed automatically once you set the retainer fee below — no agreement goes out without a fee.' };
       }
-      return { ok: true, message: `Outcome recorded: ${v.normalized}.` };
+      if (!isNotWanted) return { ok: true, message: `Outcome recorded: ${v.normalized}.` };
+
+      // A record only — nothing already in flight is cancelled; the note says what is still live so a person decides.
+      const extras = [];
+      const live = [];
+      if (lead.retainerSent && String(lead.retainerSent).trim() && !(lead.retainerSigned && String(lead.retainerSigned).trim())) {
+        live.push(`the retainer agreement sent ${String(lead.retainerSent).trim()} is still live — if the client signs it, the case opens. Void it in Documenso if that is not intended.`);
+      }
+      const slot = String(lead.bookedSlot || '').trim();
+      const slotMs = slot ? require('./postConsultService').torontoSlotToUTC(slot) : NaN;
+      if (slot && String(lead.bookingStatus || '').trim() === 'Booked' && Number.isFinite(slotMs) && Date.now() < slotMs) {
+        live.push(`the consultation booked for ${slot} still stands and its reminders will still go out — cancel it in Square if that is intended.`);
+      }
+      if (live.length) {
+        await postPortalNote(leadId, `⚠ Not Wanted, but ${live.join(' Also, ')}`);
+        extras.push(live.length === 1 ? 'Note: something is still live on this lead — see the note.' : 'Note: a retainer and a booking are still live on this lead — see the notes.');
+      }
+      let listMsg = '';
+      if (!bl.enabled()) listMsg = 'The Not Wanted list is not set up on this server, so nobody will be warned if they come back.';
+      else {
+        // One retry after the write (a passing Monday hiccup); the add is serialised per lead, so it
+        // completes — never duplicates — a row the webhook made in the meantime.
+        if (listError && !listError.badRequest) await tryList();
+        if (listResult) {
+          listMsg = listResult.result === 'created' ? 'They are now on the Not Wanted list — staff will be warned if they come back.'
+            : listResult.result === 'merged' ? 'They were already on the Not Wanted list — this lead and any new email or phone were added to their entry.'
+            : 'They are on the Not Wanted list.';
+        } else {
+          listMsg = listError && listError.badRequest ? listError.message : 'They could not be added to the Not Wanted list just now — the list is checked every 15 minutes and will pick this lead up.';
+          if (!(listError && listError.badRequest)) await postPortalNote(leadId, `⚠ Not added to the Not Wanted list yet (${escHtmlNote(listError ? listError.message : 'unknown error')}) — the 15-minute check will retry.`);
+        }
+      }
+      return { ok: true, message: `Outcome recorded: ${v.normalized}. ${listMsg}${extras.length ? ` ${extras.join(' ')}` : ''}` };
+    }
 
     case 'remark': {
       // Not blocked by the plan lock — a remark records what was done, it edits no terms.
@@ -1532,15 +1605,20 @@ async function createStaffLead(payload = {}) {
     if (!canon.caseTypes.includes(caseTypeInterest)) bad(`"${caseTypeInterest}" is not a canonical case type — pick one from the list.`);
   }
 
+  // The Not Wanted list (point 5): checked on EVERY submit, including "create
+  // anyway" — a warning, never a block. First submit with a hit → 409 so staff
+  // see it before the lead exists; the re-submit creates and the lead gets a note.
+  const blacklist = await require('./blacklistService').check({ email, phone });
+
   // Same duplicate contract as the direct-client modal: matches without an
   // explicit staff choice → 409 with the matches payload; "create anyway"
   // re-submits with allowDuplicate.
   if (!allowDuplicate) {
     // Via module.exports — the tests' stub seam for the matcher.
     const matches = await module.exports.findClientMatches({ email, phone }).catch(() => null);
-    if (matches && (matches.leads.length || matches.cases.length || matches.clients.length)) {
-      const e = new Error('This email/phone already exists in the system.');
-      e.conflict = true; e.matches = matches; throw e;
+    if ((matches && (matches.leads.length || matches.cases.length || matches.clients.length)) || blacklist.hit) {
+      const e = new Error(blacklist.hit ? 'This person is on the Not Wanted list.' : 'This email/phone already exists in the system.');
+      e.conflict = true; e.matches = matches || { leads: [], cases: [], clients: [] }; e.blacklist = blacklist; throw e;
     }
   }
 
@@ -1561,8 +1639,9 @@ async function createStaffLead(payload = {}) {
   await postPortalNote(lead.id,
     `Lead added by staff (${sourceChannel.toLowerCase()} intake)${caseTypeInterest ? ` — interested in ${caseTypeInterest}` : ''}. ` +
     'Next: send the booking invite from this page when they are ready.');
+  if (blacklist.hit) await require('./blacklistService').noteOnLead(lead.id, blacklist, 'Staff saw the warning and added this lead anyway.');
   invalidateLeadsQueue(); // the new lead must appear on the next queue load
-  return { leadId: String(lead.id) };
+  return { leadId: String(lead.id), blacklist };
 }
 
 /**
@@ -1659,6 +1738,22 @@ async function createDirectClient(payload = {}) {
   const consultantNames = Object.values(CONSULTANTS).map((c) => c.name);
   if (!consultantNames.includes(consultant)) bad('Choose the consultant retaining this client — they sign the agreement and own the case.');
 
+  // The Not Wanted list (point 5): a direct client is RETAINED at creation (the
+  // case opens now), so this is the moment to warn. Checked on every path; a
+  // warning only. With no explicit choice yet, a hit answers 409 like a duplicate
+  // so the modal shows it; link / "create anyway" proceed and the lead gets a note.
+  const blacklist = await require('./blacklistService').check({ email, phone });
+  const noteBlacklist = (id, context) => blacklist.hit ? require('./blacklistService').noteOnLead(id, blacklist, context) : Promise.resolve(false);
+  // The case opens at creation, so the warning must be SEEN first: a hit needs
+  // the modal's explicit "I have read the warning" (blacklistAck) on EVERY path —
+  // link, convert, create anyway (review 2026-10-15: a pre-fetched duplicate
+  // choice used to skip it). One tick, never a block.
+  if (blacklist.hit && payload.blacklistAck !== true) {
+    const m = await findClientMatches({ email, phone }).catch(() => ({ leads: [], cases: [], clients: [] }));
+    const e = new Error('This person is on the Not Wanted list — read the warning and tick the box if you mean to set them up anyway.');
+    e.conflict = true; e.matches = m; e.blacklist = blacklist; throw e;
+  }
+
   // Staff explicitly chose to LINK an existing lead (warn-and-link modal):
   // convert that lead into the direct-retainer client instead of minting a new
   // one. Only an un-retained, case-less lead is linkable — anything further
@@ -1723,7 +1818,8 @@ async function createDirectClient(payload = {}) {
       `Linked as a direct retainer client by staff${priorChannel && priorChannel !== DIRECT_SOURCE ? ` (originally a “${priorChannel}” lead — kept as ONE client instead of a duplicate)` : ''}. ` +
       `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}.`).catch(() => {});
     console.log(`[Consultant] Direct client LINKED to existing lead ${linkLeadId} (was "${priorChannel}")`);
-    return { ok: true, leadId: String(linkLeadId), reused: true, linked: true, caseOpened };
+    await noteBlacklist(String(linkLeadId), 'Staff saw the warning and set this person up as a direct retainer client anyway.');
+    return { ok: true, leadId: String(linkLeadId), reused: true, linked: true, caseOpened, blacklist };
   }
 
   // Duplicate guard: a lost response / re-submit must not mint a second lead.
@@ -1754,7 +1850,8 @@ async function createDirectClient(payload = {}) {
       // Newest wins if several exist (highest Monday item id).
       const pick = reusable.sort((a, b) => Number(b.id) - Number(a.id))[0];
       console.log(`[Consultant] Direct client for ${email} already exists (lead ${pick.id}) — reusing`);
-      return { ok: true, leadId: pick.id, reused: true };
+      await noteBlacklist(pick.id, 'Staff saw the warning and set this person up as a direct retainer client anyway.');
+      return { ok: true, leadId: pick.id, reused: true, blacklist };
     }
   } catch (_) { /* fall through to create */ }
 
@@ -1771,6 +1868,7 @@ async function createDirectClient(payload = {}) {
         const e = new Error('This client may already exist — choose "link to existing" or "create new anyway".');
         e.conflict = true;
         e.matches = m;
+        e.blacklist = blacklist;
         throw e;
       }
     } catch (err) {
@@ -1844,8 +1942,14 @@ async function createDirectClient(payload = {}) {
     `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}${referredBy ? ` · Referred by: ${referredBy}` : ''}. ` +
     (caseOpened ? `The Client Master case is open (case-first — this client is never a funnel lead). ` : '') +
     `Next: set the retainer fee + plan and click “Retain &amp; send agreement”.`);
+  await noteBlacklist(leadId, 'Staff saw the warning and created this direct retainer client anyway.');
   console.log(`[Consultant] Direct retainer client created — lead ${leadId} (${fullName}, ${caseType}, ${consultant}, caseOpened=${caseOpened})`);
-  return { ok: true, leadId, caseOpened };
+  return { ok: true, leadId, caseOpened, blacklist };
+}
+
+/** The 409 body for a create conflict: the duplicates AND the Not Wanted warning travel together. */
+function conflictBody(err) {
+  return { error: err.message, matches: err.matches || { leads: [], cases: [], clients: [] }, ...(err.blacklist ? { blacklist: err.blacklist } : {}) };
 }
 
 /**
@@ -2017,4 +2121,5 @@ module.exports = {
   createStaffLead, STAFF_LEAD_SOURCES,
   invalidateLeadsQueue,
   classifyLead, getConsultationsBoard,
+  conflictBody,
 };

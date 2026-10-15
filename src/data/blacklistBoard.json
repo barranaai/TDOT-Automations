@@ -1,0 +1,22 @@
+{
+  "boardId": "18435601112",
+  "name": "Not Wanted list",
+  "columns": {
+    "emails": "text_mm856k54",
+    "phones": "text_mm85mdxp",
+    "reason": "long_text_mm85wgp8",
+    "status": "color_mm85yhkm",
+    "leadIds": "text_mm85q7w5",
+    "addedBy": "text_mm854jsk",
+    "addedOn": "date_mm85ekz5",
+    "source": "text_mm85tnk1",
+    "removedBy": "text_mm85wmr6",
+    "removedOn": "date_mm85cgy2",
+    "removalReason": "long_text_mm85r9xt"
+  },
+  "statusLabels": [
+    "Active",
+    "Removed"
+  ],
+  "createdAt": "2026-10-15T09:56:44.793Z"
+}

@@ -35,13 +35,13 @@ function actorFromStaff(staff, typedName) {
  * @param {(email:string)=>boolean} isAdminEmail
  * @returns {{ok:true, actor:object} | {ok:false, status:number, error:string, loginUrl?:string}}
  */
-function namedAdminCheck(staff, isAdminEmail) {
+function namedAdminCheck(staff, isAdminEmail, { what = 'change a payment record', hint = 'Use “Flag as wrong” to alert them.' } = {}) {
   if (!staff || !staff.email) {
     return { ok: false, status: 401, loginUrl: '/q/auth/monday',
-      error: 'Sign in with Monday to change a payment record — the shared admin key doesn’t say who you are.' };
+      error: `Sign in with Monday to ${what} — the shared admin key doesn’t say who you are.` };
   }
   if (!isAdminEmail(staff.email)) {
-    return { ok: false, status: 403, error: 'Only admins can change a payment record. Use “Flag as wrong” to alert them.' };
+    return { ok: false, status: 403, error: `Only admins can ${what}.${hint ? ` ${hint}` : ''}` };
   }
   return { ok: true, actor: { name: oneLine(staff.name || staff.email).slice(0, 60), email: String(staff.email), verified: true } };
 }

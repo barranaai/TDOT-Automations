@@ -11,7 +11,8 @@
 
 const express = require('express');
 const router  = express.Router();
-const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS } = require('./adminShared');
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS } = require('./adminShared');
+const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
@@ -161,6 +162,7 @@ function buildQueueHTML() {
   .dc-btn.primary { background:var(--navy); border-color:var(--navy); color:#fff; }
   .dc-btn:disabled { opacity:.6; cursor:default; }
   ${DELETE_UI_CSS}
+  ${BLACKLIST_UI_CSS}
 </style></head><body>
 ${buildNavHeader('consultations')}
 <main class="wrap">
@@ -198,7 +200,7 @@ ${buildNavHeader('consultations')}
         </div>
       </div>
       <div class="card attn fold" id="needs-outcome" style="display:none;margin-bottom:12px">
-        <div class="attn-h" id="needs-outcome-h" role="button" tabindex="0"><span>&#9888; Needs outcome <span id="needs-outcome-n"></span> <span class="muted">— consultations that have happened with no outcome recorded. Open each and set Retain / Follow-up / Newsletter / Not wanted.</span></span><span class="muted">show / hide</span></div>
+        <div class="attn-h" id="needs-outcome-h" role="button" tabindex="0"><span>&#9888; Needs outcome <span id="needs-outcome-n"></span> <span class="muted">— consultations that have happened with no outcome recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted.</span></span><span class="muted">show / hide</span></div>
         <table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="needs-outcome-body"></tbody></table>
       </div>
       <div class="card">
@@ -255,6 +257,7 @@ ${buildNavHeader('consultations')}
       <label for="dc-consultant">Consultant *</label><select id="dc-consultant"><option value="">Choose…</option></select>
       <label for="dc-referred">Referred by</label><input id="dc-referred" type="text" maxlength="200" autocomplete="off">
       <div id="dc-profile" style="display:none" role="region" aria-label="Carried from previous application"></div>
+      <div id="dc-blacklist" style="display:none"></div>
       <div id="dc-matches" style="display:none" role="region" aria-label="Possible existing records"></div>
       <div id="dc-err" role="alert"></div>
       <div class="dc-actions">
@@ -337,7 +340,19 @@ function renderRows(rows){
 }
 /* ── Direct retainer client (walk-in / referral) ── */
 var DC_OPTS=null;
+${BLACKLIST_UI_JS}
 function dcEl(id){ return document.getElementById(id); }
+/* The Not Wanted list (point 5): the server answers 409 with the warning; with no duplicate
+   panel to choose from, an explicit tick is the "create anyway". A warning only. */
+var DC_BL_HIT=false;
+function dcRenderBlacklist(r){
+  var box=dcEl('dc-blacklist'); if(!box) return;
+  DC_BL_HIT=!!(r&&r.hit);
+  var html=tdotBlacklistHtml(r,{leadLinks:true});
+  if(!html){ box.style.display='none'; box.innerHTML=''; return; }
+  box.innerHTML=html+(DC_BL_HIT?'<label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:#991b1b;margin:-6px 0 12px"><input type="checkbox" id="dc-bl-ack" style="margin-top:2px"> I have read the warning — set this person up as a direct retainer client anyway</label>':'');
+  box.style.display='block';
+}
 function openDirectClient(){
   dcEl('dc-err').textContent='';
   // Clear every field FIRST — the modal is a singleton, and a carried
@@ -348,6 +363,7 @@ function openDirectClient(){
   ['dc-name','dc-email','dc-phone','dc-address','dc-referred'].forEach(function(id){ var e=dcEl(id); if(e) e.value=''; });
   ['dc-casetype','dc-subtype','dc-consultant'].forEach(function(id){ var e=dcEl(id); if(e) e.selectedIndex=0; });
   DC_MATCHES=null; var mb=dcEl('dc-matches'); if(mb){ mb.style.display='none'; mb.innerHTML=''; }
+  DC_BL_HIT=false; var blb=dcEl('dc-blacklist'); if(blb){ blb.style.display='none'; blb.innerHTML=''; }
   // A carried profile / lead conversion belongs to ONE opening of the modal —
   // reopening it for a different walk-in must never stamp the previous
   // client's case/family or link the previous lead.
@@ -471,6 +487,7 @@ function dcClearMatches(){
   // radio — a stale "link" choice must never target the previous person.
   DC_MATCHES=null; DC_MATCH_SEQ++;
   var box=dcEl('dc-matches'); if(box){ box.style.display='none'; box.innerHTML=''; }
+  DC_BL_HIT=false; var blb=dcEl('dc-blacklist'); if(blb){ blb.style.display='none'; blb.innerHTML=''; }
   // Same rule for a lead conversion: editing email/phone may mean a different
   // person — drop the pre-linked lead and let the duplicate check re-offer it.
   if(DC_CONVERT_LEAD_ID){
@@ -507,7 +524,7 @@ function dcCheckMatches(){
   var seq=++DC_MATCH_SEQ;
   fetch('/api/consultation/client-matches?email='+encodeURIComponent(email)+'&phone='+encodeURIComponent(phone),{headers:{'X-Api-Key':key}})
     .then(function(r){ return r.ok?r.json():null; })
-    .then(function(m){ if(m && seq===DC_MATCH_SEQ) dcRenderMatches(m); })
+    .then(function(m){ if(m && seq===DC_MATCH_SEQ){ dcRenderMatches(m); dcRenderBlacklist(m.blacklist); } })
     .catch(function(){ /* the server-side 409 guard still protects the submit */ });
 }
 function dcChosen(){
@@ -543,6 +560,13 @@ function submitDirectClient(){
     // Boot-time conversion (?convertLead): the link target was chosen by the
     // staff member on the Leads page; an explicit radio only overrides it.
     body.linkLeadId=DC_CONVERT_LEAD_ID;
+  } else if(DC_BL_HIT){
+    body.allowDuplicate=true;   /* the list hit is the only reason for the stop — no duplicate panel to choose from */
+  }
+  if(DC_BL_HIT){
+    var ack=dcEl('dc-bl-ack');
+    if(!(ack&&ack.checked)){ err.textContent='This person is on the Not Wanted list — tick the box above if you mean to set them up anyway.'; return; }
+    body.blacklistAck=true;
   }
   var key=getKey(); if(!key) return;
   var btn=dcEl('dc-create'); btn.disabled=true; btn.textContent='Creating…';
@@ -550,8 +574,9 @@ function submitDirectClient(){
     .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
     .then(function(res){
       if(res.s===409 && res.j && res.j.matches){
-        // The server found matches the modal hadn't fetched yet — show them.
+        // The server found matches the modal hadn't fetched yet — show them (and the Not Wanted warning, if any).
         dcRenderMatches(res.j.matches);
+        dcRenderBlacklist(res.j.blacklist);
         btn.disabled=false; btn.textContent='Create & open retainer';
         err.textContent=res.j.error||'This client may already exist — choose an option above.';
         return;
@@ -776,6 +801,7 @@ function buildDetailHTML(leadId) {
   ${SHARED_CSS_VARS}
   ${NAV_CSS}
   ${PAYMENT_UI_CSS}
+  ${BLACKLIST_UI_CSS}
   body { background:var(--bg); }
   .wrap { max-width:min(1560px, 95vw); margin:0 auto; padding:20px 30px 90px; }
   #loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:50vh; gap:16px; }
@@ -956,6 +982,7 @@ ${buildNavHeader('consultations')}
         <span id="c-consultant" style="display:contents"></span>
       </div>
     </div>
+    <div id="bl-banner"></div>
 
     <div class="stepper" id="c-stepper"></div>
 
@@ -1155,11 +1182,13 @@ ${buildNavHeader('consultations')}
 var LEAD_ID=${jsLit(leadId)};
 ${UPDATES_WIDGET_JS}
 var OUTCOMES=${jsLit(OUTCOME_LABELS)};
+var OUTCOME_NOT_WANTED=${jsLit(OUTCOME_NOT_WANTED)};
 var REMARKS=${jsLit(REMARK_PRESETS)};
 ${REMARKS_JS}
 var ICONS=${jsLit({ video: I.video, file: I.file, disc: I.disc, mail: I.mail, userCheck: I.userCheck, clock: I.clock, check: I.check, dollar: I.dollar })};
 ${SHARED_AUTH_JS}
 ${PAYMENT_UI_JS}
+${BLACKLIST_UI_JS}
 tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/updates/' + encodeURIComponent(LEAD_ID), itemId: LEAD_ID });
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function safeUrl(u){ u=String(u==null?'':u).trim(); return /^(https?:|mailto:)/i.test(u)?u:'#'; } // block javascript:/data: in href
@@ -1292,6 +1321,18 @@ function openConsultPaymentModal(d, clear){
     setTimeout(function(){ var f=kindEl||dlg.box.querySelector('#cp-by')||dlg.box.querySelector('[data-go]'); if(f) f.focus(); },30);
   });
 }
+// The Not Wanted list (point 5): the staff-only warning under the header; named admins get "Remove from the list…".
+function renderBlacklist(d){
+  var el=document.getElementById('bl-banner'); if(!el) return;
+  var r=d.blacklist;
+  if(!r||(r.checked!==false&&!r.hit)){ el.innerHTML=''; return; }
+  el.innerHTML=tdotBlacklistHtml(r,{leadLinks:true});
+  tdotBlViewer(function(v){
+    if(!(v&&v.canUndo)) return;
+    el.innerHTML=tdotBlacklistHtml(r,{leadLinks:true, canRemove:true});
+    tdotBlacklistBind(el,function(res){ setMsg((res&&res.message)||'Removed from the Not Wanted list.','ok'); load(); });
+  });
+}
 var LAST_DETAIL=null; // the detail last rendered — the send button's confirm text reads the package state from it
 function render(d){
   LAST_DETAIL=d;
@@ -1330,6 +1371,7 @@ function render(d){
   highlightOutcome(d.outcome||'');
   hydrateAttribution(d);
   hydrateConsultPayment(d);
+  renderBlacklist(d);
   var fee=document.getElementById('fee'); if(fee && !fee.value && d.retainerFee) fee.value=d.retainerFee;
   // Hydrate the retainer panel from the detail payload ONCE (saves a second
   // getLead round-trip); later renders (after an action) keep in-progress edits.
@@ -1957,7 +1999,11 @@ function initActions(){
     // retainer panel (set fee → save plan → send), so it's not a quick-outcome here.
     if(label==='Retain') return;
     var b=document.createElement('button'); b.type='button'; b.className='obtn'; b.textContent=label; b.setAttribute('data-outcome',label);
-    b.onclick=function(){ doAction('outcome',label); };
+    // "Not Wanted" asks for the reason first — it goes on the lead and on the Not Wanted list.
+    b.onclick=function(){
+      if(label===OUTCOME_NOT_WANTED){ tdotOpenNotWantedModal({ name:(LAST_DETAIL&&LAST_DETAIL.name)||'', onConfirm:function(reason){ doAction('outcome', JSON.stringify({label:label, reason:reason})); } }); return; }
+      doAction('outcome',label);
+    };
     obtns.appendChild(b);
   });
   document.getElementById('btn-fee').onclick=function(){

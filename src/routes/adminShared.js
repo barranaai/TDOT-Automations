@@ -895,7 +895,137 @@ const PAYMENT_UI_JS = `
   }
 `;
 
+// ─── The Not Wanted list (Gauri point 5) — the staff-only warning + two dialogs ───
+// Used by the lead page, the consultation page (banner + the "Not Wanted" reason
+// dialog) and the Add-lead / direct-client panels (the warning block). Inline
+// JS inside a template literal: no backticks, no "${", no backslashes.
+const BLACKLIST_UI_CSS = `
+  .blw { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; border-radius:10px; padding:12px 16px; font-size:13px; margin:0 0 14px; display:flex; gap:10px; align-items:flex-start; }
+  .blw > .blw-ico { font-size:16px; line-height:1.2; flex:none; }
+  .blw .blw-body { flex:1; min-width:0; }
+  .blw b { color:#7f1d1d; }
+  .blw .blw-sub { font-weight:400; color:#7f1d1d; margin-top:5px; font-size:12.5px; line-height:1.45; }
+  .blw .blw-sub a { color:#7f1d1d; }
+  .blw .blw-btn { margin-left:6px; padding:4px 9px; border-radius:7px; border:1px solid #fca5a5; background:#fff; color:#991b1b; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; vertical-align:middle; }
+  .blw .blw-btn:disabled { opacity:.5; cursor:not-allowed; }
+  .blw.blw-soft { background:#fffbeb; border-color:#fde68a; color:#92400e; }
+  .blw.blw-soft b, .blw.blw-soft .blw-sub { color:#92400e; }
+  .blm-overlay { position:fixed; inset:0; background:rgba(15,23,42,.5); display:flex; align-items:center; justify-content:center; z-index:1200; padding:20px; }
+  .blm { background:#fff; border-radius:14px; padding:22px 24px; width:100%; max-width:520px; box-shadow:0 20px 50px rgba(2,6,23,.4); font-size:13.5px; color:#0f172a; }
+  .blm h3 { margin:0 0 6px; font-size:16px; }
+  .blm h3.danger { color:#b91c1c; }
+  .blm p { margin:6px 0; color:#334155; }
+  .blm .blm-info { background:#f1f5f9; border:1px solid #e2e8f0; border-radius:8px; padding:8px 12px; font-size:12.5px; color:#334155; margin:8px 0; }
+  .blm label { display:block; font-size:12px; font-weight:700; margin:12px 0 4px; }
+  .blm input, .blm textarea { width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; box-sizing:border-box; }
+  .blm textarea { min-height:70px; resize:vertical; }
+  .blm-err { color:#dc2626; font-size:12.5px; min-height:16px; margin-top:8px; }
+  .blm-err a { color:#dc2626; }
+  .blm-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+  .blm-btn { padding:9px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:#0f172a; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .blm-btn.primary { background:#0f2d52; border-color:#0f2d52; color:#fff; }
+  .blm-btn.danger { background:#dc2626; border-color:#dc2626; color:#fff; }
+  .blm-btn:disabled { opacity:.4; cursor:not-allowed; }
+`;
+
+const BLACKLIST_UI_JS = `
+  var TDOT_BL = { viewer: null, waiting: null };
+  function blEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function blHeaders(){ var h = { 'Content-Type': 'application/json' }; var k = null; try { k = sessionStorage.getItem('tdot_admin_key'); } catch(e){} if (k) h['X-Api-Key'] = k; return h; }
+  /* Who is looking: canUndo = a named admin (Monday sign-in + the admin list) — the only one who may remove. */
+  function tdotBlViewer(cb){
+    if (TDOT_BL.viewer) { cb(TDOT_BL.viewer); return; }
+    if (TDOT_BL.waiting) { TDOT_BL.waiting.push(cb); return; }
+    TDOT_BL.waiting = [cb];
+    fetch('/admin/payments/viewer', { headers: blHeaders(), credentials: 'same-origin' })
+      .then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; })
+      .then(function(v){ TDOT_BL.viewer = v || { signedIn:false, name:'', canUndo:false, signInUrl:'/q/auth/monday' }; var w = TDOT_BL.waiting; TDOT_BL.waiting = null; w.forEach(function(f){ try { f(TDOT_BL.viewer); } catch(e){} }); });
+  }
+  function blOverlay(){
+    Array.prototype.forEach.call(document.querySelectorAll('.blm-overlay'), function(x){ if (x.parentNode) x.parentNode.removeChild(x); });
+    var opener = document.activeElement;
+    var ov = document.createElement('div'); ov.className = 'blm-overlay';
+    ov.innerHTML = '<div class="blm" role="dialog" aria-modal="true" aria-labelledby="blm-title"></div>';
+    document.body.appendChild(ov);
+    var d = { ov: ov, box: ov.querySelector('.blm') };
+    function onKey(e){ if (e.key === 'Escape') close(); }
+    function close(){ if (!ov.parentNode) return; ov.parentNode.removeChild(ov); document.removeEventListener('keydown', onKey); try { if (opener && opener.focus && document.body.contains(opener)) opener.focus(); } catch (e) {} }
+    ov.addEventListener('click', function(e){ if (e.target === ov) close(); });
+    document.addEventListener('keydown', onKey);
+    d.close = close;
+    return d;
+  }
+  var BL_HOW = { both: 'email and phone', email: 'email only', phone: 'phone only' };
+  /* The warning block for a check result ({checked, hit, matchedOn, entries}). opts: { leadLinks, canRemove }. '' when nothing to say. */
+  function tdotBlacklistHtml(r, opts){
+    opts = opts || {};
+    if (!r) return '';
+    if (r.checked === false) {
+      if (r.dormant) return '';
+      return '<div class="blw blw-soft" role="status"><span class="blw-ico">&#9888;</span><div class="blw-body"><b>The Not Wanted list could not be checked</b><div class="blw-sub">' + blEsc(r.error || 'read failed') + '. Nothing is blocked; if it matters, open the list in Monday.</div></div></div>';
+    }
+    if (!r.hit) return '';
+    var rows = (r.entries || []).map(function(h){
+      var m = { both: 'email and phone', email: 'email', phone: 'phone' }[h.matchedOn] || '';
+      var leads = (opts.leadLinks && h.leadIds && h.leadIds.length) ? ' · lead ' + h.leadIds.map(function(id){ return '<a href="/admin/lead/' + encodeURIComponent(id) + '" target="_blank" rel="noopener">' + blEsc(id) + '</a>'; }).join(', ') : '';
+      var btn = opts.canRemove ? '<button type="button" class="blw-btn" data-bl-remove="' + blEsc(h.id) + '" data-bl-name="' + blEsc(h.name || '') + '">Remove from the list&hellip;</button>' : '';
+      return '<div class="blw-sub"><b>' + blEsc(h.name || '(no name)') + '</b>' + (h.reason ? ' — ' + blEsc(h.reason) : '') + (h.addedBy ? ' · added by ' + blEsc(h.addedBy) + (h.addedOn ? ' on ' + blEsc(h.addedOn) : '') : '') + (m ? ' · matched by ' + m : '') + leads + btn + '</div>';
+    }).join('');
+    return '<div class="blw" role="alert"><span class="blw-ico">&#9940;</span><div class="blw-body"><b>On the Not Wanted list</b> — matched by ' + (BL_HOW[r.matchedOn] || blEsc(r.matchedOn)) + '. ' + (r.matchedOn === 'both' ? '' : 'Check it is the same person. ') + 'A warning only: nothing is blocked and the client sees nothing.' + rows + '</div></div>';
+  }
+  /* Wire the "Remove from the list…" buttons inside root; onDone(result) runs after a removal. */
+  function tdotBlacklistBind(root, onDone){
+    if (!root) return;
+    Array.prototype.forEach.call(root.querySelectorAll('[data-bl-remove]'), function(b){
+      b.onclick = function(){ tdotOpenBlacklistRemoveModal(b.getAttribute('data-bl-remove'), b.getAttribute('data-bl-name') || '', onDone); };
+    });
+  }
+  function tdotOpenBlacklistRemoveModal(entryId, name, onDone){
+    var d = blOverlay();
+    d.box.innerHTML = '<h3 id="blm-title" class="danger">Remove from the Not Wanted list</h3>' +
+      '<p><b>' + blEsc(name || 'This person') + '</b> would no longer trigger a warning when they come back. The entry is kept as Removed, with your name and reason. The outcome on their lead does not change.</p>' +
+      '<label for="blm-reason">Reason <span style="font-weight:400;color:#64748b">(recorded)</span></label><textarea id="blm-reason" maxlength="300"></textarea>' +
+      '<div class="blm-err" role="alert"></div>' +
+      '<div class="blm-actions"><button type="button" class="blm-btn" data-x>Cancel</button><button type="button" class="blm-btn danger" data-go>Remove from the list</button></div>';
+    d.box.querySelector('[data-x]').onclick = d.close;
+    var go = d.box.querySelector('[data-go]'), err = d.box.querySelector('.blm-err'), ta = d.box.querySelector('#blm-reason');
+    go.onclick = function(){
+      var reason = ta.value.trim();
+      if (reason.length < 3) { err.textContent = 'Give the reason — it is recorded with the removal.'; ta.focus(); return; }
+      go.disabled = true; err.textContent = '';
+      fetch('/admin/blacklist/' + encodeURIComponent(entryId) + '/remove', { method: 'POST', headers: blHeaders(), credentials: 'same-origin', body: JSON.stringify({ reason: reason }) })
+        .then(function(r){ return r.json().then(function(j){ return { s: r.status, j: j }; }); })
+        .then(function(res){
+          if (res.s === 401 && res.j && res.j.loginUrl) { go.disabled = false; err.innerHTML = blEsc(res.j.error || 'Sign in required.') + ' <a href="' + blEsc(res.j.loginUrl) + '">Sign in with Monday</a>'; return; }
+          if (res.s !== 200) { go.disabled = false; err.textContent = (res.j && res.j.error) || ('HTTP ' + res.s); return; }
+          d.close(); if (onDone) onDone(res.j);
+        })
+        .catch(function(e){ go.disabled = false; err.textContent = 'Network error — ' + (e.message || 'try again'); });
+    };
+    setTimeout(function(){ ta.focus(); }, 30);
+  }
+  /* "Not Wanted" needs the consultant's reason — it goes on the lead and on the list. o: { name, onConfirm(reason) } */
+  function tdotOpenNotWantedModal(o){
+    var d = blOverlay();
+    d.box.innerHTML = '<h3 id="blm-title" class="danger">Outcome: Not Wanted</h3>' +
+      '<p><b>' + blEsc(o.name || 'This person') + '</b> goes on the Not Wanted list. Staff are warned if they come back — by email or phone. Nothing is blocked and the client is not told.</p>' +
+      '<div class="blm-info">Anything already in flight (a retainer sent, a booking) stays as it is — the lead gets a note saying what is still live. Only a named admin can remove someone from the list later.</div>' +
+      '<label for="blm-reason">Why not wanted? <span style="font-weight:400;color:#64748b">(recorded on the lead and on the list)</span></label><textarea id="blm-reason" maxlength="300"></textarea>' +
+      '<div class="blm-err" role="alert"></div>' +
+      '<div class="blm-actions"><button type="button" class="blm-btn" data-x>Cancel</button><button type="button" class="blm-btn danger" data-go>Record Not Wanted</button></div>';
+    d.box.querySelector('[data-x]').onclick = d.close;
+    var ta = d.box.querySelector('#blm-reason'), err = d.box.querySelector('.blm-err');
+    d.box.querySelector('[data-go]').onclick = function(){
+      var reason = ta.value.trim();   /* the server folds line breaks and runs of spaces */
+      if (reason.length < 3) { err.textContent = 'Give the reason — it is recorded.'; ta.focus(); return; }
+      d.close(); o.onConfirm(reason);
+    };
+    setTimeout(function(){ ta.focus(); }, 30);
+  }
+`;
+
 module.exports = {
+  BLACKLIST_UI_CSS, BLACKLIST_UI_JS,
   PAYMENT_UI_CSS, PAYMENT_UI_JS,
   TDOT_LOGO_SVG,
   TDOT_LOGO_SVG_LARGE,
