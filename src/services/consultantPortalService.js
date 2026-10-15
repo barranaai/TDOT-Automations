@@ -2152,22 +2152,25 @@ async function getDirectRetainerQueue() {
 }
 
 /**
- * A booked consultation whose DAY HAS PASSED and that has an outcome (Gauri
- * point 4: "once an outcome is set, the client moves to the Retainers view").
- * The move waits for the next Toronto day, never the start time: nothing clears
- * an outcome when a client is re-booked, so an outcome left from an earlier
- * consultation would take today's meeting off the day's list while it runs
- * (review 2026-10-16). Today's and upcoming bookings stay on Consultations
- * whatever their outcome. A booked row with no date counts as past: the
- * outcome says the consultation happened.
+ * A booked consultation with an outcome moves to Retainers AS SOON AS the
+ * outcome is set (Gauri point 4: "once an outcome is set, the client moves to
+ * the Retainers view"; Faran 2026-10-16: no waiting for the next day).
+ *   - upcoming (a later day): stays on Consultations, whatever its outcome;
+ *   - today: moves once the outcome was set TODAY (Toronto) — nothing clears an
+ *     outcome when a client is re-booked, so one set on an earlier day belongs
+ *     to an earlier consultation and must not take today's meeting off the
+ *     day's list (review 2026-10-16). Unknown when it was set: stays today;
+ *   - an earlier day, or no date at all: moves (the outcome says it happened).
  *
- * @param {object} l      the lead (snapshot row)
+ * @param {object} l      the lead (snapshot row; outcomeChangedAt = Monday's changed_at)
  * @param {string} today  the Toronto day, 'YYYY-MM-DD'
  */
 function consultationDone(l, today) {
   if (!canonicalOutcome(l.outcome)) return false;
   const m = String(l.bookedSlot == null ? '' : l.bookedSlot).trim().match(/^(\d{4}-\d{2}-\d{2})/);
-  return !m || m[1] < today;
+  if (!m || m[1] < today) return true;
+  if (m[1] > today) return false;
+  return torontoDay(l.outcomeChangedAt) === today;
 }
 
 /**

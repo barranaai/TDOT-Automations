@@ -76,7 +76,8 @@ test('snapshot: reads only the columns the lists use, 500 a page, every page, pa
   const restore = [stub(mondayApi, 'query', async (q, v) => {
     calls.push({ q, v });
     const page = v.cursor ? 1 : 0;
-    return { boards: [{ items_page: { cursor: page === 0 ? 'c1' : null, items: [{ id: String(100 + page), name: `N${page}`, created_at: '2026-10-01T00:00:00Z', column_values: [{ id: C.bookingStatus, text: 'Booked', value: '{"index":3}' }, { id: C.bookedSlot, text: '2026-10-20 11:00', value: null }] }] } }] };
+    const oc = page === 0 ? [{ id: C.outcome, text: 'Follow-Up', value: '{"index":9,"changed_at":"2026-10-16T03:30:00.123Z"}' }] : [{ id: C.outcome, text: '', value: '{not json' }];
+    return { boards: [{ items_page: { cursor: page === 0 ? 'c1' : null, items: [{ id: String(100 + page), name: `N${page}`, created_at: '2026-10-01T00:00:00Z', column_values: [{ id: C.bookingStatus, text: 'Booked', value: '{"index":3}' }, { id: C.bookedSlot, text: '2026-10-20 11:00', value: null }, ...oc] }] } }] };
   })];
   try {
     const leads = await snap.leads();
@@ -85,6 +86,7 @@ test('snapshot: reads only the columns the lists use, 500 a page, every page, pa
     assert.ok(calls[0].q.includes(`"${C.consultAgreementSent}"`) && calls[0].q.includes(`"${C.squareConsultTxnId}"`) && !calls[0].q.includes(`"${C.email}"`), 'the list columns, not the client\'s email');
     assert.equal(calls[1].v.cursor, 'c1');
     assert.deepEqual(leads.map((l) => [l.id, l.fullName, l.bookingStatus, l.bookedSlot]), [['100', 'N0', 'Booked', '2026-10-20 11:00'], ['101', 'N1', 'Booked', '2026-10-20 11:00']]);
+    assert.deepEqual(leads.map((l) => [l.outcome, l.outcomeChangedAt]), [['Follow-Up', '2026-10-16T03:30:00.123Z'], ['', '']], 'when the Outcome was last set (Monday\'s changed_at); an unreadable value is unknown, never a throw');
     assert.ok(snap.SNAPSHOT_KEYS.every((k) => C[k]), 'every snapshot key is a real column');
   } finally { restore.forEach((r) => r()); snap._reset(); }
 });
@@ -334,21 +336,26 @@ test('REVIEW: the page — the warning header keeps its colour; a due follow-up 
 
 /* ── Retainers quick filters (Faran 2026-10-16, in place of grouping by outcome) ── */
 
-test('consultationDone: a booked consultation leaves Consultations once its DAY has passed and it has an outcome — today\'s and upcoming ones stay whatever their outcome', () => {
+test('consultationDone: a booked consultation moves to Retainers as soon as its outcome is set — an upcoming one stays; today, an outcome left from an earlier consultation keeps the client on the day\'s list', () => {
   const done = portal.consultationDone, today = '2026-10-16';
   const B = (over) => ({ bookingStatus: 'Booked', ...over });
+  const setToday = '2026-10-16T15:05:00.000Z', setEarlier = '2026-09-20T15:00:00.000Z';
   assert.equal(done(B({ bookedSlot: '2026-10-15 10:00' }), today), false, 'no outcome: stays (the Needs outcome list)');
-  assert.equal(done(B({ bookedSlot: '2026-10-15 10:00', outcome: 'Follow-Up' }), today), true);
-  assert.equal(done(B({ bookedSlot: '2026-10-16 09:00', outcome: 'Newsletter' }), today), false, 'earlier today: stays on the day\'s list until the day is over');
-  assert.equal(done(B({ bookedSlot: '2026-10-16 15:00', outcome: 'Follow-Up' }), today), false, 'a re-booking that keeps an old outcome is not moved while its meeting runs (review 2026-10-16)');
-  assert.equal(done(B({ bookedSlot: '2026-10-20 09:00', outcome: 'Follow-Up' }), today), false, 're-booked after a Follow-Up: the new consultation stays');
-  assert.equal(done(B({ bookedSlot: '2026-10-16', outcome: 'Not Wanted' }), today), false, 'today with no time: stays today too');
+  assert.equal(done(B({ bookedSlot: '2026-10-15 10:00', outcome: 'Follow-Up', outcomeChangedAt: setEarlier }), today), true, 'an earlier day: moves');
+  assert.equal(done(B({ bookedSlot: '2026-10-16 09:00', outcome: 'Newsletter', outcomeChangedAt: setToday }), today), true, 'today, the outcome set today: moves at once (Faran 2026-10-16)');
+  assert.equal(done(B({ bookedSlot: '2026-10-16 15:00', outcome: 'Follow-Up', outcomeChangedAt: setToday }), today), true, 'set today before the meeting time: moves too — staff chose it today');
+  assert.equal(done(B({ bookedSlot: '2026-10-16 15:00', outcome: 'Follow-Up', outcomeChangedAt: setEarlier }), today), false, 'a re-booked client whose outcome is from an earlier consultation stays on today\'s list (review 2026-10-16)');
+  assert.equal(done(B({ bookedSlot: '2026-10-16 15:00', outcome: 'Follow-Up' }), today), false, 'today, not known when it was set: stays');
+  assert.equal(done(B({ bookedSlot: '2026-10-16 15:00', outcome: 'Follow-Up', outcomeChangedAt: '2026-10-17T02:30:00Z' }), today), true, '10:30 pm Toronto is still today (UTC says tomorrow)');
+  assert.equal(done(B({ bookedSlot: '2026-10-16 15:00', outcome: 'Follow-Up', outcomeChangedAt: '2026-10-16T02:30:00Z' }), today), false, '10:30 pm Toronto the day BEFORE (UTC says today)');
+  assert.equal(done(B({ bookedSlot: '2026-10-20 09:00', outcome: 'Follow-Up', outcomeChangedAt: setToday }), today), false, 'an upcoming consultation stays whatever its outcome');
+  assert.equal(done(B({ bookedSlot: '2026-10-16', outcome: 'Not Wanted', outcomeChangedAt: setToday }), today), true, 'today with no time, set today: moves');
   assert.equal(done(B({ bookedSlot: '', outcome: 'Not Wanted' }), today), true, 'no date at all: the outcome says it happened');
   assert.equal(done(B({ bookedSlot: '2026-10-15 10:00', outcome: 'Don’t Retain — Ineligible' }), today), true, 'an old label reads as its new meaning');
   assert.equal(done(B({ bookedSlot: '2026-10-15 10:00', outcome: 'Something else' }), today), false, 'text that is not an outcome moves nothing');
 });
 
-test('getConsultationsBoard: Follow-Up / Newsletter / Not Wanted consultations whose day has passed sit on Retainers with their outcome group and their consultation fee; today\'s and upcoming ones stay; every Retainers row has a group', async () => {
+test('getConsultationsBoard: Follow-Up / Newsletter / Not Wanted consultations sit on Retainers once the outcome is set with their outcome group and their consultation fee; today\'s and upcoming ones stay; every Retainers row has a group', async () => {
   snap._reset();
   const rows = [
     L(1, { bookingStatus: 'Booked', bookedSlot: '2026-10-14 10:00', outcome: 'Follow-Up', followUpDate: '2026-10-20', assignedConsultant: 'Shermin Teymouri Mofrad',
@@ -360,14 +367,15 @@ test('getConsultationsBoard: Follow-Up / Newsletter / Not Wanted consultations w
     L(6, { bookingStatus: 'Booked', bookedSlot: '2026-10-09 10:00', outcome: 'Retain', retainerSent: '2026-10-11', squareConsultTxnId: 'SQ6', consultOption: JSON.stringify({ feeCents: 20000, paidCents: 22600 }) }),
     L(7, { bookingStatus: 'Booked', bookedSlot: '2026-10-14 15:00' }),
     L(8, { bookingStatus: 'Booked', bookedSlot: '2026-10-08 10:00', outcome: 'Follow-Up', retainerFee: '2500' }),
-    L(9, { bookingStatus: 'Booked', bookedSlot: '2026-10-15 09:00', outcome: 'Follow-Up' }),
+    L(9, { bookingStatus: 'Booked', bookedSlot: '2026-10-15 09:00', outcome: 'Follow-Up', outcomeChangedAt: '2026-09-30T14:00:00Z' }),
+    L(10, { bookingStatus: 'Booked', bookedSlot: '2026-10-15 10:00', outcome: 'Newsletter', outcomeChangedAt: '2026-10-15T14:45:00Z' }),
   ];
   const restore = [stub(snap.io, 'fetchLeads', async () => rows)];
   try {
     const b = await portal.getConsultationsBoard({ now: new Date('2026-10-15T16:00:00Z') });   // noon in Toronto
-    assert.deepEqual(b.consultations.map((r) => r.id), ['7', '9', '2'], 'no outcome yet, earlier today, or upcoming');
+    assert.deepEqual(b.consultations.map((r) => r.id), ['7', '9', '2'], 'no outcome yet, today with an outcome from an earlier consultation, or upcoming');
     assert.deepEqual(b.retainers.map((r) => [r.id, r.stage, r.outcomeGroup]),
-      [['6', 'Sent', 'Retain'], ['8', 'Fee set', 'Follow-Up'], ['5', 'New', 'Retain'], ['4', '', 'Not Wanted'], ['1', '', 'Follow-Up'], ['3', '', 'Newsletter']],
+      [['6', 'Sent', 'Retain'], ['8', 'Fee set', 'Follow-Up'], ['5', 'New', 'Retain'], ['4', '', 'Not Wanted'], ['1', '', 'Follow-Up'], ['10', '', 'Newsletter'], ['3', '', 'Newsletter']],
       'by stage; no retainer under way last, oldest consultation first (no date last)');
     const r1 = b.retainers.find((r) => r.id === '1');
     assert.equal(r1.outcome, 'Follow-Up'); assert.equal(r1.followUpDate, '2026-10-20'); assert.equal(r1.kind, 'booked'); assert.equal(r1.consultant, 'Shermin Teymouri Mofrad');
@@ -380,7 +388,7 @@ test('getConsultationsBoard: Follow-Up / Newsletter / Not Wanted consultations w
     assert.deepEqual([r4.paid, r4.paidCents], ['', null], 'nothing recorded yet');
     const ids = [...b.consultations, ...b.retainers].map((r) => r.id);
     assert.equal(new Set(ids).size, ids.length, 'one row, one tab');
-    assert.equal(ids.length, 9, 'and every row on one');
+    assert.equal(ids.length, 10, 'and every row on one');
   } finally { restore.forEach((r) => r()); snap._reset(); }
 });
 
