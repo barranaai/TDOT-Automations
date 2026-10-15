@@ -84,6 +84,7 @@ function buildQueueHTML() {
   .pill { display:inline-flex; align-items:center; padding:2px 9px; border-radius:20px; font-size:10px; font-weight:700; }
   .pill.green { background:#f0fdf4; color:#16a34a; } .pill.grey { background:#f1f5f9; color:#64748b; }
   .pill.amber { background:#fffbeb; color:#d97706; } .pill.blue { background:#eff6ff; color:#2563eb; }
+  .pill.red { background:#fef2f2; color:#dc2626; }
   .tier { font-weight:700; color:var(--navy); }
   .empty { padding:40px; text-align:center; color:#94a3b8; }
   .sec-h { font-size:15px; font-weight:800; color:var(--navy); margin:0; }
@@ -133,6 +134,16 @@ function buildQueueHTML() {
   .time { font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:600; color:var(--navy); }
   .time .d { font-weight:500; color:#64748b; }
   section[hidden] { display:none; }
+  /* Retainers quick filters (Faran 2026-10-16, in place of grouping by outcome): toggle buttons, none on = all */
+  .quick { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
+  .quick .ql { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; margin-right:2px; }
+  .quick button { display:inline-flex; align-items:center; gap:6px; min-height:32px; padding:5px 12px; border:1px solid #e2e8f0; border-radius:16px; background:#fff; color:var(--navy); font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
+  .quick button:hover { border-color:#94a3b8; }
+  .quick button:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
+  .quick button .qn { min-width:18px; padding:0 6px; border-radius:10px; background:#f1f5f9; color:#64748b; font-size:11px; font-weight:700; text-align:center; font-variant-numeric:tabular-nums; }
+  .quick button[aria-pressed="true"] { background:var(--navy); border-color:var(--navy); color:#fff; }
+  .quick button[aria-pressed="true"] .qn { background:rgba(255,255,255,.18); color:#fff; }
+  .quick button.zero:not([aria-pressed="true"]) { color:#94a3b8; }
   #dc-overlay { position:fixed; inset:0; background:rgba(15,23,42,.45); display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px; }
   #dc-modal { background:#fff; border-radius:14px; padding:22px 24px; width:100%; max-width:460px; max-height:90vh; overflow-y:auto; box-shadow:0 20px 50px rgba(2,6,23,.35); }
   #dc-modal h3 { margin:0 0 4px; font-size:17px; color:var(--navy); }
@@ -215,17 +226,19 @@ ${buildNavHeader('consultations')}
     <section id="tab-retainers" role="tabpanel" hidden>
       <div class="q-head">
         <div><h2 class="sec-h">Retainers <span id="r-count" class="muted" style="font-weight:500"></span></h2>
-          <p class="sec-sub">Clients at the retainer stage — direct retainer clients, and booked clients whose outcome is Retain or whose retainer has been sent. Drops off once the client is retained (the case is on the Cases page).</p></div>
+          <p class="sec-sub">Clients after their consultation — once it has happened and an outcome is set — and direct retainer clients. A client drops off once retained (the case is on the Cases page).</p></div>
         <div class="q-filters">
           <input id="rf-search" type="text" placeholder="Search client…">
           <select id="rf-consultant"><option value="">All consultants</option></select>
           <select id="rf-stage"><option value="">Any stage</option><option>Paid</option><option>Signed</option><option>Sent</option><option>Fee set</option><option>Retain</option><option>New</option></select>
           <select id="rf-kind"><option value="">Direct + booked</option><option value="direct">Direct retainer clients</option><option value="booked">After a consultation</option></select>
+          <select id="rf-followup"><option value="">Follow-up: any</option><option value="due">Due (today or earlier)</option><option value="has">Has a follow-up date</option></select>
         </div>
       </div>
+      <div class="quick" id="r-quick" role="group" aria-label="Show by outcome"></div>
       <div class="card">
         <table>
-          <thead><tr><th>Client</th><th>Case type</th><th>Consultant</th><th>Fee</th><th>Sent</th><th>Signed</th><th>Paid</th><th>Stage</th><th>Case</th><th></th></tr></thead>
+          <thead><tr><th>Client</th><th>Case type</th><th>Consultant</th><th>Outcome</th><th>Fee</th><th>Sent</th><th>Signed</th><th>Paid</th><th>Stage</th><th>Case</th><th></th></tr></thead>
           <tbody id="rbody"></tbody>
         </table>
       </div>
@@ -268,6 +281,7 @@ ${buildNavHeader('consultations')}
 ${SHARED_AUTH_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 var ALLROWS=[], RETAINERS=[], TAB='consultations', RANGE='today', ANCHOR='';
+var RET_OUTCOMES=${jsLit(OUTCOME_LABELS)}, ROUT=[];   // the Retainers quick filters: the outcomes switched on (none = all)
 function qpill(cls,txt){ return '<span class="pill '+cls+'">'+escHtml(txt)+'</span>'; }
 function todayStr(){ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto'}).format(new Date()); }   // the Toronto day
 /* ── Calendar-date helpers: 'YYYY-MM-DD' strings only, never a local Date (TZ-safe) ── */
@@ -310,9 +324,7 @@ function paidPill(c){
 }
 function rowHtml(c){
   var pc=c.preConsultSubmitted?qpill('green','Submitted'):qpill('amber','Pending');
-  var oc=c.outcome?qpill('blue',c.outcome):'<span class="pill grey">—</span>';
-  /* a follow-up date on the row: amber once it is due (today or earlier) */
-  if(c.followUpDate) oc+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);
+  var oc=outcomeCell(c);   // the outcome, and a follow-up date amber once it is due (today or earlier)
   var ag=c.agreementSigned?qpill('green','Signed '+c.agreementSigned):c.agreementSent?qpill('blue','Sent '+c.agreementSent):'<span class="pill grey">—</span>';
   var pd=paidPill(c);
   return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
@@ -679,28 +691,68 @@ function applyFilters(){
   var ndbody=document.getElementById('nodate-body'); ndbody.innerHTML=noDate.map(rowHtml).join(''); bindRowClicks(ndbody);
   document.getElementById('tn-consult').textContent=String(ALLROWS.length);
 }
+/* The Retainers quick filters: one toggle button per outcome, each with how many
+   rows the OTHER filters leave under it; none on = all. Remembered per viewer,
+   and in the address (?outcome=Follow-Up,Newsletter) so a link can open a view. */
+function retGroup(r){ return RET_OUTCOMES.indexOf(r.outcomeGroup)>=0?r.outcomeGroup:RET_OUTCOMES[0]; }
+function cleanOutcomes(list){ var out=[]; (list||[]).forEach(function(v){ v=String(v||'').trim(); if(RET_OUTCOMES.indexOf(v)>=0 && out.indexOf(v)<0) out.push(v); }); return out; }
+function setRout(list,push){
+  ROUT=cleanOutcomes(list); lsSet('tdot_ret_outcomes',ROUT.join(','));
+  if(push){ try { var u=new URL(window.location.href); if(ROUT.length) u.searchParams.set('outcome',ROUT.join(',')); else u.searchParams.delete('outcome'); history.replaceState(null,'',u.toString()); } catch(e){} }
+}
+function toggleRout(v){
+  if(!v){ setRout([],true); }
+  else { var i=ROUT.indexOf(v), next=ROUT.slice(); if(i>=0) next.splice(i,1); else next.push(v); setRout(next,true); }
+  renderRetainers();
+}
+function renderQuick(base){
+  var box=document.getElementById('r-quick'); if(!box) return;
+  var n={}; base.forEach(function(r){ var g=retGroup(r); n[g]=(n[g]||0)+1; });
+  var hint={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set' };
+  function btn(v,label,count,on){ return '<button type="button" data-rout="'+escHtml(v)+'" aria-pressed="'+(on?'true':'false')+'"'+(count?'':' class="zero"')+(hint[v]?' title="'+escHtml(hint[v])+'"':'')+'>'+escHtml(label)+' <span class="qn">'+count+'</span></button>'; }
+  box.innerHTML='<span class="ql">Show</span>'+btn('','All',base.length,!ROUT.length)+RET_OUTCOMES.map(function(o){ return btn(o,o,n[o]||0,ROUT.indexOf(o)>=0); }).join('');
+  var focusV=box.getAttribute('data-focus'); box.removeAttribute('data-focus');
+  Array.prototype.forEach.call(box.querySelectorAll('button[data-rout]'),function(b){
+    b.onclick=function(){ box.setAttribute('data-focus',b.getAttribute('data-rout')); toggleRout(b.getAttribute('data-rout')); };
+    if(focusV!==null && b.getAttribute('data-rout')===focusV) b.focus();
+  });
+}
+function outcomeCell(c){
+  var o=c.outcome, cls=o==='Retain'?'green':o==='Follow-Up'?'amber':o==='Not Wanted'?'red':'grey';
+  var h=o?qpill(cls,o):'<span class="pill grey">—</span>';
+  if(c.followUpDate) h+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);
+  return h;
+}
 function renderRetainers(){
   var q=(document.getElementById('rf-search').value||'').toLowerCase().trim();
-  var con=document.getElementById('rf-consultant').value, st=document.getElementById('rf-stage').value, kind=document.getElementById('rf-kind').value;
-  var rows=RETAINERS.filter(function(r){ if(!passesCommon(r,q,con)) return false; if(st && r.stage!==st) return false; if(kind && r.kind!==kind) return false; return true; });
+  var con=document.getElementById('rf-consultant').value, st=document.getElementById('rf-stage').value, kind=document.getElementById('rf-kind').value, fu=document.getElementById('rf-followup').value;
+  var t=todayStr(), tp=dParts(t);
+  var base=RETAINERS.filter(function(r){
+    if(!passesCommon(r,q,con)) return false; if(st && r.stage!==st) return false; if(kind && r.kind!==kind) return false;
+    if(fu==='due' && !(r.followUpDate && r.followUpDate<=t)) return false;
+    if(fu==='has' && !r.followUpDate) return false;
+    return true;
+  });
+  renderQuick(base);
+  var rows=ROUT.length?base.filter(function(r){ return ROUT.indexOf(retGroup(r))>=0; }):base;
   document.getElementById('r-count').textContent='('+rows.length+(rows.length!==RETAINERS.length?(' of '+RETAINERS.length):'')+')';
   document.getElementById('tn-ret').textContent=String(RETAINERS.length);
   var tb=document.getElementById('rbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="10" class="empty">'+(RETAINERS.length?'No retainer clients match your filters.':'No clients at the retainer stage right now.')+'</td></tr>'; return; }
-  var t=todayStr(), tp=dParts(t);
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="11" class="empty">'+(!RETAINERS.length?'No clients at the retainer stage right now.':(ROUT.length && base.length)?'Nobody under '+escHtml(ROUT.join(' or '))+(base.length!==RETAINERS.length?' with these filters':'')+' right now.':'No retainer clients match your filters.')+'</td></tr>'; return; }
   function age(d){ var p=dParts(d); if(!p||!tp) return ''; var days=Math.round((Date.UTC(tp[0],tp[1]-1,tp[2])-Date.UTC(p[0],p[1]-1,p[2]))/86400000); return days>0?' <span class="muted">('+days+'d)</span>':''; }
   tb.innerHTML=rows.map(function(c){
     var stc=c.stage==='Paid'?'green':(c.stage==='Signed'||c.stage==='Sent')?'blue':'amber';
-    var cs=c.caseOpen?qpill('green','Open'):qpill('grey','Pending');
+    var cs=c.caseOpen?qpill('green','Open'):c.stage?qpill('grey','Pending'):'<span class="pill grey">—</span>';   // no retainer under way: no case coming yet
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
       '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+(c.kind==='direct'?(c.originalChannel?' <span class="pill grey" title="Converted from a '+escHtml(c.originalChannel)+' lead — no consultation">direct · '+escHtml(c.originalChannel)+'</span>':' <span class="pill grey" title="Walk-in / referral — no consultation">direct</span>'):'')+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.caseType||'—')+'</td>'+
       '<td>'+escHtml(c.consultant||'—')+'</td>'+
+      '<td>'+outcomeCell(c)+'</td>'+
       '<td>'+(c.fee?'$'+escHtml(c.fee):'—')+'</td>'+
       '<td>'+(c.retainerSent?escHtml(c.retainerSent)+(c.retainerSigned?'':age(c.retainerSent)):'—')+'</td>'+
       '<td>'+(c.retainerSigned?escHtml(c.retainerSigned):'—')+'</td>'+
       '<td>'+(c.retainerPaid?escHtml(c.retainerPaid):'—')+'</td>'+
-      '<td>'+qpill(stc,c.stage)+'</td><td>'+cs+'</td>'+
+      '<td>'+(c.stage?qpill(stc,c.stage):'<span class="pill grey">—</span>')+'</td><td>'+cs+'</td>'+
       '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client (careful — removes the case, its checklist, and the OneDrive folder)">'+TDOT_DEL_SVG+'</button></td></tr>';
   }).join('');
   bindRowClicks(tb);
@@ -726,7 +778,7 @@ function load(force){
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
 ['f-search','f-consultant','f-mode','f-paid','f-agree','f-followup'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
-['rf-search','rf-consultant','rf-stage','rf-kind'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', renderRetainers); });
+['rf-search','rf-consultant','rf-stage','rf-kind','rf-followup'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', renderRetainers); });
 Array.prototype.forEach.call(document.querySelectorAll('.tab[data-tab]'),function(b){ b.onclick=function(){ setTab(b.getAttribute('data-tab'),true); }; });
 Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.onclick=function(){ setRange(b.getAttribute('data-range')); }; });
 Array.prototype.forEach.call(document.querySelectorAll('#range .nav'),function(b){ b.onclick=function(){ shiftRange(Number(b.getAttribute('data-nav'))); }; });
@@ -786,6 +838,7 @@ tdotBindDelete(function(){ load(true); });
 startClock(); checkApiStatus();
 setTab(new URLSearchParams(window.location.search).get('tab')||lsGet('tdot_consult_tab')||'consultations', false);
 setRange(lsGet('tdot_consult_range')||'today');
+(function(){ var p=new URLSearchParams(window.location.search).get('outcome'); setRout(String(p!==null?p:lsGet('tdot_ret_outcomes')).split(','), false); })();
 load();
 </script></body></html>`;
 }

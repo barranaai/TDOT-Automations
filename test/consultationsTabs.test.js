@@ -128,7 +128,7 @@ test('getConsultationsBoard: the two tabs from one snapshot — consultation row
   ];
   const restore = [stub(snap.io, 'fetchLeads', async () => rows)];
   try {
-    const b = await portal.getConsultationsBoard();
+    const b = await portal.getConsultationsBoard({ now: new Date('2026-10-15T16:00:00Z') });   // noon in Toronto, the day before row 2's time
     assert.deepEqual(b.consultations.map((r) => r.id), ['2', '1', '3'], 'earliest first, no date last');
     const r1 = b.consultations[1];
     assert.deepEqual(r1, { id: '1', name: 'Lead 1', service: 'Study permit', consultant: 'Shafoli Kapur', bookedSlot: '2026-10-20 11:00', meetingType: 'In-person', preConsultSubmitted: true, agreementSent: '2026-10-14', agreementSigned: '2026-10-15', paid: 'app', paidCents: 22600, paidBy: '', paidOn: '', paidVerified: true, outcome: '', followUpDate: '', consultationHeld: '', hasMeeting: false, tier: '', createdAt: '2026-10-01T12:00:00Z' });
@@ -324,8 +324,79 @@ test('REVIEW: the page — the warning header keeps its colour; a due follow-up 
   assert.ok(css.indexOf('.fold .attn-h {') < css.indexOf('.fold.attn .attn-h {'), 'the amber rule comes later AND is more specific');
   assert.ok(css.includes('.fold.attn .attn-h { background:#fffbeb; color:#92400e; }'));
   assert.ok(html.includes('<select id="f-followup">') && html.includes('<option value="due">Due (today or earlier)</option>'));
-  assert.ok(html.includes("if(c.followUpDate) oc+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);"));
+  assert.ok(html.includes("if(c.followUpDate) h+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);"));
+  assert.ok(html.includes('var oc=outcomeCell(c);'), 'the Consultations row and the Retainers row show the outcome the same way');
   assert.ok(html.includes("if(fu==='due' && !(r.followUpDate && r.followUpDate<=t)) return false;"));
   assert.ok(html.includes("if(!r.ok){ return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); }"));
   for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
+});
+
+/* ── Retainers quick filters (Faran 2026-10-16, in place of grouping by outcome) ── */
+
+test('consultationDone: a booked consultation leaves Consultations once it has HAPPENED and has an outcome — an upcoming one stays whatever its outcome', () => {
+  const done = portal.consultationDone, now = '2026-10-16 11:30';
+  const B = (over) => ({ bookingStatus: 'Booked', ...over });
+  assert.equal(done(B({ bookedSlot: '2026-10-15 10:00' }), now), false, 'no outcome: stays (the Needs outcome list)');
+  assert.equal(done(B({ bookedSlot: '2026-10-15 10:00', outcome: 'Follow-Up' }), now), true);
+  assert.equal(done(B({ bookedSlot: '2026-10-16 10:00', outcome: 'Newsletter' }), now), true, 'earlier today');
+  assert.equal(done(B({ bookedSlot: '2026-10-16 11:30', outcome: 'Newsletter' }), now), true, 'the start time itself');
+  assert.equal(done(B({ bookedSlot: '2026-10-16 14:00', outcome: 'Follow-Up' }), now), false, 'later today: still on the day\'s list');
+  assert.equal(done(B({ bookedSlot: '2026-10-20 09:00', outcome: 'Follow-Up' }), now), false, 're-booked after a Follow-Up: the new consultation stays');
+  assert.equal(done(B({ bookedSlot: '2026-10-16', outcome: 'Not Wanted' }), now), true, 'today, no time: the outcome says it happened');
+  assert.equal(done(B({ bookedSlot: '', outcome: 'Not Wanted' }), now), true, 'no date at all');
+  assert.equal(done(B({ bookedSlot: '2026-10-15 10:00', outcome: 'Don’t Retain — Ineligible' }), now), true, 'an old label reads as its new meaning');
+  assert.equal(done(B({ bookedSlot: '2026-10-15 10:00', outcome: 'Something else' }), now), false, 'text that is not an outcome moves nothing');
+});
+
+test('getConsultationsBoard: Follow-Up / Newsletter / Not Wanted consultations that have happened sit on Retainers with their outcome group; upcoming ones stay; every Retainers row has a group', async () => {
+  snap._reset();
+  const rows = [
+    L(1, { bookingStatus: 'Booked', bookedSlot: '2026-10-14 10:00', outcome: 'Follow-Up', followUpDate: '2026-10-20', assignedConsultant: 'Shermin Teymouri Mofrad' }),
+    L(2, { bookingStatus: 'Booked', bookedSlot: '2026-10-20 10:00', outcome: 'Follow-Up' }),
+    L(3, { bookingStatus: 'Booked', outcome: 'Newsletter' }),
+    L(4, { bookingStatus: 'Booked', bookedSlot: '2026-10-10 10:00', outcome: 'Not Wanted' }),
+    L(5, { sourceChannel: 'Direct Retainer', createdAt: '2026-10-02T00:00:00Z' }),
+    L(6, { bookingStatus: 'Booked', bookedSlot: '2026-10-09 10:00', outcome: 'Retain', retainerSent: '2026-10-11' }),
+    L(7, { bookingStatus: 'Booked', bookedSlot: '2026-10-14 15:00' }),
+    L(8, { bookingStatus: 'Booked', bookedSlot: '2026-10-08 10:00', outcome: 'Follow-Up', retainerFee: '2500' }),
+  ];
+  const restore = [stub(snap.io, 'fetchLeads', async () => rows)];
+  try {
+    const b = await portal.getConsultationsBoard({ now: new Date('2026-10-15T16:00:00Z') });
+    assert.deepEqual(b.consultations.map((r) => r.id), ['7', '2'], 'no outcome yet, or upcoming');
+    assert.deepEqual(b.retainers.map((r) => [r.id, r.stage, r.outcomeGroup]),
+      [['6', 'Sent', 'Retain'], ['8', 'Fee set', 'Follow-Up'], ['5', 'New', 'Retain'], ['4', '', 'Not Wanted'], ['1', '', 'Follow-Up'], ['3', '', 'Newsletter']],
+      'by stage; no retainer under way last, oldest consultation first (no date last)');
+    const r1 = b.retainers.find((r) => r.id === '1');
+    assert.equal(r1.outcome, 'Follow-Up'); assert.equal(r1.followUpDate, '2026-10-20'); assert.equal(r1.kind, 'booked'); assert.equal(r1.consultant, 'Shermin Teymouri Mofrad');
+    const ids = [...b.consultations, ...b.retainers].map((r) => r.id);
+    assert.equal(new Set(ids).size, ids.length, 'one row, one tab');
+  } finally { restore.forEach((r) => r()); snap._reset(); }
+});
+
+function quickFns() {
+  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
+  const outs = js.match(/var RET_OUTCOMES=(\[[^\]]*\])/)[1];
+  const a = js.indexOf('function retGroup('), b = js.indexOf('function setRout(');
+  return new Function(`var RET_OUTCOMES=${outs}; ${js.slice(a, b)}; return { retGroup, cleanOutcomes, RET_OUTCOMES };`)();
+}
+
+test('page: the Retainers quick filters — one button per outcome plus All, counts from the other filters, none on = all; the address and the viewer remember the choice; an Outcome column; a follow-up filter', () => {
+  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
+  const f = quickFns();
+  assert.deepEqual(f.RET_OUTCOMES, require('../config/outcomes').OUTCOME_LABELS, 'the buttons are the four outcomes, from config');
+  assert.deepEqual(f.cleanOutcomes(['Follow-Up', 'Newsletter', 'Follow-Up', 'junk', '', ' Not Wanted ']), ['Follow-Up', 'Newsletter', 'Not Wanted'], 'only real outcomes, once each');
+  assert.deepEqual(f.cleanOutcomes(''.split(',')), []);
+  assert.equal(f.retGroup({ outcomeGroup: 'Newsletter' }), 'Newsletter');
+  assert.equal(f.retGroup({}), 'Retain', 'a row without a group counts under Retain');
+  for (const s of ['<div class="quick" id="r-quick" role="group" aria-label="Show by outcome"></div>',
+    '<th>Consultant</th><th>Outcome</th><th>Fee</th>', '<select id="rf-followup">',
+    "['rf-search','rf-consultant','rf-stage','rf-kind','rf-followup'].forEach(",
+    "btn('','All',base.length,!ROUT.length)", 'aria-pressed="', "var rows=ROUT.length?base.filter(function(r){ return ROUT.indexOf(retGroup(r))>=0; }):base;",
+    "u.searchParams.set('outcome',ROUT.join(','))", "lsSet('tdot_ret_outcomes',ROUT.join(','))",
+    "var p=new URLSearchParams(window.location.search).get('outcome'); setRout(String(p!==null?p:lsGet('tdot_ret_outcomes')).split(','), false);",
+    '.pill.red {', 'colspan="11"']) assert.ok(html.includes(s), s);
+  assert.ok(html.indexOf("setRout(String(p!==null") < html.indexOf('\nload();'), 'the choice is restored before the first render');
 });

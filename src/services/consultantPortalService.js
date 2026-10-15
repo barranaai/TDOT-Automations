@@ -688,7 +688,7 @@ function normaliseRows(x) {
 // Outcome labels are the EXACT strings on the board — writing a near-match
 // would mint a junk label via create_labels_if_missing, so they must match
 // byte-for-byte. Four since 2026-10-15 (Gauri point 5): config/outcomes.js.
-const { OUTCOME_LABELS, OUTCOME_NOT_WANTED, OUTCOME_RETAIN } = require('../../config/outcomes');
+const { OUTCOME_LABELS, OUTCOME_NOT_WANTED, OUTCOME_RETAIN, canonicalOutcome } = require('../../config/outcomes');
 const NOT_WANTED_REASON_MIN = 3;
 // One-click remark presets (consultant note #8) — config/leadRemarks.js
 const { REMARK_PRESETS } = require('../../config/leadRemarks');
@@ -2152,18 +2152,42 @@ async function getDirectRetainerQueue() {
 }
 
 /**
- * The Consultations page (Gauri point 4): the Consultations and Retainers tabs,
- * from the shared snapshot, one row per lead by classifyLead. Dates are passed
- * as stored (Toronto 'YYYY-MM-DD[ HH:MM]'); the page does Today/Week/Month in
- * Toronto. Never a client's email or phone — a list, not a record.
+ * A booked consultation that has HAPPENED and has an outcome (Gauri point 4:
+ * "once an outcome is set, the client moves to the Retainers view"). An
+ * upcoming booking stays on Consultations whatever its outcome — a client who
+ * re-booked after a Follow-Up must not drop off the day's list. A slot with no
+ * time on today, or no date at all, counts as happened: the outcome says so.
+ *
+ * @param {object} l        the lead (snapshot row)
+ * @param {string} nowWall  Toronto now, 'YYYY-MM-DD HH:MM'
  */
-async function getConsultationsBoard({ fresh = false } = {}) {
+function consultationDone(l, nowWall) {
+  if (!canonicalOutcome(l.outcome)) return false;
+  const m = String(l.bookedSlot == null ? '' : l.bookedSlot).trim().match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?/);
+  if (!m) return true;
+  const today = nowWall.slice(0, 10);
+  if (m[1] !== today) return m[1] < today;
+  return !m[2] || m[2] <= nowWall.slice(11, 16);
+}
+
+/**
+ * The Consultations page (Gauri point 4): the Consultations and Retainers tabs,
+ * from the shared snapshot, one row per lead by classifyLead — plus a booked
+ * consultation that has happened and has an outcome moves to Retainers
+ * (consultationDone). Each Retainers row carries its outcome group, which the
+ * page's quick filters use. Dates are passed as stored (Toronto
+ * 'YYYY-MM-DD[ HH:MM]'); the page does Today/Week/Month in Toronto. Never a
+ * client's email or phone — a list, not a record.
+ */
+async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
   const snap = await require('./leadSnapshot').getLeadSnapshot({ fresh });
   const s = (v) => String(v == null ? '' : v).trim();
   const consultations = [], retainers = [];
   const consultPayment = require('./consultPaymentService');
+  const nowWall = torontoWallClock(now.toISOString());
   for (const l of snap.leads) {
-    const kind = classifyLead(l);
+    let kind = classifyLead(l);
+    if (kind === 'consultation' && consultationDone(l, nowWall)) kind = 'retainer';
     if (kind === 'consultation') {
       // paid: 'app' (the booking link's Square payment, paidCents incl. HST) | a kind
       // staff recorded (cash / e-transfer / invoice / other, paidCents before HST;
@@ -2183,6 +2207,7 @@ async function getConsultationsBoard({ fresh = false } = {}) {
         tier: s(l.tier), createdAt: l.createdAt || '',
       });
     } else if (kind === 'retainer') {
+      const oc = canonicalOutcome(l.outcome);
       retainers.push({
         id: l.id, name: l.fullName || l.name,
         kind: s(l.sourceChannel) === DIRECT_SOURCE ? 'direct' : 'booked',
@@ -2191,18 +2216,25 @@ async function getConsultationsBoard({ fresh = false } = {}) {
         consultant: s(l.assignedConsultant),
         fee: s(l.retainerFee),
         retainerSent: s(l.retainerSent), retainerSigned: s(l.retainerSigned), retainerPaid: s(l.retainerPaid),
-        // one stage, most advanced first
-        stage: s(l.retainerPaid) ? 'Paid' : s(l.retainerSigned) ? 'Signed' : s(l.retainerSent) ? 'Sent' : s(l.retainerFee) ? 'Fee set' : s(l.outcome) === 'Retain' ? 'Retain' : 'New',
+        // one stage, most advanced first; '' = no retainer under way (a Follow-Up,
+        // Newsletter or Not Wanted client the consultation left here)
+        stage: s(l.retainerPaid) ? 'Paid' : s(l.retainerSigned) ? 'Signed' : s(l.retainerSent) ? 'Sent' : s(l.retainerFee) ? 'Fee set'
+          : oc === OUTCOME_RETAIN ? 'Retain' : oc ? '' : 'New',
+        // the quick filters: the outcome, or Retain for a row with none (a direct
+        // retainer client, or a retainer under way with the outcome left blank)
+        outcomeGroup: oc || OUTCOME_RETAIN,
         caseOpen: !!s(l.clientMasterItemId), clientMasterItemId: s(l.clientMasterItemId),
-        bookedSlot: s(l.bookedSlot), outcome: s(l.outcome), createdAt: l.createdAt || '',
+        bookedSlot: s(l.bookedSlot), outcome: oc || s(l.outcome), followUpDate: s(l.followUpDate), createdAt: l.createdAt || '',
       });
     }
   }
   // Consultations: earliest time first (today on top), blanks last.
   consultations.sort((a, b) => (a.bookedSlot && b.bookedSlot) ? a.bookedSlot.localeCompare(b.bookedSlot) : a.bookedSlot ? -1 : b.bookedSlot ? 1 : Number(b.id) - Number(a.id));
-  // Retainers: by stage (the ones waiting on us first), then oldest first within a stage.
-  const STAGE_ORDER = { Paid: 0, Signed: 1, Sent: 2, 'Fee set': 3, Retain: 4, New: 5 };
-  const stageDate = (r) => r.retainerPaid || r.retainerSigned || r.retainerSent || r.createdAt || '';
+  // Retainers: by stage (the ones waiting on us first), then oldest first within a
+  // stage; the rows with no retainer under way last, oldest consultation first
+  // (one with no date after them).
+  const STAGE_ORDER = { Paid: 0, Signed: 1, Sent: 2, 'Fee set': 3, Retain: 4, New: 5, '': 6 };
+  const stageDate = (r) => (r.stage === '' ? (r.bookedSlot || '\uffff') : (r.retainerPaid || r.retainerSigned || r.retainerSent || r.createdAt || ''));
   retainers.sort((a, b) => (STAGE_ORDER[a.stage] - STAGE_ORDER[b.stage]) || stageDate(a).localeCompare(stageDate(b)) || Number(a.id) - Number(b.id));
   return { consultations, retainers, at: snap.at, ageMs: snap.ageMs, stale: !!snap.stale };
 }
@@ -2227,6 +2259,6 @@ module.exports = {
   createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, findClientMatches, DIRECT_SOURCE,
   createStaffLead, STAFF_LEAD_SOURCES,
   invalidateLeadsQueue,
-  classifyLead, getConsultationsBoard,
+  classifyLead, consultationDone, getConsultationsBoard,
   conflictBody, normalizeLeadLocation,
 };
