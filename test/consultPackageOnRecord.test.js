@@ -873,20 +873,25 @@ test('R2 switch OFF is the live record: removing it or recording on a lead with 
   try { const r = await apply({ kind: 'cash', amountCents: 12000, on: TODAY_TO }); assert.ok(!/cancel it in Square/.test(r.message)); } finally { w.done(); }
 }));
 
-test('R2 Review & send waits for a "Record payment" save still writing the booking', withEnv(ON, async () => {
+test('R2/F3 Review & send waits for a "Record payment" save still writing the booking (inside the real gate)', withEnv(ON, async () => {
   let release; const slow = new Promise((r) => { release = r; });
   const order = [];
   const w = world({ autoSend: async () => { order.push('record-package'); await slow; return { status: 'sent' }; } });
-  const r2 = stub(consultationService, 'sendConsultationPackage', async () => { order.push('review-send'); return { ok: true, via: 'review-link' }; });
+  const r2 = [
+    stub(require('../src/services/consultAgreementService'), 'ensureConsultAgreementReady', async () => ({ url: 'https://x/a' })),
+    stub(require('../src/services/consultAgreementService'), 'maybeSendConsultEsign', async () => null),
+    stub(microsoftMail, 'sendEmail', async () => { order.push('review-send-email'); }),
+  ];
   try {
+    w.state.lead.leadToken = 'LEAD-test';
     const rec1 = apply(PAID());
     await new Promise((r) => setTimeout(r, 10));
     const btn = portal.applyAction({ leadId: '901', action: 'sendConsultationPackage', value: JSON.stringify({ again: true }), staffName: 'M' });
     await new Promise((r) => setTimeout(r, 10));
-    assert.deepEqual(order, ['record-package'], 'the button waits');
-    release(); await rec1; await btn;
-    assert.deepEqual(order, ['record-package', 'review-send']);
-  } finally { r2(); w.done(); }
+    try { assert.deepEqual(order, ['record-package'], 'the button waits'); } finally { release(); }
+    await rec1; await btn;
+    assert.deepEqual(order, ['record-package', 'review-send-email']);
+  } finally { r2.reverse().forEach((x) => x()); w.done(); }
 }));
 
 test('R2 an online payment through the normal booking path, on a lead whose fee staff already recorded, is flagged as a possible double payment', async () => {
@@ -1071,23 +1076,100 @@ test('F3 "Record payment" saves on one lead run strictly one at a time — even 
   assert.deepEqual(order, ['start1', 'end1', 'start2', 'end2', 'start3', 'end3']);
 });
 
-test('F2 the lead page offers "Record payment / Waived (and book)" for a client not booked in the app — never while paying online, once paid online, or with a case', withEnv(ON, async () => {
+test('F2 the lead page offers "Record payment / Waived (and book)" for a client not booked in the app — label and visibility set on every render; never while paying online, once paid online, or with a case', withEnv(ON, async () => {
   const html = require('../src/routes/adminLeads').buildLeadDetailHTML('901');
   for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
-  assert.ok(html.includes('id="record-pay-row"') && html.includes('id="btn-record-pay"'));
-  assert.ok(html.includes("if(rp && !d.clientMasterItemId && !d.paidOnline && !d.heldOnline){"));
-  assert.ok(html.includes("rpb.href='/admin/consultation/'+encodeURIComponent(d.leadId)+'?record=1';"));
+  for (const str of ['id="record-pay-row"', 'id="btn-record-pay"', 'id="btn-record-pay-lbl"',
+    "var showRp=!d.clientMasterItemId && !d.paidOnline && !d.heldOnline;", "rp.style.display=showRp?'flex':'none';",
+    "document.getElementById('btn-record-pay-lbl').textContent=d.feeRecorded?'Change payment record':(d.recordBooks?'Record payment / Waived (and book)':'Record payment / Waived');",
+    "var rpH=document.getElementById('record-pay-row'); if(rpH) rpH.style.display='none';",
+    "if(FEE_RECORDED && !confirm('A consultation fee is already recorded for this client ('+FEE_RECORDED+'). The booking link asks them to PAY. Send it anyway?')) return;"]) assert.ok(html.includes(str), str);
+  assert.ok(!html.includes(".replace('Record payment / Waived','Record payment / Waived (and book)')"), 'never patched onto itself again');
   const page = require('../src/routes/adminConsultation').buildDetailHTML('901');
   for (const m of page.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   assert.ok(page.includes('cpOpenFromLink(d); })'), 'the consultation page opens the box once from the link');
   assert.ok(page.includes("if(cp.paid==='app') return;   // paid online: nothing to record"));
+  assert.ok(page.includes("' · not booked in the app (an online hold for '"), 'an expired hold time is never shown as the consultation');
   // the payload flags
+  const L0 = { id: '901', fullName: 'T', email: 't@c.co', bookingStatus: 'Slot Held', slotHeldUntil: new Date(Date.now() + 3600e3).toISOString(), squareConsultTxnId: '', inviteMessage: 'x', bookingInvite: 'Sent' };
+  let current = L0;
   const restore = [
-    stub(leadService, 'getLead', async () => ({ id: '901', fullName: 'T', email: 't@c.co', bookingStatus: 'Slot Held', slotHeldUntil: new Date(Date.now() + 3600e3).toISOString(), squareConsultTxnId: '', inviteMessage: 'x', bookingInvite: 'Sent' })),
+    stub(leadService, 'getLead', async () => ({ ...current })),
     stub(mondayApi, 'query', async () => ({})), stub(blacklistService, 'check', async () => ({ checked: true, hit: false, entries: [] })),
+    stub(require('../src/utils/clientFolderRefs'), 'readFirst', async () => null),   // never OneDrive, even run without the guard
   ];
   try {
-    const d = await portal.getLeadDetail('901');
-    assert.deepEqual([d.paidOnline, d.heldOnline, d.recordBooks], [false, true, true]);
+    let d = await portal.getLeadDetail('901');
+    assert.deepEqual([d.paidOnline, d.heldOnline, d.recordBooks, d.feeRecorded], [false, true, true, '']);
+    current = { ...L0, bookingStatus: 'Not Yet', outcome: 'Follow-Up' };
+    d = await portal.getLeadDetail('901');
+    assert.equal(d.recordBooks, false, 'an outcome is set: the box will not take a booking — no "(and book)"');
+    current = { ...L0, bookingStatus: 'Not Yet', consultPayment: rec({ package: 'skip' }) };
+    d = await portal.getLeadDetail('901');
+    assert.match(d.feeRecorded, /^Cash \$200\.00 received/, 'a recorded fee is shown, and the invite warns');
   } finally { restore.reverse().forEach((x) => x()); }
 }));
+
+test('F4b the link code: callers at once share ONE assignment, and the STORED code is used', async () => {
+  const lts = require('../src/services/leadTokenService');
+  let stored = '', writes = 0;
+  const restore = [stub(mondayApi, 'query', async (q, v) => {
+    if (/change_column_value/.test(q)) { writes++; await new Promise((r) => setTimeout(r, 5)); stored = JSON.parse(v.value); return {}; }
+    return { items: [{ column_values: [{ text: stored }] }] };
+  })];
+  try {
+    const [a, b, c] = await Promise.all([lts.ensureToken('901'), lts.ensureToken('901'), lts.ensureToken('901')]);
+    assert.equal(writes, 1, 'one code minted');
+    assert.ok(a && a === b && b === c && a === stored);
+  } finally { restore.forEach((x) => x()); }
+  // a second writer landed a different code at the same moment: the stored one wins
+  const restore2 = [stub(mondayApi, 'query', async (q) => (/change_column_value/.test(q) ? {} : { items: [{ column_values: [{ text: stored === 'X' ? 'LEAD-other' : '' }] }] }))];
+  try { stored = ''; const first = lts.ensureToken('902'); stored = 'X'; assert.equal(await first, 'LEAD-other'); } finally { restore2.forEach((x) => x()); }
+});
+
+test('F3b a record save waits for a package send already running, and Review & send waits for a record save — never the two at once', async () => {
+  const order = [];
+  let releaseSend; const sendGate = new Promise((r) => { releaseSend = r; });
+  const restore = [
+    stub(leadService, 'getLead', async () => ({ ...baseLead() })),
+    stub(require('../src/services/consultAgreementService'), 'ensureConsultAgreementReady', async () => { order.push('send:start'); await sendGate; return { url: 'https://x/a' }; }),
+    stub(require('../src/services/consultAgreementService'), 'maybeSendConsultEsign', async () => null),
+    stub(leadService, 'updateLead', async () => {}), stub(mondayApi, 'query', async () => ({})),
+    stub(microsoftMail, 'sendEmail', async () => { order.push('send:email'); }),
+  ];
+  try {
+    consultationService._resetSentMemory();
+    const send = consultationService.sendConsultationPackage('901');
+    await new Promise((r) => setTimeout(r, 5));
+    const save = consultationService.withRecordSave('901', async () => { order.push('save'); });
+    await new Promise((r) => setTimeout(r, 5));
+    assert.deepEqual(order, ['send:start'], 'the save waits for the send');
+    releaseSend(); await send; await save;
+    assert.deepEqual(order, ['send:start', 'send:email', 'save']);
+  } finally { restore.reverse().forEach((x) => x()); consultationService._resetSentMemory(); }
+});
+
+test('F1b wording: a booking known only by its Consultation Held date counts; a past one says "as soon as possible" — never a cancellation threat', async () => {
+  const today = cp.torontoToday();
+  for (const [over, want] of [
+    [{ bookedSlot: '', consultationHeld: today }, /before your consultation starts/],
+    [{ bookedSlot: PAST }, /Please complete both steps as soon as possible\./],
+  ]) {
+    consultationService._resetSentMemory();
+    const w = sendWorld(baseLead(over));
+    try {
+      await consultationService.sendConsultationPackage('901');
+      assert.match(w.mails[0].html, want);
+      assert.ok(!/may be cancelled/.test(w.mails[0].html));
+    } finally { w.done(); }
+  }
+});
+
+test('F4c the agreement link and the retainer link make a missing link code too', async () => {
+  const cas = require('../src/services/consultAgreementService');
+  const src = require('fs').readFileSync(require.resolve('../src/services/consultAgreementService'), 'utf8');
+  assert.match(src, /const token = String\(lead\.leadToken \|\| ''\)\.trim\(\) \|\| await require\('\.\/leadTokenService'\)\.ensureToken\(leadId\);/);
+  const r2 = require('fs').readFileSync(require.resolve('../src/services/retainerService2'), 'utf8');
+  assert.match(r2, /const token = String\(lead\.leadToken \|\| ''\)\.trim\(\) \|\| await require\('\.\/leadTokenService'\)\.ensureToken\(leadId\)\.catch\(\(\) => ''\);/);
+  void cas;
+});

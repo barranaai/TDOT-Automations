@@ -69,7 +69,9 @@ async function withRecordSave(leadId, fn) {
   const key = String(leadId);
   // Wait, then claim in the SAME tick — an awaited helper in between let two waiting
   // saves both see the lock free and run together (review 2026-10-16: two Teams invites).
-  while (_recordSaves.has(key)) await _recordSaves.get(key).catch(() => {});
+  // A package send already running (Review & send, a payment) goes first too: the save
+  // moves the booking, and the email must not read it half-way.
+  while (_recordSaves.has(key) || _packageInFlight.has(key)) await (_recordSaves.get(key) || _packageInFlight.get(key)).catch(() => {});
   const p = fn();
   _recordSaves.set(key, p);
   try { return await p; } finally { if (_recordSaves.get(key) === p) _recordSaves.delete(key); }
@@ -176,9 +178,10 @@ async function _retireRecordedHold(leadId, state) {
 async function autoSendConsultationPackage(leadId, opts = {}) {
   const key = String(leadId);
   const trigger = opts.trigger || 'payment';
-  // 'recorded' is called BY the save that holds the lock — never waits on itself.
-  if (trigger !== 'recorded') await waitRecordSave(key);
-  while (_packageInFlight.has(key)) {
+  // One loop over BOTH locks, the gate claimed in the same tick after it: a record save in
+  // progress goes first ('recorded' is called BY that save — it never waits on itself).
+  while ((trigger !== 'recorded' && _recordSaves.has(key)) || _packageInFlight.has(key)) {
+    if (trigger !== 'recorded' && _recordSaves.has(key)) { await _recordSaves.get(key).catch(() => {}); continue; }
     const prior = _packageInFlight.get(key);
     const priorKind = _packageInFlightKind.get(key) || 'payment';
     // A duplicate payment delivery adopts a running PAYMENT (or manual) run's
@@ -727,7 +730,8 @@ async function sendConsultationPackage(leadId, { overrides = {}, fromAuto = fals
   // an automatic run, which already holds the gate.
   if (fromAuto) return _sendConsultationPackage(leadId, { overrides });
   const key = String(leadId);
-  while (_packageInFlight.has(key)) await _packageInFlight.get(key).catch(() => {});
+  // A record save in progress (it may be moving the booking) and any package run go first.
+  while (_recordSaves.has(key) || _packageInFlight.has(key)) await (_recordSaves.get(key) || _packageInFlight.get(key)).catch(() => {});
   // again === false (the team's button, page not saying AGAIN): decided here, inside the
   // gate, from a FRESH read — a click while an automatic send ran (the record box's own
   // request may still be running after the page gave up) must not email a second package
@@ -787,8 +791,12 @@ async function _sendConsultationPackage(leadId, { overrides = {} } = {}) {
   const when = lead.bookedSlot || (lead.consultationHeld || '');
   // Less than 24 hours to go (a same-day / next-day booking): "at least 24 hours before
   // … may be cancelled" would ask the impossible and threaten a booking just made.
-  const startMs = require('./postConsultService').torontoSlotToUTC(String(lead.bookedSlot || '').trim());
-  const soon = Number.isFinite(startMs) && (startMs - Date.now()) < 24 * 3600 * 1000;
+  let startMs = require('./postConsultService').torontoSlotToUTC(String(lead.bookedSlot || '').trim());
+  // booked by hand with only a Consultation Held date: the end of that Toronto day
+  const heldDay = String(lead.consultationHeld || '').trim();
+  if (!Number.isFinite(startMs) && /^\d{4}-\d{2}-\d{2}$/.test(heldDay)) startMs = require('./postConsultService').torontoSlotToUTC(`${heldDay} 23:59`);
+  const past = Number.isFinite(startMs) && startMs <= Date.now();
+  const soon = Number.isFinite(startMs) && !past && (startMs - Date.now()) < 24 * 3600 * 1000;
   const isInPerson = lead.meetingType === 'In-person';
   const joinUrl = (lead.meetingLink || '').trim();
   const whereBlock = isInPerson
@@ -836,7 +844,11 @@ async function _sendConsultationPackage(leadId, { overrides = {} } = {}) {
         : `<p style="margin:16px 0 2px">2. Review and sign your initial consultation agreement:</p>
       <p style="margin:2px 0">${btn(agreementUrl, 'Review consultation agreement')}</p>`}
       <div style="background:#fff4e5;border:1px solid #f0c98a;border-radius:8px;padding:12px 14px;margin:22px 0 6px;font-size:13.5px;color:#7a4b00">
-        ${soon
+        ${past
+          ? (alreadySigned
+            ? `<b>Please complete the pre-consultation form as soon as possible.</b>`
+            : `<b>Please complete both steps as soon as possible.</b>`)
+          : soon
           ? (alreadySigned
             ? `<b>Please complete the pre-consultation form before your consultation starts.</b>`
             : `<b>Please complete both steps before your consultation starts.</b>`)

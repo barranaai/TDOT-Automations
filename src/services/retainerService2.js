@@ -447,7 +447,9 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false, 
     }
   }
 
-  const token = lead.leadToken || '';
+  // A lead added straight in Monday may have no link code (review 2026-10-16): make one;
+  // if that fails, the link is as before (the Documenso path does not use it).
+  const token = String(lead.leadToken || '').trim() || await require('./leadTokenService').ensureToken(leadId).catch(() => '');
   const url = `${RENDER_URL}/retainer/${leadId}?t=${encodeURIComponent(token)}`;
 
   // Invariant: mark retainerSent (the idempotency lock) ONLY when the agreement

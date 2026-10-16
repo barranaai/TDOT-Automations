@@ -476,7 +476,8 @@ ${buildNavHeader('leads')}
           <div class="muted" style="margin-bottom:8px;line-height:1.5">This is the invite email's body — the standard consultation-booking paragraph (no case-condition commentary, per firm policy). Edit only if needed, then send. The email adds the greeting, booking button and fee details around it.</div>
           <textarea id="invite-msg" rows="8" placeholder="The email will use the standard consultation-booking paragraph unless you write a message here."></textarea>
           <div class="btn-row" id="record-pay-row" style="display:none;margin-bottom:10px">
-            <a class="btn" id="btn-record-pay" title="Paid by cash, e-transfer or an invoice the team sent — or waived: record it on the consultation page">${I.clip} Record payment / Waived</a>
+            <a class="btn" id="btn-record-pay" title="Paid by cash, e-transfer or an invoice the team sent — or waived: record it on the consultation page">${I.clip} <span id="btn-record-pay-lbl">Record payment / Waived</span></a>
+            <span class="muted" id="record-pay-fee" style="font-size:12px;align-self:center"></span>
           </div>
           <div class="btn-row" id="convert-row" style="display:none;margin-bottom:10px">
             <a class="btn" id="btn-convert" title="Returning/existing client who doesn't need a consultation — reuse THIS lead (no duplicate) and go straight to the retainer panel">→ Convert to direct retainer</a>
@@ -546,6 +547,7 @@ tdotRemarksMount({ prefix:'rmk', leadId: LEAD_ID, presets: REMARKS, updatesPrefi
   });
 })();
 var WANTS_TO=''; // the client's stated intent — set in render(d); gates the invite confirmation
+var FEE_RECORDED=''; // a consultation fee staff already recorded — the invite warns (the booking link charges again)
 var ICONS=${jsLit({ flag: I.flag, file: I.file, user: I.user, clock: I.clock })};
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function initials(n){ return String(n||'?').split(/\\s+/).map(function(w){return w.charAt(0);}).join('').slice(0,2).toUpperCase(); }
@@ -667,7 +669,9 @@ function render(d){
   }
   // Booked leads get the consultation view; DIRECT retainer clients (walk-in /
   // referral — never book) get the same link, since the retainer panel lives there.
+  FEE_RECORDED=d.feeRecorded||'';
   if(d.bookingStatus==='Booked' || d.directRetainer){
+    var rpH=document.getElementById('record-pay-row'); if(rpH) rpH.style.display='none';
     document.getElementById('invite-card').style.display='none';
     document.getElementById('qa-card').style.display='block';
     var lc=document.getElementById('lnk-consult');
@@ -687,12 +691,14 @@ function render(d){
     // Paid another way (cash / e-transfer / invoice) or waived, and not booked in the app:
     // record it — with the switch on, the same box takes the booking and emails the
     // agreement and form. Never while the client is paying online, or once paid online.
+    // (set outright on every render — the page re-renders after each save)
     var rp=document.getElementById('record-pay-row');
-    if(rp && !d.clientMasterItemId && !d.paidOnline && !d.heldOnline){
-      rp.style.display='flex';
-      var rpb=document.getElementById('btn-record-pay');
-      rpb.href='/admin/consultation/'+encodeURIComponent(d.leadId)+'?record=1';
-      if(d.recordBooks) rpb.innerHTML=rpb.innerHTML.replace('Record payment / Waived','Record payment / Waived (and book)');
+    if(rp){
+      var showRp=!d.clientMasterItemId && !d.paidOnline && !d.heldOnline;
+      rp.style.display=showRp?'flex':'none';
+      document.getElementById('btn-record-pay').href='/admin/consultation/'+encodeURIComponent(d.leadId)+'?record=1';
+      document.getElementById('btn-record-pay-lbl').textContent=d.feeRecorded?'Change payment record':(d.recordBooks?'Record payment / Waived (and book)':'Record payment / Waived');
+      document.getElementById('record-pay-fee').textContent=d.feeRecorded?('Recorded: '+d.feeRecorded):'';
     }
     var cr=document.getElementById('convert-row');
     if(cr && !d.clientMasterItemId && d.bookingStatus!=='Slot Held' && !d.bookedSlot){
@@ -738,6 +744,8 @@ document.getElementById('btn-invite').onclick=function(){
   var btn=this;
   var pick=document.getElementById('inv-consultant');
   var withWho=pick&&pick.value?(' The booking will be with '+pick.value+'.'):'';
+  // A fee already recorded by staff: the booking link would charge the client again.
+  if(FEE_RECORDED && !confirm('A consultation fee is already recorded for this client ('+FEE_RECORDED+'). The booking link asks them to PAY. Send it anyway?')) return;
   var confirmTxt=(WANTS_TO && WANTS_TO!=='Book consultation')
     ? 'THIS CLIENT ASKED FOR "'+WANTS_TO+'" — not a consultation booking. Send the paid-consultation booking invite anyway?'+withWho
     : 'Email this client their consultation booking link with this message?'+withWho;

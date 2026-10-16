@@ -662,7 +662,10 @@ async function getLeadDetail(leadId) {
     // hand is often never set to Booked — the box must be reachable before that.
     paidOnline:   !!String(lead.squareConsultTxnId || '').trim(),
     heldOnline:   (String(lead.bookingStatus || '').trim() === 'Slot Held' && Date.parse(String(lead.slotHeldUntil || '')) > Date.now()),
-    recordBooks:  require('./consultationService').packageOnRecordEnabled(lead.id),
+    // "(and book)" only when the box will really ask for the booking (same test as the dialog)
+    recordBooks:  (() => { const cs = require('./consultationService'); return cs.packageOnRecordEnabled(lead.id) && cs.packageApplicable(lead).ok && !cs.packageAlreadySent(lead); })(),
+    // a fee staff already recorded (the booking link would charge again)
+    feeRecorded:  (() => { const cp = require('./consultPaymentService'); const ps = cp.paidState(lead); return ps.record && ps.paid !== 'app' ? cp.describe(ps.record) : ''; })(),
     inviteMessage,
     inviteSent: (lead.bookingInvite || '') === 'Sent',
     inviteSentAt: lead.inviteSentAt || '',
@@ -1394,14 +1397,13 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       }
       // A "Record payment" save still writing the booking / meeting goes first; then the
       // gate re-checks from a fresh read (an automatic send may be finishing right now).
-      await require('./consultationService').waitRecordSave(leadId);
       const r = await require('./consultationService').sendConsultationPackage(leadId, { again });
       const viaEsign = r.via === 'documenso';
       await postPortalNote(leadId, r.alreadySigned
-        ? 'Consultation package re-sent to the client (booking details + pre-consult form + 24h disclaimer). The consultation agreement is ALREADY SIGNED — no signature was requested; the email includes their signed-copy link.'
+        ? 'Consultation package re-sent to the client (booking details + pre-consult form + the complete-before-your-consultation note). The consultation agreement is ALREADY SIGNED — no signature was requested; the email includes their signed-copy link.'
         : viaEsign
-        ? 'Consultation package emailed to the client (booking details + pre-consult form + agreement + 24h disclaimer) — the agreement also went out for e-signature (Documenso); signing auto-records on this lead.'
-        : 'Consultation package emailed to the client (booking details + pre-consult form + agreement + 24h disclaimer).');
+        ? 'Consultation package emailed to the client (booking details + pre-consult form + agreement + the complete-before-your-consultation note) — the agreement also went out for e-signature (Documenso); signing auto-records on this lead.'
+        : 'Consultation package emailed to the client (booking details + pre-consult form + agreement + the complete-before-your-consultation note).');
       const base = r.alreadySigned
         ? 'The consultation email has been re-sent. The agreement is already signed, so no new signature was requested.'
         : viaEsign

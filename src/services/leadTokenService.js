@@ -65,10 +65,21 @@ async function validateToken(leadId, providedToken) {
 /**
  * Return the existing token for a lead, or generate and store a new one.
  */
+const _ensuring = new Map();   // leadId → Promise: callers at once share ONE assignment
 async function ensureToken(leadId) {
-  const existing = await getToken(leadId);
-  if (existing) return existing;
-  return assignToken(leadId);
+  const key = String(leadId);
+  if (_ensuring.has(key)) return _ensuring.get(key);
+  const p = (async () => {
+    const existing = await getToken(key);
+    if (existing) return existing;
+    const mine = await assignToken(key);
+    // Another writer (a second app instance) may have landed a code at the same moment:
+    // the STORED one is what the links are checked against — use it (review 2026-10-16).
+    const stored = await getToken(key).catch(() => '');
+    return stored || mine;
+  })();
+  _ensuring.set(key, p);
+  try { return await p; } finally { if (_ensuring.get(key) === p) _ensuring.delete(key); }
 }
 
 module.exports = { generateToken, assignToken, validateToken, getToken, ensureToken };

@@ -1461,7 +1461,7 @@ function openConsultPaymentModal(d, clear){
     var orc=cp.onRecord||{};
     var asks=!clear && !!(orc.enabled && orc.applicable && !orc.alreadySent);
     var h=payTitle(clear?'Remove the payment record':(cur?'Change the consultation payment record':'Record the consultation payment'), clear)+
-      '<div class="paym-client">For <b>'+payEsc(d.name||'this client')+'</b>'+(d.bookedSlot?' · consultation '+payEsc(d.bookedSlot):'')+'</div>';
+      '<div class="paym-client">For <b>'+payEsc(d.name||'this client')+'</b>'+((d.bookedSlot&&d.bookingStatus==='Booked')?' · consultation '+payEsc(d.bookedSlot):(d.bookedSlot?' · not booked in the app (an online hold for '+payEsc(d.bookedSlot)+' expired)':''))+'</div>';
     if(clear){
       h+='<div class="paym-warn">This removes the record that the fee was '+(cur.paid==='waived'?'waived':('paid — '+payEsc(CP_LABELS[cur.paid]||cur.paid)+(cur.paidCents?' '+cpMoney(cur.paidCents):'')))+'. The lead keeps a note of it. Use this for a record made by mistake.'+
         ((cp.onRecord&&cp.onRecord.enabled&&d.bookingStatus==='Booked'&&d.bookedSlot)?' It does NOT cancel the booking ('+payEsc(d.bookedSlot)+') — change Booking Status in Monday if that was a mistake too.':'')+'</div>';
@@ -2280,7 +2280,7 @@ function initActions(){
     var sentOn=ca.sent||(ca.emailedAt?String(ca.emailedAt).slice(0,10):'')||(ca.alreadySent?'an earlier date (a signing request is on record)':'');
     doAction('sendConsultationPackage', JSON.stringify({again:!!(sentOn||ca.alreadySent)}), sentOn
       ? 'This client already received the consultation package on '+sentOn+'. Send it AGAIN? They get the same email once more; the agreement they were already asked to sign is reused — no second signing request is issued.'
-      : 'Send the client ONE consultation email now — booking details, meeting link, the pre-consultation form, and the consultation agreement (sent for e-signature when e-sign is enabled) — with a note to complete both at least 24 hours before the consultation? Preview the agreement first and make sure the client\\'s address is filled in.');
+      : 'Send the client ONE consultation email now — booking details, meeting link, the pre-consultation form, and the consultation agreement (sent for e-signature when e-sign is enabled) — with a note to complete both before the consultation? Preview the agreement first and make sure the client\\'s address is filled in.');
   };
   document.getElementById('btn-attr-save').onclick=function(){
     doAction('saveAttribution', JSON.stringify({ followUpDate: document.getElementById('at-followup').value, leadOwner: document.getElementById('at-owner').value, bookedBy: document.getElementById('at-bookedby').value, paymentReviewedBy: document.getElementById('at-reviewer').value }), null);

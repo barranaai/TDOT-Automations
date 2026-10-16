@@ -147,7 +147,8 @@ async function ensureConsultAgreementReady(leadId, { overrides = {} } = {}) {
   try { pdf = await generateConsultAgreementPdf(lead); }
   catch (err) { const e = new Error(`Could not generate the agreement: ${err.message}`); e.badRequest = true; throw e; }
   cachePdf(leadId, pdf);
-  const token = lead.leadToken || '';
+  // A lead added straight in Monday may have no link code — the link would be dead (review 2026-10-16).
+  const token = String(lead.leadToken || '').trim() || await require('./leadTokenService').ensureToken(leadId);
   const url = `${RENDER_URL}/consult-agreement/${leadId}?t=${encodeURIComponent(token)}`;
   return { lead, url };
 }
