@@ -532,6 +532,8 @@ async function releaseExpiredSlots() {
       // back into Abandoned.
       const now = await leadService.getLead(it.id).catch(() => null);
       if (now && String(now.bookingStatus || '').trim() !== 'Slot Held') continue;
+      // the client may have held a new time since the list was read
+      if (now && now.slotHeldUntil && new Date(now.slotHeldUntil).getTime() >= Date.now()) continue;
       // Retire any outstanding INVOICE first — unlike a stale payment link
       // (inert), an unpaid invoice is a visible document the client could
       // still pay for a slot that no longer exists. Ordered BEFORE the status
@@ -557,6 +559,9 @@ async function releaseExpiredSlots() {
           );
         } catch (_) { /* the note is best-effort too */ }
       }
+      // Re-checked right before the write: the invoice step above takes seconds.
+      const last = await leadService.getLead(it.id).catch(() => null);
+      if (last && String(last.bookingStatus || '').trim() !== 'Slot Held') continue;
       await leadService.updateLead(it.id, { bookingStatus: 'Abandoned' });
       released++;
       require('./leadSnapshot').invalidate();
@@ -919,13 +924,15 @@ async function _confirmSlot(leadId, txnId, meetingType, amountCents) {
       _recentConfirm.set(leadId, { txnId: String(txnId), at: Date.now() });
       console.warn(`[Booking] Payment ${txnId}${paid} on lead ${leadId}, which was set to Booked by hand — recorded, staff told`);
       const slot = String(lead.bookedSlot || '').trim();
-      // Staff had already recorded this fee (cash / e-transfer / waived) — the client
-      // may have paid twice, and the record path already took care of the booking.
+      // Staff had already recorded this fee (cash / e-transfer / waived): the client
+      // may have paid twice. Nothing automatic runs here either.
       const staffRec = require('./consultPaymentService').parseConsultPayment(lead);
       if (staffRec) {
+        const sentPkg = staffRec.package === 'send' && require('./consultationService').packageAlreadySent(lead);
         await postBookingNote(leadId,
           `🚨 <b>Possible DOUBLE PAYMENT on the consultation</b> — a Square payment <code>${escNote(txnId)}</code>${escNote(paid)} arrived online, but staff had already recorded this fee: ${escNote(require('./consultPaymentService').describe(staffRec))}. ` +
-          `If both were paid, refund one in Square${staffRec.kind === 'waived' ? ' (or remove the waiver record if the client chose to pay)' : ''}. The booking${slot ? ` (${escNote(slot)})` : ''} and anything the fee record already sent are unchanged.`);
+          `If both were paid, refund one in Square (the staff record stays as the history). The booking${slot ? ` (${escNote(slot)})` : ''} is unchanged.` +
+          (sentPkg ? '' : ' If the client has not had the consultation package, use "Review &amp; send" on the consultation page.'));
         return;
       }
       await postBookingNote(leadId,
@@ -936,6 +943,14 @@ async function _confirmSlot(leadId, txnId, meetingType, amountCents) {
       console.log(`[Booking] Lead ${leadId} already booked — skipping (idempotent)`);
     }
     return;
+  }
+  // Staff had already recorded this fee another way (cash / e-transfer / waived)
+  // and the client has now paid online as well: flag it (the booking goes ahead).
+  const staffRecOnline = lead ? require('./consultPaymentService').parseConsultPayment(lead) : null;
+  if (staffRecOnline && txnId && txnId !== 'free-config') {
+    await postBookingNote(leadId,
+      `🚨 <b>Possible DOUBLE PAYMENT on the consultation</b> — the client paid online (Square payment <code>${escNote(txnId)}</code>), but staff had already recorded this fee: ${escNote(require('./consultPaymentService').describe(staffRecOnline))}. If both were paid, refund one in Square.`)
+      .catch(() => {});
   }
   // The hold had run out (Abandoned) and the client paid an old link anyway:
   // the time was released and may have been given to someone else.

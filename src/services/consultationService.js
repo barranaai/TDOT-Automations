@@ -111,6 +111,8 @@ const RETIRE_WHY = {
   'not-chosen': 'the fee record no longer asks for it (changed to "No" or removed)',
   outcome: 'an outcome has been set', case: 'the client has a case', retainer: 'a retainer is under way',
   direct: 'it is a direct retainer client', 'no-booking': 'the consultation is no longer booked with a time',
+  'not-wanted-list': 'this person is on the Not Wanted list', 'booking-failed': 'the booking (or its video meeting) could not be saved',
+  'no-link': 'the video consultation has no join link',
 };
 
 /** Booked, with a time the package can name ('YYYY-MM-DD HH:MM'). PURE. */
@@ -238,7 +240,7 @@ function slotHasStarted(lead) {
   return Number.isFinite(ms) && Date.now() >= ms;
 }
 
-async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overrides = {}, hold = '' } = {}) {
+async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overrides = {}, hold = '', block = '' } = {}) {
   if (!consultPackageAutoSendEnabled()) {
     console.log(`[Consult] Automatic package is OFF (CONSULT_PACKAGE_AUTO_SEND) — lead ${leadId} awaits the team's "Review & send"`);
     return { status: 'disabled' };
@@ -268,12 +270,27 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
     // Switched off (or this lead taken off the list): a hold already placed stays a
     // hold — the page and the address box say "Review & send" — never silently dropped.
     if (!packageOnRecordEnabled(leadId)) return { status: 'disabled' };
-    const want = recordedPackageWanted(lead);
+    let want = recordedPackageWanted(lead);
+    // A Not Wanted person is never emailed automatically — checked HERE, from a fresh
+    // read inside the gate, so a hold released later by the address box or the sweep
+    // is covered too (review round 2). The list check never throws.
+    if (want.ok) {
+      const hit = await require('./blacklistService').check({ email: lead.email, phone: lead.phone }).catch(() => null);
+      if (hit && hit.hit) want = { ok: false, why: 'not-wanted-list' };
+    }
+    // The record's own save failed to complete the booking (or its video meeting):
+    // whatever was waiting must not go out with old or missing details.
+    if (want.ok && block) want = { ok: false, why: block };
+    // Video needs its join link — never "Your consultation is booked" without one.
+    if (want.ok && String(lead.meetingType || '').trim() === 'Virtual' && !String(lead.meetingLink || '').trim()) want = { ok: false, why: 'no-link' };
     if (!want.ok) {
       if (recordedHold) {
         await _retireRecordedHold(leadId, state);
-        if (trigger === 'address') await postLeadNote(leadId, `ℹ️ <b>Consultation package not sent</b> — it was waiting for the residential address, but ${escapeHtml(RETIRE_WHY[want.why] || want.why)}.`);
+        if (trigger === 'address' || ['not-wanted-list', 'booking-failed', 'no-link'].includes(want.why)) {
+          await postLeadNote(leadId, `ℹ️ <b>Consultation package not sent</b> — it was waiting for the residential address, but ${escapeHtml(RETIRE_WHY[want.why] || want.why)}.${['not-wanted-list', 'booking-failed', 'no-link'].includes(want.why) ? ' Use "Review &amp; send" if it is still right to send it.' : ''}`);
+        }
       }
+      if (['booking-failed', 'no-link'].includes(want.why)) return { status: 'not-ready', reason: want.why, ...(recordedHold ? { retired: true } : {}) };
       return { status: 'not-wanted', reason: want.why, ...(recordedHold ? { retired: true } : {}) };
     }
     if (trigger === 'recorded') {

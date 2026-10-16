@@ -317,7 +317,9 @@ async function getConsultationDetail(leadId) {
         attempts: cs.packageAttempts || 0,
         // the server's own verdict (Review & send asks AGAIN on it — an envelope id alone counts)
         alreadySent: require('./consultationService').packageAlreadySent(lead),
-        pending: !!(cs.packagePending && !cs.packageStalled),
+        pending: !!(cs.packagePending && !cs.packageStalled && (Date.now() - Date.parse(cs.packagePending)) < 10 * 60 * 1000),
+        heldBy: cs.packageHeldBy || '',
+        recordOn: require('./consultationService').packageOnRecordEnabled(lead.id),
         skipped: (() => { const r = require('./consultPaymentService').parseConsultPayment(lead); return r && r.package === 'skip' ? (r.packageNote || 'chosen when the fee was recorded') : ''; })(),
         autoSend: require('./consultationService').consultPackageAutoSendEnabled(),
       };
@@ -1384,7 +1386,9 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         const e = new Error(`This client already received the consultation package${String(lead.consultAgreementSent || '').trim() ? ` on ${String(lead.consultAgreementSent).trim()}` : ' (a signing request was already issued)'}. Reload the page — the button then asks whether to send it AGAIN.`);
         e.badRequest = true; throw e;
       }
-      // The gate re-checks from a fresh read (an automatic send may be finishing right now).
+      // A "Record payment" save still writing the booking / meeting goes first; then the
+      // gate re-checks from a fresh read (an automatic send may be finishing right now).
+      while (_recordLocks.has(String(leadId))) await _recordLocks.get(String(leadId)).catch(() => {});
       const r = await require('./consultationService').sendConsultationPackage(leadId, { again });
       const viaEsign = r.via === 'documenso';
       await postPortalNote(leadId, r.alreadySigned
@@ -2106,10 +2110,10 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
     const lines = [];
     if (pkg && pkg.retired) lines.push('The consultation package that was waiting will not be sent.');
     else if (pkg && pkg.status === 'already' && pkg.reason === 'in-progress') lines.push('A send of the consultation package is in progress or was interrupted — check the notes in a few minutes.');
-    else if ((pkg && pkg.status === 'already') || cs.packageAlreadySent(lead)) lines.push('The consultation package already went out — it cannot be recalled.');
+    else if (onRecord && before.package === 'send' && ((pkg && pkg.status === 'already') || cs.packageAlreadySent(lead))) lines.push('The consultation package already went out — it cannot be recalled.');
     // Removing the record never cancels a booking: the money may simply not have
     // arrived. Say so, so a booking entered by mistake is not left running unnoticed.
-    if (s(lead.bookingStatus) === 'Booked' && s(lead.bookedSlot)) {
+    if (onRecord && s(lead.bookingStatus) === 'Booked' && s(lead.bookedSlot)) {
       const virtualMeeting = s(lead.meetingType) === 'Virtual' && s(lead.zoomMeetingId);
       lines.push(`The booking is NOT cancelled: ${s(lead.bookedSlot)}${s(lead.assignedConsultant) ? ` with ${s(lead.assignedConsultant)}` : ''}${s(lead.meetingType) ? ` (${s(lead.meetingType)})` : ''} is still on this lead and the client still gets the booking reminders. If it was a mistake, change Booking Status in Monday${virtualMeeting ? ' and delete the Teams meeting from the organiser’s calendar (the client already has its invite)' : ''}.`);
     }
@@ -2139,8 +2143,11 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
       lines.push('The consultation time entered has already passed, so the booking on the lead was left as it is.');
     }
     // "No" with the booking the lead already has: nothing to write.
+    const storedLen = parseInt(rawOpt.durationMin, 10);
     if (booking && pkgChoice === 'skip' && s(lead.bookingStatus) === 'Booked' && s(lead.bookedSlot) === booking.slot
-      && s(lead.assignedConsultant) === booking.consultant && s(lead.meetingType) === booking.meetingType && Number(rawOpt.durationMin) === booking.durationMin) booking = null;
+      && s(lead.assignedConsultant) === booking.consultant && s(lead.meetingType) === booking.meetingType
+      && (!Number.isFinite(storedLen) || storedLen === booking.durationMin)
+      && (booking.meetingType !== 'Virtual' || s(lead.meetingLink))) booking = null;
   } else if (n.booking) {
     // A page opened before the package went out (or before an outcome was set) still
     // carried a booking: it is NOT written — and staff are told so.
@@ -2169,7 +2176,10 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
     const clash = (claims || []).find((c) => String(c.leadId) !== String(leadId)
       && (!c.consultant || c.consultant === booking.consultant)
       && slotsOverlap(booking.slot, booking.durationMin, c.slot));
-    if (clash) throw bad(`${booking.consultant} already has a consultation at ${clash.slot} (another client in the app${clash.status === 'Slot Held' ? ', time held for online payment' : ''}), which overlaps ${booking.slot}. Nothing was saved — choose another time.`);
+    if (clash) {
+      if (!clash.consultant) throw bad(`Another client (lead ${clash.leadId}) is booked at ${clash.slot} with no consultant set, which overlaps ${booking.slot} — the app cannot tell whose time it is. Nothing was saved: set that lead's consultant in Monday, or choose another time.`);
+      throw bad(`${booking.consultant} already has a consultation at ${clash.slot} (another client in the app${clash.status === 'Slot Held' ? ', time held for online payment' : ''}), which overlaps ${booking.slot}. Nothing was saved — choose another time.`);
+    }
   }
 
   // 1) The record — the core, written first. The HST on top of the fee is fixed NOW
@@ -2200,12 +2210,10 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
   // 3) The package — only through the one automatic path.
   let pkg = null;
   if (onRecord && !alreadySent && (pkgChoice === 'send' || (before && before.package === 'send'))) {
-    if (pkgChoice === 'send' && !bookingOk) pkg = { status: 'not-ready', reason: 'booking-failed' };
-    else if (pkgChoice === 'send' && notWanted) pkg = { status: 'not-wanted', reason: 'not-wanted-list' };
-    else {
-      pkg = await cs.autoSendConsultationPackage(leadId, { trigger: 'recorded', overrides: { consultPayment: JSON.stringify(rec), ...bookingOverrides } })
-        .catch((err) => ({ status: 'failed', reason: err.message }));
-    }
+    // Always through the gate (it re-checks the Not Wanted list and retires a package an
+    // earlier save left waiting) — a failed booking or meeting is passed in as a block.
+    pkg = await cs.autoSendConsultationPackage(leadId, { trigger: 'recorded', ...(pkgChoice === 'send' && !bookingOk ? { block: 'booking-failed' } : {}), overrides: { consultPayment: JSON.stringify(rec), ...bookingOverrides } })
+      .catch((err) => ({ status: 'failed', reason: err.message }));
   }
   const futureTime = (slot) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s(slot)) && s(slot) > cp.torontoNowWall();
   const pkgLine = packageResultLine(pkg, { pkgChoice, pkgNote, kind: n.kind, alreadySent, applicable, onRecord,
@@ -2213,13 +2221,13 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
   if (pkgLine) lines.push(pkgLine);
 
   // A booking-page payment page or Square invoice made for this client earlier may still be payable.
-  if ((rawOpt.invoiceId || s(lead.squareConsultOrderId)) && !s(lead.squareConsultTxnId)) {
+  if (onRecord && (rawOpt.invoiceId || s(lead.squareConsultOrderId)) && !s(lead.squareConsultTxnId) && s(lead.bookingStatus) !== 'Abandoned') {
     lines.push('⚠ A booking-page payment link or Square invoice was made for this client earlier — cancel it in Square so they are not charged.');
   }
 
   const signedAgreement = !!s(lead.consultAgreementSigned);
   const agreementLine = signedAgreement ? ' The signed consultation agreement keeps the earlier amount.'
-    : alreadySent ? ' The consultation agreement already sent for signature keeps the earlier amount; its preview link now shows the new one.' : '';
+    : (onRecord ? alreadySent : !!s(lead.consultAgreementSent)) ? ' The consultation agreement already sent for signature keeps the earlier amount; its preview link now shows the new one.' : '';
   const recordOnly = onRecord ? '' : ' A record only — no email or automatic step runs from it.';
   await postPortalNote(leadId, `${rec.kind === 'waived' ? '🆓 Consultation fee waived' : '💳 Consultation fee recorded as paid'} — ${escHtmlNote(cp.describe(rec))}.${before ? ` Replaces: ${escHtmlNote(cp.describe(before))}.` : ''}${recordOnly}${agreementLine}${lines.length ? ' ' + escHtmlNote(lines.join(' ')) : ''}`);
   const head = rec.kind === 'waived'
@@ -2259,16 +2267,19 @@ async function writeRecordedBooking(leadId, lead, booking, staffName, lines, { n
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
   const want = { slot: booking.slot, consultant: booking.consultant, durationMin: booking.durationMin };
   const mf = raw.meetingFor && typeof raw.meetingFor === 'object' ? raw.meetingFor : null;
-  const hadMeeting = s(lead.zoomMeetingId);
-  const reuse = booking.meetingType === 'Virtual' && hadMeeting && s(lead.meetingLink) && s(lead.meetingType) === 'Virtual'
-    && mf && mf.slot === want.slot && mf.consultant === want.consultant && Number(mf.durationMin) === want.durationMin;
+  const hadMeeting = s(lead.zoomMeetingId), hadLink = s(lead.meetingLink);
+  const stampOk = !!mf && mf.slot === want.slot && mf.consultant === want.consultant && Number(mf.durationMin) === want.durationMin;
+  // A link with no stamp (pasted into Monday by hand, or made before the stamp existed)
+  // counts only for the lead's exact current video booking (review round 2).
+  const unstampedCurrent = !mf && s(lead.bookingStatus) === 'Booked' && s(lead.bookedSlot) === want.slot && s(lead.assignedConsultant) === want.consultant;
+  const reuse = booking.meetingType === 'Virtual' && !!hadLink && s(lead.meetingType) === 'Virtual' && (stampOk || unstampedCurrent);
   const { meetingFor, ...rawRest } = raw;
   const optFields = {
     ...rawRest, durationMin: booking.durationMin,
     ...(Number.isFinite(opt.feeCents) ? { feeCents: opt.feeCents } : {}),
     ...(opt.variationId ? { variationId: opt.variationId } : {}),
     consultant: booking.consultant, bookedByStaff: true,
-    ...(reuse ? { meetingFor } : {}),
+    ...(reuse ? { meetingFor: want } : {}),
   };
   const fields = {
     bookingStatus: 'Booked', bookedSlot: booking.slot, meetingType: booking.meetingType,
@@ -2277,11 +2288,11 @@ async function writeRecordedBooking(leadId, lead, booking, staffName, lines, { n
   };
   // A video meeting that is not for exactly this booking is taken off the lead in the
   // same write — the reply names it so staff can delete it from the calendar.
-  const dropMeeting = hadMeeting && !reuse;
+  const dropMeeting = !!(hadMeeting || hadLink) && !reuse;
   await leadService.updateLead(leadId, { ...fields, ...(dropMeeting ? { zoomMeetingId: '', meetingLink: '' } : {}) },
     dropMeeting ? { clearKeys: ['zoomMeetingId', 'meetingLink'] } : undefined);
   const overrides = { ...fields, ...(dropMeeting ? { zoomMeetingId: '', meetingLink: '' } : {}) };
-  if (dropMeeting) lines.push(`An earlier video meeting (for ${s(lead.bookedSlot) || 'an earlier time'}) is no longer used — delete it from the meeting organiser's calendar so the client is not confused.`);
+  if (dropMeeting) lines.push(`An earlier video meeting (for ${s(lead.bookedSlot) || 'an earlier time'}${hadLink ? `: ${hadLink}` : ''}) is no longer used — delete it from the meeting organiser's calendar so the client is not confused.`);
   if (booking.meetingType !== 'Virtual') return { overrides };
   if (reuse) { overrides.meetingLink = s(lead.meetingLink); overrides.zoomMeetingId = hadMeeting; return { overrides }; }
   if (noMeeting) {

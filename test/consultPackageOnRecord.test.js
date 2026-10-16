@@ -123,10 +123,11 @@ test('the pure rules: who a recorded payment may email at all, "already sent", "
 
 /* ── the automatic path: trigger 'recorded' ── */
 
-function harness(leadObj) {
+function harness(leadObj, { notWanted = false } = {}) {
   const sends = [], notes = [], writes = [];
   let current = { ...leadObj };
   const restore = [
+    stub(blacklistService, 'check', async () => ({ checked: true, hit: notWanted, matchedOn: notWanted ? 'email' : '', entries: [] })),
     stub(leadService, 'getLead', async () => ({ ...current })),
     stub(leadService, 'updateLead', async (id, f) => { writes.push(f); current = { ...current, ...f }; }),
     stub(consultationService, 'sendConsultationPackage', async (id, opts) => { sends.push({ id, opts }); return { ok: true, via: 'documenso' }; }),
@@ -417,14 +418,15 @@ test('apply, video: the Teams meeting is created for the consultant chosen and h
   try {
     const r = await apply(PAID({ booking: BK({ meetingType: 'Virtual' }) }));
     assert.equal(w.meetings.length, 1, 'a new time: a new meeting');
-    assert.match(r.message, /earlier video meeting \(for .* 09:00\) is no longer used — delete it/);
+    assert.match(r.message, /earlier video meeting \(for .* 09:00: https:\/\/teams\.example\/j\/0\) is no longer used — delete it/);
     assert.deepEqual(w.writes[1].opts, { clearKeys: ['zoomMeetingId', 'meetingLink'] }, 'the old meeting is taken off the lead in the booking write');
   } finally { w.done(); }
   w = world({ meetingFail: true });
   try {
     const r = await apply(PAID({ booking: BK({ meetingType: 'Virtual' }) }));
     assert.equal(r.ok, true, 'the record stays');
-    assert.equal(w.autoCalls.length, 0, 'no package without the link');
+    assert.equal(w.autoCalls.length, 1, 'the gate is told the booking failed (it retires anything waiting)');
+    assert.equal(w.autoCalls[0].opts.block, 'booking-failed');
     assert.match(r.message, /video meeting could not be created \(Graph 503\) — no invite went out and the package was NOT emailed/);
   } finally { w.done(); }
 }));
@@ -448,11 +450,11 @@ test('apply: already sent, or the consultation has happened, or a retainer clien
   }
 }));
 
-test('apply: a Not Wanted person is never emailed automatically — the record and the booking stay', withEnv(ON, async () => {
-  const w = world({ blacklistHit: true });
+test('apply: a Not Wanted person is never emailed automatically — the record and the booking stay (the gate decides, see the gate tests)', withEnv(ON, async () => {
+  const w = world({ blacklistHit: true, autoSend: { status: 'not-wanted', reason: 'not-wanted-list' } });
   try {
     const r = await apply(PAID());
-    assert.equal(w.autoCalls.length, 0);
+    assert.equal(w.autoCalls.length, 1);
     assert.equal(w.writes.length, 2);
     assert.match(r.message, /on the Not Wanted list/);
   } finally { w.done(); }
@@ -626,12 +628,13 @@ test('R1 apply: overlapping times with the same consultant are refused; back-to-
 }));
 
 test('R1 apply: a Not Wanted person gets no Teams invite either', withEnv(ON, async () => {
-  const w = world({ blacklistHit: true });
+  const w = world({ blacklistHit: true, autoSend: { status: 'not-wanted', reason: 'not-wanted-list' } });
   try {
     const r = await apply(PAID({ booking: BK({ meetingType: 'Virtual' }) }));
     assert.equal(w.meetings.length, 0);
-    assert.equal(w.autoCalls.length, 0);
+    assert.equal(w.autoCalls[0].opts.block, 'booking-failed');
     assert.match(r.message, /No Teams meeting was created: this person is on the Not Wanted list/);
+    assert.match(r.message, /The package was NOT emailed: this person is on the Not Wanted list/);
   } finally { w.done(); }
 }));
 
@@ -671,7 +674,7 @@ test('R1 video: created but its link could not be stored → never "save again";
   const noLink = stub(meetingService, 'createMeeting', async () => { const e = new Error('Teams event ev9 created but no join URL returned'); e.eventId = 'ev9'; throw e; });
   try {
     const r = await apply(PAID({ booking: BK({ meetingType: 'Virtual' }) }));
-    assert.equal(w.autoCalls.length, 0);
+    assert.equal(w.autoCalls[0].opts.block, 'booking-failed');
     assert.match(r.message, /calendar invite went to the client and Shermin Teymouri Mofrad, but it has no Teams link/);
     assert.match(r.message, /Delete that event .* \(id ev9\) BEFORE saving again/);
     assert.ok(w.writes.some((x) => x.fields.zoomMeetingId === 'ev9'), 'the event id is kept on the lead');
@@ -783,5 +786,132 @@ test('R1 detail: the agreement card knows the server\'s own "already sent", a se
     assert.equal(d.consultAgreement.alreadySent, true, 'an envelope id alone counts — the page asks AGAIN on it');
     assert.equal(d.consultAgreement.pending, true);
     assert.equal(d.consultAgreement.skipped, 'given in person');
+  } finally { restore.reverse().forEach((x) => x()); }
+}));
+
+
+/* ── review round 2 (2026-10-16) ── */
+
+test('R2 gate: a Not Wanted person is never emailed — a new record is refused, and a package already waiting for the address is retired WITH a note (address box and sweep alike)', withEnv(ON, async () => {
+  let h = harness(baseLead(), { notWanted: true });
+  try {
+    const r = await consultationService.autoSendConsultationPackage('901', { trigger: 'recorded' });
+    assert.deepEqual(r, { status: 'not-wanted', reason: 'not-wanted-list' });
+    assert.equal(h.sends.length, 0); assert.equal(h.writes.length, 0);
+  } finally { h.restore(); }
+  h = harness(baseLead({ consultCountersign: JSON.stringify({ packageHeld: 'blank-address', packageHeldBy: 'recorded' }) }), { notWanted: true });
+  try {
+    const r = await consultationService.autoSendConsultationPackage('901', { trigger: 'address' });
+    assert.deepEqual(r, { status: 'not-wanted', reason: 'not-wanted-list', retired: true });
+    assert.equal(h.sends.length, 0); assert.deepEqual(cs(h), {});
+    assert.equal(h.notes.length, 1); assert.match(h.notes[0], /this person is on the Not Wanted list\. Use "Review &amp; send" if it is still right/);
+  } finally { h.restore(); }
+}));
+
+test('R2 gate: a save whose booking failed retires a package an earlier save left waiting; a video consultation without a join link is never sent', withEnv(ON, async () => {
+  let h = harness(baseLead({ consultCountersign: JSON.stringify({ packageHeld: 'blank-address', packageHeldBy: 'recorded' }) }));
+  try {
+    const r = await consultationService.autoSendConsultationPackage('901', { trigger: 'recorded', block: 'booking-failed' });
+    assert.deepEqual(r, { status: 'not-ready', reason: 'booking-failed', retired: true });
+    assert.deepEqual(cs(h), {}); assert.match(h.notes[0], /could not be saved/);
+  } finally { h.restore(); }
+  h = harness(baseLead({ meetingType: 'Virtual', meetingLink: '' }));
+  try {
+    assert.deepEqual(await consultationService.autoSendConsultationPackage('901', { trigger: 'recorded' }), { status: 'not-ready', reason: 'no-link' });
+    assert.equal(h.sends.length, 0);
+  } finally { h.restore(); }
+  h = harness(baseLead({ meetingType: 'Virtual', meetingLink: '', consultCountersign: JSON.stringify({ packageHeld: 'blank-address', packageHeldBy: 'recorded' }) }));
+  try {
+    const r = await consultationService.autoSendConsultationPackage('901', { trigger: 'address' });
+    assert.equal(r.reason, 'no-link'); assert.equal(r.retired, true); assert.equal(h.sends.length, 0);
+  } finally { h.restore(); }
+  h = harness(baseLead({ meetingType: 'Virtual', meetingLink: 'https://teams.example/j/ok' }));
+  try { assert.equal((await consultationService.autoSendConsultationPackage('901', { trigger: 'recorded' })).status, 'sent'); } finally { h.restore(); }
+}));
+
+test('R2 "No" + video: an unchanged booking counts as unchanged only when its meeting exists; a stored length is compared only when there is one', withEnv(ON, async () => {
+  let w = world({ lead: { bookingStatus: 'Booked', bookedSlot: `${day(3)} 11:00`, meetingType: 'Virtual', assignedConsultant: 'Shermin Teymouri Mofrad', consultOption: JSON.stringify({ durationMin: 30 }) } });
+  try {
+    await apply({ kind: 'waived', on: TODAY_TO, package: 'skip', booking: BK({ meetingType: 'Virtual' }) });
+    assert.equal(w.meetings.length, 1, 'no link yet: the meeting is (re)tried');
+  } finally { w.done(); }
+  w = world({ lead: { bookingStatus: 'Booked', bookedSlot: `${day(3)} 11:00`, meetingType: 'In-person', assignedConsultant: 'Shermin Teymouri Mofrad' } });
+  try {
+    await apply({ kind: 'waived', on: TODAY_TO, package: 'skip', booking: BK() });
+    assert.equal(w.writes.length, 1, 'no stored length (booked by hand): same booking, nothing written');
+  } finally { w.done(); }
+}));
+
+test('R2 a join link staff pasted into Monday by hand: reused for exactly the current video booking (and stamped); otherwise named and taken off', withEnv(ON, async () => {
+  const hand = { bookingStatus: 'Booked', bookedSlot: `${day(3)} 11:00`, meetingType: 'Virtual', assignedConsultant: 'Shermin Teymouri Mofrad', meetingLink: 'https://teams.example/j/hand' };
+  let w = world({ lead: hand });
+  try {
+    await apply(PAID({ booking: BK({ meetingType: 'Virtual' }) }));
+    assert.equal(w.meetings.length, 0, 'the pasted link is the meeting');
+    assert.equal(w.autoCalls[0].opts.overrides.meetingLink, 'https://teams.example/j/hand');
+    assert.deepEqual(JSON.parse(w.writes[1].fields.consultOption).meetingFor, { slot: `${day(3)} 11:00`, consultant: 'Shermin Teymouri Mofrad', durationMin: 30 });
+  } finally { w.done(); }
+  w = world({ lead: hand });
+  try {
+    const r = await apply(PAID({ booking: BK({ meetingType: 'Virtual', time: '13:00' }) }));
+    assert.equal(w.meetings.length, 1, 'a different time: a new meeting');
+    assert.match(r.message, /earlier video meeting \(for .* 11:00: https:\/\/teams\.example\/j\/hand\) is no longer used/);
+    assert.deepEqual(w.writes[1].opts, { clearKeys: ['zoomMeetingId', 'meetingLink'] });
+  } finally { w.done(); }
+}));
+
+test('R2 overlap with a booking that has no consultant names that lead', withEnv(ON, async () => {
+  const w = world({ claims: [{ leadId: '777', slot: `${day(3)} 11:10`, consultant: '', status: 'Booked' }] });
+  try { await assert.rejects(apply(PAID()), (e) => e.badRequest && /Another client \(lead 777\) is booked .* with no consultant set/.test(e.message)); } finally { w.done(); }
+}));
+
+test('R2 switch OFF is the live record: removing it or recording on a lead with an old payment link adds nothing new', withEnv({ CONSULT_PACKAGE_AUTO_SEND: '1', CONSULT_PACKAGE_ON_RECORD: null }, async () => {
+  let w = world({ lead: { consultPayment: rec({ package: '' }), bookingStatus: 'Booked', bookedSlot: `${day(3)} 11:00`, consultAgreementSent: '2026-10-10' } });
+  try { assert.equal((await apply({ kind: 'clear' })).message, 'The consultation payment record was removed.'); } finally { w.done(); }
+  w = world({ lead: { consultOption: JSON.stringify({ invoiceId: 'inv_1' }) } });
+  try { const r = await apply({ kind: 'cash', amountCents: 12000, on: TODAY_TO }); assert.ok(!/cancel it in Square/.test(r.message)); } finally { w.done(); }
+}));
+
+test('R2 Review & send waits for a "Record payment" save still writing the booking', withEnv(ON, async () => {
+  let release; const slow = new Promise((r) => { release = r; });
+  const order = [];
+  const w = world({ autoSend: async () => { order.push('record-package'); await slow; return { status: 'sent' }; } });
+  const r2 = stub(consultationService, 'sendConsultationPackage', async () => { order.push('review-send'); return { ok: true, via: 'review-link' }; });
+  try {
+    const rec1 = apply(PAID());
+    await new Promise((r) => setTimeout(r, 10));
+    const btn = portal.applyAction({ leadId: '901', action: 'sendConsultationPackage', value: JSON.stringify({ again: true }), staffName: 'M' });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(order, ['record-package'], 'the button waits');
+    release(); await rec1; await btn;
+    assert.deepEqual(order, ['record-package', 'review-send']);
+  } finally { r2(); w.done(); }
+}));
+
+test('R2 an online payment through the normal booking path, on a lead whose fee staff already recorded, is flagged as a possible double payment', async () => {
+  const notes = [];
+  const lead = { id: '4242', fullName: 'T', bookingStatus: 'Slot Held', bookedSlot: `${day(3)} 11:00`, slotHeldUntil: new Date(Date.now() + 3600e3).toISOString(), assignedConsultant: 'Shermin Teymouri Mofrad',
+    consultPayment: rec({ package: 'skip' }), squareBookingId: 'never-square' };
+  let current = { ...lead };
+  const restore = [
+    stub(leadService, 'getLead', async () => ({ ...current })),
+    stub(leadService, 'updateLead', async (id, f) => { current = { ...current, ...f }; }),
+    stub(mondayApi, 'query', async (q, v) => { if (/create_update/.test(q)) notes.push(v.b || v.body); if (/items_page/.test(q)) return { boards: [{ items_page: { cursor: null, items: [] } }] }; return {}; }),
+    stub(consultationService, 'onSlotConfirmed', async () => {}),
+  ];
+  try {
+    await bookingService.confirmSlot('4242', 'SQ-ONLINE-1', 'In-person', 13560);
+    assert.ok(notes.some((n) => /Possible DOUBLE PAYMENT .* the client paid online \(Square payment <code>SQ-ONLINE-1<\/code>\), but staff had already recorded this fee/.test(n)), JSON.stringify(notes));
+  } finally { restore.reverse().forEach((x) => x()); }
+});
+
+test('R2 detail: the card knows who placed a hold and whether the record switch is on; a stale pending marker is not "being sent right now"', withEnv({ CONSULT_PACKAGE_AUTO_SEND: '1', CONSULT_PACKAGE_ON_RECORD: '12345' }, async () => {
+  const restore = [stub(leadService, 'getLead', async () => baseLead({ consultCountersign: JSON.stringify({ packageHeld: 'blank-address', packageHeldBy: 'recorded', packagePending: new Date(Date.now() - 20 * 60e3).toISOString() }) })),
+    stub(mondayApi, 'query', async () => ({})), stub(blacklistService, 'check', async () => ({ checked: true, hit: false, entries: [] }))];
+  try {
+    const d = await portal.getConsultationDetail('901');
+    assert.equal(d.consultAgreement.heldBy, 'recorded'); assert.equal(d.consultAgreement.recordOn, false); assert.equal(d.consultAgreement.pending, false);
+    const html = require('../src/routes/adminConsultation').buildDetailHTML('901');
+    assert.ok(html.includes("(ca.held==='blank-address'&&ca.heldBy==='recorded'&&!ca.recordOn)"), 'the card says "Review & send" for a record hold whose switch is off');
   } finally { restore.reverse().forEach((x) => x()); }
 }));

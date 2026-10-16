@@ -1597,6 +1597,7 @@ function render(d){
     (ca.held==='slot-clash')?'· HELD — another client is booked for the same time; sort out the time, then "Review & send"':
     (ca.held==='late-payment')?'· HELD — the client paid after the slot hold expired; confirm the time with the client, then "Review & send"':
     (ca.held&&ca.attempts>=3)?'· HELD — the automatic release failed 3 times; use "Review & send"':
+    (ca.held==='blank-address'&&ca.heldBy==='recorded'&&!ca.recordOn)?'· HELD — sending from the fee record is switched off; use "Review & send"':
     ca.held?(ca.autoSend?'· HELD — no residential address; enter it below and the package sends itself':'· HELD by the automatic package, which is now switched off — use "Review & send"'):
     (ca.autoSend&&d.bookingStatus!=='Booked')?('· not sent yet — sends automatically when the consultation is paid'+(cpRecOn(d)?' online, or when you record the fee with the booking ("Record payment / Waived")':'')):
     ca.skipped?('· not sent — staff chose not to email it when recording the fee ('+ca.skipped+')'):
