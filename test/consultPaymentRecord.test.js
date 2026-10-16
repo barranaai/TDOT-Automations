@@ -19,6 +19,8 @@ const { computeKpis } = require('../src/services/kpiService');
 
 function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; }
 const TODAY = '2026-10-15';
+// The package-on-record switch is read from the environment: these tests are about the record alone.
+delete process.env.CONSULT_PACKAGE_ON_RECORD;
 
 /* ── the column is wired everywhere a lead field must be ── */
 

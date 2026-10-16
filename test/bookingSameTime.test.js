@@ -372,3 +372,16 @@ test('REVIEW: at payment, a lead with a blank consultant is judged by its routin
     assert.deepEqual(w.slotCalls[0].extra.slotClash, []);
   } finally { w.restore(); }
 });
+
+test('2b. an online payment on a booking whose fee STAFF ALREADY RECORDED (cash / waived) is flagged as a possible DOUBLE PAYMENT — not as a hand booking with nothing done (2026-10-16)', async () => {
+  const rec = JSON.stringify({ kind: 'cash', amountCents: 12000, hstCents: 1560, on: '2026-10-15', by: 'Melanie', verified: false, package: 'send' });
+  const w = confirmWorld({ lead: LEAD({ id: '13279930001', fullName: 'Mitesh Test', bookingStatus: 'Booked', consultPayment: rec }) });
+  try {
+    await bookingService.confirmSlot('13279930001', 'SQ-PAY-9', undefined, 13560);
+    assert.equal(w.slotCalls.length, 0);
+    assert.equal(w.notes.length, 1);
+    assert.match(w.notes[0].body, /^🚨 <b>Possible DOUBLE PAYMENT on the consultation<\/b> — a Square payment <code>SQ-PAY-9<\/code>/);
+    assert.match(w.notes[0].body, /staff had already recorded this fee: Cash \$120\.00 received 2026-10-15 by Melanie/);
+    assert.ok(!/no consultation package were created/.test(w.notes[0].body), 'never the false "nothing was done" line');
+  } finally { w.restore(); }
+});

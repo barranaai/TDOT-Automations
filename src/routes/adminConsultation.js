@@ -1322,7 +1322,7 @@ function hydrateConsultPayment(d){
     rec.style.display=''; rec.innerHTML=ICONS.dollar+' Change record'; clr.style.display='';
   } else {
     st.textContent='Not recorded';
-    h+='<div class="muted" style="font-size:12px">The booking link records its own payment. Paid another way — cash, e-transfer, an invoice the team sent — or waived? Record it here so the Consultations list and the KPIs count it.'+((cp.onRecord&&cp.onRecord.enabled)?' You can also enter the booking and email the client the consultation agreement and pre-consultation form.':' A record only: no email or automatic step runs from it.')+'</div>';
+    h+='<div class="muted" style="font-size:12px">The booking link records its own payment. Paid another way — cash, e-transfer, an invoice the team sent — or waived? Record it here so the Consultations list and the KPIs count it.'+(cpRecOn(d)?' You can also enter the booking and email the client the consultation agreement and pre-consultation form.':((cp.onRecord&&cp.onRecord.enabled)?'':' A record only: no email or automatic step runs from it.'))+'</div>';
     rec.style.display=''; rec.innerHTML=ICONS.dollar+' Record payment / Waived'; clr.style.display='none';
   }
   body.innerHTML=h;
@@ -1344,22 +1344,24 @@ function cpPackageSection(orc, asks){
   if(orc.alreadySent) return '<div class="paym-info">The consultation package already went out'+(orc.sentOn?' on '+payEsc(orc.sentOn):'')+' — recording the fee does not send it again.</div>';
   if(!asks) return '<div class="paym-info">'+payEsc(CP_WHY[orc.why]||'No consultation package is sent for this client.')+'</div>';
   var pf=orc.prefill||{};
-  var cons=(orc.consultants||[]).map(function(k){ return '<option value="'+payEsc(k.name)+'"'+(k.name===pf.consultant?' selected':'')+'>'+payEsc(k.name)+'</option>'; }).join('');
+  var cons=(pf.consultant?'':'<option value="">Choose…</option>')+(orc.consultants||[]).map(function(k){ return '<option value="'+payEsc(k.name)+'"'+(k.name===pf.consultant?' selected':'')+'>'+payEsc(k.name)+'</option>'; }).join('');
   var types=[['','Choose…'],['In-person','In person (at the office)'],['Virtual','Video (Teams)'],['Phone Call','Phone call']];
   return '<div class="paym-sec">Consultation booking</div>'+
     '<div class="paym-muted">The time you booked with the client — the email and the agreement state it. Toronto time.</div>'+
     (orc.heldOnline?'<div class="paym-warn">The client is booking online right now (their time is held). Wait until the hold ends, or ask them not to pay online — the app will not record over it.</div>':'')+
     '<div class="cp-grid"><div><label for="cp-bk-date">Date</label><input id="cp-bk-date" type="date" min="'+cpTodayStr()+'" value="'+payEsc(pf.date||'')+'"></div>'+
     '<div><label for="cp-bk-time">Time</label><input id="cp-bk-time" type="time" step="300" value="'+payEsc(pf.time||'')+'"></div></div>'+
-    '<div class="cp-grid"><div><label for="cp-bk-cons">Consultant</label><select id="cp-bk-cons" class="cp-sel">'+cons+'</select></div>'+
+    '<div class="cp-grid"><div><label for="cp-bk-cons">Consultant</label><select id="cp-bk-cons" class="cp-sel">'+cons+'</select>'+(pf.suggested?'<div class="paym-hint">Suggested by the case type: '+payEsc(pf.suggested)+'</div>':'')+'</div>'+
     '<div><label for="cp-bk-len">Length</label><select id="cp-bk-len" class="cp-sel"></select></div></div>'+
     '<label for="cp-bk-type">How</label><select id="cp-bk-type" class="cp-sel">'+types.map(function(t){ return '<option value="'+t[0]+'"'+(t[0]===(pf.meetingType||'')?' selected':'')+'>'+payEsc(t[1])+'</option>'; }).join('')+'</select>'+
     '<div class="paym-hint" id="cp-bk-hint"></div>'+
-    '<div class="paym-sec">Email the client the consultation agreement and pre-consultation form?</div>'+
+    '<div class="paym-sec" id="cp-pkg-q">Email the client the consultation agreement and pre-consultation form?</div>'+
+    '<div role="radiogroup" aria-labelledby="cp-pkg-q">'+
     '<label class="cp-choice'+(orc.hasEmail?'':' off')+'" id="cp-pkg-send-l"><input type="radio" name="cp-pkg" value="send"'+(orc.hasEmail?'':' disabled')+'><span id="cp-pkg-send-t">Yes — email them now</span></label>'+
-    '<label class="cp-choice"><input type="radio" name="cp-pkg" value="skip"><span id="cp-pkg-skip-t">No</span></label>'+
+    '<label class="cp-choice"><input type="radio" name="cp-pkg" value="skip"><span id="cp-pkg-skip-t">No — don’t email them</span></label>'+
+    '</div>'+
     '<div id="cp-pkg-note-w" style="display:none"><label for="cp-pkg-note" id="cp-pkg-note-l">Why not?</label><input id="cp-pkg-note" type="text" maxlength="200" autocomplete="off" value="'+payEsc(orc.recordNote||'')+'"></div>'+
-    '<div class="paym-hint" id="cp-pkg-hint"></div>'+
+    '<div class="paym-hint" id="cp-pkg-hint" aria-live="polite"></div>'+
     '<div class="cp-preview" id="cp-preview" style="display:none"></div>';
 }
 function cpPackageBind(box, orc, cur, kindEl, amtEl, onSend){
@@ -1379,11 +1381,11 @@ function cpPackageBind(box, orc, cur, kindEl, amtEl, onSend){
   function sync(){
     var c=choice(), w=waived();
     q('#cp-pkg-send-t').textContent=w?'Yes — email them':'Yes — email them now';
-    q('#cp-pkg-skip-t').textContent=w?'No — don’t email them':'No — the client already has them';
     noteW.style.display=(c==='skip')?'':'none';
-    noteL.textContent=w?'Why not? (optional)':'Why? (e.g. given to them in person)';
-    bkHint.textContent=typeEl.value==='Virtual'?'A Teams meeting is created — the client and the consultant get its invite.':'';
-    pkHint.textContent=!orc.hasEmail?'There is no email for this client, so the package cannot be emailed.':(c==='send'&&!orc.hasAddress?'There is no residential address on this lead — the package waits until you add it on this page (the agreement prints it).':(c==='skip'?'The booking reminders still go out once a time is entered.':''));
+    noteL.textContent=w?'Why not? (optional)':'Why not? (e.g. given to them in person, or the consultation already happened)';
+    var willBook=!!(dateEl.value&&timeEl.value);
+    bkHint.textContent=(typeEl.value==='Virtual'&&(c==='send'||willBook))?'A Teams meeting is created — the client and the consultant get its invite.':'';
+    pkHint.textContent=!orc.hasEmail?'There is no email for this client, so the package cannot be emailed.':(c==='send'&&!orc.hasAddress?'There is no residential address on this lead — the package waits until you add it on this page (the agreement prints it).':(c==='skip'?'Leave the date and time empty if the consultation has already happened. The booking reminders still go out for a time ahead.':''));
     onSend(c==='send');
     preview();
   }
@@ -1392,31 +1394,40 @@ function cpPackageBind(box, orc, cur, kindEl, amtEl, onSend){
     var t;
     if(waived()) t='The agreement will say the consultation fee was waived.';
     else {
-      var c=payParseCents(amtEl?amtEl.value:''), pct=Number(orc.hstPct||0);
+      var c=payParseCents(amtEl?amtEl.value:''), pct=Number(orc.hstPct||0), st=orc.stored;
       if(isNaN(c)||c<=0){ prev.style.display='none'; return; }
-      var total=Math.round(c*(1+pct/100));
+      // the server keeps the HST fixed when the fee was first recorded if the amount is unchanged
+      var total=(st&&st.kind!=='waived'&&st.amountCents===c&&typeof st.hstCents==='number')?(c+st.hstCents):Math.round(c*(1+pct/100));
+      if(total>c) pct=Math.max(pct,1);
       t='The agreement will say the client has paid '+cpMoney(total)+(pct>0?' (incl. HST)':'')+'.';
     }
     prev.textContent=t; prev.style.display='';
   }
   function kindChanged(){
-    // A record being changed keeps its stored choice; a NEW one follows the kind
-    // until staff pick: waived = no answer, paid = yes.
-    if(!touched && !cur){ var w=waived(); if(sendEl) sendEl.checked=!w&&!!orc.hasEmail; if(skipEl) skipEl.checked=false; }
+    // A NEW record follows the kind until staff pick: waived = no answer, paid = yes.
+    // A record being changed keeps its stored choice — unless the kind crosses
+    // waived <-> paid, which asks again (waived never starts with an answer).
+    if(!touched){
+      var w=waived();
+      if(!cur){ if(sendEl) sendEl.checked=!w&&!!orc.hasEmail; if(skipEl) skipEl.checked=false; }
+      else if((cur.paid==='waived')!==w){ if(sendEl) sendEl.checked=false; if(skipEl) skipEl.checked=false; }
+      else { if(sendEl) sendEl.checked=(orc.record==='send'&&!!orc.hasEmail); if(skipEl) skipEl.checked=(orc.record==='skip'); }
+    }
     sync();
   }
   if(cur){ if(orc.record==='send'&&sendEl&&orc.hasEmail) sendEl.checked=true; else if(orc.record==='skip'&&skipEl) skipEl.checked=true; }
   fillLen(false);
   consEl.onchange=function(){ fillLen(true); };
-  typeEl.onchange=sync;
+  typeEl.onchange=sync; dateEl.onchange=sync; timeEl.onchange=sync;
   [sendEl,skipEl].forEach(function(el){ if(el) el.onchange=function(){ touched=true; sync(); }; });
   kindChanged();
   function collect(kind){
     var c=choice();
-    if(!c) return { error:'Choose whether to email the consultation agreement and form to the client.', focus:sendEl||skipEl };
+    if(!c) return { error:'Choose whether to email the consultation agreement and form to the client.', focus:(sendEl&&!sendEl.disabled)?sendEl:skipEl };
     var note=(noteEl.value||'').trim();
-    if(c==='skip'&&kind!=='waived'&&note.length<3) return { error:'Say why the client does not need the agreement and form.', focus:noteEl };
-    var any=!!(dateEl.value||timeEl.value||typeEl.value), bk=null;
+    if(c==='skip'&&kind!=='waived'&&note.length<3) return { error:'Say why the client is not being emailed the agreement and form.', focus:noteEl };
+    // "No": a booking is saved only when a date AND a time are entered (the How box alone is not a booking).
+    var any=(c==='skip')?!!(dateEl.value||timeEl.value):true, bk=null;
     if(c==='send'||any){
       if(!dateEl.value) return { error:'Enter the consultation date.', focus:dateEl };
       if(!timeEl.value) return { error:'Enter the consultation time.', focus:timeEl };
@@ -1442,7 +1453,8 @@ function openConsultPaymentModal(d, clear){
     var h=payTitle(clear?'Remove the payment record':(cur?'Change the consultation payment record':'Record the consultation payment'), clear)+
       '<div class="paym-client">For <b>'+payEsc(d.name||'this client')+'</b>'+(d.bookedSlot?' · consultation '+payEsc(d.bookedSlot):'')+'</div>';
     if(clear){
-      h+='<div class="paym-warn">This removes the record that the fee was '+(cur.paid==='waived'?'waived':('paid — '+payEsc(CP_LABELS[cur.paid]||cur.paid)+(cur.paidCents?' '+cpMoney(cur.paidCents):'')))+'. The lead keeps a note of it. Use this for a record made by mistake.</div>';
+      h+='<div class="paym-warn">This removes the record that the fee was '+(cur.paid==='waived'?'waived':('paid — '+payEsc(CP_LABELS[cur.paid]||cur.paid)+(cur.paidCents?' '+cpMoney(cur.paidCents):'')))+'. The lead keeps a note of it. Use this for a record made by mistake.'+
+        ((d.bookingStatus==='Booked'&&d.bookedSlot)?' It does NOT cancel the booking ('+payEsc(d.bookedSlot)+') — change Booking Status in Monday if that was a mistake too.':'')+'</div>';
     } else {
       h+=(orc.enabled?'':'<div class="paym-info">A record only — the client gets no email and no automatic step runs. A payment made through the booking link records itself.</div>')+
         '<label for="cp-kind">How was the fee settled?</label>'+
@@ -1578,6 +1590,7 @@ function render(d){
     cactr.signedAt?('· fully signed '+cactr.signedAt):
     caSigned?('· client signed '+ca.signed+(cactr.sentAt?(' · countersign sent '+cactr.sentAt):'')):
     ca.sent?('· sent '+ca.sent):
+    ca.pending?'· being sent right now — reload in a minute before doing anything':
     ca.emailedAt?'· emailed to the client, but the Sent date could not be saved — set "Consult Agreement Sent" by hand; do NOT re-send':
     ca.stalled?'· automatic send was interrupted — check the client\\'s inbox and Documenso, then "Review & send" if needed':
     ca.expired?'· not sent automatically — the consultation time had already passed or begun; "Review & send" if still needed':
@@ -1586,6 +1599,7 @@ function render(d){
     (ca.held&&ca.attempts>=3)?'· HELD — the automatic release failed 3 times; use "Review & send"':
     ca.held?(ca.autoSend?'· HELD — no residential address; enter it below and the package sends itself':'· HELD by the automatic package, which is now switched off — use "Review & send"'):
     (ca.autoSend&&d.bookingStatus!=='Booked')?('· not sent yet — sends automatically when the consultation is paid'+(cpRecOn(d)?' online, or when you record the fee with the booking ("Record payment / Waived")':'')):
+    ca.skipped?('· not sent — staff chose not to email it when recording the fee ('+ca.skipped+')'):
     (ca.autoSend&&cpRecOn(d)&&!(d.consultPayment&&d.consultPayment.paid))?'· not sent — record the fee with the booking ("Record payment / Waived") to email it, or use "Review & send"':
     ca.autoSend?'· not sent — this booking predates automatic sending, or the send did not run; use "Review & send"':'';
   var caw=document.getElementById('ca-warn');
@@ -2252,8 +2266,8 @@ function initActions(){
   document.getElementById('btn-retainer-countersign').onclick=countersignRetainer;
   document.getElementById('btn-consult-send').onclick=function(){
     var ca=(LAST_DETAIL&&LAST_DETAIL.consultAgreement)||{};
-    var sentOn=ca.sent||(ca.emailedAt?String(ca.emailedAt).slice(0,10):'');
-    doAction('sendConsultationPackage', JSON.stringify({again:!!sentOn}), sentOn
+    var sentOn=ca.sent||(ca.emailedAt?String(ca.emailedAt).slice(0,10):'')||(ca.alreadySent?'an earlier date (a signing request is on record)':'');
+    doAction('sendConsultationPackage', JSON.stringify({again:!!(sentOn||ca.alreadySent)}), sentOn
       ? 'This client already received the consultation package on '+sentOn+'. Send it AGAIN? They get the same email once more; the agreement they were already asked to sign is reused — no second signing request is issued.'
       : 'Send the client ONE consultation email now — booking details, meeting link, the pre-consultation form, and the consultation agreement (sent for e-signature when e-sign is enabled) — with a note to complete both at least 24 hours before the consultation? Preview the agreement first and make sure the client\\'s address is filled in.');
   };

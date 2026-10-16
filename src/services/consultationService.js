@@ -98,14 +98,20 @@ function packageAlreadySent(lead) {
   return !!(String(lead.consultAgreementSent || '').trim() || cs.packageEmailedAt || cs.clientEnvelopeId);
 }
 
-/** Does the staff record on this lead still ask for the package, right now? PURE. */
+/** Does the staff record on this lead still ask for the package, right now? PURE.
+ *  A later online payment does not cancel it: the client is still owed the package
+ *  (the double payment is flagged to staff by confirmSlot). */
 function recordedPackageWanted(lead) {
-  const cp = require('./consultPaymentService');
-  const ps = cp.paidState(lead);
-  if (ps.paid === 'app') return { ok: false, why: 'app-paid' };
-  if (!ps.record || ps.record.package !== 'send') return { ok: false, why: 'not-chosen' };
+  const rec = require('./consultPaymentService').parseConsultPayment(lead);
+  if (!rec || rec.package !== 'send') return { ok: false, why: 'not-chosen' };
   return packageApplicable(lead);
 }
+
+const RETIRE_WHY = {
+  'not-chosen': 'the fee record no longer asks for it (changed to "No" or removed)',
+  outcome: 'an outcome has been set', case: 'the client has a case', retainer: 'a retainer is under way',
+  direct: 'it is a direct retainer client', 'no-booking': 'the consultation is no longer booked with a time',
+};
 
 /** Booked, with a time the package can name ('YYYY-MM-DD HH:MM'). PURE. */
 function hasBookedTime(lead) {
@@ -257,13 +263,20 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
   // holds: the record's reply tells staff what is missing.
   const recordedHold = state.packageHeld === 'blank-address' && state.packageHeldBy === 'recorded';
   if (trigger === 'recorded' || (trigger === 'address' && recordedHold)) {
-    const want = packageOnRecordEnabled(leadId) ? recordedPackageWanted(lead) : { ok: false, why: 'disabled' };
+    // A send in progress (or cut short) is decided first: never reported as "not emailed".
+    if (trigger === 'recorded' && state.packagePending) return { status: 'already', reason: 'in-progress' };
+    // Switched off (or this lead taken off the list): a hold already placed stays a
+    // hold — the page and the address box say "Review & send" — never silently dropped.
+    if (!packageOnRecordEnabled(leadId)) return { status: 'disabled' };
+    const want = recordedPackageWanted(lead);
     if (!want.ok) {
-      if (recordedHold) await _retireRecordedHold(leadId, state);
+      if (recordedHold) {
+        await _retireRecordedHold(leadId, state);
+        if (trigger === 'address') await postLeadNote(leadId, `ℹ️ <b>Consultation package not sent</b> — it was waiting for the residential address, but ${escapeHtml(RETIRE_WHY[want.why] || want.why)}.`);
+      }
       return { status: 'not-wanted', reason: want.why, ...(recordedHold ? { retired: true } : {}) };
     }
     if (trigger === 'recorded') {
-      if (state.packagePending) return { status: 'already', reason: 'in-progress' };
       // Any marker that is not this path's own address hold needs a person.
       if (state.packageStalled || state.packageExpired || (state.packageHeld && !recordedHold)) {
         return { status: 'needs-person', reason: state.packageStalled ? 'stalled' : state.packageExpired ? 'expired' : state.packageHeld };
@@ -273,6 +286,7 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
       if (!String(lead.email || '').trim()) return { status: 'not-ready', reason: 'no-email' };
     } else if (!hasBookedTime(lead)) {
       await _retireRecordedHold(leadId, state);
+      await postLeadNote(leadId, `ℹ️ <b>Consultation package not sent</b> — it was waiting for the residential address, but ${RETIRE_WHY['no-booking']}.`);
       return { status: 'not-wanted', reason: 'no-booking', retired: true };
     }
   }
@@ -320,6 +334,7 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
         : '⚠ <b>Consultation package NOT sent — no residential address on this lead</b>, and the automatic release could not be armed. ' +
           'Enter the address, then use "Review &amp; send" on the consultation page.');
       console.log(`[Consult] Package HELD for lead ${leadId} — residential address is blank${armed ? '' : ' (release NOT armed)'}`);
+      if (!armed) return { status: 'held', reason: 'blank-address', armed: false };
     }
     return { status: 'held', reason: 'blank-address' };
   }
@@ -657,7 +672,7 @@ async function resendConsultationLinks(leadId) {
  * package's agreement button then becomes a preview link. If e-sign is disabled
  * or the envelope send fails, the button stays the legacy review-PDF link.
  */
-async function sendConsultationPackage(leadId, { overrides = {}, fromAuto = false } = {}) {
+async function sendConsultationPackage(leadId, { overrides = {}, fromAuto = false, again = null } = {}) {
   // The team's button and the automatic send share one gate, in BOTH
   // directions: a click while the automatic send is mid-flight waits for it
   // (then re-reads and finds the envelope to reuse), and while the click runs
@@ -666,10 +681,31 @@ async function sendConsultationPackage(leadId, { overrides = {}, fromAuto = fals
   if (fromAuto) return _sendConsultationPackage(leadId, { overrides });
   const key = String(leadId);
   while (_packageInFlight.has(key)) await _packageInFlight.get(key).catch(() => {});
-  const p = _sendConsultationPackage(leadId, { overrides });
+  // again === false (the team's button, page not saying AGAIN): decided here, inside the
+  // gate, from a FRESH read — a click while an automatic send ran (the record box's own
+  // request may still be running after the page gave up) must not email a second package
+  // (review 2026-10-16). The gate is claimed synchronously after the wait.
+  const p = (async () => {
+    if (again === false) await _refuseIfJustSent(leadId);
+    return _sendConsultationPackage(leadId, { overrides });
+  })();
   _packageInFlight.set(key, p);
   _packageInFlightKind.set(key, 'manual');
   try { return await p; } finally { if (_packageInFlight.get(key) === p) { _packageInFlight.delete(key); _packageInFlightKind.delete(key); } }
+}
+
+async function _refuseIfJustSent(leadId) {
+  const bad = (msg) => { const e = new Error(msg); e.badRequest = true; return e; };
+  const sentAt = _packageSentAt.get(String(leadId));
+  const fresh = await leadService.getLead(leadId);
+  const st = require('./consultAgreementService').parseCountersign(fresh || {});
+  const sent = !!fresh && packageAlreadySent(fresh);
+  if (!sent && st.packagePending && (Date.now() - Date.parse(st.packagePending)) < PACKAGE_STALE_MS) {
+    throw bad('The consultation package is being sent right now — reload the page in a minute before doing anything.');
+  }
+  if (sent || (sentAt && (Date.now() - sentAt) < PACKAGE_RECENT_MS)) {
+    throw bad('This client has already been sent the consultation package. Reload the page — the button then asks whether to send it AGAIN.');
+  }
 }
 
 async function _sendConsultationPackage(leadId, { overrides = {} } = {}) {

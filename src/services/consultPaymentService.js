@@ -77,14 +77,15 @@ function torontoNowWall() { return require('../utils/torontoTime').torontoWallCl
  * and the length one the chosen consultant offers.
  * @returns {{ ok: true, booking: { slot, date, time, consultant, meetingType, durationMin } } | { ok: false, error }}
  */
-function validateBooking(b, { nowWall = torontoNowWall() } = {}) {
+function validateBooking(b, { nowWall = torontoNowWall(), allowPast = false } = {}) {
   if (!b || typeof b !== 'object' || Array.isArray(b)) return bad('Invalid consultation booking.');
   const date = String(b.date == null ? '' : b.date).trim();
   const time = String(b.time == null ? '' : b.time).trim();
   if (!isRealDay(date)) return bad('Enter the consultation date.');
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return bad('Enter the consultation time (HH:MM, Toronto time).');
   const slot = `${date} ${time}`;
-  if (slot <= nowWall) return bad('That consultation time has already passed — the package is for before the consultation. Choose "No" if it has already happened.');
+  const past = slot <= nowWall;
+  if (past && !allowPast) return bad('That consultation time has already passed, so the package cannot be emailed for it. Choose "No", or enter the new time if the client was re-booked.');
   const [y, m, d] = date.split('-').map(Number);
   const [ny, nm, nd] = String(nowWall).slice(0, 10).split('-').map(Number);
   if ((Date.UTC(y, m - 1, d) - Date.UTC(ny, nm - 1, nd)) / 86400000 > MAX_BOOK_DAYS) return bad('That consultation date looks wrong (more than a year ahead).');
@@ -96,7 +97,7 @@ function validateBooking(b, { nowWall = torontoNowWall() } = {}) {
   const durations = require('../../config/consultantRouting').consultOptionsFor(reg).map((o) => o.durationMin);
   const durationMin = typeof b.durationMin === 'number' ? b.durationMin : (/^\d+$/.test(String(b.durationMin == null ? '' : b.durationMin).trim()) ? Number(String(b.durationMin).trim()) : NaN);
   if (!durations.includes(durationMin)) return bad(`Choose the length: ${durations.join(' or ')} minutes with ${consultant}.`);
-  return { ok: true, booking: { slot, date, time, consultant, meetingType, durationMin } };
+  return { ok: true, booking: { slot, date, time, consultant, meetingType, durationMin, ...(past ? { past: true } : {}) } };
 }
 
 /**
@@ -136,7 +137,9 @@ function validateRecord(value, { today = torontoToday(), nowWall } = {}) {
   if (packageNote.length > MAX_NOTE) return bad(`Keep the reason under ${MAX_NOTE} characters.`);
   let booking = null;
   if (o.booking != null) {
-    const b = validateBooking(o.booking, nowWall ? { nowWall } : {});
+    // A past time is refused only when the package is to be emailed; with "No" it is
+    // kept as `past` (the record says so, the booking is left alone — review 2026-10-16).
+    const b = validateBooking(o.booking, { ...(nowWall ? { nowWall } : {}), allowPast: pkg !== 'send' });
     if (!b.ok) return b;
     booking = b.booking;
   }

@@ -315,6 +315,10 @@ async function getConsultationDetail(leadId) {
         emailedAt: cs.packageEmailedAt || '',
         expired:  cs.packageExpired || '',
         attempts: cs.packageAttempts || 0,
+        // the server's own verdict (Review & send asks AGAIN on it — an envelope id alone counts)
+        alreadySent: require('./consultationService').packageAlreadySent(lead),
+        pending: !!(cs.packagePending && !cs.packageStalled),
+        skipped: (() => { const r = require('./consultPaymentService').parseConsultPayment(lead); return r && r.package === 'skip' ? (r.packageNote || 'chosen when the fee was recorded') : ''; })(),
         autoSend: require('./consultationService').consultPackageAutoSendEnabled(),
       };
     })(),
@@ -1202,136 +1206,11 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
     // agreement can state it. Video creates the Teams meeting the way online bookings
     // do. The package goes through the ONE automatic path (trigger 'recorded'), with
     // every once-only guard it already has. Switch off = exactly the old record.
-    case 'recordConsultPayment': {
-      const cp = require('./consultPaymentService');
-      const cs = require('./consultationService');
-      const n = v.normalized;
-      const verified = !!(actor && actor.verified);
-      const name = verified ? String(actor.name || '').trim().slice(0, 60) : who;
-      if (!name) { const e = new Error('Enter your name — it is recorded with the payment.'); e.badRequest = true; throw e; }
-      const state = cp.paidState(lead);
-      if (state.paid === 'app') {
-        const e = new Error(`This consultation was paid through the booking link${state.paidCents != null ? ` (${(state.paidCents / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })} incl. HST)` : ''} — there is nothing to record here. A refund is done in Square.`);
-        e.badRequest = true; throw e;
-      }
-      const before = state.record;
-      const signed = verified ? '' : ' (name as typed)';
-      const onRecord = cs.packageOnRecordEnabled(leadId);
-      const bad = (msg) => { const e = new Error(msg); e.badRequest = true; return e; };
-      if (n.kind === 'clear') {
-        if (!before) throw bad('No consultation payment is recorded on this lead.');
-        await leadService.updateLead(leadId, { consultPayment: '' }, { clearKeys: ['consultPayment'] });
-        try { consultAgreementService.evictCache(leadId); } catch (_) { /* best-effort */ }
-        // A package this record asked for and that is still waiting (for the address)
-        // is retired — inside the per-lead gate, from a fresh read.
-        let pkg = null;
-        if (onRecord && before.package === 'send') {
-          pkg = await cs.autoSendConsultationPackage(leadId, { trigger: 'recorded', overrides: { consultPayment: '' } })
-            .catch((err) => ({ status: 'failed', reason: err.message }));
-        }
-        const pkgLine = pkg && pkg.retired ? ' The consultation package that was waiting will not be sent.'
-          : (pkg && pkg.status === 'already') || cs.packageAlreadySent(lead) ? ' The consultation package already went out — it cannot be recalled.' : '';
-        await postPortalNote(leadId, `🗑 Consultation fee record removed by ${escHtmlNote(name)}${signed} — was: ${escHtmlNote(cp.describe(before))}.${escHtmlNote(pkgLine)}`);
-        return { ok: true, message: `The consultation payment record was removed.${pkgLine}`, consultPayment: null };
-      }
-
-      // ── The package question: asked only with the switch on, for a client the
-      // package is for, when none has gone out (an emailed package keeps the time it stated).
-      const alreadySent = cs.packageAlreadySent(lead);
-      const applicable = cs.packageApplicable(lead);
-      const asks = onRecord && !alreadySent && applicable.ok;
-      let pkgChoice = before ? before.package : '', pkgNote = before ? before.packageNote : '';
-      let booking = null;
-      if (asks) {
-        if (!n.package) throw bad('Choose whether to email the consultation agreement and pre-consultation form to the client.');
-        pkgChoice = n.package; pkgNote = n.packageNote;
-        if (pkgChoice === 'skip' && n.kind !== 'waived' && pkgNote.length < 3) throw bad('Say why the client does not need the agreement and form (for example: "given to them in person").');
-        if (pkgChoice === 'send' && !n.booking) throw bad('Enter the consultation date and time, the consultant, how it happens and its length — the email and the agreement state them.');
-        if (pkgChoice === 'send' && !String(lead.email || '').trim()) throw bad('There is no email for this client, so the package cannot be emailed. Add the email first, or choose "No".');
-        booking = n.booking;
-      }
-      if (booking) {
-        // The client is part-way through booking online: their time is held and a
-        // payment page is open — recording now invites a second payment.
-        const heldUntil = Date.parse(String(lead.slotHeldUntil || ''));
-        if (String(lead.bookingStatus || '').trim() === 'Slot Held' && Number.isFinite(heldUntil) && heldUntil > Date.now()) {
-          throw bad(`The client is booking online right now — their time (${String(lead.bookedSlot || '').trim()}) is held until ${require('../utils/torontoTime').torontoWallClock(new Date(heldUntil).toISOString())} Toronto time and a payment page is open. Wait until the hold ends (or ask them not to pay online), then record.`);
-        }
-        // Another client in the app already has this consultant at this time.
-        const bk = require('./bookingService');
-        let claims;
-        try { claims = await bk.readSlotClaims({ strict: true }); }
-        catch (err) { throw bad('Could not check the consultant\'s other bookings in the app just now — nothing was saved. Try again in a minute.'); }
-        const clash = bk.claimsOnSlot(claims, booking.slot, { consultant: booking.consultant, excludeLeadId: leadId });
-        if (clash.length) throw bad(`${booking.consultant} already has a consultation at ${booking.slot} (another client in the app${clash[0].status === 'Slot Held' ? ', time held for online payment' : ''}). Nothing was saved — choose another time.`);
-      }
-
-      // 1) The record — the core, written first. The HST on top of the fee is fixed NOW
-      // from where the client is (none outside Canada) — the consultation agreement
-      // prints fee + this; a later location edit never changes it. An edit of the SAME
-      // amount keeps the HST fixed when it was first recorded (round-2 review).
-      const hstCents = (before && before.amountCents === n.amountCents && Number.isInteger(before.hstCents) && n.kind !== 'waived') ? before.hstCents : rec0HstCents(n, lead);
-      const rec = {
-        kind: n.kind, amountCents: n.amountCents, hstCents, on: n.on, reference: n.reference, note: n.note, by: name, at: new Date().toISOString(), verified,
-        ...(pkgChoice ? { package: pkgChoice } : {}), ...(pkgChoice && pkgNote ? { packageNote: pkgNote } : {}),
-      };
-      await leadService.updateLead(leadId, { consultPayment: JSON.stringify(rec) });
-      try { consultAgreementService.evictCache(leadId); } catch (_) { /* the agreement's "has paid" line changes — drop the cached copy */ }
-      const money = (c) => (c / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
-      const lines = [];   // what happened after the record, for the reply and the note
-
-      // 2) The booking. From here a failure never undoes the record — the reply says what is left.
-      let bookingOverrides = {}, bookingOk = !booking;
-      if (booking) {
-        try {
-          const w = await writeRecordedBooking(leadId, lead, booking, name, lines);
-          bookingOverrides = w.overrides;
-          bookingOk = !w.meetingFailed;
-        } catch (err) {
-          lines.push(`⚠ The booking could not be saved (${err.message}) — the package was NOT emailed. Save the record again to retry.`);
-        }
-      }
-
-      // 3) The package — only through the one automatic path.
-      let pkg = null;
-      if (onRecord && !alreadySent && (pkgChoice === 'send' || (before && before.package === 'send'))) {
-        if (pkgChoice === 'send' && !bookingOk) pkg = { status: 'not-ready', reason: 'booking-failed' };
-        else {
-          // A Not Wanted client is never emailed automatically — staff decide.
-          let hit = null;
-          if (pkgChoice === 'send') { try { hit = await require('./blacklistService').check({ email: lead.email, phone: lead.phone }); } catch (_) { hit = null; } }
-          if (hit && hit.hit) pkg = { status: 'not-wanted', reason: 'not-wanted-list' };
-          else {
-            pkg = await cs.autoSendConsultationPackage(leadId, { trigger: 'recorded', overrides: { consultPayment: JSON.stringify(rec), ...bookingOverrides } })
-              .catch((err) => ({ status: 'failed', reason: err.message }));
-          }
-        }
-      }
-      const pkgLine = packageResultLine(pkg, { pkgChoice, pkgNote, kind: n.kind, alreadySent, applicable, onRecord,
-        hasTime: !!booking || require('./consultationService').hasBookedTime(lead) });
-      if (pkgLine) lines.push(pkgLine);
-
-      // A booking-page payment page or Square invoice made for this client earlier may still be payable.
-      let rawOpt = {}; try { rawOpt = JSON.parse(String(lead.consultOption || '')) || {}; } catch (_) { rawOpt = {}; }
-      if (n.kind !== 'waived' && (rawOpt.invoiceId || String(lead.squareConsultOrderId || '').trim()) && !String(lead.squareConsultTxnId || '').trim()) {
-        lines.push('⚠ A booking-page payment link or Square invoice was made for this client earlier — cancel it in Square so they are not charged twice.');
-      }
-
-      const signedAgreement = !!String(lead.consultAgreementSigned || '').trim();
-      const agreementLine = signedAgreement ? ' The signed consultation agreement keeps the earlier amount.'
-        : alreadySent ? ' The consultation agreement already sent for signature keeps the earlier amount; its preview link now shows the new one.' : '';
-      const recordOnly = onRecord ? '' : ' A record only — no email or automatic step runs from it.';
-      await postPortalNote(leadId, `${rec.kind === 'waived' ? '🆓 Consultation fee waived' : '💳 Consultation fee recorded as paid'} — ${escHtmlNote(cp.describe(rec))}.${before ? ` Replaces: ${escHtmlNote(cp.describe(before))}.` : ''}${recordOnly}${agreementLine}${lines.length ? ' ' + escHtmlNote(lines.join(' ')) : ''}`);
-      const head = rec.kind === 'waived'
-        ? 'Recorded — the consultation fee is waived.'
-        : `Recorded — ${cp.KINDS[rec.kind]} ${money(rec.amountCents)} received ${rec.on}.${before ? ' The earlier record was replaced.' : ''}${hstCents > 0 ? ` The consultation agreement states ${money(rec.amountCents + hstCents)} incl. HST.` : ''}`;
-      return {
-        ok: true,
-        message: `${head}${agreementLine}${lines.length ? ' ' + lines.join(' ') : ''}`,
-        consultPayment: rec,
-        ...(pkg ? { package: pkg.status } : {}),
-      };
-    }
+    case 'recordConsultPayment':
+      // One save at a time per lead, each from a FRESH read: a re-save after the page
+      // gave up waiting (or two staff at once) must not create a second Teams meeting
+      // or act on a stale record (review 2026-10-16).
+      return withRecordLock(leadId, () => recordConsultPaymentAction({ leadId, n: v.normalized, who, actor }));
 
     case 'saveResidentialAddress': {
       const before = String(lead.residentialAddress || '').trim();
@@ -1360,6 +1239,8 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         ? 'Residential address saved. Automatic sending is switched off — the held consultation package still needs "Review & send".'
         : released && released.status === 'expired'
         ? 'Residential address saved. The consultation date has already passed, so the held package was not sent — use "Review & send" if it is still needed.'
+        : released && released.status === 'not-wanted' && released.retired
+        ? 'Residential address saved. The consultation package that was waiting for it will not be sent — the fee record or the booking changed (see the note).'
         : 'Residential address saved.';
       return { ok: true, message, residentialAddress: v.normalized, ...(released ? { packageReleased: released.status } : {}) };
     }
@@ -1498,11 +1379,13 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
     }
 
     case 'sendConsultationPackage': {
-      if (require('./consultationService').packageAlreadySent(lead) && !(v.normalized && v.normalized.again)) {
-        const e = new Error(`This client already received the consultation package${String(lead.consultAgreementSent || '').trim() ? ` on ${String(lead.consultAgreementSent).trim()}` : ''}. Reload the page — the button then asks whether to send it AGAIN.`);
+      const again = !!(v.normalized && v.normalized.again);
+      if (require('./consultationService').packageAlreadySent(lead) && !again) {
+        const e = new Error(`This client already received the consultation package${String(lead.consultAgreementSent || '').trim() ? ` on ${String(lead.consultAgreementSent).trim()}` : ' (a signing request was already issued)'}. Reload the page — the button then asks whether to send it AGAIN.`);
         e.badRequest = true; throw e;
       }
-      const r = await require('./consultationService').sendConsultationPackage(leadId);
+      // The gate re-checks from a fresh read (an automatic send may be finishing right now).
+      const r = await require('./consultationService').sendConsultationPackage(leadId, { again });
       const viaEsign = r.via === 'documenso';
       await postPortalNote(leadId, r.alreadySigned
         ? 'Consultation package re-sent to the client (booking details + pre-consult form + 24h disclaimer). The consultation agreement is ALREADY SIGNED — no signature was requested; the email includes their signed-copy link.'
@@ -2157,6 +2040,199 @@ async function createDirectClient(payload = {}) {
 }
 
 /** HST on a staff-recorded consultation fee, fixed when it is recorded (none when waived or outside Canada). */
+const _recordLocks = new Map();   // leadId → Promise: one "Record payment" save at a time per lead
+async function withRecordLock(leadId, fn) {
+  const key = String(leadId);
+  while (_recordLocks.has(key)) await _recordLocks.get(key).catch(() => {});
+  const p = fn();
+  _recordLocks.set(key, p);
+  try { return await p; } finally { if (_recordLocks.get(key) === p) _recordLocks.delete(key); }
+}
+
+/** Two consultations with the same consultant overlap (a claim's length is not known: 30 minutes). PURE. */
+function slotsOverlap(aSlot, aMin, bSlot, bMin = 30) {
+  const t = (slot) => { const m = String(slot || '').match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) / 60000 : NaN; };
+  const a = t(aSlot), b = t(bSlot);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return String(aSlot) === String(bSlot);
+  return a < b + bMin && b < a + aMin;
+}
+
+/**
+ * "Record payment / Waived" (Gauri point 4 part 2, 2026-10-15): the fee was paid by
+ * cash / e-transfer / an invoice the team sent / another way, or waived — a RECORD on
+ * the lead, so the Consultations list and the KPIs count it. A fee paid through the
+ * booking link is recorded by the app itself and cannot be overwritten here.
+ *
+ * 2026-10-16 (Gauri 2026-10-08, Faran's four choices): with CONSULT_PACKAGE_ON_RECORD
+ * on, the record also carries the consultation package choice — "Yes — email them"
+ * or "No — don't email them" (a reason required for a paid fee; waived asks every
+ * time) — and, for a client booked by hand, the booking itself (time, consultant, in
+ * person / video / phone, length), written to the lead so the package and the
+ * agreement can state it. Video creates the Teams meeting the way online bookings
+ * do. The package goes through the ONE automatic path (trigger 'recorded'), with
+ * every once-only guard it already has. Switch off = exactly the old record.
+ */
+async function recordConsultPaymentAction({ leadId, n, who, actor }) {
+  const cp = require('./consultPaymentService');
+  const cs = require('./consultationService');
+  const s = (x) => String(x == null ? '' : x).trim();
+  const bad = (msg) => { const e = new Error(msg); e.badRequest = true; return e; };
+  const lead = await leadService.getLead(leadId);
+  if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
+  const verified = !!(actor && actor.verified);
+  const name = verified ? s(actor.name).slice(0, 60) : who;
+  if (!name) throw bad('Enter your name — it is recorded with the payment.');
+  const state = cp.paidState(lead);
+  if (state.paid === 'app') {
+    throw bad(`This consultation was paid through the booking link${state.paidCents != null ? ` (${(state.paidCents / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })} incl. HST)` : ''} — there is nothing to record here. A refund is done in Square.`);
+  }
+  const before = state.record;
+  const signed = verified ? '' : ' (name as typed)';
+  const onRecord = cs.packageOnRecordEnabled(leadId);
+  let rawOpt = {}; try { rawOpt = JSON.parse(s(lead.consultOption)) || {}; } catch (_) { rawOpt = {}; }
+  if (!rawOpt || typeof rawOpt !== 'object' || Array.isArray(rawOpt)) rawOpt = {};
+
+  if (n.kind === 'clear') {
+    if (!before) throw bad('No consultation payment is recorded on this lead.');
+    await leadService.updateLead(leadId, { consultPayment: '' }, { clearKeys: ['consultPayment'] });
+    try { consultAgreementService.evictCache(leadId); } catch (_) { /* best-effort */ }
+    // A package this record asked for and that is still waiting (for the address)
+    // is retired — inside the per-lead gate, from a fresh read.
+    let pkg = null;
+    if (onRecord && before.package === 'send') {
+      pkg = await cs.autoSendConsultationPackage(leadId, { trigger: 'recorded', overrides: { consultPayment: '' } })
+        .catch((err) => ({ status: 'failed', reason: err.message }));
+    }
+    const lines = [];
+    if (pkg && pkg.retired) lines.push('The consultation package that was waiting will not be sent.');
+    else if (pkg && pkg.status === 'already' && pkg.reason === 'in-progress') lines.push('A send of the consultation package is in progress or was interrupted — check the notes in a few minutes.');
+    else if ((pkg && pkg.status === 'already') || cs.packageAlreadySent(lead)) lines.push('The consultation package already went out — it cannot be recalled.');
+    // Removing the record never cancels a booking: the money may simply not have
+    // arrived. Say so, so a booking entered by mistake is not left running unnoticed.
+    if (s(lead.bookingStatus) === 'Booked' && s(lead.bookedSlot)) {
+      const virtualMeeting = s(lead.meetingType) === 'Virtual' && s(lead.zoomMeetingId);
+      lines.push(`The booking is NOT cancelled: ${s(lead.bookedSlot)}${s(lead.assignedConsultant) ? ` with ${s(lead.assignedConsultant)}` : ''}${s(lead.meetingType) ? ` (${s(lead.meetingType)})` : ''} is still on this lead and the client still gets the booking reminders. If it was a mistake, change Booking Status in Monday${virtualMeeting ? ' and delete the Teams meeting from the organiser’s calendar (the client already has its invite)' : ''}.`);
+    }
+    await postPortalNote(leadId, `🗑 Consultation fee record removed by ${escHtmlNote(name)}${signed} — was: ${escHtmlNote(cp.describe(before))}.${lines.length ? ' ' + escHtmlNote(lines.join(' ')) : ''}`);
+    return { ok: true, message: `The consultation payment record was removed.${lines.length ? ' ' + lines.join(' ') : ''}`, consultPayment: null };
+  }
+
+  // ── The package question: asked only with the switch on, for a client the package
+  // is for, when none has gone out (an emailed package keeps the time it stated).
+  const alreadySent = cs.packageAlreadySent(lead);
+  const applicable = cs.packageApplicable(lead);
+  const asks = onRecord && !alreadySent && applicable.ok;
+  let pkgChoice = before ? before.package : '', pkgNote = before ? before.packageNote : '';
+  let booking = null;
+  const lines = [];   // what happened after the record, for the reply and the note
+  if (asks) {
+    if (!n.package) throw bad('Choose whether to email the consultation agreement and pre-consultation form to the client.');
+    pkgChoice = n.package; pkgNote = n.packageNote;
+    if (pkgChoice === 'skip' && n.kind !== 'waived' && pkgNote.length < 3) throw bad('Say why the client is not being emailed the agreement and form (for example: "given to them in person").');
+    if (pkgChoice === 'send' && !n.booking) throw bad('Enter the consultation date and time, the consultant, how it happens and its length — the email and the agreement state them.');
+    if (pkgChoice === 'send' && !s(lead.email)) throw bad('There is no email for this client, so the package cannot be emailed. Add the email first, or choose "No".');
+    booking = n.booking;
+    if (booking && booking.past) {
+      // Only with "No" (validateRecord refuses a past time for "send"): the consultation
+      // has happened — the lead's booking is left exactly as it is.
+      booking = null;
+      lines.push('The consultation time entered has already passed, so the booking on the lead was left as it is.');
+    }
+    // "No" with the booking the lead already has: nothing to write.
+    if (booking && pkgChoice === 'skip' && s(lead.bookingStatus) === 'Booked' && s(lead.bookedSlot) === booking.slot
+      && s(lead.assignedConsultant) === booking.consultant && s(lead.meetingType) === booking.meetingType && Number(rawOpt.durationMin) === booking.durationMin) booking = null;
+  } else if (n.booking) {
+    // A page opened before the package went out (or before an outcome was set) still
+    // carried a booking: it is NOT written — and staff are told so.
+    lines.push(`The booking you entered was NOT saved — ${alreadySent ? 'the consultation package already went out with the time on the lead' : !onRecord ? 'booking from this box is switched off' : 'this client no longer has a consultation to book'}. Change the booking in Monday if it really moved.`);
+  }
+
+  // A Not Wanted person is never emailed automatically — not the package, not a Teams invite.
+  let notWanted = false;
+  if (pkgChoice === 'send' || (booking && booking.meetingType === 'Virtual')) {
+    try { const hit = await require('./blacklistService').check({ email: lead.email, phone: lead.phone }); notWanted = !!(hit && hit.hit); }
+    catch (_) { notWanted = false; }
+  }
+
+  if (booking) {
+    // The client is part-way through booking online: their time is held and a
+    // payment page is open — recording now invites a second payment.
+    const heldUntil = Date.parse(s(lead.slotHeldUntil));
+    if (s(lead.bookingStatus) === 'Slot Held' && Number.isFinite(heldUntil) && heldUntil > Date.now()) {
+      throw bad(`The client is booking online right now — their time (${s(lead.bookedSlot)}) is held until ${require('../utils/torontoTime').torontoWallClock(new Date(heldUntil).toISOString())} Toronto time and a payment page is open. Wait until the hold ends (or ask them not to pay online), then record.`);
+    }
+    // Another client in the app already has this consultant at an overlapping time.
+    const bk = require('./bookingService');
+    let claims;
+    try { claims = await bk.readSlotClaims({ strict: true }); }
+    catch (err) { throw bad('Could not check the consultant’s other bookings in the app just now — nothing was saved. Try again in a minute.'); }
+    const clash = (claims || []).find((c) => String(c.leadId) !== String(leadId)
+      && (!c.consultant || c.consultant === booking.consultant)
+      && slotsOverlap(booking.slot, booking.durationMin, c.slot));
+    if (clash) throw bad(`${booking.consultant} already has a consultation at ${clash.slot} (another client in the app${clash.status === 'Slot Held' ? ', time held for online payment' : ''}), which overlaps ${booking.slot}. Nothing was saved — choose another time.`);
+  }
+
+  // 1) The record — the core, written first. The HST on top of the fee is fixed NOW
+  // from where the client is (none outside Canada) — the consultation agreement prints
+  // fee + this; a later location edit never changes it. An edit of the SAME amount
+  // keeps the HST fixed when it was first recorded (round-2 review).
+  const hstCents = (before && before.amountCents === n.amountCents && Number.isInteger(before.hstCents) && n.kind !== 'waived') ? before.hstCents : rec0HstCents(n, lead);
+  const rec = {
+    kind: n.kind, amountCents: n.amountCents, hstCents, on: n.on, reference: n.reference, note: n.note, by: name, at: new Date().toISOString(), verified,
+    ...(pkgChoice ? { package: pkgChoice } : {}), ...(pkgChoice && pkgNote ? { packageNote: pkgNote } : {}),
+  };
+  await leadService.updateLead(leadId, { consultPayment: JSON.stringify(rec) });
+  try { consultAgreementService.evictCache(leadId); } catch (_) { /* the agreement's "has paid" line changes — drop the cached copy */ }
+  const money = (c) => (c / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+
+  // 2) The booking. From here a failure never undoes the record — the reply says what is left.
+  let bookingOverrides = {}, bookingOk = !booking;
+  if (booking) {
+    try {
+      const w = await writeRecordedBooking(leadId, lead, booking, name, lines, { noMeeting: notWanted });
+      bookingOverrides = w.overrides;
+      bookingOk = !w.meetingFailed;
+    } catch (err) {
+      lines.push(`⚠ The booking could not be saved (${err.message}) — the package was NOT emailed. Save the record again to retry.`);
+    }
+  }
+
+  // 3) The package — only through the one automatic path.
+  let pkg = null;
+  if (onRecord && !alreadySent && (pkgChoice === 'send' || (before && before.package === 'send'))) {
+    if (pkgChoice === 'send' && !bookingOk) pkg = { status: 'not-ready', reason: 'booking-failed' };
+    else if (pkgChoice === 'send' && notWanted) pkg = { status: 'not-wanted', reason: 'not-wanted-list' };
+    else {
+      pkg = await cs.autoSendConsultationPackage(leadId, { trigger: 'recorded', overrides: { consultPayment: JSON.stringify(rec), ...bookingOverrides } })
+        .catch((err) => ({ status: 'failed', reason: err.message }));
+    }
+  }
+  const futureTime = (slot) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s(slot)) && s(slot) > cp.torontoNowWall();
+  const pkgLine = packageResultLine(pkg, { pkgChoice, pkgNote, kind: n.kind, alreadySent, applicable, onRecord,
+    hasTime: bookingOk && booking ? true : (s(lead.bookingStatus) === 'Booked' && futureTime(lead.bookedSlot)) });
+  if (pkgLine) lines.push(pkgLine);
+
+  // A booking-page payment page or Square invoice made for this client earlier may still be payable.
+  if ((rawOpt.invoiceId || s(lead.squareConsultOrderId)) && !s(lead.squareConsultTxnId)) {
+    lines.push('⚠ A booking-page payment link or Square invoice was made for this client earlier — cancel it in Square so they are not charged.');
+  }
+
+  const signedAgreement = !!s(lead.consultAgreementSigned);
+  const agreementLine = signedAgreement ? ' The signed consultation agreement keeps the earlier amount.'
+    : alreadySent ? ' The consultation agreement already sent for signature keeps the earlier amount; its preview link now shows the new one.' : '';
+  const recordOnly = onRecord ? '' : ' A record only — no email or automatic step runs from it.';
+  await postPortalNote(leadId, `${rec.kind === 'waived' ? '🆓 Consultation fee waived' : '💳 Consultation fee recorded as paid'} — ${escHtmlNote(cp.describe(rec))}.${before ? ` Replaces: ${escHtmlNote(cp.describe(before))}.` : ''}${recordOnly}${agreementLine}${lines.length ? ' ' + escHtmlNote(lines.join(' ')) : ''}`);
+  const head = rec.kind === 'waived'
+    ? 'Recorded — the consultation fee is waived.'
+    : `Recorded — ${cp.KINDS[rec.kind]} ${money(rec.amountCents)} received ${rec.on}.${before ? ' The earlier record was replaced.' : ''}${hstCents > 0 ? ` The consultation agreement states ${money(rec.amountCents + hstCents)} incl. HST.` : ''}`;
+  return {
+    ok: true,
+    message: `${head}${agreementLine}${lines.length ? ' ' + lines.join(' ') : ''}`,
+    consultPayment: rec,
+    ...(pkg ? { package: pkg.status } : {}),
+  };
+}
+
 /**
  * Write the booking staff typed with the fee onto the lead (2026-10-16): Booked,
  * the time, the consultant, in person / video / phone, the length — what the
@@ -2164,14 +2240,16 @@ async function createDirectClient(payload = {}) {
  * consultation option (the agreement's duration line), keeping whatever the
  * booking page stored there (an open invoice id stays findable).
  * Video: the meeting is created the way online bookings create it (the client
- * and the consultant get its invite) — once per time and consultant: a re-save
- * of the same booking reuses it.
+ * and the consultant get its invite). It is stamped with what it was made for
+ * (time, consultant, length) and reused only for exactly that; any other video
+ * meeting on the lead is cleared from it when the booking changes (staff are told
+ * to delete it), so a stale or deleted link is never emailed (review 2026-10-16).
  * NO Square appointment: staff keep the Square calendar themselves (the app never
  * sees a booking made in Square), so writing one here would double it.
  * @returns {Promise<{ overrides: object, meetingFailed?: true }>} the values just written,
  *   handed to the package (a Monday re-read may not show them yet)
  */
-async function writeRecordedBooking(leadId, lead, booking, staffName, lines) {
+async function writeRecordedBooking(leadId, lead, booking, staffName, lines, { noMeeting = false } = {}) {
   const s = (v) => String(v == null ? '' : v).trim();
   const { CONSULTANTS, consultOptionsFor } = require('../../config/consultantRouting');
   const reg = Object.values(CONSULTANTS).find((c) => c.name === booking.consultant);
@@ -2179,39 +2257,62 @@ async function writeRecordedBooking(leadId, lead, booking, staffName, lines) {
   let raw = {};
   try { raw = JSON.parse(s(lead.consultOption)); } catch (_) { raw = {}; }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
-  const consultOption = JSON.stringify({
-    ...raw, durationMin: booking.durationMin,
+  const want = { slot: booking.slot, consultant: booking.consultant, durationMin: booking.durationMin };
+  const mf = raw.meetingFor && typeof raw.meetingFor === 'object' ? raw.meetingFor : null;
+  const hadMeeting = s(lead.zoomMeetingId);
+  const reuse = booking.meetingType === 'Virtual' && hadMeeting && s(lead.meetingLink) && s(lead.meetingType) === 'Virtual'
+    && mf && mf.slot === want.slot && mf.consultant === want.consultant && Number(mf.durationMin) === want.durationMin;
+  const { meetingFor, ...rawRest } = raw;
+  const optFields = {
+    ...rawRest, durationMin: booking.durationMin,
     ...(Number.isFinite(opt.feeCents) ? { feeCents: opt.feeCents } : {}),
     ...(opt.variationId ? { variationId: opt.variationId } : {}),
     consultant: booking.consultant, bookedByStaff: true,
-  });
+    ...(reuse ? { meetingFor } : {}),
+  };
   const fields = {
     bookingStatus: 'Booked', bookedSlot: booking.slot, meetingType: booking.meetingType,
-    assignedConsultant: booking.consultant, consultationHeld: booking.date, consultOption,
+    assignedConsultant: booking.consultant, consultationHeld: booking.date, consultOption: JSON.stringify(optFields),
     ...(s(lead.bookedBy) ? {} : { bookedBy: staffName }),
   };
-  await leadService.updateLead(leadId, fields);
-  const overrides = { ...fields };
-  const hadMeeting = s(lead.zoomMeetingId);
-  if (booking.meetingType === 'Virtual') {
-    const same = hadMeeting && s(lead.meetingLink) && s(lead.bookedSlot) === booking.slot && s(lead.assignedConsultant) === booking.consultant;
-    if (same) overrides.meetingLink = s(lead.meetingLink);
-    else {
-      try {
-        const meeting = await require('./meetingService').createMeeting({ ...lead, ...fields }, booking.slot, booking.durationMin);
-        const label = meeting.provider === 'teams' ? 'Microsoft Teams' : 'Zoom';
-        await leadService.updateLead(leadId, { zoomMeetingId: meeting.meetingId, meetingLink: { url: meeting.joinUrl, text: `Join (${label})` } });
-        overrides.meetingLink = meeting.joinUrl; overrides.zoomMeetingId = meeting.meetingId;
-        lines.push(`The ${meeting.provider === 'teams' ? 'Teams' : 'video'} meeting was created — the client and ${booking.consultant} get its invite.`);
-        if (hadMeeting) lines.push(`An earlier video meeting (for ${s(lead.bookedSlot) || 'an earlier time'}) still exists — delete it from the meeting organiser's calendar so the client is not confused.`);
-      } catch (err) {
-        lines.push(`⚠ Booked, but the video meeting could not be created (${err.message}) — the package was NOT emailed. Save the record again to retry, or choose in person or phone.`);
-        return { overrides, meetingFailed: true };
-      }
-    }
-  } else if (hadMeeting && s(lead.meetingType) === 'Virtual') {
-    lines.push(`An earlier video meeting (for ${s(lead.bookedSlot) || 'an earlier time'}) still exists — delete it from the meeting organiser's calendar so the client is not confused.`);
+  // A video meeting that is not for exactly this booking is taken off the lead in the
+  // same write — the reply names it so staff can delete it from the calendar.
+  const dropMeeting = hadMeeting && !reuse;
+  await leadService.updateLead(leadId, { ...fields, ...(dropMeeting ? { zoomMeetingId: '', meetingLink: '' } : {}) },
+    dropMeeting ? { clearKeys: ['zoomMeetingId', 'meetingLink'] } : undefined);
+  const overrides = { ...fields, ...(dropMeeting ? { zoomMeetingId: '', meetingLink: '' } : {}) };
+  if (dropMeeting) lines.push(`An earlier video meeting (for ${s(lead.bookedSlot) || 'an earlier time'}) is no longer used — delete it from the meeting organiser's calendar so the client is not confused.`);
+  if (booking.meetingType !== 'Virtual') return { overrides };
+  if (reuse) { overrides.meetingLink = s(lead.meetingLink); overrides.zoomMeetingId = hadMeeting; return { overrides }; }
+  if (noMeeting) {
+    lines.push('No Teams meeting was created: this person is on the Not Wanted list.');
+    return { overrides, meetingFailed: true };
   }
+  let meeting;
+  try {
+    meeting = await require('./meetingService').createMeeting({ ...lead, ...fields }, booking.slot, booking.durationMin);
+  } catch (err) {
+    if (err.eventId) {
+      // The calendar event (and its invites) exists — only the Teams link is missing.
+      try { await leadService.updateLead(leadId, { zoomMeetingId: String(err.eventId) }); } catch (_) { /* named below */ }
+      lines.push(`⚠ A calendar invite went to the client and ${booking.consultant}, but it has no Teams link (${err.message}) — the package was NOT emailed. Delete that event from the meeting organiser's calendar (id ${err.eventId}) BEFORE saving again, or choose in person or phone.`);
+    } else {
+      lines.push(`⚠ Booked, but the video meeting could not be created (${err.message}) — no invite went out and the package was NOT emailed. Save the record again to retry, or choose in person or phone.`);
+    }
+    return { overrides, meetingFailed: true };
+  }
+  // Created: the invites are out. From here the meeting is NEVER reported as missing.
+  overrides.meetingLink = meeting.joinUrl; overrides.zoomMeetingId = meeting.meetingId;
+  const label = meeting.provider === 'teams' ? 'Microsoft Teams' : 'Zoom';
+  const store = { zoomMeetingId: meeting.meetingId, meetingLink: { url: meeting.joinUrl, text: `Join (${label})` },
+    consultOption: JSON.stringify({ ...optFields, meetingFor: want }) };
+  let stored = false;
+  for (let i = 0; i < 2 && !stored; i++) {
+    try { await leadService.updateLead(leadId, store); stored = true; }
+    catch (err) { if (i === 1) console.warn(`[Consultant] storing the new meeting failed for lead ${leadId}: ${err.message}`); }
+  }
+  lines.push(`The ${meeting.provider === 'teams' ? 'Teams' : 'video'} meeting was created — the client and ${booking.consultant} get its invite.`);
+  if (!stored) lines.push(`⚠ Its link could not be saved on the lead — do NOT save the record again (that would create a second meeting). Put this link in "Meeting Link" in Monday by hand: ${meeting.joinUrl}`);
   return { overrides };
 }
 
@@ -2228,8 +2329,9 @@ function recordPackageView(lead, ps) {
   const { CONSULTANTS, consultOptionsFor, routeConsultant } = require('../../config/consultantRouting');
   const app = cs.packageApplicable(lead);
   const slot = s(lead.bookedSlot), status = s(lead.bookingStatus);
-  // Only a BOOKED time is offered: a time left from an expired online hold may not be the real one.
-  const timeOk = status === 'Booked' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(slot);
+  // Only a BOOKED time still ahead is offered: a time left from an expired online hold
+  // may not be the real one, and a past one cannot be emailed (review 2026-10-16).
+  const timeOk = status === 'Booked' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(slot) && slot > require('./consultPaymentService').torontoNowWall();
   const pinned = Object.values(CONSULTANTS).find((c) => c.name === s(lead.assignedConsultant));
   let routed = null; try { routed = routeConsultant(lead); } catch (_) { routed = null; }
   const opt = cs.parseConsultOption(lead);
@@ -2238,14 +2340,17 @@ function recordPackageView(lead, ps) {
     enabled: true, applicable: app.ok, why: app.ok ? '' : app.why,
     alreadySent: cs.packageAlreadySent(lead), sentOn: s(lead.consultAgreementSent),
     record: (ps.record && ps.record.package) || '', recordNote: (ps.record && ps.record.packageNote) || '',
+    stored: ps.record ? { kind: ps.record.kind, amountCents: ps.record.amountCents, hstCents: ps.record.hstCents } : null,
     hstPct: require('./bookingService').consultHstPctForLead(lead),
     hasEmail: !!s(lead.email), hasAddress: !!s(lead.residentialAddress),
     heldOnline: (status === 'Slot Held' && Number.isFinite(heldUntil) && heldUntil > Date.now()) ? s(lead.slotHeldUntil) : '',
     consultants: Object.values(CONSULTANTS).map((c) => ({ name: c.name, options: consultOptionsFor(c).map((o) => ({ durationMin: o.durationMin, feeCents: o.feeCents })) })),
     prefill: {
       date: timeOk ? slot.slice(0, 10) : '', time: timeOk ? slot.slice(11) : '',
-      consultant: pinned ? pinned.name : ((routed && routed.name) || ''),
-      meetingType: ['In-person', 'Virtual', 'Phone Call'].includes(s(lead.meetingType)) ? s(lead.meetingType) : '',
+      // Only a consultant actually set on the lead — the routing guess is offered as a hint, never chosen for staff.
+      consultant: pinned ? pinned.name : '',
+      suggested: pinned ? '' : ((routed && routed.name) || ''),
+      meetingType: (timeOk && ['In-person', 'Virtual', 'Phone Call'].includes(s(lead.meetingType))) ? s(lead.meetingType) : '',
       durationMin: opt ? opt.durationMin : null,
     },
   };
@@ -2254,6 +2359,7 @@ function recordPackageView(lead, ps) {
 /** The one line the record's reply and note say about the consultation package. PURE. */
 function packageResultLine(pkg, { pkgChoice, pkgNote, kind, alreadySent, applicable, onRecord, hasTime }) {
   if (!onRecord) return '';
+  if (pkg && pkg.status === 'already' && pkg.reason === 'in-progress') return 'A send of the consultation package is in progress or was interrupted — check the notes in a few minutes before doing anything.';
   if (alreadySent || (pkg && pkg.status === 'already')) return 'The consultation package already went out to the client — it is not sent again.';
   if (applicable && !applicable.ok) {
     return ({
@@ -2264,14 +2370,16 @@ function packageResultLine(pkg, { pkgChoice, pkgNote, kind, alreadySent, applica
     })[applicable.why] || '';
   }
   if (pkgChoice === 'skip') {
-    return `The agreement and pre-consultation form were NOT emailed — ${kind === 'waived' ? 'you chose not to send them' : 'the client already has them'}${pkgNote ? ` (${pkgNote})` : ''}.`
+    return `The agreement and pre-consultation form were NOT emailed — you chose not to${pkgNote ? ` (${pkgNote})` : ''}.`
       + (pkg && pkg.retired ? ' The package that was waiting will not be sent.' : '')
       + (hasTime ? ' The booking reminders still go out.' : '');
   }
   if (!pkg) return '';
   switch (pkg.status) {
     case 'sent': return 'The consultation agreement (for e-signature) and the pre-consultation form have been emailed to the client.';
-    case 'held': return 'The package is waiting for the client\'s residential address (the agreement prints it) — add it on this page and it is emailed automatically.';
+    case 'held': return pkg.armed === false
+      ? 'The package is NOT sent: there is no residential address (the agreement prints it), and the automatic release could not be set up — add the address, then use "Review & send".'
+      : 'The package is waiting for the client\'s residential address (the agreement prints it) — add it on this page and it is emailed automatically.';
     case 'too-late': return 'The consultation time has passed, so the package was not emailed.';
     case 'not-ready':
       return pkg.reason === 'booking-failed' ? ''
@@ -2282,6 +2390,7 @@ function packageResultLine(pkg, { pkgChoice, pkgNote, kind, alreadySent, applica
       return pkg.reason === 'not-wanted-list' ? 'The package was NOT emailed: this person is on the Not Wanted list. Use "Review & send" only if you are sure.'
         : pkg.retired ? 'The consultation package that was waiting will not be sent.' : '';
     case 'disabled': return 'Automatic sending is switched off — use "Review & send" to email the package.';
+    case 'expired': return 'The consultation time has passed, so the package was not emailed.';
     case 'failed': return `The package could not be emailed (${pkg.reason || 'unknown error'}) — use "Review & send" once fixed.`;
     default: return '';
   }
@@ -2510,6 +2619,6 @@ module.exports = {
   createStaffLead, STAFF_LEAD_SOURCES,
   invalidateLeadsQueue,
   classifyLead, consultationDone, getConsultationsBoard,
-  _recordPackageView: recordPackageView,   // test seam
+  _recordPackageView: recordPackageView, _packageResultLine: packageResultLine,   // test seams
   conflictBody, normalizeLeadLocation,
 };

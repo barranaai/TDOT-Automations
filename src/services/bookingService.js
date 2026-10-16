@@ -527,6 +527,11 @@ async function releaseExpiredSlots() {
   for (const it of items) {
     const heldUntil = it.column_values?.[0]?.text;
     if (heldUntil && new Date(heldUntil).getTime() < Date.now()) {
+      // The list was read a moment ago: staff may have booked this client since
+      // (the fee recorded with a booking — 2026-10-16). Never turn a Booked lead
+      // back into Abandoned.
+      const now = await leadService.getLead(it.id).catch(() => null);
+      if (now && String(now.bookingStatus || '').trim() !== 'Slot Held') continue;
       // Retire any outstanding INVOICE first — unlike a stale payment link
       // (inert), an unpaid invoice is a visible document the client could
       // still pay for a slot that no longer exists. Ordered BEFORE the status
@@ -914,6 +919,15 @@ async function _confirmSlot(leadId, txnId, meetingType, amountCents) {
       _recentConfirm.set(leadId, { txnId: String(txnId), at: Date.now() });
       console.warn(`[Booking] Payment ${txnId}${paid} on lead ${leadId}, which was set to Booked by hand — recorded, staff told`);
       const slot = String(lead.bookedSlot || '').trim();
+      // Staff had already recorded this fee (cash / e-transfer / waived) — the client
+      // may have paid twice, and the record path already took care of the booking.
+      const staffRec = require('./consultPaymentService').parseConsultPayment(lead);
+      if (staffRec) {
+        await postBookingNote(leadId,
+          `🚨 <b>Possible DOUBLE PAYMENT on the consultation</b> — a Square payment <code>${escNote(txnId)}</code>${escNote(paid)} arrived online, but staff had already recorded this fee: ${escNote(require('./consultPaymentService').describe(staffRec))}. ` +
+          `If both were paid, refund one in Square${staffRec.kind === 'waived' ? ' (or remove the waiver record if the client chose to pay)' : ''}. The booking${slot ? ` (${escNote(slot)})` : ''} and anything the fee record already sent are unchanged.`);
+        return;
+      }
       await postBookingNote(leadId,
         `💳 <b>Consultation payment received on a booking set to "Booked" by hand</b>${escNote(paid)} — Square payment <code>${escNote(txnId)}</code>. ` +
         `Because the booking was set by hand, the app's automatic steps did NOT run for it: no meeting link, no Square appointment and no consultation package were created. ` +

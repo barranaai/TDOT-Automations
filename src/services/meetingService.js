@@ -153,8 +153,11 @@ async function createTeamsMeeting(lead, slotStr, duration = 30) {
   const joinUrl = res.data.onlineMeeting?.joinUrl || res.data.onlineMeetingUrl || '';
   if (!joinUrl) {
     // Event exists but carries no Teams link — surface loudly rather than
-    // emailing a confirmation with a dead "join" section.
-    throw new Error(`Teams event ${res.data.id} created but no join URL returned — check the organizer's Teams license`);
+    // emailing a confirmation with a dead "join" section. The id travels with the
+    // error: the event (and its invites) EXISTS, so a caller must not simply retry.
+    const err = new Error(`Teams event ${res.data.id} created but no join URL returned — check the organizer's Teams license`);
+    err.eventId = String(res.data.id || '');
+    throw err;
   }
   return { meetingId: String(res.data.id), joinUrl, password: '', provider: 'teams' };
 }
