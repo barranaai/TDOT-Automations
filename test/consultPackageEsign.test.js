@@ -147,7 +147,9 @@ test('sendConsultationPackage: agreement already signed → coherent no-action e
     assert.ok(!/Review and sign/.test(mails[0].html));
     // The whole email must be coherent — no leftover "both steps" framing.
     assert.match(mails[0].html, /complete the step below/, 'header asks for the one remaining step');
-    assert.match(mails[0].html, /pre-consultation form at least 24 hours/, '24h disclaimer only covers the form');
+    // the disclaimer covers only the form — "at least 24 hours before", or, under 24 hours to go
+    // (this fixture's slot is in the past), "before your consultation starts" (2026-10-16)
+    assert.match(mails[0].html, /complete the pre-consultation form (at least 24 hours|before your consultation starts)/, 'the disclaimer only covers the form');
     assert.ok(!/complete both steps/.test(mails[0].html), 'no contradictory both-steps warning');
     assert.ok(!writes.some((f) => f.consultAgreementSent), 'Sent not moved past Signed on a re-send');
   } finally { restore.forEach((x) => x()); }

@@ -37,7 +37,7 @@ function withFlag(v, fn) {
 // The default consultation is TOMORROW (a fixed date went into the past on
 // 2026-10-07 and every "sent" expectation read "expired").
 const TOMORROW_SLOT = `${new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10)} 14:30`;
-const lead = (extra = {}) => ({ id: String(extra.id || '77'), fullName: 'Walk In', email: 'w@i.co', residentialAddress: '1 Main St', bookingStatus: 'Booked', bookedSlot: TOMORROW_SLOT, meetingType: 'Virtual', squareBookingId: 'test-never-square', ...extra });
+const lead = (extra = {}) => ({ id: String(extra.id || '77'), fullName: 'Walk In', email: 'w@i.co', residentialAddress: '1 Main St', bookingStatus: 'Booked', bookedSlot: TOMORROW_SLOT, meetingType: 'Virtual', squareBookingId: 'test-never-square', leadToken: 'LEAD-test', ...extra });
 const squareBookings = require('../src/services/squareBookingsService');
 
 /** A harness around autoSend: counts sends, records notes and writes. */

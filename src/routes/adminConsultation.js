@@ -1331,6 +1331,16 @@ function hydrateConsultPayment(d){
    made by hand + email the agreement and form, yes or no. Waived starts with no
    answer; a NEW paid record starts on "yes"; a change keeps what was stored. */
 var CP_WHY={ outcome:'An outcome is already set — the consultation has happened, so no consultation package is sent.', 'case':'This client already has a case — no consultation package is sent.', retainer:'A retainer is already under way — no consultation package is sent.', direct:'A direct retainer client has no consultation — no consultation package is sent.' };
+/* ?record=1 (the lead page's "Record payment / Waived" button): open the box once, then
+   drop the flag from the address so a reload does not open it again. */
+var CP_OPEN_FROM_LINK=(function(){ try { return new URLSearchParams(window.location.search).get('record')==='1'; } catch(e){ return false; } })();
+function cpOpenFromLink(d){
+  if(!CP_OPEN_FROM_LINK) return; CP_OPEN_FROM_LINK=false;
+  try { var u=new URL(window.location.href); u.searchParams.delete('record'); history.replaceState(null,'',u.toString()); } catch(e){}
+  var cp=(d&&d.consultPayment)||{};
+  if(cp.paid==='app') return;   // paid online: nothing to record
+  openConsultPaymentModal(d,false);
+}
 /* The record box can send the package for this client (switch on, the package is for them, none sent). */
 function cpRecOn(d){ var o=(d&&d.consultPayment&&d.consultPayment.onRecord)||{}; return !!(o.enabled&&o.applicable&&!o.alreadySent); }
 function cpLooksTaxed(c,orc){
@@ -1695,7 +1705,7 @@ function load(){
   fetch('/api/consultation/'+encodeURIComponent(LEAD_ID),{headers:{'X-Api-Key':key}})
    .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); }
      if(r.status===404) throw new Error('Consultation not found'); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-   .then(function(d){ render(d); document.getElementById('loading').style.display='none'; document.getElementById('content').style.display='block'; })
+   .then(function(d){ render(d); document.getElementById('loading').style.display='none'; document.getElementById('content').style.display='block'; cpOpenFromLink(d); })
    .catch(function(e){ if(e.message==='x')return;
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });

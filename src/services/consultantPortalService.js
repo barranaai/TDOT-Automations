@@ -658,6 +658,11 @@ async function getLeadDetail(leadId) {
     consultant:    (lead.assignedConsultant || '').trim(),
     preConsultSubmitted: (lead.preConsultSubmitted || '') === 'Yes',
     clientMasterItemId:  lead.clientMasterItemId || '',
+    // "Record payment / Waived" from the lead page (review 2026-10-16): a client booked by
+    // hand is often never set to Booked — the box must be reachable before that.
+    paidOnline:   !!String(lead.squareConsultTxnId || '').trim(),
+    heldOnline:   (String(lead.bookingStatus || '').trim() === 'Slot Held' && Date.parse(String(lead.slotHeldUntil || '')) > Date.now()),
+    recordBooks:  require('./consultationService').packageOnRecordEnabled(lead.id),
     inviteMessage,
     inviteSent: (lead.bookingInvite || '') === 'Sent',
     inviteSentAt: lead.inviteSentAt || '',

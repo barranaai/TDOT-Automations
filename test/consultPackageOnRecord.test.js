@@ -44,7 +44,7 @@ const PAST   = `${day(-2)} 11:00`;
 const NOW_WALL = '2026-10-16 10:00';
 const TODAY_TO = cp.torontoToday();   // the Toronto day — the record refuses a received date in the future
 const rec = (over = {}) => JSON.stringify({ kind: 'cash', amountCents: 20000, hstCents: 2600, on: TODAY_TO, by: 'Melanie', at: new Date().toISOString(), verified: false, package: 'send', ...over });
-const baseLead = (over = {}) => ({ id: '901', fullName: 'Test Client', email: 't@c.co', phone: '4165550000', residentialAddress: '1 Main St', bookingStatus: 'Booked', bookedSlot: FUTURE, meetingType: 'In-person', assignedConsultant: 'Shafoli Kapur', consultPayment: rec(), ...over });
+const baseLead = (over = {}) => ({ id: '901', fullName: 'Test Client', email: 't@c.co', phone: '4165550000', residentialAddress: '1 Main St', bookingStatus: 'Booked', bookedSlot: FUTURE, meetingType: 'In-person', assignedConsultant: 'Shafoli Kapur', consultPayment: rec(), leadToken: 'LEAD-test', ...over });
 
 /* ── the shape: validateBooking / validateRecord ── */
 
@@ -980,5 +980,114 @@ test('R3 the card: a pending marker past the stale mark reads as interrupted, no
   try {
     const d = await portal.getConsultationDetail('901');
     assert.equal(d.consultAgreement.pending, false); assert.ok(d.consultAgreement.stalled, 'shown as interrupted');
+  } finally { restore.reverse().forEach((x) => x()); }
+}));
+
+/* ── the 2026-10-16 full review: the four fixes before switching on for everyone ── */
+
+function sendWorld(leadObj, { signed = false, tokenFail = false } = {}) {
+  const mails = [], agreementCalls = [], tokens = [];
+  const restore = [
+    stub(leadService, 'getLead', async () => ({ ...leadObj })),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+    stub(require('../src/services/consultAgreementService'), 'ensureConsultAgreementReady', async (id, opts) => { agreementCalls.push(opts); return { url: 'https://x/agreement' }; }),
+    stub(require('../src/services/consultAgreementService'), 'maybeSendConsultEsign', async () => (signed ? { alreadySigned: true } : null)),
+    stub(require('../src/services/leadTokenService'), 'ensureToken', async (id) => { tokens.push(id); if (tokenFail) throw new Error('Monday 500'); return 'LEAD-new'; }),
+    stub(microsoftMail, 'sendEmail', async (m) => { mails.push(m); }),
+  ];
+  return { mails, agreementCalls, tokens, done: () => restore.reverse().forEach((x) => x()) };
+}
+const torontoIn = (ms) => {
+  const p = {}; for (const x of new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(Date.now() + ms))) p[x.type] = x.value;
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+};
+
+test('F1 a booking less than 24 hours away: "before your consultation starts" — never "24 hours before … may be cancelled"', async () => {
+  consultationService._resetSentMemory();
+  for (const [ahead, signed, want, wantNot] of [
+    [5 * 3600e3, false, /Please complete both steps before your consultation starts\./, /24 hours|may be cancelled/],
+    [5 * 3600e3, true, /Please complete the pre-consultation form before your consultation starts\./, /24 hours|may be cancelled/],
+    [3 * 86400e3, false, /Please complete both steps at least 24 hours before your scheduled consultation\..*may be cancelled/, null],
+  ]) {
+    consultationService._resetSentMemory();
+    const w = sendWorld(baseLead({ bookedSlot: torontoIn(ahead) }), { signed });
+    try {
+      await consultationService.sendConsultationPackage('901');
+      assert.equal(w.mails.length, 1);
+      assert.match(w.mails[0].html, want);
+      if (wantNot) assert.ok(!wantNot.test(w.mails[0].html), `no impossible wording for ${ahead / 3600e3} h`);
+    } finally { w.done(); }
+  }
+});
+
+test('F4 a lead with no link code gets one BEFORE any link is built (form + agreement); if it cannot be made, nothing is emailed', async () => {
+  consultationService._resetSentMemory();
+  let w = sendWorld(baseLead({ leadToken: '' }));
+  try {
+    await consultationService.sendConsultationPackage('901');
+    assert.deepEqual(w.tokens, ['901']);
+    assert.match(w.mails[0].html, /\/consult\/901\?t=LEAD-new/);
+    assert.equal(w.agreementCalls[0].overrides.leadToken, 'LEAD-new', 'the agreement link uses it too');
+  } finally { w.done(); }
+  consultationService._resetSentMemory();
+  w = sendWorld(baseLead({ leadToken: 'LEAD-have' }));
+  try { await consultationService.sendConsultationPackage('901'); assert.deepEqual(w.tokens, [], 'an existing code is kept'); assert.match(w.mails[0].html, /t=LEAD-have/); } finally { w.done(); }
+  consultationService._resetSentMemory();
+  w = sendWorld(baseLead({ leadToken: '' }), { tokenFail: true });
+  try {
+    await assert.rejects(consultationService.sendConsultationPackage('901'), /Monday 500/);
+    assert.equal(w.mails.length, 0, 'never a dead link');
+  } finally { w.done(); }
+});
+
+test('F4 the form chase makes a missing link code, and skips (no dead link) when it cannot', async () => {
+  const C = require('../src/data/newLeadsBoard.json').columns;
+  const slot = torontoIn(5 * 3600e3);
+  const item = (id) => ({ id, name: `L${id}`, updates: [], column_values: [{ id: C.bookedSlot, text: slot }, { id: C.preConsultSubmitted, text: '' }, { id: C.consultPayment, text: '' }] });
+  for (const fail of [false, true]) {
+    const mails = [];
+    const restore = [
+      stub(mondayApi, 'query', async (q) => (/items_page_by_column_values/.test(q) ? { items_page_by_column_values: { items: [item('1')] } } : {})),
+      stub(leadService, 'getLead', async (id) => ({ id, name: 'L', email: 'l@x.co', leadToken: '' })),
+      stub(require('../src/services/leadTokenService'), 'ensureToken', async () => { if (fail) throw new Error('x'); return 'LEAD-made'; }),
+      stub(microsoftMail, 'sendEmail', async (m) => { mails.push(m.html); }),
+    ];
+    try {
+      await consultationService.sendPreConsultReminders();
+      if (fail) assert.equal(mails.length, 0);
+      else { assert.equal(mails.length, 1); assert.match(mails[0], /t=LEAD-made/); }
+    } finally { restore.reverse().forEach((x) => x()); }
+  }
+});
+
+test('F3 "Record payment" saves on one lead run strictly one at a time — even three at once', async () => {
+  let running = 0, max = 0;
+  const order = [];
+  const job = (n) => async () => { running++; max = Math.max(max, running); order.push(`start${n}`); await new Promise((r) => setTimeout(r, 5)); order.push(`end${n}`); running--; return n; };
+  const out = await Promise.all([1, 2, 3].map((n) => consultationService.withRecordSave('901', job(n))));
+  assert.deepEqual(out, [1, 2, 3]);
+  assert.equal(max, 1, 'never two at once');
+  assert.deepEqual(order, ['start1', 'end1', 'start2', 'end2', 'start3', 'end3']);
+});
+
+test('F2 the lead page offers "Record payment / Waived (and book)" for a client not booked in the app — never while paying online, once paid online, or with a case', withEnv(ON, async () => {
+  const html = require('../src/routes/adminLeads').buildLeadDetailHTML('901');
+  for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
+  assert.ok(html.includes('id="record-pay-row"') && html.includes('id="btn-record-pay"'));
+  assert.ok(html.includes("if(rp && !d.clientMasterItemId && !d.paidOnline && !d.heldOnline){"));
+  assert.ok(html.includes("rpb.href='/admin/consultation/'+encodeURIComponent(d.leadId)+'?record=1';"));
+  const page = require('../src/routes/adminConsultation').buildDetailHTML('901');
+  for (const m of page.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
+  assert.ok(page.includes('cpOpenFromLink(d); })'), 'the consultation page opens the box once from the link');
+  assert.ok(page.includes("if(cp.paid==='app') return;   // paid online: nothing to record"));
+  // the payload flags
+  const restore = [
+    stub(leadService, 'getLead', async () => ({ id: '901', fullName: 'T', email: 't@c.co', bookingStatus: 'Slot Held', slotHeldUntil: new Date(Date.now() + 3600e3).toISOString(), squareConsultTxnId: '', inviteMessage: 'x', bookingInvite: 'Sent' })),
+    stub(mondayApi, 'query', async () => ({})), stub(blacklistService, 'check', async () => ({ checked: true, hit: false, entries: [] })),
+  ];
+  try {
+    const d = await portal.getLeadDetail('901');
+    assert.deepEqual([d.paidOnline, d.heldOnline, d.recordBooks], [false, true, true]);
   } finally { restore.reverse().forEach((x) => x()); }
 }));

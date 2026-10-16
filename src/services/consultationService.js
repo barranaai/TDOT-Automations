@@ -67,7 +67,9 @@ async function waitRecordSave(leadId) {
 }
 async function withRecordSave(leadId, fn) {
   const key = String(leadId);
-  await waitRecordSave(key);
+  // Wait, then claim in the SAME tick — an awaited helper in between let two waiting
+  // saves both see the lock free and run together (review 2026-10-16: two Teams invites).
+  while (_recordSaves.has(key)) await _recordSaves.get(key).catch(() => {});
   const p = fn();
   _recordSaves.set(key, p);
   try { return await p; } finally { if (_recordSaves.get(key) === p) _recordSaves.delete(key); }
@@ -681,7 +683,7 @@ async function resendConsultationLinks(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) throw new Error('Lead not found.');
   if (!lead.email) throw new Error('No client email on file.');
-  const token   = lead.leadToken || '';
+  const token   = String(lead.leadToken || '').trim() || await require('./leadTokenService').ensureToken(leadId);
   const preUrl  = `${RENDER_URL}/consult/${lead.id}?t=${encodeURIComponent(token)}`;
   const joinUrl = (lead.meetingLink || '').trim();
   const e = escapeHtml;
@@ -760,6 +762,13 @@ async function _sendConsultationPackage(leadId, { overrides = {} } = {}) {
   // that Monday may not read back yet — the package must not go out without them.
   const lead = { ...stored, ...overrides };
   if (!lead.email) throw new Error('No client email on file — cannot send the consultation package.');
+  // A lead added straight in Monday may have no link code: the form and agreement
+  // links would open "Invalid or expired link" (review 2026-10-16). Made (and saved)
+  // first; if that fails, the package fails rather than carry dead links.
+  if (!String(lead.leadToken || '').trim()) {
+    lead.leadToken = await require('./leadTokenService').ensureToken(leadId);
+    overrides = { ...overrides, leadToken: lead.leadToken };
+  }
 
   const token = lead.leadToken || '';
   const preUrl = `${RENDER_URL}/consult/${lead.id}?t=${encodeURIComponent(token)}`;
@@ -776,6 +785,10 @@ async function _sendConsultationPackage(leadId, { overrides = {} } = {}) {
 
   const e = escapeHtml;
   const when = lead.bookedSlot || (lead.consultationHeld || '');
+  // Less than 24 hours to go (a same-day / next-day booking): "at least 24 hours before
+  // … may be cancelled" would ask the impossible and threaten a booking just made.
+  const startMs = require('./postConsultService').torontoSlotToUTC(String(lead.bookedSlot || '').trim());
+  const soon = Number.isFinite(startMs) && (startMs - Date.now()) < 24 * 3600 * 1000;
   const isInPerson = lead.meetingType === 'In-person';
   const joinUrl = (lead.meetingLink || '').trim();
   const whereBlock = isInPerson
@@ -823,7 +836,11 @@ async function _sendConsultationPackage(leadId, { overrides = {} } = {}) {
         : `<p style="margin:16px 0 2px">2. Review and sign your initial consultation agreement:</p>
       <p style="margin:2px 0">${btn(agreementUrl, 'Review consultation agreement')}</p>`}
       <div style="background:#fff4e5;border:1px solid #f0c98a;border-radius:8px;padding:12px 14px;margin:22px 0 6px;font-size:13.5px;color:#7a4b00">
-        ${alreadySigned
+        ${soon
+          ? (alreadySigned
+            ? `<b>Please complete the pre-consultation form before your consultation starts.</b>`
+            : `<b>Please complete both steps before your consultation starts.</b>`)
+          : alreadySigned
           ? `<b>Please complete the pre-consultation form at least 24 hours before your scheduled consultation.</b> If it is not completed in time, your consultation may be cancelled.`
           : `<b>Please complete both steps at least 24 hours before your scheduled consultation.</b> If they are not completed in time, your consultation may be cancelled.`}
       </div>
@@ -1491,7 +1508,10 @@ async function sendPreConsultReminders() {
     if (L.updates.some((b) => b.includes('📋 pre-consult chase sent'))) continue;
     try {
       const lead = await leadService.getLead(L.id);
-      const preUrl = `${RENDER_URL}/consult/${lead.id}?t=${encodeURIComponent(lead.leadToken || '')}`;
+      // No link code (a lead added straight in Monday): make one, or skip — never a dead link.
+      const tok = String(lead.leadToken || '').trim() || await require('./leadTokenService').ensureToken(L.id).catch(() => '');
+      if (!tok) { console.warn(`[Consult] pre-consult chase skipped for ${L.id}: no link code could be made`); continue; }
+      const preUrl = `${RENDER_URL}/consult/${lead.id}?t=${encodeURIComponent(tok)}`;
       if (lead.email) await microsoftMail.sendEmail({ to: lead.email, subject: 'Please complete your pre-consultation form',
         html: `<p>Hi ${escapeHtml((lead.name || 'there').split(' ')[0])}, please complete your pre-consultation form before your call:</p><p><a href="${preUrl}">${preUrl}</a></p>` });
       await mondayApi.query(`mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
