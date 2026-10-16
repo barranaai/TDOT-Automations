@@ -163,11 +163,13 @@ async function pruneStaleSubTypeRows({ caseRef, keepSubType, keepIds = null }) {
 // Front and Back both required") the upload stays on the old row and the new
 // row asks for the new version (reported as "changed"). A "Not Applicable" row
 // moves like an empty one (one row per document, never two): its decision is
-// KEPT when it is the same document for the same person ("never studied in
-// Canada" still holds), and CLEARED — exactly as the "Applies again" button
-// does — when the new Sub Type asks it of another role (a non-accompanying
-// spouse's police certificate was not needed; an accompanying one's is) or
-// words it differently; both are listed for staff, the cleared ones with the
+// KEPT only for the very same ask — same person in the same capacity (role and
+// whether its label says non-accompanying: a "Non-Accompanying Child" is not a
+// "Dependent Child"), the same
+// wording, and not optional before / required now — ("never studied in Canada"
+// still holds); otherwise it is CLEARED, exactly as the "Applies again" button
+// does (a non-accompanying spouse's police certificate was not needed; an
+// accompanying one's is). Both are listed for staff, the cleared ones with the
 // old reason. Anything unsure stays as it was.
 
 /** Kill switch: CHECKLIST_VARIANT_MIGRATE=0 / off / false / no → re-seeds behave as before. */
@@ -198,6 +200,7 @@ function sameRequirement(a, b) {
 // children share one block, so it cannot say which child is which.
 const SLOT_ALIAS = { NonAccompanyingSpouse: 'Spouse' };
 const slotOf = (role) => SLOT_ALIAS[role] || role;
+const NON_ACC = /non[\s-]?accompanying/i;   // a role label for a family member who does NOT come along
 const normText = (s) => String(s || '').trim().toLowerCase();
 const isOpenStatus = (s) => ['', 'missing'].includes(normText(s));   // as selectStaleRows reads "not uploaded"
 const isNaStatus = (s) => normText(s) === 'not applicable';
@@ -268,6 +271,8 @@ function planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, exis
   const present = existingKeys instanceof Set ? existingKeys
     : new Set(existingKeys || (rows || []).map((r) => String(r.uniqueKey || '').trim()).filter(Boolean));
   const planRoles = [...new Set((plan || []).map((p) => p.role))];
+  const curSchema = look(caseType, caseSubType);
+  const curRole = (role) => ((curSchema && curSchema.roles) || []).find((x) => x.role === role) || null;
 
   // The case's schema rows ("code:" intake, no Template relation), well-formed:
   // the key and the document code agree — anything else is left alone.
@@ -293,7 +298,8 @@ function planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, exis
     const open = isOpenStatus(r.status), na = isNaStatus(r.status);
     cands.push({ row: r, code, stale: s, ...parsed, slot: slotOf(parsed.role), open, na, rank: open ? 2 : na ? 1 : 0,
       rawNames: [r.name, ownerDoc && ownerDoc.name].filter(Boolean), names: [normName(r.name), normName(ownerDoc && ownerDoc.name)].filter(Boolean),
-      reqName: ownerDoc ? ownerDoc.name : (r.name || ''), ownerDocName: ownerDoc ? ownerDoc.name : '' });
+      reqName: ownerDoc ? ownerDoc.name : (r.name || ''), ownerDocName: ownerDoc ? ownerDoc.name : '',
+      roleLabel: (ownerRole && ownerRole.label) || '', optional: !!(ownerDoc && ownerDoc.optional) });
   }
 
   // The current variant's rows not on the board yet.
@@ -303,7 +309,10 @@ function planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, exis
     if (present.has(uniqueKey)) continue;
     const parsed = parseCodeTail(String(p.documentCode || '').slice(mine.length), [p.role]);
     if (!parsed) continue;
-    targets.push({ row: p, uniqueKey, role: p.role, slot: slotOf(p.role), index: Number(p.memberIndex) || parsed.index, docCode: parsed.docCode, name: normName(p.documentName), base: baseName(p.documentName) });
+    const tRole = curRole(p.role);
+    const tDoc = tRole && (tRole.documents || []).find((d) => d.code === parsed.docCode);
+    targets.push({ row: p, uniqueKey, role: p.role, slot: slotOf(p.role), index: Number(p.memberIndex) || parsed.index, docCode: parsed.docCode, name: normName(p.documentName), base: baseName(p.documentName),
+      roleLabel: (tRole && tRole.label) || '', optional: !!(tDoc && tDoc.optional) });
   }
 
   const used = new Set();
@@ -314,15 +323,20 @@ function planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, exis
     (a.rank - b.rank) || (Number(a.row.id) - Number(b.row.id)))[0];   // the one holding a file, then a Not Applicable one, then the oldest
   const take = (t, c, by) => {
     used.add(c.row.id); t.done = true; c.stale.moved = true; changed.delete(String(c.row.id));
-    // a Not Applicable decision holds for the same document of the same person; otherwise it is cleared
-    const naKeep = c.na && c.role === t.role && sameRequirement(c.reqName, t.row.documentName);
+    // a Not Applicable decision holds only for the very same ask: the same role
+    // in the same capacity (one label saying "Non-Accompanying" and the other
+    // not is another capacity; other label wording is not), the same wording (no bracket tolerance —
+    // "(optional …)" may be the very difference), not optional before and
+    // required now; otherwise it is cleared
+    const sameRole = c.role === t.role && NON_ACC.test(c.roleLabel) === NON_ACC.test(t.roleLabel);
+    const naKeep = c.na && sameRole && normName(c.reqName) === normName(t.row.documentName) && !(c.optional && !t.optional);
     const naClear = c.na && !naKeep;
     t.asks = (c.open || naClear) && !c.row.uploadDate;   // the row now on this document asks the client for it
     if (c.na) (naKeep ? naCarried : naCleared).push({ id: String(c.row.id), name: c.row.name || '', to: t.row.documentName, person: t.row.applicantType || '',
-      ...(naClear ? { reason: c.row.naReason || '', why: c.role !== t.role ? 'role' : 'wording' } : {}) });
+      ...(naClear ? { reason: c.row.naReason || '', why: !sameRole ? 'role' : 'wording' } : {}) });
     moves.push({
       id: String(c.row.id), name: c.row.name || '', status: c.row.status || '', by, ownerDocName: c.ownerDocName,
-      uploadDate: c.row.uploadDate || '', naClear, naReason: c.row.naReason || '', naWhy: c.role !== t.role ? 'role' : 'wording',
+      uploadDate: c.row.uploadDate || '', naClear, naReason: c.row.naReason || '', naWhy: !sameRole ? 'role' : 'wording',
       from: { uniqueKey: c.row.uniqueKey, documentCode: c.code, subType: c.row.subType || '', applicantType: c.row.applicantType || '', category: c.row.category || '' },
       to: { row: t.row, uniqueKey: t.uniqueKey },
     });
@@ -429,7 +443,7 @@ async function moveRow({ move, caseSubType, categoryLinks = {} }) {
     const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const was = (() => { try { return require('./documentNotApplicable').reasonOnly(move.naReason || ''); } catch (_) { return move.naReason || ''; } })();
     await mondayApi.query('mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }', { i: String(move.id),
-      b: `↩️ <b>Not Applicable cleared by the Sub Type change</b> — the Case Sub Type is now "${esc(caseSubType)}", which asks for this document${move.naWhy === 'role' ? ` of the ${esc(t.applicantType || 'member')}` : ` as "${esc(t.documentName)}"`}. It is back on the checklist as "${move.uploadDate ? 'Received' : 'Missing'}".${was ? ` The earlier reason was: "${esc(was)}".` : ''} Mark it Not Applicable again if it still does not apply.` })
+      b: `↩️ <b>Not Applicable cleared by the Sub Type change</b> — the Case Sub Type is now "${esc(caseSubType)}", which asks for this document${move.naWhy === 'role' ? ` of the ${esc(t.applicantType || 'member')} in a different capacity` : ` as "${esc(t.documentName)}"`}. It is back on the checklist as "${move.uploadDate ? 'Received' : 'Missing'}".${was ? ` The earlier reason was: "${esc(was)}".` : ''} Mark it Not Applicable again if it still does not apply.` })
       .catch((err) => console.warn(`[ExecSeeder] note on row ${move.id} failed: ${err.message}`));
   }
 }

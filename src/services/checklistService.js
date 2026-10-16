@@ -298,13 +298,13 @@ function variantCheckNote({ caseRef, subType, migrated = 0, migratedFrom = [], c
   const was = (r) => { let t = r || ''; try { t = require('./documentNotApplicable').reasonOnly(t); } catch (_) { /* as stored */ } return t ? ` — earlier reason: "${esc(t)}"` : ''; };
   const from = migratedFrom.length ? `"${esc(migratedFrom.join(', '))}"` : 'the old Sub Type';
   const n = changed.length + naCleared.length + naCarried.length;
-  const parts = [`🔎 <b>Checklist moved to Sub Type "${esc(subType)}" — ${n} document(s) to check</b> (${esc(caseRef)}).${migrated ? ` ${migrated} row(s) of ${from} were moved over to the same documents (uploads, reviews and notes kept).` : ''} Please check:`];
+  const parts = [`🔎 <b>Checklist moved to Sub Type "${esc(subType)}" — ${n} document(s) to check</b> (${esc(caseRef)}).${migrated ? ` ${migrated} row(s) of ${from} were moved over to the new Sub Type's documents (uploads and notes kept${naCleared.length ? '; the Not Applicable decisions listed below were cleared' : ''}).` : ''} Please check:`];
   if (changed.length) {
     parts.push(`<br><b>Asked for differently now</b> — the client's upload stays on its old row and a new row asks for the new version. If the upload already covers it, mark the new row Not Applicable with a note saying so; otherwise the client uploads the new version: ` +
       changed.map((c) => `"${esc(c.from || c.name)}" → "${esc(c.to)}"${who(c.person)}`).join('; ') + '.');
   }
   if (naCleared.length) {
-    parts.push(`<br><b>Not Applicable cleared</b> — the new Sub Type asks for these ${naCleared.some((c) => c.why === 'role') ? 'of a different role (e.g. an accompanying spouse) or ' : ''}in different words, so they are on the checklist again. Mark one Not Applicable again if it still does not apply: ` +
+    parts.push(`<br><b>Not Applicable cleared</b> — the new Sub Type asks for these ${naCleared.some((c) => c.why === 'role') ? 'of a person in a different capacity (e.g. accompanying instead of non-accompanying) or ' : ''}in different words or as required instead of optional, so they are on the checklist again. Mark one Not Applicable again if it still does not apply: ` +
       naCleared.map((c) => `"${esc(c.to)}"${who(c.person)}${was(c.reason)}`).join('; ') + '.');
   }
   if (naCarried.length) {

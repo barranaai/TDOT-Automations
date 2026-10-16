@@ -82,7 +82,7 @@ async function onReseedButton(itemId) {
       `Schema: ${esc(result.caseType)}${result.subType ? ` / ${esc(result.subType)}` : ''}<br>` +
       `Family members detected: ${esc(members)}<br>` +
       `<b>${result.created} new row(s) added</b> · ${result.skipped} already existed (untouched) · ${result.failed} failed` +
-      (result.migrated ? `<br>${result.migrated} row(s) moved over from Sub Type "${esc((result.migratedFrom || []).join(', ') || 'the old one')}" to "${esc(result.subType || '')}" — the same documents, their uploads and status kept` : '') +
+      (result.migrated ? `<br>${result.migrated} row(s) moved over from Sub Type "${esc((result.migratedFrom || []).join(', ') || 'the old one')}" to "${esc(result.subType || '')}" — uploads and notes kept${(result.naCleared || []).length ? `; ${result.naCleared.length} Not Applicable decision(s) cleared` : ''}` : '') +
       (result.pruned ? `<br>${result.pruned} empty row(s) of another Sub Type removed` : '') +
       (toCheck ? `<br>⚠ ${toCheck} document(s) of the old Sub Type need a check — they are listed in the separate "Checklist moved" note` : ''));
     console.log(`[Reseed] ${caseRef}: created ${result.created}, skipped ${result.skipped}, failed ${result.failed}, moved ${result.migrated || 0}, pruned ${result.pruned || 0}`);

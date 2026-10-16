@@ -497,9 +497,9 @@ test('the "Checklist moved" note: names each document to check, the upload ones 
     naCleared: [{ to: 'Police clearance certificates (PCC)', person: 'Spouse', why: 'role', reason: require('../src/services/documentNotApplicable').reasonText('Non-accompanying, not needed', 'Gauri') }],
     naCarried: [{ to: 'Sibling- Proof of living in Canada (if applicable)', person: 'Principal Applicant' }] });
   assert.match(n, /Checklist moved to Sub Type "CEC Accompanying Spouse &amp; Child" — 3 document\(s\) to check/);
-  assert.match(n, /15 row\(s\) of "CEC Single Applicant" were moved over to the same documents \(uploads, reviews and notes kept\)\. Please check:/);
+  assert.match(n, /15 row\(s\) of "CEC Single Applicant" were moved over to the new Sub Type's documents \(uploads and notes kept; the Not Applicable decisions listed below were cleared\)\. Please check:/);
   assert.match(n, /Asked for differently now<\/b> — the client's upload stays on its old row and a new row asks for the new version\. If the upload already covers it, mark the new row Not Applicable with a note saying so; otherwise the client uploads the new version: "Photo" → "Photo - Front and Back both required" \(Principal Applicant\)\./);
-  assert.match(n, /Not Applicable cleared<\/b> — the new Sub Type asks for these of a different role \(e\.g\. an accompanying spouse\) or in different words, so they are on the checklist again\. Mark one Not Applicable again if it still does not apply: "Police clearance certificates \(PCC\)" \(Spouse\) — earlier reason: "Non-accompanying, not needed"/);
+  assert.match(n, /Not Applicable cleared<\/b> — the new Sub Type asks for these of a person in a different capacity \(e\.g\. accompanying instead of non-accompanying\) or in different words or as required instead of optional, so they are on the checklist again\. Mark one Not Applicable again if it still does not apply: "Police clearance certificates \(PCC\)" \(Spouse\) — earlier reason: "Non-accompanying, not needed"/);
   assert.match(n, /Still Not Applicable<\/b> — the same document for the same person, so the decision was kept; check it still holds under the new Sub Type: "Sibling- Proof of living in Canada \(if applicable\)" \(Principal Applicant\)\./);
   const only = variantCheckNote({ caseRef: REF, subType: ACC, changed: [{ from: 'A', to: 'B' }] });
   assert.doesNotMatch(only, /Not Applicable cleared|Still Not Applicable|were moved over/, 'nothing moved: never says so');
@@ -521,8 +521,30 @@ test('clearing a Not Applicable on the move is the "Applies again" write: back t
     const ph = fb.calls.moves.find((m) => m.id === photo.id).cols;
     assert.deepEqual(ph.color_mm0zwgvr, { label: 'Received' }); assert.deepEqual(ph.color_mm0z796e, { label: 'Yes' });
     const note = fb.calls.updates.find((u) => u.i === pcc.id);
-    assert.match(note.b, /Not Applicable cleared by the Sub Type change<\/b> — the Case Sub Type is now "CEC Accompanying Spouse &amp; Child", which asks for this document of the Spouse\. It is back on the checklist as "Missing"\. The earlier reason was: "Non-accompanying, not needed"\./);
+    assert.match(note.b, /Not Applicable cleared by the Sub Type change<\/b> — the Case Sub Type is now "CEC Accompanying Spouse &amp; Child", which asks for this document of the Spouse in a different capacity\. It is back on the checklist as "Missing"\. The earlier reason was: "Non-accompanying, not needed"\./);
     // the other moved rows keep their status
     assert.ok(fb.calls.moves.filter((m) => ![pcc.id, photo.id].includes(m.id)).every((m) => !('color_mm0zwgvr' in m.cols)));
   } finally { fb.restore(); }
+});
+
+test('a Not Applicable decision is kept only for the very same ask: a non-accompanying child who now comes along, or an optional document now required, gets it cleared', () => {
+  // CEC (Profile Recreation): the same role key "DependentChild" is the "Non-Accompanying Child" in Single, the "Dependent Child" in Accompanying
+  const CT3 = 'Canadian Experience Class (Profile Recreation+ITA+Submission)';
+  const child = { role: 'DependentChild', flags: {}, memberKey: 'child-1' };
+  const rows = boardRowsFor(CT3, SINGLE, [PA, child], { status: (p) => (p.role === 'DependentChild' ? 'Not Applicable' : 'Received') });
+  const kidRows = rows.filter((r) => r.status === 'Not Applicable');
+  assert.ok(kidRows.length > 0);
+  const r = seeder.planVariantMigration({ rows, plan: planFor(CT3, ACC, [PA, child]), caseRef: REF, caseType: CT3, caseSubType: ACC });
+  const movedKids = r.moves.filter((m) => kidRows.some((k) => k.id === m.id));
+  assert.ok(movedKids.length > 0 && movedKids.every((m) => m.naClear), 'the accompanying child is asked for them');
+  assert.ok(r.naCleared.every((x) => x.why === 'role')); assert.deepEqual(r.naCarried, []);
+  // Visitor Visa: "Financial Documents (optional — case-manager decision)" → the required "Financial Documents"
+  const VV = 'Visitor Visa';
+  const vv = boardRowsFor(VV, 'Spousal Sponsorship in Process', [PA], { status: (p) => (/-PRINCIPALAPPLICANT-FINDOCS-/.test(p.documentCode) ? 'Not Applicable' : 'Received') });
+  const fin = vv.find((x) => x.status === 'Not Applicable');
+  const v = seeder.planVariantMigration({ rows: vv, plan: planFor(VV, 'Spouse', [PA]), caseRef: REF, caseType: VV, caseSubType: 'Spouse' });
+  const fm = v.moves.find((m) => m.id === fin.id);
+  assert.ok(fm && fm.naClear, 'optional before, required now: cleared');
+  // label wording that does not change the capacity keeps the decision (AAIP "Dependent Spouse" / "Spouse / Common-Law Partner")
+  assert.equal(require('../src/services/executionSeederService').sameRequirement('Financial Documents', 'Financial Documents'), true);
 });
