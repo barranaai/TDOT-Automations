@@ -80,8 +80,10 @@ async function onReseedButton(itemId) {
       `✅ <b>Checklist re-seed complete</b> for ${esc(caseRef)}<br>` +
       `Schema: ${esc(result.caseType)}${result.subType ? ` / ${esc(result.subType)}` : ''}<br>` +
       `Family members detected: ${esc(members)}<br>` +
-      `<b>${result.created} new row(s) added</b> · ${result.skipped} already existed (untouched) · ${result.failed} failed`);
-    console.log(`[Reseed] ${caseRef}: created ${result.created}, skipped ${result.skipped}, failed ${result.failed}`);
+      `<b>${result.created} new row(s) added</b> · ${result.skipped} already existed (untouched) · ${result.failed} failed` +
+      (result.migrated ? `<br>${result.migrated} row(s) moved over from Sub Type "${esc((result.migratedFrom || []).join(', ') || 'the old one')}" to "${esc(result.subType || '')}" — the same documents, their uploads and status kept` : '') +
+      (result.pruned ? `<br>${result.pruned} empty row(s) of another Sub Type removed` : ''));
+    console.log(`[Reseed] ${caseRef}: created ${result.created}, skipped ${result.skipped}, failed ${result.failed}, moved ${result.migrated || 0}, pruned ${result.pruned || 0}`);
   } catch (err) {
     await setButton(itemId, LABEL_FAILED).catch(() => {});
     const hint = err.code === 'NO_SCHEMA'

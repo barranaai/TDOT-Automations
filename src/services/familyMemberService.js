@@ -176,8 +176,10 @@ const io = {
    * from his page the moment the list has two members.
    */
   carryOver: (args) => require('./questionnaireCarryOverService').carryEmbeddedAnswers(args),
-  /** The re-seed, fed the composition this call holds — never a fresh board search. */
-  reseed: (caseRef, composition) => require('./checklistService').reseedByCaseRef(caseRef, { prune: false, composition }),
+  /** The re-seed, fed the composition this call holds — never a fresh board search. Never prunes. */
+  reseed: (caseRef, composition, opts = {}) => require('./checklistService').reseedByCaseRef(caseRef, { prune: false, composition, staleOpen: opts.staleOpen || 'keep' }),
+  /** Rows of another Sub Type are moved onto the current one by the re-seed (CHECKLIST_VARIANT_MIGRATE). */
+  migrateOn: () => require('./executionSeederService').variantMigrateEnabled(),
   postNote: async (itemId, body) => {
     await require('./mondayApi').query('mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }', { i: String(itemId), b: body });
   },
@@ -355,15 +357,27 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
       // Re-seed button keeps them too); OPEN ones mean a second checklist.
       const { stale, current } = shape ? splitByVariant(shape.schema, state) : { stale: [], current: 0 };
       const staleOpen = stale.filter((r) => ['', 'missing'].includes(norm(r.status)));   // as the Re-seed clean-up (selectStaleRows) reads "not uploaded"
+      // Rows of another Sub Type of the SAME Case Type: the re-seed moves each
+      // one that is the same document for the same person onto the current Sub
+      // Type (uploads kept) — and writes nothing at all when an EMPTY old row
+      // would be left over (only the Re-seed button removes rows).
+      let moveFrom = null;
       if (!shape) result.reseed = { unknown: true };
       else if (shape.templateRows > 0) result.reseed = { manual: 'template' };
       else if (stale.length && (current === 0 || staleOpen.length > 0)) {
         const sameType = stale.every((r) => r.owner && norm(r.owner.caseType) === norm(state.caseType));
-        result.reseed = sameType
-          ? { manual: 'subtype', from: [...new Set(stale.map((r) => r.owner.subType || r.subType))].join(', ') || '(another variant)', to: state.subType }
-          : { manual: 'casetype', from: [...new Set(stale.map((r) => (r.owner ? r.owner.caseType : '')).filter(Boolean))].join(', ') || '(another case type)', to: state.caseType };
-      } else {
-        try { const r = await io.reseed(caseRef, composition); result.reseed = { created: r.created, skipped: r.skipped, failed: r.failed, pruned: r.pruned || 0 }; }
+        const subtype = { manual: 'subtype', from: [...new Set(stale.map((r) => (r.owner && r.owner.subType) || r.subType))].join(', ') || '(another variant)', to: state.subType };
+        if (!sameType) result.reseed = { manual: 'casetype', from: [...new Set(stale.map((r) => (r.owner ? r.owner.caseType : '')).filter(Boolean))].join(', ') || '(another case type)', to: state.caseType };
+        else if (!io.migrateOn()) result.reseed = subtype;
+        else moveFrom = subtype;
+      }
+      if (!result.reseed) {
+        try {
+          const r = await io.reseed(caseRef, composition, { staleOpen: moveFrom ? 'refuse' : 'keep' });
+          result.reseed = r.refused
+            ? { ...moveFrom, refused: r.refused, leftover: (r.leftover || []).length }
+            : { created: r.created, skipped: r.skipped, failed: r.failed, pruned: r.pruned || 0, ...(r.migrated ? { migrated: r.migrated, from: (r.migratedFrom || []).join(', ') || (moveFrom && moveFrom.from) || '' } : {}) };
+        }
         catch (err) { result.reseed = err.code === 'NO_SCHEMA' ? { manual: 'no-schema' } : { error: err.message }; }
         // the hint only when the checklist's schema has no place for this member at all
         if (result.reseed.created === 0) {
@@ -421,13 +435,14 @@ function note({ caseRef, boardType, rowName, who, manifestState, reseed, stage, 
           : 'questionnaire section added';
   const d = !reseed ? 'checklist not re-seeded'
           : reseed.manual === 'template' ? 'no document rows added — this case\'s checklist was built from the Template board (it uses different document keys, so an automatic re-seed would lay a second checklist beside it); check that the member\'s documents are on the checklist and add any missing ones by hand'
+          : reseed.manual === 'subtype' && reseed.refused === 'stale-open' ? `no document rows added — the checklist was built for Sub Type "${esc(reseed.from)}" and the case now says "${esc(reseed.to)}", and ${reseed.leftover} empty row(s) of the old Sub Type have no match in the new one; press Re-seed Checklist on the case (it moves the old rows that match over, keeping their uploads, removes the empty ones that do not, and adds this member\'s)`
           : reseed.manual === 'subtype' ? `no document rows added — the checklist was built for Sub Type "${esc(reseed.from)}" and the case now says "${esc(reseed.to)}"; press Re-seed Checklist on the case (it replaces the old variant\'s empty rows and adds this member\'s)`
           : reseed.manual === 'casetype' ? `no document rows added — the checklist was built for Case Type "${esc(reseed.from)}" and the case now says "${esc(reseed.to || 'nothing')}" (an automatic re-seed would lay a second checklist beside it); the member\'s Family Members row and questionnaire section are in place, so do not add them again; if the Case Type is wrong, correct it and press Re-seed Checklist on the case (it adds this member\'s documents), otherwise ask an admin to rebuild the checklist`
           : reseed.manual === 'no-schema' ? 'no document rows added — this case type has no automatic checklist; add the member\'s documents by hand'
           : reseed.unknown ? 'the checklist state could not be read — press Re-seed Checklist on the case if its checklist exists'
           : reseed.deferred ? `no document rows yet — the checklist has not been created (the case is at "${esc(stage || 'Not Started')}"); they come with the checklist at Document Collection`
           : reseed.error ? `checklist re-seed FAILED (${esc(reseed.error)}) — press Re-seed Checklist on the case`
-          : `checklist re-seeded (rows only added, never removed): ${reseed.created} new document row(s), ${reseed.skipped} existing left as they were${reseed.failed ? `, ${reseed.failed} failed — press Re-seed Checklist` : ''}`;
+          : `checklist re-seeded (rows only added, never removed): ${reseed.created} new document row(s)${reseed.migrated ? `, ${reseed.migrated} moved over from Sub Type "${esc(reseed.from || 'the old one')}" (uploads kept)` : ''}, ${reseed.skipped} existing left as they were${reseed.failed ? `, ${reseed.failed} failed — press Re-seed Checklist` : ''}`;
   return `👪 <b>Family member added</b> — ${esc(boardType)} "${esc(rowName)}" — by ${esc(who)}, ${esc(require('../utils/torontoTime').torontoTime(Date.now()))} (Toronto). ${manifestState === 'completed' ? '' : 'Family Members row created; '}${q}; ${d}.${esc(carrySentence(carry))}${hint ? ' ' + esc(hint) : ''} (${esc(caseRef)})`;
 }
 

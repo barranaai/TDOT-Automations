@@ -73,7 +73,7 @@ const ACC = 'CEC Accompanying Spouse & Child', CEC_EE = 'Canadian Experience Cla
 const { slugUpper } = require('../src/services/seedPlanner')._internal;
 const codes = (caseType, subType, n, status = '') => Array.from({ length: n }, (_, i) => ({ code: `${slugUpper(caseType)}-${slugUpper(subType)}-PRINCIPAL-APPLICANT-DOC${i}-001`, subType, status }));
 const shapeOf = (schema, templateRows = 0) => ({ rows: schema.length + templateRows, templateRows, schema });
-function harness({ boardRows = [], manifest = [{ key: 'primary', type: 'Principal Applicant' }], manifestFails = false, reseed = { created: 11, skipped: 11, failed: 0, pruned: 0 }, reseedFails = false, reseedError = null, rowFails = false, manifestAddFails = false, caseState = { stage: 'Document Collection Started', payment: 'Paid', checklistApplied: 'Yes', caseType: CEC_EE, subType: ACC }, stateFails = false, boardLags = false, now = 1_000_000, shape = shapeOf(codes(CEC_EE, ACC, 11)), shapeFails = false, createManifestReturns = null, reseedDelayMs = 0, carry = { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, pct: 0, source: '', target: '', written: false, skipped: 'nothing' }, carryFails = false, carryRefuses = false } = {}) {
+function harness({ boardRows = [], manifest = [{ key: 'primary', type: 'Principal Applicant' }], manifestFails = false, reseed = { created: 11, skipped: 11, failed: 0, pruned: 0 }, reseedFails = false, reseedError = null, rowFails = false, manifestAddFails = false, caseState = { stage: 'Document Collection Started', payment: 'Paid', checklistApplied: 'Yes', caseType: CEC_EE, subType: ACC }, stateFails = false, boardLags = false, now = 1_000_000, shape = shapeOf(codes(CEC_EE, ACC, 11)), shapeFails = false, createManifestReturns = null, reseedDelayMs = 0, carry = { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, pct: 0, source: '', target: '', written: false, skipped: 'nothing' }, carryFails = false, carryRefuses = false, migrateOn = true } = {}) {
   const calls = { seq: [], rows: [], manifestAdds: [], manifestCreates: [], reseeds: [], notes: [], carries: [], stateReads: 0, maxConcurrentReseeds: 0 };
   let liveReseeds = 0;
   let list = manifest ? manifest.map((x) => ({ ...x })) : null;   // the questionnaire member list, as the real one: adds are remembered
@@ -108,14 +108,16 @@ function harness({ boardRows = [], manifest = [{ key: 'primary', type: 'Principa
     checklistShape: async () => { if (shapeFails) throw new Error('Monday 503'); return shape; },
     createRow: async (a) => { calls.seq.push('row'); if (rowFails) throw new Error('Monday 503'); calls.rows.push(a); rows.push({ boardType: a.row.memberType, memberKey: a.row.memberKey, name: a.row.name }); return 'row-' + calls.rows.length; },
     caseState: async () => { calls.stateReads++; if (stateFails) throw new Error('Monday 503'); return caseState; },
-    reseed: async (ref, composition) => {
-      calls.seq.push('reseed'); calls.reseeds.push({ ref, composition });
+    migrateOn: () => migrateOn,
+    // reseed: the result, or a function of the options (staleOpen) — as the real one, which refuses on leftovers
+    reseed: async (ref, composition, opts = {}) => {
+      calls.seq.push('reseed'); calls.reseeds.push({ ref, composition, opts });
       liveReseeds++; calls.maxConcurrentReseeds = Math.max(calls.maxConcurrentReseeds, liveReseeds);
       try {
         if (reseedDelayMs) await new Promise((r) => setTimeout(r, reseedDelayMs));
         if (reseedError) throw reseedError;
         if (reseedFails) throw new Error('No code schema registered');
-        return reseed;
+        return typeof reseed === 'function' ? reseed(opts) : reseed;
       } finally { liveReseeds--; }
     },
     postNote: async (itemId, body) => { calls.notes.push({ itemId, body }); },
@@ -267,10 +269,10 @@ test('NO re-seed on a checklist built the old Template way, or under an earlier 
   } finally { t.restore(); }
   const mixed = harness({ shape: shapeOf(codes(CEC_EE, ACC, 11), 9) });
   try { const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.deepEqual(r.reseed, { manual: 'template' }); assert.equal(mixed.calls.reseeds.length, 0); } finally { mixed.restore(); }
-  const st = harness({ shape: shapeOf(codes(CEC_EE, 'CEC Single Applicant', 11)) });
+  const st = harness({ shape: shapeOf(codes(CEC_EE, 'CEC Single Applicant', 11)), migrateOn: false });
   try {
     const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
-    assert.deepEqual(r.reseed, { manual: 'subtype', from: 'CEC Single Applicant', to: ACC }); assert.equal(st.calls.reseeds.length, 0);
+    assert.deepEqual(r.reseed, { manual: 'subtype', from: 'CEC Single Applicant', to: ACC }); assert.equal(st.calls.reseeds.length, 0, 'the Sub Type move switched off (CHECKLIST_VARIANT_MIGRATE=0): as before');
     assert.match(st.calls.notes[0].body, /the checklist was built for Sub Type "CEC Single Applicant" and the case now says "CEC Accompanying Spouse &amp; Child"; press Re-seed Checklist on the case/);
   } finally { st.restore(); }
   const caseDiff = harness({ caseState: { stage: 'Document Collection Started', payment: 'Paid', checklistApplied: 'Yes', caseType: ' canadian experience class (ee after ita) ', subType: ' cec accompanying spouse & child ' } });
@@ -285,13 +287,22 @@ test('leftover rows of an earlier variant: all uploaded / reviewed → the re-se
   const done = harness({ shape: shapeOf([...codes(CEC_EE, ACC, 11), ...codes(CEC_EE, 'CEC Single Applicant', 3, 'Received'), ...codes(CEC_EE, 'CEC Single Applicant', 1, 'Reviewed'), ...codes(CEC_EE, 'CEC Single Applicant', 1, 'Not Applicable')]) });
   try { const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.equal(done.calls.reseeds.length, 1); assert.equal(r.reseed.created, 11); } finally { done.restore(); }
   for (const status of ['', 'Missing']) {
-    const open = harness({ shape: shapeOf([...codes(CEC_EE, ACC, 11), ...codes(CEC_EE, 'CEC Single Applicant', 2, 'Received'), ...codes(CEC_EE, 'CEC Single Applicant', 1, status)]) });
+    const open = harness({ shape: shapeOf([...codes(CEC_EE, ACC, 11), ...codes(CEC_EE, 'CEC Single Applicant', 2, 'Received'), ...codes(CEC_EE, 'CEC Single Applicant', 1, status)]), migrateOn: false });
     try {
       const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
       assert.deepEqual(r.reseed, { manual: 'subtype', from: 'CEC Single Applicant', to: ACC }, `stale row "${status || '(blank)'}"`);
       assert.equal(open.calls.reseeds.length, 0);
     } finally { open.restore(); }
   }
+  // the move switched on (the default): the re-seed runs in "refuse" mode — it writes nothing when an empty old row would be left over
+  const refused = harness({ shape: shapeOf([...codes(CEC_EE, ACC, 11), ...codes(CEC_EE, 'CEC Single Applicant', 1, 'Missing')]),
+    reseed: (o) => (o.staleOpen === 'refuse' ? { created: 0, skipped: 0, failed: 0, pruned: 0, migrated: 0, refused: 'stale-open', leftover: [{ id: '1', name: 'x', subType: 'CEC Single Applicant' }] } : { created: 99 }) });
+  try {
+    const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
+    assert.equal(refused.calls.reseeds.length, 1); assert.equal(refused.calls.reseeds[0].opts.staleOpen, 'refuse');
+    assert.deepEqual(r.reseed, { manual: 'subtype', from: 'CEC Single Applicant', to: ACC, refused: 'stale-open', leftover: 1 });
+    assert.match(refused.calls.notes[0].body, /and 1 empty row\(s\) of the old Sub Type have no match in the new one; press Re-seed Checklist on the case \(it moves the old rows that match over, keeping their uploads, removes the empty ones that do not, and adds this member's\)/);
+  } finally { refused.restore(); }
 });
 
 test('a checklist built for another CASE TYPE is never re-seeded (the re-seed would lay a second checklist) — the note names both case types', async () => {
@@ -377,7 +388,7 @@ test('rows of a retired / renamed variant of the case\'s own Case Type are owned
 });
 
 test('a retired variant of the same Case Type → the Sub Type note (press Re-seed), never the Case Type one', async () => {
-  const h = harness({ caseState: { stage: 'Internal Review', payment: 'Paid', checklistApplied: 'Yes', caseType: CEC_EE, subType: ACC }, shape: shapeOf([{ code: `${slugUpper(CEC_EE)}-OLD-VARIANT-PRINCIPAL-APPLICANT-A-001`, subType: 'Old Variant', status: '' }]) });
+  const h = harness({ caseState: { stage: 'Internal Review', payment: 'Paid', checklistApplied: 'Yes', caseType: CEC_EE, subType: ACC }, shape: shapeOf([{ code: `${slugUpper(CEC_EE)}-OLD-VARIANT-PRINCIPAL-APPLICANT-A-001`, subType: 'Old Variant', status: '' }]), migrateOn: false });
   try { const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.deepEqual(r.reseed, { manual: 'subtype', from: 'Old Variant', to: ACC }); } finally { h.restore(); }
 });
 
@@ -546,17 +557,17 @@ test('unknown type / missing ids are refused', async () => {
 
 test('re-seed from this path can only ADD rows and is fed the composition: prune:false + composition threaded reseedByCaseRef → seedFromSchema → reconcileExecutionRows', () => {
   const svc = fs.readFileSync(require.resolve('../src/services/familyMemberService.js'), 'utf8');
-  assert.match(svc, /reseedByCaseRef\(caseRef, \{ prune: false, composition \}\)/);
+  assert.match(svc, /reseedByCaseRef\(caseRef, \{ prune: false, composition, staleOpen: opts\.staleOpen \|\| 'keep' \}\)/);
   const cl = fs.readFileSync(require.resolve('../src/services/checklistService.js'), 'utf8');
-  assert.match(cl, /async function reseedByCaseRef\(caseRef, \{ prune = true, composition: compositionIn = null \} = \{\}\)/);
+  assert.match(cl, /async function reseedByCaseRef\(caseRef, \{ prune = true, composition: compositionIn = null, staleOpen = 'keep' \} = \{\}\)/);
   assert.match(cl, /const composition = compositionIn \|\| await compositionAdapter\.readForCase\(ref\);/);
-  assert.match(cl, /seedFromSchema\(\{ schema, caseRef: ref, clientName: item\.name, clientMasterItemId: item\.id, prune, composition \}\)/);
+  assert.match(cl, /seedFromSchema\(\{ schema, caseRef: ref, clientName: item\.name, clientMasterItemId: item\.id, prune, composition, staleOpen \}\)/);
   assert.match(cl, /const composition = compositionIn \|\| await compositionAdapter\.readForCase\(caseRef\);/, 'seedFromSchema plans from the composition it is given');
   assert.match(cl, /reconcileExecutionRows\(\{\s*prune,/);
   assert.match(cl, /pruned: result\.pruned \|\| 0,/);
   const ex = fs.readFileSync(require.resolve('../src/services/executionSeederService.js'), 'utf8');
-  assert.match(ex, /categoryLinks = \{\}, prune = true \}\)/);
-  assert.match(ex, /const pruned = prune \? await pruneStaleSubTypeRows\(\{ caseRef, keepSubType: caseSubType \}\) : 0;/);
+  assert.match(ex, /categoryLinks = \{\}, prune = true, staleOpen = 'keep' \}\)/);
+  assert.match(ex, /const pruned = prune \? await pruneStaleSubTypeRows\(\{ caseRef, keepSubType: caseSubType, keepIds \}\) : 0;/);
 });
 
 test('reconcileExecutionRows with prune:false never deletes a stale-sub-type row; with prune:true (the manual Re-seed button) it does', async () => {
