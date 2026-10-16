@@ -76,6 +76,7 @@ async function onReseedButton(itemId) {
 
     await setButton(itemId, LABEL_DONE);
     const members = (result.members || []).length ? result.members.join(', ') : 'Principal Applicant only';
+    const toCheck = ['changed', 'naCleared', 'naCarried'].reduce((n, k) => n + (result[k] || []).length, 0);
     await postNote(itemId,
       `✅ <b>Checklist re-seed complete</b> for ${esc(caseRef)}<br>` +
       `Schema: ${esc(result.caseType)}${result.subType ? ` / ${esc(result.subType)}` : ''}<br>` +
@@ -83,7 +84,7 @@ async function onReseedButton(itemId) {
       `<b>${result.created} new row(s) added</b> · ${result.skipped} already existed (untouched) · ${result.failed} failed` +
       (result.migrated ? `<br>${result.migrated} row(s) moved over from Sub Type "${esc((result.migratedFrom || []).join(', ') || 'the old one')}" to "${esc(result.subType || '')}" — the same documents, their uploads and status kept` : '') +
       (result.pruned ? `<br>${result.pruned} empty row(s) of another Sub Type removed` : '') +
-      (((result.changed || []).length + (result.naKept || []).length) ? `<br>⚠ ${(result.changed || []).length + (result.naKept || []).length} document(s) of the old Sub Type need a check — they are listed in the separate "Checklist moved" note` : ''));
+      (toCheck ? `<br>⚠ ${toCheck} document(s) of the old Sub Type need a check — they are listed in the separate "Checklist moved" note` : ''));
     console.log(`[Reseed] ${caseRef}: created ${result.created}, skipped ${result.skipped}, failed ${result.failed}, moved ${result.migrated || 0}, pruned ${result.pruned || 0}`);
   } catch (err) {
     await setButton(itemId, LABEL_FAILED).catch(() => {});

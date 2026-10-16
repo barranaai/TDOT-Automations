@@ -119,6 +119,8 @@ const SCHEMAS = {
   New: { caseType: T, subType: 'New', roles: [
     { role: 'PrincipalApplicant', required: true, documents: [doc('PASSPORT', 'Passport'), doc('PHOTO', 'Two photos'), doc('BANK', 'Bank statement', 'Financial')] },
     { role: 'DependentChild', multipleAllowed: true, includeWhen: { caseFlag: 'childrenIncluded' }, documents: [doc('BIRTHCERT', 'Birth certificate (if applicable)', 'Civil')] }] },
+  Mid: { caseType: T, subType: 'Mid', roles: [
+    { role: 'PrincipalApplicant', required: true, documents: [doc('PHOTO', 'Two photos')] }] },
   'New Plus': { caseType: T, subType: 'New Plus', roles: [
     { role: 'PrincipalApplicant', required: true, documents: [doc('PASSPORT', 'Passport')] }] },
 };
@@ -173,18 +175,20 @@ test('a retired / renamed Sub Type (no longer registered) is read from the row\'
  * moves (change_multiple_column_values), creates and deletes. lag:true → the
  * searches keep showing the rows as they were BEFORE this run's writes.
  */
-function fakeBoard(rows, { lag = false, failMoveIds = [], failRowRead = false } = {}) {
+function fakeBoard(rows, { lag = false, failMoveIds = [], failRowRead = false, reasons = {} } = {}) {
   const board = rows.map((r) => ({ ...r }));
   const before = new Map(board.map((r) => [r.id, { ...r }]));
-  const calls = { moves: [], creates: [], deletes: [], relations: [], reads: 0 };
+  const calls = { moves: [], creates: [], deletes: [], relations: [], reads: 0, updates: [] };
+  const reasonCol = require('../src/services/documentNotApplicable').reasonColumnId();
   const created = new Set();
   const view = (r) => (lag && before.has(r.id) ? before.get(r.id) : r);
   const cv = (r, ids) => ids.map((id) => {
-    const map = { [C.uniqueKey]: r.uniqueKey, [C.documentCode]: r.documentCode, [C.intakeItemId]: r.intake, [C.caseSubType]: r.subType, [C.applicantType]: r.applicantType, [C.documentCategory]: r.category, color_mm0zwgvr: r.status, board_relation_mm0zhagw: '' };
+    const map = { [C.uniqueKey]: r.uniqueKey, [C.documentCode]: r.documentCode, [C.intakeItemId]: r.intake, [C.caseSubType]: r.subType, [C.applicantType]: r.applicantType, [C.documentCategory]: r.category, color_mm0zwgvr: r.status, board_relation_mm0zhagw: '', date_mm0zyw0m: r.uploadDate || '', [reasonCol]: reasons[r.id] || '' };
     return { id, text: map[id] == null ? '' : map[id], value: id === 'board_relation_mm0zhagw' ? (r.templateRel ? JSON.stringify({ linkedPulseIds: [{ linkedPulseId: 1 }] }) : null) : null };
   });
   const real = mondayApi.query;
   mondayApi.query = async (q, v) => {
+    if (/create_update/.test(q)) { calls.updates.push(v); return { create_update: { id: '1' } }; }
     if (/delete_item/.test(q)) { calls.deletes.push(String(v.id)); return { delete_item: { id: v.id } }; }
     if (/create_item/.test(q)) {
       const id = String(900000 + calls.creates.length); const cols = JSON.parse(v.cols);
@@ -206,7 +210,7 @@ function fakeBoard(rows, { lag = false, failMoveIds = [], failRowRead = false } 
       if (/getExistingItems/.test(q)) return { items_page_by_column_values: { items: board.map((r) => ({ column_values: cv(view(r), [C.uniqueKey]) })) } };
       if (q.includes(C.documentCode)) {
         if (failRowRead) throw new Error('Monday 500');
-        return { items_page_by_column_values: { items: board.map((r) => ({ id: r.id, name: view(r).name, column_values: cv(view(r), [C.uniqueKey, C.documentCode, C.intakeItemId, C.caseSubType, C.applicantType, C.documentCategory, 'board_relation_mm0zhagw', 'color_mm0zwgvr']) })) } };
+        return { items_page_by_column_values: { items: board.map((r) => ({ id: r.id, name: view(r).name, column_values: cv(view(r), [C.uniqueKey, C.documentCode, C.intakeItemId, C.caseSubType, C.applicantType, C.documentCategory, 'board_relation_mm0zhagw', 'color_mm0zwgvr', 'date_mm0zyw0m', reasonCol]) })) } };
       }
       return { items_page_by_column_values: { items: board.map((r) => ({ id: r.id, column_values: cv(view(r), [C.caseSubType, C.uniqueKey, 'board_relation_mm0zhagw', 'color_mm0zwgvr']) })) } };
     }
@@ -432,21 +436,44 @@ test('every registered pair of Sub Types of one Case Type: a move never crosses 
   assert.ok(pairs > 50 && moved > 500, `swept ${pairs} pairs, ${moved} moves`);
 });
 
-test('a "Not Applicable" row is NEVER carried to another Sub Type (the decision belongs to the old one): left where it is, listed to re-check — never called an upload', () => {
-  // SOWP spouse "Canadian Education Documents" N/A (never studied here), Sub Type changed: same code, reworded
+test('a "Not Applicable" row moves like an empty one (never two rows for one document): the decision is KEPT for the same document of the same person, CLEARED when the new Sub Type asks it of another role or words it differently', () => {
+  // SOWP spouse "Canadian Education Documents" N/A (never studied here), Sub Type changed: same code, reworded → cleared
   const sowp = boardRowsFor('SOWP', 'Inland - Non Established Relationship', [PA, SPOUSE], { status: (p) => (p.role === 'Spouse' && /-CANEDU-/.test(p.documentCode) ? 'Not Applicable' : 'Received') });
   const r = seeder.planVariantMigration({ rows: sowp, plan: planFor('SOWP', 'Inland - Established Relationship', [PA, SPOUSE]), caseRef: REF, caseType: 'SOWP', caseSubType: 'Inland - Established Relationship' });
   const na = sowp.find((x) => x.status === 'Not Applicable');
-  assert.ok(!r.moves.some((m) => m.id === na.id));
-  assert.deepEqual(r.naKept, [{ id: na.id, name: na.name, to: 'Canadian Education Documents - for each program if studied here (official marksheet, degree certificates)', person: 'Spouse' }]);
+  const m = r.moves.find((x) => x.id === na.id);
+  assert.ok(m && m.naClear, 'moved, its Not Applicable cleared');
+  assert.deepEqual(r.naCleared.map((x) => [x.id, x.person, x.why]), [[na.id, 'Spouse', 'wording']]);
   assert.ok(!r.changed.some((c) => c.id === na.id), 'never reported as an upload');
-  // through the spouse alias: a non-accompanying spouse's N/A police certificate never becomes the accompanying spouse's
-  const cec = boardRowsFor(CEC, SINGLE, [PA, { role: 'NonAccompanyingSpouse', flags: {} }], { status: (p) => (p.role === 'NonAccompanyingSpouse' && /-PCC-/.test(p.documentCode) ? 'Not Applicable' : 'Received') });
+  // through the spouse alias: the non-accompanying spouse's N/A police certificate → the accompanying spouse's is asked for
+  const cec = boardRowsFor(CEC, SINGLE, [PA, { role: 'NonAccompanyingSpouse', flags: {} }], { status: (p) => (p.role === 'NonAccompanyingSpouse' && /-PCC-/.test(p.documentCode) ? 'Not Applicable' : (/-SIBLINGPROOF-/.test(p.documentCode) ? 'Not Applicable' : 'Received')) });
   const c = seeder.planVariantMigration({ rows: cec, plan: planFor(CEC, ACC, [PA, SPOUSE]), caseRef: REF, caseType: CEC, caseSubType: ACC });
-  const pcc = cec.find((x) => x.status === 'Not Applicable');
-  assert.ok(!c.moves.some((m) => m.id === pcc.id), 'the accompanying spouse\'s PCC is asked for');
-  assert.deepEqual(c.naKept.map((x) => [x.id, x.person]), [[pcc.id, 'Spouse']]);
-  assert.equal(c.moves.length, 15, 'everything else still moves (11 principal + 4 spouse)');
+  const pcc = cec.find((x) => x.status === 'Not Applicable' && /-PCC-/.test(x.documentCode));
+  const sib = cec.find((x) => x.status === 'Not Applicable' && /-SIBLINGPROOF-/.test(x.documentCode));
+  assert.ok(c.moves.find((x) => x.id === pcc.id).naClear, 'the accompanying spouse\'s PCC is asked for');
+  assert.deepEqual(c.naCleared.map((x) => [x.id, x.why]), [[pcc.id, 'role']]);
+  assert.equal(c.moves.find((x) => x.id === sib.id).naClear, false, '"Sibling - Proof …" → "… (if applicable)": the same ask of the same person — kept');
+  assert.deepEqual(c.naCarried.map((x) => x.id), [sib.id]);
+  assert.equal(c.moves.length, 16, 'one row per document: 11 principal + 5 spouse');
+});
+
+test('the "asked for differently" list never sends staff to a document another moved row filled — only where the new row really asks; one entry per document', () => {
+  const plan = seedPlan({ schema: SCHEMAS.New, composition: { caseFlags: {}, members: [PA] } });
+  const photo = rowsOf('Old', [PA], 'Received').find((r) => /-PHOTO-/.test(r.documentCode));   // "Photo" → "Two photos", holds a file
+  // a twin already marked Not Applicable for the same new wording is the one that moves (kept? no: reworded → cleared → it asks) …
+  const naTwin = { ...photo, id: String(Number(photo.id) + 7), status: 'Not Applicable', name: 'Photo' };
+  const a = seeder.planVariantMigration({ rows: [photo, naTwin], plan, caseRef: REF, caseType: T, caseSubType: 'New', registered, lookup });
+  assert.deepEqual(a.moves.map((m) => [m.id, m.naClear]), [[naTwin.id, true]]);
+  assert.deepEqual(a.changed.map((x) => x.id), [photo.id], 'the cleared row asks the client, so the upload left behind is worth a look');
+  // … but an upload from another Sub Type under the SAME wording fills the document: nothing to ask, nothing listed
+  const mid = rowsOf('Mid', [PA], 'Received').find((r) => /-PHOTO-/.test(r.documentCode));   // "Two photos" already
+  const b = seeder.planVariantMigration({ rows: [photo, mid], plan, caseRef: REF, caseType: T, caseSubType: 'New', registered, lookup });
+  assert.deepEqual(b.moves.map((m) => m.id), [mid.id]);
+  assert.deepEqual(b.changed, [], 'the new document holds the client\'s file — never "a new row asks"');
+  // two uploads left behind for one document → one entry
+  const twin = { ...photo, id: String(Number(photo.id) + 3) };
+  const t2 = seeder.planVariantMigration({ rows: [photo, twin], plan, caseRef: REF, caseType: T, caseSubType: 'New', registered, lookup });
+  assert.equal(t2.changed.length, 1);
 });
 
 test('an EMPTY moved row takes the new category only together with its folder link (no link at hand → category and link stay as they were)', async () => {
@@ -465,12 +492,37 @@ test('an EMPTY moved row takes the new category only together with its folder li
 
 test('the "Checklist moved" note: names each document to check, the upload ones and the Not Applicable ones, in plain words', () => {
   const { variantCheckNote } = require('../src/services/checklistService')._internal;
-  const n = variantCheckNote({ caseRef: REF, subType: ACC, migratedFrom: [SINGLE],
+  const n = variantCheckNote({ caseRef: REF, subType: ACC, migrated: 15, migratedFrom: [SINGLE],
     changed: [{ from: 'Photo', to: 'Photo - Front and Back both required', person: 'Principal Applicant' }],
-    naKept: [{ to: 'Police clearance certificates (PCC)', person: 'Spouse' }] });
-  assert.match(n, /Checklist moved to Sub Type "CEC Accompanying Spouse &amp; Child" — 2 document\(s\) to check/);
-  assert.match(n, /The rows of "CEC Single Applicant" that match were moved over with their uploads; these were not:/);
+    naCleared: [{ to: 'Police clearance certificates (PCC)', person: 'Spouse', why: 'role', reason: require('../src/services/documentNotApplicable').reasonText('Non-accompanying, not needed', 'Gauri') }],
+    naCarried: [{ to: 'Sibling- Proof of living in Canada (if applicable)', person: 'Principal Applicant' }] });
+  assert.match(n, /Checklist moved to Sub Type "CEC Accompanying Spouse &amp; Child" — 3 document\(s\) to check/);
+  assert.match(n, /15 row\(s\) of "CEC Single Applicant" were moved over to the same documents \(uploads, reviews and notes kept\)\. Please check:/);
   assert.match(n, /Asked for differently now<\/b> — the client's upload stays on its old row and a new row asks for the new version\. If the upload already covers it, mark the new row Not Applicable with a note saying so; otherwise the client uploads the new version: "Photo" → "Photo - Front and Back both required" \(Principal Applicant\)\./);
-  assert.match(n, /Not Applicable under the old Sub Type<\/b> — that decision is not carried over, so the new row asks for the document again\. Mark it Not Applicable again if it still does not apply: "Police clearance certificates \(PCC\)" \(Spouse\)\./);
-  assert.doesNotMatch(variantCheckNote({ caseRef: REF, subType: ACC, naKept: [{ to: 'X' }] }), /Asked for differently/);
+  assert.match(n, /Not Applicable cleared<\/b> — the new Sub Type asks for these of a different role \(e\.g\. an accompanying spouse\) or in different words, so they are on the checklist again\. Mark one Not Applicable again if it still does not apply: "Police clearance certificates \(PCC\)" \(Spouse\) — earlier reason: "Non-accompanying, not needed"/);
+  assert.match(n, /Still Not Applicable<\/b> — the same document for the same person, so the decision was kept; check it still holds under the new Sub Type: "Sibling- Proof of living in Canada \(if applicable\)" \(Principal Applicant\)\./);
+  const only = variantCheckNote({ caseRef: REF, subType: ACC, changed: [{ from: 'A', to: 'B' }] });
+  assert.doesNotMatch(only, /Not Applicable cleared|Still Not Applicable|were moved over/, 'nothing moved: never says so');
+});
+
+test('clearing a Not Applicable on the move is the "Applies again" write: back to Missing (Received + Review Required when a file was ever uploaded), the reason emptied, a note on the row with the old reason', async () => {
+  const na = require('../src/services/documentNotApplicable');
+  const reasonCol = na.reasonColumnId();
+  assert.ok(reasonCol, 'the reason column is configured');
+  const rows = boardRowsFor(CEC, SINGLE, [PA, { role: 'NonAccompanyingSpouse', flags: {} }], { status: (p) => (p.role === 'NonAccompanyingSpouse' && /-(PCC|PHOTO)-/.test(p.documentCode) ? 'Not Applicable' : 'Received') });
+  const pcc = rows.find((x) => /NONACCOMPANYINGSPOUSE-PCC/.test(x.documentCode));
+  const photo = rows.find((x) => /NONACCOMPANYINGSPOUSE-PHOTO/.test(x.documentCode));
+  const fb = fakeBoard(rows.map((r) => (r.id === photo.id ? { ...r, uploadDate: '2026-09-01' } : r)), { reasons: { [pcc.id]: na.reasonText('Non-accompanying, not needed', 'Gauri'), [photo.id]: na.reasonText('Not needed', 'Gauri') } });
+  try {
+    const r = await reconcile(planFor(CEC, ACC, [PA, SPOUSE]), { prune: false });
+    assert.equal(r.naCleared.length, 2);
+    const pc = fb.calls.moves.find((m) => m.id === pcc.id).cols;
+    assert.deepEqual(pc.color_mm0zwgvr, { label: 'Missing' }); assert.equal(pc[reasonCol], ''); assert.ok(!('color_mm0z796e' in pc));
+    const ph = fb.calls.moves.find((m) => m.id === photo.id).cols;
+    assert.deepEqual(ph.color_mm0zwgvr, { label: 'Received' }); assert.deepEqual(ph.color_mm0z796e, { label: 'Yes' });
+    const note = fb.calls.updates.find((u) => u.i === pcc.id);
+    assert.match(note.b, /Not Applicable cleared by the Sub Type change<\/b> — the Case Sub Type is now "CEC Accompanying Spouse &amp; Child", which asks for this document of the Spouse\. It is back on the checklist as "Missing"\. The earlier reason was: "Non-accompanying, not needed"\./);
+    // the other moved rows keep their status
+    assert.ok(fb.calls.moves.filter((m) => ![pcc.id, photo.id].includes(m.id)).every((m) => !('color_mm0zwgvr' in m.cols)));
+  } finally { fb.restore(); }
 });

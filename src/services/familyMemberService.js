@@ -187,6 +187,8 @@ const io = {
 };
 
 const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** What a re-seed's Sub Type move left for staff to check (listed in its "Checklist moved" note). */
+const toCheckCount = (r) => ['changed', 'naCleared', 'naCarried'].reduce((n, k) => n + ((r && r[k]) || []).length, 0);
 const _inFlight   = new Map();   // caseRef → the tail of the queue of adds on that case
 const _recentRows = new Map();   // caseRef → [{ boardType, memberKey, name, at }] rows this process wrote
 
@@ -378,7 +380,7 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
           const r = await io.reseed(caseRef, composition, { staleOpen: moveFrom ? 'refuse' : 'keep' });
           result.reseed = r.refused
             ? { ...moveFrom, refused: r.refused, leftover: (r.leftover || []).length }
-            : { created: r.created, skipped: r.skipped, failed: r.failed, pruned: r.pruned || 0, ...(r.migrated ? { migrated: r.migrated, from: (r.migratedFrom || []).join(', ') || (moveFrom && moveFrom.from) || '' } : {}), ...(((r.changed || []).length + (r.naKept || []).length) ? { toCheck: (r.changed || []).length + (r.naKept || []).length } : {}) };
+            : { created: r.created, skipped: r.skipped, failed: r.failed, pruned: r.pruned || 0, ...(r.migrated ? { migrated: r.migrated, from: (r.migratedFrom || []).join(', ') || (moveFrom && moveFrom.from) || '' } : {}), ...(toCheckCount(r) ? { toCheck: toCheckCount(r) } : {}) };
         }
         catch (err) { result.reseed = err.code === 'NO_SCHEMA' ? (moveFrom ? { ...moveFrom, noSchema: true } : { manual: 'no-schema' }) : { error: err.message }; }
         // the hint only when the checklist's schema has no place for this member at all
@@ -437,7 +439,7 @@ function note({ caseRef, boardType, rowName, who, manifestState, reseed, stage, 
           : 'questionnaire section added';
   const d = !reseed ? 'checklist not re-seeded'
           : reseed.manual === 'template' ? 'no document rows added — this case\'s checklist was built from the Template board (it uses different document keys, so an automatic re-seed would lay a second checklist beside it); check that the member\'s documents are on the checklist and add any missing ones by hand'
-          : reseed.manual === 'subtype' && reseed.noSchema ? `no document rows added — the checklist was built for Sub Type "${esc(reseed.from)}" and the case's Case Sub Type is ${reseed.to ? `"${esc(reseed.to)}", which has no automatic checklist` : 'blank'}; set the correct Case Sub Type first, then press Re-seed Checklist on the case (it moves the old rows that match over and adds this member\'s)`
+          : reseed.manual === 'subtype' && reseed.noSchema ? `no document rows added — the checklist was built for Sub Type "${esc(reseed.from)}" and the case's Case Sub Type is ${reseed.to ? `"${esc(reseed.to)}", which has no automatic checklist` : 'blank'}; set the correct Case Sub Type first, then press Re-seed Checklist on the case (${io.migrateOn() ? 'it moves the old rows that match over and adds this member\'s' : 'it replaces the old variant\'s empty rows and adds this member\'s'})`
           : reseed.manual === 'subtype' && reseed.refused === 'stale-open' ? `no document rows added — the checklist was built for Sub Type "${esc(reseed.from)}" and the case now says "${esc(reseed.to)}", and ${reseed.leftover} empty row(s) of the old Sub Type have no match in the new one; press Re-seed Checklist on the case (it moves the old rows that match over, keeping their uploads, removes the empty ones that do not, and adds this member\'s)`
           : reseed.manual === 'subtype' ? `no document rows added — the checklist was built for Sub Type "${esc(reseed.from)}" and the case now says "${esc(reseed.to)}"; press Re-seed Checklist on the case (it replaces the old variant\'s empty rows and adds this member\'s)`
           : reseed.manual === 'casetype' ? `no document rows added — the checklist was built for Case Type "${esc(reseed.from)}" and the case now says "${esc(reseed.to || 'nothing')}" (an automatic re-seed would lay a second checklist beside it); the member\'s Family Members row and questionnaire section are in place, so do not add them again; if the Case Type is wrong, correct it and press Re-seed Checklist on the case (it adds this member\'s documents), otherwise ask an admin to rebuild the checklist`

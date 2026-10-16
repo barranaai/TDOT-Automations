@@ -308,7 +308,7 @@ test('leftover rows of an earlier variant: all uploaded / reviewed → the re-se
 test('the Sub Type move on a family add: every old row matched → the re-seed moves + adds and the note says so; a blank or unknown Sub Type → the Sub Type note, never "no automatic checklist"', async () => {
   const old11 = shapeOf(codes(CEC_EE, 'CEC Single Applicant', 11, 'Received'));
   const moved = harness({ shape: shapeOf([...codes(CEC_EE, 'CEC Single Applicant', 10, 'Received'), ...codes(CEC_EE, 'CEC Single Applicant', 1, 'Missing')]),
-    reseed: (o) => ({ created: 11, skipped: 0, failed: 0, pruned: 0, migrated: 11, migratedFrom: ['CEC Single Applicant'], changed: o.staleOpen === 'refuse' ? [{ id: '9', name: 'Photo', from: 'Photo', to: 'Photo - Front and Back' }] : [], naKept: [{ id: '8', name: 'PCC', to: 'PCC', person: 'Spouse' }] }) });
+    reseed: (o) => ({ created: 11, skipped: 0, failed: 0, pruned: 0, migrated: 11, migratedFrom: ['CEC Single Applicant'], changed: o.staleOpen === 'refuse' ? [{ id: '9', name: 'Photo', from: 'Photo', to: 'Photo - Front and Back' }] : [], naCleared: [{ id: '8', name: 'PCC', to: 'PCC', person: 'Spouse', why: 'role', reason: '' }] }) });
   try {
     const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
     assert.equal(moved.calls.reseeds[0].opts.staleOpen, 'refuse');
@@ -325,6 +325,12 @@ test('the Sub Type move on a family add: every old row matched → the re-seed m
       assert.match(h.calls.notes[0].body, subType ? /the case's Case Sub Type is "Not A Real Sub Type", which has no automatic checklist; set the correct Case Sub Type first, then press Re-seed Checklist/ : /the case's Case Sub Type is blank; set the correct Case Sub Type first, then press Re-seed Checklist/);
     } finally { h.restore(); }
   }
+  // the move switched off: the note never promises a move the Re-seed will not make
+  const off = harness({ shape: old11, migrateOn: false, caseState: { stage: 'Document Collection Started', payment: 'Paid', checklistApplied: 'Yes', caseType: CEC_EE, subType: '' } });
+  try {
+    await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
+    assert.match(off.calls.notes[0].body, /set the correct Case Sub Type first, then press Re-seed Checklist on the case \(it replaces the old variant's empty rows and adds this member's\)/);
+  } finally { off.restore(); }
   // the schema vanishes between the check and the re-seed: still the Sub Type note
   const race = harness({ shape: old11, reseedError: Object.assign(new Error('No code schema registered'), { code: 'NO_SCHEMA' }) });
   try { const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.equal(r.reseed.manual, 'subtype'); assert.equal(r.reseed.noSchema, true); } finally { race.restore(); }

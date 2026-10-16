@@ -277,33 +277,39 @@ async function seedFromSchema({ schema, caseRef, clientName, clientMasterItemId,
     ).catch((e) => console.warn(`[ChecklistService] orphan note failed for ${caseRef}: ${e.message}`));
   }
 
-  // Rows of the old Sub Type that were NOT moved because they need a person's
-  // eye — posted here, so every path (Re-seed button, family add, Document
-  // Collection, the late Sub Type resume) tells staff. Only on the run that
-  // first finds them: the next run sees the new rows in place and lists none.
-  const changed = result.changed || [], naKept = result.naKept || [];
-  if (clientMasterItemId && (changed.length || naKept.length)) {
+  // What the move left for a person to check — posted here, so every path
+  // (Re-seed button, family add, Document Collection, the late Sub Type
+  // resume) tells staff. Only on the run that does it: the next run finds the
+  // rows in place and lists nothing.
+  const changed = result.changed || [], naCleared = result.naCleared || [], naCarried = result.naCarried || [];
+  if (clientMasterItemId && (changed.length || naCleared.length || naCarried.length)) {
     await mondayApi.query(
       `mutation($i: ID!, $body: String!){ create_update(item_id: $i, body: $body){ id } }`,
-      { i: String(clientMasterItemId), body: variantCheckNote({ caseRef, subType: schema.subType, migratedFrom: result.migratedFrom || [], changed, naKept }) }
+      { i: String(clientMasterItemId), body: variantCheckNote({ caseRef, subType: schema.subType, migrated: result.migrated || 0, migratedFrom: result.migratedFrom || [], changed, naCleared, naCarried }) }
     ).catch((e) => console.warn(`[ChecklistService] Sub Type check note failed for ${caseRef}: ${e.message}`));
   }
   return result;
 }
 
-/** PURE. The staff note for old-Sub-Type rows the move left for a person to check. */
-function variantCheckNote({ caseRef, subType, migratedFrom = [], changed = [], naKept = [] }) {
+/** PURE. The staff note for what the Sub Type move left for a person to check. */
+function variantCheckNote({ caseRef, subType, migrated = 0, migratedFrom = [], changed = [], naCleared = [], naCarried = [] }) {
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const who = (p) => (p ? ` (${esc(p)})` : '');
+  const was = (r) => { let t = r || ''; try { t = require('./documentNotApplicable').reasonOnly(t); } catch (_) { /* as stored */ } return t ? ` — earlier reason: "${esc(t)}"` : ''; };
   const from = migratedFrom.length ? `"${esc(migratedFrom.join(', '))}"` : 'the old Sub Type';
-  const parts = [`🔎 <b>Checklist moved to Sub Type "${esc(subType)}" — ${changed.length + naKept.length} document(s) to check</b> (${esc(caseRef)}). The rows of ${from} that match were moved over with their uploads; these were not:`];
+  const n = changed.length + naCleared.length + naCarried.length;
+  const parts = [`🔎 <b>Checklist moved to Sub Type "${esc(subType)}" — ${n} document(s) to check</b> (${esc(caseRef)}).${migrated ? ` ${migrated} row(s) of ${from} were moved over to the same documents (uploads, reviews and notes kept).` : ''} Please check:`];
   if (changed.length) {
     parts.push(`<br><b>Asked for differently now</b> — the client's upload stays on its old row and a new row asks for the new version. If the upload already covers it, mark the new row Not Applicable with a note saying so; otherwise the client uploads the new version: ` +
       changed.map((c) => `"${esc(c.from || c.name)}" → "${esc(c.to)}"${who(c.person)}`).join('; ') + '.');
   }
-  if (naKept.length) {
-    parts.push(`<br><b>Not Applicable under the old Sub Type</b> — that decision is not carried over, so the new row asks for the document again. Mark it Not Applicable again if it still does not apply: ` +
-      naKept.map((c) => `"${esc(c.to)}"${who(c.person)}`).join('; ') + '.');
+  if (naCleared.length) {
+    parts.push(`<br><b>Not Applicable cleared</b> — the new Sub Type asks for these ${naCleared.some((c) => c.why === 'role') ? 'of a different role (e.g. an accompanying spouse) or ' : ''}in different words, so they are on the checklist again. Mark one Not Applicable again if it still does not apply: ` +
+      naCleared.map((c) => `"${esc(c.to)}"${who(c.person)}${was(c.reason)}`).join('; ') + '.');
+  }
+  if (naCarried.length) {
+    parts.push(`<br><b>Still Not Applicable</b> — the same document for the same person, so the decision was kept; check it still holds under the new Sub Type: ` +
+      naCarried.map((c) => `"${esc(c.to)}"${who(c.person)}`).join('; ') + '.');
   }
   return parts.join('');
 }
@@ -640,7 +646,7 @@ async function reseedByCaseRef(caseRef, { prune = true, composition: composition
     caseType, subType,
     members: composition.members.map((m) => m.role),
     created: result.created, skipped: result.skipped, failed: result.failed, pruned: result.pruned || 0,
-    migrated: result.migrated || 0, migratedFrom: result.migratedFrom || [], changed: result.changed || [], naKept: result.naKept || [],
+    migrated: result.migrated || 0, migratedFrom: result.migratedFrom || [], changed: result.changed || [], naCleared: result.naCleared || [], naCarried: result.naCarried || [],
     ...(result.refused ? { refused: result.refused, leftover: result.leftover || [] } : {}),
   };
 }

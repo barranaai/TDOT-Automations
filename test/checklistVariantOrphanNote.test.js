@@ -95,7 +95,9 @@ test('every seeding path tells staff what the move left to check: the "Checklist
     const notes = fm.calls.notes.filter((b) => /Checklist moved to Sub Type/.test(b));
     assert.equal(notes.length, 1);
     assert.match(notes[0], /"Passport with all stamped pages" → "Passport with all stamped pages- Old and New"/);
-    if (r.naKept.length) assert.match(notes[0], /Not Applicable under the old Sub Type/);
+    if (r.naCleared.length) assert.match(notes[0], /Not Applicable cleared/);
+    if (r.naCarried.length) assert.match(notes[0], /Still Not Applicable/);
+    assert.ok(r.naCleared.length + r.naCarried.length > 0, 'the Not Applicable rows moved too (one row per document)');
     await checklist.reseedByCaseRef(REF, { composition: { caseFlags: {}, members: [PA] } });
     assert.equal(fm.calls.notes.filter((b) => /Checklist moved to Sub Type/.test(b)).length, 1, 'not again');
   } finally { fm.restore(); }
