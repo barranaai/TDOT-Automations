@@ -546,7 +546,7 @@ function famFinish(res) {
       : rs.unknown ? 'The checklist state could not be read — press Re-seed Checklist on the case if its checklist exists.'
       : rs.manual === 'template' ? 'No document rows added: this checklist was built the old Template way — check that the documents of this member are on it and add any missing ones by hand.'
       : rs.manual === 'subtype' && rs.noSchema ? 'No document rows added: the Case Sub Type is blank or has no automatic checklist — set the correct Sub Type first, then press Re-seed Checklist on the case.'
-      : rs.manual === 'subtype' ? 'No document rows added: the Sub Type changed after the checklist was built' + (rs.leftover ? ' and ' + rs.leftover + ' empty row(s) of the old Sub Type have no match in the new one' : '') + ' — press Re-seed Checklist on the case.'
+      : rs.manual === 'subtype' ? 'No document rows added: the Sub Type changed after the checklist was built' + (rs.leftover ? ' and ' + rs.leftover + ' empty row(s) of the old Sub Type could not be moved over automatically' : '') + ' — press Re-seed Checklist on the case.'
       : rs.manual === 'casetype' ? 'No document rows added: the checklist was built for another Case Type — see the note on the case (do not add the member again).'
       : rs.manual === 'no-schema' ? 'No document rows added: this case type has no automatic checklist — add the documents of this member by hand.'
       : rs.deferred ? 'Document rows come with the checklist at Document Collection (the case is at "' + (res.j.stage || 'Not Started') + '").'

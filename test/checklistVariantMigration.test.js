@@ -548,3 +548,20 @@ test('a Not Applicable decision is kept only for the very same ask: a non-accomp
   // label wording that does not change the capacity keeps the decision (AAIP "Dependent Spouse" / "Spouse / Common-Law Partner")
   assert.equal(require('../src/services/executionSeederService').sameRequirement('Financial Documents', 'Financial Documents'), true);
 });
+
+test('a moved row is never relabelled TO a "Non Accompanying" person label (the document pages hide that label — its upload would vanish); toward the accompanying label it is', async () => {
+  // spouse no longer comes along: Accompanying → Single; the spouse's uploads move onto the non-accompanying block
+  const rows = boardRowsFor(CEC, ACC, [PA, SPOUSE]).filter((r) => r.applicantType === 'Spouse');
+  const fb = fakeBoard(rows);
+  try {
+    const plan = seedPlan({ schema: css.lookup(CEC, SINGLE), composition: { caseFlags: { spouseIncluded: true }, members: [PA, SPOUSE] } });
+    const r = await seeder.reconcileExecutionRows({ caseRef: REF, caseType: CEC, caseSubType: SINGLE, clientMasterItemId: '1', plan, prune: false });
+    assert.equal(r.migrated, 5);
+    assert.ok(fb.calls.moves.every((m) => !(C.applicantType in m.cols)), 'the label stays "Spouse" — still shown');
+  } finally { fb.restore(); }
+  const back = fakeBoard(boardRowsFor(CEC, SINGLE, [PA, { role: 'NonAccompanyingSpouse', flags: {} }]).filter((r) => r.applicantType === 'Non Accompanying Spouse'));
+  try {
+    await reconcile(planFor(CEC, ACC, [PA, SPOUSE]), { prune: false });
+    assert.ok(back.calls.moves.length === 5 && back.calls.moves.every((m) => m.cols[C.applicantType] === 'Spouse'), 'toward "Spouse": relabelled, so it shows');
+  } finally { back.restore(); }
+});

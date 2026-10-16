@@ -414,7 +414,11 @@ async function moveRow({ move, caseSubType, categoryLinks = {} }) {
     [EXEC_COLS.intakeItemId]: `code:${t.documentCode}`,
     [EXEC_COLS.caseSubType]:  caseSubType || '',
   };
-  if (t.applicantType && t.applicantType !== move.from.applicantType) cols[EXEC_COLS.applicantType] = t.applicantType;
+  // The document pages show a row only when its person label matches a
+  // questionnaire member, and a "Non Accompanying …" label never does — so a
+  // row is never relabelled TO one: it would vanish from the client's and the
+  // reviewer's pages with its upload (the person is the same either way).
+  if (t.applicantType && t.applicantType !== move.from.applicantType && !(NON_ACC.test(t.applicantType) && !NON_ACC.test(move.from.applicantType))) cols[EXEC_COLS.applicantType] = t.applicantType;
   // the category (and its folder link) only on a row with no upload yet — an
   // uploaded file stays in the folder of the row's category, the link must too
   // — and only together with the new category's folder link (a category with

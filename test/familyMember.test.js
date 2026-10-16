@@ -301,7 +301,7 @@ test('leftover rows of an earlier variant: all uploaded / reviewed → the re-se
     const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
     assert.equal(refused.calls.reseeds.length, 1); assert.equal(refused.calls.reseeds[0].opts.staleOpen, 'refuse');
     assert.deepEqual(r.reseed, { manual: 'subtype', from: 'CEC Single Applicant', to: ACC, refused: 'stale-open', leftover: 1 });
-    assert.match(refused.calls.notes[0].body, /and 1 empty row\(s\) of the old Sub Type have no match in the new one; press Re-seed Checklist on the case \(it moves the old rows that match over, keeping their uploads, removes the empty ones that do not, and adds this member's\)/);
+    assert.match(refused.calls.notes[0].body, /and 1 empty row\(s\) of the old Sub Type could not be moved over automatically; press Re-seed Checklist on the case \(it moves the old rows that match over, keeping their uploads, removes the empty ones that are left, and adds this member's\)/);
   } finally { refused.restore(); }
 });
 
