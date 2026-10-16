@@ -549,7 +549,7 @@ function famFinish(res) {
       : rs.manual === 'casetype' ? 'No document rows added: the checklist was built for another Case Type — see the note on the case (do not add the member again).'
       : rs.manual === 'no-schema' ? 'No document rows added: this case type has no automatic checklist — add the documents of this member by hand.'
       : rs.deferred ? 'Document rows come with the checklist at Document Collection (the case is at "' + (res.j.stage || 'Not Started') + '").'
-      : ((rs.created || 0) + ' document row(s) added.' + (rs.migrated ? ' ' + rs.migrated + ' row(s) moved over from the old Sub Type (uploads kept).' : '') + (rs.failed ? ' ' + rs.failed + ' row(s) failed — press Re-seed Checklist.' : ''));
+      : ((rs.created || 0) + ' document row(s) added.' + (rs.migrated ? ' ' + rs.migrated + ' row(s) moved over from the old Sub Type (uploads kept).' : '') + (rs.changed ? ' ' + rs.changed + ' uploaded document(s) are asked for differently in the new Sub Type — see the note on the case.' : '') + (rs.failed ? ' ' + rs.failed + ' row(s) failed — press Re-seed Checklist.' : ''));
     var cy = res.j.carry || null;
     var carried = cy && cy.written ? ' Copied ' + cy.copied + ' answer(s) the client had typed for this member in their own form into the new section.' : (cy && cy.unmatched) ? ' No answers copied: the child named did not match exactly one child in the client form (see the note).' : (cy && cy.skipped === 'has-answers') ? ' The new section already had answers, so nothing was copied over it.' : '';
     if (cy && cy.crossForm && cy.crossForm.copied) carried += ' Also pre-filled ' + cy.crossForm.copied + ' answer(s) into the application form section - the client must review them.';

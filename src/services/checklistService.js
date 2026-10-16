@@ -263,9 +263,10 @@ async function seedFromSchema({ schema, caseRef, clientName, clientMasterItemId,
   console.log(`[ChecklistService] SCHEMA seed done for ${caseRef} — created ${result.created}, skipped ${result.skipped}, failed ${result.failed}`);
 
   // Post the orphan-members warning AFTER a successful seed (best-effort; never
-  // fails the seed). Gated on created > 0 so a retry (or an idempotent re-seed
-  // that adds nothing) can't double-post the note within one DCS event.
-  if (orphans.length && clientMasterItemId && result.created > 0) {
+  // fails the seed). Gated on the run having written rows (created, or moved
+  // over from another Sub Type) so a retry (or an idempotent re-seed that does
+  // nothing) can't double-post the note within one DCS event.
+  if (orphans.length && clientMasterItemId && (result.created > 0 || (result.migrated || 0) > 0)) {
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const who = orphans.map((o) => `${o.count} ${esc(o.label)}${o.count > 1 ? 's' : ''}`).join(', ');
     console.warn(`[ChecklistService] ${caseRef}: family on board not covered by Sub Type "${schema.subType}" — orphaned: ${who}`);
@@ -610,7 +611,7 @@ async function reseedByCaseRef(caseRef, { prune = true, composition: composition
     caseType, subType,
     members: composition.members.map((m) => m.role),
     created: result.created, skipped: result.skipped, failed: result.failed, pruned: result.pruned || 0,
-    migrated: result.migrated || 0, migratedFrom: result.migratedFrom || [],
+    migrated: result.migrated || 0, migratedFrom: result.migratedFrom || [], changed: result.changed || [],
     ...(result.refused ? { refused: result.refused, leftover: result.leftover || [] } : {}),
   };
 }

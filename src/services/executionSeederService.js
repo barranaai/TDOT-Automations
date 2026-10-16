@@ -154,8 +154,15 @@ async function pruneStaleSubTypeRows({ caseRef, keepSubType, keepIds = null }) {
 // pruned). Instead, each old row that is the SAME document for the SAME person
 // in the new variant is moved onto it — its keys, Sub Type and document code
 // rewritten, the row itself (uploads, status, review notes) kept. Matched by
-// role + member number + document code, else by the exact document name; one
-// old row per new row; anything unsure stays as it was.
+// person (role + member number; a non-accompanying spouse is the same person
+// as the accompanying one) and document code, else the document name, else the
+// name without a bracket one side adds ("… Assessment" / "… Assessment (ECA)");
+// one old row per new row; a name shared by two documents is never a match.
+// A row the client already uploaded to moves only onto the SAME requirement:
+// when the new Sub Type words the document differently ("Photo" → "Photo -
+// Front and Back both required") the upload stays on the old row and the new
+// row asks for the new version (reported as "changed"). Anything unsure stays
+// as it was.
 
 /** Kill switch: CHECKLIST_VARIANT_MIGRATE=0 / off / false / no → re-seeds behave as before. */
 function variantMigrateEnabled() {
@@ -163,6 +170,28 @@ function variantMigrateEnabled() {
 }
 
 const normName = (s) => String(s || '').toLowerCase().replace(/\(if applicable\)/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+// the name without any bracketed part, and whether it had one ("(if applicable)" never counts)
+const baseName = (s) => normName(String(s || '').toLowerCase().replace(/\(if applicable\)/g, ' ').replace(/\([^()]*\)/g, ' '));
+const hasBracket = (s) => /\([^()]*\)/.test(String(s || '').toLowerCase().replace(/\(if applicable\)/g, ' '));
+/**
+ * PURE. Two document names ask for the same thing: equal once case, spacing,
+ * punctuation and "(if applicable)" are set aside — or equal without a bracket
+ * that only ONE of them has (a bracket on both sides that differs, "(Inside
+ * Canada)" / "(Inside and Outside Canada)", is a different requirement).
+ */
+function sameRequirement(a, b) {
+  const na = normName(a), nb = normName(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const ba = baseName(a), bb = baseName(b);
+  return !!ba && ba === bb && (!hasBracket(a) || !hasBracket(b));
+}
+// The same person under another role name in the other Sub Type (the spouse
+// block of a single-applicant variant is seeded from the one spouse on the
+// Family Members board). Children are NOT aliased: the non-accompanying
+// children share one block, so it cannot say which child is which.
+const SLOT_ALIAS = { NonAccompanyingSpouse: 'Spouse' };
+const slotOf = (role) => SLOT_ALIAS[role] || role;
 const normText = (s) => String(s || '').trim().toLowerCase();
 const isOpenStatus = (s) => ['', 'missing'].includes(normText(s));   // as selectStaleRows reads "not uploaded"
 
@@ -212,9 +241,11 @@ function parseCodeTail(rest, roles) {
  * @param {Set<string>|string[]} [a.existingKeys]  keys already on the board (default: the rows' own)
  * @param {Array} [a.registered]    caseSchemaService.listRegistered()
  * @param {Function} [a.lookup]     caseSchemaService.lookup
- * @returns {{ moves: Array<{id, name, status, by:'code'|'name', from:{uniqueKey,documentCode,subType,applicantType,category}, to:{row, uniqueKey}}>,
- *             stale: Array<{id, name, status, subType, owner, moved:boolean, sameType:boolean}> }}
+ * @returns {{ moves: Array<{id, name, status, by:'code'|'name'|'base', from:{uniqueKey,documentCode,subType,applicantType,category}, to:{row, uniqueKey}}>,
+ *             stale: Array<{id, name, status, subType, owner, moved:boolean, sameType:boolean}>,
+ *             changed: Array<{id, name, status, from, to}> }}
  *   stale = every schema row NOT of the current variant (moved ones flagged) — what is left is the caller's call.
+ *   changed = uploaded rows NOT moved because the new Sub Type asks for that document differently.
  */
 function planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, existingKeys, registered, lookup }) {
   const css = require('./caseSchemaService');
@@ -247,7 +278,9 @@ function planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, exis
     if (!parsed) continue;
     const ownerRole = ownerSchema && (ownerSchema.roles || []).find((x) => x.role === parsed.role);
     const ownerDoc = ownerRole && (ownerRole.documents || []).find((d) => d.code === parsed.docCode);
-    cands.push({ row: r, code, stale: s, ...parsed, names: [normName(r.name), normName(ownerDoc && ownerDoc.name)].filter(Boolean), ownerDocName: ownerDoc ? ownerDoc.name : '' });
+    cands.push({ row: r, code, stale: s, ...parsed, slot: slotOf(parsed.role), open: isOpenStatus(r.status),
+      rawNames: [r.name, ownerDoc && ownerDoc.name].filter(Boolean), names: [normName(r.name), normName(ownerDoc && ownerDoc.name)].filter(Boolean),
+      reqName: ownerDoc ? ownerDoc.name : (r.name || ''), ownerDocName: ownerDoc ? ownerDoc.name : '' });
   }
 
   // The current variant's rows not on the board yet.
@@ -257,37 +290,48 @@ function planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, exis
     if (present.has(uniqueKey)) continue;
     const parsed = parseCodeTail(String(p.documentCode || '').slice(mine.length), [p.role]);
     if (!parsed) continue;
-    targets.push({ row: p, uniqueKey, role: p.role, index: Number(p.memberIndex) || parsed.index, docCode: parsed.docCode, name: normName(p.documentName) });
+    targets.push({ row: p, uniqueKey, role: p.role, slot: slotOf(p.role), index: Number(p.memberIndex) || parsed.index, docCode: parsed.docCode, name: normName(p.documentName), base: baseName(p.documentName) });
   }
 
   const used = new Set();
   const moves = [];
+  const changed = new Map();   // candidate id → the requirement it did not move onto
   const pick = (list) => list.slice().sort((a, b) =>
-    (isOpenStatus(a.row.status) - isOpenStatus(b.row.status)) || (Number(a.row.id) - Number(b.row.id)))[0];   // the one the client uploaded to, else the oldest
+    (a.open - b.open) || (Number(a.row.id) - Number(b.row.id)))[0];   // the one the client uploaded to, else the oldest
   const take = (t, c, by) => {
-    used.add(c.row.id); t.done = true; c.stale.moved = true;
+    used.add(c.row.id); t.done = true; c.stale.moved = true; changed.delete(String(c.row.id));
     moves.push({
       id: String(c.row.id), name: c.row.name || '', status: c.row.status || '', by, ownerDocName: c.ownerDocName,
       from: { uniqueKey: c.row.uniqueKey, documentCode: c.code, subType: c.row.subType || '', applicantType: c.row.applicantType || '', category: c.row.category || '' },
       to: { row: t.row, uniqueKey: t.uniqueKey },
     });
   };
-  const sameSlot = (t, c) => c.role === t.role && c.index === t.index && !used.has(c.row.id);
+  const sameSlot = (t, c) => c.slot === t.slot && c.index === t.index && !used.has(c.row.id);
+  // an uploaded row only onto the same requirement; an empty one onto its document whatever the wording
+  const fits = (t, c) => c.open || sameRequirement(c.reqName, t.row.documentName);
+  const one = (key) => (t) => targets.filter((o) => !o.done && o.slot === t.slot && o.index === t.index && key(o) === key(t)).length === 1;
   // 1) the same document code, same person
   for (const t of targets) {
-    const list = cands.filter((c) => sameSlot(t, c) && c.docCode === t.docCode);
+    const all = cands.filter((c) => sameSlot(t, c) && c.docCode === t.docCode);
+    const list = all.filter((c) => fits(t, c));
+    for (const c of all) if (!list.includes(c)) changed.set(String(c.row.id), { id: String(c.row.id), name: c.row.name || '', status: c.row.status || '', from: c.reqName, to: t.row.documentName });
     if (list.length) take(t, pick(list), 'code');
   }
-  // 2) the exact document name, same person — only when that name is one
-  //    document on each side (never a guess between two)
+  // 2) the document name, same person — only when that name is one document
+  //    on each side (never a guess between two)
   for (const t of targets) {
-    if (t.done || !t.name) continue;
-    if (targets.filter((o) => !o.done && o.role === t.role && o.index === t.index && o.name === t.name).length !== 1) continue;
+    if (t.done || !t.name || !one((o) => o.name)(t)) continue;
     const list = cands.filter((c) => sameSlot(t, c) && c.names.includes(t.name));
-    const docs = new Set(list.map((c) => c.docCode));
-    if (list.length && docs.size === 1) take(t, pick(list), 'name');
+    if (list.length && new Set(list.map((c) => c.docCode)).size === 1) take(t, pick(list), 'name');
   }
-  return { moves, stale };
+  // 3) the name without a bracket only one side has ("… Assessment" /
+  //    "… Assessment (ECA)") — again one document on each side
+  for (const t of targets) {
+    if (t.done || !t.base || !one((o) => o.base)(t)) continue;
+    const list = cands.filter((c) => sameSlot(t, c) && c.rawNames.some((n) => sameRequirement(n, t.row.documentName)));
+    if (list.length && new Set(list.map((c) => c.docCode)).size === 1) take(t, pick(list), 'base');
+  }
+  return { moves, stale, changed: [...changed.values()] };
 }
 
 /** I/O. The case's checklist rows with every field the variant move reads. */
@@ -311,9 +355,10 @@ async function getExistingRowsForMigration(caseRef) {
 /**
  * I/O. Move one row onto the current variant: ONE write of its key columns
  * (document code, unique key, intake id, Sub Type), plus the person label /
- * category / folder link when the new variant's differ, and the name when the
- * row still carries the old variant's own name for the document. Status,
- * files and notes are never touched.
+ * category / folder link when the new variant's differ (category and folder:
+ * only on a row with no upload yet), and the name when the row still carries
+ * the old variant's own name for the document. Status, files and notes are
+ * never touched.
  */
 async function moveRow({ move, caseSubType, categoryLinks = {} }) {
   const t = move.to.row;
@@ -324,7 +369,9 @@ async function moveRow({ move, caseSubType, categoryLinks = {} }) {
     [EXEC_COLS.caseSubType]:  caseSubType || '',
   };
   if (t.applicantType && t.applicantType !== move.from.applicantType) cols[EXEC_COLS.applicantType] = t.applicantType;
-  if (t.category && t.category !== move.from.category) {
+  // the category (and its folder link) only on a row with no upload yet: an
+  // uploaded file stays in the folder of the row's category — the link must too
+  if (t.category && t.category !== move.from.category && isOpenStatus(move.status)) {
     cols[EXEC_COLS.documentCategory] = t.category;
     if (categoryLinks[t.category]) cols[EXEC_COLS.documentFolder] = { url: categoryLinks[t.category], text: `${t.category} Folder` };
   }
@@ -405,7 +452,7 @@ async function reconcileExecutionRows({ caseRef, caseType = '', caseSubType, cli
 
   // Rows of another Sub Type of this Case Type: moved onto this one BEFORE the
   // diff, so their documents are not created a second time.
-  let migrated = 0, migrateFailed = 0, migratedFrom = [];
+  let migrated = 0, migrateFailed = 0, migratedFrom = [], changed = [];
   const hold = new Set();      // keys a failed move still owns — never created beside it this run
   const keepIds = new Set();   // rows the move touched — never pruned this run (a search may still show the old Sub Type)
   if (caseType && variantMigrateEnabled()) {
@@ -418,7 +465,9 @@ async function reconcileExecutionRows({ caseRef, caseType = '', caseSubType, cli
     }
     if (rows) {
       for (const r of rows) if (r.uniqueKey) existingKeys.add(r.uniqueKey);   // a key either read shows is on the board
-      const { moves, stale } = planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, existingKeys });
+      const mig = planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, existingKeys });
+      const { moves, stale } = mig;
+      changed = mig.changed;
       const leftover = stale.filter((s) => !s.moved && isOpenStatus(s.status));
       if (staleOpen === 'refuse' && leftover.length) {
         return { created: 0, skipped: 0, failed: 0, pruned: 0, migrated: 0, refused: 'stale-open', leftover: leftover.map((s) => ({ id: s.id, name: s.name, subType: s.subType || (s.owner && s.owner.subType) || '' })) };
@@ -471,7 +520,7 @@ async function reconcileExecutionRows({ caseRef, caseType = '', caseSubType, cli
   const pruned = prune ? await pruneStaleSubTypeRows({ caseRef, keepSubType: caseSubType, keepIds }) : 0;
 
   console.log(`[ExecSeeder] ${caseRef}: created ${created}, skipped ${toSkip.length}, failed ${failed}, pruned ${pruned}, moved ${migrated}`);
-  return { created, skipped: toSkip.length - migrated, failed, pruned, migrated, migratedFrom: [...new Set(migratedFrom.filter(Boolean))] };
+  return { created, skipped: toSkip.length - migrated, failed, pruned, migrated, migratedFrom: [...new Set(migratedFrom.filter(Boolean))], changed };
 }
 
 module.exports = {
@@ -482,6 +531,7 @@ module.exports = {
   parseTemplateRel,
   pruneStaleSubTypeRows,
   planVariantMigration,
+  sameRequirement,
   variantOwnerOf,
   parseCodeTail,
   variantMigrateEnabled,

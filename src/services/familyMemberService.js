@@ -368,7 +368,8 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
         const sameType = stale.every((r) => r.owner && norm(r.owner.caseType) === norm(state.caseType));
         const subtype = { manual: 'subtype', from: [...new Set(stale.map((r) => (r.owner && r.owner.subType) || r.subType))].join(', ') || '(another variant)', to: state.subType };
         if (!sameType) result.reseed = { manual: 'casetype', from: [...new Set(stale.map((r) => (r.owner ? r.owner.caseType : '')).filter(Boolean))].join(', ') || '(another case type)', to: state.caseType };
-        else if (!io.migrateOn()) result.reseed = subtype;
+        // the move needs a checklist to move onto: a blank / unknown Sub Type has none
+        else if (!io.migrateOn() || !require('./caseSchemaService').lookup(state.caseType, state.subType || null)) result.reseed = subtype;
         else moveFrom = subtype;
       }
       if (!result.reseed) {
@@ -376,9 +377,9 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
           const r = await io.reseed(caseRef, composition, { staleOpen: moveFrom ? 'refuse' : 'keep' });
           result.reseed = r.refused
             ? { ...moveFrom, refused: r.refused, leftover: (r.leftover || []).length }
-            : { created: r.created, skipped: r.skipped, failed: r.failed, pruned: r.pruned || 0, ...(r.migrated ? { migrated: r.migrated, from: (r.migratedFrom || []).join(', ') || (moveFrom && moveFrom.from) || '' } : {}) };
+            : { created: r.created, skipped: r.skipped, failed: r.failed, pruned: r.pruned || 0, ...(r.migrated ? { migrated: r.migrated, from: (r.migratedFrom || []).join(', ') || (moveFrom && moveFrom.from) || '' } : {}), ...((r.changed || []).length ? { changed: r.changed.length } : {}) };
         }
-        catch (err) { result.reseed = err.code === 'NO_SCHEMA' ? { manual: 'no-schema' } : { error: err.message }; }
+        catch (err) { result.reseed = err.code === 'NO_SCHEMA' ? (moveFrom || { manual: 'no-schema' }) : { error: err.message }; }
         // the hint only when the checklist's schema has no place for this member at all
         if (result.reseed.created === 0) {
           const css = require('./caseSchemaService');
@@ -442,7 +443,7 @@ function note({ caseRef, boardType, rowName, who, manifestState, reseed, stage, 
           : reseed.unknown ? 'the checklist state could not be read — press Re-seed Checklist on the case if its checklist exists'
           : reseed.deferred ? `no document rows yet — the checklist has not been created (the case is at "${esc(stage || 'Not Started')}"); they come with the checklist at Document Collection`
           : reseed.error ? `checklist re-seed FAILED (${esc(reseed.error)}) — press Re-seed Checklist on the case`
-          : `checklist re-seeded (rows only added, never removed): ${reseed.created} new document row(s)${reseed.migrated ? `, ${reseed.migrated} moved over from Sub Type "${esc(reseed.from || 'the old one')}" (uploads kept)` : ''}, ${reseed.skipped} existing left as they were${reseed.failed ? `, ${reseed.failed} failed — press Re-seed Checklist` : ''}`;
+          : `checklist re-seeded (rows only added, never removed): ${reseed.created} new document row(s)${reseed.migrated ? `, ${reseed.migrated} moved over from Sub Type "${esc(reseed.from || 'the old one')}" (uploads kept)` : ''}${reseed.changed ? `, ${reseed.changed} uploaded document(s) the new Sub Type words differently kept on their old row (a new row asks for the new version — check whether the upload already covers it)` : ''}, ${reseed.skipped} existing left as they were${reseed.failed ? `, ${reseed.failed} failed — press Re-seed Checklist` : ''}`;
   return `👪 <b>Family member added</b> — ${esc(boardType)} "${esc(rowName)}" — by ${esc(who)}, ${esc(require('../utils/torontoTime').torontoTime(Date.now()))} (Toronto). ${manifestState === 'completed' ? '' : 'Family Members row created; '}${q}; ${d}.${esc(carrySentence(carry))}${hint ? ' ' + esc(hint) : ''} (${esc(caseRef)})`;
 }
 

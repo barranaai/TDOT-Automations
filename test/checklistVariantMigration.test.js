@@ -22,13 +22,14 @@ const SPOUSE = { role: 'Spouse', flags: {}, memberKey: 'spouse' };
 
 let seq = 13184600000;
 /** Board rows exactly as a seed of this variant writes them. */
-function boardRowsFor(caseType, subType, members, { status = () => 'Received', caseRef = REF } = {}) {
-  return seedPlan({ schema: css.lookup(caseType, subType), composition: { caseFlags: {}, members } }).map((p, i) => ({
+function boardRowsFor(caseType, subType, members, { status = () => 'Received', caseRef = REF, caseFlags = {} } = {}) {
+  return seedPlan({ schema: css.lookup(caseType, subType), composition: { caseFlags, members } }).map((p, i) => ({
     id: String(++seq), name: p.documentName, uniqueKey: `${caseRef}-${p.documentCode}`, documentCode: p.documentCode, intake: `code:${p.documentCode}`,
     subType, applicantType: p.applicantType, category: p.category, templateRel: '', status: status(p, i),
   }));
 }
 const planFor = (caseType, subType, members) => seedPlan({ schema: css.lookup(caseType, subType), composition: { caseFlags: {}, members } });
+const KIDS = { caseFlags: { childrenIncluded: true } };   // the non-accompanying children's one shared block
 const tail = (code) => String(code).split('-').slice(-2, -1)[0];
 
 /* ───────────────────────── the matcher (pure) ───────────────────────── */
@@ -72,12 +73,24 @@ test('two old rows for one document: the one the client uploaded to moves (else 
   assert.deepEqual(r2.moves.map((m) => m.id), [a.id], 'both empty: the oldest');
 });
 
-test('never across people or case types: a non-accompanying spouse\'s row is not the accompanying spouse\'s; another Case Type\'s rows are stale but never moved; malformed and Template rows are left alone', () => {
+test('the spouse is one person in both Sub Types: the non-accompanying spouse\'s rows move onto the accompanying spouse\'s (and back) — never onto the principal\'s', () => {
   const nonAcc = boardRowsFor(CEC, SINGLE, [PA, { role: 'NonAccompanyingSpouse', flags: {} }]).filter((r) => /NONACCOMPANYINGSPOUSE/.test(r.documentCode));
-  assert.ok(nonAcc.length > 0);
-  const plan = planFor(CEC, ACC, [PA, SPOUSE]);
-  const r = seeder.planVariantMigration({ rows: nonAcc, plan, caseRef: REF, caseType: CEC, caseSubType: ACC });
-  assert.equal(r.moves.length, 0); assert.equal(r.stale.length, nonAcc.length); assert.ok(r.stale.every((s) => s.sameType && !s.moved));
+  assert.equal(nonAcc.length, 5);
+  const r = seeder.planVariantMigration({ rows: nonAcc, plan: planFor(CEC, ACC, [PA, SPOUSE]), caseRef: REF, caseType: CEC, caseSubType: ACC });
+  assert.equal(r.moves.length, 5, 'passport, permits, photo, medical, PCC');
+  assert.ok(r.moves.every((m) => m.to.row.role === 'Spouse' && m.by === 'code'));
+  const back = boardRowsFor(CEC, ACC, [PA, SPOUSE]).filter((x) => x.applicantType === 'Spouse');
+  const singlePlan = seedPlan({ schema: css.lookup(CEC, SINGLE), composition: { caseFlags: { spouseIncluded: true }, members: [PA, SPOUSE] } });   // as compositionAdapter derives it
+  const b = seeder.planVariantMigration({ rows: back, plan: singlePlan, caseRef: REF, caseType: CEC, caseSubType: SINGLE });
+  assert.equal(b.moves.length, 5); assert.ok(b.moves.every((m) => m.to.row.role === 'NonAccompanyingSpouse'));
+});
+
+test('never across people or case types: the non-accompanying children\'s shared block is not any one child\'s; another Case Type\'s rows are stale but never moved; malformed and Template rows are left alone', () => {
+  const nac = boardRowsFor(CEC, SINGLE, [PA], KIDS).filter((r) => /NONACCOMPANYINGCHILD/.test(r.documentCode));
+  assert.ok(nac.length > 0);
+  const plan = planFor(CEC, ACC, [PA, { role: 'DependentChild', flags: {}, memberKey: 'child-1' }]);
+  const r = seeder.planVariantMigration({ rows: nac, plan, caseRef: REF, caseType: CEC, caseSubType: ACC });
+  assert.equal(r.moves.length, 0); assert.equal(r.stale.length, nac.length); assert.ok(r.stale.every((s) => s.sameType && !s.moved));
 
   const other = css.listRegistered().find((s) => s.caseType !== CEC && css.lookup(s.caseType, s.subType).roles.some((x) => x.role === 'PrincipalApplicant'));
   const foreign = boardRowsFor(other.caseType, other.subType, [PA]);
@@ -245,8 +258,9 @@ test('a move that fails: its new row is NOT created beside the old one, the old 
 });
 
 test('the Re-seed button (prune on): rows that match are moved; an EMPTY old row with no match is removed; an uploaded one with no match stays', async () => {
-  const rows = boardRowsFor(CEC, SINGLE, [PA, { role: 'NonAccompanyingSpouse', flags: {} }], { status: (p) => (p.role === 'NonAccompanyingSpouse' && /PASSPORT/.test(p.documentCode) ? 'Received' : 'Missing') });
-  const nonAcc = rows.filter((r) => /NONACCOMPANYINGSPOUSE/.test(r.documentCode));
+  const rows = boardRowsFor(CEC, SINGLE, [PA], { ...KIDS, status: (p) => (p.role === 'NonAccompanyingChild' && /PASSPORT/.test(p.documentCode) ? 'Received' : 'Missing') });
+  const nonAcc = rows.filter((r) => /NONACCOMPANYINGCHILD/.test(r.documentCode));
+  assert.ok(nonAcc.some((x) => x.status === 'Received'));
   const fb = fakeBoard(rows);
   try {
     const r = await reconcile(planFor(CEC, ACC, [PA, SPOUSE]));
@@ -258,7 +272,7 @@ test('the Re-seed button (prune on): rows that match are moved; an EMPTY old row
 });
 
 test('staleOpen "refuse" (the family add): an empty old row with no match → NOTHING is written and the leftovers are named; with every old row matched it moves and adds', async () => {
-  const rows = boardRowsFor(CEC, SINGLE, [PA, { role: 'NonAccompanyingSpouse', flags: {} }], { status: () => 'Missing' });
+  const rows = boardRowsFor(CEC, SINGLE, [PA], { ...KIDS, status: () => 'Missing' });
   const fb = fakeBoard(rows);
   try {
     const r = await reconcile(planFor(CEC, ACC, [PA, SPOUSE]), { staleOpen: 'refuse', prune: false });
@@ -307,7 +321,7 @@ test('no Case Type given (any older caller) → no move is attempted, exactly th
 });
 
 test('a moved row takes the new variant\'s person label / category / folder link when they differ, and its new name only when it still had the old variant\'s own name', async () => {
-  const rows = rowsOf('Old', [PA]).filter((r) => /-PHOTO-/.test(r.documentCode));
+  const rows = rowsOf('Old', [PA], 'Missing').filter((r) => /-PHOTO-/.test(r.documentCode));
   const custom = { ...rows[0], id: String(++seq), name: 'Photos (taken at the office)' };
   const kid = rowsOf('Old', kids).find((r) => /DEPENDENTCHILD1-BIRTH/.test(r.documentCode));
   const fb = fakeBoard([rows[0], { ...kid, applicantType: 'Principal Applicant' }]);
@@ -321,10 +335,20 @@ test('a moved row takes the new variant\'s person label / category / folder link
     assert.equal(photo.name, 'Two photos', 'still the old variant\'s own name → renamed to the new one');
     const birth = fb.calls.moves.find((m) => m.id === kid.id).cols;
     assert.equal(birth[C.applicantType], 'Dependent Child 1', 'a wrong person label is corrected from the code');
-    assert.equal(birth[C.documentCategory], 'Civil');
-    assert.deepEqual(birth[C.documentFolder], { url: 'https://onedrive.example/civil', text: 'Civil Folder' });
+    assert.ok(!(C.documentCategory in birth) && !(C.documentFolder in birth), 'UPLOADED: the category and folder link stay with the file\'s folder');
     assert.equal(birth.name, 'Birth certificate (if applicable)', 'matched by name, still the old variant\'s own wording → the new wording');
   } finally { fb.restore(); css.lookup = realLookup; css.listRegistered = realList; }
+  // the same move for a row with NO upload yet: category + folder link follow the new Sub Type
+  const emptyKid = { ...kid, id: String(++seq), status: 'Missing' };
+  const fb3 = fakeBoard([emptyKid]);
+  css.lookup = lookup; css.listRegistered = () => registered;
+  try {
+    const plan = seedPlan({ schema: SCHEMAS.New, composition: { caseFlags: {}, members: kids } });
+    await seeder.reconcileExecutionRows({ caseRef: REF, caseType: T, caseSubType: 'New', clientMasterItemId: '1', plan, categoryLinks: { Civil: 'https://onedrive.example/civil' }, prune: false });
+    const c = fb3.calls.moves[0].cols;
+    assert.equal(c[C.documentCategory], 'Civil');
+    assert.deepEqual(c[C.documentFolder], { url: 'https://onedrive.example/civil', text: 'Civil Folder' });
+  } finally { fb3.restore(); css.lookup = realLookup; css.listRegistered = realList; }
   const fb2 = fakeBoard([custom]);
   css.lookup = lookup; css.listRegistered = () => registered;
   try {
@@ -339,9 +363,70 @@ test('staff see it: the Re-seed note names the moved rows and the removed empty 
   const btn = fs.readFileSync(require.resolve('../src/services/reseedButtonService.js'), 'utf8');
   assert.match(btn, /row\(s\) moved over from Sub Type/);
   assert.match(btn, /empty row\(s\) of another Sub Type removed/);
+  assert.match(btn, /uploaded document\(s\) are asked for differently in the new Sub Type, so the upload stays on its old row/);
   const page = fs.readFileSync(require.resolve('../src/routes/adminCase.js'), 'utf8');
   assert.match(page, /row\(s\) moved over from the old Sub Type \(uploads kept\)\./);
+  assert.match(page, /uploaded document\(s\) are asked for differently in the new Sub Type — see the note on the case\./);
   const cl = fs.readFileSync(require.resolve('../src/services/checklistService.js'), 'utf8');
   assert.match(cl, /caseType:\s+schema\.caseType,/, 'every schema seed passes its Case Type — the move runs on every re-seed');
   assert.match(cl, /migrated: result\.migrated \|\| 0/);
+});
+
+test('an UPLOADED row moves only onto the same requirement: worded differently in the new Sub Type → the upload stays on its old row, a new row asks for the new version, and it is reported as changed', () => {
+  const plan = seedPlan({ schema: SCHEMAS.New, composition: { caseFlags: {}, members: [PA] } });
+  const photo = rowsOf('Old', [PA], 'Received').find((r) => /-PHOTO-/.test(r.documentCode));   // "Photo" → "Two photos"
+  const up = seeder.planVariantMigration({ rows: [photo], plan, caseRef: REF, caseType: T, caseSubType: 'New', registered, lookup });
+  assert.equal(up.moves.length, 0);
+  assert.deepEqual(up.changed, [{ id: photo.id, name: 'Photo', status: 'Received', from: 'Photo', to: 'Two photos' }]);
+  const empty = seeder.planVariantMigration({ rows: [{ ...photo, status: 'Missing' }], plan, caseRef: REF, caseType: T, caseSubType: 'New', registered, lookup });
+  assert.equal(empty.moves.length, 1, 'no upload yet: it simply becomes the new document');
+  assert.deepEqual(empty.changed, []);
+  // an empty twin takes the new document; the uploaded one stays (and is reported)
+  const both = seeder.planVariantMigration({ rows: [photo, { ...photo, id: String(Number(photo.id) + 1), status: 'Missing' }], plan, caseRef: REF, caseType: T, caseSubType: 'New', registered, lookup });
+  assert.deepEqual(both.moves.map((m) => m.id), [String(Number(photo.id) + 1)]); assert.deepEqual(both.changed.map((c) => c.id), [photo.id]);
+});
+
+test('sameRequirement: case, spacing, punctuation and "(if applicable)" never matter; a bracket only ONE side has is a clarification; different brackets on both sides are a different requirement', () => {
+  const same = seeder.sameRequirement;
+  assert.equal(same('Sibling - Proof of living in Canada', 'Sibling- Proof of living in Canada (if applicable)'), true);
+  assert.equal(same('Foreign Education Documents along with Educational Credential Assessment', 'Foreign Education Documents along with Educational Credential Assessment (ECA)'), true);
+  assert.equal(same('Current Employment Proof', 'Current Employment Proof (reference letter, paystubs, T4, NOA ...)'), true);
+  assert.equal(same('Proof of work experience (Inside Canada)', 'Proof of work experience (Inside and Outside Canada)'), false);
+  assert.equal(same('Passport with all stamped pages', 'Passport with all stamped pages- Old and New'), false);
+  assert.equal(same('Photo', 'Photo - Front and Back both required'), false);
+  assert.equal(same('', 'Photo'), false);
+});
+
+test('the sibling CEC Case Type (Profile+ITA+Submission), Single → Accompanying: all 11 of the principal\'s rows move — the ECA by its name without the "(ECA)" bracket', () => {
+  const CT2 = 'Canadian Experience Class (Profile+ITA+Submission)';
+  const rows = boardRowsFor(CT2, SINGLE, [PA]);
+  const { moves, changed } = seeder.planVariantMigration({ rows, plan: planFor(CT2, ACC, [PA, SPOUSE]), caseRef: REF, caseType: CT2, caseSubType: ACC });
+  assert.equal(moves.length, rows.length); assert.deepEqual(changed, []);
+  assert.ok(moves.some((m) => m.by === 'base' && /FOREDU/.test(m.from.documentCode) && /FOREIGNEDU/.test(m.to.row.documentCode)));
+});
+
+test('every registered pair of Sub Types of one Case Type: a move never crosses people, never lands one row twice, and an uploaded row only ever moves onto the same requirement', () => {
+  const byType = new Map();
+  for (const r of css.listRegistered()) { if (!byType.has(r.caseType)) byType.set(r.caseType, []); byType.get(r.caseType).push(r.subType); }
+  let pairs = 0, moved = 0;
+  for (const [ct, subs] of byType) {
+    for (const from of subs) for (const to of subs) {
+      if (from === to) continue;
+      const full = (st) => css.lookup(ct, st).roles.map((ro) => ({ role: ro.role, flags: {}, memberKey: ro.multipleAllowed ? 'x-1' : '' }));
+      let rows, plan;
+      try { rows = boardRowsFor(ct, from, full(from), { caseFlags: { spouseIncluded: true, childrenIncluded: true, parentsIncluded: true, siblingsIncluded: true, supporterIncluded: true } }); plan = planFor(ct, to, full(to)); }
+      catch (_) { continue; }
+      pairs++;
+      const { moves } = seeder.planVariantMigration({ rows, plan, caseRef: REF, caseType: ct, caseSubType: to });
+      moved += moves.length;
+      assert.equal(new Set(moves.map((m) => m.to.uniqueKey)).size, moves.length, `${ct}: ${from} → ${to} lands one row twice`);
+      for (const m of moves) {
+        const fromRole = rows.find((r) => r.id === m.id);
+        const slot = (x) => (x === 'Non Accompanying Spouse' ? 'Spouse' : x);
+        assert.equal(slot(fromRole.applicantType), slot(m.to.row.applicantType), `${ct}: ${from} → ${to}: ${m.name} crosses people`);
+        assert.ok(seeder.sameRequirement(m.ownerDocName || m.name, m.to.row.documentName), `${ct}: ${from} → ${to}: uploaded "${m.name}" onto "${m.to.row.documentName}"`);
+      }
+    }
+  }
+  assert.ok(pairs > 50 && moved > 500, `swept ${pairs} pairs, ${moved} moves`);
 });
