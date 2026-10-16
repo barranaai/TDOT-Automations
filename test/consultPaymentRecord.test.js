@@ -33,10 +33,10 @@ test('wiring: the Consultation Payment column is mapped, typed as text, and part
 
 test('validate: the five kinds, the amount rules, the date rules, the caps; "clear" needs nothing else', () => {
   const v = (o) => cp.validateRecord(o, { today: TODAY });
-  assert.deepEqual(v({ kind: 'cash', amountCents: 20000 }), { ok: true, normalized: { kind: 'cash', amountCents: 20000, on: TODAY, reference: '', note: '' } }, 'date defaults to today (Toronto)');
+  assert.deepEqual(v({ kind: 'cash', amountCents: 20000 }), { ok: true, normalized: { kind: 'cash', amountCents: 20000, on: TODAY, reference: '', note: '', package: '', packageNote: '', booking: null } }, 'date defaults to today (Toronto)');
   assert.deepEqual(v(JSON.stringify({ kind: 'e-transfer', amountCents: 22600, on: '2026-10-14', reference: ' INT-123 ', note: ' paid  at the\n office ' })),
-    { ok: true, normalized: { kind: 'e-transfer', amountCents: 22600, on: '2026-10-14', reference: 'INT-123', note: 'paid at the office' } }, 'a JSON string is accepted; spaces collapse');
-  assert.deepEqual(v({ kind: 'waived', amountCents: 99999, note: 'referral' }), { ok: true, normalized: { kind: 'waived', amountCents: 0, on: TODAY, reference: '', note: 'referral' } }, 'waived never carries an amount');
+    { ok: true, normalized: { kind: 'e-transfer', amountCents: 22600, on: '2026-10-14', reference: 'INT-123', note: 'paid at the office', package: '', packageNote: '', booking: null } }, 'a JSON string is accepted; spaces collapse');
+  assert.deepEqual(v({ kind: 'waived', amountCents: 99999, note: 'referral' }), { ok: true, normalized: { kind: 'waived', amountCents: 0, on: TODAY, reference: '', note: 'referral', package: '', packageNote: '', booking: null } }, 'waived never carries an amount');
   assert.deepEqual(v({ kind: 'clear' }), { ok: true, normalized: { kind: 'clear' } });
   for (const bad of [null, 'nope', '{', { kind: 'paypal', amountCents: 100 }, { kind: '' }]) assert.equal(v(bad).ok, false, JSON.stringify(bad));
   // review 2026-10-15: a kind is an OWN key of the five — Object.prototype names are not kinds
@@ -57,7 +57,7 @@ test('validate: the five kinds, the amount rules, the date rules, the caps; "cle
   assert.match(v({ kind: 'cash', amountCents: 100, note: 'x'.repeat(201) }).error, /note under 200/);
   assert.match(v({ kind: 'cash', amountCents: 100, reference: 'x'.repeat(121) }).error, /reference under 120/);
   assert.equal(cp.validateRecord({ kind: 'cash', amountCents: 100 }).normalized.on, cp.torontoToday(), 'the default day is Toronto today');
-  assert.deepEqual(portal.validateAction('recordConsultPayment', { kind: 'other', amountCents: 5000, on: '2026-01-02' }), { ok: true, normalized: { kind: 'other', amountCents: 5000, on: '2026-01-02', reference: '', note: '' } }, 'reachable as a portal action');
+  assert.deepEqual(portal.validateAction('recordConsultPayment', { kind: 'other', amountCents: 5000, on: '2026-01-02' }), { ok: true, normalized: { kind: 'other', amountCents: 5000, on: '2026-01-02', reference: '', note: '', package: '', packageNote: '', booking: null } }, 'reachable as a portal action');
 });
 
 /* ── reading the record ── */
@@ -186,7 +186,7 @@ test('list: paid reads app | kind | blank with the amount, who and when; the det
   const r2 = [stub(leadService, 'getLead', async () => ({ id: '2', fullName: 'B', consultOption: JSON.stringify({ durationMin: 30, feeCents: 20000 }), consultPayment: rows[1].consultPayment }))];
   try {
     const d = await portal.getConsultationDetail('2');
-    assert.deepEqual(d.consultPayment, { paid: 'cash', paidCents: 20000, on: '2026-10-14', by: 'Melanie', verified: false, reference: '', note: '', at: '', feeCents: 20000, alsoRecorded: '' });
+    assert.deepEqual(d.consultPayment, { paid: 'cash', paidCents: 20000, on: '2026-10-14', by: 'Melanie', verified: false, reference: '', note: '', at: '', feeCents: 20000, alsoRecorded: '', onRecord: { enabled: false } }, 'the package question is off unless switched on');
   } finally { r2.forEach((r) => r()); }
   const r3 = [stub(leadService, 'getLead', async () => ({ id: '1', fullName: 'A', squareConsultTxnId: 'SQ1', consultOption: rows[0].consultOption, consultPayment: rows[1].consultPayment }))];
   try {

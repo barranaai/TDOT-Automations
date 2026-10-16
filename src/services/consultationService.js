@@ -56,8 +56,69 @@ function consultPackageAutoSendEnabled() {
 }
 
 const _packageInFlight  = new Map();   // leadId → Promise: overlapping triggers (two Square deliveries, a reconciler sweep) collapse to one
+const _packageInFlightKind = new Map(); // leadId → the trigger of the run in flight ('payment' | 'address' | 'recorded' | 'manual')
 const _packageSentAt    = new Map();   // leadId → ms: a trigger arriving AFTER completion must not trust a stale Monday read
 const PACKAGE_RECENT_MS = 15 * 60 * 1000;
+
+// ─── The package after a staff-recorded payment (Gauri 2026-10-08; Faran 2026-10-16) ───
+// "Everyone who pays a consultation fee, cash included, gets the agreement and
+// form; waived bookings get a send / don't-send option." The staff record carries
+// the choice (record.package 'send' | 'skip') and, for a client booked by hand,
+// the booking itself (time, consultant, in person / video / phone).
+//
+// Ships OFF. CONSULT_PACKAGE_ON_RECORD=1 turns it on for every lead; a comma list
+// of lead ids turns it on for those leads only (the live test). It needs the
+// automatic package (CONSULT_PACKAGE_AUTO_SEND) on as well.
+function packageOnRecordEnabled(leadId) {
+  if (!consultPackageAutoSendEnabled()) return false;
+  const v = String(process.env.CONSULT_PACKAGE_ON_RECORD || '').trim();
+  if (/^(true|1)$/i.test(v)) return true;
+  if (!v || leadId == null || leadId === '') return false;
+  return v.split(',').map((x) => x.trim()).filter(Boolean).includes(String(leadId));
+}
+
+/**
+ * Is this a client a recorded payment may email the package to at all? Not a
+ * walk-in retainer client, not once the consultation has an outcome, a retainer
+ * or a case — the consultation has happened. PURE.
+ * @returns {{ ok: true } | { ok: false, why: 'direct'|'case'|'retainer'|'outcome' }}
+ */
+function packageApplicable(lead) {
+  const s = (v) => String(v == null ? '' : v).trim();
+  if (s(lead.sourceChannel) === 'Direct Retainer') return { ok: false, why: 'direct' };
+  if (s(lead.conversionStatus) === 'Retained' || s(lead.clientMasterItemId)) return { ok: false, why: 'case' };
+  if (s(lead.retainerSent) || s(lead.retainerSigned)) return { ok: false, why: 'retainer' };
+  if (s(lead.outcome)) return { ok: false, why: 'outcome' };
+  return { ok: true };
+}
+
+/** The package already went out (or its signing request did) — never a second one. PURE. */
+function packageAlreadySent(lead) {
+  const cs = require('./consultAgreementService').parseCountersign(lead);
+  return !!(String(lead.consultAgreementSent || '').trim() || cs.packageEmailedAt || cs.clientEnvelopeId);
+}
+
+/** Does the staff record on this lead still ask for the package, right now? PURE. */
+function recordedPackageWanted(lead) {
+  const cp = require('./consultPaymentService');
+  const ps = cp.paidState(lead);
+  if (ps.paid === 'app') return { ok: false, why: 'app-paid' };
+  if (!ps.record || ps.record.package !== 'send') return { ok: false, why: 'not-chosen' };
+  return packageApplicable(lead);
+}
+
+/** Booked, with a time the package can name ('YYYY-MM-DD HH:MM'). PURE. */
+function hasBookedTime(lead) {
+  return String(lead.bookingStatus || '').trim() === 'Booked'
+    && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(String(lead.bookedSlot || '').trim());
+}
+
+/** Retire a hold this path placed (the record no longer asks for a send). */
+async function _retireRecordedHold(leadId, state) {
+  const { packageHeld, packageHeldAt, packageHeldBy, packageAttempts, packageLastFailedAt, packageLastError, ...rest } = state;
+  await leadService.updateLead(leadId, { consultCountersign: JSON.stringify(rest) })
+    .catch((err) => console.warn(`[Consult] retiring the record's package hold failed for lead ${leadId}: ${err.message}`));
+}
 
 /**
  * Send the consultation package automatically — or hold it — exactly once.
@@ -71,24 +132,36 @@ const PACKAGE_RECENT_MS = 15 * 60 * 1000;
  *   overrides: values written moments ago that a re-read may not show yet
  *     (the Teams join link, the meeting type, the address just saved, the
  *     consultation option the payment reconcile recorded).
+ *   trigger 'recorded': staff just recorded the fee (or changed / removed the
+ *     record) — sends only when the record says 'send' and the lead is booked
+ *     with a future time; when the record no longer asks for it, a hold this
+ *     path placed is retired. Quiet when it is not ready: the record's own
+ *     reply says why.
  *   hold: 'slot-clash' | 'late-payment' (payment trigger only) — the booking
  *     needs a person first (another client has the same time / the client paid
  *     after the hold ran out): HELD with a note; only "Review & send" sends it.
- * @returns {Promise<{status: 'sent'|'held'|'already'|'not-held'|'disabled'|'failed'|'expired', reason?: string}>}
+ * @returns {Promise<{status: 'sent'|'held'|'already'|'not-held'|'disabled'|'failed'|'expired'|'not-wanted'|'not-ready'|'too-late'|'needs-person', reason?: string}>}
  */
 async function autoSendConsultationPackage(leadId, opts = {}) {
   const key = String(leadId);
+  const trigger = opts.trigger || 'payment';
   while (_packageInFlight.has(key)) {
     const prior = _packageInFlight.get(key);
-    // Duplicate payment deliveries adopt the running result (a manual run's
-    // result is normalised); the address trigger waits and then re-evaluates —
-    // the run it overlapped may have just placed the hold it is meant to release.
-    if ((opts.trigger || 'payment') !== 'address') return prior.then((r) => (r && r.status ? r : { status: 'already' }), () => ({ status: 'failed', reason: 'prior run failed' }));
+    const priorKind = _packageInFlightKind.get(key) || 'payment';
+    // A duplicate payment delivery adopts a running PAYMENT (or manual) run's
+    // result (a manual run's result is normalised). Every other overlap waits and
+    // re-evaluates: an address may release the hold the run just placed, a record
+    // may have changed while it waited — and a payment must never adopt a
+    // record's "not ready" answer and lose the client's package (review 2026-10-16).
+    if (trigger === 'payment' && (priorKind === 'payment' || priorKind === 'manual')) {
+      return prior.then((r) => (r && r.status ? r : { status: 'already' }), () => ({ status: 'failed', reason: 'prior run failed' }));
+    }
     await prior.catch(() => {});
   }
   const p = _autoSendConsultationPackage(key, opts);
   _packageInFlight.set(key, p);
-  try { return await p; } finally { _packageInFlight.delete(key); }
+  _packageInFlightKind.set(key, trigger);
+  try { return await p; } finally { if (_packageInFlight.get(key) === p) { _packageInFlight.delete(key); _packageInFlightKind.delete(key); } }
 }
 
 /**
@@ -110,7 +183,7 @@ async function autoSendConsultationPackage(leadId, opts = {}) {
  */
 const PACKAGE_STALE_MS     = 10 * 60 * 1000;
 const PACKAGE_MAX_ATTEMPTS = 3;
-const BOOKED_PAGE          = 200;
+const BOOKED_PAGE          = 500;   // Monday's page maximum (Booked leads only grow: 70 on 2026-10-16)
 // Holds that only a person can clear ("Review & send"): never released by an address.
 const PERSON_HOLDS = ['slot-clash', 'late-payment'];
 
@@ -178,6 +251,32 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
   // needs a person (same time / late payment) is cleared by "Review & send".
   if (trigger === 'address' && state.packageHeld !== 'blank-address') return { status: 'not-held' };
 
+  // A staff-recorded payment (2026-10-16). Decided here, inside the per-lead gate,
+  // from a fresh read — so a record changed or removed while another run held
+  // the gate is seen. Nothing here writes a marker or a note unless it sends or
+  // holds: the record's reply tells staff what is missing.
+  const recordedHold = state.packageHeld === 'blank-address' && state.packageHeldBy === 'recorded';
+  if (trigger === 'recorded' || (trigger === 'address' && recordedHold)) {
+    const want = packageOnRecordEnabled(leadId) ? recordedPackageWanted(lead) : { ok: false, why: 'disabled' };
+    if (!want.ok) {
+      if (recordedHold) await _retireRecordedHold(leadId, state);
+      return { status: 'not-wanted', reason: want.why, ...(recordedHold ? { retired: true } : {}) };
+    }
+    if (trigger === 'recorded') {
+      if (state.packagePending) return { status: 'already', reason: 'in-progress' };
+      // Any marker that is not this path's own address hold needs a person.
+      if (state.packageStalled || state.packageExpired || (state.packageHeld && !recordedHold)) {
+        return { status: 'needs-person', reason: state.packageStalled ? 'stalled' : state.packageExpired ? 'expired' : state.packageHeld };
+      }
+      if (!hasBookedTime(lead)) return { status: 'not-ready', reason: 'no-booking' };
+      if (slotHasStarted(lead)) return { status: 'too-late' };   // quiet: the record says so
+      if (!String(lead.email || '').trim()) return { status: 'not-ready', reason: 'no-email' };
+    } else if (!hasBookedTime(lead)) {
+      await _retireRecordedHold(leadId, state);
+      return { status: 'not-wanted', reason: 'no-booking', retired: true };
+    }
+  }
+
   // Never booking details for a time already begun or gone (an address entered
   // on the call, or for the retainer months later).
   if (slotHasStarted(lead)) {
@@ -212,7 +311,7 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
       const { packagePending, ...rest } = state;
       let armed = true;
       await leadService.updateLead(leadId, {
-        consultCountersign: JSON.stringify({ ...rest, packageHeld: 'blank-address', packageHeldAt: new Date().toISOString() }),
+        consultCountersign: JSON.stringify({ ...rest, packageHeld: 'blank-address', packageHeldAt: new Date().toISOString(), ...(trigger === 'recorded' ? { packageHeldBy: 'recorded' } : {}) }),
       }).catch((err) => { armed = false; console.error(`[Consult] package-held marker failed for lead ${leadId}: ${err.message}`); });
       // Promise the automatic release only if it was actually armed.
       await postLeadNote(leadId, armed
@@ -236,11 +335,12 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
   // staff note — it never re-sends on it. Written onto `state` itself so the
   // post-send clear below sees exactly what is in the column.
   const wasHeld = state.packageHeld || '';
+  const wasHeldBy = state.packageHeldBy || '';
   // A release in progress is no longer a hold: drop the held marker here so an
   // interrupted release reads as "pending" (handed to staff), never as a hold
   // the sweep would drive again. A CLEAN failure below restores it, so a
   // release that failed for a fixable reason is retried up to the cap.
-  delete state.packageHeld; delete state.packageHeldAt;
+  delete state.packageHeld; delete state.packageHeldAt; delete state.packageHeldBy;
   state.packagePending = new Date().toISOString();
   await leadService.updateLead(leadId, { consultCountersign: JSON.stringify(state) })
     .catch((err) => console.warn(`[Consult] package-pending marker failed for lead ${leadId}: ${err.message}`));
@@ -297,7 +397,7 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
     }
     const { packagePending, ...rest } = state;
     await leadService.updateLead(leadId, { consultCountersign: JSON.stringify({
-      ...rest, ...(wasHeld ? { packageHeld: wasHeld } : {}),
+      ...rest, ...(wasHeld ? { packageHeld: wasHeld, ...(wasHeldBy ? { packageHeldBy: wasHeldBy } : {}) } : {}),
       packageAttempts: attempts, packageLastFailedAt: new Date().toISOString(), packageLastError: String(err.message || err).slice(0, 200),
     }) }).catch((e) => console.warn(`[Consult] package failure marker failed for lead ${leadId}: ${e.message}`));
     if (attempts === 1 || attempts >= PACKAGE_MAX_ATTEMPTS) {
@@ -568,7 +668,8 @@ async function sendConsultationPackage(leadId, { overrides = {}, fromAuto = fals
   while (_packageInFlight.has(key)) await _packageInFlight.get(key).catch(() => {});
   const p = _sendConsultationPackage(leadId, { overrides });
   _packageInFlight.set(key, p);
-  try { return await p; } finally { _packageInFlight.delete(key); }
+  _packageInFlightKind.set(key, 'manual');
+  try { return await p; } finally { if (_packageInFlight.get(key) === p) { _packageInFlight.delete(key); _packageInFlightKind.delete(key); } }
 }
 
 async function _sendConsultationPackage(leadId, { overrides = {} } = {}) {
@@ -1245,7 +1346,7 @@ async function getBookedLeads() {
     `query($boardId: ID!, $colId: String!, $val: String!) {
        items_page_by_column_values(limit: 200, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) {
          items { id name updates { body }
-           column_values(ids: ["${C.bookedSlot}","${C.preConsultSubmitted}"]) { id text } }
+           column_values(ids: ["${C.bookedSlot}","${C.preConsultSubmitted}","${C.consultPayment}"]) { id text } }
        }
      }`,
     { boardId: String(leadBoardId), colId: C.bookingStatus, val: 'Booked' }
@@ -1254,6 +1355,8 @@ async function getBookedLeads() {
   return (data?.items_page_by_column_values?.items || []).map((it) => {
     const cv = {}; it.column_values.forEach((c) => { cv[c.id] = c.text || ''; });
     return { id: it.id, name: it.name, bookedSlot: cv[C2.bookedSlot], preConsult: cv[C2.preConsultSubmitted],
+             // staff chose NOT to send the package when recording the fee (2026-10-16) — no form chase either
+             packageSkipped: (require('./consultPaymentService').parseConsultPayment({ consultPayment: cv[C2.consultPayment] }) || {}).package === 'skip',
              updates: (it.updates || []).map((u) => u.body || '') };
   });
 }
@@ -1300,7 +1403,7 @@ async function sendPreConsultReminders() {
   const now = Date.now();
   let sent = 0;
   for (const L of leads) {
-    if (L.preConsult === 'Yes') continue;
+    if (L.preConsult === 'Yes' || L.packageSkipped) continue;
     const ts = torontoSlotToUTC(L.bookedSlot);
     const hoursOut = (ts - now) / 3600000;
     if (hoursOut < 1 || hoursOut >= 24) continue;
@@ -1326,6 +1429,7 @@ module.exports = {
   onSlotConfirmed, createZoomMeeting, getZoomAccessToken, parseConsultOption,
   buildPreConsultFormHtml, savePreConsultData, resendConsultationLinks, sendConsultationPackage,
   autoSendConsultationPackage, consultPackageAutoSendEnabled, sweepConsultPackages,
+  packageOnRecordEnabled, packageApplicable, packageAlreadySent, recordedPackageWanted, hasBookedTime,
   _resetSentMemory: () => _packageSentAt.clear(),   // test seam
   send24hReminders, send1hReminders, sendPreConsultReminders,
   // exported for tests

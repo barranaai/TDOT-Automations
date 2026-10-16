@@ -293,6 +293,7 @@ async function getConsultationDetail(leadId) {
         paid: ps.paid, paidCents: ps.paidCents, on: ps.on, by: ps.by, verified: ps.verified,
         reference: ps.reference, note: ps.note, at: ps.at, feeCents: ps.feeCents,
         alsoRecorded: ps.paid === 'app' && ps.record ? cp.describe(ps.record) : '',
+        onRecord: recordPackageView(lead, ps),
       };
     })(),
 
@@ -932,9 +933,14 @@ function validateAction(action, value) {
         ? { ok: true, normalized: v }
         : { ok: false, error: 'Unknown consultant — pick one from the list.' };
     }
+    case 'sendConsultationPackage': {
+      // { again: true } once the package already went out (2026-10-16: automatic sends from
+      // recorded payments make a stale page's click likely — the server decides, not the page).
+      let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { o = null; }
+      return { ok: true, normalized: { again: !!(o && typeof o === 'object' && o.again === true) } };
+    }
     case 'resendLinks':
     case 'sendConsultAgreement':
-    case 'sendConsultationPackage':
     case 'consultantSignAgreement':
     case 'consultantSignRetainer':
     case 'retainAndSend':
@@ -1185,11 +1191,20 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
 
     // Gauri point 4 part 2 (2026-10-15): the fee was paid by cash / e-transfer / an
     // invoice the team sent / another way, or waived — a RECORD on the lead, so the
-    // Consultations list and the KPIs count it. Nothing else runs from it: no email,
-    // no consultation package, no booking step. A fee paid through the booking link
+    // Consultations list and the KPIs count it. A fee paid through the booking link
     // is recorded by the app itself and cannot be overwritten here.
+    //
+    // 2026-10-16 (Gauri 2026-10-08, Faran's four choices): with CONSULT_PACKAGE_ON_RECORD
+    // on, the record also carries the consultation package choice — a paid kind sends
+    // it (or "No — the client already has them", with a reason), waived asks yes / no —
+    // and, for a client booked by hand, the booking itself (time, consultant, in person
+    // / video / phone, length), which is written to the lead so the package and the
+    // agreement can state it. Video creates the Teams meeting the way online bookings
+    // do. The package goes through the ONE automatic path (trigger 'recorded'), with
+    // every once-only guard it already has. Switch off = exactly the old record.
     case 'recordConsultPayment': {
       const cp = require('./consultPaymentService');
+      const cs = require('./consultationService');
       const n = v.normalized;
       const verified = !!(actor && actor.verified);
       const name = verified ? String(actor.name || '').trim().slice(0, 60) : who;
@@ -1201,30 +1216,120 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       }
       const before = state.record;
       const signed = verified ? '' : ' (name as typed)';
+      const onRecord = cs.packageOnRecordEnabled(leadId);
+      const bad = (msg) => { const e = new Error(msg); e.badRequest = true; return e; };
       if (n.kind === 'clear') {
-        if (!before) { const e = new Error('No consultation payment is recorded on this lead.'); e.badRequest = true; throw e; }
+        if (!before) throw bad('No consultation payment is recorded on this lead.');
         await leadService.updateLead(leadId, { consultPayment: '' }, { clearKeys: ['consultPayment'] });
         try { consultAgreementService.evictCache(leadId); } catch (_) { /* best-effort */ }
-        await postPortalNote(leadId, `🗑 Consultation fee record removed by ${escHtmlNote(name)}${signed} — was: ${escHtmlNote(cp.describe(before))}.`);
-        return { ok: true, message: 'The consultation payment record was removed.', consultPayment: null };
+        // A package this record asked for and that is still waiting (for the address)
+        // is retired — inside the per-lead gate, from a fresh read.
+        let pkg = null;
+        if (onRecord && before.package === 'send') {
+          pkg = await cs.autoSendConsultationPackage(leadId, { trigger: 'recorded', overrides: { consultPayment: '' } })
+            .catch((err) => ({ status: 'failed', reason: err.message }));
+        }
+        const pkgLine = pkg && pkg.retired ? ' The consultation package that was waiting will not be sent.'
+          : (pkg && pkg.status === 'already') || cs.packageAlreadySent(lead) ? ' The consultation package already went out — it cannot be recalled.' : '';
+        await postPortalNote(leadId, `🗑 Consultation fee record removed by ${escHtmlNote(name)}${signed} — was: ${escHtmlNote(cp.describe(before))}.${escHtmlNote(pkgLine)}`);
+        return { ok: true, message: `The consultation payment record was removed.${pkgLine}`, consultPayment: null };
       }
-      // The HST on top of the fee, fixed NOW from where the client is (none outside Canada) —
-      // the consultation agreement prints fee + this; a later location edit never changes it.
-      // An edit of the SAME amount keeps the HST fixed when it was first recorded (round-2 review).
+
+      // ── The package question: asked only with the switch on, for a client the
+      // package is for, when none has gone out (an emailed package keeps the time it stated).
+      const alreadySent = cs.packageAlreadySent(lead);
+      const applicable = cs.packageApplicable(lead);
+      const asks = onRecord && !alreadySent && applicable.ok;
+      let pkgChoice = before ? before.package : '', pkgNote = before ? before.packageNote : '';
+      let booking = null;
+      if (asks) {
+        if (!n.package) throw bad('Choose whether to email the consultation agreement and pre-consultation form to the client.');
+        pkgChoice = n.package; pkgNote = n.packageNote;
+        if (pkgChoice === 'skip' && n.kind !== 'waived' && pkgNote.length < 3) throw bad('Say why the client does not need the agreement and form (for example: "given to them in person").');
+        if (pkgChoice === 'send' && !n.booking) throw bad('Enter the consultation date and time, the consultant, how it happens and its length — the email and the agreement state them.');
+        if (pkgChoice === 'send' && !String(lead.email || '').trim()) throw bad('There is no email for this client, so the package cannot be emailed. Add the email first, or choose "No".');
+        booking = n.booking;
+      }
+      if (booking) {
+        // The client is part-way through booking online: their time is held and a
+        // payment page is open — recording now invites a second payment.
+        const heldUntil = Date.parse(String(lead.slotHeldUntil || ''));
+        if (String(lead.bookingStatus || '').trim() === 'Slot Held' && Number.isFinite(heldUntil) && heldUntil > Date.now()) {
+          throw bad(`The client is booking online right now — their time (${String(lead.bookedSlot || '').trim()}) is held until ${require('../utils/torontoTime').torontoWallClock(new Date(heldUntil).toISOString())} Toronto time and a payment page is open. Wait until the hold ends (or ask them not to pay online), then record.`);
+        }
+        // Another client in the app already has this consultant at this time.
+        const bk = require('./bookingService');
+        let claims;
+        try { claims = await bk.readSlotClaims({ strict: true }); }
+        catch (err) { throw bad('Could not check the consultant\'s other bookings in the app just now — nothing was saved. Try again in a minute.'); }
+        const clash = bk.claimsOnSlot(claims, booking.slot, { consultant: booking.consultant, excludeLeadId: leadId });
+        if (clash.length) throw bad(`${booking.consultant} already has a consultation at ${booking.slot} (another client in the app${clash[0].status === 'Slot Held' ? ', time held for online payment' : ''}). Nothing was saved — choose another time.`);
+      }
+
+      // 1) The record — the core, written first. The HST on top of the fee is fixed NOW
+      // from where the client is (none outside Canada) — the consultation agreement
+      // prints fee + this; a later location edit never changes it. An edit of the SAME
+      // amount keeps the HST fixed when it was first recorded (round-2 review).
       const hstCents = (before && before.amountCents === n.amountCents && Number.isInteger(before.hstCents) && n.kind !== 'waived') ? before.hstCents : rec0HstCents(n, lead);
-      const rec = { kind: n.kind, amountCents: n.amountCents, hstCents, on: n.on, reference: n.reference, note: n.note, by: name, at: new Date().toISOString(), verified };
+      const rec = {
+        kind: n.kind, amountCents: n.amountCents, hstCents, on: n.on, reference: n.reference, note: n.note, by: name, at: new Date().toISOString(), verified,
+        ...(pkgChoice ? { package: pkgChoice } : {}), ...(pkgChoice && pkgNote ? { packageNote: pkgNote } : {}),
+      };
       await leadService.updateLead(leadId, { consultPayment: JSON.stringify(rec) });
       try { consultAgreementService.evictCache(leadId); } catch (_) { /* the agreement's "has paid" line changes — drop the cached copy */ }
+      const money = (c) => (c / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+      const lines = [];   // what happened after the record, for the reply and the note
+
+      // 2) The booking. From here a failure never undoes the record — the reply says what is left.
+      let bookingOverrides = {}, bookingOk = !booking;
+      if (booking) {
+        try {
+          const w = await writeRecordedBooking(leadId, lead, booking, name, lines);
+          bookingOverrides = w.overrides;
+          bookingOk = !w.meetingFailed;
+        } catch (err) {
+          lines.push(`⚠ The booking could not be saved (${err.message}) — the package was NOT emailed. Save the record again to retry.`);
+        }
+      }
+
+      // 3) The package — only through the one automatic path.
+      let pkg = null;
+      if (onRecord && !alreadySent && (pkgChoice === 'send' || (before && before.package === 'send'))) {
+        if (pkgChoice === 'send' && !bookingOk) pkg = { status: 'not-ready', reason: 'booking-failed' };
+        else {
+          // A Not Wanted client is never emailed automatically — staff decide.
+          let hit = null;
+          if (pkgChoice === 'send') { try { hit = await require('./blacklistService').check({ email: lead.email, phone: lead.phone }); } catch (_) { hit = null; } }
+          if (hit && hit.hit) pkg = { status: 'not-wanted', reason: 'not-wanted-list' };
+          else {
+            pkg = await cs.autoSendConsultationPackage(leadId, { trigger: 'recorded', overrides: { consultPayment: JSON.stringify(rec), ...bookingOverrides } })
+              .catch((err) => ({ status: 'failed', reason: err.message }));
+          }
+        }
+      }
+      const pkgLine = packageResultLine(pkg, { pkgChoice, pkgNote, kind: n.kind, alreadySent, applicable, onRecord,
+        hasTime: !!booking || require('./consultationService').hasBookedTime(lead) });
+      if (pkgLine) lines.push(pkgLine);
+
+      // A booking-page payment page or Square invoice made for this client earlier may still be payable.
+      let rawOpt = {}; try { rawOpt = JSON.parse(String(lead.consultOption || '')) || {}; } catch (_) { rawOpt = {}; }
+      if (n.kind !== 'waived' && (rawOpt.invoiceId || String(lead.squareConsultOrderId || '').trim()) && !String(lead.squareConsultTxnId || '').trim()) {
+        lines.push('⚠ A booking-page payment link or Square invoice was made for this client earlier — cancel it in Square so they are not charged twice.');
+      }
+
       const signedAgreement = !!String(lead.consultAgreementSigned || '').trim();
       const agreementLine = signedAgreement ? ' The signed consultation agreement keeps the earlier amount.'
-        : String(lead.consultAgreementSent || '').trim() ? ' The consultation agreement already sent for signature keeps the earlier amount; its preview link now shows the new one.' : '';
-      await postPortalNote(leadId, `${rec.kind === 'waived' ? '🆓 Consultation fee waived' : '💳 Consultation fee recorded as paid'} — ${escHtmlNote(cp.describe(rec))}.${before ? ` Replaces: ${escHtmlNote(cp.describe(before))}.` : ''} A record only — no email or automatic step runs from it.${agreementLine}`);
+        : alreadySent ? ' The consultation agreement already sent for signature keeps the earlier amount; its preview link now shows the new one.' : '';
+      const recordOnly = onRecord ? '' : ' A record only — no email or automatic step runs from it.';
+      await postPortalNote(leadId, `${rec.kind === 'waived' ? '🆓 Consultation fee waived' : '💳 Consultation fee recorded as paid'} — ${escHtmlNote(cp.describe(rec))}.${before ? ` Replaces: ${escHtmlNote(cp.describe(before))}.` : ''}${recordOnly}${agreementLine}${lines.length ? ' ' + escHtmlNote(lines.join(' ')) : ''}`);
+      const head = rec.kind === 'waived'
+        ? 'Recorded — the consultation fee is waived.'
+        : `Recorded — ${cp.KINDS[rec.kind]} ${money(rec.amountCents)} received ${rec.on}.${before ? ' The earlier record was replaced.' : ''}${hstCents > 0 ? ` The consultation agreement states ${money(rec.amountCents + hstCents)} incl. HST.` : ''}`;
       return {
         ok: true,
-        message: rec.kind === 'waived'
-          ? `Recorded — the consultation fee is waived.${agreementLine}`
-          : `Recorded — ${cp.KINDS[rec.kind]} ${(rec.amountCents / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })} received ${rec.on}.${before ? ' The earlier record was replaced.' : ''}${hstCents > 0 ? ` The consultation agreement states ${((rec.amountCents + hstCents) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })} incl. HST.` : ''}${agreementLine}`,
+        message: `${head}${agreementLine}${lines.length ? ' ' + lines.join(' ') : ''}`,
         consultPayment: rec,
+        ...(pkg ? { package: pkg.status } : {}),
       };
     }
 
@@ -1393,6 +1498,10 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
     }
 
     case 'sendConsultationPackage': {
+      if (require('./consultationService').packageAlreadySent(lead) && !(v.normalized && v.normalized.again)) {
+        const e = new Error(`This client already received the consultation package${String(lead.consultAgreementSent || '').trim() ? ` on ${String(lead.consultAgreementSent).trim()}` : ''}. Reload the page — the button then asks whether to send it AGAIN.`);
+        e.badRequest = true; throw e;
+      }
       const r = await require('./consultationService').sendConsultationPackage(leadId);
       const viaEsign = r.via === 'documenso';
       await postPortalNote(leadId, r.alreadySigned
@@ -2048,6 +2157,136 @@ async function createDirectClient(payload = {}) {
 }
 
 /** HST on a staff-recorded consultation fee, fixed when it is recorded (none when waived or outside Canada). */
+/**
+ * Write the booking staff typed with the fee onto the lead (2026-10-16): Booked,
+ * the time, the consultant, in person / video / phone, the length — what the
+ * package email and the agreement state. The length's standard fee goes on the
+ * consultation option (the agreement's duration line), keeping whatever the
+ * booking page stored there (an open invoice id stays findable).
+ * Video: the meeting is created the way online bookings create it (the client
+ * and the consultant get its invite) — once per time and consultant: a re-save
+ * of the same booking reuses it.
+ * NO Square appointment: staff keep the Square calendar themselves (the app never
+ * sees a booking made in Square), so writing one here would double it.
+ * @returns {Promise<{ overrides: object, meetingFailed?: true }>} the values just written,
+ *   handed to the package (a Monday re-read may not show them yet)
+ */
+async function writeRecordedBooking(leadId, lead, booking, staffName, lines) {
+  const s = (v) => String(v == null ? '' : v).trim();
+  const { CONSULTANTS, consultOptionsFor } = require('../../config/consultantRouting');
+  const reg = Object.values(CONSULTANTS).find((c) => c.name === booking.consultant);
+  const opt = (reg ? consultOptionsFor(reg) : []).find((o) => o.durationMin === booking.durationMin) || {};
+  let raw = {};
+  try { raw = JSON.parse(s(lead.consultOption)); } catch (_) { raw = {}; }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
+  const consultOption = JSON.stringify({
+    ...raw, durationMin: booking.durationMin,
+    ...(Number.isFinite(opt.feeCents) ? { feeCents: opt.feeCents } : {}),
+    ...(opt.variationId ? { variationId: opt.variationId } : {}),
+    consultant: booking.consultant, bookedByStaff: true,
+  });
+  const fields = {
+    bookingStatus: 'Booked', bookedSlot: booking.slot, meetingType: booking.meetingType,
+    assignedConsultant: booking.consultant, consultationHeld: booking.date, consultOption,
+    ...(s(lead.bookedBy) ? {} : { bookedBy: staffName }),
+  };
+  await leadService.updateLead(leadId, fields);
+  const overrides = { ...fields };
+  const hadMeeting = s(lead.zoomMeetingId);
+  if (booking.meetingType === 'Virtual') {
+    const same = hadMeeting && s(lead.meetingLink) && s(lead.bookedSlot) === booking.slot && s(lead.assignedConsultant) === booking.consultant;
+    if (same) overrides.meetingLink = s(lead.meetingLink);
+    else {
+      try {
+        const meeting = await require('./meetingService').createMeeting({ ...lead, ...fields }, booking.slot, booking.durationMin);
+        const label = meeting.provider === 'teams' ? 'Microsoft Teams' : 'Zoom';
+        await leadService.updateLead(leadId, { zoomMeetingId: meeting.meetingId, meetingLink: { url: meeting.joinUrl, text: `Join (${label})` } });
+        overrides.meetingLink = meeting.joinUrl; overrides.zoomMeetingId = meeting.meetingId;
+        lines.push(`The ${meeting.provider === 'teams' ? 'Teams' : 'video'} meeting was created — the client and ${booking.consultant} get its invite.`);
+        if (hadMeeting) lines.push(`An earlier video meeting (for ${s(lead.bookedSlot) || 'an earlier time'}) still exists — delete it from the meeting organiser's calendar so the client is not confused.`);
+      } catch (err) {
+        lines.push(`⚠ Booked, but the video meeting could not be created (${err.message}) — the package was NOT emailed. Save the record again to retry, or choose in person or phone.`);
+        return { overrides, meetingFailed: true };
+      }
+    }
+  } else if (hadMeeting && s(lead.meetingType) === 'Virtual') {
+    lines.push(`An earlier video meeting (for ${s(lead.bookedSlot) || 'an earlier time'}) still exists — delete it from the meeting organiser's calendar so the client is not confused.`);
+  }
+  return { overrides };
+}
+
+/**
+ * What the "Record payment" dialog needs to ask about the consultation package
+ * (2026-10-16): whether to ask at all, what to pre-fill for the booking, the
+ * consultants and their lengths, the HST for the "has paid" preview. PURE apart
+ * from the clock.
+ */
+function recordPackageView(lead, ps) {
+  const cs = require('./consultationService');
+  if (!cs.packageOnRecordEnabled(lead.id)) return { enabled: false };
+  const s = (v) => String(v == null ? '' : v).trim();
+  const { CONSULTANTS, consultOptionsFor, routeConsultant } = require('../../config/consultantRouting');
+  const app = cs.packageApplicable(lead);
+  const slot = s(lead.bookedSlot), status = s(lead.bookingStatus);
+  // Only a BOOKED time is offered: a time left from an expired online hold may not be the real one.
+  const timeOk = status === 'Booked' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(slot);
+  const pinned = Object.values(CONSULTANTS).find((c) => c.name === s(lead.assignedConsultant));
+  let routed = null; try { routed = routeConsultant(lead); } catch (_) { routed = null; }
+  const opt = cs.parseConsultOption(lead);
+  const heldUntil = Date.parse(s(lead.slotHeldUntil));
+  return {
+    enabled: true, applicable: app.ok, why: app.ok ? '' : app.why,
+    alreadySent: cs.packageAlreadySent(lead), sentOn: s(lead.consultAgreementSent),
+    record: (ps.record && ps.record.package) || '', recordNote: (ps.record && ps.record.packageNote) || '',
+    hstPct: require('./bookingService').consultHstPctForLead(lead),
+    hasEmail: !!s(lead.email), hasAddress: !!s(lead.residentialAddress),
+    heldOnline: (status === 'Slot Held' && Number.isFinite(heldUntil) && heldUntil > Date.now()) ? s(lead.slotHeldUntil) : '',
+    consultants: Object.values(CONSULTANTS).map((c) => ({ name: c.name, options: consultOptionsFor(c).map((o) => ({ durationMin: o.durationMin, feeCents: o.feeCents })) })),
+    prefill: {
+      date: timeOk ? slot.slice(0, 10) : '', time: timeOk ? slot.slice(11) : '',
+      consultant: pinned ? pinned.name : ((routed && routed.name) || ''),
+      meetingType: ['In-person', 'Virtual', 'Phone Call'].includes(s(lead.meetingType)) ? s(lead.meetingType) : '',
+      durationMin: opt ? opt.durationMin : null,
+    },
+  };
+}
+
+/** The one line the record's reply and note say about the consultation package. PURE. */
+function packageResultLine(pkg, { pkgChoice, pkgNote, kind, alreadySent, applicable, onRecord, hasTime }) {
+  if (!onRecord) return '';
+  if (alreadySent || (pkg && pkg.status === 'already')) return 'The consultation package already went out to the client — it is not sent again.';
+  if (applicable && !applicable.ok) {
+    return ({
+      outcome: 'No consultation package: an outcome is already set, so the consultation has happened.',
+      case: 'No consultation package: this client already has a case.',
+      retainer: 'No consultation package: a retainer is already under way.',
+      direct: 'No consultation package: a direct retainer client has no consultation.',
+    })[applicable.why] || '';
+  }
+  if (pkgChoice === 'skip') {
+    return `The agreement and pre-consultation form were NOT emailed — ${kind === 'waived' ? 'you chose not to send them' : 'the client already has them'}${pkgNote ? ` (${pkgNote})` : ''}.`
+      + (pkg && pkg.retired ? ' The package that was waiting will not be sent.' : '')
+      + (hasTime ? ' The booking reminders still go out.' : '');
+  }
+  if (!pkg) return '';
+  switch (pkg.status) {
+    case 'sent': return 'The consultation agreement (for e-signature) and the pre-consultation form have been emailed to the client.';
+    case 'held': return 'The package is waiting for the client\'s residential address (the agreement prints it) — add it on this page and it is emailed automatically.';
+    case 'too-late': return 'The consultation time has passed, so the package was not emailed.';
+    case 'not-ready':
+      return pkg.reason === 'booking-failed' ? ''
+        : pkg.reason === 'no-email' ? 'The package was not emailed: there is no email for this client.'
+        : 'The package was not emailed: the consultation is not booked with a date and time yet.';
+    case 'needs-person': return `The package was not emailed — it needs a person first (${pkg.reason || 'see the notes'}). Use "Review & send" on this page.`;
+    case 'not-wanted':
+      return pkg.reason === 'not-wanted-list' ? 'The package was NOT emailed: this person is on the Not Wanted list. Use "Review & send" only if you are sure.'
+        : pkg.retired ? 'The consultation package that was waiting will not be sent.' : '';
+    case 'disabled': return 'Automatic sending is switched off — use "Review & send" to email the package.';
+    case 'failed': return `The package could not be emailed (${pkg.reason || 'unknown error'}) — use "Review & send" once fixed.`;
+    default: return '';
+  }
+}
+
 function rec0HstCents(n, lead) {
   if (!n || n.kind === 'waived' || !(n.amountCents > 0)) return 0;
   return require('./bookingService').consultTotalWithTaxForLead(n.amountCents, lead) - n.amountCents;
