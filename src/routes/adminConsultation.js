@@ -1331,6 +1331,8 @@ function hydrateConsultPayment(d){
    made by hand + email the agreement and form, yes or no. Waived starts with no
    answer; a NEW paid record starts on "yes"; a change keeps what was stored. */
 var CP_WHY={ outcome:'An outcome is already set — the consultation has happened, so no consultation package is sent.', 'case':'This client already has a case — no consultation package is sent.', retainer:'A retainer is already under way — no consultation package is sent.', direct:'A direct retainer client has no consultation — no consultation package is sent.' };
+/* The record box can send the package for this client (switch on, the package is for them, none sent). */
+function cpRecOn(d){ var o=(d&&d.consultPayment&&d.consultPayment.onRecord)||{}; return !!(o.enabled&&o.applicable&&!o.alreadySent); }
 function cpLooksTaxed(c,orc){
   var pct=Number((orc&&orc.hstPct)||0); if(!(pct>0)||!(c>0)) return false;
   var hit=false;
@@ -1583,7 +1585,8 @@ function render(d){
     (ca.held==='late-payment')?'· HELD — the client paid after the slot hold expired; confirm the time with the client, then "Review & send"':
     (ca.held&&ca.attempts>=3)?'· HELD — the automatic release failed 3 times; use "Review & send"':
     ca.held?(ca.autoSend?'· HELD — no residential address; enter it below and the package sends itself':'· HELD by the automatic package, which is now switched off — use "Review & send"'):
-    (ca.autoSend&&d.bookingStatus!=='Booked')?'· not sent yet — sends automatically when the consultation is paid':
+    (ca.autoSend&&d.bookingStatus!=='Booked')?('· not sent yet — sends automatically when the consultation is paid'+(cpRecOn(d)?' online, or when you record the fee with the booking ("Record payment / Waived")':'')):
+    (ca.autoSend&&cpRecOn(d)&&!(d.consultPayment&&d.consultPayment.paid))?'· not sent — record the fee with the booking ("Record payment / Waived") to email it, or use "Review & send"':
     ca.autoSend?'· not sent — this booking predates automatic sending, or the send did not run; use "Review & send"':'';
   var caw=document.getElementById('ca-warn');
   // The editable address — never overwrite a value the consultant is typing.
