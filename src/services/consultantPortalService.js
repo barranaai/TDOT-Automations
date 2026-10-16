@@ -2510,5 +2510,6 @@ module.exports = {
   createStaffLead, STAFF_LEAD_SOURCES,
   invalidateLeadsQueue,
   classifyLead, consultationDone, getConsultationsBoard,
+  _recordPackageView: recordPackageView,   // test seam
   conflictBody, normalizeLeadLocation,
 };
