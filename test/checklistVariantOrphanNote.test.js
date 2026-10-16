@@ -84,3 +84,19 @@ test('a Sub Type change that drops a family member\'s role and only MOVES rows s
     assert.equal(fm.calls.notes.filter((b) => /Family members not covered by this checklist/.test(b)).length, 1);
   } finally { fm.restore(); }
 });
+
+test('every seeding path tells staff what the move left to check: the "Checklist moved" note comes from the seed itself (once — the next run has nothing to list)', async () => {
+  const PG = 'PGWP';
+  const rows = rowsFor(PG, 'Single Applicant', [PA]).map((r) => (/-PASSPORT-/.test(r.documentCode) ? { ...r, status: 'Reviewed' } : /-PHOTO-|-IDCIVIL|-PERMITS-/.test(r.documentCode) ? { ...r, status: 'Not Applicable' } : r));
+  const fm = fakeMonday(rows, { caseType: PG, subType: 'Extension - Single Applicant' });
+  try {
+    const r = await checklist.reseedByCaseRef(REF, { composition: { caseFlags: {}, members: [PA] } });
+    assert.ok(r.changed.length >= 1, 'the reviewed passport is asked for differently ("- Old and New")');
+    const notes = fm.calls.notes.filter((b) => /Checklist moved to Sub Type/.test(b));
+    assert.equal(notes.length, 1);
+    assert.match(notes[0], /"Passport with all stamped pages" → "Passport with all stamped pages- Old and New"/);
+    if (r.naKept.length) assert.match(notes[0], /Not Applicable under the old Sub Type/);
+    await checklist.reseedByCaseRef(REF, { composition: { caseFlags: {}, members: [PA] } });
+    assert.equal(fm.calls.notes.filter((b) => /Checklist moved to Sub Type/.test(b)).length, 1, 'not again');
+  } finally { fm.restore(); }
+});

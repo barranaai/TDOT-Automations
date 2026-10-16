@@ -161,8 +161,11 @@ async function pruneStaleSubTypeRows({ caseRef, keepSubType, keepIds = null }) {
 // A row the client already uploaded to moves only onto the SAME requirement:
 // when the new Sub Type words the document differently ("Photo" → "Photo -
 // Front and Back both required") the upload stays on the old row and the new
-// row asks for the new version (reported as "changed"). Anything unsure stays
-// as it was.
+// row asks for the new version (reported as "changed"). A "Not Applicable"
+// decision belongs to the old Sub Type (a non-accompanying spouse's police
+// certificate is not needed; an accompanying one's is): such a row is never
+// moved — the new row asks again and staff are told to re-check (reported as
+// "naKept"). Anything unsure stays as it was.
 
 /** Kill switch: CHECKLIST_VARIANT_MIGRATE=0 / off / false / no → re-seeds behave as before. */
 function variantMigrateEnabled() {
@@ -194,6 +197,7 @@ const SLOT_ALIAS = { NonAccompanyingSpouse: 'Spouse' };
 const slotOf = (role) => SLOT_ALIAS[role] || role;
 const normText = (s) => String(s || '').trim().toLowerCase();
 const isOpenStatus = (s) => ['', 'missing'].includes(normText(s));   // as selectStaleRows reads "not uploaded"
+const isNaStatus = (s) => normText(s) === 'not applicable';
 
 /**
  * PURE. The variant a schema code was built for: the registered variant whose
@@ -243,9 +247,10 @@ function parseCodeTail(rest, roles) {
  * @param {Function} [a.lookup]     caseSchemaService.lookup
  * @returns {{ moves: Array<{id, name, status, by:'code'|'name'|'base', from:{uniqueKey,documentCode,subType,applicantType,category}, to:{row, uniqueKey}}>,
  *             stale: Array<{id, name, status, subType, owner, moved:boolean, sameType:boolean}>,
- *             changed: Array<{id, name, status, from, to}> }}
+ *             changed: Array<{id, name, status, from, to, person}>, naKept: Array<{id, name, to, person}> }}
  *   stale = every schema row NOT of the current variant (moved ones flagged) — what is left is the caller's call.
  *   changed = uploaded rows NOT moved because the new Sub Type asks for that document differently.
+ *   naKept  = "Not Applicable" rows NOT moved (never carried across Sub Types) that the new Sub Type asks for.
  */
 function planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, existingKeys, registered, lookup }) {
   const css = require('./caseSchemaService');
@@ -278,7 +283,7 @@ function planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, exis
     if (!parsed) continue;
     const ownerRole = ownerSchema && (ownerSchema.roles || []).find((x) => x.role === parsed.role);
     const ownerDoc = ownerRole && (ownerRole.documents || []).find((d) => d.code === parsed.docCode);
-    cands.push({ row: r, code, stale: s, ...parsed, slot: slotOf(parsed.role), open: isOpenStatus(r.status),
+    cands.push({ row: r, code, stale: s, ...parsed, slot: slotOf(parsed.role), open: isOpenStatus(r.status), na: isNaStatus(r.status),
       rawNames: [r.name, ownerDoc && ownerDoc.name].filter(Boolean), names: [normName(r.name), normName(ownerDoc && ownerDoc.name)].filter(Boolean),
       reqName: ownerDoc ? ownerDoc.name : (r.name || ''), ownerDocName: ownerDoc ? ownerDoc.name : '' });
   }
@@ -295,7 +300,8 @@ function planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, exis
 
   const used = new Set();
   const moves = [];
-  const changed = new Map();   // candidate id → the requirement it did not move onto
+  const changed = new Map();   // candidate id → the requirement its upload did not move onto
+  const naKept = new Map();    // candidate id → the document its "Not Applicable" was not carried onto
   const pick = (list) => list.slice().sort((a, b) =>
     (a.open - b.open) || (Number(a.row.id) - Number(b.row.id)))[0];   // the one the client uploaded to, else the oldest
   const take = (t, c, by) => {
@@ -310,28 +316,33 @@ function planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, exis
   // an uploaded row only onto the same requirement; an empty one onto its document whatever the wording
   const fits = (t, c) => c.open || sameRequirement(c.reqName, t.row.documentName);
   const one = (key) => (t) => targets.filter((o) => !o.done && o.slot === t.slot && o.index === t.index && key(o) === key(t)).length === 1;
+  // a "Not Applicable" row is never moved: noted against the document the new Sub Type asks for
+  const setAsideNa = (t, list) => {
+    for (const c of list) if (c.na) naKept.set(String(c.row.id), { id: String(c.row.id), name: c.row.name || '', to: t.row.documentName, person: t.row.applicantType || '' });
+    return list.filter((c) => !c.na);
+  };
   // 1) the same document code, same person
   for (const t of targets) {
-    const all = cands.filter((c) => sameSlot(t, c) && c.docCode === t.docCode);
+    const all = setAsideNa(t, cands.filter((c) => sameSlot(t, c) && c.docCode === t.docCode));
     const list = all.filter((c) => fits(t, c));
-    for (const c of all) if (!list.includes(c)) changed.set(String(c.row.id), { id: String(c.row.id), name: c.row.name || '', status: c.row.status || '', from: c.reqName, to: t.row.documentName });
+    for (const c of all) if (!list.includes(c)) changed.set(String(c.row.id), { id: String(c.row.id), name: c.row.name || '', status: c.row.status || '', from: c.reqName, to: t.row.documentName, person: t.row.applicantType || '' });
     if (list.length) take(t, pick(list), 'code');
   }
   // 2) the document name, same person — only when that name is one document
   //    on each side (never a guess between two)
   for (const t of targets) {
     if (t.done || !t.name || !one((o) => o.name)(t)) continue;
-    const list = cands.filter((c) => sameSlot(t, c) && c.names.includes(t.name));
+    const list = setAsideNa(t, cands.filter((c) => sameSlot(t, c) && c.names.includes(t.name)));
     if (list.length && new Set(list.map((c) => c.docCode)).size === 1) take(t, pick(list), 'name');
   }
   // 3) the name without a bracket only one side has ("… Assessment" /
   //    "… Assessment (ECA)") — again one document on each side
   for (const t of targets) {
     if (t.done || !t.base || !one((o) => o.base)(t)) continue;
-    const list = cands.filter((c) => sameSlot(t, c) && c.rawNames.some((n) => sameRequirement(n, t.row.documentName)));
+    const list = setAsideNa(t, cands.filter((c) => sameSlot(t, c) && c.rawNames.some((n) => sameRequirement(n, t.row.documentName))));
     if (list.length && new Set(list.map((c) => c.docCode)).size === 1) take(t, pick(list), 'base');
   }
-  return { moves, stale, changed: [...changed.values()] };
+  return { moves, stale, changed: [...changed.values()], naKept: [...naKept.values()] };
 }
 
 /** I/O. The case's checklist rows with every field the variant move reads. */
@@ -356,7 +367,8 @@ async function getExistingRowsForMigration(caseRef) {
  * I/O. Move one row onto the current variant: ONE write of its key columns
  * (document code, unique key, intake id, Sub Type), plus the person label /
  * category / folder link when the new variant's differ (category and folder:
- * only on a row with no upload yet), and the name when the row still carries
+ * only on a row with no upload yet, and only when the new category's folder
+ * link is at hand), and the name when the row still carries
  * the old variant's own name for the document. Status, files and notes are
  * never touched.
  */
@@ -369,11 +381,13 @@ async function moveRow({ move, caseSubType, categoryLinks = {} }) {
     [EXEC_COLS.caseSubType]:  caseSubType || '',
   };
   if (t.applicantType && t.applicantType !== move.from.applicantType) cols[EXEC_COLS.applicantType] = t.applicantType;
-  // the category (and its folder link) only on a row with no upload yet: an
-  // uploaded file stays in the folder of the row's category — the link must too
-  if (t.category && t.category !== move.from.category && isOpenStatus(move.status)) {
+  // the category (and its folder link) only on a row with no upload yet — an
+  // uploaded file stays in the folder of the row's category, the link must too
+  // — and only together with the new category's folder link (a category with
+  // no link would send the next upload to a folder the row does not open)
+  if (t.category && t.category !== move.from.category && isOpenStatus(move.status) && categoryLinks[t.category]) {
     cols[EXEC_COLS.documentCategory] = t.category;
-    if (categoryLinks[t.category]) cols[EXEC_COLS.documentFolder] = { url: categoryLinks[t.category], text: `${t.category} Folder` };
+    cols[EXEC_COLS.documentFolder] = { url: categoryLinks[t.category], text: `${t.category} Folder` };
   }
   if (t.documentName && move.ownerDocName && move.name === move.ownerDocName && t.documentName !== move.name) cols.name = t.documentName;
   const data = await mondayApi.query(
@@ -452,7 +466,7 @@ async function reconcileExecutionRows({ caseRef, caseType = '', caseSubType, cli
 
   // Rows of another Sub Type of this Case Type: moved onto this one BEFORE the
   // diff, so their documents are not created a second time.
-  let migrated = 0, migrateFailed = 0, migratedFrom = [], changed = [];
+  let migrated = 0, migrateFailed = 0, migratedFrom = [], changed = [], naKept = [];
   const hold = new Set();      // keys a failed move still owns — never created beside it this run
   const keepIds = new Set();   // rows the move touched — never pruned this run (a search may still show the old Sub Type)
   if (caseType && variantMigrateEnabled()) {
@@ -468,6 +482,7 @@ async function reconcileExecutionRows({ caseRef, caseType = '', caseSubType, cli
       const mig = planVariantMigration({ rows, plan, caseRef, caseType, caseSubType, existingKeys });
       const { moves, stale } = mig;
       changed = mig.changed;
+      naKept = mig.naKept;
       const leftover = stale.filter((s) => !s.moved && isOpenStatus(s.status));
       if (staleOpen === 'refuse' && leftover.length) {
         return { created: 0, skipped: 0, failed: 0, pruned: 0, migrated: 0, refused: 'stale-open', leftover: leftover.map((s) => ({ id: s.id, name: s.name, subType: s.subType || (s.owner && s.owner.subType) || '' })) };
@@ -520,7 +535,7 @@ async function reconcileExecutionRows({ caseRef, caseType = '', caseSubType, cli
   const pruned = prune ? await pruneStaleSubTypeRows({ caseRef, keepSubType: caseSubType, keepIds }) : 0;
 
   console.log(`[ExecSeeder] ${caseRef}: created ${created}, skipped ${toSkip.length}, failed ${failed}, pruned ${pruned}, moved ${migrated}`);
-  return { created, skipped: toSkip.length - migrated, failed, pruned, migrated, migratedFrom: [...new Set(migratedFrom.filter(Boolean))], changed };
+  return { created, skipped: toSkip.length - migrated, failed, pruned, migrated, migratedFrom: [...new Set(migratedFrom.filter(Boolean))], changed, naKept };
 }
 
 module.exports = {

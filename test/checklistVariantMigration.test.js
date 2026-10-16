@@ -363,10 +363,11 @@ test('staff see it: the Re-seed note names the moved rows and the removed empty 
   const btn = fs.readFileSync(require.resolve('../src/services/reseedButtonService.js'), 'utf8');
   assert.match(btn, /row\(s\) moved over from Sub Type/);
   assert.match(btn, /empty row\(s\) of another Sub Type removed/);
-  assert.match(btn, /uploaded document\(s\) are asked for differently in the new Sub Type, so the upload stays on its old row/);
+  assert.match(btn, /document\(s\) of the old Sub Type need a check — they are listed in the separate "Checklist moved" note/);
   const page = fs.readFileSync(require.resolve('../src/routes/adminCase.js'), 'utf8');
   assert.match(page, /row\(s\) moved over from the old Sub Type \(uploads kept\)\./);
-  assert.match(page, /uploaded document\(s\) are asked for differently in the new Sub Type — see the note on the case\./);
+  assert.match(page, /document\(s\) of the old Sub Type need a check — see the Checklist moved note on the case\./);
+  assert.match(page, /rs\.manual === 'subtype' && rs\.noSchema \? 'No document rows added: the Case Sub Type is blank or has no automatic checklist — set the correct Sub Type first, then press Re-seed Checklist on the case\.'/);
   const cl = fs.readFileSync(require.resolve('../src/services/checklistService.js'), 'utf8');
   assert.match(cl, /caseType:\s+schema\.caseType,/, 'every schema seed passes its Case Type — the move runs on every re-seed');
   assert.match(cl, /migrated: result\.migrated \|\| 0/);
@@ -377,7 +378,7 @@ test('an UPLOADED row moves only onto the same requirement: worded differently i
   const photo = rowsOf('Old', [PA], 'Received').find((r) => /-PHOTO-/.test(r.documentCode));   // "Photo" → "Two photos"
   const up = seeder.planVariantMigration({ rows: [photo], plan, caseRef: REF, caseType: T, caseSubType: 'New', registered, lookup });
   assert.equal(up.moves.length, 0);
-  assert.deepEqual(up.changed, [{ id: photo.id, name: 'Photo', status: 'Received', from: 'Photo', to: 'Two photos' }]);
+  assert.deepEqual(up.changed, [{ id: photo.id, name: 'Photo', status: 'Received', from: 'Photo', to: 'Two photos', person: 'Principal Applicant' }]);
   const empty = seeder.planVariantMigration({ rows: [{ ...photo, status: 'Missing' }], plan, caseRef: REF, caseType: T, caseSubType: 'New', registered, lookup });
   assert.equal(empty.moves.length, 1, 'no upload yet: it simply becomes the new document');
   assert.deepEqual(empty.changed, []);
@@ -429,4 +430,47 @@ test('every registered pair of Sub Types of one Case Type: a move never crosses 
     }
   }
   assert.ok(pairs > 50 && moved > 500, `swept ${pairs} pairs, ${moved} moves`);
+});
+
+test('a "Not Applicable" row is NEVER carried to another Sub Type (the decision belongs to the old one): left where it is, listed to re-check — never called an upload', () => {
+  // SOWP spouse "Canadian Education Documents" N/A (never studied here), Sub Type changed: same code, reworded
+  const sowp = boardRowsFor('SOWP', 'Inland - Non Established Relationship', [PA, SPOUSE], { status: (p) => (p.role === 'Spouse' && /-CANEDU-/.test(p.documentCode) ? 'Not Applicable' : 'Received') });
+  const r = seeder.planVariantMigration({ rows: sowp, plan: planFor('SOWP', 'Inland - Established Relationship', [PA, SPOUSE]), caseRef: REF, caseType: 'SOWP', caseSubType: 'Inland - Established Relationship' });
+  const na = sowp.find((x) => x.status === 'Not Applicable');
+  assert.ok(!r.moves.some((m) => m.id === na.id));
+  assert.deepEqual(r.naKept, [{ id: na.id, name: na.name, to: 'Canadian Education Documents - for each program if studied here (official marksheet, degree certificates)', person: 'Spouse' }]);
+  assert.ok(!r.changed.some((c) => c.id === na.id), 'never reported as an upload');
+  // through the spouse alias: a non-accompanying spouse's N/A police certificate never becomes the accompanying spouse's
+  const cec = boardRowsFor(CEC, SINGLE, [PA, { role: 'NonAccompanyingSpouse', flags: {} }], { status: (p) => (p.role === 'NonAccompanyingSpouse' && /-PCC-/.test(p.documentCode) ? 'Not Applicable' : 'Received') });
+  const c = seeder.planVariantMigration({ rows: cec, plan: planFor(CEC, ACC, [PA, SPOUSE]), caseRef: REF, caseType: CEC, caseSubType: ACC });
+  const pcc = cec.find((x) => x.status === 'Not Applicable');
+  assert.ok(!c.moves.some((m) => m.id === pcc.id), 'the accompanying spouse\'s PCC is asked for');
+  assert.deepEqual(c.naKept.map((x) => [x.id, x.person]), [[pcc.id, 'Spouse']]);
+  assert.equal(c.moves.length, 15, 'everything else still moves (11 principal + 4 spouse)');
+});
+
+test('an EMPTY moved row takes the new category only together with its folder link (no link at hand → category and link stay as they were)', async () => {
+  const kid = rowsOf('Old', kids, 'Missing').find((r) => /DEPENDENTCHILD1-BIRTH/.test(r.documentCode));
+  const fb = fakeBoard([kid]);
+  const realLookup = css.lookup, realList = css.listRegistered;
+  css.lookup = lookup; css.listRegistered = () => registered;
+  try {
+    const plan = seedPlan({ schema: SCHEMAS.New, composition: { caseFlags: {}, members: kids } });
+    const r = await seeder.reconcileExecutionRows({ caseRef: REF, caseType: T, caseSubType: 'New', clientMasterItemId: '1', plan, categoryLinks: {}, prune: false });
+    assert.equal(r.migrated, 1);
+    const c = fb.calls.moves[0].cols;
+    assert.ok(!(C.documentCategory in c) && !(C.documentFolder in c), 'OneDrive folders failed: the row keeps a category and link that agree');
+  } finally { fb.restore(); css.lookup = realLookup; css.listRegistered = realList; }
+});
+
+test('the "Checklist moved" note: names each document to check, the upload ones and the Not Applicable ones, in plain words', () => {
+  const { variantCheckNote } = require('../src/services/checklistService')._internal;
+  const n = variantCheckNote({ caseRef: REF, subType: ACC, migratedFrom: [SINGLE],
+    changed: [{ from: 'Photo', to: 'Photo - Front and Back both required', person: 'Principal Applicant' }],
+    naKept: [{ to: 'Police clearance certificates (PCC)', person: 'Spouse' }] });
+  assert.match(n, /Checklist moved to Sub Type "CEC Accompanying Spouse &amp; Child" — 2 document\(s\) to check/);
+  assert.match(n, /The rows of "CEC Single Applicant" that match were moved over with their uploads; these were not:/);
+  assert.match(n, /Asked for differently now<\/b> — the client's upload stays on its old row and a new row asks for the new version\. If the upload already covers it, mark the new row Not Applicable with a note saying so; otherwise the client uploads the new version: "Photo" → "Photo - Front and Back both required" \(Principal Applicant\)\./);
+  assert.match(n, /Not Applicable under the old Sub Type<\/b> — that decision is not carried over, so the new row asks for the document again\. Mark it Not Applicable again if it still does not apply: "Police clearance certificates \(PCC\)" \(Spouse\)\./);
+  assert.doesNotMatch(variantCheckNote({ caseRef: REF, subType: ACC, naKept: [{ to: 'X' }] }), /Asked for differently/);
 });

@@ -83,7 +83,7 @@ async function onReseedButton(itemId) {
       `<b>${result.created} new row(s) added</b> · ${result.skipped} already existed (untouched) · ${result.failed} failed` +
       (result.migrated ? `<br>${result.migrated} row(s) moved over from Sub Type "${esc((result.migratedFrom || []).join(', ') || 'the old one')}" to "${esc(result.subType || '')}" — the same documents, their uploads and status kept` : '') +
       (result.pruned ? `<br>${result.pruned} empty row(s) of another Sub Type removed` : '') +
-      ((result.changed || []).length ? `<br>⚠ ${result.changed.length} uploaded document(s) are asked for differently in the new Sub Type, so the upload stays on its old row and a new row asks for the new version — check whether the upload already covers it: ${result.changed.map((c) => `"${esc(c.from || c.name)}" → "${esc(c.to)}"`).join('; ')}` : ''));
+      (((result.changed || []).length + (result.naKept || []).length) ? `<br>⚠ ${(result.changed || []).length + (result.naKept || []).length} document(s) of the old Sub Type need a check — they are listed in the separate "Checklist moved" note` : ''));
     console.log(`[Reseed] ${caseRef}: created ${result.created}, skipped ${result.skipped}, failed ${result.failed}, moved ${result.migrated || 0}, pruned ${result.pruned || 0}`);
   } catch (err) {
     await setButton(itemId, LABEL_FAILED).catch(() => {});

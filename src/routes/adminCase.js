@@ -545,11 +545,12 @@ function famFinish(res) {
     var docs = rs.error ? 'Checklist re-seed failed — press Re-seed Checklist on the case.'
       : rs.unknown ? 'The checklist state could not be read — press Re-seed Checklist on the case if its checklist exists.'
       : rs.manual === 'template' ? 'No document rows added: this checklist was built the old Template way — check that the documents of this member are on it and add any missing ones by hand.'
+      : rs.manual === 'subtype' && rs.noSchema ? 'No document rows added: the Case Sub Type is blank or has no automatic checklist — set the correct Sub Type first, then press Re-seed Checklist on the case.'
       : rs.manual === 'subtype' ? 'No document rows added: the Sub Type changed after the checklist was built' + (rs.leftover ? ' and ' + rs.leftover + ' empty row(s) of the old Sub Type have no match in the new one' : '') + ' — press Re-seed Checklist on the case.'
       : rs.manual === 'casetype' ? 'No document rows added: the checklist was built for another Case Type — see the note on the case (do not add the member again).'
       : rs.manual === 'no-schema' ? 'No document rows added: this case type has no automatic checklist — add the documents of this member by hand.'
       : rs.deferred ? 'Document rows come with the checklist at Document Collection (the case is at "' + (res.j.stage || 'Not Started') + '").'
-      : ((rs.created || 0) + ' document row(s) added.' + (rs.migrated ? ' ' + rs.migrated + ' row(s) moved over from the old Sub Type (uploads kept).' : '') + (rs.changed ? ' ' + rs.changed + ' uploaded document(s) are asked for differently in the new Sub Type — see the note on the case.' : '') + (rs.failed ? ' ' + rs.failed + ' row(s) failed — press Re-seed Checklist.' : ''));
+      : ((rs.created || 0) + ' document row(s) added.' + (rs.migrated ? ' ' + rs.migrated + ' row(s) moved over from the old Sub Type (uploads kept).' : '') + (rs.toCheck ? ' ' + rs.toCheck + ' document(s) of the old Sub Type need a check — see the Checklist moved note on the case.' : '') + (rs.failed ? ' ' + rs.failed + ' row(s) failed — press Re-seed Checklist.' : ''));
     var cy = res.j.carry || null;
     var carried = cy && cy.written ? ' Copied ' + cy.copied + ' answer(s) the client had typed for this member in their own form into the new section.' : (cy && cy.unmatched) ? ' No answers copied: the child named did not match exactly one child in the client form (see the note).' : (cy && cy.skipped === 'has-answers') ? ' The new section already had answers, so nothing was copied over it.' : '';
     if (cy && cy.crossForm && cy.crossForm.copied) carried += ' Also pre-filled ' + cy.crossForm.copied + ' answer(s) into the application form section - the client must review them.';

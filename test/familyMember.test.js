@@ -308,25 +308,26 @@ test('leftover rows of an earlier variant: all uploaded / reviewed → the re-se
 test('the Sub Type move on a family add: every old row matched → the re-seed moves + adds and the note says so; a blank or unknown Sub Type → the Sub Type note, never "no automatic checklist"', async () => {
   const old11 = shapeOf(codes(CEC_EE, 'CEC Single Applicant', 11, 'Received'));
   const moved = harness({ shape: shapeOf([...codes(CEC_EE, 'CEC Single Applicant', 10, 'Received'), ...codes(CEC_EE, 'CEC Single Applicant', 1, 'Missing')]),
-    reseed: (o) => ({ created: 11, skipped: 0, failed: 0, pruned: 0, migrated: 11, migratedFrom: ['CEC Single Applicant'], changed: o.staleOpen === 'refuse' ? [{ id: '9', name: 'Photo', from: 'Photo', to: 'Photo - Front and Back' }] : [] }) });
+    reseed: (o) => ({ created: 11, skipped: 0, failed: 0, pruned: 0, migrated: 11, migratedFrom: ['CEC Single Applicant'], changed: o.staleOpen === 'refuse' ? [{ id: '9', name: 'Photo', from: 'Photo', to: 'Photo - Front and Back' }] : [], naKept: [{ id: '8', name: 'PCC', to: 'PCC', person: 'Spouse' }] }) });
   try {
     const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
     assert.equal(moved.calls.reseeds[0].opts.staleOpen, 'refuse');
-    assert.deepEqual(r.reseed, { created: 11, skipped: 0, failed: 0, pruned: 0, migrated: 11, from: 'CEC Single Applicant', changed: 1 });
-    assert.match(moved.calls.notes[0].body, /checklist re-seeded \(rows only added, never removed\): 11 new document row\(s\), 11 moved over from Sub Type "CEC Single Applicant" \(uploads kept\), 1 uploaded document\(s\) the new Sub Type words differently kept on their old row/);
+    assert.deepEqual(r.reseed, { created: 11, skipped: 0, failed: 0, pruned: 0, migrated: 11, from: 'CEC Single Applicant', toCheck: 2 });
+    assert.match(moved.calls.notes[0].body, /checklist re-seeded \(rows only added, never removed\): 11 new document row\(s\), 11 moved over from Sub Type "CEC Single Applicant" \(uploads kept\), 2 document\(s\) of the old Sub Type to check \(listed in the separate "Checklist moved" note\)/);
   } finally { moved.restore(); }
   for (const subType of ['', 'Not A Real Sub Type']) {
     const h = harness({ shape: old11, caseState: { stage: 'Document Collection Started', payment: 'Paid', checklistApplied: 'Yes', caseType: CEC_EE, subType } });
     try {
       const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' });
       assert.equal(h.calls.reseeds.length, 0, `Sub Type "${subType}": nothing to move onto`);
-      assert.deepEqual(r.reseed, { manual: 'subtype', from: 'CEC Single Applicant', to: subType });
-      assert.doesNotMatch(h.calls.notes[0].body, /no automatic checklist/);
+      assert.deepEqual(r.reseed, { manual: 'subtype', from: 'CEC Single Applicant', to: subType, noSchema: true });
+      assert.doesNotMatch(h.calls.notes[0].body, /this case type has no automatic checklist/);
+      assert.match(h.calls.notes[0].body, subType ? /the case's Case Sub Type is "Not A Real Sub Type", which has no automatic checklist; set the correct Case Sub Type first, then press Re-seed Checklist/ : /the case's Case Sub Type is blank; set the correct Case Sub Type first, then press Re-seed Checklist/);
     } finally { h.restore(); }
   }
   // the schema vanishes between the check and the re-seed: still the Sub Type note
   const race = harness({ shape: old11, reseedError: Object.assign(new Error('No code schema registered'), { code: 'NO_SCHEMA' }) });
-  try { const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.equal(r.reseed.manual, 'subtype'); } finally { race.restore(); }
+  try { const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff' }); assert.equal(r.reseed.manual, 'subtype'); assert.equal(r.reseed.noSchema, true); } finally { race.restore(); }
 });
 
 test('a checklist built for another CASE TYPE is never re-seeded (the re-seed would lay a second checklist) — the note names both case types', async () => {

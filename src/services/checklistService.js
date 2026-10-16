@@ -276,7 +276,36 @@ async function seedFromSchema({ schema, caseRef, clientName, clientMasterItemId,
         body: `⚠️ <b>Family members not covered by this checklist.</b> ${esc(who)} on the Family Members board, but the current Case Sub Type <b>"${esc(schema.subType) || '(none)'}"</b> has no matching document role — <b>their documents were NOT seeded.</b> If they are accompanying this application, change the Case Sub Type to the accompanying variant and flip <b>Re-seed Checklist → Run</b>.` }
     ).catch((e) => console.warn(`[ChecklistService] orphan note failed for ${caseRef}: ${e.message}`));
   }
+
+  // Rows of the old Sub Type that were NOT moved because they need a person's
+  // eye — posted here, so every path (Re-seed button, family add, Document
+  // Collection, the late Sub Type resume) tells staff. Only on the run that
+  // first finds them: the next run sees the new rows in place and lists none.
+  const changed = result.changed || [], naKept = result.naKept || [];
+  if (clientMasterItemId && (changed.length || naKept.length)) {
+    await mondayApi.query(
+      `mutation($i: ID!, $body: String!){ create_update(item_id: $i, body: $body){ id } }`,
+      { i: String(clientMasterItemId), body: variantCheckNote({ caseRef, subType: schema.subType, migratedFrom: result.migratedFrom || [], changed, naKept }) }
+    ).catch((e) => console.warn(`[ChecklistService] Sub Type check note failed for ${caseRef}: ${e.message}`));
+  }
   return result;
+}
+
+/** PURE. The staff note for old-Sub-Type rows the move left for a person to check. */
+function variantCheckNote({ caseRef, subType, migratedFrom = [], changed = [], naKept = [] }) {
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const who = (p) => (p ? ` (${esc(p)})` : '');
+  const from = migratedFrom.length ? `"${esc(migratedFrom.join(', '))}"` : 'the old Sub Type';
+  const parts = [`🔎 <b>Checklist moved to Sub Type "${esc(subType)}" — ${changed.length + naKept.length} document(s) to check</b> (${esc(caseRef)}). The rows of ${from} that match were moved over with their uploads; these were not:`];
+  if (changed.length) {
+    parts.push(`<br><b>Asked for differently now</b> — the client's upload stays on its old row and a new row asks for the new version. If the upload already covers it, mark the new row Not Applicable with a note saying so; otherwise the client uploads the new version: ` +
+      changed.map((c) => `"${esc(c.from || c.name)}" → "${esc(c.to)}"${who(c.person)}`).join('; ') + '.');
+  }
+  if (naKept.length) {
+    parts.push(`<br><b>Not Applicable under the old Sub Type</b> — that decision is not carried over, so the new row asks for the document again. Mark it Not Applicable again if it still does not apply: ` +
+      naKept.map((c) => `"${esc(c.to)}"${who(c.person)}`).join('; ') + '.');
+  }
+  return parts.join('');
 }
 
 /**
@@ -611,7 +640,7 @@ async function reseedByCaseRef(caseRef, { prune = true, composition: composition
     caseType, subType,
     members: composition.members.map((m) => m.role),
     created: result.created, skipped: result.skipped, failed: result.failed, pruned: result.pruned || 0,
-    migrated: result.migrated || 0, migratedFrom: result.migratedFrom || [], changed: result.changed || [],
+    migrated: result.migrated || 0, migratedFrom: result.migratedFrom || [], changed: result.changed || [], naKept: result.naKept || [],
     ...(result.refused ? { refused: result.refused, leftover: result.leftover || [] } : {}),
   };
 }
@@ -746,4 +775,4 @@ async function noteWorkFoldersFailed(itemId, err) {
 }
 
 module.exports = { onDocumentCollectionStarted, reseedByCaseRef, resumeSeedingAfterSubType,
-  _internal: { isSchemaDrivenEnabled, markQuestionnaireApplied, caseTypeHasSubTypeVariants, resumeDeps, knownSubTypeLabels, checkSubTypeKnown, displayedSubTypeLabels } };
+  _internal: { variantCheckNote, isSchemaDrivenEnabled, markQuestionnaireApplied, caseTypeHasSubTypeVariants, resumeDeps, knownSubTypeLabels, checkSubTypeKnown, displayedSubTypeLabels } };
