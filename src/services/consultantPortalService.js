@@ -311,13 +311,14 @@ async function getConsultationDetail(leadId) {
         // (entering the address releases it), 'slot-clash' or 'late-payment'
         // (a person decides; "Review & send").
         held:     cs.packageHeld || '',
-        stalled:  cs.packageStalled || '',
+        // a pending marker past the stale mark reads as interrupted (never "not sent — use Review & send")
+        stalled:  cs.packageStalled || ((cs.packagePending && (Date.now() - Date.parse(cs.packagePending)) >= require('./consultationService').PACKAGE_STALE_MS) ? cs.packagePending : ''),
         emailedAt: cs.packageEmailedAt || '',
         expired:  cs.packageExpired || '',
         attempts: cs.packageAttempts || 0,
         // the server's own verdict (Review & send asks AGAIN on it — an envelope id alone counts)
         alreadySent: require('./consultationService').packageAlreadySent(lead),
-        pending: !!(cs.packagePending && !cs.packageStalled && (Date.now() - Date.parse(cs.packagePending)) < 10 * 60 * 1000),
+        pending: !!(cs.packagePending && !cs.packageStalled && (Date.now() - Date.parse(cs.packagePending)) < require('./consultationService').PACKAGE_STALE_MS),
         heldBy: cs.packageHeldBy || '',
         recordOn: require('./consultationService').packageOnRecordEnabled(lead.id),
         skipped: (() => { const r = require('./consultPaymentService').parseConsultPayment(lead); return r && r.package === 'skip' ? (r.packageNote || 'chosen when the fee was recorded') : ''; })(),
@@ -1241,8 +1242,8 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         ? 'Residential address saved. Automatic sending is switched off — the held consultation package still needs "Review & send".'
         : released && released.status === 'expired'
         ? 'Residential address saved. The consultation date has already passed, so the held package was not sent — use "Review & send" if it is still needed.'
-        : released && released.status === 'not-wanted' && released.retired
-        ? 'Residential address saved. The consultation package that was waiting for it will not be sent — the fee record or the booking changed (see the note).'
+        : released && released.retired
+        ? `Residential address saved. The consultation package that was waiting for it was NOT sent — ${require('./consultationService').RETIRE_WHY[released.reason] || released.reason} (see the note).`
         : 'Residential address saved.';
       return { ok: true, message, residentialAddress: v.normalized, ...(released ? { packageReleased: released.status } : {}) };
     }
@@ -1388,7 +1389,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       }
       // A "Record payment" save still writing the booking / meeting goes first; then the
       // gate re-checks from a fresh read (an automatic send may be finishing right now).
-      while (_recordLocks.has(String(leadId))) await _recordLocks.get(String(leadId)).catch(() => {});
+      await require('./consultationService').waitRecordSave(leadId);
       const r = await require('./consultationService').sendConsultationPackage(leadId, { again });
       const viaEsign = r.via === 'documenso';
       await postPortalNote(leadId, r.alreadySigned
@@ -2044,14 +2045,9 @@ async function createDirectClient(payload = {}) {
 }
 
 /** HST on a staff-recorded consultation fee, fixed when it is recorded (none when waived or outside Canada). */
-const _recordLocks = new Map();   // leadId → Promise: one "Record payment" save at a time per lead
-async function withRecordLock(leadId, fn) {
-  const key = String(leadId);
-  while (_recordLocks.has(key)) await _recordLocks.get(key).catch(() => {});
-  const p = fn();
-  _recordLocks.set(key, p);
-  try { return await p; } finally { if (_recordLocks.get(key) === p) _recordLocks.delete(key); }
-}
+/** One "Record payment" save at a time per lead — the lock lives in consultationService,
+ *  where every other package trigger waits for it. */
+function withRecordLock(leadId, fn) { return require('./consultationService').withRecordSave(leadId, fn); }
 
 /** Two consultations with the same consultant overlap (a claim's length is not known: 30 minutes). PURE. */
 function slotsOverlap(aSlot, aMin, bSlot, bMin = 30) {
@@ -2125,6 +2121,8 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
   // is for, when none has gone out (an emailed package keeps the time it stated).
   const alreadySent = cs.packageAlreadySent(lead);
   const applicable = cs.packageApplicable(lead);
+  const pendingNow = (() => { const st = consultAgreementService.parseCountersign(lead); return st.packagePending && !st.packageStalled && (Date.now() - Date.parse(st.packagePending)) < cs.PACKAGE_STALE_MS; })();
+  if (onRecord && pendingNow && n.booking) throw bad('The consultation package is being sent right now — nothing was saved. Wait a minute, reload the page and try again.');
   const asks = onRecord && !alreadySent && applicable.ok;
   let pkgChoice = before ? before.package : '', pkgNote = before ? before.packageNote : '';
   let booking = null;
@@ -2146,7 +2144,7 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
     const storedLen = parseInt(rawOpt.durationMin, 10);
     if (booking && pkgChoice === 'skip' && s(lead.bookingStatus) === 'Booked' && s(lead.bookedSlot) === booking.slot
       && s(lead.assignedConsultant) === booking.consultant && s(lead.meetingType) === booking.meetingType
-      && (!Number.isFinite(storedLen) || storedLen === booking.durationMin)
+      && storedLen === booking.durationMin
       && (booking.meetingType !== 'Virtual' || s(lead.meetingLink))) booking = null;
   } else if (n.booking) {
     // A page opened before the package went out (or before an outcome was set) still
@@ -2221,7 +2219,7 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
   if (pkgLine) lines.push(pkgLine);
 
   // A booking-page payment page or Square invoice made for this client earlier may still be payable.
-  if (onRecord && (rawOpt.invoiceId || s(lead.squareConsultOrderId)) && !s(lead.squareConsultTxnId) && s(lead.bookingStatus) !== 'Abandoned') {
+  if (onRecord && !s(lead.squareConsultTxnId) && (s(lead.squareConsultOrderId) || (rawOpt.invoiceId && s(lead.bookingStatus) !== 'Abandoned'))) {
     lines.push('⚠ A booking-page payment link or Square invoice was made for this client earlier — cancel it in Square so they are not charged.');
   }
 

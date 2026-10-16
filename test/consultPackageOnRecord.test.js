@@ -804,7 +804,7 @@ test('R2 gate: a Not Wanted person is never emailed — a new record is refused,
     const r = await consultationService.autoSendConsultationPackage('901', { trigger: 'address' });
     assert.deepEqual(r, { status: 'not-wanted', reason: 'not-wanted-list', retired: true });
     assert.equal(h.sends.length, 0); assert.deepEqual(cs(h), {});
-    assert.equal(h.notes.length, 1); assert.match(h.notes[0], /this person is on the Not Wanted list\. Use "Review &amp; send" if it is still right/);
+    assert.equal(h.notes.length, 1); assert.match(h.notes[0], /this person is on the Not Wanted list\. Use "Review &amp; send" only if you are sure\./);
   } finally { h.restore(); }
 }));
 
@@ -829,7 +829,7 @@ test('R2 gate: a save whose booking failed retires a package an earlier save lef
   try { assert.equal((await consultationService.autoSendConsultationPackage('901', { trigger: 'recorded' })).status, 'sent'); } finally { h.restore(); }
 }));
 
-test('R2 "No" + video: an unchanged booking counts as unchanged only when its meeting exists; a stored length is compared only when there is one', withEnv(ON, async () => {
+test('R2/R3 "No" + video: an unchanged booking counts as unchanged only when its meeting exists and its length is stored and equal', withEnv(ON, async () => {
   let w = world({ lead: { bookingStatus: 'Booked', bookedSlot: `${day(3)} 11:00`, meetingType: 'Virtual', assignedConsultant: 'Shermin Teymouri Mofrad', consultOption: JSON.stringify({ durationMin: 30 }) } });
   try {
     await apply({ kind: 'waived', on: TODAY_TO, package: 'skip', booking: BK({ meetingType: 'Virtual' }) });
@@ -838,7 +838,8 @@ test('R2 "No" + video: an unchanged booking counts as unchanged only when its me
   w = world({ lead: { bookingStatus: 'Booked', bookedSlot: `${day(3)} 11:00`, meetingType: 'In-person', assignedConsultant: 'Shermin Teymouri Mofrad' } });
   try {
     await apply({ kind: 'waived', on: TODAY_TO, package: 'skip', booking: BK() });
-    assert.equal(w.writes.length, 1, 'no stored length (booked by hand): same booking, nothing written');
+    assert.equal(w.writes.length, 2, 'no stored length (booked by hand): the length staff chose is written (round 3)');
+    assert.equal(JSON.parse(w.writes[1].fields.consultOption).durationMin, 30);
   } finally { w.done(); }
 }));
 
@@ -913,5 +914,71 @@ test('R2 detail: the card knows who placed a hold and whether the record switch 
     assert.equal(d.consultAgreement.heldBy, 'recorded'); assert.equal(d.consultAgreement.recordOn, false); assert.equal(d.consultAgreement.pending, false);
     const html = require('../src/routes/adminConsultation').buildDetailHTML('901');
     assert.ok(html.includes("(ca.held==='blank-address'&&ca.heldBy==='recorded'&&!ca.recordOn)"), 'the card says "Review & send" for a record hold whose switch is off');
+  } finally { restore.reverse().forEach((x) => x()); }
+}));
+
+
+/* ── review round 3 (2026-10-16) ── */
+
+test('R3 every other trigger waits for a "Record payment" save in progress (the address box / sweep never read the lead half-way through it)', withEnv(ON, async () => {
+  const h = harness(baseLead({ residentialAddress: '1 Main St', consultCountersign: JSON.stringify({ packageHeld: 'blank-address', packageHeldBy: 'recorded' }) }));
+  let release; const slow = new Promise((r) => { release = r; });
+  const order = [];
+  try {
+    const save = consultationService.withRecordSave('901', async () => { order.push('save-start'); await slow; order.push('save-end'); });
+    await new Promise((r) => setTimeout(r, 5));
+    const addr = consultationService.autoSendConsultationPackage('901', { trigger: 'address' }).then((r) => { order.push('address:' + r.status); });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(order, ['save-start'], 'the address release waits');
+    release(); await save; await addr;
+    assert.deepEqual(order, ['save-start', 'save-end', 'address:sent']);
+  } finally { h.restore(); }
+}));
+
+test('R3 a recorded save never moves the booking under a send in progress', withEnv(ON, async () => {
+  const w = world({ lead: { consultCountersign: JSON.stringify({ packagePending: new Date().toISOString() }) } });
+  try {
+    await assert.rejects(apply(PAID()), (e) => e.badRequest && /being sent right now — nothing was saved/.test(e.message));
+    assert.equal(w.writes.length, 0);
+  } finally { w.done(); }
+}));
+
+test('R3 gate: a video link made for another time (moved by hand in Monday) is no link — retired with "save the record again" advice, never "Review & send"', withEnv(ON, async () => {
+  const h = harness(baseLead({ meetingType: 'Virtual', meetingLink: 'https://teams.example/j/old', bookedSlot: `${day(3)} 14:00`,
+    consultOption: JSON.stringify({ meetingFor: { slot: `${day(3)} 11:00`, consultant: 'Shafoli Kapur', durationMin: 30 } }),
+    consultCountersign: JSON.stringify({ packageHeld: 'blank-address', packageHeldBy: 'recorded' }) }));
+  try {
+    const r = await consultationService.autoSendConsultationPackage('901', { trigger: 'address' });
+    assert.deepEqual([r.status, r.reason, r.retired], ['not-ready', 'no-link', true]);
+    assert.equal(h.sends.length, 0);
+    assert.match(h.notes[0], /made for another time/); assert.match(h.notes[0], /Save the fee record again so the meeting is made for this time/);
+  } finally { h.restore(); }
+}));
+
+test('R3 the "cancel the old payment link" warning: a payment LINK stays payable even once the hold has expired; a cancelled invoice is not mentioned', withEnv(ON, async () => {
+  let w = world({ lead: { bookingStatus: 'Abandoned', squareConsultOrderId: 'ord_1' } });
+  try { assert.match((await apply(PAID())).message, /cancel it in Square so they are not charged/); } finally { w.done(); }
+  w = world({ lead: { bookingStatus: 'Abandoned', consultOption: JSON.stringify({ invoiceId: 'inv_1' }) } });
+  try { assert.ok(!/cancel it in Square/.test((await apply(PAID())).message), 'an invoice the hold release already cancelled'); } finally { w.done(); }
+}));
+
+test('R3 the address box names the real reason a waiting package was not sent', withEnv(ON, async () => {
+  const restore = [
+    stub(leadService, 'getLead', async () => baseLead({ residentialAddress: '', consultCountersign: JSON.stringify({ packageHeld: 'blank-address', packageHeldBy: 'recorded' }) })),
+    stub(leadService, 'updateLead', async () => {}), stub(mondayApi, 'query', async () => ({})),
+    stub(consultationService, 'autoSendConsultationPackage', async () => ({ status: 'not-wanted', reason: 'not-wanted-list', retired: true })),
+  ];
+  try {
+    const r = await portal.applyAction({ leadId: '901', action: 'saveResidentialAddress', value: '9 New Rd, Toronto ON', staffName: 'M' });
+    assert.match(r.message, /was NOT sent — this person is on the Not Wanted list/);
+  } finally { restore.reverse().forEach((x) => x()); }
+}));
+
+test('R3 the card: a pending marker past the stale mark reads as interrupted, not "not sent"', withEnv(ON, async () => {
+  const restore = [stub(leadService, 'getLead', async () => baseLead({ consultCountersign: JSON.stringify({ packagePending: new Date(Date.now() - 12 * 60e3).toISOString() }) })),
+    stub(mondayApi, 'query', async () => ({})), stub(blacklistService, 'check', async () => ({ checked: true, hit: false, entries: [] }))];
+  try {
+    const d = await portal.getConsultationDetail('901');
+    assert.equal(d.consultAgreement.pending, false); assert.ok(d.consultAgreement.stalled, 'shown as interrupted');
   } finally { restore.reverse().forEach((x) => x()); }
 }));

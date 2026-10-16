@@ -57,6 +57,21 @@ function consultPackageAutoSendEnabled() {
 
 const _packageInFlight  = new Map();   // leadId → Promise: overlapping triggers (two Square deliveries, a reconciler sweep) collapse to one
 const _packageInFlightKind = new Map(); // leadId → the trigger of the run in flight ('payment' | 'address' | 'recorded' | 'manual')
+// One "Record payment" save at a time per lead (it writes the record, then the booking /
+// meeting, then runs the package). Every OTHER package trigger waits for a save in
+// progress, so nothing reads the lead half-way through it (review round 3).
+const _recordSaves = new Map();   // leadId → Promise
+async function waitRecordSave(leadId) {
+  const key = String(leadId);
+  while (_recordSaves.has(key)) await _recordSaves.get(key).catch(() => {});
+}
+async function withRecordSave(leadId, fn) {
+  const key = String(leadId);
+  await waitRecordSave(key);
+  const p = fn();
+  _recordSaves.set(key, p);
+  try { return await p; } finally { if (_recordSaves.get(key) === p) _recordSaves.delete(key); }
+}
 const _packageSentAt    = new Map();   // leadId → ms: a trigger arriving AFTER completion must not trust a stale Monday read
 const PACKAGE_RECENT_MS = 15 * 60 * 1000;
 
@@ -112,7 +127,13 @@ const RETIRE_WHY = {
   outcome: 'an outcome has been set', case: 'the client has a case', retainer: 'a retainer is under way',
   direct: 'it is a direct retainer client', 'no-booking': 'the consultation is no longer booked with a time',
   'not-wanted-list': 'this person is on the Not Wanted list', 'booking-failed': 'the booking (or its video meeting) could not be saved',
-  'no-link': 'the video consultation has no join link',
+  'no-link': 'the video consultation has no join link (or its link was made for another time)',
+};
+// What to do next — never "Review & send" where that would email old or missing details.
+const RETIRE_NEXT = {
+  'not-wanted-list': 'Use "Review &amp; send" only if you are sure.',
+  'booking-failed': 'Save the fee record again (with the booking) once the problem is fixed.',
+  'no-link': 'Save the fee record again so the meeting is made for this time, or put the right link in "Meeting Link" before "Review &amp; send".',
 };
 
 /** Booked, with a time the package can name ('YYYY-MM-DD HH:MM'). PURE. */
@@ -153,6 +174,8 @@ async function _retireRecordedHold(leadId, state) {
 async function autoSendConsultationPackage(leadId, opts = {}) {
   const key = String(leadId);
   const trigger = opts.trigger || 'payment';
+  // 'recorded' is called BY the save that holds the lock — never waits on itself.
+  if (trigger !== 'recorded') await waitRecordSave(key);
   while (_packageInFlight.has(key)) {
     const prior = _packageInFlight.get(key);
     const priorKind = _packageInFlightKind.get(key) || 'payment';
@@ -281,13 +304,18 @@ async function _autoSendConsultationPackage(leadId, { trigger = 'payment', overr
     // The record's own save failed to complete the booking (or its video meeting):
     // whatever was waiting must not go out with old or missing details.
     if (want.ok && block) want = { ok: false, why: block };
-    // Video needs its join link — never "Your consultation is booked" without one.
-    if (want.ok && String(lead.meetingType || '').trim() === 'Virtual' && !String(lead.meetingLink || '').trim()) want = { ok: false, why: 'no-link' };
+    // Video needs its join link — never "Your consultation is booked" without one, nor
+    // with a link made for another time or consultant (moved by hand in Monday).
+    if (want.ok && String(lead.meetingType || '').trim() === 'Virtual') {
+      let mf = null; try { mf = (JSON.parse(String(lead.consultOption || '')) || {}).meetingFor || null; } catch (_) { mf = null; }
+      const stale = mf && (mf.slot !== String(lead.bookedSlot || '').trim() || mf.consultant !== String(lead.assignedConsultant || '').trim());
+      if (!String(lead.meetingLink || '').trim() || stale) want = { ok: false, why: 'no-link' };
+    }
     if (!want.ok) {
       if (recordedHold) {
         await _retireRecordedHold(leadId, state);
         if (trigger === 'address' || ['not-wanted-list', 'booking-failed', 'no-link'].includes(want.why)) {
-          await postLeadNote(leadId, `ℹ️ <b>Consultation package not sent</b> — it was waiting for the residential address, but ${escapeHtml(RETIRE_WHY[want.why] || want.why)}.${['not-wanted-list', 'booking-failed', 'no-link'].includes(want.why) ? ' Use "Review &amp; send" if it is still right to send it.' : ''}`);
+          await postLeadNote(leadId, `ℹ️ <b>Consultation package not sent</b> — it was waiting for the residential address, but ${escapeHtml(RETIRE_WHY[want.why] || want.why)}.${RETIRE_NEXT[want.why] ? ' ' + RETIRE_NEXT[want.why] : ''}`);
         }
       }
       if (['booking-failed', 'no-link'].includes(want.why)) return { status: 'not-ready', reason: want.why, ...(recordedHold ? { retired: true } : {}) };
@@ -1483,6 +1511,7 @@ module.exports = {
   buildPreConsultFormHtml, savePreConsultData, resendConsultationLinks, sendConsultationPackage,
   autoSendConsultationPackage, consultPackageAutoSendEnabled, sweepConsultPackages,
   packageOnRecordEnabled, packageApplicable, packageAlreadySent, recordedPackageWanted, hasBookedTime,
+  waitRecordSave, withRecordSave, RETIRE_WHY, PACKAGE_STALE_MS,
   _resetSentMemory: () => _packageSentAt.clear(),   // test seam
   send24hReminders, send1hReminders, sendPreConsultReminders,
   // exported for tests

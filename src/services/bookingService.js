@@ -542,7 +542,7 @@ async function releaseExpiredSlots() {
       // failure still releases the slot (freeing it wins) but posts a LOUD
       // staff note carrying the invoice id, so it's fixable by hand.
       try {
-        const l = await leadService.getLead(it.id);
+        const l = now || await leadService.getLead(it.id);
         const opt = JSON.parse(l.consultOption || '{}');
         if (opt.invoiceId) {
           const r = await require('./squareInvoicesService').cancelInvoice(opt.invoiceId);
@@ -562,6 +562,7 @@ async function releaseExpiredSlots() {
       // Re-checked right before the write: the invoice step above takes seconds.
       const last = await leadService.getLead(it.id).catch(() => null);
       if (last && String(last.bookingStatus || '').trim() !== 'Slot Held') continue;
+      if (last && last.slotHeldUntil && new Date(last.slotHeldUntil).getTime() >= Date.now()) continue;
       await leadService.updateLead(it.id, { bookingStatus: 'Abandoned' });
       released++;
       require('./leadSnapshot').invalidate();

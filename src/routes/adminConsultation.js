@@ -1454,7 +1454,7 @@ function openConsultPaymentModal(d, clear){
       '<div class="paym-client">For <b>'+payEsc(d.name||'this client')+'</b>'+(d.bookedSlot?' · consultation '+payEsc(d.bookedSlot):'')+'</div>';
     if(clear){
       h+='<div class="paym-warn">This removes the record that the fee was '+(cur.paid==='waived'?'waived':('paid — '+payEsc(CP_LABELS[cur.paid]||cur.paid)+(cur.paidCents?' '+cpMoney(cur.paidCents):'')))+'. The lead keeps a note of it. Use this for a record made by mistake.'+
-        ((d.bookingStatus==='Booked'&&d.bookedSlot)?' It does NOT cancel the booking ('+payEsc(d.bookedSlot)+') — change Booking Status in Monday if that was a mistake too.':'')+'</div>';
+        ((cp.onRecord&&cp.onRecord.enabled&&d.bookingStatus==='Booked'&&d.bookedSlot)?' It does NOT cancel the booking ('+payEsc(d.bookedSlot)+') — change Booking Status in Monday if that was a mistake too.':'')+'</div>';
     } else {
       h+=(orc.enabled?'':'<div class="paym-info">A record only — the client gets no email and no automatic step runs. A payment made through the booking link records itself.</div>')+
         '<label for="cp-kind">How was the fee settled?</label>'+
