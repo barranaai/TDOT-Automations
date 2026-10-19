@@ -29,12 +29,14 @@ function el(id) {
   };
   return e;
 }
-function makeRow(itemId) {
+function makeRow(itemId, { status = 'Received', noteOnFile = '' } = {}) {
   const row = el('row-' + itemId);
-  row.setAttribute('data-status', 'Received');
+  row.setAttribute('data-status', status);
   const parts = { '.status-pill': el(), '.btn-reviewed': el(), '.btn-rework': el(), '.btn-undo': el(), '.doc-meta': el() };
+  if (noteOnFile) { const n = el(); n.className = 'review-notes'; n.textContent = '📝 Review note on file (row is Received — see the upload trail below): ' + noteOnFile; parts['.doc-meta'].appendChild(n); }
   parts['.doc-meta'].querySelector = (sel) => (sel === '.review-notes' ? parts['.doc-meta'].kids.filter((k) => !k.removed && k.className === 'review-notes').pop() || null : null);
-  row.querySelector = (sel) => parts[sel] || null;
+  // like the browser: a row's querySelector also finds the note inside its .doc-meta
+  row.querySelector = (sel) => parts[sel] || (sel === '.review-notes' ? parts['.doc-meta'].querySelector(sel) : null);
   row.parts = parts;
   return row;
 }
@@ -42,7 +44,14 @@ function makeRow(itemId) {
 /** A browser tab's sessionStorage — pass the same one to two loadPage calls to model a reload. */
 function storage() { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), size: () => m.size }; }
 
-function loadPage({ na = false, session = storage() } = {}) {
+/** A clock the page reads (Date.now / new Date) — advance it to cross the "may still land" window. */
+function clock(t0 = Date.UTC(2026, 9, 19, 14, 0)) {
+  const c = { t: t0 };
+  c.Date = class extends Date { constructor(...a) { super(...(a.length ? a : [c.t])); } static now() { return c.t; } };
+  return c;
+}
+
+function loadPage({ na = false, session = storage(), time = clock(), rowState = {} } = {}) {
   const prevNa = process.env.DOC_NOT_APPLICABLE;
   if (na) process.env.DOC_NOT_APPLICABLE = '1';
   const items = DOCS.map(([id, name]) => ({ id, name, status: 'Received', category: 'Academic', applicantType: 'Principal Applicant', documentCode: 'X-' + id }));
@@ -50,7 +59,7 @@ function loadPage({ na = false, session = storage() } = {}) {
   if (na) { if (prevNa === undefined) delete process.env.DOC_NOT_APPLICABLE; else process.env.DOC_NOT_APPLICABLE = prevNa; }
   const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
   const byId = {};
-  const rows = Object.fromEntries(DOCS.map(([id]) => [id, makeRow(id)]));
+  const rows = Object.fromEntries(DOCS.map(([id]) => [id, makeRow(id, rowState[id])]));
   const docListeners = {};
   const document = {
     getElementById: (id) => (byId[id] = byId[id] || el(id)),
@@ -67,7 +76,7 @@ function loadPage({ na = false, session = storage() } = {}) {
   // short timers (focus, toast hide) run at once; long ones (the one-minute wait) only when the test says
   const longTimers = new Map(); let timerId = 0;
   const ctx = {
-    document, console, URLSearchParams, AbortController, sessionStorage: session,
+    document, console, URLSearchParams, AbortController, sessionStorage: session, Date: time.Date,
     setTimeout: (f, ms) => { if (!ms || ms < 5000) { f(); return 0; } const id = ++timerId; longTimers.set(id, f); return id; },
     clearTimeout: (id) => { longTimers.delete(id); }, setInterval: () => 0, clearInterval() {},
     location: { reload() {}, pathname: '/d/x/review', search: '' }, navigator: {},
@@ -141,15 +150,15 @@ test('connection lost (no answer): "may or may not have gone through — reload 
   p.open('102'); p.type('blurry');
   p.answer(() => Promise.reject(new TypeError('Failed to fetch')));
   await p.ctx.confirmRework();
-  assert.match(p.toast(), /may or may not have gone through\. Reload the page in a few minutes to check before sending again/);
+  assert.match(p.toast(), /may or may not have gone through\. Reload the page after \d{1,2}:\d\d(?: ?[AP]M)? to check before sending again/);
   assert.equal(p.dialogOpen(), true, 'the note stays on screen');
   assert.equal(p.el('rework-notes').value, 'blurry'); assert.equal(p.el('rework-notes').readOnly, true);
-  assert.equal(p.btn.disabled, true); assert.equal(p.btn.textContent, 'Reload the page to check');
+  assert.equal(p.btn.disabled, true); assert.match(p.btn.textContent, /^Reload after \d{1,2}:\d\d(?: ?[AP]M)? to check$/);
   assert.equal(p.cancel().disabled, false);
   await p.ctx.confirmRework(); assert.equal(p.calls.length, 1, 'never sent again from here');
   p.ctx.closeModal(); assert.equal(p.dialogOpen(), false);
   p.open('102'); assert.equal(p.dialogOpen(), false, 'the same document: refused until a reload');
-  assert.match(p.toast(), /may already have gone through — reload the page to check before sending again/);
+  assert.match(p.toast(), /may still go through — reload the page after \d{1,2}:\d\d(?: ?[AP]M)? to check before sending again/);
   p.answer(ok); p.open('101');
   assert.equal(p.dialogOpen(), true, 'another document: fine');
   assert.equal(p.el('rework-notes').readOnly, false); assert.equal(p.btn.disabled, false); assert.equal(p.btn.textContent, 'Send Rework Request');
@@ -170,24 +179,67 @@ test('an answer that is not the app\'s (a proxy error page): treated as "may hav
   q.open('101'); q.type('x');
   q.answer(() => Promise.resolve({ ok: false, status: 502, redirected: false, json: async () => { throw new SyntaxError('Unexpected token <'); } }));
   await q.ctx.confirmRework();
-  assert.match(q.toast(), /did not answer clearly \(502\) — reload the page in a few minutes to see whether the request went through/);
-  assert.equal(q.dialogOpen(), true); assert.equal(q.btn.textContent, 'Reload the page to check');
+  assert.match(q.toast(), /did not answer clearly \(502\) — reload the page after \d{1,2}:\d\d(?: ?[AP]M)? to see whether the request went through/);
+  assert.equal(q.dialogOpen(), true); assert.match(q.btn.textContent, /^Reload after/);
 });
 
-test('an unsent note survives a reload: back in the dialog for that document, with a pointer to check the row; a sent note is forgotten', async () => {
-  const session = storage();
-  const p = loadPage({ session });
+test('no clear answer, then a reload: the block survives the reload until the server can no longer land it (7 min), and the note comes back only when the reloaded row proves it did not land', async () => {
+  const session = storage(), time = clock();
+  const p = loadPage({ session, time });
   p.open('102'); p.type('long explanation the reviewer would hate to retype');
   p.answer(() => Promise.reject(new TypeError('Failed to fetch')));
   await p.ctx.confirmRework();
-  const r = loadPage({ session });                 // the page is reloaded
-  r.open('102');
-  assert.equal(r.dialogOpen(), true);
-  assert.equal(r.el('rework-notes').value, 'long explanation the reviewer would hate to retype');
-  assert.match(r.toast(), /earlier note for this document is back\. If the row does not say Rework Required, it was not sent/);
-  await r.ctx.confirmRework();                     // sent this time
-  assert.equal(session.size(), 0, 'a sent note is forgotten');
-  r.open('101'); assert.equal(r.el('rework-notes').value, '', 'other documents start blank');
+  // reloaded at once (the server may still be retrying Monday): still blocked, with the time to come back
+  time.t += 60 * 1000;
+  const r1 = loadPage({ session, time });
+  r1.open('102');
+  assert.equal(r1.dialogOpen(), false);
+  assert.match(r1.toast(), /may still go through — reload the page after \d{1,2}:\d\d(?: ?[AP]M)?/);
+  // the window passes, but THIS page was loaded inside it: its rows are too old to tell
+  time.t += 7 * 60 * 1000;
+  r1.open('102');
+  assert.equal(r1.dialogOpen(), false);
+  assert.match(r1.toast(), /may have gone through — reload the page to check before sending again/);
+  // reloaded after the window, and the row shows no rework: it did not land — the note is back, ready to send
+  const r2 = loadPage({ session, time });
+  r2.open('102');
+  assert.equal(r2.dialogOpen(), true);
+  assert.equal(r2.el('rework-notes').value, 'long explanation the reviewer would hate to retype');
+  assert.match(r2.toast(), /did not go through \(this document still shows no rework request\) — it is back, ready to send/);
+  assert.equal(r2.btn.disabled, false);
+  await r2.ctx.confirmRework();
+  assert.equal(session.size(), 0, 'sent: forgotten');
+});
+
+test('a note that DID land is never brought back: the reloaded row says Rework Required, or later shows that note on file (after an upload or Undo) — forgotten, the dialog opens blank', async () => {
+  for (const rowState of [{ '102': { status: 'Rework Required' } }, { '102': { status: 'Received', noteOnFile: 'please upload all pages' } }]) {
+    const session = storage(), time = clock();
+    const p = loadPage({ session, time });
+    p.open('102'); p.type('please upload all pages');
+    p.answer(() => Promise.reject(new TypeError('Failed to fetch')));
+    await p.ctx.confirmRework();
+    time.t += 8 * 60 * 1000;
+    const r = loadPage({ session, time, rowState });
+    r.ctx.openRework({ getAttribute: (a) => (a === 'data-id' ? '102' : 'Doc') });
+    if (rowState['102'].status === 'Received') {
+      assert.equal(r.dialogOpen(), true); assert.equal(r.el('rework-notes').value, '', 'never pre-filled with a note that was sent');
+    }
+    assert.equal(session.size(), 0, 'forgotten');
+  }
+});
+
+test('an expired sign-in: the note (never sent) comes back after the reload, once', async () => {
+  const session = storage();
+  const p = loadPage({ session });
+  p.open('101'); p.type('note typed after lunch');
+  p.answer(() => Promise.resolve({ ok: false, status: 0, type: 'opaqueredirect', json: async () => { throw new SyntaxError('x'); } }));
+  await p.ctx.confirmRework();
+  const r = loadPage({ session });
+  r.open('101');
+  assert.equal(r.el('rework-notes').value, 'note typed after lunch');
+  assert.match(r.toast(), /Your unsent note for this document is back/);
+  r.ctx.closeModal(); r.open('101');
+  assert.equal(r.el('rework-notes').value, '', 'shown once');
 });
 
 test('one send at a time: while it sends, the dialog cannot be closed (Cancel, Esc, outside click) or sent twice, and the result lands on the document it was sent for', async () => {
@@ -242,7 +294,7 @@ test('a server that never answers: after one minute the dialog stops waiting —
   assert.equal(p.dialogOpen(), true); assert.equal(p.pendingLongTimers(), 1);
   p.fireLongTimers();                      // a minute passes
   await sending;
-  assert.match(p.toast(), /No answer after a minute — the request may still go through\. Reload the page in about 5 minutes to check before sending again/);
+  assert.match(p.toast(), /No answer after a minute — the request may still go through\. Reload the page after \d{1,2}:\d\d(?: ?[AP]M)? to check before sending again/);
   assert.equal(p.dialogOpen(), true); assert.equal(p.el('rework-notes').readOnly, true);
   assert.equal(p.btn.disabled, true); assert.equal(p.cancel().disabled, false, 'the reviewer can close it now');
   p.ctx.closeModal(); assert.equal(p.dialogOpen(), false);
@@ -262,8 +314,8 @@ test('the server says Monday did not confirm its write (a timeout after retries)
   p.open('102'); p.type('timeout');
   p.answer(() => Promise.resolve({ ok: false, status: 500, json: async () => ({ ok: false, error: 'timeout of 30000ms exceeded', outcomeUnknown: true }) }));
   await p.ctx.confirmRework();
-  assert.match(p.toast(), /Monday did not confirm the change \(timeout of 30000ms exceeded\) — it may still have been saved\. Reload the page to check before sending again/);
-  assert.equal(p.btn.disabled, true); assert.equal(p.btn.textContent, 'Reload the page to check');
+  assert.match(p.toast(), /Monday did not confirm the change \(timeout of 30000ms exceeded\) — it may still have been saved\. Reload the page after \d{1,2}:\d\d(?: ?[AP]M)? to check before sending again/);
+  assert.equal(p.btn.disabled, true); assert.match(p.btn.textContent, /^Reload after \d{1,2}:\d\d(?: ?[AP]M)? to check$/);
   p.ctx.closeModal(); p.open('102'); assert.equal(p.dialogOpen(), false);
 });
 

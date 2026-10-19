@@ -980,17 +980,20 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
        every open: a successful send used to leave it disabled on "Sending…",
        and every later rework on the page could not be sent until a reload
        (consultant report, EE-074). One send at a time, and the dialog
-       cannot be closed while it sends (the note is never lost mid-send);
-       each send keeps its own document id. An expired sign-in is caught
-       before anything is sent (the note is kept). When a send gets NO clear
-       answer (connection lost, a proxy error page, no answer in a minute) it
-       may still go through: the dialog keeps the note read-only, Send stays
-       off and that document is blocked until the page is reloaded, so nobody
-       re-sends blind. An unsent note survives a reload (sessionStorage). */
+       cannot be closed while it sends; each send keeps its own document id.
+       An expired sign-in is caught before anything is sent: the note is kept
+       for after the reload. A send with NO clear answer (connection lost, a
+       proxy error page, no answer in a minute) may still land — the server
+       keeps retrying Monday for up to ~6½ minutes — so that document stays
+       blocked until the page is reloaded after that window (the block
+       survives a reload), and the note comes back only once the reloaded
+       row proves it did not land. Notes are kept per tab (sessionStorage). */
     var REWORK_BTN_LABEL = 'Send Rework Request';
-    var REWORK_WAIT_MS = 60000;   // no answer in a minute: stop waiting (the server may still finish)
+    var REWORK_WAIT_MS = 60000;           // no answer in a minute: stop waiting (the server may still finish)
+    var REWORK_PENDING_MS = 7 * 60000;    // how long a send with no clear answer may still land
+    var PAGE_LOADED_AT = Date.now();      // the rows on screen show Monday as of this moment
     var _reworkSending = false;
-    var _reworkUnknown = {};   // itemId → a send with no clear answer: reload to see whether it went through
+    var _reworkUnknown = {};              // itemId → until when a send with no clear answer may still land (also kept in storage)
     function setReworkSending(on) {
       _reworkSending = on;
       var c = document.getElementById('rework-cancel-btn');
@@ -1000,21 +1003,44 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       var b = document.getElementById('confirm-btn');
       if (b) { b.disabled = false; b.textContent = REWORK_BTN_LABEL; }
     }
-    // The note survives a reload until it is sent (best effort — storage may be off).
+    function hhmm(ms) { return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+    // { kind: 'unsent' | 'pending', note, at } per case + document (best effort — storage may be off)
     function noteKey(id) { return 'tdot-rework-note:' + CASE_REF + ':' + id; }
-    function saveNote(id, text) { try { window.sessionStorage.setItem(noteKey(id), text); } catch (_) { /* storage off */ } }
-    function loadNote(id) { try { return window.sessionStorage.getItem(noteKey(id)) || ''; } catch (_) { return ''; } }
-    function dropNote(id) { try { window.sessionStorage.removeItem(noteKey(id)); } catch (_) { /* storage off */ } }
+    function readEntry(id) { try { var raw = window.sessionStorage.getItem(noteKey(id)); return raw ? JSON.parse(raw) : null; } catch (_) { return null; } }
+    function writeEntry(id, e) { try { window.sessionStorage.setItem(noteKey(id), JSON.stringify(e)); } catch (_) { /* storage off */ } }
+    function dropEntry(id) { try { window.sessionStorage.removeItem(noteKey(id)); } catch (_) { /* storage off */ } }
+    // the row (as loaded) shows this note reached Monday: it says Rework Required, or carries the note on file
+    function noteLanded(id, note) {
+      var row = document.querySelector('.doc-row[data-item-id="' + id + '"]');
+      if (!row) return false;
+      if (row.getAttribute('data-status') === 'Rework Required') return true;
+      var onFile = row.querySelector('.review-notes');
+      return !!(note && onFile && String(onFile.textContent || '').indexOf(note) !== -1);
+    }
     function openRework(btn) {
       if (_reworkSending) { showToast('Please wait — the previous rework request is still being sent.', true); return; }
       var id = btn.getAttribute('data-id');
-      if (_reworkUnknown[id]) { showToast('The last rework request for this document may already have gone through — reload the page to check before sending again.', true); return; }
+      var e = readEntry(id);
+      if (e && noteLanded(id, e.note)) { dropEntry(id); e = null; }   // it reached the client: nothing to bring back
+      var until = Math.max((e && e.kind === 'pending') ? e.at + REWORK_PENDING_MS : 0, _reworkUnknown[id] || 0);
+      if (until > Date.now()) {
+        showToast('A rework request for this document may still go through — reload the page after ' + hhmm(until) + ' to check before sending again.', true);
+        return;
+      }
+      if (until && PAGE_LOADED_AT < until) {
+        showToast('A rework request for this document may have gone through — reload the page to check before sending again.', true);
+        return;
+      }
       _modalItemId = id;
       var ta = document.getElementById('rework-notes');
       ta.readOnly = false;
-      var saved = loadNote(id);
-      ta.value = saved;
-      if (saved) showToast('Your earlier note for this document is back. If the row does not say Rework Required, it was not sent.');
+      ta.value = e ? (e.note || '') : '';
+      if (e) {
+        dropEntry(id);   // shown once; a send or a later problem stores it again
+        showToast(e.kind === 'pending'
+          ? 'Your note from ' + hhmm(e.at) + ' did not go through (this document still shows no rework request) — it is back, ready to send.'
+          : 'Your unsent note for this document is back.');
+      }
       document.getElementById('modal-sub').textContent = 'Document: ' + (btn.getAttribute('data-name') || '');
       resetReworkBtn();
       document.getElementById('modal-bg').classList.add('open');
@@ -1036,7 +1062,8 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       var confirmBtn = document.getElementById('confirm-btn');
       var unknown = function (msg) { var e = new Error(msg); e.unknown = true; return e; };
       var outcomeUnknown = false;
-      saveNote(itemId, notes);
+      var sentAt = Date.now();
+      var mayLandBy = sentAt + REWORK_PENDING_MS;
       setReworkSending(true);
       confirmBtn.disabled = true;
       confirmBtn.textContent = 'Sending…';
@@ -1057,23 +1084,24 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
           });
         } catch (netErr) {
           if (netErr && netErr.name === 'AbortError') {
-            throw unknown('No answer after a minute — the request may still go through. Reload the page in about 5 minutes to check before sending again.');
+            throw unknown('No answer after a minute — the request may still go through. Reload the page after ' + hhmm(mayLandBy) + ' to check before sending again.');
           }
-          throw unknown('Could not reach the server — the request may or may not have gone through. Reload the page in a few minutes to check before sending again.');
+          throw unknown('Could not reach the server — the request may or may not have gone through. Reload the page after ' + hhmm(mayLandBy) + ' to check before sending again.');
         }
         if (res.type === 'opaqueredirect') {
           // the sign-in check turned the request away: nothing was sent
+          writeEntry(itemId, { kind: 'unsent', note: notes, at: sentAt });
           throw new Error('Your sign-in has expired — nothing was sent. Reload the page to sign in again; your note will be kept.');
         }
         var data = null;
         try { data = await res.json(); } catch (_) { data = null; }
         if (data && data.outcomeUnknown) {
           // The server's own write got no clear answer from Monday: it may have landed.
-          throw unknown('Monday did not confirm the change (' + (data.error || res.status) + ') — it may still have been saved. Reload the page to check before sending again.');
+          throw unknown('Monday did not confirm the change (' + (data.error || res.status) + ') — it may still have been saved. Reload the page after ' + hhmm(mayLandBy) + ' to check before sending again.');
         }
         if (!data) {
           // Not the app's answer (a login or proxy error page): outcome unknown.
-          throw unknown('The server did not answer clearly (' + res.status + ') — reload the page in a few minutes to see whether the request went through.');
+          throw unknown('The server did not answer clearly (' + res.status + ') — reload the page after ' + hhmm(mayLandBy) + ' to see whether the request went through.');
         }
         if (!res.ok || !data.ok) throw new Error(data.error || ('The request failed (' + res.status + ').'));
 
@@ -1092,11 +1120,15 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
             meta.appendChild(note);
           }
         }
-        dropNote(itemId);
+        dropEntry(itemId);
         closeModal(true);
         showToast('✓ Rework requested — client will be notified by email');
       } catch (err) {
-        if (err && err.unknown) { _reworkUnknown[itemId] = true; outcomeUnknown = true; }
+        if (err && err.unknown) {
+          outcomeUnknown = true;
+          _reworkUnknown[itemId] = mayLandBy;
+          writeEntry(itemId, { kind: 'pending', note: notes, at: sentAt });   // the block and the note survive a reload
+        }
         showToast('✗ ' + (err.message || 'Failed to request rework'), true);
       } finally {
         if (waitTimer) clearTimeout(waitTimer);
@@ -1104,7 +1136,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
         if (outcomeUnknown) {
           // keep the note on screen (read-only, to copy) but never send it again from here
           confirmBtn.disabled = true;
-          confirmBtn.textContent = 'Reload the page to check';
+          confirmBtn.textContent = 'Reload after ' + hhmm(mayLandBy) + ' to check';
           document.getElementById('rework-notes').readOnly = true;
         } else {
           // ready for the next document; a clear refusal keeps the dialog open with the note
