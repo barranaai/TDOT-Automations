@@ -169,7 +169,7 @@ test('an expired sign-in turns the request away BEFORE anything is done (the bro
   p.open('103'); p.type('expired session note');
   p.answer(() => Promise.resolve({ ok: false, status: 0, type: 'opaqueredirect', redirected: false, json: async () => { throw new SyntaxError('Unexpected end of JSON input'); } }));
   await p.ctx.confirmRework();
-  assert.match(p.toast(), /sign-in has expired — nothing was sent\. Reload the page to sign in again; your note will be kept/);
+  assert.match(p.toast(), /sign-in has expired — nothing was sent\. Copy your note, then reload the page to sign in again/);
   assert.equal(p.dialogOpen(), true); assert.equal(p.el('rework-notes').value, 'expired session note'); assert.equal(p.el('rework-notes').readOnly, false);
   assert.equal(p.btn.disabled, false, 'not blocked: nothing was sent');
 });
@@ -214,28 +214,27 @@ test('the time to come back is rounded UP to the minute (never a minute already 
   assert.ok(p.toast().includes('after ' + want), p.toast());
 });
 
-test('an expired sign-in: the note (never sent) comes back after the reload, once — and says why', async () => {
+test('an expired sign-in: nothing is stored or guessed — the note stays in the open dialog to copy, and a reload starts clean', async () => {
   const session = storage();
   const p = loadPage({ session });
   p.open('101'); p.type('note typed after lunch');
   p.answer(() => Promise.resolve({ ok: false, status: 0, type: 'opaqueredirect', json: async () => { throw new SyntaxError('x'); } }));
   await p.ctx.confirmRework();
+  assert.equal(p.dialogOpen(), true); assert.equal(p.el('rework-notes').value, 'note typed after lunch'); assert.equal(p.el('rework-notes').readOnly, false);
+  assert.equal(session.size(), 0, 'nothing stored');
   const r = loadPage({ session });
-  r.open('101');
-  assert.equal(r.el('rework-notes').value, 'note typed after lunch');
-  assert.match(r.toast(), /Your unsent note for this document is back \(your sign-in had expired, so it was not sent\)/);
-  r.ctx.closeModal(); r.open('101');
-  assert.equal(r.el('rework-notes').value, '', 'once');
-  r.open('102'); assert.equal(r.el('rework-notes').value, '', 'other documents start blank');
+  r.open('101'); assert.equal(r.el('rework-notes').value, '');
 });
 
-test('the server refuses a second change while the first is still being processed (409): the dialog keeps the note and says to wait', async () => {
+test('the server refuses a second change while the first is still being processed (409 busy): treated like an unclear outcome — note read-only, Send off, this document blocked on the page, a time to reload after', async () => {
   const p = loadPage();
   p.open('103'); p.type('second try');
-  p.answer(() => Promise.resolve({ ok: false, status: 409, json: async () => ({ ok: false, error: 'An earlier change to this document is still being processed — wait a few minutes, then reload the page to see where it stands.' }) }));
+  p.answer(() => Promise.resolve({ ok: false, status: 409, json: async () => ({ ok: false, busy: true, error: 'An earlier change to this document is still being processed — wait a few minutes, then reload the page to see where it stands.' }) }));
   await p.ctx.confirmRework();
-  assert.match(p.toast(), /still being processed — wait a few minutes/);
-  assert.equal(p.dialogOpen(), true); assert.equal(p.el('rework-notes').value, 'second try');
+  assert.match(p.toast(), /An earlier change to this document is still being processed — reload the page after \d{1,2}:\d\d(?: ?[AP]M)? to see where it stands/);
+  assert.equal(p.dialogOpen(), true); assert.equal(p.el('rework-notes').readOnly, true);
+  assert.equal(p.btn.disabled, true); assert.match(p.btn.textContent, /^Reload after/);
+  await p.ctx.confirmRework(); assert.equal(p.calls.length, 1, 'never sent again from this page');
 });
 
 test('one send at a time: while it sends, the dialog cannot be closed (Cancel, Esc, outside click) or sent twice, and the result lands on the document it was sent for', async () => {
@@ -367,7 +366,7 @@ test('the status route: a second change to the SAME document while the first is 
     const r1 = fakeRes(); const first = handler(req('501', 'first'), r1);
     await new Promise((r) => setImmediate(r));
     const r2 = fakeRes(); await handler(req('501', 'second'), r2);
-    assert.equal(r2.statusCode, 409); assert.match(r2.body.error, /still being processed/);
+    assert.equal(r2.statusCode, 409); assert.equal(r2.body.busy, true); assert.match(r2.body.error, /still being processed/);
     const r3 = fakeRes(); await handler(req('502', 'other doc'), r3);
     assert.equal(r3.statusCode, 200);
     release(); await first;

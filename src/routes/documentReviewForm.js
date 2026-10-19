@@ -167,7 +167,7 @@ router.post('/:caseRef/review/:itemId/status', requireStaffAuth, async (req, res
   }
 
   if (_statusInFlight.has(itemId)) {
-    return res.status(409).json({ ok: false, error: 'An earlier change to this document is still being processed — wait a few minutes, then reload the page to see where it stands.' });
+    return res.status(409).json({ ok: false, busy: true, error: 'An earlier change to this document is still being processed — wait a few minutes, then reload the page to see where it stands.' });
   }
   _statusInFlight.add(itemId);
   try {

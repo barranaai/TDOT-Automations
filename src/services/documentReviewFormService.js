@@ -981,13 +981,15 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
        and every later rework on the page could not be sent until a reload
        (consultant report, EE-074). One send at a time, and the dialog
        cannot be closed while it sends; each send keeps its own document id.
-       An expired sign-in is caught before anything is sent: the note comes
-       back once after the reload. A send with NO clear answer (connection
-       lost, a proxy error page, no answer in a minute) may still land — the
-       server keeps retrying Monday for up to ~6½ minutes, and refuses a
-       second change to that document meanwhile — so the note stays on screen
-       read-only, Send is off and the document is blocked on this page; the
-       reviewer is told when to reload to see where it stands. */
+       An expired sign-in is caught before anything is sent: the dialog stays
+       open with the note, to copy before reloading. A send with NO clear
+       answer (connection lost, a proxy error page, no answer in a minute) may
+       still land — the server keeps retrying Monday for up to ~6½ minutes,
+       and refuses a second change to that document meanwhile — so the note
+       stays on screen read-only, Send is off and the document is blocked on
+       this page; the reviewer is told when to reload to see where it stands.
+       Nothing is stored or guessed across a reload: the reloaded rows are
+       Monday's word. */
     var REWORK_BTN_LABEL = 'Send Rework Request';
     var REWORK_WAIT_MS = 60000;           // no answer in a minute: stop waiting (the server may still finish)
     var REWORK_PENDING_MS = 7 * 60000;    // how long a send with no clear answer may still land
@@ -1004,13 +1006,6 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
     }
     // a time to come back at, rounded UP to the minute (never a minute that is already under way)
     function hhmmUp(ms) { return new Date(Math.ceil(ms / 60000) * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
-    // A note an expired sign-in turned away (certainly never sent) waits for the reload — per tab, best effort.
-    function noteKey(id) { return 'tdot-rework-unsent:' + CASE_REF + ':' + id; }
-    function keepUnsent(id, note) { try { window.sessionStorage.setItem(noteKey(id), note); } catch (_) { /* storage off */ } }
-    function takeUnsent(id) {
-      try { var n = window.sessionStorage.getItem(noteKey(id)) || ''; window.sessionStorage.removeItem(noteKey(id)); return n; }
-      catch (_) { return ''; }
-    }
     function openRework(btn) {
       if (_reworkSending) { showToast('Please wait — the previous rework request is still being sent.', true); return; }
       var id = btn.getAttribute('data-id');
@@ -1024,9 +1019,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       _modalItemId = id;
       var ta = document.getElementById('rework-notes');
       ta.readOnly = false;
-      var unsent = takeUnsent(id);
-      ta.value = unsent;
-      if (unsent) showToast('Your unsent note for this document is back (your sign-in had expired, so it was not sent).');
+      ta.value = '';
       document.getElementById('modal-sub').textContent = 'Document: ' + (btn.getAttribute('data-name') || '');
       resetReworkBtn();
       document.getElementById('modal-bg').classList.add('open');
@@ -1076,11 +1069,14 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
         }
         if (res.type === 'opaqueredirect') {
           // the sign-in check turned the request away: nothing was sent
-          keepUnsent(itemId, notes);
-          throw new Error('Your sign-in has expired — nothing was sent. Reload the page to sign in again; your note will be kept.');
+          throw new Error('Your sign-in has expired — nothing was sent. Copy your note, then reload the page to sign in again.');
         }
         var data = null;
         try { data = await res.json(); } catch (_) { data = null; }
+        if (data && data.busy) {
+          // an earlier change to this document is still running on the server — it may yet land
+          throw unknown('An earlier change to this document is still being processed — reload the page after ' + hhmmUp(mayLandBy) + ' to see where it stands.');
+        }
         if (data && data.outcomeUnknown) {
           // The server's own write got no clear answer from Monday: it may have landed.
           throw unknown('Monday did not confirm the change (' + (data.error || res.status) + ') — it may still have been saved. Reload the page after ' + hhmmUp(mayLandBy) + ' to check before sending again.');
