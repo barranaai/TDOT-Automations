@@ -981,10 +981,12 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
        and every later rework on the page could not be sent until a reload
        (consultant report, EE-074). One send at a time, and the dialog
        cannot be closed while it sends (the note is never lost mid-send);
-       each send keeps its own document id. When a send gets NO clear answer
-       (connection lost, expired sign-in, a proxy error page) it may still
-       have gone through: that document's dialog stays shut until the page is
-       reloaded, so nobody re-sends blind. */
+       each send keeps its own document id. An expired sign-in is caught
+       before anything is sent (the note is kept). When a send gets NO clear
+       answer (connection lost, a proxy error page, no answer in a minute) it
+       may still go through: the dialog keeps the note read-only, Send stays
+       off and that document is blocked until the page is reloaded, so nobody
+       re-sends blind. An unsent note survives a reload (sessionStorage). */
     var REWORK_BTN_LABEL = 'Send Rework Request';
     var REWORK_WAIT_MS = 60000;   // no answer in a minute: stop waiting (the server may still finish)
     var _reworkSending = false;
@@ -998,12 +1000,21 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       var b = document.getElementById('confirm-btn');
       if (b) { b.disabled = false; b.textContent = REWORK_BTN_LABEL; }
     }
+    // The note survives a reload until it is sent (best effort — storage may be off).
+    function noteKey(id) { return 'tdot-rework-note:' + CASE_REF + ':' + id; }
+    function saveNote(id, text) { try { window.sessionStorage.setItem(noteKey(id), text); } catch (_) { /* storage off */ } }
+    function loadNote(id) { try { return window.sessionStorage.getItem(noteKey(id)) || ''; } catch (_) { return ''; } }
+    function dropNote(id) { try { window.sessionStorage.removeItem(noteKey(id)); } catch (_) { /* storage off */ } }
     function openRework(btn) {
       if (_reworkSending) { showToast('Please wait — the previous rework request is still being sent.', true); return; }
       var id = btn.getAttribute('data-id');
       if (_reworkUnknown[id]) { showToast('The last rework request for this document may already have gone through — reload the page to check before sending again.', true); return; }
       _modalItemId = id;
-      document.getElementById('rework-notes').value = '';
+      var ta = document.getElementById('rework-notes');
+      ta.readOnly = false;
+      var saved = loadNote(id);
+      ta.value = saved;
+      if (saved) showToast('Your earlier note for this document is back. If the row does not say Rework Required, it was not sent.');
       document.getElementById('modal-sub').textContent = 'Document: ' + (btn.getAttribute('data-name') || '');
       resetReworkBtn();
       document.getElementById('modal-bg').classList.add('open');
@@ -1017,13 +1028,15 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
     }
 
     async function confirmRework() {
-      if (!_modalItemId || _reworkSending) return;
+      if (!_modalItemId || _reworkSending || _reworkUnknown[_modalItemId]) return;   // never a blind second send
       var itemId = _modalItemId;
       var notes = document.getElementById('rework-notes').value.trim();
       if (!notes) { showToast('Notes are required for rework requests.', true); return; }
 
       var confirmBtn = document.getElementById('confirm-btn');
       var unknown = function (msg) { var e = new Error(msg); e.unknown = true; return e; };
+      var outcomeUnknown = false;
+      saveNote(itemId, notes);
       setReworkSending(true);
       confirmBtn.disabled = true;
       confirmBtn.textContent = 'Sending…';
@@ -1040,14 +1053,17 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'rework', notes: notes }),
             signal: ctrl ? ctrl.signal : undefined,
+            redirect: 'manual',   // an expired sign-in answers with a redirect BEFORE anything is done
           });
         } catch (netErr) {
           if (netErr && netErr.name === 'AbortError') {
-            throw unknown('No answer after a minute — the request may still go through. Reload the page in a minute to check before sending again.');
+            throw unknown('No answer after a minute — the request may still go through. Reload the page in about 5 minutes to check before sending again.');
           }
-          // No answer — the connection dropped, or an expired sign-in sent the
-          // request off to the Monday login (the browser refuses that hop).
-          throw unknown('Could not reach the server, or your sign-in has expired — reload the page to see whether the request went through.');
+          throw unknown('Could not reach the server — the request may or may not have gone through. Reload the page in a few minutes to check before sending again.');
+        }
+        if (res.type === 'opaqueredirect') {
+          // the sign-in check turned the request away: nothing was sent
+          throw new Error('Your sign-in has expired — nothing was sent. Reload the page to sign in again; your note will be kept.');
         }
         var data = null;
         try { data = await res.json(); } catch (_) { data = null; }
@@ -1057,9 +1073,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
         }
         if (!data) {
           // Not the app's answer (a login or proxy error page): outcome unknown.
-          throw unknown(res.redirected
-            ? 'Your sign-in has expired — reload the page and sign in again, then check this document.'
-            : 'The server did not answer clearly (' + res.status + ') — reload the page to see whether the request went through.');
+          throw unknown('The server did not answer clearly (' + res.status + ') — reload the page in a few minutes to see whether the request went through.');
         }
         if (!res.ok || !data.ok) throw new Error(data.error || ('The request failed (' + res.status + ').'));
 
@@ -1078,39 +1092,46 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
             meta.appendChild(note);
           }
         }
+        dropNote(itemId);
         closeModal(true);
         showToast('✓ Rework requested — client will be notified by email');
       } catch (err) {
-        if (err && err.unknown) {
-          _reworkUnknown[itemId] = true;
-          closeModal(true);   // nothing more to do here until the page is reloaded
-        }
+        if (err && err.unknown) { _reworkUnknown[itemId] = true; outcomeUnknown = true; }
         showToast('✗ ' + (err.message || 'Failed to request rework'), true);
       } finally {
         if (waitTimer) clearTimeout(waitTimer);
-        // the dialog is ready for the next document (a clear refusal keeps the
-        // dialog open with the note, so the reviewer can correct and resend)
         setReworkSending(false);
-        resetReworkBtn();
+        if (outcomeUnknown) {
+          // keep the note on screen (read-only, to copy) but never send it again from here
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = 'Reload the page to check';
+          document.getElementById('rework-notes').readOnly = true;
+        } else {
+          // ready for the next document; a clear refusal keeps the dialog open with the note
+          resetReworkBtn();
+        }
       }
     }
 
     // Close modal on outside click + Esc key. An outside click only counts
-    // when the press STARTED outside too: selecting note text and releasing
-    // the mouse past the dialog's edge must never close it (and lose the note).
-    var _reworkDownOutside = false;
-    document.getElementById('modal-bg').addEventListener('mousedown', function (e) {
-      _reworkDownOutside = (e.target.id === 'modal-bg');
-    });
-    document.getElementById('modal-bg').addEventListener('click', function (e) {
-      if (e.target.id === 'modal-bg' && _reworkDownOutside) closeModal();
-      _reworkDownOutside = false;
-    });
+    // when the press both STARTED and ENDED on the backdrop: selecting note
+    // text past the dialog's edge, or pressing outside and releasing inside,
+    // must never close it (and lose the note).
+    function outsideClickCloser(overlayId, close) {
+      var down = false, up = false;
+      var ov = document.getElementById(overlayId);
+      if (!ov) return;
+      ov.addEventListener('mousedown', function (e) { down = (e.target.id === overlayId); up = false; });
+      ov.addEventListener('mouseup', function (e) { up = (e.target.id === overlayId); });
+      ov.addEventListener('click', function (e) {
+        if (e.target.id === overlayId && down && up) close();
+        down = false; up = false;
+      });
+    }
+    outsideClickCloser('modal-bg', function () { closeModal(); });
     var naModal = document.getElementById('na-modal');
     function naSaving() { var b = document.getElementById('na-confirm-btn'); return !!(b && b.disabled); }   // never discard a reason mid-save
-    var _naDownOutside = false;   // same rule as the rework dialog: a press that started inside never closes it
-    if (naModal) naModal.addEventListener('mousedown', function (e) { _naDownOutside = (e.target.id === 'na-modal'); });
-    if (naModal) naModal.addEventListener('click', function (e) { if (e.target.id === 'na-modal' && _naDownOutside && !naSaving()) closeNaModal(); _naDownOutside = false; });
+    outsideClickCloser('na-modal', function () { if (!naSaving()) closeNaModal(); });   // same rule: the typed reason is never lost
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { closeModal(); if (naModal && !naSaving()) closeNaModal(); }
     });

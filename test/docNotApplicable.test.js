@@ -633,7 +633,8 @@ test('review page: "Doesn\'t apply" only on Missing/Received rows and only when 
     assert.ok(!/openNaModal\(|appliesAgain\(/.test(markup) && !/class="btn btn-applies"/.test(markup), 'switch OFF: no N/A button in the markup');
     assert.ok(!html.includes('id="na-modal"'), 'switch OFF: no modal');
     const script = (html.match(/<script>([\s\S]*?)<\/script>/) || [])[1] || '';
-    assert.match(script, /if \(naModal\) naModal\.addEventListener\('click'/, 'backdrop closes the modal (guarded)');
+    assert.match(script, /outsideClickCloser\('na-modal', function \(\) \{ if \(!naSaving\(\)\) closeNaModal\(\); \}\)/, 'backdrop closes the modal, never mid-save');
+    assert.match(script, /var ov = document\.getElementById\(overlayId\);\s*if \(!ov\) return;/, 'guarded: no modal on the page (switch off) = no handler, no error');
     assert.match(script, /if \(naModal && !naSaving\(\)\) closeNaModal\(\)/, 'Esc closes it, but never mid-save');
     assert.ok(html.includes('Marriage certificate'), 'the N/A row is still shown');
   } finally { restore(); }
