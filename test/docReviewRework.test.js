@@ -226,15 +226,16 @@ test('an expired sign-in: nothing is stored or guessed — the note stays in the
   r.open('101'); assert.equal(r.el('rework-notes').value, '');
 });
 
-test('the server refuses a second change while the first is still being processed (409 busy): treated like an unclear outcome — note read-only, Send off, this document blocked on the page, a time to reload after', async () => {
+test('the server refuses a second change while an earlier one is still being processed (409 busy): a clear "Not sent" — the note stays editable to send later, nothing is blocked', async () => {
   const p = loadPage();
   p.open('103'); p.type('second try');
-  p.answer(() => Promise.resolve({ ok: false, status: 409, json: async () => ({ ok: false, busy: true, error: 'An earlier change to this document is still being processed — wait a few minutes, then reload the page to see where it stands.' }) }));
+  p.answer(() => Promise.resolve({ ok: false, status: 409, json: async () => ({ ok: false, busy: true, error: 'Not sent — an earlier change to this document is still being processed. Keep your note, wait a few minutes, then reload the page to see where it stands.' }) }));
   await p.ctx.confirmRework();
-  assert.match(p.toast(), /An earlier change to this document is still being processed — reload the page after \d{1,2}:\d\d(?: ?[AP]M)? to see where it stands/);
-  assert.equal(p.dialogOpen(), true); assert.equal(p.el('rework-notes').readOnly, true);
-  assert.equal(p.btn.disabled, true); assert.match(p.btn.textContent, /^Reload after/);
-  await p.ctx.confirmRework(); assert.equal(p.calls.length, 1, 'never sent again from this page');
+  assert.match(p.toast(), /^✗ Not sent — an earlier change to this document is still being processed\. Keep your note/);
+  assert.equal(p.dialogOpen(), true); assert.equal(p.el('rework-notes').value, 'second try'); assert.equal(p.el('rework-notes').readOnly, false);
+  assert.equal(p.btn.disabled, false);
+  p.ctx.closeModal(); p.open('103');
+  assert.equal(p.dialogOpen(), true, 'not blocked: this rework was never sent');
 });
 
 test('one send at a time: while it sends, the dialog cannot be closed (Cancel, Esc, outside click) or sent twice, and the result lands on the document it was sent for', async () => {

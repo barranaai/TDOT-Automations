@@ -1073,10 +1073,6 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
         }
         var data = null;
         try { data = await res.json(); } catch (_) { data = null; }
-        if (data && data.busy) {
-          // an earlier change to this document is still running on the server — it may yet land
-          throw unknown('An earlier change to this document is still being processed — reload the page after ' + hhmmUp(mayLandBy) + ' to see where it stands.');
-        }
         if (data && data.outcomeUnknown) {
           // The server's own write got no clear answer from Monday: it may have landed.
           throw unknown('Monday did not confirm the change (' + (data.error || res.status) + ') — it may still have been saved. Reload the page after ' + hhmmUp(mayLandBy) + ' to check before sending again.');
