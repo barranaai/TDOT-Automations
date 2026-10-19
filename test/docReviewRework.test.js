@@ -183,52 +183,38 @@ test('an answer that is not the app\'s (a proxy error page): treated as "may hav
   assert.equal(q.dialogOpen(), true); assert.match(q.btn.textContent, /^Reload after/);
 });
 
-test('no clear answer, then a reload: the block survives the reload until the server can no longer land it (7 min), and the note comes back only when the reloaded row proves it did not land', async () => {
-  const session = storage(), time = clock();
-  const p = loadPage({ session, time });
-  p.open('102'); p.type('long explanation the reviewer would hate to retype');
+test('no clear answer: the block is for THIS page — before the time shown it says when to reload, after it says reload now; a reload starts clean (the server then refuses a second change while the first is still running)', async () => {
+  const time = clock();
+  const p = loadPage({ time });
+  p.open('102'); p.type('note');
   p.answer(() => Promise.reject(new TypeError('Failed to fetch')));
   await p.ctx.confirmRework();
-  // reloaded at once (the server may still be retrying Monday): still blocked, with the time to come back
+  p.ctx.closeModal();
   time.t += 60 * 1000;
-  const r1 = loadPage({ session, time });
-  r1.open('102');
-  assert.equal(r1.dialogOpen(), false);
-  assert.match(r1.toast(), /may still go through — reload the page after \d{1,2}:\d\d(?: ?[AP]M)?/);
-  // the window passes, but THIS page was loaded inside it: its rows are too old to tell
+  p.open('102');
+  assert.equal(p.dialogOpen(), false);
+  assert.match(p.toast(), /may still go through — reload the page after \d{1,2}:\d\d(?: ?[AP]M)? to check before sending again/);
   time.t += 7 * 60 * 1000;
-  r1.open('102');
-  assert.equal(r1.dialogOpen(), false);
-  assert.match(r1.toast(), /may have gone through — reload the page to check before sending again/);
-  // reloaded after the window, and the row shows no rework: it did not land — the note is back, ready to send
-  const r2 = loadPage({ session, time });
-  r2.open('102');
-  assert.equal(r2.dialogOpen(), true);
-  assert.equal(r2.el('rework-notes').value, 'long explanation the reviewer would hate to retype');
-  assert.match(r2.toast(), /did not go through \(this document still shows no rework request\) — it is back, ready to send/);
-  assert.equal(r2.btn.disabled, false);
-  await r2.ctx.confirmRework();
-  assert.equal(session.size(), 0, 'sent: forgotten');
+  p.open('102');
+  assert.equal(p.dialogOpen(), false);
+  assert.match(p.toast(), /may have gone through — reload the page to check before sending again/);
+  const r = loadPage({ time });                 // reloaded: the rows on screen are Monday's word now
+  r.open('102');
+  assert.equal(r.dialogOpen(), true); assert.equal(r.el('rework-notes').value, '', 'nothing is guessed across a reload');
 });
 
-test('a note that DID land is never brought back: the reloaded row says Rework Required, or later shows that note on file (after an upload or Undo) — forgotten, the dialog opens blank', async () => {
-  for (const rowState of [{ '102': { status: 'Rework Required' } }, { '102': { status: 'Received', noteOnFile: 'please upload all pages' } }]) {
-    const session = storage(), time = clock();
-    const p = loadPage({ session, time });
-    p.open('102'); p.type('please upload all pages');
-    p.answer(() => Promise.reject(new TypeError('Failed to fetch')));
-    await p.ctx.confirmRework();
-    time.t += 8 * 60 * 1000;
-    const r = loadPage({ session, time, rowState });
-    r.ctx.openRework({ getAttribute: (a) => (a === 'data-id' ? '102' : 'Doc') });
-    if (rowState['102'].status === 'Received') {
-      assert.equal(r.dialogOpen(), true); assert.equal(r.el('rework-notes').value, '', 'never pre-filled with a note that was sent');
-    }
-    assert.equal(session.size(), 0, 'forgotten');
-  }
+test('the time to come back is rounded UP to the minute (never a minute already under way)', async () => {
+  const time = clock(Date.UTC(2026, 9, 19, 14, 0, 50));      // sent at hh:00:50 → may land until hh:07:50 → "after hh:08"
+  const p = loadPage({ time });
+  p.open('101'); p.type('x');
+  p.answer(() => Promise.reject(new TypeError('Failed to fetch')));
+  await p.ctx.confirmRework();
+  const want = new Date(Date.UTC(2026, 9, 19, 14, 8, 0)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  assert.ok(p.btn.textContent === 'Reload after ' + want + ' to check', p.btn.textContent + ' vs ' + want);
+  assert.ok(p.toast().includes('after ' + want), p.toast());
 });
 
-test('an expired sign-in: the note (never sent) comes back after the reload, once', async () => {
+test('an expired sign-in: the note (never sent) comes back after the reload, once — and says why', async () => {
   const session = storage();
   const p = loadPage({ session });
   p.open('101'); p.type('note typed after lunch');
@@ -237,9 +223,19 @@ test('an expired sign-in: the note (never sent) comes back after the reload, onc
   const r = loadPage({ session });
   r.open('101');
   assert.equal(r.el('rework-notes').value, 'note typed after lunch');
-  assert.match(r.toast(), /Your unsent note for this document is back/);
+  assert.match(r.toast(), /Your unsent note for this document is back \(your sign-in had expired, so it was not sent\)/);
   r.ctx.closeModal(); r.open('101');
-  assert.equal(r.el('rework-notes').value, '', 'shown once');
+  assert.equal(r.el('rework-notes').value, '', 'once');
+  r.open('102'); assert.equal(r.el('rework-notes').value, '', 'other documents start blank');
+});
+
+test('the server refuses a second change while the first is still being processed (409): the dialog keeps the note and says to wait', async () => {
+  const p = loadPage();
+  p.open('103'); p.type('second try');
+  p.answer(() => Promise.resolve({ ok: false, status: 409, json: async () => ({ ok: false, error: 'An earlier change to this document is still being processed — wait a few minutes, then reload the page to see where it stands.' }) }));
+  await p.ctx.confirmRework();
+  assert.match(p.toast(), /still being processed — wait a few minutes/);
+  assert.equal(p.dialogOpen(), true); assert.equal(p.el('rework-notes').value, 'second try');
 });
 
 test('one send at a time: while it sends, the dialog cannot be closed (Cancel, Esc, outside click) or sent twice, and the result lands on the document it was sent for', async () => {
@@ -339,4 +335,75 @@ test('the Not Applicable dialog: selecting reason text and releasing past the ed
   assert.equal(m.classList.contains('open'), true); assert.equal(p.el('na-reason').value, 'client is single');
   click('na-modal', 'na-modal');
   assert.equal(m.classList.contains('open'), false);
+});
+
+/* ── the status route itself ── */
+function routeHandler(method, path) {
+  const router = require('../src/routes/documentReviewForm');
+  const layer = router.stack.find((l) => l.route && l.route.path === path && l.route.methods[method]);
+  const st = layer.route.stack;
+  return { router, handler: st[st.length - 1].handle };   // past requireStaffAuth
+}
+function fakeRes() {
+  const r = { statusCode: 200, headers: {}, body: null };
+  r.status = (c) => { r.statusCode = c; return r; };
+  r.json = (b) => { r.body = b; return r; };
+  r.set = (k, v) => { r.headers[k.toLowerCase()] = v; return r; };
+  r.type = () => r; r.send = (b) => { r.body = b; return r; };
+  return r;
+}
+
+test('the status route: a second change to the SAME document while the first is still running is refused (409) — never written twice; other documents go through; the lock is released after', async () => {
+  const caseAccess = require('../src/services/caseAccessService');
+  const svcMod = require('../src/services/documentReviewFormService');
+  const real = { viewer: caseAccess.viewerFromStaff, rework: svcMod.requestRework };
+  const writes = [];
+  let release;
+  caseAccess.viewerFromStaff = () => ({ isAdmin: true });
+  svcMod.requestRework = (itemId, notes) => { writes.push([itemId, notes]); return itemId === '501' && !release ? new Promise((r) => { release = r; }) : Promise.resolve(); };
+  try {
+    const { router, handler } = routeHandler('post', '/:caseRef/review/:itemId/status');
+    const req = (id, notes) => ({ params: { caseRef: '2026-CEC-EE-074', itemId: id }, body: { action: 'rework', notes }, staff: { name: 'Gauri' } });
+    const r1 = fakeRes(); const first = handler(req('501', 'first'), r1);
+    await new Promise((r) => setImmediate(r));
+    const r2 = fakeRes(); await handler(req('501', 'second'), r2);
+    assert.equal(r2.statusCode, 409); assert.match(r2.body.error, /still being processed/);
+    const r3 = fakeRes(); await handler(req('502', 'other doc'), r3);
+    assert.equal(r3.statusCode, 200);
+    release(); await first;
+    assert.equal(r1.statusCode, 200);
+    assert.deepEqual(writes, [['501', 'first'], ['502', 'other doc']], 'the second change to 501 was never written');
+    assert.equal(router._statusInFlight.size, 0, 'released');
+    const r4 = fakeRes(); await handler(req('501', 'later'), r4);
+    assert.equal(r4.statusCode, 200, 'allowed again once the first is done');
+  } finally { caseAccess.viewerFromStaff = real.viewer; svcMod.requestRework = real.rework; }
+});
+
+test('the status route: a failure past its checks says "outcome unknown" (Monday may still have saved it) and still releases the document', async () => {
+  const caseAccess = require('../src/services/caseAccessService');
+  const svcMod = require('../src/services/documentReviewFormService');
+  const real = { viewer: caseAccess.viewerFromStaff, rework: svcMod.requestRework };
+  caseAccess.viewerFromStaff = () => ({ isAdmin: true });
+  svcMod.requestRework = async () => { throw new Error('timeout of 30000ms exceeded'); };
+  try {
+    const { router, handler } = routeHandler('post', '/:caseRef/review/:itemId/status');
+    const r = fakeRes();
+    await handler({ params: { caseRef: '2026-CEC-EE-074', itemId: '601' }, body: { action: 'rework', notes: 'x' }, staff: {} }, r);
+    assert.equal(r.statusCode, 500); assert.equal(r.body.outcomeUnknown, true);
+    assert.equal(router._statusInFlight.size, 0);
+  } finally { caseAccess.viewerFromStaff = real.viewer; svcMod.requestRework = real.rework; }
+});
+
+test('the review page is never served from the browser cache (no-store) — Back or a reopened tab always shows live statuses', async () => {
+  const caseAccess = require('../src/services/caseAccessService');
+  const docForm = require('../src/services/documentFormService');
+  const real = { viewer: caseAccess.viewerFromStaff, sum: docForm.getCaseSummary };
+  caseAccess.viewerFromStaff = () => ({ isAdmin: true });
+  docForm.getCaseSummary = async () => ({ items: [], clientName: 'T' });
+  try {
+    const { handler } = routeHandler('get', '/:caseRef/review');
+    const r = fakeRes();
+    await handler({ params: { caseRef: '2026-CEC-EE-074' }, staff: {} }, r);
+    assert.equal(r.headers['cache-control'], 'no-store');
+  } finally { caseAccess.viewerFromStaff = real.viewer; docForm.getCaseSummary = real.sum; }
 });

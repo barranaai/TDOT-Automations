@@ -64,6 +64,9 @@ function sanitiseItemId(s) {
 
 router.get('/:caseRef/review', requireStaffAuth, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
+  // Live statuses: never served from the browser cache (Back, a reopened tab,
+  // a restored session) — a stale page would offer actions on the wrong state.
+  res.set('Cache-Control', 'no-store');
 
   try {
     if (!(await enforceCaseAccess(req, res, caseRef))) return;
@@ -135,6 +138,12 @@ router.get('/:caseRef/review/updates', requireStaffAuth, async (req, res) => {
 });
 
 // ─── POST /d/:caseRef/review/:itemId/status — Mark Reviewed / Request Rework ─
+//
+// One action per document at a time: while one is still being processed (it
+// can take minutes when Monday is slow — the page may have stopped waiting and
+// the reviewer reloaded), a second is refused rather than written twice (a
+// second rework would email the client again). In-process: one app instance.
+const _statusInFlight = new Set();
 
 router.post('/:caseRef/review/:itemId/status', requireStaffAuth, async (req, res) => {
   const caseRef = sanitiseCaseRef(req.params.caseRef);
@@ -157,6 +166,10 @@ router.post('/:caseRef/review/:itemId/status', requireStaffAuth, async (req, res
     return res.status(400).json({ ok: false, error: 'A reason is required to mark a document not applicable.' });
   }
 
+  if (_statusInFlight.has(itemId)) {
+    return res.status(409).json({ ok: false, error: 'An earlier change to this document is still being processed — wait a few minutes, then reload the page to see where it stands.' });
+  }
+  _statusInFlight.add(itemId);
   try {
     if (!(await enforceCaseAccess(req, res, caseRef, { json: true }))) return;
     const staffName = req.staff?.name || req.staff?.email || 'Staff';
@@ -182,7 +195,11 @@ router.post('/:caseRef/review/:itemId/status', requireStaffAuth, async (req, res
     // may still have landed (a timeout after retries). The page must not
     // invite a second send (for a rework: a second client email).
     return res.status(500).json({ ok: false, error: err.message, outcomeUnknown: true });
+  } finally {
+    _statusInFlight.delete(itemId);
   }
 });
+
+router._statusInFlight = _statusInFlight;   // tests
 
 module.exports = router;

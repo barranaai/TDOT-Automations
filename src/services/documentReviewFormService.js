@@ -981,19 +981,18 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
        and every later rework on the page could not be sent until a reload
        (consultant report, EE-074). One send at a time, and the dialog
        cannot be closed while it sends; each send keeps its own document id.
-       An expired sign-in is caught before anything is sent: the note is kept
-       for after the reload. A send with NO clear answer (connection lost, a
-       proxy error page, no answer in a minute) may still land — the server
-       keeps retrying Monday for up to ~6½ minutes — so that document stays
-       blocked until the page is reloaded after that window (the block
-       survives a reload), and the note comes back only once the reloaded
-       row proves it did not land. Notes are kept per tab (sessionStorage). */
+       An expired sign-in is caught before anything is sent: the note comes
+       back once after the reload. A send with NO clear answer (connection
+       lost, a proxy error page, no answer in a minute) may still land — the
+       server keeps retrying Monday for up to ~6½ minutes, and refuses a
+       second change to that document meanwhile — so the note stays on screen
+       read-only, Send is off and the document is blocked on this page; the
+       reviewer is told when to reload to see where it stands. */
     var REWORK_BTN_LABEL = 'Send Rework Request';
     var REWORK_WAIT_MS = 60000;           // no answer in a minute: stop waiting (the server may still finish)
     var REWORK_PENDING_MS = 7 * 60000;    // how long a send with no clear answer may still land
-    var PAGE_LOADED_AT = Date.now();      // the rows on screen show Monday as of this moment
     var _reworkSending = false;
-    var _reworkUnknown = {};              // itemId → until when a send with no clear answer may still land (also kept in storage)
+    var _reworkUnknown = {};              // itemId → until when a send with no clear answer may still land (this page)
     function setReworkSending(on) {
       _reworkSending = on;
       var c = document.getElementById('rework-cancel-btn');
@@ -1003,44 +1002,31 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       var b = document.getElementById('confirm-btn');
       if (b) { b.disabled = false; b.textContent = REWORK_BTN_LABEL; }
     }
-    function hhmm(ms) { return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
-    // { kind: 'unsent' | 'pending', note, at } per case + document (best effort — storage may be off)
-    function noteKey(id) { return 'tdot-rework-note:' + CASE_REF + ':' + id; }
-    function readEntry(id) { try { var raw = window.sessionStorage.getItem(noteKey(id)); return raw ? JSON.parse(raw) : null; } catch (_) { return null; } }
-    function writeEntry(id, e) { try { window.sessionStorage.setItem(noteKey(id), JSON.stringify(e)); } catch (_) { /* storage off */ } }
-    function dropEntry(id) { try { window.sessionStorage.removeItem(noteKey(id)); } catch (_) { /* storage off */ } }
-    // the row (as loaded) shows this note reached Monday: it says Rework Required, or carries the note on file
-    function noteLanded(id, note) {
-      var row = document.querySelector('.doc-row[data-item-id="' + id + '"]');
-      if (!row) return false;
-      if (row.getAttribute('data-status') === 'Rework Required') return true;
-      var onFile = row.querySelector('.review-notes');
-      return !!(note && onFile && String(onFile.textContent || '').indexOf(note) !== -1);
+    // a time to come back at, rounded UP to the minute (never a minute that is already under way)
+    function hhmmUp(ms) { return new Date(Math.ceil(ms / 60000) * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+    // A note an expired sign-in turned away (certainly never sent) waits for the reload — per tab, best effort.
+    function noteKey(id) { return 'tdot-rework-unsent:' + CASE_REF + ':' + id; }
+    function keepUnsent(id, note) { try { window.sessionStorage.setItem(noteKey(id), note); } catch (_) { /* storage off */ } }
+    function takeUnsent(id) {
+      try { var n = window.sessionStorage.getItem(noteKey(id)) || ''; window.sessionStorage.removeItem(noteKey(id)); return n; }
+      catch (_) { return ''; }
     }
     function openRework(btn) {
       if (_reworkSending) { showToast('Please wait — the previous rework request is still being sent.', true); return; }
       var id = btn.getAttribute('data-id');
-      var e = readEntry(id);
-      if (e && noteLanded(id, e.note)) { dropEntry(id); e = null; }   // it reached the client: nothing to bring back
-      var until = Math.max((e && e.kind === 'pending') ? e.at + REWORK_PENDING_MS : 0, _reworkUnknown[id] || 0);
-      if (until > Date.now()) {
-        showToast('A rework request for this document may still go through — reload the page after ' + hhmm(until) + ' to check before sending again.', true);
-        return;
-      }
-      if (until && PAGE_LOADED_AT < until) {
-        showToast('A rework request for this document may have gone through — reload the page to check before sending again.', true);
+      var until = _reworkUnknown[id] || 0;
+      if (until) {
+        showToast(until > Date.now()
+          ? 'A rework request for this document may still go through — reload the page after ' + hhmmUp(until) + ' to check before sending again.'
+          : 'A rework request for this document may have gone through — reload the page to check before sending again.', true);
         return;
       }
       _modalItemId = id;
       var ta = document.getElementById('rework-notes');
       ta.readOnly = false;
-      ta.value = e ? (e.note || '') : '';
-      if (e) {
-        dropEntry(id);   // shown once; a send or a later problem stores it again
-        showToast(e.kind === 'pending'
-          ? 'Your note from ' + hhmm(e.at) + ' did not go through (this document still shows no rework request) — it is back, ready to send.'
-          : 'Your unsent note for this document is back.');
-      }
+      var unsent = takeUnsent(id);
+      ta.value = unsent;
+      if (unsent) showToast('Your unsent note for this document is back (your sign-in had expired, so it was not sent).');
       document.getElementById('modal-sub').textContent = 'Document: ' + (btn.getAttribute('data-name') || '');
       resetReworkBtn();
       document.getElementById('modal-bg').classList.add('open');
@@ -1084,24 +1070,24 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
           });
         } catch (netErr) {
           if (netErr && netErr.name === 'AbortError') {
-            throw unknown('No answer after a minute — the request may still go through. Reload the page after ' + hhmm(mayLandBy) + ' to check before sending again.');
+            throw unknown('No answer after a minute — the request may still go through. Reload the page after ' + hhmmUp(mayLandBy) + ' to check before sending again.');
           }
-          throw unknown('Could not reach the server — the request may or may not have gone through. Reload the page after ' + hhmm(mayLandBy) + ' to check before sending again.');
+          throw unknown('Could not reach the server — the request may or may not have gone through. Reload the page after ' + hhmmUp(mayLandBy) + ' to check before sending again.');
         }
         if (res.type === 'opaqueredirect') {
           // the sign-in check turned the request away: nothing was sent
-          writeEntry(itemId, { kind: 'unsent', note: notes, at: sentAt });
+          keepUnsent(itemId, notes);
           throw new Error('Your sign-in has expired — nothing was sent. Reload the page to sign in again; your note will be kept.');
         }
         var data = null;
         try { data = await res.json(); } catch (_) { data = null; }
         if (data && data.outcomeUnknown) {
           // The server's own write got no clear answer from Monday: it may have landed.
-          throw unknown('Monday did not confirm the change (' + (data.error || res.status) + ') — it may still have been saved. Reload the page after ' + hhmm(mayLandBy) + ' to check before sending again.');
+          throw unknown('Monday did not confirm the change (' + (data.error || res.status) + ') — it may still have been saved. Reload the page after ' + hhmmUp(mayLandBy) + ' to check before sending again.');
         }
         if (!data) {
           // Not the app's answer (a login or proxy error page): outcome unknown.
-          throw unknown('The server did not answer clearly (' + res.status + ') — reload the page after ' + hhmm(mayLandBy) + ' to see whether the request went through.');
+          throw unknown('The server did not answer clearly (' + res.status + ') — reload the page after ' + hhmmUp(mayLandBy) + ' to see whether the request went through.');
         }
         if (!res.ok || !data.ok) throw new Error(data.error || ('The request failed (' + res.status + ').'));
 
@@ -1120,14 +1106,12 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
             meta.appendChild(note);
           }
         }
-        dropEntry(itemId);
         closeModal(true);
         showToast('✓ Rework requested — client will be notified by email');
       } catch (err) {
         if (err && err.unknown) {
           outcomeUnknown = true;
           _reworkUnknown[itemId] = mayLandBy;
-          writeEntry(itemId, { kind: 'pending', note: notes, at: sentAt });   // the block and the note survive a reload
         }
         showToast('✗ ' + (err.message || 'Failed to request rework'), true);
       } finally {
@@ -1136,7 +1120,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
         if (outcomeUnknown) {
           // keep the note on screen (read-only, to copy) but never send it again from here
           confirmBtn.disabled = true;
-          confirmBtn.textContent = 'Reload after ' + hhmm(mayLandBy) + ' to check';
+          confirmBtn.textContent = 'Reload after ' + hhmmUp(mayLandBy) + ' to check';
           document.getElementById('rework-notes').readOnly = true;
         } else {
           // ready for the next document; a clear refusal keeps the dialog open with the note
