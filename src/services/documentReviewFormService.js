@@ -975,11 +975,25 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       }
     }
 
-    /* ── Open Rework Modal ── */
+    /* ── Open Rework Modal ──
+       One dialog serves every row, so its Send button must start fresh on
+       every open: a successful send used to leave it disabled on "Sending…",
+       and every later rework on the page could not be sent until a reload
+       (consultant report, EE-074). One send at a time; each send keeps its
+       own document id, so closing or reopening the dialog meanwhile can never
+       put the result on another row. */
+    var REWORK_BTN_LABEL = 'Send Rework Request';
+    var _reworkSending = false;
+    function resetReworkBtn() {
+      var b = document.getElementById('confirm-btn');
+      if (b) { b.disabled = false; b.textContent = REWORK_BTN_LABEL; }
+    }
     function openRework(btn) {
+      if (_reworkSending) { showToast('Please wait — the previous rework request is still being sent.', true); return; }
       _modalItemId = btn.getAttribute('data-id');
       document.getElementById('rework-notes').value = '';
       document.getElementById('modal-sub').textContent = 'Document: ' + (btn.getAttribute('data-name') || '');
+      resetReworkBtn();
       document.getElementById('modal-bg').classList.add('open');
       setTimeout(function () { document.getElementById('rework-notes').focus(); }, 60);
     }
@@ -990,25 +1004,40 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
     }
 
     async function confirmRework() {
-      if (!_modalItemId) return;
+      if (!_modalItemId || _reworkSending) return;
+      var itemId = _modalItemId;
       var notes = document.getElementById('rework-notes').value.trim();
       if (!notes) { showToast('Notes are required for rework requests.', true); return; }
 
       var confirmBtn = document.getElementById('confirm-btn');
+      _reworkSending = true;
       confirmBtn.disabled = true;
       confirmBtn.textContent = 'Sending…';
 
       try {
-        var res = await fetch('/d/' + encodeURIComponent(CASE_REF) + '/review/' + encodeURIComponent(_modalItemId) + '/status', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'rework', notes: notes }),
-        });
-        var data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data.error || 'Failed');
+        var res;
+        try {
+          res = await fetch('/d/' + encodeURIComponent(CASE_REF) + '/review/' + encodeURIComponent(itemId) + '/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'rework', notes: notes }),
+          });
+        } catch (netErr) {
+          // No answer (connection lost, or an expired sign-in redirected away):
+          // the request may still have gone through — never invite a blind
+          // second send, which would email the client twice.
+          throw new Error('Could not reach the server, or your sign-in has expired — reload the page to see whether the request went through.');
+        }
+        var data = null;
+        try { data = await res.json(); } catch (_) { data = null; }
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && data.error) || (res.redirected
+            ? 'Your sign-in has expired — reload the page and sign in again.'
+            : 'The request failed (' + res.status + ') — reload the page to see whether it went through.'));
+        }
 
         // Update the row in place
-        var row = document.querySelector('.doc-row[data-item-id="' + _modalItemId + '"]');
+        var row = document.querySelector('.doc-row[data-item-id="' + itemId + '"]');
         if (row) {
           setRowStatus(row, 'Rework Required'); // enables Undo, disables Request Rework
           // Inject the new review note inline
@@ -1025,9 +1054,11 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
         closeModal();
         showToast('✓ Rework requested — client will be notified by email');
       } catch (err) {
-        confirmBtn.disabled = false;
-        confirmBtn.textContent = 'Send Rework Request';
         showToast('✗ ' + (err.message || 'Failed to request rework'), true);
+      } finally {
+        // success or failure: the dialog is ready for the next document
+        _reworkSending = false;
+        resetReworkBtn();
       }
     }
 
