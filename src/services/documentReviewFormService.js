@@ -986,6 +986,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
        have gone through: that document's dialog stays shut until the page is
        reloaded, so nobody re-sends blind. */
     var REWORK_BTN_LABEL = 'Send Rework Request';
+    var REWORK_WAIT_MS = 60000;   // no answer in a minute: stop waiting (the server may still finish)
     var _reworkSending = false;
     var _reworkUnknown = {};   // itemId → a send with no clear answer: reload to see whether it went through
     function setReworkSending(on) {
@@ -1027,6 +1028,10 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       confirmBtn.disabled = true;
       confirmBtn.textContent = 'Sending…';
 
+      // The page is never held hostage by a slow server: after a minute the
+      // dialog stops waiting and treats the send as "may have gone through".
+      var ctrl = (typeof AbortController === 'function') ? new AbortController() : null;
+      var waitTimer = ctrl ? setTimeout(function () { ctrl.abort(); }, REWORK_WAIT_MS) : null;
       try {
         var res;
         try {
@@ -1034,14 +1039,22 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'rework', notes: notes }),
+            signal: ctrl ? ctrl.signal : undefined,
           });
         } catch (netErr) {
+          if (netErr && netErr.name === 'AbortError') {
+            throw unknown('No answer after a minute — the request may still go through. Reload the page in a minute to check before sending again.');
+          }
           // No answer — the connection dropped, or an expired sign-in sent the
           // request off to the Monday login (the browser refuses that hop).
           throw unknown('Could not reach the server, or your sign-in has expired — reload the page to see whether the request went through.');
         }
         var data = null;
         try { data = await res.json(); } catch (_) { data = null; }
+        if (data && data.outcomeUnknown) {
+          // The server's own write got no clear answer from Monday: it may have landed.
+          throw unknown('Monday did not confirm the change (' + (data.error || res.status) + ') — it may still have been saved. Reload the page to check before sending again.');
+        }
         if (!data) {
           // Not the app's answer (a login or proxy error page): outcome unknown.
           throw unknown(res.redirected
@@ -1074,6 +1087,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
         }
         showToast('✗ ' + (err.message || 'Failed to request rework'), true);
       } finally {
+        if (waitTimer) clearTimeout(waitTimer);
         // the dialog is ready for the next document (a clear refusal keeps the
         // dialog open with the note, so the reviewer can correct and resend)
         setReworkSending(false);
@@ -1094,7 +1108,9 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
     });
     var naModal = document.getElementById('na-modal');
     function naSaving() { var b = document.getElementById('na-confirm-btn'); return !!(b && b.disabled); }   // never discard a reason mid-save
-    if (naModal) naModal.addEventListener('click', function (e) { if (e.target.id === 'na-modal' && !naSaving()) closeNaModal(); });
+    var _naDownOutside = false;   // same rule as the rework dialog: a press that started inside never closes it
+    if (naModal) naModal.addEventListener('mousedown', function (e) { _naDownOutside = (e.target.id === 'na-modal'); });
+    if (naModal) naModal.addEventListener('click', function (e) { if (e.target.id === 'na-modal' && _naDownOutside && !naSaving()) closeNaModal(); _naDownOutside = false; });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { closeModal(); if (naModal && !naSaving()) closeNaModal(); }
     });

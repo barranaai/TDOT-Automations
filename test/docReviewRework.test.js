@@ -39,9 +39,12 @@ function makeRow(itemId) {
   return row;
 }
 
-function loadPage() {
+function loadPage({ na = false } = {}) {
+  const prevNa = process.env.DOC_NOT_APPLICABLE;
+  if (na) process.env.DOC_NOT_APPLICABLE = '1';
   const items = DOCS.map(([id, name]) => ({ id, name, status: 'Received', category: 'Academic', applicantType: 'Principal Applicant', documentCode: 'X-' + id }));
   const html = svc.buildReviewPage({ caseRef: '2026-CEC-EE-074', clientName: 'Test', staffName: 'Staff', items, folderLinks: {}, folderLinksUnavailable: false });
+  if (na) { if (prevNa === undefined) delete process.env.DOC_NOT_APPLICABLE; else process.env.DOC_NOT_APPLICABLE = prevNa; }
   const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
   const byId = {};
   const rows = Object.fromEntries(DOCS.map(([id]) => [id, makeRow(id)]));
@@ -58,14 +61,23 @@ function loadPage() {
   byId['confirm-btn'] = Object.assign(el('confirm-btn'), { textContent: (html.match(/id="confirm-btn"[^>]*>([^<]*)</) || [])[1] });
   const calls = [];
   let next = null;   // the answer the next POST gets: a function (url, opts) => Promise<Response-like>
+  // short timers (focus, toast hide) run at once; long ones (the one-minute wait) only when the test says
+  const longTimers = new Map(); let timerId = 0;
   const ctx = {
-    document, console, URLSearchParams,
-    setTimeout: (f) => { f(); return 0; }, clearTimeout() {}, setInterval: () => 0, clearInterval() {},
+    document, console, URLSearchParams, AbortController,
+    setTimeout: (f, ms) => { if (!ms || ms < 5000) { f(); return 0; } const id = ++timerId; longTimers.set(id, f); return id; },
+    clearTimeout: (id) => { longTimers.delete(id); }, setInterval: () => 0, clearInterval() {},
     location: { reload() {}, pathname: '/d/x/review', search: '' }, navigator: {},
     fetch: (url, opts) => {
       if (!opts || opts.method !== 'POST') return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, replies: {}, uploads: {} }) });
       calls.push({ url, body: JSON.parse(opts.body) });
-      return next ? next(url, opts) : Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
+      const answer = next ? next(url, opts) : Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
+      if (!opts.signal) return answer;
+      // like a browser: an aborted request rejects with an AbortError
+      return new Promise((resolve, reject) => {
+        opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })));
+        answer.then(resolve, reject);
+      });
     },
   };
   ctx.window = ctx;
@@ -83,6 +95,9 @@ function loadPage() {
     overlay: (type, onOverlay) => (document.getElementById('modal-bg').listeners[type] || []).forEach((fn) => fn({ target: onOverlay ? { id: 'modal-bg' } : { id: 'rework-notes' } })),
     key: (k) => (docListeners.keydown || []).forEach((fn) => fn({ key: k })),
     cancel: () => document.getElementById('rework-cancel-btn'),
+    fireLongTimers: () => { const fs = [...longTimers.values()]; longTimers.clear(); fs.forEach((f) => f()); },
+    pendingLongTimers: () => longTimers.size,
+    html,
   };
 }
 const ok = () => Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
@@ -185,4 +200,56 @@ test('the note shown on the row is the escaped text that was sent', async () => 
   await p.ctx.confirmRework();
   const note = p.rows['103'].parts['.doc-meta'].kids.find((k) => k.className === 'review-notes');
   assert.match(note.innerHTML, /score &lt;5&gt; &amp; expired/);
+});
+
+test('a server that never answers: after one minute the dialog stops waiting — "may still go through, reload to check" — and that document is blocked until a reload (the page is never held hostage)', async () => {
+  const p = loadPage();
+  p.answer(() => new Promise(() => {}));   // no answer, ever
+  p.open('101'); p.type('slow');
+  const sending = p.ctx.confirmRework();
+  assert.equal(p.dialogOpen(), true); assert.equal(p.pendingLongTimers(), 1);
+  p.fireLongTimers();                      // a minute passes
+  await sending;
+  assert.match(p.toast(), /No answer after a minute — the request may still go through\. Reload the page in a minute to check before sending again/);
+  assert.equal(p.dialogOpen(), false);
+  assert.equal(p.btn.disabled, false); assert.equal(p.cancel().disabled, false);
+  p.open('101'); assert.equal(p.dialogOpen(), false, 'blocked until a reload');
+  p.answer(ok); p.open('102'); assert.equal(p.dialogOpen(), true, 'other documents are fine');
+});
+
+test('an answer in time clears the one-minute wait', async () => {
+  const p = loadPage();
+  p.open('101'); p.type('fast');
+  await p.ctx.confirmRework();
+  assert.equal(p.pendingLongTimers(), 0);
+});
+
+test('the server says Monday did not confirm its write (a timeout after retries): treated as "may have been saved" — never invites a second send', async () => {
+  const p = loadPage();
+  p.open('102'); p.type('timeout');
+  p.answer(() => Promise.resolve({ ok: false, status: 500, json: async () => ({ ok: false, error: 'timeout of 30000ms exceeded', outcomeUnknown: true }) }));
+  await p.ctx.confirmRework();
+  assert.match(p.toast(), /Monday did not confirm the change \(timeout of 30000ms exceeded\) — it may still have been saved\. Reload the page to check before sending again/);
+  assert.equal(p.dialogOpen(), false);
+  p.open('102'); assert.equal(p.dialogOpen(), false);
+});
+
+test('the route marks every failure past its checks as "outcome unknown" (Monday may still have saved it); clear refusals stay plain 400s', () => {
+  const src = require('fs').readFileSync(require.resolve('../src/routes/documentReviewForm.js'), 'utf8');
+  assert.match(src, /if \(err\.badRequest\) return res\.status\(400\)\.json\(\{ ok: false, error: err\.message \}\);/);
+  assert.match(src, /return res\.status\(500\)\.json\(\{ ok: false, error: err\.message, outcomeUnknown: true \}\);/);
+});
+
+test('the Not Applicable dialog: selecting reason text and releasing past the edge no longer closes it (a real outside click still does)', () => {
+  const p = loadPage({ na: true });
+  assert.ok(p.html.includes('id="na-modal"'), 'the Not Applicable dialog is on the page');
+  p.ctx.openNaModal({ getAttribute: (a) => (a === 'data-id' ? '101' : 'Doc A') });
+  const m = p.el('na-modal');
+  assert.equal(m.classList.contains('open'), true);
+  p.el('na-reason').value = 'client is single';
+  const fire = (type, onOverlay) => (m.listeners[type] || []).forEach((fn) => fn({ target: onOverlay ? { id: 'na-modal' } : { id: 'na-reason' } }));
+  fire('mousedown', false); fire('click', true);
+  assert.equal(m.classList.contains('open'), true); assert.equal(p.el('na-reason').value, 'client is single');
+  fire('mousedown', true); fire('click', true);
+  assert.equal(m.classList.contains('open'), false);
 });

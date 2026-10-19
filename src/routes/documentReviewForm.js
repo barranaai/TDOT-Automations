@@ -178,7 +178,10 @@ router.post('/:caseRef/review/:itemId/status', requireStaffAuth, async (req, res
   } catch (err) {
     if (err.badRequest) return res.status(400).json({ ok: false, error: err.message });
     console.error(`[/d/review] Action ${action} failed for item ${itemId}:`, err.message);
-    return res.status(500).json({ ok: false, error: err.message });
+    // Past the checks, a failure means Monday did not CONFIRM the write — it
+    // may still have landed (a timeout after retries). The page must not
+    // invite a second send (for a rework: a second client email).
+    return res.status(500).json({ ok: false, error: err.message, outcomeUnknown: true });
   }
 });
 
