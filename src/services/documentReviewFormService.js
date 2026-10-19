@@ -807,7 +807,7 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       <p class="sub" id="modal-sub"></p>
       <textarea id="rework-notes" placeholder="Explain to the client what needs to be corrected. This text will be sent to them by email and shown in their upload form."></textarea>
       <div class="modal-actions">
-        <button class="btn btn-cancel" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-cancel" id="rework-cancel-btn" onclick="closeModal()">Cancel</button>
         <button class="btn btn-confirm" id="confirm-btn" onclick="confirmRework()">Send Rework Request</button>
       </div>
     </div>
@@ -979,18 +979,29 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
        One dialog serves every row, so its Send button must start fresh on
        every open: a successful send used to leave it disabled on "Sending…",
        and every later rework on the page could not be sent until a reload
-       (consultant report, EE-074). One send at a time; each send keeps its
-       own document id, so closing or reopening the dialog meanwhile can never
-       put the result on another row. */
+       (consultant report, EE-074). One send at a time, and the dialog
+       cannot be closed while it sends (the note is never lost mid-send);
+       each send keeps its own document id. When a send gets NO clear answer
+       (connection lost, expired sign-in, a proxy error page) it may still
+       have gone through: that document's dialog stays shut until the page is
+       reloaded, so nobody re-sends blind. */
     var REWORK_BTN_LABEL = 'Send Rework Request';
     var _reworkSending = false;
+    var _reworkUnknown = {};   // itemId → a send with no clear answer: reload to see whether it went through
+    function setReworkSending(on) {
+      _reworkSending = on;
+      var c = document.getElementById('rework-cancel-btn');
+      if (c) c.disabled = on;
+    }
     function resetReworkBtn() {
       var b = document.getElementById('confirm-btn');
       if (b) { b.disabled = false; b.textContent = REWORK_BTN_LABEL; }
     }
     function openRework(btn) {
       if (_reworkSending) { showToast('Please wait — the previous rework request is still being sent.', true); return; }
-      _modalItemId = btn.getAttribute('data-id');
+      var id = btn.getAttribute('data-id');
+      if (_reworkUnknown[id]) { showToast('The last rework request for this document may already have gone through — reload the page to check before sending again.', true); return; }
+      _modalItemId = id;
       document.getElementById('rework-notes').value = '';
       document.getElementById('modal-sub').textContent = 'Document: ' + (btn.getAttribute('data-name') || '');
       resetReworkBtn();
@@ -998,7 +1009,8 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       setTimeout(function () { document.getElementById('rework-notes').focus(); }, 60);
     }
 
-    function closeModal() {
+    function closeModal(force) {
+      if (_reworkSending && !force) return;   // never close (and lose the note) mid-send
       document.getElementById('modal-bg').classList.remove('open');
       _modalItemId = null;
     }
@@ -1010,7 +1022,8 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
       if (!notes) { showToast('Notes are required for rework requests.', true); return; }
 
       var confirmBtn = document.getElementById('confirm-btn');
-      _reworkSending = true;
+      var unknown = function (msg) { var e = new Error(msg); e.unknown = true; return e; };
+      setReworkSending(true);
       confirmBtn.disabled = true;
       confirmBtn.textContent = 'Sending…';
 
@@ -1023,18 +1036,19 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
             body: JSON.stringify({ action: 'rework', notes: notes }),
           });
         } catch (netErr) {
-          // No answer (connection lost, or an expired sign-in redirected away):
-          // the request may still have gone through — never invite a blind
-          // second send, which would email the client twice.
-          throw new Error('Could not reach the server, or your sign-in has expired — reload the page to see whether the request went through.');
+          // No answer — the connection dropped, or an expired sign-in sent the
+          // request off to the Monday login (the browser refuses that hop).
+          throw unknown('Could not reach the server, or your sign-in has expired — reload the page to see whether the request went through.');
         }
         var data = null;
         try { data = await res.json(); } catch (_) { data = null; }
-        if (!res.ok || !data || !data.ok) {
-          throw new Error((data && data.error) || (res.redirected
-            ? 'Your sign-in has expired — reload the page and sign in again.'
-            : 'The request failed (' + res.status + ') — reload the page to see whether it went through.'));
+        if (!data) {
+          // Not the app's answer (a login or proxy error page): outcome unknown.
+          throw unknown(res.redirected
+            ? 'Your sign-in has expired — reload the page and sign in again, then check this document.'
+            : 'The server did not answer clearly (' + res.status + ') — reload the page to see whether the request went through.');
         }
+        if (!res.ok || !data.ok) throw new Error(data.error || ('The request failed (' + res.status + ').'));
 
         // Update the row in place
         var row = document.querySelector('.doc-row[data-item-id="' + itemId + '"]');
@@ -1051,20 +1065,32 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
             meta.appendChild(note);
           }
         }
-        closeModal();
+        closeModal(true);
         showToast('✓ Rework requested — client will be notified by email');
       } catch (err) {
+        if (err && err.unknown) {
+          _reworkUnknown[itemId] = true;
+          closeModal(true);   // nothing more to do here until the page is reloaded
+        }
         showToast('✗ ' + (err.message || 'Failed to request rework'), true);
       } finally {
-        // success or failure: the dialog is ready for the next document
-        _reworkSending = false;
+        // the dialog is ready for the next document (a clear refusal keeps the
+        // dialog open with the note, so the reviewer can correct and resend)
+        setReworkSending(false);
         resetReworkBtn();
       }
     }
 
-    // Close modal on outside click + Esc key
+    // Close modal on outside click + Esc key. An outside click only counts
+    // when the press STARTED outside too: selecting note text and releasing
+    // the mouse past the dialog's edge must never close it (and lose the note).
+    var _reworkDownOutside = false;
+    document.getElementById('modal-bg').addEventListener('mousedown', function (e) {
+      _reworkDownOutside = (e.target.id === 'modal-bg');
+    });
     document.getElementById('modal-bg').addEventListener('click', function (e) {
-      if (e.target.id === 'modal-bg') closeModal();
+      if (e.target.id === 'modal-bg' && _reworkDownOutside) closeModal();
+      _reworkDownOutside = false;
     });
     var naModal = document.getElementById('na-modal');
     function naSaving() { var b = document.getElementById('na-confirm-btn'); return !!(b && b.disabled); }   // never discard a reason mid-save
