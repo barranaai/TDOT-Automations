@@ -158,6 +158,12 @@ function startScheduler() {
         'no document reminders are going out for them: ' + rows.map((r) => r.caseRef || r.cmId).join(', ')); })
       .catch((err) => console.error('[Scheduler] Stalled-case scan failed:', err.message)));
   console.log('[Scheduler] Jobs registered — retainer/payment status sync every 15 min, stalled-case report hourly');
+  // The staff Client Portal link column comes back when a row loses it (moved to
+  // another board and back, or cleared by hand) — never a new access code.
+  cron.schedule('27 * * * *', () =>
+    require('./portalLinkHealService').healMissingPortalLinks()
+      .catch((err) => console.error('[Scheduler] Client Portal link heal failed:', err.message)));
+  console.log('[Scheduler] Job registered — Client Portal link self-heal hourly');
   // The shared Lead Board snapshot behind the Leads / Consultations / Retainers
   // tabs, the KPIs and the booking page's taken-times check: warm at boot, then
   // refreshed every 3 minutes so a page view never pays for the board read.

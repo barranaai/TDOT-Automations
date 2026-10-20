@@ -230,6 +230,21 @@ app.post('/api/checklist/reseed/:caseRef', async (req, res) => {
   }
 });
 
+// Put back missing staff Client Portal links (2026-10-20, case 2026-CEC-PS-080):
+// rows with a current-format case number + an access code + no link. Never
+// creates an access code. The same sweep runs hourly; this runs it now.
+// Usage: POST /api/portal-links/heal        (?dry=1 → only list what it would do)
+app.post('/api/portal-links/heal', async (req, res) => {
+  try {
+    const dryRun = String(req.query.dry || '') === '1';
+    const result = await require('./services/portalLinkHealService').healMissingPortalLinks({ dryRun });
+    res.json({ status: 'ok', ...result });
+  } catch (err) {
+    console.error(`[PortalLink] heal failed: ${err.message}`);
+    res.status(500).json({ status: 'error', error: err.message });
+  }
+});
+
 // Teams migration preflight — proves organizer + Calendars.ReadWrite + Teams
 // license in one shot with zero client impact (throwaway event, no attendees,
 // auto-deleted). Run BEFORE flipping MEETING_PROVIDER=teams.
