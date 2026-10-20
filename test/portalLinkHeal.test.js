@@ -20,6 +20,7 @@ function world(rows, { changeBeforeWrite = {}, failWrite = [] } = {}) {
   const board = new Map(rows.map((r) => [r.id, heal.readRow(r)]));
   const calls = { writes: [], notes: [] };
   const real = { ...heal.io };
+  heal._resetForTests();
   Object.assign(heal.io, {
     allRows: async () => [...board.values()].map((r) => ({ ...r })),
     oneRow: async (id) => { if (changeBeforeWrite[id]) Object.assign(board.get(id) || {}, changeBeforeWrite[id]); const r = board.get(id); return r ? { ...r } : null; },
@@ -45,13 +46,13 @@ test('picks only rows with a current-format case number, an access code and no l
 test('puts the link back with the SAME url the app writes at case creation, re-reading each row first; a note on the row', async () => {
   const w = world([item('101', '2026-CEC-PS-080', 'abc DEF', ''), item('102', '2026-SCLWP-006', 'xyz', '')]);
   try {
-    const r = await heal.healMissingPortalLinks();
+    const r = await heal.healMissingPortalLinks({ now: true });
     assert.deepEqual(r.healed, ['2026-CEC-PS-080', '2026-SCLWP-006']);
     const want = require('../src/services/clientPortalService').buildPortalUrl({ caseRef: '2026-CEC-PS-080', accessToken: 'abc DEF', staff: true });
     assert.equal(w.calls.writes[0][1], want);
     assert.match(want, /\/client\/2026-CEC-PS-080\?t=abc%20DEF&staff=1$/);
     assert.equal(w.calls.notes.length, 2); assert.match(w.calls.notes[0][1], /Client Portal link put back/);
-    const again = await heal.healMissingPortalLinks();
+    const again = await heal.healMissingPortalLinks({ now: true });
     assert.deepEqual([again.due, again.healed.length], [0, 0], 'nothing left to do');
   } finally { w.restore(); }
 });
@@ -61,7 +62,7 @@ test('a row that changed between the scan and the write is left alone (got a lin
     changeBeforeWrite: { '1': { link: 'https://already' }, '2': { token: '' }, '3': { caseRef: '2026-A-B-999' } },
   });
   try {
-    const r = await heal.healMissingPortalLinks();
+    const r = await heal.healMissingPortalLinks({ now: true });
     assert.deepEqual(r.healed, []);
     assert.deepEqual(r.skipped.map((s) => s.why), ['already has a link', 'no access code', 'case number changed']);
     assert.equal(w.calls.writes.length, 0);
@@ -72,7 +73,7 @@ test('a failed write is reported and the run carries on; at most 25 rows a run (
   const many = Array.from({ length: 30 }, (_, i) => item(String(200 + i), `2026-CEC-PS-${String(100 + i).padStart(3, '0')}`, 't' + i, ''));
   const w = world(many, { failWrite: ['200'] });
   try {
-    const r = await heal.healMissingPortalLinks();
+    const r = await heal.healMissingPortalLinks({ now: true });
     assert.equal(r.due, 30); assert.equal(r.more, 5);
     assert.equal(r.failed.length, 1); assert.equal(r.healed.length, 24);
   } finally { w.restore(); }
@@ -97,7 +98,39 @@ test('wired: hourly in the scheduler, and POST /api/portal-links/heal (admin key
   assert.match(sch, /cron\.schedule\('27 \* \* \* \*', \(\) =>\s*require\('\.\/portalLinkHealService'\)\.healMissingPortalLinks\(\)/);
   const srv = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
   assert.match(srv, /app\.post\('\/api\/portal-links\/heal'/);
+  assert.match(srv, /healMissingPortalLinks\(\{ dryRun, now: true \}\)/, 'staff asked: heal at once');
   assert.ok(srv.indexOf("app.use('/api', requireApiKey)") < srv.indexOf("app.post('/api/portal-links/heal'"), 'behind the admin key');
   const svc = fs.readFileSync(require.resolve('../src/services/portalLinkHealService.js'), 'utf8');
   assert.ok(!/ensureAccessToken|generateToken/.test(svc), 'never creates an access code');
+});
+
+test('the hourly run heals only a row that was ALSO missing its link on the run before — a case still being created never gets a false "link was lost" note', async () => {
+  const w = world([item('1', '2026-CEC-PS-080', 't', '')]);
+  try {
+    const first = await heal.healMissingPortalLinks();
+    assert.deepEqual([first.healed.length, first.waiting], [0, 1], 'first sighting: wait one run');
+    assert.equal(w.calls.writes.length, 0);
+    const second = await heal.healMissingPortalLinks();
+    assert.deepEqual(second.healed, ['2026-CEC-PS-080'], 'still missing an hour later: put back');
+    // a row whose own creation write lands between runs is never touched
+    w.board.set('2', heal.readRow(item('2', '2026-CEC-PS-081', 't2', '')));
+    await heal.healMissingPortalLinks();               // seen once
+    w.board.get('2').link = 'https://app/client/2026-CEC-PS-081?t=t2&staff=1';   // creation's write lands
+    const third = await heal.healMissingPortalLinks();
+    assert.equal(third.healed.length, 0); assert.equal(w.calls.writes.length, 1);
+  } finally { w.restore(); }
+});
+
+test('the re-read before writing refuses an archived/deleted row or one no longer on the Client Master board (items(ids:) is account-wide)', async () => {
+  const mondayApi = require('../src/services/mondayApi');
+  const { clientMasterBoardId } = require('../config/monday');
+  const realQuery = mondayApi.query;
+  const shape = (state, boardId) => ({ items: [{ id: '9', state, board: { id: boardId }, column_values: item('9', '2026-CEC-PS-080', 't', '').column_values }] });
+  try {
+    for (const [state, board, want] of [['active', String(clientMasterBoardId), true], ['archived', String(clientMasterBoardId), false], ['deleted', String(clientMasterBoardId), false], ['active', '18431138043', false]]) {
+      mondayApi.query = async (q) => { assert.match(q, /state board\{ id \}/); return shape(state, board); };
+      const r = await heal.io.oneRow('9');
+      assert.equal(!!r, want, `${state} on ${board}`);
+    }
+  } finally { mondayApi.query = realQuery; }
 });

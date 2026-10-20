@@ -237,7 +237,7 @@ app.post('/api/checklist/reseed/:caseRef', async (req, res) => {
 app.post('/api/portal-links/heal', async (req, res) => {
   try {
     const dryRun = String(req.query.dry || '') === '1';
-    const result = await require('./services/portalLinkHealService').healMissingPortalLinks({ dryRun });
+    const result = await require('./services/portalLinkHealService').healMissingPortalLinks({ dryRun, now: true });
     res.json({ status: 'ok', ...result });
   } catch (err) {
     console.error(`[PortalLink] heal failed: ${err.message}`);

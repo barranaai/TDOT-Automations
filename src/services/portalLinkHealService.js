@@ -12,8 +12,12 @@
  * Only rows with a current-format case number AND an access code AND no link.
  * It never creates an access code: a new one would silently stop every link the
  * client was already emailed (that is a decision for staff, with a re-send).
- * Each row is re-read right before its write, so a row that changed meanwhile
- * is left alone. Off with PORTAL_LINK_HEAL=0.
+ * Each row is re-read right before its write — still active, still on this
+ * board, still the same case, still a code and no link — or it is left alone.
+ * The hourly run heals only a row that was ALSO missing its link on the run
+ * before, so a brand-new case whose own link write is a moment behind never
+ * gets a false "link was lost" note; staff's "heal now" acts at once.
+ * Off with PORTAL_LINK_HEAL=0.
  */
 
 const mondayApi = require('./mondayApi');
@@ -69,11 +73,14 @@ const io = {
     }
     return items.map(readRow);
   },
-  /** One row as it is now (null when gone). */
+  /** One row as it is now — null when gone, archived/deleted, or no longer on this board (items(ids:) is account-wide). */
   oneRow: async (id) => {
-    const d = await mondayApi.query(`query($i:[ID!]){ items(ids:$i, limit:1){ id column_values(ids:${COLS}){ id text value } } }`, { i: [String(id)] });
+    const d = await mondayApi.query(`query($i:[ID!]){ items(ids:$i, limit:1){ id state board{ id } column_values(ids:${COLS}){ id text value } } }`, { i: [String(id)] });
     const it = d && d.items && d.items[0];
-    return it ? readRow(it) : null;
+    if (!it) return null;
+    if (it.state && it.state !== 'active') return null;
+    if (!it.board || String(it.board.id) !== String(clientMasterBoardId)) return null;
+    return readRow(it);
   },
   writeLink: async (id, url) => {
     const d = await mondayApi.query(
@@ -93,29 +100,33 @@ const NOTE = '🔗 <b>Client Portal link put back</b> — the link column was em
   + 'Nothing else was changed; the links the client was emailed are not affected.';
 
 let _running = false;
+let _dueLastRun = new Set();   // item ids missing their link on the previous hourly run
 
 /**
- * @param {{ dryRun?: boolean, limit?: number }} [opts]
+ * @param {{ dryRun?: boolean, limit?: number, now?: boolean }} [opts]  now: staff asked — heal at once (no wait for a second run)
  * @returns {Promise<{ checked, due, healed: string[], skipped: Array<{caseRef, why}>, failed: Array<{caseRef, error}>, more, dryRun?, off? }>}
  */
-async function healMissingPortalLinks({ dryRun = false, limit = PER_RUN } = {}) {
+async function healMissingPortalLinks({ dryRun = false, limit = PER_RUN, now = false } = {}) {
   if (!dryRun && !isEnabled()) return { off: true, checked: 0, due: 0, healed: [], skipped: [], failed: [], more: 0 };
   if (_running) return { busy: true, checked: 0, due: 0, healed: [], skipped: [], failed: [], more: 0 };
   _running = true;
   try {
     const rows = await io.allRows();
-    const due = rowsToHeal(rows);
+    const missing = rowsToHeal(rows);
+    // the hourly run: only rows ALSO missing their link last time (never a case still being created)
+    const due = (now || dryRun) ? missing : missing.filter((r) => _dueLastRun.has(r.id));
+    if (!dryRun && !now) _dueLastRun = new Set(missing.map((r) => r.id));
     const batch = due.slice(0, Math.max(0, limit));
-    const out = { checked: rows.length, due: due.length, healed: [], skipped: [], failed: [], more: due.length - batch.length };
+    const out = { checked: rows.length, due: due.length, healed: [], skipped: [], failed: [], more: due.length - batch.length, waiting: missing.length - due.length };
     if (dryRun) return { ...out, dryRun: true, wouldHeal: batch.map((r) => r.caseRef) };
     for (const r of batch) {
       try {
-        const now = await io.oneRow(r.id);                     // as it is NOW — never write on a stale read
-        if (!now) { out.skipped.push({ caseRef: r.caseRef, why: 'row gone' }); continue; }
-        if (now.caseRef !== r.caseRef) { out.skipped.push({ caseRef: r.caseRef, why: 'case number changed' }); continue; }
-        if (!now.token) { out.skipped.push({ caseRef: r.caseRef, why: 'no access code' }); continue; }
-        if (now.link) { out.skipped.push({ caseRef: r.caseRef, why: 'already has a link' }); continue; }
-        await io.writeLink(r.id, io.portalUrl({ caseRef: now.caseRef, accessToken: now.token }));
+        const cur = await io.oneRow(r.id);                     // as it is NOW — never write on a stale read
+        if (!cur) { out.skipped.push({ caseRef: r.caseRef, why: 'row gone' }); continue; }
+        if (cur.caseRef !== r.caseRef) { out.skipped.push({ caseRef: r.caseRef, why: 'case number changed' }); continue; }
+        if (!cur.token) { out.skipped.push({ caseRef: r.caseRef, why: 'no access code' }); continue; }
+        if (cur.link) { out.skipped.push({ caseRef: r.caseRef, why: 'already has a link' }); continue; }
+        await io.writeLink(r.id, io.portalUrl({ caseRef: cur.caseRef, accessToken: cur.token }));
         out.healed.push(r.caseRef);
         await io.postNote(r.id, NOTE).catch((err) => console.warn(`[PortalLink] note on ${r.caseRef} failed: ${err.message}`));
       } catch (err) {
@@ -132,4 +143,5 @@ async function healMissingPortalLinks({ dryRun = false, limit = PER_RUN } = {}) 
   }
 }
 
-module.exports = { healMissingPortalLinks, rowsToHeal, readRow, linkUrl, isEnabled, io, CURRENT_REF, PER_RUN, NOTE };
+module.exports = { healMissingPortalLinks, rowsToHeal, readRow, linkUrl, isEnabled, io, CURRENT_REF, PER_RUN, NOTE,
+  _resetForTests: () => { _dueLastRun = new Set(); _running = false; } };
