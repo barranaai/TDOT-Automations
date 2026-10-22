@@ -605,7 +605,7 @@ test('reconcileExecutionRows with prune:false never deletes a stale-sub-type row
   const seeder = require('../src/services/executionSeederService');
   const mondayApi = require('../src/services/mondayApi');
   const real = mondayApi.query;
-  const stale = { id: '555', column_values: [{ id: 'text_mm17zdy7', text: 'Old Sub Type', value: null }, { id: 'text_mm15dwah', text: '2026-X-001-OLD-DOC-001', value: null }, { id: 'board_relation_mm0zhagw', text: '', value: null }, { id: 'color_mm0zwgvr', text: '', value: null }] };
+  const stale = { id: '555', column_values: [{ id: 'text_mm17zdy7', text: 'Old Sub Type', value: null }, { id: 'text_mm15dwah', text: '2026-X-001-OLD-DOC-001', value: null }, { id: 'text_mm0zfsp1', text: 'code:OLD-DOC', value: null }, { id: 'board_relation_mm0zhagw', text: null, value: null, linked_item_ids: [], display_value: '' }, { id: 'color_mm0zwgvr', text: '', value: null }] };
   const deletes = [];
   mondayApi.query = async (q, v) => {
     if (/delete_item/.test(q)) { deletes.push(String(v.id)); return { delete_item: { id: v.id } }; }

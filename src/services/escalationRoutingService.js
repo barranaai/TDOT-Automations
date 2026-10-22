@@ -442,7 +442,7 @@ async function applyRule(item, rule) {
       await sendEmail({
         to:      clientEmail,
         subject: `Important update regarding your case – ${caseRef}`,
-        html:    buildClientEmailHtml(body, caseRef, clientName),
+        html:    buildClientEmailHtml(body, caseRef, clientName, false, { accessToken: col(CM.accessToken) }),
         replyTo: EMAIL_REPLY_TO || undefined,
       });
       console.log(`[EscRouting] ✉ Client reminder sent to ${clientEmail} for ${caseRef}`);
@@ -460,7 +460,7 @@ async function applyRule(item, rule) {
       await sendEmail({
         to:      clientEmail,
         subject: `Final Notice — Immediate action required — ${caseRef}`,
-        html:    buildClientEmailHtml(body, caseRef, clientName, true),
+        html:    buildClientEmailHtml(body, caseRef, clientName, true, { accessToken: col(CM.accessToken) }),
         replyTo: EMAIL_REPLY_TO || undefined,
       });
       console.log(`[EscRouting] ✉ Final notice sent to ${clientEmail} for ${caseRef}`);
@@ -472,10 +472,14 @@ async function applyRule(item, rule) {
 
 // ─── Email template ───────────────────────────────────────────────────────────
 
-function buildClientEmailHtml(bodyText, caseRef, clientName, isFinal = false) {
+function buildClientEmailHtml(bodyText, caseRef, clientName, isFinal = false, { accessToken = '' } = {}) {
   const colour    = isFinal ? '#dc2626' : '#f97316';
   const badge     = isFinal ? 'Final Notice' : 'Important Update';
-  const qLink     = `${BASE_URL}/questionnaire/${encodeURIComponent(caseRef)}`;
+  // The client's own questionnaire (/q, needs the case's access code). The old
+  // /questionnaire/<ref> page reads the retired Monday questionnaire board: it
+  // answers "No questionnaire found … check your case reference" for almost
+  // every case (found 2026-10-22). With no access code the button is left out.
+  const qLink     = accessToken ? `${BASE_URL}/q/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(accessToken)}` : '';
   const docLink   = `${BASE_URL}/documents/${encodeURIComponent(caseRef)}`;
 
   return `<!DOCTYPE html>
@@ -498,7 +502,7 @@ function buildClientEmailHtml(bodyText, caseRef, clientName, isFinal = false) {
   <h2>Hi ${clientName || 'Client'},</h2>
   <p>${bodyText.replace(/\n/g, '<br>')}</p>
   <div class="btn-row">
-    <a href="${qLink}"  class="btn btn-q">Complete Questionnaire</a>
+    ${qLink ? `<a href="${qLink}"  class="btn btn-q">Complete Questionnaire</a>` : ''}
     <a href="${docLink}" class="btn btn-d">Upload Documents</a>
   </div>
   <hr>
@@ -577,4 +581,4 @@ async function runEscalationRouting() {
   return tally;
 }
 
-module.exports = { runEscalationRouting };
+module.exports = { runEscalationRouting, buildClientEmailHtml };

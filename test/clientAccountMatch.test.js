@@ -192,7 +192,8 @@ test('linkLead: stamps the lead AND appends the account\'s Leads relation (exist
   const restore = [
     stub(leadService, 'updateLead', async (id, f) => writes.push(['stamp', id, f.clientAccountId])),
     stub(mondayApi, 'query', async (q, vars) => {
-      if (/items\(ids/.test(q)) return { items: [{ column_values: [{ value: JSON.stringify({ linkedPulseIds: [{ linkedPulseId: 111 }] }) }] }] };
+      // as Monday answers (2026-10-22): text/value null; ids only through the typed fragment
+      if (/items\(ids/.test(q)) return { items: [{ id: '55', column_values: [{ id: cfg.columns.leads, text: null, value: null, ...(/on BoardRelationValue \{ linked_item_ids/.test(q) ? { linked_item_ids: ['111'] } : {}) }] }] };
       if (/change_multiple_column_values/.test(q)) { writes.push(['relation', JSON.parse(vars.c)]); return {}; }
       return {};
     }),
@@ -204,4 +205,34 @@ test('linkLead: stamps the lead AND appends the account\'s Leads relation (exist
     const ids = rel[cfg.columns.leads].item_ids.sort();
     assert.deepEqual(ids, [111, 222], 'the new lead is APPENDED — the existing link survives');
   } finally { restore.forEach((x) => x()); }
+});
+
+// 2026-10-22: the read used to come back blank, so every append REPLACED the
+// account's links (10 accounts each lost a case + a lead link).
+test('linkCase: an account link cell that cannot be read is NEVER written (a write replaces every link it cannot see); an id already there is not written again', async () => {
+  const writes = [];
+  let answer;
+  const restore = [
+    stub(mondayApi, 'query', async (q, vars) => {
+      if (/items\(ids/.test(q)) return answer;
+      if (/change_multiple_column_values/.test(q)) { writes.push(JSON.parse(vars.c)); return {}; }
+      return {};
+    }),
+  ];
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const caseWrites = () => writes.filter((c) => cfg.columns.cases in c);
+    answer = { items: [{ id: '55', column_values: [{ id: cfg.columns.cases, text: null, value: null }] }] };   // no ids in the answer
+    await svc.linkCase('55', { cmItemId: '700' });
+    assert.equal(caseWrites().length, 0, 'unreadable → not written');
+    answer = { items: [] };                                                                                    // row not found
+    await svc.linkCase('55', { cmItemId: '700' });
+    assert.equal(caseWrites().length, 0);
+    answer = { items: [{ id: '55', column_values: [{ id: cfg.columns.cases, text: null, value: null, linked_item_ids: ['700', '701'] }] }] };
+    await svc.linkCase('55', { cmItemId: '700' });
+    assert.equal(caseWrites().length, 0, 'already linked → nothing to write');
+    answer = { items: [{ id: '55', column_values: [{ id: cfg.columns.cases, text: null, value: null, linked_item_ids: [] }] }] };
+    await svc.linkCase('55', { cmItemId: '700' });
+    assert.deepEqual(caseWrites().map((c) => c[cfg.columns.cases].item_ids), [[700]], 'a readable EMPTY cell takes the first link');
+  } finally { console.warn = warn; restore.forEach((x) => x()); }
 });

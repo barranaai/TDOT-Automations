@@ -74,13 +74,15 @@ function diffPlan({ plan, existingKeys, caseRef }) {
  * PURE. From a case's existing rows, pick the ones to prune because they belong
  * to a DIFFERENT sub-type than the one now being seeded (the stale-duplicate
  * signature: a case re-seeded after its Case Sub Type changed). Conservative:
- *   - only reconciler-managed SCHEMA rows — identified by having a uniqueKey AND
- *     no Template-Board relation (this covers BOTH the old numeric-intakeItemId
- *     format and the new "code:" format; it excludes legacy Template-Board rows
- *     and manually-added rows, which have no uniqueKey),
+ *   - only reconciler-managed SCHEMA rows — a uniqueKey, an intake id of the
+ *     form "code:<documentCode>" (the reconciler has written nothing else since
+ *     its first version; a numeric intake id is a legacy Template-board row) AND
+ *     no Template-board relation. Two independent tests on purpose: the
+ *     relation read was blank for months (Monday returns null text/value for
+ *     link cells), which left the Template rows unprotected (2026-10-22),
  *   - only rows whose caseSubType differs from the current one,
  *   - NEVER a row a client has uploaded to (status beyond "Missing").
- * @param {Array<{id,subType,uniqueKey,templateRel,status}>} rows
+ * @param {Array<{id,subType,uniqueKey,intake,templateRel,status}>} rows
  * @param {string} keepSubType  the sub-type currently being seeded
  */
 function selectStaleRows(rows, keepSubType) {
@@ -88,7 +90,8 @@ function selectStaleRows(rows, keepSubType) {
   const keep = norm(keepSubType);
   const uploaded = (s) => { const n = norm(s); return n !== '' && n !== 'missing'; };
   return (rows || []).filter((r) =>
-    String(r.uniqueKey || '').trim() !== '' &&        // reconciler-managed schema row (old or new format)
+    String(r.uniqueKey || '').trim() !== '' &&        // reconciler-managed …
+    String(r.intake || '').trim().startsWith('code:') && // … schema row — never a Template row (numeric intake) or a hand-added one
     String(r.templateRel || '').trim() === '' &&      // NOT a legacy Template-Board row
     norm(r.subType) !== keep &&                        // from a DIFFERENT sub-type than the current one
     !uploaded(r.status)                                // never a row a client has uploaded to
@@ -96,31 +99,31 @@ function selectStaleRows(rows, keepSubType) {
 }
 
 /**
- * PURE. A board_relation column's `text` is NULL from Monday's API — the linked
- * items live in the raw `value` JSON. Returns 'linked' when the relation holds
- * any item (so selectStaleRows' legacy-Template-Board exclusion actually works).
+ * PURE. 'linked' when the Template-board relation holds any item. Monday returns
+ * a link cell's text AND value as null — the ids come only through the typed
+ * fragment (mondayColumnRead.RELATION_FIELDS), read here first; the old value
+ * shape stays as a fallback. An unreadable cell answers 'unknown' (never '' —
+ * '' would read as "not a Template row").
  */
 function parseTemplateRel(col) {
   if (!col) return '';
+  const ids = require('./mondayColumnRead').linkedIds(col);
+  if (ids && ids.length) return 'linked';
+  if (ids) return '';
   if (String(col.text || '').trim()) return String(col.text).trim();
-  try {
-    const v = JSON.parse(col.value || '{}');
-    const ids = v.linkedPulseIds || v.linked_item_ids || v.linkedItemIds || [];
-    if (Array.isArray(ids) && ids.length) return 'linked';
-  } catch (_) { /* no relation */ }
-  return '';
+  return 'unknown';
 }
 
 /** I/O. Read a case's existing rows with the fields the prune needs. */
 async function getExistingRowsForPrune(caseRef) {
   const data = await mondayApi.query(
-    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:500, board_id:$b, columns:[{column_id:"${EXEC_COLS.caseReferenceNumber}", column_values:[$v]}]){ items{ id column_values(ids:["${EXEC_COLS.caseSubType}","${EXEC_COLS.uniqueKey}","board_relation_mm0zhagw","color_mm0zwgvr"]){ id text value } } } }`,
+    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:500, board_id:$b, columns:[{column_id:"${EXEC_COLS.caseReferenceNumber}", column_values:[$v]}]){ items{ id column_values(ids:["${EXEC_COLS.caseSubType}","${EXEC_COLS.uniqueKey}","${EXEC_COLS.intakeItemId}","board_relation_mm0zhagw","color_mm0zwgvr"]){ id text value ${require('./mondayColumnRead').RELATION_FIELDS} } } } }`,
     { b: String(BOARD_ID), v: String(caseRef) }
   );
   return (data?.items_page_by_column_values?.items || []).map((it) => {
     const g = (id) => (it.column_values.find((c) => c.id === id) || {}).text || '';
     const relCol = it.column_values.find((c) => c.id === 'board_relation_mm0zhagw');
-    return { id: it.id, subType: g(EXEC_COLS.caseSubType), uniqueKey: g(EXEC_COLS.uniqueKey), templateRel: parseTemplateRel(relCol), status: g('color_mm0zwgvr') };
+    return { id: it.id, subType: g(EXEC_COLS.caseSubType), uniqueKey: g(EXEC_COLS.uniqueKey), intake: g(EXEC_COLS.intakeItemId), templateRel: parseTemplateRel(relCol), status: g('color_mm0zwgvr') };
   });
 }
 
@@ -380,10 +383,10 @@ async function getExistingRowsForMigration(caseRef) {
   const reasonCol = naReasonCol();
   const ids = [EXEC_COLS.uniqueKey, EXEC_COLS.documentCode, EXEC_COLS.intakeItemId, EXEC_COLS.caseSubType, EXEC_COLS.applicantType, EXEC_COLS.documentCategory, 'board_relation_mm0zhagw', 'color_mm0zwgvr', UPLOAD_DATE_COL, ...(reasonCol ? [reasonCol] : [])];
   const data = await mondayApi.query(
-    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:500, board_id:$b, columns:[{column_id:"${EXEC_COLS.caseReferenceNumber}", column_values:[$v]}]){ items{ id name column_values(ids:${JSON.stringify(ids)}){ id text value } } } }`,
+    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:500, board_id:$b, columns:[{column_id:"${EXEC_COLS.caseReferenceNumber}", column_values:[$v]}]){ items{ id name column_values(ids:${JSON.stringify(ids)}){ id text value ${require('./mondayColumnRead').RELATION_FIELDS} } } } }`,
     { b: String(BOARD_ID), v: String(caseRef) }
   );
-  return (data?.items_page_by_column_values?.items || []).map((it) => {
+  const rows = (data?.items_page_by_column_values?.items || []).map((it) => {
     const g = (id) => String((it.column_values.find((c) => c.id === id) || {}).text || '').trim();
     return {
       id: String(it.id), name: it.name || '',
@@ -393,6 +396,10 @@ async function getExistingRowsForMigration(caseRef) {
       uploadDate: g(UPLOAD_DATE_COL), naReason: reasonCol ? g(reasonCol) : '',
     };
   });
+  // A template link that could not be read is a failed read, not "no link": the
+  // move would skip that row and the seed lay a second one beside it.
+  if (rows.some((r) => r.templateRel === 'unknown')) throw new Error('the template links of the checklist rows could not be read');
+  return rows;
 }
 
 /**

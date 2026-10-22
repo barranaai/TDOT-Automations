@@ -82,19 +82,25 @@ test('an already-applied checklist still short-circuits before the gate (no note
 
 // ─── the prune's legacy-row detection ────────────────────────────────────────
 
-test('parseTemplateRel: reads the linked relation from raw value (text is null for board_relation columns)', () => {
+test('parseTemplateRel: reads the link through the typed fragment (Monday returns text AND value null for link cells); unreadable is "unknown", never ""', () => {
   const p = seeder.parseTemplateRel;
+  // what Monday actually sends (2026-10-22): text/value null, ids in linked_item_ids
+  assert.equal(p({ text: null, value: null, linked_item_ids: ['123'], display_value: 'Passport' }), 'linked');
+  assert.equal(p({ text: null, value: null, linked_item_ids: [], display_value: '' }), '');
+  // the older value shape still reads
   assert.equal(p({ text: null, value: '{"linkedPulseIds":[{"linkedPulseId":123}]}' }), 'linked');
-  assert.equal(p({ text: null, value: '{"linked_item_ids":[123]}' }), 'linked');
+  assert.equal(p({ text: null, value: '{"linkedPulseIds":[]}' }), '');
   assert.equal(p({ text: 'Some Template', value: null }), 'Some Template');
-  assert.equal(p({ text: null, value: '{}' }), '');
+  // the shape that hid every link for months — a read WITHOUT the fragment
+  assert.equal(p({ text: null, value: null }), 'unknown');
+  assert.equal(p({ text: null, value: '{}' }), 'unknown');
   assert.equal(p(null), '');
 });
 
 test('selectStaleRows: legacy Template-Board rows (linked relation) are NEVER selected for pruning', () => {
   const rows = [
-    { id: '1', uniqueKey: 'REF-A1', templateRel: 'linked', subType: 'Old Sub', status: '' }, // template row
-    { id: '2', uniqueKey: 'REF-A2', templateRel: '',       subType: 'Old Sub', status: '' }, // schema row, stale
+    { id: '1', uniqueKey: 'REF-A1', intake: 'code:A1', templateRel: 'linked', subType: 'Old Sub', status: '' }, // template row
+    { id: '2', uniqueKey: 'REF-A2', intake: 'code:A2', templateRel: '',       subType: 'Old Sub', status: '' }, // schema row, stale
   ];
   const stale = seeder.selectStaleRows(rows, 'New Sub');
   assert.deepEqual(stale.map((r) => r.id), ['2'], 'only the schema-managed row is prunable');

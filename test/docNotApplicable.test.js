@@ -662,8 +662,8 @@ test('cockpit page: the emitted script knows both actions, asks for a reason, an
 test('seeder: an N/A row is never pruned when the sub-type changes (the decision is the firm\'s record)', () => {
   const { selectStaleRows } = require('../src/services/executionSeederService');
   const rows = [
-    { id: 'a', subType: 'CEC Single Applicant', status: 'Not Applicable', uniqueKey: '2026-X-a', templateRel: '' },
-    { id: 'b', subType: 'CEC Single Applicant', status: 'Missing',        uniqueKey: '2026-X-b', templateRel: '' },
+    { id: 'a', subType: 'CEC Single Applicant', status: 'Not Applicable', uniqueKey: '2026-X-a', intake: 'code:X', templateRel: '' },
+    { id: 'b', subType: 'CEC Single Applicant', status: 'Missing',        uniqueKey: '2026-X-b', intake: 'code:X', templateRel: '' },
   ];
   assert.deepEqual(selectStaleRows(rows, 'CEC Family').map((r) => r.id), ['b']);
 });

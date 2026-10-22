@@ -175,16 +175,21 @@ test('a retired / renamed Sub Type (no longer registered) is read from the row\'
  * moves (change_multiple_column_values), creates and deletes. lag:true → the
  * searches keep showing the rows as they were BEFORE this run's writes.
  */
-function fakeBoard(rows, { lag = false, failMoveIds = [], failRowRead = false, reasons = {} } = {}) {
+function fakeBoard(rows, { lag = false, failMoveIds = [], failRowRead = false, reasons = {}, noFragment = false } = {}) {
   const board = rows.map((r) => ({ ...r }));
   const before = new Map(board.map((r) => [r.id, { ...r }]));
   const calls = { moves: [], creates: [], deletes: [], relations: [], reads: 0, updates: [] };
   const reasonCol = require('../src/services/documentNotApplicable').reasonColumnId();
   const created = new Set();
   const view = (r) => (lag && before.has(r.id) ? before.get(r.id) : r);
-  const cv = (r, ids) => ids.map((id) => {
-    const map = { [C.uniqueKey]: r.uniqueKey, [C.documentCode]: r.documentCode, [C.intakeItemId]: r.intake, [C.caseSubType]: r.subType, [C.applicantType]: r.applicantType, [C.documentCategory]: r.category, color_mm0zwgvr: r.status, board_relation_mm0zhagw: '', date_mm0zyw0m: r.uploadDate || '', [reasonCol]: reasons[r.id] || '' };
-    return { id, text: map[id] == null ? '' : map[id], value: id === 'board_relation_mm0zhagw' ? (r.templateRel ? JSON.stringify({ linkedPulseIds: [{ linkedPulseId: 1 }] }) : null) : null };
+  // As Monday answers: a link cell's text and value are null; its ids come
+  // only when the query asks through the typed fragment.
+  const cv = (r, ids, q = '') => ids.map((id) => {
+    if (id === 'board_relation_mm0zhagw') {
+      return { id, text: null, value: null, ...(!noFragment && /on BoardRelationValue/.test(q) ? { linked_item_ids: r.templateRel ? ['1'] : [], display_value: r.templateRel ? 'Template' : '' } : {}) };
+    }
+    const map = { [C.uniqueKey]: r.uniqueKey, [C.documentCode]: r.documentCode, [C.intakeItemId]: r.intake, [C.caseSubType]: r.subType, [C.applicantType]: r.applicantType, [C.documentCategory]: r.category, color_mm0zwgvr: r.status, date_mm0zyw0m: r.uploadDate || '', [reasonCol]: reasons[r.id] || '' };
+    return { id, text: map[id] == null ? '' : map[id], value: null };
   });
   const real = mondayApi.query;
   mondayApi.query = async (q, v) => {
@@ -210,9 +215,9 @@ function fakeBoard(rows, { lag = false, failMoveIds = [], failRowRead = false, r
       if (/getExistingItems/.test(q)) return { items_page_by_column_values: { items: board.map((r) => ({ column_values: cv(view(r), [C.uniqueKey]) })) } };
       if (q.includes(C.documentCode)) {
         if (failRowRead) throw new Error('Monday 500');
-        return { items_page_by_column_values: { items: board.map((r) => ({ id: r.id, name: view(r).name, column_values: cv(view(r), [C.uniqueKey, C.documentCode, C.intakeItemId, C.caseSubType, C.applicantType, C.documentCategory, 'board_relation_mm0zhagw', 'color_mm0zwgvr', 'date_mm0zyw0m', reasonCol]) })) } };
+        return { items_page_by_column_values: { items: board.map((r) => ({ id: r.id, name: view(r).name, column_values: cv(view(r), [C.uniqueKey, C.documentCode, C.intakeItemId, C.caseSubType, C.applicantType, C.documentCategory, 'board_relation_mm0zhagw', 'color_mm0zwgvr', 'date_mm0zyw0m', reasonCol], q) })) } };
       }
-      return { items_page_by_column_values: { items: board.map((r) => ({ id: r.id, column_values: cv(view(r), [C.caseSubType, C.uniqueKey, 'board_relation_mm0zhagw', 'color_mm0zwgvr']) })) } };
+      return { items_page_by_column_values: { items: board.map((r) => ({ id: r.id, column_values: cv(view(r), [C.caseSubType, C.uniqueKey, C.intakeItemId, 'board_relation_mm0zhagw', 'color_mm0zwgvr'], q) })) } };
     }
     throw new Error('unexpected query: ' + q.slice(0, 80));
   };
@@ -314,6 +319,14 @@ test('the row read fails on a case that HAS a checklist → the re-seed stops be
   } finally { fb.restore(); }
   const empty = fakeBoard([], { failRowRead: true });
   try { const r = await reconcile(planFor(CEC, ACC, [PA])); assert.equal(r.created, 11); } finally { empty.restore(); }
+});
+
+test('a template link that comes back unreadable (no ids in the answer) counts as a failed read → the re-seed stops before any write', async () => {
+  const fb = fakeBoard(boardRowsFor(CEC, SINGLE, [PA]), { noFragment: true });
+  try {
+    await assert.rejects(reconcile(planFor(CEC, ACC, [PA])), /template links of the checklist rows could not be read[\s\S]*nothing was changed/);
+    assert.deepEqual([fb.calls.moves.length, fb.calls.creates.length, fb.calls.deletes.length], [0, 0, 0]);
+  } finally { fb.restore(); }
 });
 
 test('no Case Type given (any older caller) → no move is attempted, exactly the old reconcile', async () => {

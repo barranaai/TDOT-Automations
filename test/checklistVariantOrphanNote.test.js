@@ -31,7 +31,10 @@ function fakeMonday(rows, cm) {
   const board = rows.map((r) => ({ ...r }));
   const calls = { notes: [], moves: 0, creates: 0, deletes: 0 };
   const created = new Set();
-  const cv = (r, ids) => ids.map((id) => {
+  // As Monday answers: a link cell's text and value are null; its ids come
+  // only when the query asks through the typed fragment.
+  const cv = (r, ids, q = '') => ids.map((id) => {
+    if (id === 'board_relation_mm0zhagw') return { id, text: null, value: null, ...(/on BoardRelationValue/.test(q) ? { linked_item_ids: r.templateRel ? ['1'] : [] } : {}) };
     const map = { [C.uniqueKey]: r.uniqueKey, [C.documentCode]: r.documentCode, [C.intakeItemId]: r.intake, [C.caseSubType]: r.subType, [C.applicantType]: r.applicantType, [C.documentCategory]: r.category, color_mm0zwgvr: r.status };
     return { id, text: map[id] == null ? '' : map[id], value: null };
   });
@@ -54,8 +57,8 @@ function fakeMonday(rows, cm) {
     if (/items_page_by_column_values/.test(q)) {
       if (String(v.boardId) === String(clientMasterBoardId)) return { items_page_by_column_values: { items: [{ id: CM_ID, name: 'Test Client', column_values: [{ id: 'dropdown_mm0xd1qn', text: cm.caseType }, { id: 'dropdown_mm0x4t91', text: cm.subType }] }] } };
       if (/getExistingItems/.test(q)) return { items_page_by_column_values: { items: board.map((r) => ({ column_values: cv(r, [C.uniqueKey]) })) } };
-      if (q.includes(C.documentCode)) return { items_page_by_column_values: { items: board.map((r) => ({ id: r.id, name: r.name, column_values: cv(r, [C.uniqueKey, C.documentCode, C.intakeItemId, C.caseSubType, C.applicantType, C.documentCategory, 'board_relation_mm0zhagw', 'color_mm0zwgvr']) })) } };
-      return { items_page_by_column_values: { items: board.map((r) => ({ id: r.id, column_values: cv(r, [C.caseSubType, C.uniqueKey, 'board_relation_mm0zhagw', 'color_mm0zwgvr']) })) } };
+      if (q.includes(C.documentCode)) return { items_page_by_column_values: { items: board.map((r) => ({ id: r.id, name: r.name, column_values: cv(r, [C.uniqueKey, C.documentCode, C.intakeItemId, C.caseSubType, C.applicantType, C.documentCategory, 'board_relation_mm0zhagw', 'color_mm0zwgvr'], q) })) } };
+      return { items_page_by_column_values: { items: board.map((r) => ({ id: r.id, column_values: cv(r, [C.caseSubType, C.uniqueKey, C.intakeItemId, 'board_relation_mm0zhagw', 'color_mm0zwgvr'], q) })) } };
     }
     if (/items\s*\(ids/.test(q)) return { items: [{ id: CM_ID, column_values: [] }] };
     throw new Error('unexpected query: ' + q.slice(0, 100));

@@ -195,21 +195,27 @@ async function findOrCreate({ email, phone, fullName, residentialAddress, dob, s
  * I/O. Append one item to a board_relation column on an account row without
  * dropping the existing links (Monday replaces the whole set on write, so we
  * read-merge-write). Best-effort — navigation relations never block flows.
+ * The read uses the typed fragment (a link cell's text/value come back null —
+ * reading those made every append REPLACE the account's earlier case/lead,
+ * 2026-08…10); a cell that cannot be read is never written.
  */
 async function appendAccountRelation(cfg, clientId, relColId, itemId, label) {
   if (!relColId) return;
+  const { RELATION_FIELDS, linkedIds } = require('./mondayColumnRead');
   try {
     const existing = await mondayApi.query(
-      `query($id:ID!){ items(ids:[$id]){ column_values(ids:["${relColId}"]){ value } } }`,
+      `query($id:ID!){ items(ids:[$id], limit:1){ id column_values(ids:["${relColId}"]){ id ${RELATION_FIELDS} } } }`,
       { id: String(clientId) }
     );
-    const raw = existing?.items?.[0]?.column_values?.[0]?.value;
-    const ids = new Set();
-    try { for (const x of (JSON.parse(raw || '{}').linkedPulseIds || [])) ids.add(Number(x.linkedPulseId)); } catch (_) { /* fresh */ }
-    ids.add(Number(itemId));
+    const have = linkedIds(existing?.items?.[0]?.column_values?.[0]);
+    if (have === null) {
+      console.warn(`[ClientAccount] ${label} links of client ${clientId} could not be read — not written (a write would replace links it cannot see)`);
+      return;
+    }
+    if (have.includes(String(itemId))) return;   // already linked
     await mondayApi.query(
       'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
-      { b: String(cfg.boardId), i: String(clientId), c: JSON.stringify({ [relColId]: { item_ids: [...ids] } }) }
+      { b: String(cfg.boardId), i: String(clientId), c: JSON.stringify({ [relColId]: { item_ids: [...have, String(itemId)].map(Number) } }) }
     );
   } catch (err) { console.warn(`[ClientAccount] ${label} relation append failed for client ${clientId}: ${err.message}`); }
 }

@@ -19,6 +19,7 @@
 
 require('dotenv').config();
 const mondayApi = require('../services/mondayApi');
+const { RELATION_FIELDS, linkedIds } = require('../services/mondayColumnRead');
 
 const EXEC_BOARD         = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
 const TEMPLATE_BOARD     = process.env.MONDAY_TEMPLATE_BOARD_ID  || '18401624183';
@@ -111,7 +112,7 @@ async function run() {
                    "${EXEC_DOC_CODE_COL}",
                    "${EXEC_INTAKE_ID_COL}",
                    "${EXEC_TEMPLATE_REL}"
-                 ]) { id text value }
+                 ]) { id text value ${RELATION_FIELDS} }
                }
              }
            }
@@ -130,7 +131,7 @@ async function run() {
                    "${EXEC_DOC_CODE_COL}",
                    "${EXEC_INTAKE_ID_COL}",
                    "${EXEC_TEMPLATE_REL}"
-                 ]) { id text value }
+                 ]) { id text value ${RELATION_FIELDS} }
                }
              }
            }
@@ -145,9 +146,15 @@ async function run() {
   console.log(`  → Loaded ${execItems.length} execution items\n`);
 
   // ── 3. Identify items needing repair ────────────────────────────────────────
+  // A link cell's text/value come back null from Monday — read the ids through
+  // the typed fragment; an unreadable cell is NOT "empty". Only Template-built
+  // rows (numeric intake id) ever had a template link: a schema row ("code:…")
+  // must never be "repaired" (its intake id would be overwritten). 2026-10-22.
   const toFix = execItems.filter((item) => {
-    const relVal = item.column_values.find((c) => c.id === EXEC_TEMPLATE_REL)?.value || '';
-    return !relVal || relVal === 'null';
+    const intake = String(item.column_values.find((c) => c.id === EXEC_INTAKE_ID_COL)?.text || '').trim();
+    if (!/^\d+$/.test(intake)) return false;
+    const ids = linkedIds(item.column_values.find((c) => c.id === EXEC_TEMPLATE_REL));
+    return Array.isArray(ids) && ids.length === 0;
   });
 
   console.log(`Items needing board_relation repair: ${toFix.length}\n`);
