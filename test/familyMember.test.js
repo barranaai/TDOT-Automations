@@ -73,8 +73,8 @@ const ACC = 'CEC Accompanying Spouse & Child', CEC_EE = 'Canadian Experience Cla
 const { slugUpper } = require('../src/services/seedPlanner')._internal;
 const codes = (caseType, subType, n, status = '') => Array.from({ length: n }, (_, i) => ({ code: `${slugUpper(caseType)}-${slugUpper(subType)}-PRINCIPAL-APPLICANT-DOC${i}-001`, subType, status }));
 const shapeOf = (schema, templateRows = 0) => ({ rows: schema.length + templateRows, templateRows, schema });
-function harness({ boardRows = [], manifest = [{ key: 'primary', type: 'Principal Applicant' }], manifestFails = false, reseed = { created: 11, skipped: 11, failed: 0, pruned: 0 }, reseedFails = false, reseedError = null, rowFails = false, manifestAddFails = false, caseState = { stage: 'Document Collection Started', payment: 'Paid', checklistApplied: 'Yes', caseType: CEC_EE, subType: ACC }, stateFails = false, boardLags = false, now = 1_000_000, shape = shapeOf(codes(CEC_EE, ACC, 11)), shapeFails = false, createManifestReturns = null, reseedDelayMs = 0, carry = { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, pct: 0, source: '', target: '', written: false, skipped: 'nothing' }, carryFails = false, carryRefuses = false, migrateOn = true } = {}) {
-  const calls = { seq: [], rows: [], manifestAdds: [], manifestCreates: [], reseeds: [], notes: [], carries: [], stateReads: 0, maxConcurrentReseeds: 0 };
+function harness({ boardRows = [], manifest = [{ key: 'primary', type: 'Principal Applicant' }], manifestFails = false, reseed = { created: 11, skipped: 11, failed: 0, pruned: 0 }, reseedFails = false, reseedError = null, rowFails = false, manifestAddFails = false, caseState = { stage: 'Document Collection Started', payment: 'Paid', checklistApplied: 'Yes', caseType: CEC_EE, subType: ACC }, stateFails = false, boardLags = false, now = 1_000_000, shape = shapeOf(codes(CEC_EE, ACC, 11)), shapeFails = false, createManifestReturns = null, reseedDelayMs = 0, carry = { copied: 0, total: 0, bySection: {}, unmapped: [], skippedSharedTable: 0, pct: 0, source: '', target: '', written: false, skipped: 'nothing' }, carryFails = false, carryRefuses = false, migrateOn = true, reopenFails = false } = {}) {
+  const calls = { seq: [], rows: [], manifestAdds: [], manifestCreates: [], reseeds: [], notes: [], carries: [], reopened: [], stateReads: 0, maxConcurrentReseeds: 0 };
   let liveReseeds = 0;
   let list = manifest ? manifest.map((x) => ({ ...x })) : null;   // the questionnaire member list, as the real one: adds are remembered
   const rows = boardRows.slice();
@@ -108,6 +108,7 @@ function harness({ boardRows = [], manifest = [{ key: 'primary', type: 'Principa
     checklistShape: async () => { if (shapeFails) throw new Error('Monday 503'); return shape; },
     createRow: async (a) => { calls.seq.push('row'); if (rowFails) throw new Error('Monday 503'); calls.rows.push(a); rows.push({ boardType: a.row.memberType, memberKey: a.row.memberKey, name: a.row.name }); return 'row-' + calls.rows.length; },
     caseState: async () => { calls.stateReads++; if (stateFails) throw new Error('Monday 503'); return caseState; },
+    questionnaireReopened: async (itemId) => { calls.seq.push('q-reopen'); calls.reopened.push(itemId); if (reopenFails) throw new Error('Monday 503'); },
     migrateOn: () => migrateOn,
     // reseed: the result, or a function of the options (staleOpen) — as the real one, which refuses on leftovers
     reseed: async (ref, composition, opts = {}) => {
@@ -143,6 +144,42 @@ test('staff adds a spouse: questionnaire section FIRST, then the board row (same
     assert.equal(h.calls.stateReads, 1, 'the case state (Checklist Template Applied) is read live, once');
     assert.equal(h.calls.notes.length, 1); assert.equal(h.calls.notes[0].itemId, BASE.cmItemId);
     assert.match(h.calls.notes[0].body, /👪 <b>Family member added<\/b> — Spouse "Spouse \(added by staff\)" — by Gauri Berde \(staff\), .*\(Toronto\)\. Family Members row created; questionnaire section added on the client's existing link; checklist re-seeded \(rows only added, never removed\): 11 new document row\(s\), 11 existing left as they were\./);
+  } finally { h.restore(); }
+});
+
+// 2026-10-24 (2026-SV-021): the second parent joins a questionnaire the board
+// already called Done — their part is empty, so the board must not say Done.
+test('a member added to a questionnaire the board calls Done sets it back to Working on it (once, before the re-seed); a failed write is said in the note; an adopted member is reopened too unless they had already submitted', async () => {
+  const done = { stage: 'Document Collection Started', payment: 'Paid', checklistApplied: 'Yes', caseType: CEC_EE, subType: ACC, qStatus: 'Done' };
+  let h = harness({ caseState: done });
+  try {
+    const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', name: 'Meena Sharma', source: 'staff', actor: { name: 'Gauri Berde' } });
+    assert.deepEqual(h.calls.seq, ['carry', 'manifest', 'row', 'q-reopen', 'reseed']);
+    assert.deepEqual(h.calls.reopened, [BASE.cmItemId]); assert.equal(r.qReopened, true);
+    assert.match(h.calls.notes[0].body, /Questionnaire Completion Status set back to Working on it — the new member's section is not complete yet\./);
+  } finally { h.restore(); }
+  h = harness({ caseState: { ...done, qStatus: 'Working on it' } });
+  try {
+    await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff', actor: { name: 'Gauri Berde' } });
+    assert.deepEqual(h.calls.reopened, [], 'not Done: nothing to reopen');
+    assert.doesNotMatch(h.calls.notes[0].body, /Working on it/);
+  } finally { h.restore(); }
+  h = harness({ caseState: done, reopenFails: true });
+  try {
+    const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff', actor: { name: 'Gauri Berde' } });
+    assert.equal(r.qReopened, false); assert.equal(h.calls.reseeds.length, 1, 'the re-seed still runs');
+    assert.match(h.calls.notes[0].body, /still says Done .* set it to Working on it by hand/);
+  } finally { h.restore(); }
+  // adopted: the list already held the member (a half-added retry, or the client's own add) — reopened too, unless they had submitted
+  h = harness({ caseState: done, manifest: [{ key: 'primary', type: 'Principal Applicant' }, { key: 'spouse', type: 'Spouse / Common-Law Partner', label: 'Meena' }] });
+  try {
+    const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff', actor: { name: 'Gauri Berde' } });
+    assert.equal(r.manifest, 'adopted'); assert.deepEqual(h.calls.reopened, [BASE.cmItemId], 'their section is not complete: reopened');
+  } finally { h.restore(); }
+  h = harness({ caseState: done, manifest: [{ key: 'primary', type: 'Principal Applicant' }, { key: 'spouse', type: 'Spouse / Common-Law Partner', label: 'Meena', submittedAt: '2026-10-01T00:00:00Z' }] });
+  try {
+    const r = await fam.addFamilyMember({ ...BASE, boardType: 'Spouse', source: 'staff', actor: { name: 'Gauri Berde' } });
+    assert.equal(r.manifest, 'adopted'); assert.deepEqual(h.calls.reopened, [], 'they had submitted: Done stands');
   } finally { h.restore(); }
 });
 

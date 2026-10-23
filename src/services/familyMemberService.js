@@ -143,13 +143,19 @@ const io = {
   addManifestMember: (args) => require('./htmlQuestionnaireService').addMember(args),
   createManifest: (args) => require('./htmlQuestionnaireService').createManifestFromBoard(args),
   createRow: (args) => require('./familyCompositionService').createFamilyRow(args),
-  /** { stage, payment, checklistApplied, caseType, subType } of the case — "Yes" = a checklist exists. */
+  /** { stage, payment, checklistApplied, caseType, subType, qStatus } of the case — "Yes" = a checklist exists; qStatus = Questionnaire Completion Status. */
   caseState: async (cmItemId) => {
-    const d = await require('./mondayApi').query(`query($ids:[ID!]){ items(ids:$ids, limit:1){ column_values(ids:["color_mm0x8faa","color_mm0x9fnn","color_mm0xs7kp","dropdown_mm0xd1qn","dropdown_mm0x4t91"]){ id text } } }`, { ids: [String(cmItemId)] });
+    const d = await require('./mondayApi').query(`query($ids:[ID!]){ items(ids:$ids, limit:1){ column_values(ids:["color_mm0x8faa","color_mm0x9fnn","color_mm0xs7kp","dropdown_mm0xd1qn","dropdown_mm0x4t91","color_mm0x9s08"]){ id text } } }`, { ids: [String(cmItemId)] });
     const item = d && d.items && d.items[0];
     if (!item) throw new Error('case not returned');
     const cv = Object.fromEntries((item.column_values || []).map((c) => [c.id, (c.text || '').trim()]));
-    return { stage: cv.color_mm0x8faa || '', payment: cv.color_mm0x9fnn || '', checklistApplied: cv.color_mm0xs7kp || '', caseType: cv.dropdown_mm0xd1qn || '', subType: cv.dropdown_mm0x4t91 || '' };
+    return { stage: cv.color_mm0x8faa || '', payment: cv.color_mm0x9fnn || '', checklistApplied: cv.color_mm0xs7kp || '', caseType: cv.dropdown_mm0xd1qn || '', subType: cv.dropdown_mm0x4t91 || '', qStatus: cv.color_mm0x9s08 || '' };
+  },
+  /** Questionnaire Completion Status back to "Working on it": a new member's part of it is empty. */
+  questionnaireReopened: async (cmItemId) => {
+    const { clientMasterBoardId } = require('../../config/monday');
+    await require('./mondayApi').query('mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
+      { b: String(clientMasterBoardId), i: String(cmItemId), c: JSON.stringify({ color_mm0x9s08: { label: 'Working on it' } }) });
   },
   /**
    * How the case's checklist was built. Schema rows carry "code:<documentCode>"
@@ -345,6 +351,15 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
   const result = { ok: true, key: memberKey, boardType, portalType, rowId, rowName, label: sectionLabel || (isPlaceholderName(rowName) ? '' : rowName), manifest: manifestState, stage: (state && state.stage) || '', reseed: null, hint: '', carry: carry && { copied: carry.copied, total: carry.total, bySection: carry.bySection, unmapped: carry.unmapped, skippedSharedTable: carry.skippedSharedTable, ambiguousDependent: carry.ambiguousDependent || 0, givenName: carry.givenName || '', unmatched: !!carry.unmatched, childNames: carry.childNames || [], attributedBlock: !!carry.attributedBlock, skipped: carry.skipped || '', written: !!carry.written, crossForm: carry.crossForm && (carry.crossForm.written || carry.crossForm.skipped === 'legacy-edition') ? { copied: carry.crossForm.written ? carry.crossForm.copied : 0, unmapped: carry.crossForm.unmapped || [], skipped: carry.crossForm.skipped || '' } : null } };
   const norm = (v) => String(v || '').trim().toLowerCase();
   const finish = async () => {
+    // A questionnaire the board calls Done is not done any more: the new
+    // member's section is not complete (the client's save keeps Done on
+    // purpose — only this, a new person, reopens it). A member the list
+    // already held (adopted — the client's own add, or a half-added retry)
+    // reopens it too, unless that member had already submitted.
+    if (state && state.qStatus === 'Done' && !(adopt && adopt.submittedAt)) {
+      try { await io.questionnaireReopened(cmItemId); result.qReopened = true; }
+      catch (err) { result.qReopened = false; console.warn(`[Family] questionnaire status not reopened for ${caseRef}: ${err.message}`); }
+    }
     let shape = null;
     if (state) { try { shape = await io.checklistShape(caseRef); } catch (err) { console.warn(`[Family] checklist shape unreadable for ${caseRef}: ${err.message}`); } }
     if (!state) result.reseed = { unknown: true };
@@ -397,7 +412,7 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
         }
       }
     }
-    await io.postNote(cmItemId, note({ caseRef, boardType, rowName, who, manifestState, reseed: result.reseed, stage: result.stage, hint: result.hint, carry: result.carry })).catch((err) => console.warn(`[Family] note failed for ${caseRef}: ${err.message}`));
+    await io.postNote(cmItemId, note({ caseRef, boardType, rowName, who, manifestState, reseed: result.reseed, stage: result.stage, hint: result.hint, carry: result.carry, qReopened: result.qReopened })).catch((err) => console.warn(`[Family] note failed for ${caseRef}: ${err.message}`));
     console.log(`[Family] ${caseRef}: ${boardType} "${rowName}" (${memberKey}) added by ${source}; manifest ${manifestState}; reseed ${JSON.stringify(result.reseed)}`);
   };
   if (reseedMode === 'background') {
@@ -431,7 +446,7 @@ function carryCore(c) {
   return '';
 }
 
-function note({ caseRef, boardType, rowName, who, manifestState, reseed, stage, hint, carry }) {
+function note({ caseRef, boardType, rowName, who, manifestState, reseed, stage, hint, carry, qReopened }) {
   const q = manifestState === 'added'     ? 'questionnaire section added on the client\'s existing link'
           : manifestState === 'adopted'   ? 'the questionnaire section the client already had is now matched by a row'
           : manifestState === 'completed' ? 'the member was on the Family Members board already — their questionnaire section is now added'
@@ -448,7 +463,9 @@ function note({ caseRef, boardType, rowName, who, manifestState, reseed, stage, 
           : reseed.deferred ? `no document rows yet — the checklist has not been created (the case is at "${esc(stage || 'Not Started')}"); they come with the checklist at Document Collection`
           : reseed.error ? `checklist re-seed FAILED (${esc(reseed.error)}) — press Re-seed Checklist on the case`
           : `checklist re-seeded (rows only added, never removed): ${reseed.created} new document row(s)${reseed.migrated ? `, ${reseed.migrated} moved over from Sub Type "${esc(reseed.from || 'the old one')}" (uploads kept)` : ''}${reseed.toCheck ? `, ${reseed.toCheck} document(s) of the old Sub Type to check (listed in the separate "Checklist moved" note)` : ''}, ${reseed.skipped} existing left as they were${reseed.failed ? `, ${reseed.failed} failed — press Re-seed Checklist` : ''}`;
-  return `👪 <b>Family member added</b> — ${esc(boardType)} "${esc(rowName)}" — by ${esc(who)}, ${esc(require('../utils/torontoTime').torontoTime(Date.now()))} (Toronto). ${manifestState === 'completed' ? '' : 'Family Members row created; '}${q}; ${d}.${esc(carrySentence(carry))}${hint ? ' ' + esc(hint) : ''} (${esc(caseRef)})`;
+  const reopened = qReopened === true ? ' Questionnaire Completion Status set back to Working on it — the new member\'s section is not complete yet.'
+                 : qReopened === false ? ' Questionnaire Completion Status still says Done although the new member\'s section is not complete — the status write failed; set it to Working on it by hand.' : '';
+  return `👪 <b>Family member added</b> — ${esc(boardType)} "${esc(rowName)}" — by ${esc(who)}, ${esc(require('../utils/torontoTime').torontoTime(Date.now()))} (Toronto). ${manifestState === 'completed' ? '' : 'Family Members row created; '}${q}; ${d}.${esc(carrySentence(carry))}${hint ? ' ' + esc(hint) : ''}${reopened} (${esc(caseRef)})`;
 }
 
 module.exports = { addFamilyMember, nextMemberKey, seedIndices, adoptableMember, splitByVariant, carrySentence, CARRY_TYPES, placeholderName, cleanName, PORTAL_TO_BOARD, BOARD_TO_PORTAL, ROLE_TO_BOARD, SINGLETON, NAME_MAX, RECENT_ROWS_MS, io, _inFlight, _recentRows };

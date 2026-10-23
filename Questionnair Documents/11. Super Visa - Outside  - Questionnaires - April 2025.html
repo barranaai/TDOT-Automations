@@ -453,23 +453,23 @@ table.dynamic-table td input, table.dynamic-table td select { font-size: 0.85rem
         <thead><tr><th>#</th><th>Questions</th><th>Answer Yes or No</th></tr></thead>
         <tbody>
           <tr><td>1</td><td class="q-text">Have you been convicted of a crime or offence in Canada for which a pardon has not been granted under the Criminal Records Act of Canada?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td>2</td><td class="q-text">Have you ever committed, been arrested for, been charged with or convicted of any criminal offence in any country?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td>3</td><td class="q-text">Have you made previous claims for refugee protection in Canada or at a Canadian visa office abroad, in any other country or countries, or with the United Nations High Commissioner for Refugees (UNHCR No)</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td>4</td><td class="q-text">Have you been refused refugee status, or an immigrant or permanent resident visa (including a Certificate de selection du Québec (CSQ) or application to the Provincial Nominee Program) or visitor or temporary resident visa, to Canada?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td></td><td class="q-text">Have you been refused refugee status, or an immigrant or permanent resident visa or visitor or temporary resident visa, to any country?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td>5</td><td class="q-text">Have you ever been refused a visa or permit to Canada?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td></td><td class="q-text">Have you ever been refused a visa or permit to any other country?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td></td><td class="q-text">Have you ever been denied entry or ordered to leave Canada?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td></td><td class="q-text">Have you ever been denied entry or ordered to leave any other country?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td colspan="3">
             <div class="refusal-details" id="refusal-details">
               <p style="font-weight:600;margin-bottom:8px;">If yes, please provide details:</p>
@@ -482,17 +482,17 @@ table.dynamic-table td input, table.dynamic-table td select { font-size: 0.85rem
             </div>
           </td></tr>
           <tr><td>6</td><td class="q-text">Have you been involved in an act of genocide, a war crime or in the commission of a crime against humanity?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td>7</td><td class="q-text">Have you used, planned or advocated the use of armed struggle or violence to reach political, religious or social objectives?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td>8</td><td class="q-text">Have you been associated with a group that used, uses, advocated or advocates the use of armed struggle or violence to reach political, religious or social objectives?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td>9</td><td class="q-text">Have you been a member of an organization that is or was engaged in an activity that is part of a pattern of criminal activity?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td>10</td><td class="q-text">Have you been detained, incarcerated, or put in jail?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
           <tr><td>11</td><td class="q-text">Have you had any serious diseases or physical or mental disorder?</td>
-            <td><select class="refusal-trigger"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
+            <td><select class="refusal-trigger" onchange="toggleRefusalDetails(this)"><option value="">-- Select --</option><option value="no">No</option><option value="yes">Yes</option></select></td></tr>
         </tbody>
       </table>
       <div class="form-group full">
@@ -552,14 +552,17 @@ function removeRow(btn) {
   if (tbody.rows.length > 1) btn.closest('tr').remove();
 }
 
-document.querySelectorAll('.refusal-trigger').forEach(sel => {
-  sel.addEventListener('change', () => {
-    const anyYes = Array.from(document.querySelectorAll('.refusal-trigger')).some(s => s.value === 'yes');
-    const d = document.getElementById('refusal-details');
-    d.classList.toggle('visible', anyYes);
-    d.style.display = anyYes ? 'block' : 'none';
-  });
-});
+// Refusal group trigger — per statutory section, so a family member's copy of
+// the form (the questionnaire clones every section per person) opens its OWN
+// details block; wired inline so the clone keeps it (listeners are not cloned).
+function toggleRefusalDetails(sel) {
+  const scope = sel.closest('.accordion-body') || document;
+  const anyYes = Array.from(scope.querySelectorAll('.refusal-trigger')).some(s => s.value === 'yes');
+  const d = scope.querySelector('.refusal-details');
+  if (!d) return;
+  d.classList.toggle('visible', anyYes);
+  d.style.display = anyYes ? 'block' : 'none';
+}
 </script>
 </body>
 </html>

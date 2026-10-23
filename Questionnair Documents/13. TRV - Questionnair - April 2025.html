@@ -834,7 +834,10 @@
 
   // Show refusal details block only when Q5 is answered yes
   function toggleRefusalBlock(radio) {
-    const block = document.getElementById('sq-refusal-block');
+    // the block of THIS copy of the section (a family member's copy of the
+    // form has its own), falling back to the page's one
+    const scope = radio.closest('.top-accordion-body');
+    const block = (scope && scope.querySelector('.refusal-block')) || document.getElementById('sq-refusal-block');
     if (block) block.classList.toggle('open', radio.value === 'yes');
   }
 

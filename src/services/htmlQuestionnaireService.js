@@ -388,6 +388,7 @@ const WRAP_CELLS_JS = [
   '  /* ── Wrapping table cells: text <input> in a <td> → auto-growing <textarea> ── */',
   '  function convertTableCellInputs(root) {',
   '    var inputs = (root || document).querySelectorAll("table td > input");',
+  '    var replaced = 0;',
   '    for (var i = 0; i < inputs.length; i++) {',
   '      var inp = inputs[i];',
   '      if ((inp.getAttribute("type") || "text").toLowerCase() !== "text") continue;',
@@ -403,7 +404,13 @@ const WRAP_CELLS_JS = [
   '      ta.className = (inp.className ? inp.className + " " : "") + "tdot-wrap-cell";',
   '      inp.parentNode.replaceChild(ta, inp);',
   '      autosizeCell(ta);',
+  '      replaced++;',
   '    }',
+  '    /* The engine caches its field list; a box this replaced is detached from',
+  '       the page, and a detached box belongs to nobody (it would fall back to',
+  '       the principal on a multi-member page). Refresh the list (client engine',
+  '       only — the review page has no cache). */',
+  '    if (replaced && typeof invalidateCache === "function") invalidateCache();',
   '  }',
   '  function autosizeCell(el) {',
   '    if (!el || !el.classList || !el.classList.contains("tdot-wrap-cell")) return;',
@@ -554,15 +561,26 @@ const _asideSpotSansTop = (f) => {
   return _asideSpot({ section: s.slice(i + 3), label: f && f.label });
 };
 const _onPageSansTop = (onPage, f) => { const alt = _asideSpotSansTop(f); return !!alt && onPage.has(`${alt}\u0002${_asideText(f && f.value)}`); };
+/* …and the other way round: the page now shows the top heading an older save
+   dropped (a member of a whole-form questionnaire — Super Visa, Study Permit,
+   PR Card, Visitor Record — saved before 2026-10-24 under "Personal Details"
+   alone; the same box now reads "Section 1 – Profile Details › Personal
+   Details"). onPageSansTop holds every page answer at its heading-less spot. */
+const _onPageWithTop = (onPageSansTop, f) => onPageSansTop.has(`${_asideSpot(f)}\u0002${_asideText(f && f.value)}`);
 
 function computeSetAside({ previousFields, previousSetAside, incomingFields, fromFormFile, now }) {
   const at = now || new Date().toISOString();
   const incoming = new Map();
   const onPage = new Set();                          // spot + value of every answer on the page
+  const onPageSansTop = new Set();                   // the same, minus the top heading
   for (const f of (Array.isArray(incomingFields) ? incomingFields : [])) {
     if (!f) continue;
     incoming.set(_asideId(f), _asideText(f.value));
-    if (_asideText(f.value)) onPage.add(`${_asideSpot(f)}\u0002${_asideText(f.value)}`);
+    if (_asideText(f.value)) {
+      onPage.add(`${_asideSpot(f)}\u0002${_asideText(f.value)}`);
+      const alt = _asideSpotSansTop(f);
+      if (alt) onPageSansTop.add(`${alt}\u0002${_asideText(f.value)}`);
+    }
   }
   const kept = [];
   const seen = new Set();
@@ -572,6 +590,7 @@ function computeSetAside({ previousFields, previousSetAside, incomingFields, fro
     if (incoming.has(id) && incoming.get(id) === _asideText(e.value)) continue;   // the answer is back in its box
     if (onPage.has(`${_asideSpot(e)}\u0002${_asideText(e.value)}`)) continue;   // …or back in the same column
     if (_onPageSansTop(onPage, e)) continue;          // …or back after a single→multi flip dropped the principal's heading
+    if (_onPageWithTop(onPageSansTop, e)) continue;   // …or back with the heading a whole-form page restored
     const sig = _asideSig(e);
     if (seen.has(sig)) continue;                     // carried twice (e.g. a restore merged two lists)
     seen.add(sig);
@@ -585,6 +604,7 @@ function computeSetAside({ previousFields, previousSetAside, incomingFields, fro
     if (incoming.has(id)) continue;                  // its box is on the page — kept, edited or cleared by the client
     if (onPage.has(`${_asideSpot(f)}\u0002${_asideText(f.value)}`)) continue;   // still on the page, in the same column
     if (_onPageSansTop(onPage, f)) continue;          // still on the page — a single→multi flip only dropped the principal's heading
+    if (_onPageWithTop(onPageSansTop, f)) continue;   // still on the page — a whole-form page only restored the heading
     const sig = _asideSig(f);
     if (seen.has(sig)) continue;
     seen.add(sig);
@@ -2584,6 +2604,15 @@ ${(isMultiMember || canHaveMembers) ? `
 }
 .mm-member-status.submitted { background: #dcfce7; color: #166534; }
 .mm-member-status.in-progress { background: #fef9c3; color: #854d0e; }
+/* One person's whole questionnaire (forms with several top sections and no
+   dependent template): a banner with the member's name above their sections. */
+.mm-member { margin: 0 0 28px; }
+.mm-member-header {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  background: #0B1D32; color: #fff; border-left: 4px solid #C9A84C;
+  border-radius: 8px; padding: 12px 18px; margin: 18px 0 10px;
+  font-size: 15px; font-weight: 700;
+}
 ` : ''}
 ${hasAdditionalForm ? `
 .tdot-nav-bar {
@@ -2926,6 +2955,14 @@ ${hasAdditionalForm ? `
   ${RESTORE_MATCH_JS}
 
   function collectFields() {
+    /* A cached box the page no longer holds (a table row the client removed,
+       a cell the wrapper swapped) has no member: it would be saved as the
+       principal's. Rebuild the list whenever one is gone. */
+    if (!_cacheStale && _fieldCache) {
+      for (var ck = 0; ck < _fieldCache.length; ck++) {
+        if (_fieldCache[ck].el && !document.body.contains(_fieldCache[ck].el)) { _cacheStale = true; break; }
+      }
+    }
     if (!_cacheStale && _fieldCache) return _fieldCache;
 
     var fields  = [];
@@ -3670,7 +3707,7 @@ ${hasAdditionalForm ? `
         /* Find the member section header and add a flag indicator */
         var section = document.querySelector('[data-member-key="' + memberKey + '"]');
         if (section) {
-          var header = section.querySelector('.top-accordion-header, .applicant-header, .accordion-header');
+          var header = section.querySelector('.mm-member-header') || section.querySelector('.top-accordion-header, .applicant-header, .accordion-header');
           if (header) {
             var badge = document.createElement('span');
             badge.style.cssText = 'display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#fff7ed;color:#92400e;border:1px solid #fed7aa;margin-left:8px;';
@@ -4000,13 +4037,71 @@ ${hasAdditionalForm ? `
     return !!(h && /dependent/i.test(h.textContent || ''));
   }
 
+  /* A form with SEVERAL top-level sections and no dependent template is the
+     applicant's whole questionnaire (Super Visa, Study Permit, PR Card / PRTD,
+     Visitor Record): every person on the case answers all of it. Each member —
+     the principal too — gets one wrapper carrying data-member-key, with a
+     banner and every section inside. A field's section path then keeps the
+     section heading ("Section 1 – Profile Details › Personal Details"): the
+     very key the single-applicant page writes, so a case that gains its second
+     member keeps every answer by key (2026-10-24, case 2026-SV-021: the second
+     parent used to get a copy of Section 1 only). The principal's sections are
+     MOVED into their wrapper (ids and the form's own listeners stay); members
+     get clones. One-section forms (the work permits) and template forms keep
+     the section itself as the member element, exactly as before. */
+  function memberWrapper() {
+    var wrap = document.createElement('div');
+    wrap.className = 'mm-member';
+    var header = document.createElement('div');
+    header.className = 'mm-member-header';
+    wrap.appendChild(header);
+    return wrap;
+  }
+
+  function fullFormBlueprint(topSections) {
+    var wrap = memberWrapper();
+    for (var i = 0; i < topSections.length; i++) wrap.appendChild(topSections[i].cloneNode(true));
+    return wrap;
+  }
+
+  function wrapPrimarySections(topSections) {
+    var primaryMember = null;
+    for (var i = 0; i < MEMBERS.length; i++) if (MEMBERS[i].key === 'primary') primaryMember = MEMBERS[i];
+    var wrap = memberWrapper();
+    wrap.setAttribute('data-member-key', 'primary');
+    fillMemberHeader(wrap.querySelector('.mm-member-header'), primaryMember || { key: 'primary', type: 'Principal Applicant', label: 'Principal Applicant' });
+    topSections[0].parentNode.insertBefore(wrap, topSections[0]);
+    for (var j = 0; j < topSections.length; j++) wrap.appendChild(topSections[j]);
+    return wrap;
+  }
+
+  /* The member's banner: icon + name, a type badge for family, a Submitted badge. */
+  function fillMemberHeader(header, member) {
+    var chevron = header.querySelector('.chevron');
+    var icon = MEMBER_ICONS[member.type] || '👤';
+    header.textContent = '';
+    header.appendChild(document.createTextNode(icon + '  ' + member.label));
+    if (member.type !== 'Principal Applicant') {
+      var typeBadge = document.createElement('span');
+      typeBadge.className = 'mm-section-badge';
+      typeBadge.textContent = member.type.split(' / ')[0];
+      header.appendChild(typeBadge);
+    }
+    if (member.status === 'Submitted') {
+      var statusBadge = document.createElement('span');
+      statusBadge.className = 'mm-member-status submitted';
+      statusBadge.textContent = '✅ Submitted';
+      header.appendChild(statusBadge);
+    }
+    if (chevron) header.appendChild(chevron.cloneNode(true));
+  }
+
   function setupMultiMemberDOM() {
     var topSections = findTopSections();
     if (topSections.length === 0) return;
 
     /* The first section is always the primary applicant */
     var primarySection = topSections[0];
-    primarySection.setAttribute('data-member-key', 'primary');
 
     /* Identify the per-member "dependent template" section(s). They are authored
        explicitly — either marked with data-member-template, or a header that names
@@ -4019,17 +4114,26 @@ ${hasAdditionalForm ? `
     for (var i = 1; i < topSections.length; i++) {
       if (isDependentTemplateSection(topSections[i])) depSections.push(topSections[i]);
     }
+    var insertRef;
     if (depSections.length > 0) {
+      primarySection.setAttribute('data-member-key', 'primary');
       _memberBlueprint = depSections[0].cloneNode(true);
       for (var di = 0; di < depSections.length; di++) depSections[di].remove();
+      insertRef = primarySection;
+    } else if (topSections.length > 1) {
+      /* No dependent template, several sections: the whole form, per person
+         (see memberWrapper above). Cloned before the principal's are moved. */
+      _memberBlueprint = fullFormBlueprint(topSections);
+      insertRef = wrapPrimarySections(topSections);
     } else {
       /* No dependent template — clone the primary as a stripped blueprint and KEEP
          every principal-applicant section intact. */
+      primarySection.setAttribute('data-member-key', 'primary');
       _memberBlueprint = primarySection.cloneNode(true);
+      insertRef = primarySection;
     }
 
     /* Create sections for each non-primary member from the manifest */
-    var insertRef = primarySection;
     for (var mi = 0; mi < MEMBERS.length; mi++) {
       var m = MEMBERS[mi];
       if (m.key === 'primary') continue;
@@ -4063,27 +4167,10 @@ ${hasAdditionalForm ? `
        style or the whole section stays invisible to the client. */
     section.style.display = '';
 
-    /* Update the header text */
-    var header = findSectionHeader(section);
-    if (header) {
-      var chevron = header.querySelector('.chevron');
-      var icon = MEMBER_ICONS[member.type] || '👤';
-      header.textContent = '';
-      header.appendChild(document.createTextNode(icon + '  ' + member.label));
-      if (member.type !== 'Principal Applicant') {
-        var typeBadge = document.createElement('span');
-        typeBadge.className = 'mm-section-badge';
-        typeBadge.textContent = member.type.split(' / ')[0];
-        header.appendChild(typeBadge);
-      }
-      if (member.status === 'Submitted') {
-        var statusBadge = document.createElement('span');
-        statusBadge.className = 'mm-member-status submitted';
-        statusBadge.textContent = '✅ Submitted';
-        header.appendChild(statusBadge);
-      }
-      if (chevron) header.appendChild(chevron.cloneNode(true));
-    }
+    /* Update the header text: the wrapper's own banner on a whole-form member,
+       else the cloned section's header */
+    var header = section.querySelector('.mm-member-header') || findSectionHeader(section);
+    if (header) fillMemberHeader(header, member);
 
     /* Make the body visible / open */
     var body = findSectionBody(section);
@@ -4119,8 +4206,25 @@ ${hasAdditionalForm ? `
     var keepList = KEEP_SECTIONS_FOR[memberType];
     if (!keepList) return; /* Keep all sections for spouse/worker-spouse/sponsor */
 
+    /* A whole-form member of a trimmed type keeps the FIRST top section only
+       — the person's own profile section, whatever the form calls it — exactly
+       what the type got before; the keep words trim inside it. */
+    var scope = section;
+    if (section.classList.contains('mm-member')) {
+      var first = null;
+      for (var ci = 0; ci < section.children.length; ci++) {
+        var kid = section.children[ci];
+        if (kid.classList.contains('mm-member-header')) continue;
+        if (!first) { first = kid; continue; }
+        kid.style.display = 'none';
+        kid.setAttribute('data-mm-hidden', 'true');
+      }
+      if (!first) return;
+      scope = first;
+    }
+
     /* Find all sub-accordion sections within this member section */
-    var subAccordions = section.querySelectorAll('.sub-accordion, .accordion');
+    var subAccordions = scope.querySelectorAll('.sub-accordion, .accordion');
     for (var i = 0; i < subAccordions.length; i++) {
       var sub = subAccordions[i];
       var subHeader = sub.querySelector('.sub-accordion-header, .accordion-header');
@@ -4981,6 +5085,13 @@ ${isMultiMember ? `
 .mm-review-member-divider {
   border: none; border-top: 3px solid #C9A84C; margin: 32px 0 8px;
   position: relative;
+}
+.mm-member { margin: 0 0 28px; }
+.mm-member-header {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  background: #0B1D32; color: #fff; border-left: 4px solid #C9A84C;
+  border-radius: 8px; padding: 12px 18px; margin: 18px 0 10px;
+  font-size: 15px; font-weight: 700;
 }
 ` : ''}
 #tdot-review-bar {
@@ -6022,12 +6133,26 @@ input[disabled], select[disabled], textarea[disabled] {
     });
   }
 
+  /* The member's banner: icon + name, a type badge for family. */
+  function fillReviewMemberHeader(header, m) {
+    var chevron = header.querySelector('.chevron');
+    var icon = MEMBER_ICONS[m.type] || '👤';
+    header.textContent = '';
+    header.appendChild(document.createTextNode(icon + '  ' + m.label));
+    if (m.type !== 'Principal Applicant') {
+      var typeBadge = document.createElement('span');
+      typeBadge.className = 'mm-review-section-label';
+      typeBadge.textContent = m.type.split(' / ')[0];
+      header.appendChild(typeBadge);
+    }
+    if (chevron) header.appendChild(chevron.cloneNode(true));
+  }
+
   function setupMultiMemberReview() {
     var topSections = reviewTopSections();
     if (topSections.length === 0) return;
 
     var primarySection = topSections[0];
-    primarySection.setAttribute('data-member-key', 'primary');
 
     /* Clone the dependent-template section(s) as the blueprint and remove ONLY
        those — keep principal-applicant sections on forms with no dependent template
@@ -6039,11 +6164,42 @@ input[disabled], select[disabled], textarea[disabled] {
     }
     var depSections = [];
     for (var i = 1; i < topSections.length; i++) if (isDepTpl(topSections[i])) depSections.push(topSections[i]);
-    var blueprint = depSections.length > 0 ? depSections[0].cloneNode(true) : primarySection.cloneNode(true);
-    for (var dj = 0; dj < depSections.length; dj++) depSections[dj].remove();
+
+    /* Whole-form members — several top sections and no dependent template: one
+       wrapper per person with a banner and every section inside (the client
+       engine's memberWrapper / fullFormBlueprint / wrapPrimarySections, mirrored). */
+    function reviewMemberWrapper() {
+      var wrap = document.createElement('div');
+      wrap.className = 'mm-member';
+      var header = document.createElement('div');
+      header.className = 'mm-member-header';
+      wrap.appendChild(header);
+      return wrap;
+    }
+    var blueprint, insertRef;
+    if (depSections.length > 0) {
+      primarySection.setAttribute('data-member-key', 'primary');
+      blueprint = depSections[0].cloneNode(true);
+      for (var dj = 0; dj < depSections.length; dj++) depSections[dj].remove();
+      insertRef = primarySection;
+    } else if (topSections.length > 1) {
+      blueprint = reviewMemberWrapper();
+      for (var ti = 0; ti < topSections.length; ti++) blueprint.appendChild(topSections[ti].cloneNode(true));
+      var primaryWrap = reviewMemberWrapper();
+      primaryWrap.setAttribute('data-member-key', 'primary');
+      var pm = null;
+      for (var pi = 0; pi < REVIEW_MEMBERS.length; pi++) if (REVIEW_MEMBERS[pi].key === 'primary') pm = REVIEW_MEMBERS[pi];
+      fillReviewMemberHeader(primaryWrap.querySelector('.mm-member-header'), pm || { key: 'primary', type: 'Principal Applicant', label: 'Principal Applicant' });
+      topSections[0].parentNode.insertBefore(primaryWrap, topSections[0]);
+      for (var tj = 0; tj < topSections.length; tj++) primaryWrap.appendChild(topSections[tj]);
+      insertRef = primaryWrap;
+    } else {
+      primarySection.setAttribute('data-member-key', 'primary');
+      blueprint = primarySection.cloneNode(true);
+      insertRef = primarySection;
+    }
 
     /* Create sections for each non-primary member */
-    var insertRef = primarySection;
     for (var mi = 0; mi < REVIEW_MEMBERS.length; mi++) {
       var m = REVIEW_MEMBERS[mi];
       if (m.key === 'primary') continue;
@@ -6053,24 +6209,28 @@ input[disabled], select[disabled], textarea[disabled] {
       section.style.position = 'relative';
       section.style.display = '';                 /* the blueprint ships hidden — see createMemberSection */
 
-      /* Update header */
-      var header = section.querySelector('.top-accordion-header, .applicant-header, .accordion-header');
-      if (header) {
-        var chevron = header.querySelector('.chevron');
-        var icon = MEMBER_ICONS[m.type] || '👤';
-        header.textContent = '';
-        header.appendChild(document.createTextNode(icon + '  ' + m.label));
-        var typeBadge = document.createElement('span');
-        typeBadge.className = 'mm-review-section-label';
-        typeBadge.textContent = m.type.split(' / ')[0];
-        header.appendChild(typeBadge);
-        if (chevron) header.appendChild(chevron.cloneNode(true));
-      }
+      /* Update header: the wrapper's own banner on a whole-form member, else
+         the cloned section's header */
+      var header = section.querySelector('.mm-member-header') || section.querySelector('.top-accordion-header, .applicant-header, .accordion-header');
+      if (header) fillReviewMemberHeader(header, m);
 
-      /* Adjust sub-sections for member type */
+      /* Adjust sub-sections for member type — a whole-form member of a trimmed
+         type keeps its FIRST top section only (as before), the keep words trim
+         inside it (mirrors adjustSectionsForType) */
       var keepList = KEEP_SECTIONS_FOR[m.type];
       if (keepList) {
-        var subs = section.querySelectorAll('.sub-accordion, .accordion');
+        var trimScope = section;
+        if (section.classList.contains('mm-member')) {
+          var firstTop = null;
+          for (var ci0 = 0; ci0 < section.children.length; ci0++) {
+            var kid0 = section.children[ci0];
+            if (kid0.classList.contains('mm-member-header')) continue;
+            if (!firstTop) { firstTop = kid0; continue; }
+            kid0.style.display = 'none';
+          }
+          trimScope = firstTop || section;
+        }
+        var subs = trimScope.querySelectorAll('.sub-accordion, .accordion');
         for (var si = 0; si < subs.length; si++) {
           var subH = subs[si].querySelector('.sub-accordion-header, .accordion-header');
           if (!subH) continue;
@@ -6313,6 +6473,7 @@ module.exports = {
   STAT_Q_COLLECTOR_JS,
   LEGACY_STRIP_JS,
   RESTORE_MATCH_JS,
+  WRAP_CELLS_JS,
   computeSetAside,
   buildRestoreContent,
   eraAuditFlags,
