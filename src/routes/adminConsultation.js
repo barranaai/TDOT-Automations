@@ -987,6 +987,10 @@ ${REMARKS_CSS}
   .rp-flag.high { background:#f0fdf4; color:#16a34a; } .rp-flag.verify { background:#fffbeb; color:#d97706; }
   .rp-warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; padding:9px 12px; border-radius:8px; font-size:12px; margin:10px 0; line-height:1.5; }
   .rp-warn ul { margin:5px 0 0; padding-left:18px; }
+  .rp-sv { background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:9px 12px; margin:8px 0; font-size:13px; }
+  .rp-sv > b { display:block; margin-bottom:4px; }
+  .rp-sv .rp-sv-hint { font-size:12px; margin-top:4px; color:#64748b; }
+  .rp-sv .rp-sv-hint.need { color:#92400e; font-weight:600; }
   .dynamic-table { width:100%; border-collapse:collapse; margin-top:6px; font-size:12.5px; }
   .dynamic-table th { background:#f8fafc; text-align:left; padding:7px 9px; font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; }
   .dynamic-table td { padding:5px 6px; border-bottom:1px solid #f5f7fa; vertical-align:middle; }
@@ -1170,6 +1174,11 @@ ${buildNavHeader('consultations')}
       <div id="rp-warnings"></div>
 
       <div class="subhead" style="margin-top:14px">${I.userCheck} Family members <span class="muted">(consultant-set · only “accompanying” members get a checklist + questionnaire · date of birth / status / residence are optional and pre-fill the member’s questionnaire)</span></div>
+      <div class="rp-sv" id="rp-sv" style="display:none">
+        <b>Super Visa — both parents applying?</b>
+        <div class="rp-sv-hint" id="rp-sv-hint"></div>
+        <button class="btn" id="rp-sv-add" type="button" style="display:none;margin-top:6px">${I.plus} Add the second parent (Spouse)</button>
+      </div>
       <table class="dynamic-table" id="family-table">
         <thead><tr><th style="width:15%">Type</th><th style="width:19%">Full name</th><th style="width:15%">Date of birth</th><th style="width:16%">Current status</th><th style="width:16%">Residence country</th><th style="width:11%">Accomp.</th><th style="width:4%"></th></tr></thead>
         <tbody id="family-body"></tbody>
@@ -1264,6 +1273,9 @@ var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload onl
 // sent, unless the consultant "Amend"s. RP_SENT (sent specifically) vs RP_RETAINED
 // (signed/paid/Retained) only differ in the wording of the lock message.
 var RP_LOCKED=false, RP_AMEND=false, RP_SENT=false, RP_RETAINED=false, RP_SIGNED=false, RP_RC_DONE=false, RP_RC_SENT=false;
+// The family list has been used: the client signed (or was retained) AND the case is open — it was read when the case
+// was set up, and an edit here no longer reaches the case (the case page's ➕ Add family member does).
+var RP_LIST_USED=false;
 // Consultation-agreement countersign state (same three-state button contract).
 var CS_RC_DONE=false, CS_RC_SENT=false;
 // Progressive-enablement state for the retainer send flow: you must Set fee →
@@ -1591,6 +1603,7 @@ function render(d){
   // client is retained — but STAYS enabled for a signed lead whose handoff failed
   // (no case yet), so staff can retry per the failed-handoff recovery note.
   RP_SIGNED = (_retSigned && _caseOpen) || _retained;
+  RP_LIST_USED = (_retSigned || _retained) && _caseOpen;
   RP_LOCKED = _retSent || RP_RETAINED; RP_AMEND = false; applyRetainerLock();
 
   var ca=d.consultAgreement||{};
@@ -1811,6 +1824,7 @@ function applyRetainerLock(){
   // and wrong-email recovery flow (meeting 2026-08-13).
   var reissueBtn=document.getElementById('rp-reissue');
   if(reissueBtn) reissueBtn.style.display = (RP_SENT && !RP_RETAINED) ? 'inline-flex' : 'none';
+  rpUpdateSvQuestion();   // the signed state is known only after hydration — the Super Visa question follows it
 }
 function startAmend(){
   if(!window.confirm('The retainer agreement has already been emailed to the client. Amending the fee or milestones will NOT re-send it, and the client may hold an agreement stating the original terms — a staff note will record the change. Continue?')) return;
@@ -1876,6 +1890,7 @@ function hydrateRetainer(d){
   rebuildMilestones(plan.milestones||[]);
   if(d.familyMemberTypes&&d.familyMemberTypes.length) FAMILY_TYPES=d.familyMemberTypes;
   rebuildFamily(d.familyMembers||[]);
+  rpUpdateSvQuestion();
   renderMilestonePayments(d.milestonePayments||[]);
   var flag=annex.code?(annex.needsVerify?'<span class="rp-flag verify">verify</span>':'<span class="rp-flag high">high</span>'):'';
   rpEl('rp-suggestion').innerHTML='<div class="rp-sugg"><b>Suggested:</b> '+escHtml(RP_TPL_LABELS[plan.template]||plan.template||'—')+' · '+(annex.code?('['+escHtml(annex.code)+'] '+escHtml(annex.label||'')):'no annex auto-selected')+flag+(annex.basis?('<br><span class="muted">'+escHtml(annex.basis)+'</span>'):'')+(d.saved?' <span class="muted">· saved plan loaded</span>':'')+'</div>';
@@ -2009,6 +2024,69 @@ function collectFamily(){
       countryOfResidence:((tr.querySelector('.f-residence')||{}).value||'').trim(), accompanying:!!((tr.querySelector('.f-acc')||{}).checked) };
   }).filter(function(m){ return m.type; });
 }
+// ── Super Visa: both parents? (2026-10-24 — on 2026-10-23 none of the 21 Super
+// Visa cases had the second parent, so one parent got no questionnaire and no
+// documents). The second parent is ONE accompanying Spouse row; "Parent" has no
+// Super Visa documents. The box above the list says what the list holds; the
+// question itself is asked at Retain & send. Nothing is stored or remembered:
+// the list is the only truth.
+function rpIsSuperVisa(){ var ct=(rpEl('rp-casetype')&&rpEl('rp-casetype').value)||RP_PLAN_CT||''; return /^super\\s*visa$/i.test(String(ct).trim()); }
+function svCounts(fam){
+  var c={ spouse:0, parent:0, name:'' };
+  (fam||[]).forEach(function(m){ if(!m.accompanying) return; if(m.type==='Spouse'){ c.spouse++; if(!c.name) c.name=m.name||''; } if(m.type==='Parent') c.parent++; });
+  return c;
+}
+/* Something wrong in the list ('' when not). Shared by the box and the send check. */
+function svProblem(c){
+  if(c.spouse>1) return 'Two Spouse rows are ticked “Accomp.” — a Super Visa has one second parent. Remove one.';
+  if(c.parent&&c.spouse) return 'Both a Spouse and a “Parent” are ticked “Accomp.” — if they are the same person, remove the “Parent” row (a Super Visa has no documents for that type).';
+  if(c.parent) return 'A family member is listed as “Parent” — a Super Visa has no documents for that type. Change that row’s Type to Spouse.';
+  return '';
+}
+function rpUpdateSvQuestion(){
+  var box=rpEl('rp-sv'); if(!box) return;
+  var sv=rpIsSuperVisa();
+  box.style.display=sv?'':'none';
+  if(!sv) return;
+  var c=svCounts(collectFamily()), problem=svProblem(c), one=(c.spouse===1&&!problem);
+  var status=problem||(one?('Second parent listed: '+(c.name||'Spouse — no name yet')+'.'):'Only one parent is listed. If both parents are applying, add the second parent as an accompanying Spouse (not “Parent”).');
+  var editable=!(RP_LOCKED&&!RP_AMEND), text;
+  if(RP_LIST_USED){
+    // signed and the case is open: the list was read when the case was set up
+    text='The client has signed — this list was read when the case was set up, and changes here no longer reach the case. '+(
+      one ? 'Check that the case page’s Family card shows the second parent as Spouse (not “Parent”) — if they show as Parent, ask an admin to change them; do not add them again.'
+      : (c.parent&&!c.spouse) ? 'If the second parent is on the case as “Parent”, ask an admin to change them to Spouse — do not add them again.'
+      : problem ? 'Check the case page’s Family card and ask an admin to fix it.'
+      : 'If both parents are applying, add the second parent on the case page: Family card → ➕ Add family member → Spouse.');
+  } else if(RP_RETAINED){
+    // signed, but no case yet: this list is what the case gets when it opens
+    text='The client has signed but the case is not open yet — '+(one ? 'this list reaches the case when it opens. ' : editable ? '' : 'press ✎ Amend, fix the list and Save so the case gets it. ')+status;
+  } else if(RP_SENT&&!editable){
+    text='The agreement is sent — press ✎ Amend to change this list (it reaches the case when the client signs). '+status;
+  } else {
+    text=status;
+  }
+  var hint=rpEl('rp-sv-hint');
+  hint.className='rp-sv-hint'+(one?'':' need');
+  hint.textContent=text;
+  var add=rpEl('rp-sv-add');
+  if(add) add.style.display=(!RP_LIST_USED&&editable&&!c.spouse&&!c.parent)?'':'none';
+}
+function svAddSecondParent(){
+  addFamily();
+  var rows=document.querySelectorAll('#family-body tr'), tr=rows[rows.length-1];
+  var nm=tr&&tr.querySelector('.f-name');
+  if(nm){ nm.placeholder='Second parent’s full name'; nm.focus(); }
+  RP_PLAN_SAVED=false; applyRetainerLock();
+}
+/** Before Retain & send: '' when fine, else the question to confirm (Super Visa only). */
+function svSendCheck(){
+  if(!rpIsSuperVisa()) return '';
+  var c=svCounts(collectFamily()), problem=svProblem(c);
+  if(problem) return problem;
+  if(!c.spouse) return 'This Super Visa lists ONE parent. Are both parents applying? If so, Cancel and add the second parent as an accompanying Spouse — otherwise they get no questionnaire and no documents.';
+  return '';
+}
 function feeCentsNow(){ var fe=rpEl('fee'); var f=Number(String((fe&&fe.value)||'').replace(/[^0-9.]/g,'')); return f>0?Math.round(f*100):0; }
 function collectMilestones(){
   return Array.prototype.map.call(document.querySelectorAll('#milestone-body tr'),function(tr,i){
@@ -2084,6 +2162,7 @@ function rpUpdateAdFeeVisibility(){
 }
 function rpPopulateSubtypes(){
   rpUpdateAdFeeVisibility();
+  rpUpdateSvQuestion();
   var sel=rpEl('rp-subtype'); if(!sel) return;
   var ct=rpEl('rp-casetype')?rpEl('rp-casetype').value:'';
   var subs=(RP_CT_OPTS&&RP_CT_OPTS.subTypesByCase&&RP_CT_OPTS.subTypesByCase[ct])||[];
@@ -2234,7 +2313,10 @@ function initActions(){
   var ctSel=rpEl('rp-casetype'); if(ctSel) ctSel.onchange=function(){ RP_PLAN_CT=this.value; RP_PLAN_ST=''; rpPopulateSubtypes(); };
   var stSel=rpEl('rp-subtype'); if(stSel) stSel.onchange=function(){ RP_PLAN_ST=this.value; };
   rpEl('rp-add-mile').onclick=addMile;
-  rpEl('rp-add-family').onclick=addFamily;
+  rpEl('rp-add-family').onclick=function(){ addFamily(); rpUpdateSvQuestion(); };
+  var svAdd=rpEl('rp-sv-add'); if(svAdd) svAdd.onclick=svAddSecondParent;
+  var famBody=rpEl('family-body');
+  if(famBody){ famBody.addEventListener('change', rpUpdateSvQuestion); famBody.addEventListener('click', function(e){ if(e.target&&e.target.getAttribute&&e.target.getAttribute('data-rmf')) setTimeout(rpUpdateSvQuestion,0); }); }
   rpEl('rp-split-mile').onclick=splitMilestones;
   rpEl('rp-hst').oninput=updateMileSum;
   rpEl('btn-retainer-preview').onclick=previewRetainer;
@@ -2252,6 +2334,11 @@ function initActions(){
       return;
     }
     if(errEl) errEl.style.display='none';
+    var svMsg=svSendCheck();
+    if(svMsg && !window.confirm(svMsg+'\\n\\nOK sends the agreement as it is. Cancel to change the family list first.')){
+      var box=rpEl('rp-sv'); if(box&&box.scrollIntoView) box.scrollIntoView({block:'center'});
+      return;
+    }
     var confirmMsg = rpEl('rp-template').value==='pa-inviter'
       ? 'Retain this client and email the retainer agreement to BOTH signers now — the client and the Inviter/Sponsor/Dependent? It completes only when both have signed.'
       : 'Retain this client and email the retainer agreement (stating the fee) to them now?';

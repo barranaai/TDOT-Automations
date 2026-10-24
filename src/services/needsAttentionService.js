@@ -110,6 +110,7 @@ const KINDS = {
   'no-checklist':  { order: 41, severity: 'high',   label: 'Paid, but no document checklist' },
   'not-started':   { order: 42, severity: 'high',   label: 'Signed and paid, but onboarding did not start' },
   'family-missing':{ order: 43, severity: 'high',   label: 'Accompanying family not recorded' },
+  'sv-second-parent':{ order: 44, severity: 'high', label: 'Super Visa: second parent not on the case as Spouse' },
   'on-hold':       { order: 50, severity: 'medium', label: 'Paid, onboarding waiting for signatures' },
   'intake-email':  { order: 60, severity: 'medium', label: '"Your case is ready" email not confirmed' },
   'sponsor-email': { order: 61, severity: 'medium', label: 'Sponsor email not sent' },
@@ -254,6 +255,19 @@ const BEFORE_CHECKLIST = ['', 'Not Started', 'Pre-Onboarding', 'Retainer Confirm
 function needsFamilyCheck(c) {
   return !!c.ref && !isTestCase(c) && !isClosed(c) && !isLegacy(c) && isPaid(c) && !BEFORE_CHECKLIST.includes(c.stage) && saysAccompanying(c.subType);
 }
+/* A Super Visa usually brings BOTH parents, but the second one is on the case
+   only when someone added them (the retainer panel's family list, or ➕ Add
+   family member) — as Spouse. On 2026-10-23 none of the 21 Super Visa cases had
+   one, and a case named for two people (2026-SV-021 "Udhav Raj Sharma & Meena
+   Sharma") had one questionnaire and one parent's documents. The name is the
+   only sign of a second person the app has; a one-parent case named that way
+   is closed with Mark handled. Legacy cases count too (2026-SV-017 sits in that
+   group with an app-built checklist). */
+const isSuperVisa = (t) => /^super\s*visa$/i.test(String(t || '').trim());
+const TWO_PEOPLE_RE = /\s&\s|\sand\s|\/|\s\+\s/i;
+function needsSecondParentCheck(c) {
+  return !!c.ref && !isTestCase(c) && !isClosed(c) && isPaid(c) && !BEFORE_CHECKLIST.includes(c.stage) && isSuperVisa(c.caseType) && TWO_PEOPLE_RE.test(String(c.name || ''));
+}
 
 function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), checklistFamily = new Map(), manifestFamily = new Map(), balances = new Map(), now }) {
   const out = [];
@@ -295,6 +309,30 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
       since: c.created,
       why: 'No Primary Case Type is set, so the case has no case number (and no portal or folder yet).',
       todo: 'Set the Primary Case Type on the Cases board — the case number is then created automatically.',
+    });
+  }
+
+  // ── 1c. Super Visa named for two people, no second parent on the board ───
+  for (const c of live) {
+    if (!needsSecondParentCheck(c)) continue;
+    if (c.paidDate ? now - c.paidDate < GRACE_PAID_DAY_MS : now - c.created < GRACE_SETUP_MS) continue;
+    const types = family.get(c.ref);
+    if (!(types instanceof Set)) continue;                         // not read (an outage) — no claim
+    if (types.has('Spouse')) continue;
+    if (types.has('Parent')) {
+      // the second parent was entered as "Parent": a Super Visa has no documents
+      // for that type — adding them again as Spouse would list the person twice
+      add('sv-second-parent', c, `${c.id}|sv-parent-type`, {
+        since: c.paidDate || c.created,
+        why: `The case is named for two people ("${c.name}") and the second parent is on the Family Members board as "Parent" — a Super Visa has no documents for that type, and their questionnaire section is the short one.`,
+        todo: 'Tell an admin: the member must be changed from Parent to Spouse (their Family Members row and their questionnaire section), then flip Re-seed Checklist → Run so their documents are added — adding them again with ➕ Add family member would list the same person twice. If only one parent is applying, press Mark handled.',
+      });
+      continue;
+    }
+    add('sv-second-parent', c, `${c.id}|sv-second-parent`, {
+      since: c.paidDate || c.created,
+      why: `The case is named for two people ("${c.name}"), but the Family Members board has no second parent (Spouse) — so only one parent has a questionnaire, and a checklist the app built lists one parent's documents.`,
+      todo: 'On the case page, Family card → "➕ Add family member" → Spouse, with the second parent\'s full name — it adds their questionnaire section on the client\'s existing link and their documents (an older checklist that already lists them is left as it is). If only one parent is applying, press Mark handled.',
     });
   }
 
@@ -824,7 +862,9 @@ async function buildSnapshot() {
 
   // Accompanying-family sub types: who is on the Family Members board?
   const family = new Map();
-  const famRefs = [...new Set(cases.filter((c) => needsFamilyCheck(c)).map((c) => c.ref))];
+  const famCheckRefs = new Set(cases.filter((c) => needsFamilyCheck(c)).map((c) => c.ref));
+  // …and the Super Visa cases named for two people (the board read only — no checklist/questionnaire read)
+  const famRefs = [...new Set([...famCheckRefs, ...cases.filter((c) => needsSecondParentCheck(c)).map((c) => c.ref)])];
   const famAnswers = await eachLimited(famRefs, 4, (ref) => io.familyTypes(ref));
   let famUnknown = 0;
   famRefs.forEach((ref, i) => { family.set(ref, famAnswers[i].ok ? famAnswers[i].value : null); if (!famAnswers[i].ok) famUnknown++; });
@@ -832,7 +872,7 @@ async function buildSnapshot() {
   // them anyway? (A checklist built the old Template-board way lists every
   // member type whatever the board says — those cases are not missing family.)
   const checklistFamily = new Map();
-  const noFamRefs = famRefs.filter((ref) => family.get(ref) instanceof Set && !ACCOMPANYING_TYPES.some((t) => family.get(ref).has(t)));
+  const noFamRefs = famRefs.filter((ref) => famCheckRefs.has(ref) && family.get(ref) instanceof Set && !ACCOMPANYING_TYPES.some((t) => family.get(ref).has(t)));
   const clAnswers = await eachLimited(noFamRefs, 4, (ref) => io.checklistMemberTypes(ref));
   noFamRefs.forEach((ref, i) => { checklistFamily.set(ref, clAnswers[i].ok ? clAnswers[i].value : null); if (!clAnswers[i].ok) famUnknown++; });
   // …and does the questionnaire? (it decides the wording, and whether a
