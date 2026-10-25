@@ -121,8 +121,10 @@ test('status route: signed in, the job of THIS case, the viewer may see the case
 function pageSandbox({ responses, stored = '' } = {}) {
   const html = require('../src/routes/adminCase').buildCockpitHTML('2026-CEC-PS-085');
   const js = html.slice(html.lastIndexOf('<script>') + 8, html.lastIndexOf('</script>'));
-  const seg = js.slice(js.indexOf('function famAdd()'), js.indexOf('// Create case folder'));
-  assert.ok(seg.length > 1000 && /function famResume/.test(seg));
+  // the page's own role-naming helper (a Super Visa's "Second parent"; plain on this CEC case) rides along
+  const role = js.slice(js.indexOf("var CASE_TYPE = '', CASE_SUB_TYPE = '';"), js.indexOf('function roleName('));
+  const seg = role + '\n' + js.slice(js.indexOf('function famAdd()'), js.indexOf('// Create case folder'));
+  assert.ok(role.length > 100 && seg.length > 1000 && /function famResume/.test(seg));
   const els = { 'fam-type': { value: 'Spouse / Common-Law Partner' }, 'fam-name': { value: 'Samirul Nazrul Shaikh' }, 'fam-add-btn': { disabled: false } };
   const msgs = [], fetches = [], timers = [], store = stored ? { ['tdot_fam_job:2026-CEC-PS-085']: stored } : {};
   let loads = 0, clock = 1e12;

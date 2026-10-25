@@ -2159,7 +2159,7 @@ async function markMemberSubmitted({ clientName, caseRef, memberKey }) {
  * @param {{ itemId, caseRef, caseType, formKey, formLabel, completionPct }} params
  *   caseType is required for threshold lookup and stage gate calls.
  */
-async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, completionPct, clientName, formFiles }) {
+async function markSubmitted({ itemId, caseRef, caseType, caseSubType = '', formKey, formLabel, completionPct, clientName, formFiles }) {
   const pct = Math.round(completionPct);
 
   // ── Step 0: Extract member key from formKey ───────────────────────────────
@@ -2173,7 +2173,8 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
   if (clientName) {
     try {
       await markMemberSubmitted({ clientName, caseRef, memberKey });
-      members = await loadMembers({ clientName, caseRef });
+      // named for the case in the note (a Super Visa's "Second parent")
+      members = require('../utils/familyRoleLabels').decorateMembers(caseType, await loadMembers({ clientName, caseRef }), caseSubType);
       const member = members.find(m => m.key === memberKey);
       memberLabel = member?.label || '';
     } catch (err) {
@@ -2311,7 +2312,7 @@ async function markSubmitted({ itemId, caseRef, caseType, formKey, formLabel, co
  * @param {{ itemId, caseRef, caseType, formLabel, clientName, memberSubmissions }} params
  *   memberSubmissions: [{ formKey, fields, completionPct }]
  */
-async function markAllSubmitted({ itemId, caseRef, caseType, formLabel, clientName, memberSubmissions, formFiles }) {
+async function markAllSubmitted({ itemId, caseRef, caseType, caseSubType = '', formLabel, clientName, memberSubmissions, formFiles }) {
   // ── Step 1: Mark all members submitted in the manifest ────────────────────
   const perMember = [];
   for (const sub of memberSubmissions) {
@@ -2328,7 +2329,7 @@ async function markAllSubmitted({ itemId, caseRef, caseType, formLabel, clientNa
   // ── Step 2: Re-load manifest and calculate aggregate readiness ────────────
   let members = [];
   try {
-    members = await loadMembers({ clientName, caseRef });
+    members = require('../utils/familyRoleLabels').decorateMembers(caseType, await loadMembers({ clientName, caseRef }), caseSubType);   // named for the case in the note
   } catch (err) {
     console.warn(`[HtmlQ] Could not load members for ${caseRef}: ${err.message}`);
   }
@@ -4084,7 +4085,7 @@ ${hasAdditionalForm ? `
     if (member.type !== 'Principal Applicant') {
       var typeBadge = document.createElement('span');
       typeBadge.className = 'mm-section-badge';
-      typeBadge.textContent = member.type.split(' / ')[0];
+      typeBadge.textContent = member.badge || member.type.split(' / ')[0];
       header.appendChild(typeBadge);
     }
     if (member.status === 'Submitted') {
@@ -5197,7 +5198,7 @@ input[disabled], select[disabled], textarea[disabled] {
   var STAFF_NAME  = ${jsEmbed(String(staffName))};
   var SAVED_DATA  = ${jsEmbed(savedFields)};
   var flags       = ${jsEmbed(savedFlags)};
-  var REVIEW_MEMBERS = ${jsEmbed(isMultiMember ? members.map(m => ({ key: m.key, type: m.type, label: m.label, fields: m.fields, flags: m.flags })) : [])};
+  var REVIEW_MEMBERS = ${jsEmbed(isMultiMember ? members.map(m => ({ key: m.key, type: m.type, badge: m.badge || '', label: m.label, fields: m.fields, flags: m.flags })) : [])};
   var IS_MULTI_REVIEW = REVIEW_MEMBERS.length > 1;
   var REVIEW_KEY_SUFFIX = ${jsEmbed(formKeySuffix || '')};
 
@@ -6142,7 +6143,7 @@ input[disabled], select[disabled], textarea[disabled] {
     if (m.type !== 'Principal Applicant') {
       var typeBadge = document.createElement('span');
       typeBadge.className = 'mm-review-section-label';
-      typeBadge.textContent = m.type.split(' / ')[0];
+      typeBadge.textContent = m.badge || m.type.split(' / ')[0];
       header.appendChild(typeBadge);
     }
     if (chevron) header.appendChild(chevron.cloneNode(true));

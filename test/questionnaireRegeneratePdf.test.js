@@ -286,3 +286,15 @@ test('endpoint + listFiles + driver pins', () => {
   assert.match(server.slice(i), /editedAfterSubmission === 'render' \? 'render' : 'skip'/, 'endpoint whitelists the option');
   assert.doesNotMatch(drv, /mutation/, 'driver never mutates Monday');
 });
+
+test('regenerateCasePdfs: on a Super Visa the covers say "First parent (principal applicant)" / "Second parent" — and the admin route passes the case type, so a regenerate never writes "Spouse" back over them', async () => {
+  const manifest = { members: [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant' }, { key: 'spouse-1', type: 'Spouse / Common-Law Partner', label: 'Spouse' }] };
+  const mk = () => harness({ files: [F('primary'), P('primary'), F('spouse-1'), P('spouse-1'), `questionnaire-members-${CASE}.json`], store: { [F('primary')]: answered(1), [F('spouse-1')]: answered(2) }, manifest });
+  const sv = byKey(await run(mk().svc, { caseType: 'Supervisa', caseSubType: 'Parents' }));
+  assert.deepEqual([sv.primary.memberLabel, sv['spouse-1'].memberLabel], ['First parent (principal applicant)', 'Second parent']);
+  const plain = byKey(await run(mk().svc));
+  assert.deepEqual([plain.primary.memberLabel, plain['spouse-1'].memberLabel], ['Primary Applicant', 'Spouse'], 'no case type → the manifest labels, as before');
+  const srv = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
+  assert.match(srv, /const \{ clientName, formFiles, caseType, caseSubType \} = await svc\.validateAccessForStaff\(caseRef, \{ skipFormVersioning: true \}\);/, 'the admin route reads the case type');
+  assert.match(srv, /regenerateCasePdfs\(\{\n\s+clientName, caseRef, formFiles, caseType: caseType \|\| '', caseSubType: caseSubType \|\| '',/, '…and passes it');
+});

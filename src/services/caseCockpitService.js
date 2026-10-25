@@ -124,6 +124,7 @@ function summariseDocuments(items) {
 
     const cat = it.category || 'Other';
     const member = it.applicantType || 'Principal Applicant';
+    const memberLabel = it.applicantLabel || member;         // what pages SHOW (a Super Visa's "Second parent")
     // id + notes + upload date power the Documents tab's INLINE actions
     // (mark reviewed / request rework) — not just the read-only summary.
     const row = {
@@ -131,6 +132,7 @@ function summariseDocuments(items) {
       name:          it.name,
       status:        s,
       applicantType: member,
+      applicantLabel: memberLabel,
       lastUpload:    it.lastUpload || '',
       reviewNotes:   it.reviewNotes || '',
       // the reason split server-side: the cockpit script may carry no backslash
@@ -141,8 +143,8 @@ function summariseDocuments(items) {
     if (!catMap.has(cat)) catMap.set(cat, []);
     catMap.get(cat).push(row);
 
-    if (!memMap.has(member)) memMap.set(member, new Map());
-    const cm = memMap.get(member);
+    if (!memMap.has(member)) memMap.set(member, { label: memberLabel, cats: new Map() });
+    const cm = memMap.get(member).cats;
     if (!cm.has(cat)) cm.set(cat, []);
     cm.get(cat).push(row);
   }
@@ -154,8 +156,8 @@ function summariseDocuments(items) {
   const memberRank = (m) => (/principal applicant/i.test(m) ? 0 : 1);
   const byMember = [...memMap.entries()]
     .sort((a, b) => memberRank(a[0]) - memberRank(b[0]) || a[0].localeCompare(b[0]))
-    .map(([member, cm]) => ({ member, categories: [...cm.entries()].map(([category, list]) => ({ category, items: list })) }));
-  return { counts, byCategory, byMember, rework: rework.map((r) => ({ name: r.name, applicantType: r.applicantType })),
+    .map(([member, cm]) => ({ member: cm.label, applicantType: member, categories: [...cm.cats.entries()].map(([category, list]) => ({ category, items: list })) }));
+  return { counts, byCategory, byMember, rework: rework.map((r) => ({ name: r.name, applicantType: r.applicantType, applicantLabel: r.applicantLabel || r.applicantType })),
     notApplicableEnabled: na.isReady() };
 }
 
@@ -377,7 +379,7 @@ async function getCaseOverview(caseRef) {
       flags:     Object.keys(m.flags || {}),
     })),
     questionnaire: {
-      members:   qMembers.map((m) => ({ key: m.key, type: m.type, label: m.label, status: m.status, hasData: !!m.hasData, submittedAt: torontoWallClock(m.submittedAt) })),
+      members:   require('../utils/familyRoleLabels').decorateMembers(caseType, qMembers, caseSubType).map((m) => ({ key: m.key, type: m.type, badge: m.badge || '', label: m.label, status: m.status, hasData: !!m.hasData, submittedAt: torontoWallClock(m.submittedAt) })),
       submitted: qMembers.filter((m) => m.status === 'Submitted').length,
       total:     qMembers.length,
     },

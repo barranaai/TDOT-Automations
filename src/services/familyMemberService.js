@@ -232,7 +232,9 @@ async function addFamilyMember(p) {
   return o.result;
 }
 
-async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', source = 'staff', actor = null, reseedMode = 'await', caseSubType = '', forms = null }) {
+async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', source = 'staff', actor = null, reseedMode = 'await', caseType = '', caseSubType = '', forms = null }) {
+  // what this role is called on this case (a Super Visa's "Second parent")
+  const shownRole = require('../utils/familyRoleLabels').roleLabelOr(caseType, boardType, SHORT[boardType] || boardType, caseSubType);
   if (!PORTAL_TO_BOARD[BOARD_TO_PORTAL[boardType]]) throw badRequest(`Unknown member type "${boardType}".`);
   if (!caseRef || !cmItemId) throw badRequest('caseRef and cmItemId are required.');
   const portalType = BOARD_TO_PORTAL[boardType];
@@ -254,7 +256,7 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
   try { manifest = await io.manifest({ clientName, caseRef }); }
   catch (_) { throw transient(TRANSIENT_MSG); }
   if (SINGLETON.has(boardType) && !manifest && boardRows.some((r) => r.boardType === boardType)) {
-    throw badRequest(`A ${SHORT[boardType].toLowerCase()} is already on this case.`);
+    throw badRequest(`A ${shownRole.toLowerCase()} is already on this case.`);
   }
   // No member list yet: build it NOW from the board rows held (never a later,
   // lagging board read), so every board member — named or not — has its key
@@ -286,10 +288,10 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
     }
   }
   if (!complete && SINGLETON.has(boardType) && boardRows.some((r) => r.boardType === boardType)) {
-    throw badRequest(`A ${SHORT[boardType].toLowerCase()} is already on this case.`);
+    throw badRequest(`A ${shownRole.toLowerCase()} is already on this case.`);
   }
   const memberKey = adopt ? adopt.key : complete ? complete.memberKey : nextMemberKey(boardType, { boardRows, manifestMembers: manifest || [] });
-  if (!memberKey) throw badRequest(`A ${SHORT[boardType].toLowerCase()} is already on this case.`);
+  if (!memberKey) throw badRequest(`A ${shownRole.toLowerCase()} is already on this case.`);
   const realName = (n) => { const c = cleanName(n); return c && !isPlaceholderName(c) ? c : ''; };
   const rowName = label || realName(adopt && adopt.label) || (complete && cleanName(complete.name)) || placeholderName(boardType, memberKey, source);
   const newMember = { role: BOARD_TO_ROLE[boardType], name: rowName, memberKey, flags: {} };
@@ -317,7 +319,7 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
   try {
     if (adopt) { manifestState = 'adopted'; sectionLabel = adopt.label || ''; }
     else {
-      const sectionName = label || realName(complete && complete.name) || undefined;
+      const sectionName = label || realName(complete && complete.name) || undefined;   // the pages name a default-labelled member (a Super Visa's "Second parent")
       const added = await io.addManifestMember({ clientName, caseRef, memberType: portalType, label: sectionName, key: memberKey });
       manifestState = complete ? 'completed' : listCreated ? 'created' : 'added';
       sectionLabel = (added && added.label) || sectionName || '';
@@ -332,7 +334,7 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
   let rowId = '';
   if (!complete) try { rowId = await io.createRow({ caseRef, cmItemId, row: { name: rowName, memberType: boardType, memberKey } }); }
   catch (err) {
-    await io.postNote(cmItemId, `⚠ <b>Family member half-added</b> — ${esc(boardType)} "${esc(rowName)}" by ${esc(who)}: the questionnaire section exists, but the Family Members row could not be created (${esc(err.message)}). Press ➕ Add family member on the case page again — it completes the row and the document rows.`).catch(() => {});
+    await io.postNote(cmItemId, `⚠ <b>Family member half-added</b> — ${esc(shownRole)} "${esc(rowName)}" by ${esc(who)}: the questionnaire section exists, but the Family Members row could not be created (${esc(err.message)}). Press ➕ Add family member on the case page again — it completes the row and the document rows.`).catch(() => {});
     const e = transient(`The questionnaire section was added, but the Family Members row could not be created (${err.message}). Press Add family member again in a minute — it completes the row.`);
     e.member = { key: memberKey, type: portalType, label: sectionLabel || portalType.split(' / ')[0] }; e.manifestAdded = true;
     throw e;
@@ -406,13 +408,14 @@ async function addOne({ caseRef, cmItemId, clientName, boardType, name = '', sou
           if (schema && !covers(schema)) {
             const elsewhere = css.listForCaseType(state.caseType).some((s) => s !== schema && covers(s));
             result.hint = elsewhere
-              ? `The Case Sub Type "${state.subType || caseSubType}" has no documents for a ${SHORT[boardType].toLowerCase()} — change it to the variant with family and press Re-seed Checklist.`
-              : `This case type's checklist has no documents for a ${SHORT[boardType].toLowerCase()} — add any they need by hand.`;
+              ? `The Case Sub Type "${state.subType || caseSubType}" has no documents for a ${shownRole.toLowerCase()} — change it to the variant with family and press Re-seed Checklist.`
+              : `This case type's checklist has no documents for a ${shownRole.toLowerCase()} — add any they need by hand.`;
           }
         }
       }
     }
-    await io.postNote(cmItemId, note({ caseRef, boardType, rowName, who, manifestState, reseed: result.reseed, stage: result.stage, hint: result.hint, carry: result.carry, qReopened: result.qReopened })).catch((err) => console.warn(`[Family] note failed for ${caseRef}: ${err.message}`));
+    const roleShown = require('../utils/familyRoleLabels').roleLabelOr((state && state.caseType) || caseType, boardType, boardType, (state && state.subType) || caseSubType);
+    await io.postNote(cmItemId, note({ caseRef, boardType: roleShown, rowName, who, manifestState, reseed: result.reseed, stage: result.stage, hint: result.hint, carry: result.carry, qReopened: result.qReopened })).catch((err) => console.warn(`[Family] note failed for ${caseRef}: ${err.message}`));
     console.log(`[Family] ${caseRef}: ${boardType} "${rowName}" (${memberKey}) added by ${source}; manifest ${manifestState}; reseed ${JSON.stringify(result.reseed)}`);
   };
   if (reseedMode === 'background') {

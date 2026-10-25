@@ -95,6 +95,39 @@ async function getClientName(caseRef) {
  * Fetch the disclaimer text matching the case's Primary Case Type + Sub Type.
  * Falls back to a generic disclaimer if no exact match is found.
  */
+/** The case's Primary Case Type + Case Sub Type (one read of the Client Master row); '' when unreadable. */
+async function getCaseTypeCells(caseRef) {
+  try {
+    const data = await mondayApi.query(
+      `query($boardId: ID!, $caseRef: String!) {
+         items_page_by_column_values(
+           limit: 1,
+           board_id: $boardId,
+           columns: [{ column_id: "${CM_CASE_REF_COL}", column_values: [$caseRef] }]
+         ) {
+           items {
+             column_values(ids: ["${CM_CASE_TYPE_COL}", "${CM_SUB_TYPE_COL}"]) { id text }
+           }
+         }
+       }`,
+      { boardId: String(CM_BOARD_ID), caseRef }
+    );
+    const cols = data?.items_page_by_column_values?.items?.[0]?.column_values || [];
+    return { caseType: cols.find(c => c.id === CM_CASE_TYPE_COL)?.text?.trim() || '', subType: cols.find(c => c.id === CM_SUB_TYPE_COL)?.text?.trim() || '' };
+  } catch (err) {
+    console.warn(`[DocForm] Case type lookup failed for "${caseRef}": ${err.message}`);
+    return { caseType: '', subType: '', failed: true };
+  }
+}
+
+/** Pure: the disclaimer for a case type + sub type. */
+function disclaimerFor({ caseType, subType }) {
+  const map  = getDisclaimerMap();
+  const key  = `${caseType}|${subType}`;
+  const fallback = map[`${caseType}|`] || DEFAULT_DISCLAIMER;
+  return map[key] || fallback;
+}
+
 async function getDisclaimerForCase(caseRef) {
   try {
     const data = await mondayApi.query(
@@ -179,7 +212,7 @@ async function getCategoryFromTemplate(intakeId) {
  *     per-member document reads as "Principal Applicant".
  * @returns {{ resolved: object|null, applicantType: string, applicantLabel: string }}
  */
-function applicantLabelFor({ intakeId, templateApplicantType = '', execApplicantType = '' }) {
+function applicantLabelFor({ intakeId, templateApplicantType = '', execApplicantType = '', caseType = '', subType = '' }) {
   const id = String(intakeId || '');
   let resolved = null;
   if (id.startsWith('code:')) {
@@ -188,9 +221,11 @@ function applicantLabelFor({ intakeId, templateApplicantType = '', execApplicant
     catch (err) { console.warn(`[DocForm] Schema role lookup failed for ${id}: ${err.message}`); }
   }
   const applicantType = templateApplicantType || execApplicantType || 'Principal Applicant';
+  // A Template-built row has no schema role: its own type, named for the case
+  // type (a Super Visa's "Spouse / Common-Law Partner" is the second parent).
   const applicantLabel = resolved && resolved.role.label
     ? resolved.role.label + (resolved.memberIndex > 1 ? ` ${resolved.memberIndex}` : '')
-    : applicantType;
+    : require('../utils/familyRoleLabels').roleLabelOr(caseType, applicantType, applicantType, subType);
   return { resolved, applicantType, applicantLabel };
 }
 
@@ -237,7 +272,7 @@ function resolveUploadCategory({ templateCategory = '', catText = '', mirror = '
  *
  * Returns items sorted by category then document code.
  */
-async function getCaseDocuments(caseRef) {
+async function getCaseDocuments(caseRef, { caseType = '' } = {}) {
   // ── Step 1: Execution Board items for this case ───────────────────────────
   const execData = await mondayApi.query(
     `query($boardId: ID!, $caseRef: String!) {
@@ -325,8 +360,9 @@ async function getCaseDocuments(caseRef) {
       // (applicantLabelFor), so a schema-seeded "code:" row shows the role's
       // DISPLAY label and its per-document guidance.
       const { resolved, applicantType, applicantLabel } = applicantLabelFor({
-        intakeId, templateApplicantType: tmpl.applicantType || '', execApplicantType: c(EXEC_APPLICANT_TYPE_COL),
+        intakeId, templateApplicantType: tmpl.applicantType || '', execApplicantType: c(EXEC_APPLICANT_TYPE_COL), caseType,
       });
+      const templateRow = !resolved;    // no schema role: the member is named by the row's own type (see getCaseSummary)
 
       return {
         id:                 item.id,
@@ -336,6 +372,7 @@ async function getCaseDocuments(caseRef) {
         category,
         applicantType,      // internal vocabulary — filters/grouping keys
         applicantLabel,     // human-facing — what pages should DISPLAY
+        templateRow,
         lastUpload:         c(UPLOAD_DATE_COL),
         description:        tmpl.description        || '',
         clientInstructions: tmpl.clientInstructions || (resolved && resolved.doc.guidance) || '',
@@ -457,11 +494,12 @@ async function getAllowedApplicantTypesFromManifest({ caseRef, clientName }) {
  * the previous behaviour with no data loss.
  */
 async function getCaseSummary(caseRef) {
-  const [items, clientName, disclaimer] = await Promise.all([
-    getCaseDocuments(caseRef),
-    getClientName(caseRef),
-    getDisclaimerForCase(caseRef),
-  ]);
+  // the case type once (read beside the others): it names a Template-built
+  // row's member (a Super Visa's second parent) and picks the disclaimer
+  const [rawItems, clientName, cells] = await Promise.all([getCaseDocuments(caseRef), getClientName(caseRef), getCaseTypeCells(caseRef)]);
+  const { roleLabelOr } = require('../utils/familyRoleLabels');
+  const items = rawItems.map((it) => (it.templateRow ? { ...it, applicantLabel: roleLabelOr(cells.caseType, it.applicantType, it.applicantLabel, cells.subType) } : it));
+  const disclaimer = cells.failed ? DEFAULT_DISCLAIMER : disclaimerFor(cells);
 
   let filteredItems = items;
   if (clientName) {
@@ -539,9 +577,10 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, rawOriginalName
   let folderText   = cols.find((c) => c.id === DOC_FOLDER_COL)?.text?.trim()      || '';
 
   // Parallel: resolve the Template row (category + member) + get client name
-  const [tmplMeta, clientName] = await Promise.all([
+  const [tmplMeta, clientName, typeCells] = await Promise.all([
     getTemplateMeta(intakeId),   // null unless a real Template item id resolves
     getClientName(caseRef),
+    getCaseTypeCells(caseRef),   // names a Template-built row's member in the upload note (a Super Visa's second parent)
   ]);
   const templateCategory = tmplMeta ? tmplMeta.category : '';
   const category = resolveUploadCategory({ templateCategory, catText, mirror, schemaCategory: categoryFromSchemaCode(intakeId) });
@@ -549,7 +588,7 @@ async function uploadFileToOneDrive(itemId, caseRef, fileBuffer, rawOriginalName
     console.warn(`[DocForm] Category fell back to "General" for item ${itemId} (intakeId="${intakeId}", catText="${catText}", mirror="${mirror}")`);
   }
   const { resolved, applicantType, applicantLabel } = applicantLabelFor({
-    intakeId, templateApplicantType: tmplMeta ? tmplMeta.applicantType : '', execApplicantType,
+    intakeId, templateApplicantType: tmplMeta ? tmplMeta.applicantType : '', execApplicantType, caseType: typeCells.caseType, subType: typeCells.subType,
   });
 
   console.log(
@@ -1040,6 +1079,7 @@ module.exports = {
   markDocumentReceived,
   onStatusWriteFailed,
   applicantLabelFor,
+  getCaseTypeCells,
   io,
   normApplicantType, // exported for tests (manifest-filter label matching)
   resolveUploadCategory, isTemplateItemId, categoryFromSchemaCode, // exported for tests (upload folder resolution)

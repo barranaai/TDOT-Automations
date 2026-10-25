@@ -701,6 +701,12 @@ function parseSubmissionUpdates(updates) {
  *   5. otherwise: draft
  * @returns {{ submitted: boolean, via: string, submittedAt?: string|null, uncertain?: boolean }}
  */
+/** The member's name on a cover: the manifest label, named for the case (a Super Visa's "Second parent"). */
+function memberShown(member, memberKey, caseType, caseSubType) {
+  const shown = member ? require('../utils/familyRoleLabels').decorateMembers(caseType, [member], caseSubType)[0].label : '';
+  return shown || (memberKey === 'primary' ? 'Primary Applicant' : memberKey);
+}
+
 function decideSubmission({ formKey, memberKey, member, manifestExists, hasAdditionalSlot, evidence, caseDone, savedAt, legacyPdfAt = null }) {
   const stamp = (member && member.submittedAt) || null;
   if (evidence && evidence.exact.has(formKey)) {
@@ -744,7 +750,7 @@ function decideSubmission({ formKey, memberKey, member, manifestExists, hasAddit
  * Per-form failures are recorded (action 'failed') and the case continues.
  * In dry-run the PDF is still BUILT (not uploaded) so render errors surface.
  */
-async function regenerateCasePdfs({ clientName, caseRef, formFiles = null, qCompletionStatus = '', updates = null, updatesTruncated = false,
+async function regenerateCasePdfs({ clientName, caseRef, formFiles = null, caseType = '', caseSubType = '', qCompletionStatus = '', updates = null, updatesTruncated = false,
                                     skipKeys = [], dryRun = true, createMissing = false, editedAfterSubmission = 'skip', now = Date.now() }) {
   if (!clientName || !caseRef) throw new Error('clientName and caseRef are required');
   const write = dryRun === false;
@@ -810,7 +816,7 @@ async function regenerateCasePdfs({ clientName, caseRef, formFiles = null, qComp
 
       const member = members.find((m) => m && m.key === memberKey) || null;
       if (manifestExists && !member) { r.reason = 'orphan-member'; continue; }
-      r.memberLabel = (member && member.label) || (memberKey === 'primary' ? 'Primary Applicant' : memberKey);
+      r.memberLabel = memberShown(member, memberKey, caseType, caseSubType);
       const fileForLabel = data.formFile || (isAdditional ? (formFiles && formFiles.additional) : (formFiles && formFiles.primary)) || '';
       r.formLabel = formTitleFromFile(fileForLabel) || (isAdditional ? 'Additional Questionnaire' : 'Questionnaire');
       r.completionPct = Number(data.completionPct) || 0;
@@ -880,7 +886,7 @@ async function mapLimit(items, limit, fn) {
  * quietly claims "no corrections").
  * @returns {Promise<{ buffer: Buffer, forms: Array }|null>} null when nothing is saved
  */
-async function exportCasePdf({ clientName, caseRef, formFiles = null, formKey = null, caseDone = false, loadFlags = null }) {
+async function exportCasePdf({ clientName, caseRef, formFiles = null, formKey = null, caseDone = false, loadFlags = null, caseType = '', caseSubType = '' }) {
   if (!clientName || !caseRef) throw new Error('clientName and caseRef are required');
   const files  = await oneDrive.listFiles({ clientName, caseRef, subfolder: QUESTIONNAIRE_SUBFOLDER });
   const byName = new Map(files.map((f) => [f.name, f]));
@@ -936,7 +942,7 @@ async function exportCasePdf({ clientName, caseRef, formFiles = null, formKey = 
     if (!stripLegacyStatutoryPairs(fields).fields.some(isClientAnswer)) continue;   // nothing the client answered (prefill-only / placeholder-only / empty)
     const { formKey: normKey, memberKey, isAdditional } = splitFormKey(storedKey);
     const member = members.find((m) => m && m.key === memberKey) || null;
-    const memberLabel = (member && member.label) || (memberKey === 'primary' ? 'Primary Applicant' : memberKey);
+    const memberLabel = memberShown(member, memberKey, caseType, caseSubType);
     const fileForLabel = data.formFile || (isAdditional ? (formFiles && formFiles.additional) : (formFiles && formFiles.primary)) || '';
     const formLabel = formTitleFromFile(fileForLabel) || (isAdditional ? 'Additional Questionnaire' : 'Questionnaire');
     const savedAt = data.savedAt || null;

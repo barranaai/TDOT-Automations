@@ -158,7 +158,7 @@ async function getCaseDetails(caseRef) {
  *   formFields: [{ key, label, section, value }] — the submitted answers (for label lookup)
  *   flags:      { [key]: { label, section, comment, flaggedBy } }
  */
-async function sendCorrectionEmail({ caseRef, formKey, caseDetails, flags, formFields, staffName }) {
+async function sendCorrectionEmail({ caseRef, formKey, caseDetails, flags, formFields, staffName, memberLabel: shownLabel }) {
   const { itemId, clientEmail, clientName, caseType, accessToken } = caseDetails;
 
   if (!clientEmail) {
@@ -212,9 +212,11 @@ async function sendCorrectionEmail({ caseRef, formKey, caseDetails, flags, formF
   }
   const formUrl = `${BASE_URL}/q/${encodedRef}${tokenParam}${formParam}`;
 
-  // Derive member label from the formKey for the email subject
+  // The member's name for the email: what the review page shows (a real name,
+  // a Super Visa's "Second parent") when the route passes it, else from the formKey
   const memberKey   = formKey.replace(/-additional$/, '');
-  const memberLabel = memberKey !== 'primary'
+  const memberLabel = typeof shownLabel === 'string' ? shownLabel
+    : memberKey !== 'primary'
     ? memberKey.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) // 'child-1' → 'Child 1'
     : '';
   const memberNote  = memberLabel ? ` (${memberLabel})` : '';

@@ -105,10 +105,13 @@ test('phantom-docs audit is read-only and buckets every Received row', () => {
 });
 
 // ── Behavioural: drive uploadFileToOneDrive with stubbed Monday + OneDrive ──
-function freshUploadHarness({ intakeId, catText = '', mirror = '', folderText = '', templateCategory = 'Travel', templateApplicantType = '', execApplicantType = '', docName = 'Passport', storedName, replaced = false, rowNoteFails = false, rowNoteHangs = false } = {}) {
+function freshUploadHarness({ intakeId, catText = '', mirror = '', folderText = '', templateCategory = 'Travel', templateApplicantType = '', execApplicantType = '', docName = 'Passport', storedName, replaced = false, rowNoteFails = false, rowNoteHangs = false, caseType = '', subType = '' } = {}) {
   const calls = { uploads: [], templateLookups: 0, columnWrites: [], updates: 0, updateBodies: [], updateRetries: [], order: [] };
   const fakeMonday = {
     query: async (q, vars, retries) => {
+      if (q.includes('dropdown_mm0xd1qn')) {   // the case type + sub type (names a Super Visa's second parent in the note)
+        return { items_page_by_column_values: { items: [{ column_values: [{ id: 'dropdown_mm0xd1qn', text: caseType }, { id: 'dropdown_mm0x4t91', text: subType }] }] } };
+      }
       if (q.includes('items_page_by_column_values')) {
         // a real tick (not a microtask), so "the CM note lands AFTER the upload returns" is observable
         calls.order.push('cmLookup'); await new Promise((r) => setImmediate(r));
@@ -440,3 +443,23 @@ function realSchemaCode({ role } = {}) {
   }
   return null;
 }
+
+test('(19d) on a Super Visa the row note and the Client Master note say "For: Second parent" — a Template-built spouse row, an exec-typed one (Grandparents: "Second grandparent"); any other case type reads as before', async () => withUniqueNames('1', async () => {
+  const h = freshUploadHarness({ intakeId: '18401700001', templateApplicantType: 'Spouse / Common-Law Partner', catText: 'Identity', folderText: 'Identity Folder - https://folder/Identity', caseType: 'Supervisa', subType: 'Parents' });
+  await h.svc.uploadFileToOneDrive('5', '2026-SV-004', Buffer.from('x'), 'passport.pdf', 'application/pdf');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(h.calls.updateBodies[0].split('\n')[6], 'For: Second parent', 'the row note');
+  assert.match(h.calls.updateBodies[1], /\nFor: Second parent\n/, 'the Client Master note');
+  const g = freshUploadHarness({ intakeId: '', execApplicantType: 'Spouse', catText: 'Identity', folderText: 'Identity Folder - https://folder/Identity', caseType: 'Super Visa', subType: 'Grandparents' });
+  await g.svc.uploadFileToOneDrive('5', '2026-SV-004', Buffer.from('x'), 'passport.pdf', 'application/pdf');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(g.calls.updateBodies[0].split('\n')[6], 'For: Second grandparent');
+  const o = freshUploadHarness({ intakeId: '18401700001', templateApplicantType: 'Spouse / Common-Law Partner', catText: 'Identity', folderText: 'Identity Folder - https://folder/Identity', caseType: 'BOWP' });
+  await o.svc.uploadFileToOneDrive('5', '2026-BOWP-004', Buffer.from('x'), 'passport.pdf', 'application/pdf');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(o.calls.updateBodies[0].split('\n')[6], 'For: Spouse / Common-Law Partner');
+  const none = freshUploadHarness({ intakeId: '18401700001', templateApplicantType: 'Spouse / Common-Law Partner', catText: 'Identity', folderText: 'Identity Folder - https://folder/Identity' });
+  await none.svc.uploadFileToOneDrive('5', '2026-SPE-013', Buffer.from('x'), 'passport.pdf', 'application/pdf');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(none.calls.updateBodies[0].split('\n')[6], 'For: Spouse / Common-Law Partner', 'no case type read → as before');
+}));

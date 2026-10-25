@@ -1175,9 +1175,9 @@ ${buildNavHeader('consultations')}
 
       <div class="subhead" style="margin-top:14px">${I.userCheck} Family members <span class="muted">(consultant-set · only “accompanying” members get a checklist + questionnaire · date of birth / status / residence are optional and pre-fill the member’s questionnaire)</span></div>
       <div class="rp-sv" id="rp-sv" style="display:none">
-        <b>Super Visa — both parents applying?</b>
+        <b id="rp-sv-title">Super Visa — both parents applying?</b>
         <div class="rp-sv-hint" id="rp-sv-hint"></div>
-        <button class="btn" id="rp-sv-add" type="button" style="display:none;margin-top:6px">${I.plus} Add the second parent (Spouse)</button>
+        <button class="btn" id="rp-sv-add" type="button" style="display:none;margin-top:6px">${I.plus} <span id="rp-sv-add-txt">Add the second parent</span></button>
       </div>
       <table class="dynamic-table" id="family-table">
         <thead><tr><th style="width:15%">Type</th><th style="width:19%">Full name</th><th style="width:15%">Date of birth</th><th style="width:16%">Current status</th><th style="width:16%">Residence country</th><th style="width:11%">Accomp.</th><th style="width:4%"></th></tr></thead>
@@ -2004,8 +2004,11 @@ function bindMile(){
   Array.prototype.forEach.call(document.querySelectorAll('#milestone-body tr'),function(tr){ var s=tr.querySelector('.m-trigger'); if(s) s.onchange=function(){ updateDue(tr); }; updateDue(tr); });
 }
 // ── Family members (consultant-set; materialised to the board at handoff) ──
+/* On a Super Visa the "Spouse" row IS the second parent (the principal applicant's spouse) — the list says so. */
+function svWho(){ var st=(rpEl('rp-subtype')&&rpEl('rp-subtype').value)||RP_PLAN_ST||''; return /grandparent/i.test(st)?'grandparent':'parent'; }
+function famTypeLabel(t){ return (t==='Spouse'&&rpIsSuperVisa())?('Second '+svWho()+' (spouse of the applicant)'):t; }
 function famRowHtml(m){
-  var opts=FAMILY_TYPES.map(function(t){ return '<option value="'+escA(t)+'"'+(m.type===t?' selected':'')+'>'+escHtml(t)+'</option>'; }).join('');
+  var opts=FAMILY_TYPES.map(function(t){ return '<option value="'+escA(t)+'"'+(m.type===t?' selected':'')+'>'+escHtml(famTypeLabel(t))+'</option>'; }).join('');
   return '<td><select class="f-type">'+opts+'</select></td>'+
     '<td><input class="f-name" type="text" value="'+escA(m.name||'')+'" placeholder="Full name (optional)"></td>'+
     '<td><input class="f-dob" type="date" value="'+escA(m.dateOfBirth||'')+'"></td>'+
@@ -2038,26 +2041,31 @@ function svCounts(fam){
 }
 /* Something wrong in the list ('' when not). Shared by the box and the send check. */
 function svProblem(c){
-  if(c.spouse>1) return 'Two Spouse rows are ticked “Accomp.” — a Super Visa has one second parent. Remove one.';
-  if(c.parent&&c.spouse) return 'Both a Spouse and a “Parent” are ticked “Accomp.” — if they are the same person, remove the “Parent” row (a Super Visa has no documents for that type).';
-  if(c.parent) return 'A family member is listed as “Parent” — a Super Visa has no documents for that type. Change that row’s Type to Spouse.';
+  var W=svWho();
+  if(c.spouse>1) return 'Two rows are marked “Second '+W+'” and ticked “Accomp.” — a Super Visa has one second '+W+'. Remove one.';
+  if(c.parent&&c.spouse) return 'Both a “Second '+W+'” and a “Parent” row are ticked “Accomp.” — if they are the same person, remove the “Parent” row (a Super Visa has no documents for that type).';
+  if(c.parent) return 'A family member is listed as “Parent” — a Super Visa has no documents for that type. Change that row’s Type to “Second '+W+'”.';
   return '';
 }
 function rpUpdateSvQuestion(){
   var box=rpEl('rp-sv'); if(!box) return;
   var sv=rpIsSuperVisa();
   box.style.display=sv?'':'none';
+  // the Type options follow the case type ("Spouse" reads "Second parent" on a Super Visa)
+  Array.prototype.forEach.call(document.querySelectorAll('#family-body .f-type option'),function(o){ o.textContent=famTypeLabel(o.value); });
   if(!sv) return;
+  var W=svWho();
+  var title=rpEl('rp-sv-title'); if(title) title.textContent='Super Visa — both '+W+'s applying?';
   var c=svCounts(collectFamily()), problem=svProblem(c), one=(c.spouse===1&&!problem);
-  var status=problem||(one?('Second parent listed: '+(c.name||'Spouse — no name yet')+'.'):'Only one parent is listed. If both parents are applying, add the second parent as an accompanying Spouse (not “Parent”).');
+  var status=problem||(one?('Second '+W+' listed: '+(c.name||'no name yet')+'.'):'Only one '+W+' is listed. If both '+W+'s are applying, add the second '+W+' (Type “Second '+W+'”, ticked “Accomp.”).');
   var editable=!(RP_LOCKED&&!RP_AMEND), text;
   if(RP_LIST_USED){
     // signed and the case is open: the list was read when the case was set up
     text='The client has signed — this list was read when the case was set up, and changes here no longer reach the case. '+(
-      one ? 'Check that the case page’s Family card shows the second parent as Spouse (not “Parent”) — if they show as Parent, ask an admin to change them; do not add them again.'
-      : (c.parent&&!c.spouse) ? 'If the second parent is on the case as “Parent”, ask an admin to change them to Spouse — do not add them again.'
+      one ? 'Check that the case page’s Family card shows the second '+W+' as “Second '+W+'” (not “Parent”) — if they show as Parent, ask an admin to change them; do not add them again.'
+      : (c.parent&&!c.spouse) ? 'If the second '+W+' is on the case as “Parent”, ask an admin to change them to “Second '+W+'” — do not add them again.'
       : problem ? 'Check the case page’s Family card and ask an admin to fix it.'
-      : 'If both parents are applying, add the second parent on the case page: Family card → ➕ Add family member → Spouse.');
+      : 'If both '+W+'s are applying, add the second '+W+' on the case page: Family card → ➕ Add family member → “Second '+W+'”.');
   } else if(RP_RETAINED){
     // signed, but no case yet: this list is what the case gets when it opens
     text='The client has signed but the case is not open yet — '+(one ? 'this list reaches the case when it opens. ' : editable ? '' : 'press ✎ Amend, fix the list and Save so the case gets it. ')+status;
@@ -2071,12 +2079,13 @@ function rpUpdateSvQuestion(){
   hint.textContent=text;
   var add=rpEl('rp-sv-add');
   if(add) add.style.display=(!RP_LIST_USED&&editable&&!c.spouse&&!c.parent)?'':'none';
+  var addTxt=rpEl('rp-sv-add-txt'); if(addTxt) addTxt.textContent='Add the second '+W;
 }
 function svAddSecondParent(){
   addFamily();
   var rows=document.querySelectorAll('#family-body tr'), tr=rows[rows.length-1];
   var nm=tr&&tr.querySelector('.f-name');
-  if(nm){ nm.placeholder='Second parent’s full name'; nm.focus(); }
+  if(nm){ nm.placeholder='Second '+svWho()+'’s full name'; nm.focus(); }
   RP_PLAN_SAVED=false; applyRetainerLock();
 }
 /** Before Retain & send: '' when fine, else the question to confirm (Super Visa only). */
@@ -2084,7 +2093,8 @@ function svSendCheck(){
   if(!rpIsSuperVisa()) return '';
   var c=svCounts(collectFamily()), problem=svProblem(c);
   if(problem) return problem;
-  if(!c.spouse) return 'This Super Visa lists ONE parent. Are both parents applying? If so, Cancel and add the second parent as an accompanying Spouse — otherwise they get no questionnaire and no documents.';
+  var W2=svWho();
+  if(!c.spouse) return 'This Super Visa lists ONE '+W2+'. Are both '+W2+'s applying? If so, Cancel and add the second '+W2+' (Type “Second '+W2+'”, ticked “Accomp.”) — otherwise they get no questionnaire and no documents.';
   return '';
 }
 function feeCentsNow(){ var fe=rpEl('fee'); var f=Number(String((fe&&fe.value)||'').replace(/[^0-9.]/g,'')); return f>0?Math.round(f*100):0; }
@@ -2311,7 +2321,7 @@ function initActions(){
   };
   rpEl('rp-template').onchange=toggleTemplateBlocks;
   var ctSel=rpEl('rp-casetype'); if(ctSel) ctSel.onchange=function(){ RP_PLAN_CT=this.value; RP_PLAN_ST=''; rpPopulateSubtypes(); };
-  var stSel=rpEl('rp-subtype'); if(stSel) stSel.onchange=function(){ RP_PLAN_ST=this.value; };
+  var stSel=rpEl('rp-subtype'); if(stSel) stSel.onchange=function(){ RP_PLAN_ST=this.value; rpUpdateSvQuestion(); };
   rpEl('rp-add-mile').onclick=addMile;
   rpEl('rp-add-family').onclick=function(){ addFamily(); rpUpdateSvQuestion(); };
   var svAdd=rpEl('rp-sv-add'); if(svAdd) svAdd.onclick=svAddSecondParent;

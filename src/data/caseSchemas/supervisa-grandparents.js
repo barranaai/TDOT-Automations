@@ -76,8 +76,8 @@ module.exports = {
   },
 
   roles: [
-    { role: 'PrincipalApplicant', label: 'Principal Applicant (Grandparent)', required: true,  documents: PA_SPOUSE_DOCUMENTS },
-    { role: 'Spouse',             label: 'Dependent Spouse (Grandparent)',    includeWhen: { caseFlag: 'spouseIncluded' }, documents: PA_SPOUSE_DOCUMENTS },
+    { role: 'PrincipalApplicant', label: 'First grandparent (principal applicant)', required: true,  documents: PA_SPOUSE_DOCUMENTS },   // display labels (2026-10-25)
+    { role: 'Spouse',             label: 'Second grandparent',                 includeWhen: { caseFlag: 'spouseIncluded' }, documents: PA_SPOUSE_DOCUMENTS },
     { role: 'Sponsor',            label: 'Sponsor / Inviter (in Canada)',     required: true,  documents: SPONSOR_DOCUMENTS },
   ],
 };

@@ -85,7 +85,7 @@ const MEMBER_ICONS = {
 };
 
 function memberIcon(memberType) {
-  return MEMBER_ICONS[memberType] || '👤';
+  return MEMBER_ICONS[memberType] || MEMBER_ICONS[memberTypeOfLabel(memberType)] || '👤';
 }
 
 function esc(str = '') {
@@ -98,6 +98,7 @@ function esc(str = '') {
 
 // Shared with the client portal + staff review page — one formatter, identical output.
 const { formatInstructions } = require('../services/instructionFormatter');
+const { memberTypeOfLabel } = require('../utils/familyRoleLabels');   // a Super Visa's "Second parent" stands for the spouse type
 
 // Canonical order for member types (Principal Applicant always first)
 const MEMBER_ORDER = [
@@ -107,6 +108,22 @@ const MEMBER_ORDER = [
   'Sponsor',
   'Worker Spouse',
 ];
+
+/**
+ * The pill order: MEMBER_ORDER's types first, in that order, then the rest as
+ * they came — exactly as before; a Super Visa's shown name ("First parent
+ * (principal applicant)", "Second parent") takes the place of the type it
+ * stands for, right after that type's own pill if a case has both.
+ */
+function orderMemberKeys(keys) {
+  const rank = (k) => {
+    const own = MEMBER_ORDER.indexOf(k);
+    if (own >= 0) return own * 2;
+    const stands = MEMBER_ORDER.indexOf(memberTypeOfLabel(k));
+    return stands >= 0 ? stands * 2 + 1 : MEMBER_ORDER.length * 2;
+  };
+  return keys.map((k, i) => ({ k, i })).sort((a, b) => rank(a.k) - rank(b.k) || a.i - b.i).map((x) => x.k);
+}
 
 function groupByCategory(items) {
   const map = {};
@@ -126,6 +143,8 @@ function groupByCategory(items) {
  * Returns { isMultiMember: bool, members: [{ memberType, sections }] }
  */
 function groupByMemberAndCategory(items) {
+  // grouped by the member's SHOWN name (a schema row's label, a Super Visa's
+  // "Second parent"), as always; ordered by the type that name stands for
   const memberMap = {};
   items.forEach((item) => {
     const mt = item.applicantLabel || item.applicantType || 'Principal Applicant';
@@ -133,9 +152,7 @@ function groupByMemberAndCategory(items) {
     memberMap[mt].push(item);
   });
 
-  const memberTypes = MEMBER_ORDER
-    .filter((m) => memberMap[m])
-    .concat(Object.keys(memberMap).filter((m) => !MEMBER_ORDER.includes(m)));
+  const memberTypes = orderMemberKeys(Object.keys(memberMap));
 
   const isMultiMember = memberTypes.length > 1;
 
@@ -174,10 +191,7 @@ function aggregateMembersAcrossPhases(phases) {
       memberMap[m.memberType].phaseSections[phaseKey] = m.sections || [];
     }
   }
-  const ordered = MEMBER_ORDER
-    .filter((m) => memberMap[m])
-    .concat(Object.keys(memberMap).filter((m) => !MEMBER_ORDER.includes(m)));
-  return ordered.map((mt) => memberMap[mt]);
+  return orderMemberKeys(Object.keys(memberMap)).map((mt) => memberMap[mt]);
 }
 
 /**
@@ -1326,5 +1340,8 @@ router.post('/:caseRef/complete', (req, res) => {
 });
 
 module.exports = router;
-// For tests only: the page builder, so the emitted <script> can be parsed.
+// For tests only: the page builder, so the emitted <script> can be parsed; the member grouping.
 module.exports._formPage = formPage;
+module.exports._groupByMemberAndCategory = groupByMemberAndCategory;
+module.exports._aggregateMembersAcrossPhases = aggregateMembersAcrossPhases;
+module.exports._memberIcon = memberIcon;

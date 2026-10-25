@@ -29,17 +29,31 @@ test('Needs attention: a paid Super Visa named for two people with no Spouse on 
   NA.io.now = () => NOW;
   const r = run([item()], EMPTY);
   assert.equal(r.length, 1);
-  assert.match(r[0].why, /named for two people \("Udhav Raj Sharma & Meena Sharma"\), but the Family Members board has no second parent \(Spouse\)/);
-  assert.match(r[0].todo, /➕ Add family member" → Spouse/);
+  assert.match(r[0].why, /named for two people \("Udhav Raj Sharma & Meena Sharma"\), but the Family Members board has no second parent — so only one parent has a questionnaire/);
+  assert.match(r[0].todo, /➕ Add family member" → "Second parent", with their full name/);
   assert.match(r[0].todo, /If only one parent is applying, press Mark handled/);
   assert.ok(r[0].since.startsWith('2026-09-29'));
   assert.equal(run([item()], { '2026-SV-021': new Set(['Spouse']) }).length, 0);
   const parent = run([item()], { '2026-SV-021': new Set(['Parent']) });
   assert.equal(parent.length, 1, 'a "Parent" row is not the second parent…');
   assert.match(parent[0].why, /on the Family Members board as "Parent" — a Super Visa has no documents for that type/);
-  assert.match(parent[0].todo, /changed from Parent to Spouse[\s\S]*then flip Re-seed Checklist → Run so their documents are added — adding them again with ➕ Add family member would list the same person twice/, '…the documents step too, and never "add them again"');
+  assert.match(parent[0].todo, /changed from "Parent" to the second parent \(the Spouse row[\s\S]*then flip Re-seed Checklist → Run so their documents are added — adding them again with ➕ Add family member would list the same person twice/, '…the documents step too, and never "add them again"');
   assert.notEqual(parent[0].key, r[0].key, 'its own Mark handled key');
   assert.equal(run([item()], { '2026-SV-021': new Set(['Sponsor', 'Principal Applicant']) }).length, 1);
+});
+
+test('Needs attention: the Grandparents sub type says "grandparent" in every wording — never "parent"', () => {
+  NA.io.now = () => NOW;
+  const r = run([item({ subType: 'Grandparents' })], EMPTY);
+  assert.equal(r.length, 1);
+  assert.match(r[0].why, /has no second grandparent — so only one grandparent has a questionnaire, and a checklist the app built lists one grandparent's documents/);
+  assert.match(r[0].todo, /→ "Second grandparent", with their full name[\s\S]*If only one grandparent is applying, press Mark handled/);
+  const p = run([item({ subType: 'Grandparents' })], { '2026-SV-021': new Set(['Parent']) });
+  assert.equal(p.length, 1);
+  assert.match(p[0].why, /the second grandparent is on the Family Members board as "Parent"/);
+  assert.match(p[0].todo, /changed from "Parent" to the second grandparent \(the Spouse row[\s\S]*If only one grandparent is applying/);
+  assert.doesNotMatch([r[0].why, r[0].todo, p[0].why, p[0].todo].join(' '), /second parent|one parent/);
+  assert.match(run([item({ subType: 'Parents' })], EMPTY)[0].why, /no second parent/);
 });
 
 test('Needs attention: the real two-person names count ("&", "and", "/", "+"); a one-person name never does', () => {
@@ -91,7 +105,7 @@ test('Needs attention snapshot: Super Visa cases named for two people are read f
 
 test('Needs attention: the group has its label and order', () => {
   const src = fs.readFileSync(require.resolve('../src/services/needsAttentionService.js'), 'utf8');
-  assert.match(src, /'sv-second-parent':\{ order: 44, severity: 'high', label: 'Super Visa: second parent not on the case as Spouse' \}/);
+  assert.match(src, /'sv-second-parent':\{ order: 44, severity: 'high', label: 'Super Visa: second parent not on the case' \}/);
 });
 
 /* ───────────────────────── the retainer panel ───────────────────────── */
@@ -100,14 +114,18 @@ const HTML = require('../src/routes/adminConsultation').buildDetailHTML('12345')
 const JS = HTML.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi).map((s) => s.replace(/^<script[^>]*>|<\/script>$/gi, '')).find((s) => s.includes('function svSendCheck'));
 
 /** The panel's Super Visa helpers, run against a tiny stand-in for the page. */
-function panel({ caseType = 'Supervisa', family = [], signed = false, retained = false, sent = false, locked = false, amend = false } = {}) {
+function panel({ caseType = 'Supervisa', subType = '', family = [], signed = false, retained = false, sent = false, locked = false, amend = false } = {}) {
   const a = JS.indexOf('function rpIsSuperVisa(){'), b = JS.indexOf('function feeCentsNow(){');
-  assert.ok(a > 0 && b > a);
-  const els = { 'rp-casetype': { value: caseType }, 'rp-sv': { style: {} }, 'rp-sv-add': { style: {} }, 'rp-sv-hint': {} };
+  const a2 = JS.indexOf('function svWho(){'), b2 = JS.indexOf('function famRowHtml(m){');
+  assert.ok(a > 0 && b > a && a2 > 0 && b2 > a2);
+  const els = { 'rp-casetype': { value: caseType }, 'rp-subtype': { value: subType }, 'rp-sv': { style: {} }, 'rp-sv-add': { style: {} }, 'rp-sv-add-txt': {}, 'rp-sv-title': {}, 'rp-sv-hint': {} };
+  // the family table's Type <option>s, as the page relabels them
+  const opts = [{ value: 'Spouse', textContent: 'Spouse' }, { value: 'Dependent Child', textContent: 'Dependent Child' }, { value: 'Parent', textContent: 'Parent' }];
   // signed = signed (or retained) with the case open — the list has been used; retained = signed, no case yet
-  const ctx = { RP_PLAN_CT: caseType, RP_LIST_USED: signed, RP_RETAINED: retained || signed, RP_SENT: sent, RP_LOCKED: locked || sent || retained || signed, RP_AMEND: amend,
-    rpEl: (id) => els[id] || null, collectFamily: () => family };
-  vm.runInNewContext(JS.slice(a, b), ctx);
+  const ctx = { RP_PLAN_CT: caseType, RP_PLAN_ST: subType, RP_LIST_USED: signed, RP_RETAINED: retained || signed, RP_SENT: sent, RP_LOCKED: locked || sent || retained || signed, RP_AMEND: amend,
+    rpEl: (id) => els[id] || null, collectFamily: () => family, document: { querySelectorAll: (sel) => (sel === '#family-body .f-type option' ? opts : []) } };
+  vm.runInNewContext(JS.slice(a2, b2) + '\n' + JS.slice(a, b), ctx);
+  ctx.els = els; ctx.opts = opts;
   ctx.view = () => { ctx.rpUpdateSvQuestion(); return { shown: els['rp-sv'].style.display !== 'none', add: els['rp-sv-add'].style.display !== 'none', need: /\bneed\b/.test(els['rp-sv-hint'].className), text: els['rp-sv-hint'].textContent }; };
   return ctx;
 }
@@ -118,7 +136,7 @@ test('panel: the box sits inside the lockable part of the plan, above the family
   const fsAt = HTML.indexOf('<fieldset id="rp-lock-fs"'), fsEnd = HTML.indexOf('</fieldset>', fsAt);
   const q = HTML.indexOf('id="rp-sv"'), table = HTML.indexOf('id="family-table"');
   assert.ok(fsAt > 0 && q > fsAt && q < fsEnd && q < table, 'inside #rp-lock-fs, before the family table');
-  assert.match(HTML, /<button class="btn" id="rp-sv-add" type="button" style="display:none;margin-top:6px">[\s\S]{0,400}?Add the second parent \(Spouse\)<\/button>/);
+  assert.match(HTML, /<button class="btn" id="rp-sv-add" type="button" style="display:none;margin-top:6px">[\s\S]{0,400}?<span id="rp-sv-add-txt">Add the second parent<\/span><\/button>/);
   assert.doesNotMatch(HTML, /type="radio" name="rp-sv-both"/, 'no stored answer — the list is the truth');
   assert.doesNotThrow(() => new vm.Script(JS));
   assert.match(JS, /return \/\^super\\s\*visa\$\/i\.test\(String\(ct\)\.trim\(\)\);/);
@@ -132,10 +150,10 @@ test('panel: what the box says for every list, unsigned and editable — the but
   assert.deepEqual([v.shown, v.add, v.need], [true, true, true]); assert.match(v.text, /^Only one parent is listed\. If both parents are applying/);
   v = panel({ family: [SP()] }).view();
   assert.deepEqual([v.add, v.need], [false, false]); assert.equal(v.text, 'Second parent listed: Meena Sharma.');
-  v = panel({ family: [SP('')] }).view(); assert.equal(v.text, 'Second parent listed: Spouse — no name yet.');
+  v = panel({ family: [SP('')] }).view(); assert.equal(v.text, 'Second parent listed: no name yet.');
   v = panel({ family: [SP('Meena', false)] }).view(); assert.deepEqual([v.add, v.need], [true, true], 'a Spouse not ticked accompanying is not the second parent');
-  v = panel({ family: [SP(), SP('Other')] }).view(); assert.deepEqual([v.add, v.need], [false, true]); assert.match(v.text, /Two Spouse rows are ticked “Accomp\.” — a Super Visa has one second parent\. Remove one\./);
-  v = panel({ family: [PA()] }).view(); assert.deepEqual([v.add, v.need], [false, true]); assert.match(v.text, /listed as “Parent”[\s\S]*Change that row’s Type to Spouse/);
+  v = panel({ family: [SP(), SP('Other')] }).view(); assert.deepEqual([v.add, v.need], [false, true]); assert.match(v.text, /Two rows are marked “Second parent” and ticked “Accomp\.” — a Super Visa has one second parent\. Remove one\./);
+  v = panel({ family: [PA()] }).view(); assert.deepEqual([v.add, v.need], [false, true]); assert.match(v.text, /listed as “Parent”[\s\S]*Change that row’s Type to “Second parent”/);
   v = panel({ family: [SP(), PA()] }).view(); assert.match(v.text, /if they are the same person, remove the “Parent” row/);
   v = panel({ family: [{ type: 'Dependent Child', name: 'X', accompanying: true }] }).view(); assert.match(v.text, /^Only one parent is listed/);
   v = panel({ caseType: 'BOWP' }).view(); assert.equal(v.shown, false);
@@ -145,11 +163,11 @@ test('panel: what the box says for every list, unsigned and editable — the but
 test('panel: signed with the case open → the list no longer reaches the case: point to the case page (Parent → ask an admin, never add again), no button; sent → press Amend; signed but no case yet → Amend + Save', () => {
   let v = panel({ signed: true }).view();
   assert.deepEqual([v.add, v.need], [false, true]);
-  assert.match(v.text, /^The client has signed — this list was read when the case was set up, and changes here no longer reach the case\. If both parents are applying, add the second parent on the case page: Family card → ➕ Add family member → Spouse\.$/);
+  assert.match(v.text, /^The client has signed — this list was read when the case was set up, and changes here no longer reach the case\. If both parents are applying, add the second parent on the case page: Family card → ➕ Add family member → “Second parent”\.$/);
   v = panel({ signed: true, family: [PA()] }).view();
-  assert.match(v.text, /ask an admin to change them to Spouse — do not add them again/); assert.doesNotMatch(v.text, /Add family member/);
+  assert.match(v.text, /ask an admin to change them to “Second parent” — do not add them again/); assert.doesNotMatch(v.text, /Add family member/);
   v = panel({ signed: true, family: [SP()] }).view(); assert.deepEqual([v.need, v.add], [false, false]);
-  assert.match(v.text, /Check that the case page’s Family card shows the second parent as Spouse \(not “Parent”\) — if they show as Parent, ask an admin to change them; do not add them again\./, 'a row retyped here is still Parent on the case');
+  assert.match(v.text, /Check that the case page’s Family card shows the second parent as “Second parent” \(not “Parent”\) — if they show as Parent, ask an admin to change them; do not add them again\./, 'a row retyped here is still Parent on the case');
   v = panel({ signed: true, family: [SP(), PA()] }).view(); assert.equal(v.need, true); assert.match(v.text, /ask an admin to fix it/);
   v = panel({ signed: true, amend: true }).view(); assert.equal(v.add, false, 'amending a signed plan still never offers the button');
   v = panel({ sent: true }).view(); assert.equal(v.add, false); assert.match(v.text, /^The agreement is sent — press ✎ Amend to change this list \(it reaches the case when the client signs\)\. Only one parent is listed/);
@@ -165,11 +183,11 @@ test('panel: signed with the case open → the list no longer reaches the case: 
 });
 
 test('panel: Retain & send asks on a Super Visa that lists one parent, or a wrong list; never on another case type; Cancel stops before the usual confirm', () => {
-  assert.match(panel().svSendCheck(), /lists ONE parent\. Are both parents applying\? If so, Cancel and add the second parent as an accompanying Spouse/);
+  assert.match(panel().svSendCheck(), /lists ONE parent\. Are both parents applying\? If so, Cancel and add the second parent \(Type “Second parent”, ticked “Accomp\.”\)/);
   assert.equal(panel({ family: [SP()] }).svSendCheck(), '');
   assert.match(panel({ family: [SP('', false)] }).svSendCheck(), /lists ONE parent/);
-  assert.match(panel({ family: [PA()] }).svSendCheck(), /Change that row’s Type to Spouse/);
-  assert.match(panel({ family: [SP(), SP('B')] }).svSendCheck(), /Two Spouse rows/);
+  assert.match(panel({ family: [PA()] }).svSendCheck(), /Change that row’s Type to “Second parent”/);
+  assert.match(panel({ family: [SP(), SP('B')] }).svSendCheck(), /Two rows are marked “Second parent”/);
   assert.match(panel({ family: [SP(), PA()] }).svSendCheck(), /remove the “Parent” row/);
   assert.equal(panel({ caseType: 'Visitor Visa' }).svSendCheck(), '');
   assert.equal(panel({ caseType: 'BOWP', family: [PA()] }).svSendCheck(), '');
@@ -192,5 +210,27 @@ test('panel: kept in step — after the list loads, when the lock state is appli
   assert.match(add, /^function svAddSecondParent\(\)\{\s*addFamily\(\);/, 'the same row the Add button makes: an accompanying Spouse');
   assert.match(JS, /function addFamily\(\)\{ var tr=document\.createElement\('tr'\); tr\.innerHTML=famRowHtml\(\{type:'Spouse',name:'',accompanying:true\}\);/);
   assert.match(add, /RP_PLAN_SAVED=false; applyRetainerLock\(\);/);
-  assert.match(add, /nm\.placeholder='Second parent’s full name'/, 'a placeholder, never a name ("Second parent" would become the person\'s name on the board)');
+  assert.match(add, /nm\.placeholder='Second '\+svWho\(\)\+'’s full name'/, 'a placeholder, never a name ("Second parent" would become the person\'s name on the board)');
+});
+
+test('panel: the Type option "Spouse" reads "Second parent (spouse of the applicant)" on a Super Visa — "Second grandparent …" on the Grandparents sub type — and plain "Spouse" again on any other case type; the box, button and placeholder follow the sub type', () => {
+  const p = panel(); let v = p.view();
+  assert.deepEqual(p.opts.map((o) => o.textContent), ['Second parent (spouse of the applicant)', 'Dependent Child', 'Parent']);
+  assert.equal(p.els['rp-sv-title'].textContent, 'Super Visa — both parents applying?'); assert.equal(p.els['rp-sv-add-txt'].textContent, 'Add the second parent');
+  // the same page: Super Visa → another case type → Super Visa again
+  p.els['rp-casetype'].value = 'BOWP'; v = p.view();
+  assert.deepEqual([v.shown, p.opts[0].textContent], [false, 'Spouse'], 'plain again — the relabel is undone when the case type changes');
+  p.els['rp-casetype'].value = 'Super Visa'; v = p.view();
+  assert.deepEqual([v.shown, p.opts[0].textContent], [true, 'Second parent (spouse of the applicant)']);
+  // Grandparents
+  const g = panel({ subType: 'Grandparents' }); v = g.view();
+  assert.equal(g.opts[0].textContent, 'Second grandparent (spouse of the applicant)');
+  assert.match(v.text, /^Only one grandparent is listed\. If both grandparents are applying, add the second grandparent \(Type “Second grandparent”, ticked “Accomp\.”\)\.$/);
+  assert.equal(g.els['rp-sv-title'].textContent, 'Super Visa — both grandparents applying?'); assert.equal(g.els['rp-sv-add-txt'].textContent, 'Add the second grandparent');
+  v = panel({ subType: 'Grandparents', family: [SP()] }).view(); assert.equal(v.text, 'Second grandparent listed: Meena Sharma.');
+  v = panel({ subType: 'Grandparents', family: [PA()] }).view(); assert.match(v.text, /Change that row’s Type to “Second grandparent”\.$/);
+  assert.match(panel({ subType: 'Grandparents' }).svSendCheck(), /^This Super Visa lists ONE grandparent\. Are both grandparents applying\?/);
+  // the sub type dropdown re-runs the box when it changes; the placeholder follows too
+  assert.match(JS, /stSel\.onchange=function\(\)\{ RP_PLAN_ST=this\.value; rpUpdateSvQuestion\(\); \};/);
+  assert.match(JS, /nm\.placeholder='Second '\+svWho\(\)\+'’s full name';/);
 });

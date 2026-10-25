@@ -142,3 +142,16 @@ test('route + review bar pins: application/pdf inline, staff auth + RBAC kept, s
   const cockpit = fs.readFileSync(require.resolve('../src/routes/adminCase'), 'utf8');
   assert.match(cockpit, /\/export-pdf' \+ kq \+ '" target="_blank"/);
 });
+
+test('exportCasePdf: on a Super Visa the covers say "First parent (principal applicant)" / "Second parent" (a real name stays); without the case type the manifest labels, as before', async () => {
+  const manifest = { members: [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant' }, { key: 'spouse-1', type: 'Spouse / Common-Law Partner', label: 'Spouse' }, { key: 'sponsor', type: 'Sponsor', label: 'Mehak' }] };
+  const mk = () => harness({ files: [F('primary'), F('spouse-1'), F('sponsor'), `questionnaire-members-${CASE}.json`], store: { [F('primary')]: form(1), [F('spouse-1')]: form(2), [F('sponsor')]: form(3) }, manifest });
+  const sv = await mk().exportCasePdf({ clientName: 'C', caseRef: CASE, caseType: 'Supervisa', caseSubType: 'Parents' });
+  assert.deepEqual(sv.forms.map((f) => f.memberLabel), ['First parent (principal applicant)', 'Second parent', 'Mehak']);
+  const gp = await mk().exportCasePdf({ clientName: 'C', caseRef: CASE, caseType: 'Super Visa', caseSubType: 'Grandparents', formKey: 'spouse-1' });
+  assert.equal(gp.forms[0].memberLabel, 'Second grandparent');
+  const plain = await mk().exportCasePdf({ clientName: 'C', caseRef: CASE });
+  assert.deepEqual(plain.forms.map((f) => f.memberLabel), ['Primary Applicant', 'Spouse', 'Mehak']);
+  const other = await mk().exportCasePdf({ clientName: 'C', caseRef: CASE, caseType: 'BOWP' });
+  assert.deepEqual(other.forms.map((f) => f.memberLabel), ['Primary Applicant', 'Spouse', 'Mehak']);
+});

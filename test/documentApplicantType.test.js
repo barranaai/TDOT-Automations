@@ -93,3 +93,42 @@ test('getCaseDocuments: Template-linked item still wins from the Template row (n
     assert.equal(docs[0].applicantType, 'Sponsor', 'template applicantType takes precedence for legacy template-linked items');
   } finally { restore(); }
 });
+
+test('getCaseSummary: on a Super Visa every row without a schema role — Template-linked or typed on the exec row — is shown as "Second parent" / "First parent (principal applicant)"; any other case type, and a failed case-type read, show what they always did', async () => {
+  const htmlQ = require('../src/services/htmlQuestionnaireService');
+  const rows = () => [
+    execItem('1', 'Passport', { [INTAKE_ID_COL]: '18401700001', [DOC_STATUS_COL]: 'Missing', [CATEGORY_TEXT_COL]: 'Identity', [EXEC_APPLICANT_TYPE_COL]: '' }),            // Template-linked
+    execItem('2', 'Passport', { [INTAKE_ID_COL]: '', [DOC_STATUS_COL]: 'Missing', [CATEGORY_TEXT_COL]: 'Identity', [EXEC_APPLICANT_TYPE_COL]: 'Spouse' }),                 // typed on the exec row
+    execItem('3', 'Passport', { [INTAKE_ID_COL]: '', [DOC_STATUS_COL]: 'Missing', [CATEGORY_TEXT_COL]: 'Identity', [EXEC_APPLICANT_TYPE_COL]: 'Principal Applicant' }),
+  ];
+  const stubFor = (caseType, subType, { typeFails = false } = {}) => {
+    const r1 = stub(mondayApi, 'query', async (q) => {
+      if (q.includes('dropdown_mm0xd1qn')) {   // the case type + sub type
+        if (typeFails) throw new Error('Monday 500');
+        return { items_page_by_column_values: { items: [{ column_values: [{ id: 'dropdown_mm0xd1qn', text: caseType }, { id: 'dropdown_mm0x4t91', text: subType }] }] } };
+      }
+      if (q.includes('items { name }')) return { items_page_by_column_values: { items: [{ name: 'Test Client' }] } };
+      if (q.includes('items_page_by_column_values')) return { items_page_by_column_values: { items: rows() } };
+      return { items: [{ id: '18401700001', column_values: [{ id: TMPL_APPLICANT_TYPE_COL, text: 'Spouse / Common-Law Partner' }, { id: 'dropdown_mm0x41zm', text: 'Identity' }] }] };   // the Template row
+    });
+    const r2 = stub(htmlQ, 'loadMembers', async () => [{ key: 'primary', type: 'Principal Applicant' }, { key: 'spouse', type: 'Spouse / Common-Law Partner' }]);
+    return () => { r1(); r2(); };
+  };
+  const labels = async () => { const s = await docSvc.getCaseSummary('2026-SV-004'); return Object.fromEntries(s.items.map((d) => [d.id, [d.applicantType, d.applicantLabel, d.templateRow]])); };
+  let restore = stubFor('Supervisa', 'Parents');
+  try {
+    assert.deepEqual(await labels(), { 1: ['Spouse / Common-Law Partner', 'Second parent', true], 2: ['Spouse', 'Second parent', true], 3: ['Principal Applicant', 'First parent (principal applicant)', true] });
+  } finally { restore(); }
+  restore = stubFor('Super Visa', 'Grandparents');
+  try { assert.equal((await labels())['1'][1], 'Second grandparent'); } finally { restore(); }
+  restore = stubFor('BOWP', '');
+  try {
+    assert.deepEqual(await labels(), { 1: ['Spouse / Common-Law Partner', 'Spouse / Common-Law Partner', true], 2: ['Spouse', 'Spouse', true], 3: ['Principal Applicant', 'Principal Applicant', true] }, 'any other case type: the row\'s own type, as always');
+  } finally { restore(); }
+  restore = stubFor('Supervisa', 'Parents', { typeFails: true });
+  try {
+    const s = await docSvc.getCaseSummary('2026-SV-004');
+    assert.equal(s.items.find((d) => d.id === '1').applicantLabel, 'Spouse / Common-Law Partner', 'the case type unreadable: the page still renders, the row as before');
+    assert.ok(Array.isArray(s.disclaimer) && s.disclaimer.length, 'with the default disclaimer');
+  } finally { restore(); }
+});

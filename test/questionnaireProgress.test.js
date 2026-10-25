@@ -696,3 +696,29 @@ test('pins: the client engine counts only applicable fields and sends the page %
   // The three counters share ONE exclusion rule — no private copies left behind.
   assert.equal((src.match(/isExcludedFromProgress\(f\.el, optionalSections\)/g) || []).length, 3);
 });
+
+// ─── the submission notes name a Super Visa's parents (2026-10-25) ───────────
+
+test('markSubmitted / markAllSubmitted: the Monday notes say "Second parent" / "First parent (principal applicant)" on a Super Visa ("grandparent" on Grandparents); any other case type as before', async () => {
+  const files = () => ({
+    'questionnaire-members-2026-SV-004.json': manifest([{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant' }, { key: 'spouse', type: 'Spouse / Common-Law Partner', label: 'Spouse' }]),
+    'questionnaire-2026-SV-004-primary.json': formJson(80), 'questionnaire-2026-SV-004-spouse.json': formJson(60),
+  });
+  const noteOf = (m, re) => { const w = m.writes.find((x) => /create_update/.test(x.q) && re.test(String(x.vars && x.vars.body))); return w ? String(w.vars.body) : ''; };
+  svc._resetProgressSync();
+  let m = mondayStub(); let restore = oneDriveFiles(files());
+  try {
+    await svc.markSubmitted({ itemId: '301', caseRef: '2026-SV-004', caseType: 'Supervisa', caseSubType: 'Parents', formKey: 'spouse', formLabel: 'Super Visa', completionPct: 60, clientName: 'Test', formFiles: { primary: '11. Super Visa.html' } });
+    assert.match(noteOf(m, /Questionnaire Submitted/), /\nForm: "Super Visa"\nMember: Second parent\nCase: 2026-SV-004\n/);
+  } finally { restore(); m.restore(); svc._resetProgressSync(); }
+  m = mondayStub(); restore = oneDriveFiles(files());
+  try {
+    await svc.markAllSubmitted({ itemId: '301', caseRef: '2026-SV-004', caseType: 'Super Visa', caseSubType: 'Grandparents', formLabel: 'Super Visa', clientName: 'Test', formFiles: { primary: '11. Super Visa.html' }, memberSubmissions: [{ formKey: 'primary', completionPct: 80 }, { formKey: 'spouse', completionPct: 60 }] });
+    assert.match(noteOf(m, /Members submitted/), /Members submitted:\n  • First grandparent \(principal applicant\): 80%\n  • Second grandparent: 60%\n/);
+  } finally { restore(); m.restore(); svc._resetProgressSync(); }
+  m = mondayStub(); restore = oneDriveFiles(files());
+  try {
+    await svc.markSubmitted({ itemId: '301', caseRef: '2026-SV-004', caseType: 'BOWP', formKey: 'spouse', formLabel: 'BOWP', completionPct: 60, clientName: 'Test', formFiles: { primary: 'F.html' } });
+    assert.match(noteOf(m, /Questionnaire Submitted/), /\nMember: Spouse\n/, 'any other case type: the manifest label');
+  } finally { restore(); m.restore(); svc._resetProgressSync(); }
+});

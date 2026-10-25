@@ -350,6 +350,19 @@ var ROLE_LABEL = {
   PrincipalApplicant: 'Principal applicant', Spouse: 'Spouse', DependentChild: 'Dependent child',
   Sponsor: 'Sponsor', WorkerSpouse: 'Worker spouse', Parent: 'Parent', Sibling: 'Sibling'
 };
+/* On a Super Visa the applicants are the parents: the principal applicant's spouse is the
+   SECOND PARENT (the same rule as src/utils/familyRoleLabels.js — keep the two together). */
+var CASE_TYPE = '', CASE_SUB_TYPE = '';
+function svRole(role) {
+  if (!/^super\\s*visa$/i.test(String(CASE_TYPE || '').trim())) return '';
+  var n = String(role || '').toLowerCase().replace(/^\\s+|\\s+$/g, '');
+  if (/non[\\s-]?accompanying|worker/.test(n)) return '';
+  var w = /grandparent/i.test(String(CASE_SUB_TYPE || '')) ? 'grandparent' : 'parent';
+  if (/^(dependent\\s+)?spouse\\b/.test(n)) return 'Second ' + w;
+  if (/^principal\\s*applicant\\b/.test(n)) return 'First ' + w + ' (principal applicant)';
+  return '';
+}
+function roleName(role) { return svRole(role) || ROLE_LABEL[role] || role; }
 
 function statusTag(s) {
   if (s === 'Submitted') return '<span class="status-tag done">Submitted</span>';
@@ -411,11 +424,12 @@ function render(d) {
 
   // Family
   var fam = d.family || [];
+  CASE_TYPE = d.caseType || ''; CASE_SUB_TYPE = d.caseSubType || '';
   document.getElementById('fam-cnt').textContent = fam.length + ' member' + (fam.length !== 1 ? 's' : '');
   var famHtml = fam.length ? fam.map(function(m) {
     var flags = (m.flags || []).map(function(f) { return '<span class="mflag">' + escHtml(f) + '</span>'; }).join(' ');
-    return '<div class="mrow"><span class="mname">' + escHtml(m.name || (ROLE_LABEL[m.role] || m.role)) + '</span> ' +
-      flags + '<span class="mtype">' + escHtml(ROLE_LABEL[m.role] || m.role) + '</span></div>';
+    return '<div class="mrow"><span class="mname">' + escHtml(m.name || roleName(m.role)) + '</span> ' +
+      flags + '<span class="mtype">' + escHtml(roleName(m.role)) + '</span></div>';
   }).join('') : '<div class="muted">No family members recorded on the board.</div>';
   document.getElementById('fam-list').innerHTML = famHtml;
   // "Add family member" (2026-10-07): one click adds the board row, the
@@ -423,7 +437,7 @@ function render(d) {
   var fat = d.familyAddTypes || [];
   document.getElementById('fam-add').innerHTML = fat.length
     ? '<div class="sp-form" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
-      '<select id="fam-type" class="sbtn" style="cursor:pointer">' + fat.map(function(t) { return '<option value="' + escHtml(t) + '">' + escHtml(t.split(' / ')[0]) + '</option>'; }).join('') + '</select>' +
+      '<select id="fam-type" class="sbtn" style="cursor:pointer">' + fat.map(function(t) { return '<option value="' + escHtml(t) + '">' + escHtml(svRole(t) || t.split(' / ')[0]) + '</option>'; }).join('') + '</select>' +
       '<input id="fam-name" placeholder="Name (optional)" maxlength="80" style="flex:1;min-width:140px">' +
       '<button class="sbtn" id="fam-add-btn" title="Adds the Family Members row, the questionnaire section on the client portal link, and the document rows">➕ Add family member</button></div>'
     : '';
@@ -436,7 +450,7 @@ function render(d) {
   document.getElementById('qm-cnt').textContent = qm.length + ' section' + (qm.length !== 1 ? 's' : '');
   document.getElementById('qm-list').innerHTML = qm.length ? qm.map(function(m) {
     return '<div class="mrow"><span class="mname">' + escHtml(m.label || m.key) + '</span>' +
-      '<span class="mtype" style="margin-right:8px">' + escHtml(m.type || '') + '</span>' + statusTag(m.status) + '</div>';
+      '<span class="mtype" style="margin-right:8px">' + escHtml(m.badge || m.type || '') + '</span>' + statusTag(m.status) + '</div>';
   }).join('') : '<div class="muted">Primary applicant only.</div>';
 
   // Documents
@@ -451,7 +465,7 @@ function render(d) {
   document.getElementById('doc-cats').innerHTML = cats.length ? cats.map(function(cat) {
     var lines = cat.items.map(function(it) {
       return '<div class="doc-line"><span class="dotc" style="background:' + (DOC_DOT[it.status] || '#cbd5e1') + '"></span>' +
-        '<span class="dn">' + escHtml(it.name) + '</span><span class="dt">' + escHtml(it.applicantType) + ' · ' + escHtml(it.status) + '</span></div>';
+        '<span class="dn">' + escHtml(it.name) + '</span><span class="dt">' + escHtml(it.applicantLabel || it.applicantType) + ' · ' + escHtml(it.status) + '</span></div>';
     }).join('');
     return '<div class="cat-block"><div class="cat-head">' + escHtml(cat.category) + '</div>' + lines + '</div>';
   }).join('') : '<div class="muted" style="margin-top:10px">No checklist rows seeded yet.</div>';
@@ -513,7 +527,7 @@ function famAdd() {
   var typeEl = document.getElementById('fam-type'), nameEl = document.getElementById('fam-name'), btn = document.getElementById('fam-add-btn');
   if (!typeEl || !btn) return;
   var memberType = typeEl.value, name = (nameEl && nameEl.value || '').trim();
-  if (!window.confirm('Add ' + (name || memberType.split(' / ')[0]) + ' to this case? This adds the Family Members row, the questionnaire section on the client portal link, and the document rows. No email is sent.')) return;
+  if (!window.confirm('Add ' + (name || svRole(memberType) || memberType.split(' / ')[0]) + ' to this case? This adds the Family Members row, the questionnaire section on the client portal link, and the document rows. No email is sent.')) return;
   btn.disabled = true;
   FAM_PENDING = true;   // re-renders keep the button off until the answer is in
   var key = peekKey();
@@ -529,7 +543,7 @@ function famAdd() {
       if (res.j.jobId === FAM_JOB) return;
       if (res.j.jobId === famRecalled()) return famTrack(res.j.jobId, 'Your earlier add on this case is still running — its result shows here when it ends.', '');
       // someone else's add: THIS add was not made — follow theirs only to say when to press again
-      var asked = name || memberType.split(' / ')[0];
+      var asked = name || svRole(memberType) || memberType.split(' / ')[0];
       return famTrack(res.j.jobId, (res.j.error || 'Another add on this case is running.') + ' Your add of ' + asked + ' was NOT made — this says when the other add ends.', asked);
     }
     famFinish(res);
@@ -614,7 +628,7 @@ function famPoll(jobId, startedAt, fails) {
     if (res.status === 200 && j && j.state === 'running') return again(0);
     if (res.status === 200 && j && (j.state === 'done' || j.state === 'failed') && FAM_FOREIGN) {
       var asked = FAM_FOREIGN; famEnd();
-      actMsg('fam-msg', 'info', 'The other add on this case (' + String(j.memberType || 'a family member').split(' / ')[0] + (j.by ? ', started by ' + j.by : '') + ') has ' + (j.state === 'done' ? 'finished' : 'ended') + '. Your add of ' + asked + ' was NOT made — press Add family member again if it is still needed.');
+      actMsg('fam-msg', 'info', 'The other add on this case (' + (svRole(j.memberType) || String(j.memberType || 'a family member').split(' / ')[0]) + (j.by ? ', started by ' + j.by : '') + ') has ' + (j.state === 'done' ? 'finished' : 'ended') + '. Your add of ' + asked + ' was NOT made — press Add family member again if it is still needed.');
       loadCase(); return;
     }
     if (res.status === 200 && j && j.state === 'done') { famEnd(); return famFinish({ ok: true, status: 200, j: j.result || {} }); }
@@ -939,7 +953,7 @@ function renderQTab(d) {
   document.getElementById('qt-list').innerHTML = qm.length ? qm.map(function(m) {
     var sub = m.submittedAt ? ('<span class="dmeta" style="margin-right:8px">submitted ' + escHtml(String(m.submittedAt).slice(0, 10)) + '</span>') : '';
     return '<div class="mrow"><span class="mname">' + escHtml(m.label || m.key) + '</span>' +
-      '<span class="mtype" style="margin-right:8px">' + escHtml(m.type || '') + '</span>' + sub + statusTag(m.status) + '</div>';
+      '<span class="mtype" style="margin-right:8px">' + escHtml(m.badge || m.type || '') + '</span>' + sub + statusTag(m.status) + '</div>';
   }).join('') : '<div class="muted">No questionnaire members yet — they appear once the case checklist is provisioned.</div>';
 }
 

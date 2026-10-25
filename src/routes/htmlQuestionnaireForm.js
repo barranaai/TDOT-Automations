@@ -333,7 +333,7 @@ router.get('/:caseRef/review', staffOrAdminKey, async (req, res) => {
         staffName:    req.staff.name,
         savedFields:  allMembersData[0].fields,
         savedFlags:   allMembersData[0].flags,
-        members:      allMembersData,
+        members:      require('../utils/familyRoleLabels').decorateMembers(caseType, allMembersData, caseSubType),
         formKeySuffix,
       })));
     }
@@ -412,7 +412,7 @@ router.get('/:caseRef/export-pdf', staffOrAdminKey, async (req, res) => {
     const formFiles = svc.resolveForm(caseType, caseSubType);
 
     const result = await require('../services/questionnairePdfService').exportCasePdf({
-      clientName, caseRef, formFiles, formKey,
+      clientName, caseRef, formFiles, formKey, caseType, caseSubType,
       caseDone: String(qCompletionStatus || '').trim().toLowerCase() === 'done',
       loadFlags: (k) => review.loadFlags({ clientName, caseRef, formKey: k }),
     });
@@ -495,6 +495,19 @@ router.post('/:caseRef/notify', requireStaffAuth, async (req, res) => {
     const { clientName } = caseDetails;
     const key = sanitiseFormKey(formKey || 'primary');
 
+    // the member's name as the review page shows it (a real name, a Super
+    // Visa's "Second parent"); without a manifest entry the email names them
+    // from the form key, as before
+    let memberLabel;
+    try {
+      const mk = key.replace(/-additional$/, '');
+      const member = (await svc.loadMembers({ clientName, caseRef })).find((m) => m && m.key === mk);
+      if (member) {
+        const shown = require('../utils/familyRoleLabels').decorateMembers(caseDetails.caseType, [member], caseDetails.caseSubType)[0].label || '';
+        memberLabel = (mk === 'primary' && shown === String(member.label || '')) ? '' : shown;
+      }
+    } catch (_) { /* named from the key */ }
+
     const [flags, formFields] = await Promise.all([
       review.loadFlags({ clientName, caseRef, formKey: key }),
       svc.loadFormData({ clientName, caseRef, formKey: key }),
@@ -508,6 +521,7 @@ router.post('/:caseRef/notify', requireStaffAuth, async (req, res) => {
       caseRef,
       formKey:    key,
       caseDetails,
+      memberLabel,
       flags,
       formFields,
       staffName:  req.staff.name,
@@ -540,8 +554,8 @@ router.post('/:caseRef/notify-all', requireStaffAuth, async (req, res) => {
     const { clientName } = caseDetails;
     const suffix = sanitiseFormKey(formKeySuffix || '');
 
-    // Load members manifest for labels/types
-    const members = await svc.loadMembers({ clientName, caseRef });
+    // Load members manifest for labels/types — named for the case (a Super Visa's "Second parent")
+    const members = require('../utils/familyRoleLabels').decorateMembers(caseDetails.caseType, await svc.loadMembers({ clientName, caseRef }), caseDetails.caseSubType);
     const memberMap = {};
     for (const m of members) memberMap[m.key] = m;
 
@@ -778,7 +792,7 @@ router.post('/:caseRef/submit', async (req, res) => {
   }
 
   try {
-    const { itemId, clientName, caseType, formFiles } = await svc.validateAccess(caseRef, token);
+    const { itemId, clientName, caseType, caseSubType, formFiles } = await svc.validateAccess(caseRef, token);
 
     const key       = sanitiseFormKey(formKey || 'primary');
     const formTitle = key === 'additional' && formFiles?.additional
@@ -787,7 +801,7 @@ router.post('/:caseRef/submit', async (req, res) => {
 
     await svc.saveFormData({ clientName, caseRef, itemId, formKey: key, fields, completionPct: completionPct || 0,
       formFile: svc.validSaveFormFile(formFiles, key, (req.body || {}).formFile) });
-    await svc.markSubmitted({ itemId, caseRef, caseType, formKey: key, formLabel: formTitle, completionPct: completionPct || 0, clientName, formFiles });
+    await svc.markSubmitted({ itemId, caseRef, caseType, caseSubType, formKey: key, formLabel: formTitle, completionPct: completionPct || 0, clientName, formFiles });
 
     // Fire-and-forget: on submit, always email if there are missing fields (no throttle)
     if (Array.isArray(missingSections) && missingSections.length) {
@@ -856,7 +870,7 @@ router.post('/:caseRef/submit-all', async (req, res) => {
   }
 
   try {
-    const { itemId, clientName, caseType, formFiles } = await svc.validateAccess(caseRef, token);
+    const { itemId, clientName, caseType, caseSubType, formFiles } = await svc.validateAccess(caseRef, token);
 
     const formTitle = (formFiles?.primary || '').replace(/^\d+\.\s*/, '').replace(/\s*-\s*Questionnaire?.*$/i, '').trim();
 
@@ -891,7 +905,7 @@ router.post('/:caseRef/submit-all', async (req, res) => {
 
     // All saves succeeded — do the batch submit (single Monday update + single audit comment)
     await svc.markAllSubmitted({
-      itemId, caseRef, caseType, formLabel: formTitle, clientName, formFiles,
+      itemId, caseRef, caseType, caseSubType, formLabel: formTitle, clientName, formFiles,
       memberSubmissions,
     });
 
@@ -969,7 +983,7 @@ router.post('/:caseRef/add-member', async (req, res) => {
     const fam = require('../services/familyMemberService');
     let r;
     try {
-      r = await fam.addFamilyMember({ caseRef, cmItemId: itemId, clientName, boardType: fam.PORTAL_TO_BOARD[memberType], source: 'client', reseedMode: 'background', caseSubType: caseSubType || '',
+      r = await fam.addFamilyMember({ caseRef, cmItemId: itemId, clientName, boardType: fam.PORTAL_TO_BOARD[memberType], source: 'client', reseedMode: 'background', caseType: caseType || '', caseSubType: caseSubType || '',
         forms: require('../../config/questionnaireFormMap').resolveForm(caseType, caseSubType) || null });
     } catch (err) {
       if (err.manifestAdded && err.member) { console.warn(`[/q/add-member] ${caseRef}: section added, row failed: ${err.message}`); return res.json({ ok: true, member: err.member }); }
@@ -1086,7 +1100,7 @@ router.get('/:caseRef', async (req, res) => {
         formTitle,
         hasAdditionalForm:  hasTwo,
         overviewUrl:        '',
-        members:            hasMembers ? withStatuses : undefined,
+        members:            hasMembers ? require('../utils/familyRoleLabels').decorateMembers(caseType, withStatuses, caseSubType) : undefined,
         allowedMemberTypes: hasMembers ? memberTypes : undefined,
         otherFormUrl,
         otherFormTitle,
@@ -1118,7 +1132,7 @@ router.get('/:caseRef', async (req, res) => {
     // Load member manifest to get the member's label for display
     const members    = await svc.loadMembers({ clientName, caseRef });
     const member     = members.find(m => m.key === memberKey);
-    const memberLabel = member ? member.label : 'Primary Applicant';
+    const memberLabel = member ? (require('../utils/familyRoleLabels').decorateMembers(caseType, [member], caseSubType)[0].label) : 'Primary Applicant';
 
     return res.type('html').send(svc.buildFormPage({
       formFile, caseRef, token,

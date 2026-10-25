@@ -1060,7 +1060,7 @@ app.post('/admin/case-action/:caseRef/family/add', express.json(), async (req, r
   const args = {
     caseRef: ctx.overview.caseRef || caseRef, cmItemId: ctx.overview.itemId, clientName: ctx.overview.clientName,
     boardType: fam.PORTAL_TO_BOARD[memberType], name: fam.cleanName(body.name), source: 'staff', actor,
-    caseSubType: ctx.overview.caseSubType || '',
+    caseType: ctx.overview.caseType || '', caseSubType: ctx.overview.caseSubType || '',
     forms: require('../config/questionnaireFormMap').resolveForm(ctx.overview.caseType, ctx.overview.caseSubType) || null,
   };
   const r = require('./services/familyAddJobs').start({ caseRef: args.caseRef, assignees: ctx.overview.assignees, by: actor.name, memberType, run: () => fam.addFamilyMember(args) });
@@ -1454,9 +1454,9 @@ app.post('/admin/questionnaire/:caseRef/regenerate-pdfs', express.json(), async 
     const svc = require('./services/htmlQuestionnaireService');
     const { dryRun = true, qCompletionStatus = '', updates = null, updatesTruncated = false, skipKeys = [], createMissing = false, editedAfterSubmission = 'skip' } = req.body || {};
     // skipFormVersioning: the recorded formFile wins for the label; the era resolver's extra reads are not needed here.
-    const { clientName, formFiles } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+    const { clientName, formFiles, caseType, caseSubType } = await svc.validateAccessForStaff(caseRef, { skipFormVersioning: true });
     const result = await require('./services/questionnairePdfService').regenerateCasePdfs({
-      clientName, caseRef, formFiles, qCompletionStatus: String(qCompletionStatus || ''),
+      clientName, caseRef, formFiles, caseType: caseType || '', caseSubType: caseSubType || '', qCompletionStatus: String(qCompletionStatus || ''),
       updates: Array.isArray(updates) ? updates.slice(0, 200) : null,
       updatesTruncated: updatesTruncated === true,
       skipKeys: Array.isArray(skipKeys) ? skipKeys.slice(0, 50).map(String) : [],

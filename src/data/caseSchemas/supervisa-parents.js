@@ -125,13 +125,13 @@ module.exports = {
   roles: [
     {
       role:      'PrincipalApplicant',
-      label:     'Principal Applicant (Parent)',
+      label:     'First parent (principal applicant)',   // what the client's pages call this role (2026-10-25)
       required:  true,                 // always seeded
       documents: PA_SPOUSE_DOCUMENTS,
     },
     {
       role:        'Spouse',
-      label:       'Dependent Spouse (Parent)',
+      label:       'Second parent',                        // the principal applicant's spouse
       includeWhen: { caseFlag: 'spouseIncluded' },   // seeded only if spouse applies
       documents:   PA_SPOUSE_DOCUMENTS,
     },
