@@ -629,7 +629,7 @@ function render(d){
   if(d.originalChannel) st+=kv('Original channel', d.originalChannel);
   st+=kv('Lead owner', d.leadOwner||'Not set');
   if(d.caseTypeInterest && d.caseTypeInterest!==d.service) st+=kv('Case type interest', d.caseTypeInterest);
-  st+=kv('Intake archive', d.hasIntakeArchive?('Submitted '+String(d.intakeSubmittedAt||'').slice(0,10)):(d.staffAdded?'None — added by staff':'Not found'));
+  st+=kv('Intake archive', d.hasIntakeArchive?('Submitted '+String(d.intakeSubmittedAt||'').slice(0,10)):(d.staffAdded?((d.originalChannel==='Email'&&!d.leadOwner)?'None — came in by email':'None — added by staff'):'Not found'));
   if(d.consentsAt) st+=kv('Consents', String(d.consentsAt).slice(0,10));
   if(d.email) st+=kv('Email', d.email);
   if(d.phone) st+=kv('Phone', d.phone);

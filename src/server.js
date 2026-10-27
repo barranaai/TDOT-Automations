@@ -753,6 +753,25 @@ function resolveAdminOrReject(req, res, message = 'Only an admin can delete reco
   return viewer;
 }
 
+// ─── Email → lead (Faran 2026-10-27): admin status, access check, run now ────
+// The office inbox (EMAIL_LEADS_MAILBOX, default info@tdotimm.com) is read every
+// 5 minutes by the scheduler; these let an admin see what it did, check that
+// Microsoft allows the app to read the mailbox, and run it once on demand.
+app.get('/admin/email-leads/status', async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can see the email → lead status.')) return;
+  try { res.json(await require('./services/emailLeadsService').getStatus()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.get('/admin/email-leads/check', async (req, res) => {   // read-only — openable in the browser
+  if (!resolveAdminOrReject(req, res, 'Only an admin can check the inbox access.')) return;
+  const r = await require('./services/emailLeadsService').checkAccess();
+  res.status(r.ok ? 200 : 422).json(r);
+});
+app.post('/admin/email-leads/run', async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can run the email → lead check.')) return;
+  res.json(await require('./services/emailLeadsService').runOnce({ reason: 'admin' }));
+});
+
 app.get('/admin/delete/preview', async (req, res) => {
   if (!resolveAdminOrReject(req, res)) return;
   try {

@@ -196,6 +196,15 @@ function startScheduler() {
       console.error('[Scheduler] Teams transcript fetch failed:', err.message)));
   console.log('[Scheduler] Post-consult jobs registered — nudge (15 min) + Teams recordings (30 min) + transcripts (30 min)');
 
+  // ── Email → lead (Faran 2026-10-27): new email to the office inbox becomes a
+  // lead, or a note on the person's case / lead. Every 5 minutes, off the
+  // minutes the payment reconciler uses. Does nothing until Microsoft allows the
+  // app to read the mailbox (docs/email-leads-setup.md); EMAIL_LEADS=off stops it.
+  cron.schedule('2-59/5 * * * *', () =>
+    require('./emailLeadsService').runOnce().catch((err) =>
+      console.error('[Scheduler] Email → lead run failed:', err.message)));
+  console.log('[Scheduler] Job registered — email → lead every 5 min');
+
   // ── "Needs attention" on the Summary page: fresh before the team starts,
   // 07:00 TORONTO (the server's clock is UTC). An hourly tick that acts only in
   // Toronto's 7 o'clock hour — node-cron 4's own timezone option skips the run

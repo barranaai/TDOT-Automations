@@ -135,7 +135,7 @@ function buildCols(fields, clearKeys = []) {
  * Create a new Lead Board item from the public form payload, then assign a
  * lead access token. Returns { id, ...formData }.
  */
-async function createLead(formData, { groupId } = {}) {
+async function createLead(formData, { groupId, createRetries } = {}) {
   const name = (formData.fullName || '').trim() || 'Unnamed Lead';
   console.log(`[Lead] Creating lead for ${formData.email || '(no email)'}${groupId ? ` (group ${groupId})` : ''}`);
 
@@ -192,13 +192,15 @@ async function createLead(formData, { groupId } = {}) {
                create_item(board_id: $boardId, group_id: $groupId, item_name: $name, column_values: $cols) { id }
              }`,
         { boardId: String(leadBoardId), groupId: targetGroup, name, cols: JSON.stringify(buildCols(createFields)),
-          ...(anchorId ? { rel: anchorId } : {}) }
+          ...(anchorId ? { rel: anchorId } : {}) },
+        createRetries   // undefined = Monday's usual re-sends; 0 for a caller that must never create twice (email → lead)
       )
     : await mondayApi.query(
         `mutation($boardId: ID!, $name: String!, $cols: JSON!) {
            create_item(board_id: $boardId, item_name: $name, column_values: $cols) { id }
          }`,
-        { boardId: String(leadBoardId), name, cols: JSON.stringify(buildCols(createFields)) }
+        { boardId: String(leadBoardId), name, cols: JSON.stringify(buildCols(createFields)) },
+        createRetries
       );
 
   const id = result?.create_item?.id;
