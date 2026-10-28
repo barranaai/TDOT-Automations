@@ -145,7 +145,7 @@ test('wiring: the list rows carry the status; the page shows it; remarks, invite
     assert.deepEqual(rows.map((r) => [r.id, r.status.label]), [['2', 'Outcome: Newsletter'], ['1', 'New']]);
   } finally { snap.io.fetchLeads = keep; snap._reset(); portal.invalidateLeadsQueue(); }
   const page = require('../src/routes/adminLeads').buildLeadsQueueHTML();
-  assert.ok(page.includes(">Current status</th>") && page.includes("'<td>'+statusCell(c.status)+'</td>'"));
+  assert.ok(page.includes("label: 'Current status'") && page.includes("'<td>'+statusCell(c.status)+'</td>'"));
   assert.ok(page.includes(`var tip=st.detail?' title="'+escHtml(st.detail)+'"':'';`), 'the remark\'s full text on hover, escaped');
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   assert.match(read('src/services/consultantPortalService.js'), /require\('\.\/leadStatusService'\)\.record\(leadId, `📝 \[Remark/);

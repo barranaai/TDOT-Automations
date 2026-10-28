@@ -12,6 +12,7 @@
 const express = require('express');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
+const { leadsTableScript, LEADS_TABLE_CSS } = require('./leadsTableFilters');   // header filters + sorting on the Leads list
 const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const router  = express.Router();
@@ -80,16 +81,7 @@ function buildLeadsQueueHTML() {
   .tier { font-weight:700; color:var(--navy); }
   .empty { padding:40px; text-align:center; color:#94a3b8; }
   .sec-h { font-size:15px; font-weight:800; color:var(--navy); margin:0; }
-  .q-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin:2px 0 10px; }
-  .q-filters { display:flex; gap:8px; flex-wrap:wrap; }
-  .q-filters input, .q-filters select { padding:7px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:12.5px; font-family:inherit; background:#fff; color:var(--navy); }
-  .q-filters input { width:150px; }
-  /* Received date range (Faran 2026-10-28): the day the lead arrived, Toronto time, both ends included. */
-  .q-range { display:inline-flex; align-items:center; gap:6px; }
-  .q-range label { font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:.05em; }
-  .q-filters .q-range input { width:140px; }
-  .q-clear { border:1px solid #e2e8f0; background:#fff; color:#64748b; border-radius:8px; padding:6px 9px; font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
-  .q-clear:hover { color:var(--navy); border-color:var(--navy); }
+  ${LEADS_TABLE_CSS}
   ${DELETE_UI_CSS}
   ${BLACKLIST_UI_CSS}
 </style></head><body>
@@ -133,32 +125,19 @@ ${buildNavHeader('leads')}
       </div>
     </div>
 
-    <div class="q-head">
+    <div class="q-toolbar">
       <h2 class="sec-h">Awaiting booking <span id="q-count" class="muted" style="font-weight:500"></span></h2>
-      <div class="q-filters">
-        <input id="f-search" type="text" placeholder="Search lead…">
-        <select id="f-status" aria-label="Booking" title="The Booking column"><option value="">Booking: any</option><option>Not Yet</option><option>Slot Held</option><option>Abandoned</option></select>
-        <select id="f-service"><option value="">All services</option></select>
-        <select id="f-source" aria-label="Source" title="How they reached us — the Source column"><option value="">Source: any</option></select>
-        <select id="f-owner" aria-label="Lead owner" title="The lead owner — the name under the source in the Source column"><option value="">Owner: any</option></select>
-        <select id="f-month"><option value="">All months</option></select>
-        <span class="q-range" role="group" aria-label="Received between" title="The day the lead arrived (Toronto time) — both days included">
-          <label for="f-from">From</label><input id="f-from" type="date">
-          <label for="f-to">To</label><input id="f-to" type="date">
-          <button type="button" id="f-dates-clear" class="q-clear" style="display:none" title="Clear the dates">Clear dates</button>
-        </span>
-        <select id="f-urgent"><option value="">Urgency: any</option><option value="urgent">Urgent only</option></select>
-        <select id="f-invite"><option value="">Invite: any</option><option value="sent">Invite sent</option><option value="not">No invite yet</option></select>
-        <select id="f-cstatus" aria-label="Current status" title="The Current status column"><option value="">Current status: any</option></select>
-      </div>
+      <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="q-search" type="search" placeholder="Search by name…" aria-label="Search leads by name" autocomplete="off"></div>
     </div>
-    <div class="card">
+    <div id="q-chips" class="q-chips" style="display:none" aria-live="polite"></div>
+    <div class="card"><div class="tbl-wrap">
       <table>
-        <thead><tr><th>Lead</th><th>Service</th><th title="Where the lead is with us: invite, reminders, the latest remark, booked, expired, or the Outcome">Current status</th><th title="How they reached us · who owns the lead">Source</th><th title="The day the lead arrived, Toronto time">Received</th><th>Tier</th><th>Priority</th><th>Booking</th><th>Invite</th><th></th></tr></thead>
+        <thead><tr id="q-headrow"></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
-    </div>
+    </div></div>
   </div>
+  <div id="q-pop" role="dialog" aria-modal="false"></div>
 </main>
 <script>
 ${SHARED_AUTH_JS}
@@ -195,77 +174,18 @@ function renderRows(rows){
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
       '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+urgent+wants+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
-      '<td>'+statusCell(c.status)+'</td>'+
       '<td>'+escHtml(c.source||'—')+(c.owner?'<div class="muted" style="font-size:11.5px">'+escHtml(c.owner)+'</div>':'')+'</td>'+
       '<td>'+escHtml(createdOf(c)||'—')+'</td>'+
       '<td class="tier">'+escHtml(c.tier||'—')+'</td>'+
       '<td>'+(c.priority?qpill(c.priority==='Critical'?'red':c.priority==='High'?'amber':'grey',c.priority):'<span class="pill grey">—</span>')+'</td>'+
       '<td>'+statusPill(c.bookingStatus)+'</td>'+
       '<td>'+invitePill(c)+'</td>'+
+      '<td>'+statusCell(c.status)+'</td>'+
       '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this lead (careful — removes its Monday row and OneDrive folder)">'+TDOT_DEL_SVG+'</button></td></tr>';
   }).join('');
   Array.prototype.forEach.call(document.querySelectorAll('tr.row'),function(tr){
     tr.onclick=function(){ window.location.href='/admin/lead/'+encodeURIComponent(tr.getAttribute('data-id')); };
   });
-}
-function monthOf(r){ return String(r.createdDay||'').slice(0,7); }   // the Toronto month
-function distinctVals(rows,fn){ var s={}; rows.forEach(function(r){ var v=fn(r); if(v) s[v]=1; }); return Object.keys(s).sort(); }
-function fillSel(id,vals,label){ var el=document.getElementById(id); var cur=el.value; el.innerHTML='<option value="">'+label+'</option>'+vals.map(function(v){return '<option value="'+escHtml(v)+'">'+escHtml(v)+'</option>';}).join(''); el.value=cur; }
-function ownerOf(r){ return String(r.owner||'').trim(); }   // the lead owner shown in the Source column
-// Current status filter (Faran 2026-10-28, the last filter): one choice per kind of status —
-// every remark is "A remark", each Outcome its own — in the order a lead moves through them.
-var CST_ORDER=['new','invite-sending','invite-failed','invite','reminder1','reminder2','remark','abandoned','holding','paid','booked','expired','outcome'];
-function cstKey(r){ var st=r.status||{}; if(!st.key) return ''; return st.key==='outcome'?('outcome:'+st.label):st.key; }
-function cstText(r){ var st=r.status||{}; return st.key==='remark'?'A remark':st.key==='paid'?'Paid / fee recorded':String(st.label||''); }
-function sourceOf(r){ return String(r.source||'').trim(); }  // how they reached us (the Source column)
-function populateFilters(rows){
-  fillSel('f-service', distinctVals(rows,function(r){return r.service;}), 'All services');
-  var cEl=document.getElementById('f-cstatus'), cCur=cEl.value, cOpts={};
-  rows.forEach(function(r){ var k=cstKey(r); if(k && !cOpts[k]) cOpts[k]=cstText(r); });
-  var cKeys=Object.keys(cOpts).sort(function(a,b){ var ia=CST_ORDER.indexOf(a.split(':')[0]), ib=CST_ORDER.indexOf(b.split(':')[0]); return (ia<0?99:ia)-(ib<0?99:ib) || (a<b?-1:a>b?1:0); });
-  cEl.innerHTML='<option value="">Current status: any</option>'+cKeys.map(function(k){ return '<option value="'+escHtml(k)+'">'+escHtml(cOpts[k])+'</option>'; }).join('');
-  cEl.value=cCur; if(cEl.value!==cCur) cEl.value='';
-  // Source (Faran 2026-10-28): every source on the list, then the leads with none.
-  var sEl=document.getElementById('f-source'), sCur=sEl.value;
-  fillSel('f-source', distinctVals(rows,sourceOf), 'Source: any');
-  if(rows.some(function(r){ return !sourceOf(r); })){ var ns=document.createElement('option'); ns.value='__none__'; ns.textContent='No source'; sEl.appendChild(ns); }
-  sEl.value=sCur; if(sEl.value!==sCur) sEl.value='';
-  // Owner (Faran 2026-10-28): every owner on the list, then the leads nobody owns yet.
-  var oEl=document.getElementById('f-owner'), oCur=oEl.value;
-  fillSel('f-owner', distinctVals(rows,ownerOf), 'Owner: any');
-  if(rows.some(function(r){ return !ownerOf(r); })){ var none=document.createElement('option'); none.value='__none__'; none.textContent='No owner'; oEl.appendChild(none); }
-  oEl.value=oCur; if(oEl.value!==oCur) oEl.value='';
-  fillSel('f-month', distinctVals(rows,monthOf).reverse(), 'All months');
-}
-function applyFilters(){
-  var q=(document.getElementById('f-search').value||'').toLowerCase().trim();
-  var st=document.getElementById('f-status').value, sv=document.getElementById('f-service').value;
-  var mo=document.getElementById('f-month').value, ur=document.getElementById('f-urgent').value;
-  var inv=document.getElementById('f-invite').value;
-  var ow=document.getElementById('f-owner').value, so=document.getElementById('f-source').value, cs=document.getElementById('f-cstatus').value;
-  // Received date range: both days included; dates typed the wrong way round still work.
-  var fEl=document.getElementById('f-from'), tEl=document.getElementById('f-to');
-  var df=fEl.value||'', dt=tEl.value||'';
-  fEl.max=dt; tEl.min=df;
-  document.getElementById('f-dates-clear').style.display=(df||dt)?'':'none';
-  if(df && dt && df>dt){ var sw=df; df=dt; dt=sw; }
-  var rows=ALLROWS.filter(function(r){
-    if(q && String(r.name||'').toLowerCase().indexOf(q)<0) return false;
-    if(st && (r.bookingStatus||'Not Yet')!==st) return false;
-    if(sv && r.service!==sv) return false;
-    if(so && (so==='__none__' ? sourceOf(r)!=='' : sourceOf(r)!==so)) return false;
-    if(ow && (ow==='__none__' ? ownerOf(r)!=='' : ownerOf(r)!==ow)) return false;
-    if(cs && cstKey(r)!==cs) return false;
-    if(mo && monthOf(r)!==mo) return false;
-    if(df && !(createdOf(r) && createdOf(r)>=df)) return false;
-    if(dt && !(createdOf(r) && createdOf(r)<=dt)) return false;
-    if(ur==='urgent' && !r.urgent) return false;
-    if(inv==='sent' && !r.inviteSent) return false;
-    if(inv==='not' && r.inviteSent) return false;
-    return true;
-  });
-  document.getElementById('q-count').textContent='('+rows.length+(rows.length!==ALLROWS.length?(' of '+ALLROWS.length):'')+')';
-  renderRows(rows);
 }
 function load(){
   var key=getKey(); if(!key) return;
@@ -277,8 +197,7 @@ function load(){
    })
    .then(function(d){
      ALLROWS=(d.leads||[]);
-     populateFilters(ALLROWS);
-     applyFilters();
+     window.LeadsTable.setRows(ALLROWS);   // header filters + sorting (leadsTableFilters.js)
      document.getElementById('loading').style.display='none';
      document.getElementById('content').style.display='block';
    })
@@ -286,9 +205,6 @@ function load(){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
-['f-search','f-status','f-service','f-source','f-owner','f-month','f-urgent','f-invite','f-cstatus'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
-['f-from','f-to'].forEach(function(id){ var el=document.getElementById(id); el.addEventListener('input', applyFilters); el.addEventListener('change', applyFilters); });
-document.getElementById('f-dates-clear').onclick=function(){ document.getElementById('f-from').value=''; document.getElementById('f-to').value=''; applyFilters(); };
 /* ── Add lead (staff phone-in — meeting 2026-08-13 "direct leads") ── */
 var AL_ALLOW=false, AL_SIGNED=false;
 function alEl(id){ return document.getElementById(id); }
@@ -381,7 +297,8 @@ ${BLACKLIST_UI_JS}
 ${DELETE_UI_JS}
 tdotBindDelete(function(){ load(); });
 startClock(); checkApiStatus(); load();
-</script></body></html>`;
+</script>
+<script>${leadsTableScript()}</script></body></html>`;
 }
 
 // ─── Detail page ────────────────────────────────────────────────────────────────
