@@ -1794,7 +1794,7 @@ app.get('/api/direct-retainers', async (_req, res) => {
 
 app.post('/api/consultation/direct-client', express.json(), async (req, res) => {
   try {
-    const result = await consultantPortalService.createDirectClient(req.body || {});
+    const result = await consultantPortalService.createDirectClient(req.body || {}, { actor: staffActor(req, '') });
     res.json(result);
   } catch (err) {
     if (err.conflict) return res.status(409).json(consultantPortalService.conflictBody(err));

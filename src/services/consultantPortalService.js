@@ -1882,8 +1882,37 @@ async function directCaseTypeLabels() {
   return { caseTypes: cfg.CASE_TYPE_LABELS, subTypesByCase: cfg.SUB_TYPES_BY_CASE };
 }
 
-async function createDirectClient(payload = {}) {
+/**
+ * The direct-retainer popup's Notes (Faran 2026-10-28): an update on the client's
+ * lead row AND on their case (Client Master) in Monday. Never twice — a re-submit
+ * (a lost response, a double click) finds it already on the lead. Best-effort:
+ * the client is already created, so a failed note only warns.
+ */
+async function postDirectClientNotes({ leadId, cmId, notes, actor }) {
+  const text = String(notes || '').trim();
+  if (!text || !leadId) return { posted: [] };
+  const by = actor && actor.verified && String(actor.name || '').trim() ? ` · ${escHtmlNote(String(actor.name).trim().slice(0, 60))}` : '';
+  const body = `📝 <b>[Note${by}]</b> ${escHtmlNote(text).replace(/\n/g, '<br>')}`;
+  const plain = (x) => String(x || '').replace(/\s+/g, ' ').trim();
+  try {
+    const d = await mondayApi.query('query($i:[ID!]){ items(ids:$i){ updates(limit:30){ text_body } } }', { i: [String(leadId)] });
+    const ups = (d && d.items && d.items[0] && d.items[0].updates) || [];
+    if (ups.some((u) => /\[Note/.test(u.text_body || '') && plain(u.text_body).includes(plain(text).slice(0, 300)))) return { posted: [], already: true };
+  } catch (_) { /* cannot check — post */ }
+  const posted = [];
+  for (const id of [leadId, cmId].filter(Boolean).map(String)) {
+    try {
+      await mondayApi.query('mutation($id: ID!, $b: String!) { create_update(item_id: $id, body: $b) { id } }', { id, b: body });
+      posted.push(id);
+    } catch (err) { console.warn(`[Consultant] direct-client note failed on item ${id}: ${err.message}`); }
+  }
+  return { posted };
+}
+
+async function createDirectClient(payload = {}, { actor = null } = {}) {
   const clean = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
+  // Notes (optional): kept with their line breaks.
+  const notes = String(payload.notes == null ? '' : payload.notes).replace(/\r\n?/g, '\n').trim().slice(0, 2000);
   const fullName    = clean(payload.fullName, 120);
   const email       = clean(payload.email, 200);
   const phone       = clean(payload.phone, 40);
@@ -2030,9 +2059,10 @@ async function createDirectClient(payload = {}) {
     await leadService.updateLead(String(linkLeadId), linkWiring);
     _directQueueCache = { at: 0, rows: null };
     invalidateLeadsQueue(); // the lead just left the funnel — drop it from the funnel queue too
-    let caseOpened = false;
+    let caseOpened = false, linkCmId = '';
     try {
-      caseOpened = !!(await require('./handoffService').openCaseEarly({ leadId: String(linkLeadId) }));
+      linkCmId = await require('./handoffService').openCaseEarly({ leadId: String(linkLeadId) });
+      caseOpened = !!linkCmId;
     } catch (err) {
       console.error(`[Consultant] Early case-open failed for linked lead ${linkLeadId}: ${err.message}`);
     }
@@ -2041,7 +2071,8 @@ async function createDirectClient(payload = {}) {
       `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}.`).catch(() => {});
     console.log(`[Consultant] Direct client LINKED to existing lead ${linkLeadId} (was "${priorChannel}")`);
     await noteBlacklist(String(linkLeadId), 'Staff saw the warning and set this person up as a direct retainer client anyway.');
-    return { ok: true, leadId: String(linkLeadId), reused: true, linked: true, caseOpened, blacklist };
+    const notesSaved = await postDirectClientNotes({ leadId: String(linkLeadId), cmId: linkCmId || existing.clientMasterItemId, notes, actor });
+    return { ok: true, leadId: String(linkLeadId), reused: true, linked: true, caseOpened, blacklist, notesSaved: notesSaved.posted.length };
   }
 
   // Duplicate guard: a lost response / re-submit must not mint a second lead.
@@ -2073,7 +2104,8 @@ async function createDirectClient(payload = {}) {
       const pick = reusable.sort((a, b) => Number(b.id) - Number(a.id))[0];
       console.log(`[Consultant] Direct client for ${email} already exists (lead ${pick.id}) — reusing`);
       await noteBlacklist(pick.id, 'Staff saw the warning and set this person up as a direct retainer client anyway.');
-      return { ok: true, leadId: pick.id, reused: true, blacklist };
+      const notesSaved = await postDirectClientNotes({ leadId: pick.id, cmId: pick.clientMasterItemId, notes, actor });
+      return { ok: true, leadId: pick.id, reused: true, blacklist, notesSaved: notesSaved.posted.length };
     }
   } catch (_) { /* fall through to create */ }
 
@@ -2149,9 +2181,9 @@ async function createDirectClient(payload = {}) {
   // open the Client Master case NOW (neutral labels; the case ref generates off
   // the confirmed case type). Signing later upgrades the same case via
   // ensureSignedState — the handoff is idempotent, so no duplicate is possible.
-  let caseOpened = false;
+  let caseOpened = false, cmId = '';
   try {
-    const cmId = await require('./handoffService').openCaseEarly({ leadId });
+    cmId = await require('./handoffService').openCaseEarly({ leadId });
     caseOpened = !!cmId;
   } catch (err) {
     console.error(`[Consultant] Early case-open failed for direct client ${leadId}: ${err.message}`);
@@ -2165,8 +2197,10 @@ async function createDirectClient(payload = {}) {
     (caseOpened ? `The Client Master case is open (case-first — this client is never a funnel lead). ` : '') +
     `Next: set the retainer fee + plan and click “Retain &amp; send agreement”.`);
   await noteBlacklist(leadId, 'Staff saw the warning and created this direct retainer client anyway.');
+  // After the "created" note, so the team reads them in order.
+  const notesSaved = await postDirectClientNotes({ leadId, cmId, notes, actor });
   console.log(`[Consultant] Direct retainer client created — lead ${leadId} (${fullName}, ${caseType}, ${consultant}, caseOpened=${caseOpened})`);
-  return { ok: true, leadId, caseOpened, blacklist };
+  return { ok: true, leadId, caseOpened, blacklist, notesSaved: notesSaved.posted.length };
 }
 
 /** HST on a staff-recorded consultation fee, fixed when it is recorded (none when waived or outside Canada). */

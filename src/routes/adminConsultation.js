@@ -149,6 +149,7 @@ function buildQueueHTML() {
   #dc-modal h3 { margin:0 0 4px; font-size:17px; color:var(--navy); }
   .dc-sub { font-size:12px; color:#64748b; margin:0 0 14px; }
   #dc-modal label { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; margin:10px 0 3px; }
+  #dc-modal textarea { width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; color:var(--navy); background:#fff; box-sizing:border-box; resize:vertical; min-height:64px; }
   #dc-modal input, #dc-modal select { width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; color:var(--navy); background:#fff; box-sizing:border-box; }
   .dc-hint { font-weight:500; text-transform:none; letter-spacing:0; }
   #dc-err { color:#dc2626; font-size:12.5px; min-height:16px; margin-top:10px; }
@@ -266,6 +267,7 @@ ${buildNavHeader('consultations')}
       <label for="dc-subtype">Case sub-type</label><select id="dc-subtype"><option value="">— (can be set later)</option></select>
       <label for="dc-consultant">Consultant *</label><select id="dc-consultant"><option value="">Choose…</option></select>
       <label for="dc-referred">Referred by</label><input id="dc-referred" type="text" maxlength="200" autocomplete="off">
+      <label for="dc-notes">Notes <span class="dc-hint">(saved as an update on the client and their case in Monday)</span></label><textarea id="dc-notes" rows="3" maxlength="2000" placeholder="Anything the team should know — what the client needs, documents mentioned, next steps…"></textarea>
       <div id="dc-profile" style="display:none" role="region" aria-label="Carried from previous application"></div>
       <div id="dc-blacklist" style="display:none"></div>
       <div id="dc-matches" style="display:none" role="region" aria-label="Possible existing records"></div>
@@ -369,7 +371,7 @@ function openDirectClient(){
   // otherwise persist into the next opening and be saved on the wrong client
   // (a stale address prints on their retainer). The boot prefill runs AFTER
   // this and re-populates intentionally.
-  ['dc-name','dc-email','dc-phone','dc-address','dc-referred'].forEach(function(id){ var e=dcEl(id); if(e) e.value=''; });
+  ['dc-name','dc-email','dc-phone','dc-address','dc-referred','dc-notes'].forEach(function(id){ var e=dcEl(id); if(e) e.value=''; });
   ['dc-casetype','dc-subtype','dc-consultant'].forEach(function(id){ var e=dcEl(id); if(e) e.selectedIndex=0; });
   DC_MATCHES=null; var mb=dcEl('dc-matches'); if(mb){ mb.style.display='none'; mb.innerHTML=''; }
   DC_BL_HIT=false; var blb=dcEl('dc-blacklist'); if(blb){ blb.style.display='none'; blb.innerHTML=''; }
@@ -544,7 +546,8 @@ function submitDirectClient(){
   var err=dcEl('dc-err'); err.textContent='';
   var body={ fullName:dcEl('dc-name').value, email:dcEl('dc-email').value, phone:dcEl('dc-phone').value,
              residentialAddress:dcEl('dc-address').value, caseType:dcEl('dc-casetype').value,
-             caseSubType:dcEl('dc-subtype').value, consultant:dcEl('dc-consultant').value, referredBy:dcEl('dc-referred').value };
+             caseSubType:dcEl('dc-subtype').value, consultant:dcEl('dc-consultant').value, referredBy:dcEl('dc-referred').value,
+             notes:dcEl('dc-notes').value };
   if(!body.fullName.trim()||!body.email.trim()||!body.phone.trim()||!body.caseType||!body.consultant||!body.residentialAddress.trim()){
     err.textContent='Name, email, phone, residential address, case type and consultant are required.'; return;
   }
