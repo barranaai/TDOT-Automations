@@ -110,6 +110,8 @@ const io = {
   deleteNote: (id) => require('./mondayApi').query('mutation($i: ID!){ delete_update(id: $i){ id } }', { i: String(id) }),
   blacklistCheck: (who) => require('./blacklistService').check(who),
   sendEmail: (msg) => require('./microsoftMailService').sendEmail(msg),
+  /** The Leads list's Current status shows a sent reminder at once (display only; never throws). */
+  record: (leadId, text) => { try { require('./leadStatusService').record(leadId, text); } catch (_) { /* display only */ } },
   log: (m) => console.log(m),
   warn: (m) => console.warn(m),
 };
@@ -377,9 +379,11 @@ async function remindPerson(ids, { dryRun = false, preloaded } = {}) {
     return { ...base, result: 'failed', n: r.n, why: err.message };
   }
   // 4. The copy of the record on the person's other invited rows (best-effort).
+  io.record(leadId, claimText(r.n));
   for (const row of a.pair) {
     if (row.id === leadId) continue;
     await Promise.resolve(io.postNote(row.id, `⏰ ${copyText(r.n)} ${escHtml(leadId)} to ${escHtml(lead.email)} (the same person) — no reminder goes from this lead.`))
+      .then(() => io.record(row.id, copyText(r.n)))
       .catch((e) => io.warn(`[BookingReminders] copy note failed on lead ${row.id}: ${e.message}`));
   }
   io.log(`[BookingReminders] reminder ${r.n} emailed for lead ${leadId}`);

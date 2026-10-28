@@ -43,7 +43,6 @@ const SNAPSHOT_KEYS = [
   'retainerSent', 'retainerSigned', 'retainerPaid', 'retainerFee', 'clientMasterItemId', 'conversionStatus', 'consultPayment', 'originalChannel',
   'confirmedCaseType', 'serviceRequired', 'whatDoYouWant', 'deadlineDate', 'removalOrder', 'enforcementLetter',
   'relationshipWithTdot', 'existingFileType', 'assignedConsultant', 'leadOwner', 'bookingInvite', 'inviteSentAt',
-  'currentStatus', 'statusExpiry',   // the Leads list's "Current status" column (Faran 2026-10-28)
 ];
 const SNAPSHOT_IDS = SNAPSHOT_KEYS.map((k) => COLS[k]).filter(Boolean);
 

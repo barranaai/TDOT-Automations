@@ -1172,6 +1172,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
     }
   }
   await postInviteNote(leadId, `📧 <b>Booking invite emailed</b> to ${lead.email} on ${sentDate}.`).catch(() => {});
+  try { require('./leadStatusService').record(leadId, 'Booking invite emailed'); } catch (_) { /* display only */ }
   console.log(`[Booking] Invite emailed to ${lead.email} for lead ${leadId}`);
 }
 

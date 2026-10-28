@@ -213,6 +213,14 @@ function startScheduler() {
       console.error('[Scheduler] Booking reminders failed:', err.message)));
   console.log('[Scheduler] Job registered — booking-invite reminders hourly (:19)');
 
+  // ── The Leads list's "Current status" (Faran 2026-10-28): a copy of the Lead
+  // Board's recent notes (invite, reminders, remarks). Read back 45 days at boot,
+  // then the new notes every 10 minutes (a full re-read every 6 hours). Read-only.
+  const leadStatus = require('./leadStatusService');
+  setTimeout(() => leadStatus.refresh(), 30 * 1000);
+  cron.schedule('4-59/10 * * * *', () => leadStatus.refresh());
+  console.log('[Scheduler] Lead status notes copy — at boot, then every 10 min');
+
   // ── "Needs attention" on the Summary page: fresh before the team starts,
   // 07:00 TORONTO (the server's clock is UTC). An hourly tick that acts only in
   // Toronto's 7 o'clock hour — node-cron 4's own timezone option skips the run

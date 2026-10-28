@@ -153,7 +153,7 @@ ${buildNavHeader('leads')}
     </div>
     <div class="card">
       <table>
-        <thead><tr><th>Lead</th><th>Service</th><th title="The client's immigration status where they are now, from the intake form · when it expires">Current status</th><th title="How they reached us · who owns the lead">Source</th><th title="The day the lead arrived, Toronto time">Received</th><th>Tier</th><th>Priority</th><th>Booking</th><th>Invite</th><th></th></tr></thead>
+        <thead><tr><th>Lead</th><th>Service</th><th title="Where the lead is with us: invite, reminders, the latest remark, booked, expired, or the Outcome">Current status</th><th title="How they reached us · who owns the lead">Source</th><th title="The day the lead arrived, Toronto time">Received</th><th>Tier</th><th>Priority</th><th>Booking</th><th>Invite</th><th></th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div>
@@ -170,6 +170,15 @@ function statusPill(s){
   return qpill('amber', s||'Not Yet');
 }
 function createdOf(r){ return String(r.createdDay||''); }   // the Toronto day the lead arrived (server-made)
+// Current status (Faran 2026-10-28): where the lead is with us — the label, then when (Toronto day).
+function stDay(ms){ try { return new Date(ms).toLocaleDateString('en-CA',{ timeZone:'America/Toronto', month:'short', day:'numeric' }); } catch(e){ return ''; } }
+function statusCell(st){
+  if(!st||!st.label) return '<span class="pill grey">—</span>';
+  var sub=st.slot?st.slot:(st.at?stDay(st.at):'');
+  if(st.key==='remark' && st.by) sub=(sub?sub+' · ':'')+st.by;
+  var tip=st.detail?' title="'+escHtml(st.detail)+'"':'';   // a remark's full text on hover
+  return '<span'+tip+'>'+qpill(st.tone||'grey', st.label)+'</span>'+(sub?'<div class="muted" style="font-size:11.5px;margin-top:2px">'+escHtml(sub)+'</div>':'');
+}
 function invitePill(c){
   if(!c.inviteSent) return '<span class="pill grey">—</span>';
   return qpill('green', c.inviteSentAt?('Sent '+String(c.inviteSentAt).slice(0,10)):'Sent');
@@ -185,7 +194,7 @@ function renderRows(rows){
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
       '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+urgent+wants+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
-      '<td>'+escHtml(c.currentStatus||'—')+(c.statusExpiry?'<div class="muted" style="font-size:11.5px">expires '+escHtml(c.statusExpiry)+'</div>':'')+'</td>'+
+      '<td>'+statusCell(c.status)+'</td>'+
       '<td>'+escHtml(c.source||'—')+(c.owner?'<div class="muted" style="font-size:11.5px">'+escHtml(c.owner)+'</div>':'')+'</td>'+
       '<td>'+escHtml(createdOf(c)||'—')+'</td>'+
       '<td class="tier">'+escHtml(c.tier||'—')+'</td>'+

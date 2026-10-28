@@ -550,9 +550,8 @@ async function getLeadsQueue() {
     urgent:        l.removalOrder === 'Yes' || l.enforcementLetter === 'Yes' || Boolean((l.deadlineDate || '').trim()),
     inviteSent:    (l.bookingInvite || '') === 'Sent',
     inviteSentAt:  l.inviteSentAt || '',  // blank for invites sent before the stamp existed
-    // The client's immigration status where they are now (intake form) + when it expires (Faran 2026-10-28).
-    currentStatus: (l.currentStatus || '').trim(),
-    statusExpiry:  String(l.statusExpiry || '').trim().slice(0, 10),
+    // Where the lead is WITH US (Faran 2026-10-28) — invite, reminders, a remark, booked, expired, the Outcome.
+    status:        require('./leadStatusService').leadStatus(l, require('./leadStatusService').activityFor(l.id), Date.now()),
   }));
   rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || Number(b.id) - Number(a.id));
   _leadsQueueCache = { at: Date.now(), rows };
@@ -993,6 +992,9 @@ async function postRemarkNote(leadId, { presetLabel = '', text = '', staffName =
     `mutation($id: ID!, $b: String!) { create_update(item_id: $id, body: $b) { id } }`,
     { id: String(leadId), b: `${head} ${parts.join(' — ')}` }
   );
+  // The Leads list's Current status shows it at once (the notes copy reads it within 10 minutes anyway).
+  require('./leadStatusService').record(leadId, `📝 [Remark${staffName ? ' · ' + staffName : ''}] ${[presetLabel, text].filter(Boolean).join(' — ')}`);
+  _leadsQueueCache.at = 0;
 }
 
 /**
