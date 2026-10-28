@@ -16,18 +16,20 @@ const script = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/scrip
 function page(rows) {
   const els = {};
   const el = (id) => (els[id] = els[id] || { id, value: '', min: '', max: '', style: { display: '' }, textContent: '' });
-  ['f-search', 'f-status', 'f-service', 'f-source', 'f-owner', 'f-month', 'f-urgent', 'f-invite', 'f-from', 'f-to', 'f-dates-clear', 'q-count'].forEach(el);
+  ['f-search', 'f-status', 'f-service', 'f-source', 'f-owner', 'f-month', 'f-urgent', 'f-invite', 'f-cstatus', 'f-from', 'f-to', 'f-dates-clear', 'q-count'].forEach(el);
   const pick = (name) => { const m = script.match(new RegExp(`function ${name}\\(([^)]*)\\)\\{[\\s\\S]*?\\n\\}\\n`)); assert.ok(m, name); return m[0]; };
   const one = (name) => { const m = script.match(new RegExp(`function ${name}\\([^)]*\\)\\{[^\\n]*\\}`)); assert.ok(m, name); return m[0]; };
   const shown = [];
   const ctx = { document: { getElementById: (id) => el(id) }, ALLROWS: rows, renderRows: (r) => { shown.length = 0; shown.push(...r); } };
   vm.createContext(ctx);
-  vm.runInContext(`${one('createdOf')}\n${one('monthOf')}\n${one('ownerOf')}\n${one('sourceOf')}\n${pick('applyFilters')}`, ctx);
+  vm.runInContext(`${one('createdOf')}\n${one('monthOf')}\n${one('ownerOf')}\n${one('sourceOf')}\n${one('cstKey')}\n${pick('applyFilters')}`, ctx);
   return { el, run: () => { ctx.applyFilters(); return shown.map((r) => r.createdDay); }, ids: () => shown.map((r) => r.id), count: () => el('q-count').textContent };
 }
 
 const ROWS = ['2026-10-28', '2026-10-27', '2026-10-27', '2026-10-25', '2026-10-20', '2026-10-01', '2026-09-30', '2026-09-15', '']
-  .map((d, i) => ({ id: String(i), name: `Lead ${i}`, createdDay: d, bookingStatus: 'Not Yet', owner: ['Gauri', '', 'Melanie ', 'Gauri', '', 'Shafoli Kapur', 'Melanie', '', 'Gauri'][i], source: ['Website', 'Phone', 'Website', 'Instagram', '', 'Phone ', 'Email', 'Website', 'Phone'][i] }));
+  .map((d, i) => ({ id: String(i), name: `Lead ${i}`, createdDay: d, bookingStatus: 'Not Yet', owner: ['Gauri', '', 'Melanie ', 'Gauri', '', 'Shafoli Kapur', 'Melanie', '', 'Gauri'][i], source: ['Website', 'Phone', 'Website', 'Instagram', '', 'Phone ', 'Email', 'Website', 'Phone'][i],
+    status: [{ key: 'invite', label: 'Invite sent' }, { key: 'remark', label: 'No answer / voicemail' }, { key: 'remark', label: 'Remark: called' }, { key: 'expired', label: 'Expired' },
+      { key: 'outcome', label: 'Outcome: Follow-Up' }, { key: 'outcome', label: 'Outcome: Newsletter' }, { key: 'reminder1', label: '1st reminder sent' }, { key: 'new', label: 'New' }, {}][i] }));
 
 test('the page has From / To date boxes and a Clear button next to the other filters', () => {
   for (const s of ['<input id="f-from" type="date">', '<input id="f-to" type="date">', 'id="f-dates-clear"', 'aria-label="Received between"']) assert.ok(html.includes(s), s);
@@ -87,4 +89,18 @@ test('Source: one channel, or "No source"; it combines with the owner and the da
   p.run(); assert.deepEqual(p.ids(), ['0']);
   p.el('f-owner').value = ''; p.el('f-to').value = '2026-10-01';
   p.run(); assert.deepEqual(p.ids(), ['7']);
+});
+
+test('Current status filter: the LAST filter; one choice per kind (every remark together, each Outcome on its own)', () => {
+  const ids = [...html.matchAll(/<(?:select|input) id="(f-[a-z]+)"/g)].map((m) => m[1]);
+  assert.equal(ids[ids.length - 1], 'f-cstatus', `last of ${ids.join(', ')}`);
+  for (const x of ['<option value="">Current status: any</option>', '<option value="">Booking: any</option>', "'f-invite','f-cstatus'].forEach("]) assert.ok(html.includes(x), x);
+  assert.ok(!html.includes('>All statuses<'), 'the booking filter no longer says "All statuses"');
+  const p = page(ROWS);
+  p.el('f-cstatus').value = 'remark';
+  p.run(); assert.deepEqual(p.ids(), ['1', '2']);
+  p.el('f-cstatus').value = 'outcome:Outcome: Follow-Up';
+  p.run(); assert.deepEqual(p.ids(), ['4']);
+  p.el('f-cstatus').value = 'expired'; p.el('f-source').value = 'Instagram';
+  p.run(); assert.deepEqual(p.ids(), ['3']);
 });

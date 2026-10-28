@@ -137,7 +137,7 @@ ${buildNavHeader('leads')}
       <h2 class="sec-h">Awaiting booking <span id="q-count" class="muted" style="font-weight:500"></span></h2>
       <div class="q-filters">
         <input id="f-search" type="text" placeholder="Search lead…">
-        <select id="f-status"><option value="">All statuses</option><option>Not Yet</option><option>Slot Held</option><option>Abandoned</option></select>
+        <select id="f-status" aria-label="Booking" title="The Booking column"><option value="">Booking: any</option><option>Not Yet</option><option>Slot Held</option><option>Abandoned</option></select>
         <select id="f-service"><option value="">All services</option></select>
         <select id="f-source" aria-label="Source" title="How they reached us — the Source column"><option value="">Source: any</option></select>
         <select id="f-owner" aria-label="Lead owner" title="The lead owner — the name under the source in the Source column"><option value="">Owner: any</option></select>
@@ -149,6 +149,7 @@ ${buildNavHeader('leads')}
         </span>
         <select id="f-urgent"><option value="">Urgency: any</option><option value="urgent">Urgent only</option></select>
         <select id="f-invite"><option value="">Invite: any</option><option value="sent">Invite sent</option><option value="not">No invite yet</option></select>
+        <select id="f-cstatus" aria-label="Current status" title="The Current status column"><option value="">Current status: any</option></select>
       </div>
     </div>
     <div class="card">
@@ -211,9 +212,19 @@ function monthOf(r){ return String(r.createdDay||'').slice(0,7); }   // the Toro
 function distinctVals(rows,fn){ var s={}; rows.forEach(function(r){ var v=fn(r); if(v) s[v]=1; }); return Object.keys(s).sort(); }
 function fillSel(id,vals,label){ var el=document.getElementById(id); var cur=el.value; el.innerHTML='<option value="">'+label+'</option>'+vals.map(function(v){return '<option value="'+escHtml(v)+'">'+escHtml(v)+'</option>';}).join(''); el.value=cur; }
 function ownerOf(r){ return String(r.owner||'').trim(); }   // the lead owner shown in the Source column
+// Current status filter (Faran 2026-10-28, the last filter): one choice per kind of status —
+// every remark is "A remark", each Outcome its own — in the order a lead moves through them.
+var CST_ORDER=['new','invite-sending','invite-failed','invite','reminder1','reminder2','remark','abandoned','holding','paid','booked','expired','outcome'];
+function cstKey(r){ var st=r.status||{}; if(!st.key) return ''; return st.key==='outcome'?('outcome:'+st.label):st.key; }
+function cstText(r){ var st=r.status||{}; return st.key==='remark'?'A remark':st.key==='paid'?'Paid / fee recorded':String(st.label||''); }
 function sourceOf(r){ return String(r.source||'').trim(); }  // how they reached us (the Source column)
 function populateFilters(rows){
   fillSel('f-service', distinctVals(rows,function(r){return r.service;}), 'All services');
+  var cEl=document.getElementById('f-cstatus'), cCur=cEl.value, cOpts={};
+  rows.forEach(function(r){ var k=cstKey(r); if(k && !cOpts[k]) cOpts[k]=cstText(r); });
+  var cKeys=Object.keys(cOpts).sort(function(a,b){ var ia=CST_ORDER.indexOf(a.split(':')[0]), ib=CST_ORDER.indexOf(b.split(':')[0]); return (ia<0?99:ia)-(ib<0?99:ib) || (a<b?-1:a>b?1:0); });
+  cEl.innerHTML='<option value="">Current status: any</option>'+cKeys.map(function(k){ return '<option value="'+escHtml(k)+'">'+escHtml(cOpts[k])+'</option>'; }).join('');
+  cEl.value=cCur; if(cEl.value!==cCur) cEl.value='';
   // Source (Faran 2026-10-28): every source on the list, then the leads with none.
   var sEl=document.getElementById('f-source'), sCur=sEl.value;
   fillSel('f-source', distinctVals(rows,sourceOf), 'Source: any');
@@ -231,7 +242,7 @@ function applyFilters(){
   var st=document.getElementById('f-status').value, sv=document.getElementById('f-service').value;
   var mo=document.getElementById('f-month').value, ur=document.getElementById('f-urgent').value;
   var inv=document.getElementById('f-invite').value;
-  var ow=document.getElementById('f-owner').value, so=document.getElementById('f-source').value;
+  var ow=document.getElementById('f-owner').value, so=document.getElementById('f-source').value, cs=document.getElementById('f-cstatus').value;
   // Received date range: both days included; dates typed the wrong way round still work.
   var fEl=document.getElementById('f-from'), tEl=document.getElementById('f-to');
   var df=fEl.value||'', dt=tEl.value||'';
@@ -244,6 +255,7 @@ function applyFilters(){
     if(sv && r.service!==sv) return false;
     if(so && (so==='__none__' ? sourceOf(r)!=='' : sourceOf(r)!==so)) return false;
     if(ow && (ow==='__none__' ? ownerOf(r)!=='' : ownerOf(r)!==ow)) return false;
+    if(cs && cstKey(r)!==cs) return false;
     if(mo && monthOf(r)!==mo) return false;
     if(df && !(createdOf(r) && createdOf(r)>=df)) return false;
     if(dt && !(createdOf(r) && createdOf(r)<=dt)) return false;
@@ -274,7 +286,7 @@ function load(){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
-['f-search','f-status','f-service','f-source','f-owner','f-month','f-urgent','f-invite'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
+['f-search','f-status','f-service','f-source','f-owner','f-month','f-urgent','f-invite','f-cstatus'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
 ['f-from','f-to'].forEach(function(id){ var el=document.getElementById(id); el.addEventListener('input', applyFilters); el.addEventListener('change', applyFilters); });
 document.getElementById('f-dates-clear').onclick=function(){ document.getElementById('f-from').value=''; document.getElementById('f-to').value=''; applyFilters(); };
 /* ── Add lead (staff phone-in — meeting 2026-08-13 "direct leads") ── */
