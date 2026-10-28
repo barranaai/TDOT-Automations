@@ -335,7 +335,9 @@ function buildLeadDetailHTML(leadId) {
   ${SHARED_CSS_VARS}
   ${NAV_CSS}
   body { background:var(--bg); }
-  .wrap { max-width:1140px; margin:0 auto; padding:20px 30px 90px; }
+  /* Full width (Faran 2026-10-28), like the listing pages: the page gets the
+     screen, with the same side padding as the header so the edges line up. */
+  .wrap { max-width:none; margin:0; padding:20px 14px 90px; }
   #loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:50vh; gap:16px; }
   .spinner { width:42px; height:42px; border:3px solid #e2e8f0; border-top-color:var(--navy); border-radius:50%; animation:spin .7s linear infinite; }
   ${UPDATES_WIDGET_CSS}
@@ -487,6 +489,7 @@ ${buildNavHeader('leads')}
             <button class="btn primary" id="btn-invite" title="Email the client this message with their booking link">${I.send} Send booking invite</button>
           </div>
           <div id="inv-msg" class="act-msg"></div>
+          <div class="muted" style="margin-top:8px;line-height:1.5">If the client does not book, the app emails them a reminder 48 hours and 5 days after the first invite. Setting an Outcome stops the reminders.</div>
         </div>
         <div class="card">
           <div class="card-t">${I.flag} Outcome &amp; remarks</div>
@@ -621,6 +624,7 @@ function render(d){
   st+=kv('Booking status', d.bookingStatus||'Not Yet');
   if(d.bookedSlot) st+=kv('Booked slot', d.bookedSlot);
   st+=kv('Booking invite', d.inviteSent?('Sent'+(d.inviteSentAt?(' · '+String(d.inviteSentAt).slice(0,10)):'')):'Not sent yet');
+  if(d.bookingReminders) st+=kv('Booking reminders', d.bookingReminders);
   st+=kv('Pre-consult', d.preConsultSubmitted?'Submitted':'Pending');
   if(d.outcome) st+=kv('Outcome', d.outcome);
   Array.prototype.forEach.call(document.querySelectorAll('.obtn'),function(b){ b.classList.toggle('active', b.getAttribute('data-outcome')===(d.outcome||'')); });

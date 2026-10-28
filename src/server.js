@@ -772,6 +772,18 @@ app.post('/admin/email-leads/run', async (req, res) => {
   res.json(await require('./services/emailLeadsService').runOnce({ reason: 'admin' }));
 });
 
+// ─── Booking-invite reminders (Faran 2026-10-28) ──────────────────────────────
+// preview = who would get a reminder right now and why the others would not
+// (read-only — openable in the browser); run = one run now (sends what is due).
+app.get('/admin/booking-reminders/preview', async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can see the booking reminders.')) return;
+  res.json(await require('./services/bookingRemindersService').runOnce({ dryRun: true }));
+});
+app.post('/admin/booking-reminders/run', async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can run the booking reminders.')) return;
+  res.json(await require('./services/bookingRemindersService').runOnce());
+});
+
 app.get('/admin/delete/preview', async (req, res) => {
   if (!resolveAdminOrReject(req, res)) return;
   try {

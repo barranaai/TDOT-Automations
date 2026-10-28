@@ -205,6 +205,14 @@ function startScheduler() {
       console.error('[Scheduler] Email → lead run failed:', err.message)));
   console.log('[Scheduler] Job registered — email → lead every 5 min');
 
+  // ── Booking-invite reminders (Faran 2026-10-28): a lead invited to book who
+  // has not booked gets a reminder 48 hours and 5 days after the first invite.
+  // Hourly, at :19 (no other job runs at :19). BOOKING_REMINDERS=off stops it.
+  cron.schedule('19 * * * *', () =>
+    require('./bookingRemindersService').runOnce().catch((err) =>
+      console.error('[Scheduler] Booking reminders failed:', err.message)));
+  console.log('[Scheduler] Job registered — booking-invite reminders hourly (:19)');
+
   // ── "Needs attention" on the Summary page: fresh before the team starts,
   // 07:00 TORONTO (the server's clock is UTC). An hourly tick that acts only in
   // Toronto's 7 o'clock hour — node-cron 4's own timezone option skips the run

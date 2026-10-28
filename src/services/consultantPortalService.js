@@ -565,6 +565,15 @@ async function getLeadDetail(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Lead not found'); e.notFound = true; throw e; }
 
+  // Where the booking-invite reminders stand (one line; invited leads only).
+  // Started now, read alongside the intake; time-boxed so it never slows the page.
+  const remindersP = (lead.bookingInvite || '') === 'Sent'
+    ? Promise.race([
+      require('./bookingRemindersService').describeForLead(lead),
+      new Promise((resolve) => { const t = setTimeout(() => resolve(''), 4000); if (t.unref) t.unref(); }),
+    ]).catch(() => '')
+    : Promise.resolve('');
+
   const intake = await readLeadJson(lead, 'intake-submission.json');
   const f = (intake && intake.fields) || {};
   const { sections, flags } = buildIntakeSections(f, lead);
@@ -669,6 +678,7 @@ async function getLeadDetail(leadId) {
     inviteMessage,
     inviteSent: (lead.bookingInvite || '') === 'Sent',
     inviteSentAt: lead.inviteSentAt || '',
+    bookingReminders: await remindersP,
 
     hasIntakeArchive: Boolean(intake),
     intakeSubmittedAt: torontoWallClock(intake && intake.submittedAt),   // shown as a Toronto date

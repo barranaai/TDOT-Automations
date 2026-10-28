@@ -1039,6 +1039,61 @@ async function postInviteNote(leadId, body) {
   } catch (err) { console.warn(`[Booking] invite note failed for ${leadId}: ${err.message}`); }
 }
 
+/**
+ * The client's personal booking link — the booking invite and its two
+ * reminders (bookingRemindersService) send the same one.
+ */
+function bookingUrl(leadId, token) {
+  const base = String(process.env.RENDER_URL || 'https://tdot-automations.onrender.com').replace(/\/+$/, '');
+  return `${base}/book/${leadId}?t=${encodeURIComponent(token)}`;
+}
+
+/**
+ * The fee sentence of the booking emails: the ROUTED consultant's real pricing
+ * (per-duration options), not the flat env fee — the booking page will offer
+ * exactly these. '' when nothing is priced.
+ */
+function inviteFeeLine(lead) {
+  let feeLine = '';
+  try {
+    const routing = require('../../config/consultantRouting');
+    const opts = routing.consultOptionsFor(routing.resolveConsultant(lead));   // invite quotes the PINNED consultant's fees
+    const cad = (c) => (c / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+    const priced = opts.filter((o) => o.feeCents > 0);
+    // Totals shown WITH HST (team feedback 2026-08-13: a client charged $226
+    // must never have been told "$200" with no mention of tax) — EXCEPT for
+    // clients outside Canada, who are HST-exempt (Melanie, 2026-08-24).
+    const leadPct = consultHstPctForLead(lead);
+    const hst = leadPct > 0 ? ' (incl. HST)' : '';
+    if (priced.length > 1) {
+      feeLine = `The consultation fee is ${priced.map((o) => `<b>${cad(consultTotalWithTaxForLead(o.feeCents, lead))}</b>${hst} for ${o.durationMin} minutes`).join(' or ')}, payable securely online when you book.`;
+    } else if (priced.length === 1) {
+      feeLine = `The consultation fee is <b>${cad(consultTotalWithTaxForLead(priced[0].feeCents, lead))}</b>${hst}, payable securely online when you book.`;
+    }
+  } catch (_) {
+    if (CONSULT_FEE_CENTS > 0) feeLine = `The consultation fee is <b>${(consultTotalWithTaxForLead(CONSULT_FEE_CENTS, lead) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })}</b>${consultHstPctForLead(lead) > 0 ? ' (incl. HST)' : ''}, payable securely online when you book.`;
+  }
+  return feeLine;
+}
+
+/**
+ * The booking emails' layout (invite + reminders). `first` is already escaped;
+ * `bodyHtml` is ready HTML; `heading` is plain text.
+ */
+function bookingEmailHtml({ heading, first, bodyHtml, url, feeLine }) {
+  const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
+  return `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
+        <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
+          <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">${escNote(heading)}</h1></div>
+        <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
+          <p>Hi ${first},</p>
+          ${bodyHtml}
+          <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Choose your consultation time</a></p>
+          <p>You'll see our real-time availability and can pick whatever works for you. ${feeLine}</p>
+          <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it. Questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
+        </div></div>`;
+}
+
 async function sendBookingInvite(leadId, { force = false } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) return;
@@ -1059,34 +1114,12 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
 
   const leadTokenService = require('./leadTokenService');
   const token = lead.leadToken || await leadTokenService.ensureToken(leadId);
-  const base = String(process.env.RENDER_URL || 'https://tdot-automations.onrender.com').replace(/\/+$/, '');
-  const url = `${base}/book/${leadId}?t=${encodeURIComponent(token)}`;
+  const url = bookingUrl(leadId, token);
 
-  const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
   const microsoftMail = require('./microsoftMailService');
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const esc = escNote;
   const first = esc(String(lead.fullName || 'there').split(' ')[0]);
-  // Quote the ROUTED consultant's real pricing (per-duration options), not the
-  // flat env fee — the booking page will offer exactly these.
-  let feeLine = '';
-  try {
-    const routing = require('../../config/consultantRouting');
-    const opts = routing.consultOptionsFor(routing.resolveConsultant(lead));   // invite quotes the PINNED consultant's fees
-    const cad = (c) => (c / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
-    const priced = opts.filter((o) => o.feeCents > 0);
-    // Totals shown WITH HST (team feedback 2026-08-13: a client charged $226
-    // must never have been told "$200" with no mention of tax) — EXCEPT for
-    // clients outside Canada, who are HST-exempt (Melanie, 2026-08-24).
-    const leadPct = consultHstPctForLead(lead);
-    const hst = leadPct > 0 ? ' (incl. HST)' : '';
-    if (priced.length > 1) {
-      feeLine = `The consultation fee is ${priced.map((o) => `<b>${cad(consultTotalWithTaxForLead(o.feeCents, lead))}</b>${hst} for ${o.durationMin} minutes`).join(' or ')}, payable securely online when you book.`;
-    } else if (priced.length === 1) {
-      feeLine = `The consultation fee is <b>${cad(consultTotalWithTaxForLead(priced[0].feeCents, lead))}</b>${hst}, payable securely online when you book.`;
-    }
-  } catch (_) {
-    if (CONSULT_FEE_CENTS > 0) feeLine = `The consultation fee is <b>${(consultTotalWithTaxForLead(CONSULT_FEE_CENTS, lead) / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })}</b>${consultHstPctForLead(lead) > 0 ? ' (incl. HST)' : ''}, payable securely online when you book.`;
-  }
+  const feeLine = inviteFeeLine(lead);
 
   // Body: the saved draft (the standard compliance-safe paragraph, possibly
   // staff-edited on the portal Leads tab) when set; otherwise the SAME standard
@@ -1107,16 +1140,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
     await microsoftMail.sendEmail({
       to: lead.email,
       subject: 'Book your consultation with TDOT Immigration',
-      html: `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:${BRAND.textOnLight}">
-        <div style="background:${BRAND.darkPanel};padding:24px;border-radius:12px 12px 0 0;text-align:center">${TDOT_LOGO_LIGHT_HTML}
-          <h1 style="color:${BRAND.textOnDark};margin:12px 0 0;font-size:20px">Book your consultation</h1></div>
-        <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
-          <p>Hi ${first},</p>
-          ${bodyHtml}
-          <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Choose your consultation time</a></p>
-          <p>You'll see our real-time availability and can pick whatever works for you. ${feeLine}</p>
-          <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it. Questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
-        </div></div>`,
+      html: bookingEmailHtml({ heading: 'Book your consultation', first, bodyHtml, url, feeLine }),
     });
   } catch (err) {
     console.error(`[Booking] Invite email FAILED for ${leadId}: ${err.message}`);
@@ -1156,6 +1180,7 @@ module.exports = {
   bookingWeeksAhead, availabilityWindows,
   holdSlot, holdSlotIfFree, readSlotClaims, claimsOnSlot, takenSlotKeys, releaseExpiredSlots, createCheckout,
   handleSquarePaymentWebhook, confirmSlot, verifySquareSignature, squareNotificationUrls, sendBookingInvite,
+  bookingUrl, inviteFeeLine, bookingEmailHtml,
   dropBufferConflicts, reconcileConsultOptionWithPayment,
   CONSULT_FEE_CENTS, CONSULT_HST_PCT, consultTotalWithTax,
   isConsultHstExemptCountry, consultHstPctForLead, consultTotalWithTaxForLead,
