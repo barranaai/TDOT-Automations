@@ -139,6 +139,7 @@ ${buildNavHeader('leads')}
         <input id="f-search" type="text" placeholder="Search lead…">
         <select id="f-status"><option value="">All statuses</option><option>Not Yet</option><option>Slot Held</option><option>Abandoned</option></select>
         <select id="f-service"><option value="">All services</option></select>
+        <select id="f-owner" aria-label="Lead owner" title="The lead owner — the name under the source in the Source column"><option value="">Owner: any</option></select>
         <select id="f-month"><option value="">All months</option></select>
         <span class="q-range" role="group" aria-label="Received between" title="The day the lead arrived (Toronto time) — both days included">
           <label for="f-from">From</label><input id="f-from" type="date">
@@ -198,8 +199,14 @@ function renderRows(rows){
 function monthOf(r){ return String(r.createdDay||'').slice(0,7); }   // the Toronto month
 function distinctVals(rows,fn){ var s={}; rows.forEach(function(r){ var v=fn(r); if(v) s[v]=1; }); return Object.keys(s).sort(); }
 function fillSel(id,vals,label){ var el=document.getElementById(id); var cur=el.value; el.innerHTML='<option value="">'+label+'</option>'+vals.map(function(v){return '<option value="'+escHtml(v)+'">'+escHtml(v)+'</option>';}).join(''); el.value=cur; }
+function ownerOf(r){ return String(r.owner||'').trim(); }   // the lead owner shown in the Source column
 function populateFilters(rows){
   fillSel('f-service', distinctVals(rows,function(r){return r.service;}), 'All services');
+  // Owner (Faran 2026-10-28): every owner on the list, then the leads nobody owns yet.
+  var oEl=document.getElementById('f-owner'), oCur=oEl.value;
+  fillSel('f-owner', distinctVals(rows,ownerOf), 'Owner: any');
+  if(rows.some(function(r){ return !ownerOf(r); })){ var none=document.createElement('option'); none.value='__none__'; none.textContent='No owner'; oEl.appendChild(none); }
+  oEl.value=oCur; if(oEl.value!==oCur) oEl.value='';
   fillSel('f-month', distinctVals(rows,monthOf).reverse(), 'All months');
 }
 function applyFilters(){
@@ -207,6 +214,7 @@ function applyFilters(){
   var st=document.getElementById('f-status').value, sv=document.getElementById('f-service').value;
   var mo=document.getElementById('f-month').value, ur=document.getElementById('f-urgent').value;
   var inv=document.getElementById('f-invite').value;
+  var ow=document.getElementById('f-owner').value;
   // Received date range: both days included; dates typed the wrong way round still work.
   var fEl=document.getElementById('f-from'), tEl=document.getElementById('f-to');
   var df=fEl.value||'', dt=tEl.value||'';
@@ -217,6 +225,7 @@ function applyFilters(){
     if(q && String(r.name||'').toLowerCase().indexOf(q)<0) return false;
     if(st && (r.bookingStatus||'Not Yet')!==st) return false;
     if(sv && r.service!==sv) return false;
+    if(ow && (ow==='__none__' ? ownerOf(r)!=='' : ownerOf(r)!==ow)) return false;
     if(mo && monthOf(r)!==mo) return false;
     if(df && !(createdOf(r) && createdOf(r)>=df)) return false;
     if(dt && !(createdOf(r) && createdOf(r)<=dt)) return false;
@@ -247,7 +256,7 @@ function load(){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
-['f-search','f-status','f-service','f-month','f-urgent','f-invite'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
+['f-search','f-status','f-service','f-owner','f-month','f-urgent','f-invite'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
 ['f-from','f-to'].forEach(function(id){ var el=document.getElementById(id); el.addEventListener('input', applyFilters); el.addEventListener('change', applyFilters); });
 document.getElementById('f-dates-clear').onclick=function(){ document.getElementById('f-from').value=''; document.getElementById('f-to').value=''; applyFilters(); };
 /* ── Add lead (staff phone-in — meeting 2026-08-13 "direct leads") ── */

@@ -1,6 +1,7 @@
 'use strict';
 
-// Leads list: a "Received" date range filter (Faran 2026-10-28) — From / To on
+// Leads list filters (Faran 2026-10-28). An Owner filter: the lead owner shown
+// in the Source column, plus "No owner". A "Received" date range filter: From / To on
 // the day the lead arrived (Toronto), both days included, dates entered the
 // wrong way round still work, combines with the other filters, "Clear dates".
 // The page's own filter code runs here against a tiny fake page.
@@ -15,18 +16,18 @@ const script = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/scrip
 function page(rows) {
   const els = {};
   const el = (id) => (els[id] = els[id] || { id, value: '', min: '', max: '', style: { display: '' }, textContent: '' });
-  ['f-search', 'f-status', 'f-service', 'f-month', 'f-urgent', 'f-invite', 'f-from', 'f-to', 'f-dates-clear', 'q-count'].forEach(el);
+  ['f-search', 'f-status', 'f-service', 'f-owner', 'f-month', 'f-urgent', 'f-invite', 'f-from', 'f-to', 'f-dates-clear', 'q-count'].forEach(el);
   const pick = (name) => { const m = script.match(new RegExp(`function ${name}\\(([^)]*)\\)\\{[\\s\\S]*?\\n\\}\\n`)); assert.ok(m, name); return m[0]; };
   const one = (name) => { const m = script.match(new RegExp(`function ${name}\\([^)]*\\)\\{[^\\n]*\\}`)); assert.ok(m, name); return m[0]; };
   const shown = [];
   const ctx = { document: { getElementById: (id) => el(id) }, ALLROWS: rows, renderRows: (r) => { shown.length = 0; shown.push(...r); } };
   vm.createContext(ctx);
-  vm.runInContext(`${one('createdOf')}\n${one('monthOf')}\n${pick('applyFilters')}`, ctx);
-  return { el, run: () => { ctx.applyFilters(); return shown.map((r) => r.createdDay); }, count: () => el('q-count').textContent };
+  vm.runInContext(`${one('createdOf')}\n${one('monthOf')}\n${one('ownerOf')}\n${pick('applyFilters')}`, ctx);
+  return { el, run: () => { ctx.applyFilters(); return shown.map((r) => r.createdDay); }, ids: () => shown.map((r) => r.id), count: () => el('q-count').textContent };
 }
 
 const ROWS = ['2026-10-28', '2026-10-27', '2026-10-27', '2026-10-25', '2026-10-20', '2026-10-01', '2026-09-30', '2026-09-15', '']
-  .map((d, i) => ({ id: String(i), name: `Lead ${i}`, createdDay: d, bookingStatus: 'Not Yet' }));
+  .map((d, i) => ({ id: String(i), name: `Lead ${i}`, createdDay: d, bookingStatus: 'Not Yet', owner: ['Gauri', '', 'Melanie ', 'Gauri', '', 'Shafoli Kapur', 'Melanie', '', 'Gauri'][i] }));
 
 test('the page has From / To date boxes and a Clear button next to the other filters', () => {
   for (const s of ['<input id="f-from" type="date">', '<input id="f-to" type="date">', 'id="f-dates-clear"', 'aria-label="Received between"']) assert.ok(html.includes(s), s);
@@ -58,4 +59,18 @@ test('dates entered the wrong way round still give the range; it combines with t
   p.el('f-month').value = ''; p.el('f-from').value = ''; p.el('f-to').value = '';
   assert.equal(p.run().length, 9);
   assert.equal(p.el('f-dates-clear').style.display, 'none');
+});
+
+test('Owner: one name, or "No owner"; it combines with the date range', () => {
+  for (const x of ['<select id="f-owner" aria-label="Lead owner"', "'f-search','f-status','f-service','f-owner','f-month'", "none.value='__none__'; none.textContent='No owner'", "fillSel('f-owner', distinctVals(rows,ownerOf), 'Owner: any');"]) assert.ok(html.includes(x), x);
+  const p = page(ROWS);
+  p.el('f-owner').value = 'Gauri';
+  p.run(); assert.deepEqual(p.ids(), ['0', '3', '8']);
+  p.el('f-owner').value = 'Melanie';
+  p.run(); assert.deepEqual(p.ids(), ['2', '6'], 'a stray space in the name still matches');
+  p.el('f-owner').value = '__none__';
+  p.run(); assert.deepEqual(p.ids(), ['1', '4', '7']);
+  p.el('f-owner').value = 'Gauri'; p.el('f-from').value = '2026-10-25';
+  p.run(); assert.deepEqual(p.ids(), ['0', '3']);
+  assert.equal(p.count(), '(2 of 9)');
 });
