@@ -46,3 +46,18 @@ test('the admin route is admin-only and read-only', () => {
   const s = require('fs').readFileSync(require.resolve('../src/server'), 'utf8');
   assert.match(s, /app\.get\('\/admin\/otter\/files', async \(req, res\) => \{\n  if \(!resolveAdminOrReject\(req, res, 'Only an admin can look at the Otter files\.'\)\) return;/);
 });
+
+test('the deep look: every file created / changed in the last days, wherever it is — names only, read-only, paged', async () => {
+  const keep = O.io.get; const urls = [];
+  O.io.get = async (url) => { urls.push(url);
+    if (!/page2/.test(url)) return { value: [item('Otter', { folder: true }), { ...item('Old.docx', { c: '2026-01-01T00:00:00Z' }), lastModifiedDateTime: '2026-01-02T00:00:00Z' }], '@odata.nextLink': 'https://graph/page2' };
+    return { value: [item('Test meeting notes.docx', { p: '/drive/root:/Otter/2026', c: '2026-10-28T13:00:00Z' }), { name: 'gone.txt', deleted: {} }] };
+  };
+  try {
+    const r = await O.recent({ days: 2, now: Date.parse('2026-10-28T14:00:00Z') });
+    assert.equal(r.ok, true); assert.equal(r.complete, true); assert.equal(r.scanned, 4);
+    assert.deepEqual(r.files.map((f) => [f.folder, f.name]), [['/Otter/2026', 'Test meeting notes.docx']]);
+    assert.ok(!JSON.stringify(r).includes('secret'));
+    assert.match(urls[0], /\/drive\/root\/delta\?/);
+  } finally { O.io.get = keep; }
+});

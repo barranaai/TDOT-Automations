@@ -88,4 +88,30 @@ async function look() {
   return out;
 }
 
-module.exports = { look, driveUser, io };
+/**
+ * The deep look: every file in the drive created in the last `days` days, wherever
+ * it sits (Graph delta, read-only, capped). For finding where a new Otter note landed.
+ */
+async function recent({ days = 2, now = Date.now() } = {}) {
+  const user = driveUser();
+  const since = new Date(now - days * 24 * 3600 * 1000).toISOString();
+  const out = { ok: true, drive: user, since, scanned: 0, files: [], problems: [], complete: false };
+  let url = `${GRAPH}/users/${encodeURIComponent(user)}/drive/root/delta?$top=500&$select=name,folder,file,size,createdDateTime,lastModifiedDateTime,parentReference,deleted`;
+  try {
+    for (let page = 0; page < 60 && url; page++) {
+      const d = await io.get(url);
+      for (const f of d.value || []) {
+        out.scanned++;
+        if (f.folder || f.deleted || !f.name) continue;
+        if (String(f.createdDateTime || '') >= since || String(f.lastModifiedDateTime || '') >= since) out.files.push(brief(f));
+      }
+      url = d['@odata.nextLink'] || '';
+      if (!url) out.complete = true;
+    }
+  } catch (err) { out.ok = false; out.problems.push(`the drive could not be scanned (${why(err)})`); }
+  out.files.sort((a, b) => String(b.created).localeCompare(String(a.created)));
+  out.files = out.files.slice(0, 50);
+  return out;
+}
+
+module.exports = { look, recent, driveUser, io };

@@ -777,7 +777,8 @@ app.post('/admin/email-leads/run', async (req, res) => {
 // look like — names, folders, types, sizes, dates. Never opens or changes a file.
 app.get('/admin/otter/files', async (req, res) => {
   if (!resolveAdminOrReject(req, res, 'Only an admin can look at the Otter files.')) return;
-  res.json(await require('./services/otterFilesService').look());
+  const svc = require('./services/otterFilesService');
+  res.json(req.query.deep ? await svc.recent({ days: Math.min(14, Math.max(1, parseInt(req.query.days, 10) || 2)) }) : await svc.look());
 });
 
 // ─── Booking-invite reminders (Faran 2026-10-28) ──────────────────────────────
