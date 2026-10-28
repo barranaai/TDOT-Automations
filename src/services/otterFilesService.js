@@ -59,14 +59,14 @@ async function look() {
     return out;
   }
   // Folders that look like Otter's, then one level inside them.
-  const folders = out.top.filter((f) => f.kind === 'folder' && /otter|meeting|notes|transcript/i.test(f.name)).slice(0, MAX_FOLDERS);
+  const folders = out.top.filter((f) => f.kind === 'folder' && /otter|meeting|notes|transcript|^apps$/i.test(f.name)).slice(0, MAX_FOLDERS);
   for (const f of folders) {
     try {
       const path = `/${f.name}`;
       const d = await io.get(`${base}/root:${encodeURI(path)}:/children?$top=50&$orderby=lastModifiedDateTime desc&$select=name,folder,size,createdDateTime,lastModifiedDateTime,parentReference`);
       const items = (d.value || []).map(brief);
       const sub = [];
-      for (const s of items.filter((x) => x.kind === 'folder').slice(0, 3)) {
+      for (const s of items.filter((x) => x.kind === 'folder').slice(0, 8)) {
         try {
           const dd = await io.get(`${base}/root:${encodeURI(`${path}/${s.name}`)}:/children?$top=20&$orderby=lastModifiedDateTime desc&$select=name,folder,size,createdDateTime,lastModifiedDateTime,parentReference`);
           sub.push({ folder: `${path}/${s.name}`, items: (dd.value || []).map(brief) });

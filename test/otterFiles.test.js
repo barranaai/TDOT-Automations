@@ -25,6 +25,7 @@ test('lists the top, the Otter-looking folders (one level in), a search, the new
     assert.equal(r.ok, true);
     assert.equal(r.drive, O.driveUser());
     assert.deepEqual(r.otterFolders.map((f) => f.folder), ['/Otter'], 'Recordings is not an Otter folder');
+    assert.ok(/\|\^apps\$/.test(require('fs').readFileSync(require.resolve('../src/services/otterFilesService'), 'utf8')), 'the Apps folder (a connected app\'s own folder) is looked into');
     assert.deepEqual(r.newestFiles.map((f) => [f.folder, f.name, f.kind]), [['/Otter', 'Asha Rao consultation.docx', 'docx'], ['/Otter/2026', 'Bo Li.pdf', 'pdf'], ['/', 'stray.txt', 'txt']], 'newest first, no duplicates');
     assert.ok(!JSON.stringify(r).includes('secret'), 'no links of any kind');
     assert.ok(urls.every((u) => !/content|createLink|invite|permissions/.test(u)), 'never opens or shares a file');
