@@ -772,6 +772,14 @@ app.post('/admin/email-leads/run', async (req, res) => {
   res.json(await require('./services/emailLeadsService').runOnce({ reason: 'admin' }));
 });
 
+// ─── Otter notes in OneDrive: READ-ONLY look (Faran 2026-10-28) ────────────────
+// Where Otter saves meeting notes (noreply@tdotimm.com's OneDrive) and what the files
+// look like — names, folders, types, sizes, dates. Never opens or changes a file.
+app.get('/admin/otter/files', async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can look at the Otter files.')) return;
+  res.json(await require('./services/otterFilesService').look());
+});
+
 // ─── Booking-invite reminders (Faran 2026-10-28) ──────────────────────────────
 // preview = who would get a reminder right now and why the others would not
 // (read-only — openable in the browser); run = one run now (sends what is due).
