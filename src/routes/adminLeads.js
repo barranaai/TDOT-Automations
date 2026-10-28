@@ -84,6 +84,12 @@ function buildLeadsQueueHTML() {
   .q-filters { display:flex; gap:8px; flex-wrap:wrap; }
   .q-filters input, .q-filters select { padding:7px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:12.5px; font-family:inherit; background:#fff; color:var(--navy); }
   .q-filters input { width:150px; }
+  /* Received date range (Faran 2026-10-28): the day the lead arrived, Toronto time, both ends included. */
+  .q-range { display:inline-flex; align-items:center; gap:6px; }
+  .q-range label { font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:.05em; }
+  .q-filters .q-range input { width:140px; }
+  .q-clear { border:1px solid #e2e8f0; background:#fff; color:#64748b; border-radius:8px; padding:6px 9px; font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
+  .q-clear:hover { color:var(--navy); border-color:var(--navy); }
   ${DELETE_UI_CSS}
   ${BLACKLIST_UI_CSS}
 </style></head><body>
@@ -134,6 +140,11 @@ ${buildNavHeader('leads')}
         <select id="f-status"><option value="">All statuses</option><option>Not Yet</option><option>Slot Held</option><option>Abandoned</option></select>
         <select id="f-service"><option value="">All services</option></select>
         <select id="f-month"><option value="">All months</option></select>
+        <span class="q-range" role="group" aria-label="Received between" title="The day the lead arrived (Toronto time) — both days included">
+          <label for="f-from">From</label><input id="f-from" type="date">
+          <label for="f-to">To</label><input id="f-to" type="date">
+          <button type="button" id="f-dates-clear" class="q-clear" style="display:none" title="Clear the dates">Clear dates</button>
+        </span>
         <select id="f-urgent"><option value="">Urgency: any</option><option value="urgent">Urgent only</option></select>
         <select id="f-invite"><option value="">Invite: any</option><option value="sent">Invite sent</option><option value="not">No invite yet</option></select>
       </div>
@@ -196,11 +207,19 @@ function applyFilters(){
   var st=document.getElementById('f-status').value, sv=document.getElementById('f-service').value;
   var mo=document.getElementById('f-month').value, ur=document.getElementById('f-urgent').value;
   var inv=document.getElementById('f-invite').value;
+  // Received date range: both days included; dates typed the wrong way round still work.
+  var fEl=document.getElementById('f-from'), tEl=document.getElementById('f-to');
+  var df=fEl.value||'', dt=tEl.value||'';
+  fEl.max=dt; tEl.min=df;
+  document.getElementById('f-dates-clear').style.display=(df||dt)?'':'none';
+  if(df && dt && df>dt){ var sw=df; df=dt; dt=sw; }
   var rows=ALLROWS.filter(function(r){
     if(q && String(r.name||'').toLowerCase().indexOf(q)<0) return false;
     if(st && (r.bookingStatus||'Not Yet')!==st) return false;
     if(sv && r.service!==sv) return false;
     if(mo && monthOf(r)!==mo) return false;
+    if(df && !(createdOf(r) && createdOf(r)>=df)) return false;
+    if(dt && !(createdOf(r) && createdOf(r)<=dt)) return false;
     if(ur==='urgent' && !r.urgent) return false;
     if(inv==='sent' && !r.inviteSent) return false;
     if(inv==='not' && r.inviteSent) return false;
@@ -229,6 +248,8 @@ function load(){
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
 ['f-search','f-status','f-service','f-month','f-urgent','f-invite'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
+['f-from','f-to'].forEach(function(id){ var el=document.getElementById(id); el.addEventListener('input', applyFilters); el.addEventListener('change', applyFilters); });
+document.getElementById('f-dates-clear').onclick=function(){ document.getElementById('f-from').value=''; document.getElementById('f-to').value=''; applyFilters(); };
 /* ── Add lead (staff phone-in — meeting 2026-08-13 "direct leads") ── */
 var AL_ALLOW=false, AL_SIGNED=false;
 function alEl(id){ return document.getElementById(id); }
