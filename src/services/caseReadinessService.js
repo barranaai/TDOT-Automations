@@ -384,17 +384,69 @@ async function writeToCaseMaster(masterItemId, qMetrics, docMetrics, minThreshol
  *   the master board (set by the last form submission).  When provided, the daily scan
  *   can still fire stage gates even though the Q board has no items.
  */
+// The stages the FULL calculation runs in: the four document numbers, Doc Threshold
+// Met / Ready for Review, and the stage gates.
+const FULL_STAGES = new Set([
+  'Document Collection Started',
+  'Internal Review',
+  'Submission Preparation',
+  'Stuck',
+]);
+
+/**
+ * What a case's stage allows (Faran 2026-10-28, case 2026-CEC-EE-110: moved to
+ * "Profile Created" the day before the client uploaded everything, the column kept
+ * reading 0%):
+ *   'full'    — the four stages above (and a blank stage, as before);
+ *   'numbers' — every other OPEN stage: the four document numbers only, kept true
+ *               to the checklist — never the status columns, never a stage move;
+ *   'none'    — a closed stage (stageGateService.TERMINAL_STAGES): left as it is.
+ */
+function stagePath(caseStage) {
+  const st = String(caseStage || '').trim();
+  if (!st || FULL_STAGES.has(st)) return 'full';
+  if (stageGateService.TERMINAL_STAGES.has(st)) return 'none';
+  return 'numbers';
+}
+
+const DOC_NUMBER_COLS = () => [CM.docReadiness, CM.docUploaded, CM.blockingDocCount, CM.missingRequired];
+
+/**
+ * The 'numbers' path: recount the checklist and write the four document numbers
+ * — only when one of them differs from what the board shows. Nothing else is
+ * written or triggered. `dryRun` only reports.
+ */
+async function refreshDocNumbers({ masterItemId, caseRef, dryRun = false }) {
+  if (!caseRef || !masterItemId) return null;
+  const dItems = await fetchExecutionItems(D_BOARD_ID, D_COLS.caseRef,
+    [D_COLS.countsTowardReady, D_COLS.documentStatus, D_COLS.blockingDoc, D_COLS.requiredType, D_COLS.intakeItemId], caseRef);
+  if (dItems.length === 0) return null;
+  await enrichDocItemsWithTemplateData(dItems);
+  const m = calcDocMetrics(dItems);
+  const next = { [CM.docReadiness]: m.readinessPct, [CM.docUploaded]: m.uploadedPct, [CM.blockingDocCount]: m.blockingCount, [CM.missingRequired]: m.missingRequired };
+  const cur = await mondayApi.query(
+    `query($ids:[ID!]){ items(ids:$ids){ id column_values(ids:${JSON.stringify(DOC_NUMBER_COLS())}) { id text } } }`, { ids: [String(masterItemId)] });
+  const before = {};
+  for (const c of ((cur && cur.items && cur.items[0] && cur.items[0].column_values) || [])) before[c.id] = String(c.text == null ? '' : c.text).trim();
+  const changed = DOC_NUMBER_COLS().filter((id) => String(before[id] == null ? '' : before[id]) !== String(next[id]));
+  if (changed.length && !dryRun) {
+    await mondayApi.query(
+      `mutation($boardId: ID!, $itemId: ID!, $colValues: JSON!) {
+         change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $colValues) { id }
+       }`,
+      { boardId: String(clientMasterBoardId), itemId: String(masterItemId), colValues: JSON.stringify(next) });
+  }
+  const pick = (o) => ({ uploadedPct: o[CM.docUploaded], readinessPct: o[CM.docReadiness], blocking: o[CM.blockingDocCount], missingRequired: o[CM.missingRequired] });
+  if (changed.length) console.log(`[Readiness] ${caseRef} | numbers only${dryRun ? ' (dry run)' : ''}: ${JSON.stringify(pick(before))} → ${JSON.stringify(pick(next))}`);
+  return { numbersOnly: true, caseRef, changed: changed.length > 0, written: changed.length > 0 && !dryRun, before: pick(before), after: pick(next) };
+}
+
 async function calculateForCase({ masterItemId, caseRef, caseType, caseStage, checkLock = true, storedQReadiness = null, qSubmitted = false, currentReadyForReview = '' }) {
   if (!caseRef || !masterItemId) return null;
 
-  // Only calculate for active collection/review stages
-  const eligibleStages = new Set([
-    'Document Collection Started',
-    'Internal Review',
-    'Submission Preparation',
-    'Stuck',
-  ]);
-  if (caseStage && !eligibleStages.has(caseStage)) return null;
+  const path = stagePath(caseStage);
+  if (path === 'none') return null;
+  if (path === 'numbers') return refreshDocNumbers({ masterItemId, caseRef });
 
   const [thresholds, dItems] = await Promise.all([
     loadThresholds(),
@@ -524,6 +576,40 @@ async function runDailyReadinessCheck() {
   console.log(`[Readiness] Done in ${elapsed}s — ${processed} updated, ${skipped} skipped, ${errors} errors`);
 }
 
+// ─── One-off / admin: refresh the document numbers of every open later-stage case ──
+
+/**
+ * Every case whose stage takes the 'numbers' path (open, outside the four full
+ * stages), not locked: recount and write the four document numbers where they
+ * differ. `dryRun` reports only. Never moves a stage, never writes a status.
+ */
+async function refreshAllDocNumbers({ dryRun = true } = {}) {
+  const FETCH_IDS = [CM.caseRef, CM.caseStage, CM.automationLock];
+  let items = [], cursor = null;
+  do {
+    const data = await mondayApi.query(
+      `query($b:[ID!], $c:String){ boards(ids:$b){ items_page(limit:200, cursor:$c){ cursor items { id column_values(ids:${JSON.stringify(FETCH_IDS)}) { id text } } } } }`,
+      { b: [String(clientMasterBoardId)], c: cursor });
+    const page = data.boards[0].items_page;
+    items = items.concat(page.items); cursor = page.cursor || null;
+  } while (cursor);
+  const out = { dryRun, looked: 0, noChecklist: 0, unchanged: 0, changed: [], errors: [] };
+  for (const item of items) {
+    const col = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
+    const caseRef = col(CM.caseRef);
+    if (!caseRef || col(CM.automationLock) === 'Yes' || stagePath(col(CM.caseStage)) !== 'numbers') continue;
+    out.looked++;
+    try {
+      const r = await refreshDocNumbers({ masterItemId: item.id, caseRef, dryRun });
+      if (!r) out.noChecklist++;
+      else if (!r.changed) out.unchanged++;
+      else out.changed.push({ caseRef, stage: col(CM.caseStage), before: r.before, after: r.after, written: r.written });
+    } catch (err) { out.errors.push({ caseRef, error: err.message }); }
+    if (!dryRun) await new Promise((res) => setTimeout(res, 200));
+  }
+  return out;
+}
+
 // ─── Convenience wrapper — call with just a caseRef ──────────────────────────
 
 /**
@@ -572,5 +658,5 @@ async function calculateForCaseRef(caseRef) {
   });
 }
 
-module.exports = { calculateForCase, calculateForCaseRef, runDailyReadinessCheck, loadThresholds,
-  _internal: { calcDocMetrics, applySchemaDefaults, enrichDocItemsWithTemplateData, writeToCaseMaster } };
+module.exports = { calculateForCase, calculateForCaseRef, runDailyReadinessCheck, loadThresholds, refreshAllDocNumbers, stagePath,
+  _internal: { calcDocMetrics, applySchemaDefaults, enrichDocItemsWithTemplateData, writeToCaseMaster, refreshDocNumbers } };

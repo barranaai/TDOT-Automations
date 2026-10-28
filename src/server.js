@@ -781,6 +781,16 @@ app.get('/admin/otter/files', async (req, res) => {
   res.json(req.query.deep ? await svc.recent({ days: Math.min(14, Math.max(1, parseInt(req.query.days, 10) || 2)) }) : await svc.look());
 });
 
+// ─── Document numbers on later-stage cases (Faran 2026-10-28, 2026-CEC-EE-110) ──
+// Recount the four document numbers of every open case outside the four
+// collection/review stages. dryRun (default) reports; { dryRun: false } writes —
+// only numbers that differ; never a status column, never a stage move.
+app.post('/admin/readiness/refresh-numbers', express.json(), async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can refresh the document numbers.')) return;
+  try { res.json(await require('./services/caseReadinessService').refreshAllDocNumbers({ dryRun: (req.body || {}).dryRun !== false })); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── Booking-invite reminders (Faran 2026-10-28) ──────────────────────────────
 // preview = who would get a reminder right now and why the others would not
 // (read-only — openable in the browser); run = one run now (sends what is due).
