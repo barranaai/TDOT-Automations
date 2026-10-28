@@ -74,3 +74,24 @@ test('Owner: one name, or "No owner"; it combines with the date range', () => {
   p.run(); assert.deepEqual(p.ids(), ['0', '3']);
   assert.equal(p.count(), '(2 of 9)');
 });
+
+test('Current status column: the client\'s immigration status from the intake, with its expiry; "—" when not given', async () => {
+  for (const x of ['>Current status</th>', 'colspan="10"', "escHtml(c.currentStatus||'—')", "expires '+escHtml(c.statusExpiry)"]) assert.ok(html.includes(x), x);
+  const heads = (html.match(/<thead><tr>([\s\S]*?)<\/tr><\/thead>/) || [])[1].match(/<th/g).length;
+  const cells = (script.match(/function renderRows[\s\S]*?\.join\(''\);/) || [''])[0].match(/'<td/g).length;
+  assert.equal(cells, heads, 'one cell per heading');
+  const snap = require('../src/services/leadSnapshot');
+  const portal = require('../src/services/consultantPortalService');
+  assert.ok(snap.SNAPSHOT_KEYS.includes('currentStatus') && snap.SNAPSHOT_KEYS.includes('statusExpiry'));
+  assert.ok(!snap.SNAPSHOT_KEYS.includes('email'), 'still no client emails in the shared list');
+  snap._reset(); portal.invalidateLeadsQueue();
+  const keep = snap.io.fetchLeads;
+  snap.io.fetchLeads = async () => [
+    { id: '1', fullName: 'A', currentStatus: 'Worker ', statusExpiry: '2027-03-01', createdAt: '2026-10-10T12:00:00Z' },
+    { id: '2', fullName: 'B', createdAt: '2026-10-11T12:00:00Z' },
+  ];
+  try {
+    const rows = await portal.getLeadsQueue();
+    assert.deepEqual(rows.map((r) => [r.id, r.currentStatus, r.statusExpiry]), [['2', '', ''], ['1', 'Worker', '2027-03-01']]);
+  } finally { snap.io.fetchLeads = keep; snap._reset(); portal.invalidateLeadsQueue(); }
+});

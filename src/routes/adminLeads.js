@@ -152,7 +152,7 @@ ${buildNavHeader('leads')}
     </div>
     <div class="card">
       <table>
-        <thead><tr><th>Lead</th><th>Service</th><th title="How they reached us · who owns the lead">Source</th><th title="The day the lead arrived, Toronto time">Received</th><th>Tier</th><th>Priority</th><th>Booking</th><th>Invite</th><th></th></tr></thead>
+        <thead><tr><th>Lead</th><th>Service</th><th title="The client's immigration status where they are now, from the intake form · when it expires">Current status</th><th title="How they reached us · who owns the lead">Source</th><th title="The day the lead arrived, Toronto time">Received</th><th>Tier</th><th>Priority</th><th>Booking</th><th>Invite</th><th></th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div>
@@ -175,7 +175,7 @@ function invitePill(c){
 }
 function renderRows(rows){
   var tb=document.getElementById('qbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="9" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="10" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.')+'</td></tr>'; return; }
   tb.innerHTML=rows.map(function(c){
     var urgent=c.urgent?(' '+qpill('red','URGENT')):'';
     // Non-booking intent ("Request quote", "Existing file update", …) — visible
@@ -184,6 +184,7 @@ function renderRows(rows){
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
       '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+urgent+wants+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
+      '<td>'+escHtml(c.currentStatus||'—')+(c.statusExpiry?'<div class="muted" style="font-size:11.5px">expires '+escHtml(c.statusExpiry)+'</div>':'')+'</td>'+
       '<td>'+escHtml(c.source||'—')+(c.owner?'<div class="muted" style="font-size:11.5px">'+escHtml(c.owner)+'</div>':'')+'</td>'+
       '<td>'+escHtml(createdOf(c)||'—')+'</td>'+
       '<td class="tier">'+escHtml(c.tier||'—')+'</td>'+

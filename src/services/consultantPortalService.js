@@ -550,6 +550,9 @@ async function getLeadsQueue() {
     urgent:        l.removalOrder === 'Yes' || l.enforcementLetter === 'Yes' || Boolean((l.deadlineDate || '').trim()),
     inviteSent:    (l.bookingInvite || '') === 'Sent',
     inviteSentAt:  l.inviteSentAt || '',  // blank for invites sent before the stamp existed
+    // The client's immigration status where they are now (intake form) + when it expires (Faran 2026-10-28).
+    currentStatus: (l.currentStatus || '').trim(),
+    statusExpiry:  String(l.statusExpiry || '').trim().slice(0, 10),
   }));
   rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || Number(b.id) - Number(a.id));
   _leadsQueueCache = { at: Date.now(), rows };

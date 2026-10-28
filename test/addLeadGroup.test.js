@@ -226,7 +226,7 @@ test('pages: Add lead asks In Canada now? (+ country) and Added by (hidden when 
   for (const html of [q, d]) for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   for (const s of ['name="al-incanada" value="Yes"', 'name="al-incanada" value="No"', 'id="al-country"', '<option value="India">India</option>', 'id="al-addedby"', '<option value="Shafoli Kapur">', 'id="al-signedin"',
     "inCanada:alLoc(), currentCountry:alEl('al-country').value, addedBy:alEl('al-addedby').value", "if(!AL_SIGNED && !body.addedBy)", 'tdotBlViewer(function(v){',
-    '<th title="How they reached us · who owns the lead">Source</th>', 'colspan="9"']) assert.ok(q.includes(s), s);
+    '<th title="How they reached us · who owns the lead">Source</th>', 'colspan="10"']) assert.ok(q.includes(s), s);
   for (const s of ['id="lead-owner"', 'id="btn-lead-owner"', 'name="lead-incanada"', 'id="lead-country"', 'id="btn-lead-loc"', "doAction(ob,'saveLeadOwner',null,os.value,'lead-owner-msg')",
     "doAction(lb,'saveLocation',null,JSON.stringify({ inCanada: yn, country: c }),'lead-loc-msg')", 'hydrateOwnerLocation(d);', "kv('How they reached us'", "'None — added by staff'"]) assert.ok(d.includes(s), s);
   const server = require('fs').readFileSync(require.resolve('../src/server'), 'utf8');
