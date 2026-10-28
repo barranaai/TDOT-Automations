@@ -39,7 +39,8 @@ test('checks: a name, a real email, a phone of 7–15 digits (or none), a source
   const v = (b) => portal.validateAction('saveBasicInfo', JSON.stringify({ ...BODY, ...b }));
   assert.deepEqual(v({ fullName: '  Asha   Rao ', phone: '' }).normalized, { ...BODY, phone: '' });
   assert.match(v({ fullName: 'A' }).error, /full name/);
-  for (const email of ['', 'asha', 'asha@x', 'a b@x.com']) assert.match(v({ email }).error, /valid email/, email);
+  for (const email of ['asha', 'asha@x', 'a b@x.com']) assert.match(v({ email }).error, /doesn’t look right/, email);
+  assert.equal(v({ email: '' }).ok, true, 'no email is allowed (a lead may be added with the name only)');
   for (const phone of ['123', 'call me', '+1 416 555 0101 1234 5678']) assert.match(v({ phone }).error, /phone/, phone);
   assert.equal(portal.validateAction('saveBasicInfo', 'not json').ok, false);
   assert.equal(portal.validateAction('saveInquiry', 'x'.repeat(5001)).ok, false);
@@ -85,6 +86,16 @@ test('refused: name / email / phone once a case is open; changing a Direct Retai
     assert.deepEqual(w.calls.updates[0].f, { fullName: 'Asha R' }, 'unchanged old label passes');
     await assert.rejects(w.act({ sourceChannel: 'TikTok' }), /from the list/);
     await assert.rejects(w.act({ sourceChannel: '' }), /from the list/);
+  } finally { w.done(); }
+});
+
+test('removing the email: saved (column cleared) with a warning that no invite or reminder can go out', async () => {
+  const w = world({ bookingInvite: 'Sent' });
+  try {
+    const r = await w.act({ email: '' });
+    assert.deepEqual(w.calls.updates[0].o, { clearKeys: ['email'] });
+    assert.match(r.message, /Without an email the booking invite and its reminders cannot go out\./);
+    assert.ok(!/send it again/.test(r.message));
   } finally { w.done(); }
 });
 

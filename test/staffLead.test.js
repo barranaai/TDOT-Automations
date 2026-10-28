@@ -16,20 +16,29 @@ function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () =>
 const VALID = { fullName: 'Phone Caller', email: 'caller@x.com', phone: '4165550001', sourceChannel: 'Phone',
                 residentialAddress: '12 King St W, Toronto, ON M5H 1A1, Canada', inCanada: 'Yes', addedBy: 'Melanie' };
 
-test('validation: name/email/phone/address required; junk source falls back to Phone; case type must be canonical', async () => {
-  const restore = [stub(svc, 'findClientMatches', async () => ({ clients: [], cases: [], leads: [] }))];
+test('validation: only the full name is required (Faran 2026-10-28); what IS given must make sense; case type must be canonical', async () => {
+  const created = [];
+  const restore = [
+    stub(svc, 'findClientMatches', async () => ({ clients: [], cases: [], leads: [] })),
+    stub(leadService, 'createLead', async (f) => { created.push(f); return { id: '9200', ...f }; }),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
   try {
     for (const bad of [
       { ...VALID, fullName: '' },
+      { ...VALID, fullName: '   ' },
       { ...VALID, email: 'not-an-email' },
       { ...VALID, phone: '12' },
-      { ...VALID, residentialAddress: '' },        // staff request 2026-09-04: address is mandatory
-      { ...VALID, residentialAddress: '   ' },
-      (() => { const v = { ...VALID }; delete v.residentialAddress; return v; })(),
       { ...VALID, caseTypeInterest: 'Made Up Type' },
     ]) {
-      await assert.rejects(svc.createStaffLead(bad), (e) => e.badRequest === true);
+      await assert.rejects(svc.createStaffLead(bad), (e) => e.badRequest === true, JSON.stringify(bad));
     }
+    assert.equal(created.length, 0);
+    // the name alone is enough
+    const r = await svc.createStaffLead({ fullName: 'Name Only' });
+    assert.equal(r.leadId, '9200');
+    assert.deepEqual(created[0], { fullName: 'Name Only', sourceChannel: 'Phone' }, 'nothing empty is written');
   } finally { restore.reverse().forEach((x) => x()); }
 });
 
@@ -103,10 +112,13 @@ test('the address is written AT creation, so a mandatory field is never missing'
   assert.match(src.slice(i, src.indexOf('};', i)), /residentialAddress:\s*formData\.residentialAddress/);
 });
 
-test('the "Add lead" modal asks for the address and blocks submit without it', () => {
-  const html = require('../src/routes/adminLeads').buildLeadDetailHTML ? require('../src/routes/adminLeads').buildLeadsQueueHTML() : '';
+test('the "Add lead" modal: only Full name is marked required; the address, email and phone are asked but optional', () => {
+  const html = require('../src/routes/adminLeads').buildLeadsQueueHTML();
   assert.match(html, /id="al-address"/, 'the field exists');
-  assert.match(html, /Residential address \*/, 'marked required for staff');
   assert.match(html, /residentialAddress:alEl\('al-address'\)\.value/, 'sent to the API');
-  assert.match(html, /Name, email, phone and residential address are all required\./, 'immediate feedback');
+  assert.match(html, /<label class="al-l" for="al-name">Full name \*<\/label>/);
+  for (const l of ['Email', 'Phone', 'Residential address', 'Added by']) assert.ok(html.includes(`>${l}</label>`), `${l} is not marked required`);
+  assert.ok(html.includes('<div class="al-l" id="al-incanada-l">In Canada now?</div>'));
+  assert.match(html, /only the full name is required/);
+  assert.ok(!/Name, email, phone and residential address are all required/.test(html), 'the old all-required message is gone');
 });

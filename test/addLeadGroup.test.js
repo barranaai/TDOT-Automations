@@ -55,12 +55,16 @@ test('countries: no Canada, no duplicates or blanks, and every one is HST-exempt
   assert.equal(booking.isConsultHstExemptCountry('Canada'), false);
 });
 
-test('Add lead: the location is required and checked FIRST; Yes stores Canada at creation; No stores the country; the note says the HST', async () => {
+test('Add lead: the location may be left for later (Faran 2026-10-28); "No" still needs a country, checked FIRST; Yes stores Canada at creation; No stores the country; the note says the HST', async () => {
   const w = world();
   try {
-    await assert.rejects(portal.createStaffLead({ ...VALID, inCanada: '' }), (e) => e.badRequest && /In Canada now/.test(e.message));
     await assert.rejects(portal.createStaffLead({ ...VALID, inCanada: 'No', currentCountry: '' }), (e) => e.badRequest && /country/.test(e.message));
     assert.equal(w.calls.matched, 0, 'refused before any duplicate lookup');
+    await portal.createStaffLead({ ...VALID, email: 'later@x.com', inCanada: '' });
+    assert.equal(w.calls.created[0].country, undefined, 'no location written');
+    assert.ok(!w.calls.updates.some((u) => u.f.insideCanada), 'no In Canada answer written');
+    assert.ok(w.calls.notes.some((b) => /Still to add on this page: where the client is now \(HST is charged on the consultation fee until it is set\)/.test(b)));
+    w.calls.created.length = 0; w.calls.updates.length = 0; w.calls.notes.length = 0;
     await portal.createStaffLead(VALID);
     assert.equal(w.calls.created[0].country, 'Canada', 'on the creation write — an invite sent at once already prices it');
     assert.ok(w.calls.updates.some((u) => u.id === '9300' && u.f.insideCanada === 'Yes'));
@@ -75,7 +79,7 @@ test('Add lead: the location is required and checked FIRST; Yes stores Canada at
 
 /* ── 2. who added it → the lead owner ── */
 
-test('who added it: the Monday sign-in wins (matched to the roster name); without it, a roster name must be picked; it becomes the Lead Owner', async () => {
+test('who added it: the Monday sign-in wins (matched to the roster name); without it, a roster name or nothing; it becomes the Lead Owner', async () => {
   const w = world();
   try {
     await portal.createStaffLead({ ...VALID, addedBy: 'Gauri' }, { actor: { name: 'Melanie Smith', email: 'm@tdotimm.com', verified: true } });
@@ -83,9 +87,12 @@ test('who added it: the Monday sign-in wins (matched to the roster name); withou
     assert.ok(w.calls.notes.some((b) => /Lead added by Melanie \(signed in with Monday\)/.test(b)));
     await portal.createStaffLead({ ...VALID, email: 'b@x.com', addedBy: 'Prajwal', sourceChannel: 'Instagram' }, { actor: { name: 'Unidentified (shared admin key)', verified: false } });
     assert.equal(w.calls.created[1].leadOwner, 'Prajwal');
-    for (const addedBy of ['', 'Somebody', 'melanie']) {
+    for (const addedBy of ['Somebody', 'melanie']) {
       await assert.rejects(portal.createStaffLead({ ...VALID, email: 'c@x.com', addedBy }, { actor: { name: 'x', verified: false } }), (e) => e.badRequest && /Added by/.test(e.message), addedBy);
     }
+    await portal.createStaffLead({ ...VALID, email: 'e@x.com', addedBy: '' }, { actor: { name: 'x', verified: false } });
+    assert.equal(w.calls.created[w.calls.created.length - 1].leadOwner, undefined, 'left empty: no owner');
+    assert.ok(w.calls.notes.some((b) => /\[Consultant portal\]<\/b> Lead added \(phone intake\)/.test(b)));
     // a Monday name with markup is escaped in the note
     await portal.createStaffLead({ ...VALID, email: 'd@x.com' }, { actor: { name: 'Zed <b>X</b>', verified: true } });
     assert.ok(w.calls.notes.some((b) => b.includes('Zed &lt;b&gt;X&lt;/b&gt;')));
@@ -225,7 +232,7 @@ test('pages: Add lead asks In Canada now? (+ country) and Added by (hidden when 
   const q = al.buildLeadsQueueHTML(), d = al.buildLeadDetailHTML('7');
   for (const html of [q, d]) for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   for (const s of ['name="al-incanada" value="Yes"', 'name="al-incanada" value="No"', 'id="al-country"', '<option value="India">India</option>', 'id="al-addedby"', '<option value="Shafoli Kapur">', 'id="al-signedin"',
-    "inCanada:alLoc(), currentCountry:alEl('al-country').value, addedBy:alEl('al-addedby').value", "if(!AL_SIGNED && !body.addedBy)", 'tdotBlViewer(function(v){',
+    "inCanada:alLoc(), currentCountry:alEl('al-country').value, addedBy:alEl('al-addedby').value", "if(!body.fullName.trim()){ err.textContent='Enter the full name — it is the only required field.'", 'tdotBlViewer(function(v){',
     "label: 'Source', title: 'How they reached us · who owns the lead'", 'colspan="10"']) assert.ok(q.includes(s), s);
   for (const s of ['id="lead-owner"', 'id="btn-lead-owner"', 'name="lead-incanada"', 'id="lead-country"', 'id="btn-lead-loc"', "doAction(ob,'saveLeadOwner',null,os.value,'lead-owner-msg')",
     "doAction(lb,'saveLocation',null,JSON.stringify({ inCanada: yn, country: c }),'lead-loc-msg')", 'hydrateOwnerLocation(d);', "kv('How they reached us'", "'None — added by staff'"]) assert.ok(d.includes(s), s);

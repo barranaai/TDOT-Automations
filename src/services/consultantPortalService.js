@@ -944,7 +944,7 @@ function validateAction(action, value) {
       const fullName = one(o.fullName, 120), email = one(o.email, 200), phone = one(o.phone, 40);
       const sourceChannel = one(o.sourceChannel, 40), caseTypeInterest = one(o.caseTypeInterest, 120);
       if (fullName.length < 2) return { ok: false, error: 'Enter the client’s full name.' };
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Enter a valid email address (the booking invite and reminders go there).' };
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'That email doesn’t look right — fix it or leave it empty (the booking invite needs one).' };
       const digits = phone.replace(/\D/g, '');
       if (phone && (!/^[\d\s()+.\-]+$/.test(phone) || digits.length < 7 || digits.length > 15)) return { ok: false, error: 'Enter a valid phone number (7 to 15 digits).' };
       return { ok: true, normalized: { fullName, email, phone, sourceChannel, caseTypeInterest } };
@@ -1265,7 +1265,9 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       const show = (x) => (x ? `“${escHtmlNote(x)}”` : '(empty)');
       const byName = (actor && actor.verified && String(actor.name || '').trim()) ? String(actor.name).trim().slice(0, 60) : who;
       const warn = [];
-      if (changed.includes('email') && st(lead.bookingInvite) === 'Sent' && st(lead.bookingStatus) !== 'Booked') {
+      if (changed.includes('email') && !n.email) {
+        warn.push('Without an email the booking invite and its reminders cannot go out.');
+      } else if (changed.includes('email') && st(lead.bookingInvite) === 'Sent' && st(lead.bookingStatus) !== 'Booked') {
         warn.push('The booking invite went to the old email address — send it again so the client gets it (the reminders only go to an address an invite went to).');
       }
       if ((changed.includes('fullName') || changed.includes('email')) && (st(lead.consultAgreementSent) || st(lead.retainerSent))) {
@@ -1784,12 +1786,13 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
   const allowDuplicate   = payload.allowDuplicate === true;
 
   const bad = (m) => { const e = new Error(m); e.badRequest = true; throw e; };
+  // Only the full name is required (Faran 2026-10-28) — email, phone, address,
+  // where the client is and who added it can come later on the lead page. What
+  // IS given must make sense. (No email = no booking invite until one is added;
+  // no address = the consultation package waits for it; no location = HST.)
   if (!fullName) bad('Full name is required.');
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('A valid email is required.');
-  if (!phone || phone.replace(/\D/g, '').length < 7) bad('A valid phone number is required.');
-  // Required (staff request 2026-09-04): the retainer agreement prints it, the
-  // questionnaire pre-fills from it, and chasing it later costs a call back.
-  if (!address) bad('A residential address is required.');
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('That email doesn’t look right — fix it or leave it empty.');
+  if (phone && phone.replace(/\D/g, '').length < 7) bad('That phone number is too short — fix it or leave it empty.');
   if (caseTypeInterest) {
     const canon = await directCaseTypeLabels();
     if (!canon.caseTypes.includes(caseTypeInterest)) bad(`"${caseTypeInterest}" is not a canonical case type — pick one from the list.`);
@@ -1797,14 +1800,15 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
   // Where the client is now — it sets the HST on the consultation fee (Melanie's
   // rule, 2026-08-24). Asked before any duplicate / Not Wanted stop, so a missing
   // answer is the first thing staff see.
-  const loc = normalizeLeadLocation({ inCanada: payload.inCanada, country: payload.currentCountry });
+  const askedLoc = String(payload.inCanada == null ? '' : payload.inCanada).trim() !== '';
+  const loc = askedLoc ? normalizeLeadLocation({ inCanada: payload.inCanada, country: payload.currentCountry }) : { ok: true, insideCanada: '', country: '' };
   if (!loc.ok) bad(loc.error);
   // Who added it → the Lead Owner (Faran 2026-10-15): the Monday sign-in when
   // there is one (matched to the roster name), else the name picked in the form.
   const roster = require('../../config/portalStaff');
   const signedIn = !!(actor && actor.verified && String(actor.name || '').trim());
   const addedBy = signedIn ? roster.rosterNameFor(actor.name) : clean(payload.addedBy, 60);
-  if (!signedIn && !roster.onRoster(addedBy)) bad('Choose your name in "Added by" (or sign in with Monday and it is filled in for you).');
+  if (!signedIn && addedBy && !roster.onRoster(addedBy)) bad('Choose your name in "Added by" from the list (or leave it empty).');
 
   // The Not Wanted list (point 5): checked on EVERY submit, including "create
   // anyway" — a warning, never a block. First submit with a hit → 409 so staff
@@ -1824,10 +1828,12 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
   }
 
   const lead = await leadService.createLead({
-    fullName, email, phone, sourceChannel,
-    residentialAddress: address,   // written AT creation — a mandatory field must never be missing
-    country: loc.country,          // text column, AT creation: an invite sent at once already prices the HST right
-    leadOwner: addedBy,
+    fullName, sourceChannel,
+    ...(email ? { email } : {}),
+    ...(phone ? { phone } : {}),
+    ...(address ? { residentialAddress: address } : {}),
+    ...(loc.country ? { country: loc.country } : {}),   // text column, AT creation: an invite sent at once already prices the HST right
+    ...(addedBy ? { leadOwner: addedBy } : {}),
     ...(note ? { situationDescription: note } : {}),
   });
   // The interest dropdown's board vocabulary is the intake's coarse label set —
@@ -1836,11 +1842,20 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
   // in a follow-up updateLead instead, whose mutation auto-creates labels —
   // the SAME sanctioned path createDirectClient uses for confirmedCaseType.
   // Status / dropdown values follow via updateLead (create_item mints no labels).
-  await leadService.updateLead(lead.id, { insideCanada: loc.insideCanada, ...(caseTypeInterest ? { caseTypeInterest } : {}) })
-    .catch((err) => console.warn(`[Leads] follow-up write (In Canada / case type) failed for staff lead ${lead.id}: ${err.message} — the lead itself is created`));
+  const follow = { ...(loc.insideCanada ? { insideCanada: loc.insideCanada } : {}), ...(caseTypeInterest ? { caseTypeInterest } : {}) };
+  if (Object.keys(follow).length) {
+    await leadService.updateLead(lead.id, follow)
+      .catch((err) => console.warn(`[Leads] follow-up write (In Canada / case type) failed for staff lead ${lead.id}: ${err.message} — the lead itself is created`));
+  }
+  const missing = [];
+  if (!email) missing.push('email (the booking invite needs it)');
+  if (!phone) missing.push('phone');
+  if (!address) missing.push('residential address (the consultation agreement prints it)');
+  if (!loc.insideCanada) missing.push('where the client is now (HST is charged on the consultation fee until it is set)');
   await postPortalNote(lead.id,
-    `Lead added by ${escHtmlNote(addedBy)}${signedIn ? ' (signed in with Monday)' : ''} (${sourceChannel.toLowerCase()} intake)${caseTypeInterest ? ` — interested in ${escHtmlNote(caseTypeInterest)}` : ''}. ` +
-    `${loc.insideCanada === 'Yes' ? 'In Canada now — HST applies to the consultation fee.' : `Outside Canada now (${escHtmlNote(loc.country)}) — no HST on the consultation fee.`} ` +
+    `Lead added${addedBy ? ` by ${escHtmlNote(addedBy)}` : ''}${signedIn ? ' (signed in with Monday)' : ''} (${sourceChannel.toLowerCase()} intake)${caseTypeInterest ? ` — interested in ${escHtmlNote(caseTypeInterest)}` : ''}. ` +
+    `${loc.insideCanada === 'Yes' ? 'In Canada now — HST applies to the consultation fee. ' : loc.insideCanada === 'No' ? `Outside Canada now (${escHtmlNote(loc.country)}) — no HST on the consultation fee. ` : ''}` +
+    `${missing.length ? `Still to add on this page: ${missing.join('; ')}. ` : ''}` +
     'Next: send the booking invite from this page when they are ready.');
   if (blacklist.hit) await require('./blacklistService').noteOnLead(lead.id, blacklist, 'Staff saw the warning and added this lead anyway.');
   invalidateLeadsQueue(); // the new lead must appear on the next queue load

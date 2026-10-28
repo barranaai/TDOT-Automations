@@ -99,22 +99,22 @@ ${buildNavHeader('leads')}
     <div id="al-overlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;align-items:flex-start;justify-content:center;padding:48px 16px">
       <div style="background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.25);max-width:460px;width:100%;padding:24px">
         <h3 style="margin:0 0 4px;font-size:17px">Add a lead</h3>
-        <div class="muted" style="font-size:12.5px;margin-bottom:14px">A caller's basics — everything else (booking invite, pre-consultation form) is sent from their lead page afterwards. No case is opened.</div>
+        <div class="muted" style="font-size:12.5px;margin-bottom:14px">A caller's basics — only the full name is required; anything else can be added now or later on their lead page. The booking invite and pre-consultation form are sent from there. No case is opened.</div>
         <label class="al-l" for="al-name">Full name *</label><input id="al-name" type="text" maxlength="120" autocomplete="off">
-        <label class="al-l" for="al-email">Email *</label><input id="al-email" type="email" maxlength="200" autocomplete="off">
-        <label class="al-l" for="al-phone">Phone *</label><input id="al-phone" type="tel" maxlength="40" autocomplete="off">
-        <label class="al-l" for="al-address">Residential address *</label><input id="al-address" type="text" maxlength="500" autocomplete="off" placeholder="Street, city, province/state, postal code, country">
-        <div class="al-l" id="al-incanada-l">In Canada now? *</div>
+        <label class="al-l" for="al-email">Email</label><input id="al-email" type="email" maxlength="200" autocomplete="off">
+        <label class="al-l" for="al-phone">Phone</label><input id="al-phone" type="tel" maxlength="40" autocomplete="off">
+        <label class="al-l" for="al-address">Residential address</label><input id="al-address" type="text" maxlength="500" autocomplete="off" placeholder="Street, city, province/state, postal code, country">
+        <div class="al-l" id="al-incanada-l">In Canada now?</div>
         <div class="al-yn" role="radiogroup" aria-labelledby="al-incanada-l"><label><input type="radio" name="al-incanada" value="Yes"> Yes</label><label><input type="radio" name="al-incanada" value="No"> No</label></div>
-        <div class="al-hint">Decides the HST on the consultation fee — no HST for clients outside Canada.</div>
+        <div class="al-hint">Decides the HST on the consultation fee — no HST for clients outside Canada. Not sure yet? Leave it: HST is charged until it is set on the lead page.</div>
         <div id="al-country-row" style="display:none"><label class="al-l" for="al-country">Which country? *</label><select id="al-country">${COUNTRY_OPTS}</select></div>
-        <div id="al-addedby-row"><label class="al-l" for="al-addedby">Added by *</label><select id="al-addedby">${STAFF_OPTS}</select><div class="al-hint">Becomes the lead owner. Signed in with Monday? Your name is filled in for you.</div></div>
+        <div id="al-addedby-row"><label class="al-l" for="al-addedby">Added by</label><select id="al-addedby">${STAFF_OPTS}</select><div class="al-hint">Becomes the lead owner. Signed in with Monday? Your name is filled in for you.</div></div>
         <div id="al-signedin" class="al-hint" style="display:none;margin-top:10px"></div>
         <label class="al-l" for="al-source">How they reached us</label>
         <select id="al-source"><option>Phone</option><option>WhatsApp</option><option>Email</option><option>Instagram</option><option>Other</option></select>
-        <label class="al-l" for="al-casetype">Case type interest (optional)</label>
+        <label class="al-l" for="al-casetype">Case type interest</label>
         <select id="al-casetype"><option value="">— not sure yet —</option></select>
-        <label class="al-l" for="al-note">Note (optional)</label>
+        <label class="al-l" for="al-note">Note</label>
         <textarea id="al-note" rows="3" maxlength="2000" placeholder="What they told us on the call…"></textarea>
         <div id="al-matches" style="display:none;background:#fff4e5;border:1px solid #f0c98a;border-radius:8px;padding:10px 12px;margin-top:12px;font-size:13px;color:#7a4b00"></div>
         <div id="al-err" style="color:#c0392b;font-size:13px;margin-top:10px"></div>
@@ -240,15 +240,11 @@ function alSubmit(){
     residentialAddress:alEl('al-address').value,
     sourceChannel:alEl('al-source').value, caseTypeInterest:alEl('al-casetype').value, note:alEl('al-note').value,
     inCanada:alLoc(), currentCountry:alEl('al-country').value, addedBy:alEl('al-addedby').value };
-  /* Immediate feedback for the mandatory fields; the server enforces them too. */
-  if(!body.fullName.trim() || !body.email.trim() || !body.phone.trim() || !body.residentialAddress.trim()){
-    err.textContent='Name, email, phone and residential address are all required.';
-    (!body.fullName.trim()?alEl('al-name'):!body.email.trim()?alEl('al-email'):!body.phone.trim()?alEl('al-phone'):alEl('al-address')).focus();
-    return;
-  }
-  if(!body.inCanada){ err.textContent='Answer "In Canada now?" — it decides the HST on the consultation fee.'; return; }
-  if(body.inCanada==='No' && !body.currentCountry){ err.textContent='Choose the country the client is in now.'; alEl('al-country').focus(); return; }
-  if(!AL_SIGNED && !body.addedBy){ err.textContent='Choose your name in "Added by".'; alEl('al-addedby').focus(); return; }
+  /* Only the full name is required (Faran 2026-10-28); what IS typed must make sense. The server checks the same. */
+  if(!body.fullName.trim()){ err.textContent='Enter the full name — it is the only required field.'; alEl('al-name').focus(); return; }
+  if(body.email.trim() && !/^[^ @]+@[^ @]+[.][^ @]+$/.test(body.email.trim())){ err.textContent='That email doesn\u2019t look right — fix it or leave it empty.'; alEl('al-email').focus(); return; }
+  if(body.phone.trim() && body.phone.replace(/[^0-9]/g,'').length<7){ err.textContent='That phone number is too short — fix it or leave it empty.'; alEl('al-phone').focus(); return; }
+  if(body.inCanada==='No' && !body.currentCountry){ err.textContent='Choose the country the client is in now (or leave "In Canada now?" unanswered).'; alEl('al-country').focus(); return; }
   if(AL_ALLOW) body.allowDuplicate=true;
   var key=getKey(); if(!key) return;
   var btn=alEl('al-create'); btn.disabled=true; btn.textContent='Creating…';
