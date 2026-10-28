@@ -449,6 +449,11 @@ function buildLeadDetailHTML(leadId) {
   .obtn.active { background:var(--navy, #1e3a5f); color:white; border-color:var(--navy, #1e3a5f); }
   .obtn:disabled { opacity:.55; cursor:not-allowed; }
 ${REMARKS_CSS}
+  /* Basic details (Faran 2026-10-28): editable on the lead page */
+  .bd-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:2px 16px; }
+  .bd-grid input, .bd-grid select, #inq-text { width:100%; box-sizing:border-box; border:1px solid #e2e8f0; border-radius:8px; padding:7px 10px; font:inherit; font-size:13px; color:var(--navy); background:#fff; }
+  .bd-grid input[readonly] { background:#f8fafc; color:#64748b; }
+  .card-t .tbtn { margin-left:auto; padding:4px 10px; font-size:12px; }
   .kv { display:flex; padding:6px 0; font-size:13px; border-top:1px solid #f8fafc; gap:10px; }
   .kv:first-child { border-top:none; }
   .kv .k { color:var(--muted); min-width:150px; flex-shrink:0; }
@@ -496,7 +501,26 @@ ${buildNavHeader('leads')}
 
     <div class="cols">
       <div class="col">
-        <div class="card"><div class="card-t">${I.clip} Their inquiry</div><div id="c-inquiry"></div></div>
+        <div class="card" id="basic-card"><div class="card-t">${I.user} Basic details</div>
+          <div class="bd-grid">
+            <div><label class="al-l" for="bd-name">Full name</label><input id="bd-name" type="text" maxlength="120" autocomplete="off"></div>
+            <div><label class="al-l" for="bd-email">Email</label><input id="bd-email" type="email" maxlength="200" autocomplete="off"></div>
+            <div><label class="al-l" for="bd-phone">Phone</label><input id="bd-phone" type="tel" maxlength="40" autocomplete="off"></div>
+            <div><label class="al-l" for="bd-source">How they reached us</label><select id="bd-source"><option>Website</option><option>Phone</option><option>Email</option><option>WhatsApp</option><option>Instagram</option><option>Other</option></select></div>
+            <div><label class="al-l" for="bd-casetype">Case type interest</label><select id="bd-casetype"><option value="">— not sure yet —</option></select></div>
+          </div>
+          <div class="al-hint" id="bd-lock" style="display:none;margin-top:8px"></div>
+          <div style="margin-top:10px"><button class="btn" id="btn-bd-save" type="button">Save details</button></div>
+          <div id="bd-msg" class="act-msg"></div>
+        </div>
+        <div class="card"><div class="card-t">${I.clip} Their inquiry <button class="btn tbtn" id="btn-inq-edit" type="button" title="Edit the inquiry text">Edit</button></div>
+          <div id="c-inquiry"></div>
+          <div id="inq-editor" style="display:none">
+            <textarea id="inq-text" rows="6" maxlength="5000" placeholder="What the client is asking about…"></textarea>
+            <div style="display:flex;gap:8px;margin-top:8px"><button class="btn" id="btn-inq-save" type="button">Save inquiry</button><button class="btn" id="btn-inq-cancel" type="button">Cancel</button></div>
+          </div>
+          <div id="inq-msg" class="act-msg"></div>
+        </div>
         <!-- Residential address (Gauri 2026-09-04, point 07): required on every new lead since 2026-09-04,
              editable here for older leads and typos — it prints on the consultation agreement and the retainer. -->
         <div class="card"><div class="card-t">${I.clip} Residential address <span class="muted">(prints on the consultation agreement and retainer)</span></div>
@@ -621,6 +645,8 @@ function render(d){
   var la=document.getElementById('lead-address');
   if(la && !ADDR_DIRTY && document.activeElement!==la) la.value=d.address||'';   // never overwrite what the staffer is typing
   hydrateOwnerLocation(d);
+  hydrateBasic(d);
+  INQ_TEXT=d.situationDescription||'';
   var iw=document.getElementById('invite-warn');
   if(iw){
     if(WANTS_TO && WANTS_TO!=='Book consultation'){
@@ -858,6 +884,45 @@ function load(){
 }
 // Address box: typed-but-unsaved text survives any re-render (same guard as the
 // invite draft); after a save the box shows the value the server actually stored.
+// Basic details (Faran 2026-10-28): name, email, phone, how they reached us, case type interest.
+// Unsaved edits survive any re-render (same guard as the address).
+var BD_DIRTY=false, BD_TYPES=null, INQ_TEXT='';
+function bdEl(id){ return document.getElementById('bd-'+id); }
+function bdOption(sel,val){ if(val && ![].some.call(sel.options,function(o){ return o.value===val; })){ var o=document.createElement('option'); o.value=val; o.textContent=val; sel.appendChild(o); } }
+function hydrateBasic(d){
+  var caseOpen=!!d.clientMasterItemId, direct=!!d.directRetainer;
+  ['name','email','phone'].forEach(function(k){ bdEl(k).readOnly=caseOpen; });
+  bdEl('source').disabled=direct;
+  var lock=bdEl('lock');
+  lock.textContent=caseOpen?'This lead has a case — change the name, email or phone on the case page, so the case and its emails use the right details.':(direct?'A direct-retainer client stays "Direct Retainer".':'');
+  lock.style.display=lock.textContent?'':'none';
+  if(BD_DIRTY) return;
+  bdEl('name').value=d.name||''; bdEl('email').value=d.email||''; bdEl('phone').value=d.phone||'';
+  var src=bdEl('source'); bdOption(src,d.sourceChannel||''); src.value=d.sourceChannel||'Website';
+  var ct=bdEl('casetype'); bdOption(ct,d.caseTypeInterest||''); ct.value=d.caseTypeInterest||'';
+  if(!BD_TYPES){ var key=getKey(); if(!key) return;
+    BD_TYPES='loading';
+    fetch('/api/consultation/direct-client/options',{headers:{'X-Api-Key':key}}).then(function(r){ return r.json(); })
+      .then(function(o){ BD_TYPES=o.caseTypes||[]; var keep=ct.value;
+        ct.innerHTML='<option value="">— not sure yet —</option>'+BD_TYPES.map(function(c){ return '<option>'+escHtml(c)+'</option>'; }).join('');
+        bdOption(ct,keep); ct.value=keep; })
+      .catch(function(){ BD_TYPES=null; });
+  }
+}
+['name','email','phone','source','casetype'].forEach(function(k){ var el=bdEl(k); el.addEventListener(el.tagName==='SELECT'?'change':'input',function(){ BD_DIRTY=true; }); });
+document.getElementById('btn-bd-save').onclick=function(){
+  var body={ fullName:bdEl('name').value, email:bdEl('email').value, phone:bdEl('phone').value, sourceChannel:bdEl('source').value, caseTypeInterest:bdEl('casetype').value };
+  var p=doAction(this,'saveBasicInfo',null,JSON.stringify(body),'bd-msg'); if(!p) return;
+  p.then(function(res){ if(res&&res.ok){ BD_DIRTY=false; if(res.j&&res.j.warnings&&res.j.warnings.length) actMsg('bd-msg','info',res.j.message); load(); var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r(); } });
+};
+// The inquiry: Edit → a text box with the current text; Save writes it (the old text is kept in a note).
+function inqEditing(on){ document.getElementById('inq-editor').style.display=on?'':'none'; document.getElementById('c-inquiry').style.display=on?'none':''; document.getElementById('btn-inq-edit').style.display=on?'none':''; }
+document.getElementById('btn-inq-edit').onclick=function(){ document.getElementById('inq-text').value=INQ_TEXT; inqEditing(true); document.getElementById('inq-text').focus(); };
+document.getElementById('btn-inq-cancel').onclick=function(){ inqEditing(false); };
+document.getElementById('btn-inq-save').onclick=function(){
+  var p=doAction(this,'saveInquiry',null,document.getElementById('inq-text').value,'inq-msg'); if(!p) return;
+  p.then(function(res){ if(res&&res.ok){ inqEditing(false); load(); var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r(); } });
+};
 var ADDR_DIRTY=false;
 var _addrEl=document.getElementById('lead-address'), _addrBtn=document.getElementById('btn-lead-addr');
 if(_addrEl) _addrEl.addEventListener('input',function(){ ADDR_DIRTY=true; });

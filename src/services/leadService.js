@@ -267,6 +267,16 @@ async function updateLead(leadId, fields, opts = {}) {
 }
 function _snapshotChanged() { try { require('./leadSnapshot').invalidate(); } catch (_) { /* the copy is a convenience */ } }
 
+/** The lead's row name on the Lead Board (the item name — the Full Name column is written by updateLead). */
+async function renameLead(leadId, name) {
+  const n = stripInvisibles(String(name || '')).replace(/\s+/g, ' ').trim();
+  if (!n) throw new Error('A lead needs a name');
+  await mondayApi.query(
+    `mutation($boardId: ID!, $itemId: ID!, $v: String!) { change_simple_column_value(board_id: $boardId, item_id: $itemId, column_id: "name", value: $v) { id } }`,
+    { boardId: String(leadBoardId), itemId: String(leadId), v: n });
+  _snapshotChanged();
+}
+
 /**
  * Find a lead by the value of one of its columns (e.g. a Square order id).
  * @param {string} key  camelCase column key (must exist in COLS)
@@ -509,4 +519,4 @@ async function generateInviteMessage(lead) {
 }
 
 module.exports = {
-  stripInvisibles, createLead, qualifyLead, generateInviteMessage, getLead, updateLead, findByColumnValue, findAllByColumnValue, listAllLeads, parseItem };
+  stripInvisibles, createLead, qualifyLead, generateInviteMessage, getLead, updateLead, renameLead, findByColumnValue, findAllByColumnValue, listAllLeads, parseItem };

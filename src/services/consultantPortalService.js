@@ -936,6 +936,24 @@ function validateAction(action, value) {
       const r = normalizeLeadLocation(o || {});
       return r.ok ? { ok: true, normalized: { insideCanada: r.insideCanada, country: r.country } } : r;
     }
+    // Basic details on the lead page (Faran 2026-10-28: "all the basic information should be editable").
+    case 'saveBasicInfo': {
+      let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid details.' }; }
+      if (!o || typeof o !== 'object') return { ok: false, error: 'Invalid details.' };
+      const one = (x, max) => String(x == null ? '' : x).replace(/\s+/g, ' ').trim().slice(0, max);
+      const fullName = one(o.fullName, 120), email = one(o.email, 200), phone = one(o.phone, 40);
+      const sourceChannel = one(o.sourceChannel, 40), caseTypeInterest = one(o.caseTypeInterest, 120);
+      if (fullName.length < 2) return { ok: false, error: 'Enter the client’s full name.' };
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Enter a valid email address (the booking invite and reminders go there).' };
+      const digits = phone.replace(/\D/g, '');
+      if (phone && (!/^[\d\s()+.\-]+$/.test(phone) || digits.length < 7 || digits.length > 15)) return { ok: false, error: 'Enter a valid phone number (7 to 15 digits).' };
+      return { ok: true, normalized: { fullName, email, phone, sourceChannel, caseTypeInterest } };
+    }
+    case 'saveInquiry': {
+      const t = String(value == null ? '' : value).replace(/\r\n?/g, '\n').trim();
+      if (t.length > 5000) return { ok: false, error: 'The inquiry is too long (max 5000 characters).' };
+      return { ok: true, normalized: t };
+    }
     case 'saveLeadOwner': {
       const n = String(value == null ? '' : value).trim();
       if (n && !require('../../config/portalStaff').onRoster(n)) return { ok: false, error: 'Choose an owner from the list.' };
@@ -1208,6 +1226,74 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       if (!paid && (lead.bookingInvite || '') === 'Sent' && status !== 'Booked') lines.push('The invite email quoted the old price — use "Send booking invite" to re-send it.');
       await postPortalNote(leadId, `Where the client is now: ${n.insideCanada === 'Yes' ? 'in Canada' : `outside Canada (${escHtmlNote(n.country)})`}${byName ? ` — set by ${escHtmlNote(byName)}` : ''}${before.country ? ` (was: ${escHtmlNote(before.country)})` : ''}. ${hst}.${openPage ? ' ⚠ A payment page or invoice at the old price may still be open.' : ''}`);
       return { ok: true, message: `Saved — ${hst}.${lines.length ? ' ' + lines.join(' ') : ''}` };
+    }
+
+    case 'saveBasicInfo': {
+      const n = v.normalized;
+      const st = (x) => String(x == null ? '' : x).replace(/\s+/g, ' ').trim();
+      const cur = { fullName: st(lead.fullName || lead.name), email: st(lead.email), phone: st(lead.phone), sourceChannel: st(lead.sourceChannel), caseTypeInterest: st(lead.caseTypeInterest) };
+      // A phone typed with or without spaces / dashes / the +1 is the same number.
+      const digits = (x) => { const d = String(x || '').replace(/\D/g, ''); return d.length === 11 && d[0] === '1' ? d.slice(1) : d; };
+      const same = (k) => (k === 'phone' ? digits(n.phone) === digits(cur.phone) : n[k] === cur[k]);
+      const changed = Object.keys(cur).filter((k) => !same(k));
+      if (!changed.length) return { ok: true, message: 'No change.' };
+      const refuse = (msg) => { const e = new Error(msg); e.badRequest = true; throw e; };
+      if (st(lead.clientMasterItemId) && changed.some((k) => ['fullName', 'email', 'phone'].includes(k))) {
+        refuse('This lead already has a case — change the client’s name, email or phone on the case page, so the case and its emails use the right details.');
+      }
+      // The source: an unchanged value (any label, old ones too) passes; a CHANGE must be one
+      // of the list (labels the board already has — a typo would mint a new one).
+      if (changed.includes('sourceChannel')) {
+        if (cur.sourceChannel === DIRECT_SOURCE) refuse('A direct-retainer client stays "Direct Retainer".');
+        if (!BASIC_SOURCES.includes(n.sourceChannel)) refuse('Choose how they reached us from the list.');
+      }
+      if (changed.includes('caseTypeInterest') && n.caseTypeInterest) {
+        const canon = await directCaseTypeLabels();
+        if (!canon.caseTypes.includes(n.caseTypeInterest)) refuse(`"${n.caseTypeInterest}" is not a case type from the list.`);
+      }
+      const fields = {}, clear = [];
+      for (const k of changed) { if (n[k]) fields[k] = n[k]; else clear.push(k); }
+      // The row name first: the Full Name column is what the next read compares against, so a
+      // rename that failed after the column was written could never be retried.
+      if (changed.includes('fullName')) await leadService.renameLead(leadId, n.fullName);
+      await leadService.updateLead(leadId, fields, { clearKeys: clear });
+      // The unsigned consultation-agreement review copy prints the name and email — rebuild it.
+      try { consultAgreementService.evictCache(leadId); } catch (_) { /* best-effort */ }
+      _leadsQueueCache.at = 0;
+
+      const LABEL = { fullName: 'Name', email: 'Email', phone: 'Phone', sourceChannel: 'How they reached us', caseTypeInterest: 'Case type interest' };
+      const show = (x) => (x ? `“${escHtmlNote(x)}”` : '(empty)');
+      const byName = (actor && actor.verified && String(actor.name || '').trim()) ? String(actor.name).trim().slice(0, 60) : who;
+      const warn = [];
+      if (changed.includes('email') && st(lead.bookingInvite) === 'Sent' && st(lead.bookingStatus) !== 'Booked') {
+        warn.push('The booking invite went to the old email address — send it again so the client gets it (the reminders only go to an address an invite went to).');
+      }
+      if ((changed.includes('fullName') || changed.includes('email')) && (st(lead.consultAgreementSent) || st(lead.retainerSent))) {
+        warn.push('An agreement already sent keeps the old details.');
+      }
+      if (changed.includes('email') || changed.includes('phone')) {
+        const probe = { email: changed.includes('email') ? n.email : '', phone: changed.includes('phone') ? n.phone : '' };
+        const m = await module.exports.findClientMatches(probe).catch(() => null);
+        const others = m ? [...(m.leads || []).filter((x) => String(x.id) !== String(leadId)).map((x) => `lead ${x.id}`), ...(m.cases || []).map((x) => `case ${x.caseRef || x.id}`)] : [];
+        if (others.length) warn.push(`This ${probe.email && probe.phone ? 'email or phone' : probe.email ? 'email' : 'phone'} is also on ${others.slice(0, 5).join(', ')}${others.length > 5 ? '…' : ''}.`);
+        const bl = await require('./blacklistService').check(probe).catch(() => null);
+        if (bl && bl.hit) warn.push('This person is on the Not Wanted list.');
+      }
+      await postPortalNote(leadId, `Basic details changed${byName ? ` by ${escHtmlNote(byName)}` : ''}: `
+        + changed.map((k) => `${LABEL[k]} ${show(n[k])} (was ${show(cur[k])})`).join('; ') + '.'
+        + (warn.length ? ` ${warn.map(escHtmlNote).join(' ')}` : ''));
+      return { ok: true, message: `Saved: ${changed.map((k) => LABEL[k].toLowerCase()).join(', ')}.${warn.length ? ` ${warn.join(' ')}` : ''}`, warnings: warn };
+    }
+
+    case 'saveInquiry': {
+      const before = String(lead.situationDescription || '').trim();
+      if (before === v.normalized) return { ok: true, message: 'No change.' };
+      await leadService.updateLead(leadId, { situationDescription: v.normalized }, { clearKeys: v.normalized ? [] : ['situationDescription'] });
+      _leadsQueueCache.at = 0;
+      const byName = (actor && actor.verified && String(actor.name || '').trim()) ? String(actor.name).trim().slice(0, 60) : who;
+      const cut = (x) => escHtmlNote(x.length > 400 ? `${x.slice(0, 399)}…` : x);
+      await postPortalNote(leadId, `Inquiry ${before ? 'edited' : 'added'}${byName ? ` by ${escHtmlNote(byName)}` : ''}.${before ? ` It was: “${cut(before)}”` : ''}`);
+      return { ok: true, message: 'Inquiry saved.' };
     }
 
     case 'saveLeadOwner': {
@@ -1666,6 +1752,8 @@ const DIRECT_SOURCE = 'Direct Retainer';
 // and pre-consultation machinery takes over from the lead's detail page.
 // Source options are the EXISTING board labels only (no label minting).
 const STAFF_LEAD_SOURCES = ['Phone', 'Email', 'WhatsApp', 'Instagram', 'Other'];
+// "How they reached us" choices on the lead page (labels the board already has).
+const BASIC_SOURCES = ['Website', ...STAFF_LEAD_SOURCES];
 
 /**
  * Where the client is now (Add-lead group, 2026-10-15): it decides the HST on
