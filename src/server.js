@@ -135,6 +135,21 @@ function requireApiKey(req, res, next) {
 
 app.use('/api', requireApiKey);
 
+// ── Staff guide ("How TDOT works") ───────────────────────────────────────────
+// The page carries no guide content; it fetches /admin/guide/data, which only
+// answers to the team key or a Monday staff sign-in. Built from the app's code
+// by the staff-guide pipeline (src/staffGuide/README.md).
+const staffGuide = require('./services/staffGuideService');
+app.get('/admin/guide', (_req, res) => {
+  res.set('Cache-Control', 'no-cache').type('html').send(staffGuide.page());
+});
+app.get('/admin/guide/data', (req, res) => {
+  const key = req.headers['x-api-key'] || '';
+  const keyOk = !!ADMIN_API_KEY && key === ADMIN_API_KEY;
+  if (!keyOk && !tryStaffAuth(req)) return res.status(401).json({ error: 'Sign in to read the staff guide.' });
+  res.set('Cache-Control', 'private, no-store').type('json').send(staffGuide.data());
+});
+
 // ── Updates thread (the Monday "Updates" section, in the platform) ───────────
 // GET one item's thread (lead/consultation pages), the merged case thread
 // (cockpit), and POST a staff update. All behind the /api admin-key gate.

@@ -92,6 +92,9 @@ function buildNavHeader(activePage) {
       <a href="/admin/dashboard/summary" class="nav-lnk${isSummary ? ' active' : ''}" title="Summary"${isSummary ? ' aria-current="page"' : ''}>
         <span class="nav-icon" aria-hidden="true">📊</span> <span class="nav-txt">Summary</span>
       </a>
+      <a href="/admin/guide" class="nav-lnk" title="Staff guide: how TDOT works (opens in a new tab)" target="_blank" rel="noopener">
+        <span class="nav-icon" aria-hidden="true">📘</span> <span class="nav-txt">Guide</span>
+      </a>
     </nav>
   </div>
   <div class="admin-hdr-right">
