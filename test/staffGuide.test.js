@@ -37,9 +37,11 @@ test('the data route answers only to the team key or a Monday staff sign-in', ()
   assert.match(body, /no-store/);
 });
 
-test('every staff page header has the Guide button (new tab)', () => {
+test('every staff page header has the Guide button, opening in the same tab (the team key lives in the tab)', () => {
   const { buildNavHeader } = require('../src/routes/adminShared');
   const html = buildNavHeader('leads');
-  assert.match(html, /<a href="\/admin\/guide" class="nav-lnk"[^>]*target="_blank" rel="noopener"/);
+  assert.match(html, /<a href="\/admin\/guide" class="nav-lnk"/);
+  // A new tab would not carry the team key (it is kept per tab), so key-only staff would be asked to sign in.
+  assert.ok(!/href="\/admin\/guide"[^>]*target=/.test(html), 'same tab');
   assert.ok(html.includes('<span class="nav-txt">Guide</span>'));
 });
