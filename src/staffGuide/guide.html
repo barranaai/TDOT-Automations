@@ -353,6 +353,7 @@ ol.recipe li b{display:block}
     <div class="box">
       <h2>New here? Start here</h2>
       <ol>
+        <li><b>The staff app is at app.tdotimm.com</b> — sign in with the team key, and use “Sign in with Monday” when a step needs your name. Addresses in this guide (like /admin/leads) are pages of that site.</li>
         <li><b>The picture below is the whole journey</b> of a client, from first contact (left) to the application filed with IRCC (right). Each coloured row is a team; the client is at the top.</li>
         <li><b>Find your row.</b> Pick your department above — your boxes stay bright and the ‹ › arrows take you from one of your boxes to the next.</li>
         <li><b>Press ▶ Play</b> to watch a typical client move through the system, one step at a time, with a short explanation of each step.</li>
@@ -723,7 +724,8 @@ function stageOptions(sel, items){
 function renderNA(){
   var rows=G.needs_attention||[];
   document.querySelector('#naTbl tbody').innerHTML=rows.map(function(r){
-    return '<tr><td class="k">'+esc(r.problem)+'</td><td>'+esc(r.means)+'</td><td>'+esc(r.do)+'</td><td><span class="pill" style="--c:'+laneColor(r.lane)+'">'+esc(laneName(r.lane))+'</span></td></tr>';
+    var st=(r.step_ids||[]).filter(function(id){ return stepById[id]; });
+    return '<tr><td class="k">'+esc(r.problem)+'</td><td>'+esc(r.means)+'</td><td>'+esc(r.do)+(st.length?'<div class="related" style="margin-top:6px">'+st.map(function(id){ return '<button type="button" data-goto="'+esc(id)+'">'+esc(stepById[id].title)+'</button>'; }).join('')+'</div>':'')+'</td><td><span class="pill" style="--c:'+laneColor(r.lane)+'">'+esc(laneName(r.lane))+'</span></td></tr>';
   }).join('');
   document.getElementById('naSec').classList.toggle('hide',!rows.length);
 }
