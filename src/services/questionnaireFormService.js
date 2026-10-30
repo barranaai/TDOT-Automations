@@ -133,6 +133,24 @@ async function getCaseItems(caseRef) {
 }
 
 /**
+ * Just the item ids of a case's rows — the only rows a save may touch
+ * (2026-10-31). Same lookup and limit as getCaseItems, without the help texts.
+ */
+async function getCaseItemIds(caseRef) {
+  const data = await mondayApi.query(
+    `query($boardId: ID!, $caseRef: String!) {
+       items_page_by_column_values(
+         limit: 500,
+         board_id: $boardId,
+         columns: [{ column_id: "${CASE_REF_COL}", column_values: [$caseRef] }]
+       ) { items { id } }
+     }`,
+    { boardId: BOARD_ID, caseRef }
+  );
+  return (data?.items_page_by_column_values?.items || []).map((i) => String(i.id));
+}
+
+/**
  * Persist one or more answers back to Monday execution board items.
  * answers: [{ itemId, answer }]
  */
@@ -191,4 +209,4 @@ async function submitQuestionnaire(caseRef) {
   return { submitted: items.length - failed, failed };
 }
 
-module.exports = { getCaseItems, saveAnswers, submitQuestionnaire };
+module.exports = { getCaseItems, getCaseItemIds, saveAnswers, submitQuestionnaire };

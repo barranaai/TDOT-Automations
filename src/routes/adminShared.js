@@ -103,6 +103,7 @@ function buildNavHeader(activePage) {
       <span id="sys-text">Checking…</span>
     </div>
     <span class="hdr-clock" id="hdr-time"></span>
+    <span class="hdr-who" id="hdr-who"></span>
     <button class="sign-out-btn" onclick="signOut()">Sign Out</button>
   </div>
 </header>`;
@@ -222,15 +223,60 @@ const NAV_CSS = `
     border-color: rgba(255,255,255,.3);
   }
 
-  /* Four tabs, the status pill and Sign Out must never push the bar past the
-     screen: the clock goes first, then the spacing tightens, then (phones) the
-     tabs show icons only and the pill its dot only (it keeps a title). */
+  /* Who is signed in with Monday (2026-10-31): your name, or an orange link to
+     sign in. The slot stays out of the layout until it is filled. */
+  .hdr-who:empty { display: none; }
+  .who-chip {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 12px; font-weight: 600;
+    white-space: nowrap;
+    text-decoration: none;
+    color: rgba(255,255,255,.85);
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.14);
+  }
+  .who-chip svg { flex-shrink: 0; }
+  .who-chip .who-txt { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+  a.who-chip {
+    color: white;
+    background: rgba(230,81,0,.25);
+    border-color: rgba(255,109,0,.75);
+    transition: background .15s;
+  }
+  a.who-chip:hover { background: rgba(230,81,0,.45); }
+  a.who-chip:focus-visible { outline: 2px solid white; outline-offset: 2px; }
+
+  /* Five tabs, the status pill, your name and Sign Out must never push the
+     tabs out of sight: the clock goes first, then the spacing tightens, then
+     (phones) the tabs show icons only and the pill its dot only (it keeps a
+     title). Measured with the real bar from 360 to 1920px (2026-10-31). */
   .admin-hdr-left { min-width: 0; }
   .admin-nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .admin-nav::-webkit-scrollbar { display: none; }
   .sign-out-btn { white-space: nowrap; }
   @media (max-width: 1100px) {
     .hdr-clock { display: none; }
+  }
+  @media (max-width: 1300px) {   /* your name or the sign-in link takes the clock's place */
+    .admin-hdr-right:has(.hdr-who:not(:empty)) .hdr-clock { display: none; }
+  }
+  /* Tighter, so the words "Sign in with Monday" stay in view. Max-width only
+     (no "min-width: 901px"): at a scaled screen's in-between widths such as
+     900.8px a min/max pair would leave a gap. The blocks below override it. */
+  @media (max-width: 1140px) {
+    .admin-hdr-right:has(.hdr-who:not(:empty)) #sys-text { display: none; }   /* the light keeps its dot and tooltip */
+    .admin-brand { padding-right: 12px; }
+    .admin-divider { margin-right: 10px; }
+    .nav-lnk { padding: 7px 10px; }
+    .admin-hdr-right { gap: 8px; }
+    .who-chip { padding: 5px 10px; }
+    .who-chip.on .who-txt { max-width: 110px; }   /* a long name is cut with "…"; the tooltip has it all */
+  }
+  @media (max-width: 920px) {   /* a page scrollbar takes ~17px: the words go a little before 900 */
+    .who-chip .who-txt { display: none; }   /* the icon only; its tooltip names you, or says "Sign in with Monday" */
+    .who-chip { padding: 5px 8px; }
   }
   @media (max-width: 900px) {
     .admin-brand { padding-right: 12px; }
@@ -239,7 +285,7 @@ const NAV_CSS = `
     .admin-hdr-right { gap: 8px; }
     #sys-text { display: none; }
   }
-  @media (max-width: 700px) {
+  @media (max-width: 800px) {   /* with a page scrollbar the labels need ~775px */
     .admin-hdr { padding: 0 12px; }
     .nav-lnk .nav-txt { display: none; }   /* each link keeps its title */
     .nav-lnk { padding: 7px 8px; }
@@ -249,8 +295,11 @@ const NAV_CSS = `
     .status-pill { padding: 5px 8px; }
     .sign-out-btn { padding: 6px 10px; }
   }
-  @media (max-width: 400px) {   /* the smallest phones: the tabs win over the status dot */
+  @media (max-width: 430px) {   /* phones: the tabs win over the status dot */
     .status-pill, .admin-divider { display: none; }
+  }
+  @media (max-width: 400px) {   /* the smallest phones: … and over the Monday icon */
+    .hdr-who { display: none; }
   }
 `;
 
@@ -271,10 +320,57 @@ const SHARED_AUTH_JS = `
     return sessionStorage.getItem('tdot_admin_key') || null;
   }
 
+  // Sign Out ends both sign-ins: the team key (this tab) and the Monday sign-in
+  // (a cookie only the server can clear — 2026-10-31), so the next person at
+  // this computer is not taken for you. Off to the sign-in page either way: a
+  // slow answer never keeps you here.
   function signOut() {
     sessionStorage.removeItem('tdot_admin_key');
-    window.location.replace('/admin');
+    var gone = false;
+    function leave() { if (!gone) { gone = true; window.location.replace('/admin'); } }
+    try {
+      fetch('/q/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'X-Tdot-Signout': '1' } }).then(leave, leave);
+    } catch (_) { leave(); }
+    setTimeout(leave, 3000);
   }
+
+  // Who is signed in with Monday (2026-10-31). The team key opens the pages but
+  // says nothing about who you are; the Monday sign-in does, and some actions
+  // need it. The top bar shows your name, or a "Sign in with Monday" link that
+  // comes back to this page.
+  var TDOT_WHO_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>';
+  function showMondayUser() {
+    var slot = document.getElementById('hdr-who');
+    if (!slot) return;
+    var h = {};
+    var k = peekKey();
+    if (k) h['X-Api-Key'] = k;
+    fetch('/admin/payments/viewer', { headers: h, credentials: 'same-origin' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(v) {
+        if (!v) return;
+        var chip;
+        if (v.signedIn) {
+          chip = document.createElement('span');
+          chip.className = 'who-chip on';
+          chip.title = v.name ? 'Signed in with Monday as ' + v.name : 'Signed in with Monday';
+          chip.innerHTML = TDOT_WHO_SVG + '<span class="who-txt"></span>';
+          chip.querySelector('.who-txt').textContent = v.name || 'Signed in';
+        } else {
+          chip = document.createElement('a');
+          chip.className = 'who-chip';
+          chip.href = '/q/auth/monday?returnTo=' + encodeURIComponent(location.pathname + location.search);
+          chip.title = 'Sign in with Monday, so the app knows who you are';
+          chip.setAttribute('aria-label', chip.title);
+          chip.innerHTML = TDOT_WHO_SVG + '<span class="who-txt">Sign in with Monday</span>';
+        }
+        slot.innerHTML = '';
+        slot.appendChild(chip);
+      })
+      .catch(function() {});
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', showMondayUser);
+  else showMondayUser();
 
   function startClock() {
     function tick() {

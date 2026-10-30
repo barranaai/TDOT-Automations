@@ -31,7 +31,7 @@ const router   = express.Router();
 const svc    = require('../services/htmlQuestionnaireService');
 const review = require('../services/htmlQuestionnaireReviewService');
 const { sendMissingFieldsEmail } = require('../services/missingFieldsEmailService');
-const { requireStaffAuth, tryStaffAuth, createStaffToken, setStaffCookie } = require('../middleware/staffAuth');
+const { requireStaffAuth, tryStaffAuth, createStaffToken, setStaffCookie, clearStaffCookie } = require('../middleware/staffAuth');
 const { FORMS_DIR, resolveMemberTypes, formEmbedsMembers, MEMBER_TYPE } = require('../../config/questionnaireFormMap');
 
 // The case cockpit is gated by the ADMIN_API_KEY (not the Monday-OAuth staff
@@ -261,6 +261,21 @@ router.get('/auth/monday/callback', async (req, res) => {
 
   console.log(`[StaffAuth] Staff login — ${me.name} (${me.email})`);
   return res.redirect(safeReturnTo(returnTo));
+});
+
+// ─── Staff sign-out — POST /q/auth/logout  (MUST be before /:caseRef) ────────
+// Sign Out on every staff page calls this, so the next person at the computer
+// is not taken for the last one (2026-10-31). The cookie is httpOnly — only the
+// server can clear it. The custom header means another website cannot sign
+// staff out with a hidden form (a plain form cannot send it).
+
+router.post('/auth/logout', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (req.get('X-Tdot-Signout') !== '1') return res.status(400).json({ ok: false, error: 'Sign out from the Sign Out button.' });
+  const was = tryStaffAuth(req);
+  clearStaffCookie(res);
+  if (was) console.log(`[StaffAuth] Staff sign-out — ${was.name} (${was.email})`);
+  return res.json({ ok: true });
 });
 
 // ─── Staff review page — GET /q/:caseRef/review ──────────────────────────────

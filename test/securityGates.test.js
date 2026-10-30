@@ -176,9 +176,12 @@ test('documents router on a local port: strangers refused, ?staff=1 → Monday s
 
 test('the three refusal messages are the access check\'s own words — reworded there, they must be reworded here', () => {
   const svc = fs.readFileSync(require.resolve('../src/services/htmlQuestionnaireService.js'), 'utf8');
+  // the check is shared with the old questionnaire page since 2026-10-31
+  const access = fs.readFileSync(require.resolve('../src/middleware/clientOrStaffAccess.js'), 'utf8');
+  assert.match(DOCFORM, /require\('\.\.\/middleware\/clientOrStaffAccess'\)/, 'the documents page uses the shared check');
   for (const m of ['Missing case reference or access token.', 'Case not found.', 'Invalid or expired access token.']) {
     assert.ok(svc.includes(`throw new Error('${m}')`), `the service still throws "${m}"`);
-    assert.ok(DOCFORM.includes(`'${m}'`), `the page recognises "${m}"`);
+    assert.ok(access.includes(`'${m}'`), `the shared check recognises "${m}"`);
   }
 });
 

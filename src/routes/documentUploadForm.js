@@ -10,7 +10,6 @@ const { calculateForCaseRef }   = require('../services/caseReadinessService');
 const mondayApi = require('../services/mondayApi');
 const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
 const staffAuth = require('../middleware/staffAuth');              // a Monday staff sign-in (the staff cookie)
-const htmlQ     = require('../services/htmlQuestionnaireService');  // the case's access code — the same check as /q and /client
 
 // ─── File upload config ───────────────────────────────────────────────────────
 
@@ -1204,62 +1203,12 @@ async function submitDone() {
 // number alone — guessable, and it showed the client's name and document list.
 // Now: a Monday staff sign-in, OR the case's own access code (the ?t= in the
 // links we email — the same check the portal and the questionnaire make).
-const oneStr = (v) => (Array.isArray(v) ? v[0] : v) == null ? '' : String(Array.isArray(v) ? v[0] : v);
-const safeDecode = (s) => { try { return decodeURIComponent(String(s || '')); } catch (_) { return String(s || ''); } };
-// validateAccess's own refusals — anything else is a backend problem, never shown as a bad link.
-const ACCESS_ERRORS = new Set(['Missing case reference or access token.', 'Case not found.', 'Invalid or expired access token.']);
-
-/**
- * @returns {Promise<{ok:true, staff:boolean, token:string} | {ok:false, status:number, reason:'token'|'backend'|'assigned'|'notfound'}>}
- */
-async function authorise(req, caseRef) {
-  const staff = staffAuth.tryStaffAuth(req);
-  if (staff) {
-    // Same visibility rule as the review pages and the portal's staff view:
-    // every signed-in staffer by default; with CASE_VISIBILITY=assigned only
-    // the case's assignees (and admins).
-    const caseAccess = require('../services/caseAccessService');
-    const viewer = caseAccess.viewerFromStaff(staff);
-    if (viewer.isAdmin || caseAccess.caseVisibilityPolicy() === 'all') return { ok: true, staff: true, token: '' };
-    try {
-      const { itemId } = await htmlQ.validateAccessForStaff(caseRef, { skipFormVersioning: true });
-      const ids = caseAccess.PEOPLE_COLUMNS.map((c) => `"${c}"`).join(', ');
-      const data = await mondayApi.query(`query($itemId: ID!) { items(ids: [$itemId]) { column_values(ids: [${ids}]) { id value } } }`, { itemId: String(itemId) });
-      const valueByColId = {};
-      for (const c of (data && data.items && data.items[0] && data.items[0].column_values) || []) valueByColId[c.id] = c.value;
-      if (!caseAccess.viewerCanSee(caseAccess.assigneesFromColumnValues(valueByColId), viewer)) return { ok: false, status: 403, reason: 'assigned' };
-      return { ok: true, staff: true, token: '' };
-    } catch (err) {
-      if (String(err.message || '').trim() === 'Case not found.') return { ok: false, status: 404, reason: 'notfound' };
-      console.error(`[DocForm] staff access check failed for ${caseRef}:`, err.message);
-      return { ok: false, status: 503, reason: 'backend' };
-    }
-  }
-  const token = oneStr(req.query && req.query.t) || oneStr(req.body && req.body.t);
-  try {
-    // Auth-only: never let a questionnaire-era storage read fail the page.
-    await htmlQ.validateAccess(caseRef, token, { skipFormVersioning: true });
-    return { ok: true, staff: false, token };
-  } catch (err) {
-    if (ACCESS_ERRORS.has(String(err.message || '').trim())) return { ok: false, status: 403, reason: 'token' };
-    console.error(`[DocForm] access check backend error for ${caseRef}:`, err.message);
-    return { ok: false, status: 503, reason: 'backend' };
-  }
-}
-
+// The check is shared with the old questionnaire page (clientOrStaffAccess).
+const caseLinkAccess = require('../middleware/clientOrStaffAccess');
+const { oneStr, safeDecode } = caseLinkAccess;
+const authorise = (req, caseRef) => caseLinkAccess.authorise(req, caseRef, { logTag: '[DocForm]' });
 /** Gate for the POSTs — runs BEFORE the upload parser, so a stranger never takes an upload slot. */
-async function requireClientOrStaff(req, res, next) {
-  const caseRef = safeDecode(req.params.caseRef).trim();
-  if (!validateCaseRef(caseRef)) return res.status(400).json({ success: false, error: 'Invalid case reference format.' });
-  const a = await authorise(req, caseRef);
-  if (a.ok) return next();
-  const token = oneStr(req.query && req.query.t) || oneStr(req.body && req.body.t);
-  if (a.reason === 'backend')  return res.status(503).json({ success: false, error: 'We could not verify your link just now — please try again in a moment.' });
-  if (a.reason === 'assigned') return res.status(403).json({ success: false, error: 'You are not assigned to this case.' });
-  if (a.reason === 'notfound') return res.status(404).json({ success: false, error: 'No case with this number.' });
-  if (!token)                  return res.status(401).json({ success: false, error: 'Your Monday sign-in has expired — reload this page and sign in again.' });
-  return res.status(403).json({ success: false, error: 'Access denied — please use the most recent link from your case officer.' });
-}
+const requireClientOrStaff = caseLinkAccess.requireClientOrStaff({ logTag: '[DocForm]' });
 
 /** The page a visitor without a valid link sees. Says nothing about the case. */
 function accessPage(caseRef, reason) {

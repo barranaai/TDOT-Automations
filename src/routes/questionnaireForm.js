@@ -1,9 +1,11 @@
 const express = require('express');
 const router  = express.Router();
-const { getCaseItems, saveAnswers, submitQuestionnaire } = require('../services/questionnaireFormService');
+const { getCaseItems, getCaseItemIds, saveAnswers, submitQuestionnaire } = require('../services/questionnaireFormService');
 const { updateLastActivityDate } = require('../services/clientMasterService');
 const { calculateForCaseRef }   = require('../services/caseReadinessService');
 const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
+const staffAuth = require('../middleware/staffAuth');                    // a Monday staff sign-in (the staff cookie)
+const caseLinkAccess = require('../middleware/clientOrStaffAccess');     // the case's access code or a staff sign-in
 
 // ─── Category display order ───────────────────────────────────────────────────
 const CATEGORY_ORDER = ['Personal', 'Background', 'Travel', 'Education', 'Employment', 'Legal', 'Financial', 'General'];
@@ -63,67 +65,59 @@ function groupByCategory(items) {
     .map((cat) => ({ category: cat, items: map[cat] }));
 }
 
-// ─── Landing page ─────────────────────────────────────────────────────────────
-function landingPage(error = '') {
+// ─── Notice page ──────────────────────────────────────────────────────────────
+// What a visitor without a valid link sees (and the bare /questionnaire). Says
+// nothing about the case; there is no case-number box to guess with any more.
+function noticePage(caseRef, reason) {
+  const staffUrl = caseRef ? `/q/auth/monday?returnTo=${encodeURIComponent(`/questionnaire/${encodeURIComponent(caseRef)}?staff=1`)}` : '';
+  const portal  = 'Open the email called “Your case is ready” (or “Your Client Portal link”) and click <strong>Open Your Portal</strong> — your questionnaire is inside the portal.';
+  const contact = 'Can\'t find the email? Please email us at <a href="mailto:info@tdotimm.com">info@tdotimm.com</a> and we will send your link again.';
+  const bodies = {
+    backend:       '<h1>Please try again in a moment</h1><p>Something went wrong on our side. Nothing is wrong with your link — please refresh this page in a minute.</p>',
+    notfound:      '<h1>No case with this number</h1><p>Check the case number and try again.</p>',
+    assigned:      '<h1>You are not assigned to this case</h1><p>Only the staff assigned to this case (and admins) can open it. Ask the case manager or an admin to add you.</p>',
+    'empty-staff': `<h1>Nothing on the old questionnaire board</h1><p>Case ${esc(caseRef)} has no rows on the old Monday questionnaire board. Its questionnaire is the one in the client's portal — open it from the case page.</p>`,
+    empty:         `<h1>Your questionnaire is in your portal</h1><p>${portal}</p><p>${contact}</p>`,
+  };
+  // Real clients land here from OUR older emails (Mar–Oct 2026), whose links
+  // never carried the access code — so never "open it from your email".
+  const body = bodies[reason] || `<h1>This questionnaire link has changed</h1>
+    <p>The questionnaire link in our older emails no longer opens this page. ${portal}</p>
+    <p>Can't find that email, or it has no Open Your Portal button? Please email us at <a href="mailto:info@tdotimm.com">info@tdotimm.com</a> and we will send your link again.</p>${staffUrl ? `
+    <div class="staff">TDOT staff: <a href="${staffUrl}">sign in with Monday</a> to open this page.</div>` : ''}`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Client Questionnaire</title>
+<meta name="robots" content="noindex,nofollow">
+<title>Client Questionnaire — TDOT Immigration</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--brand:#8f0505;--brand-dark:#6d0404;--brand-faint:rgba(143,5,5,.07)}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;background:#eceef1;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
-.card{background:#fff;border-radius:18px;box-shadow:0 8px 40px rgba(0,0,0,.14),0 2px 10px rgba(0,0,0,.06);width:100%;max-width:420px;overflow:hidden;text-align:center;border:1px solid #e5e7eb}
-.card-header{background:#1a1a1a;padding:1.8rem 2rem 1.65rem;display:flex;flex-direction:column;align-items:center;gap:.55rem;border-bottom:2px solid var(--brand)}
-.logo-img{height:38px;object-fit:contain}
-.brand-sub{font-size:.63rem;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.35);font-weight:600}
-.card-body{padding:2rem 2.25rem 2.1rem}
-h1{font-size:1.18rem;color:#111;margin-bottom:.45rem;font-weight:800;letter-spacing:-.01em}
-.card-body>p{color:#6b7280;font-size:.88rem;margin-bottom:1.7rem;line-height:1.7}
-label{display:block;text-align:left;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.42rem;letter-spacing:.02em;text-transform:uppercase}
-input[type=text]{width:100%;padding:.76rem 1rem;border:1.5px solid #e5e7eb;border-radius:10px;font-size:.93rem;outline:none;transition:border-color .2s,box-shadow .2s;color:#111;background:#fff;font-family:inherit}
-input[type=text]:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-faint)}
-.btn{display:block;width:100%;margin-top:1.1rem;padding:.84rem;background:var(--brand);color:#fff;font-size:.91rem;font-weight:700;border:none;border-radius:10px;cursor:pointer;transition:background .2s,transform .12s;letter-spacing:.02em;font-family:inherit}
-.btn:hover{background:var(--brand-dark);transform:translateY(-1px)}
-.btn:active{transform:translateY(0)}
-.error{background:#fef2f2;border:1.5px solid #fecaca;color:#9b1c1c;padding:.75rem 1rem;border-radius:10px;margin-bottom:1.2rem;font-size:.84rem;text-align:left;line-height:1.55}
-.hint{font-size:.74rem;color:#9ca3af;margin-top:1.1rem;line-height:1.6}
-.card-footer{padding:.85rem;background:#f9fafb;border-top:1px solid #f3f4f6;font-size:.65rem;color:#d1d5db;letter-spacing:.08em;text-transform:uppercase;font-weight:500}
+.card{background:#fff;border-radius:18px;box-shadow:0 8px 40px rgba(0,0,0,.14);width:100%;max-width:460px;overflow:hidden;border:1px solid #e5e7eb}
+.card-header{background:#1a1a1a;padding:1.6rem 2rem;display:flex;flex-direction:column;align-items:center;gap:.5rem;border-bottom:2px solid #8f0505}
+.logo-img{height:38px;object-fit:contain;background:#fff;padding:3px 6px;border-radius:6px}
+.card-body{padding:2rem 2.1rem}
+h1{font-size:1.15rem;color:#111;margin-bottom:.6rem;font-weight:800}
+p{color:#4b5563;font-size:.92rem;line-height:1.7;margin-bottom:.9rem}
+a{color:#8f0505}
+.staff{margin-top:1.4rem;padding-top:1rem;border-top:1px solid #f1f5f9;font-size:.8rem;color:#9ca3af}
+.staff a{font-weight:600}
 </style>
 </head>
 <body>
 <div class="card">
-  <div class="card-header">
-    <img style="background:#fff;padding:3px 6px;border-radius:6px;" src="${LOGO_URL}" alt="TDOT Immigration" class="logo-img">
-    <span class="brand-sub">Client Portal</span>
-  </div>
+  <div class="card-header"><img src="${LOGO_URL}" alt="TDOT Immigration" class="logo-img"></div>
   <div class="card-body">
-    <h1>Client Questionnaire</h1>
-    <p>Enter your <strong>Case Reference Number</strong> to access and complete your questionnaire.</p>
-    ${error ? `<div class="error">${esc(error)}</div>` : ''}
-    <form method="GET" action="">
-      <label for="caseRef">Case Reference Number</label>
-      <input type="text" id="caseRef" name="ref" placeholder="e.g. 2026-SP-001" autocomplete="off" required>
-      <button class="btn" type="submit">Access My Questionnaire →</button>
-    </form>
-    <p class="hint">Don't know your case reference? Contact your consultant.</p>
+    ${body}
   </div>
-  <div class="card-footer">TDOT Immigration &nbsp;·&nbsp; Secure Client Portal</div>
 </div>
-<script>
-  const form = document.querySelector('form');
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const ref = document.getElementById('caseRef').value.trim();
-    if (ref) window.location.href = '/questionnaire/' + encodeURIComponent(ref);
-  });
-</script>
-</body></html>`;
+</body>
+</html>`;
 }
 
 // ─── Main questionnaire form ──────────────────────────────────────────────────
-function formPage(caseRef, sections) {
+function formPage(caseRef, sections, token = '') {
   const totalQ   = sections.reduce((s, sec) => s + sec.items.length, 0);
   const answered = sections.reduce((s, sec) => s + sec.items.filter((i) => i.currentAnswer).length, 0);
   const pct      = totalQ ? Math.round((answered / totalQ) * 100) : 0;
@@ -371,6 +365,9 @@ ${flaggedCount > 0 ? `
 
 <script>
 const CASE_REF          = ${JSON.stringify(caseRef)};
+// The client's access code (?t=) rides on every save — the server checks it (2026-10-31).
+const ACCESS_TOKEN      = ${JSON.stringify(token).replace(/</g, '\\u003c')};
+const withToken = (u) => ACCESS_TOKEN ? u + '?t=' + encodeURIComponent(ACCESS_TOKEN) : u;
 const TOTAL             = ${total};
 const FIRST_FLAGGED     = ${firstFlaggedStep};   // -1 if no flagged items
 let currentStep = 0;
@@ -480,7 +477,7 @@ async function saveCurrent(idx, silent = false) {
   if (msg) msg.textContent = '';
 
   try {
-    const res = await fetch('/questionnaire/' + encodeURIComponent(CASE_REF) + '/save', {
+    const res = await fetch(withToken('/questionnaire/' + encodeURIComponent(CASE_REF) + '/save'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ answers }),
@@ -491,7 +488,7 @@ async function saveCurrent(idx, silent = false) {
       if (!silent) showToast('Section saved!');
       return true;
     } else {
-      if (msg) msg.textContent = '⚠ Save failed. Please try again.';
+      if (msg) msg.textContent = '⚠ ' + (data.error || 'Save failed. Please try again.');
       showToast('Save failed', 'error');
       return false;
     }
@@ -527,7 +524,7 @@ async function submitAll() {
   btns.forEach(b => { b.disabled = true; b.textContent = 'Submitting…'; });
 
   try {
-    const res = await fetch('/questionnaire/' + encodeURIComponent(CASE_REF) + '/submit', {
+    const res = await fetch(withToken('/questionnaire/' + encodeURIComponent(CASE_REF) + '/submit'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -544,7 +541,7 @@ async function submitAll() {
       document.querySelector('.steps-wrap').style.display = 'none';
       document.querySelector('.progress-wrap').style.display = 'none';
     } else {
-      showToast('Submission failed. Please try again.', 'error');
+      showToast(data.error || 'Submission failed. Please try again.', 'error');
       btns.forEach(b => { b.disabled = false; b.textContent = '✅ Submit Questionnaire'; });
     }
   } catch (e) {
@@ -557,63 +554,81 @@ async function submitAll() {
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
+// Locked 2026-10-31 (Faran). This old page reads the retired Monday
+// questionnaire board and used to open — and save — with the case number
+// alone. Now, like the documents page, it opens only with the case's own
+// access code (?t=) or a Monday staff sign-in, and a save touches only this
+// case's own rows.
+const LOG = '[QuestionnaireForm]';
+const requireClientOrStaff = caseLinkAccess.requireClientOrStaff({ logTag: LOG });
+const caseRefOf = (req) => caseLinkAccess.safeDecode(req.params.caseRef).trim();
 
-// GET /questionnaire  — landing page
+// GET /questionnaire — once a case-number box; now it only says where the questionnaire is
 router.get('/', (req, res) => {
-  const error = req.query.error || '';
-  res.send(landingPage(error));
+  res.send(noticePage('', 'token'));
 });
 
-// GET /questionnaire/:caseRef  — questionnaire form
+// GET /questionnaire/:caseRef — the client's link (?t=) or a Monday staff sign-in.
+// ?staff=1 goes through the Monday sign-in first and comes back here.
 router.get('/:caseRef', async (req, res) => {
-  const caseRef = decodeURIComponent(req.params.caseRef).trim();
+  const caseRef = caseRefOf(req);
+  if (!caseLinkAccess.validCaseRef(caseRef)) return res.status(400).send(noticePage('', 'token'));
+  if (caseLinkAccess.oneStr(req.query.staff) === '1' && !staffAuth.tryStaffAuth(req)) {
+    return res.redirect(`/q/auth/monday?returnTo=${encodeURIComponent(req.originalUrl || `/questionnaire/${encodeURIComponent(caseRef)}`)}`);
+  }
+  const access = await caseLinkAccess.authorise(req, caseRef, { logTag: LOG });
+  if (!access.ok) return res.status(access.status).send(noticePage(caseRef, access.reason));
 
   try {
     const items = await getCaseItems(caseRef);
-    if (!items.length) {
-      return res.redirect(`/questionnaire?error=${encodeURIComponent(`No questionnaire found for case "${caseRef}". Please check your case reference number.`)}`);
-    }
-
-    const sections = groupByCategory(items);
-    res.send(formPage(caseRef, sections));
+    if (!items.length) return res.status(404).send(noticePage(caseRef, access.staff ? 'empty-staff' : 'empty'));
+    res.send(formPage(caseRef, groupByCategory(items), access.token));
   } catch (err) {
-    console.error('[QuestionnaireForm] Error loading form:', err.message);
-    res.status(500).send(landingPage('An error occurred. Please try again later.'));
+    console.error(`${LOG} Error loading form:`, err.message);
+    res.status(500).send(noticePage(caseRef, 'backend'));
   }
 });
 
-// POST /questionnaire/:caseRef/save  — save section answers
-router.post('/:caseRef/save', async (req, res) => {
-  const caseRef = decodeURIComponent(req.params.caseRef).trim();
-  const { answers } = req.body;
-
-  if (!answers || !Array.isArray(answers)) {
+// POST /questionnaire/:caseRef/save  — save section answers (this case's own rows only)
+router.post('/:caseRef/save', requireClientOrStaff, async (req, res) => {
+  const caseRef = caseRefOf(req);
+  const { answers } = req.body || {};
+  if (!Array.isArray(answers) || answers.some((a) => !a || typeof a !== 'object' || (a.answer != null && typeof a.answer !== 'string'))) {
     return res.status(400).json({ success: false, error: 'Invalid payload' });
   }
 
   try {
-    const result = await saveAnswers(answers);
+    // A row from another case (or anything else) is refused, never written.
+    const own = new Set(await getCaseItemIds(caseRef));
+    if (answers.length > own.size || answers.some((a) => !own.has(String(a.itemId)))) {
+      return res.status(400).json({ success: false, error: 'Some answers are not part of this questionnaire — please reload the page.' });
+    }
+    const result = await saveAnswers(answers.map((a) => ({ itemId: String(a.itemId), answer: a.answer })));
     res.json({ success: true, ...result });
     // Non-blocking post-save: update activity date + recalculate readiness
     updateLastActivityDate(caseRef).catch(() => {});
     calculateForCaseRef(caseRef).catch(() => {});
   } catch (err) {
-    console.error('[QuestionnaireForm] Save error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
+    console.error(`${LOG} Save error:`, err.message);
+    res.status(500).json({ success: false, error: 'Could not save just now — please try again.' });
   }
 });
 
 // POST /questionnaire/:caseRef/submit  — mark questionnaire as submitted
-router.post('/:caseRef/submit', async (req, res) => {
-  const caseRef = decodeURIComponent(req.params.caseRef).trim();
+router.post('/:caseRef/submit', requireClientOrStaff, async (req, res) => {
+  const caseRef = caseRefOf(req);
 
   try {
     const result = await submitQuestionnaire(caseRef);
     res.json({ success: true, ...result });
   } catch (err) {
-    console.error('[QuestionnaireForm] Submit error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
+    console.error(`${LOG} Submit error:`, err.message);
+    res.status(500).json({ success: false, error: 'Could not submit just now — please try again.' });
   }
 });
+
+// Test hooks
+router._noticePage = noticePage;
+router._formPage = formPage;
 
 module.exports = router;

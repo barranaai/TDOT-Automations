@@ -77,6 +77,20 @@ function setStaffCookie(res, token) {
 }
 
 /**
+ * End the Monday sign-in in this browser (Sign Out, 2026-10-31). Same options
+ * as setStaffCookie, so the browser matches and drops the cookie.
+ *
+ * @param {import('express').Response} res
+ */
+function clearStaffCookie(res) {
+  res.clearCookie(COOKIE_NAME, {
+    httpOnly: true,
+    secure:   process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+  });
+}
+
+/**
  * Non-redirecting staff auth probe.
  * Returns the decoded JWT payload if a valid staff cookie is present,
  * or null otherwise. Use this on routes that serve BOTH staff and clients
@@ -95,4 +109,4 @@ function tryStaffAuth(req) {
   }
 }
 
-module.exports = { requireStaffAuth, tryStaffAuth, createStaffToken, setStaffCookie };
+module.exports = { requireStaffAuth, tryStaffAuth, createStaffToken, setStaffCookie, clearStaffCookie };

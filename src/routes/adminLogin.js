@@ -4,6 +4,8 @@
  * If the user is already authenticated (key in sessionStorage),
  * the page immediately redirects to /admin/consultations.
  * On successful login, stores key and redirects to /admin/consultations.
+ * Below the key: "Sign in with Monday" — the per-person sign-in that tells the
+ * app who you are (2026-10-31); once done it reads "Signed in with Monday as …".
  */
 
 const express = require('express');
@@ -22,17 +24,18 @@ function buildLoginHTML() {
     ${SHARED_CSS_VARS}
 
     html, body {
-      height: 100%;
       margin: 0;
     }
 
+    /* The card is taller since the Monday button (2026-10-31): on a short
+       window the page scrolls instead of cutting the card off. */
     body {
       background: var(--navy-dark);
       display: flex;
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      overflow: hidden;
+      overflow-x: hidden;
     }
 
     /* ── Background pattern ─────────────────────────── */
@@ -214,6 +217,62 @@ function buildLoginHTML() {
     }
 
     .card-footer strong { color: var(--muted); }
+
+    /* Sign in with Monday (2026-10-31) */
+    .mon-sep {
+      display: flex; align-items: center; gap: 10px;
+      margin: 24px 0 16px;
+      font-size: 11px; font-weight: 700;
+      color: var(--light);
+      text-transform: uppercase; letter-spacing: .8px;
+    }
+    .mon-sep::before, .mon-sep::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+    .btn-monday {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%;
+      padding: 11px 24px;
+      background: white;
+      color: var(--navy);
+      border: 2px solid var(--navy);
+      border-radius: var(--r-sm);
+      font-size: 14px; font-weight: 700;
+      text-decoration: none;
+      transition: background .15s, color .15s;
+    }
+    .btn-monday:hover { background: var(--navy); color: white; }
+    .btn-monday:focus-visible { outline: 3px solid rgba(26,53,88,.35); outline-offset: 2px; }
+
+    .mon-ok {
+      padding: 11px 14px;
+      background: var(--green-bg);
+      border: 1px solid #bbf7d0;
+      border-radius: var(--r-sm);
+      color: var(--green);
+      font-size: 13px; font-weight: 600;
+      text-align: left;
+    }
+
+    .mon-out {
+      margin-left: 4px;
+      padding: 0;
+      background: none;
+      border: none;
+      color: var(--navy);
+      font: inherit;
+      font-weight: 600;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    .mon-out:focus-visible { outline: 2px solid var(--navy); outline-offset: 2px; border-radius: 3px; }
+
+    .mon-note {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+      text-align: left;
+    }
   </style>
 </head>
 <body>
@@ -254,6 +313,16 @@ function buildLoginHTML() {
 
       <div class="error-box" id="error-box"></div>
 
+      <!-- The per-person sign-in: the key opens the pages, Monday says who you are -->
+      <div class="mon-sep" aria-hidden="true">and</div>
+      <a class="btn-monday" id="mon-btn" href="/q/auth/monday?returnTo=%2Fadmin">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        Sign in with Monday
+      </a>
+      <div class="mon-ok" id="mon-ok" role="status" style="display:none">&#10003; Signed in with Monday<span id="mon-as"></span>.
+        <button type="button" class="mon-out" id="mon-out">Not you? Sign out</button></div>
+      <p class="mon-note" id="mon-note">Also sign in with Monday, so the app knows who you are. Some actions need it — flagging answers, reviewing documents, resending a client's portal link.</p>
+
     </div><!-- /card-body -->
 
     <div class="card-footer">
@@ -270,6 +339,43 @@ function buildLoginHTML() {
     var k = sessionStorage.getItem('tdot_admin_key');
     if (k) { window.location.replace('/admin/consultations'); }
   })();
+
+  /* Monday sign-in (2026-10-31): if this browser is signed in, say who. */
+  (function mondayStatus() {
+    fetch('/admin/payments/viewer', { credentials: 'same-origin' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(v) {
+        if (!v || !v.signedIn) return;
+        if (v.name) document.getElementById('mon-as').textContent = ' as ' + v.name;
+        document.getElementById('mon-ok').style.display = 'block';
+        document.getElementById('mon-btn').style.display = 'none';
+        document.getElementById('mon-note').style.display = 'none';
+      })
+      .catch(function() {});
+  })();
+
+  /* "Not you?" — someone else signed in with Monday on this computer: end that
+     sign-in here and say what to do next. Monday.com keeps its own sign-in, so
+     "Sign in with Monday" can bring the same person back until they log out
+     there. If we cannot tell that it worked, reload to show the real state. */
+  document.getElementById('mon-out').addEventListener('click', function() {
+    var done = false;
+    function finish(ok) {
+      if (done) return;
+      done = true;
+      if (!ok) { window.location.reload(); return; }
+      document.getElementById('mon-ok').style.display = 'none';
+      document.getElementById('mon-btn').style.display = '';
+      var note = document.getElementById('mon-note');
+      note.textContent = 'Signed out of Monday here. Now press "Sign in with Monday". If it brings back the same name, log out on the Monday.com website first.';
+      note.style.display = 'block';
+    }
+    try {
+      fetch('/q/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'X-Tdot-Signout': '1' } })
+        .then(function(r) { finish(!!(r && r.ok)); }, function() { finish(false); });
+    } catch (_) { finish(false); }
+    setTimeout(function() { finish(false); }, 3000);
+  });
 
   function handleLogin() {
     var key  = document.getElementById('api-key').value.trim();
