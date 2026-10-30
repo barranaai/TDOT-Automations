@@ -33,7 +33,8 @@ test('both routes take an upload slot BEFORE multer buffers the body', () => {
   const portal = fs.readFileSync(require.resolve('../src/routes/clientPortal.js'), 'utf8');
   assert.match(portal, /uploadRateLimit, uploadLimits\.uploadSlot, uploadSingle,/);
   const docs = fs.readFileSync(require.resolve('../src/routes/documentUploadForm.js'), 'utf8');
-  assert.match(docs, /'\/:caseRef\/upload\/:itemId', uploadLimits\.uploadSlot, uploadSingle,/);
+  // the access check comes first (2026-10-31): a stranger never takes a slot, let alone buffers a body
+  assert.match(docs, /'\/:caseRef\/upload\/:itemId', requireClientOrStaff, uploadLimits\.uploadSlot, uploadSingle,/);
 });
 
 test('uploadSlot: a size budget, not a count — many small files pass together, very large ones take turns', () => {

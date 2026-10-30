@@ -9,6 +9,8 @@ const { updateLastActivityDate } = require('../services/clientMasterService');
 const { calculateForCaseRef }   = require('../services/caseReadinessService');
 const mondayApi = require('../services/mondayApi');
 const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
+const staffAuth = require('../middleware/staffAuth');              // a Monday staff sign-in (the staff cookie)
+const htmlQ     = require('../services/htmlQuestionnaireService');  // the case's access code — the same check as /q and /client
 
 // ─── File upload config ───────────────────────────────────────────────────────
 
@@ -265,14 +267,9 @@ input[type=text]:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--bran
   </div>
   <div class="card-body">
     <h1>Document Upload</h1>
-    <p>Enter your <strong>Case Reference Number</strong> to access and upload your required documents.</p>
+    <p>Your documents page opens from the link in the email we sent you (“Your case is ready” or “Your Client Portal link”). Open that email and click its button.</p>
     ${error ? `<div class="error">${esc(error)}</div>` : ''}
-    <form method="GET" action="/documents">
-      <label for="caseRef">Case Reference Number</label>
-      <input type="text" id="caseRef" name="ref" placeholder="e.g. 2026-SP-001" autocomplete="off" required>
-      <button class="btn" type="submit">Access My Documents →</button>
-    </form>
-    <p class="hint">Don't know your case reference? Contact your consultant.</p>
+    <p class="hint">Can't find the email? Reply to your case officer or write to info@tdotimm.com and we will send your link again.</p>
   </div>
   <div class="card-footer">TDOT Immigration &nbsp;·&nbsp; Secure Client Portal</div>
 </div>
@@ -343,7 +340,7 @@ function docRowHtml(doc, caseRef) {
  * @param {string[]}     disclaimer    - case-specific disclaimer bullets from PDF
  * @param {Array|null}   phases        - if dual-phase, array of { phase, isMultiMember, members }
  */
-function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], phases = null) {
+function formPage(caseRef, clientName, members, isMultiMember, disclaimer = [], phases = null, token = '') {
   // Flatten all items for global counts (across all phases)
   const allPhaseMembers = phases ? phases.flatMap(p => p.members) : members;
   const allItems     = allPhaseMembers.flatMap((m) => m.sections.flatMap((s) => s.items));
@@ -815,6 +812,11 @@ ${flaggedCount > 0 ? `
 
 <script>
 const CASE_REF      = ${JSON.stringify(caseRef)};
+// The access code from the client's link (empty for signed-in staff) — every
+// request from this page carries it, so the server can check it is really
+// this client (Faran 2026-10-31).
+const ACCESS_TOKEN  = ${JSON.stringify(token)};
+const withToken = (u) => ACCESS_TOKEN ? u + '?t=' + encodeURIComponent(ACCESS_TOKEN) : u;
 const MAX_UPLOAD_BYTES = ${uploadLimits.MAX_UPLOAD_BYTES};
 const MAX_UPLOAD_MB    = ${uploadLimits.MAX_UPLOAD_MB};
 const TOTAL         = ${total};
@@ -933,7 +935,7 @@ function openDocReply(itemId) {
     sendBtn.textContent = 'Sending...';
 
     try {
-      const res = await fetch('/documents/' + encodeURIComponent(CASE_REF) + '/reply-note', {
+      const res = await fetch(withToken('/documents/' + encodeURIComponent(CASE_REF) + '/reply-note'), {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ itemId: itemId, reply: reply }),
@@ -1032,7 +1034,7 @@ async function handleUpload(itemId, caseRef, input) {
       let res, data;
       for (let attempt = 1; attempt <= 8; attempt++) {
         res  = await fetch(
-          '/documents/' + encodeURIComponent(caseRef) + '/upload/' + itemId,
+          withToken('/documents/' + encodeURIComponent(caseRef) + '/upload/' + itemId),
           { method: 'POST', body: formData }
         );
         data = await res.json();
@@ -1176,7 +1178,7 @@ async function submitDone() {
   if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
 
   try {
-    await fetch('/documents/' + encodeURIComponent(CASE_REF) + '/complete', { method: 'POST' });
+    await fetch(withToken('/documents/' + encodeURIComponent(CASE_REF) + '/complete'), { method: 'POST' });
   } catch (_) {
     // Best-effort — show the done panel regardless
   }
@@ -1197,6 +1199,82 @@ async function submitDone() {
 </html>`;
 }
 
+// ─── Who may open this case's documents (Faran 2026-10-31) ────────────────────
+// Until now the page, the uploads and the reply box opened with the case
+// number alone — guessable, and it showed the client's name and document list.
+// Now: a Monday staff sign-in, OR the case's own access code (the ?t= in the
+// links we email — the same check the portal and the questionnaire make).
+const oneStr = (v) => (Array.isArray(v) ? v[0] : v) == null ? '' : String(Array.isArray(v) ? v[0] : v);
+
+/**
+ * @returns {Promise<{ok:true, staff:boolean, token:string} | {ok:false, status:number, reason:'token'|'backend'}>}
+ */
+async function authorise(req, caseRef) {
+  if (staffAuth.tryStaffAuth(req)) return { ok: true, staff: true, token: '' };
+  const token = oneStr(req.query && req.query.t) || oneStr(req.body && req.body.t);
+  try {
+    // Auth-only: never let a questionnaire-era storage read fail the page.
+    await htmlQ.validateAccess(caseRef, token, { skipFormVersioning: true });
+    return { ok: true, staff: false, token };
+  } catch (err) {
+    if (/token|not found|no such case|missing/i.test(err.message || '')) return { ok: false, status: 403, reason: 'token' };
+    console.error(`[DocForm] access check backend error for ${caseRef}:`, err.message);
+    return { ok: false, status: 503, reason: 'backend' };
+  }
+}
+
+/** Gate for the POSTs — runs BEFORE the upload parser, so a stranger never takes an upload slot. */
+async function requireClientOrStaff(req, res, next) {
+  const caseRef = decodeURIComponent(req.params.caseRef).trim();
+  if (!validateCaseRef(caseRef)) return res.status(400).json({ success: false, error: 'Invalid case reference format.' });
+  const a = await authorise(req, caseRef);
+  if (a.ok) return next();
+  return res.status(a.status).json({ success: false, error: a.reason === 'token'
+    ? 'Access denied — please use the most recent link from your case officer.'
+    : 'We could not verify your link just now — please try again in a moment.' });
+}
+
+/** The page a visitor without a valid link sees. Says nothing about the case. */
+function accessPage(caseRef, reason) {
+  const staffUrl = `/q/auth/monday?returnTo=${encodeURIComponent(`/documents/${encodeURIComponent(caseRef)}?staff=1`)}`;
+  const backend = reason === 'backend';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Document Upload — TDOT Immigration</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;background:#eceef1;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
+.card{background:#fff;border-radius:18px;box-shadow:0 8px 40px rgba(0,0,0,.14);width:100%;max-width:460px;overflow:hidden;border:1px solid #e5e7eb}
+.card-header{background:#1a1a1a;padding:1.6rem 2rem;display:flex;flex-direction:column;align-items:center;gap:.5rem;border-bottom:2px solid #8f0505}
+.logo-img{height:38px;object-fit:contain;background:#fff;padding:3px 6px;border-radius:6px}
+.card-body{padding:2rem 2.1rem}
+h1{font-size:1.15rem;color:#111;margin-bottom:.6rem;font-weight:800}
+p{color:#4b5563;font-size:.92rem;line-height:1.7;margin-bottom:.9rem}
+.staff{margin-top:1.4rem;padding-top:1rem;border-top:1px solid #f1f5f9;font-size:.8rem;color:#9ca3af}
+.staff a{color:#8f0505;font-weight:600}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="card-header"><img src="${LOGO_URL}" alt="TDOT Immigration" class="logo-img"></div>
+  <div class="card-body">
+    ${backend
+      ? `<h1>Please try again in a moment</h1>
+    <p>We could not check your link just now. Nothing is wrong with your link — please refresh this page in a minute.</p>`
+      : `<h1>Please open this page from your email</h1>
+    <p>For your security, your documents page opens only from the link in the email we sent you (“Your case is ready” or “Your Client Portal link”). Open that email and click its button.</p>
+    <p>Can't find the email? Reply to your case officer or write to info@tdotimm.com and we will send your link again.</p>
+    <div class="staff">TDOT staff: <a href="${staffUrl}">sign in with Monday</a> to open this page.</div>`}
+  </div>
+</div>
+</body>
+</html>`;
+}
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 // Landing page — also handles ?ref= redirect (works with and without JS)
@@ -1206,9 +1284,17 @@ router.get('/', (req, res) => {
   res.send(landingPage(req.query.error || ''));
 });
 
-// Document upload form
+// Document upload form — the client's link (?t=) or a Monday staff sign-in.
+// ?staff=1 (what staff type, or follow from the sign-in note) goes through the
+// Monday sign-in first and comes back here, exactly like the client portal.
 router.get('/:caseRef', async (req, res) => {
   const caseRef = decodeURIComponent(req.params.caseRef).trim();
+  if (!validateCaseRef(caseRef)) return res.status(400).send(accessPage('', 'token'));
+  if (oneStr(req.query.staff) === '1' && !staffAuth.tryStaffAuth(req)) {
+    return res.redirect(`/q/auth/monday?returnTo=${encodeURIComponent(req.originalUrl || `/documents/${encodeURIComponent(caseRef)}`)}`);
+  }
+  const access = await authorise(req, caseRef);
+  if (!access.ok) return res.status(access.status).send(accessPage(caseRef, access.reason));
   try {
     const { items, clientName, disclaimer } = await getCaseSummary(caseRef);
     if (!items.length) {
@@ -1221,7 +1307,7 @@ router.get('/:caseRef', async (req, res) => {
     const { hasDualPhase, phases } = groupByPhase(items);
     // For backward compat: single-phase cases pass members/isMultiMember directly
     const { isMultiMember, members } = phases[0];
-    res.send(formPage(caseRef, clientName, members, isMultiMember, disclaimer, hasDualPhase ? phases : null));
+    res.send(formPage(caseRef, clientName, members, isMultiMember, disclaimer, hasDualPhase ? phases : null, access.token));
   } catch (err) {
     console.error('[DocForm] Error loading form:', err.message);
     res.redirect(
@@ -1231,7 +1317,7 @@ router.get('/:caseRef', async (req, res) => {
 });
 
 // File upload handler
-router.post('/:caseRef/upload/:itemId', uploadLimits.uploadSlot, uploadSingle, async (req, res) => {
+router.post('/:caseRef/upload/:itemId', requireClientOrStaff, uploadLimits.uploadSlot, uploadSingle, async (req, res) => {
   let caseRef = decodeURIComponent(req.params.caseRef).trim();
   const itemId  = req.params.itemId;
   const file    = req.file;
@@ -1297,7 +1383,7 @@ router.post('/:caseRef/upload/:itemId', uploadLimits.uploadSlot, uploadSingle, a
 
 // ─── Client reply to document review note ───────────────────────────────────
 
-router.post('/:caseRef/reply-note', async (req, res) => {
+router.post('/:caseRef/reply-note', requireClientOrStaff, async (req, res) => {
   const caseRef = decodeURIComponent(req.params.caseRef).trim();
   const { itemId, reply } = req.body || {};
 
@@ -1333,7 +1419,7 @@ router.post('/:caseRef/reply-note', async (req, res) => {
 });
 
 // Done handler — client explicitly marks all documents as submitted
-router.post('/:caseRef/complete', (req, res) => {
+router.post('/:caseRef/complete', requireClientOrStaff, (req, res) => {
   const caseRef = decodeURIComponent(req.params.caseRef).trim();
   console.log(`[DocForm] Client marked case ${caseRef} as complete`);
   res.json({ success: true });
@@ -1342,6 +1428,8 @@ router.post('/:caseRef/complete', (req, res) => {
 module.exports = router;
 // For tests only: the page builder, so the emitted <script> can be parsed; the member grouping.
 module.exports._formPage = formPage;
+module.exports._authorise = authorise;
+module.exports._accessPage = accessPage;
 module.exports._groupByMemberAndCategory = groupByMemberAndCategory;
 module.exports._aggregateMembersAcrossPhases = aggregateMembersAcrossPhases;
 module.exports._memberIcon = memberIcon;

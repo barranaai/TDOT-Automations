@@ -778,12 +778,35 @@ ${buildNavHeader('engines')}
     if (!getKey()) return;
     startClock();
     checkApiStatus();
+    guardNamedAdmin();
     restoreLog();
     updateMondayStatBadge();
     document.getElementById('intake-id').addEventListener('keydown', function(e) {
       if (e.key === 'Enter') resendIntake();
     });
   });
+
+  // Running the checks by hand and the Document Code Generator are for NAMED
+  // admins (Monday sign-in + admin list) — 2026-10-31. The server refuses
+  // everyone else; this tells the person why the buttons are off.
+  function guardNamedAdmin() {
+    var key = getKey(); if (!key) return;
+    fetch('/admin/payments/viewer', { headers: { 'X-Api-Key': key }, credentials: 'same-origin' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(v) {
+        if (!v || v.canUndo) return;
+        var bar = document.createElement('div');
+        bar.setAttribute('role', 'status');
+        bar.style.cssText = 'margin:16px 24px 0;padding:12px 16px;border-radius:10px;background:#fff7ed;border:1px solid #fdba74;color:#7c2d12;font-size:14px;line-height:1.5';
+        bar.innerHTML = 'Running these checks by hand and the Document Code Generator need a <b>named admin</b> signed in with Monday. ' +
+          '<a href="/q/auth/monday?returnTo=' + encodeURIComponent(location.pathname) + '" style="color:#9a3412;font-weight:700">Sign in with Monday</a>';
+        var hdr = document.querySelector('.admin-hdr');
+        if (hdr && hdr.parentNode) hdr.parentNode.insertBefore(bar, hdr.nextSibling); else document.body.insertBefore(bar, document.body.firstChild);
+        var btns = document.querySelectorAll('.run-btn, #run-all-btn, #btn-doccode-generate');
+        for (var i = 0; i < btns.length; i++) { btns[i].disabled = true; btns[i].title = 'Needs a named admin signed in with Monday'; }
+      })
+      .catch(function() {});
+  }
 
   function updateMondayStatBadge() {
     var key = getKey(); if (!key) return;

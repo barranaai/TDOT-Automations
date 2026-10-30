@@ -133,8 +133,9 @@ test('CASE_VISIBILITY=assigned restores the original per-assignment rule without
 test('opening visibility grants NO admin powers: the destructive surfaces still demand ADMIN_EMAILS', () => {
   const src = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
   for (const [route, guard] of [
-    ["app.get('/admin/delete/preview'", 'resolveAdminOrReject'],
-    ["app.post('/admin/delete/execute'", 'resolveAdminOrReject'],
+    // 2026-10-31: deleting is for NAMED admins (Monday sign-in + ADMIN_EMAILS) — stronger than the key gate
+    ["app.get('/admin/delete/preview'", 'resolveNamedAdminViewerOrReject'],
+    ["app.post('/admin/delete/execute'", 'resolveNamedAdminViewerOrReject'],
     ["app.post('/admin/onedrive/refile-general'", 'resolveAdminOrReject'],
     ["app.get('/admin/status-audit'", 'viewer.isAdmin'],
   ]) {

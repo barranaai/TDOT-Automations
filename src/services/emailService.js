@@ -309,7 +309,7 @@ async function sendIntakeEmail(itemId, opts = {}) {
 
   const portalUrl        = `${BASE_URL}/client/${encodedRef}?t=${encodeURIComponent(accessToken)}`;
   const questionnaireUrl = `${BASE_URL}/q/${encodedRef}?t=${encodeURIComponent(accessToken)}`;
-  const documentsUrl     = `${BASE_URL}/documents/${encodedRef}`;
+  const documentsUrl     = `${BASE_URL}/documents/${encodedRef}?t=${encodeURIComponent(accessToken)}`;   // the page checks the code (2026-10-31)
 
   await mail.sendEmail({
     to:      client.clientEmail,

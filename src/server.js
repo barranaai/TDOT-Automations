@@ -376,6 +376,7 @@ app.get('/api/boards/execution', async (req, res) => {
 
 // Manual trigger — run Case Readiness Engine immediately
 app.post('/api/readiness/run', async (req, res) => {
+  if (!resolveNamedAdminViewerOrReject(req, res, 'run the overnight checks by hand')) return;   // named admins only (2026-10-31)
   res.json({ status: 'triggered', message: 'Case Readiness Engine running in background…' });
   caseReadinessService.runDailyReadinessCheck().catch((err) =>
     console.error('[Readiness] Manual run failed:', err.message)
@@ -384,6 +385,7 @@ app.post('/api/readiness/run', async (req, res) => {
 
 // Manual trigger — run SLA & Risk Engine immediately
 app.post('/api/sla/run', async (req, res) => {
+  if (!resolveNamedAdminViewerOrReject(req, res, 'run the overnight checks by hand')) return;   // named admins only (2026-10-31)
   res.json({ status: 'triggered', message: 'SLA & Risk Engine running in background…' });
   slaRiskEngine.runDailyCheck().catch((err) =>
     console.error('[SLAEngine] Manual run failed:', err.message)
@@ -392,6 +394,7 @@ app.post('/api/sla/run', async (req, res) => {
 
 // Manual trigger — run Case Health Engine immediately
 app.post('/api/health/run', async (req, res) => {
+  if (!resolveNamedAdminViewerOrReject(req, res, 'run the overnight checks by hand')) return;   // named admins only (2026-10-31)
   res.json({ status: 'triggered', message: 'Case Health Engine running in background…' });
   caseHealthEngine.runHealthCheck().catch((err) =>
     console.error('[HealthEngine] Manual run failed:', err.message)
@@ -400,6 +403,7 @@ app.post('/api/health/run', async (req, res) => {
 
 // Manual trigger — run Expiry Risk Engine immediately
 app.post('/api/expiry/run', async (req, res) => {
+  if (!resolveNamedAdminViewerOrReject(req, res, 'run the overnight checks by hand')) return;   // named admins only (2026-10-31)
   res.json({ status: 'triggered', message: 'Expiry Risk Engine running in background…' });
   expiryRiskEngine.runExpiryCheck().catch((err) =>
     console.error('[ExpiryEngine] Manual run failed:', err.message)
@@ -408,6 +412,7 @@ app.post('/api/expiry/run', async (req, res) => {
 
 // Manual trigger — run Escalation Routing Engine immediately
 app.post('/api/escalation/run', async (req, res) => {
+  if (!resolveNamedAdminViewerOrReject(req, res, 'run the overnight checks by hand')) return;   // named admins only (2026-10-31)
   res.json({ status: 'triggered', message: 'Escalation Routing Engine running in background…' });
   escalationRoutingService.runEscalationRouting().catch((err) =>
     console.error('[EscRouting] Manual run failed:', err.message)
@@ -416,6 +421,7 @@ app.post('/api/escalation/run', async (req, res) => {
 
 // Manual trigger — run Client Chasing Loop immediately
 app.post('/api/chasing/run', async (req, res) => {
+  if (!resolveNamedAdminViewerOrReject(req, res, 'run the overnight checks by hand')) return;   // named admins only (2026-10-31)
   res.json({ status: 'triggered', message: 'Client Chasing Loop running in background…' });
   chasingLoopService.runChasingLoop().catch((err) =>
     console.error('[ChasingLoop] Manual run failed:', err.message)
@@ -435,6 +441,7 @@ app.get('/api/utils/doc-codes/preview', async (req, res) => {
 
 // Document Code Generator — write (fire-and-forget, generates missing codes)
 app.post('/api/utils/doc-codes/generate', async (req, res) => {
+  if (!resolveNamedAdminViewerOrReject(req, res, 'run the Document Code Generator')) return;   // named admins only (2026-10-31)
   res.json({ status: 'triggered', message: 'Document Code Generator running in background…' });
   docCodeGenerator.generateCodes().catch((err) =>
     console.error('[DocCodes] Generate failed:', err.message)
@@ -818,8 +825,9 @@ app.post('/admin/booking-reminders/run', async (req, res) => {
   res.json(await require('./services/bookingRemindersService').runOnce());
 });
 
+// Deleting is for NAMED admins only (2026-10-31): the shared key no longer counts.
 app.get('/admin/delete/preview', async (req, res) => {
-  if (!resolveAdminOrReject(req, res)) return;
+  if (!resolveNamedAdminViewerOrReject(req, res, 'delete records')) return;
   try {
     const preview = await require('./services/deletionService').previewDeletion({
       leadId: (req.query.leadId || '').trim() || undefined,
@@ -834,8 +842,8 @@ app.get('/admin/delete/preview', async (req, res) => {
 });
 
 app.post('/admin/delete/execute', express.json(), async (req, res) => {
-  const viewer = resolveAdminOrReject(req, res);
-  if (!viewer) return;
+  const actor = resolveNamedAdminViewerOrReject(req, res, 'delete records');
+  if (!actor) return;
   const { leadId, caseRef, confirmText, kind } = req.body || {};
   try {
     const result = await require('./services/deletionService').executeDeletion({
@@ -843,7 +851,7 @@ app.post('/admin/delete/execute', express.json(), async (req, res) => {
       caseRef: String(caseRef || '').trim() || undefined,
       confirmText,
       expectedKind: kind === 'case' || kind === 'lead' ? kind : undefined,
-      actor: viewer.email || viewer.name || 'admin-key',
+      actor: actor.email || actor.name,
     });
     consultantPortalService.invalidateDirectRetainerQueue(); // deleted clients must drop off the Direct section immediately
     consultantPortalService.invalidateLeadsQueue();          // …and off the funnel-leads queue (was showing deleted leads as alive)
@@ -874,6 +882,17 @@ function staffActor(req, typedName) {
 function resolveNamedAdminOrReject(req, res) {
   const r = require('./utils/staffIdentity').namedAdminCheck(tryStaffAuth(req), caseAccess.isAdminEmail);
   if (!r.ok) { res.status(r.status).json({ error: r.error, ...(r.loginUrl ? { loginUrl: r.loginUrl } : {}) }); return null; }
+  return r.actor;
+}
+
+// The same NAMED-admin rule for the other destructive tools (Faran 2026-10-31):
+// deleting records and running the overnight engines by hand. The shared key
+// used to count as an admin for these — anyone holding it could delete a
+// client. `what` is the plain action name for the refusal ("delete records").
+// The answer carries both `error` and `message`, so every dialog shows it.
+function resolveNamedAdminViewerOrReject(req, res, what) {
+  const r = require('./utils/staffIdentity').namedAdminCheck(tryStaffAuth(req), caseAccess.isAdminEmail, { what, hint: '' });
+  if (!r.ok) { res.status(r.status).json({ error: r.error, message: r.error, ...(r.loginUrl ? { loginUrl: r.loginUrl } : {}) }); return null; }
   return r.actor;
 }
 

@@ -104,7 +104,7 @@ function buildRevisionEmailHtml({ clientName, caseRef, accessToken, questionnair
   const encodedRef        = encodeURIComponent(caseRef);
   const tokenParam        = accessToken ? `?t=${encodeURIComponent(accessToken)}` : '';
   const questionnaireUrl  = `${BASE_URL}/q/${encodedRef}${tokenParam}`;
-  const documentsUrl      = `${BASE_URL}/documents/${encodedRef}`;
+  const documentsUrl      = `${BASE_URL}/documents/${encodedRef}${tokenParam}`;   // the page checks the code (2026-10-31)
 
   const qRows = questionnaire.map(({ name, notes }) => `
     <tr>

@@ -157,7 +157,8 @@ function hoursSince(dateStr) {
 // ─── Email templates ──────────────────────────────────────────────────────────
 
 function buildChasingEmail(type, { clientName, caseRef, token, qLink }) {
-  const docLink = `${BASE_URL}/documents/${encodeURIComponent(caseRef)}`;
+  // The documents page checks the case's access code (2026-10-31) — carry it like the questionnaire link.
+  const docLink = `${BASE_URL}/documents/${encodeURIComponent(caseRef)}${token ? `?t=${encodeURIComponent(token)}` : ''}`;
   const name   = clientName || 'Client';
 
   const config = {

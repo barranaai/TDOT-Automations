@@ -480,7 +480,8 @@ function buildClientEmailHtml(bodyText, caseRef, clientName, isFinal = false, { 
   // answers "No questionnaire found … check your case reference" for almost
   // every case (found 2026-10-22). With no access code the button is left out.
   const qLink     = accessToken ? `${BASE_URL}/q/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(accessToken)}` : '';
-  const docLink   = `${BASE_URL}/documents/${encodeURIComponent(caseRef)}`;
+  // The documents page checks the same code (2026-10-31); without it the client lands on a "use your email link" page.
+  const docLink   = `${BASE_URL}/documents/${encodeURIComponent(caseRef)}${accessToken ? `?t=${encodeURIComponent(accessToken)}` : ''}`;
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>

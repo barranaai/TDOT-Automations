@@ -354,6 +354,20 @@ const DELETE_UI_JS = `
     return h;
   }
 
+  // Deleting is for NAMED admins (Monday sign-in + admin list) — 2026-10-31. The
+  // server refuses everyone else; hiding the bin icons just keeps the pages
+  // honest. /admin/payments/viewer answers the same question (canUndo).
+  (function hideBinsForNonAdmins(){
+    try {
+      fetch('/admin/payments/viewer', { headers: delHeaders(), credentials: 'same-origin' })
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(v){
+          if (v && !v.canUndo) { var s = document.createElement('style'); s.textContent = '.del-btn{display:none!important}'; document.head.appendChild(s); }
+        })
+        .catch(function(){});
+    } catch (_) {}
+  })();
+
   function tdotOpenDeleteModal(target, onDone){
     var qs = target.caseRef ? ('caseRef=' + encodeURIComponent(target.caseRef)) : ('leadId=' + encodeURIComponent(target.leadId));
     var ov = document.createElement('div');

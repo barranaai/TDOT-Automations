@@ -60,10 +60,11 @@ test('escalation email: the questionnaire button opens the client\'s own /q link
   const withCode = buildClientEmailHtml('Please finish.', '2026-PGWP-030', 'Ana', false, { accessToken: 'ab c/d' });
   assert.match(withCode, /href="[^"]*\/q\/2026-PGWP-030\?t=ab%20c%2Fd"\s+class="btn btn-q">Complete Questionnaire<\/a>/);
   assert.doesNotMatch(withCode, /\/questionnaire\//);
-  assert.match(withCode, /\/documents\/2026-PGWP-030" class="btn btn-d">Upload Documents/);
+  // the documents page checks the same code since 2026-10-31 — the button carries it
+  assert.match(withCode, /\/documents\/2026-PGWP-030\?t=ab%20c%2Fd" class="btn btn-d">Upload Documents/);
   const noCode = buildClientEmailHtml('Please finish.', '2026-PGWP-030', 'Ana', true);
   assert.doesNotMatch(noCode, /Complete Questionnaire|\/questionnaire\//);
-  assert.match(noCode, /Upload Documents/);
+  assert.match(noCode, /\/documents\/2026-PGWP-030" class="btn btn-d">Upload Documents/);
   assert.match(noCode, /Final Notice/);
 });
 
