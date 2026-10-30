@@ -5034,27 +5034,34 @@ function buildPlaceholderPage(caseRef) {
 /**
  * Build an error / access-denied page.
  */
-function buildErrorPage(message) {
+function buildErrorPage(message, opts = {}) {
+  // opts.notice: not an error at all — e.g. the client has not answered yet
+  // (Faran 2026-10-30: staff read "Access Denied" on an empty questionnaire as
+  // a permission problem). A calm heading and icon; real errors keep 🔒.
+  const escHtml = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const notice = !!opts.notice;
+  const heading = opts.title || (notice ? 'Nothing to show yet' : 'Access Denied');
+  const icon = opts.icon || (notice ? '📝' : '🔒');
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Access Error</title>
+  <title>${notice ? escHtml(heading) : 'Access Error'}</title>
   <style>
     body { font-family:'Segoe UI',sans-serif; background:#FAF8F4; display:flex;
            align-items:center; justify-content:center; min-height:100vh; padding:40px 20px; }
     .box { background:#FFFFFF; border-radius:14px; padding:48px 40px; text-align:center;
            box-shadow:0 2px 20px rgba(11,29,50,.07); max-width:480px; width:100%;
-           border-top:4px solid #C9A84C; }
-    h1   { color:#8B0000; font-size:20px; margin-bottom:12px; }
+           border-top:4px solid ${notice ? '#9CA3AF' : '#C9A84C'}; }
+    h1   { color:${notice ? '#0B1D32' : '#8B0000'}; font-size:20px; margin-bottom:12px; }
     p    { color:#6B7280; font-size:14px; line-height:1.6; }
   </style>
 </head>
 <body>
   <div class="box">
-    <div style="font-size:48px;margin-bottom:16px">🔒</div>
-    <h1>Access Denied</h1>
+    <div style="font-size:48px;margin-bottom:16px">${icon}</div>
+    <h1>${escHtml(heading)}</h1>
     <p>${message || 'This link is invalid or has expired. Please contact your consultant.'}</p>
   </div>
 </body>

@@ -134,6 +134,11 @@ p{color:#6b7280;font-size:14px;line-height:1.6;margin-bottom:10px}</style></head
 </div></body></html>`;
 }
 
+// "Nothing to review yet" notices (Faran 2026-10-30): the app only knows no answers were
+// SAVED where it looked, so the wording never claims the client did nothing.
+const RESEND_HINT = ' If the client says they did not get their link, open “🏠 Client portal” at the top of the case page and use “Resend portal access email” in the Client access box (needs Monday sign-in).';
+const oldFormNote = (n) => ` Note: its ${n} statutory Yes/No rows were not captured by the form before 2026-09-09 — the client must answer them again.`;
+
 // ─── Staff OAuth — /q/auth/monday  (MUST be before /:caseRef) ───────────────
 
 router.get('/auth/monday', (req, res) => {
@@ -313,11 +318,11 @@ router.get('/:caseRef/review', staffOrAdminKey, async (req, res) => {
       );
       if (!anyData) {
         const lost = allMembersData.reduce((n, m) => n + (m.notRecorded || 0), 0);
-        const statutoryNote = lost
-          ? ` Note: its ${lost} statutory Yes/No rows were not captured by the form before 2026-09-09 — the client must answer them again.`
-          : '';
+        // An old form whose statutory rows were never captured proves the client had the link,
+        // so it gets that note instead of the resend hint.
         return res.type('html').send(maybeEmbed(req, svc.buildErrorPage(
-          'No submitted data found for this case. The client may not have completed the questionnaire yet.' + statutoryNote
+          'No answers have been saved for this questionnaire yet, so there is nothing to review.' + (lost ? oldFormNote(lost) : RESEND_HINT),
+          { notice: true, title: 'Nothing to review yet' }
         )));
       }
 
@@ -351,13 +356,11 @@ router.get('/:caseRef/review', staffOrAdminKey, async (req, res) => {
     const hasData = fields.some(f => f.value && f.value.trim() !== '');
 
     if (!fields.length || !hasData) {
-      const statutoryNote = notRecorded.length
-        ? ` Note: its ${notRecorded.length} statutory Yes/No rows were not captured by the form before 2026-09-09 — the client must answer them again.`
-        : '';
       return res.type('html').send(maybeEmbed(req, svc.buildErrorPage(
         fields.length
-          ? 'The client has opened the questionnaire but has not yet filled in any answers. Please ask them to complete and submit the form before reviewing.' + statutoryNote
-          : 'No submitted data found for this case. The client may not have opened the questionnaire yet.'
+          ? 'The client has opened the questionnaire, but no answers have been saved yet. Please ask them to complete and submit it before reviewing.' + (notRecorded.length ? oldFormNote(notRecorded.length) : '')
+          : 'No answers have been saved for this questionnaire yet, so there is nothing to review.' + RESEND_HINT,
+        { notice: true, title: fields.length ? 'No answers yet' : 'Nothing to review yet' }
       )));
     }
 
@@ -418,7 +421,8 @@ router.get('/:caseRef/export-pdf', staffOrAdminKey, async (req, res) => {
     });
     if (!result) {
       return res.type('html').send(svc.buildErrorPage(
-        'No saved questionnaire data found for this case yet.'
+        'No saved answers were found for this form, so there is nothing to export.',
+        { notice: true, title: 'Nothing to export yet' }
       ));
     }
     const filename = `Questionnaire-${caseRef}${formKey ? '-' + formKey : ''}.pdf`;
