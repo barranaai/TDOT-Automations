@@ -798,8 +798,13 @@ ${buildNavHeader('engines')}
         var bar = document.createElement('div');
         bar.setAttribute('role', 'status');
         bar.style.cssText = 'margin:16px 24px 0;padding:12px 16px;border-radius:10px;background:#fff7ed;border:1px solid #fdba74;color:#7c2d12;font-size:14px;line-height:1.5';
-        bar.innerHTML = 'Running these checks by hand and the Document Code Generator need a <b>named admin</b> signed in with Monday. ' +
-          '<a href="/q/auth/monday?returnTo=' + encodeURIComponent(location.pathname) + '" style="color:#9a3412;font-weight:700">Sign in with Monday</a>';
+        if (v.signedIn) {
+          bar.textContent = 'You are signed in as ' + (v.name || 'a Monday user') + ', but your Monday account is not on the admin list. ' +
+            'Running these checks by hand and the Document Code Generator need a named admin \u2014 ask one to run them.';
+        } else {
+          bar.innerHTML = 'Running these checks by hand and the Document Code Generator need a <b>named admin</b> signed in with Monday. ' +
+            '<a href="/q/auth/monday?returnTo=' + encodeURIComponent(location.pathname) + '" style="color:#9a3412;font-weight:700">Sign in with Monday</a>';
+        }
         var hdr = document.querySelector('.admin-hdr');
         if (hdr && hdr.parentNode) hdr.parentNode.insertBefore(bar, hdr.nextSibling); else document.body.insertBefore(bar, document.body.firstChild);
         var btns = document.querySelectorAll('.run-btn, #run-all-btn, #btn-doccode-generate');

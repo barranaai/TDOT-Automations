@@ -267,9 +267,9 @@ input[type=text]:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--bran
   </div>
   <div class="card-body">
     <h1>Document Upload</h1>
-    <p>Your documents page opens from the link in the email we sent you (“Your case is ready” or “Your Client Portal link”). Open that email and click its button.</p>
+    <p>Your documents page opens from the link in the email we sent you. Open the email called “Your case is ready” (or “Your Client Portal link”) and click <strong>Open Your Portal</strong> — your documents page is inside the portal. A link from an older reminder or document email no longer opens on its own.</p>
     ${error ? `<div class="error">${esc(error)}</div>` : ''}
-    <p class="hint">Can't find the email? Reply to your case officer or write to info@tdotimm.com and we will send your link again.</p>
+    <p class="hint">Can't find the email? Please email us at info@tdotimm.com and we will send your link again.</p>
   </div>
   <div class="card-footer">TDOT Immigration &nbsp;·&nbsp; Secure Client Portal</div>
 </div>
@@ -811,11 +811,11 @@ ${flaggedCount > 0 ? `
 <div class="toast" id="toast"></div>
 
 <script>
-const CASE_REF      = ${JSON.stringify(caseRef)};
+const CASE_REF      = ${JSON.stringify(caseRef).replace(/</g, '\\u003c')};
 // The access code from the client's link (empty for signed-in staff) — every
 // request from this page carries it, so the server can check it is really
 // this client (Faran 2026-10-31).
-const ACCESS_TOKEN  = ${JSON.stringify(token)};
+const ACCESS_TOKEN  = ${JSON.stringify(token).replace(/</g, '\\u003c')};
 const withToken = (u) => ACCESS_TOKEN ? u + '?t=' + encodeURIComponent(ACCESS_TOKEN) : u;
 const MAX_UPLOAD_BYTES = ${uploadLimits.MAX_UPLOAD_BYTES};
 const MAX_UPLOAD_MB    = ${uploadLimits.MAX_UPLOAD_MB};
@@ -1205,19 +1205,43 @@ async function submitDone() {
 // Now: a Monday staff sign-in, OR the case's own access code (the ?t= in the
 // links we email — the same check the portal and the questionnaire make).
 const oneStr = (v) => (Array.isArray(v) ? v[0] : v) == null ? '' : String(Array.isArray(v) ? v[0] : v);
+const safeDecode = (s) => { try { return decodeURIComponent(String(s || '')); } catch (_) { return String(s || ''); } };
+// validateAccess's own refusals — anything else is a backend problem, never shown as a bad link.
+const ACCESS_ERRORS = new Set(['Missing case reference or access token.', 'Case not found.', 'Invalid or expired access token.']);
 
 /**
  * @returns {Promise<{ok:true, staff:boolean, token:string} | {ok:false, status:number, reason:'token'|'backend'}>}
  */
 async function authorise(req, caseRef) {
-  if (staffAuth.tryStaffAuth(req)) return { ok: true, staff: true, token: '' };
+  const staff = staffAuth.tryStaffAuth(req);
+  if (staff) {
+    // Same visibility rule as the review pages and the portal's staff view:
+    // every signed-in staffer by default; with CASE_VISIBILITY=assigned only
+    // the case's assignees (and admins).
+    const caseAccess = require('../services/caseAccessService');
+    const viewer = caseAccess.viewerFromStaff(staff);
+    if (viewer.isAdmin || caseAccess.caseVisibilityPolicy() === 'all') return { ok: true, staff: true, token: '' };
+    try {
+      const { itemId } = await htmlQ.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+      const ids = caseAccess.PEOPLE_COLUMNS.map((c) => `"${c}"`).join(', ');
+      const data = await mondayApi.query(`query($itemId: ID!) { items(ids: [$itemId]) { column_values(ids: [${ids}]) { id value } } }`, { itemId: String(itemId) });
+      const valueByColId = {};
+      for (const c of (data && data.items && data.items[0] && data.items[0].column_values) || []) valueByColId[c.id] = c.value;
+      if (!caseAccess.viewerCanSee(caseAccess.assigneesFromColumnValues(valueByColId), viewer)) return { ok: false, status: 403, reason: 'assigned' };
+      return { ok: true, staff: true, token: '' };
+    } catch (err) {
+      if (ACCESS_ERRORS.has(String(err.message || '').trim())) return { ok: false, status: 403, reason: 'token' };   // 'Case not found.'
+      console.error(`[DocForm] staff access check failed for ${caseRef}:`, err.message);
+      return { ok: false, status: 503, reason: 'backend' };
+    }
+  }
   const token = oneStr(req.query && req.query.t) || oneStr(req.body && req.body.t);
   try {
     // Auth-only: never let a questionnaire-era storage read fail the page.
     await htmlQ.validateAccess(caseRef, token, { skipFormVersioning: true });
     return { ok: true, staff: false, token };
   } catch (err) {
-    if (/token|not found|no such case|missing/i.test(err.message || '')) return { ok: false, status: 403, reason: 'token' };
+    if (ACCESS_ERRORS.has(String(err.message || '').trim())) return { ok: false, status: 403, reason: 'token' };
     console.error(`[DocForm] access check backend error for ${caseRef}:`, err.message);
     return { ok: false, status: 503, reason: 'backend' };
   }
@@ -1225,19 +1249,22 @@ async function authorise(req, caseRef) {
 
 /** Gate for the POSTs — runs BEFORE the upload parser, so a stranger never takes an upload slot. */
 async function requireClientOrStaff(req, res, next) {
-  const caseRef = decodeURIComponent(req.params.caseRef).trim();
+  const caseRef = safeDecode(req.params.caseRef).trim();
   if (!validateCaseRef(caseRef)) return res.status(400).json({ success: false, error: 'Invalid case reference format.' });
   const a = await authorise(req, caseRef);
   if (a.ok) return next();
-  return res.status(a.status).json({ success: false, error: a.reason === 'token'
-    ? 'Access denied — please use the most recent link from your case officer.'
-    : 'We could not verify your link just now — please try again in a moment.' });
+  const token = oneStr(req.query && req.query.t) || oneStr(req.body && req.body.t);
+  if (a.reason === 'backend')  return res.status(503).json({ success: false, error: 'We could not verify your link just now — please try again in a moment.' });
+  if (a.reason === 'assigned') return res.status(403).json({ success: false, error: 'You are not assigned to this case.' });
+  if (!token)                  return res.status(401).json({ success: false, error: 'Your Monday sign-in has expired — reload this page and sign in again.' });
+  return res.status(403).json({ success: false, error: 'Access denied — please use the most recent link from your case officer.' });
 }
 
 /** The page a visitor without a valid link sees. Says nothing about the case. */
 function accessPage(caseRef, reason) {
   const staffUrl = `/q/auth/monday?returnTo=${encodeURIComponent(`/documents/${encodeURIComponent(caseRef)}?staff=1`)}`;
   const backend = reason === 'backend';
+  const assigned = reason === 'assigned';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1265,9 +1292,13 @@ p{color:#4b5563;font-size:.92rem;line-height:1.7;margin-bottom:.9rem}
     ${backend
       ? `<h1>Please try again in a moment</h1>
     <p>We could not check your link just now. Nothing is wrong with your link — please refresh this page in a minute.</p>`
+      : assigned
+      ? `<h1>You are not assigned to this case</h1>
+    <p>Only the staff assigned to this case (and admins) can open its documents page. Ask the case manager or an admin to add you, or to upload the file for you.</p>`
       : `<h1>Please open this page from your email</h1>
-    <p>For your security, your documents page opens only from the link in the email we sent you (“Your case is ready” or “Your Client Portal link”). Open that email and click its button.</p>
-    <p>Can't find the email? Reply to your case officer or write to info@tdotimm.com and we will send your link again.</p>
+    <p>For your security, your documents page opens only from the link in the email we sent you. Open the email called “Your case is ready” (or “Your Client Portal link”) and click <strong>Open Your Portal</strong> — your documents page is inside the portal.</p>
+    <p>Came here from an older reminder or document email? That link has changed — please use the portal button instead.</p>
+    <p>Can't find the email? Please email us at <a href="mailto:info@tdotimm.com" style="color:#8f0505">info@tdotimm.com</a> and we will send your link again.</p>
     <div class="staff">TDOT staff: <a href="${staffUrl}">sign in with Monday</a> to open this page.</div>`}
   </div>
 </div>
@@ -1288,7 +1319,7 @@ router.get('/', (req, res) => {
 // ?staff=1 (what staff type, or follow from the sign-in note) goes through the
 // Monday sign-in first and comes back here, exactly like the client portal.
 router.get('/:caseRef', async (req, res) => {
-  const caseRef = decodeURIComponent(req.params.caseRef).trim();
+  const caseRef = safeDecode(req.params.caseRef).trim();
   if (!validateCaseRef(caseRef)) return res.status(400).send(accessPage('', 'token'));
   if (oneStr(req.query.staff) === '1' && !staffAuth.tryStaffAuth(req)) {
     return res.redirect(`/q/auth/monday?returnTo=${encodeURIComponent(req.originalUrl || `/documents/${encodeURIComponent(caseRef)}`)}`);
@@ -1300,7 +1331,7 @@ router.get('/:caseRef', async (req, res) => {
     if (!items.length) {
       return res.redirect(
         `/documents?error=${encodeURIComponent(
-          `No documents found for case "${caseRef}". Please check your case reference number.`
+          'Your document list is not ready yet — your case officer will email you when it is.'
         )}`
       );
     }
@@ -1311,14 +1342,14 @@ router.get('/:caseRef', async (req, res) => {
   } catch (err) {
     console.error('[DocForm] Error loading form:', err.message);
     res.redirect(
-      `/documents?error=${encodeURIComponent('An error occurred. Please try again later.')}`
+      `/documents?error=${encodeURIComponent('Something went wrong loading your documents. Please open your email link again in a moment.')}`
     );
   }
 });
 
 // File upload handler
 router.post('/:caseRef/upload/:itemId', requireClientOrStaff, uploadLimits.uploadSlot, uploadSingle, async (req, res) => {
-  let caseRef = decodeURIComponent(req.params.caseRef).trim();
+  let caseRef = safeDecode(req.params.caseRef).trim();
   const itemId  = req.params.itemId;
   const file    = req.file;
 
@@ -1384,7 +1415,7 @@ router.post('/:caseRef/upload/:itemId', requireClientOrStaff, uploadLimits.uploa
 // ─── Client reply to document review note ───────────────────────────────────
 
 router.post('/:caseRef/reply-note', requireClientOrStaff, async (req, res) => {
-  const caseRef = decodeURIComponent(req.params.caseRef).trim();
+  const caseRef = safeDecode(req.params.caseRef).trim();
   const { itemId, reply } = req.body || {};
 
   if (!validateCaseRef(caseRef)) {
@@ -1420,7 +1451,7 @@ router.post('/:caseRef/reply-note', requireClientOrStaff, async (req, res) => {
 
 // Done handler — client explicitly marks all documents as submitted
 router.post('/:caseRef/complete', requireClientOrStaff, (req, res) => {
-  const caseRef = decodeURIComponent(req.params.caseRef).trim();
+  const caseRef = safeDecode(req.params.caseRef).trim();
   console.log(`[DocForm] Client marked case ${caseRef} as complete`);
   res.json({ success: true });
 });

@@ -481,7 +481,7 @@ function buildClientEmailHtml(bodyText, caseRef, clientName, isFinal = false, { 
   // every case (found 2026-10-22). With no access code the button is left out.
   const qLink     = accessToken ? `${BASE_URL}/q/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(accessToken)}` : '';
   // The documents page checks the same code (2026-10-31); without it the client lands on a "use your email link" page.
-  const docLink   = `${BASE_URL}/documents/${encodeURIComponent(caseRef)}${accessToken ? `?t=${encodeURIComponent(accessToken)}` : ''}`;
+  const docLink   = accessToken ? `${BASE_URL}/documents/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(accessToken)}` : '';
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
@@ -504,7 +504,8 @@ function buildClientEmailHtml(bodyText, caseRef, clientName, isFinal = false, { 
   <p>${bodyText.replace(/\n/g, '<br>')}</p>
   <div class="btn-row">
     ${qLink ? `<a href="${qLink}"  class="btn btn-q">Complete Questionnaire</a>` : ''}
-    <a href="${docLink}" class="btn btn-d">Upload Documents</a>
+    ${docLink ? `<a href="${docLink}" class="btn btn-d">Upload Documents</a>` : ''}
+    ${!qLink && !docLink ? `<p>Need your portal link again? Please ${require('../utils/clientContact').EMAIL_US}.</p>` : ''}
   </div>
   <hr>
   <p style="font-size:.84rem;color:#4b5563">

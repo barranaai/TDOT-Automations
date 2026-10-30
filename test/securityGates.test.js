@@ -66,7 +66,7 @@ test('documents page wiring: the gate runs before the upload parser, on every PO
   assert.match(DOCFORM, /oneStr\(req\.query\.staff\) === '1' && !staffAuth\.tryStaffAuth\(req\)[\s\S]{0,200}res\.redirect\(`\/q\/auth\/monday\?returnTo=/);
   assert.match(DOCFORM, /if \(!access\.ok\) return res\.status\(access\.status\)\.send\(accessPage\(caseRef, access\.reason\)\)/);
   // the page carries the code on every request it makes
-  assert.match(DOCFORM, /const ACCESS_TOKEN  = \$\{JSON\.stringify\(token\)\};/);
+  assert.match(DOCFORM, /const ACCESS_TOKEN  = \$\{JSON\.stringify\(token\)\.replace\(\/<\/g, '\\\\u003c'\)\};/, 'a < in the code can never close the script');
   for (const u of ["withToken('/documents/' + encodeURIComponent(CASE_REF) + '/reply-note')", "withToken('/documents/' + encodeURIComponent(caseRef) + '/upload/' + itemId)", "withToken('/documents/' + encodeURIComponent(CASE_REF) + '/complete')"]) assert.ok(DOCFORM.includes(u), u);
   assert.ok(DOCFORM.includes('disclaimer, hasDualPhase ? phases : null, access.token)'), 'the page is built with the code it was opened with');
   // the landing page no longer asks for a case number
@@ -77,8 +77,9 @@ test('every email that links to the documents page carries the case\'s access co
   const read = (f) => fs.readFileSync(require.resolve(f), 'utf8');
   assert.match(read('../src/services/emailService.js'), /documentsUrl\s*=\s*`\$\{BASE_URL\}\/documents\/\$\{encodedRef\}\?t=\$\{encodeURIComponent\(accessToken\)\}`/);
   assert.match(read('../src/services/revisionNotificationService.js'), /documentsUrl\s*=\s*`\$\{BASE_URL\}\/documents\/\$\{encodedRef\}\$\{tokenParam\}`/);
-  assert.match(read('../src/services/chasingLoopService.js'), /docLink = `\$\{BASE_URL\}\/documents\/\$\{encodeURIComponent\(caseRef\)\}\$\{token \? `\?t=\$\{encodeURIComponent\(token\)\}` : ''\}`/);
-  assert.match(read('../src/services/escalationRoutingService.js'), /docLink\s*=\s*`\$\{BASE_URL\}\/documents\/\$\{encodeURIComponent\(caseRef\)\}\$\{accessToken \? `\?t=\$\{encodeURIComponent\(accessToken\)\}` : ''\}`/);
+  assert.match(read('../src/services/chasingLoopService.js'), /docLink = token \? `\$\{BASE_URL\}\/documents\/\$\{encodeURIComponent\(caseRef\)\}\?t=\$\{encodeURIComponent\(token\)\}` : ''/);
+  assert.match(read('../src/services/escalationRoutingService.js'), /docLink\s*=\s*accessToken \? `\$\{BASE_URL\}\/documents\/\$\{encodeURIComponent\(caseRef\)\}\?t=\$\{encodeURIComponent\(accessToken\)\}` : ''/);
+  assert.match(read('../src/services/revisionNotificationService.js'), /\$\{tokenParam \? `<a href="\$\{documentsUrl\}"/, 'no code → no dead documents button');
   assert.match(read('../src/services/clientPortalService.js'), /`\$\{BASE_URL\}\/documents\/\$\{encodedRef\}\$\{tokenParam\}`/, 'the portal already carried it');
 });
 
@@ -110,7 +111,8 @@ test('the pages tell non-admins: bin icons hidden, engine buttons off with a sig
   assert.match(shared, /fetch\('\/admin\/payments\/viewer', \{ headers: delHeaders\(\), credentials: 'same-origin' \}\)[\s\S]{0,300}if \(v && !v\.canUndo\)[\s\S]{0,120}\.del-btn\{display:none!important\}/);
   const engines = fs.readFileSync(require.resolve('../src/routes/adminEngines.js'), 'utf8');
   assert.match(engines, /guardNamedAdmin\(\);/);
-  assert.match(engines, /if \(!v \|\| v\.canUndo\) return;[\s\S]{0,900}'\.run-btn, #run-all-btn, #btn-doccode-generate'/);
+  assert.match(engines, /if \(!v \|\| v\.canUndo\) return;[\s\S]{0,1600}'\.run-btn, #run-all-btn, #btn-doccode-generate'/);
+  assert.match(engines, /if \(v\.signedIn\) \{[\s\S]{0,300}not on the admin list/, 'a signed-in non-admin is told the real reason, not sent to sign in again');
 });
 
 // End to end, in this process: the real router on a local port, Monday stubbed
@@ -135,18 +137,25 @@ test('documents router on a local port: strangers refused, ?staff=1 → Monday s
     assert.equal(res.status, 403);
     const html = await res.text();
     assert.match(html, /open this page from your email/i);
+    assert.match(html, /Open Your Portal/, 'points at the button that still works');
+    assert.match(html, /older reminder or document email/, 'old tokenless buttons are explained');
     assert.doesNotMatch(html, /Educational|Passport|Not uploaded yet/, 'no document list leaks');
 
     res = await fetch(`${base}/documents/2026-TEST-001?staff=1`, { redirect: 'manual' });
     assert.equal(res.status, 302);
     assert.equal(res.headers.get('location'), '/q/auth/monday?returnTo=%2Fdocuments%2F2026-TEST-001%3Fstaff%3D1');
 
-    res = await fetch(`${base}/documents/2026-TEST-001/upload/123`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'content-length': '5' }, body: 'hello' });
+    res = await fetch(`${base}/documents/2026-TEST-001/upload/123?t=TDOT-wrong`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'content-length': '5' }, body: 'hello' });
     assert.equal(res.status, 403);
     assert.deepEqual(await res.json(), { success: false, error: 'Access denied — please use the most recent link from your case officer.' });
+    res = await fetch(`${base}/documents/2026-TEST-001/upload/123`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'content-length': '5' }, body: 'hello' });
+    assert.equal(res.status, 401, 'no code at all = the staff cookie ran out');
+    assert.match((await res.json()).error, /Monday sign-in has expired/);
+    res = await fetch(`${base}/documents/2026-%25E0`, { redirect: 'manual' });
+    assert.equal(res.status, 400, 'a bad %-sequence answers, never hangs');
     assert.equal(require('../src/utils/uploadLimits')._inFlightBytes(), slotBefore, 'a refused upload never took a slot');
 
-    res = await fetch(`${base}/documents/2026-TEST-001/reply-note`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: '123', reply: 'hi' }) });
+    res = await fetch(`${base}/documents/2026-TEST-001/reply-note?t=TDOT-wrong`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: '123', reply: 'hi' }) });
     assert.equal(res.status, 403);
     res = await fetch(`${base}/documents/2026-TEST-001/complete?t=TDOT-wrong`, { method: 'POST' });
     assert.equal(res.status, 403);

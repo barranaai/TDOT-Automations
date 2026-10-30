@@ -139,9 +139,9 @@ function buildRevisionEmailHtml({ clientName, caseRef, accessToken, questionnair
       ${dRows}
     </table>
     <p style="margin:0 0 20px;">
-      <a href="${documentsUrl}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-size:.9rem;">
+${tokenParam ? `<a href="${documentsUrl}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-size:.9rem;">
         Upload Documents →
-      </a>
+      </a>` : `<p>Need your portal link again? Please ${require('../utils/clientContact').EMAIL_US}.</p>`}
     </p>` : '';
 
   const totalCount = questionnaire.length + documents.length;

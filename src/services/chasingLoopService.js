@@ -158,7 +158,7 @@ function hoursSince(dateStr) {
 
 function buildChasingEmail(type, { clientName, caseRef, token, qLink }) {
   // The documents page checks the case's access code (2026-10-31) — carry it like the questionnaire link.
-  const docLink = `${BASE_URL}/documents/${encodeURIComponent(caseRef)}${token ? `?t=${encodeURIComponent(token)}` : ''}`;
+  const docLink = token ? `${BASE_URL}/documents/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(token)}` : '';
   const name   = clientName || 'Client';
 
   const config = {
@@ -225,7 +225,7 @@ function buildChasingEmail(type, { clientName, caseRef, token, qLink }) {
   ${t.body}
   <div class="btn-row">
     <a href="${qLink}" class="btn btn-q">Complete Questionnaire</a>
-    <a href="${docLink}" class="btn btn-d">Upload Documents</a>
+    ${docLink ? `<a href="${docLink}" class="btn btn-d">Upload Documents</a>` : ''}
   </div>
   <hr class="divider">
   <p style="font-size:.84rem;color:#4b5563">

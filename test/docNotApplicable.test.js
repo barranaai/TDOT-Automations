@@ -746,7 +746,7 @@ test('case references are compared case-insensitively (Monday\'s own match is): 
   assert.match(legacy, /row\.caseRef\.toUpperCase\(\) !== caseRef\.toUpperCase\(\)/);
   // …and the upload then goes on under the row's own spelling: the client's OneDrive folder is found by an exact-case ending
   assert.match(legacy, /else if \(row\.caseRef\) caseRef = row\.caseRef;/);
-  assert.match(legacy, /let caseRef = decodeURIComponent\(req\.params\.caseRef\)\.trim\(\);\n  const itemId  = req\.params\.itemId;/);
+  assert.match(legacy, /let caseRef = safeDecode\(req\.params\.caseRef\)\.trim\(\);\n  const itemId  = req\.params\.itemId;/);   // safeDecode since 2026-10-31: a bad %-sequence answers 400 instead of hanging
 });
 
 test('legacy /documents page: a Not Applicable row shows no upload tips (there is nothing to upload)', () => {

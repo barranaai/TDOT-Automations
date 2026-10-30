@@ -64,7 +64,8 @@ test('escalation email: the questionnaire button opens the client\'s own /q link
   assert.match(withCode, /\/documents\/2026-PGWP-030\?t=ab%20c%2Fd" class="btn btn-d">Upload Documents/);
   const noCode = buildClientEmailHtml('Please finish.', '2026-PGWP-030', 'Ana', true);
   assert.doesNotMatch(noCode, /Complete Questionnaire|\/questionnaire\//);
-  assert.match(noCode, /\/documents\/2026-PGWP-030" class="btn btn-d">Upload Documents/);
+  assert.doesNotMatch(noCode, /Upload Documents|\/documents\//, 'no code → no dead documents button');
+  assert.match(noCode, /Need your portal link again\? Please email us at .*info@tdotimm\.com/, 'the house contact line, never "reply"');
   assert.match(noCode, /Final Notice/);
 });
 
