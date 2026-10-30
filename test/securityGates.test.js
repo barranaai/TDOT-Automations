@@ -171,3 +171,88 @@ test('documents router on a local port: strangers refused, ?staff=1 → Monday s
     await new Promise((r) => server.close(r));
   }
 });
+
+// ── second review (2026-10-31): the exact refusal texts, the per-case staff rule, the emails ──
+
+test('the three refusal messages are the access check\'s own words — reworded there, they must be reworded here', () => {
+  const svc = fs.readFileSync(require.resolve('../src/services/htmlQuestionnaireService.js'), 'utf8');
+  for (const m of ['Missing case reference or access token.', 'Case not found.', 'Invalid or expired access token.']) {
+    assert.ok(svc.includes(`throw new Error('${m}')`), `the service still throws "${m}"`);
+    assert.ok(DOCFORM.includes(`'${m}'`), `the page recognises "${m}"`);
+  }
+});
+
+test('authorise: each of the three messages is a bad link (403); anything else is the backend (503)', async () => {
+  const r1 = stub(staffAuth, 'tryStaffAuth', () => null);
+  const r2 = stub(htmlQ, 'validateAccess', async (ref, token) => {
+    if (!token) throw new Error('Missing case reference or access token.');
+    if (ref === '2026-NOPE-001') throw new Error('Case not found.');
+    if (token !== 'TDOT-good') throw new Error('Invalid or expired access token.');
+    return {};
+  });
+  const warn = console.error; console.error = () => {};
+  try {
+    assert.deepEqual(await docForm._authorise({ query: {} }, '2026-TEST-001'), { ok: false, status: 403, reason: 'token' });
+    assert.deepEqual(await docForm._authorise({ query: { t: 'TDOT-good' } }, '2026-NOPE-001'), { ok: false, status: 403, reason: 'token' });
+    assert.deepEqual(await docForm._authorise({ query: { t: 'x' } }, '2026-TEST-001'), { ok: false, status: 403, reason: 'token' });
+    htmlQ.validateAccess = async () => { throw new Error('Monday: column not found'); };   // contains "not found" — still the backend
+    assert.deepEqual(await docForm._authorise({ query: { t: 'TDOT-good' } }, '2026-TEST-001'), { ok: false, status: 503, reason: 'backend' });
+  } finally { r1(); r2(); console.error = warn; }
+});
+
+test('CASE_VISIBILITY=assigned: staff open only the cases they are named on; an unknown number is a 404 for staff', async () => {
+  const mondayApi = require('../src/services/mondayApi');
+  const caseAccess = require('../src/services/caseAccessService');
+  const COL = caseAccess.PEOPLE_COLUMNS[0];
+  const prev = process.env.CASE_VISIBILITY; process.env.CASE_VISIBILITY = 'assigned';
+  const staffer = { id: '77', name: 'Kamal', email: 'nobody.test@example.invalid', teamIds: [] };
+  const r1 = stub(staffAuth, 'tryStaffAuth', () => staffer);
+  const r2 = stub(htmlQ, 'validateAccessForStaff', async (ref) => { if (ref === '2026-NOPE-001') throw new Error('Case not found.'); if (ref === '2026-DOWN-001') throw new Error('ECONNRESET'); return { itemId: '555' }; });
+  let people = { personsAndTeams: [{ id: 77, kind: 'person' }] };
+  const r3 = stub(mondayApi, 'query', async () => ({ items: [{ column_values: [{ id: COL, value: JSON.stringify(people) }] }] }));
+  const warn = console.error; console.error = () => {};
+  try {
+    assert.equal(caseAccess.isAdminEmail(staffer.email), false, 'the test staffer is not on the admin list');
+    assert.deepEqual(await docForm._authorise({ query: {} }, '2026-TEST-001'), { ok: true, staff: true, token: '' }, 'named on the case');
+    people = { personsAndTeams: [{ id: 99, kind: 'person' }] };
+    assert.deepEqual(await docForm._authorise({ query: {} }, '2026-TEST-001'), { ok: false, status: 403, reason: 'assigned' }, 'someone else\'s case');
+    assert.deepEqual(await docForm._authorise({ query: {} }, '2026-NOPE-001'), { ok: false, status: 404, reason: 'notfound' });
+    assert.deepEqual(await docForm._authorise({ query: {} }, '2026-DOWN-001'), { ok: false, status: 503, reason: 'backend' });
+    const page = docForm._accessPage('2026-TEST-001', 'assigned');
+    assert.match(page, /not assigned to this case/i);
+    assert.doesNotMatch(page, /sign in with Monday/i, 'they are already signed in');
+    assert.match(docForm._accessPage('2026-NOPE-001', 'notfound'), /No case with this number/);
+    // the gate's JSON for the same two cases
+    const express = require('express'); const http = require('http');
+    const app = express(); app.use('/documents', docForm);
+    const server = http.createServer(app); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      let res = await fetch(`${base}/documents/2026-TEST-001/upload/1`, { method: 'POST', headers: { 'content-length': '0' } });
+      assert.equal(res.status, 403); assert.deepEqual(await res.json(), { success: false, error: 'You are not assigned to this case.' });
+      res = await fetch(`${base}/documents/2026-NOPE-001/complete`, { method: 'POST' });
+      assert.equal(res.status, 404); assert.deepEqual(await res.json(), { success: false, error: 'No case with this number.' });
+      res = await fetch(`${base}/documents/2026-TEST-001`, { redirect: 'manual' });
+      assert.equal(res.status, 403); assert.match(await res.text(), /not assigned to this case/i);
+    } finally { await new Promise((r) => server.close(r)); }
+  } finally { r1(); r2(); r3(); console.error = warn; if (prev === undefined) delete process.env.CASE_VISIBILITY; else process.env.CASE_VISIBILITY = prev; }
+});
+
+test('reminder and rework emails: with a code both buttons carry it; with no code there are no buttons, only the contact line', () => {
+  const { buildChasingEmail } = require('../src/services/chasingLoopService');
+  const { buildRevisionEmailHtml } = require('../src/services/revisionNotificationService');
+  const withCode = buildChasingEmail('R1', { clientName: 'Ana', caseRef: '2026-X-001', token: 'ab c', qLink: 'https://x/q/2026-X-001?t=ab%20c' }).html;
+  assert.match(withCode, /href="https:\/\/x\/q\/2026-X-001\?t=ab%20c" class="btn btn-q">Complete Questionnaire/);
+  assert.match(withCode, /\/documents\/2026-X-001\?t=ab%20c" class="btn btn-d">Upload Documents/);
+  const noCode = buildChasingEmail('R1', { clientName: 'Ana', caseRef: '2026-X-001', token: '', qLink: '' }).html;
+  assert.doesNotMatch(noCode, /class="btn btn-[qd]"|\/documents\/|\/questionnaire\//, 'no dead buttons');
+  assert.match(noCode, /Need your portal link again\? Please email us at .*info@tdotimm\.com/);
+  const chasingSrc = fs.readFileSync(require.resolve('../src/services/chasingLoopService.js'), 'utf8');
+  assert.doesNotMatch(chasingSrc, /\/questionnaire\/\$\{encodeURIComponent\(caseRef\)\}/, 'the retired /questionnaire page is never linked');
+  const rw = buildRevisionEmailHtml({ clientName: 'Ana', caseRef: '2026-X-001', accessToken: 'tok', questionnaire: [], documents: [{ name: 'Passport', notes: '' }] });
+  assert.match(rw, /href="[^"]*\/documents\/2026-X-001\?t=tok"/);
+  const rwNo = buildRevisionEmailHtml({ clientName: 'Ana', caseRef: '2026-X-001', accessToken: '', questionnaire: [], documents: [{ name: 'Passport', notes: '' }] });
+  assert.doesNotMatch(rwNo, /\/documents\//);
+  assert.match(rwNo, /Need your portal link again\?/);
+  assert.doesNotMatch(rwNo, /<p style="margin:0 0 20px;">\s*<p>/, 'no paragraph nested in a paragraph');
+});

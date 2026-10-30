@@ -1210,7 +1210,7 @@ const safeDecode = (s) => { try { return decodeURIComponent(String(s || '')); } 
 const ACCESS_ERRORS = new Set(['Missing case reference or access token.', 'Case not found.', 'Invalid or expired access token.']);
 
 /**
- * @returns {Promise<{ok:true, staff:boolean, token:string} | {ok:false, status:number, reason:'token'|'backend'}>}
+ * @returns {Promise<{ok:true, staff:boolean, token:string} | {ok:false, status:number, reason:'token'|'backend'|'assigned'|'notfound'}>}
  */
 async function authorise(req, caseRef) {
   const staff = staffAuth.tryStaffAuth(req);
@@ -1230,7 +1230,7 @@ async function authorise(req, caseRef) {
       if (!caseAccess.viewerCanSee(caseAccess.assigneesFromColumnValues(valueByColId), viewer)) return { ok: false, status: 403, reason: 'assigned' };
       return { ok: true, staff: true, token: '' };
     } catch (err) {
-      if (ACCESS_ERRORS.has(String(err.message || '').trim())) return { ok: false, status: 403, reason: 'token' };   // 'Case not found.'
+      if (String(err.message || '').trim() === 'Case not found.') return { ok: false, status: 404, reason: 'notfound' };
       console.error(`[DocForm] staff access check failed for ${caseRef}:`, err.message);
       return { ok: false, status: 503, reason: 'backend' };
     }
@@ -1256,6 +1256,7 @@ async function requireClientOrStaff(req, res, next) {
   const token = oneStr(req.query && req.query.t) || oneStr(req.body && req.body.t);
   if (a.reason === 'backend')  return res.status(503).json({ success: false, error: 'We could not verify your link just now — please try again in a moment.' });
   if (a.reason === 'assigned') return res.status(403).json({ success: false, error: 'You are not assigned to this case.' });
+  if (a.reason === 'notfound') return res.status(404).json({ success: false, error: 'No case with this number.' });
   if (!token)                  return res.status(401).json({ success: false, error: 'Your Monday sign-in has expired — reload this page and sign in again.' });
   return res.status(403).json({ success: false, error: 'Access denied — please use the most recent link from your case officer.' });
 }
@@ -1265,6 +1266,7 @@ function accessPage(caseRef, reason) {
   const staffUrl = `/q/auth/monday?returnTo=${encodeURIComponent(`/documents/${encodeURIComponent(caseRef)}?staff=1`)}`;
   const backend = reason === 'backend';
   const assigned = reason === 'assigned';
+  const notfound = reason === 'notfound';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1292,6 +1294,9 @@ p{color:#4b5563;font-size:.92rem;line-height:1.7;margin-bottom:.9rem}
     ${backend
       ? `<h1>Please try again in a moment</h1>
     <p>We could not check your link just now. Nothing is wrong with your link — please refresh this page in a minute.</p>`
+      : notfound
+      ? `<h1>No case with this number</h1>
+    <p>Check the case number and try again.</p>`
       : assigned
       ? `<h1>You are not assigned to this case</h1>
     <p>Only the staff assigned to this case (and admins) can open its documents page. Ask the case manager or an admin to add you, or to upload the file for you.</p>`
@@ -1331,7 +1336,7 @@ router.get('/:caseRef', async (req, res) => {
     if (!items.length) {
       return res.redirect(
         `/documents?error=${encodeURIComponent(
-          'Your document list is not ready yet — your case officer will email you when it is.'
+          access.staff ? `No documents found for case "${caseRef}" — check the case number.` : 'Your document list is not ready yet — your case officer will email you when it is.'
         )}`
       );
     }

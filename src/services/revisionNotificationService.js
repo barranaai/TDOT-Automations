@@ -141,7 +141,7 @@ function buildRevisionEmailHtml({ clientName, caseRef, accessToken, questionnair
     <p style="margin:0 0 20px;">
 ${tokenParam ? `<a href="${documentsUrl}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-size:.9rem;">
         Upload Documents →
-      </a>` : `<p>Need your portal link again? Please ${require('../utils/clientContact').EMAIL_US}.</p>`}
+      </a>` : `Need your portal link again? Please ${require('../utils/clientContact').EMAIL_US}.`}
     </p>` : '';
 
   const totalCount = questionnaire.length + documents.length;
@@ -294,4 +294,4 @@ function queueItem(caseRef, itemName, reviewNotes, type, itemId = '') {
   console.log(`[RevisionNotify] Queued ${type} item "${itemName}" for case ${caseRef} (batch fires in 2 min)`);
 }
 
-module.exports = { queueItem };
+module.exports = { queueItem, buildRevisionEmailHtml };

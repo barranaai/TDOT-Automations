@@ -224,8 +224,9 @@ function buildChasingEmail(type, { clientName, caseRef, token, qLink }) {
   <h2>${t.heading}</h2>
   ${t.body}
   <div class="btn-row">
-    <a href="${qLink}" class="btn btn-q">Complete Questionnaire</a>
+    ${qLink ? `<a href="${qLink}" class="btn btn-q">Complete Questionnaire</a>` : ''}
     ${docLink ? `<a href="${docLink}" class="btn btn-d">Upload Documents</a>` : ''}
+    ${!qLink && !docLink ? `<p>Need your portal link again? Please ${require('../utils/clientContact').EMAIL_US}.</p>` : ''}
   </div>
   <hr class="divider">
   <p style="font-size:.84rem;color:#4b5563">
@@ -335,9 +336,11 @@ async function processCase(item, offsets) {
   // Build the correct questionnaire link depending on whether this case uses
   // the new HTML form system or the legacy Monday questionnaire board.
   const isHtmlFormCase = Boolean(resolveForm(caseType, caseSubType));
+  // No code, or a case on the retired Monday questionnaire board (the old /questionnaire page
+  // answers "No questionnaire found" for almost every case, found 2026-10-22): no button beats a dead one.
   const qLink = isHtmlFormCase && token
     ? `${BASE_URL}/q/${encodeURIComponent(caseRef)}?t=${encodeURIComponent(token)}`
-    : `${BASE_URL}/questionnaire/${encodeURIComponent(caseRef)}`;
+    : '';
 
   const emailCtx = { clientEmail, clientName, caseRef, token, qLink };
 
@@ -429,4 +432,4 @@ async function runChasingLoop() {
   return tally;
 }
 
-module.exports = { runChasingLoop };
+module.exports = { runChasingLoop, buildChasingEmail };
