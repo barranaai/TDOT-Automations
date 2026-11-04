@@ -92,7 +92,7 @@ test('who added it: the Monday sign-in wins (matched to the roster name); withou
     }
     await portal.createStaffLead({ ...VALID, email: 'e@x.com', addedBy: '' }, { actor: { name: 'x', verified: false } });
     assert.equal(w.calls.created[w.calls.created.length - 1].leadOwner, undefined, 'left empty: no owner');
-    assert.ok(w.calls.notes.some((b) => /\[Consultant portal\]<\/b> Lead added \(phone intake\)/.test(b)));
+    assert.ok(w.calls.notes.some((b) => /\[Consultant portal\]<\/b> Lead added — source \/ reference: Phone\./.test(b)));
     // a Monday name with markup is escaped in the note
     await portal.createStaffLead({ ...VALID, email: 'd@x.com' }, { actor: { name: 'Zed <b>X</b>', verified: true } });
     assert.ok(w.calls.notes.some((b) => b.includes('Zed &lt;b&gt;X&lt;/b&gt;')));
@@ -233,9 +233,9 @@ test('pages: Add lead asks In Canada now? (+ country) and Added by (hidden when 
   for (const html of [q, d]) for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   for (const s of ['name="al-incanada" value="Yes"', 'name="al-incanada" value="No"', 'id="al-country"', '<option value="India">India</option>', 'id="al-addedby"', '<option value="Shafoli Kapur">', 'id="al-signedin"',
     "inCanada:alLoc(), currentCountry:alEl('al-country').value, addedBy:alEl('al-addedby').value", "if(!body.fullName.trim()){ err.textContent='Enter the full name.'", 'tdotBlViewer(function(v){',
-    "label: 'Source', title: 'How they reached us · who owns the lead'", 'colspan="10"']) assert.ok(q.includes(s), s);
+    "label: 'Source', title: 'Source / Reference · who owns the lead'", 'colspan="10"']) assert.ok(q.includes(s), s);
   for (const s of ['id="lead-owner"', 'id="btn-lead-owner"', 'name="lead-incanada"', 'id="lead-country"', 'id="btn-lead-loc"', "doAction(ob,'saveLeadOwner',null,os.value,'lead-owner-msg')",
-    "doAction(lb,'saveLocation',null,JSON.stringify({ inCanada: yn, country: c }),'lead-loc-msg')", 'hydrateOwnerLocation(d);', "kv('How they reached us'", "'None — added by staff'"]) assert.ok(d.includes(s), s);
+    "doAction(lb,'saveLocation',null,JSON.stringify({ inCanada: yn, country: c }),'lead-loc-msg')", 'hydrateOwnerLocation(d);', "kv('Source / Reference'", "'None — added by staff'"]) assert.ok(d.includes(s), s);
   const server = require('fs').readFileSync(require.resolve('../src/server'), 'utf8');
   assert.match(server, /createStaffLead\(req\.body \|\| \{\}, \{ actor: staffActor\(req, \(req\.body \|\| \{\}\)\.addedBy\) \}\)/);
 });

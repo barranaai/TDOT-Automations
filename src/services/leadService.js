@@ -149,6 +149,7 @@ async function createLead(formData, { groupId, createRetries } = {}) {
     situationDescription: formData.situationDescription,
     residentialAddress:   formData.residentialAddress,
     howHeard:             formData.howHeard,
+    referredBy:           formData.referredBy,   // Add lead's Source / Reference second answer (2026-11-04); a text column, skipped when empty
     sourceChannel:        formData.sourceChannel || 'Website',
     leadOwner:            formData.leadOwner,   // staff-added leads: who added it (Add-lead group, 2026-10-15)
     conversionStatus:     'New',

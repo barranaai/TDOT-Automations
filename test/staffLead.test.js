@@ -37,10 +37,10 @@ test('validation (2026-11-04): the name, an email OR a phone, and the source are
     await expectMsg({ ...VALID, email: 'not-an-email' }, /email doesn/);
     await expectMsg({ ...VALID, phone: '12' }, /phone number is too short/);
     // the source is a real choice — no silent "Phone" default, no label minting
-    await expectMsg({ ...VALID, sourceChannel: '' }, /how they reached us/);
-    await expectMsg({ ...VALID, sourceChannel: undefined }, /how they reached us/);
-    await expectMsg({ ...VALID, sourceChannel: 'Website' }, /how they reached us/);   // a Website lead comes from the public form, never typed by staff
-    await expectMsg({ ...VALID, sourceChannel: 'Carrier pigeon' }, /how they reached us/);
+    await expectMsg({ ...VALID, sourceChannel: '' }, /source \/ reference from the list/);
+    await expectMsg({ ...VALID, sourceChannel: undefined }, /source \/ reference from the list/);
+    await expectMsg({ ...VALID, sourceChannel: 'Direct Retainer' }, /source \/ reference from the list/);   // set by the direct-client form only, never on Add lead
+    await expectMsg({ ...VALID, sourceChannel: 'Carrier pigeon' }, /source \/ reference from the list/);
     await expectMsg({ ...VALID, caseTypeInterest: 'Made Up Type' }, /not a canonical case type/);
     assert.equal(created.length, 0);
     // name + phone + source is enough (a screenshot often has only the number)
@@ -139,12 +139,13 @@ test('the "Add lead" modal: name, email-or-phone and source are marked required;
   assert.match(html, /id="al-address"/, 'the field exists');
   assert.match(html, /residentialAddress:alEl\('al-address'\)\.value/, 'sent to the API');
   assert.match(html, /<label class="al-l" for="al-name">Full name \*<\/label>/);
-  for (const l of ['Email', 'Phone', 'How they reached us']) assert.ok(html.includes(`>${l} *</label>`), `${l} is not marked required`);
+  for (const l of ['Email', 'Phone', 'Source / Reference']) assert.ok(html.includes(`>${l} *</label>`), `${l} is not marked required`);
   assert.match(html, /one of the two is enough/, 'the either-or hint');
   for (const l of ['Residential address', 'Added by', 'Case type interest', 'Note']) assert.ok(html.includes(`>${l}</label>`), `${l} must stay optional`);
   assert.ok(html.includes('<div class="al-l" id="al-incanada-l">In Canada now?</div>'));
   // the source opens on a blank choice (it used to open on "Phone", which made "required" meaningless)
   assert.match(html, /<select id="al-source"><option value="">— choose —<\/option><option>Phone<\/option>/);
+  assert.match(html, /var refErr=AL_REF\.check\(\); if\(refErr\)/, 'the second question is checked before sending');
   assert.match(html, /alEl\('al-source'\)\.value='';/, 'reset on every open');
   // the browser-side checks mirror the server's
   assert.match(html, /if\(!body\.email\.trim\(\) && !body\.phone\.trim\(\)\)/);

@@ -37,7 +37,7 @@ function world(lead = {}, { matches = { leads: [], cases: [], clients: [] }, bl 
 
 test('checks: a name, a real email, a phone of 7–15 digits (or none), a source from the list', () => {
   const v = (b) => portal.validateAction('saveBasicInfo', JSON.stringify({ ...BODY, ...b }));
-  assert.deepEqual(v({ fullName: '  Asha   Rao ', phone: '' }).normalized, { ...BODY, phone: '' });
+  assert.deepEqual(v({ fullName: '  Asha   Rao ', phone: '' }).normalized, { ...BODY, phone: '', referredBy: null, referredFrom: 'typed' }, 'no referredBy key sent = unchanged (null), never "cleared"');
   assert.match(v({ fullName: 'A' }).error, /full name/);
   for (const email of ['asha', 'asha@x', 'a b@x.com']) assert.match(v({ email }).error, /doesn’t look right/, email);
   assert.equal(v({ email: '' }).ok, true, 'no email is allowed (a lead may be added with the name only)');
@@ -54,8 +54,8 @@ test('only what changed is written; the name also renames the row; a note lists 
     const r = await w.act({ fullName: 'Asha K Rao', phone: '647 555 0199', sourceChannel: 'Phone', caseTypeInterest: 'Study Permit' });
     assert.deepEqual(w.calls.updates[0].f, { fullName: 'Asha K Rao', phone: '647 555 0199', sourceChannel: 'Phone', caseTypeInterest: 'Study Permit' });
     assert.deepEqual(w.calls.renames, ['Asha K Rao']);
-    assert.match(w.calls.notes[0], /Basic details changed by Gauri: Name “Asha K Rao” \(was “Asha Rao”\); Phone “647 555 0199” \(was “\+1 416-555-0101”\); How they reached us “Phone” \(was “Website”\); Case type interest “Study Permit” \(was \(empty\)\)\./);
-    assert.match(r.message, /^Saved: name, phone, how they reached us, case type interest\.$/);
+    assert.match(w.calls.notes[0], /Basic details changed by Gauri: Name “Asha K Rao” \(was “Asha Rao”\); Phone “647 555 0199” \(was “\+1 416-555-0101”\); Source \/ reference “Phone” \(was “Website”\); Case type interest “Study Permit” \(was \(empty\)\)\./);
+    assert.match(r.message, /^Saved: name, phone, source \/ reference, case type interest\.$/);
     // clearing the phone / case type uses the column clear
     const w2 = world({ caseTypeInterest: 'Study Permit' });
     try {
@@ -84,7 +84,7 @@ test('refused: name / email / phone once a case is open; changing a Direct Retai
   try {
     await w.act({ sourceChannel: 'Referral', fullName: 'Asha R' });
     assert.deepEqual(w.calls.updates[0].f, { fullName: 'Asha R' }, 'unchanged old label passes');
-    await assert.rejects(w.act({ sourceChannel: 'TikTok' }), /from the list/);
+    await assert.rejects(w.act({ sourceChannel: 'Carrier Pigeon' }), /from the list/);   // TikTok became a real choice on 2026-11-04
     await assert.rejects(w.act({ sourceChannel: '' }), /from the list/);
   } finally { w.done(); }
 });

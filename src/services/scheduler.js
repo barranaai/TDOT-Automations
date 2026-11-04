@@ -171,6 +171,12 @@ function startScheduler() {
   setTimeout(() => leadSnapshot.warm(), 5000);
   cron.schedule('*/3 * * * *', () => leadSnapshot.warm());
   console.log('[Scheduler] Lead Board snapshot — warmed at boot, refreshed every 3 min');
+  // The "Which client?" search on Add lead (Source / Reference = Existing Client / Client Referral,
+  // 2026-11-04): a read-only copy of the OLD Consultations board, warmed at boot, refreshed hourly.
+  const oldClientDirectory = require('./oldClientDirectory');
+  setTimeout(() => oldClientDirectory.warm(), 20000);
+  cron.schedule('13 * * * *', () => oldClientDirectory.warm());
+  console.log('[Scheduler] Old Consultations client list — warmed at boot, refreshed hourly');
 
   // ── Case-type canon guard: the Client Master board's Primary Case Type list
   // is the approved standard. Daily, sync followers (Lead Board dropdown) and

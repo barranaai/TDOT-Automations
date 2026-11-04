@@ -12,7 +12,8 @@
 const express = require('express');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
-const { leadsTableScript, LEADS_TABLE_CSS } = require('./leadsTableFilters');   // header filters + sorting on the Leads list
+const { leadsTableScript, LEADS_TABLE_CSS } = require('./leadsTableFilters');
+const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // Source / Reference second question (2026-11-04)   // header filters + sorting on the Leads list
 const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const router  = express.Router();
@@ -84,6 +85,7 @@ function buildLeadsQueueHTML() {
   ${LEADS_TABLE_CSS}
   ${DELETE_UI_CSS}
   ${BLACKLIST_UI_CSS}
+  ${REFERRAL_CSS}
 </style></head><body>
 ${buildNavHeader('leads')}
 <main class="wrap">
@@ -99,7 +101,7 @@ ${buildNavHeader('leads')}
     <div id="al-overlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;align-items:flex-start;justify-content:center;padding:48px 16px">
       <div style="background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.25);max-width:460px;width:100%;padding:24px">
         <h3 style="margin:0 0 4px;font-size:17px">Add a lead</h3>
-        <div class="muted" style="font-size:12.5px;margin-bottom:14px">A caller's basics — the full name, an email or a phone number, and how they reached us are required; anything else can be added now or later on their lead page. The booking invite and pre-consultation form are sent from there. No case is opened.</div>
+        <div class="muted" style="font-size:12.5px;margin-bottom:14px">A caller's basics — the full name, an email or a phone number, and the source / reference are required; anything else can be added now or later on their lead page. The booking invite and pre-consultation form are sent from there. No case is opened.</div>
         <label class="al-l" for="al-name">Full name *</label><input id="al-name" type="text" maxlength="120" autocomplete="off">
         <label class="al-l" for="al-email">Email *</label><input id="al-email" type="email" maxlength="200" autocomplete="off">
         <label class="al-l" for="al-phone">Phone *</label><input id="al-phone" type="tel" maxlength="40" autocomplete="off">
@@ -111,8 +113,8 @@ ${buildNavHeader('leads')}
         <div id="al-country-row" style="display:none"><label class="al-l" for="al-country">Which country? *</label><select id="al-country">${COUNTRY_OPTS}</select></div>
         <div id="al-addedby-row"><label class="al-l" for="al-addedby">Added by</label><select id="al-addedby">${STAFF_OPTS}</select><div class="al-hint">Becomes the lead owner. Signed in with Monday? Your name is filled in for you.</div></div>
         <div id="al-signedin" class="al-hint" style="display:none;margin-top:10px"></div>
-        <label class="al-l" for="al-source">How they reached us *</label>
-        <select id="al-source"><option value="">— choose —</option><option>Phone</option><option>WhatsApp</option><option>Email</option><option>Instagram</option><option>Other</option></select>
+        <label class="al-l" for="al-source">Source / Reference *</label>
+        <select id="al-source">${sourceOptionsHtml({ blank: true })}</select>${referralFieldsHtml('al')}
         <label class="al-l" for="al-casetype">Case type interest</label>
         <select id="al-casetype"><option value="">— not sure yet —</option></select>
         <label class="al-l" for="al-note">Note</label>
@@ -207,7 +209,9 @@ function load(){
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
 /* ── Add lead (staff phone-in — meeting 2026-08-13 "direct leads") ── */
+${REFERRAL_UI_JS}
 var AL_ALLOW=false, AL_SIGNED=false;
+var AL_REF=tdotRef('al');   /* Source / Reference second question: which employee / which client (2026-11-04) */
 function alEl(id){ return document.getElementById(id); }
 function alLoc(){ var r=document.querySelector('input[name="al-incanada"]:checked'); return r?r.value:''; }
 function alOpen(){
@@ -217,6 +221,7 @@ function alOpen(){
   Array.prototype.forEach.call(document.querySelectorAll('input[name="al-incanada"]'),function(r){ r.checked=false; });
   alEl('al-country').value=''; alEl('al-country-row').style.display='none'; alEl('al-addedby').value='';
   alEl('al-source').value='';   /* the source is a real choice each time — no carried-over pick */
+  AL_REF.reset();
   TDOT_BL.viewer=null;   /* re-check the Monday sign-in every time (the session lasts 8 h; the page may be open longer) */
   AL_SIGNED=false; alEl('al-addedby-row').style.display=''; alEl('al-signedin').style.display='none';
   tdotBlViewer(function(v){
@@ -240,14 +245,15 @@ function alSubmit(){
   var err=alEl('al-err'); err.textContent='';
   var body={ fullName:alEl('al-name').value, email:alEl('al-email').value, phone:alEl('al-phone').value,
     residentialAddress:alEl('al-address').value,
-    sourceChannel:alEl('al-source').value, caseTypeInterest:alEl('al-casetype').value, note:alEl('al-note').value,
+    sourceChannel:alEl('al-source').value, referredBy:AL_REF.value(), referredFrom:AL_REF.from(), caseTypeInterest:alEl('al-casetype').value, note:alEl('al-note').value,
     inCanada:alLoc(), currentCountry:alEl('al-country').value, addedBy:alEl('al-addedby').value };
   /* Required (2026-11-04): the full name, an email OR a phone number, and the source; what IS typed must make sense. The server checks the same. */
   if(!body.fullName.trim()){ err.textContent='Enter the full name.'; alEl('al-name').focus(); return; }
   if(!body.email.trim() && !body.phone.trim()){ err.textContent='Enter an email or a phone number — one of the two is required.'; alEl('al-email').focus(); return; }
   if(body.email.trim() && !/^[^ @]+@[^ @]+[.][^ @]+$/.test(body.email.trim())){ err.textContent='That email doesn\u2019t look right — fix it or leave it empty.'; alEl('al-email').focus(); return; }
   if(body.phone.trim() && body.phone.replace(/[^0-9]/g,'').length<7){ err.textContent='That phone number is too short — fix it or leave it empty.'; alEl('al-phone').focus(); return; }
-  if(!body.sourceChannel){ err.textContent='Choose how they reached us.'; alEl('al-source').focus(); return; }
+  if(!body.sourceChannel){ err.textContent='Choose the source / reference.'; alEl('al-source').focus(); return; }
+  var refErr=AL_REF.check(); if(refErr){ err.textContent=refErr; AL_REF.focus(); return; }
   if(body.inCanada==='No' && !body.currentCountry){ err.textContent='Choose the country the client is in now (or leave "In Canada now?" unanswered).'; alEl('al-country').focus(); return; }
   if(AL_ALLOW) body.allowDuplicate=true;
   var key=getKey(); if(!key) return;
@@ -349,6 +355,7 @@ function buildLeadDetailHTML(leadId) {
 
   /* urgency banner */
   ${BLACKLIST_UI_CSS}
+  ${REFERRAL_CSS}
   .alert { background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; border-radius:var(--r); padding:12px 16px; font-size:13px; font-weight:700; margin-bottom:14px; display:flex; gap:9px; align-items:flex-start; }
   .alert svg { font-size:16px; flex:none; margin-top:1px; }
 
@@ -370,6 +377,9 @@ ${REMARKS_CSS}
   .bd-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:2px 16px; }
   .bd-grid input, .bd-grid select, #inq-text { width:100%; box-sizing:border-box; border:1px solid #e2e8f0; border-radius:8px; padding:7px 10px; font:inherit; font-size:13px; color:var(--navy); background:#fff; }
   .bd-grid input[readonly] { background:#f8fafc; color:#64748b; }
+  .bd-ref { max-width:460px; }
+  .bd-ref input, .bd-ref select { width:100%; box-sizing:border-box; border:1px solid #e2e8f0; border-radius:8px; padding:7px 10px; font:inherit; font-size:13px; color:var(--navy); background:#fff; }
+  .bd-ref .al-hint { font-size:12px; color:#64748b; margin-top:3px; }
   .card-t .tbtn { margin-left:auto; padding:4px 10px; font-size:12px; }
   .kv { display:flex; padding:6px 0; font-size:13px; border-top:1px solid #f8fafc; gap:10px; }
   .kv:first-child { border-top:none; }
@@ -423,9 +433,10 @@ ${buildNavHeader('leads')}
             <div><label class="al-l" for="bd-name">Full name</label><input id="bd-name" type="text" maxlength="120" autocomplete="off"></div>
             <div><label class="al-l" for="bd-email">Email</label><input id="bd-email" type="email" maxlength="200" autocomplete="off"></div>
             <div><label class="al-l" for="bd-phone">Phone</label><input id="bd-phone" type="tel" maxlength="40" autocomplete="off"></div>
-            <div><label class="al-l" for="bd-source">How they reached us</label><select id="bd-source"><option>Website</option><option>Phone</option><option>Email</option><option>WhatsApp</option><option>Instagram</option><option>Other</option></select></div>
+            <div><label class="al-l" for="bd-source">Source / Reference</label><select id="bd-source">${sourceOptionsHtml()}</select></div>
             <div><label class="al-l" for="bd-casetype">Case type interest</label><select id="bd-casetype"><option value="">— not sure yet —</option></select></div>
           </div>
+          <div class="bd-ref">${referralFieldsHtml('bd')}</div>
           <div class="al-hint" id="bd-lock" style="display:none;margin-top:8px"></div>
           <div style="margin-top:10px"><button class="btn" id="btn-bd-save" type="button">Save details</button></div>
           <div id="bd-msg" class="act-msg"></div>
@@ -632,7 +643,8 @@ function render(d){
   if(d.outcome) st+=kv('Outcome', d.outcome);
   Array.prototype.forEach.call(document.querySelectorAll('.obtn'),function(b){ b.classList.toggle('active', b.getAttribute('data-outcome')===(d.outcome||'')); });
   if(d.consultant) st+=kv('Consultant', d.consultant);
-  st+=kv('How they reached us', d.sourceChannel||'—');
+  st+=kv('Source / Reference', d.sourceChannel||'—');
+  if(d.referredBy && tdotRefKind(d.sourceChannel)) st+=kv('Referred by', d.referredBy);
   if(d.originalChannel) st+=kv('Original channel', d.originalChannel);
   st+=kv('Lead owner', d.leadOwner||'Not set');
   if(d.caseTypeInterest && d.caseTypeInterest!==d.service) st+=kv('Case type interest', d.caseTypeInterest);
@@ -804,6 +816,9 @@ function load(){
 // Basic details (Faran 2026-10-28): name, email, phone, how they reached us, case type interest.
 // Unsaved edits survive any re-render (same guard as the address).
 var BD_DIRTY=false, BD_TYPES=null, INQ_TEXT='';
+${REFERRAL_UI_JS}
+var BD_REF=tdotRef('bd', function(){ BD_DIRTY=true; });   /* Source / Reference second question (2026-11-04) */
+var BD_LOADED={ src:'', ref:'' };
 function bdEl(id){ return document.getElementById('bd-'+id); }
 function bdOption(sel,val){ if(val && ![].some.call(sel.options,function(o){ return o.value===val; })){ var o=document.createElement('option'); o.value=val; o.textContent=val; sel.appendChild(o); } }
 function hydrateBasic(d){
@@ -816,6 +831,7 @@ function hydrateBasic(d){
   if(BD_DIRTY) return;
   bdEl('name').value=d.name||''; bdEl('email').value=d.email||''; bdEl('phone').value=d.phone||'';
   var src=bdEl('source'); bdOption(src,d.sourceChannel||''); src.value=d.sourceChannel||'Website';
+  BD_REF.load(src.value, d.referredBy||''); BD_LOADED={ src:src.value, ref:d.referredBy||'' };
   var ct=bdEl('casetype'); bdOption(ct,d.caseTypeInterest||''); ct.value=d.caseTypeInterest||'';
   if(!BD_TYPES){ var key=getKey(); if(!key) return;
     BD_TYPES='loading';
@@ -831,6 +847,11 @@ document.getElementById('btn-bd-save').onclick=function(){
   var body={ fullName:bdEl('name').value, email:bdEl('email').value, phone:bdEl('phone').value, sourceChannel:bdEl('source').value, caseTypeInterest:bdEl('casetype').value };
   /* Same rule as Add lead (2026-11-04): a lead keeps an email or a phone number. The server refuses too. */
   if(!body.email.trim() && !body.phone.trim()){ actMsg('bd-msg','err','Keep an email or a phone number — one of the two is required.'); bdEl('email').focus(); return; }
+  /* Source / Reference second question: sent only for a referral source; checked when the source or the answer changed (the server does the same). */
+  if(BD_REF.kind()){
+    body.referredBy=BD_REF.value(); body.referredFrom=BD_REF.from();
+    if(body.sourceChannel!==BD_LOADED.src || body.referredBy!==BD_LOADED.ref){ var re=BD_REF.check(); if(re){ actMsg('bd-msg','err',re); BD_REF.focus(); return; } }
+  }
   var p=doAction(this,'saveBasicInfo',null,JSON.stringify(body),'bd-msg'); if(!p) return;
   p.then(function(res){ if(res&&res.ok){ BD_DIRTY=false; if(res.j&&res.j.warnings&&res.j.warnings.length) actMsg('bd-msg','info',res.j.message); load(); var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r(); } });
 };

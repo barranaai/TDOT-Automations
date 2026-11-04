@@ -1,0 +1,12 @@
+{
+  "boardId": "5821353829",
+  "boardName": "Consultations",
+  "note": "READ-ONLY source for the 'Existing Client' / 'Client Referral' search on Add lead (2026-11-04). The app never writes to this board. Column ids confirmed by a read of the live board on 2026-11-04.",
+  "columns": {
+    "phone": "contact_number__1",
+    "email": "short_text__1",
+    "consultDate": "date4",
+    "retained": "status1",
+    "clientType": "status4"
+  }
+}

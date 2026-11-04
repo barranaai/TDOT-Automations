@@ -653,7 +653,8 @@ async function getLeadDetail(leadId) {
     originalChannel:  (lead.originalChannel || '').trim(),
     caseTypeInterest: (lead.caseTypeInterest || '').trim(),
     leadOwner:        (lead.leadOwner || '').trim(),
-    staffAdded:       STAFF_LEAD_SOURCES.includes((lead.sourceChannel || '').trim()),
+    staffAdded:       isStaffSource(lead.sourceChannel),
+    referredBy:       (lead.referredBy || '').trim(),   // Source / Reference's second answer (2026-11-04)
     insideCanada:     (lead.insideCanada || '').trim(),
     country:          (lead.country || '').trim(),
 
@@ -943,13 +944,16 @@ function validateAction(action, value) {
       const one = (x, max) => String(x == null ? '' : x).replace(/\s+/g, ' ').trim().slice(0, max);
       const fullName = one(o.fullName, 120), email = one(o.email, 200), phone = one(o.phone, 40);
       const sourceChannel = one(o.sourceChannel, 40), caseTypeInterest = one(o.caseTypeInterest, 120);
+      // Source / Reference's second answer (2026-11-04) — checked against the lead's stored values in applyAction.
+      // Absent (a page opened before 2026-11-04 sends no such key) = unchanged, never "cleared".
+      const referredBy = o.referredBy === undefined ? null : one(o.referredBy, 200), referredFrom = o.referredFrom === 'list' ? 'list' : 'typed';
       if (fullName.length < 2) return { ok: false, error: 'Enter the client’s full name.' };
       // Same rule as Add lead (2026-11-04): a lead keeps an email or a phone number — both cannot be cleared.
       if (!email && !phone) return { ok: false, error: 'Keep an email or a phone number — one of the two is required.' };
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'That email doesn’t look right — fix it or leave it empty (the booking invite needs one).' };
       const digits = phone.replace(/\D/g, '');
       if (phone && (!/^[\d\s()+.\-]+$/.test(phone) || digits.length < 7 || digits.length > 15)) return { ok: false, error: 'Enter a valid phone number (7 to 15 digits).' };
-      return { ok: true, normalized: { fullName, email, phone, sourceChannel, caseTypeInterest } };
+      return { ok: true, normalized: { fullName, email, phone, sourceChannel, caseTypeInterest, referredBy, referredFrom } };
     }
     case 'saveInquiry': {
       const t = String(value == null ? '' : value).replace(/\r\n?/g, '\n').trim();
@@ -1238,8 +1242,28 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       const digits = (x) => { const d = String(x || '').replace(/\D/g, ''); return d.length === 11 && d[0] === '1' ? d.slice(1) : d; };
       const same = (k) => (k === 'phone' ? digits(n.phone) === digits(cur.phone) : n[k] === cur[k]);
       const changed = Object.keys(cur).filter((k) => !same(k));
-      if (!changed.length) return { ok: true, message: 'No change.' };
       const refuse = (msg) => { const e = new Error(msg); e.badRequest = true; throw e; };
+      // Referred By (Source / Reference's second answer, 2026-11-04). The box only shows for
+      // Employee Referral / Existing Client / Client Referral:
+      //  - such a source: a NEW answer (or a changed source) must pass the same check as Add lead;
+      //  - moving AWAY from such a source clears the staff pick (no stale referrer);
+      //  - any other source leaves the column alone (it may hold the public form's "who referred you").
+      cur.referredBy = st(lead.referredBy);
+      if (n.referredBy === null) n.referredBy = cur.referredBy;
+      const newKind = LEAD_SRC.referralKind(n.sourceChannel), oldKind = LEAD_SRC.referralKind(cur.sourceChannel);
+      let refTarget = cur.referredBy;
+      if (newKind) {
+        if (changed.includes('sourceChannel') || n.referredBy !== cur.referredBy) {
+          const r = LEAD_SRC.checkReferral(n.sourceChannel, n.referredBy);
+          if (!r.ok) refuse(r.error);
+          refTarget = r.referredBy;
+        }
+      } else if (oldKind && changed.includes('sourceChannel')) {
+        refTarget = '';
+      }
+      n.referredBy = refTarget;
+      if (refTarget !== cur.referredBy) changed.push('referredBy');
+      if (!changed.length) return { ok: true, message: 'No change.' };
       if (st(lead.clientMasterItemId) && changed.some((k) => ['fullName', 'email', 'phone'].includes(k))) {
         refuse('This lead already has a case — change the client’s name, email or phone on the case page, so the case and its emails use the right details.');
       }
@@ -1247,7 +1271,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       // of the list (labels the board already has — a typo would mint a new one).
       if (changed.includes('sourceChannel')) {
         if (cur.sourceChannel === DIRECT_SOURCE) refuse('A direct-retainer client stays "Direct Retainer".');
-        if (!BASIC_SOURCES.includes(n.sourceChannel)) refuse('Choose how they reached us from the list.');
+        if (!BASIC_SOURCES.includes(n.sourceChannel)) refuse('Choose the source / reference from the list.');
       }
       if (changed.includes('caseTypeInterest') && n.caseTypeInterest) {
         const canon = await directCaseTypeLabels();
@@ -1263,7 +1287,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       try { consultAgreementService.evictCache(leadId); } catch (_) { /* best-effort */ }
       _leadsQueueCache.at = 0;
 
-      const LABEL = { fullName: 'Name', email: 'Email', phone: 'Phone', sourceChannel: 'How they reached us', caseTypeInterest: 'Case type interest' };
+      const LABEL = { fullName: 'Name', email: 'Email', phone: 'Phone', sourceChannel: 'Source / reference', caseTypeInterest: 'Case type interest', referredBy: 'Referred by' };
       const show = (x) => (x ? `“${escHtmlNote(x)}”` : '(empty)');
       const byName = (actor && actor.verified && String(actor.name || '').trim()) ? String(actor.name).trim().slice(0, 60) : who;
       const warn = [];
@@ -1754,10 +1778,17 @@ const DIRECT_SOURCE = 'Direct Retainer';
 // full intake wiring createLead provides (access token + OneDrive folder) but
 // NO case, NO consultant pin, NO retainer intent — the regular booking-invite
 // and pre-consultation machinery takes over from the lead's detail page.
-// Source options are the EXISTING board labels only (no label minting).
-const STAFF_LEAD_SOURCES = ['Phone', 'Email', 'WhatsApp', 'Instagram', 'Other'];
-// "How they reached us" choices on the lead page (labels the board already has).
-const BASIC_SOURCES = ['Website', ...STAFF_LEAD_SOURCES];
+// Source options are the EXISTING board labels only (no label minting): the
+// "Source / Reference" list in config/leadSources.js (team meeting 2026-11-04 —
+// it added Website, the social sites, the referral kinds and three named
+// referrers; each one was added as a Monday label first).
+const LEAD_SRC = require('../../config/leadSources');
+const STAFF_LEAD_SOURCES = LEAD_SRC.LEAD_SOURCES;
+// The same list on the lead page's Edit basics box (Website is in it).
+const BASIC_SOURCES = LEAD_SRC.LEAD_SOURCES;
+// "Added by staff" for the lead page's Intake archive line: every staff choice
+// except Website (a website lead with no archive found reads "Not found").
+const isStaffSource = (src) => { const s = String(src || '').trim(); return s !== 'Website' && STAFF_LEAD_SOURCES.includes(s); };
 
 /**
  * Where the client is now (Add-lead group, 2026-10-15): it decides the HST on
@@ -1799,7 +1830,14 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('That email doesn’t look right — fix it or leave it empty.');
   if (phone && phone.replace(/\D/g, '').length < 7) bad('That phone number is too short — fix it or leave it empty.');
   // The source is a REAL choice now (no silent "Phone" default): existing board labels only.
-  if (!STAFF_LEAD_SOURCES.includes(sourceChannel)) bad('Choose how they reached us from the list.');
+  if (!STAFF_LEAD_SOURCES.includes(sourceChannel)) bad('Choose the source / reference from the list.');
+  // Its second answer (2026-11-04): Employee Referral → which employee (from the list);
+  // Existing Client / Client Referral → which client (picked from the old Consultations
+  // board, or typed). Saved in the lead's "Referred By" column; '' for any other source.
+  const ref = LEAD_SRC.checkReferral(sourceChannel, payload.referredBy);
+  if (!ref.ok) bad(ref.error);
+  const referredBy = ref.referredBy;
+  const referredFrom = payload.referredFrom === 'list' ? 'list' : 'typed';
   if (caseTypeInterest) {
     const canon = await directCaseTypeLabels();
     if (!canon.caseTypes.includes(caseTypeInterest)) bad(`"${caseTypeInterest}" is not a canonical case type — pick one from the list.`);
@@ -1836,6 +1874,8 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
 
   const lead = await leadService.createLead({
     fullName, sourceChannel,
+    // AT creation (a text column — no label risk): a follow-up write can fail unseen and lose it.
+    ...(referredBy ? { referredBy } : {}),
     ...(email ? { email } : {}),
     ...(phone ? { phone } : {}),
     ...(address ? { residentialAddress: address } : {}),
@@ -1860,7 +1900,9 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
   if (!address) missing.push('residential address (the consultation agreement prints it)');
   if (!loc.insideCanada) missing.push('where the client is now (HST is charged on the consultation fee until it is set)');
   await postPortalNote(lead.id,
-    `Lead added${addedBy ? ` by ${escHtmlNote(addedBy)}` : ''}${signedIn ? ' (signed in with Monday)' : ''} (${sourceChannel.toLowerCase()} intake)${caseTypeInterest ? ` — interested in ${escHtmlNote(caseTypeInterest)}` : ''}. ` +
+    `Lead added${addedBy ? ` by ${escHtmlNote(addedBy)}` : ''}${signedIn ? ' (signed in with Monday)' : ''} — source / reference: ${escHtmlNote(sourceChannel)}` +
+    `${referredBy ? ` (referred by ${escHtmlNote(referredBy)}${LEAD_SRC.referralKind(sourceChannel) === 'client' ? (referredFrom === 'list' ? ', picked from the old Consultations board' : ', name typed by hand') : ''})` : ''}` +
+    `${caseTypeInterest ? ` — interested in ${escHtmlNote(caseTypeInterest)}` : ''}. ` +
     `${loc.insideCanada === 'Yes' ? 'In Canada now — HST applies to the consultation fee. ' : loc.insideCanada === 'No' ? `Outside Canada now (${escHtmlNote(loc.country)}) — no HST on the consultation fee. ` : ''}` +
     `${missing.length ? `Still to add on this page: ${missing.join('; ')}. ` : ''}` +
     'Next: send the booking invite from this page when they are ready.');
@@ -2044,6 +2086,10 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
       bad('The chosen lead does not match the name, email or phone you typed — re-check the duplicate panel and try again.');
     }
     const priorChannel = (existing.sourceChannel || '').trim();
+    // A referrer already on the lead (picked on Add lead, or the public form's answer) is KEPT
+    // (2026-11-04): the walk-in form's "Referred by" box fills it only when it is empty.
+    const priorReferredBy = String(existing.referredBy || '').replace(/\s+/g, ' ').trim();
+    const keptReferrer = !!(priorReferredBy && referredBy && priorReferredBy !== String(referredBy).replace(/\s+/g, ' ').trim());
     const linkWiring = {
       // The staff-typed identity is the CURRENT one (they just validated it) —
       // it must win over the lead's stored values, or the retainer would go to
@@ -2054,7 +2100,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
       selectedSubType:    caseSubType,
       assignedConsultant: consultant,
       residentialAddress: address,
-      referredBy,
+      ...(priorReferredBy ? {} : { referredBy }),
       conversionStatus:   'Qualified',
       ...reuseExtras,
     };
@@ -2075,7 +2121,8 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     }
     await postPortalNote(String(linkLeadId),
       `Linked as a direct retainer client by staff${priorChannel && priorChannel !== DIRECT_SOURCE ? ` (originally a “${priorChannel}” lead — kept as ONE client instead of a duplicate)` : ''}. ` +
-      `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}.`).catch(() => {});
+      `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}.` +
+      (keptReferrer ? ` Referred by kept as “${escHtmlNote(priorReferredBy)}” (the form said “${escHtmlNote(referredBy)}”).` : '')).catch(() => {});
     console.log(`[Consultant] Direct client LINKED to existing lead ${linkLeadId} (was "${priorChannel}")`);
     await noteBlacklist(String(linkLeadId), 'Staff saw the warning and set this person up as a direct retainer client anyway.');
     const notesSaved = await postDirectClientNotes({ leadId: String(linkLeadId), cmId: linkCmId || existing.clientMasterItemId, notes, actor });
@@ -2200,7 +2247,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
   }
   await postPortalNote(leadId,
     `Direct retainer client created — walk-in/referral entering at the retainer stage (no consultation). ` +
-    `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}${referredBy ? ` · Referred by: ${referredBy}` : ''}. ` +
+    `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}${referredBy ? ` · Referred by: ${escHtmlNote(referredBy)}` : ''}. ` +
     (caseOpened ? `The Client Master case is open (case-first — this client is never a funnel lead). ` : '') +
     `Next: set the retainer fee + plan and click “Retain &amp; send agreement”.`);
   await noteBlacklist(leadId, 'Staff saw the warning and created this direct retainer client anyway.');

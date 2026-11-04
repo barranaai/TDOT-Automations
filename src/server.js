@@ -1801,6 +1801,23 @@ app.post('/api/leads/create', express.json(), async (req, res) => {
   }
 });
 
+// "Which client?" on Add lead / Edit basics (Source / Reference = Existing Client or Client Referral,
+// 2026-11-04): search the OLD Consultations board's people. POST so typed names / phone digits never sit
+// in a URL or an access log; the search text is never logged; never cached; behind the team key (/api).
+// Answers names + the last 3 phone digits only — never a full phone or email.
+app.post('/api/old-clients/search', express.json(), async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try {
+    const q = String((req.body && req.body.q) || '');
+    const r = await require('./services/oldClientDirectory').search(q);
+    if (!r.ok) return res.status(503).json(r);
+    res.json(r);
+  } catch (err) {
+    console.error('[OldClients] search failed:', err.message);
+    res.status(500).json({ ok: false, error: 'The client search failed — try again, or type the name.' });
+  }
+});
+
 app.get('/api/leads', async (_req, res) => {
   try {
     const leads = await consultantPortalService.getLeadsQueue();

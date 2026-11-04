@@ -34,7 +34,7 @@ function leadsTableCore() {
   // The tick-box filters: what each lead's value is ('' = the "none" choice).
   var FACETS = {
     service:  { label: 'Service', get: function (r) { return s(r.service); }, none: 'Not set' },
-    source:   { label: 'How they reached us', get: function (r) { return s(r.source); }, none: 'No source' },
+    source:   { label: 'Source / Reference', get: function (r) { return s(r.source); }, none: 'No source' },
     owner:    { label: 'Owner', get: function (r) { return s(r.owner); }, none: 'No owner' },
     tier:     { label: 'Tier', get: function (r) { return s(r.tier); }, none: 'No tier' },
     priority: { label: 'Priority', get: function (r) { return s(r.priority); }, none: 'No priority', order: ['Critical', 'High', 'Medium', 'Low'] },
@@ -154,7 +154,7 @@ function leadsTableUi(LT, win) {
   var COLS = [
     { id: 'lead', label: 'Lead', menu: 'lead', sort: 'name', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
     { id: 'service', label: 'Service', menu: 'facet', facets: ['service'] },
-    { id: 'source', label: 'Source', title: 'How they reached us · who owns the lead', menu: 'facet', facets: ['source', 'owner'] },
+    { id: 'source', label: 'Source', title: 'Source / Reference · who owns the lead', menu: 'facet', facets: ['source', 'owner'] },
     { id: 'received', label: 'Received', title: 'The day the lead arrived, Toronto time', menu: 'date', sort: 'received', sortText: ['Newest first', 'Oldest first'], sortDirs: ['desc', 'asc'] },
     { id: 'tier', label: 'Tier', menu: 'facet', facets: ['tier'], sort: 'tier', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
     { id: 'priority', label: 'Priority', menu: 'facet', facets: ['priority'], sort: 'priority', sortText: ['Most urgent first', 'Least urgent first'], sortDirs: ['asc', 'desc'] },
