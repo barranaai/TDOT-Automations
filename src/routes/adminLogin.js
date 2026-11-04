@@ -162,6 +162,13 @@ function buildLoginHTML() {
       transition: border-color .15s, box-shadow .15s, background .15s;
     }
 
+    /* "Keep me signed in on this device" (2026-11-04) */
+    .keep-row { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 13px; color: var(--text); cursor: pointer; line-height: 1.4; }
+    .keep-row input { margin-top: 2px; flex: none; width: 16px; height: 16px; }
+    .keep-hint { color: var(--muted, #64748b); font-size: 12px; }
+    /* an iPhone zooms the page into any box under 16px when it is tapped */
+    @media (max-width: 760px) { .field-input { font-size: 16px; } }
+
     .field-input:focus {
       border-color: var(--navy);
       background: white;
@@ -305,6 +312,7 @@ function buildLoginHTML() {
           autocomplete="off"
           autofocus
         />
+        <label class="keep-row" for="keep-signed-in"><input type="checkbox" id="keep-signed-in"><span>Keep me signed in on this device<br><span class="keep-hint">Only on your own phone or computer — Sign Out forgets it.</span></span></label>
       </div>
 
       <button class="btn-login" id="login-btn" onclick="handleLogin()">
@@ -405,6 +413,11 @@ function buildLoginHTML() {
       .then(function(d) {
         if (!d.connected) throw new Error('Monday.com API is not reachable. Try again shortly.');
         sessionStorage.setItem('tdot_admin_key', key);
+        /* "Keep me signed in on this device" (2026-11-04): new tabs on this device open without the key again. Unticked = forget any kept one. */
+        try {
+          if (document.getElementById('keep-signed-in').checked) localStorage.setItem('tdot_admin_key_keep', key);
+          else localStorage.removeItem('tdot_admin_key_keep');
+        } catch (e) { /* storage blocked — signed in for this tab only */ }
         btn.textContent = '\u2713 Success! Redirecting\u2026';
         window.location.replace('/admin/consultations');
       })
@@ -433,3 +446,4 @@ router.get('/', (_req, res) => {
 });
 
 module.exports = router;
+module.exports.buildLoginHTML = buildLoginHTML;

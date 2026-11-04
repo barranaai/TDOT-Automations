@@ -301,10 +301,26 @@ const NAV_CSS = `
   @media (max-width: 400px) {   /* the smallest phones: … and over the Monday icon */
     .hdr-who { display: none; }
   }
+  /* Phones (2026-11-04): an iPhone zooms the whole page into any text box under 16px
+     when it is tapped — every box is 16px on a phone-sized screen. */
+  @media (max-width: 760px) {
+    input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]):not([type=submit]), select, textarea { font-size: 16px !important; }
+  }
 `;
 
 // ─── Shared auth + clock JS (injected into every protected page) ──────────────
 const SHARED_AUTH_JS = `
+  // "Keep me signed in on this device" (2026-11-04, for phones): the sign-in page may also
+  // keep the team key in this browser's storage; a new tab picks it up here, so staff do
+  // not type it again. Sign Out forgets it.
+  (function tdotRestoreKey() {
+    try {
+      if (!sessionStorage.getItem('tdot_admin_key')) {
+        var kept = localStorage.getItem('tdot_admin_key_keep');
+        if (kept) sessionStorage.setItem('tdot_admin_key', kept);
+      }
+    } catch (e) { /* private browsing: the key is asked for as before */ }
+  })();
   function getKey() {
     var k = sessionStorage.getItem('tdot_admin_key');
     if (!k) { window.location.replace('/admin'); return null; }
@@ -326,6 +342,7 @@ const SHARED_AUTH_JS = `
   // slow answer never keeps you here.
   function signOut() {
     sessionStorage.removeItem('tdot_admin_key');
+    try { localStorage.removeItem('tdot_admin_key_keep'); } catch (e) {}
     var gone = false;
     function leave() { if (!gone) { gone = true; window.location.replace('/admin'); } }
     try {
