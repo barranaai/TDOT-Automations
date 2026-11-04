@@ -30,12 +30,12 @@ test('the page: filters live in the column headers; Current status is the LAST c
   for (const x of ['<thead><tr id="q-headrow"></tr></thead>', 'id="q-search"', 'id="q-chips"', '<div id="q-pop" role="dialog"', 'window.LeadsTable.setRows(ALLROWS);', '<div class="tbl-wrap">']) assert.ok(html.includes(x), x);
   for (const old of ['id="f-from"', 'id="f-source"', 'id="f-owner"', 'id="f-cstatus"', 'id="f-month"', 'function applyFilters', 'class="q-filters"']) assert.ok(!html.includes(old), `gone: ${old}`);
   const cells = (html.match(/function renderRows[\s\S]*?\}\)\.join\(''\);/) || [''])[0].match(/'<td[^']*'/g);
-  assert.equal(cells.length, 10);
+  assert.equal(cells.length, 11);
   const row = (html.match(/function renderRows[\s\S]*?\}\)\.join\(''\);/) || [''])[0];
   assert.ok(row.indexOf("statusCell(c.status)") > row.indexOf('invitePill(c)') && row.indexOf("statusCell(c.status)") < row.indexOf('data-del-lead'), 'status after Invite, before the delete button');
   const src = leadsTableScript();
   const order = [...src.matchAll(/\{ id: '([a-z]+)', label:/g)].map((m) => m[1]);
-  assert.deepEqual(order, ['lead', 'service', 'source', 'received', 'tier', 'priority', 'booking', 'invite', 'status', 'del'], 'headers in the same order as the cells');
+  assert.deepEqual(order, ['lead', 'service', 'source', 'referred', 'received', 'tier', 'priority', 'booking', 'invite', 'status', 'del'], 'headers in the same order as the cells');
   assert.ok(src.includes('aria-haspopup="dialog"') && src.includes("e.key === 'Escape'") && src.includes('aria-sort'), 'keyboard + screen reader');
   new vm.Script(src);
 });

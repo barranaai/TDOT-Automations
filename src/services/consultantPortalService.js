@@ -540,6 +540,7 @@ async function getLeadsQueue() {
     service:       l.confirmedCaseType || l.serviceRequired || l.caseTypeInterest || '',
     source:        (l.sourceChannel || '').trim(),      // how they reached us
     owner:         (l.leadOwner || '').trim(),          // who added / owns it
+    referredBy:    String(l.referredBy || '').replace(/\s+/g, ' ').trim(),   // the employee / client who referred them (Source / Reference second answer; the public form's "Referral" too)
     tier:          l.tier || '',
     priority:      l.priority || '',
     bookingStatus: l.bookingStatus || 'Not Yet',

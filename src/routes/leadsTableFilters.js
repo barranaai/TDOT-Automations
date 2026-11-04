@@ -35,6 +35,7 @@ function leadsTableCore() {
   var FACETS = {
     service:  { label: 'Service', get: function (r) { return s(r.service); }, none: 'Not set' },
     source:   { label: 'Source / Reference', get: function (r) { return s(r.source); }, none: 'No source' },
+    referredBy: { label: 'Referred By', get: function (r) { return s(r.referredBy); }, none: 'Not set' },
     owner:    { label: 'Owner', get: function (r) { return s(r.owner); }, none: 'No owner' },
     tier:     { label: 'Tier', get: function (r) { return s(r.tier); }, none: 'No tier' },
     priority: { label: 'Priority', get: function (r) { return s(r.priority); }, none: 'No priority', order: ['Critical', 'High', 'Medium', 'Low'] },
@@ -154,7 +155,8 @@ function leadsTableUi(LT, win) {
   var COLS = [
     { id: 'lead', label: 'Lead', menu: 'lead', sort: 'name', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
     { id: 'service', label: 'Service', menu: 'facet', facets: ['service'] },
-    { id: 'source', label: 'Source', title: 'Source / Reference · who owns the lead', menu: 'facet', facets: ['source', 'owner'] },
+    { id: 'source', label: 'Source / Reference', title: 'How they reached us · the lead owner underneath', menu: 'facet', facets: ['source', 'owner'] },
+    { id: 'referred', label: 'Referred By', title: 'The employee or client who referred them', menu: 'facet', facets: ['referredBy'] },
     { id: 'received', label: 'Received', title: 'The day the lead arrived, Toronto time', menu: 'date', sort: 'received', sortText: ['Newest first', 'Oldest first'], sortDirs: ['desc', 'asc'] },
     { id: 'tier', label: 'Tier', menu: 'facet', facets: ['tier'], sort: 'tier', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
     { id: 'priority', label: 'Priority', menu: 'facet', facets: ['priority'], sort: 'priority', sortText: ['Most urgent first', 'Least urgent first'], sortDirs: ['asc', 'desc'] },
@@ -349,7 +351,9 @@ const LEADS_TABLE_CSS = `
   .q-clearall { border:none; background:none; color:#64748b; font:inherit; font-size:12px; font-weight:700; cursor:pointer; padding:4px 6px; text-decoration:underline; }
   .q-clearall:hover { color:var(--navy); }
   .tbl-wrap { overflow-x:auto; }
-  .tbl-wrap table { min-width:980px; }
+  .tbl-wrap table { min-width:1100px; }
+  td.ref-by { max-width:200px; overflow-wrap:anywhere; }
+  #qbody .pill { white-space:nowrap; }
   th .th-in { display:flex; align-items:center; gap:4px; white-space:nowrap; }
   th .th-sort { font-size:8px; color:var(--navy); }
   th .th-f { display:inline-flex; align-items:center; gap:2px; border:1px solid transparent; background:transparent; color:#94a3b8; border-radius:6px; padding:3px 4px; min-width:24px; min-height:24px; cursor:pointer; margin-left:2px; }

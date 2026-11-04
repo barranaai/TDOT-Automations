@@ -43,6 +43,7 @@ const SNAPSHOT_KEYS = [
   'retainerSent', 'retainerSigned', 'retainerPaid', 'retainerFee', 'clientMasterItemId', 'conversionStatus', 'consultPayment', 'originalChannel',
   'confirmedCaseType', 'serviceRequired', 'whatDoYouWant', 'deadlineDate', 'removalOrder', 'enforcementLetter',
   'relationshipWithTdot', 'existingFileType', 'assignedConsultant', 'leadOwner', 'bookingInvite', 'inviteSentAt',
+  'referredBy',   // the Leads list's "Referred By" column (2026-11-04)
 ];
 const SNAPSHOT_IDS = SNAPSHOT_KEYS.map((k) => COLS[k]).filter(Boolean);
 

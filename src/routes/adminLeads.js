@@ -168,7 +168,7 @@ function invitePill(c){
 }
 function renderRows(rows){
   var tb=document.getElementById('qbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="10" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="11" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.')+'</td></tr>'; return; }
   tb.innerHTML=rows.map(function(c){
     var urgent=c.urgent?(' '+qpill('red','URGENT')):'';
     // Non-booking intent ("Request quote", "Existing file update", …) — visible
@@ -177,7 +177,8 @@ function renderRows(rows){
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
       '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+urgent+wants+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
-      '<td>'+escHtml(c.source||'—')+(c.owner?'<div class="muted" style="font-size:11.5px">'+escHtml(c.owner)+'</div>':'')+'</td>'+
+      '<td>'+escHtml(c.source||'—')+(c.owner?'<div class="muted" style="font-size:11.5px">Owner: '+escHtml(c.owner)+'</div>':'')+'</td>'+
+      '<td class="ref-by">'+(c.referredBy?escHtml(c.referredBy):'<span class="muted">—</span>')+'</td>'+
       '<td>'+escHtml(createdOf(c)||'—')+'</td>'+
       '<td class="tier">'+escHtml(c.tier||'—')+'</td>'+
       '<td>'+(c.priority?qpill(c.priority==='Critical'?'red':c.priority==='High'?'amber':'grey',c.priority):'<span class="pill grey">—</span>')+'</td>'+
