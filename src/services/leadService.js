@@ -67,6 +67,7 @@ const COL_TYPE = {
   empCompanyPhone: 'text', empRepPhone: 'text', empRepEmail: 'text',
   consultAgreementSent: 'date', consultAgreementSigned: 'date',
   consultOption: 'text', // JSON: the booking-page choice {durationMin, feeCents, variationId, consultant}
+  walkInSource: 'text',    // a direct retainer (walk-in) client's real source / reference — the Direct retainer form (2026-11-04); Source Channel stays "Direct Retainer"
   originalChannel: 'text', // how a lead first reached us — kept when it is converted to a direct-retainer client (Source Channel then reads "Direct Retainer")
   consultPayment: 'text', // JSON: a consultation fee settled outside the booking link (cash / e-transfer / invoice / waived), who recorded it — consultPaymentService alone writes it
   consultCountersign: 'text', // JSON: consult e-sign envelope state {clientEnvelopeId, clientItemId, envelopeId, itemId, signUrl, sentAt, signedAt}

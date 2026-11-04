@@ -541,6 +541,7 @@ async function getLeadsQueue() {
     source:        (l.sourceChannel || '').trim(),      // how they reached us
     owner:         (l.leadOwner || '').trim(),          // who added / owns it
     referredBy:    String(l.referredBy || '').replace(/\s+/g, ' ').trim(),   // the employee / client who referred them (Source / Reference second answer; the public form's "Referral" too)
+    hasEmail:      l.hasEmail !== false,                // the "No email" marker: the booking invite and the retainer go by email (2026-11-04; the snapshot keeps only yes/no)
     tier:          l.tier || '',
     priority:      l.priority || '',
     bookingStatus: l.bookingStatus || 'Not Yet',
@@ -652,6 +653,7 @@ async function getLeadDetail(leadId) {
     // Add-lead group (2026-10-15)
     sourceChannel:    (lead.sourceChannel || '').trim(),
     originalChannel:  (lead.originalChannel || '').trim(),
+    walkInSource:     (lead.walkInSource || '').trim(),   // a walk-in's source / reference (2026-11-04)
     caseTypeInterest: (lead.caseTypeInterest || '').trim(),
     leadOwner:        (lead.leadOwner || '').trim(),
     staffAdded:       isStaffSource(lead.sourceChannel),
@@ -1272,8 +1274,12 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       n.referredBy = refTarget;
       if (refTarget !== cur.referredBy) changed.push('referredBy');
       if (!changed.length) return { ok: true, message: 'No change.' };
-      if (st(lead.clientMasterItemId) && changed.some((k) => ['fullName', 'email', 'phone'].includes(k))) {
-        refuse('This lead already has a case — change the client’s name, email or phone on the case page, so the case and its emails use the right details.');
+      // With a case, the name / email / phone are locked — EXCEPT filling one that is still
+      // empty (2026-11-04: a phone-only walk-in's email arrives later; the case gets it too).
+      const hasCase = !!st(lead.clientMasterItemId);
+      const fillsBlank = (k) => (k === 'email' || k === 'phone') && !cur[k] && !!n[k];
+      if (hasCase && changed.some((k) => ['fullName', 'email', 'phone'].includes(k) && !fillsBlank(k))) {
+        refuse('This lead already has a case — its name, email and phone can no longer be changed here (an empty email or phone can still be added). Ask an admin to correct them on the case in Monday, so the case and its emails use the right details.');
       }
       // The source: an unchanged value (any label, old ones too) passes; a CHANGE must be one
       // of the list (labels the board already has — a typo would mint a new one).
@@ -1294,6 +1300,11 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       // The unsigned consultation-agreement review copy prints the name and email — rebuild it.
       try { consultAgreementService.evictCache(leadId); } catch (_) { /* best-effort */ }
       _leadsQueueCache.at = 0;
+      invalidateLeadsQueue();   // the list's "No email" marker reads the shared snapshot
+      // A filled-in email / phone goes onto the case too (its emails read the case's copy).
+      const caseCopy = hasCase ? await copyContactToCase(st(lead.clientMasterItemId), {
+        email: changed.includes('email') ? n.email : '', phone: changed.includes('phone') ? n.phone : '', leadId,
+      }) : null;
 
       const LABEL = { fullName: 'Name', email: 'Email', phone: 'Phone', sourceChannel: 'Source / reference', caseTypeInterest: 'Case type interest', referredBy: 'Referred by' };
       const show = (x) => (x ? `“${escHtmlNote(x)}”` : '(empty)');
@@ -1310,11 +1321,13 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       if (changed.includes('email') || changed.includes('phone')) {
         const probe = { email: changed.includes('email') ? n.email : '', phone: changed.includes('phone') ? n.phone : '' };
         const m = await module.exports.findClientMatches(probe).catch(() => null);
-        const others = m ? [...(m.leads || []).filter((x) => String(x.id) !== String(leadId)).map((x) => `lead ${x.id}`), ...(m.cases || []).map((x) => `case ${x.caseRef || x.id}`)] : [];
+        const others = m ? [...(m.leads || []).filter((x) => String(x.id) !== String(leadId)).map((x) => `lead ${x.id}`), ...(m.cases || []).filter((x) => String(x.id) !== st(lead.clientMasterItemId)).map((x) => `case ${x.caseRef || x.id}`)] : [];
         if (others.length) warn.push(`This ${probe.email && probe.phone ? 'email or phone' : probe.email ? 'email' : 'phone'} is also on ${others.slice(0, 5).join(', ')}${others.length > 5 ? '…' : ''}.`);
         const bl = await require('./blacklistService').check(probe).catch(() => null);
         if (bl && bl.hit) warn.push('This person is on the Not Wanted list.');
       }
+      if (caseCopy && caseCopy.problem) warn.push(caseCopy.problem);
+      else if (caseCopy && caseCopy.copied.length) warn.push(`Also saved on the case (${caseCopy.copied.join(' and ')}).`);
       await postPortalNote(leadId, `Basic details changed${byName ? ` by ${escHtmlNote(byName)}` : ''}: `
         + changed.map((k) => `${LABEL[k]} ${show(n[k])} (was ${show(cur[k])})`).join('; ') + '.'
         + (warn.length ? ` ${warn.map(escHtmlNote).join(' ')}` : ''));
@@ -1411,6 +1424,12 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         e.badRequest = true; e.locked = true; throw e;
       }
       if (!feeSet) { const e = new Error('Set the retainer fee before sending the agreement.'); e.badRequest = true; throw e; }
+      {
+        // No email (a phone-only walk-in) or, on the real templates, no address: refuse
+        // BEFORE the Outcome changes, the notice goes out or a PDF is built (2026-11-04).
+        const blocker = require('./retainerService2').sendBlocker(lead);
+        if (blocker) { const e = new Error(blocker); e.badRequest = true; throw e; }
+      }
       {
         // A variant case type MUST carry a sub-type before the retainer goes out —
         // a blank one blocks the document checklist at case-open (the direct-client
@@ -1662,6 +1681,11 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       if (!agreementSent) {
         const e = new Error('Nothing to re-issue — no agreement has been sent. Use “Retain & send agreement”.');
         e.badRequest = true; throw e;
+      }
+      {
+        // Never void the client's live agreement when the fresh one could not go out (2026-11-04).
+        const blocker = require('./retainerService2').sendBlocker(lead);
+        if (blocker) { const e = new Error(blocker.replace('Nothing was changed.', 'The agreement already sent was NOT voided.')); e.badRequest = true; throw e; }
       }
       const r = (await require('./retainerService2').voidAndReissueRetainer(leadId)) || {};
       if (r.status === 'not-retain' && !r.reissued) {
@@ -1940,6 +1964,44 @@ async function directCaseTypeLabels() {
 }
 
 /**
+ * A lead's newly-filled email / phone onto its case (Client Master) row, which the
+ * portal, onboarding and reminder emails read. Only into an EMPTY case email — a case
+ * that already holds another address is never overwritten from here (it says so).
+ * @returns {Promise<{copied: string[], problem: string}>}
+ */
+async function copyContactToCase(cmId, { email = '', phone = '', leadId = '' } = {}) {
+  const out = { copied: [], problem: '' };
+  if (!cmId || (!email && !phone)) return out;
+  const handoff = require('./handoffService');
+  const CM_EMAIL = 'text_mm0xw6bp', CM_PHONE = 'phone_mm33zr0c';
+  const digits = (x) => { const d = String(x || '').replace(/\D/g, ''); return d.length === 11 && d[0] === '1' ? d.slice(1) : d; };
+  try {
+    const d = await mondayApi.query(`query($i:[ID!]){ items(ids:$i){ id board{ id } column_values(ids:["${CM_EMAIL}","${CM_PHONE}"]){ id text } } }`, { i: [String(cmId)] });
+    const it = d && d.items && d.items[0];
+    if (!it) { out.problem = 'The case could not be found — ask an admin to add it on the case in Monday too.'; return out; }
+    const have = (id) => String(((it.column_values || []).find((c) => c.id === id) || {}).text || '').trim();
+    const differs = [];
+    if (email) {
+      if (!have(CM_EMAIL)) {
+        await mondayApi.query('mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
+          { b: String(it.board.id), i: String(cmId), c: JSON.stringify({ [CM_EMAIL]: email }) });
+        out.copied.push('email');
+      } else if (have(CM_EMAIL).toLowerCase() !== email.toLowerCase()) differs.push(`email (${have(CM_EMAIL)})`);
+    }
+    if (phone && handoff.phoneColValue(phone)) {
+      if (!have(CM_PHONE)) { await handoff.setClientPhone(String(cmId), { id: leadId, phone }); out.copied.push('phone'); }
+      else if (digits(have(CM_PHONE)) !== digits(phone)) differs.push(`phone (${have(CM_PHONE)})`);
+    }
+    if (differs.length) out.problem = `The case already has a different ${differs.join(' and ')} — it was left as it is. Ask an admin which one is right.`;
+  } catch (err) {
+    console.warn(`[Consultant] contact copy to case ${cmId} failed: ${err.message}`);
+    out.problem = 'Saved on the lead, but the case could not be updated just now — save it again in a minute.';
+  }
+  try { require('./dashboardService').invalidateCases(); } catch (_) { /* convenience only */ }
+  return out;
+}
+
+/**
  * The direct-retainer popup's Notes (Faran 2026-10-28): an update on the client's
  * lead row AND on their case (Client Master) in Monday. Never twice — a re-submit
  * (a lost response, a double click) finds it already on the lead. Best-effort:
@@ -1968,7 +2030,7 @@ async function postDirectClientNotes({ leadId, cmId, notes, actor }) {
 
 async function createDirectClient(payload = {}, { actor = null } = {}) {
   const clean = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
-  // Notes (optional): kept with their line breaks.
+  // Notes (REQUIRED since 2026-11-04 — what the client needs + the amount quoted): kept with their line breaks.
   const notes = String(payload.notes == null ? '' : payload.notes).replace(/\r\n?/g, '\n').trim().slice(0, 2000);
   const fullName    = clean(payload.fullName, 120);
   const email       = clean(payload.email, 200);
@@ -1977,7 +2039,11 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
   const caseSubType = clean(payload.caseSubType, 120);
   const consultant  = clean(payload.consultant, 80);
   const address     = clean(payload.residentialAddress, 500);
-  const referredBy  = clean(payload.referredBy, 200);
+  // Source / Reference (2026-11-04): how the walk-in reached us — the Add lead list. Saved in
+  // the lead's own "Walk-in Source" column: Source / Reference must keep reading "Direct
+  // Retainer" (the Retainers tab, the KPIs and the direct group all key on it).
+  const walkInSource = clean(payload.sourceChannel, 30);
+  const referredFrom = payload.referredFrom === 'list' ? 'list' : 'typed';
   // Warn-and-link choices (duplicate handling) — staff-explicit, from the modal.
   const linkLeadId      = clean(payload.linkLeadId, 30).replace(/\D/g, '');
   const chosenAccountId = clean(payload.clientAccountId, 30).replace(/\D/g, '');
@@ -2018,11 +2084,20 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
 
   const bad = (m) => { const e = new Error(m); e.badRequest = true; throw e; };
   if (fullName.length < 2) bad('The client’s full legal name is required.');
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('A valid client email is required — the retainer agreement is sent to it.');
-  if (address.length < 5) bad('The client’s residential address is required — it is printed on the retainer agreement.');
+  // An email OR a phone (Faran 2026-11-04 — like Add lead). Without an email the case still
+  // opens, and staff see a "no email" caution: the retainer agreement waits for one.
+  if (!email && !phone) bad('Enter an email or a phone number — one of the two is required.');
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('That email doesn’t look right — fix it or leave it empty.');
   // Same rule the Client Master write uses (handoffService.phoneColValue), so a
   // phone that passes here is guaranteed to land on the case row.
-  if (!require('./handoffService').phoneColValue(phone)) bad('A valid client phone number is required — it goes on the case record and is used to reach the client.');
+  if (phone && !require('./handoffService').phoneColValue(phone)) bad('That phone number doesn’t look right — fix it or leave it empty.');
+  // The address is optional now; when given it must be a real one (the agreement prints it).
+  if (address && address.length < 5) bad('That address looks too short — enter the full address or leave it empty.');
+  if (!LEAD_SRC.LEAD_SOURCES.includes(walkInSource)) bad('Choose the source / reference from the list.');
+  const ref = LEAD_SRC.checkReferral(walkInSource, payload.referredBy);
+  if (!ref.ok) bad(ref.error);
+  const referredBy = ref.referredBy;
+  if (notes.length < 3) bad('Add a note — what the client needs and the amount quoted.');
   const labels = await directCaseTypeLabels();
   if (!labels.caseTypes.includes(caseType)) bad('Choose a case type — it generates the case reference and the document checklist.');
   {
@@ -2087,7 +2162,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     // match panel (email edited after the radios rendered) or a mispick must
     // never route the new client into someone else's record.
     const handoffSvc = require('./handoffService');
-    const sameEmail = existing.email && String(existing.email).trim().toLowerCase() === email.toLowerCase();
+    const sameEmail = !!(email && existing.email && String(existing.email).trim().toLowerCase() === email.toLowerCase());
     const samePhone = String(existing.phone || '').replace(/\D/g, '').slice(-10) === phone.replace(/\D/g, '').slice(-10) && phone.replace(/\D/g, '').length >= 7;
     const sameName  = handoffSvc.normName(existing.fullName) === handoffSvc.normName(fullName);
     if (!sameEmail && !samePhone && !sameName) {
@@ -2104,10 +2179,11 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
       // a stale email under an old name.
       fullName, email, phone,
       sourceChannel:      DIRECT_SOURCE,
+      walkInSource,
       confirmedCaseType:  caseType,
       selectedSubType:    caseSubType,
       assignedConsultant: consultant,
-      residentialAddress: address,
+      residentialAddress: address,   // '' keeps the lead's own address (empty values are never written)
       ...(priorReferredBy ? {} : { referredBy }),
       conversionStatus:   'Qualified',
       ...reuseExtras,
@@ -2129,7 +2205,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     }
     await postPortalNote(String(linkLeadId),
       `Linked as a direct retainer client by staff${priorChannel && priorChannel !== DIRECT_SOURCE ? ` (originally a “${priorChannel}” lead — kept as ONE client instead of a duplicate)` : ''}. ` +
-      `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}.` +
+      `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant} · Source / reference: ${escHtmlNote(walkInSource)}.` +
       (keptReferrer ? ` Referred by kept as “${escHtmlNote(priorReferredBy)}” (the form said “${escHtmlNote(referredBy)}”).` : '')).catch(() => {});
     console.log(`[Consultant] Direct client LINKED to existing lead ${linkLeadId} (was "${priorChannel}")`);
     await noteBlacklist(String(linkLeadId), 'Staff saw the warning and set this person up as a direct retainer client anyway.');
@@ -2153,7 +2229,13 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
   // non-direct lead. Best-effort: a read failure falls through to create.
   try {
     const { normName } = require('./handoffService');
-    const matches = await leadService.findAllByColumnValue('email', email);
+    // By email; a phone-only client (2026-11-04) by the phone's digit forms instead —
+    // the lead phone column stores the digits as typed.
+    const pd = phone.replace(/\D/g, ''), pBare = pd.length === 11 && pd.startsWith('1') ? pd.slice(1) : pd;
+    const matches = email
+      ? await leadService.findAllByColumnValue('email', email)
+      : [...new Map((await Promise.all([...new Set([pd, pBare, `1${pBare}`])].map((v) => leadService.findAllByColumnValue('phone', v))))
+        .flat().map((l) => [String(l.id), l])).values()];
     const reusable = (matches || []).filter((l) => {
       const existingType = String(l.confirmedCaseType || '').trim();
       return (l.sourceChannel || '').trim() === DIRECT_SOURCE &&
@@ -2164,7 +2246,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     if (reusable.length) {
       // Newest wins if several exist (highest Monday item id).
       const pick = reusable.sort((a, b) => Number(b.id) - Number(a.id))[0];
-      console.log(`[Consultant] Direct client for ${email} already exists (lead ${pick.id}) — reusing`);
+      console.log(`[Consultant] Direct client ${email ? `for ${email} ` : '(phone only) '}already exists (lead ${pick.id}) — reusing`);
       await noteBlacklist(pick.id, 'Staff saw the warning and set this person up as a direct retainer client anyway.');
       const notesSaved = await postDirectClientNotes({ leadId: pick.id, cmId: pick.clientMasterItemId, notes, actor });
       return { ok: true, leadId: pick.id, reused: true, blacklist, notesSaved: notesSaved.posted.length };
@@ -2204,14 +2286,13 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     // where this row exists as an untagged "Website" lead that a refreshing
     // Leads tab could cache and display.
     sourceChannel: DIRECT_SOURCE,
-    situationDescription: referredBy
-      ? `Direct retainer client — entered at the retainer stage, no consultation. Referred by: ${referredBy}`
-      : 'Direct retainer client — entered at the retainer stage, no consultation.',
+    situationDescription: `Direct retainer client — entered at the retainer stage, no consultation. Source / reference: ${walkInSource}${referredBy ? ` · Referred by: ${referredBy}` : ''}`,
   }, { groupId: directGroupId });
   const leadId = created.id;
   invalidateDirectRetainerQueue(); // the new client must show on the Retainers tab at once (the shared snapshot too)
   const wiring = {
     sourceChannel:      DIRECT_SOURCE,
+    walkInSource,
     confirmedCaseType:  caseType,
     selectedSubType:    caseSubType,
     assignedConsultant: consultant,
@@ -2249,14 +2330,20 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     caseOpened = !!cmId;
   } catch (err) {
     console.error(`[Consultant] Early case-open failed for direct client ${leadId}: ${err.message}`);
+    // Honest wording (2026-11-04): the old note promised "created automatically when the
+    // retainer is signed — no action needed", but a missing detail fails the same way there.
     await postPortalNote(leadId,
-      `⚠ <b>The Client Master case could not be opened yet</b> (${err.message}). ` +
-      `It will be created automatically when the retainer is signed — no action needed unless this repeats.`).catch(() => {});
+      `⚠ <b>The Client Master case could not be opened yet</b> (${escHtmlNote(err.message)}). ` +
+      `The app tries again when the retainer is signed. If the reason above names a missing detail, add it on this lead first; ` +
+      `if it repeats, tell an admin.`).catch(() => {});
   }
   await postPortalNote(leadId,
     `Direct retainer client created — walk-in/referral entering at the retainer stage (no consultation). ` +
-    `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant}${referredBy ? ` · Referred by: ${escHtmlNote(referredBy)}` : ''}. ` +
+    `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant} · Source / reference: ${escHtmlNote(walkInSource)}` +
+    `${referredBy ? ` · Referred by: ${escHtmlNote(referredBy)}${LEAD_SRC.referralKind(walkInSource) === 'client' ? (referredFrom === 'list' ? ' (picked from the old Consultations board)' : ' (name typed by hand)') : ''}` : ''}. ` +
     (caseOpened ? `The Client Master case is open (case-first — this client is never a funnel lead). ` : '') +
+    (!email ? `⚠ <b>No email address yet</b> — the retainer agreement is sent by email, so add the client’s email on this lead before “Retain &amp; send agreement”. ` : '') +
+    (!address ? `No residential address yet — the agreement prints it; add it before sending. ` : '') +
     `Next: set the retainer fee + plan and click “Retain &amp; send agreement”.`);
   await noteBlacklist(leadId, 'Staff saw the warning and created this direct retainer client anyway.');
   // After the "created" note, so the team reads them in order.
@@ -2800,6 +2887,8 @@ async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
         id: l.id, name: l.fullName || l.name,
         kind: direct ? 'direct' : 'booked',
         originalChannel: s(l.originalChannel),
+        walkInSource: s(l.walkInSource),   // a walk-in's source / reference (Direct retainer form, 2026-11-04)
+        hasEmail: l.hasEmail !== false,    // "No email": the retainer agreement cannot go out (2026-11-04; the snapshot keeps only yes/no)
         caseType: s(l.confirmedCaseType) || s(l.caseTypeInterest) || s(l.serviceRequired),
         consultant: s(l.assignedConsultant),
         fee: s(l.retainerFee),

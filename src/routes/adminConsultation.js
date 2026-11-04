@@ -16,6 +16,8 @@ const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
+const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // the walk-in form's Source / Reference (2026-11-04)
+const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   // Shafoli's screenshot attachments (2026-11-04)
 
 function escAttr(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -170,6 +172,11 @@ function buildQueueHTML() {
   .dc-btn { padding:9px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:var(--navy); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
   .dc-btn.primary { background:var(--navy); border-color:var(--navy); color:#fff; }
   .dc-btn:disabled { opacity:.6; cursor:default; }
+  /* The walk-in form's Source / Reference picker + attachments (shared pieces, 2026-11-04) */
+  ${REFERRAL_CSS}
+  ${ATTACH_CSS}
+  #dc-modal .al-hint, #dc-modal .dc-note { font-size:12px; color:#64748b; margin-top:3px; }
+  #dc-modal .att-row input[type=file] { border:0; padding:6px 0; }
   ${DELETE_UI_CSS}
   ${BLACKLIST_UI_CSS}
 </style></head><body>
@@ -260,14 +267,16 @@ ${buildNavHeader('consultations')}
       <h3 id="dc-title">New direct retainer client</h3>
       <p class="dc-sub">Walk-in / referral entering at the retainer stage — no booking or consultation. Creates the client fully wired (case type → case reference &amp; checklist, consultant → agreement signatory &amp; case visibility), then opens the retainer panel.</p>
       <label for="dc-name">Full legal name *</label><input id="dc-name" type="text" maxlength="120" autocomplete="off">
-      <label for="dc-email">Email *</label><input id="dc-email" type="email" maxlength="200" autocomplete="off">
-      <label for="dc-phone">Phone *</label><input id="dc-phone" type="tel" maxlength="40" autocomplete="off" required>
-      <label for="dc-address">Residential address * <span class="dc-hint">(printed on the retainer agreement)</span></label><input id="dc-address" type="text" maxlength="500" autocomplete="off" required>
+      <label for="dc-email">Email</label><input id="dc-email" type="email" maxlength="200" autocomplete="off">
+      <label for="dc-phone">Phone</label><input id="dc-phone" type="tel" maxlength="40" autocomplete="off">
+      <div class="dc-note">An email <b>or</b> a phone number — one of the two is enough. Without an email the retainer agreement can’t be emailed until one is added.</div>
+      <label for="dc-address">Residential address <span class="dc-hint">(optional now — it is printed on the retainer agreement, so add it before sending)</span></label><input id="dc-address" type="text" maxlength="500" autocomplete="off">
       <label for="dc-casetype">Case type *</label><select id="dc-casetype"><option value="">Choose…</option></select>
       <label for="dc-subtype">Case sub-type</label><select id="dc-subtype"><option value="">— (can be set later)</option></select>
       <label for="dc-consultant">Consultant *</label><select id="dc-consultant"><option value="">Choose…</option></select>
-      <label for="dc-referred">Referred by</label><input id="dc-referred" type="text" maxlength="200" autocomplete="off">
-      <label for="dc-notes">Notes <span class="dc-hint">(saved as an update on the client and their case in Monday)</span></label><textarea id="dc-notes" rows="3" maxlength="2000" placeholder="Anything the team should know — what the client needs, documents mentioned, next steps…"></textarea>
+      <label for="dc-source">Source / Reference *</label>
+      <select id="dc-source">${sourceOptionsHtml({ blank: true })}</select>${referralFieldsHtml('dc')}
+      <label for="dc-notes">Notes * <span class="dc-hint">(what the client needs + the amount quoted · saved as an update on the client and their case in Monday)</span></label><textarea id="dc-notes" rows="3" maxlength="2000" placeholder="What the client needs, the amount quoted, documents mentioned, next steps…"></textarea>${attachFieldHtml('dc')}
       <div id="dc-profile" style="display:none" role="region" aria-label="Carried from previous application"></div>
       <div id="dc-blacklist" style="display:none"></div>
       <div id="dc-matches" style="display:none" role="region" aria-label="Possible existing records"></div>
@@ -283,6 +292,11 @@ ${buildNavHeader('consultations')}
 ${SHARED_AUTH_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 var ALLROWS=[], RETAINERS=[], TAB='consultations', RANGE='today', ANCHOR='';
+${REFERRAL_UI_JS}
+${ATTACH_UI_JS}
+var DC_REF=tdotRef('dc');      /* the walk-in form's Source / Reference second question (2026-11-04) */
+var DC_ATT=tdotAttach('dc');   /* "Attach a screenshot": only for the staff allowed to (Shafoli), signed in with Monday */
+var DC_PROFILE_ADDR='';        /* the carried address — its "is it current?" tick is asked only while the box still shows it */
 var RET_OUTCOMES=${jsLit(OUTCOME_LABELS)}, ROUT=[];   // the Retainers quick filters: the outcomes switched on (none = all)
 function qpill(cls,txt){ return '<span class="pill '+cls+'">'+escHtml(txt)+'</span>'; }
 function todayStr(){ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto'}).format(new Date()); }   // the Toronto day
@@ -371,8 +385,9 @@ function openDirectClient(){
   // otherwise persist into the next opening and be saved on the wrong client
   // (a stale address prints on their retainer). The boot prefill runs AFTER
   // this and re-populates intentionally.
-  ['dc-name','dc-email','dc-phone','dc-address','dc-referred','dc-notes'].forEach(function(id){ var e=dcEl(id); if(e) e.value=''; });
-  ['dc-casetype','dc-subtype','dc-consultant'].forEach(function(id){ var e=dcEl(id); if(e) e.selectedIndex=0; });
+  ['dc-name','dc-email','dc-phone','dc-address','dc-notes'].forEach(function(id){ var e=dcEl(id); if(e) e.value=''; });
+  ['dc-casetype','dc-subtype','dc-consultant','dc-source'].forEach(function(id){ var e=dcEl(id); if(e) e.selectedIndex=0; });
+  DC_REF.reset(); DC_ATT.reset(); DC_PROFILE_ADDR='';
   DC_MATCHES=null; var mb=dcEl('dc-matches'); if(mb){ mb.style.display='none'; mb.innerHTML=''; }
   DC_BL_HIT=false; var blb=dcEl('dc-blacklist'); if(blb){ blb.style.display='none'; blb.innerHTML=''; }
   // A carried profile / lead conversion belongs to ONE opening of the modal —
@@ -482,6 +497,7 @@ function dcApplyProfile(ref,p){
   var pf=p.priorFacts||{};
   if(pf.hadRefusal) rows.push('<div class="dcp-fact">⚠ Refusal on file'+(pf.refusalType?' ('+escHtml(pf.refusalType)+(pf.refusalDate?', '+escHtml(pf.refusalDate):'')+')':'')+' — ensure the new application discloses it.</div>');
   (pf.openCases||[]).forEach(function(c){ rows.push('<div class="dcp-fact">This client also has open case '+escHtml(c.caseRef)+(c.caseStage?' ('+escHtml(c.caseStage)+')':'')+'.</div>'); });
+  DC_PROFILE_ADDR=String(id.address||'');
   if(id.address) rows.push('<label class="dcp-confirm"><input type="checkbox" id="dcp-addr-ok"><span>I confirmed the residential address is CURRENT with the client (it prints on the retainer agreement)</span></label>');
   var box=dcEl('dc-profile'); box.innerHTML=rows.join(''); box.style.display='block';
 }
@@ -518,6 +534,9 @@ function dcLoadConvertLead(leadId){
       set('dc-email', d.email||'');
       set('dc-phone', d.phone||'');
       set('dc-address', d.address||'');
+      /* How they first reached us carries over as the Source / Reference (and its referrer) — staff can change it. */
+      var srcSel=dcEl('dc-source'), lsrc=String(d.sourceChannel||'');
+      if(srcSel && !srcSel.value && lsrc && [].some.call(srcSel.options,function(o){ return o.value===lsrc; })){ srcSel.value=lsrc; DC_REF.load(lsrc, d.referredBy||''); }
       DC_CONVERT_LEAD_ID=String(leadId);
       var box=dcEl('dc-profile');
       if(box){
@@ -546,11 +565,22 @@ function submitDirectClient(){
   var err=dcEl('dc-err'); err.textContent='';
   var body={ fullName:dcEl('dc-name').value, email:dcEl('dc-email').value, phone:dcEl('dc-phone').value,
              residentialAddress:dcEl('dc-address').value, caseType:dcEl('dc-casetype').value,
-             caseSubType:dcEl('dc-subtype').value, consultant:dcEl('dc-consultant').value, referredBy:dcEl('dc-referred').value,
+             caseSubType:dcEl('dc-subtype').value, consultant:dcEl('dc-consultant').value,
+             sourceChannel:dcEl('dc-source').value, referredBy:DC_REF.value(), referredFrom:DC_REF.from(),
              notes:dcEl('dc-notes').value };
-  if(!body.fullName.trim()||!body.email.trim()||!body.phone.trim()||!body.caseType||!body.consultant||!body.residentialAddress.trim()){
-    err.textContent='Name, email, phone, residential address, case type and consultant are required.'; return;
-  }
+  /* Required (Faran 2026-11-04): the name, an email OR a phone, the case type, the consultant, the source / reference
+     (+ who referred them, for a referral) and a note. The address is optional now. The server checks the same. */
+  if(body.fullName.trim().length<2){ err.textContent='Enter the client'+String.fromCharCode(8217)+'s full legal name.'; dcEl('dc-name').focus(); return; }
+  if(!body.email.trim() && !body.phone.trim()){ err.textContent='Enter an email or a phone number — one of the two is required.'; dcEl('dc-email').focus(); return; }
+  if(body.email.trim() && !/^[^ @]+@[^ @]+[.][^ @]+$/.test(body.email.trim())){ err.textContent='That email doesn'+String.fromCharCode(8217)+'t look right — fix it or leave it empty.'; dcEl('dc-email').focus(); return; }
+  if(body.phone.trim() && body.phone.replace(/[^0-9]/g,'').length<7){ err.textContent='That phone number is too short — fix it or leave it empty.'; dcEl('dc-phone').focus(); return; }
+  if(body.residentialAddress.trim() && body.residentialAddress.trim().length<5){ err.textContent='That address looks too short — enter the full address or leave it empty.'; dcEl('dc-address').focus(); return; }
+  if(!body.caseType){ err.textContent='Choose the case type.'; dcEl('dc-casetype').focus(); return; }
+  if(!body.consultant){ err.textContent='Choose the consultant.'; dcEl('dc-consultant').focus(); return; }
+  if(!body.sourceChannel){ err.textContent='Choose the source / reference.'; dcEl('dc-source').focus(); return; }
+  var refErr=DC_REF.check(); if(refErr){ err.textContent=refErr; DC_REF.focus(); return; }
+  if(body.notes.trim().length<3){ err.textContent='Add a note — what the client needs and the amount quoted.'; dcEl('dc-notes').focus(); return; }
+  var attErr=DC_ATT.check(); if(attErr){ err.textContent=attErr; return; }
   var subOpts=(DC_OPTS&&DC_OPTS.subTypesByCase&&DC_OPTS.subTypesByCase[body.caseType])||[];
   if(subOpts.length && !body.caseSubType){
     err.textContent='This case type has checklist variants — choose the Case Sub Type.'; return;
@@ -559,7 +589,9 @@ function submitDirectClient(){
   // confirmation is mandatory before a carried address may be used.
   if(DC_PROFILE_REF){
     var ok=dcEl('dcp-addr-ok');
-    if(ok && !ok.checked){ err.textContent='Confirm the residential address is current with the client (checkbox above) — it prints on the retainer agreement.'; return; }
+    /* Asked only while the box still shows the CARRIED address: cleared = nothing to confirm; retyped = typing it is the confirmation. */
+    var carriedShown=!!DC_PROFILE_ADDR && body.residentialAddress.trim()===DC_PROFILE_ADDR.trim();
+    if(ok && carriedShown && !ok.checked){ err.textContent='Confirm the residential address is current with the client (checkbox above) — it prints on the retainer agreement.'; return; }
     body.profileSourceCaseRef=DC_PROFILE_REF;
   }
   // Duplicate panel showing → a choice is mandatory before submitting.
@@ -600,7 +632,14 @@ function submitDirectClient(){
       if(res.j.warning) window.alert(res.j.warning);
       else if(res.j.linked) window.alert('Linked to the existing lead — one record for this person, now set up as a direct retainer client.');
       else if(res.j.reused) window.alert('This client already exists as a direct retainer lead — opening it instead of creating a duplicate.');
-      window.location.href='/admin/consultation/'+encodeURIComponent(res.j.leadId);
+      /* The client exists: attach the chosen files now (a failed file never undoes the client), then open it. */
+      var go=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(res.j.leadId); };
+      if(!DC_ATT.files().length) return go();
+      btn.textContent='Attaching…';
+      return DC_ATT.upload(res.j.leadId).then(function(o){
+        if(o.failed.length) window.alert('The client was created. '+o.failed.length+' file(s) were not attached — add them from the client'+String.fromCharCode(8217)+'s lead page:'+String.fromCharCode(10)+o.failed.map(function(x){ return '• '+x.name+' — '+x.error; }).join(String.fromCharCode(10)));
+        go();
+      });
     })
     .catch(function(e){ btn.disabled=false; btn.textContent='Create & open retainer'; err.textContent=e.message||'Creation failed — try again.'; });
 }
@@ -753,7 +792,9 @@ function renderRetainers(){
     var stc=c.stage==='Paid'?'green':(c.stage==='Signed'||c.stage==='Sent')?'blue':'amber';
     var cs=c.caseOpen?qpill('green','Open'):c.stage?qpill('grey','Pending'):'<span class="pill grey">—</span>';   // no retainer under way: no case coming yet
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
-      '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+(c.kind==='direct'?(c.originalChannel?' <span class="pill grey" title="Converted from a '+escHtml(c.originalChannel)+' lead — no consultation">direct · '+escHtml(c.originalChannel)+'</span>':' <span class="pill grey" title="Walk-in / referral — no consultation">direct</span>'):'')+'</td>'+
+      '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+(c.kind==='direct'?(c.originalChannel?' <span class="pill grey" title="Converted from a '+escHtml(c.originalChannel)+' lead — no consultation">direct · '+escHtml(c.originalChannel)+'</span>':(c.walkInSource?' <span class="pill grey" title="Walk-in — came through '+escHtml(c.walkInSource)+'; no consultation">direct · '+escHtml(c.walkInSource)+'</span>':' <span class="pill grey" title="Walk-in / referral — no consultation">direct</span>')):'')+
+        /* No email (2026-11-04): the retainer agreement cannot go out until one is added — shown until it is sent. */
+        ((c.hasEmail===false && !c.retainerSent)?' <span class="pill amber" title="No email address — the retainer agreement cannot be emailed until one is added on the lead page">No email</span>':'')+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.caseType||'—')+'</td>'+
       '<td>'+escHtml(c.consultant||'—')+'</td>'+
       '<td>'+outcomeCell(c)+'</td>'+
@@ -988,6 +1029,8 @@ ${REMARKS_CSS}
   .rp-sugg { font-size:12px; color:#475569; background:#f8fafc; border:1px solid #eef2f7; border-radius:8px; padding:9px 12px; line-height:1.55; }
   .rp-flag { display:inline-block; font-size:9.5px; font-weight:800; padding:1px 7px; border-radius:10px; margin-left:6px; text-transform:uppercase; letter-spacing:.4px; }
   .rp-flag.high { background:#f0fdf4; color:#16a34a; } .rp-flag.verify { background:#fffbeb; color:#d97706; }
+  .email-warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; padding:11px 14px; border-radius:10px; font-size:13px; margin:0 0 14px; line-height:1.5; }
+  .email-warn a { color:#92400e; font-weight:700; }
   .rp-warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; padding:9px 12px; border-radius:8px; font-size:12px; margin:10px 0; line-height:1.5; }
   .rp-warn ul { margin:5px 0 0; padding-left:18px; }
   .rp-sv { background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:9px 12px; margin:8px 0; font-size:13px; }
@@ -1056,6 +1099,7 @@ ${buildNavHeader('consultations')}
       </div>
     </div>
     <div id="bl-banner"></div>
+    <div id="email-warn"></div>
 
     <div class="stepper" id="c-stepper"></div>
 
@@ -1584,6 +1628,14 @@ function render(d){
   hydrateAttribution(d);
   hydrateConsultPayment(d);
   renderBlacklist(d);
+  // No email (2026-11-04: a walk-in may come with a phone only). This page cannot edit the email — the lead page can.
+  (function(){
+    var w=document.getElementById('email-warn'); if(!w) return;
+    if(String(d.email||'').trim()){ w.innerHTML=''; return; }
+    var id=d.leadId||d.id||'';
+    w.innerHTML='<div class="email-warn" role="status"><b>No email address on file.</b> The retainer agreement, payment links and receipts are sent by email, so the system can'+String.fromCharCode(8217)+'t send them to this client. '+
+      'Add the client'+String.fromCharCode(8217)+'s email on the <a href="/admin/lead/'+encodeURIComponent(id)+'">lead page</a> (Basic details)'+(d.phone?' — phone: '+escHtml(d.phone):'')+'.</div>';
+  })();
   var fee=document.getElementById('fee'); if(fee && !fee.value && d.retainerFee) fee.value=d.retainerFee;
   // Hydrate the retainer panel from the detail payload ONCE (saves a second
   // getLead round-trip); later renders (after an action) keep in-progress edits.
@@ -1808,11 +1860,14 @@ function applyRetainerLock(){
   gate('btn-retainer-save',    locked || !RP_FEE_SET, 'Set the retainer fee first');
   // Retain & send: need fee AND a saved plan; never re-sendable once the agreement
   // is sent OR the client has already signed / been retained.
+  // …and an email to send it to (2026-11-04: the server refuses the same, before changing anything).
+  var rpNoEmail = !!(LAST_DETAIL && !String(LAST_DETAIL.email||'').trim());
   gate('btn-retain-send',
-       RP_LOCKED || !RP_FEE_SET || !RP_PLAN_SAVED,
+       RP_LOCKED || !RP_FEE_SET || !RP_PLAN_SAVED || rpNoEmail,
        RP_RETAINED ? 'Client already retained — no new agreement needed'
          : RP_SENT ? 'Agreement already sent'
-         : (!RP_FEE_SET ? 'Set the retainer fee first' : 'Save the retainer plan first'));
+         : (!RP_FEE_SET ? 'Set the retainer fee first' : !RP_PLAN_SAVED ? 'Save the retainer plan first'
+           : 'Add the client'+String.fromCharCode(8217)+'s email first (on the lead page) — the agreement is sent by email'));
 
   if(banner){ banner.style.display = RP_LOCKED ? 'flex' : 'none'; banner.className = 'rp-lock' + (RP_AMEND ? ' amending' : ''); }
   if(msg) msg.innerHTML = RP_AMEND

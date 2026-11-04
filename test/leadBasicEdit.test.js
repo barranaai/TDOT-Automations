@@ -68,7 +68,9 @@ test('only what changed is written; the name also renames the row; a note lists 
 test('refused: name / email / phone once a case is open; changing a Direct Retainer source; a case type not on the list', async () => {
   let w = world({ clientMasterItemId: '999' });
   try {
-    await assert.rejects(w.act({ email: 'new@example.com' }), /has a case — change the client’s name, email or phone on the case page/);
+    await assert.rejects(w.act({ email: 'new@example.com' }), /has a case — its name, email and phone can no longer be changed here/);
+    await assert.rejects(w.act({ fullName: 'Asha K Rao' }), /has a case/);
+    await assert.rejects(w.act({ email: '' }), /has a case/, 'clearing one is a change, never a fill');
     await w.act({ caseTypeInterest: 'Express Entry' });   // other details still save
     assert.deepEqual(w.calls.updates[0].f, { caseTypeInterest: 'Express Entry' });
   } finally { w.done(); }
@@ -142,7 +144,45 @@ test('the lead page: a Basic details card (locked fields for a case), an editabl
   const html = require('../src/routes/adminLeads').buildLeadDetailHTML('5');
   for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   for (const x of ['id="bd-name"', 'id="bd-email" type="email"', 'id="bd-phone" type="tel"', 'id="bd-source"', 'id="bd-casetype"', 'id="btn-bd-save"',
-    "doAction(this,'saveBasicInfo',null,JSON.stringify(body),'bd-msg')", "['name','email','phone'].forEach(function(k){ bdEl(k).readOnly=caseOpen; });",
+    "doAction(this,'saveBasicInfo',null,JSON.stringify(body),'bd-msg')", "bdEl('name').readOnly=caseOpen;", "bdEl('email').readOnly=caseOpen && !!String(d.email||'').trim();", "bdEl('phone').readOnly=caseOpen && !!String(d.phone||'').trim();",
     'id="btn-inq-edit"', 'id="inq-text"', "doAction(this,'saveInquiry',null,document.getElementById('inq-text').value,'inq-msg')", 'hydrateBasic(d);']) assert.ok(html.includes(x), x);
   assert.ok(html.indexOf('id="basic-card"') < html.indexOf('Their inquiry'), 'Basic details come first');
+});
+
+test('2026-11-04: a lead WITH a case can still get its EMPTY email / phone filled in — written on the lead and copied onto the case (never over a different one)', async () => {
+  const run = async (lead, body, caseCols) => {
+    const caseWrites = [], calls = { updates: [], notes: [] };
+    const restore = [
+      stub(leadService, 'getLead', async (id) => ({ ...BASE, ...lead, id })),
+      stub(leadService, 'updateLead', async (id, f, o) => { calls.updates.push({ id, f, o }); }),
+      stub(leadService, 'renameLead', async () => {}),
+      stub(mondayApi, 'query', async (q, v) => {
+        if (/create_update/.test(q)) { calls.notes.push(v.b); return {}; }
+        if (/items\(ids:\$i\)\{ id board\{ id \} column_values/.test(q)) return { items: [{ id: '999', board: { id: 'CMB' }, column_values: caseCols }] };
+        if (/change_multiple_column_values/.test(q)) { caseWrites.push(JSON.parse(v.c || v.cols)); return {}; }
+        return {};
+      }),
+      stub(portal, 'findClientMatches', async () => ({ leads: [], cases: [{ id: '999', caseRef: 'OWN' }], clients: [] })),
+      stub(blacklist, 'check', async () => ({ checked: true, hit: false })),
+      stub(registry, 'getCaseTypes', async () => ['Express Entry']),
+    ];
+    try {
+      const r = await portal.applyAction({ leadId: '5', action: 'saveBasicInfo', value: JSON.stringify({ ...BODY, ...body }), staffName: 'Gauri' });
+      return { r, caseWrites, calls };
+    } finally { restore.reverse().forEach((x) => x()); }
+  };
+  // a phone-only walk-in with a case: the email arrives later
+  const a = await run({ clientMasterItemId: '999', email: '' }, { email: 'late@example.com' }, [{ id: 'text_mm0xw6bp', text: '' }, { id: 'phone_mm33zr0c', text: '14165550101' }]);
+  assert.deepEqual(a.calls.updates[0].f, { email: 'late@example.com' });
+  assert.deepEqual(a.caseWrites, [{ text_mm0xw6bp: 'late@example.com' }], 'the case gets the email too');
+  assert.match(a.r.message, /Also saved on the case \(email\)/);
+  assert.ok(!/also on case OWN/.test(a.r.message), 'its own case is never reported as "also on"');
+  // the case already holds ANOTHER email: the lead is filled, the case is left alone and staff are told
+  const b = await run({ clientMasterItemId: '999', email: '' }, { email: 'late@example.com' }, [{ id: 'text_mm0xw6bp', text: 'other@example.com' }, { id: 'phone_mm33zr0c', text: '' }]);
+  assert.deepEqual(b.caseWrites, [], 'never overwritten');
+  assert.match(b.r.message, /The case already has a different email \(other@example.com\)/);
+  // an empty phone can be added as well
+  const c = await run({ clientMasterItemId: '999', phone: '' }, { phone: '647 555 0199' }, [{ id: 'text_mm0xw6bp', text: 'asha@example.com' }, { id: 'phone_mm33zr0c', text: '' }]);
+  assert.deepEqual(c.calls.updates[0].f, { phone: '647 555 0199' });
+  assert.equal(c.caseWrites.length, 1, 'the phone goes on the case');
 });

@@ -907,6 +907,8 @@ app.get('/admin/payments/viewer', (req, res) => {
     signedIn: !!(staff && staff.email),
     name: (staff && staff.name) || '',
     canUndo: !!(staff && staff.email && caseAccess.isAdminEmail(staff.email)),
+    // Attachments on a new client (2026-11-04): only the listed staff, signed in with Monday.
+    canAttach: require('../config/staffAttachments').canAttach(staff),
     adminsConfigured,
     signInUrl: '/q/auth/monday',
   });
@@ -1873,6 +1875,40 @@ app.post('/api/consultation/direct-client', express.json(), async (req, res) => 
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Staff attachments on a client (Faran 2026-11-04): a picture / screenshot / PDF of the
+// client's details — Shafoli only, signed in with Monday (the shared key alone is never
+// enough). One file per request; the page sends them one by one after the client exists.
+// The gate runs BEFORE the upload slot and multer, so a refused upload is never buffered.
+{
+  const attachRules = require('../config/staffAttachments');
+  const attachUpload = require('multer')({ storage: require('multer').memoryStorage(), limits: { fileSize: attachRules.MAX_FILE_BYTES, files: 1 } }).single('file');
+  const upl = require('./utils/uploadLimits');
+  app.post('/api/leads/:leadId/attachments', (req, res, next) => {
+    if (!/^\d{5,20}$/.test(String(req.params.leadId || ''))) return res.status(400).json({ error: 'Which client? (bad lead id)' });
+    const staff = tryStaffAuth(req);
+    if (!staff || !staff.email) return res.status(401).json({ error: 'Sign in with Monday to attach files.', loginUrl: '/q/auth/monday' });
+    if (!attachRules.canAttach(staff)) return res.status(403).json({ error: 'Attaching files is not switched on for your account.' });
+    req.attachStaff = staff;
+    next();
+  }, upl.uploadSlot, (req, res, next) => attachUpload(req, res, (err) => {
+    if (!err) return next();
+    const tooBig = err.code === 'LIMIT_FILE_SIZE';
+    res.status(tooBig ? 413 : 400).json({ error: tooBig ? `That file is too big — the limit is ${Math.round(attachRules.MAX_FILE_BYTES / 1048576)} MB.` : 'There was a problem with that upload — please try again.' });
+  }), async (req, res) => {
+    try {
+      const r = await require('./services/leadAttachmentService').attach({ leadId: req.params.leadId, file: req.file, staff: req.attachStaff });
+      res.json(r);
+    } catch (err) {
+      if (err.forbidden) return res.status(403).json({ error: err.message });
+      if (err.badRequest) return res.status(400).json({ error: err.message });
+      if (err.notFound) return res.status(404).json({ error: err.message });
+      if (err.retry) return res.status(409).json({ error: err.message, retry: true });
+      console.error('[Attach] failed:', err.stack || err.message);
+      res.status(502).json({ error: 'The file could not be saved just now — try again in a minute.' });
+    }
+  });
+}
 
 // "New application": the reusable profile of a client's previous case —
 // identity + slow-circumstance candidates (staff-confirmed in the modal),

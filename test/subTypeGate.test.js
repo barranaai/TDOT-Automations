@@ -123,10 +123,10 @@ test('createDirectClient: a variant-carrying case type REQUIRES a sub-type; with
   ];
   try {
     await assert.rejects(
-      () => portal.createDirectClient({ fullName: 'A B', email: 'a@b.co', residentialAddress: '1 Main St', phone: '4165550100', caseType: withSubs, consultant: 'Shafoli Kapur' }),
+      () => portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', fullName: 'A B', email: 'a@b.co', residentialAddress: '1 Main St', phone: '4165550100', caseType: withSubs, consultant: 'Shafoli Kapur' }),
       (e) => e.badRequest === true && /Sub Type/i.test(e.message),
       'blank sub-type on a variant case type must be rejected');
-    const ok = await portal.createDirectClient({
+    const ok = await portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.',
       fullName: 'A B', email: 'a@b.co', residentialAddress: '1 Main St', phone: '4165550100', caseType: withSubs,
       caseSubType: (SUB_TYPES_BY_CASE[withSubs] || [])[0], consultant: 'Shafoli Kapur' });
     assert.equal(ok.ok, true, 'with a valid sub-type the creation proceeds');

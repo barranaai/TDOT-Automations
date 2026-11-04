@@ -1492,6 +1492,61 @@ async function uploadToLeadFolderAndLink({ fullName, leadId, folderId, filename,
 
 
 /**
+ * A staff attachment (a screenshot of the client's details, 2026-11-04) into the
+ * client's own folder, sub-folder `subfolder` (default "Intake"), addressed by the
+ * FOLDER ID only — never by a name or case reference, so a folder being renamed to
+ * "{name} - {caseRef}" can never mint a second folder (the split-folder rule). Never
+ * replaces: a same-named file gets a free name. Two auth scopes, as uploadFileAsNew:
+ * a 401 retry re-runs only the PUT, which wrote nothing.
+ * @returns {Promise<{ id, name, webUrl, url, replaced }>}
+ */
+async function uploadToFolderIdAsNew({ folderId, subfolder = 'Intake', filename, buffer, mimeType }) {
+  const parent = String(folderId || '').trim();
+  if (!parent) throw new Error('No folder id — the client folder is not known yet');
+  const sub = String(subfolder || '').replace(/[*:"<>?\\|/]/g, '').trim();
+  const safeFile = String(filename || '').replace(/[*:"<>?\\|/]/g, '').replace(/\s+/g, ' ').replace(/^[\s.]+|[\s.]+$/g, '') || 'attachment';
+  let target = parent;
+  if (sub) {
+    target = await withGraphAuth('attachFolder', async (token) => {
+      const auth = { Authorization: `Bearer ${token}` };
+      const subUrl = `${userBase()}/items/${parent}:/${encodeURIComponent(sub)}`;
+      try {
+        return (await axios.get(subUrl, { headers: auth, timeout: GRAPH_TIMEOUT_MS })).data.id;
+      } catch (err) {
+        if (err.response?.status !== 404) throw err;
+      }
+      try {
+        return (await axios.post(`${userBase()}/items/${parent}/children`, { name: sub, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }, { headers: auth, timeout: GRAPH_TIMEOUT_MS })).data.id;
+      } catch (err) {
+        if (err.response?.status !== 409) throw err;   // made by someone else meanwhile — read it
+        return (await axios.get(subUrl, { headers: auth, timeout: GRAPH_TIMEOUT_MS })).data.id;
+      }
+    });
+  }
+  let put;
+  try {
+    put = await withGraphAuth('attachPut', (token) => axios.put(
+      `${userBase()}/items/${target}:/${encodeURIComponent(safeFile)}:/content?@microsoft.graph.conflictBehavior=rename`, buffer, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeType || 'application/octet-stream' },
+        maxContentLength: Infinity, maxBodyLength: Infinity, timeout: GRAPH_UPLOAD_TIMEOUT_MS,
+      }));
+  } catch (err) {
+    console.error(`[OneDrive] Attachment upload failed (${err.response?.status}): ${err.message}`);
+    throw wrapError('OneDrive upload failed', err);
+  }
+  const { id = '', name = safeFile, webUrl = '' } = put.data || {};
+  const replaced = put.status === 200;
+  if (replaced) console.error(`[OneDrive] REPLACED-IN-PLACE attachment ${safeFile} — conflictBehavior=rename was not honoured`);
+  let link = webUrl;
+  if (id) {
+    try { link = await withGraphAuth('attachLink', (token) => createOrgLink(token, id)); }
+    catch (err) { console.warn(`[OneDrive] Org link failed for ${name} (using webUrl): ${err.message}`); }
+  }
+  console.log(`[OneDrive] Attachment stored → folder ${parent}/${sub || ''} as "${name}"`);
+  return { id, name, webUrl, url: link, replaced };
+}
+
+/**
  * List a stored file's version history (OneDrive/SharePoint keeps versions
  * automatically). Newest first. Returns [] when the file or history is absent.
  *
@@ -1542,6 +1597,7 @@ async function readFileVersion({ clientName, caseRef, subfolder, filename, versi
 }
 
 module.exports = {
+  uploadToFolderIdAsNew,
   createClientFolders, uploadFile, readFile, listFiles, listChildren, moveFile, caseFolderName, findCaseFolderByRef, findCaseFoldersByRef, resolveCaseFolderName, _clearCaseFolderCache, ensureClientFolder, ensureCategoryFolderLink,
   ensureLeadFolder, renameDriveItem, uploadFileAndLink, uploadToLeadFolderAndLink,
   getClientFolderByName, getDriveItemById, deleteDriveItem,

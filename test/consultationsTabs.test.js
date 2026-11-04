@@ -83,7 +83,9 @@ test('snapshot: reads only the columns the lists use, 500 a page, every page, pa
     const leads = await snap.leads();
     assert.equal(calls.length, 2, 'two pages');
     assert.match(calls[0].q, /items_page\(limit: 500, cursor: \$cursor\)/);
-    assert.ok(calls[0].q.includes(`"${C.consultAgreementSent}"`) && calls[0].q.includes(`"${C.squareConsultTxnId}"`) && !calls[0].q.includes(`"${C.email}"`), 'the list columns, not the client\'s email');
+    assert.ok(calls[0].q.includes(`"${C.consultAgreementSent}"`) && calls[0].q.includes(`"${C.squareConsultTxnId}"`), 'the list columns');
+    // 2026-11-04: the email column is read ONLY to know whether there is one — the copy keeps yes/no, never the address.
+    assert.ok(leads.every((l) => !('email' in l) && l.hasEmail === false), 'no address kept; these rows have no email');
     assert.equal(calls[1].v.cursor, 'c1');
     assert.deepEqual(leads.map((l) => [l.id, l.fullName, l.bookingStatus, l.bookedSlot]), [['100', 'N0', 'Booked', '2026-10-20 11:00'], ['101', 'N1', 'Booked', '2026-10-20 11:00']]);
     assert.deepEqual(leads.map((l) => [l.outcome, l.outcomeChangedAt]), [['Follow-Up', '2026-10-16T03:30:00.123Z'], ['', '']], 'when the Outcome was last set (Monday\'s changed_at); an unreadable value is unknown, never a throw');

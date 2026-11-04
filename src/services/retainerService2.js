@@ -51,6 +51,31 @@ function esc(s) {
 // never depends on CloudConvert being up.
 function isV2() { return String(process.env.RETAINER_ENGINE || 'v1').trim().toLowerCase() === 'v2'; }
 
+/** Does this master template print the client's address? (pa / pa-inviter / consult do; employer does not.) */
+function agreementPrintsAddress(template) { return String(template || '') !== 'employer'; }
+
+/**
+ * Can the agreement go out to this lead at all? Asked BEFORE anything changes
+ * ("Retain & send" used to set the Outcome and build the PDF, then find no email).
+ * @returns {string} '' when fine, else the plain reason for staff
+ */
+function sendBlocker(lead) {
+  if (!String((lead && lead.email) || '').trim()) {
+    return 'There is no email address for this client — the retainer agreement is sent by email. Add the client’s email on the lead page first. Nothing was changed.';
+  }
+  if (isV2()) {
+    let template = '';
+    try {
+      const pb = require('./retainerPlanBuilder');
+      template = pb.buildRetainerPlan(lead, pb.overridesFromLead(lead)).template || '';
+    } catch (_) { template = lead.selectedTemplate || ''; }
+    if (agreementPrintsAddress(template) && !String(lead.residentialAddress || '').trim()) {
+      return 'The client’s residential address is missing — it is printed on the retainer agreement. Add it on the lead page first. Nothing was changed.';
+    }
+  }
+  return '';
+}
+
 const _pdfCache = new Map(); // leadId → PDF Buffer (fast path; lost on restart)
 function cacheRetainerPdf(leadId, buf) {
   const key = String(leadId);
@@ -105,6 +130,13 @@ async function generateV2Pdf(lead) {
   if (!plan.ready) {
     const e = new Error(plan.warnings.join(' · ') || 'The retainer plan is not complete.');
     e.notReady = true; e.warnings = plan.warnings;
+    throw e;
+  }
+  // The address is optional on the walk-in form (2026-11-04), but the agreement prints it
+  // ("located at …"): never send one with a blank there. (A preview may still show it.)
+  if (agreementPrintsAddress(plan.template) && !String(lead.residentialAddress || '').trim()) {
+    const msg = 'The client’s residential address is missing — it is printed on the retainer agreement. Add it on the lead page.';
+    const e = new Error(msg); e.notReady = true; e.warnings = [msg];
     throw e;
   }
   return require('./retainerDocService').generate({
@@ -420,6 +452,20 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false, 
     return { status: 'no-fee' };
   }
 
+  // Invariant: mark retainerSent (the idempotency lock) ONLY when the agreement
+  // was actually DELIVERED. A no-email lead or a failed send must NOT lock the
+  // lead — otherwise the guard above blocks every retry and the client silently
+  // never gets the agreement. Both non-delivery paths post a VISIBLE staff note.
+  // Checked BEFORE the v2 PDF is built (2026-11-04): a client with no email used
+  // to cost a PDF conversion on every try.
+  if (!String(lead.email || '').trim()) {
+    console.warn(`[Retainer2] No email on file for lead ${leadId} — agreement NOT sent`);
+    await postLeadNote(leadId,
+      `⚠ <b>Retainer agreement not sent — no client email on file.</b> Add the client's email on the lead page, ` +
+      `then click “Retain &amp; send agreement” again (or re-set the Outcome to "Retain").`);
+    return { status: 'no-email' };
+  }
+
   // v2: the agreement is the real-template PDF built from the consultant's saved
   // plan. Hold the send until the plan is READY, and pre-generate + cache the PDF
   // now so the client's view is instant and CloudConvert-independent. Either gate
@@ -451,18 +497,6 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false, 
   // if that fails, the link is as before (the Documenso path does not use it).
   const token = String(lead.leadToken || '').trim() || await require('./leadTokenService').ensureToken(leadId).catch(() => '');
   const url = `${RENDER_URL}/retainer/${leadId}?t=${encodeURIComponent(token)}`;
-
-  // Invariant: mark retainerSent (the idempotency lock) ONLY when the agreement
-  // was actually DELIVERED. A no-email lead or a failed send must NOT lock the
-  // lead — otherwise the guard above blocks every retry and the client silently
-  // never gets the agreement. Both non-delivery paths post a VISIBLE staff note.
-  if (!lead.email) {
-    console.warn(`[Retainer2] No email on file for lead ${leadId} — agreement NOT sent`);
-    await postLeadNote(leadId,
-      `⚠ <b>Retainer agreement not sent — no client email on file.</b> Add the client's email and re-set ` +
-      `the Outcome to "Retain" to send. The agreement link: <a href="${esc(url)}">${esc(url)}</a>`);
-    return { status: 'no-email' };
-  }
 
   // ── e-signature path (Documenso) ──
   // When enabled, send the agreement for in-browser signature instead of the
@@ -820,4 +854,4 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
   }
 }
 
-module.exports = { onOutcomeRetain, maybeSendRetainerAgreement, voidAndReissueRetainer, buildRetainerPdf, getRetainerDocument, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents, retainerSigners };
+module.exports = { onOutcomeRetain, maybeSendRetainerAgreement, sendBlocker, agreementPrintsAddress, voidAndReissueRetainer, buildRetainerPdf, getRetainerDocument, onRetainerSigned, maybeSendRetainerPaymentLink, feeToCents, retainerSigners };

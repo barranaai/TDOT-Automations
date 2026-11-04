@@ -73,6 +73,10 @@ function classifyMatch(input, candidate) {
   if (nameMatch) reasons.push('same name');
 
   if (emailMatch && nameMatch && !dobConflict) return { confidence: 'exact', reasons };
+  // A client with NO email (a phone-only walk-in, 2026-11-04): the same phone AND the
+  // same name is the same person — else every case of theirs minted a new account.
+  // Only when the looked-up person has no email: with one, the email decides.
+  if (!normalizeEmail(input.email) && phoneMatch && nameMatch && !dobConflict) return { confidence: 'exact', reasons };
   if (dobConflict) reasons.push('DIFFERENT date of birth — likely two people (Sr/Jr)');
   if (emailMatch && !nameMatch) reasons.push('different name — shared family email or a name change; verify identity');
   if (!emailMatch && phoneMatch) reasons.push('phone-only match — weak signal');
@@ -157,7 +161,7 @@ const _inFlight = new Map();
 async function findOrCreate({ email, phone, fullName, residentialAddress, dob, source } = {}) {
   const cfg = loadBoard();
   if (!cfg) return null;
-  const key = `${normalizeEmail(email)}|${normName(fullName)}`;
+  const key = `${normalizeEmail(email) || `phone:${normalizePhone(phone)}`}|${normName(fullName)}`;
   if (_inFlight.has(key)) return _inFlight.get(key);
 
   const work = (async () => {

@@ -44,6 +44,8 @@ const SNAPSHOT_KEYS = [
   'confirmedCaseType', 'serviceRequired', 'whatDoYouWant', 'deadlineDate', 'removalOrder', 'enforcementLetter',
   'relationshipWithTdot', 'existingFileType', 'assignedConsultant', 'leadOwner', 'bookingInvite', 'inviteSentAt',
   'referredBy',   // the Leads list's "Referred By" column (2026-11-04)
+  'email',        // ONLY to know whether there is one: kept as hasEmail, the address itself is dropped (2026-11-04)
+  'walkInSource', // a walk-in's real source / reference (Retainers list; 2026-11-04)
 ];
 const SNAPSHOT_IDS = SNAPSHOT_KEYS.map((k) => COLS[k]).filter(Boolean);
 
@@ -82,6 +84,10 @@ const io = {
         let at = '';
         try { at = String((oc && oc.value && JSON.parse(oc.value).changed_at) || ''); } catch (_) { /* unreadable value — unknown */ }
         lead.outcomeChangedAt = at;
+        // The lists are lists, not records: the copy keeps whether the client HAS an email
+        // (the "No email" markers, 2026-11-04) — never the address.
+        lead.hasEmail = !!String(lead.email || '').trim();
+        delete lead.email;
         out.push(lead);
       }
       cursor = page.cursor || null;

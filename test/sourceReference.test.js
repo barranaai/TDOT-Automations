@@ -220,7 +220,8 @@ test('linking a lead as a direct retainer client keeps a saved Referred By; fill
       stub(mondayApi, 'query', async (q, v) => { if (/create_update/.test(q)) notes.push(v.b); return {}; }),
     ];
     try {
-      await portal.createDirectClient({ fullName: 'Same Person', email: 'dup@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: 'Shermin Teymouri Mofrad', linkLeadId: '300', referredBy });
+      // A referral source (2026-11-04: the walk-in form's Referred By follows the Source / Reference picker).
+      await portal.createDirectClient({ sourceChannel: 'Client Referral', notes: 'Needs a work permit — quoted $2,500.', fullName: 'Same Person', email: 'dup@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: 'Shermin Teymouri Mofrad', linkLeadId: '300', referredBy });
       return { f: updates.find((u) => u.id === '300').f, notes };
     } finally { restore.reverse().forEach((x) => x()); }
   };

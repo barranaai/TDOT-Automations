@@ -308,14 +308,14 @@ test('Direct client (retained at creation): a hit with no choice answers 409 wit
     stub(require('../src/services/handoffService'), 'openCaseEarly', async () => '555'),
     stub(mondayApi, 'query', async (q, vars) => { if (/create_update/.test(q)) notes.push(vars.b); return {}; }),
   ];
-  const body = { fullName: 'Walkin Client', email: 'walkin@example.com', phone: '+1 416 555 0100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT };
+  const body = { fullName: 'Walkin Client', email: 'walkin@example.com', phone: '+1 416 555 0100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT, sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.' };
   try {
     await assert.rejects(portal.createDirectClient(body), (e) => e.conflict === true && e.blacklist.hit === true && e.blacklist.matchedOn === 'phone' && /Not Wanted list/.test(e.message));
     // review 2026-10-15: "create anyway" / link chosen in the duplicate panel is NOT the acknowledgement — the warning must be seen
-    await assert.rejects(portal.createDirectClient({ ...body, allowDuplicate: true }), (e) => e.conflict === true && e.blacklist.hit === true);
-    await assert.rejects(portal.createDirectClient({ ...body, linkLeadId: '123' }), (e) => e.conflict === true && e.blacklist.hit === true);
+    await assert.rejects(portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', ...body, allowDuplicate: true }), (e) => e.conflict === true && e.blacklist.hit === true);
+    await assert.rejects(portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', ...body, linkLeadId: '123' }), (e) => e.conflict === true && e.blacklist.hit === true);
     assert.equal(created, 0);
-    const r = await portal.createDirectClient({ ...body, allowDuplicate: true, blacklistAck: true });
+    const r = await portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', ...body, allowDuplicate: true, blacklistAck: true });
     assert.equal(r.ok, true); assert.equal(r.leadId, '900'); assert.equal(r.blacklist.hit, true);
     assert.ok(notes.some((b) => /⛔ <b>On the Not Wanted list — matched by phone: Alpha — fraud \(added by Shafoli Kapur on 2026-10-02\)\.<\/b> Staff saw the warning and created this direct retainer client anyway\./.test(b)), notes.join('\n'));
   } finally { restore.reverse().forEach((x) => x()); bl._reset(); }

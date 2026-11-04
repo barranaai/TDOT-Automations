@@ -173,7 +173,31 @@ async function findClientMasterByEmailAndName(email, fullName, { preferShell = f
     const g = (colId) => (((it && it.column_values) || []).find((c) => c.id === colId) || {}).text || '';
     return { id: String(it.id), name: it.name || '', caseRef: g(CM.caseRef), caseType: g(CM.caseType), caseStage: g(CM.caseStage), paymentStatus: g(CM.paymentStatus) };
   };
-  const matches = items.filter((it) => normName(it.name) === wanted).map(parse);
+  return chooseSamePerson(items.filter((it) => normName(it.name) === wanted).map(parse), { preferShell });
+}
+
+/**
+ * The same person for a client with NO email (phone-only walk-ins, 2026-11-04):
+ * the case's "Client Contact Number" + the SAME name. A shared family phone under
+ * a different name is a different person, exactly like a shared email.
+ */
+async function findClientMasterByPhoneAndName(phone, fullName, { preferShell = false } = {}) {
+  if (!phoneColValue(phone)) return null;
+  const wanted = normName(fullName);
+  if (!wanted) return null;
+  const rows = await require('./clientMasterService').findCasesByPhone(phone);
+  return chooseSamePerson((rows || []).filter((r) => normName(r.name) === wanted)
+    .map((r) => ({ id: String(r.id), name: r.name || '', caseRef: r.caseRef || '', caseType: r.caseType || '', caseStage: r.caseStage || '', paymentStatus: r.paymentStatus || '' })), { preferShell });
+}
+
+/** The person's existing case: by email + name when there is an email, else by phone + name. */
+function findClientMasterSamePerson(lead, opts = {}) {
+  const email = String((lead && lead.email) || '').trim();
+  if (email) return findClientMasterByEmailAndName(email, lead.fullName, opts);
+  return findClientMasterByPhoneAndName(lead && lead.phone, lead && lead.fullName, opts);
+}
+
+function chooseSamePerson(matches, { preferShell = false } = {}) {
   if (!matches.length) return null;
   // Once a person can have MULTIPLE cases, prefer an early SHELL among the
   // matches (crash/double-submit recovery must find the shell it should
@@ -417,14 +441,18 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
   // map → defer-to-staff with a note), so requiring caseTypeInterest (which only
   // the public intake form sets) would wrongly block a staff-created or
   // confirmedCaseType-only lead from ever getting a Client Master case.
-  const missing = ['email'].filter((k) => !lead[k]);
+  // An email OR a usable phone (2026-11-04: walk-ins may come with a phone only —
+  // the case opens; the missing email is flagged to staff, and the retainer waits for it).
+  const missing = [];
+  if (!String(lead.email || '').trim() && !phoneColValue(lead.phone)) missing.push('email or phone');
   if (!lead.fullName || lead.fullName === lead.id) missing.push('fullName');
   if (missing.length) throw new Error(`Lead ${leadId} missing required field(s) for handoff: ${missing.join(', ')}`);
 
   // Pre-create dedup: the SAME person may already have a case (lost Lead link).
-  // Matched on email AND name so a shared family email never merges two matters.
+  // Matched on email AND name (phone AND name when there is no email) so a shared
+  // family email or phone never merges two matters.
   const multiCase = require('../../config/features').clientMultiCaseEnabled;
-  const existing = await findClientMasterByEmailAndName(lead.email, lead.fullName, { preferShell: multiCase });
+  const existing = await findClientMasterSamePerson(lead, { preferShell: multiCase });
   // A returning client's SECOND application must get a NEW case — reusing a
   // progressed case would overwrite it (caseType reset, stage clobbered).
   // Reuse stays for what it was built for: crash/double-submit recovery of an
@@ -497,7 +525,7 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
   // presigned (direct retainer, case-first): Payment Status stays EMPTY — the
   // client hasn't signed anything yet; ensureSignedState() stamps it at signing.
   const createCols = {
-    [CM.clientEmail]:   lead.email,
+    ...(String(lead.email || '').trim() ? { [CM.clientEmail]: lead.email } : {}),
     ...(presigned ? {} : { [CM.paymentStatus]: { label: 'Signed (Unpaid)' } }),
     [CM.caseStage]:     { label: 'Pre-Onboarding' },
   };
@@ -754,6 +782,6 @@ async function openCaseEarly({ leadId }) {
   try { return await p; } finally { _inFlight.delete(key); }
 }
 
-module.exports = { onRetainerSigned, openCaseEarly, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, normName, decideCaseReuse, stampClientAccount, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone,
+module.exports = { onRetainerSigned, openCaseEarly, findClientMasterSamePerson, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, normName, decideCaseReuse, stampClientAccount, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone,
   // Exported for tests: the bounded wait that keeps a client to ONE folder.
   ensureLeadFolderNow, leadFolderWaitMs };

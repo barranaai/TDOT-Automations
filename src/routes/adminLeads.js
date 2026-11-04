@@ -14,6 +14,7 @@ const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 const { leadsTableScript, LEADS_TABLE_CSS } = require('./leadsTableFilters');
 const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // Source / Reference second question (2026-11-04)   // header filters + sorting on the Leads list
+const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   // Shafoli's screenshot attachments (2026-11-04)
 const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const router  = express.Router();
@@ -86,6 +87,7 @@ function buildLeadsQueueHTML() {
   ${DELETE_UI_CSS}
   ${BLACKLIST_UI_CSS}
   ${REFERRAL_CSS}
+  ${ATTACH_CSS}
 </style></head><body>
 ${buildNavHeader('leads')}
 <main class="wrap">
@@ -118,7 +120,7 @@ ${buildNavHeader('leads')}
         <label class="al-l" for="al-casetype">Case type interest</label>
         <select id="al-casetype"><option value="">— not sure yet —</option></select>
         <label class="al-l" for="al-note">Note</label>
-        <textarea id="al-note" rows="3" maxlength="2000" placeholder="What they told us on the call…"></textarea>
+        <textarea id="al-note" rows="3" maxlength="2000" placeholder="What they told us on the call…"></textarea>${attachFieldHtml('al')}
         <div id="al-matches" style="display:none;background:#fff4e5;border:1px solid #f0c98a;border-radius:8px;padding:10px 12px;margin-top:12px;font-size:13px;color:#7a4b00"></div>
         <div id="al-err" style="color:#c0392b;font-size:13px;margin-top:10px"></div>
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
@@ -174,8 +176,10 @@ function renderRows(rows){
     // Non-booking intent ("Request quote", "Existing file update", …) — visible
     // before anyone opens the lead and reaches for the booking invite.
     var wants=(c.wantsTo&&c.wantsTo!=='Book consultation')?(' '+qpill('amber',c.wantsTo)):'';
+    /* No email (2026-11-04): the booking invite and the retainer go by email — visible without opening the lead. */
+    var noEmail=(c.hasEmail===false)?' <span class="pill amber" title="No email address — the booking invite and the retainer agreement cannot be emailed until one is added">No email</span>':'';
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
-      '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+urgent+wants+'</td>'+
+      '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+urgent+wants+noEmail+'</td>'+
       '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
       '<td>'+escHtml(c.source||'—')+(c.owner?'<div class="muted" style="font-size:11.5px">Owner: '+escHtml(c.owner)+'</div>':'')+'</td>'+
       '<td class="ref-by">'+(c.referredBy?escHtml(c.referredBy):'<span class="muted">—</span>')+'</td>'+
@@ -213,6 +217,8 @@ function load(){
 ${REFERRAL_UI_JS}
 var AL_ALLOW=false, AL_SIGNED=false;
 var AL_REF=tdotRef('al');   /* Source / Reference second question: which employee / which client (2026-11-04) */
+${ATTACH_UI_JS}
+var AL_ATT=tdotAttach('al');   /* "Attach a screenshot": shows only for the staff allowed to (Shafoli), signed in with Monday */
 function alEl(id){ return document.getElementById(id); }
 function alLoc(){ var r=document.querySelector('input[name="al-incanada"]:checked'); return r?r.value:''; }
 function alOpen(){
@@ -223,6 +229,7 @@ function alOpen(){
   alEl('al-country').value=''; alEl('al-country-row').style.display='none'; alEl('al-addedby').value='';
   alEl('al-source').value='';   /* the source is a real choice each time — no carried-over pick */
   AL_REF.reset();
+  AL_ATT.reset();
   TDOT_BL.viewer=null;   /* re-check the Monday sign-in every time (the session lasts 8 h; the page may be open longer) */
   AL_SIGNED=false; alEl('al-addedby-row').style.display=''; alEl('al-signedin').style.display='none';
   tdotBlViewer(function(v){
@@ -256,6 +263,7 @@ function alSubmit(){
   if(!body.sourceChannel){ err.textContent='Choose the source / reference.'; alEl('al-source').focus(); return; }
   var refErr=AL_REF.check(); if(refErr){ err.textContent=refErr; AL_REF.focus(); return; }
   if(body.inCanada==='No' && !body.currentCountry){ err.textContent='Choose the country the client is in now (or leave "In Canada now?" unanswered).'; alEl('al-country').focus(); return; }
+  var attErr=AL_ATT.check(); if(attErr){ err.textContent=attErr; return; }
   if(AL_ALLOW) body.allowDuplicate=true;
   var key=getKey(); if(!key) return;
   var btn=alEl('al-create'); btn.disabled=true; btn.textContent='Creating…';
@@ -281,7 +289,14 @@ function alSubmit(){
         if(/Added by/.test(String(res.j.error||''))){ AL_SIGNED=false; TDOT_BL.viewer=null; alEl('al-addedby-row').style.display=''; alEl('al-signedin').style.display='none'; }
         err.textContent=res.j.error||('HTTP '+res.s); return;
       }
-      window.location.href='/admin/lead/'+encodeURIComponent(res.j.leadId);
+      /* The lead exists: attach the chosen files now (a failed file never undoes the lead), then open it. */
+      var go=function(){ window.location.href='/admin/lead/'+encodeURIComponent(res.j.leadId); };
+      if(!AL_ATT.files().length) return go();
+      btn.textContent='Attaching…';
+      return AL_ATT.upload(res.j.leadId).then(function(o){
+        if(o.failed.length) window.alert('The lead was created. '+o.failed.length+' file(s) were not attached — add them from the lead page:'+String.fromCharCode(10)+o.failed.map(function(x){ return '• '+x.name+' — '+x.error; }).join(String.fromCharCode(10)));
+        go();
+      });
     })
     .catch(function(){ err.textContent='Network error — the lead may or may not have been created. Check the leads list before retrying to avoid a duplicate.'; })
     .finally(function(){ btn.disabled=false; btn.textContent='Create lead'; });
@@ -357,8 +372,12 @@ function buildLeadDetailHTML(leadId) {
   /* urgency banner */
   ${BLACKLIST_UI_CSS}
   ${REFERRAL_CSS}
+  ${ATTACH_CSS}
   .alert { background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; border-radius:var(--r); padding:12px 16px; font-size:13px; font-weight:700; margin-bottom:14px; display:flex; gap:9px; align-items:flex-start; }
   .alert svg { font-size:16px; flex:none; margin-top:1px; }
+  /* "No email" caution (2026-11-04): amber, not the red "review urgently" */
+  .alert.amber { background:#fffbeb; border-color:#fde68a; color:#92400e; font-weight:500; }
+  .alert.amber b { font-weight:700; }
 
   /* two-column working area — info leads, actions support */
   .cols { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:16px; align-items:start; }
@@ -426,6 +445,7 @@ ${buildNavHeader('leads')}
 
     <div id="c-alert"></div>
     <div id="bl-banner"></div>
+    <div id="email-warn"></div>
 
     <div class="cols">
       <div class="col">
@@ -441,6 +461,9 @@ ${buildNavHeader('leads')}
           <div class="al-hint" id="bd-lock" style="display:none;margin-top:8px"></div>
           <div style="margin-top:10px"><button class="btn" id="btn-bd-save" type="button">Save details</button></div>
           <div id="bd-msg" class="act-msg"></div>
+        </div>
+        <div class="card" id="la-att-card" style="display:none"><div class="card-t">${I.clip} Attachments <span class="muted">(staff only — saved in the client’s folder)</span></div>${attachFieldHtml('la')}
+          <div style="margin-top:8px"><button class="btn" id="btn-la-att" type="button">Attach</button></div>
         </div>
         <div class="card"><div class="card-t">${I.clip} Their inquiry <button class="btn tbtn" id="btn-inq-edit" type="button" title="Edit the inquiry text">Edit</button></div>
           <div id="c-inquiry"></div>
@@ -605,6 +628,10 @@ function render(d){
   document.getElementById('c-alert').innerHTML=(d.flags||[]).length
     ? '<div class="alert">'+ICONS.flag+'<div>'+d.flags.map(function(f){return escHtml(f);}).join(' · ')+' — review urgently</div></div>' : '';
 
+  // No email (2026-11-04: an email OR a phone is enough to add a client): say plainly what cannot go out.
+  document.getElementById('email-warn').innerHTML=String(d.email||'').trim() ? ''
+    : '<div class="alert amber" role="status">'+ICONS.flag+'<div><b>No email address on file.</b> The booking invite, the retainer agreement, payment links and receipts are sent by email, so the system can'+String.fromCharCode(8217)+'t send them to this client. Add the client'+String.fromCharCode(8217)+'s email in <b>Basic details</b> below'+(d.phone?' (phone: '+escHtml(d.phone)+')':'')+'.</div></div>';
+
   // The Not Wanted list (point 5): the staff-only warning under the header; named admins get "Remove from the list…".
   (function(){
     var el=document.getElementById('bl-banner'); if(!el) return;
@@ -645,7 +672,8 @@ function render(d){
   Array.prototype.forEach.call(document.querySelectorAll('.obtn'),function(b){ b.classList.toggle('active', b.getAttribute('data-outcome')===(d.outcome||'')); });
   if(d.consultant) st+=kv('Consultant', d.consultant);
   st+=kv('Source / Reference', d.sourceChannel||'—');
-  if(d.referredBy && tdotRefKind(d.sourceChannel)) st+=kv('Referred by', d.referredBy);
+  if(d.walkInSource) st+=kv('Walk-in source', d.walkInSource);
+  if(d.referredBy && (tdotRefKind(d.sourceChannel) || tdotRefKind(d.walkInSource))) st+=kv('Referred by', d.referredBy);
   if(d.originalChannel) st+=kv('Original channel', d.originalChannel);
   st+=kv('Lead owner', d.leadOwner||'Not set');
   if(d.caseTypeInterest && d.caseTypeInterest!==d.service) st+=kv('Case type interest', d.caseTypeInterest);
@@ -819,15 +847,33 @@ function load(){
 var BD_DIRTY=false, BD_TYPES=null, INQ_TEXT='';
 ${REFERRAL_UI_JS}
 var BD_REF=tdotRef('bd', function(){ BD_DIRTY=true; });   /* Source / Reference second question (2026-11-04) */
+${ATTACH_UI_JS}
+/* Attachments (2026-11-04): only for the staff allowed to (Shafoli), signed in with Monday — the card stays hidden for everyone else. */
+var LA_ATT=tdotAttach('la');
+LA_ATT.ready.then(function(ok){ var c=document.getElementById('la-att-card'); if(c) c.style.display=ok?'':'none'; });
+document.getElementById('btn-la-att').onclick=function(){
+  var b=this, e=LA_ATT.check();
+  if(e){ LA_ATT.setStatus(e,'err'); return; }
+  if(!LA_ATT.files().length){ LA_ATT.setStatus('Choose a file first.','err'); return; }
+  b.disabled=true;
+  LA_ATT.upload(LEAD_ID).then(function(o){
+    b.disabled=false;
+    if(!o.failed.length){ LA_ATT.reset(); LA_ATT.setStatus(o.sent+' attached — the link is in the updates below.','ok'); }
+    var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r();
+  });
+};
 var BD_LOADED={ src:'', ref:'', email:'', phone:'' };
 function bdEl(id){ return document.getElementById('bd-'+id); }
 function bdOption(sel,val){ if(val && ![].some.call(sel.options,function(o){ return o.value===val; })){ var o=document.createElement('option'); o.value=val; o.textContent=val; sel.appendChild(o); } }
 function hydrateBasic(d){
   var caseOpen=!!d.clientMasterItemId, direct=!!d.directRetainer;
-  ['name','email','phone'].forEach(function(k){ bdEl(k).readOnly=caseOpen; });
+  /* With a case the name, email and phone are locked — except an EMPTY email or phone, which can still be added (it goes on the case too). */
+  bdEl('name').readOnly=caseOpen;
+  bdEl('email').readOnly=caseOpen && !!String(d.email||'').trim();
+  bdEl('phone').readOnly=caseOpen && !!String(d.phone||'').trim();
   bdEl('source').disabled=direct;
   var lock=bdEl('lock');
-  lock.textContent=caseOpen?'This lead has a case — change the name, email or phone on the case page, so the case and its emails use the right details.':(direct?'A direct-retainer client stays "Direct Retainer".':'');
+  lock.textContent=caseOpen?('This lead has a case — its name, email and phone can no longer be changed here'+((!String(d.email||'').trim()||!String(d.phone||'').trim())?' (an empty email or phone can still be added, and goes on the case too)':'')+'. Ask an admin to correct them on the case in Monday.'):(direct?'A direct-retainer client stays "Direct Retainer".':'');
   lock.style.display=lock.textContent?'':'none';
   if(BD_DIRTY) return;
   bdEl('name').value=d.name||''; bdEl('email').value=d.email||''; bdEl('phone').value=d.phone||'';

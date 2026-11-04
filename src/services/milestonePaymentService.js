@@ -340,7 +340,9 @@ async function sendMilestoneEtransferRequest(leadId, index) {
         b: `📧 <b>E-transfer request ${reIssue ? 're-issued' : 'sent'}</b> — ${esc(row.label)} (${esc(dollars)})<br>` +
               (reIssue ? `This milestone originally went out via the old Square flow with no e-Transfer details — this replaces it. ` : '') +
               `Client asked to e-transfer to <b>${esc(ETRANSFER_EMAIL)}</b>, reference <b>${esc(reference)}</b>. ` +
-              `Emailed to ${esc(lead.email || '(no email on lead)')}. Record it as paid here once the e-transfer arrives.` });
+              (String(lead.email || '').trim()
+                ? `Emailed to ${esc(lead.email)}. Record it as paid here once the e-transfer arrives.`
+                : `<b>NOT emailed — there is no client email.</b> Give the client these e-transfer details yourself, then record it as paid here once it arrives.`) });
 
     return { ok: true, amount, label: row.label, reference };
   } finally { _reqInFlight.delete(key); }

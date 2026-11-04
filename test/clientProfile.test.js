@@ -116,7 +116,7 @@ test('createDirectClient: previousCaseRef stamped and the family roster carried 
     ] })),
   ];
   try {
-    const r = await portal.createDirectClient({
+    const r = await portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.',
       fullName: 'Jane Doe', email: 'jane-new-app@x.com', phone: '4165550100',
       residentialAddress: '9 New St, Toronto', caseType: CASE_TYPE,
       consultant: 'Shermin Teymouri Mofrad', profileSourceCaseRef: '2026-VV-100',

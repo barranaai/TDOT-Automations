@@ -189,7 +189,7 @@ test('convert to direct retainer: the original channel is kept in its own column
       stub(mondayApi, 'query', async () => ({})),
     ];
     try {
-      await portal.createDirectClient({ fullName: 'Same Person', email: 'dup@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: 'Shermin Teymouri Mofrad', linkLeadId: '300' });
+      await portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', fullName: 'Same Person', email: 'dup@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: 'Shermin Teymouri Mofrad', linkLeadId: '300' });
       return updates.find((u) => u.id === '300').f;
     } finally { restore.reverse().forEach((x) => x()); }
   };

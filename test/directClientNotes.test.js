@@ -44,7 +44,7 @@ const noteBodies = (w) => w.posts.filter((p) => /\[Note/.test(p.b));
 test('the note lands on the client\'s lead row AND on the case, after the "created" note, with the signed-in name', async () => {
   const w = world();
   try {
-    const r = await portal.createDirectClient({ ...BODY, notes: '  Needs a study permit extension.\r\nBrings passport Monday. <b>urgent</b>  ' },
+    const r = await portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', ...BODY, notes: '  Needs a study permit extension.\r\nBrings passport Monday. <b>urgent</b>  ' },
       { actor: { name: 'Gauri Sharma', verified: true } });
     assert.equal(r.notesSaved, 2);
     const n = noteBodies(w);
@@ -56,16 +56,15 @@ test('the note lands on the client\'s lead row AND on the case, after the "creat
   } finally { w.done(); }
 });
 
-test('no notes typed → nothing extra posted; no sign-in → no name; no case yet → the lead row only', async () => {
+test('notes are REQUIRED (2026-11-04) → a blank one is refused before anything is created; no sign-in → no name; no case yet → the lead row only', async () => {
   let w = world();
   try {
-    const r = await portal.createDirectClient({ ...BODY, notes: '   ' });
-    assert.equal(r.notesSaved, 0);
-    assert.equal(noteBodies(w).length, 0);
+    await assert.rejects(portal.createDirectClient({ sourceChannel: 'Phone', ...BODY, notes: '   ' }), (e) => e.badRequest === true && /Add a note/.test(e.message));
+    assert.equal(w.posts.length, 0, 'nothing created, nothing posted');
   } finally { w.done(); }
   w = world({ caseId: '' });
   try {
-    await portal.createDirectClient({ ...BODY, notes: 'Walk-in, referred by a friend.' }, { actor: { name: 'Shared key', verified: false } });
+    await portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', ...BODY, notes: 'Walk-in, referred by a friend.' }, { actor: { name: 'Shared key', verified: false } });
     assert.deepEqual(noteBodies(w).map((p) => [p.id, p.b]), [['900', '📝 <b>[Note]</b> Walk-in, referred by a friend.']]);
   } finally { w.done(); }
 });
@@ -74,7 +73,7 @@ test('a re-submit (lost response, double click) never posts the note twice', asy
   const w = world({ reusable: { id: '777', fullName: 'Walkin Client', email: 'walkin@example.com', sourceChannel: 'Direct Retainer', confirmedCaseType: CASE_TYPE, clientMasterItemId: '556' },
     existingUpdates: [{ text_body: '📝 [Note · Gauri Sharma] Needs a study permit extension. Brings passport Monday.' }] });
   try {
-    const r = await portal.createDirectClient({ ...BODY, notes: 'Needs a study permit extension.\nBrings passport Monday.' }, { actor: { name: 'Gauri Sharma', verified: true } });
+    const r = await portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', ...BODY, notes: 'Needs a study permit extension.\nBrings passport Monday.' }, { actor: { name: 'Gauri Sharma', verified: true } });
     assert.equal(r.reused, true);
     assert.equal(r.notesSaved, 0);
     assert.equal(noteBodies(w).length, 0);
@@ -82,7 +81,7 @@ test('a re-submit (lost response, double click) never posts the note twice', asy
   // the reused client WITHOUT the note yet (the first submit died before posting) → posted now, on its case too
   const w2 = world({ reusable: { id: '777', fullName: 'Walkin Client', email: 'walkin@example.com', sourceChannel: 'Direct Retainer', confirmedCaseType: CASE_TYPE, clientMasterItemId: '556' } });
   try {
-    await portal.createDirectClient({ ...BODY, notes: 'Needs a study permit extension.' });
+    await portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', ...BODY, notes: 'Needs a study permit extension.' });
     assert.deepEqual(noteBodies(w2).map((p) => p.id), ['777', '556']);
   } finally { w2.done(); }
 });
@@ -91,7 +90,7 @@ test('linking an existing lead posts the note on that lead and its new case', as
   const w = world({ caseId: '558' });
   const r1 = stub(leadService, 'getLead', async (id) => ({ id, fullName: 'Walkin Client', email: 'walkin@example.com', sourceChannel: 'Phone' }));
   try {
-    const r = await portal.createDirectClient({ ...BODY, linkLeadId: '300', notes: 'Converted from a phone lead.' });
+    const r = await portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', ...BODY, linkLeadId: '300', notes: 'Converted from a phone lead.' });
     assert.equal(r.linked, true);
     assert.deepEqual(noteBodies(w).map((p) => p.id), ['300', '558']);
   } finally { r1(); w.done(); }
@@ -101,14 +100,14 @@ test('a note that fails on the case never undoes the client (best-effort)', asyn
   const w = world({ failOn: '555' });
   const warn = console.warn; console.warn = () => {};
   try {
-    const r = await portal.createDirectClient({ ...BODY, notes: 'x' });
+    const r = await portal.createDirectClient({ sourceChannel: 'Phone', ...BODY, notes: 'Quoted $900' });
     assert.equal(r.ok, true); assert.equal(r.leadId, '900'); assert.equal(r.notesSaved, 1);
   } finally { console.warn = warn; w.done(); }
 });
 
-test('the popup: a Notes box (optional), cleared on open, sent with the form; the route passes the signed-in person', () => {
+test('the popup: a Notes box (required since 2026-11-04), cleared on open, sent with the form; the route passes the signed-in person', () => {
   const html = require('../src/routes/adminConsultation').buildQueueHTML ? require('../src/routes/adminConsultation').buildQueueHTML() : require('fs').readFileSync(require.resolve('../src/routes/adminConsultation'), 'utf8');
-  for (const x of ['<label for="dc-notes">Notes', '<textarea id="dc-notes" rows="3" maxlength="2000"', "'dc-referred','dc-notes'].forEach(", "notes:dcEl('dc-notes').value"]) assert.ok(html.includes(x), x);
+  for (const x of ['<label for="dc-notes">Notes *', '<textarea id="dc-notes" rows="3" maxlength="2000"', "'dc-address','dc-notes'].forEach(", "notes:dcEl('dc-notes').value"]) assert.ok(html.includes(x), x);
   const server = require('fs').readFileSync(require.resolve('../src/server'), 'utf8');
   assert.ok(server.includes("createDirectClient(req.body || {}, { actor: staffActor(req, '') })"));
 });

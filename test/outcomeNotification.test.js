@@ -14,7 +14,7 @@ function fresh({ lead = { id: '1', fullName: 'Kamalpreet Kaur', outcome: '', con
   set('../src/services/mondayApi', { query: async (q, v) => { if (q.includes('create_update')) calls.updates.push(v.b); return {}; } });
   const realLead = require('../src/services/leadService');
   set('../src/services/leadService', { ...realLead, getLead: async () => lead, updateLead: async (id, u) => { calls.leadWrites.push(u); } });
-  set('../src/services/retainerService2', { feeToCents: () => 250000, maybeSendRetainerAgreement: async () => ({ status: 'sent' }) });
+  set('../src/services/retainerService2', { feeToCents: () => 250000, sendBlocker: () => '', maybeSendRetainerAgreement: async () => ({ status: 'sent' }) });
   set('../src/services/microsoftMailService', { sendEmail: mail || (async (m) => { calls.mails.push(m); }) });
   const p = require.resolve('../src/services/consultantPortalService');
   delete require.cache[p];
@@ -87,7 +87,7 @@ test('both outcome writers notify: the outcome buttons and "Retain & send"', asy
   assert.equal(h.calls.mails.length, 0, 'no email when nothing actually changed');
 
   // "Retain & send" sets Retain → notifies too
-  h = fresh({ lead: { id: '1', fullName: 'K', outcome: 'Follow-Up', confirmedCaseType: 'Study Permit', selectedSubType: 'x', retainerFee: '2500', retainerSent: '', conversionStatus: '' } });
+  h = fresh({ lead: { id: '1', fullName: 'K', email: 'k@x.co', outcome: 'Follow-Up', confirmedCaseType: 'Study Permit', selectedSubType: 'x', retainerFee: '2500', retainerSent: '', conversionStatus: '' } });
   await withEnv('kamal@tdotimm.com', () => h.svc.applyAction({ leadId: '1', action: 'retainAndSend', value: '' }).catch(() => {}));
   assert.equal(h.calls.mails.length, 1, '"Retain & send" announces the outcome too');
   assert.match(h.calls.mails[0].subject, /Outcome: Retain/);

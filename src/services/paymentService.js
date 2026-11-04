@@ -289,8 +289,9 @@ async function sendRetainerPaymentLink(leadId, { amountCents, label } = {}) {
       { itemId: String(leadId),
         body: `💳 <b>Retainer payment link generated</b> (${esc(dollars)})<br>` +
               `<a href="${esc(url)}">${esc(url)}</a><br>` +
-              `Emailed to ${esc(lead.email || '(no email on lead)')} automatically. ` +
-              `If the client didn't receive it, this link can be re-shared — it stays valid until paid.` }
+              (String(lead.email || '').trim()
+                ? `Emailed to ${esc(lead.email)} automatically. If the client didn't receive it, this link can be re-shared — it stays valid until paid.`
+                : `<b>NOT emailed — there is no client email.</b> Share this link with the client yourself (WhatsApp / text); it stays valid until paid.`) }
     );
   } catch (err) {
     console.warn(`[Payment] Payment-link backup note failed for ${leadId}: ${err.message}`);
