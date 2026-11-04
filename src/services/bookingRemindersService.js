@@ -76,7 +76,6 @@ const failText  = (n) => `Booking reminder ${n} of 2 did not go out`;
 const copyText  = (n) => `Booking reminder ${n} of 2 was emailed from lead`;
 /** The address an invite note says it went to ('' when the note does not say). */
 const inviteAddress = (text) => { const m = /Booking invite emailed to (\S+@\S+?)\s+on\s/i.exec(String(text || '')); return m ? m[1].trim().toLowerCase() : ''; };
-const DIRECT_SOURCE = 'Direct Retainer';
 
 const s = (v) => String(v == null ? '' : v).trim();
 const normEmail = (v) => s(v).toLowerCase();
@@ -157,7 +156,7 @@ function progressReason(lead, now) {
   if (s(lead.consultPayment)) return 'the consultation fee is recorded or waived';
   if (s(lead.outcome)) return `the Outcome is set (${s(lead.outcome)})`;
   if (s(lead.conversionStatus) === 'Retained') return 'retained';
-  if (s(lead.sourceChannel) === DIRECT_SOURCE || s(lead.retainerSent) || s(lead.retainerSigned) || s(lead.retainerPaid)) return 'a retainer is under way';
+  if (require('../utils/directClient').isDirectClient(lead) || s(lead.retainerSent) || s(lead.retainerSigned) || s(lead.retainerPaid)) return 'a retainer is under way';
   if (s(lead.clientMasterItemId)) return 'a case is open';
   return '';
 }

@@ -43,15 +43,17 @@ function createWorld({ caseId = 'CM-1', byPhone = [] } = {}) {
   return { calls, done: () => restore.reverse().forEach((r) => r()) };
 }
 
-test('a phone-only walk-in is created (no email, no address): source + referrer saved in their own columns, a "No email yet" line in the note', async () => {
+test('a phone-only walk-in is created (no email, no address): the real source in Source / Reference, the "Direct Retainer Client" marker, the referrer; a "No email yet" line in the note', async () => {
   const w = createWorld();
   try {
     const r = await portal.createDirectClient(PHONE_ONLY);
     assert.equal(r.ok, true); assert.equal(r.caseOpened, true);
     assert.equal(w.calls.created[0].email, '', 'no email written');
-    assert.equal(w.calls.created[0].sourceChannel, 'Direct Retainer', 'Source / Reference keeps the Direct Retainer marker');
+    assert.equal(w.calls.created[0].sourceChannel, 'Employee Referral', 'one Source / Reference column holds the real source');
+    assert.equal(w.calls.created[0].directClient, 'Yes', 'the marker is set AT creation');
+    assert.equal(w.calls.created[0].referredBy, 'Gauri Berde');
     const wiring = w.calls.updates.find((u) => u.id === '900').f;
-    assert.equal(wiring.walkInSource, 'Employee Referral', 'the real source goes in its own column');
+    assert.equal(wiring.sourceChannel, 'Employee Referral'); assert.equal(wiring.directClient, 'Yes');
     assert.equal(wiring.referredBy, 'Gauri Berde');
     assert.equal(wiring.residentialAddress, '', 'blank — buildCols skips it, nothing is cleared');
     const created = w.calls.notes.find((n) => /Direct retainer client created/.test(n.b)).b;
@@ -209,7 +211,7 @@ test('the lists: "No email" tags on Leads rows and on un-sent Retainers rows; a 
   assert.ok(leads.includes("var noEmail=(c.hasEmail===false)?' <span class=\"pill amber\""));
   const cons = require('../src/routes/adminConsultation').buildQueueHTML();
   assert.ok(cons.includes("((c.hasEmail===false && !c.retainerSent)?' <span class=\"pill amber\""));
-  assert.ok(cons.includes("direct · '+escHtml(c.walkInSource)"));
+  assert.ok(cons.includes("direct · '+escHtml(c.directSource)"));
 });
 
 test('the shared list copy keeps only "has an email: yes/no" — never the address', async () => {
@@ -298,10 +300,25 @@ test('attach box: no backslashes in the browser code (template-literal trap); hi
 
 // ── review round 1 (2026-11-04) ──────────────────────────────────────────────
 
-test('review: the walk-in source has a real Monday column before this can ship (no silent drop)', () => {
+test('one Source / Reference column (Faran 2026-11-04): "Walk-in" is a choice; the marker column is mapped; old and new direct clients are both recognised everywhere', () => {
   const C = require('../src/data/newLeadsBoard.json').columns;
-  assert.ok(C.walkInSource, 'create the Lead Board text column "Walk-in Source" and add its id as columns.walkInSource');
-  assert.ok(C.referredBy && C.email && C.phone);
+  assert.equal(C.directClient, 'text_mm8smgwh', 'the "Direct Retainer Client" marker column');
+  assert.ok(!('walkInSource' in C), 'no separate walk-in source column');
+  assert.ok(require('../config/leadSources').LEAD_SOURCES.includes('Walk-in'));
+  const { isDirectClient, shownSource } = require('../src/utils/directClient');
+  assert.equal(isDirectClient({ sourceChannel: 'Walk-in', directClient: 'Yes' }), true, 'new: the marker');
+  assert.equal(isDirectClient({ sourceChannel: 'Direct Retainer' }), true, 'old: the source label');
+  assert.equal(isDirectClient({ sourceChannel: 'Walk-in' }), false, 'a Walk-in LEAD (Add lead) is a normal lead');
+  assert.equal(shownSource({ sourceChannel: 'Direct Retainer' }), '');
+  assert.equal(portal.classifyLead ? portal.classifyLead({ sourceChannel: 'Instagram', directClient: 'Yes' }) : 'retainer', 'retainer', 'a direct client is on Retainers, not Leads');
+  // no service decides "direct" from the source label alone any more
+  const fs = require('fs');
+  for (const f of ['../src/services/kpiService', '../src/services/consultationService', '../src/services/retainerService2', '../src/services/bookingRemindersService', '../src/services/consultantPortalService']) {
+    const src = fs.readFileSync(require.resolve(f), 'utf8');
+    assert.ok(!/sourceChannel[^;\n]{0,40}===\s*(DIRECT_SOURCE|'Direct Retainer')/.test(src), f);
+  }
+  const snap = require('../src/services/leadSnapshot');
+  assert.ok(snap.SNAPSHOT_KEYS.includes('directClient') && snap.SNAPSHOT_IDS.includes('text_mm8smgwh'));
 });
 
 test('review: an automatic onboarding start with no client email leaves a case note the Summary reads; a sent email leaves none', async () => {

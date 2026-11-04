@@ -23,7 +23,7 @@ function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () =>
 // The Leads board "Source / Reference" dropdown (dropdown_mm44g4xg) labels, read live on 2026-11-04
 // after the 9 new ones were added. Every staff choice MUST be one of them: create_item cannot add labels.
 const BOARD_LABELS_2026_11_04 = ['Website', 'Email', 'WhatsApp', 'Instagram', 'Phone', 'Other', 'Direct Retainer',
-  'Facebook', 'TikTok', 'LinkedIn', 'Client Referral', 'Employee Referral', 'Existing Client', 'Nasir Khan', 'Aman Galhotra', 'Shafoli Friend'];
+  'Facebook', 'TikTok', 'LinkedIn', 'Client Referral', 'Employee Referral', 'Existing Client', 'Nasir Khan', 'Aman Galhotra', 'Shafoli Friend', 'Walk-in'];
 
 test('the list: every choice is an existing board label (exact spelling), no duplicates, never Direct Retainer; 14 employees', () => {
   for (const s of SRC.LEAD_SOURCES) assert.ok(BOARD_LABELS_2026_11_04.includes(s), `"${s}" is not a label on the board — add it on Monday first`);

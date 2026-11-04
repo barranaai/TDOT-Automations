@@ -80,7 +80,7 @@ function computeKpis(leads = [], month = '') {
   // Classified by the EXPLICIT tag (createDirectClient's Source Channel), never
   // by missing booking data — inference would silently reclassify historical
   // leads whose booking fields simply weren't stamped.
-  const isDirect = (l) => (l.sourceChannel || '').trim() === 'Direct Retainer';
+  const isDirect = (l) => require('../utils/directClient').isDirectClient(l);   // the marker column, or the old "Direct Retainer" source
   for (const l of leads) {
     // Direct clients never enter the booking funnel — they'd deflate the
     // booked-from-leads rate. totalLeads still counts them.

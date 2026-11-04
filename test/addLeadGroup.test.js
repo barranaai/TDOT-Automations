@@ -173,7 +173,7 @@ test('lead page payload: channel, original channel, owner, staff-added, location
 
 /* ── 3. the original channel ── */
 
-test('convert to direct retainer: the original channel is kept in its own column (once); Source Channel still reads Direct Retainer', async () => {
+test('convert to direct retainer: the original channel is kept in its own column (once); Source / Reference shows the chosen source and the marker column says Yes (2026-11-04)', async () => {
   const registry = require('../src/services/caseTypeRegistryService');
   const handoff = require('../src/services/handoffService');
   const { CASE_TYPE_LABELS, SUB_TYPES_BY_CASE } = require('../config/caseTypes');
@@ -194,7 +194,7 @@ test('convert to direct retainer: the original channel is kept in its own column
     } finally { restore.reverse().forEach((x) => x()); }
   };
   const a = await run({ sourceChannel: 'Website' });
-  assert.deepEqual([a.sourceChannel, a.originalChannel], ['Direct Retainer', 'Website']);
+  assert.deepEqual([a.sourceChannel, a.directClient, a.originalChannel], ['Phone', 'Yes', 'Website']);
   const b = await run({ sourceChannel: 'Phone', originalChannel: 'Instagram' });
   assert.equal('originalChannel' in b, false, 'never overwritten');
   const c = await run({ sourceChannel: 'Direct Retainer' });

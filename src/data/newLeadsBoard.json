@@ -114,6 +114,6 @@
     "advertisementFee": "numeric_mm67q8re",
     "consultPayment": "text_mm8533r9",
     "originalChannel": "text_mm85mpjf",
-    "walkInSource": "text_mm8smgwh"
+    "directClient": "text_mm8smgwh"
   }
 }

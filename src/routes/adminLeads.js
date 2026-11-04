@@ -672,8 +672,8 @@ function render(d){
   Array.prototype.forEach.call(document.querySelectorAll('.obtn'),function(b){ b.classList.toggle('active', b.getAttribute('data-outcome')===(d.outcome||'')); });
   if(d.consultant) st+=kv('Consultant', d.consultant);
   st+=kv('Source / Reference', d.sourceChannel||'—');
-  if(d.walkInSource) st+=kv('Walk-in source', d.walkInSource);
-  if(d.referredBy && (tdotRefKind(d.sourceChannel) || tdotRefKind(d.walkInSource))) st+=kv('Referred by', d.referredBy);
+  if(d.directRetainer) st+=kv('Direct retainer client', 'Yes');
+  if(d.referredBy && tdotRefKind(d.sourceChannel)) st+=kv('Referred by', d.referredBy);
   if(d.originalChannel) st+=kv('Original channel', d.originalChannel);
   st+=kv('Lead owner', d.leadOwner||'Not set');
   if(d.caseTypeInterest && d.caseTypeInterest!==d.service) st+=kv('Case type interest', d.caseTypeInterest);
@@ -871,9 +871,9 @@ function hydrateBasic(d){
   bdEl('name').readOnly=caseOpen;
   bdEl('email').readOnly=caseOpen && !!String(d.email||'').trim();
   bdEl('phone').readOnly=caseOpen && !!String(d.phone||'').trim();
-  bdEl('source').disabled=direct;
+  bdEl('source').disabled=false;   /* a direct client keeps its real source now (2026-11-04) — editable like any other */
   var lock=bdEl('lock');
-  lock.textContent=caseOpen?('This lead has a case — its name, email and phone can no longer be changed here'+((!String(d.email||'').trim()||!String(d.phone||'').trim())?' (an empty email or phone can still be added, and goes on the case too)':'')+'. Ask an admin to correct them on the case in Monday.'):(direct?'A direct-retainer client stays "Direct Retainer".':'');
+  lock.textContent=caseOpen?('This lead has a case — its name, email and phone can no longer be changed here'+((!String(d.email||'').trim()||!String(d.phone||'').trim())?' (an empty email or phone can still be added, and goes on the case too)':'')+'. Ask an admin to correct them on the case in Monday.'):'';
   lock.style.display=lock.textContent?'':'none';
   if(BD_DIRTY) return;
   bdEl('name').value=d.name||''; bdEl('email').value=d.email||''; bdEl('phone').value=d.phone||'';

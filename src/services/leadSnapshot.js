@@ -45,7 +45,7 @@ const SNAPSHOT_KEYS = [
   'relationshipWithTdot', 'existingFileType', 'assignedConsultant', 'leadOwner', 'bookingInvite', 'inviteSentAt',
   'referredBy',   // the Leads list's "Referred By" column (2026-11-04)
   'email',        // ONLY to know whether there is one: kept as hasEmail, the address itself is dropped (2026-11-04)
-  'walkInSource', // a walk-in's real source / reference (Retainers list; 2026-11-04)
+  'directClient', // "Yes" = a direct retainer client (the Leads / Retainers split, the KPIs; 2026-11-04)
 ];
 const SNAPSHOT_IDS = SNAPSHOT_KEYS.map((k) => COLS[k]).filter(Boolean);
 

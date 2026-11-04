@@ -67,8 +67,8 @@ const COL_TYPE = {
   empCompanyPhone: 'text', empRepPhone: 'text', empRepEmail: 'text',
   consultAgreementSent: 'date', consultAgreementSigned: 'date',
   consultOption: 'text', // JSON: the booking-page choice {durationMin, feeCents, variationId, consultant}
-  walkInSource: 'text',    // a direct retainer (walk-in) client's real source / reference — the Direct retainer form (2026-11-04); Source Channel stays "Direct Retainer"
-  originalChannel: 'text', // how a lead first reached us — kept when it is converted to a direct-retainer client (Source Channel then reads "Direct Retainer")
+  directClient: 'text',    // "Yes" = a direct retainer (walk-in) client — set by the app's Direct retainer form (2026-11-04); see src/utils/directClient.js
+  originalChannel: 'text', // how a lead first reached us — kept when it is converted to a direct-retainer client (it still counts as a lead in the KPIs)
   consultPayment: 'text', // JSON: a consultation fee settled outside the booking link (cash / e-transfer / invoice / waived), who recorded it — consultPaymentService alone writes it
   consultCountersign: 'text', // JSON: consult e-sign envelope state {clientEnvelopeId, clientItemId, envelopeId, itemId, signUrl, sentAt, signedAt}
   retainerCountersign: 'text', // JSON: retainer e-sign envelope state (same shape as consultCountersign)
@@ -152,6 +152,7 @@ async function createLead(formData, { groupId, createRetries } = {}) {
     howHeard:             formData.howHeard,
     referredBy:           formData.referredBy,   // Add lead's Source / Reference second answer (2026-11-04); a text column, skipped when empty
     sourceChannel:        formData.sourceChannel || 'Website',
+    directClient:         formData.directClient,   // "Yes" for a Direct retainer form client — AT creation, so the row is never a funnel lead (2026-11-04)
     leadOwner:            formData.leadOwner,   // staff-added leads: who added it (Add-lead group, 2026-10-15)
     conversionStatus:     'New',
   };

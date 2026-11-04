@@ -49,7 +49,10 @@ test('createDirectClient: creates a fully-wired lead (tag, case type, consultant
     assert.equal(createArgs.email, 'walkin@example.com');
     const wired = updates.find((u) => u.id === '900' && u.f.sourceChannel);
     assert.ok(wired, 'the wiring update ran');
-    assert.equal(wired.f.sourceChannel, 'Direct Retainer', 'tagged as direct (KPI/UI honesty)');
+    assert.equal(wired.f.sourceChannel, 'Phone', 'the real source (2026-11-04: one Source / Reference column)');
+    assert.equal(wired.f.directClient, 'Yes', 'marked as a direct client in its own column (KPI/UI honesty)');
+    assert.equal(createArgs.directClient, 'Yes', 'marked AT creation — never a moment as a funnel lead');
+    assert.equal(createArgs.sourceChannel, 'Phone');
     assert.equal(wired.f.confirmedCaseType, CASE_TYPE, 'confirmed case type → handoff auto-resolves, checklist seeds');
     assert.equal(wired.f.assignedConsultant, CONSULTANT, 'pinned consultant → agreement signatory + Retained-by');
     assert.equal(wired.f.conversionStatus, 'Qualified', 'honest status — never "Booked"/"Consulted"');
@@ -354,7 +357,8 @@ test('createDirectClient: linkLeadId converts the existing lead (one person, one
     assert.equal(r.linked, true);
     assert.equal(r.leadId, '300');
     const w = updates.find((u) => u.id === '300');
-    assert.equal(w.f.sourceChannel, 'Direct Retainer');
+    assert.equal(w.f.sourceChannel, 'Phone');
+    assert.equal(w.f.directClient, 'Yes');
     assert.equal(w.f.confirmedCaseType, CASE_TYPE);
   } finally { restore.forEach((x) => x()); }
 });

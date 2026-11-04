@@ -104,7 +104,7 @@ function packageOnRecordEnabled(leadId) {
  */
 function packageApplicable(lead) {
   const s = (v) => String(v == null ? '' : v).trim();
-  if (s(lead.sourceChannel) === 'Direct Retainer') return { ok: false, why: 'direct' };
+  if (require('../utils/directClient').isDirectClient(lead)) return { ok: false, why: 'direct' };
   if (s(lead.conversionStatus) === 'Retained' || s(lead.clientMasterItemId)) return { ok: false, why: 'case' };
   if (s(lead.retainerSent) || s(lead.retainerSigned)) return { ok: false, why: 'retainer' };
   if (s(lead.outcome)) return { ok: false, why: 'outcome' };

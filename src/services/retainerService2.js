@@ -705,7 +705,7 @@ async function onRetainerSigned(leadId) {
   const outcome = String(lead.outcome || '').trim();
   const signedViaDocumenso = require('./retainerCountersignService').parseRetainerCountersign(lead).clientSignedVia === 'documenso';
   if (outcome && outcome !== 'Retain' && !signedViaDocumenso
-      && String(lead.sourceChannel || '').trim() !== 'Direct Retainer'
+      && !require('../utils/directClient').isDirectClient(lead)
       && !String(lead.clientMasterItemId || '').trim() && String(lead.conversionStatus || '').trim() !== 'Retained') {
     const typed = String(lead.retainerSigned || '').trim();
     // A durable marker: Retain resumes exactly these leads, and the payment link waits.

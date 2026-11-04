@@ -65,7 +65,7 @@ test('only what changed is written; the name also renames the row; a note lists 
   } finally { w.done(); }
 });
 
-test('refused: name / email / phone once a case is open; changing a Direct Retainer source; a case type not on the list', async () => {
+test('refused: name / email / phone once a case is open; a case type not on the list. An OLD direct client (source "Direct Retainer") may get a real source — and keeps being a direct client', async () => {
   let w = world({ clientMasterItemId: '999' });
   try {
     await assert.rejects(w.act({ email: 'new@example.com' }), /has a case — its name, email and phone can no longer be changed here/);
@@ -76,11 +76,18 @@ test('refused: name / email / phone once a case is open; changing a Direct Retai
   } finally { w.done(); }
   w = world({ sourceChannel: 'Direct Retainer' });
   try {
-    await assert.rejects(w.act({ sourceChannel: 'Phone' }), /stays "Direct Retainer"/);
     await assert.rejects(w.act({ sourceChannel: 'Direct Retainer', caseTypeInterest: 'Made Up Visa' }), /not a case type from the list/);
     assert.equal(w.calls.updates.length, 0);
     await w.act({ sourceChannel: 'Direct Retainer', fullName: 'Asha R' });   // the page sends the unchanged source back
     assert.deepEqual(w.calls.updates[0].f, { fullName: 'Asha R' });
+    await w.act({ sourceChannel: 'Walk-in', fullName: 'Asha Rao' });   // 2026-11-04: the real source — the marker column keeps them direct
+    assert.deepEqual(w.calls.updates[1].f, { sourceChannel: 'Walk-in', directClient: 'Yes' });
+    await assert.rejects(w.act({ sourceChannel: 'Direct Retainer' }).then(() => w.act({ sourceChannel: 'Carrier Pigeon' })), /from the list/);
+  } finally { w.done(); }
+  w = world({ sourceChannel: 'Walk-in', directClient: 'Yes' });   // a NEW direct client: an ordinary source change, the marker untouched
+  try {
+    await w.act({ sourceChannel: 'Instagram' });
+    assert.deepEqual(w.calls.updates[0].f, { sourceChannel: 'Instagram' });
   } finally { w.done(); }
   w = world({ sourceChannel: 'Referral' });   // an older label not on today's list
   try {

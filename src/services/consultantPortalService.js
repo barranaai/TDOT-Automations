@@ -520,7 +520,7 @@ function invalidateLeadsQueue() { _leadsQueueCache = { at: 0, rows: null }; requ
 function classifyLead(l) {
   const s = (v) => String(v == null ? '' : v).trim();
   if (s(l.conversionStatus) === 'Retained') return 'gone';
-  if (s(l.sourceChannel) === DIRECT_SOURCE || s(l.retainerSent) || s(l.retainerSigned) || s(l.retainerPaid) || s(l.outcome) === 'Retain') return 'retainer';
+  if (isDirectClient(l) || s(l.retainerSent) || s(l.retainerSigned) || s(l.retainerPaid) || s(l.outcome) === 'Retain') return 'retainer';
   if (s(l.bookingStatus) === 'Booked') return 'consultation';
   return 'lead';
 }
@@ -653,7 +653,6 @@ async function getLeadDetail(leadId) {
     // Add-lead group (2026-10-15)
     sourceChannel:    (lead.sourceChannel || '').trim(),
     originalChannel:  (lead.originalChannel || '').trim(),
-    walkInSource:     (lead.walkInSource || '').trim(),   // a walk-in's source / reference (2026-11-04)
     caseTypeInterest: (lead.caseTypeInterest || '').trim(),
     leadOwner:        (lead.leadOwner || '').trim(),
     staffAdded:       isStaffSource(lead.sourceChannel),
@@ -669,7 +668,7 @@ async function getLeadDetail(leadId) {
     wantsTo:       lead.whatDoYouWant || '',
     // Walk-in/referral entering at the retainer stage — the leads page shows the
     // consultation/retainer link for these even though they never book.
-    directRetainer: (lead.sourceChannel || '').trim() === DIRECT_SOURCE,
+    directRetainer: isDirectClient(lead),
     consultant:    (lead.assignedConsultant || '').trim(),
     preConsultSubmitted: (lead.preConsultSubmitted || '') === 'Yes',
     clientMasterItemId:  lead.clientMasterItemId || '',
@@ -1289,7 +1288,6 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       // The source: an unchanged value (any label, old ones too) passes; a CHANGE must be one
       // of the list (labels the board already has — a typo would mint a new one).
       if (changed.includes('sourceChannel')) {
-        if (cur.sourceChannel === DIRECT_SOURCE) refuse('A direct-retainer client stays "Direct Retainer".');
         if (!BASIC_SOURCES.includes(n.sourceChannel)) refuse('Choose the source / reference from the list.');
       }
       if (changed.includes('caseTypeInterest') && n.caseTypeInterest) {
@@ -1298,6 +1296,9 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       }
       const fields = {}, clear = [];
       for (const k of changed) { if (n[k]) fields[k] = n[k]; else clear.push(k); }
+      // An OLD direct client (Source "Direct Retainer") given a real source keeps being a direct client:
+      // the marker column says so from now on (2026-11-04).
+      if (changed.includes('sourceChannel') && isDirectClient(lead) && String(lead.directClient || '').trim() !== DIRECT_MARK) fields.directClient = DIRECT_MARK;
       // The row name first: the Full Name column is what the next read compares against, so a
       // rename that failed after the column was written could never be retried.
       if (changed.includes('fullName')) await leadService.renameLead(leadId, n.fullName);
@@ -1809,7 +1810,11 @@ async function getSignedRetainerAgreementPdf(leadId) {
 // silently no-opping), and the "Direct Retainer" source tag that keeps the KPI
 // funnel honest and stops the retainer send stamping a false "Consulted".
 
-const DIRECT_SOURCE = 'Direct Retainer';
+// The OLD marker (Source / Reference "Direct Retainer", before 2026-11-04). New direct
+// clients keep their real source and are marked in their own column — always ask
+// isDirectClient(), which knows both.
+const { isDirectClient, shownSource: directShownSource, MARK: DIRECT_MARK } = require('../utils/directClient');
+const DIRECT_SOURCE = require('../utils/directClient').LEGACY_SOURCE;
 
 // ─── Staff-entered lead (phone-in — meeting 2026-08-13 "direct leads") ────────
 //
@@ -2051,10 +2056,10 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
   const caseSubType = clean(payload.caseSubType, 120);
   const consultant  = clean(payload.consultant, 80);
   const address     = clean(payload.residentialAddress, 500);
-  // Source / Reference (2026-11-04): how the walk-in reached us — the Add lead list. Saved in
-  // the lead's own "Walk-in Source" column: Source / Reference must keep reading "Direct
-  // Retainer" (the Retainers tab, the KPIs and the direct group all key on it).
-  const walkInSource = clean(payload.sourceChannel, 30);
+  // Source / Reference (2026-11-04): how the client reached us — the Add lead list (Walk-in,
+  // Instagram, Employee Referral …), saved in Source / Reference itself. That they are a DIRECT
+  // client is the app's own marker column ("Direct Retainer Client" = Yes), set here.
+  const clientSource = clean(payload.sourceChannel, 30);
   const referredFrom = payload.referredFrom === 'list' ? 'list' : 'typed';
   // Warn-and-link choices (duplicate handling) — staff-explicit, from the modal.
   const linkLeadId      = clean(payload.linkLeadId, 30).replace(/\D/g, '');
@@ -2105,8 +2110,8 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
   if (phone && !require('./handoffService').phoneColValue(phone)) bad('That phone number doesn’t look right — fix it or leave it empty.');
   // The address is optional now; when given it must be a real one (the agreement prints it).
   if (address && address.length < 5) bad('That address looks too short — enter the full address or leave it empty.');
-  if (!LEAD_SRC.LEAD_SOURCES.includes(walkInSource)) bad('Choose the source / reference from the list.');
-  const ref = LEAD_SRC.checkReferral(walkInSource, payload.referredBy);
+  if (!LEAD_SRC.LEAD_SOURCES.includes(clientSource)) bad('Choose the source / reference from the list.');
+  const ref = LEAD_SRC.checkReferral(clientSource, payload.referredBy);
   if (!ref.ok) bad(ref.error);
   const referredBy = ref.referredBy;
   if (notes.length < 3) bad('Add a note — what the client needs and the amount quoted.');
@@ -2197,8 +2202,8 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
       // it must win over the lead's stored values, or the retainer would go to
       // a stale email under an old name.
       fullName, email, phone,
-      sourceChannel:      DIRECT_SOURCE,
-      walkInSource,
+      sourceChannel:      clientSource,
+      directClient:       DIRECT_MARK,
       confirmedCaseType:  caseType,
       selectedSubType:    caseSubType,
       assignedConsultant: consultant,
@@ -2208,9 +2213,9 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
       ...reuseExtras,
     };
     if (chosenAccountId) linkWiring.clientAccountId = chosenAccountId;
-    // Keep how they first reached us (Add-lead group, 2026-10-15): Source Channel must read
-    // "Direct Retainer" (it drives the Retainers tab, the KPIs, the direct group), so the
-    // original goes to its own column — once, never overwritten.
+    // Keep how they first reached us (Add-lead group, 2026-10-15) in its own column — once,
+    // never overwritten: it says this client was a LEAD first (the KPIs still count them as
+    // one; the Retainers list shows "converted from").
     if (priorChannel && priorChannel !== DIRECT_SOURCE && !String(existing.originalChannel || '').trim()) linkWiring.originalChannel = priorChannel;
     await leadService.updateLead(String(linkLeadId), linkWiring);
     _directQueueCache = { at: 0, rows: null };
@@ -2224,7 +2229,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     }
     await postPortalNote(String(linkLeadId),
       `Linked as a direct retainer client by staff${priorChannel && priorChannel !== DIRECT_SOURCE ? ` (originally a “${priorChannel}” lead — kept as ONE client instead of a duplicate)` : ''}. ` +
-      `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant} · Source / reference: ${escHtmlNote(walkInSource)}.` +
+      `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant} · Source / reference: ${escHtmlNote(clientSource)}.` +
       (keptReferrer ? ` Referred by kept as “${escHtmlNote(priorReferredBy)}” (the form said “${escHtmlNote(referredBy)}”).` : '') +
       (keptAddress ? ` The address box was empty, so the lead’s address was kept: “${escHtmlNote(keptAddress)}” — it prints on the retainer agreement; check it is current.` : '')).catch(() => {});
     console.log(`[Consultant] Direct client LINKED to existing lead ${linkLeadId} (was "${priorChannel}")`);
@@ -2258,7 +2263,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
         .flat().map((l) => [String(l.id), l])).values()];
     const reusable = (matches || []).filter((l) => {
       const existingType = String(l.confirmedCaseType || '').trim();
-      return (l.sourceChannel || '').trim() === DIRECT_SOURCE &&
+      return isDirectClient(l) &&
         normName(l.fullName) === normName(fullName) &&
         (!existingType || existingType === caseType) &&
         !(l.retainerSent && String(l.retainerSent).trim());
@@ -2303,16 +2308,18 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
   const created = await leadService.createLead({
     fullName, email, phone,
     // Tagged AT creation (not in the follow-up write) — there must be no window
-    // where this row exists as an untagged "Website" lead that a refreshing
-    // Leads tab could cache and display.
-    sourceChannel: DIRECT_SOURCE,
-    situationDescription: `Direct retainer client — entered at the retainer stage, no consultation. Source / reference: ${walkInSource}${referredBy ? ` · Referred by: ${referredBy}` : ''}`,
+    // where this row exists as an unmarked lead that a refreshing Leads tab could
+    // cache and display. The real source, and the direct-client marker.
+    sourceChannel: clientSource,
+    directClient:  DIRECT_MARK,
+    referredBy,
+    situationDescription: `Direct retainer client — entered at the retainer stage, no consultation. Source / reference: ${clientSource}${referredBy ? ` · Referred by: ${referredBy}` : ''}`,
   }, { groupId: directGroupId });
   const leadId = created.id;
   invalidateDirectRetainerQueue(); // the new client must show on the Retainers tab at once (the shared snapshot too)
   const wiring = {
-    sourceChannel:      DIRECT_SOURCE,
-    walkInSource,
+    sourceChannel:      clientSource,
+    directClient:       DIRECT_MARK,
     confirmedCaseType:  caseType,
     selectedSubType:    caseSubType,
     assignedConsultant: consultant,
@@ -2336,7 +2343,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
       await postPortalNote(leadId,
         `⚠ <b>Direct retainer client created, but the wiring write failed</b> (${err2.message}). ` +
         `Please set manually: Confirmed Case Type “${caseType}”${caseSubType ? ` (sub-type ${caseSubType})` : ''}, ` +
-        `consultant “${consultant}”, Source Channel “${DIRECT_SOURCE}”.`);
+        `consultant “${consultant}”, “Direct Retainer Client” = Yes.`);
       return { ok: true, leadId, warning: 'The client was created, but tagging failed — opening the lead; please set the case type and consultant manually (see the note on the lead).' };
     }
   }
@@ -2359,8 +2366,8 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
   }
   await postPortalNote(leadId,
     `Direct retainer client created — walk-in/referral entering at the retainer stage (no consultation). ` +
-    `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant} · Source / reference: ${escHtmlNote(walkInSource)}` +
-    `${referredBy ? ` · Referred by: ${escHtmlNote(referredBy)}${LEAD_SRC.referralKind(walkInSource) === 'client' ? (referredFrom === 'list' ? ' (picked from the old Consultations board)' : ' (name typed by hand)') : ''}` : ''}. ` +
+    `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant} · Source / reference: ${escHtmlNote(clientSource)}` +
+    `${referredBy ? ` · Referred by: ${escHtmlNote(referredBy)}${LEAD_SRC.referralKind(clientSource) === 'client' ? (referredFrom === 'list' ? ' (picked from the old Consultations board)' : ' (name typed by hand)') : ''}` : ''}. ` +
     (caseOpened ? `The Client Master case is open (case-first — this client is never a funnel lead). ` : '') +
     (!email ? `⚠ <b>No email address yet</b> — the retainer agreement is sent by email, so add the client’s email on this lead before “Retain &amp; send agreement”. ` : '') +
     (!address ? `No residential address yet — the agreement prints it; add it before sending. ` : '') +
@@ -2818,7 +2825,7 @@ async function getDirectRetainerQueue() {
   if (_directQueueCache.rows && (Date.now() - _directQueueCache.at) < 60 * 1000) return _directQueueCache.rows;
   const leads = await require('./leadSnapshot').leads();
   const rows = leads
-    .filter((l) => (l.sourceChannel || '').trim() === DIRECT_SOURCE
+    .filter((l) => isDirectClient(l)
       && String(l.conversionStatus || '').trim() !== 'Retained')
     .map((l) => ({
       id: l.id,
@@ -2898,7 +2905,7 @@ async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
       });
     } else if (kind === 'retainer') {
       const oc = canonicalOutcome(l.outcome);
-      const direct = s(l.sourceChannel) === DIRECT_SOURCE;
+      const direct = isDirectClient(l);
       // the CONSULTATION fee (not the retainer's): a client who had one keeps its
       // paid state on this tab, so an unrecorded fee is still found (review 2026-10-16).
       // A direct client had no consultation, but a fee staff recorded for one still shows.
@@ -2907,7 +2914,7 @@ async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
         id: l.id, name: l.fullName || l.name,
         kind: direct ? 'direct' : 'booked',
         originalChannel: s(l.originalChannel),
-        walkInSource: s(l.walkInSource),   // a walk-in's source / reference (Direct retainer form, 2026-11-04)
+        directSource: direct ? directShownSource(l) : '',   // a direct client's real source (Walk-in, Instagram …; '' for an old one)
         hasEmail: l.hasEmail !== false,    // "No email": the retainer agreement cannot go out (2026-11-04; the snapshot keeps only yes/no)
         caseType: s(l.confirmedCaseType) || s(l.caseTypeInterest) || s(l.serviceRequired),
         consultant: s(l.assignedConsultant),

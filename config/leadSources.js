@@ -10,12 +10,14 @@
  * create_item, which cannot add labels — an unknown label fails the whole
  * create. The 9 newer labels were added on Monday on 2026-11-04 (through the
  * test lead, which was put back). To add a choice: add the label on Monday
- * FIRST, then here. "Direct Retainer" is never a staff choice (the direct-client
- * form sets it).
+ * FIRST, then here. "Walk-in" was added on Monday on 2026-11-04 the same way.
+ * "Direct Retainer" is never a staff choice: it is the OLD marker of a direct
+ * retainer client (before 2026-11-04); new ones keep their real source here and
+ * are marked in their own column (src/utils/directClient.js).
  */
 
 const LEAD_SOURCES = Object.freeze([
-  'Phone', 'WhatsApp', 'Email', 'Instagram', 'Facebook', 'TikTok', 'LinkedIn', 'Website',
+  'Phone', 'Walk-in', 'WhatsApp', 'Email', 'Instagram', 'Facebook', 'TikTok', 'LinkedIn', 'Website',
   'Client Referral', 'Employee Referral', 'Existing Client',
   'Nasir Khan', 'Aman Galhotra', 'Shafoli Friend',
   'Other',
