@@ -948,8 +948,8 @@ function validateAction(action, value) {
       // Absent (a page opened before 2026-11-04 sends no such key) = unchanged, never "cleared".
       const referredBy = o.referredBy === undefined ? null : one(o.referredBy, 200), referredFrom = o.referredFrom === 'list' ? 'list' : 'typed';
       if (fullName.length < 2) return { ok: false, error: 'Enter the client’s full name.' };
-      // Same rule as Add lead (2026-11-04): a lead keeps an email or a phone number — both cannot be cleared.
-      if (!email && !phone) return { ok: false, error: 'Keep an email or a phone number — one of the two is required.' };
+      // (Email-or-phone: checked in applyAction against the stored values — a save may not CLEAR the last contact,
+      // but a lead that never had one, added before 2026-11-04, can still be edited.)
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'That email doesn’t look right — fix it or leave it empty (the booking invite needs one).' };
       const digits = phone.replace(/\D/g, '');
       if (phone && (!/^[\d\s()+.\-]+$/.test(phone) || digits.length < 7 || digits.length > 15)) return { ok: false, error: 'Enter a valid phone number (7 to 15 digits).' };
@@ -1248,6 +1248,10 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       //  - such a source: a NEW answer (or a changed source) must pass the same check as Add lead;
       //  - moving AWAY from such a source clears the staff pick (no stale referrer);
       //  - any other source leaves the column alone (it may hold the public form's "who referred you").
+      // Same rule as Add lead (2026-11-04): a save may not clear the LAST email / phone.
+      if ((changed.includes('email') || changed.includes('phone')) && !n.email && !n.phone) {
+        refuse('Keep an email or a phone number — one of the two is required.');
+      }
       cur.referredBy = st(lead.referredBy);
       if (n.referredBy === null) n.referredBy = cur.referredBy;
       const newKind = LEAD_SRC.referralKind(n.sourceChannel), oldKind = LEAD_SRC.referralKind(cur.sourceChannel);

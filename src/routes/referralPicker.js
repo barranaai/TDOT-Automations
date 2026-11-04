@@ -80,11 +80,12 @@ function tdotRef(p, onEdit){
       list = el('ref-list'), state = el('ref-state'), modeBtn = el('ref-mode'), cliLabel = el('ref-cli-l');
   var mode = 'search', picked = null, seq = 0, timer = null, results = [], active = -1;
   function edited(){ if (typeof onEdit === 'function') onEdit(); }
+  function cancel(){ clearTimeout(timer); seq++; }   /* drop a pending search and any answer still on its way */
   function key(){ try { return sessionStorage.getItem('tdot_admin_key') || ''; } catch (e) { return ''; } }
   function closeList(){ list.hidden = true; list.innerHTML = ''; cli.setAttribute('aria-expanded', 'false'); cli.removeAttribute('aria-activedescendant'); results = []; active = -1; }
   function setState(t){ state.textContent = t || ''; }
   function setMode(m){
-    mode = m; picked = null; closeList();
+    cancel(); mode = m; picked = null; closeList();
     if (m === 'manual') {
       modeBtn.textContent = 'Search the client list instead';
       cli.placeholder = 'Type the client' + String.fromCharCode(39) + 's full name';
@@ -102,7 +103,7 @@ function tdotRef(p, onEdit){
     empRow.style.display = k === 'employee' ? '' : 'none';
     cliRow.style.display = k === 'client' ? '' : 'none';
     if (k === 'client') cliLabel.textContent = srcEl.value === 'Client Referral' ? 'Which client referred them? *' : 'Which client? *';
-    if (k !== 'client') closeList();
+    if (k !== 'client') { cancel(); closeList(); }
   }
   function reset(){ emp.value = ''; cli.value = ''; setMode('search'); sync(); }
   function ensureEmpOption(v){
@@ -128,7 +129,7 @@ function tdotRef(p, onEdit){
         if (x.phoneLast3) meta.push('phone ending ' + tdotRefEsc(x.phoneLast3));
         if (x.lastConsult) meta.push('last consultation ' + tdotRefEsc(x.lastConsult));
         if (x.consults > 1) meta.push(x.consults + ' consultations');
-        return '<button type="button" class="ref-opt" role="option" id="' + p + '-ref-o' + i + '" data-i="' + i + '">' + tdotRefEsc(x.name)
+        return '<button type="button" class="ref-opt" role="option" tabindex="-1" id="' + p + '-ref-o' + i + '" data-i="' + i + '">' + tdotRefEsc(x.name)
           + (x.retained ? '<span class="ref-tag">retained</span>' : '')
           + '<span class="ref-meta">' + (meta.join(' · ') || 'no phone on file') + '</span></button>';
       }).join('') + (r.more ? '<div class="ref-empty">More found — type more of the name to narrow it down.</div>' : '');
@@ -145,6 +146,7 @@ function tdotRef(p, onEdit){
   }
   function pick(i){
     var x = results[i]; if (!x) return;
+    cancel();
     picked = { name: x.name, id: x.id };
     cli.value = x.name; closeList();
     setState('Picked from the old Consultations board' + (x.phoneLast3 ? ' (phone ending ' + x.phoneLast3 + ')' : '') + '.');
@@ -153,12 +155,12 @@ function tdotRef(p, onEdit){
   function search(){
     var q = cli.value.replace(/^ +| +$/g, '');
     var letters = q.replace(/[^A-Za-z]/g, '').length, digits = q.replace(/[^0-9]/g, '').length;
-    if (letters < 2 && digits < 4 && q.indexOf('@') < 0) { closeList(); setState(q ? 'Keep typing — 2+ letters of the name, or 4+ digits of the phone.' : ''); return; }
+    if (letters < 2 && digits < 4 && q.indexOf('@') < 0) { cancel(); closeList(); setState(q ? 'Keep typing — 2+ letters of the name, or 4+ digits of the phone.' : ''); return; }
     var my = ++seq; setState('Searching…');
     fetch('/api/old-clients/search', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': key() }, body: JSON.stringify({ q: q }) })
       .then(function(r){ return r.json().then(function(j){ return { s: r.status, j: j }; }); })
       .then(function(res){
-        if (my !== seq || mode !== 'search') return;   /* an older answer, or the box changed mode */
+        if (my !== seq || mode !== 'search' || tdotRefKind(srcEl.value) !== 'client') return;   /* an older answer, the box changed mode, or the source moved away */
         if (res.s !== 200 || !res.j || !res.j.ok) { closeList(); setState((res.j && res.j.error) || 'The client search failed — try again, or type the name.'); return; }
         setState(res.j.stale ? 'The client list may be a few hours old.' : '');
         render(res.j);
@@ -196,6 +198,7 @@ function tdotRef(p, onEdit){
       if (k === 'client') return mode === 'search' ? (picked ? picked.name : '') : cli.value.replace(/^ +| +$/g, '');
       return '';
     },
+    pending: function(){ return tdotRefKind(srcEl.value) === 'client' && mode === 'search' && !picked && !!cli.value.replace(/ /g, ''); },
     from: function(){ return (tdotRefKind(srcEl.value) === 'client' && mode === 'search' && picked) ? 'list' : 'typed'; },
     check: function(){
       var k = tdotRefKind(srcEl.value);

@@ -818,7 +818,7 @@ function load(){
 var BD_DIRTY=false, BD_TYPES=null, INQ_TEXT='';
 ${REFERRAL_UI_JS}
 var BD_REF=tdotRef('bd', function(){ BD_DIRTY=true; });   /* Source / Reference second question (2026-11-04) */
-var BD_LOADED={ src:'', ref:'' };
+var BD_LOADED={ src:'', ref:'', email:'', phone:'' };
 function bdEl(id){ return document.getElementById('bd-'+id); }
 function bdOption(sel,val){ if(val && ![].some.call(sel.options,function(o){ return o.value===val; })){ var o=document.createElement('option'); o.value=val; o.textContent=val; sel.appendChild(o); } }
 function hydrateBasic(d){
@@ -831,7 +831,7 @@ function hydrateBasic(d){
   if(BD_DIRTY) return;
   bdEl('name').value=d.name||''; bdEl('email').value=d.email||''; bdEl('phone').value=d.phone||'';
   var src=bdEl('source'); bdOption(src,d.sourceChannel||''); src.value=d.sourceChannel||'Website';
-  BD_REF.load(src.value, d.referredBy||''); BD_LOADED={ src:src.value, ref:d.referredBy||'' };
+  BD_REF.load(src.value, d.referredBy||''); BD_LOADED={ src:src.value, ref:d.referredBy||'', email:d.email||'', phone:d.phone||'' };
   var ct=bdEl('casetype'); bdOption(ct,d.caseTypeInterest||''); ct.value=d.caseTypeInterest||'';
   if(!BD_TYPES){ var key=getKey(); if(!key) return;
     BD_TYPES='loading';
@@ -845,12 +845,15 @@ function hydrateBasic(d){
 ['name','email','phone','source','casetype'].forEach(function(k){ var el=bdEl(k); el.addEventListener(el.tagName==='SELECT'?'change':'input',function(){ BD_DIRTY=true; }); });
 document.getElementById('btn-bd-save').onclick=function(){
   var body={ fullName:bdEl('name').value, email:bdEl('email').value, phone:bdEl('phone').value, sourceChannel:bdEl('source').value, caseTypeInterest:bdEl('casetype').value };
-  /* Same rule as Add lead (2026-11-04): a lead keeps an email or a phone number. The server refuses too. */
-  if(!body.email.trim() && !body.phone.trim()){ actMsg('bd-msg','err','Keep an email or a phone number — one of the two is required.'); bdEl('email').focus(); return; }
+  /* Same rule as Add lead (2026-11-04): a save may not CLEAR the last email / phone. A lead that never had either
+     (added before the rule) can still be edited. The server refuses the same. */
+  var contactEdited=(body.email.trim()!==String(BD_LOADED.email).trim() || body.phone.trim()!==String(BD_LOADED.phone).trim());
+  if(contactEdited && !body.email.trim() && !body.phone.trim()){ actMsg('bd-msg','err','Keep an email or a phone number — one of the two is required.'); bdEl('email').focus(); return; }
   /* Source / Reference second question: sent only for a referral source; checked when the source or the answer changed (the server does the same). */
   if(BD_REF.kind()){
     body.referredBy=BD_REF.value(); body.referredFrom=BD_REF.from();
-    if(body.sourceChannel!==BD_LOADED.src || body.referredBy!==BD_LOADED.ref){ var re=BD_REF.check(); if(re){ actMsg('bd-msg','err',re); BD_REF.focus(); return; } }
+    /* also when a client name was typed in the search box but not picked — never drop it silently */
+    if(body.sourceChannel!==BD_LOADED.src || body.referredBy!==BD_LOADED.ref || BD_REF.pending()){ var re=BD_REF.check(); if(re){ actMsg('bd-msg','err',re); BD_REF.focus(); return; } }
   }
   var p=doAction(this,'saveBasicInfo',null,JSON.stringify(body),'bd-msg'); if(!p) return;
   p.then(function(res){ if(res&&res.ok){ BD_DIRTY=false; if(res.j&&res.j.warnings&&res.j.warnings.length) actMsg('bd-msg','info',res.j.message); load(); var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r(); } });

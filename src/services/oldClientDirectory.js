@@ -41,20 +41,37 @@ function loadConfig() {
   catch (_) { return null; }
 }
 
-/** Lower-case, accents folded, punctuation → space, spaces collapsed. */
-function fold(s) {
+const APOSTROPHES = /['\u2019\u2018`\u00b4]/g;
+const MARKS = /[\u0300-\u036f]/g;
+/**
+ * Lower-case, accents folded, everything but letters and digits → one space.
+ * apostrophes: 'join' (D'Souza → dsouza, the form names are grouped by) or 'split' (→ d souza).
+ * Periods are word breaks ("Mohd. Ali" = "Mohd Ali").
+ */
+function fold(s, apostrophes = 'join') {
   return String(s == null ? '' : s)
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .toLowerCase().replace(/[^a-z0-9@.+]+/g, ' ').replace(/\s+/g, ' ').trim();
+    .normalize('NFD').replace(MARKS, '')
+    .toLowerCase().replace(APOSTROPHES, apostrophes === 'join' ? '' : ' ')
+    .replace(/[^a-z0-9]+/g, ' ').trim();
 }
+/** Every word a name can be found by: apostrophes joined AND split, and initials with their periods dropped ("A.K." → "ak"). */
+function nameWords(name) {
+  const forms = [fold(name, 'join'), fold(name, 'split'), fold(String(name == null ? '' : name).replace(/\./g, ''), 'join')];
+  return [...new Set(forms.join(' ').split(' ').filter(Boolean))];
+}
+/**
+ * A phone as its LAST 10 digits (7–10-digit numbers kept whole): "+1 416 555 0101",
+ * "14165550101" and "416 555 0101" are one number, and so are "+91 98765 43210"
+ * and "98765 43210". Under 7 digits: not a phone.
+ */
 function phoneDigits(raw) {
   const d = String(raw || '').replace(/\D/g, '');
   if (d.length < 7) return '';
-  return d.length === 11 && d[0] === '1' ? d.slice(1) : d;
+  return d.length > 10 ? d.slice(-10) : d;
 }
-function emailKey(raw) {
-  const s = String(raw || '').trim().toLowerCase();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) ? s : '';
+/** Every address in an email cell (a cell may hold two: "a@x.com, b@y.ca"). */
+function emailKeys(raw) {
+  return [...new Set(String(raw || '').toLowerCase().split(/[\s,;/]+/).filter((t) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)))];
 }
 
 /**
@@ -65,7 +82,7 @@ function emailKey(raw) {
 function buildPeople(rows) {
   const byName = new Map();
   for (const r of rows || []) {
-    const nameKey = fold(r.name);
+    const nameKey = fold(r.name, 'join');
     if (!nameKey) continue;
     if (!byName.has(nameKey)) byName.set(nameKey, []);
     byName.get(nameKey).push(r);
@@ -77,14 +94,14 @@ function buildPeople(rows) {
     const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
     const seen = new Map();
     group.forEach((r, i) => {
-      for (const k of [phoneDigits(r.phone) && 'p:' + phoneDigits(r.phone), emailKey(r.email) && 'e:' + emailKey(r.email)].filter(Boolean)) {
+      for (const k of [phoneDigits(r.phone) && 'p:' + phoneDigits(r.phone), ...emailKeys(r.email).map((e) => 'e:' + e)].filter(Boolean)) {
         if (seen.has(k)) parent[find(i)] = find(seen.get(k)); else seen.set(k, i);
       }
     });
     const clusters = new Map();
     const keyless = [];
     group.forEach((r, i) => {
-      if (!phoneDigits(r.phone) && !emailKey(r.email)) { keyless.push(r); return; }
+      if (!phoneDigits(r.phone) && !emailKeys(r.email).length) { keyless.push(r); return; }
       const c = find(i);
       if (!clusters.has(c)) clusters.set(c, []);
       clusters.get(c).push(r);
@@ -100,9 +117,9 @@ function buildPeople(rows) {
         id: String(newest.id),
         name: String(newest.name || '').replace(/\s+/g, ' ').trim(),
         nameKey,
-        words: nameKey.split(' '),
+        words: [...new Set(list.flatMap((r) => nameWords(r.name)))],
         phones: [...new Set(list.map((r) => phoneDigits(r.phone)).filter(Boolean))],
-        emails: [...new Set(list.map((r) => emailKey(r.email)).filter(Boolean))],
+        emails: [...new Set(list.flatMap((r) => emailKeys(r.email)))],
         phoneLast3: withPhone ? phoneDigits(withPhone.phone).slice(-3) : '',
         lastConsult: (list.map((r) => String(r.date || '')).filter(Boolean).sort().pop() || '').slice(0, 7),
         consults: list.length,
@@ -120,14 +137,14 @@ function publicView(p, matchedOn) {
 
 /**
  * PURE. Search people.
- *  - 4+ digits and no letters → phone (digits contained in a phone);
+ *  - 4+ digits and no letters → phone (digits contained in a phone; a typed +1 / country code is fine);
  *  - contains "@"             → email (starts with);
  *  - otherwise                → name: every typed word starts a word of the name (2+ letters in all).
- * Ranked: whole name starts with the query, then the newest consultation.
+ * Ranked: the exact name, then names starting with the query, then the newest consultation.
  */
 function searchPeople(people, rawQ) {
   const q = String(rawQ == null ? '' : rawQ).trim().slice(0, MAX_Q);
-  const hasLetters = /[a-z]/i.test(q.normalize('NFD').replace(/[̀-ͯ]/g, ''));
+  const hasLetters = /[a-z]/i.test(q.normalize('NFD').replace(MARKS, ''));
   const digits = q.replace(/\D/g, '');
   let hits = [], mode = '';
   if (q.includes('@')) {
@@ -137,14 +154,17 @@ function searchPeople(people, rawQ) {
     hits = people.filter((p) => p.emails.some((x) => x.startsWith(e)));
   } else if (!hasLetters && digits.length >= 4) {
     mode = 'phone';
-    hits = people.filter((p) => p.phones.some((x) => x.includes(digits)));
+    // The same last-10-digits rule as the stored numbers; a partly typed "+1 416 5…" also matches by its area code onward.
+    const qd = digits.length > 10 ? digits.slice(-10) : digits;
+    const alt = (qd[0] === '1' && qd.length >= 5 && qd.length < 10) ? qd.slice(1) : '';
+    hits = people.filter((p) => p.phones.some((x) => x.includes(qd) || (alt && x.startsWith(alt))));
   } else {
-    const fq = fold(q);
+    const fq = fold(q, 'join');
     const words = fq.split(' ').filter(Boolean);
     if (fq.replace(/[^a-z]/g, '').length < 2) return { results: [], more: false, mode: 'short' };
     mode = 'name';
     hits = people.filter((p) => words.every((w) => p.words.some((pw) => pw.startsWith(w))));
-    hits.forEach((p) => { p._starts = p.nameKey.startsWith(fq) ? 1 : 0; });
+    hits.forEach((p) => { p._starts = p.nameKey === fq ? 2 : p.nameKey.startsWith(fq) ? 1 : 0; });
   }
   hits.sort((a, b) => ((b._starts || 0) - (a._starts || 0)) || String(b.lastConsult).localeCompare(String(a.lastConsult)) || a.name.localeCompare(b.name));
   const results = hits.slice(0, MAX_RESULTS).map((p) => publicView(p, mode));

@@ -54,14 +54,32 @@ test('validation (2026-11-04): the name, an email OR a phone, and the source are
   } finally { restore.reverse().forEach((x) => x()); }
 });
 
-test('the lead page "Edit basics" keeps an email or a phone: clearing both is refused; one of the two stays allowed', () => {
-  const v = (o) => svc.validateAction('saveBasicInfo', JSON.stringify(o));
-  const both = v({ fullName: 'Someone Here', email: '', phone: '' });
-  assert.equal(both.ok, false); assert.match(both.error, /email or a phone number/);
-  const ws = v({ fullName: 'Someone Here', email: '   ', phone: ' ' });
-  assert.equal(ws.ok, false, 'whitespace is empty');
-  assert.equal(v({ fullName: 'Someone Here', email: '', phone: '416 555 0001' }).ok, true);
-  assert.equal(v({ fullName: 'Someone Here', email: 'a@x.com', phone: '' }).ok, true);
+test('the lead page "Edit basics": a save may not CLEAR the last email / phone; a lead that never had one (added before the rule) can still be edited', async () => {
+  const blacklist = require('../src/services/blacklistService');
+  const run = async (lead, body) => {
+    const updates = [];
+    const restore = [
+      stub(leadService, 'getLead', async (id) => ({ id, fullName: 'Someone Here', name: 'Someone Here', email: '', phone: '', sourceChannel: 'Phone', caseTypeInterest: '', ...lead })),
+      stub(leadService, 'updateLead', async (id, f, o) => { updates.push({ f, o }); }),
+      stub(leadService, 'renameLead', async () => {}),
+      stub(mondayApi, 'query', async () => ({})),
+      stub(svc, 'findClientMatches', async () => ({ leads: [], cases: [], clients: [] })),
+      stub(blacklist, 'check', async () => ({ checked: true, hit: false })),
+    ];
+    try { await svc.applyAction({ leadId: '8', action: 'saveBasicInfo', value: JSON.stringify({ fullName: 'Someone Here', email: '', phone: '', sourceChannel: 'Phone', caseTypeInterest: '', ...body }), staffName: 'Gauri' }); return updates; }
+    finally { restore.reverse().forEach((r) => r()); }
+  };
+  // clearing the only contact: refused (whitespace is empty)
+  await assert.rejects(run({ email: 'a@x.com' }, { email: '' }), /email or a phone number/);
+  await assert.rejects(run({ phone: '4165550001' }, { phone: '   ' }), /email or a phone number/);
+  await assert.rejects(run({ email: 'a@x.com', phone: '4165550001' }, { email: '', phone: '' }), /email or a phone number/);
+  // one of the two stays: fine
+  assert.deepEqual((await run({ email: 'a@x.com', phone: '4165550001' }, { email: '', phone: '4165550001' }))[0].o, { clearKeys: ['email'] });
+  // a contact-less OLD lead: other details still save
+  assert.deepEqual((await run({}, { fullName: 'Someone Else' }))[0].f, { fullName: 'Someone Else' });
+  assert.deepEqual((await run({}, { sourceChannel: 'Employee Referral', referredBy: 'Gauri Berde' }))[0].f, { sourceChannel: 'Employee Referral', referredBy: 'Gauri Berde' });
+  // validateAction alone no longer decides it (it cannot see the stored values)
+  assert.equal(svc.validateAction('saveBasicInfo', JSON.stringify({ fullName: 'Someone Here', email: '', phone: '' })).ok, true);
 });
 
 test('duplicate contract: matches → 409-shaped conflict; allowDuplicate creates anyway', async () => {
@@ -154,7 +172,9 @@ test('the "Add lead" modal: name, email-or-phone and source are marked required;
   assert.ok(!/Name, email, phone and residential address are all required/.test(html), 'the old all-required message is gone');
 });
 
-test('the lead page "Edit basics" box refuses to clear both email and phone before calling the server', () => {
+test('the lead page "Edit basics" box refuses to CLEAR both email and phone before calling the server (an old contact-less lead still saves)', () => {
   const html = require('../src/routes/adminLeads').buildLeadDetailHTML('123');
-  assert.match(html, /if\(!body\.email\.trim\(\) && !body\.phone\.trim\(\)\)\{ actMsg\('bd-msg','err','Keep an email or a phone number/);
+  assert.match(html, /var contactEdited=\(body\.email\.trim\(\)!==String\(BD_LOADED\.email\)\.trim\(\) \|\| body\.phone\.trim\(\)!==String\(BD_LOADED\.phone\)\.trim\(\)\);/);
+  assert.match(html, /if\(contactEdited && !body\.email\.trim\(\) && !body\.phone\.trim\(\)\)\{ actMsg\('bd-msg','err','Keep an email or a phone number/);
+  assert.match(html, /BD_LOADED=\{ src:src\.value, ref:d\.referredBy\|\|'', email:d\.email\|\|'', phone:d\.phone\|\|'' \};/);
 });

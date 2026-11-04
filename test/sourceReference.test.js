@@ -363,3 +363,55 @@ test('pages: Source / Reference with all choices; the two second questions; scri
   assert.match(d, /BD_REF\.load\(src\.value, d\.referredBy\|\|''\)/);
   assert.match(d, /kv\('Referred by', d\.referredBy\)/);
 });
+
+// ── Review round 1 (2026-11-04): fixes pinned ───────────────────────────────
+test('review: a phone typed the usual way (+1, 1-, country code) finds the person; one number with/without a country code is one person', () => {
+  const people = dir.buildPeople([
+    { id: '1', name: 'Pat Lee', phone: '+1 416 555 0101', date: '2025-01-01' },
+    { id: '2', name: 'Amit Shah', phone: '+91 98765 43210', date: '2024-01-01' },
+    { id: '3', name: 'Amit Shah', phone: '98765 43210', date: '2025-01-01', retained: 'Yes' },
+  ]);
+  for (const q of ['+1 416 555 0101', '1-416-555-0101', '14165550101', '416 555 0101', '+1 416 5', '5550101']) {
+    assert.deepEqual(dir.searchPeople(people, q).results.map((r) => r.id), ['1'], q);
+  }
+  assert.equal(people.filter((p) => p.nameKey === 'amit shah').length, 1, 'with and without +91: one person');
+  const a = dir.searchPeople(people, '+91 98765 43210').results;
+  assert.deepEqual([a.length, a[0].id, a[0].retained, a[0].consults], [1, '3', true, 2]);
+});
+
+test('review: names — periods and apostrophes, initials, exact name first; an email cell with two addresses', () => {
+  const rows = [
+    { id: '1', name: "Maria D'Souza", phone: '4165550101', email: 'neha@gmail.com, neha.work@corp.ca', date: '2025-01-01' },
+    { id: '2', name: 'Maria Dsouza', phone: '4165550101', date: '2025-03-01' },
+    { id: '3', name: 'A.K. Sharma', date: '2025-01-01' },
+    { id: '4', name: 'Mohd. Ali', phone: '6475550000', date: '2025-01-01' },
+    { id: '5', name: 'Mohd Ali', phone: '6475550000', date: '2025-02-01' },
+    { id: '6', name: "Sean O'Brien", date: '2025-01-01' },
+    { id: '7', name: 'Gurpreet', phone: '2895550000', date: '2024-01-01' },
+    ...Array.from({ length: 12 }, (_, i) => ({ id: String(100 + i), name: `Gurpreet Singh${i}`, phone: `90555500${String(i).padStart(2, '0')}`, date: '2026-01-01' })),
+  ];
+  const people = dir.buildPeople(rows);
+  assert.equal(people.filter((p) => p.nameKey === 'maria dsouza').length, 1, "D'Souza and Dsouza with one phone: one person");
+  assert.equal(people.filter((p) => p.nameKey === 'mohd ali').length, 1, 'Mohd. Ali and Mohd Ali: one person');
+  const ids = (q) => dir.searchPeople(people, q).results.map((r) => r.id);
+  for (const q of ['dsouza', "D'Souza", 'D’Souza', 'souza', 'maria d']) assert.deepEqual(ids(q), ['2'], q);
+  for (const q of ['AK Sharma', 'A K Sharma', 'A.K. Sharma', 'sharma']) assert.deepEqual(ids(q), ['3'], q);
+  for (const q of ['OBrien', "O'Brien", 'brien']) assert.deepEqual(ids(q), ['6'], q);
+  assert.deepEqual(ids('Mohd. Ali'), ['5']);
+  assert.equal(ids('gurpreet')[0], '7', 'the exact one-word name comes first, before 12 newer longer names');
+  assert.deepEqual(ids('neha.work@'), ['2'], 'the second address in a cell counts');
+});
+
+test('review: the browser code cancels pending searches and late answers; results are not Tab stops; Edit basics never drops a typed-but-unpicked name', () => {
+  const { REFERRAL_UI_JS } = require('../src/routes/referralPicker');
+  assert.match(REFERRAL_UI_JS, /function cancel\(\)\{ clearTimeout\(timer\); seq\+\+; \}/);
+  assert.match(REFERRAL_UI_JS, /function setMode\(m\)\{\s+cancel\(\);/);
+  assert.match(REFERRAL_UI_JS, /if \(k !== 'client'\) \{ cancel\(\); closeList\(\); \}/);
+  assert.match(REFERRAL_UI_JS, /var x = results\[i\]; if \(!x\) return;\s+cancel\(\);/);
+  assert.match(REFERRAL_UI_JS, /\{ cancel\(\); closeList\(\); setState\(q \? 'Keep typing/);
+  assert.match(REFERRAL_UI_JS, /if \(my !== seq \|\| mode !== 'search' \|\| tdotRefKind\(srcEl\.value\) !== 'client'\) return;/);
+  assert.match(REFERRAL_UI_JS, /class="ref-opt" role="option" tabindex="-1"/);
+  assert.match(REFERRAL_UI_JS, /pending: function\(\)\{ return tdotRefKind\(srcEl\.value\) === 'client' && mode === 'search' && !picked && !!cli\.value/);
+  const d = require('../src/routes/adminLeads').buildLeadDetailHTML('7');
+  assert.match(d, /body\.referredBy!==BD_LOADED\.ref \|\| BD_REF\.pending\(\)\)\{ var re=BD_REF\.check\(\);/);
+});
