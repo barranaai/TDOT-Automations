@@ -2216,7 +2216,9 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     // Keep how they first reached us (Add-lead group, 2026-10-15) in its own column — once,
     // never overwritten: it says this client was a LEAD first (the KPIs still count them as
     // one; the Retainers list shows "converted from").
-    if (priorChannel && priorChannel !== DIRECT_SOURCE && !String(existing.originalChannel || '').trim()) linkWiring.originalChannel = priorChannel;
+    // Only a real LEAD was "a lead first" — an existing direct client (old label or new marker) never is.
+    const wasLead = !!priorChannel && !isDirectClient(existing);
+    if (wasLead && !String(existing.originalChannel || '').trim()) linkWiring.originalChannel = priorChannel;
     await leadService.updateLead(String(linkLeadId), linkWiring);
     _directQueueCache = { at: 0, rows: null };
     invalidateLeadsQueue(); // the lead just left the funnel — drop it from the funnel queue too
@@ -2228,7 +2230,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
       console.error(`[Consultant] Early case-open failed for linked lead ${linkLeadId}: ${err.message}`);
     }
     await postPortalNote(String(linkLeadId),
-      `Linked as a direct retainer client by staff${priorChannel && priorChannel !== DIRECT_SOURCE ? ` (originally a “${priorChannel}” lead — kept as ONE client instead of a duplicate)` : ''}. ` +
+      `Linked as a direct retainer client by staff${wasLead ? ` (originally a “${priorChannel}” lead — kept as ONE client instead of a duplicate)` : ''}. ` +
       `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant} · Source / reference: ${escHtmlNote(clientSource)}.` +
       (keptReferrer ? ` Referred by kept as “${escHtmlNote(priorReferredBy)}” (the form said “${escHtmlNote(referredBy)}”).` : '') +
       (keptAddress ? ` The address box was empty, so the lead’s address was kept: “${escHtmlNote(keptAddress)}” — it prints on the retainer agreement; check it is current.` : '')).catch(() => {});
@@ -2793,6 +2795,7 @@ async function findClientMatches({ email, phone } = {}) {
         email: l.email || '',
         phone: l.phone || '',
         sourceChannel: (l.sourceChannel || '').trim(),
+        direct: isDirectClient(l),   // the panel says "direct retainer client" — the source alone no longer does (2026-11-04)
         conversionStatus: (l.conversionStatus || '').trim(),
         hasCase: !!(l.clientMasterItemId && String(l.clientMasterItemId).trim()),
         retainerSent: !!(l.retainerSent && String(l.retainerSent).trim()),

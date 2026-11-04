@@ -201,6 +201,9 @@ test('convert to direct retainer: the original channel is kept in its own column
   assert.equal('originalChannel' in c, false);
   const d = await run({ sourceChannel: '' });
   assert.equal('originalChannel' in d, false);
+  // review 2026-11-04: an existing NEW-style direct client (real source + marker) was never "a lead first"
+  const e = await run({ sourceChannel: 'Walk-in', directClient: 'Yes' });
+  assert.equal('originalChannel' in e, false, 'a direct client linked again is not counted as a converted lead');
 });
 
 test('KPIs: a converted lead still counts as a lead; a walk-in direct client still does not', () => {

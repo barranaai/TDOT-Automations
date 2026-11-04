@@ -455,7 +455,7 @@ function dcRenderMatches(m){
   });
   (m.leads||[]).forEach(function(l){
     var linkable=!l.hasCase && !l.retainerSent && !l.booked && !l.planInProgress && l.conversionStatus!=='Retained';
-    var ident=escHtml(l.name)+(l.email?' &middot; '+escHtml(l.email):'')+(l.sourceChannel?' ('+escHtml(l.sourceChannel)+')':'');
+    var ident=escHtml(l.name)+(l.email?' &middot; '+escHtml(l.email):'')+(l.sourceChannel?' ('+escHtml(l.sourceChannel)+')':'')+(l.direct?' &middot; direct retainer client':'');
     if(linkable){
       rows.push('<label class="dcm-row"><input type="radio" name="dcm-choice" value="link:'+escHtml(l.id)+'"><span>Link to existing lead — <b>'+ident+'</b> — keeps ONE record for this person</span></label>');
     } else {
