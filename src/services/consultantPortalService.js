@@ -1248,8 +1248,11 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       //  - such a source: a NEW answer (or a changed source) must pass the same check as Add lead;
       //  - moving AWAY from such a source clears the staff pick (no stale referrer);
       //  - any other source leaves the column alone (it may hold the public form's "who referred you").
-      // Same rule as Add lead (2026-11-04): a save may not clear the LAST email / phone.
-      if ((changed.includes('email') || changed.includes('phone')) && !n.email && !n.phone) {
+      // Same rule as Add lead (2026-11-04): a save may not clear the LAST usable email / phone. A lead that
+      // never had one — or whose only one is unusable junk (e.g. phone "12345") — can still be saved/cleaned.
+      const usableEmail = (x) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x);
+      const usablePhone = (x) => { const dg = String(x || '').replace(/\D/g, ''); return dg.length >= 7 && dg.length <= 15; };
+      if (!n.email && !n.phone && ((changed.includes('email') && usableEmail(cur.email)) || (changed.includes('phone') && usablePhone(cur.phone)))) {
         refuse('Keep an email or a phone number — one of the two is required.');
       }
       cur.referredBy = st(lead.referredBy);

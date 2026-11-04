@@ -81,6 +81,8 @@ function tdotRef(p, onEdit){
   var mode = 'search', picked = null, seq = 0, timer = null, results = [], active = -1;
   function edited(){ if (typeof onEdit === 'function') onEdit(); }
   function cancel(){ clearTimeout(timer); seq++; }   /* drop a pending search and any answer still on its way */
+  var SEARCHING = 'Searching…';
+  function stopSearch(){ cancel(); closeList(); if (state.textContent === SEARCHING) setState(''); }   /* Escape, leaving the box, the source moving away */
   function key(){ try { return sessionStorage.getItem('tdot_admin_key') || ''; } catch (e) { return ''; } }
   function closeList(){ list.hidden = true; list.innerHTML = ''; cli.setAttribute('aria-expanded', 'false'); cli.removeAttribute('aria-activedescendant'); results = []; active = -1; }
   function setState(t){ state.textContent = t || ''; }
@@ -103,7 +105,7 @@ function tdotRef(p, onEdit){
     empRow.style.display = k === 'employee' ? '' : 'none';
     cliRow.style.display = k === 'client' ? '' : 'none';
     if (k === 'client') cliLabel.textContent = srcEl.value === 'Client Referral' ? 'Which client referred them? *' : 'Which client? *';
-    if (k !== 'client') { cancel(); closeList(); }
+    if (k !== 'client') stopSearch();   /* back to a client source later: the search runs again when the box is focused */
   }
   function reset(){ emp.value = ''; cli.value = ''; setMode('search'); sync(); }
   function ensureEmpOption(v){
@@ -156,7 +158,7 @@ function tdotRef(p, onEdit){
     var q = cli.value.replace(/^ +| +$/g, '');
     var letters = q.replace(/[^A-Za-z]/g, '').length, digits = q.replace(/[^0-9]/g, '').length;
     if (letters < 2 && digits < 4 && q.indexOf('@') < 0) { cancel(); closeList(); setState(q ? 'Keep typing — 2+ letters of the name, or 4+ digits of the phone.' : ''); return; }
-    var my = ++seq; setState('Searching…');
+    var my = ++seq; setState(SEARCHING);
     fetch('/api/old-clients/search', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': key() }, body: JSON.stringify({ q: q }) })
       .then(function(r){ return r.json().then(function(j){ return { s: r.status, j: j }; }); })
       .then(function(res){
@@ -174,13 +176,16 @@ function tdotRef(p, onEdit){
     clearTimeout(timer); timer = setTimeout(search, 250);
   });
   cli.addEventListener('keydown', function(e){
+    /* Escape with the list open, or while "Searching…": stop the search only — never the pop-up; a late answer stays closed */
+    if (e.key === 'Escape' && mode === 'search' && (!list.hidden || state.textContent === SEARCHING)) { e.preventDefault(); e.stopPropagation(); stopSearch(); return; }
     if (mode !== 'search' || list.hidden) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); highlight(active + 1); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); highlight(active - 1); }
     else if (e.key === 'Enter') { if (active >= 0) { e.preventDefault(); pick(active); } }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeList(); }   /* close the list only — not the pop-up */
   });
-  cli.addEventListener('blur', function(){ setTimeout(function(){ if (document.activeElement !== cli) closeList(); }, 150); });
+  /* Back in the box with text typed and nothing picked (after Escape, leaving the box, or a source change): search it again */
+  cli.addEventListener('focus', function(){ if (mode === 'search' && !picked && list.hidden && cli.value.replace(/ /g, '')) { clearTimeout(timer); timer = setTimeout(search, 0); } });
+  cli.addEventListener('blur', function(){ setTimeout(function(){ if (document.activeElement !== cli) stopSearch(); }, 150); });   /* left the box: no list opens behind the staffer */
   list.addEventListener('mousedown', function(e){ e.preventDefault(); });   /* keep focus in the box while clicking a result */
   list.addEventListener('click', function(e){
     var b = e.target && e.target.closest ? e.target.closest('.ref-opt') : null;

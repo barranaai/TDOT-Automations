@@ -175,6 +175,6 @@ test('the "Add lead" modal: name, email-or-phone and source are marked required;
 test('the lead page "Edit basics" box refuses to CLEAR both email and phone before calling the server (an old contact-less lead still saves)', () => {
   const html = require('../src/routes/adminLeads').buildLeadDetailHTML('123');
   assert.match(html, /var contactEdited=\(body\.email\.trim\(\)!==String\(BD_LOADED\.email\)\.trim\(\) \|\| body\.phone\.trim\(\)!==String\(BD_LOADED\.phone\)\.trim\(\)\);/);
-  assert.match(html, /if\(contactEdited && !body\.email\.trim\(\) && !body\.phone\.trim\(\)\)\{ actMsg\('bd-msg','err','Keep an email or a phone number/);
+  assert.match(html, /if\(contactEdited && hadContact && !body\.email\.trim\(\) && !body\.phone\.trim\(\)\)\{ actMsg\('bd-msg','err','Keep an email or a phone number/);
   assert.match(html, /BD_LOADED=\{ src:src\.value, ref:d\.referredBy\|\|'', email:d\.email\|\|'', phone:d\.phone\|\|'' \};/);
 });

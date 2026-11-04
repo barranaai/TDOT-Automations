@@ -353,7 +353,7 @@ test('pages: Source / Reference with all choices; the two second questions; scri
     for (const s of SRC.LEAD_SOURCES) assert.ok(html.includes(`<option>${s}</option>`), s);
     for (const e of SRC.REFERRAL_EMPLOYEES) assert.ok(html.includes(`<option>${e}</option>`), e);
     assert.ok(!html.includes('<option>Direct Retainer</option>'));
-    assert.match(html, /e\.preventDefault\(\); e\.stopPropagation\(\); closeList\(\);/);
+    assert.match(html, /if \(e\.key === 'Escape' && mode === 'search' && \(!list\.hidden \|\| state\.textContent === SEARCHING\)\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); stopSearch\(\); return; \}/);
     assert.match(html, /fetch\('\/api\/old-clients\/search', \{ method: 'POST'/);
   }
   for (const id of ['al-ref-emp', 'al-ref-cli', 'al-ref-list', 'al-ref-mode']) assert.ok(q.includes(`id="${id}"`), id);
@@ -406,7 +406,7 @@ test('review: the browser code cancels pending searches and late answers; result
   const { REFERRAL_UI_JS } = require('../src/routes/referralPicker');
   assert.match(REFERRAL_UI_JS, /function cancel\(\)\{ clearTimeout\(timer\); seq\+\+; \}/);
   assert.match(REFERRAL_UI_JS, /function setMode\(m\)\{\s+cancel\(\);/);
-  assert.match(REFERRAL_UI_JS, /if \(k !== 'client'\) \{ cancel\(\); closeList\(\); \}/);
+  assert.match(REFERRAL_UI_JS, /if \(k !== 'client'\) stopSearch\(\);/);
   assert.match(REFERRAL_UI_JS, /var x = results\[i\]; if \(!x\) return;\s+cancel\(\);/);
   assert.match(REFERRAL_UI_JS, /\{ cancel\(\); closeList\(\); setState\(q \? 'Keep typing/);
   assert.match(REFERRAL_UI_JS, /if \(my !== seq \|\| mode !== 'search' \|\| tdotRefKind\(srcEl\.value\) !== 'client'\) return;/);
@@ -414,4 +414,61 @@ test('review: the browser code cancels pending searches and late answers; result
   assert.match(REFERRAL_UI_JS, /pending: function\(\)\{ return tdotRefKind\(srcEl\.value\) === 'client' && mode === 'search' && !picked && !!cli\.value/);
   const d = require('../src/routes/adminLeads').buildLeadDetailHTML('7');
   assert.match(d, /body\.referredBy!==BD_LOADED\.ref \|\| BD_REF\.pending\(\)\)\{ var re=BD_REF\.check\(\);/);
+});
+
+// ── Review round 2 (2026-11-04): fixes pinned ───────────────────────────────
+test('review 2: spaced and apostrophe spellings find each other and group as one person; non-Latin names stay searchable by phone/email; Ø Ł fold', () => {
+  const people = dir.buildPeople([
+    { id: '1', name: 'Sean O Brien', phone: '4165550111', date: '2025-01-01' },
+    { id: '2', name: 'Maria D Souza', phone: '4165550101', date: '2025-01-01' },
+    { id: '3', name: "Maria D'Souza", phone: '416 555 0101', date: '2025-03-01' },
+    { id: '4', name: 'Maria Dsouza', phone: '+1 416 555 0101', date: '2025-05-01' },
+    { id: '5', name: 'ਗੁਰਪ੍ਰੀਤ ਸਿੰਘ', phone: '4165559999', email: 'g@x.com', date: '2025-01-01' },
+    { id: '6', name: 'Øyvind Łukasz', date: '2025-01-01' },
+  ]);
+  const ids = (q) => dir.searchPeople(people, q).results.map((r) => r.id);
+  for (const q of ["O'Brien", 'O’Brien', 'O Brien', 'OBrien', 'brien']) assert.deepEqual(ids(q), ['1'], q);
+  for (const q of ["D'Souza", 'D Souza', 'Dsouza', 'souza']) assert.deepEqual(ids(q), ['4'], q);
+  const maria = people.filter((p) => p.groupKey === 'mariadsouza');
+  assert.deepEqual([maria.length, maria[0].consults], [1, 3], 'three spellings, one phone: one person with 3 consultations');
+  assert.deepEqual(ids('g@x'), ['5']); assert.deepEqual(ids('4165559999'), ['5']);
+  assert.deepEqual(ids('oyvind'), ['6']); assert.deepEqual(ids('lukasz'), ['6']);
+});
+
+test('review 2: phones — partial +91, +1 typed one digit short, "+1 416" by area code only, no false +1 guesses for plain digits', () => {
+  const people = dir.buildPeople([
+    { id: '1', name: 'Ravi Kumar', phone: '+919876543210', date: '2025-01-01' },
+    { id: '2', name: 'Maria Lee', phone: '+1 416 555 0101', date: '2025-01-01' },
+    { id: '3', name: 'Quinn Roe', phone: '647-141-6000', date: '2026-01-01' },
+    { id: '4', name: 'Pat Lee', phone: '905-861-6475', date: '2024-01-01' },
+    ...Array.from({ length: 30 }, (_, i) => ({ id: String(200 + i), name: `Filler ${i}`, phone: `6475${String(i).padStart(6, '0')}`, date: '2026-02-01' })),
+  ]);
+  const ids = (q) => dir.searchPeople(people, q).results.map((r) => r.id);
+  for (const q of ['+91 9876', '+91 98765', '91 98765', '+91 98765 4321', '+91 98765 43210', '98765']) assert.deepEqual(ids(q), ['1'], q);
+  for (const q of ['+1 416 555 010', '+1 416 555 0101', '+1416555', '1-416-555-0101', '1 (416) 555', '14165550101']) assert.deepEqual(ids(q), ['2'], q);
+  assert.deepEqual(ids('+1 416'), ['2'], '"+1 416" is the area code, not the digits 1416 anywhere');
+  assert.deepEqual(ids('16475'), ['4'], 'plain digits are matched as typed, never as "+1 6475…"');
+});
+
+test('review 2: Edit basics — clearing a junk-only contact is allowed; clearing a usable last contact is refused', async () => {
+  const w = editWorld({ email: '', phone: '12345' });
+  try {
+    await w.act({ email: '', phone: '' });
+    assert.deepEqual(w.calls.updates[0].o, { clearKeys: ['phone'] }, 'the junk phone can be cleaned');
+  } finally { w.done(); }
+  const w2 = editWorld({ email: '', phone: '416 555 0101' });
+  try { await assert.rejects(w2.act({ email: '', phone: '' }), /email or a phone number/); } finally { w2.done(); }
+  const w3 = editWorld({ email: 'not-an-email', phone: '' });
+  try { await w3.act({ email: '', phone: '' }); assert.deepEqual(w3.calls.updates[0].o, { clearKeys: ['email'] }); } finally { w3.done(); }
+  const d = require('../src/routes/adminLeads').buildLeadDetailHTML('7');
+  assert.match(d, /if\(contactEdited && hadContact && !body\.email\.trim\(\) && !body\.phone\.trim\(\)\)/);
+});
+
+test('review 2: the search box stops a late answer on Escape and on leaving the box; coming back to the box searches the text again', () => {
+  const { REFERRAL_UI_JS } = require('../src/routes/referralPicker');
+  assert.match(REFERRAL_UI_JS, /function stopSearch\(\)\{ cancel\(\); closeList\(\); if \(state\.textContent === SEARCHING\) setState\(''\); \}/);
+  assert.match(REFERRAL_UI_JS, /state\.textContent === SEARCHING\)\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); stopSearch\(\); return; \}/);
+  assert.match(REFERRAL_UI_JS, /if \(document\.activeElement !== cli\) stopSearch\(\); \}, 150\);/);
+  assert.match(REFERRAL_UI_JS, /cli\.addEventListener\('focus', function\(\)\{ if \(mode === 'search' && !picked && list\.hidden && cli\.value\.replace\(\/ \/g, ''\)\) \{ clearTimeout\(timer\); timer = setTimeout\(search, 0\); \} \}\);/);
+  assert.ok(!REFERRAL_UI_JS.includes('\\'));
 });
