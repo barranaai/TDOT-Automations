@@ -387,7 +387,7 @@ function openDirectClient(){
   // this and re-populates intentionally.
   ['dc-name','dc-email','dc-phone','dc-address','dc-notes'].forEach(function(id){ var e=dcEl(id); if(e) e.value=''; });
   ['dc-casetype','dc-subtype','dc-consultant','dc-source'].forEach(function(id){ var e=dcEl(id); if(e) e.selectedIndex=0; });
-  DC_REF.reset(); DC_ATT.reset(); DC_PROFILE_ADDR='';
+  DC_REF.reset(); DC_ATT.reset(); DC_ATT.refresh(); DC_PROFILE_ADDR='';
   DC_MATCHES=null; var mb=dcEl('dc-matches'); if(mb){ mb.style.display='none'; mb.innerHTML=''; }
   DC_BL_HIT=false; var blb=dcEl('dc-blacklist'); if(blb){ blb.style.display='none'; blb.innerHTML=''; }
   // A carried profile / lead conversion belongs to ONE opening of the modal —
@@ -497,7 +497,8 @@ function dcApplyProfile(ref,p){
   var pf=p.priorFacts||{};
   if(pf.hadRefusal) rows.push('<div class="dcp-fact">⚠ Refusal on file'+(pf.refusalType?' ('+escHtml(pf.refusalType)+(pf.refusalDate?', '+escHtml(pf.refusalDate):'')+')':'')+' — ensure the new application discloses it.</div>');
   (pf.openCases||[]).forEach(function(c){ rows.push('<div class="dcp-fact">This client also has open case '+escHtml(c.caseRef)+(c.caseStage?' ('+escHtml(c.caseStage)+')':'')+'.</div>'); });
-  DC_PROFILE_ADDR=String(id.address||'');
+  /* as the one-line box holds it: line breaks dropped, or a carried two-line address would never ask for the tick */
+  DC_PROFILE_ADDR=String(id.address||'').split(String.fromCharCode(13)).join('').split(String.fromCharCode(10)).join('');
   if(id.address) rows.push('<label class="dcp-confirm"><input type="checkbox" id="dcp-addr-ok"><span>I confirmed the residential address is CURRENT with the client (it prints on the retainer agreement)</span></label>');
   var box=dcEl('dc-profile'); box.innerHTML=rows.join(''); box.style.display='block';
 }

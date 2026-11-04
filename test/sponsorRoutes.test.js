@@ -114,7 +114,7 @@ test('the route sits with the other cockpit actions (after the milestone route) 
 
 test('webhook: Document Collection Started emails the sponsor right after the client, in onboard mode', () => {
   const src = code(WEBHOOK);
-  const dcs = src.indexOf("emailService.sendIntakeEmail(pulseId)");
+  const dcs = src.indexOf("emailService.sendIntakeEmailAuto(pulseId)");
   assert.ok(dcs !== -1, 'the DCS intake email is where it was');
   const after = src.slice(dcs, dcs + 700);
   assert.match(after, /sponsorOnboardingService'\)\.ensureSponsor\(\{ itemId: pulseId, mode: 'onboard', trigger: 'dcs' \}\)/);
@@ -152,7 +152,7 @@ test('webhook: the Client Email correction branch does NOT email the sponsor (sp
 
 test('retainerService: the deferred (pre-staged, then paid) branch onboards the sponsor after the client email', () => {
   const src = code(RETAINER);
-  const i = src.indexOf('emailService.sendIntakeEmail(itemId)');
+  const i = src.indexOf('emailService.sendIntakeEmailAuto(itemId)');
   assert.ok(i !== -1);
   const after = src.slice(i, i + 600);
   assert.match(after, /require\('\.\/sponsorOnboardingService'\)\.ensureSponsor\(\{ itemId, mode: 'onboard', trigger: 'retainer-paid' \}\)/, 'lazy require — cycle-safe');
@@ -170,7 +170,7 @@ test('caseRefService: prepare after the family rows and before the stuck-onboard
   assert.match(src.slice(prepare - 160, prepare + 200), /\.then\(\(rows\) => require\('\.\/sponsorOnboardingService'\)\.ensureSponsor\(\{ itemId, caseRef, mode: 'prepare', trigger: 'case-ref', boardJustWritten: Number\(rows\) > 0 \}\)\)\s*\.catch\(/, 'the count of rows just written travels into prepare (no row on a board read that may lag them); its own catch — a sponsor failure never stops the resume');
   assert.match(src.slice(rows - 40, rows + 260), /\.catch\(err => \{ console\.warn\([^)]*Family rows skipped[\s\S]{0,60}return 0; \}\)/, 'a failed family-rows step counts as none written');
   const fn = src.slice(src.indexOf('async function resumeOnboardingIfStuck'), src.indexOf('async function writePortalLinkForItem'));
-  const email = fn.indexOf('emailService.sendIntakeEmail(itemId)');
+  const email = fn.indexOf('emailService.sendIntakeEmailAuto(itemId)');
   const sponsor = fn.indexOf("ensureSponsor({ itemId, caseRef, mode: 'onboard', trigger: 'resume' })");
   const seed = fn.indexOf('checklistService.onDocumentCollectionStarted');
   assert.ok(email !== -1 && sponsor !== -1 && seed !== -1);

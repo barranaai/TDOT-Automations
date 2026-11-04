@@ -333,5 +333,25 @@ function maskAddr(email) {
 
 // BASE_URL / EMAIL_REPLY_TO / STAGES_REQUIRING_RESEND / maskAddr are shared with
 // sponsorOnboardingService so the sponsor's link and gates are the client's.
-module.exports = { sendIntakeEmail, onClientEmailChanged, BASE_URL, EMAIL_REPLY_TO, STAGES_REQUIRING_RESEND, maskAddr,
+/**
+ * The AUTOMATIC onboarding starts (stage webhook, deferred paid start, case-ref resume)
+ * send the intake email and used to ignore the answer. Since 2026-11-04 a phone-only
+ * walk-in can have a case with no email, so a case-row note now says when the email
+ * could not go out for that reason. Its wording starts like Needs-attention's
+ * "intakeFailed" note, so the Summary lists the case. Other skips (no case reference
+ * yet) are transient and stay log-only, as before. Never throws.
+ */
+async function sendIntakeEmailAuto(itemId) {
+  const r = await module.exports.sendIntakeEmail(itemId);   // via exports: tests stub it
+  if (r && !r.sent && /no client email/i.test(String(r.reason || ''))) {
+    await mondayApi.query('mutation($id: ID!, $b: String!) { create_update(item_id: $id, body: $b) { id } }', {
+      id: String(itemId),
+      b: '⚠ <b>The client’s intake email did not go out</b> — there is no client email on this case, so the client has NOT received their portal link. ' +
+         'Add the client’s email on their lead page (Basic details) — the link then goes out by itself — or send the client their portal link yourself (text / WhatsApp).',
+    }).catch((err) => console.warn(`[Email] no-email note failed for item ${itemId}: ${err.message}`));
+  }
+  return r;
+}
+
+module.exports = { sendIntakeEmail, sendIntakeEmailAuto, onClientEmailChanged, BASE_URL, EMAIL_REPLY_TO, STAGES_REQUIRING_RESEND, maskAddr,
   _setRetryMsForTests: (ms) => { EMAIL_CHANGE_RETRY_MS = ms; } };

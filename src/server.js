@@ -1904,6 +1904,7 @@ app.post('/api/consultation/direct-client', express.json(), async (req, res) => 
       if (err.badRequest) return res.status(400).json({ error: err.message });
       if (err.notFound) return res.status(404).json({ error: err.message });
       if (err.retry) return res.status(409).json({ error: err.message, retry: true });
+      if (err.noFolder) return res.status(409).json({ error: err.message });
       console.error('[Attach] failed:', err.stack || err.message);
       res.status(502).json({ error: 'The file could not be saved just now — try again in a minute.' });
     }

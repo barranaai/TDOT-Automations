@@ -311,7 +311,7 @@ async function onRetainerPaid({ itemId, _retryOfUnreadable = false }) {
     console.log(`[Retainer] Item ${itemId} was pre-staged before payment — starting deferred onboarding now`);
     const emailService     = require('./emailService');     // lazy: avoid require cycles
     const checklistService = require('./checklistService');
-    emailService.sendIntakeEmail(itemId).catch(err =>
+    emailService.sendIntakeEmailAuto(itemId).catch(err =>
       console.error(`[Retainer] Deferred intake email failed for ${itemId}:`, err.message));
     // The sponsor's own portal email, same gates as the webhook path (lazy
     // require: the sponsor service reads leads, which read this module).

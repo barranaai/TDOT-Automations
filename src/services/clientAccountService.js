@@ -75,8 +75,10 @@ function classifyMatch(input, candidate) {
   if (emailMatch && nameMatch && !dobConflict) return { confidence: 'exact', reasons };
   // A client with NO email (a phone-only walk-in, 2026-11-04): the same phone AND the
   // same name is the same person — else every case of theirs minted a new account.
-  // Only when the looked-up person has no email: with one, the email decides.
-  if (!normalizeEmail(input.email) && phoneMatch && nameMatch && !dobConflict) return { confidence: 'exact', reasons };
+  // Only when one side has no email: when BOTH have one, the email decides.
+  // Symmetric: an account made for a phone-only client (no email on it) is the same person
+  // when they come back WITH an email — same phone + same name.
+  if ((!normalizeEmail(input.email) || !normalizeEmail(candidate.email)) && phoneMatch && nameMatch && !dobConflict) return { confidence: 'exact', reasons };
   if (dobConflict) reasons.push('DIFFERENT date of birth — likely two people (Sr/Jr)');
   if (emailMatch && !nameMatch) reasons.push('different name — shared family email or a name change; verify identity');
   if (!emailMatch && phoneMatch) reasons.push('phone-only match — weak signal');

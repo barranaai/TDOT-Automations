@@ -1500,6 +1500,12 @@ async function uploadToLeadFolderAndLink({ fullName, leadId, folderId, filename,
  * a 401 retry re-runs only the PUT, which wrote nothing.
  * @returns {Promise<{ id, name, webUrl, url, replaced }>}
  */
+function folderGone() {
+  const e = new Error('The client’s OneDrive folder recorded on this client no longer exists — ask an admin to re-link it (“Case folder…” on the case page), then attach again.');
+  e.notFound = true;
+  return e;
+}
+
 async function uploadToFolderIdAsNew({ folderId, subfolder = 'Intake', filename, buffer, mimeType }) {
   const parent = String(folderId || '').trim();
   if (!parent) throw new Error('No folder id — the client folder is not known yet');
@@ -1518,6 +1524,7 @@ async function uploadToFolderIdAsNew({ folderId, subfolder = 'Intake', filename,
       try {
         return (await axios.post(`${userBase()}/items/${parent}/children`, { name: sub, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }, { headers: auth, timeout: GRAPH_TIMEOUT_MS })).data.id;
       } catch (err) {
+        if (err.response?.status === 404) throw folderGone();   // the parent folder itself is gone
         if (err.response?.status !== 409) throw err;   // made by someone else meanwhile — read it
         return (await axios.get(subUrl, { headers: auth, timeout: GRAPH_TIMEOUT_MS })).data.id;
       }
@@ -1532,6 +1539,7 @@ async function uploadToFolderIdAsNew({ folderId, subfolder = 'Intake', filename,
       }));
   } catch (err) {
     console.error(`[OneDrive] Attachment upload failed (${err.response?.status}): ${err.message}`);
+    if (err.response?.status === 404) throw folderGone();
     throw wrapError('OneDrive upload failed', err);
   }
   const { id = '', name = safeFile, webUrl = '' } = put.data || {};

@@ -51,8 +51,10 @@ var TDOT_ATT_VIEWER=null;
 function tdotAttViewer(){
   if (TDOT_ATT_VIEWER) return TDOT_ATT_VIEWER;
   var h={}; try { var k=sessionStorage.getItem('tdot_admin_key'); if (k) h['X-Api-Key']=k; } catch (e) {}
+  /* A failed or refused answer is never kept: the next opening asks again (a sign-in may have happened meanwhile). */
   TDOT_ATT_VIEWER=fetch('/admin/payments/viewer',{headers:h,credentials:'same-origin'})
-    .then(function(r){ return r.ok ? r.json() : {}; }).catch(function(){ return {}; });
+    .then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; })
+    .then(function(v){ if (!v) TDOT_ATT_VIEWER=null; return v || {}; });
   return TDOT_ATT_VIEWER;
 }
 function tdotAttExt(name){ var m=/[.][a-zA-Z0-9]{1,5}$/.exec(String(name||'')); return m ? m[0].toLowerCase() : ''; }
@@ -61,6 +63,8 @@ function tdotAttach(p){
   function el(id){ return document.getElementById(p+'-'+id); }
   var row=el('att-row'), input=el('att'), list=el('att-list'), status=el('att-status');
   var allowed=false;
+  var done={};   /* files already attached in this pick — a retry after a partial failure sends only the rest */
+  function fkey(f){ return f.name+'|'+f.size+'|'+(f.lastModified||0); }
   function setStatus(t,cls){ if (!status) return; status.textContent=t||''; status.className='att-status'+(cls?' '+cls:''); }
   function files(){ return (input && input.files) ? Array.prototype.slice.call(input.files) : []; }
   function problem(f){
@@ -81,8 +85,8 @@ function tdotAttach(p){
     });
     setStatus('');
   }
-  if (input) input.addEventListener('change',draw);
-  function reset(){ if (input) input.value=''; draw(); }
+  if (input) input.addEventListener('change',function(){ done={}; draw(); });
+  function reset(){ done={}; if (input) input.value=''; draw(); }
   function check(){
     if (!allowed) return '';
     var fs=files();
@@ -99,7 +103,7 @@ function tdotAttach(p){
   }
   /* Uploads the chosen files one after another. Resolves {sent, failed:[{name,error}]} — never rejects. */
   function upload(leadId){
-    var fs=allowed ? files() : [];
+    var fs=(allowed ? files() : []).filter(function(f){ return !done[fkey(f)]; });
     var out={ sent:0, failed:[] };
     if (!fs.length || !leadId) return Promise.resolve(out);
     var i=0;
@@ -107,16 +111,21 @@ function tdotAttach(p){
       if (i>=fs.length) return Promise.resolve(out);
       var f=fs[i++];
       setStatus('Attaching '+i+' of '+fs.length+'…');
-      return uploadOne(leadId,f).then(function(r){ if (r.ok) out.sent++; else out.failed.push({ name:f.name, error:r.error }); return next(); });
+      return uploadOne(leadId,f).then(function(r){ if (r.ok){ out.sent++; done[fkey(f)]=1; } else out.failed.push({ name:f.name, error:r.error }); return next(); });
     }
     return next().then(function(o){
-      if (o.failed.length) setStatus(o.failed.length+' of '+fs.length+' not attached: '+o.failed.map(function(x){ return x.name+' ('+x.error+')'; }).join('; '),'err');
+      if (o.failed.length) setStatus((o.sent?o.sent+' attached; ':'')+o.failed.length+' not attached: '+o.failed.map(function(x){ return x.name+' ('+x.error+')'; }).join('; ')+'. Attaching again sends only these.','err');
       else setStatus(o.sent+' attached.','ok');
       return o;
     });
   }
-  var ready=tdotAttViewer().then(function(v){ allowed=!!(v&&v.canAttach); if (row) row.style.display=allowed?'':'none'; return allowed; });
-  return { reset:reset, check:check, upload:upload, files:function(){ return allowed ? files() : []; }, allowed:function(){ return allowed; }, ready:ready, setStatus:setStatus };
+  function ask(){ return tdotAttViewer().then(function(v){ allowed=!!(v&&v.canAttach); if (row) row.style.display=allowed?'':'none'; return allowed; }); }
+  var api={ reset:reset, check:check, upload:upload, setStatus:setStatus,
+    files:function(){ return allowed ? files().filter(function(f){ return !done[fkey(f)]; }) : []; },
+    allowed:function(){ return allowed; }, ready:ask(),
+    /* ask again (each time a form opens): the Monday sign-in may have changed since the page loaded */
+    refresh:function(){ TDOT_ATT_VIEWER=null; api.ready=ask(); return api.ready; } };
+  return api;
 }
 `;
 

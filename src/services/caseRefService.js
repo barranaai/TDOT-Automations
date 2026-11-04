@@ -429,7 +429,7 @@ async function resumeOnboardingIfStuck({ itemId, caseRef }) {
       ).catch((err) => console.warn(`[CaseRef] Resume: chasing clock not started for ${caseRef}: ${err.message}`));
     }
 
-    emailService.sendIntakeEmail(itemId).catch(err =>
+    emailService.sendIntakeEmailAuto(itemId).catch(err =>
       console.error(`[CaseRef] Resume: intake email failed for ${caseRef}:`, err.message)
     );
     // The sponsor's own portal email (same link) — the service checks the

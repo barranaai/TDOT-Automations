@@ -524,8 +524,12 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
   // Create WITHOUT Case Type (Case Type is set separately below so the webhook fires).
   // presigned (direct retainer, case-first): Payment Status stays EMPTY — the
   // client hasn't signed anything yet; ensureSignedState() stamps it at signing.
+  // No email (a phone-only walk-in, 2026-11-04): the PHONE is this person's dedup key
+  // (findClientMasterByPhoneAndName), so it goes on in the same write that creates the
+  // row — a crash before the later setClientPhone must not leave a row nobody can find.
+  const noEmail = !String(lead.email || '').trim();
   const createCols = {
-    ...(String(lead.email || '').trim() ? { [CM.clientEmail]: lead.email } : {}),
+    ...(noEmail ? (phoneColValue(lead.phone) ? { [CM.clientPhone]: phoneColValue(lead.phone) } : {}) : { [CM.clientEmail]: lead.email }),
     ...(presigned ? {} : { [CM.paymentStatus]: { label: 'Signed (Unpaid)' } }),
     [CM.caseStage]:     { label: 'Pre-Onboarding' },
   };
@@ -537,15 +541,26 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
       createCols[CM.oneDriveFolderLink] = { url: lead.oneDriveFolderLink, text: 'Open client folder' };
     }
   }
-  const result = await mondayApi.query(
+  const createCase = (cols) => mondayApi.query(
     `mutation($boardId: ID!, $groupId: String!, $name: String!, $cols: JSON!) {
        create_item(board_id: $boardId, group_id: $groupId, item_name: $name, column_values: $cols, create_labels_if_missing: true) { id }
      }`,
     {
       boardId: String(clientMasterBoardId), groupId, name: lead.fullName,
-      cols: JSON.stringify(createCols),
+      cols: JSON.stringify(cols),
     }
   );
+  let result;
+  try {
+    result = await createCase(createCols);
+  } catch (err) {
+    // An odd phone format must never stop the case opening: once more without it
+    // (setClientPhone below tries again, best-effort, as for every case).
+    if (!createCols[CM.clientPhone]) throw err;
+    console.warn(`[Handoff] create with the phone failed for lead ${leadId} (${err.message}) — retrying without it`);
+    const { [CM.clientPhone]: _dropped, ...rest } = createCols;
+    result = await createCase(rest);
+  }
   const newId = result?.create_item?.id;
   if (!newId) throw new Error(`create_item returned no id for lead ${leadId}`);
   try { require('./dashboardService').invalidateCases(); } catch (_) { /* the Cases page copy is a convenience */ }

@@ -257,6 +257,8 @@ test('attach: into the client folder BY ID ("Intake"), a dated name with who att
     note: async (id, b) => { notes.push({ id, b }); },
     sleep: async () => {},
     now: () => new Date('2026-11-04T19:32:00Z'),
+    caseFolderId: async () => '',          // the case row has no folder of its own here: the lead's is used
+    ensureLeadFolder: async () => null,    // a no-case lead whose folder cannot be made right now
   });
   try {
     const r = await svc.attach({ leadId: '900', file, staff: SHAF });
@@ -267,7 +269,7 @@ test('attach: into the client folder BY ID ("Intake"), a dated name with who att
     assert.match(notes[0].b, /Attachment added by Shafoli Kapur<\/b>: <a href="https:\/\/org\/link">/);
     await assert.rejects(svc.attach({ leadId: '900', file, staff: { email: 'gauri@tdotimm.com' } }), (e) => e.forbidden);
     await assert.rejects(svc.attach({ leadId: '900', file: { ...file, originalname: 'x.exe' }, staff: SHAF }), (e) => e.badRequest && /Only pictures/.test(e.message));
-    svc.io.getLead = async () => ({ id: '900', oneDriveFolderId: '' });
+    svc.io.getLead = async () => ({ id: '900', oneDriveFolderId: '', clientMasterItemId: '' });
     uploads.length = 0;
     await assert.rejects(svc.attach({ leadId: '900', file, staff: SHAF }), (e) => e.retry && /still being created/.test(e.message));
     assert.equal(uploads.length, 0, 'never resolved by name — nothing uploaded');
@@ -292,4 +294,138 @@ test('attach box: no backslashes in the browser code (template-literal trap); hi
   const leads = require('../src/routes/adminLeads').buildLeadsQueueHTML();
   assert.ok(leads.includes('id="al-att-row"') && leads.includes("var AL_ATT=tdotAttach('al');") && leads.includes('AL_ATT.upload(res.j.leadId)'));
   for (const s of scriptsOf(leads)) new vm.Script(s);
+});
+
+// ── review round 1 (2026-11-04) ──────────────────────────────────────────────
+
+test('review: the walk-in source has a real Monday column before this can ship (no silent drop)', () => {
+  const C = require('../src/data/newLeadsBoard.json').columns;
+  assert.ok(C.walkInSource, 'create the Lead Board text column "Walk-in Source" and add its id as columns.walkInSource');
+  assert.ok(C.referredBy && C.email && C.phone);
+});
+
+test('review: an automatic onboarding start with no client email leaves a case note the Summary reads; a sent email leaves none', async () => {
+  const email = require('../src/services/emailService');
+  const notes = [];
+  const restore = [stub(mondayApi, 'query', async (q, v) => { if (/create_update/.test(q)) notes.push(v); return {}; })];
+  try {
+    restore.push(stub(email, 'sendIntakeEmail', async () => ({ sent: false, to: '', caseRef: 'X', reason: 'This case has no client email on the Client Master row.' })));
+    await email.sendIntakeEmailAuto('CM-7');
+    assert.equal(notes.length, 1); assert.equal(notes[0].id, 'CM-7');
+    assert.match(notes[0].b, /The client’s intake email did not go out/);
+    assert.match(require('fs').readFileSync(require.resolve('../src/services/needsAttentionService'), 'utf8'), /intakeFailed:\s+\/The client.s intake email did not go out\/i/);
+    restore.push(stub(email, 'sendIntakeEmail', async () => ({ sent: false, to: 'a@b.co', caseRef: '', reason: 'This case has no case reference yet.' })));
+    await email.sendIntakeEmailAuto('CM-7');
+    restore.push(stub(email, 'sendIntakeEmail', async () => ({ sent: true })));
+    await email.sendIntakeEmailAuto('CM-7');
+    assert.equal(notes.length, 1, 'only the no-email skip is noted');
+  } finally { restore.reverse().forEach((r) => r()); }
+  const fs = require('fs');
+  for (const f of ['../src/routes/mondayWebhook', '../src/services/retainerService', '../src/services/caseRefService']) {
+    const src = fs.readFileSync(require.resolve(f), 'utf8');
+    assert.ok(src.includes('sendIntakeEmailAuto(') && !/emailService\.sendIntakeEmail\((pulseId|itemId)\)/.test(src), f);
+  }
+});
+
+test('review: a phone-only case is created WITH its phone (the dedup key exists from the first moment); an odd phone never blocks the case', async () => {
+  process.env.MONDAY_CM_HANDOFF_GROUP_ID = 'gtest';
+  const run = async (failPhone) => {
+    const creates = [];
+    const restore = [
+      stub(leadService, 'getLead', async () => ({ id: '800', fullName: 'Phone Only', email: '', phone: '4165550123', clientMasterItemId: '', confirmedCaseType: CASE_TYPE, oneDriveFolderId: 'F1' })),
+      stub(leadService, 'updateLead', async () => {}),
+      stub(clientMaster, 'findCasesByPhone', async () => []),
+      stub(mondayApi, 'query', async (q, v) => {
+        if (/create_item/.test(q) && /item_name/.test(q)) { const cols = JSON.parse(v.cols); creates.push(cols); if (failPhone && cols.phone_mm33zr0c) throw new Error('invalid phone'); return { create_item: { id: 'CM-NEW' } }; }
+        if (/updates\(/.test(q)) return { items: [{ updates: [] }] };
+        if (/column_values\(ids/.test(q)) return { items: [{ column_values: [] }] };
+        return {};
+      }),
+      stub(registry, 'isCanonicalCaseType', async () => true),
+    ];
+    const warn = console.warn; console.warn = () => {};
+    try { return { id: await handoff.openCaseEarly({ leadId: '800' }), creates }; } finally { console.warn = warn; restore.reverse().forEach((r) => r()); }
+  };
+  const a = await run(false);
+  assert.deepEqual(a.creates[0].phone_mm33zr0c, { phone: '+14165550123', countryShortName: 'CA' });
+  const b = await run(true);
+  assert.equal(b.id, 'CM-NEW'); assert.equal(b.creates.length, 2); assert.ok(!b.creates[1].phone_mm33zr0c, 'retried without the phone');
+});
+
+test('review: an account made without an email is the same person when they come back with one (same phone + name)', () => {
+  assert.equal(accounts.classifyMatch({ email: 'new@x.co', phone: '4165550123', fullName: 'Phone Only' }, { email: '', phone: '+14165550123', name: 'Phone Only' }).confidence, 'exact');
+  assert.equal(accounts.classifyMatch({ email: 'new@x.co', phone: '4165550123', fullName: 'Phone Only' }, { email: 'old@x.co', phone: '4165550123', name: 'Phone Only' }).confidence, 'review', 'two different emails still need staff');
+});
+
+test('review: converting a lead with the Email box emptied is refused (the old email would silently stay and get the retainer); a kept address is noted', async () => {
+  const run = async (existing, body) => {
+    const notes = [];
+    const restore = [
+      stub(registry, 'getCaseTypes', async () => { throw new Error('no monday in tests'); }),
+      stub(leadService, 'getLead', async () => ({ id: '300', fullName: 'Same Person', sourceChannel: 'Phone', clientMasterItemId: '', conversionStatus: '', retainerSent: '', ...existing })),
+      stub(leadService, 'updateLead', async () => {}),
+      stub(leadService, 'createLead', async () => { throw new Error('must not create'); }),
+      stub(handoff, 'openCaseEarly', async () => 'CM-300'),
+      stub(blacklist, 'check', async () => ({ checked: true, hit: false })),
+      stub(mondayApi, 'query', async (q, v) => { if (/create_update/.test(q)) notes.push(v.b); return { items: [{ updates: [] }] }; }),
+    ];
+    try { await portal.createDirectClient({ ...PHONE_ONLY, fullName: 'Same Person', linkLeadId: '300', ...body }); return notes; } finally { restore.reverse().forEach((r) => r()); }
+  };
+  await assert.rejects(run({ email: 'old@x.co', phone: '4165550123' }, {}), (e) => e.badRequest && /already has the email old@x\.co/.test(e.message));
+  const notes = await run({ email: '', phone: '4165550123', residentialAddress: '9 Old Rd, Toronto' }, {});
+  assert.ok(notes.some((b) => /lead’s address was kept: “9 Old Rd, Toronto”/.test(b)));
+});
+
+test('review: payment toasts never claim an email went to a client with no email', async () => {
+  const restore = [
+    stub(leadService, 'getLead', async () => ({ id: '1', fullName: 'P', email: '', outcome: 'Retain', retainerFee: '2500', retainerSent: '2026-11-01', retainerSigned: '', conversionStatus: '' })),
+    stub(require('../src/services/milestonePaymentService'), 'sendMilestoneEtransferRequest', async () => ({ ok: true, label: 'Milestone 1', reference: 'TDOT-1-1', emailed: false, etransferTo: 'pay@x.co' })),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    const r = await portal.applyAction({ leadId: '1', action: 'sendMilestoneEtransferRequest', value: '0' }).catch((e) => ({ message: e.message }));
+    assert.match(r.message, /NOT emailed — there is no client email.*pay@x\.co.*TDOT-1-1/);
+  } finally { restore.reverse().forEach((x) => x()); }
+  const src = require('fs').readFileSync(require.resolve('../src/services/milestonePaymentService'), 'utf8');
+  assert.match(src, /emailed = true;/); assert.match(src, /reference, emailed, etransferTo: ETRANSFER_EMAIL/);
+});
+
+test('review: attach uses the CASE folder when there is a case; no folder → make the lead folder (no case) or an admin message (case); a vanished folder says so', async () => {
+  const svc = require('../src/services/leadAttachmentService');
+  const SHAF = { email: 'shafoli@tdotimm.com', name: 'Shafoli Kapur' };
+  const file = { originalname: 'a.png', buffer: Buffer.from('x'), size: 1 };
+  const orig = { ...svc.io };
+  const ups = [];
+  try {
+    Object.assign(svc.io, { sleep: async () => {}, note: async () => {}, upload: async (a) => { ups.push(a.folderId); return { name: 'a.png', url: 'u' }; },
+      getLead: async () => ({ id: '9', oneDriveFolderId: 'LEAD-F', clientMasterItemId: 'CM-1' }), caseFolderId: async () => 'CASE-F', ensureLeadFolder: async () => { throw new Error('must not make a folder for a case'); } });
+    await svc.attach({ leadId: '9', file, staff: SHAF });
+    assert.equal(ups.pop(), 'CASE-F');
+    svc.io.caseFolderId = async () => '';
+    await svc.attach({ leadId: '9', file, staff: SHAF });
+    assert.equal(ups.pop(), 'LEAD-F', 'the case has none: the lead folder');
+    svc.io.getLead = async () => ({ id: '9', oneDriveFolderId: '', clientMasterItemId: 'CM-1' });
+    await assert.rejects(svc.attach({ leadId: '9', file, staff: SHAF }), (e) => e.noFolder && /Case folder…/.test(e.message));
+    svc.io.caseFolderId = async () => { throw new Error('Monday 503'); };
+    await assert.rejects(svc.attach({ leadId: '9', file, staff: SHAF }), (e) => e.retry);
+    svc.io.getLead = async () => ({ id: '9', fullName: 'N', oneDriveFolderId: '', clientMasterItemId: '' });
+    svc.io.ensureLeadFolder = async () => ({ id: 'MADE-F' });
+    await svc.attach({ leadId: '9', file, staff: SHAF });
+    assert.equal(ups.pop(), 'MADE-F', 'no case: the lead folder is made / found now');
+  } finally { Object.assign(svc.io, orig); }
+  const od = require('fs').readFileSync(require.resolve('../src/services/oneDriveService'), 'utf8');
+  assert.match(od, /if \(err\.response\?\.status === 404\) throw folderGone\(\);/);
+});
+
+test('review: the attach box re-asks who is signed in on each opening, never keeps a failed answer, and a retry sends only the files that failed', () => {
+  const { ATTACH_UI_JS } = require('../src/routes/attachUi');
+  assert.ok(!ATTACH_UI_JS.includes('\\'));
+  assert.match(ATTACH_UI_JS, /if \(!v\) TDOT_ATT_VIEWER=null;/);
+  assert.match(ATTACH_UI_JS, /refresh:function\(\)\{ TDOT_ATT_VIEWER=null;/);
+  assert.match(ATTACH_UI_JS, /if \(r\.ok\)\{ out\.sent\+\+; done\[fkey\(f\)\]=1; \}/);
+  assert.match(ATTACH_UI_JS, /filter\(function\(f\)\{ return !done\[fkey\(f\)\]; \}\)/);
+  assert.ok(require('../src/routes/adminLeads').buildLeadsQueueHTML().includes('AL_ATT.reset(); AL_ATT.refresh();'));
+  const cons = require('../src/routes/adminConsultation').buildQueueHTML();
+  assert.ok(cons.includes('DC_ATT.refresh();'));
+  assert.ok(cons.includes("DC_PROFILE_ADDR=String(id.address||'').split(String.fromCharCode(13)).join('').split(String.fromCharCode(10)).join('');"), 'a two-line carried address still asks for the tick');
 });

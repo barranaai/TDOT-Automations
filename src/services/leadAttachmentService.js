@@ -16,6 +16,14 @@ const RULES = require('../../config/staffAttachments');
 
 const io = {
   getLead: (id) => require('./leadService').getLead(String(id)),
+  /** The case row's folder id ('' = none). Throws when it cannot be read — never guess. */
+  caseFolderId: async (cmId) => {
+    const C = require('../../config/monday').cmColumns.oneDriveFolderId;   // the case row's "OneDrive Folder Id"
+    const d = await require('./mondayApi').query(`query($id: ID!) { items(ids: [$id]) { column_values(ids: ["${C}"]) { text } } }`, { id: String(cmId) });
+    return (((d && d.items) || [])[0]?.column_values || [])[0]?.text?.trim() || '';
+  },
+  /** A no-case lead's folder, made now if it is missing (idempotent; records the id on the lead). */
+  ensureLeadFolder: (lead) => require('./handoffService').ensureLeadFolderNow(lead),
   upload: (args) => require('./oneDriveService').uploadToFolderIdAsNew(args),
   note: (itemId, body) => require('./mondayApi').query(
     'mutation($id: ID!, $b: String!) { create_update(item_id: $id, body: $b) { id } }', { id: String(itemId), b: body }),
@@ -39,7 +47,7 @@ function stamp(d) {
 /**
  * @param {{ leadId: string, file: { originalname: string, buffer: Buffer, size: number }, staff: { name?: string, email?: string } }} p
  * @returns {Promise<{ ok: true, name: string, url: string, notedOn: string[] }>}
- * @throws .badRequest | .notFound | .forbidden | .retry (the folder is not ready yet)
+ * @throws .badRequest | .notFound | .forbidden | .retry (try again later) | .noFolder (an admin must make the folder)
  */
 async function attach({ leadId, file, staff } = {}) {
   if (!RULES.canAttach(staff)) fail('Only the staff members allowed to attach files can do this (signed in with Monday).', 'forbidden');
@@ -52,13 +60,29 @@ async function attach({ leadId, file, staff } = {}) {
 
   let lead = await io.getLead(id);
   if (!lead) fail('That client could not be found — refresh the page.', 'notFound');
-  // A brand-new client's folder is made in the background: wait for its id, briefly.
-  for (let i = 0; i < FOLDER_WAIT_TRIES && !String(lead.oneDriveFolderId || '').trim(); i++) {
+  const cmId = String(lead.clientMasterItemId || '').trim();
+  // With a case, the CASE row's folder is the client's folder (a second lead on a reused
+  // case, or a folder made / repaired on the case, can differ from this lead's own).
+  let folderId = '';
+  if (cmId) {
+    try { folderId = await io.caseFolderId(cmId); }
+    catch (err) { fail('The client’s case could not be read just now — try again in a minute.', 'retry'); }
+  }
+  // A brand-new client's lead folder is made in the background: wait for its id, briefly.
+  for (let i = 0; !folderId && i < FOLDER_WAIT_TRIES && !String(lead.oneDriveFolderId || '').trim(); i++) {
     await io.sleep(FOLDER_WAIT_MS);
     lead = (await io.getLead(id)) || lead;
   }
-  const folderId = String(lead.oneDriveFolderId || '').trim();
-  if (!folderId) fail('The client’s folder is still being created — attach the file again in a minute from the client’s lead page.', 'retry');
+  if (!folderId) folderId = String(lead.oneDriveFolderId || '').trim();
+  if (!folderId && !cmId) {
+    // No case: the lead folder cannot have been renamed yet, so making / finding it now is safe.
+    const f = await io.ensureLeadFolder(lead).catch(() => null);
+    folderId = String((f && f.id) || '').trim();
+  }
+  if (!folderId) {
+    if (cmId) fail('This client has no OneDrive folder on file — an admin can make it with “Case folder…” on the case page; then attach again.', 'noFolder');
+    fail('The client’s folder is still being created — attach the file again in a minute from the client’s lead page.', 'retry');
+  }
 
   const who = String((staff && staff.name) || '').trim().slice(0, 40);
   const base = String(file.originalname || 'attachment').replace(/\.[a-z0-9]{1,5}$/i, '').replace(/[^\p{L}\p{N} ._()-]+/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'attachment';

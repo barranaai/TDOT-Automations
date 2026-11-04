@@ -229,7 +229,7 @@ function alOpen(){
   alEl('al-country').value=''; alEl('al-country-row').style.display='none'; alEl('al-addedby').value='';
   alEl('al-source').value='';   /* the source is a real choice each time — no carried-over pick */
   AL_REF.reset();
-  AL_ATT.reset();
+  AL_ATT.reset(); AL_ATT.refresh();
   TDOT_BL.viewer=null;   /* re-check the Monday sign-in every time (the session lasts 8 h; the page may be open longer) */
   AL_SIGNED=false; alEl('al-addedby-row').style.display=''; alEl('al-signedin').style.display='none';
   tdotBlViewer(function(v){

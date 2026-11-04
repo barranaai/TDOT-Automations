@@ -1178,11 +1178,16 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         : `Retainer fee set to $${v.normalized} CAD.`);
       return { ok: true, message: agreementSent
         ? `Retainer fee amended to $${v.normalized}. A staff note was recorded — the agreement was NOT re-sent.`
-        : `Retainer fee set to $${v.normalized}. The retainer agreement (once Outcome is Retain) and the payment link (once signed) are emailed automatically.` };
+        : (String(lead.email || '').trim()
+          ? `Retainer fee set to $${v.normalized}. The retainer agreement (once Outcome is Retain) and the payment link (once signed) are emailed automatically.`
+          : `Retainer fee set to $${v.normalized}. There is no client email yet — add it on the lead page, or the agreement and payment link cannot be emailed.`) };
 
     case 'sendMilestoneEtransferRequest': {
       // Not blocked by the plan lock — this collects a payment, it doesn't edit terms.
       const r = await require('./milestonePaymentService').sendMilestoneEtransferRequest(leadId, v.normalized);
+      if (r.emailed === false) {
+        return { ok: true, message: `E-transfer request for ${r.label} recorded, but NOT emailed — ${String(lead.email || '').trim() ? 'the email could not be sent just now' : 'there is no client email'}. Give the client the details yourself: e-transfer to ${r.etransferTo || 'our e-transfer address'}, reference ${r.reference}.` };
+      }
       return { ok: true, message: `E-transfer request for ${r.label} emailed to the client (ref ${r.reference}).` };
     }
 
@@ -1485,7 +1490,9 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       }
       await leadService.updateLead(leadId, { retainerSigned: v.normalized });
       await postPortalNote(leadId, `Retainer marked signed (${v.normalized}).`);
-      return { ok: true, message: 'Retainer marked signed — the case is being created and the payment link emailed to the client.' };
+      return { ok: true, message: String(lead.email || '').trim()
+        ? 'Retainer marked signed — the case is being created and the payment link emailed to the client.'
+        : 'Retainer marked signed — the case is being created. There is no client email, so the payment link is NOT emailed: it is in a note on the lead — share it with the client yourself.' };
     }
 
     case 'bookingInvite':
@@ -1989,7 +1996,12 @@ async function copyContactToCase(cmId, { email = '', phone = '', leadId = '' } =
       } else if (have(CM_EMAIL).toLowerCase() !== email.toLowerCase()) differs.push(`email (${have(CM_EMAIL)})`);
     }
     if (phone && handoff.phoneColValue(phone)) {
-      if (!have(CM_PHONE)) { await handoff.setClientPhone(String(cmId), { id: leadId, phone }); out.copied.push('phone'); }
+      if (!have(CM_PHONE)) {
+        // Our own write (not the best-effort setClientPhone, which swallows errors): a failure must reach the catch below.
+        await mondayApi.query('mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
+          { b: String(it.board.id), i: String(cmId), c: JSON.stringify({ [CM_PHONE]: handoff.phoneColValue(phone) }) });
+        out.copied.push('phone');
+      }
       else if (digits(have(CM_PHONE)) !== digits(phone)) differs.push(`phone (${have(CM_PHONE)})`);
     }
     if (differs.length) out.problem = `The case already has a different ${differs.join(' and ')} — it was left as it is. Ask an admin which one is right.`;
@@ -2168,6 +2180,13 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     if (!sameEmail && !samePhone && !sameName) {
       bad('The chosen lead does not match the name, email or phone you typed — re-check the duplicate panel and try again.');
     }
+    // An email box left EMPTY never clears the lead's email (empty values are not written),
+    // so the retainer would quietly go to that address — say so instead (review 2026-11-04).
+    const keptEmail = String(existing.email || '').trim();
+    if (!email && keptEmail) {
+      bad(`This lead already has the email ${keptEmail} — keep it in the Email box, or type the client’s new email. To remove it, change it on the lead page first.`);
+    }
+    const keptAddress = !address ? String(existing.residentialAddress || '').trim() : '';
     const priorChannel = (existing.sourceChannel || '').trim();
     // A referrer already on the lead (picked on Add lead, or the public form's answer) is KEPT
     // (2026-11-04): the walk-in form's "Referred by" box fills it only when it is empty.
@@ -2206,7 +2225,8 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     await postPortalNote(String(linkLeadId),
       `Linked as a direct retainer client by staff${priorChannel && priorChannel !== DIRECT_SOURCE ? ` (originally a “${priorChannel}” lead — kept as ONE client instead of a duplicate)` : ''}. ` +
       `Case type: ${caseType}${caseSubType ? ` / ${caseSubType}` : ''} · Consultant: ${consultant} · Source / reference: ${escHtmlNote(walkInSource)}.` +
-      (keptReferrer ? ` Referred by kept as “${escHtmlNote(priorReferredBy)}” (the form said “${escHtmlNote(referredBy)}”).` : '')).catch(() => {});
+      (keptReferrer ? ` Referred by kept as “${escHtmlNote(priorReferredBy)}” (the form said “${escHtmlNote(referredBy)}”).` : '') +
+      (keptAddress ? ` The address box was empty, so the lead’s address was kept: “${escHtmlNote(keptAddress)}” — it prints on the retainer agreement; check it is current.` : '')).catch(() => {});
     console.log(`[Consultant] Direct client LINKED to existing lead ${linkLeadId} (was "${priorChannel}")`);
     await noteBlacklist(String(linkLeadId), 'Staff saw the warning and set this person up as a direct retainer client anyway.');
     const notesSaved = await postDirectClientNotes({ leadId: String(linkLeadId), cmId: linkCmId || existing.clientMasterItemId, notes, actor });

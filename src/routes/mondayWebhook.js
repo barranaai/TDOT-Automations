@@ -341,7 +341,7 @@ router.post('/', async (req, res) => {
         // both of which are already set before the stage change. Do NOT await the checklist
         // setup first: that can take 1-2 minutes for large templates and will be killed by
         // a Render deploy mid-flight, causing the email to never fire.
-        emailService.sendIntakeEmail(pulseId).catch(err =>
+        emailService.sendIntakeEmailAuto(pulseId).catch(err =>
           console.error('[Email] Failed to send intake email:', err.message)
         );
         // The sponsor / inviter's own portal email (same link, their document

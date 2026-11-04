@@ -325,12 +325,14 @@ async function sendMilestoneEtransferRequest(leadId, index) {
 
     await patchPayment(leadId, index, { status: 'requested', amountCents: amount, reference, method: 'e-transfer', requestedAt: todayISO() });
 
+    let emailed = false;   // the page says what really happened (2026-11-04: phone-only clients exist)
     if (lead.email) {
       try {
         await require('./microsoftMailService').sendEmail({
           to: lead.email, subject: `Your TDOT Immigration payment — ${row.label}`,
           html: etransferInstructionsHtml({ firstName: (lead.fullName || 'there').split(' ')[0], label: row.label, dollars, reference }),
         });
+        emailed = true;
       } catch (err) { console.warn(`[Milestone] e-transfer request email failed for ${leadId}#${index}: ${err.message}`); }
     }
     // The variable MUST be named b — it was sent as "body", Monday rejected the
@@ -344,7 +346,7 @@ async function sendMilestoneEtransferRequest(leadId, index) {
                 ? `Emailed to ${esc(lead.email)}. Record it as paid here once the e-transfer arrives.`
                 : `<b>NOT emailed — there is no client email.</b> Give the client these e-transfer details yourself, then record it as paid here once it arrives.`) });
 
-    return { ok: true, amount, label: row.label, reference };
+    return { ok: true, amount, label: row.label, reference, emailed, etransferTo: ETRANSFER_EMAIL };
   } finally { _reqInFlight.delete(key); }
 }
 
