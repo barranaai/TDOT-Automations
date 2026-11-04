@@ -112,3 +112,14 @@ test('each row: the Referred By cell sits right after Source / Reference; names 
   assert.equal(c2[3], '<span class="muted">—</span>', 'nothing referred: a dash');
   assert.match(renderWith([]), /<td colspan="11" class="empty">/, 'the empty message spans every column');
 });
+
+test('review: list pills may wrap (a one-line rule made the table scroll sideways on 1280–1440px laptops); the guide names both columns and both filters', () => {
+  assert.ok(!/\.pill[^{]*\{[^}]*nowrap/.test(LEADS_TABLE_CSS), 'no nowrap on the list pills');
+  const g = require('../src/staffGuide/guide-data.json');
+  const step = (id) => g.steps.find((s) => s.id === id);
+  const open = step('lead-list-open').options.map((o) => o.label), filt = step('lead-list-filter').options.map((o) => o.label);
+  assert.deepEqual(open.slice(open.indexOf('Source / Reference'), open.indexOf('Source / Reference') + 3), ['Source / Reference', 'Referred By', 'Received']);
+  assert.ok(!open.includes('Source'), 'the old header is gone from the guide');
+  assert.ok(filt.includes('Referred By (tick boxes)') && filt.some((l) => l.startsWith('Source / Reference →')));
+  assert.ok(!JSON.stringify(g).includes('the Source column'));
+});

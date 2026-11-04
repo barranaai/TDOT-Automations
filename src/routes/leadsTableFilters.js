@@ -156,7 +156,7 @@ function leadsTableUi(LT, win) {
     { id: 'lead', label: 'Lead', menu: 'lead', sort: 'name', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
     { id: 'service', label: 'Service', menu: 'facet', facets: ['service'] },
     { id: 'source', label: 'Source / Reference', title: 'How they reached us · the lead owner underneath', menu: 'facet', facets: ['source', 'owner'] },
-    { id: 'referred', label: 'Referred By', title: 'The employee or client who referred them', menu: 'facet', facets: ['referredBy'] },
+    { id: 'referred', label: 'Referred By', title: 'Who referred them: the employee or client chosen by staff, or the answer the client gave on the website form', menu: 'facet', facets: ['referredBy'] },
     { id: 'received', label: 'Received', title: 'The day the lead arrived, Toronto time', menu: 'date', sort: 'received', sortText: ['Newest first', 'Oldest first'], sortDirs: ['desc', 'asc'] },
     { id: 'tier', label: 'Tier', menu: 'facet', facets: ['tier'], sort: 'tier', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
     { id: 'priority', label: 'Priority', menu: 'facet', facets: ['priority'], sort: 'priority', sortText: ['Most urgent first', 'Least urgent first'], sortDirs: ['asc', 'desc'] },
@@ -353,7 +353,6 @@ const LEADS_TABLE_CSS = `
   .tbl-wrap { overflow-x:auto; }
   .tbl-wrap table { min-width:1100px; }
   td.ref-by { max-width:200px; overflow-wrap:anywhere; }
-  #qbody .pill { white-space:nowrap; }
   th .th-in { display:flex; align-items:center; gap:4px; white-space:nowrap; }
   th .th-sort { font-size:8px; color:var(--navy); }
   th .th-f { display:inline-flex; align-items:center; gap:2px; border:1px solid transparent; background:transparent; color:#94a3b8; border-radius:6px; padding:3px 4px; min-width:24px; min-height:24px; cursor:pointer; margin-left:2px; }
