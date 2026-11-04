@@ -16,7 +16,7 @@ function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () =>
 const VALID = { fullName: 'Phone Caller', email: 'caller@x.com', phone: '4165550001', sourceChannel: 'Phone',
                 residentialAddress: '12 King St W, Toronto, ON M5H 1A1, Canada', inCanada: 'Yes', addedBy: 'Melanie' };
 
-test('validation: only the full name is required (Faran 2026-10-28); what IS given must make sense; case type must be canonical', async () => {
+test('validation (2026-11-04): the name, an email OR a phone, and the source are required; what IS given must make sense; case type must be canonical', async () => {
   const created = [];
   const restore = [
     stub(svc, 'findClientMatches', async () => ({ clients: [], cases: [], leads: [] })),
@@ -25,21 +25,43 @@ test('validation: only the full name is required (Faran 2026-10-28); what IS giv
     stub(mondayApi, 'query', async () => ({})),
   ];
   try {
-    for (const bad of [
-      { ...VALID, fullName: '' },
-      { ...VALID, fullName: '   ' },
-      { ...VALID, email: 'not-an-email' },
-      { ...VALID, phone: '12' },
-      { ...VALID, caseTypeInterest: 'Made Up Type' },
-    ]) {
-      await assert.rejects(svc.createStaffLead(bad), (e) => e.badRequest === true, JSON.stringify(bad));
-    }
+    const expectMsg = async (bad, re) => {
+      await assert.rejects(svc.createStaffLead(bad), (e) => e.badRequest === true && re.test(e.message), JSON.stringify(bad) + ' → ' + re);
+    };
+    await expectMsg({ ...VALID, fullName: '' }, /Full name is required/);
+    await expectMsg({ ...VALID, fullName: '   ' }, /Full name is required/);
+    // email OR phone: both empty (or whitespace) is refused; one of the two is enough
+    await expectMsg({ ...VALID, email: '', phone: '' }, /email or a phone number/);
+    await expectMsg({ ...VALID, email: '  ', phone: undefined }, /email or a phone number/);
+    await expectMsg({ fullName: 'Name Only' }, /email or a phone number/);
+    await expectMsg({ ...VALID, email: 'not-an-email' }, /email doesn/);
+    await expectMsg({ ...VALID, phone: '12' }, /phone number is too short/);
+    // the source is a real choice — no silent "Phone" default, no label minting
+    await expectMsg({ ...VALID, sourceChannel: '' }, /how they reached us/);
+    await expectMsg({ ...VALID, sourceChannel: undefined }, /how they reached us/);
+    await expectMsg({ ...VALID, sourceChannel: 'Website' }, /how they reached us/);   // a Website lead comes from the public form, never typed by staff
+    await expectMsg({ ...VALID, sourceChannel: 'Carrier pigeon' }, /how they reached us/);
+    await expectMsg({ ...VALID, caseTypeInterest: 'Made Up Type' }, /not a canonical case type/);
     assert.equal(created.length, 0);
-    // the name alone is enough
-    const r = await svc.createStaffLead({ fullName: 'Name Only' });
+    // name + phone + source is enough (a screenshot often has only the number)
+    const r = await svc.createStaffLead({ fullName: 'Number Only', phone: '4165550001', sourceChannel: 'WhatsApp' });
     assert.equal(r.leadId, '9200');
-    assert.deepEqual(created[0], { fullName: 'Name Only', sourceChannel: 'Phone' }, 'nothing empty is written');
+    assert.deepEqual(created[0], { fullName: 'Number Only', phone: '4165550001', sourceChannel: 'WhatsApp' }, 'nothing empty is written');
+    // name + email + source is enough too
+    const r2 = await svc.createStaffLead({ fullName: 'Email Only', email: 'e@x.com', sourceChannel: 'Email' });
+    assert.equal(r2.leadId, '9200');
+    assert.deepEqual(created[1], { fullName: 'Email Only', email: 'e@x.com', sourceChannel: 'Email' });
   } finally { restore.reverse().forEach((x) => x()); }
+});
+
+test('the lead page "Edit basics" keeps an email or a phone: clearing both is refused; one of the two stays allowed', () => {
+  const v = (o) => svc.validateAction('saveBasicInfo', JSON.stringify(o));
+  const both = v({ fullName: 'Someone Here', email: '', phone: '' });
+  assert.equal(both.ok, false); assert.match(both.error, /email or a phone number/);
+  const ws = v({ fullName: 'Someone Here', email: '   ', phone: ' ' });
+  assert.equal(ws.ok, false, 'whitespace is empty');
+  assert.equal(v({ fullName: 'Someone Here', email: '', phone: '416 555 0001' }).ok, true);
+  assert.equal(v({ fullName: 'Someone Here', email: 'a@x.com', phone: '' }).ok, true);
 });
 
 test('duplicate contract: matches → 409-shaped conflict; allowDuplicate creates anyway', async () => {
@@ -112,13 +134,26 @@ test('the address is written AT creation, so a mandatory field is never missing'
   assert.match(src.slice(i, src.indexOf('};', i)), /residentialAddress:\s*formData\.residentialAddress/);
 });
 
-test('the "Add lead" modal: only Full name is marked required; the address, email and phone are asked but optional', () => {
+test('the "Add lead" modal: name, email-or-phone and source are marked required; the address, case type, location and Added by stay optional', () => {
   const html = require('../src/routes/adminLeads').buildLeadsQueueHTML();
   assert.match(html, /id="al-address"/, 'the field exists');
   assert.match(html, /residentialAddress:alEl\('al-address'\)\.value/, 'sent to the API');
   assert.match(html, /<label class="al-l" for="al-name">Full name \*<\/label>/);
-  for (const l of ['Email', 'Phone', 'Residential address', 'Added by']) assert.ok(html.includes(`>${l}</label>`), `${l} is not marked required`);
+  for (const l of ['Email', 'Phone', 'How they reached us']) assert.ok(html.includes(`>${l} *</label>`), `${l} is not marked required`);
+  assert.match(html, /one of the two is enough/, 'the either-or hint');
+  for (const l of ['Residential address', 'Added by', 'Case type interest', 'Note']) assert.ok(html.includes(`>${l}</label>`), `${l} must stay optional`);
   assert.ok(html.includes('<div class="al-l" id="al-incanada-l">In Canada now?</div>'));
-  assert.match(html, /only the full name is required/);
+  // the source opens on a blank choice (it used to open on "Phone", which made "required" meaningless)
+  assert.match(html, /<select id="al-source"><option value="">— choose —<\/option><option>Phone<\/option>/);
+  assert.match(html, /alEl\('al-source'\)\.value='';/, 'reset on every open');
+  // the browser-side checks mirror the server's
+  assert.match(html, /if\(!body\.email\.trim\(\) && !body\.phone\.trim\(\)\)/);
+  assert.match(html, /if\(!body\.sourceChannel\)/);
+  assert.ok(!/only the full name is required/.test(html), 'the old name-only message is gone');
   assert.ok(!/Name, email, phone and residential address are all required/.test(html), 'the old all-required message is gone');
+});
+
+test('the lead page "Edit basics" box refuses to clear both email and phone before calling the server', () => {
+  const html = require('../src/routes/adminLeads').buildLeadDetailHTML('123');
+  assert.match(html, /if\(!body\.email\.trim\(\) && !body\.phone\.trim\(\)\)\{ actMsg\('bd-msg','err','Keep an email or a phone number/);
 });

@@ -99,10 +99,11 @@ ${buildNavHeader('leads')}
     <div id="al-overlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;align-items:flex-start;justify-content:center;padding:48px 16px">
       <div style="background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.25);max-width:460px;width:100%;padding:24px">
         <h3 style="margin:0 0 4px;font-size:17px">Add a lead</h3>
-        <div class="muted" style="font-size:12.5px;margin-bottom:14px">A caller's basics — only the full name is required; anything else can be added now or later on their lead page. The booking invite and pre-consultation form are sent from there. No case is opened.</div>
+        <div class="muted" style="font-size:12.5px;margin-bottom:14px">A caller's basics — the full name, an email or a phone number, and how they reached us are required; anything else can be added now or later on their lead page. The booking invite and pre-consultation form are sent from there. No case is opened.</div>
         <label class="al-l" for="al-name">Full name *</label><input id="al-name" type="text" maxlength="120" autocomplete="off">
-        <label class="al-l" for="al-email">Email</label><input id="al-email" type="email" maxlength="200" autocomplete="off">
-        <label class="al-l" for="al-phone">Phone</label><input id="al-phone" type="tel" maxlength="40" autocomplete="off">
+        <label class="al-l" for="al-email">Email *</label><input id="al-email" type="email" maxlength="200" autocomplete="off">
+        <label class="al-l" for="al-phone">Phone *</label><input id="al-phone" type="tel" maxlength="40" autocomplete="off">
+        <div class="al-hint">An email or a phone number — one of the two is enough.</div>
         <label class="al-l" for="al-address">Residential address</label><input id="al-address" type="text" maxlength="500" autocomplete="off" placeholder="Street, city, province/state, postal code, country">
         <div class="al-l" id="al-incanada-l">In Canada now?</div>
         <div class="al-yn" role="radiogroup" aria-labelledby="al-incanada-l"><label><input type="radio" name="al-incanada" value="Yes"> Yes</label><label><input type="radio" name="al-incanada" value="No"> No</label></div>
@@ -110,8 +111,8 @@ ${buildNavHeader('leads')}
         <div id="al-country-row" style="display:none"><label class="al-l" for="al-country">Which country? *</label><select id="al-country">${COUNTRY_OPTS}</select></div>
         <div id="al-addedby-row"><label class="al-l" for="al-addedby">Added by</label><select id="al-addedby">${STAFF_OPTS}</select><div class="al-hint">Becomes the lead owner. Signed in with Monday? Your name is filled in for you.</div></div>
         <div id="al-signedin" class="al-hint" style="display:none;margin-top:10px"></div>
-        <label class="al-l" for="al-source">How they reached us</label>
-        <select id="al-source"><option>Phone</option><option>WhatsApp</option><option>Email</option><option>Instagram</option><option>Other</option></select>
+        <label class="al-l" for="al-source">How they reached us *</label>
+        <select id="al-source"><option value="">— choose —</option><option>Phone</option><option>WhatsApp</option><option>Email</option><option>Instagram</option><option>Other</option></select>
         <label class="al-l" for="al-casetype">Case type interest</label>
         <select id="al-casetype"><option value="">— not sure yet —</option></select>
         <label class="al-l" for="al-note">Note</label>
@@ -215,6 +216,7 @@ function alOpen(){
   /* Where the client is + who is adding them: asked fresh each time (a shared front-desk PC must not credit the last person). */
   Array.prototype.forEach.call(document.querySelectorAll('input[name="al-incanada"]'),function(r){ r.checked=false; });
   alEl('al-country').value=''; alEl('al-country-row').style.display='none'; alEl('al-addedby').value='';
+  alEl('al-source').value='';   /* the source is a real choice each time — no carried-over pick */
   TDOT_BL.viewer=null;   /* re-check the Monday sign-in every time (the session lasts 8 h; the page may be open longer) */
   AL_SIGNED=false; alEl('al-addedby-row').style.display=''; alEl('al-signedin').style.display='none';
   tdotBlViewer(function(v){
@@ -240,10 +242,12 @@ function alSubmit(){
     residentialAddress:alEl('al-address').value,
     sourceChannel:alEl('al-source').value, caseTypeInterest:alEl('al-casetype').value, note:alEl('al-note').value,
     inCanada:alLoc(), currentCountry:alEl('al-country').value, addedBy:alEl('al-addedby').value };
-  /* Only the full name is required (Faran 2026-10-28); what IS typed must make sense. The server checks the same. */
-  if(!body.fullName.trim()){ err.textContent='Enter the full name — it is the only required field.'; alEl('al-name').focus(); return; }
+  /* Required (2026-11-04): the full name, an email OR a phone number, and the source; what IS typed must make sense. The server checks the same. */
+  if(!body.fullName.trim()){ err.textContent='Enter the full name.'; alEl('al-name').focus(); return; }
+  if(!body.email.trim() && !body.phone.trim()){ err.textContent='Enter an email or a phone number — one of the two is required.'; alEl('al-email').focus(); return; }
   if(body.email.trim() && !/^[^ @]+@[^ @]+[.][^ @]+$/.test(body.email.trim())){ err.textContent='That email doesn\u2019t look right — fix it or leave it empty.'; alEl('al-email').focus(); return; }
   if(body.phone.trim() && body.phone.replace(/[^0-9]/g,'').length<7){ err.textContent='That phone number is too short — fix it or leave it empty.'; alEl('al-phone').focus(); return; }
+  if(!body.sourceChannel){ err.textContent='Choose how they reached us.'; alEl('al-source').focus(); return; }
   if(body.inCanada==='No' && !body.currentCountry){ err.textContent='Choose the country the client is in now (or leave "In Canada now?" unanswered).'; alEl('al-country').focus(); return; }
   if(AL_ALLOW) body.allowDuplicate=true;
   var key=getKey(); if(!key) return;
@@ -825,6 +829,8 @@ function hydrateBasic(d){
 ['name','email','phone','source','casetype'].forEach(function(k){ var el=bdEl(k); el.addEventListener(el.tagName==='SELECT'?'change':'input',function(){ BD_DIRTY=true; }); });
 document.getElementById('btn-bd-save').onclick=function(){
   var body={ fullName:bdEl('name').value, email:bdEl('email').value, phone:bdEl('phone').value, sourceChannel:bdEl('source').value, caseTypeInterest:bdEl('casetype').value };
+  /* Same rule as Add lead (2026-11-04): a lead keeps an email or a phone number. The server refuses too. */
+  if(!body.email.trim() && !body.phone.trim()){ actMsg('bd-msg','err','Keep an email or a phone number — one of the two is required.'); bdEl('email').focus(); return; }
   var p=doAction(this,'saveBasicInfo',null,JSON.stringify(body),'bd-msg'); if(!p) return;
   p.then(function(res){ if(res&&res.ok){ BD_DIRTY=false; if(res.j&&res.j.warnings&&res.j.warnings.length) actMsg('bd-msg','info',res.j.message); load(); var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r(); } });
 };

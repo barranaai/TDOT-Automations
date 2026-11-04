@@ -944,6 +944,8 @@ function validateAction(action, value) {
       const fullName = one(o.fullName, 120), email = one(o.email, 200), phone = one(o.phone, 40);
       const sourceChannel = one(o.sourceChannel, 40), caseTypeInterest = one(o.caseTypeInterest, 120);
       if (fullName.length < 2) return { ok: false, error: 'Enter the client’s full name.' };
+      // Same rule as Add lead (2026-11-04): a lead keeps an email or a phone number — both cannot be cleared.
+      if (!email && !phone) return { ok: false, error: 'Keep an email or a phone number — one of the two is required.' };
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'That email doesn’t look right — fix it or leave it empty (the booking invite needs one).' };
       const digits = phone.replace(/\D/g, '');
       if (phone && (!/^[\d\s()+.\-]+$/.test(phone) || digits.length < 7 || digits.length > 15)) return { ok: false, error: 'Enter a valid phone number (7 to 15 digits).' };
@@ -1778,21 +1780,26 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
   const fullName         = clean(payload.fullName, 120);
   const email            = clean(payload.email, 200);
   const phone            = clean(payload.phone, 40);
-  const sourceRaw        = clean(payload.sourceChannel, 30);
-  const sourceChannel    = STAFF_LEAD_SOURCES.includes(sourceRaw) ? sourceRaw : 'Phone';
+  const sourceChannel    = clean(payload.sourceChannel, 30);
   const caseTypeInterest = clean(payload.caseTypeInterest, 100);
   const note             = clean(payload.note, 2000);
   const address          = clean(payload.residentialAddress, 500);
   const allowDuplicate   = payload.allowDuplicate === true;
 
   const bad = (m) => { const e = new Error(m); e.badRequest = true; throw e; };
-  // Only the full name is required (Faran 2026-10-28) — email, phone, address,
-  // where the client is and who added it can come later on the lead page. What
-  // IS given must make sense. (No email = no booking invite until one is added;
-  // no address = the consultation package waits for it; no location = HST.)
+  // Required (team meeting, Faran 2026-11-04): the full name, an email OR a
+  // phone number (one of the two is enough — a screenshot often has only the
+  // number), and how they reached us. Everything else — address, where the
+  // client is, who added it, the case type, the note — can come later on the
+  // lead page. What IS given must make sense. (No email = no booking invite
+  // until one is added; no address = the consultation package waits for it;
+  // no location = HST.) Until 2026-11-04 only the name was required.
   if (!fullName) bad('Full name is required.');
+  if (!email && !phone) bad('Enter an email or a phone number — one of the two is required.');
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bad('That email doesn’t look right — fix it or leave it empty.');
   if (phone && phone.replace(/\D/g, '').length < 7) bad('That phone number is too short — fix it or leave it empty.');
+  // The source is a REAL choice now (no silent "Phone" default): existing board labels only.
+  if (!STAFF_LEAD_SOURCES.includes(sourceChannel)) bad('Choose how they reached us from the list.');
   if (caseTypeInterest) {
     const canon = await directCaseTypeLabels();
     if (!canon.caseTypes.includes(caseTypeInterest)) bad(`"${caseTypeInterest}" is not a canonical case type — pick one from the list.`);
