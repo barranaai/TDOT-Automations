@@ -60,17 +60,19 @@ function compact(s) { return fold(s).replace(/ /g, ''); }
  * of the query's forms starts a word of the name:
  *   as written ("D'Souza" → d, souza);
  *   apostrophes and periods dropped ("D'Souza" → dsouza, "A.K. Sharma" → ak, sharma);
+ *   apostrophes dropped, periods kept as breaks ("S.D'Souza" → s, dsouza);
  *   single letters joined to the next word ("D Souza" → dsouza, "O Brien" → obrien).
  */
 function wordForms(s) {
   const raw = String(s == null ? '' : s);
   const split = fold(raw).split(' ').filter(Boolean);
   const joined = fold(raw.replace(APOSTROPHES, '').replace(/\./g, '')).split(' ').filter(Boolean);
+  const aposOnly = fold(raw.replace(APOSTROPHES, '')).split(' ').filter(Boolean);   // "S.D'Souza" → s, dsouza
   const merged = [];
   let buf = '';
   for (const w of split) { if (w.length === 1) { buf += w; continue; } merged.push(buf + w); buf = ''; }
   if (buf) merged.push(buf);
-  return [split, joined, merged].filter((f) => f.length);
+  return [split, joined, aposOnly, merged].filter((f) => f.length);
 }
 /** Every digit of a phone cell (under 7 digits: not a phone). */
 function phoneRaw(raw) {
@@ -99,9 +101,9 @@ function buildPeople(rows) {
   const byName = new Map();
   for (const r of rows || []) {
     if (!r || !String(r.name || '').trim()) continue;
-    // A name with no Latin letters or digits (another script, emoji only) is kept on its own,
-    // so its phone and email can still be searched.
-    const key = compact(r.name) || `id:${r.id}`;
+    // A name with no Latin letters or digits (another script) is grouped by its own text, so rows of one
+    // person still join on a shared phone / email and stay searchable by phone and email.
+    const key = compact(r.name) || 'raw:' + String(r.name).normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
     if (!byName.has(key)) byName.set(key, []);
     byName.get(key).push(r);
   }
@@ -185,7 +187,10 @@ function searchPeople(people, rawQ) {
       hits = people.filter((p) => p.phones.some((x) => x.startsWith(rest) || (last10 && x === last10)));
     } else {
       const last10 = digits.length > 10 ? digits.slice(-10) : '';
-      hits = people.filter((p) => p.phoneRaw.some((x) => x.includes(digits)) || (last10 && p.phones.includes(last10)));
+      // "1416555" (a 1 with no space after it, 7–11 digits) also finds a number stored without the 1;
+      // shorter digits ("16475") are never guessed as +1.
+      const after1 = (digits[0] === '1' && digits.length >= 7 && digits.length <= 11) ? digits.slice(1) : '';
+      hits = people.filter((p) => p.phoneRaw.some((x) => x.includes(digits)) || (last10 && p.phones.includes(last10)) || (after1 && p.phones.some((x) => x.startsWith(after1))));
     }
   } else {
     const forms = wordForms(q);

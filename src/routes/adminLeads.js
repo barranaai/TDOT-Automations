@@ -848,7 +848,8 @@ document.getElementById('btn-bd-save').onclick=function(){
   /* Same rule as Add lead (2026-11-04): a save may not CLEAR the last email / phone. A lead that never had either
      (added before the rule) can still be edited. The server refuses the same. */
   var contactEdited=(body.email.trim()!==String(BD_LOADED.email).trim() || body.phone.trim()!==String(BD_LOADED.phone).trim());
-  var hadContact=(/^[^ @]+@[^ @]+[.][^ @]+$/.test(String(BD_LOADED.email).trim()) || String(BD_LOADED.phone).replace(/[^0-9]/g,'').length>=7);
+  var pd=String(BD_LOADED.phone).replace(/[^0-9]/g,'').length;   /* the server's rule: a usable phone has 7–15 digits */
+  var hadContact=(/^[^ @]+@[^ @]+[.][^ @]+$/.test(String(BD_LOADED.email).trim()) || (pd>=7 && pd<=15));
   if(contactEdited && hadContact && !body.email.trim() && !body.phone.trim()){ actMsg('bd-msg','err','Keep an email or a phone number — one of the two is required.'); bdEl('email').focus(); return; }
   /* Source / Reference second question: sent only for a referral source; checked when the source or the answer changed (the server does the same). */
   if(BD_REF.kind()){

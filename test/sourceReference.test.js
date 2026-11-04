@@ -472,3 +472,24 @@ test('review 2: the search box stops a late answer on Escape and on leaving the 
   assert.match(REFERRAL_UI_JS, /cli\.addEventListener\('focus', function\(\)\{ if \(mode === 'search' && !picked && list\.hidden && cli\.value\.replace\(\/ \/g, ''\)\) \{ clearTimeout\(timer\); timer = setTimeout\(search, 0\); \} \}\);/);
   assert.ok(!REFERRAL_UI_JS.includes('\\'));
 });
+
+// ── Review round 3 (2026-11-04): fixes pinned ───────────────────────────────
+test('review 3: "1416555" (no space after the 1) finds a number stored without the 1; "S.D\'Souza" is found by "Dsouza"; a non-Latin name joins its rows; the page uses the 7–15-digit rule', () => {
+  const people = dir.buildPeople([
+    { id: '1', name: 'Pat Lee', phone: '4165550101', date: '2025-01-01' },
+    { id: '2', name: "S.D'Souza", date: '2025-01-01' },
+    { id: '3', name: "J.O'Neil", date: '2025-01-01' },
+    { id: '4', name: 'ਗੁਰਪ੍ਰੀਤ ਸਿੰਘ', phone: '4165559999', email: 'g@x.com', date: '2025-01-01' },
+    { id: '5', name: 'ਗੁਰਪ੍ਰੀਤ ਸਿੰਘ', phone: '4165559999', date: '2025-02-01', retained: 'Yes' },
+    { id: '6', name: 'ਗੁਰਪ੍ਰੀਤ  ਸਿੰਘ', email: 'g@x.com', date: '2025-03-01' },
+    { id: '7', name: 'Pat Roe', phone: '905-861-6475', date: '2024-01-01' },
+  ]);
+  const ids = (q) => dir.searchPeople(people, q).results.map((r) => r.id);
+  for (const q of ['1416555', '1416 555 01', '14165550101']) assert.ok(ids(q).includes('1'), q);
+  assert.deepEqual(ids('16475'), ['7'], 'short digits still never guessed as +1');
+  assert.deepEqual(ids('Dsouza'), ['2']); assert.deepEqual(ids('Oneil'), ['3']);
+  const g = dir.searchPeople(people, '4165559999').results;
+  assert.deepEqual([g.length, g[0].consults, g[0].retained], [1, 3, true], 'one person, 3 consultations, retained');
+  const d = require('../src/routes/adminLeads').buildLeadDetailHTML('7');
+  assert.match(d, /var hadContact=\(\/\^\[\^ @\]\+@\[\^ @\]\+\[\.\]\[\^ @\]\+\$\/\.test\(String\(BD_LOADED\.email\)\.trim\(\)\) \|\| \(pd>=7 && pd<=15\)\);/);
+});
