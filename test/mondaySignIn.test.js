@@ -111,7 +111,8 @@ function browserFor({ viewer, key = 'k', path = '/admin/leads', search = '' }) {
       getElementById: (id) => (id === 'hdr-who' ? slot : null),
       createElement: (tag) => {
         const txt = { textContent: '' };
-        return { tag, attrs: {}, txt, setAttribute(k, v) { this.attrs[k] = v; }, querySelector: (sel) => (sel === '.who-txt' ? txt : null) };
+        return { tag, attrs: {}, txt, on: {}, setAttribute(k, v) { this.attrs[k] = v; }, querySelector: (sel) => (sel === '.who-txt' ? txt : null),
+          addEventListener(ev, fn) { (this.on[ev] = this.on[ev] || []).push(fn); }, fire(ev) { (this.on[ev] || []).forEach((fn) => fn()); } };
       },
     },
     fetch: (url, opts) => {
@@ -153,6 +154,14 @@ test('top bar: signed in with Monday → your name (as text); not signed in → 
   assert.equal(link.href, '/q/auth/monday?returnTo=' + encodeURIComponent('/admin/case/2026-EE-001?tab=docs'));
   assert.match(link.innerHTML, /Sign in with Monday/);
   assert.equal(link.attrs['aria-label'], 'Sign in with Monday, so the app knows who you are');
+  // the way back is the address at the moment of the click (review 2026-11-05: the Retainers tabs change the address)
+  b.ctx.location.pathname = '/admin/retainers'; b.ctx.location.search = '?outcome=Follow-Up';
+  link.fire('click');
+  assert.equal(link.href, '/q/auth/monday?returnTo=' + encodeURIComponent('/admin/retainers?outcome=Follow-Up'), 'a click');
+  b.ctx.location.search = '?outcome=All'; link.fire('mousedown');
+  assert.equal(link.href, '/q/auth/monday?returnTo=' + encodeURIComponent('/admin/retainers?outcome=All'), 'a middle-click / right-click (open in a new tab)');
+  b.ctx.location.search = '?outcome=Newsletter'; link.fire('focus');
+  assert.equal(link.href, '/q/auth/monday?returnTo=' + encodeURIComponent('/admin/retainers?outcome=Newsletter'), 'the keyboard');
 
   b = browserFor({ viewer: null, key: null });   // no key, no Monday: the page sends you to sign in anyway
   await tick();

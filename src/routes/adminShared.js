@@ -397,7 +397,11 @@ const SHARED_AUTH_JS = `
         } else {
           chip = document.createElement('a');
           chip.className = 'who-chip';
-          chip.href = '/q/auth/monday?returnTo=' + encodeURIComponent(location.pathname + location.search);
+          /* The way back is the address at the moment of the click, not when the chip was drawn: a page whose address
+             follows what is on screen (the Retainers tabs, 2026-11-05) comes back to that, not to how it first opened. */
+          var setBack = function() { chip.href = '/q/auth/monday?returnTo=' + encodeURIComponent(location.pathname + location.search); };
+          setBack();
+          ['mousedown', 'focus', 'click'].forEach(function(ev) { chip.addEventListener(ev, setBack); });
           chip.title = 'Sign in with Monday, so the app knows who you are';
           chip.setAttribute('aria-label', chip.title);
           chip.innerHTML = TDOT_WHO_SVG + '<span class="who-txt">Sign in with Monday</span>';

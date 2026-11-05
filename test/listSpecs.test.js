@@ -298,7 +298,9 @@ test('review 2026-11-05: Sign Out stops a list read still running from saving th
   const { listTableUi } = require('../src/routes/listFilters');
   assert.ok(SHARED_AUTH_JS.indexOf('window.TDOT_SIGNED_OUT = true;') < SHARED_AUTH_JS.indexOf('forgetLists();'));
   assert.ok(SHARED_AUTH_JS.includes('function leave() { if (!gone) { gone = true; forgetLists(); window.location.replace'));
-  assert.ok(listTableUi.toString().includes('function save() { if (win.TDOT_SIGNED_OUT) return;'));
+  assert.ok(/function save\(\) \{\s+if \(win\.TDOT_SIGNED_OUT\) return;/.test(listTableUi.toString()), 'nothing is saved after Sign Out — the kept tab neither (it is written below the guard)');
+  const sv = listTableUi.toString(), sf = sv.slice(sv.indexOf('function save() {'), sv.indexOf('function countRows()'));
+  assert.ok(sf.indexOf('if (win.TDOT_SIGNED_OUT) return;') >= 0 && sf.indexOf('if (win.TDOT_SIGNED_OUT) return;') < sf.indexOf('win.sessionStorage.setItem(o.quick.storeKey, (state.sel[o.quick.facet]'), 'in save(): the guard first');
   assert.ok(require('../src/routes/adminConsultation').buildQueueHTML().includes("function ssSet(k,v){ if(window.TDOT_SIGNED_OUT) return;"));
   assert.equal(S.casesListOpts({}).sortReset, 'newest case first');
   assert.equal(S.consultListOpts({}).countable, 'consultCountable');
@@ -335,7 +337,22 @@ test('2026-11-05 point 7: the Retainers outcome tabs work like the Leads tabs �
   start(s3, (st) => { st.sel.outcome = ['Newsletter']; return true; }, true);
   assert.equal(s3.tdot_list_retainers_tab, 'Follow-Up', 'never written after Sign Out');
   assert.deepEqual(start({ tdot_list_retainers_tab: 'Follow-Up' }, () => false), ['Follow-Up'], 'not a link: the kept tab');
+  // Back brings an older copy of the page out of the browser's memory: it reads the list again (setRows), and the kept
+  // tab becomes the tab that copy shows — so the way back from a record returns to the tab on screen (review round 2)
+  const s4 = {};
+  const win4 = { document: { getElementById: () => null, createElement: el, body: el(), addEventListener() {}, activeElement: null, documentElement: el() },
+    sessionStorage: { getItem: (k) => (k in s4 ? s4[k] : null), setItem: (k, v) => { s4[k] = String(v); } }, addEventListener() {}, location: { search: '' }, renderRetainerList: () => {} };
+  const o4 = S.retainerListOpts({ outcomes: OUTCOME_LABELS, onChange() {} });
+  const api4 = listTableUi(listCore(S.retainerListSpec({ outcomes: OUTCOME_LABELS, today: () => '' })), o4, win4) || win4[o4.api];
+  api4.setRows([]);
+  assert.equal(s4.tdot_list_retainers_tab, 'Retain', 'shown = kept');
+  s4.tdot_list_retainers_tab = 'Follow-Up';   // a newer copy of the page, on Follow-Up, then Back to this one
+  api4.setRows([]);
+  assert.equal(s4.tdot_list_retainers_tab, 'Retain', 'the copy on screen decides');
+  win4.TDOT_SIGNED_OUT = true; s4.tdot_list_retainers_tab = 'x'; api4.setRows([]);
+  assert.equal(s4.tdot_list_retainers_tab, 'x', 'nothing written after Sign Out');
   // the click: one value, stored ('' = All) — the same code path as the Leads tabs
   const src = listTableUi.toString();
   assert.ok(src.includes("if (!v) next = []; else if (q.tabs) next = [v];") && src.includes("win.sessionStorage.setItem(q.storeKey, v || '')"));
 });
+

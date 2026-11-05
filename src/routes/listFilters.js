@@ -200,7 +200,13 @@ function listTableUi(LT, o, win) {
   pop.classList.add('lt-pop');
   function esc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function col(id) { for (var i = 0; i < COLS.length; i++) if (COLS[i].id === id) return COLS[i]; return null; }
-  function save() { if (win.TDOT_SIGNED_OUT) return; try { win.sessionStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* not kept — fine */ } }
+  function save() {
+    if (win.TDOT_SIGNED_OUT) return;
+    try { win.sessionStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* not kept — fine */ }
+    /* Tabs: the kept tab is always the tab shown — also after Back brings an older copy of the page out of the browser's
+       memory, so the way back from a record (and the top bar) returns to the tab on screen (review 2026-11-05). */
+    if (o.quick && o.quick.storeKey) { try { win.sessionStorage.setItem(o.quick.storeKey, (state.sel[o.quick.facet] || [''])[0]); } catch (e) { /* not kept — fine */ } }
+  }
   /* The rows the counts beside the choices are taken from (Consultations: only the date range on view, with its two folds). */
   function countRows() { return o.countable && typeof win[o.countable] === 'function' ? ROWS.filter(function (r) { return win[o.countable](r); }) : ROWS; }
   function hasPanel(c) { return !!((c.facets && c.facets.length) || (c.flags && c.flags.length) || c.date); }
