@@ -368,7 +368,7 @@ function renderRetainerList(rows,why,st,h){
       '<td>'+(c.retainerPaid?escHtml(c.retainerPaid):'—')+'</td>'+
       '<td>'+(c.stage?qpill(stc,c.stage):'<span class="pill grey">—</span>')+'</td><td>'+cs+'</td>'+
       /* No bin on a retained client: from a list it would delete the whole case (that is done on the Cases page). */
-      '<td>'+(c.retained?'':'<button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client and their consultation record (careful — if there is a case, the case, its checklist and the OneDrive folder go too)">'+TDOT_DEL_SVG+'</button>')+'</td></tr>';
+      '<td>'+(c.retained?'':'<button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client, their consultation record and their OneDrive folder (careful — if there is a case, the case and its checklist go too)">'+TDOT_DEL_SVG+'</button>')+'</td></tr>';
   }).join('');
   bindRowClicks(tb,'?from=retainers');   /* the record's back link comes back here */
   return { shown: rows.length, total: kindTotal };
@@ -1280,6 +1280,7 @@ var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload onl
 // sent, unless the consultant "Amend"s. RP_SENT (sent specifically) vs RP_RETAINED
 // (signed/paid/Retained) only differ in the wording of the lock message.
 var RP_LOCKED=false, RP_AMEND=false, RP_SENT=false, RP_RETAINED=false, RP_SIGNED=false, RP_RC_DONE=false, RP_RC_SENT=false;
+var RP_SIGNED_WHY='';   /* why "Mark retainer signed" is greyed out — never "the case is open" when no case is (point 8 review) */
 // The family list has been used: the client signed (or was retained) AND the case is open — it was read when the case
 // was set up, and an edit here no longer reaches the case (the case page's ➕ Add family member does).
 var RP_LIST_USED=false;
@@ -1637,6 +1638,8 @@ function render(d){
   // client is retained — but STAYS enabled for a signed lead whose handoff failed
   // (no case yet), so staff can retry per the failed-handoff recovery note.
   RP_SIGNED = (_retSigned && _caseOpen) || _retained;
+  RP_SIGNED_WHY = d.caseDeleted ? 'Retainer already signed — this client’s case was deleted (see “Case deleted”); no case opens by itself'
+    : _caseOpen ? 'Retainer already signed — the case is open' : 'Retainer already signed — the client is retained';
   RP_LIST_USED = (_retSigned || _retained) && _caseOpen;
   RP_LOCKED = _retSent || RP_RETAINED; RP_AMEND = false; applyRetainerLock();
 
@@ -1814,7 +1817,7 @@ function applyRetainerLock(){
   // done — the case is open / client retained — re-clicking re-fires the whole
   // signed→handoff→payment-link chain on a completed retention.
   var signedBtn=document.getElementById('btn-signed');
-  if(signedBtn){ signedBtn.disabled = RP_SIGNED; signedBtn.title = RP_SIGNED ? 'Retainer already signed — the case is open' : ''; }
+  if(signedBtn){ signedBtn.disabled = RP_SIGNED; signedBtn.title = RP_SIGNED ? RP_SIGNED_WHY : ''; }
   // "Sign retainer as consultant": the envelope now goes to the consultant
   // automatically when the client signs, so the button is mostly a way to
   // RE-OPEN that signing page (or to issue it if the auto-send failed). It

@@ -479,6 +479,10 @@ async function captureCompleted(body) {
   }
 
   // 3. Set the signed state.
+  // A client whose case was deleted and this consultation record kept (2026-11-05, point 8): the signature is recorded,
+  // but no case opens by itself (onRetainerSigned holds it) — so nothing here may say it does, and the consultant is
+  // not asked to countersign a retainer for a case that no longer exists.
+  const caseGone = !!String(lead.caseDeleted || '').trim() && !String(lead.clientMasterItemId || '').trim();
   if (type === 'retainer') {
     // Exactly what a human clicking "Mark retainer signed" does — setting the
     // date fires the Monday webhook → onRetainerSigned → the case opens. Single
@@ -521,7 +525,7 @@ async function captureCompleted(body) {
               <p style="margin:4px 0">Case type: <b>${esc(lead.confirmedCaseType || lead.caseTypeInterest || '—')}</b><br>
               Consultant: ${esc(lead.assignedConsultant || '—')}<br>
               Fee: ${lead.retainerFee ? '$' + esc(lead.retainerFee) : '—'}</p>
-              <p>The case opens automatically; payment ${lead.retainerPaid ? 'is already recorded' : 'is not recorded yet'}.</p>
+              <p>${caseGone ? `This client’s case was deleted (${esc(String(lead.caseDeleted).trim())}) — <b>no case opens by itself</b>; see the note on the lead.` : `The case opens automatically; payment ${lead.retainerPaid ? 'is already recorded' : 'is not recorded yet'}.`}</p>
               <p><a href="${base}/admin/consultation/${encodeURIComponent(leadId)}">Open the consultation record</a></p>
             </div>`,
           });
@@ -530,7 +534,11 @@ async function captureCompleted(body) {
         console.warn(`[Documenso] staff signature notification failed for lead ${leadId}: ${err.message}`);
       }
     }
-    await postNote(leadId, `✍️ <b>Retainer agreement signed via Documenso</b>${stored ? ' — signed copy saved to OneDrive.' : '.'} The case will open automatically.`);
+    await postNote(leadId, `✍️ <b>Retainer agreement signed via Documenso</b>${stored ? ' — signed copy saved to OneDrive.' : '.'}` +
+      (caseGone ? ` This client’s case was deleted (${String(lead.caseDeleted).trim().replace(/[<>&"]/g, '')}): no case opens by itself, and the consultant was not asked to countersign. To open a new case, clear “Case deleted” first; then click “Sign retainer as consultant” when the case is open.` : ' The case will open automatically.'));
+    if (caseGone) {
+      return { type, leadId, stored, retainerSignedSet: !lead.retainerSigned, consultSignedSet: false, countersignSet: false, caseDeleted: true };
+    }
 
     // The consultant's countersign envelope now goes out AUTOMATICALLY the
     // moment the client signs — previously it waited for someone to notice a

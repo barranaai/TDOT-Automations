@@ -214,3 +214,38 @@ test('wiring: the copy is written after the race check and after Case Type, on t
   const snapSrc = fs.readFileSync(require.resolve('../src/services/leadSnapshot'), 'utf8');
   assert.ok(snapSrc.includes("'recordingLink', 'preConsultPdf',"));
 });
+
+test('review 2026-11-05: a NEW case whose copy was lost at opening is filled by the hourly run — from THE one lead pointing at it, read fresh; never a case from before 5 Nov, never with several or no leads; the anchor is written first', () => withEnv(env, async () => {
+  const at = (d) => new Date(d).toISOString();
+  const rows = {
+    1: { id: '1', createdAt: at('2026-11-06T15:00:00Z'), cells: blank() },   // new, one lead → filled
+    2: { id: '2', createdAt: at('2026-11-01T15:00:00Z'), cells: blank() },   // before the cut-over → never
+    3: { id: '3', createdAt: at('2026-11-06T15:00:00Z'), cells: blank() },   // two leads → left alone
+    4: { id: '4', createdAt: at('2026-11-06T15:00:00Z'), cells: blank() },   // no lead → left alone
+  };
+  const leads = [
+    { id: '10', clientMasterItemId: '1', assignedConsultant: 'Shafoli', outcome: 'Retain' },
+    { id: '20', clientMasterItemId: '2', assignedConsultant: 'A' },
+    { id: '30', clientMasterItemId: '3' }, { id: '31', clientMasterItemId: '3' },
+  ];
+  const w = cmWorld(rows);
+  const order = [];
+  const restore = [
+    stub(mondayApi, 'query', async (q, v) => { if (/change_multiple_column_values/.test(q)) order.push(Object.keys(JSON.parse(v.v))); return w.fn(q, v); }),
+    stub(leadService, 'getLead', async (id) => { const l = leads.find((x) => x.id === String(id)); return l ? { ...l } : null; }),
+    stub(copy.io, 'listCaseRows', async () => Object.values(rows).map((r) => ({ id: r.id, state: 'active', createdAt: r.createdAt, cells: { ...r.cells } }))),
+    stub(copy.io, 'leads', async () => leads),
+    stub(copy.io, 'sleep', async () => {}),
+  ];
+  try {
+    const r = await copy.sweep();
+    assert.equal(r.filled, 1); assert.equal(r.written, 1);
+    assert.deepEqual(w.writes.map((x) => x.id), ['1'], 'only the new case with one lead');
+    assert.deepEqual(r.skipped, { 'several-leads': 1, 'no-lead': 1 });
+    assert.equal(w.writes[0].cells[COLS.consultant], 'Shafoli');
+    assert.equal(order[0][0], COLS.record, 'the anchor (the record link) is the first cell written');
+    const again = await copy.sweep();
+    assert.equal(again.filled, 0, 'filled once: from then on an ordinary refresh');
+    assert.ok(copy.NEW_CASES_SINCE === Date.parse('2026-11-05T05:00:00Z'));
+  } finally { restore.forEach((x) => x()); }
+}));

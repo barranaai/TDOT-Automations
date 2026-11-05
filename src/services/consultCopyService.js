@@ -15,6 +15,8 @@
  * The "Consultation Record" link names the lead the copy comes from (its id is in the link's path): that is the
  * copy's anchor. A case whose anchor lead no longer points at it (the case was deleted and the record kept, or the
  * lead was moved to another case) is left exactly as it is — never cleared, never re-pointed by the refresh.
+ * A case opened since NEW_CASES_SINCE whose copy could not be written when it opened (Monday down, a restart in the
+ * middle) is filled by the hourly run — only when exactly one lead points at it. Older cases are never filled.
  *
  * Never on the critical path: every entry point is best-effort, never throws, and a case opens whether or not the
  * copy could be written. The column ids live in src/data/clientMasterBoard.json (consultColumns) — without them
@@ -31,6 +33,8 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const KEYS = ['date', 'consultant', 'outcome', 'fee', 'source', 'record', 'recording', 'preConsult'];
 const LINK_TEXT = { record: 'Open consultation record', recording: 'Consultation recording', preConsult: 'Pre-consult answers (PDF)' };
 const SWEEP_WRITE_CAP = 50;      // writes per hourly run (a few a day are expected — this only bounds a surprise)
+// "New cases only" (Faran 2026-11-05): a case created before this is never filled in. 00:00 Toronto, 5 Nov 2026.
+const NEW_CASES_SINCE = Date.parse('2026-11-05T05:00:00Z');
 const SWEEP_PACE_MS = 300;
 
 /** The eight column ids, or null (not set up → the copy is dormant). */
@@ -132,9 +136,10 @@ function readCells(columnValues, cols) {
   return out;
 }
 /** Only the cells that differ, as Monday values ('' clears). The record link counts as the same when it names the same lead. */
+const WRITE_ORDER = ['record', ...KEYS.filter((k) => k !== 'record')];   // the anchor first: a partial write still carries it
 function diffCells(want, have, cols) {
   const out = {};
-  for (const k of KEYS) {
+  for (const k of WRITE_ORDER) {
     const w = s(want[k]), h = s(have[k]);
     if (k === 'record' ? leadIdOfRecordUrl(w) === leadIdOfRecordUrl(h) && !!h === !!w : w === h) continue;
     if (!w) { out[cols[k]] = ''; continue; }
@@ -222,6 +227,25 @@ async function refreshCase(cmItemId) {
   return r;
 }
 
+/**
+ * A case opened since NEW_CASES_SINCE that has no copy (its write at opening failed): fill it from THE lead that
+ * points at it — both sides read fresh, and only while the row still has no copy and the lead still points here.
+ */
+async function firstCopy(cmItemId, leadId) {
+  const cols = columns();
+  if (!cols) return { skipped: 'off' };
+  const have = await readCaseRow(cmItemId, cols);
+  if (!have) return { skipped: 'no-row' };
+  if (have.record) return refreshCase(cmItemId);   // filled meanwhile: an ordinary refresh
+  const lead = await require('./leadService').getLead(String(leadId));
+  if (!lead) return { skipped: 'lead-gone' };
+  if (s(lead.clientMasterItemId) !== String(cmItemId)) return { skipped: 'lead-moved' };
+  const cells = diffCells(factsFor(lead), have, cols);
+  const r = await writeCells(cmItemId, cells);
+  console.log(`[ConsultCopy] case ${cmItemId} ← consultation record ${leadId} (filled — it had no copy since it opened): ${r.written} cell(s)`);
+  return r;
+}
+
 /** I/O seam (tests): every Client Master row with its copy cells, paged (never items(ids) without a limit). */
 const io = {
   async listCaseRows(cols) {
@@ -230,12 +254,12 @@ const io = {
     let cursor = null, pages = 0;
     do {
       const d = await mondayApi.query(
-        `query($b:ID!,$c:String){ boards(ids:[$b]){ items_page(limit:500, cursor:$c){ cursor items{ id state column_values(ids:[${ids}]){ id text value } } } } }`,
+        `query($b:ID!,$c:String){ boards(ids:[$b]){ items_page(limit:500, cursor:$c){ cursor items{ id state created_at column_values(ids:[${ids}]){ id text value } } } } }`,
         { b: String(clientMasterBoardId), c: cursor || undefined }
       );
       const page = d && d.boards && d.boards[0] && d.boards[0].items_page;
       if (!page) break;
-      for (const it of page.items || []) out.push({ id: String(it.id), state: it.state, cells: readCells(it.column_values, cols) });
+      for (const it of page.items || []) out.push({ id: String(it.id), state: it.state, createdAt: it.created_at || '', cells: readCells(it.column_values, cols) });
       cursor = page.cursor || null;
       if (++pages > 40) throw new Error('the Client Master listing did not end');
     } while (cursor);
@@ -256,18 +280,36 @@ async function sweep({ cap = SWEEP_WRITE_CAP } = {}) {
   if (!cols || !enabled()) return { skipped: 'off' };
   if (_running) return { skipped: 'running' };
   _running = true;
-  const res = { rows: 0, withCopy: 0, differing: 0, written: 0, unchanged: 0, skipped: {}, failed: 0, more: false };
+  const res = { rows: 0, withCopy: 0, differing: 0, written: 0, filled: 0, unchanged: 0, skipped: {}, failed: 0, more: false };
+  const skip = (why) => { res.skipped[why] = (res.skipped[why] || 0) + 1; };
   try {
     const [rows, leads] = await Promise.all([io.listCaseRows(cols), io.leads()]);
     const byId = new Map((leads || []).map((l) => [String(l.id), l]));
+    const claims = new Map();   // case id → the leads that point at it
+    for (const l of leads || []) { const c = s(l.clientMasterItemId); if (c) { if (!claims.has(c)) claims.set(c, []); claims.get(c).push(String(l.id)); } }
     res.rows = rows.length;
     for (const row of rows) {
       if (row.state && row.state !== 'active') continue;
       const leadId = leadIdOfRecordUrl(row.cells.record);
-      if (!leadId) continue;                      // no copy: opened before this existed — new cases only
+      if (!leadId) {
+        // No copy. Opened before the copy existed: never filled (new cases only). Opened since, with its copy lost at
+        // opening: filled from THE lead pointing at it (none / several: left alone).
+        const created = Date.parse(row.createdAt || '');
+        if (!(created >= NEW_CASES_SINCE)) continue;
+        const who = claims.get(row.id) || [];
+        if (who.length !== 1) { skip(who.length ? 'several-leads' : 'no-lead'); continue; }
+        if (res.written >= cap) { res.more = true; continue; }
+        try {
+          const r = await firstCopy(row.id, who[0]);
+          if (r && r.written) { res.written++; res.filled++; } else if (r && r.skipped) skip(r.skipped);
+          if (r && r.failed && r.failed.length) res.failed++;
+        } catch (err) { res.failed++; console.warn(`[ConsultCopy] first copy of case ${row.id} failed: ${err.message}`); }
+        await io.sleep(SWEEP_PACE_MS);
+        continue;
+      }
       res.withCopy++;
       const lead = byId.get(leadId);
-      if (!lead || s(lead.clientMasterItemId) !== row.id) { res.skipped[lead ? 'lead-moved' : 'lead-not-listed'] = (res.skipped[lead ? 'lead-moved' : 'lead-not-listed'] || 0) + 1; continue; }
+      if (!lead || s(lead.clientMasterItemId) !== row.id) { skip(lead ? 'lead-moved' : 'lead-not-listed'); continue; }
       if (!Object.keys(diffCells(factsFor(lead), row.cells, cols)).length) continue;
       res.differing++;
       if (res.written >= cap) { res.more = true; continue; }
@@ -275,7 +317,7 @@ async function sweep({ cap = SWEEP_WRITE_CAP } = {}) {
         const r = await refreshCase(row.id);
         if (r && r.written) res.written++;
         else if (r && r.unchanged) res.unchanged++;
-        else if (r && r.skipped) res.skipped[r.skipped] = (res.skipped[r.skipped] || 0) + 1;
+        else if (r && r.skipped) skip(r.skipped);
         if (r && r.failed && r.failed.length) res.failed++;
       } catch (err) {
         res.failed++;
@@ -290,4 +332,4 @@ async function sweep({ cap = SWEEP_WRITE_CAP } = {}) {
   }
 }
 
-module.exports = { copyOnCaseOpen, refreshCase, sweep, factsFor, diffCells, readCells, leadIdOfRecordUrl, recordUrl, columns, enabled, KEYS, io };
+module.exports = { copyOnCaseOpen, refreshCase, firstCopy, sweep, factsFor, diffCells, readCells, leadIdOfRecordUrl, recordUrl, columns, enabled, KEYS, NEW_CASES_SINCE, io };

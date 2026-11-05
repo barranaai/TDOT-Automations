@@ -261,6 +261,7 @@ test('execute: a child-row failure KEEPS the CM row, leads and folders (re-runna
   });
   let folderDeleted = false;
   const restore = [
+    stub(oneDrive, 'findCaseFoldersByRef', async () => []),   // the Cases-page delete keeps the record: it looks the folder up by the case number
     stub(mondayApi, 'query', m.fn),
     stub(leadService, 'findAllByColumnValue', async () => ([{ id: '500', fullName: 'C' }])),
     stub(clientMaster, 'findItemByCaseRef', async () => '900'),

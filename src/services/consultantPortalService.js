@@ -1497,7 +1497,10 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       const caseOpen      = !!(lead.clientMasterItemId && String(lead.clientMasterItemId).trim());
       const isRetained    = String(lead.conversionStatus || '').trim() === 'Retained';
       if (alreadySigned && (caseOpen || isRetained)) {
-        return { ok: true, message: `The retainer was already marked signed on ${lead.retainerSigned} and the case is open — no change.` };
+        // Never "the case is open" when none is linked (a retained client whose case was deleted, review 2026-11-05).
+        return { ok: true, message: caseOpen
+          ? `The retainer was already marked signed on ${lead.retainerSigned} and the case is open — no change.`
+          : `The retainer was already marked signed on ${lead.retainerSigned} and the client is retained — no change. No case is linked: to open one, clear “Case deleted” on the lead if it is filled in, then in Monday clear the Retainer Signed date and type it again.` };
       }
       await leadService.updateLead(leadId, { retainerSigned: v.normalized });
       await postPortalNote(leadId, `Retainer marked signed (${v.normalized}).`);
