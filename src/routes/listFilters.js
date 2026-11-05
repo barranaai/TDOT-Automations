@@ -303,6 +303,7 @@ function listTableUi(LT, o, win) {
         apply('filter');
       };
       if (q.tabs) b.onkeydown = function (e) {
+        if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;   /* Alt/Cmd + arrow = the browser's Back: left alone */
         var to = e.key === 'ArrowRight' ? idx + 1 : e.key === 'ArrowLeft' ? idx - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? btns.length - 1 : null;
         if (to === null) return;
         e.preventDefault();

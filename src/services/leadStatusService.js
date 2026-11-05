@@ -182,6 +182,14 @@ function inviteFacts(l, act, now) {
     out.abandoned = { at: Number.isFinite(at) ? at : 0 };
   }
   if (ep && invited && now >= ep.anchor + EXPIRE_AFTER_MS) out.expired = { at: ep.anchor + EXPIRE_AFTER_MS };
+  if (invited && !ep) {
+    // "Sent" with no date and no invite note in the 45-day copy (2026-11-05 review): an invite from before the date
+    // stamp (2026-07-04) or set by hand — when is unknown. It IS an invite (never "New"), and expired once the lead
+    // is 7 days old (the invite cannot be older than the lead).
+    out.invite = { at: 0 };
+    const c = Date.parse(s(l.createdAt));
+    if (!Number.isFinite(c) || now >= c + EXPIRE_AFTER_MS) out.expired = { at: Number.isFinite(c) ? c + EXPIRE_AFTER_MS : 0 };
+  }
   return out;
 }
 

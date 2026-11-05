@@ -62,6 +62,19 @@ test('two steps at the same moment: the tab breaks the tie exactly as the Curren
   assert.equal(LS.leadPhase(l, a, T0 + 3 * DAY), 'invite');
 });
 
+test('review: "Sent" with no date and no invite note (an invite from before the date stamp, or set by hand) is never New — Invite sent, then Expired once the lead is 7 days old; the Current status agrees', () => {
+  const old = invited({ inviteSentAt: '', createdAt: '2026-06-20T15:00:00Z' });
+  assert.equal(LS.leadPhase(old, null, T0), 'expired');
+  assert.equal(LS.leadStatus(old, null, T0).key, 'expired');
+  assert.equal(LS.leadPhase(old, act(), T0), 'expired', 'the notes copy has nothing for it');
+  const young = invited({ inviteSentAt: '', createdAt: new Date(T0 - 2 * DAY).toISOString() });
+  assert.equal(LS.leadPhase(young, null, T0), 'invite');
+  assert.equal(LS.leadStatus(young, null, T0).key, 'invite');
+  assert.equal(LS.leadStatus(young, null, T0).at, 0, 'no date shown for an invite whose time is unknown');
+  assert.equal(LS.leadPhase(invited({ inviteSentAt: '' }), null, T0), 'expired', 'no creation time either: an old row');
+  assert.equal(LS.leadPhase(lead({ bookingInvite: 'Failed', inviteSentAt: '' }), null, T0), 'new', 'a failed invite is still New');
+});
+
 test('a remark or an Outcome never moves a lead between tabs', () => {
   const a = act({ invites: [T0], rem: rem(T0 + 2 * DAY), remark: { label: 'No answer / voicemail', at: T0 + 2 * DAY + HOUR, by: 'Gauri' } });
   assert.equal(LS.leadStatus(invited(), a, T0 + 3 * DAY).key, 'remark', 'the status shows the remark');
