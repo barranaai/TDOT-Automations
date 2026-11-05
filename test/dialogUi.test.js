@@ -265,6 +265,9 @@ test('Add lead (Faran 2026-11-05): always opens EMPTY; a late answer for an earl
   assert.ok(q.includes(".catch(function(){ if(!dlg.still(run)) return;"));
   assert.ok(q.includes(".finally(function(){ if(!dlg.still(run)) return; dlg.setBusy(false);"));
   assert.ok(q.includes("var go=function(){ if(!dlg.still(run)){ load(); return; }"), 'closed during the attach upload: no jump to the lead');
+  assert.ok(q.includes("AL_ALLOW=false; dlg.close(true); window.location.href='/admin/lead/'"), 'saved: the window closes before the page moves on (Back never brings the filled form back)');
+  assert.ok(q.includes("window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });"), 'Back to the list: it is read again');
+  assert.ok(require('../src/routes/adminConsultation').buildQueueHTML().includes("dlg.close(true); window.location.href='/admin/consultation/'"));
 });
 
 test('New direct retainer client: a duplicate lookup or a 409 for an earlier client never lands in a reopened form', () => {

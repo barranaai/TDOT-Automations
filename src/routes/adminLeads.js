@@ -315,7 +315,8 @@ function alSubmit(){
         err.textContent=res.j.error||('HTTP '+res.s); return;
       }
       /* The lead exists: attach the chosen files now (a failed file never undoes the lead), then open it. */
-      var go=function(){ if(!dlg.still(run)){ load(); return; } window.location.href='/admin/lead/'+encodeURIComponent(res.j.leadId); };
+      /* Saved: the window closes BEFORE the page moves on — Back must never bring this caller's filled form (and a "create anyway") back. */
+      var go=function(){ if(!dlg.still(run)){ load(); return; } AL_ALLOW=false; dlg.close(true); window.location.href='/admin/lead/'+encodeURIComponent(res.j.leadId); };
       if(!AL_ATT.files().length) return go();
       btn.textContent='Attaching…';
       return AL_ATT.upload(res.j.leadId).then(function(o){
@@ -342,6 +343,8 @@ function alSubmit(){
 ${BLACKLIST_UI_JS}
 ${DELETE_UI_JS}
 tdotBindDelete(function(){ load(); });
+/* Back to this page from the browser's memory: read the list again (a lead added meanwhile shows). */
+window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });
 startClock(); checkApiStatus(); load();
 </script>
 <script>${leadsTableScript()}</script></body></html>`;

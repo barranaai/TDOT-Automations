@@ -433,7 +433,7 @@ test('page: the Retainers quick filters — one button per outcome plus All, cou
     "aria-pressed=\"' + (on ? 'true' : 'false')", "key: 'tdot_list_retainers'",
     '.pill.red {', 'colspan="12"']) assert.ok(html.includes(s), s);
   for (const gone of ["lsSet('tdot_ret_outcomes'", 'function setRout(', 'function paidMatch(', "['rf-search',"]) assert.ok(!html.includes(gone), 'gone: ' + gone);
-  assert.ok(html.indexOf('initial: retInitial') < html.indexOf('<script>load();</script>'), 'the link\'s choice is read before the first render');
+  assert.ok(html.indexOf('initial: retInitial') < html.indexOf('<script>load();'), 'the link\'s choice is read before the first render');
   // a link opens a view; an empty or junk link opens all
   const st = { sel: {} }; f.loc.search = '?outcome=Follow-Up,junk'; f.retInitial(st); assert.deepEqual(st.sel.outcome, ['Follow-Up']);
   const st2 = { sel: { outcome: ['Retain'] } }; f.loc.search = '?outcome='; f.retInitial(st2); assert.equal(st2.sel.outcome, undefined);

@@ -648,7 +648,8 @@ function submitDirectClient(){
       else if(res.j.linked) window.alert('Linked to the existing lead — one record for this person, now set up as a direct retainer client.');
       else if(res.j.reused) window.alert('This client already exists as a direct retainer lead — opening it instead of creating a duplicate.');
       /* The client exists: attach the chosen files now (a failed file never undoes the client), then open it. */
-      var go=function(){ if(!dlg.still(run)){ load(true); return; } window.location.href='/admin/consultation/'+encodeURIComponent(res.j.leadId); };
+      /* Saved: the window closes BEFORE the page moves on — Back must never bring this client's filled form back. */
+      var go=function(){ if(!dlg.still(run)){ load(true); return; } dlg.close(true); window.location.href='/admin/consultation/'+encodeURIComponent(res.j.leadId); };
       if(!DC_ATT.files().length) return go();
       btn.textContent='Attaching…';
       return DC_ATT.upload(res.j.leadId).then(function(o){
@@ -855,7 +856,7 @@ setRange(ssGet('tdot_list_consult_range')||'today');
 </script>
 <script>${listTableScript(consultListSpec, consultListOpts)}</script>
 <script>${listTableScript(retainerListSpec, retainerListOpts, '{ outcomes: RET_OUTCOMES, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }')}</script>
-<script>load();</script></body></html>`;
+<script>load(); window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });   /* Back to this page from memory: read the lists again */</script></body></html>`;
 }
 
 // ─── Detail page ────────────────────────────────────────────────────────────────
