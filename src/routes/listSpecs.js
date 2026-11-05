@@ -71,7 +71,7 @@ function retainerListSpec(ctx) {
       paid: { label: 'Consult fee', get: function (r) { return (r.kind === 'direct' && !s(r.paid)) ? 'na' : !s(r.paid) ? 'none' : r.paid === 'waived' ? 'waived' : r.paid === 'app' ? 'app' : 'staff'; },
         text: function (v) { return ({ app: 'Paid (app)', staff: 'Paid — recorded by staff', waived: 'Waived', none: 'Not paid', na: 'No consultation (direct)' })[v] || v; }, order: ['app', 'staff', 'waived', 'none', 'na'], fixed: true },
       stage: { label: 'Stage', get: function (r) { return s(r.stage); }, none: 'No stage', order: ['New', 'Retain', 'Fee set', 'Sent', 'Signed', 'Paid'] },
-      // The buttons above the table: one per outcome; a row without a group counts under the first (Retain).
+      // The tabs above the table: one per outcome; a row without a group counts under the first (Retain).
       outcome: { label: 'Outcome', quick: true, get: function (r) { return OUT.indexOf(r.outcomeGroup) >= 0 ? r.outcomeGroup : OUT[0]; }, order: OUT },
     },
     sorts: {},
@@ -85,12 +85,15 @@ function retainerListOpts(ctx) {
     ids: { head: 'rq-headrow', chips: 'rq-chips', count: 'r-count', search: 'rq-search', pop: 'rq-pop' },
     render: 'renderRetainerList', api: 'RetainerTable',
     initial: ctx.initial, onChange: ctx.onChange,
-    quick: { facet: 'outcome', box: 'r-quick', label: 'Show', all: 'All', values: ctx.outcomes || [], hints: ctx.hints || {} },
+    // Tabs, like the Leads page (team meeting 2026-11-05, point 7): one outcome at a time, "All" last; a new browser tab
+    // opens on Retain; the tab chosen is kept until the browser tab is closed. A link's ?outcome= opens that tab (not kept).
+    quick: { facet: 'outcome', box: 'r-quick', tabs: true, allLast: true, all: 'All', storeKey: 'tdot_list_retainers_tab', default: (ctx.outcomes || [])[0],
+      values: ctx.outcomes || [], hints: ctx.hints || {} },
     cols: [
       { id: 'client', label: 'Client', menu: 'facet', facets: ['kind'] },
       { id: 'casetype', label: 'Case type' },
       { id: 'consultant', label: 'Consultant', menu: 'facet', facets: ['consultant'] },
-      { id: 'outcome', label: 'Outcome', title: 'The outcome buttons are above the table; here: the follow-up date', menu: 'facet', facets: ['followUp'] },
+      { id: 'outcome', label: 'Outcome', title: 'The outcome tabs are above the table; here: the follow-up date', menu: 'facet', facets: ['followUp'] },
       { id: 'fee', label: 'Consult fee', menu: 'facet', facets: ['paid'] },
       { id: 'retfee', label: 'Retainer fee' },
       { id: 'sent', label: 'Sent' },

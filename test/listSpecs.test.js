@@ -303,3 +303,32 @@ test('review 2026-11-05: Sign Out stops a list read still running from saving th
   assert.equal(S.casesListOpts({}).sortReset, 'newest case first');
   assert.equal(S.consultListOpts({}).countable, 'consultCountable');
 });
+
+test('2026-11-05 point 7: the Retainers outcome tabs work like the Leads tabs — a new browser tab opens on Retain, the tab chosen is kept until it closes (All too), a link opens its tab without changing the kept one, one tab at a time', () => {
+  const { listTableUi } = require('../src/routes/listFilters');
+  const el = () => ({ setAttribute() {}, removeAttribute() {}, getAttribute() { return null; }, classList: { add() {}, remove() {}, contains() { return false; } }, appendChild() {}, addEventListener() {}, querySelectorAll() { return []; }, querySelector() { return null; }, contains() { return false; }, style: {} });
+  const start = (store, initial) => {
+    const win = { document: { getElementById: () => null, createElement: el, body: el(), addEventListener() {}, activeElement: null, documentElement: el() },
+      sessionStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } }, addEventListener() {}, location: { search: '' }, renderRetainerList: () => {} };
+    const o = S.retainerListOpts({ outcomes: OUTCOME_LABELS, initial, onChange() {} });
+    const api = listTableUi(listCore(S.retainerListSpec({ outcomes: OUTCOME_LABELS, today: () => '' })), o, win) || win[o.api];
+    return api.state().sel.outcome;
+  };
+  const q = S.retainerListOpts({ outcomes: OUTCOME_LABELS }).quick;
+  assert.deepEqual([q.facet, q.box, q.tabs, q.allLast, q.all, q.default, q.storeKey], ['outcome', 'r-quick', true, true, 'All', 'Retain', 'tdot_list_retainers_tab']);
+  assert.ok(q.storeKey.indexOf('tdot_list_') === 0, 'Sign Out forgets it');
+  assert.equal(q.label, undefined, 'no "Show" label in front of tabs');
+  assert.deepEqual(start({}), ['Retain'], 'a new browser tab opens on Retain');
+  assert.deepEqual(start({ tdot_list_retainers_tab: 'Follow-Up' }), ['Follow-Up'], 'the tab chosen is kept');
+  assert.equal(start({ tdot_list_retainers_tab: '' }), undefined, 'All is kept too');
+  assert.deepEqual(start({ tdot_list_retainers_tab: 'Follow Up' }), ['Retain'], 'a kept tab that no longer exists: Retain');
+  // an older saved view with several outcomes on (the buttons could be combined) shows one tab
+  assert.deepEqual(start({ tdot_list_retainers: JSON.stringify({ sel: { outcome: ['Newsletter', 'Follow-Up'] } }), tdot_list_retainers_tab: 'Newsletter' }), ['Newsletter']);
+  const store = { tdot_list_retainers_tab: 'Follow-Up' };
+  assert.deepEqual(start(store, (st) => { st.sel.outcome = ['Not Wanted', 'Retain']; return true; }), ['Not Wanted'], 'a link wins, one tab');
+  assert.equal(store.tdot_list_retainers_tab, 'Follow-Up', 'and the kept tab is not changed by the link');
+  assert.deepEqual(start({ tdot_list_retainers_tab: 'Follow-Up' }, () => false), ['Follow-Up'], 'not a link: the kept tab');
+  // the click: one value, stored ('' = All) — the same code path as the Leads tabs
+  const src = listTableUi.toString();
+  assert.ok(src.includes("if (!v) next = []; else if (q.tabs) next = [v];") && src.includes("win.sessionStorage.setItem(q.storeKey, v || '')"));
+});

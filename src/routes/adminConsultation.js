@@ -126,16 +126,8 @@ const CONSULT_PAGE_CSS = `
 const RETAINERS_PAGE_CSS = `
   .btn-direct { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border:1px solid var(--navy); background:var(--navy); color:#fff; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
   .btn-direct:hover { filter:brightness(1.12); }
-  /* Retainers quick filters (Faran 2026-10-16, in place of grouping by outcome): toggle buttons, none on = all */
-  .quick { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
-  .quick .ql { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#475569; margin-right:2px; }
-  .quick button { display:inline-flex; align-items:center; gap:6px; min-height:32px; padding:5px 12px; border:1px solid #e2e8f0; border-radius:16px; background:#fff; color:var(--navy); font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
-  .quick button:hover { border-color:#94a3b8; }
-  .quick button:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
-  .quick button .qn { min-width:18px; padding:0 6px; border-radius:10px; background:#f1f5f9; color:#475569; font-size:11px; font-weight:700; text-align:center; font-variant-numeric:tabular-nums; }
-  .quick button[aria-pressed="true"] { background:var(--navy); border-color:var(--navy); color:#fff; }
-  .quick button[aria-pressed="true"] .qn { background:rgba(255,255,255,.18); color:#fff; }
-  .quick button.zero:not([aria-pressed="true"]) { color:#64748b; border-style:dashed; }
+  /* The outcome tabs (team meeting 2026-11-05, like the Leads page) use the shared tab look (listFilters.js .lt-tabs); the search sits under them, on the right. */
+  .q-head.r-tools { justify-content:flex-end; margin-top:0; }
   /* New direct retainer client: the shared pop-up (dialogUi.js); the field look matches Add lead. */
   .dc-sub { font-size:12.5px; color:#64748b; margin:0 0 12px; line-height:1.45; }
   #dc-modal label { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:12px 0 4px; }
@@ -325,21 +317,23 @@ function renderConsultList(keep){
 // The Retainers page's own browser code: the outcome buttons' link + address, the list, the pop-up.
 const RETAINERS_PAGE_JS = `
 function dParts(d){ var m=String(d||'').match(/^(\\d{4})-(\\d{2})-(\\d{2})/); return m?[Number(m[1]),Number(m[2]),Number(m[3])]:null; }
-/* The Retainers quick filters (the outcome buttons above the table) are the shared engine's "quick" facet
-   (listSpecs.js retainerListSpec): counts from the other filters, none on = all. A link can open a view
-   (/admin/retainers?outcome=Follow-Up,Newsletter) and the address follows the buttons. */
+/* The Retainers outcome tabs (above the table, like the Leads page — team meeting 2026-11-05) are the shared engine's
+   "quick" facet in tabs mode (listSpecs.js retainerListOpts): one at a time, counts from the other filters, "All" last.
+   A new browser tab opens on Retain and the tab chosen is kept until it is closed. A link opens a tab
+   (/admin/retainers?outcome=Follow-Up; an old link naming several opens the first; a bare ?outcome= opens All) without
+   changing the one kept, and the address follows the tabs. A link naming no outcome we know is not a link. */
 function cleanOutcomes(list){ var out=[]; (list||[]).forEach(function(v){ v=String(v||'').trim(); if(RET_OUTCOMES.indexOf(v)>=0 && out.indexOf(v)<0) out.push(v); }); return out; }
-function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return; var l=cleanOutcomes(String(p).split(',')); if(l.length) st.sel.outcome=l; else delete st.sel.outcome; }
+function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return false; if(!String(p).trim()){ delete st.sel.outcome; return true; } var l=cleanOutcomes(String(p).split(',')); if(!l.length) return false; st.sel.outcome=[l[0]]; return true; }
 function retOnChange(st){
   var l=(st.sel&&st.sel.outcome)||[];
   try { var u=new URL(window.location.href); if(l.length){ u.searchParams.set('outcome',l.join(',')); } else u.searchParams.delete('outcome'); history.replaceState(null,'',u.toString()); } catch(e){}
 }
-/* The Retainers list: the shared engine hands over the rows that pass (the header filters, the search, the outcome buttons). */
+/* The Retainers list: the shared engine hands over the rows that pass (the header filters, the search, the outcome tab). */
 function renderRetainerList(rows,why,st,h){
   var t=todayStr(), tp=dParts(t);
   var rout=(st&&st.sel&&st.sel.outcome)||[], base=h?h.without('outcome'):rows.length;
   var tb=document.getElementById('rbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="12" class="empty">'+(!RETAINERS.length?'Nobody here right now.':(rout.length && base)?'Nobody under '+escHtml(rout.join(' or '))+(base!==RETAINERS.length?' with these filters':'')+' right now.':'No clients match your filters.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="12" class="empty">'+(!RETAINERS.length?'Nobody here right now.':(rout.length && base)?'Nobody in “'+escHtml(rout.join(' or '))+'”'+(base!==RETAINERS.length?' with these filters':'')+' right now.':'No clients match your filters.')+'</td></tr>'; return; }
   function age(d){ var p=dParts(d); if(!p||!tp) return ''; var days=Math.round((Date.UTC(tp[0],tp[1]-1,tp[2])-Date.UTC(p[0],p[1]-1,p[2]))/86400000); return days>0?' <span class="muted">('+days+'d)</span>':''; }
   tb.innerHTML=rows.map(function(c){
     var stc=c.stage==='Paid'?'green':(c.stage==='Signed'||c.stage==='Sent')?'blue':'amber';
@@ -788,8 +782,8 @@ ${buildNavHeader('retainers')}
       <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
     </div>
     <p class="page-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation, and drops off once retained (the case is on the Cases page). <span class="age" id="snap-age"></span></p>
-    <div class="q-head">
-      <div class="quick" id="r-quick" role="group" aria-label="Show by outcome"></div>
+    <div class="lt-tabs" id="r-quick" role="tablist" aria-label="Retainers &amp; follow-ups by outcome"></div>
+    <div class="q-head r-tools">
       <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="rq-search" type="search" placeholder="Search by name…" aria-label="Search retainers and follow-ups by name" autocomplete="off"></div>
     </div>
     <div id="rq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
@@ -812,7 +806,7 @@ ${ATTACH_UI_JS}
 var DC_REF=tdotRef('dc');      /* the walk-in form's Source / Reference second question (2026-11-04) */
 var DC_ATT=tdotAttach('dc');   /* "Attach a screenshot": only for the staff allowed to (Shafoli), signed in with Monday */
 var DC_PROFILE_ADDR='';        /* the carried address — its "is it current?" tick is asked only while the box still shows it */
-var RET_OUTCOMES=${jsLit(OUTCOME_LABELS)};   // the Retainers quick filters: one button per outcome (the shared list engine keeps which are on)
+var RET_OUTCOMES=${jsLit(OUTCOME_LABELS)};   // the Retainers outcome tabs: one per outcome, Retain first (the shared list engine keeps which is on)
 var RET_HINTS={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set', 'Follow-Up':'The team calls the client back — not retained', 'Newsletter':'Nothing to do now — the client gets the newsletter', 'Not Wanted':'On the Not Wanted list — staff are warned if they come back' };
 ${RETAINERS_PAGE_JS}
 function load(force){

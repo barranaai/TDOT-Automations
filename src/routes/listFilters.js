@@ -168,7 +168,8 @@ function listCore(spec) {
  *      api: window name for { setRows, state, apply }, initial(state) (e.g. a link's choice), onChange(state) (a person changed something),
  *      quick: { facet, box, label, all, values: [...], hints: {} } (buttons above the table), countText(shown, total);
  *        quick.tabs: drawn as tabs (one at a time, arrow keys move); quick.allLast: "All" is the last tab;
- *        quick.storeKey + quick.default: a new browser tab opens on the default; the choice (All too) is kept for this tab,
+ *        quick.storeKey + quick.default: a new browser tab opens on the default; the choice (All too) is kept for this tab
+ *        (a link chosen by initial() returning true wins, and is not kept),
  *      countable: window function name (r) -> boolean — only these rows are counted beside the choices (Consultations: the date range),
  *      sortReset: 'newest case first' — the list's normal order has no column, so a column sort shows as a chip whose × goes back to it }
  * A column: { id, label, title, menu, facets: [...], flags: [...], date: true, note, sort, sortText: [..], sortDirs: [first, second] }
@@ -177,16 +178,20 @@ function listTableUi(LT, o, win) {
   var doc = win.document, KEY = o.key, ids = o.ids, COLS = o.cols;
   var state = LT.emptyState();
   try { state = LT.normalizeState(JSON.parse(win.sessionStorage.getItem(KEY) || 'null')); } catch (e) { /* private window: defaults */ }
-  if (o.initial) { try { o.initial(state); } catch (e) { /* a bad link: defaults */ } }
+  /* initial() returns true when a link chose the tab (Retainers ?outcome=): it is shown, not kept over the person's own. */
+  var linked = false;
+  if (o.initial) { try { linked = o.initial(state) === true; } catch (e) { /* a bad link: defaults */ } }
   var ROWS = [], openCol = null, openBtn = null;
   /* Tabs (Leads by stage, 2026-11-05): a new browser tab opens on the default; the choice — All too — is kept for this tab. */
-  if (o.quick && o.quick.storeKey) {
+  if (o.quick && o.quick.storeKey && !linked) {
     var tk = null; try { tk = win.sessionStorage.getItem(o.quick.storeKey); } catch (e) { /* defaults */ }
     if (tk === null) { if (o.quick.default) state.sel[o.quick.facet] = [o.quick.default]; else delete state.sel[o.quick.facet]; }
     else if (tk === '') delete state.sel[o.quick.facet];
     else if (o.quick.values.indexOf(tk) >= 0) state.sel[o.quick.facet] = [tk];
     else if (o.quick.default) state.sel[o.quick.facet] = [o.quick.default];
   }
+  /* Tabs show one at a time: a link (or an older saved view) naming several keeps the first. */
+  if (o.quick && o.quick.tabs && state.sel[o.quick.facet] && state.sel[o.quick.facet].length > 1) state.sel[o.quick.facet] = [state.sel[o.quick.facet][0]];
   var FUNNEL = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M1.5 2.5h13l-5 6v4.2l-3 1.6V8.5z"/></svg>';
   var pop = doc.getElementById(ids.pop);
   if (!pop) { pop = doc.createElement('div'); pop.id = ids.pop; pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-modal', 'false'); doc.body.appendChild(pop); }

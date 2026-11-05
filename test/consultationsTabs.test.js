@@ -398,11 +398,11 @@ test('REVIEW: the Cases copy — a delete during an in-flight refresh is not los
 
 test('REVIEW: the page — the warning header keeps its colour; a due follow-up is a cue on the row and a filter; a failed read is said, not shown as an empty list', () => {
   const html = require('../src/routes/adminConsultation').buildQueueHTML();
-  const ret = require('../src/routes/adminConsultation').buildRetainersHTML();   // the follow-up filter and the outcome buttons are on the Retainers page (2026-11-05)
+  const ret = require('../src/routes/adminConsultation').buildRetainersHTML();   // the follow-up filter and the outcome tabs are on the Retainers page (2026-11-05)
   const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
   assert.ok(css.indexOf('.fold .attn-h {') < css.indexOf('.fold.attn .attn-h {'), 'the amber rule comes later AND is more specific');
   assert.ok(css.includes('.fold.attn .attn-h { background:#fffbeb; color:#92400e; }'));
-  assert.ok(ret.includes("followUp: { label: 'Follow-up'") && ret.includes("due: 'Due (today or earlier)'") && ret.includes("{ id: 'outcome', label: 'Outcome', title: 'The outcome buttons are above the table; here: the follow-up date', menu: 'facet', facets: ['followUp'] }"),
+  assert.ok(ret.includes("followUp: { label: 'Follow-up'") && ret.includes("due: 'Due (today or earlier)'") && ret.includes("{ id: 'outcome', label: 'Outcome', title: 'The outcome tabs are above the table; here: the follow-up date', menu: 'facet', facets: ['followUp'] }"),
     'the follow-up filter is on Retainers (its Outcome column), where a follow-up sits once its consultation day has passed');
   assert.ok(!html.includes('id="f-followup"') && !html.includes("facets: ['followUp']"), 'and not on Consultations (it would find almost nothing there)');
   for (const page of [html, ret]) assert.ok(page.includes("if(c.followUpDate) h+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);"), 'the outcome cell is the same on both pages');
@@ -485,31 +485,34 @@ function quickFns() {
   return fns;
 }
 
-test('page: the Retainers quick filters — one button per outcome plus All, counts from the other filters, none on = all; the address and the viewer remember the choice; an Outcome column; a follow-up filter', () => {
+test('page: the Retainers outcome tabs (like the Leads page, 2026-11-05 point 7) — one per outcome plus All last, counts from the other filters; opens on Retain; the tab is kept until the browser tab closes; a link opens a tab; an Outcome column; a follow-up filter', () => {
   const html = require('../src/routes/adminConsultation').buildRetainersHTML();   // its own page since 2026-11-05
   for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   const f = quickFns();
-  assert.deepEqual(f.RET_OUTCOMES, require('../config/outcomes').OUTCOME_LABELS, 'the buttons are the four outcomes, from config');
+  assert.deepEqual(f.RET_OUTCOMES, require('../config/outcomes').OUTCOME_LABELS, 'the tabs are the four outcomes, from config');
+  assert.equal(f.RET_OUTCOMES[0], 'Retain', 'Retain is the first tab — the one a new browser tab opens on');
   assert.deepEqual(f.cleanOutcomes(['Follow-Up', 'Newsletter', 'Follow-Up', 'junk', '', ' Not Wanted ']), ['Follow-Up', 'Newsletter', 'Not Wanted'], 'only real outcomes, once each');
   assert.deepEqual(f.cleanOutcomes(''.split(',')), []);
   assert.equal(f.retGroup({ outcomeGroup: 'Newsletter' }), 'Newsletter');
   assert.equal(f.retGroup({}), 'Retain', 'a row without a group counts under Retain');
-  // 2026-11-05: the buttons are the shared list engine's "quick" facet (listFilters.js renderQuick: All + one per outcome,
-  // aria-pressed, counts from the other filters); the choice is kept with the other filters until the tab is closed.
-  for (const s of ['<div class="quick" id="r-quick" role="group" aria-label="Show by outcome"></div>',
+  // 2026-11-05: the tabs are the shared list engine's "quick" facet in tabs mode (listFilters.js renderQuick: one per
+  // outcome then All, role=tab, counts from the other filters) — the same engine and look as the Leads page tabs.
+  for (const s of ['<div class="lt-tabs" id="r-quick" role="tablist" aria-label="Retainers &amp; follow-ups by outcome"></div>', '<div class="q-head r-tools">',
     '<th>Consultant</th><th>Outcome</th><th>Consult fee</th><th>Retainer fee</th>',
     "((c.kind==='direct' && !c.paid)?'<span class=\"pill grey\" title=\"Direct retainer client — no consultation\">n/a</span>':paidPill(c))",
-    "u.searchParams.set('outcome',l.join(','));", "function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return;",
-    "quick: { facet: 'outcome', box: 'r-quick', label: 'Show', all: 'All', values: ctx.outcomes || [], hints: ctx.hints || {} },",
+    "u.searchParams.set('outcome',l.join(','));", "function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return false;",
+    "quick: { facet: 'outcome', box: 'r-quick', tabs: true, allLast: true, all: 'All', storeKey: 'tdot_list_retainers_tab', default: (ctx.outcomes || [])[0],",
     "initial: retInitial, onChange: retOnChange", "{ outcomes: RET_OUTCOMES, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }",
-    "aria-pressed=\"' + (on ? 'true' : 'false')", "key: 'tdot_list_retainers'",
+    "role=\"tab\" class=\"lt-tab'", "key: 'tdot_list_retainers'",
     '.pill.red {', 'colspan="12"']) assert.ok(html.includes(s), s);
-  for (const gone of ["lsSet('tdot_ret_outcomes'", 'function setRout(', 'function paidMatch(', "['rf-search',", "u.searchParams.set('tab'", 'function setTab(']) assert.ok(!html.includes(gone), 'gone: ' + gone);
+  for (const gone of ['class="quick"', '.quick button', 'aria-label="Show by outcome"', "label: 'Show'", "lsSet('tdot_ret_outcomes'", 'function setRout(', 'function paidMatch(', "['rf-search',", "u.searchParams.set('tab'", 'function setTab(']) assert.ok(!html.includes(gone), 'gone: ' + gone);
   assert.ok(html.indexOf('initial: retInitial') < html.indexOf('<script>load();'), 'the link\'s choice is read before the first render');
-  // a link opens a view; an empty or junk link opens all
-  const st = { sel: {} }; f.loc.search = '?outcome=Follow-Up,junk'; f.retInitial(st); assert.deepEqual(st.sel.outcome, ['Follow-Up']);
-  const st2 = { sel: { outcome: ['Retain'] } }; f.loc.search = '?outcome='; f.retInitial(st2); assert.equal(st2.sel.outcome, undefined);
-  const st3 = { sel: { outcome: ['Retain'] } }; f.loc.search = ''; f.retInitial(st3); assert.deepEqual(st3.sel.outcome, ['Retain'], 'no link: the tab\'s own choice stays');
+  // a link opens a tab (true = a link chose it, so the engine does not put the kept tab over it); a bare ?outcome= opens All
+  const st = { sel: {} }; f.loc.search = '?outcome=Follow-Up,junk'; assert.equal(f.retInitial(st), true); assert.deepEqual(st.sel.outcome, ['Follow-Up']);
+  const st1 = { sel: {} }; f.loc.search = '?outcome=Newsletter,Follow-Up'; assert.equal(f.retInitial(st1), true); assert.deepEqual(st1.sel.outcome, ['Newsletter'], 'an old link naming several opens the first');
+  const st2 = { sel: { outcome: ['Retain'] } }; f.loc.search = '?outcome='; assert.equal(f.retInitial(st2), true); assert.equal(st2.sel.outcome, undefined, 'a bare ?outcome= opens All');
+  const st3 = { sel: { outcome: ['Retain'] } }; f.loc.search = ''; assert.equal(f.retInitial(st3), false); assert.deepEqual(st3.sel.outcome, ['Retain'], 'no link: the kept tab is used');
+  const st4 = { sel: { outcome: ['Retain'] } }; f.loc.search = '?outcome=Follow%20Up'; assert.equal(f.retInitial(st4), false, 'a link naming no outcome we know is not a link: the kept tab is used'); assert.deepEqual(st4.sel.outcome, ['Retain']);
 });
 
 test('page: one consultation-fee rule for both tabs (the Paid / Consult fee header filters)', () => {
