@@ -424,6 +424,7 @@ async function runOnce({ dryRun = false } = {}) {
   if (dryRun) _previewing = true; else _running = true;
   try {
     const now = io.now();
+    if (!dryRun) await require('./consultPriceService').ensureFresh({ reason: 'booking reminders' });   // the fee quoted is Square's current price
     let leads;
     try { leads = await io.snapshot(); }
     catch (err) { io.warn(`[BookingReminders] the Lead Board could not be read: ${err.message}`); return { ok: false, error: err.message }; }

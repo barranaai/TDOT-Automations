@@ -846,7 +846,9 @@ async function reconcileConsultOptionWithPayment(lead, paidCents) {
 
   const routing = require('../../config/consultantRouting');
   const consultant = routing.resolveConsultant(lead);   // pinned override wins (2026-08-17)
-  const paidOption = routing.consultOptionsFor(consultant).find((o) => matchesFee(o.feeCents));
+  // A payment at the live price, the listed price, or a price read earlier (it changed
+  // in Square between the quote and the payment) all name the same option (2026-11-05).
+  const paidOption = routing.consultOptionsFor(consultant).find((o) => (o.knownFeeCents || [o.feeCents]).some(matchesFee));
   if (paidOption) {
     const next = JSON.stringify({
       durationMin: paidOption.durationMin, feeCents: paidOption.feeCents,
@@ -1119,6 +1121,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
   const microsoftMail = require('./microsoftMailService');
   const esc = escNote;
   const first = esc(String(lead.fullName || 'there').split(' ')[0]);
+  await require('./consultPriceService').ensureFresh({ reason: 'booking invite' });   // the fee quoted is Square's current price
   const feeLine = inviteFeeLine(lead);
 
   // Body: the saved draft (the standard compliance-safe paragraph, possibly

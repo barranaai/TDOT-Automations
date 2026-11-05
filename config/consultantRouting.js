@@ -36,9 +36,13 @@ const CONSULTANTS = {
     // fee). variationId = the "(TDOT Automation)" Square services created
     // 2026-07-30 — dedicated to this system; staff services stay untouched.
     // Order = display order; `default: true` marks the pre-selected one.
+    // feeCents = the rate as of 2026-11-05 (Faran: Shafoli $300 / $450 + HST in
+    // Canada). The LIVE price comes from the Square service itself
+    // (consultPriceService) — these figures are the fallback until Square has
+    // answered, and the sanity band a Square price is checked against.
     consultOptions: [
-      { durationMin: 30, feeCents: 20000, variationId: 'TMJIRVYQUD76E7A3YGXSEOQ5', default: true },
-      { durationMin: 45, feeCents: 30000, variationId: 'Z2XFERF43EO567YZGX4Y5WDL' },
+      { durationMin: 30, feeCents: 30000, variationId: 'TMJIRVYQUD76E7A3YGXSEOQ5', default: true },
+      { durationMin: 45, feeCents: 45000, variationId: 'Z2XFERF43EO567YZGX4Y5WDL' },
     ],
   },
   shermin: {
@@ -58,14 +62,30 @@ const CONSULTANTS = {
 
 /**
  * The booking-page consultation options for a routed consultant ({key,name,…}
- * or a bare key). Falls back to a single option built from the legacy env
- * config (flat fee, env variation, 30 min) so the flow still works if a
- * consultant entry ever lacks options.
+ * or a bare key) — COPIES, with the price Square gives the option's service laid
+ * over the listed figure (consultPriceService, 2026-11-05): feeCents = the price in
+ * use, listFeeCents = the figure in this file, feeSource = 'square' | 'code',
+ * knownFeeCents = every price a payment for the option may carry (live, listed,
+ * earlier readings). The registry entries themselves are never changed.
+ * Falls back to a single option built from the legacy env config (flat fee, env
+ * variation, 30 min) so the flow still works if a consultant entry ever lacks options.
  */
 function consultOptionsFor(consultantOrKey) {
   const key = typeof consultantOrKey === 'string' ? consultantOrKey : consultantOrKey && consultantOrKey.key;
   const c = CONSULTANTS[key];
-  if (c && Array.isArray(c.consultOptions) && c.consultOptions.length) return c.consultOptions;
+  if (c && Array.isArray(c.consultOptions) && c.consultOptions.length) {
+    const prices = require('../src/services/consultPriceService');
+    return c.consultOptions.map((o) => {
+      const live = o.variationId ? prices.priceFor(o.variationId) : null;
+      return {
+        ...o,
+        feeCents: live ? live.feeCents : o.feeCents,
+        listFeeCents: o.feeCents,
+        feeSource: live ? 'square' : 'code',
+        knownFeeCents: prices.knownFeesFor(o.variationId, o.feeCents),
+      };
+    });
+  }
   const feeEnv = parseInt(process.env.SQUARE_CONSULT_FEE_CENTS, 10);
   return [{
     durationMin: parseInt(process.env.SQUARE_CONSULT_DURATION_MIN, 10) || 30,

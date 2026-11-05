@@ -33,6 +33,8 @@ router.get('/phase2/health', (req, res) => res.json({
   // consult service variation is configured (last 6 chars only, to eyeball it).
   squareCalendar: bookingService.squareCalendarEnabled(),
   consultVariation: String(process.env.SQUARE_CONSULT_SERVICE_VARIATION_ID || '').slice(-6) || null,
+  // Consultation prices: 'square 4/4 (3 min ago)' = every option priced from Square; 'code' = the app's own list.
+  consultPrices: require('../services/consultPriceService').summary(),
 }));
 
 // ─── WS2 — Lead capture (V2 intake form, TDOT brief sections A–G) ────────────
@@ -159,6 +161,9 @@ router.get('/book/:leadId', async (req, res) => {
     // resolveConsultant honors a staff-pinned assignedConsultant (Melanie's
     // pre-invite override, 2026-08-17) and falls back to auto-routing.
     const consultant = routing.resolveConsultant(lead);
+    // The prices shown are Square's own, read no longer than minutes ago (a bounded wait —
+    // a slow Square never holds the page; the last reading or the app's list is used).
+    await require('../services/consultPriceService').ensureFresh({ reason: 'booking page' });
     // One availability search per consultation option (duration ↔ Square
     // variation) — a 45-min consult needs a bigger clear window than a 30-min.
     // All-or-nothing: if ANY option's live search fails, EVERY option falls
@@ -225,7 +230,9 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
 
     // Resolve the chosen consultation option (duration ↔ fee ↔ Square variation)
     // against the ROUTED consultant's list — the posted value is untrusted.
-    // Missing/invalid → the consultant's default option.
+    // Missing/invalid → the consultant's default option. The fee charged is
+    // Square's current price for that service (read fresh here, bounded wait).
+    await require('../services/consultPriceService').ensureFresh({ reason: 'checkout' });
     const options = routing.consultOptionsFor(consultant);
     const wantedDur = parseInt(req.body.durationMin, 10);
     const option = options.find((o) => o.durationMin === wantedDur)
@@ -270,6 +277,7 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
         }),
       });
     } catch (e) { console.error(`[Book] consultOption persist FAILED for ${leadId} (fee/duration may fall back to defaults downstream): ${e.message}`); }
+    console.log(`[Book] lead ${leadId}: ${option.durationMin} min with ${consultant.name} at $${(option.feeCents / 100).toFixed(2)} (${option.feeSource === 'square' ? 'Square price' : 'app list price'})`);
 
     // Clients outside Canada are HST-exempt (Melanie, 2026-08-24): the lead's
     // country drives the tax — 0% when outside Canada, otherwise the Ontario
