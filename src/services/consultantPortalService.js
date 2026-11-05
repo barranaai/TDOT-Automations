@@ -554,6 +554,8 @@ async function getLeadsQueue() {
     inviteSentAt:  l.inviteSentAt || '',  // blank for invites sent before the stamp existed
     // Where the lead is WITH US (Faran 2026-10-28) — invite, reminders, a remark, booked, expired, the Outcome.
     status:        require('./leadStatusService').leadStatus(l, require('./leadStatusService').activityFor(l.id), Date.now()),
+    // The Leads list tabs (Faran 2026-11-05): New · Invite sent · 1st reminder · 2nd reminder · Expired — from the same invite facts.
+    phase:         require('./leadStatusService').leadPhase(l, require('./leadStatusService').activityFor(l.id), Date.now()),
   }));
   rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || Number(b.id) - Number(a.id));
   _leadsQueueCache = { at: Date.now(), rows };

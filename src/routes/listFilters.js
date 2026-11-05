@@ -166,7 +166,9 @@ function listCore(spec) {
 /**
  * o: { key: sessionStorage key, ids: { head, chips, count, search, pop }, cols: [...], render: window function name,
  *      api: window name for { setRows, state, apply }, initial(state) (e.g. a link's choice), onChange(state) (a person changed something),
- *      quick: { facet, box, label, all, values: [...], hints: {} } (buttons above the table), countText(shown, total),
+ *      quick: { facet, box, label, all, values: [...], hints: {} } (buttons above the table), countText(shown, total);
+ *        quick.tabs: drawn as tabs (one at a time, arrow keys move); quick.allLast: "All" is the last tab;
+ *        quick.storeKey + quick.default: a new browser tab opens on the default; the choice (All too) is kept for this tab,
  *      countable: window function name (r) -> boolean — only these rows are counted beside the choices (Consultations: the date range),
  *      sortReset: 'newest case first' — the list's normal order has no column, so a column sort shows as a chip whose × goes back to it }
  * A column: { id, label, title, menu, facets: [...], flags: [...], date: true, note, sort, sortText: [..], sortDirs: [first, second] }
@@ -177,6 +179,14 @@ function listTableUi(LT, o, win) {
   try { state = LT.normalizeState(JSON.parse(win.sessionStorage.getItem(KEY) || 'null')); } catch (e) { /* private window: defaults */ }
   if (o.initial) { try { o.initial(state); } catch (e) { /* a bad link: defaults */ } }
   var ROWS = [], openCol = null, openBtn = null;
+  /* Tabs (Leads by stage, 2026-11-05): a new browser tab opens on the default; the choice — All too — is kept for this tab. */
+  if (o.quick && o.quick.storeKey) {
+    var tk = null; try { tk = win.sessionStorage.getItem(o.quick.storeKey); } catch (e) { /* defaults */ }
+    if (tk === null) { if (o.quick.default) state.sel[o.quick.facet] = [o.quick.default]; else delete state.sel[o.quick.facet]; }
+    else if (tk === '') delete state.sel[o.quick.facet];
+    else if (o.quick.values.indexOf(tk) >= 0) state.sel[o.quick.facet] = [tk];
+    else if (o.quick.default) state.sel[o.quick.facet] = [o.quick.default];
+  }
   var FUNNEL = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M1.5 2.5h13l-5 6v4.2l-3 1.6V8.5z"/></svg>';
   var pop = doc.getElementById(ids.pop);
   if (!pop) { pop = doc.createElement('div'); pop.id = ids.pop; pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-modal', 'false'); doc.body.appendChild(pop); }
@@ -266,18 +276,44 @@ function listTableUi(LT, o, win) {
     var counts = {}; LT.facetCounts(CR, state, q.facet).forEach(function (x) { counts[x.value] = x.count; });
     var base = CR.filter(function (r) { return LT.passes(r, state, q.facet); }).length, sel = state.sel[q.facet] || [];
     var focusV = doc.activeElement && box.contains(doc.activeElement) ? doc.activeElement.getAttribute('data-quick') : null;
-    function btn(v, label, count, on) { return '<button type="button" data-quick="' + esc(v) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' + (count ? '' : ' class="zero"') + (q.hints && q.hints[v] ? ' title="' + esc(q.hints[v]) + '"' : '') + '>' + esc(label) + ' <span class="qn">' + count + '</span></button>'; }
-    box.innerHTML = (q.label ? '<span class="ql">' + esc(q.label) + '</span>' : '') + btn('', q.all || 'All', base, !sel.length)
-      + q.values.map(function (v) { return btn(v, v, counts[v] || 0, sel.indexOf(v) >= 0); }).join('');
-    Array.prototype.forEach.call(box.querySelectorAll('button[data-quick]'), function (b) {
+    var tip = function (v) { return q.hints && q.hints[v] ? ' title="' + esc(q.hints[v]) + '"' : ''; };
+    if (q.tabs) {
+      /* One at a time, like the Consultations page tabs: role=tablist, the chosen tab is the one Tab reaches, arrows move. */
+      var chosen = sel.length ? sel[0] : '';
+      var tab = function (v, label, count) {
+        var cur = v === chosen;
+        return '<button type="button" role="tab" class="lt-tab' + (cur ? ' active' : '') + (count ? '' : ' zero') + '" data-quick="' + esc(v) + '" aria-selected="' + (cur ? 'true' : 'false') + '" tabindex="' + (cur ? '0' : '-1') + '"' + tip(v) + '>'
+          + esc(label) + ' <span class="lt-tab-n">' + count + '</span></button>';
+      };
+      var tabs = q.values.map(function (v) { return tab(v, LT.labelOf(q.facet, v), counts[v] || 0); }), allTab = tab('', q.all || 'All', base);
+      box.setAttribute('role', 'tablist');
+      box.innerHTML = q.allLast ? tabs.join('') + allTab : allTab + tabs.join('');
+    } else {
+      var btn = function (v, label, count, on) { return '<button type="button" data-quick="' + esc(v) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' + (count ? '' : ' class="zero"') + tip(v) + '>' + esc(label) + ' <span class="qn">' + count + '</span></button>'; };
+      box.innerHTML = (q.label ? '<span class="ql">' + esc(q.label) + '</span>' : '') + btn('', q.all || 'All', base, !sel.length)
+        + q.values.map(function (v) { return btn(v, v, counts[v] || 0, sel.indexOf(v) >= 0); }).join('');
+    }
+    var btns = box.querySelectorAll('button[data-quick]');
+    Array.prototype.forEach.call(btns, function (b, idx) {
       b.onclick = function () {
         var v = b.getAttribute('data-quick'), next = (state.sel[q.facet] || []).slice();
-        if (!v) next = []; else { var i = next.indexOf(v); if (i >= 0) next.splice(i, 1); else next.push(v); }
+        if (!v) next = []; else if (q.tabs) next = [v]; else { var i = next.indexOf(v); if (i >= 0) next.splice(i, 1); else next.push(v); }
         if (next.length) state.sel[q.facet] = next; else delete state.sel[q.facet];
+        if (q.storeKey && !win.TDOT_SIGNED_OUT) { try { win.sessionStorage.setItem(q.storeKey, v || ''); } catch (e) { /* not kept — fine */ } }
         apply('filter');
+      };
+      if (q.tabs) b.onkeydown = function (e) {
+        var to = e.key === 'ArrowRight' ? idx + 1 : e.key === 'ArrowLeft' ? idx - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? btns.length - 1 : null;
+        if (to === null) return;
+        e.preventDefault();
+        to = (to + btns.length) % btns.length;
+        box.setAttribute('data-focus', String(to));
+        btns[to].click();
       };
       if (focusV !== null && b.getAttribute('data-quick') === focusV) b.focus();
     });
+    var ft = box.getAttribute('data-focus');   /* arrows: the newly chosen tab keeps the focus after the redraw */
+    if (ft !== null) { box.removeAttribute('data-focus'); var nb = box.querySelectorAll('button[data-quick]')[Number(ft)]; if (nb) nb.focus(); }
   }
 
   var started = false;
@@ -431,6 +467,7 @@ function listTableUi(LT, o, win) {
     state: function () { return state; },
     apply: function (why) { apply(why || 'filter'); },
     close: function () { close(false); },
+    label: function (facet, v) { return LT.labelOf(facet, v); },
   };
   win[o.api] = api;
   return api;
@@ -448,6 +485,14 @@ const LIST_TABLE_CSS = `
   .q-chip button:hover, .q-chip button:focus-visible { background:#e0e7ff; outline:none; }
   .q-chip-sort { background:#f8fafc; color:#334155; border-color:#e2e8f0; }
   .q-chip-sort button { color:#64748b; }
+  .lt-tabs { display:flex; align-items:flex-end; flex-wrap:wrap; gap:2px; border-bottom:2px solid #e2e8f0; margin:0 0 12px; }   /* wraps on a phone, like the Consultations tabs: no tab is ever hidden */
+  .lt-tab { appearance:none; background:none; border:0; border-bottom:3px solid transparent; margin-bottom:-2px; padding:9px 13px; font:inherit; font-size:13.5px; font-weight:700; color:#64748b; cursor:pointer; white-space:nowrap; }
+  .lt-tab:hover { color:var(--navy); }
+  .lt-tab.active { color:var(--navy); border-bottom-color:var(--navy); }
+  .lt-tab:focus-visible { outline:2px solid #93c5fd; outline-offset:-2px; border-radius:6px 6px 0 0; }
+  .lt-tab .lt-tab-n { display:inline-block; min-width:18px; padding:0 6px; border-radius:10px; background:#f1f5f9; color:#64748b; font-size:11px; margin-left:4px; text-align:center; font-variant-numeric:tabular-nums; }
+  .lt-tab.active .lt-tab-n { background:var(--navy); color:#fff; }
+  .lt-tab.zero:not(.active) { color:#94a3b8; }
   .q-clearall { border:none; background:none; color:#64748b; font:inherit; font-size:12px; font-weight:700; cursor:pointer; padding:4px 6px; text-decoration:underline; }
   .q-clearall:hover { color:var(--navy); }
   .tbl-wrap { overflow-x:auto; }

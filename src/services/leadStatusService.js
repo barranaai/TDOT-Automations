@@ -153,6 +153,39 @@ function bookedByHand(l) {
 }
 
 /**
+ * The invite facts both the status and the stage read (one place, so they never disagree). Pure.
+ * invite: { at } the latest invite of the current pair · reminders[1|2]: { at } sent in that pair ·
+ * abandoned: { at } a held time ran out · expired: { at } no booking 7 days after the pair's first invite.
+ */
+function inviteFacts(l, act, now) {
+  const st = s(l.bookingStatus);
+  const invited = s(l.bookingInvite) === 'Sent';
+  const BR = require('./bookingRemindersService');
+  const invites = act ? act.invites.slice().sort((a, b) => a - b) : [];
+  let ep = null;
+  if (invited || invites.length) {
+    ep = BR.episodeOf(invites.map((at) => ({ at, text: 'Booking invite emailed' })), invited ? s(l.inviteSentAt).slice(0, 10) : '');
+  }
+  const out = { invited, ep, invite: null, reminders: { 1: null, 2: null }, abandoned: null, expired: null };
+  const lastInvite = ep ? ep.lastInvite : NaN;   // a resend whose note was lost counts by its Booking Invite date
+  if (Number.isFinite(lastInvite) && (invited || invites.length)) out.invite = { at: lastInvite };
+  if (act && ep) {
+    for (const n of [1, 2]) {
+      const r = act.rem[n];
+      const inPair = (xs) => xs.filter((t) => t >= ep.anchor);
+      const claims = inPair(r.claims), fails = inPair(r.fails), copies = inPair(r.copies);
+      if (claims.length > fails.length || copies.length) out.reminders[n] = { at: Math.max(...claims, ...copies) };
+    }
+  }
+  if (st === 'Abandoned') {
+    const at = Date.parse(s(l.slotHeldUntil));
+    out.abandoned = { at: Number.isFinite(at) ? at : 0 };
+  }
+  if (ep && invited && now >= ep.anchor + EXPIRE_AFTER_MS) out.expired = { at: ep.anchor + EXPIRE_AFTER_MS };
+  return out;
+}
+
+/**
  * The lead's current status. Pure.
  * @returns {{ key: string, label: string, at: number|null, tone: 'green'|'blue'|'amber'|'red'|'grey', by?: string }}
  */
@@ -174,39 +207,50 @@ function leadStatus(l, act, now) {
 
   // The latest of the dated events.
   const events = [];
-  const invited = s(l.bookingInvite) === 'Sent';
-  const BR = require('./bookingRemindersService');
-  const invites = act ? act.invites.slice().sort((a, b) => a - b) : [];
-  let ep = null;
-  if (invited || invites.length) {
-    ep = BR.episodeOf(invites.map((at) => ({ at, text: 'Booking invite emailed' })), invited ? s(l.inviteSentAt).slice(0, 10) : '');
-  }
-  const lastInvite = ep ? ep.lastInvite : NaN;   // a resend whose note was lost counts by its Booking Invite date
-  if (Number.isFinite(lastInvite) && (invited || invites.length)) events.push({ key: 'invite', label: 'Invite sent', at: lastInvite, tone: 'blue' });
-  if (act && ep) {
-    for (const n of [1, 2]) {
-      const r = act.rem[n];
-      const inPair = (xs) => xs.filter((t) => t >= ep.anchor);
-      const claims = inPair(r.claims), fails = inPair(r.fails), copies = inPair(r.copies);
-      if (claims.length > fails.length || copies.length) {
-        events.push({ key: `reminder${n}`, label: n === 1 ? '1st reminder sent' : '2nd reminder sent', at: Math.max(...claims, ...copies), tone: 'amber' });
-      }
-    }
+  const f = inviteFacts(l, act, now);
+  if (f.invite) events.push({ key: 'invite', label: 'Invite sent', at: f.invite.at, tone: 'blue' });
+  for (const n of [1, 2]) {
+    if (f.reminders[n]) events.push({ key: `reminder${n}`, label: n === 1 ? '1st reminder sent' : '2nd reminder sent', at: f.reminders[n].at, tone: 'amber' });
   }
   if (act && act.remark) events.push({ key: 'remark', label: act.remark.label, at: act.remark.at, tone: 'grey', by: act.remark.by, detail: act.remark.text || '' });
-  if (st === 'Abandoned') {
-    const at = Date.parse(s(l.slotHeldUntil));
-    events.push({ key: 'abandoned', label: 'Booking not finished', at: Number.isFinite(at) ? at : 0, tone: 'amber' });
-  }
-  if (ep && invited && now >= ep.anchor + EXPIRE_AFTER_MS) events.push({ key: 'expired', label: 'Expired', at: ep.anchor + EXPIRE_AFTER_MS, tone: 'red' });
+  if (f.abandoned) events.push({ key: 'abandoned', label: 'Booking not finished', at: f.abandoned.at, tone: 'amber' });
+  if (f.expired) events.push({ key: 'expired', label: 'Expired', at: f.expired.at, tone: 'red' });
   if (events.length) return events.reduce((a, b) => (b.at >= a.at ? b : a));
   if (s(l.bookingInvite) === 'Failed') return { key: 'invite-failed', label: 'Invite failed', at: null, tone: 'red' };
   if (s(l.bookingInvite) === 'Send') return { key: 'invite-sending', label: 'Invite sending', at: null, tone: 'blue' };
   return { key: 'new', label: 'New', at: null, tone: 'grey' };
 }
 
+/**
+ * The Leads list tabs (Faran 2026-11-05): how far the booking invite has gone. Every lead is in exactly one:
+ *   new        — no invite yet (also "Invite failed" / "Invite sending")
+ *   invite     — invite sent, no reminder yet; also a booking in progress, a booking not finished, and paid /
+ *                fee recorded with no time yet (Faran: "booking in progress under invite sent")
+ *   reminder1  — the 48-hour reminder went out · reminder2 — the 5-day reminder went out
+ *   expired    — no booking 7 days after the first invite (the same rule as the "Expired" status)
+ * The tab is the latest invite step, picked exactly as the Current status picks it; a remark or an Outcome never
+ * moves a lead between tabs (the Current status column shows those). Pure.
+ */
+const PHASES = ['new', 'invite', 'reminder1', 'reminder2', 'expired'];
+function leadPhase(l, act, now) {
+  const st = s(l.bookingStatus);
+  // Booking under way or done (live hold, paid / fee recorded, booked by hand): in the booking, never New or Expired.
+  if (st === 'Booked' || bookedByHand(l) || s(l.squareConsultTxnId) || s(l.consultPayment)) return 'invite';
+  if (st === 'Slot Held' && Date.parse(s(l.slotHeldUntil)) > now) return 'invite';
+  const f = inviteFacts(l, act, now);
+  // The latest invite step — picked exactly as the Current status picks it (same order, same ties), minus remarks
+  // and Outcomes; "Booking not finished" counts as the invite stage (and never New).
+  const steps = [];
+  if (f.invite) steps.push({ phase: 'invite', at: f.invite.at });
+  for (const n of [1, 2]) if (f.reminders[n]) steps.push({ phase: `reminder${n}`, at: f.reminders[n].at });
+  if (f.abandoned) steps.push({ phase: 'invite', at: f.abandoned.at });
+  if (f.expired) steps.push({ phase: 'expired', at: f.expired.at });
+  if (!steps.length) return 'new';
+  return steps.reduce((a, b) => (b.at >= a.at ? b : a)).phase;
+}
+
 module.exports = {
-  refresh, record, activityFor, ready, leadStatus, bookedByHand, classify,
+  refresh, record, activityFor, ready, leadStatus, leadPhase, inviteFacts, PHASES, bookedByHand, classify,
   EXPIRE_AFTER_MS, HORIZON_DAYS,
   io,
   _reset: () => { _byItem = new Map(); _seen = new Set(); _at = 0; _fullAt = 0; _inFlight = null; },

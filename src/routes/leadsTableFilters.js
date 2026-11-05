@@ -44,6 +44,9 @@ function leadsTableSpec() {
       booking:  { label: 'Booking', get: function (r) { return s(r.bookingStatus) || 'Not Yet'; }, order: ['Not Yet', 'Slot Held', 'Abandoned'] },
       invite:   { label: 'Invite', get: function (r) { return r.inviteSent ? 'Sent' : 'Not sent'; }, order: ['Sent', 'Not sent'] },
       status:   { label: 'Current status', get: cstKey, text: cstText, order: CST_ORDER, none: 'No status' },
+      // The tabs above the table (Faran 2026-11-05): how far the booking invite has gone — worked out on the server (leadStatusService.leadPhase).
+      phase:    { label: 'Stage', quick: true, get: function (r) { return s(r.phase); }, order: ['new', 'invite', 'reminder1', 'reminder2', 'expired'],
+        text: function (v) { return ({ new: 'New', invite: 'Invite sent', reminder1: '1st reminder', reminder2: '2nd reminder', expired: 'Expired' })[v] || v; } },
     },
     sorts: {
       received: function (r) { return s(r.createdAt) || s(r.createdDay); },
@@ -74,6 +77,13 @@ function leadsTableOpts() {
     key: 'tdot_leads_table_v1',
     ids: { head: 'q-headrow', chips: 'q-chips', count: 'q-count', search: 'q-search', pop: 'q-pop' },
     render: 'renderRows', api: 'LeadsTable',
+    // Tabs by stage (Faran 2026-11-05): two reminders; booking in progress sits under Invite sent; a new browser tab opens on New.
+    quick: { facet: 'phase', box: 'q-phase', tabs: true, allLast: true, all: 'All', storeKey: 'tdot_list_leads_tab', default: 'new',
+      values: ['new', 'invite', 'reminder1', 'reminder2', 'expired'],
+      hints: { 'new': 'No booking invite sent yet (or it did not go out)',
+        invite: 'Invite sent, no reminder yet — also clients booking right now, who did not finish booking, or paid with no time yet',
+        reminder1: 'The first reminder went out (48 hours after the invite)', reminder2: 'The second reminder went out (5 days after the invite)',
+        expired: 'No booking 7 days after the first invite', '': 'Every lead on this list' } },
     // menu: what the header's panel offers.
     cols: [
       { id: 'lead', label: 'Lead', menu: 'lead', flags: ['urgent'], note: 'Search by name in the box above the table.', sort: 'name', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },

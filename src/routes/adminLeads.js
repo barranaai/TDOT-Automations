@@ -100,7 +100,7 @@ ${buildNavHeader('leads')}
       <h1 class="page-h" style="margin-bottom:0">Leads</h1>
       <button class="btn primary" id="btn-add-lead" type="button" title="Phone-in / walk-in caller — add them as a lead with the basics; send the booking invite from their page">＋ Add lead</button>
     </div>
-    <p class="page-sub">Intake submissions awaiting a consultation booking — newest first. Once a consultation is booked, the lead moves to Consultations.</p>
+    <p class="page-sub">Intake submissions awaiting a consultation booking — newest first, in tabs by how far the booking invite has gone. Once a consultation is booked, the lead moves to Consultations.</p>
 
     <div id="al-overlay" class="tdlg-ov" hidden>
       <div id="al-modal" class="tdlg" role="dialog" aria-modal="true" aria-labelledby="al-title">
@@ -135,6 +135,7 @@ ${buildNavHeader('leads')}
       </div>
     </div>
 
+    <div class="lt-tabs" id="q-phase" role="tablist" aria-label="Leads by stage"></div>
     <div class="q-toolbar">
       <h2 class="sec-h">Awaiting booking <span id="q-count" class="muted" style="font-weight:500" aria-live="polite"></span></h2>
       <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="q-search" type="search" placeholder="Search by name…" aria-label="Search leads by name" autocomplete="off"></div>
@@ -174,9 +175,15 @@ function invitePill(c){
   if(!c.inviteSent) return '<span class="pill grey">—</span>';
   return qpill('green', c.inviteSentAt?('Sent '+String(c.inviteSentAt).slice(0,10)):'Sent');
 }
-function renderRows(rows){
+function renderRows(rows,why,st,h){
   var tb=document.getElementById('qbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="11" class="empty">'+(ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.')+'</td></tr>'; return; }
+  if(!rows.length){
+    var msg=ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.';
+    /* A stage tab with nobody in it (2026-11-05): say which tab, and whether the filters hide them. */
+    var tab=(ALLROWS.length && st && st.sel && st.sel.phase && st.sel.phase.length)?st.sel.phase[0]:'';
+    if(tab && h && window.LeadsTable){ var tl=LeadsTable.label('phase',tab); msg=(h.without('phase')===ALLROWS.length)?('No leads in “'+tl+'” right now.'):('No leads in “'+tl+'” match your filters.'); }
+    tb.innerHTML='<tr><td colspan="11" class="empty">'+escHtml(msg)+'</td></tr>'; return;
+  }
   tb.innerHTML=rows.map(function(c){
     var urgent=c.urgent?(' '+qpill('red','URGENT')):'';
     // Non-booking intent ("Request quote", "Existing file update", …) — visible
