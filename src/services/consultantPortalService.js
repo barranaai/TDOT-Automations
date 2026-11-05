@@ -2880,18 +2880,27 @@ function consultationDone(l, today) {
  */
 function listFor(l, now = new Date()) {
   const kind = classifyLead(l);
-  if (kind === 'gone') return 'cases';
+  // Retained: the case (on the Cases page) — or, with no case linked (its case was deleted, the consultation
+  // record kept; or the case never opened), the Retained tab of Retainers & follow-ups (2026-11-05, point 8).
+  if (kind === 'gone') return String(l.clientMasterItemId == null ? '' : l.clientMasterItemId).trim() ? 'cases' : 'retainers';
   if (kind === 'retainer') return 'retainers';
   if (kind === 'consultation') return consultationDone(l, torontoDay(now.toISOString())) ? 'retainers' : 'consultations';
   return 'leads';
 }
 
 /**
- * Which outcome tab of the Retainers & follow-ups page a client is under (2026-11-05, point 7): the outcome,
- * or Retain when there is none (a direct retainer client, or a retainer under way with the outcome left blank).
- * The page's rows (outcomeGroup) and the consultation record's way back use this one rule.
+ * Which tab of the Retainers & follow-ups page a client is under (2026-11-05, points 7 + 8): Retained once retained
+ * (signed and paid — the Conversion Status 'Retained'); otherwise the outcome, or Retain when there is none (a direct
+ * retainer client, or a retainer under way with the outcome left blank). The page's rows (outcomeGroup) and the
+ * consultation record's way back use this one rule. 'Retained' is a TAB, never an outcome: it is not in
+ * OUTCOME_LABELS (the outcome write-validator — a Monday label must never be made from it).
  */
-function retainerTab(l) { return canonicalOutcome(l && l.outcome) || OUTCOME_RETAIN; }
+const RETAINED_TAB = 'Retained';
+const RETAINER_TABS = [...OUTCOME_LABELS, RETAINED_TAB];
+function retainerTab(l) {
+  if (l && classifyLead(l) === 'gone') return RETAINED_TAB;
+  return canonicalOutcome(l && l.outcome) || OUTCOME_RETAIN;
+}
 
 /**
  * The Consultations page (Gauri point 4): the Consultations and Retainers tabs,
@@ -2902,10 +2911,10 @@ function retainerTab(l) { return canonicalOutcome(l && l.outcome) || OUTCOME_RET
  * 'YYYY-MM-DD[ HH:MM]'); the page does Today/Week/Month in Toronto. Never a
  * client's email or phone — a list, not a record.
  */
-async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
+async function getConsultationsBoard({ fresh = false, now = new Date(), withRetained = false } = {}) {
   const snap = await require('./leadSnapshot').getLeadSnapshot({ fresh });
   const s = (v) => String(v == null ? '' : v).trim();
-  const consultations = [], retainers = [];
+  const consultations = [], retainers = [], retained = [];
   const consultPayment = require('./consultPaymentService');
   const today = torontoDay(now.toISOString());
   for (const l of snap.leads) {
@@ -2930,33 +2939,16 @@ async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
         tier: s(l.tier), createdAt: l.createdAt || '',
       });
     } else if (kind === 'retainer') {
-      const oc = canonicalOutcome(l.outcome);
-      const direct = isDirectClient(l);
-      // the CONSULTATION fee (not the retainer's): a client who had one keeps its
-      // paid state on this tab, so an unrecorded fee is still found (review 2026-10-16).
-      // A direct client had no consultation, but a fee staff recorded for one still shows.
-      const ps = consultPayment.paidState(l);
-      retainers.push({
-        id: l.id, name: l.fullName || l.name,
-        kind: direct ? 'direct' : 'booked',
-        originalChannel: s(l.originalChannel),
-        directSource: direct ? directShownSource(l) : '',   // a direct client's real source (Walk-in, Instagram …; '' for an old one)
-        hasEmail: l.hasEmail !== false,    // "No email": the retainer agreement cannot go out (2026-11-04; the snapshot keeps only yes/no)
-        caseType: s(l.confirmedCaseType) || s(l.caseTypeInterest) || s(l.serviceRequired),
-        consultant: s(l.assignedConsultant),
-        fee: s(l.retainerFee),
-        retainerSent: s(l.retainerSent), retainerSigned: s(l.retainerSigned), retainerPaid: s(l.retainerPaid),
-        // one stage, most advanced first; '' = no retainer under way (a Follow-Up,
-        // Newsletter or Not Wanted client the consultation left here)
-        stage: s(l.retainerPaid) ? 'Paid' : s(l.retainerSigned) ? 'Signed' : s(l.retainerSent) ? 'Sent' : s(l.retainerFee) ? 'Fee set'
-          : oc === OUTCOME_RETAIN ? 'Retain' : oc ? '' : 'New',
-        // the outcome tabs: the outcome, or Retain for a row with none (a direct
-        // retainer client, or a retainer under way with the outcome left blank)
-        outcomeGroup: retainerTab(l),
-        caseOpen: !!s(l.clientMasterItemId), clientMasterItemId: s(l.clientMasterItemId),
-        bookedSlot: s(l.bookedSlot), outcome: oc || s(l.outcome), followUpDate: s(l.followUpDate), createdAt: l.createdAt || '',
-        paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
-      });
+      retainers.push(retainerRow(l, consultPayment));
+    } else if (kind === 'gone' && withRetained) {
+      // The Retained tab (2026-11-05, point 8): retained clients stay findable. Only when asked for — the
+      // Consultations page never asks, and a Retainers page from before the tab existed would file them under Retain.
+      const r = retainerRow(l, consultPayment);
+      r.retained = true;
+      r.followUpDate = '';   // a date from before the retainer is moot now — never an amber "due" cue
+      r.stage = s(l.retainerPaid) ? 'Paid' : s(l.retainerSigned) ? 'Signed' : s(l.retainerSent) ? 'Sent' : '';
+      r.retainedOn = [s(l.retainerSigned), s(l.retainerPaid)].filter(Boolean).sort().pop() || '';
+      retained.push(r);
     }
   }
   // Consultations: earliest time first (today on top), blanks last.
@@ -2967,7 +2959,81 @@ async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
   const STAGE_ORDER = { Paid: 0, Signed: 1, Sent: 2, 'Fee set': 3, Retain: 4, New: 5, '': 6 };
   const stageDate = (r) => (r.stage === '' ? (r.bookedSlot || '\uffff') : (r.retainerPaid || r.retainerSigned || r.retainerSent || r.createdAt || ''));
   retainers.sort((a, b) => (STAGE_ORDER[a.stage] - STAGE_ORDER[b.stage]) || stageDate(a).localeCompare(stageDate(b)) || Number(a.id) - Number(b.id));
-  return { consultations, retainers, at: snap.at, ageMs: snap.ageMs, stale: !!snap.stale };
+  const out = { consultations, retainers, at: snap.at, ageMs: snap.ageMs, stale: !!snap.stale };
+  if (withRetained) {
+    // Retained: the newest first (the later of signed / paid), then the newest lead.
+    retained.sort((a, b) => b.retainedOn.localeCompare(a.retainedOn) || String(b.createdAt).localeCompare(String(a.createdAt)) || Number(b.id) - Number(a.id));
+    out.casesKnown = await addCaseRefs(retained);
+    out.retained = retained;
+  }
+  return out;
+}
+
+/** One Retainers row (the Retained tab adds its own fields on top). No email or phone — a list, not a record. */
+function retainerRow(l, consultPayment) {
+  const s = (v) => String(v == null ? '' : v).trim();
+  const oc = canonicalOutcome(l.outcome);
+  const direct = isDirectClient(l);
+  // the CONSULTATION fee (not the retainer's): a client who had one keeps its
+  // paid state on this tab, so an unrecorded fee is still found (review 2026-10-16).
+  // A direct client had no consultation, but a fee staff recorded for one still shows.
+  const ps = consultPayment.paidState(l);
+  return {
+    id: l.id, name: l.fullName || l.name,
+    kind: direct ? 'direct' : 'booked',
+    originalChannel: s(l.originalChannel),
+    directSource: direct ? directShownSource(l) : '',   // a direct client's real source (Walk-in, Instagram …; '' for an old one)
+    hasEmail: l.hasEmail !== false,    // "No email": the retainer agreement cannot go out (2026-11-04; the snapshot keeps only yes/no)
+    caseType: s(l.confirmedCaseType) || s(l.caseTypeInterest) || s(l.serviceRequired),
+    consultant: s(l.assignedConsultant),
+    fee: s(l.retainerFee),
+    retainerSent: s(l.retainerSent), retainerSigned: s(l.retainerSigned), retainerPaid: s(l.retainerPaid),
+    // one stage, most advanced first; '' = no retainer under way (a Follow-Up,
+    // Newsletter or Not Wanted client the consultation left here)
+    stage: s(l.retainerPaid) ? 'Paid' : s(l.retainerSigned) ? 'Signed' : s(l.retainerSent) ? 'Sent' : s(l.retainerFee) ? 'Fee set'
+      : oc === OUTCOME_RETAIN ? 'Retain' : oc ? '' : 'New',
+    // the outcome tabs: the outcome, or Retain for a row with none (a direct
+    // retainer client, or a retainer under way with the outcome left blank)
+    outcomeGroup: retainerTab(l),
+    caseOpen: !!s(l.clientMasterItemId), clientMasterItemId: s(l.clientMasterItemId),
+    bookedSlot: s(l.bookedSlot), outcome: oc || s(l.outcome), followUpDate: s(l.followUpDate), createdAt: l.createdAt || '',
+    paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
+  };
+}
+
+/**
+ * The Retained tab's Case column: each row's case number, from the Cases page's own short-lived copy of the
+ * Client Master rows (dashboardService). Never waits long: if that copy is not to hand within CASE_REFS_WAIT_MS the
+ * rows go without (the read carries on and warms the copy for the next load). Never throws.
+ * Sets on each row caseRef ('' when unknown) and caseFound (true / false = not on the board / null = not known).
+ * Returns true when the Client Master rows were read.
+ */
+const CASE_REFS_WAIT_MS = 4000;
+async function addCaseRefs(rows, waitMs = CASE_REFS_WAIT_MS) {
+  rows.forEach((r) => { r.caseRef = ''; r.caseFound = null; });
+  if (!rows.some((r) => r.clientMasterItemId)) return false;
+  let items = null;
+  try {
+    const read = require('./dashboardService').fetchAllItems().catch((e) => { console.warn(`[Consultant] Retained tab: Cases read failed — ${e.message}`); return null; });
+    let timer;
+    const late = new Promise((res) => { timer = setTimeout(() => res(null), waitMs); });
+    items = await Promise.race([read, late]);
+    clearTimeout(timer);
+  } catch (_) { items = null; }
+  if (!Array.isArray(items)) return false;
+  const refOf = new Map();
+  for (const it of items) {
+    if (!it) continue;
+    const cv = (it.column_values || []).find((c) => c && c.id === CM_CASE_REF_COL);
+    refOf.set(String(it.id), String((cv && cv.text) || '').trim());
+  }
+  for (const r of rows) {
+    if (!r.clientMasterItemId) continue;
+    const has = refOf.has(r.clientMasterItemId);
+    r.caseFound = has;
+    r.caseRef = has ? refOf.get(r.clientMasterItemId) : '';
+  }
+  return true;
 }
 
 /** Option lists for the direct-client form (case types → sub-types, consultants). */
@@ -2990,7 +3056,7 @@ module.exports = {
   createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, findClientMatches, DIRECT_SOURCE,
   createStaffLead, STAFF_LEAD_SOURCES,
   invalidateLeadsQueue,
-  classifyLead, consultationDone, listFor, retainerTab, getConsultationsBoard,
+  classifyLead, consultationDone, listFor, retainerTab, RETAINED_TAB, RETAINER_TABS, getConsultationsBoard, CASE_REFS_WAIT_MS, addCaseRefs,
   _recordPackageView: recordPackageView, _packageResultLine: packageResultLine,   // test seams
   conflictBody, normalizeLeadLocation,
 };

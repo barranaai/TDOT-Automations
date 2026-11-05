@@ -1947,7 +1947,8 @@ app.get('/api/consultation/client-matches', async (req, res) => {
 // the shared board snapshot — one read for both, a few minutes old at most.
 app.get('/api/consultations-board', async (req, res) => {
   try {
-    res.json(await consultantPortalService.getConsultationsBoard({ fresh: String(req.query.fresh || '') === '1' }));
+    // ?retained=1: also the retained clients (the Retainers page's Retained tab, 2026-11-05) — never for the Consultations page
+    res.json(await consultantPortalService.getConsultationsBoard({ fresh: String(req.query.fresh || '') === '1', withRetained: String(req.query.retained || '') === '1' }));
   } catch (err) {
     console.error('[Consultant] Board failed:', err.stack || err.message);
     res.status(500).json({ error: 'Internal server error' });

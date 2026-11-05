@@ -146,6 +146,51 @@ test('getConsultationsBoard: the two tabs from one snapshot — consultation row
   } finally { restore.forEach((r) => r()); snap._reset(); }
 });
 
+test('point 8 (2026-11-05): the Retained tab — retained clients come only when asked (?retained=1), kept apart, newest first, with their case number; every lead is on exactly one list; no email or phone', async () => {
+  snap._reset();
+  const dash = require('../src/services/dashboardService');
+  const rows = [
+    L(11, { sourceChannel: 'Direct Retainer', conversionStatus: 'Retained', retainerSigned: '2026-09-01', retainerPaid: '2026-09-03', clientMasterItemId: '701', followUpDate: '2026-08-01', outcome: 'Retain', email: 'ret@x.co', phone: '9055550000' }),
+    L(12, { bookingStatus: 'Booked', bookedSlot: '2026-08-01 10:00', outcome: 'Follow-Up', conversionStatus: 'Retained', retainerSigned: '2026-10-02', retainerPaid: '2026-10-01', clientMasterItemId: '702', createdAt: '2026-07-01T00:00:00Z' }),
+    L(13, { sourceChannel: 'Direct Retainer', conversionStatus: 'Retained', retainerSigned: '2026-10-02', clientMasterItemId: '799', createdAt: '2026-09-01T00:00:00Z' }),   // its case row is gone from the board
+    L(14, { sourceChannel: 'Direct Retainer', conversionStatus: 'Retained' }),   // retained by hand, no dates, no case
+    L(15, { sourceChannel: 'Direct Retainer', retainerSent: '2026-10-05' }),     // still being worked
+    L(16, { bookingStatus: 'Booked', bookedSlot: '2026-12-01 10:00' }),          // a consultation
+    L(17),                                                                         // a lead
+  ];
+  const cm = [{ id: '701', name: 'A', column_values: [{ id: 'text_mm142s49', text: '2026-SP-001' }] }, { id: '702', name: 'B', column_values: [{ id: 'text_mm142s49', text: '2026-VV-002' }] }];
+  const restore = [stub(snap.io, 'fetchLeads', async () => rows), stub(dash, 'fetchAllItems', async () => cm)];
+  try {
+    const now = new Date('2026-11-05T16:00:00Z');
+    const plain = await portal.getConsultationsBoard({ now });
+    assert.equal(plain.retained, undefined, 'not asked: no retained rows (the Consultations page, and a Retainers page from before the tab)');
+    assert.ok(!plain.retainers.some((r) => r.retained), 'never mixed into the working rows');
+    const b = await portal.getConsultationsBoard({ now, withRetained: true });
+    assert.deepEqual(b.retained.map((r) => [r.id, r.outcomeGroup, r.retainedOn, r.stage]), [['13', 'Retained', '2026-10-02', 'Signed'], ['12', 'Retained', '2026-10-02', 'Paid'], ['11', 'Retained', '2026-09-03', 'Paid'], ['14', 'Retained', '', '']],
+      'newest first (the later of signed / paid; a tie: the newer lead); stage from the dates only');
+    assert.ok(b.retained.every((r) => r.retained === true && r.followUpDate === ''), 'flagged; an old follow-up date never shows as due');
+    assert.deepEqual(b.retained.map((r) => [r.id, r.caseRef, r.caseFound]), [['13', '', false], ['12', '2026-VV-002', true], ['11', '2026-SP-001', true], ['14', '', null]], 'the case number from the Cases copy; a case row not on the board = not found; no case = unknown');
+    assert.equal(b.casesKnown, true);
+    assert.ok(!JSON.stringify(b).includes('ret@x.co') && !JSON.stringify(b).includes('9055550000'), 'a list, not a record');
+    portal.invalidateLeadsQueue();
+    const lists = [(await portal.getLeadsQueue()).map((r) => r.id), b.consultations.map((r) => r.id), b.retainers.map((r) => r.id), b.retained.map((r) => r.id)];
+    const all = lists.flat().sort();
+    assert.deepEqual(all, rows.map((r) => String(r.id)).sort(), 'every lead on exactly one list');
+    // the Cases copy is slow: the rows go without case numbers, never an error, never a long wait
+    let release; const slow = new Promise((res) => { release = res; });
+    const restore2 = stub(dash, 'fetchAllItems', () => slow);
+    try {
+      const t0 = Date.now();
+      const r2 = [{ clientMasterItemId: '701' }];
+      assert.equal(await portal.addCaseRefs(r2, 50), false);
+      assert.ok(Date.now() - t0 < 1000);
+      assert.deepEqual([r2[0].caseRef, r2[0].caseFound], ['', null]);
+    } finally { restore2(); release([]); }
+    const restore3 = stub(dash, 'fetchAllItems', async () => { throw new Error('Monday down'); });
+    try { const r3 = [{ clientMasterItemId: '701' }]; assert.equal(await portal.addCaseRefs(r3, 50), false); assert.equal(r3[0].caseFound, null); } finally { restore3(); }
+  } finally { restore.forEach((r) => r()); snap._reset(); }
+});
+
 /* ── the booking page reads the snapshot; the hold step reads Monday ── */
 
 test('booking page: taken times come from the snapshot plus this process\'s recent holds — no board read per view; the hold step still reads Monday strictly', async () => {
@@ -216,12 +261,12 @@ test('pages (2026-11-05): Consultations shows consultations only; Retainers & fo
     assert.ok(!q.includes(gone), 'consultations, gone: ' + gone);
   for (const page of [q, r]) assert.ok(page.includes("['tdot_consult_tab','tdot_consult_range','tdot_ret_outcomes'].forEach(function(k){ localStorage.removeItem(k); })"), 'the old one-page keys are tidied away');
   for (const s of ['id="rq-headrow"', 'id="rq-search"', 'id="rq-chips"', 'id="r-count"', 'id="r-quick"', "api: 'RetainerTable'", 'id="btn-direct-client"', '<div id="dc-overlay" class="tdlg-ov" hidden>',
-    "fetch('/api/consultations-board'+(force?'?fresh=1':'')", 'id="snap-age"', 'RetainerTable.setRows(RETAINERS); showAge(d);']) assert.ok(r.includes(s), 'retainers: ' + s);
+    "fetch('/api/consultations-board?retained=1'+(force?'&fresh=1':'')", 'id="snap-age"', 'RetainerTable.setRows(RETAINERS); showAge(d);', "RETAINERS=(d.retainers||[]).concat(d.retained||[]);"]) assert.ok(r.includes(s), 'retainers: ' + s);
   for (const gone of ['data-tab=', 'id="cq-headrow"', "api: 'ConsultTable'", 'id="range"', 'id="needs-outcome"', 'function setTab(', 'loadKpis', "lsGet('tdot_consult_tab')"])
     assert.ok(!r.includes(gone), 'retainers, gone: ' + gone);
   assert.ok(q.includes("function dParts(d){") && r.includes("function dParts(d){"), 'both pages read calendar days the TZ-safe way');
   const src = fs.readFileSync(require.resolve('../src/server'), 'utf8');
-  assert.match(src, /app\.get\('\/api\/consultations-board', async \(req, res\) => \{\s*try \{\s*res\.json\(await consultantPortalService\.getConsultationsBoard\(\{ fresh: String\(req\.query\.fresh \|\| ''\) === '1' \}\)\);/);
+  assert.match(src, /app\.get\('\/api\/consultations-board', async \(req, res\) => \{\s*try \{\s*(\/\/[^\n]*\n\s*)?res\.json\(await consultantPortalService\.getConsultationsBoard\(\{ fresh: String\(req\.query\.fresh \|\| ''\) === '1', withRetained: String\(req\.query\.retained \|\| ''\) === '1' \}\)\);/);
 });
 
 test('routes (2026-11-05): /admin/retainers serves the Retainers page; the old one-page links are redirected — ?tab=retainers / ?outcome= / ?convertLead= / ?newAppFrom= to the Retainers page, ?tab=reporting to the Summary page', () => {
@@ -258,7 +303,7 @@ test('routes (2026-11-05): /admin/retainers serves the Retainers page; the old o
   const svc = fs.readFileSync(require.resolve('../src/services/consultantPortalService'), 'utf8');
   assert.ok(svc.includes("    onList:         listFor(lead),"), 'the record payload carries it');
   // point 7 (tabs): opened from elsewhere, the way back opens the client's own outcome tab — the rows' rule (retainerTab)
-  assert.ok(svc.includes("    onListTab:      retainerTab(lead),") && svc.includes('        outcomeGroup: retainerTab(l),'), 'one rule for the row and the way back');
+  assert.ok(svc.includes("    onListTab:      retainerTab(lead),") && svc.includes('    outcomeGroup: retainerTab(l),'), 'one rule for the row and the way back');
   assert.ok(plain.includes("if(list==='retainers'){ href='/admin/retainers?outcome='+encodeURIComponent(d.onListTab||'All');"), 'the client\'s tab');
   assert.ok(plain.indexOf("if(!bl||/[?&]from=retainers/.test(window.location.search)) return;") < plain.indexOf("href='/admin/retainers?outcome='"), 'from the Retainers page: the plain link — the tab the person was on');
   const { retainerTab } = require('../src/services/consultantPortalService');
@@ -282,7 +327,9 @@ test('routes (2026-11-05): /admin/retainers serves the Retainers page; the old o
   assert.equal(listFor({ directClient: 'Yes', sourceChannel: 'Walk-in', conversionStatus: 'Qualified' }, now), 'retainers', 'a direct client with nothing sent yet');
   assert.equal(listFor({ retainerSent: '2026-11-01', bookingStatus: 'Booked' }, now), 'retainers');
   assert.equal(listFor({ outcome: 'Retain', bookingStatus: 'Booked', bookedSlot: '2026-11-20 10:00' }, now), 'retainers');
-  assert.equal(listFor({ conversionStatus: 'Retained', retainerSigned: '2026-10-01', retainerPaid: '2026-10-02' }, now), 'cases', 'retained: on the Cases page, on neither list');
+  assert.equal(listFor({ conversionStatus: 'Retained', retainerSigned: '2026-10-01', retainerPaid: '2026-10-02', clientMasterItemId: '9001' }, now), 'cases', 'retained with a case: the case');
+  assert.equal(listFor({ conversionStatus: 'Retained', retainerSigned: '2026-10-01', retainerPaid: '2026-10-02' }, now), 'retainers', 'retained with no case linked (its case deleted, the record kept): the Retained tab (point 8)');
+  assert.equal(require('../src/services/consultantPortalService').retainerTab({ conversionStatus: 'Retained', outcome: 'Follow-Up' }), 'Retained', 'retained: the Retained tab, whatever the outcome');
   assert.equal(listFor({ bookingStatus: 'Booked', bookedSlot: '2026-11-20 10:00' }, now), 'consultations', 'booked for a later day');
   assert.equal(listFor({ bookingStatus: 'Booked', bookedSlot: '2026-11-03 10:00', outcome: 'Follow-Up' }, now), 'retainers', 'a consultation that happened, Follow-Up set');
   assert.equal(listFor({ bookingStatus: 'Booked', bookedSlot: '2026-11-03 10:00' }, now), 'consultations', 'happened, no outcome yet (Needs outcome)');
@@ -493,12 +540,13 @@ test('getConsultationsBoard: Follow-Up / Newsletter / Not Wanted consultations s
 function quickFns() {
   const html = require('../src/routes/adminConsultation').buildRetainersHTML();   // the Retainers page (2026-11-05)
   const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
-  const outs = js.match(/var RET_OUTCOMES=(\[[^\]]*\])/)[1];
+  const outs = js.match(/var RET_TABS=(\[[^\]]*\])/)[1], apart = js.match(/var RET_APART=(\[[^\]]*\])/)[1];
   const a = js.indexOf('function cleanOutcomes('), b = js.indexOf('function renderRetainerList(');
   const loc = { search: '' };
-  const fns = new Function('window', 'history', `var RET_OUTCOMES=${outs}; ${js.slice(a, b)}; return { cleanOutcomes, retInitial, retOnChange, RET_OUTCOMES };`)({ location: loc }, { replaceState() {} });
-  // the outcome group of a row is the list spec's (listSpecs.js) — the "quick" facet behind the buttons
-  const LT = require('../src/routes/listFilters').listCore(require('../src/routes/listSpecs').retainerListSpec({ outcomes: fns.RET_OUTCOMES, today: () => '' }));
+  const fns = new Function('window', 'history', `var RET_TABS=${outs}, RET_APART=${apart}; ${js.slice(a, b)}; return { cleanOutcomes, retInitial, retOnChange, retCase: typeof retCase === 'function' ? retCase : null, RET_TABS, RET_APART };`)({ location: loc }, { replaceState() {} });
+  // the outcome group of a row is the list spec's (listSpecs.js) — the "quick" facet behind the tabs
+  const LT = require('../src/routes/listFilters').listCore(require('../src/routes/listSpecs').retainerListSpec({ outcomes: fns.RET_TABS, apart: fns.RET_APART, today: () => '' }));
+  fns.LT = LT;
   fns.retGroup = (r) => LT.valuesOf('outcome', r)[0];
   fns.loc = loc;
   return fns;
@@ -508,8 +556,10 @@ test('page: the Retainers outcome tabs (like the Leads page, 2026-11-05 point 7)
   const html = require('../src/routes/adminConsultation').buildRetainersHTML();   // its own page since 2026-11-05
   for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   const f = quickFns();
-  assert.deepEqual(f.RET_OUTCOMES, require('../config/outcomes').OUTCOME_LABELS, 'the tabs are the four outcomes, from config');
-  assert.equal(f.RET_OUTCOMES[0], 'Retain', 'Retain is the first tab — the one a new browser tab opens on');
+  assert.deepEqual(f.RET_TABS, [...require('../config/outcomes').OUTCOME_LABELS, 'Retained'], 'the tabs are the four outcomes, from config, then Retained (point 8)');
+  assert.deepEqual(f.RET_APART, ['Retained'], 'Retained is kept apart from All');
+  assert.equal(f.RET_TABS[0], 'Retain', 'Retain is the first tab — the one a new browser tab opens on');
+  assert.ok(!require('../config/outcomes').OUTCOME_LABELS.includes('Retained'), 'Retained is a tab, never an outcome (the outcome write-validator)');
   assert.deepEqual(f.cleanOutcomes(['Follow-Up', 'Newsletter', 'Follow-Up', 'junk', '', ' Not Wanted ']), ['Follow-Up', 'Newsletter', 'Not Wanted'], 'only real outcomes, once each');
   assert.deepEqual(f.cleanOutcomes(''.split(',')), []);
   assert.equal(f.retGroup({ outcomeGroup: 'Newsletter' }), 'Newsletter');
@@ -521,7 +571,7 @@ test('page: the Retainers outcome tabs (like the Leads page, 2026-11-05 point 7)
     "((c.kind==='direct' && !c.paid)?'<span class=\"pill grey\" title=\"Direct retainer client — no consultation\">n/a</span>':paidPill(c))",
     "u.searchParams.set('outcome',l.length?l[0]:'All');", "retOnChange(RetainerTable.state());", "function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return false;",
     "quick: { facet: 'outcome', box: 'r-quick', tabs: true, allLast: true, all: 'All', storeKey: 'tdot_list_retainers_tab', default: (ctx.outcomes || [])[0],",
-    "initial: retInitial, onChange: retOnChange", "{ outcomes: RET_OUTCOMES, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }",
+    "initial: retInitial, onChange: retOnChange", "{ outcomes: RET_TABS, apart: RET_APART, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }",
     "role=\"tab\" class=\"lt-tab'", "key: 'tdot_list_retainers'",
     '.pill.red {', 'colspan="12"']) assert.ok(html.includes(s), s);
   for (const gone of ['class="quick"', '.quick button', 'aria-label="Show by outcome"', "label: 'Show'", "lsSet('tdot_ret_outcomes'", 'function setRout(', 'function paidMatch(', "['rf-search',", "u.searchParams.set('tab'", 'function setTab(']) assert.ok(!html.includes(gone), 'gone: ' + gone);

@@ -14,7 +14,7 @@ const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS, DIALOG_UI_JS } = require('./adminShared');
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
-const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
+const { OUTCOME_LABELS, REMARK_PRESETS, RETAINER_TABS, RETAINED_TAB } = require('../services/consultantPortalService');
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // the walk-in form's Source / Reference (2026-11-04)
 const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   // Shafoli's screenshot attachments (2026-11-04)
@@ -92,6 +92,7 @@ const LIST_PAGE_CSS = `
   .pill.green { background:#f0fdf4; color:#16a34a; } .pill.grey { background:#f1f5f9; color:#64748b; }
   .pill.amber { background:#fffbeb; color:#d97706; } .pill.blue { background:#eff6ff; color:#2563eb; }
   .pill.red { background:#fef2f2; color:#dc2626; }
+  .case-lnk { color:#2563eb; font-weight:600; text-decoration:none; white-space:nowrap; } .case-lnk:hover { text-decoration:underline; }
   .tier { font-weight:700; color:var(--navy); }
   .empty { padding:40px; text-align:center; color:#94a3b8; }
   .sec-h { font-size:15px; font-weight:800; color:var(--navy); margin:0; }
@@ -217,7 +218,8 @@ function outcomeCell(c){
 }
 function bindRowClicks(root,suffix){
   Array.prototype.forEach.call(root.querySelectorAll('tr.row'),function(tr){
-    tr.onclick=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id'))+(suffix||''); };
+    /* a link inside the row (the Retained tab's case number) goes where it says, not to the record */
+    tr.onclick=function(e){ if(e && e.target && e.target.closest && e.target.closest('a')) return; window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id'))+(suffix||''); };
   });
 }
 function showAge(d){
@@ -322,23 +324,36 @@ function dParts(d){ var m=String(d||'').match(/^(\\d{4})-(\\d{2})-(\\d{2})/); re
    A new browser tab opens on Retain and the tab shown is kept until it is closed — a tab opened from a link too, so the
    way back from a client's record returns to it. A link opens a tab (/admin/retainers?outcome=Follow-Up; ?outcome=All or
    a bare ?outcome= opens All; an old link naming several opens the first); a link naming no outcome we know is not a link.
-   The address always names the tab shown (All too), so a saved or shared address opens the same tab. */
-function cleanOutcomes(list){ var out=[]; (list||[]).forEach(function(v){ v=String(v||'').trim(); if(RET_OUTCOMES.indexOf(v)>=0 && out.indexOf(v)<0) out.push(v); }); return out; }
+   The address always names the tab shown (All too), so a saved or shared address opens the same tab.
+   Retained (2026-11-05, point 8) comes after All and is never counted in it: All = everyone still being worked. */
+function cleanOutcomes(list){ var out=[]; (list||[]).forEach(function(v){ v=String(v||'').trim(); if(RET_TABS.indexOf(v)>=0 && out.indexOf(v)<0) out.push(v); }); return out; }
 function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return false; var t=String(p).trim(); if(!t || t.toLowerCase()==='all'){ delete st.sel.outcome; return true; } var l=cleanOutcomes(t.split(',')); if(!l.length) return false; st.sel.outcome=[l[0]]; return true; }
 function retOnChange(st){
   var l=(st.sel&&st.sel.outcome)||[];
   try { var u=new URL(window.location.href); u.searchParams.set('outcome',l.length?l[0]:'All'); history.replaceState(null,'',u.toString()); } catch(e){}
 }
-/* The Retainers list: the shared engine hands over the rows that pass (the header filters, the search, the outcome tab). */
+/* The Retainers list: the shared engine hands over the rows that pass (the header filters, the search, the outcome tab).
+   The count beside the heading is out of the rows of that kind: the retained ones on the Retained tab, everyone
+   still being worked on the others. */
+function retCase(c){
+  /* The Retained tab's Case column: the case number (a link to the case), else what is known. */
+  if(c.caseDeleted) return '<span class="pill amber" title="The case was deleted on '+escHtml(c.caseDeleted)+' — this consultation record was kept">Case deleted</span>';
+  if(c.caseRef) return '<a class="case-lnk" href="/admin/case/'+encodeURIComponent(c.caseRef)+'" title="Open the case">'+escHtml(c.caseRef)+'</a>';
+  if(c.caseFound===false) return '<span class="pill grey" title="This client is linked to a case row that is not on the Cases board any more">Case not found</span>';
+  if(c.caseOpen) return qpill('green','Open');
+  return '<span class="pill amber" title="Retained, but no case is linked — check the Cases page">No case</span>';
+}
 function renderRetainerList(rows,why,st,h){
   var t=todayStr(), tp=dParts(t);
   var rout=(st&&st.sel&&st.sel.outcome)||[], base=h?h.without('outcome'):rows.length;
+  var onRetained=rout.indexOf(RET_APART[0])>=0;
+  var kindTotal=RETAINERS.filter(function(r){ return !!r.retained===onRetained; }).length;
   var tb=document.getElementById('rbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="12" class="empty">'+(!RETAINERS.length?'Nobody here right now.':(rout.length && base)?'Nobody in “'+escHtml(rout.join(' or '))+'”'+(base!==RETAINERS.length?' with these filters':'')+' right now.':'No clients match your filters.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="12" class="empty">'+(!RETAINERS.length?'Nobody here right now.':(rout.length && base)?'Nobody in “'+escHtml(rout.join(' or '))+'”'+(base!==RETAINERS.length?' with these filters':'')+' right now.':'No clients match your filters.')+'</td></tr>'; return { shown: 0, total: kindTotal }; }
   function age(d){ var p=dParts(d); if(!p||!tp) return ''; var days=Math.round((Date.UTC(tp[0],tp[1]-1,tp[2])-Date.UTC(p[0],p[1]-1,p[2]))/86400000); return days>0?' <span class="muted">('+days+'d)</span>':''; }
   tb.innerHTML=rows.map(function(c){
     var stc=c.stage==='Paid'?'green':(c.stage==='Signed'||c.stage==='Sent')?'blue':'amber';
-    var cs=c.caseOpen?qpill('green','Open'):c.stage?qpill('grey','Pending'):'<span class="pill grey">—</span>';   // no retainer under way: no case coming yet
+    var cs=c.retained?retCase(c):c.caseDeleted?retCase(c):c.caseOpen?qpill('green','Open'):c.stage?qpill('grey','Pending'):'<span class="pill grey">—</span>';   // no retainer under way: no case coming yet
     return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
       '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+(c.kind==='direct'?(c.originalChannel?' <span class="pill grey" title="Converted from a '+escHtml(c.originalChannel)+' lead — no consultation">direct · '+escHtml(c.originalChannel)+'</span>':(c.directSource?' <span class="pill grey" title="Direct retainer client — came through '+escHtml(c.directSource)+'; no consultation">direct · '+escHtml(c.directSource)+'</span>':' <span class="pill grey" title="Walk-in / referral — no consultation">direct</span>')):'')+
         /* No email (2026-11-04): the retainer agreement cannot go out until one is added — shown until it is sent. */
@@ -352,9 +367,11 @@ function renderRetainerList(rows,why,st,h){
       '<td>'+(c.retainerSigned?escHtml(c.retainerSigned):'—')+'</td>'+
       '<td>'+(c.retainerPaid?escHtml(c.retainerPaid):'—')+'</td>'+
       '<td>'+(c.stage?qpill(stc,c.stage):'<span class="pill grey">—</span>')+'</td><td>'+cs+'</td>'+
-      '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client (careful — removes the case, its checklist, and the OneDrive folder)">'+TDOT_DEL_SVG+'</button></td></tr>';
+      /* No bin on a retained client: from a list it would delete the whole case (that is done on the Cases page). */
+      '<td>'+(c.retained?'':'<button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client (careful — removes the case, its checklist, and the OneDrive folder)">'+TDOT_DEL_SVG+'</button>')+'</td></tr>';
   }).join('');
   bindRowClicks(tb,'?from=retainers');   /* the record's back link comes back here */
+  return { shown: rows.length, total: kindTotal };
 }
 /* ── Direct retainer client (walk-in / referral) ── */
 var DC_OPTS=null;
@@ -782,7 +799,7 @@ ${buildNavHeader('retainers')}
       <h1 class="page-h" style="margin:0">Retainers &amp; follow-ups <span id="r-count" class="cnt" aria-live="polite"></span></h1>
       <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
     </div>
-    <p class="page-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation, and drops off once retained (the case is on the Cases page). <span class="age" id="snap-age"></span></p>
+    <p class="page-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation; once retained (signed and paid) they move to the <b>Retained</b> tab, and the case is on the Cases page. <b>All</b> = everyone still being worked (not Retained). <span class="age" id="snap-age"></span></p>
     <div class="lt-tabs" id="r-quick" role="tablist" aria-label="Retainers &amp; follow-ups by outcome"></div>
     <div class="q-head r-tools">
       <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="rq-search" type="search" placeholder="Search by name…" aria-label="Search retainers and follow-ups by name" autocomplete="off"></div>
@@ -807,15 +824,16 @@ ${ATTACH_UI_JS}
 var DC_REF=tdotRef('dc');      /* the walk-in form's Source / Reference second question (2026-11-04) */
 var DC_ATT=tdotAttach('dc');   /* "Attach a screenshot": only for the staff allowed to (Shafoli), signed in with Monday */
 var DC_PROFILE_ADDR='';        /* the carried address — its "is it current?" tick is asked only while the box still shows it */
-var RET_OUTCOMES=${jsLit(OUTCOME_LABELS)};   // the Retainers outcome tabs: one per outcome, Retain first (the shared list engine keeps which is on)
-var RET_HINTS={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set', 'Follow-Up':'The team calls the client back — not retained', 'Newsletter':'Nothing to do now — the client gets the newsletter', 'Not Wanted':'On the Not Wanted list — staff are warned if they come back' };
+var RET_TABS=${jsLit(RETAINER_TABS)};   // the Retainers tabs: one per outcome, Retain first, then Retained (the shared list engine keeps which is on)
+var RET_APART=${jsLit([RETAINED_TAB])};   // never counted under All: shown only on its own tab, after All
+var RET_HINTS={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set — until retained', 'Follow-Up':'The team calls the client back — not retained', 'Newsletter':'Nothing to do now — the client gets the newsletter', 'Not Wanted':'On the Not Wanted list — staff are warned if they come back', 'Retained':'Signed and paid (a part-payment of the first milestone counts) — the case is on the Cases page. Not counted under All.' };
 ${RETAINERS_PAGE_JS}
 function load(force){
   var key=getKey(); if(!key) return;
-  fetch('/api/consultations-board'+(force?'?fresh=1':''),{headers:{'X-Api-Key':key}})
+  fetch('/api/consultations-board?retained=1'+(force?'&fresh=1':''),{headers:{'X-Api-Key':key}})
    .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); } return r.json(); })
    .then(function(d){
-     RETAINERS=(d.retainers||[]);
+     RETAINERS=(d.retainers||[]).concat(d.retained||[]);   /* the Retained tab's rows ride along (kept apart from All) */
      RetainerTable.setRows(RETAINERS); showAge(d);   // the filters stay as they were (a refresh never clears them)
      document.getElementById('loading').style.display='none';
      document.getElementById('content').style.display='block';
@@ -828,7 +846,7 @@ ${DELETE_UI_JS}
 tdotBindDelete(function(){ load(true); });
 startClock(); checkApiStatus();
 </script>
-<script>${listTableScript(retainerListSpec, retainerListOpts, '{ outcomes: RET_OUTCOMES, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }')}
+<script>${listTableScript(retainerListSpec, retainerListOpts, '{ outcomes: RET_TABS, apart: RET_APART, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }')}
 retOnChange(RetainerTable.state());   /* the address names the tab shown from the start (a saved address opens the same tab) */</script>
 <script>load(); window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });   /* Back to this page from memory: read the list again */</script></body></html>`;
 }

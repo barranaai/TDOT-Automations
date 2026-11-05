@@ -22,7 +22,9 @@
  * The page keeps its own row HTML: o.render names a window function that gets the
  * filtered, sorted rows (and may return { shown, total } for the count).
  *
- * spec: { facets: { key: { label, get(r) -> string | string[], none, order, text(v), fixed (always list every order value), quick } },
+ * spec: { facets: { key: { label, get(r) -> string | string[], none, order, text(v), fixed (always list every order value), quick,
+ *                          apart: [values] (rows with one of these values show only when that choice is on — never under
+ *                          "no choice" / All; the Retainers page's Retained tab) } },
  *         sorts: { key: get(r) }, defaultSort: { key, dir } | null (null = keep the server order),
  *         search: { text(r) -> string | string[], chip }, flags: { key: { chip, test(r) } },
  *         date: { key, chip, get(r) -> 'YYYY-MM-DD' } | null }
@@ -41,6 +43,8 @@ function listCore(spec) {
     v = s(v); return [v === '' ? NONE : v];
   }
   function labelOf(f, v) { if (v === NONE) return FACETS[f].none || 'None'; return FACETS[f].text ? FACETS[f].text(v) : v; }
+  /** Is the row one a facet keeps apart (shown only when its own choice is on)? */
+  function apartOf(f, r) { var ap = FACETS[f] && FACETS[f].apart; return !!(ap && ap.length && valuesOf(f, r).some(function (v) { return ap.indexOf(v) >= 0; })); }
 
   function emptyState() {
     var st = { q: '', from: '', to: '', sel: {}, sort: DEFAULT_SORT ? { key: DEFAULT_SORT.key, dir: DEFAULT_SORT.dir } : null };
@@ -89,6 +93,12 @@ function listCore(spec) {
       if (f === skip || !FACETS[f]) continue;
       var set = st.sel[f];
       if (set && set.length && !valuesOf(f, r).some(function (v) { return set.indexOf(v) >= 0; })) return false;
+    }
+    /* A row kept apart shows only when its facet has a choice on (with no choice — All — it is left out). */
+    for (var g in FACETS) {
+      if (g === skip || !FACETS[g].apart) continue;
+      if (st.sel[g] && st.sel[g].length) continue;
+      if (apartOf(g, r)) return false;
     }
     return true;
   }
@@ -160,7 +170,7 @@ function listCore(spec) {
 
   return { NONE: NONE, FACETS: FACETS, FLAGS: FLAGS, DATE: DATE, DEFAULT_SORT: DEFAULT_SORT, emptyState: emptyState, normalizeState: normalizeState, passes: passes,
     filterRows: filterRows, facetCounts: facetCounts, sortRows: sortRows, presetRange: presetRange, chips: chips, clearKey: clearKey, clearAll: clearAll, range: range,
-    valuesOf: valuesOf, labelOf: labelOf };
+    valuesOf: valuesOf, labelOf: labelOf, apartOf: apartOf };
 }
 
 /**
@@ -287,7 +297,9 @@ function listTableUi(LT, o, win) {
     var box = doc.getElementById(q.box); if (!box) return;
     var CR = countRows();
     var counts = {}; LT.facetCounts(CR, state, q.facet).forEach(function (x) { counts[x.value] = x.count; });
-    var base = CR.filter(function (r) { return LT.passes(r, state, q.facet); }).length, sel = state.sel[q.facet] || [];
+    /* All counts the rows with no choice on — never the ones kept apart (the Retained tab) */
+    var base = CR.filter(function (r) { return LT.passes(r, state, q.facet) && !LT.apartOf(q.facet, r); }).length, sel = state.sel[q.facet] || [];
+    var apart = (LT.FACETS[q.facet] && LT.FACETS[q.facet].apart) || [];
     var focusV = doc.activeElement && box.contains(doc.activeElement) ? doc.activeElement.getAttribute('data-quick') : null;
     var tip = function (v) { return q.hints && q.hints[v] ? ' title="' + esc(q.hints[v]) + '"' : ''; };
     if (q.tabs) {
@@ -298,9 +310,11 @@ function listTableUi(LT, o, win) {
         return '<button type="button" role="tab" class="lt-tab' + (cur ? ' active' : '') + (count ? '' : ' zero') + '" data-quick="' + esc(v) + '" aria-selected="' + (cur ? 'true' : 'false') + '" tabindex="' + (cur ? '0' : '-1') + '"' + tip(v) + '>'
           + esc(label) + ' <span class="lt-tab-n">' + count + '</span></button>';
       };
-      var tabs = q.values.map(function (v) { return tab(v, LT.labelOf(q.facet, v), counts[v] || 0); }), allTab = tab('', q.all || 'All', base);
+      /* A tab kept apart (Retained) comes after All: All is the sum of the tabs before it, never of that one. */
+      var tabs = q.values.filter(function (v) { return apart.indexOf(v) < 0; }).map(function (v) { return tab(v, LT.labelOf(q.facet, v), counts[v] || 0); }), allTab = tab('', q.all || 'All', base);
+      var side = q.values.filter(function (v) { return apart.indexOf(v) >= 0; }).map(function (v) { return tab(v, LT.labelOf(q.facet, v), counts[v] || 0); });
       box.setAttribute('role', 'tablist');
-      box.innerHTML = q.allLast ? tabs.join('') + allTab : allTab + tabs.join('');
+      box.innerHTML = (q.allLast ? tabs.join('') + allTab : allTab + tabs.join('')) + side.join('');
     } else {
       var btn = function (v, label, count, on) { return '<button type="button" data-quick="' + esc(v) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' + (count ? '' : ' class="zero"') + tip(v) + '>' + esc(label) + ' <span class="qn">' + count + '</span></button>'; };
       box.innerHTML = (q.label ? '<span class="ql">' + esc(q.label) + '</span>' : '') + btn('', q.all || 'All', base, !sel.length)

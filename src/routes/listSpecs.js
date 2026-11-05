@@ -56,7 +56,8 @@ function consultListOpts(ctx) {
   };
 }
 
-/* ctx: { outcomes: the four outcome labels (config/outcomes), today(): the Toronto day, hints: { outcome: text }, initial(state), onChange(state) } */
+/* ctx: { outcomes: the tabs — the four outcome labels (config/outcomes), plus 'Retained' on the Retainers page (2026-11-05),
+          apart: the tabs never counted under All (['Retained']), today(): the Toronto day, hints: { outcome: text }, initial(state), onChange(state) } */
 function retainerListSpec(ctx) {
   function s(v) { return String(v == null ? '' : v).trim(); }
   var OUT = ctx.outcomes || [];
@@ -71,8 +72,9 @@ function retainerListSpec(ctx) {
       paid: { label: 'Consult fee', get: function (r) { return (r.kind === 'direct' && !s(r.paid)) ? 'na' : !s(r.paid) ? 'none' : r.paid === 'waived' ? 'waived' : r.paid === 'app' ? 'app' : 'staff'; },
         text: function (v) { return ({ app: 'Paid (app)', staff: 'Paid — recorded by staff', waived: 'Waived', none: 'Not paid', na: 'No consultation (direct)' })[v] || v; }, order: ['app', 'staff', 'waived', 'none', 'na'], fixed: true },
       stage: { label: 'Stage', get: function (r) { return s(r.stage); }, none: 'No stage', order: ['New', 'Retain', 'Fee set', 'Sent', 'Signed', 'Paid'] },
-      // The tabs above the table: one per outcome; a row without a group counts under the first (Retain).
-      outcome: { label: 'Outcome', quick: true, get: function (r) { return OUT.indexOf(r.outcomeGroup) >= 0 ? r.outcomeGroup : OUT[0]; }, order: OUT },
+      // The tabs above the table: one per outcome (+ Retained); a row without a group counts under the first (Retain).
+      // Retained rows are kept apart: only on their own tab, never under All (All = everyone still being worked).
+      outcome: { label: 'Outcome', quick: true, get: function (r) { return OUT.indexOf(r.outcomeGroup) >= 0 ? r.outcomeGroup : OUT[0]; }, order: OUT, apart: ctx.apart || [] },
     },
     sorts: {},
     defaultSort: null,   // the server order: by stage, then date

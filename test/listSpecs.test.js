@@ -356,3 +356,31 @@ test('2026-11-05 point 7: the Retainers outcome tabs work like the Leads tabs �
   assert.ok(src.includes("if (!v) next = []; else if (q.tabs) next = [v];") && src.includes("win.sessionStorage.setItem(q.storeKey, v || '')"));
 });
 
+
+test('point 8 (2026-11-05): a tab kept apart (Retained) is never under All — not its rows, not the header counts — and has its own tab with its own count; lists that keep nothing apart are unchanged', () => {
+  const LT = listCore(S.retainerListSpec({ outcomes: [...OUTCOME_LABELS, 'Retained'], apart: ['Retained'], today: () => '' }));
+  const rows = [
+    { id: '1', outcomeGroup: 'Retain', consultant: 'A' }, { id: '2', outcomeGroup: 'Follow-Up', consultant: 'A' },
+    { id: '3', outcomeGroup: 'Retained', consultant: 'A', retained: true }, { id: '4', outcomeGroup: 'Retained', consultant: 'B', retained: true },
+  ];
+  const st = LT.emptyState();
+  assert.deepEqual(LT.filterRows(rows, st).map((r) => r.id), ['1', '2'], 'All: everyone still being worked');
+  const tabCounts = Object.fromEntries(LT.facetCounts(rows, st, 'outcome').map((x) => [x.value, x.count]));
+  assert.equal(tabCounts.Retained, 2, 'the Retained tab still counts its rows');
+  assert.equal(tabCounts.Retain, 1);
+  assert.deepEqual(Object.fromEntries(LT.facetCounts(rows, st, 'consultant').map((x) => [x.value, x.count])), { A: 2 }, 'a header filter on All counts only the working rows');
+  assert.equal(LT.apartOf('outcome', rows[2]), true); assert.equal(LT.apartOf('outcome', rows[0]), false);
+  st.sel.outcome = ['Retained'];
+  assert.deepEqual(LT.filterRows(rows, st).map((r) => r.id), ['3', '4'], 'its own tab');
+  assert.deepEqual(Object.fromEntries(LT.facetCounts(rows, st, 'consultant').map((x) => [x.value, x.count])), { A: 1, B: 1 });
+  st.sel.outcome = ['Follow-Up'];
+  assert.deepEqual(LT.filterRows(rows, st).map((r) => r.id), ['2']);
+  // nothing kept apart (the Leads tabs, the old Retainers spec): All is everyone, as before
+  const plain = listCore(S.retainerListSpec({ outcomes: OUTCOME_LABELS, today: () => '' }));
+  assert.deepEqual(plain.filterRows(rows, plain.emptyState()).map((r) => r.id), ['1', '2', '3', '4'], 'an unknown group still falls under Retain, and All shows it');
+  assert.equal(plain.apartOf('outcome', rows[2]), false);
+  // the tabs: the kept-apart one comes AFTER All, and All counts without it (the page code: listTableUi renderQuick)
+  const ui = require('../src/routes/listFilters').listTableUi.toString();
+  assert.ok(ui.includes("box.innerHTML = (q.allLast ? tabs.join('') + allTab : allTab + tabs.join('')) + side.join('');"));
+  assert.ok(ui.includes('return LT.passes(r, state, q.facet) && !LT.apartOf(q.facet, r); }).length'));
+});
