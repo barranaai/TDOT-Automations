@@ -495,6 +495,8 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
     }
     await setClientPhone(existing.id, lead);
     await stampClientAccount(lead, existing.id);
+    // The consultation copy (point 8) — only onto a reused case that has none; never over another consultation's.
+    await require('./consultCopyService').copyOnCaseOpen(existing.id, lead, { reused: true });
     return existing.id;
   }
 
@@ -671,6 +673,10 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
     } catch (_) {}
     console.log(`[Handoff] Lead ${leadId} → Client Master ${newId} · Case Type DEFERRED to staff (interest: "${lead.caseTypeInterest}")`);
   }
+
+  // The consultation copy on the new case (team meeting point 8): after the race check (never onto a duplicate
+  // about to be deleted) and after Case Type (the case number is never delayed). Best-effort — never throws.
+  await require('./consultCopyService').copyOnCaseOpen(newId, lead);
 
   return newId;
 }

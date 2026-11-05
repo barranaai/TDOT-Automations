@@ -219,6 +219,14 @@ function startScheduler() {
       console.error('[Scheduler] Booking reminders failed:', err.message)));
   console.log('[Scheduler] Job registered — booking-invite reminders hourly (:19)');
 
+  // ── The consultation copy on Client Master (team meeting point 8, 2026-11-05): cases opened since then carry a
+  // copy of their consultation; hourly at :46 (no other job runs at :46) it is brought up to date from the lead —
+  // a recording or a fee recorded later. Only rows that already carry a copy. CONSULT_COPY=off stops it.
+  cron.schedule('46 * * * *', () =>
+    require('./consultCopyService').sweep().catch((err) =>
+      console.error('[Scheduler] Consultation copy refresh failed:', err.message)));
+  console.log('[Scheduler] Job registered — Client Master consultation copy refresh hourly (:46)');
+
   // ── The Leads list's "Current status" (Faran 2026-10-28): a copy of the Lead
   // Board's recent notes (invite, reminders, remarks). Read back 45 days at boot,
   // then the new notes every 10 minutes (a full re-read every 6 hours). Read-only.

@@ -47,6 +47,7 @@ const SNAPSHOT_KEYS = [
   'email',        // ONLY to know whether there is one: kept as hasEmail, the address itself is dropped (2026-11-04)
   'directClient', // "Yes" = a direct retainer client (the Leads / Retainers split, the KPIs; 2026-11-04)
   'caseDeleted',  // the case was deleted and this record kept (2026-11-05) — the Retainers rows say "Case deleted"
+  'recordingLink', 'preConsultPdf',   // the Client Master consultation copy's hourly refresh compares against these (point 8)
 ];
 const SNAPSHOT_IDS = SNAPSHOT_KEYS.map((k) => COLS[k]).filter(Boolean);
 
