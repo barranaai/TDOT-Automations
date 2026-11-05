@@ -369,7 +369,7 @@ function renderRetainerList(rows,why,st,h){
       '<td>'+(c.stage?qpill(stc,c.stage):'<span class="pill grey">—</span>')+'</td><td>'+cs+'</td>'+
       /* No bin on a retained client WITH a case (that is deleted on the Cases page, which keeps this record); one whose
          case is gone (deleted — the record kept — or never opened) has it: the explicit "delete the record" (review 2026-11-05). */
-      '<td>'+((c.retained && c.clientMasterItemId && c.caseFound!==false)?'':'<button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client, their consultation record and their OneDrive folder (careful — if there is a case, the case and its checklist go too)">'+TDOT_DEL_SVG+'</button>')+'</td></tr>';
+      '<td>'+((c.retained && c.clientMasterItemId && c.caseFound!==false)?'':'<button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'"'+(c.retained?' data-del-record-only="1" title="Delete this consultation record and its OneDrive folder (careful — a folder carrying a case number is kept; refused while the client’s case is still on the Cases board: delete the case there first)"':' title="Delete this client, their consultation record and their OneDrive folder (careful — if there is a case, the case and its checklist go too)"')+'>'+TDOT_DEL_SVG+'</button>')+'</td></tr>';
   }).join('');
   bindRowClicks(tb,'?from=retainers');   /* the record's back link comes back here */
   return { shown: rows.length, total: kindTotal };

@@ -832,6 +832,7 @@ app.get('/admin/delete/preview', async (req, res) => {
     const preview = await require('./services/deletionService').previewDeletion({
       leadId: (req.query.leadId || '').trim() || undefined,
       caseRef: (req.query.caseRef || '').trim() || undefined,
+      recordOnly: req.query.recordOnly === '1',   // the Retained tab's bin: a record only, never a case
     });
     res.json(preview);
   } catch (err) {
@@ -844,7 +845,7 @@ app.get('/admin/delete/preview', async (req, res) => {
 app.post('/admin/delete/execute', express.json(), async (req, res) => {
   const actor = resolveNamedAdminViewerOrReject(req, res, 'delete records');
   if (!actor) return;
-  const { leadId, caseRef, confirmText, kind } = req.body || {};
+  const { leadId, caseRef, confirmText, kind, recordOnly } = req.body || {};
   try {
     const result = await require('./services/deletionService').executeDeletion({
       leadId: String(leadId || '').trim() || undefined,
@@ -852,6 +853,7 @@ app.post('/admin/delete/execute', express.json(), async (req, res) => {
       confirmText,
       expectedKind: kind === 'case' || kind === 'lead' ? kind : undefined,
       actor: actor.email || actor.name,
+      recordOnly: recordOnly === true,
     });
     consultantPortalService.invalidateDirectRetainerQueue(); // deleted clients must drop off the Direct section immediately
     consultantPortalService.invalidateLeadsQueue();          // …and off the funnel-leads queue (was showing deleted leads as alive)

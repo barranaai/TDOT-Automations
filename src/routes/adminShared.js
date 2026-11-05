@@ -503,7 +503,7 @@ const DELETE_UI_JS = DIALOG_UI_JS + `
      Once "Delete permanently" has been pressed, EVERY way of closing refreshes the list — and so
      does an answer that arrives after the window was closed (2026-11-05). */
   function tdotOpenDeleteModal(target, onDone){
-    var qs = target.caseRef ? ('caseRef=' + encodeURIComponent(target.caseRef)) : ('leadId=' + encodeURIComponent(target.leadId));
+    var qs = target.caseRef ? ('caseRef=' + encodeURIComponent(target.caseRef)) : ('leadId=' + encodeURIComponent(target.leadId) + (target.recordOnly ? '&recordOnly=1' : ''));
     var ov = document.createElement('div');
     ov.className = 'delm-overlay tdlg-ov';
     ov.innerHTML = '<div class="delm tdlg" role="dialog" aria-modal="true" aria-labelledby="delm-title"><button type="button" class="tdlg-x" aria-label="Close">&times;</button>' +
@@ -577,7 +577,7 @@ const DELETE_UI_JS = DIALOG_UI_JS + `
           sent = true; dlg.setBusy(true);   /* no closing until the answer is in (or the wait is too long) */
           input.readOnly = true;            /* and no second send by editing the typed confirmation */
           var body = { confirmText: input.value.trim(), kind: p.kind };
-          if (target.caseRef) body.caseRef = target.caseRef; else body.leadId = target.leadId;
+          if (target.caseRef) body.caseRef = target.caseRef; else { body.leadId = target.leadId; if (target.recordOnly) body.recordOnly = true; }
           fetch('/admin/delete/execute', { method: 'POST', headers: delHeaders(), credentials: 'same-origin', body: JSON.stringify(body) })
             .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); })
             .then(function(res){
@@ -648,7 +648,8 @@ const DELETE_UI_JS = DIALOG_UI_JS + `
       var leadId = btn.getAttribute('data-del-lead');
       var caseRef = btn.getAttribute('data-del-case');
       if (!leadId && !caseRef) return;
-      tdotOpenDeleteModal(caseRef ? { caseRef: caseRef } : { leadId: leadId }, onDone);
+      /* data-del-record-only (the Retained tab): a record whose case is gone — the server refuses a case. */
+      tdotOpenDeleteModal(caseRef ? { caseRef: caseRef } : { leadId: leadId, recordOnly: btn.getAttribute('data-del-record-only') === '1' }, onDone);
     }, true);
   }
 `;
