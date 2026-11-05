@@ -116,6 +116,15 @@ async function readCmItem(cmItemId) {
   return { id: String(it.id), name: it.name, caseRef: g(CM_CASE_REF_COL).trim(), email: g(CM_EMAIL_COL).trim(), oneDriveFolderId: g(CM_ONEDRIVE_ID_COL).trim() };
 }
 
+/** I/O. A linked case row that is NOT on the Cases board: the name of the board it is live on (moved off the Cases
+ *  board — 2026-ISS-009, found 2026-11-05), or '' when it is gone (Monday's recycle bin, no such item). */
+async function caseRowElsewhere(cmItemId) {
+  const d = await mondayApi.query('query($id:ID!){ items(ids:[$id]){ id state board { id name } } }', { id: String(cmItemId) });
+  const it = d?.items?.[0];
+  if (!it || it.state === 'deleted' || !it.board || String(it.board.id) === String(clientMasterBoardId)) return '';
+  return String(it.board.name || `board ${it.board.id}`);
+}
+
 /**
  * Resolve the OneDrive folders to remove. A stored folder id is looked up and
  * only accepted when the item sits DIRECTLY under the Client Documents root —
@@ -155,6 +164,30 @@ async function resolveFolders({ folderId, nameCandidates }) {
   return { folders, warnings };
 }
 
+/**
+ * The plan of a Cases-page delete, noted on the CASE row before anything is changed (review round 3, 2026-11-05).
+ * A run that stops part-way leaves it there, so the next run still knows every record this delete keeps and the
+ * folder it renamed — even once some records are unlinked (no longer found by the case link) and the folder no
+ * longer carries the case number. The plan rides in a marker in the note (base64url JSON: survives the text form).
+ */
+const PLAN_OPEN = '⟦keep-plan ', PLAN_CLOSE = '⟧';
+const planMarker = (p) => `${PLAN_OPEN}${Buffer.from(JSON.stringify(p), 'utf8').toString('base64url')}${PLAN_CLOSE}`;
+async function readKeepPlan(cmItemId) {
+  const d = await mondayApi.query('query($id:[ID!]){ items(ids:$id, limit:1){ updates(limit:100){ text_body } } }', { id: [String(cmItemId)] });
+  for (const u of (d && d.items && d.items[0] && d.items[0].updates) || []) {   // newest first
+    const t = String(u.text_body || '');
+    const a = t.lastIndexOf(PLAN_OPEN); if (a < 0) continue;
+    const b = t.indexOf(PLAN_CLOSE, a + PLAN_OPEN.length); if (b < 0) continue;
+    try {
+      const p = JSON.parse(Buffer.from(t.slice(a + PLAN_OPEN.length, b).trim(), 'base64url').toString('utf8'));
+      if (p && p.v === 1 && Array.isArray(p.leads)) return p;
+    } catch (_) { /* not a plan */ }
+  }
+  return null;
+}
+/** The "Case deleted" marker names its case between " · " separators (date · case · who) — never a prefix match. */
+const markerNames = (caseDeleted, ref) => ` ${String(caseDeleted || '')} `.includes(` · ${ref} · `);
+
 /** The lead's folder name: the client name the record knows it by (clientFolderRefs.candidateFolderState), with the
  *  characters OneDrive does not allow stripped — as every folder the app makes (ensureLeadFolder, caseFolderName).
  *  The record finds it by the " - LEAD-{id}" ending, so a stripped name is found all the same. */
@@ -177,7 +210,7 @@ const escNote = (v) => String(v == null ? '' : v).replace(/[<>&"]/g, (c) => ({ '
  * If OneDrive cannot answer, the delete is REFUSED (preview and execute alike): going ahead without the rename
  * would leave the kept record unable to find its files, with the case row — the only way to re-run — gone.
  */
-async function planFolderReturn(cm, leads) {
+async function planFolderReturn(cm, leads, prior = null) {
   const none = (why) => ({ plan: null, note: why });
   const ask = async (fn) => {
     try { return await fn(); } catch (err) {
@@ -187,13 +220,19 @@ async function planFolderReturn(cm, leads) {
   if (!cm.caseRef) return none('');   // the folder never took the case number: it still has the lead's name
   const caseFolders = await ask(() => oneDrive.findCaseFoldersByRef(cm.caseRef));
   if (!caseFolders.length) {
-    // An earlier run of this delete may have renamed it back already: the case row's own folder, now ending
-    // " - LEAD-{id}" of a kept record. Nothing to do — but the undo steps must still give the way back.
+    // An earlier run of this delete may have renamed it back already. Nothing to do — but the undo steps must still
+    // give the way back. Its plan (noted on the case row) names the folder and its owner; failing that, the case
+    // row's own folder now ending " - LEAD-{id}" of a record this delete keeps.
+    if (prior && prior.from && prior.owner) {
+      const back = (await ask(() => oneDrive.findCaseFoldersByRef(`LEAD-${prior.owner}`)))[0];
+      if (back) return { plan: null, note: `The OneDrive folder was already renamed back to “${back.name}” (an earlier run of this delete). Nothing is deleted from OneDrive.`, returned: { to: back.name, from: String(prior.from) } };
+    }
+    const ours = new Set([...leads, ...((prior && prior.leads) || [])].map((l) => String(l.id)));
     const sid = String(cm.oneDriveFolderId || '').trim();
     if (sid) {
       const item = await ask(() => oneDrive.getDriveItemById(sid));
       const m = item && String(item.parentPath || '').endsWith(`/${ROOT_FOLDER_NAME}`) ? / - LEAD-(\d+)$/.exec(String(item.name || '')) : null;
-      if (m && leads.some((l) => String(l.id) === m[1])) {
+      if (m && ours.has(m[1])) {
         const back = `${String(item.name).slice(0, String(item.name).length - m[0].length)} - ${cm.caseRef}`;
         return { plan: null, note: `The OneDrive folder was already renamed back to “${item.name}” (an earlier run of this delete). Nothing is deleted from OneDrive.`, returned: { to: item.name, from: back } };
       }
@@ -203,7 +242,7 @@ async function planFolderReturn(cm, leads) {
   if (caseFolders.length > 1) return none(`${caseFolders.length} OneDrive folders carry this case number — all are KEPT as they are (check them in OneDrive): the consultation record may not find its files until one is renamed to the lead's name.`);
   const folder = caseFolders[0];
   const owners = leads.length === 1 ? leads : leads.filter((l) => String(l.oneDriveFolderId || '').trim() === String(folder.id));
-  if (owners.length !== 1) return none(`The OneDrive folder "${folder.name}" is KEPT as it is — it is not clear which consultation record owns it.`);
+  if (owners.length !== 1) return none(leads.length ? `The OneDrive folder "${folder.name}" is KEPT as it is — it is not clear which consultation record owns it.` : `The OneDrive folder "${folder.name}" is KEPT as it is. Nothing is deleted from OneDrive.`);
   const owner = owners[0];
   const to = leadFolderName(owner);
   // The record's own folder already there (a root folder ending " - LEAD-{id}"): renaming would make two.
@@ -239,7 +278,25 @@ async function caseGraph(cm, { keepLeads = false } = {}) {
     // The consultation record is kept forever (point 8): the lead rows stay, unlinked and marked; no folder is deleted.
     if (leads.length >= KEEP_LEADS_LIMIT) bad(`${leads.length} or more consultation records are linked to this case — too many to be sure all are kept. Nothing was deleted; ask for help.`);
     if (leads.length && !leadCaseDeletedCol()) bad('The Leads board has no "Case deleted" column set up in the app yet — nothing was deleted (a kept consultation record must be marked). Ask for help.');
-    const { plan, note, returned } = leads.length ? await planFolderReturn(cm, leads) : { plan: null, note: '', returned: null };
+    // An earlier run that stopped part-way: its plan names the records it already set aside (unlinked — no longer
+    // found by the case link) and the folder it renamed. Only records still set aside for THIS case count.
+    const ref = caseRef || `CASE-${cm.id}`;
+    let prior = null;
+    try { prior = await readKeepPlan(cm.id); }
+    catch (err) { bad(`The case’s notes could not be read (${err.message}) — nothing was deleted. Try again in a minute.`); }
+    const linkedIds = new Set(leads.map((l) => String(l.id)));
+    const earlier = [];
+    for (const l of ((prior && prior.leads) || []).slice(0, KEEP_LEADS_LIMIT)) {
+      const id = String(l.id);
+      if (linkedIds.has(id) || earlier.some((e) => e.id === id)) continue;
+      let cur;
+      try { cur = await leadService.getLead(id); }
+      catch (err) { bad(`Consultation record ${id} could not be read (${err.message}) — nothing was deleted. Try again in a minute.`); }
+      if (cur && !String(cur.clientMasterItemId || '').trim() && markerNames(cur.caseDeleted, ref)) {
+        earlier.push({ id, name: String(cur.fullName || cur.name || l.name || `Lead ${id}`) });
+      }
+    }
+    const { plan, note, returned } = (leads.length || earlier.length) ? await planFolderReturn(cm, leads, prior) : { plan: null, note: '', returned: null };
     const names = leads.map((l) => l.fullName || l.name || `Lead ${l.id}`);
     // A retainer agreement still out for signature (review 2026-11-05): the client can still sign it — recorded, no case.
     const outForSignature = leads.filter((l) => String(l.retainerSent || '').trim() && !String(l.retainerSigned || '').trim())
@@ -253,14 +310,18 @@ async function caseGraph(cm, { keepLeads = false } = {}) {
       cmItemId: cm.id,
       execRows, qexecRows, familyRows,
       leads: [],          // nothing of the consultation record is deleted or cancelled
-      keptLeads: leads.map((l) => ({ id: String(l.id), name: l.fullName || l.name || `Lead ${l.id}` })),
+      keptLeads: leads.map((l) => ({ id: String(l.id), name: l.fullName || l.name || `Lead ${l.id}` })),   // still linked: unlinked now
+      earlierLeads: earlier,   // set aside by an earlier, stopped run of this delete
+      keptAll: [...leads.map((l) => ({ id: String(l.id), name: l.fullName || l.name || `Lead ${l.id}` })), ...earlier],
+      priorPlan: prior,
       folders: [],        // a case delete never deletes a OneDrive folder
       folderPlan: plan,
       folderReturned: returned || null,   // renamed back by an earlier run of this delete (for the undo steps)
       warnings: [
         leads.length
           ? `The consultation record${leads.length > 1 ? 's' : ''} (${names.join(', ')}) ${leads.length > 1 ? 'are' : 'is'} KEPT on the Leads board — outcome, retainer dates, payments and notes stay — and no longer linked to this case. “Case deleted” is filled in on ${leads.length > 1 ? 'them' : 'it'}, and the app never opens a new case for ${leads.length > 1 ? 'them' : 'it'} by itself.`
-          : 'No consultation record (lead) is linked to this case.',
+          : (earlier.length ? '' : 'No consultation record (lead) is linked to this case.'),
+        earlier.length ? `An earlier run of this delete already set aside ${earlier.map((l) => `${l.name} (${l.id})`).join(', ')} (kept, marked “Case deleted”) — this run finishes the rest.` : '',
         plan ? `The OneDrive folder is KEPT and renamed back to “${plan.to}”, so the consultation record finds its files. Nothing is deleted from OneDrive.`
           : (note || 'Nothing is deleted from OneDrive.'),
         'No Square booking or invoice is touched.',
@@ -348,7 +409,10 @@ async function buildGraph({ leadId, caseRef }) {
     if (lead.clientMasterItemId) {
       const cm = await readCmItem(lead.clientMasterItemId);
       if (cm) return caseGraph(cm);
-      // CM link points nowhere (or at a non-CM item) — treat as a plain lead
+      // Not on the Cases board. Gone (Monday's recycle bin, no such item) → a plain lead. Live on ANOTHER board → the
+      // case was moved off the Cases board and is not gone (2026-ISS-009): deleting the record would take its folder.
+      const where = await caseRowElsewhere(lead.clientMasterItemId);
+      if (where) bad(`This record is linked to a case row on the Monday board “${where}”, not on the Cases board — the case was moved, it is not gone, and deleting the record would take its OneDrive folder. Nothing was deleted. Move the case row back to the Cases board (ask for help); if the link is wrong, clear “Client Master Item ID” on the lead and delete again.`);
     }
     return leadGraph(lead);
   }
@@ -365,7 +429,7 @@ async function previewDeletion({ leadId, caseRef }) {
     client: g.client,
     keepsLeads: !!g.keepLeads,
     // What stays (point 8): the consultation record(s), and the folder — renamed back to the lead's name when planned.
-    kept: g.keepLeads ? { leadRows: (g.keptLeads || []).map((l) => l.name), folderRename: g.folderPlan ? { from: g.folderPlan.from, to: g.folderPlan.to } : null } : null,
+    kept: g.keepLeads ? { leadRows: (g.keptAll || g.keptLeads || []).map((l) => l.name), folderRename: g.folderPlan ? { from: g.folderPlan.from, to: g.folderPlan.to } : null } : null,
     targets: {
       clientMasterRow: g.cmItemId ? 1 : 0,
       checklistRows: g.execRows.length,
@@ -454,6 +518,25 @@ async function executeDeletion({ leadId, caseRef, confirmText, expectedKind, act
     const failures = [];
     const deleted = { checklistRows: 0, questionnaireRows: 0, familyMemberRows: 0, clientMasterRow: 0, leadRows: 0, oneDriveFolders: 0, squareAppointmentsCancelled: 0 };
     const kept = g.keepLeads ? { leadRows: 0, folderRenamed: 0, leadsAlreadyUnlinked: 0 } : null;
+    if (kept && (g.earlierLeads || []).length) kept.leadsSetAsideEarlier = g.earlierLeads.length;   // a re-run says the whole result
+    if (kept && g.folderReturned) kept.folderRenamedEarlier = 1;
+    const marker = g.keepLeads ? `${torontoDay()} · ${g.caseRef || `CASE-${g.cmItemId}`} · ${actor || 'admin'}` : '';
+
+    // Keeping the record (review round 3): the plan goes on the case row BEFORE anything is changed — a run that
+    // stops part-way leaves it for the next run (every record kept, the folder names). Not noted → nothing deleted.
+    if (g.keepLeads && (g.keptAll || []).length) {
+      const fp = g.folderPlan ? { from: g.folderPlan.from, to: g.folderPlan.to, owner: g.folderPlan.leadId }
+        : (g.priorPlan && g.priorPlan.from ? { from: g.priorPlan.from, to: g.priorPlan.to, owner: g.priorPlan.owner } : {});
+      const same = g.priorPlan && (g.priorPlan.from || '') === (fp.from || '') && (g.priorPlan.to || '') === (fp.to || '')
+        && g.priorPlan.leads.map((l) => String(l.id)).sort().join(',') === g.keptAll.map((l) => l.id).sort().join(',');
+      if (!same) {
+        const body = `🗑 <b>Deleting this case from the Cases page — the consultation record is kept</b> (${escNote(marker)}). ` +
+          `Kept: ${g.keptAll.map((l) => `${escNote(l.name)} (${l.id})`).join(', ')}.` +
+          (fp.from ? ` OneDrive folder “${escNote(fp.from)}” → renamed back to “${escNote(fp.to)}”.` : '') +
+          ` If the delete stops part-way, running it again finishes it from this plan. ${planMarker({ v: 1, leads: g.keptAll, ...fp })}`;
+        if (!(await postNote(g.cmItemId, body))) bad('The delete could not be noted on the case (Monday did not answer) — nothing was deleted. Try again in a minute.');
+      }
+    }
 
     for (const [countKey, rows] of [['checklistRows', g.execRows], ['questionnaireRows', g.qexecRows], ['familyMemberRows', g.familyRows]]) {
       const r = await deleteMondayRows(rows, countKey);
@@ -516,16 +599,35 @@ async function executeDeletion({ leadId, caseRef, confirmText, expectedKind, act
         }
       }
       if (!failures.length) {
-        const marker = `${torontoDay()} · ${g.caseRef || `CASE-${g.cmItemId}`} · ${actor || 'admin'}`;
+        const noNote = [];
         for (const l of g.keptLeads) {
           try {
             const r = await unlinkKeptLead(l.id, g, marker);
             if (r === 'unlinked' || r === 'unlinked-no-note') kept.leadRows++; else kept.leadsAlreadyUnlinked++;
-            if (r === 'unlinked-no-note') kept.notesFailed = (kept.notesFailed || 0) + 1;
+            if (r === 'unlinked-no-note') noNote.push(l);
           } catch (err) {
             failures.push(`Consultation record ${l.name} (${l.id}) could not be unlinked from the case: ${err.message}`);
           }
         }
+        // Stopped before ANY record was set aside (now or by an earlier run): the folder gets the case number back, so
+        // nothing is half-done on the record's side — the next run renames it again.
+        if (failures.length && kept.folderRenamed && !kept.leadRows && !(g.earlierLeads || []).length) {
+          try {
+            await oneDrive.renameItemById({ itemId: g.folderPlan.id, newName: g.folderPlan.from });
+            kept.folderRenamed = 0;
+            failures.push(`The OneDrive folder was given its case name “${g.folderPlan.from}” back — the consultation record is still linked to the case.`);
+          } catch (err) {
+            failures.push(`The OneDrive folder is now “${g.folderPlan.to}” and could NOT be given its case name back (${err.message}) — the case does not find its files until it is: rename it in OneDrive to “${g.folderPlan.from}”, or run the delete again.`);
+          }
+        }
+        // A record an earlier, stopped run set aside whose note never got posted: posted now.
+        for (const l of g.earlierLeads || []) {
+          const r = await postMissingKeptNote(l, g).catch(() => 'failed');
+          if (r === 'posted') kept.notesPosted = (kept.notesPosted || 0) + 1;
+          if (r === 'failed') noNote.push(l);
+        }
+        // The note carries the way back — the case row (the only way to re-run) is not deleted without it.
+        if (noNote.length) failures.push(`The note with the way back could not be added on ${noNote.map((l) => `${l.name} (${l.id})`).join(', ')} — run the delete again in a minute: it adds the note, then deletes the case row.`);
       }
       if (failures.length) {
         failures.push('The Client Master row was KEPT because the consultation record could not be fully set aside — nothing of it was deleted. Run the delete again in a minute.');
@@ -582,7 +684,7 @@ function keptNote(leadId, g, marker) {
   const folderLine = folderStep
     ? (mine ? ` Its OneDrive folder was kept and renamed back to “${escNote(folderStep.to)}”.` : ` The case’s OneDrive folder was kept and renamed back to “${escNote(folderStep.to)}”.`)
     : ' Its OneDrive folder was kept as it is.';
-  const others = (g.keptLeads || []).filter((l) => String(l.id) !== String(leadId));
+  const others = (g.keptAll || g.keptLeads || []).filter((l) => String(l.id) !== String(leadId));
   const relink = others.length
     ? `this lead and on ${others.map((l) => `${escNote(l.name)} (${l.id})`).join(', ')}`
     : 'this lead';
@@ -615,11 +717,38 @@ async function unlinkKeptLead(leadId, g, marker) {
       return 'not-linked';
     }
     await leadService.updateLead(String(leadId), { clientMasterItemId: '', caseDeleted: marker }, { clearKeys: ['clientMasterItemId'] });
-    let noted = true;
-    await mondayApi.query('mutation($id:ID!,$b:String!){ create_update(item_id:$id, body:$b){ id } }', { id: String(leadId), b: keptNote(leadId, g, marker) })
-      .catch((err) => { noted = false; console.warn(`[Deletion] note on kept lead ${leadId} failed: ${err.message}`); });
-    return noted ? 'unlinked' : 'unlinked-no-note';
+    return (await postNote(leadId, keptNote(leadId, g, marker))) ? 'unlinked' : 'unlinked-no-note';
   });
 }
 
-module.exports = { previewDeletion, executeDeletion, _internal: { buildGraph, rowsByCaseRef, resolveFolders, deleteMondayRows, planFolderReturn, unlinkKeptLead, keptNote } };
+/** A note on a Monday item, tried twice — never throws. */
+async function postNote(itemId, body) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await mondayApi.query('mutation($id:ID!,$b:String!){ create_update(item_id:$id, body:$b){ id } }', { id: String(itemId), b: body });
+      return true;
+    } catch (err) {
+      console.warn(`[Deletion] note on item ${itemId} failed (try ${attempt}): ${err.message}`);
+      if (attempt < 2) await sleep(800);
+    }
+  }
+  return false;
+}
+
+/**
+ * A record an earlier, stopped run set aside: when it is still set aside for THIS case and has no deletion note yet,
+ * the note is posted now (under the lead's lock, from a fresh read). Returns 'posted' | 'present' | 'skipped' | 'failed'.
+ */
+async function postMissingKeptNote(l, g) {
+  const ref = g.caseRef || `CASE-${g.cmItemId}`;
+  return require('./leadMutex').withLeadLock(String(l.id), async () => {
+    const cur = await leadService.getLead(String(l.id));
+    if (!cur || String(cur.clientMasterItemId || '').trim() || !markerNames(cur.caseDeleted, ref)) return 'skipped';
+    const d = await mondayApi.query('query($id:[ID!]){ items(ids:$id, limit:1){ updates(limit:100){ text_body } } }', { id: [String(l.id)] });
+    const notes = (d && d.items && d.items[0] && d.items[0].updates) || [];
+    if (notes.some((u) => String(u.text_body || '').includes(`Case ${ref} was deleted`))) return 'present';
+    return (await postNote(l.id, keptNote(l.id, g, String(cur.caseDeleted).trim()))) ? 'posted' : 'failed';
+  });
+}
+
+module.exports = { previewDeletion, executeDeletion, _internal: { buildGraph, rowsByCaseRef, resolveFolders, deleteMondayRows, planFolderReturn, unlinkKeptLead, keptNote, readKeepPlan, planMarker } };

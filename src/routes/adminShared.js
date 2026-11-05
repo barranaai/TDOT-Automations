@@ -606,8 +606,8 @@ const DELETE_UI_JS = DIALOG_UI_JS + `
                   : ' Square appointment NOT cancelled (it was already cancelled, in the past, or gone from Square) \\u2014 check the Square calendar if you expected it to be freed.';
               }
               var kp = res.j.kept, keptTxt = '';
-              if (kp) keptTxt = ' Kept: ' + ((kp.leadRows + kp.leadsAlreadyUnlinked) ? (kp.leadRows + kp.leadsAlreadyUnlinked) + ' consultation record' + ((kp.leadRows + kp.leadsAlreadyUnlinked) > 1 ? 's' : '') + ' (marked “Case deleted”) and ' : '') + 'the OneDrive folder' + (kp.folderRenamed ? ' (renamed back to the lead’s name)' : '') + '.' +
-                (kp.notesFailed ? ' The note with the undo steps could not be posted on ' + kp.notesFailed + ' record' + (kp.notesFailed > 1 ? 's' : '') + ' — the steps are in the staff guide (Delete a record or a case).' : '');
+              var kn = kp ? kp.leadRows + kp.leadsAlreadyUnlinked + (kp.leadsSetAsideEarlier || 0) : 0;   /* a re-run counts what the stopped run set aside */
+              if (kp) keptTxt = ' Kept: ' + (kn ? kn + ' consultation record' + (kn > 1 ? 's' : '') + ' (marked “Case deleted”) and ' : '') + 'the OneDrive folder' + ((kp.folderRenamed || kp.folderRenamedEarlier) ? ' (renamed back to the lead’s name)' : '') + '.';
               /* A run that stopped part-way says what it already changed (a re-run finishes the rest). */
               var partTxt = (kp && kp.folderRenamed) ? ' The OneDrive folder was already renamed back to the lead’s name — running the delete again finishes the rest.' : '';
               var cls = res.j.ok ? 'delm-result' : 'delm-result bad';
