@@ -135,7 +135,9 @@ async function refresh({ reason = 'manual', force = false } = {}) {
     const result = { ok: false, read: 0, changed: [], rejected: [], missing: [], error: '' };
     if (!ids.length) { result.ok = true; return result; }
     try {
-      const res = await axios.post(`${base()}/v2/catalog/batch-retrieve`, { object_ids: ids, include_deleted_objects: false }, {
+      // Deleted objects are asked for: a service deleted in Square must be SEEN as deleted (refused → the
+      // list price), not go missing from the answer with its last reading kept.
+      const res = await axios.post(`${base()}/v2/catalog/batch-retrieve`, { object_ids: ids, include_deleted_objects: true }, {
         headers: { Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`, 'Square-Version': SQUARE_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
         timeout: READ_TIMEOUT_MS,
       });

@@ -66,6 +66,7 @@ test('one read from Square prices every option; the registry itself is never cha
     assert.deepEqual(sq.calls[0].body.object_ids.sort(), [SH30, SH45, SE30, SE15].sort());
     assert.equal(sq.calls[0].opts.headers.Authorization, 'Bearer sq0atp-test');
     assert.equal(sq.calls[0].opts.timeout, 10000);
+    assert.equal(sq.calls[0].body.include_deleted_objects, true, 'a service deleted in Square is seen as deleted, not missing');
     const sh = routing.consultOptionsFor('shafoli');
     assert.deepEqual(sh.map((o) => [o.durationMin, o.feeCents, o.feeSource, o.listFeeCents]), [[30, 30000, 'square', 30000], [45, 45000, 'square', 45000]]);
     assert.equal(routing.CONSULTANTS.shafoli.consultOptions[0].feeCents, 30000, 'the registry is untouched');
