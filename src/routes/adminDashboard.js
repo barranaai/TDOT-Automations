@@ -869,8 +869,9 @@ function buildDashboardHTML(view = 'cases') {
     /* The Cases list: the shared filter look (listFilters.js) — header funnels, chips, sort by the column name. */
     ${LIST_TABLE_CSS}
     #all-cases-table { min-width:960px; }
-    #all-cases-table th { cursor:default; }
-    #all-cases-table th:hover { background:#f8fafc; color:#94a3b8; }
+    /* Headers sort through their name buttons now (Cases) — and the Summary at-risk table never sorted: no pointer, no hover. */
+    .data-table th { cursor:default; }
+    .data-table th:hover { background:#f8fafc; color:#94a3b8; }
     .cs-chips { padding:10px 20px 0; margin:0; }
   </style>
 </head>

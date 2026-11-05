@@ -209,7 +209,7 @@ ${buildNavHeader('consultations')}
       </div>
       <div id="cq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
       <div class="card attn fold" id="needs-outcome" style="display:none;margin-bottom:12px">
-        <div class="attn-h" id="needs-outcome-h" role="button" tabindex="0"><span>&#9888; Needs outcome <span id="needs-outcome-n"></span> <span class="muted">— consultations that have happened with no outcome recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted.</span></span><span class="muted">show / hide</span></div>
+        <div class="attn-h" id="needs-outcome-h" role="button" tabindex="0" aria-expanded="false" aria-controls="needs-outcome-body"><span>&#9888; Needs outcome <span id="needs-outcome-n"></span> <span class="muted">— consultations that have happened with no outcome recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted.</span></span><span class="muted">show / hide</span></div>
         <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="needs-outcome-body"></tbody></table></div>
       </div>
       <div class="card"><div class="tbl-wrap">
@@ -219,7 +219,7 @@ ${buildNavHeader('consultations')}
         </table>
       </div></div>
       <div class="card fold" id="nodate" style="display:none;margin-top:12px">
-        <div class="attn-h" id="nodate-h" role="button" tabindex="0"><span>No date <span id="nodate-n"></span> <span class="muted">— marked Booked by hand with no consultation time. Open one to set its time, or delete it.</span></span><span class="muted">show / hide</span></div>
+        <div class="attn-h" id="nodate-h" role="button" tabindex="0" aria-expanded="false" aria-controls="nodate-body"><span>No date <span id="nodate-n"></span> <span class="muted">— marked Booked by hand with no consultation time. Open one to set its time, or delete it.</span></span><span class="muted">show / hide</span></div>
         <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="nodate-body"></tbody></table></div>
       </div>
     </section>
@@ -243,7 +243,7 @@ ${buildNavHeader('consultations')}
     <section id="tab-reporting" role="tabpanel" hidden>
       <div class="kpi-head">
         <h2 class="sec-h">Reporting</h2>
-        <div><label class="muted" style="margin-right:6px">Period</label><select id="kpi-month"></select></div>
+        <div><label class="muted" for="kpi-month" style="margin-right:6px">Period</label><select id="kpi-month"></select></div>
       </div>
       <div id="kpi-body"><div class="muted">Loading KPIs…</div></div>
     </section>
@@ -793,7 +793,7 @@ function load(force){
 Array.prototype.forEach.call(document.querySelectorAll('.tab[data-tab]'),function(b){ b.onclick=function(){ setTab(b.getAttribute('data-tab'),true); }; });
 Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.onclick=function(){ setRange(b.getAttribute('data-range')); }; });
 Array.prototype.forEach.call(document.querySelectorAll('#range .nav'),function(b){ b.onclick=function(){ shiftRange(Number(b.getAttribute('data-nav'))); }; });
-['needs-outcome','nodate'].forEach(function(id){ var h=document.getElementById(id+'-h'); var box=document.getElementById(id); if(h&&box){ var tog=function(){ box.classList.toggle('open'); }; h.onclick=tog; h.onkeydown=function(ev){ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); tog(); } }; } });
+['needs-outcome','nodate'].forEach(function(id){ var h=document.getElementById(id+'-h'); var box=document.getElementById(id); if(h&&box){ var tog=function(){ box.classList.toggle('open'); h.setAttribute('aria-expanded',box.classList.contains('open')?'true':'false'); }; h.onclick=tog; h.onkeydown=function(ev){ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); tog(); } }; } });
 // ── Reporting / KPIs ──────────────────────────────────────────────────────
 function kpiMoney(n){ return '$'+Number(n||0).toLocaleString('en-CA'); }
 function kpiCard(label,num,sub){ return '<div class="kpi-card"><div class="k-label">'+label+'</div><div class="k-num">'+num+'</div>'+(sub?'<div class="k-sub">'+sub+'</div>':'')+'</div>'; }
