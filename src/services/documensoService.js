@@ -561,7 +561,7 @@ async function captureCompleted(body) {
       }
     } catch (err) {
       console.warn(`[Documenso] auto-countersign for lead ${leadId} failed: ${err.message}`);
-      await postNote(leadId, '⚠️ <b>The countersign request could not be sent to the consultant automatically.</b> Open this lead in the Consultations page and click “Sign retainer as consultant”.');
+      await postNote(leadId, '⚠️ <b>The countersign request could not be sent to the consultant automatically.</b> Open this client from the Retainers & follow-ups page and click “Sign retainer as consultant”.');
     }
   } else if (type === 'retainer2') {
     // RCIC countersign completed → the retainer is FULLY signed. Same

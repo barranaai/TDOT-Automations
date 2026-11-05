@@ -223,9 +223,9 @@ function outcomeCell(c){
   if(c.followUpDate) h+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);
   return h;
 }
-function bindRowClicks(root){
+function bindRowClicks(root,suffix){
   Array.prototype.forEach.call(root.querySelectorAll('tr.row'),function(tr){
-    tr.onclick=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id')); };
+    tr.onclick=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id'))+(suffix||''); };
   });
 }
 function showAge(d){
@@ -359,7 +359,7 @@ function renderRetainerList(rows,why,st,h){
       '<td>'+(c.stage?qpill(stc,c.stage):'<span class="pill grey">—</span>')+'</td><td>'+cs+'</td>'+
       '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client (careful — removes the case, its checklist, and the OneDrive folder)">'+TDOT_DEL_SVG+'</button></td></tr>';
   }).join('');
-  bindRowClicks(tb);
+  bindRowClicks(tb,'?from=retainers');   /* the record's back link comes back here */
 }
 /* ── Direct retainer client (walk-in / referral) ── */
 var DC_OPTS=null;
@@ -654,7 +654,7 @@ function submitDirectClient(){
       else if(res.j.reused) window.alert('This client already exists as a direct retainer lead — opening it instead of creating a duplicate.');
       /* The client exists: attach the chosen files now (a failed file never undoes the client), then open it. */
       /* Saved: the window closes BEFORE the page moves on — Back must never bring this client's filled form back. */
-      var go=function(){ if(!dlg.still(run)){ load(true); return; } dlg.close(true); window.location.href='/admin/consultation/'+encodeURIComponent(res.j.leadId); };
+      var go=function(){ if(!dlg.still(run)){ load(true); return; } dlg.close(true); window.location.href='/admin/consultation/'+encodeURIComponent(res.j.leadId)+'?from=retainers'; };
       if(!DC_ATT.files().length) return go();
       btn.textContent='Attaching…';
       return DC_ATT.upload(res.j.leadId).then(function(o){
@@ -838,7 +838,10 @@ startClock(); checkApiStatus();
 }
 
 // ─── Detail page ────────────────────────────────────────────────────────────────
-function buildDetailHTML(leadId) {
+// opts.from = 'retainers' when the record was opened from the Retainers & follow-ups page (2026-11-05): the top bar
+// and the back link point there. Opened any other way, the page works out the right list once the record has loaded.
+function buildDetailHTML(leadId, opts) {
+  const fromRetainers = !!(opts && opts.from === 'retainers');
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TDOT — Consultation</title><style>
@@ -1021,9 +1024,9 @@ ${REMARKS_CSS}
 
   a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }
 </style></head><body>
-${buildNavHeader('consultations')}
+${buildNavHeader(fromRetainers ? 'retainers' : 'consultations')}
 <main class="wrap">
-  <a href="/admin/consultations" class="back-lnk">${I.back} All consultations</a>
+  <a href="${fromRetainers ? '/admin/retainers' : '/admin/consultations'}" class="back-lnk" id="back-lnk">${I.back} <span id="back-lnk-txt">${fromRetainers ? 'Retainers &amp; follow-ups' : 'All consultations'}</span></a>
   <div id="loading"><div class="spinner"></div><div class="muted">Loading consultation…</div></div>
   <div id="error-msg"></div>
   <div id="content">
@@ -1533,8 +1536,21 @@ function renderBlacklist(d){
   });
 }
 var LAST_DETAIL=null; // the detail last rendered — the send button's confirm text reads the package state from it
+/* Opened without ?from=: a client who sits on the Retainers & follow-ups list (a direct client, a retainer under way,
+   Outcome Retain — consultantPortalService.classifyLead) gets that page as the way back, and in the top bar. */
+function pointBackAtList(d){
+  var onRetainers=!!(d.directRetainer||d.retainerSent||d.retainerSigned||d.retainerPaid||String(d.outcome||'')==='Retain');
+  var bl=document.getElementById('back-lnk'), txt=document.getElementById('back-lnk-txt');
+  if(!bl||!onRetainers||/[?&]from=retainers/.test(window.location.search)) return;
+  bl.href='/admin/retainers'; if(txt) txt.textContent='Retainers & follow-ups';
+  Array.prototype.forEach.call(document.querySelectorAll('.admin-nav .nav-lnk'),function(a){
+    var on=a.getAttribute('href')==='/admin/retainers';
+    a.classList.toggle('active',on); if(on) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current');
+  });
+}
 function render(d){
   LAST_DETAIL=d;
+  pointBackAtList(d);
   document.getElementById('c-avatar').textContent=initials(d.name||d.leadId);
   document.getElementById('c-name').textContent=d.name||d.leadId;
   document.getElementById('c-sub').textContent=(d.serviceRequired||'—')+'  ·  '+(d.tier?('Tier '+d.tier):'')+'  ·  lead '+d.leadId;
@@ -2417,7 +2433,7 @@ router.get('/consultations', (req, res) => {
 });
 router.get('/retainers', (_req, res) => res.type('html').send(buildRetainersHTML()));
 router.get('/consultation/:leadId', (req, res) =>
-  res.type('html').send(buildDetailHTML((req.params.leadId || '').trim())));
+  res.type('html').send(buildDetailHTML((req.params.leadId || '').trim(), { from: String((req.query || {}).from || '') === 'retainers' ? 'retainers' : '' })));
 
 module.exports = router;
 module.exports.buildDetailHTML = buildDetailHTML;

@@ -248,6 +248,21 @@ test('routes (2026-11-05): /admin/retainers serves the Retainers page; the old o
   // the pages that link in point at the new page already
   assert.ok(require('../src/routes/adminLeads').buildLeadDetailHTML('7').includes("href='/admin/retainers?convertLead='"));
   assert.ok(require('../src/routes/adminCase').buildCockpitHTML('2026-TEST-001').includes("href=\"/admin/retainers?newAppFrom="));
+  // the consultation record goes back to the list the client is on (review 2026-11-05)
+  const detail = require('../src/routes/adminConsultation').buildDetailHTML;
+  const plain = detail('555'), fromRet = detail('555', { from: 'retainers' });
+  assert.ok(plain.includes('<a href="/admin/consultations" class="back-lnk" id="back-lnk">') && plain.includes('<span id="back-lnk-txt">All consultations</span>'));
+  assert.ok(fromRet.includes('<a href="/admin/retainers" class="back-lnk" id="back-lnk">') && fromRet.includes('<span id="back-lnk-txt">Retainers &amp; follow-ups</span>'));
+  assert.ok(fromRet.includes('<a href="/admin/retainers" class="nav-lnk active"') && plain.includes('<a href="/admin/consultations" class="nav-lnk active"'), 'the top bar follows');
+  assert.ok(plain.includes("var onRetainers=!!(d.directRetainer||d.retainerSent||d.retainerSigned||d.retainerPaid||String(d.outcome||'')==='Retain');"), 'opened any other way: the record itself says which list (classifyLead)');
+  assert.ok(plain.includes('  pointBackAtList(d);'));
+  const retPage = require('../src/routes/adminConsultation').buildRetainersHTML();
+  assert.ok(retPage.includes("bindRowClicks(tb,'?from=retainers');") && retPage.includes("+encodeURIComponent(res.j.leadId)+'?from=retainers'; };"), 'the Retainers rows and the new-client pop-up say where they came from');
+  assert.ok(!require('../src/routes/adminConsultation').buildQueueHTML().includes("'?from=retainers'"), 'the Consultations rows do not');
+  const dr = route('/consultation/:leadId'); const outs = {};
+  dr.route.stack[0].handle({ params: { leadId: '555' }, query: { from: 'retainers' } }, { type: () => ({ send: (h) => { outs.ret = h; } }) });
+  dr.route.stack[0].handle({ params: { leadId: '555' }, query: { from: 'junk' } }, { type: () => ({ send: (h) => { outs.junk = h; } }) });
+  assert.ok(outs.ret.includes('<span id="back-lnk-txt">Retainers &amp; follow-ups</span>') && outs.junk.includes('<span id="back-lnk-txt">All consultations</span>'));
   // the top bar has the new page
   const nav = require('../src/routes/adminShared').buildNavHeader('retainers');
   assert.ok(nav.includes('<a href="/admin/retainers" class="nav-lnk active" title="Retainers &amp; follow-ups" aria-current="page">'));

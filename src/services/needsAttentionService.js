@@ -219,7 +219,7 @@ function todoForHold(missing) {
   const m = s(missing).toLowerCase();
   const steps = [];
   if (/client signature/.test(m)) steps.push('remind the client to sign the retainer agreement');
-  if (/countersign/.test(m)) steps.push('the consultant countersigns it (Consultations page → open the client → Sign retainer as consultant)');
+  if (/countersign/.test(m)) steps.push('the consultant countersigns it (Retainers & follow-ups page → open the client → Sign retainer as consultant; a retained client: case page → Open consultation view)');
   if (!steps.length) return 'Onboarding starts by itself once the agreement is fully signed and paid. If it already is, tell an admin.';
   const joined = steps.join(', and ');
   return `${joined[0].toUpperCase()}${joined.slice(1)}. Onboarding then starts by itself.`;

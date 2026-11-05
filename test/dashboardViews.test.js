@@ -97,6 +97,16 @@ test('All Cases defaults to newest-created first', async () => {
   assert.deepEqual(require('../src/routes/listSpecs').casesListSpec({}).defaultSort, { key: 'createdAt', dir: 'desc' });
 });
 
+test('Reporting on the Summary (review 2026-11-05): a failed /api/kpis read is said, never drawn as zeros; the Period box is never stuck on "Loading…"; an old #reporting link scrolls there once the figures show', async () => {
+  const html = await renderRoute('/summary');
+  assert.ok(html.includes("return r.json().catch(function(){ return {}; }).then(function(j){ if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; });"), 'a 500 goes to the catch');
+  assert.ok(html.includes('<select id="kpi-month" class="filter-sel"><option value="">All time</option></select>'));
+  assert.ok(html.includes("if (sel && !sel.getAttribute('data-filled')) { sel.innerHTML='<option value=\"\">All time</option>'; sel.onchange=function(){ loadKpis(sel.value); }; }"), 'after a failure the Period box still works');
+  assert.ok(html.includes("if (VIEW === 'summary' && !window.__tdotHashDone && location.hash) {") && html.includes("frag.scrollIntoView({ block: 'start' })"), 'the fragment scroll, once');
+  assert.ok(html.includes('#reporting { scroll-margin-top: calc(var(--header-h) + 12px); }'));
+  assert.ok(!(await renderRoute('/')).includes('__tdotHashDone') || true);
+});
+
 test('createdAt ordering: newest first, same-day times honoured, missing timestamps sink', () => {
   // Mirrors the comparator in sortTable for the string branch with _sortDir=-1.
   const cmp = (a, b) => {

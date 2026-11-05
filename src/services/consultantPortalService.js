@@ -2163,7 +2163,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
       bad('That lead already has an open case — open the case instead of creating a direct client.');
     }
     if (existing.retainerSent && String(existing.retainerSent).trim()) {
-      bad('That lead has already been sent a retainer — open it from the Consultations page instead.');
+      bad('That lead has already been sent a retainer — open it from the Retainers & follow-ups page instead.');
     }
     // A lead that is mid-funnel must NOT be hijacked into the direct pipeline:
     // converting a booked lead corrupts the KPI funnel (booked without being a
@@ -2175,7 +2175,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
       bad('That lead has a consultation booked or held — manage it from the Consultations page instead of converting it to a direct client.');
     }
     if ([existing.retainerMilestones, existing.selectedTemplate, existing.retainerFee].some((v) => v && String(v).trim())) {
-      bad('That lead already has a retainer plan in progress — open it from the Consultations page and continue there.');
+      bad('That lead already has a retainer plan in progress — open it from the Retainers & follow-ups page and continue there.');
     }
     // The chosen lead must actually BE the person staff just typed — a stale
     // match panel (email edited after the radios rendered) or a mispick must

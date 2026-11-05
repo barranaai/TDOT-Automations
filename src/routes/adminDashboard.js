@@ -79,7 +79,7 @@ const SUMMARY_BODY_HTML = `
     <div class="sec-hd" id="reporting">📈 Reporting</div>
     <div class="rp-head">
       <p class="rp-intro">Consultations and retainers by month. Each figure counts by its own date, so one month's steps are not always the same clients.</p>
-      <div class="rp-period"><label for="kpi-month">Period</label><select id="kpi-month" class="filter-sel"><option value="">Loading…</option></select></div>
+      <div class="rp-period"><label for="kpi-month">Period</label><select id="kpi-month" class="filter-sel"><option value="">All time</option></select></div>
     </div>
     <div id="kpi-body" aria-live="polite"><div class="rp-muted">Loading the figures…</div></div>
 
@@ -739,6 +739,7 @@ function buildDashboardHTML(view = 'cases') {
     .search-box:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(30,58,95,.08); }
 
     /* ── Reporting (monthly figures) ── */
+    #reporting { scroll-margin-top: calc(var(--header-h) + 12px); }   /* under the sticky top bar when scrolled to */
     .rp-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin:0 0 12px; }
     .rp-intro { font-size:12.5px; color:#64748b; margin:0; max-width:640px; line-height:1.5; }
     .rp-period { display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:600; color:#64748b; }
@@ -1032,6 +1033,12 @@ function loadData() {
       render(data);
       document.getElementById('loading').style.display = 'none';
       document.getElementById('content').style.display = 'block';
+      /* An old Reporting link lands on #reporting: the browser could not scroll to it while #content was hidden — once, on the first load. */
+      if (VIEW === 'summary' && !window.__tdotHashDone && location.hash) {
+        window.__tdotHashDone = true;
+        var frag = document.getElementById(location.hash.slice(1));
+        if (frag) requestAnimationFrame(function() { frag.scrollIntoView({ block: 'start' }); });
+      }
       var gen = new Date(data.generatedAt);
       var scope = '';
       if (data.viewer && data.viewer.scope === 'assigned') {
@@ -1098,16 +1105,26 @@ function fillMonths(months, sel){
   el.onchange=function(){ loadKpis(el.value); };
 }
 function loadKpis(month){
-  /* The figures need the team key (the /api routes). A Monday-only sign-in sees the rest of the page; the box says what to do. */
+  /* The figures need the team key (the /api routes). The Summary page itself needs it too (loadData's getKey sends a
+     visitor without one to the sign-in page), so this branch is only a safety net for a key removed mid-session. */
   var key = peekKey();
   var body = document.getElementById('kpi-body');
-  if (!key) { body.innerHTML = '<div class="rp-muted">The monthly figures need the team key — sign in on the <a href="/admin">sign-in page</a> to see them.</div>'; return; }
+  var sel = document.getElementById('kpi-month');
+  if (!key) { body.innerHTML = '<div class="rp-muted">The monthly figures need the team key — sign in on the <a href="/admin">sign-in page</a> to see them.</div>'; if (sel) sel.disabled = true; return; }
   var m = (month===undefined) ? new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto',year:'numeric',month:'2-digit'}).format(new Date()) : month;   // the Toronto month
   body.innerHTML='<div class="rp-muted">Loading the figures…</div>';
   fetch('/api/kpis'+(m?('?month='+encodeURIComponent(m)):''),{headers:{'X-Api-Key':key}})
-   .then(function(r){ if(r.status===401||r.status===403){ throw new Error('the team key was not accepted — sign in again on the sign-in page'); } return r.json(); })
+   .then(function(r){
+     if(r.status===401||r.status===403){ throw new Error('the team key was not accepted — sign in again on the sign-in page'); }
+     /* A failed read is said — never drawn as all-zero figures (review 2026-11-05). */
+     return r.json().catch(function(){ return {}; }).then(function(j){ if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; });
+   })
    .then(function(d){ fillMonths(d.months, m); renderKpis(d); })
-   .catch(function(e){ body.innerHTML='<div class="rp-muted">The figures could not be read: '+escHtml(e.message)+'</div>'; });
+   .catch(function(e){
+     body.innerHTML='<div class="rp-muted">The figures could not be read: '+escHtml(e.message)+' — choose a period again, or reload the page.</div>';
+     /* the Period box stays usable: choosing again is the retry */
+     if (sel && !sel.getAttribute('data-filled')) { sel.innerHTML='<option value="">All time</option>'; sel.onchange=function(){ loadKpis(sel.value); }; }
+   });
 }
 
 /* ── Render all ──────────────────────────────────────────────────── */
