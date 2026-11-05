@@ -249,7 +249,7 @@ test('wiring: the booking page, the checkout, the invite, the reminders, a staff
   assert.ok(p2.includes("await require('../services/consultPriceService').ensureFresh({ reason: 'booking page' });"));
   assert.ok(p2.includes("await require('../services/consultPriceService').ensureFresh({ reason: 'checkout' });\n    const options = routing.consultOptionsFor(consultant);"));
   assert.ok(p2.indexOf("ensureFresh({ reason: 'checkout' })") < p2.indexOf("bookingService.holdSlotIfFree(leadId, slotDate, slotTime"), 'the price is settled before a slot is held');
-  assert.ok(p2.includes("if (bookingService.CONSULT_FEE_CENTS !== 0 && (!Number.isInteger(quotedFee) || quotedFee !== Number(option.feeCents))) {"), 'a missing quote is refused too');
+  assert.ok(p2.includes("if (bookingService.CONSULT_FEE_CENTS !== 0 && (!Number.isInteger(quotedFee) || quotedFee !== Number(option.feeCents) || quotedTax !== taxPctNow)) {"), 'a missing quote, a changed price or a changed HST is refused');
   assert.ok(p2.includes("consultPrices: require('../services/consultPriceService').summary(),"));
   const bs = src('../src/services/bookingService.js');
   assert.ok(bs.includes("await require('./consultPriceService').ensureFresh({ reason: 'booking invite' });"));
@@ -295,7 +295,7 @@ test('the booking page shows and the checkout charges Square\'s price (end to en
     assert.equal(sq.calls.length, 1);
     await new Promise((resolve, reject) => {
       const res = { type() { return this; }, status() { return this; }, send: resolve, redirect: resolve };
-      phase2.handle({ method: 'POST', url: '/book/700?t=tok', params: { leadId: '700' }, query: { t: 'tok' }, headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: { slotDate: '2026-12-01', slotTime: '10:00', durationMin: '30', meetingType: 'Virtual', quotedFeeCents: '32500' } }, res, reject);
+      phase2.handle({ method: 'POST', url: '/book/700?t=tok', params: { leadId: '700' }, query: { t: 'tok' }, headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: { slotDate: '2026-12-01', slotTime: '10:00', durationMin: '30', meetingType: 'Virtual', quotedFeeCents: '32500', quotedTaxPct: '13' } }, res, reject);
     });
     assert.ok(checkout, 'a checkout was created');
     assert.equal(checkout.amount, 32500, 'charged at Square\'s price');
@@ -304,6 +304,7 @@ test('the booking page shows and the checkout charges Square\'s price (end to en
     assert.deepEqual([stored.durationMin, stored.feeCents, stored.variationId], [30, 32500, SH30], 'the booking keeps the price it was charged');
     assert.match(page, /name="durationChoice" value="30" data-fee="32500" checked/, 'the page posts the price it showed with the choice');
     assert.match(page, /name="quotedFeeCents" id="quotedFeeCents"/);
+    assert.match(page, /name="quotedTaxPct" value="13"/, 'the page vouches for the HST it showed too');
     // the price changes in Square after the page was shown: the click charges nothing and sends the client back
     sq.restore();
     const sq2 = square({ objects: [variation(SH30, 34000), variation(SH45, 45000, { minutes: 45 }), variation(SE30, 12000), variation(SE15, 6000, { minutes: 15 })] });
@@ -314,7 +315,7 @@ test('the booking page shows and the checkout charges Square\'s price (end to en
       checkout = null; writes.length = 0;
       const out = await new Promise((resolve, reject) => {
         const res = { type() { return this; }, status(c) { res.code = c; return this; }, send: (h) => resolve({ code: res.code, html: h }), redirect: (u) => resolve({ redirect: u }) };
-        phase2.handle({ method: 'POST', url: '/book/700?t=tok', params: { leadId: '700' }, query: { t: 'tok' }, headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: { slotDate: '2026-12-01', slotTime: '10:00', durationMin: '30', meetingType: 'Virtual', quotedFeeCents: '32500' } }, res, reject);
+        phase2.handle({ method: 'POST', url: '/book/700?t=tok', params: { leadId: '700' }, query: { t: 'tok' }, headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: { slotDate: '2026-12-01', slotTime: '10:00', durationMin: '30', meetingType: 'Virtual', quotedFeeCents: '32500', quotedTaxPct: '13' } }, res, reject);
       });
       assert.equal(out.code, 409);
       assert.match(out.html, /Please review the consultation fee/); assert.match(out.html, /Nothing has been charged/);
@@ -435,4 +436,48 @@ test('round 2: the booking page is never served from the browser’s history (no
     delete process.env.CONSULT_PRICES_FROM_SQUARE;
     assert.equal(prices.enabled(), true, 'the real server reads Square');
   } finally { process.env.NODE_TEST_CONTEXT = ctx; process.argv[1] = argv1; }
+}));
+
+test('round 3: the lead’s creation day is read in Toronto time for the former-rate bound (an evening lead on the last day still had the old rate); the HST the page showed must still apply at the click', withEnv(ON, async () => {
+  const sq = square();
+  const W = reconcileWorld();
+  const prev = process.env.CONSULT_FORMER_RATES_UNTIL;
+  process.env.CONSULT_FORMER_RATES_UNTIL = '2026-11-06';
+  delete require.cache[require.resolve('../config/consultantRouting')];
+  try {
+    await prices.refresh({ force: true });
+    // created 2026-11-06 20:30 Toronto = 2026-11-07T01:30Z: still a lead of the last day → the old 45-min link is possible → asked
+    await W.bookingService.reconcileConsultOptionWithPayment(W.lead({ createdAt: '2026-11-07T01:30:00Z' }), 33900);
+    assert.equal(W.notes.length, 1, 'asked, not silently booked as 30 minutes');
+    assert.equal(JSON.parse(W.writes.pop().consultOption).provisional, true);
+    // created 2026-11-07 00:30 Toronto = 05:30Z: a next-day lead → today's 30-min price, no question
+    await W.bookingService.reconcileConsultOptionWithPayment(W.lead({ createdAt: '2026-11-07T05:30:00Z' }), 33900);
+    assert.equal(W.notes.length, 1);
+    assert.equal(JSON.parse(W.writes.pop().consultOption).provisional, undefined);
+  } finally {
+    W.restore.forEach((x) => x()); sq.restore();
+    if (prev == null) delete process.env.CONSULT_FORMER_RATES_UNTIL; else process.env.CONSULT_FORMER_RATES_UNTIL = prev;
+    delete require.cache[require.resolve('../config/consultantRouting')]; require('../config/consultantRouting');
+  }
+  // the tax: a client outside Canada saw "$300.00 CAD"; the country is corrected to Canada while the page is open → back to the page
+  const sq2 = square();
+  const phase2 = require('../src/routes/phase2');
+  const bookingService = require('../src/services/bookingService');
+  const leadService = require('../src/services/leadService');
+  let held = 0, checkout = null;
+  const restore = [
+    stub(require('../src/services/leadTokenService'), 'validateToken', async () => true),
+    stub(leadService, 'getLead', async () => ({ id: '700', fullName: 'Pay Test', serviceRequired: 'PNP or OINP', country: 'Canada', bookingStatus: '' })),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(bookingService, 'holdSlotIfFree', async () => { held++; return { ok: true }; }),
+    stub(bookingService, 'createCheckout', async (a) => { checkout = a; return { url: 'x', orderId: 'o' }; }),
+  ];
+  try {
+    await prices.refresh({ force: true });
+    const out = await new Promise((resolve, reject) => {
+      const res = { type() { return this; }, status(c) { res.code = c; return this; }, send: (h) => resolve({ code: res.code, html: h }), redirect: (u) => resolve({ redirect: u }) };
+      phase2.handle({ method: 'POST', url: '/book/700?t=tok', params: { leadId: '700' }, query: { t: 'tok' }, headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: { slotDate: '2026-12-01', slotTime: '10:00', durationMin: '30', meetingType: 'Virtual', quotedFeeCents: '30000', quotedTaxPct: '0' } }, res, reject);
+    });
+    assert.equal(out.code, 409); assert.equal(held, 0); assert.equal(checkout, null);
+  } finally { restore.forEach((x) => x()); sq2.restore(); }
 }));

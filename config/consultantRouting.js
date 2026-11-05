@@ -48,7 +48,7 @@ const CONSULTANTS = {
     // that rate could have been issued (`until`, Toronto date): a client can still
     // pay such a link after the change, and it must still name its option — but
     // only for a lead that existed then. (Set CONSULT_FORMER_RATES_UNTIL to the
-    // day this change went live to tighten the date.)
+    // TORONTO day this change went live to tighten the date.)
     consultOptions: [
       { durationMin: 30, feeCents: 30000, formerRates: [{ cents: 20000, until: FORMER_RATES_UNTIL }], variationId: 'TMJIRVYQUD76E7A3YGXSEOQ5', default: true },
       { durationMin: 45, feeCents: 45000, formerRates: [{ cents: 30000, until: FORMER_RATES_UNTIL }], variationId: 'Z2XFERF43EO567YZGX4Y5WDL' },

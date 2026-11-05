@@ -851,7 +851,8 @@ async function reconcileConsultOptionWithPayment(lead, paidCents) {
   // between the quote and the payment), or a FORMER rate — only for a lead that existed
   // while that rate could still be quoted — names its option (2026-11-05). The fee recorded
   // is the fee the client PAID (pre-tax), never today's price.
-  const leadDay = String(lead.createdAt || '').slice(0, 10);
+  // The lead's creation day in TORONTO (Monday's created_at is UTC; `until` is a Toronto date).
+  const leadDay = lead.createdAt ? require('../utils/torontoTime').torontoDay(lead.createdAt) : '';
   const formerFor = (o) => (o.formerRates || []).filter((r) => !leadDay || leadDay <= String(r.until || '')).map((r) => r.cents);
   const candidates = routing.consultOptionsFor(consultant)
     .map((o) => ({ option: o, feeCents: prices.knownFeesFor(o.variationId, o.listFeeCents || o.feeCents, formerFor(o)).find(matchesFee) }))

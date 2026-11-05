@@ -244,9 +244,11 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
     const option = options.find((o) => o.durationMin === wantedDur)
       || options.find((o) => o.default) || options[0];
     const quotedFee = parseInt(req.body.quotedFeeCents, 10);
-    if (bookingService.CONSULT_FEE_CENTS !== 0 && (!Number.isInteger(quotedFee) || quotedFee !== Number(option.feeCents))) {
+    const quotedTax = parseInt(req.body.quotedTaxPct, 10);
+    const taxPctNow = bookingService.consultHstPctForLead(lead);   // the HST the page showed must still apply (the country may have been corrected since)
+    if (bookingService.CONSULT_FEE_CENTS !== 0 && (!Number.isInteger(quotedFee) || quotedFee !== Number(option.feeCents) || quotedTax !== taxPctNow)) {
       // No quote at all = a page served before this version (its prices may be old): back to the page too.
-      console.warn(`[Book] lead ${leadId}: the page showed ${Number.isInteger(quotedFee) ? `$${(quotedFee / 100).toFixed(2)}` : 'no price it can vouch for'} for ${option.durationMin} min but the price is now $${(option.feeCents / 100).toFixed(2)} — sent back to the page, nothing charged`);
+      console.warn(`[Book] lead ${leadId}: the page showed ${Number.isInteger(quotedFee) ? `$${(quotedFee / 100).toFixed(2)} + ${Number.isInteger(quotedTax) ? quotedTax : '?'}% HST` : 'no price it can vouch for'} for ${option.durationMin} min but the price is now $${(option.feeCents / 100).toFixed(2)} + ${taxPctNow}% HST — sent back to the page, nothing charged`);
       return res.status(409).type('html').send(buildPriceChangedHtml(leadId, req.query.t));
     }
 
@@ -475,7 +477,7 @@ function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
     <p style="margin:0;opacity:0.85;font-size:14px;">${consultant && consultant.name ? `Your consultation will be with <b>${consultant.name}</b>. ` : ''}Choose a time that works for you.</p></div>
     <form class="card" method="POST" action="/book/${lead.id}?t=${encodeURIComponent(token)}" onsubmit="return prep(event)">
       <input type="hidden" name="slotDate" id="slotDate"><input type="hidden" name="slotTime" id="slotTime">
-      <input type="hidden" name="meetingType" id="meetingType"><input type="hidden" name="durationMin" id="durationMin"><input type="hidden" name="quotedFeeCents" id="quotedFeeCents" value="${multiDuration ? '' : (Number((sets[0] || {}).feeCents) || '')}">
+      <input type="hidden" name="meetingType" id="meetingType"><input type="hidden" name="durationMin" id="durationMin"><input type="hidden" name="quotedFeeCents" id="quotedFeeCents" value="${multiDuration ? '' : (Number((sets[0] || {}).feeCents) || '')}"><input type="hidden" name="quotedTaxPct" value="${leadHstPct}">
       <div class="mtype" id="mtype-box">
         <div class="mtype-q">How would you like to meet? <span style="color:${BRAND.primary}">*</span></div>
         <label class="mtype-opt"><input type="radio" name="meetingTypeChoice" value="Virtual" required>
