@@ -285,3 +285,21 @@ test('Sign Out forgets every list’s saved filters (a search holds a client’s
   vm.runInContext(SHARED_AUTH_JS + '; signOut();', ctx);
   assert.deepEqual(Object.keys(store), ['tdot_fam_add_x'], 'the key and the filters are gone; other tab state (a family add in progress) stays');
 });
+
+test('review 2026-11-05: a saved outcome button that no longer exists (a renamed outcome) is dropped on restore — the list never sits empty with no button pressed', () => {
+  const LT = listCore(S.retainerListSpec({ outcomes: OUTCOME_LABELS, today: () => '' }));
+  assert.equal(LT.normalizeState({ sel: { outcome: ['Follow Up'] } }).sel.outcome, undefined);
+  assert.deepEqual(LT.normalizeState({ sel: { outcome: ['Follow Up', 'Newsletter'] } }).sel.outcome, ['Newsletter']);
+  assert.deepEqual(LT.normalizeState({ sel: { stage: ['Gone stage'] } }).sel.stage, ['Gone stage'], 'an open list keeps its value (it shows ticked, with 0, and can be unticked)');
+});
+
+test('review 2026-11-05: Sign Out stops a list read still running from saving the filters again; the Cases normal order can always be brought back', () => {
+  const { SHARED_AUTH_JS } = require('../src/routes/adminShared');
+  const { listTableUi } = require('../src/routes/listFilters');
+  assert.ok(SHARED_AUTH_JS.indexOf('window.TDOT_SIGNED_OUT = true;') < SHARED_AUTH_JS.indexOf('forgetLists();'));
+  assert.ok(SHARED_AUTH_JS.includes('function leave() { if (!gone) { gone = true; forgetLists(); window.location.replace'));
+  assert.ok(listTableUi.toString().includes('function save() { if (win.TDOT_SIGNED_OUT) return;'));
+  assert.ok(require('../src/routes/adminConsultation').buildQueueHTML().includes("function ssSet(k,v){ if(window.TDOT_SIGNED_OUT) return;"));
+  assert.equal(S.casesListOpts({}).sortReset, 'newest case first');
+  assert.equal(S.consultListOpts({}).countable, 'consultCountable');
+});

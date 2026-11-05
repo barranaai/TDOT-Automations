@@ -58,7 +58,13 @@ function listCore(spec) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(s(x.to))) st.to = s(x.to);
     }
     var sel = x.sel || {};
-    Object.keys(FACETS).forEach(function (f) { if (Array.isArray(sel[f]) && sel[f].length) st.sel[f] = sel[f].map(s).filter(Boolean).slice(0, 50); });
+    Object.keys(FACETS).forEach(function (f) {
+      if (!Array.isArray(sel[f]) || !sel[f].length) return;
+      var vals = sel[f].map(s).filter(Boolean).slice(0, 50);
+      /* A quick facet's buttons are a fixed list: a saved value that is no longer on it (a renamed outcome) is dropped. */
+      if (FACETS[f].quick && FACETS[f].order) vals = vals.filter(function (v) { return FACETS[f].order.indexOf(v) >= 0; });
+      if (vals.length) st.sel[f] = vals;
+    });
     if (x.sort && SORTS[x.sort.key]) st.sort = { key: x.sort.key, dir: x.sort.dir === 'asc' ? 'asc' : 'desc' };
     return st;
   }
@@ -152,7 +158,7 @@ function listCore(spec) {
     return next;
   }
 
-  return { NONE: NONE, FACETS: FACETS, FLAGS: FLAGS, DATE: DATE, emptyState: emptyState, normalizeState: normalizeState, passes: passes,
+  return { NONE: NONE, FACETS: FACETS, FLAGS: FLAGS, DATE: DATE, DEFAULT_SORT: DEFAULT_SORT, emptyState: emptyState, normalizeState: normalizeState, passes: passes,
     filterRows: filterRows, facetCounts: facetCounts, sortRows: sortRows, presetRange: presetRange, chips: chips, clearKey: clearKey, clearAll: clearAll, range: range,
     valuesOf: valuesOf, labelOf: labelOf };
 }
@@ -160,7 +166,9 @@ function listCore(spec) {
 /**
  * o: { key: sessionStorage key, ids: { head, chips, count, search, pop }, cols: [...], render: window function name,
  *      api: window name for { setRows, state, apply }, initial(state) (e.g. a link's choice), onChange(state) (a person changed something),
- *      quick: { facet, box, label, all, values: [...], hints: {} } (buttons above the table), countText(shown, total) }
+ *      quick: { facet, box, label, all, values: [...], hints: {} } (buttons above the table), countText(shown, total),
+ *      countable: window function name (r) -> boolean — only these rows are counted beside the choices (Consultations: the date range),
+ *      sortReset: 'newest case first' — the list's normal order has no column, so a column sort shows as a chip whose × goes back to it }
  * A column: { id, label, title, menu, facets: [...], flags: [...], date: true, note, sort, sortText: [..], sortDirs: [first, second] }
  */
 function listTableUi(LT, o, win) {
@@ -175,7 +183,9 @@ function listTableUi(LT, o, win) {
   pop.classList.add('lt-pop');
   function esc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function col(id) { for (var i = 0; i < COLS.length; i++) if (COLS[i].id === id) return COLS[i]; return null; }
-  function save() { try { win.sessionStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* not kept — fine */ } }
+  function save() { if (win.TDOT_SIGNED_OUT) return; try { win.sessionStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* not kept — fine */ } }
+  /* The rows the counts beside the choices are taken from (Consultations: only the date range on view, with its two folds). */
+  function countRows() { return o.countable && typeof win[o.countable] === 'function' ? ROWS.filter(function (r) { return win[o.countable](r); }) : ROWS; }
   function hasPanel(c) { return !!((c.facets && c.facets.length) || (c.flags && c.flags.length) || c.date); }
   function activeCount(c) {
     var n = 0;
@@ -210,36 +220,51 @@ function listTableUi(LT, o, win) {
     });
     Array.prototype.forEach.call(tr.querySelectorAll('[data-sortcol]'), function (b) {
       b.onclick = function () {
-        var c = col(b.getAttribute('data-sortcol')), dirs = c.sortDirs || ['asc', 'desc'];
+        var sid = b.getAttribute('data-sortcol'), c = col(sid), dirs = c.sortDirs || ['asc', 'desc'];
         var dir = sortedBy(c) ? (state.sort.dir === dirs[0] ? dirs[1] : dirs[0]) : dirs[0];   // first click: the column's natural order; again: the other way
+        close(false);   /* a filter panel open: closed by this click (the press does not close it — it would rebuild the header under the click) */
         state.sort = { key: c.sort, dir: dir }; apply('sort');
+        var tr2 = doc.getElementById(ids.head), again = tr2 && tr2.querySelector('[data-sortcol="' + sid + '"]'); if (again) again.focus();
       };
     });
     if (focusSort) { var again = tr.querySelector('[data-sortcol="' + focusSort + '"]'); if (again) again.focus(); }   // keyboard: stay on the column
   }
 
   function countText(shown, total) { return o.countText ? o.countText(shown, total) : '(' + shown + (shown !== total ? ' of ' + total : '') + ')'; }
+  /* The list's normal order has no column (Cases: newest case first): a column sort shows as a chip; its × goes back. */
+  function sortChip() {
+    var d = LT.DEFAULT_SORT, st = state.sort;
+    if (!o.sortReset || !d || !st || (st.key === d.key && st.dir === d.dir)) return '';
+    var c = null; for (var i = 0; i < COLS.length; i++) if (COLS[i].sort === st.key) c = COLS[i];
+    if (!c) return '';
+    var t = 'Sorted: ' + c.label + ' (' + c.sortText[Math.max(0, (c.sortDirs || []).indexOf(st.dir))] + ')';
+    return '<span class="q-chip q-chip-sort">' + esc(t) + '<button type="button" data-sortreset="1" aria-label="Back to the normal order: ' + esc(o.sortReset) + '" title="Back to ' + esc(o.sortReset) + '">×</button></span>';
+  }
   function renderChips(shown, total) {
-    var box = doc.getElementById(ids.chips), list = LT.chips(state), cnt = doc.getElementById(ids.count);
+    var box = doc.getElementById(ids.chips), list = LT.chips(state), cnt = doc.getElementById(ids.count), sc = sortChip();
     if (cnt) cnt.textContent = countText(shown, total);
     if (!box) return;
-    if (!list.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
+    if (!list.length && !sc) { box.innerHTML = ''; box.style.display = 'none'; return; }
     box.style.display = '';
-    box.innerHTML = list.map(function (c) {
+    box.innerHTML = sc + list.map(function (c) {
       return '<span class="q-chip">' + esc(c.text) + '<button type="button" data-chip="' + esc(c.key) + '" aria-label="Remove filter: ' + esc(c.text) + '">×</button></span>';
-    }).join('') + '<button type="button" class="q-clearall" data-clearall="1">Clear filters</button>';
+    }).join('') + (list.length ? '<button type="button" class="q-clearall" data-clearall="1">Clear filters</button>' : '');
+    var rs = box.querySelector('[data-sortreset]');
+    if (rs) rs.onclick = function () { state.sort = { key: LT.DEFAULT_SORT.key, dir: LT.DEFAULT_SORT.dir }; apply('sort'); };
     Array.prototype.forEach.call(box.querySelectorAll('[data-chip]'), function (b) {
       b.onclick = function () { LT.clearKey(state, b.getAttribute('data-chip')); if (b.getAttribute('data-chip') === 'q') setSearch(''); apply('filter'); };
     });
-    box.querySelector('[data-clearall]').onclick = function () { state = LT.clearAll(state); setSearch(''); close(false); apply('filter'); var s = doc.getElementById(ids.search); if (s) s.focus(); };
+    var ca = box.querySelector('[data-clearall]');
+    if (ca) ca.onclick = function () { state = LT.clearAll(state); setSearch(''); close(false); apply('filter'); var s = doc.getElementById(ids.search); if (s) s.focus(); };
   }
 
   /* Buttons above the table for one facet (Retainers: the outcomes) — counts from the other filters; none on = all. */
   function renderQuick() {
     var q = o.quick; if (!q) return;
     var box = doc.getElementById(q.box); if (!box) return;
-    var counts = {}; LT.facetCounts(ROWS, state, q.facet).forEach(function (x) { counts[x.value] = x.count; });
-    var base = ROWS.filter(function (r) { return LT.passes(r, state, q.facet); }).length, sel = state.sel[q.facet] || [];
+    var CR = countRows();
+    var counts = {}; LT.facetCounts(CR, state, q.facet).forEach(function (x) { counts[x.value] = x.count; });
+    var base = CR.filter(function (r) { return LT.passes(r, state, q.facet); }).length, sel = state.sel[q.facet] || [];
     var focusV = doc.activeElement && box.contains(doc.activeElement) ? doc.activeElement.getAttribute('data-quick') : null;
     function btn(v, label, count, on) { return '<button type="button" data-quick="' + esc(v) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' + (count ? '' : ' class="zero"') + (q.hints && q.hints[v] ? ' title="' + esc(q.hints[v]) + '"' : '') + '>' + esc(label) + ' <span class="qn">' + count + '</span></button>'; }
     box.innerHTML = (q.label ? '<span class="ql">' + esc(q.label) + '</span>' : '') + btn('', q.all || 'All', base, !sel.length)
@@ -259,7 +284,7 @@ function listTableUi(LT, o, win) {
   function apply(why) {
     var rows = LT.sortRows(LT.filterRows(ROWS, state), state.sort);
     /* h.without(f): how many rows pass every filter except f (an empty list can say why it is empty) */
-    var h = { total: ROWS.length, without: function (f) { return ROWS.filter(function (r) { return LT.passes(r, state, f); }).length; } };
+    var h = { total: ROWS.length, without: function (f) { return countRows().filter(function (r) { return LT.passes(r, state, f); }).length; } };
     var out = win[o.render](rows, why || 'filter', state, h);
     var shown = rows.length, total = ROWS.length;
     if (typeof out === 'number') shown = out;
@@ -284,7 +309,7 @@ function listTableUi(LT, o, win) {
     if (c.flags && c.flags.length) {
       h += '<div class="qp-sec">' + c.flags.map(function (k) {
         return '<label class="qp-row"><input type="checkbox" data-flag="' + k + '"' + (state[k] ? ' checked' : '') + '> <span>' + esc(LT.FLAGS[k].chip) + '</span>'
-          + '<span class="qp-c">' + ROWS.filter(function (r) { return LT.FLAGS[k].test(r) && LT.passes(r, state, k); }).length + '</span></label>';
+          + '<span class="qp-c">' + countRows().filter(function (r) { return LT.FLAGS[k].test(r) && LT.passes(r, state, k); }).length + '</span></label>';
       }).join('') + (c.note ? '<div class="qp-note">' + esc(c.note) + '</div>' : '') + '</div>';
     }
     if (c.date) {
@@ -298,7 +323,7 @@ function listTableUi(LT, o, win) {
         + '<div class="qp-note">Both days included, Toronto time.</div></div>';
     }
     (c.facets || []).forEach(function (f) {
-      var opts = LT.facetCounts(ROWS, state, f), sel = state.sel[f] || [];
+      var opts = LT.facetCounts(countRows(), state, f), sel = state.sel[f] || [];
       h += '<div class="qp-sec" data-facet="' + f + '">' + ((c.facets.length > 1 || c.sort || (c.flags && c.flags.length)) ? '<div class="qp-t">' + esc(LT.FACETS[f].label) + '</div>' : '')
         + (opts.length > 8 ? '<input type="search" class="qp-find" data-find="' + f + '" placeholder="Find…" aria-label="Find a ' + esc(LT.FACETS[f].label) + '">' : '')
         + '<div class="qp-list">' + (opts.length ? opts.map(function (x) {
@@ -365,6 +390,7 @@ function listTableUi(LT, o, win) {
     pop.style.maxHeight = Math.max(200, win.innerHeight - r.bottom - 18) + 'px';
   }
   function open(id) {
+    try { doc.dispatchEvent(new CustomEvent('tdot-list-open', { detail: KEY })); } catch (e) { /* old browser: the outside press closes it */ }
     openCol = id; renderHead();
     openBtn = headBtn(id);
     pop.style.display = 'flex';
@@ -384,9 +410,12 @@ function listTableUi(LT, o, win) {
     if (e.key === 'Escape' && openCol && !e.defaultPrevented) { e.preventDefault(); close(true); }
   });
   doc.addEventListener('tdot-dialog-open', function () { close(false); });
+  doc.addEventListener('tdot-list-open', function (e) { if (!e || e.detail !== KEY) close(false); });   /* another list's panel opened */
   doc.addEventListener('mousedown', function (e) {
     if (!openCol) return;
-    if (pop.contains(e.target) || (e.target.closest && e.target.closest('.th-f'))) return;
+    var tr = doc.getElementById(ids.head);
+    /* this list's own funnels and column names handle the press themselves (a name closes the panel in its click) */
+    if (pop.contains(e.target) || (tr && tr.contains(e.target) && e.target.closest && e.target.closest('.th-f, [data-sortcol]'))) return;
     close(false);
   });
   win.addEventListener('resize', function () { if (openCol) place(); });
@@ -417,6 +446,8 @@ const LIST_TABLE_CSS = `
   .q-chip { display:inline-flex; align-items:center; gap:4px; background:#eef2ff; color:#3730a3; border:1px solid #e0e7ff; border-radius:999px; padding:3px 4px 3px 11px; font-size:12px; font-weight:600; max-width:100%; }
   .q-chip button { border:none; background:transparent; color:#4f46e5; font-size:15px; line-height:1; width:22px; height:22px; border-radius:50%; cursor:pointer; }
   .q-chip button:hover, .q-chip button:focus-visible { background:#e0e7ff; outline:none; }
+  .q-chip-sort { background:#f8fafc; color:#334155; border-color:#e2e8f0; }
+  .q-chip-sort button { color:#64748b; }
   .q-clearall { border:none; background:none; color:#64748b; font:inherit; font-size:12px; font-weight:700; cursor:pointer; padding:4px 6px; text-decoration:underline; }
   .q-clearall:hover { color:var(--navy); }
   .tbl-wrap { overflow-x:auto; }

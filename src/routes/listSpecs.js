@@ -40,6 +40,7 @@ function consultListOpts(ctx) {
     key: 'tdot_list_consultations',
     ids: { head: 'cq-headrow', chips: 'cq-chips', count: 'cq-count', search: 'cq-search', pop: 'cq-pop' },
     render: 'renderConsultList', api: 'ConsultTable',
+    countable: 'consultCountable',   // the counts beside the choices: only the date range on view (and its two folds)
     cols: [
       { id: 'time', label: 'Time' },
       { id: 'client', label: 'Client' },
@@ -138,6 +139,7 @@ function casesListOpts(ctx) {
     key: 'tdot_list_cases',
     ids: { head: 'cs-headrow', chips: 'cs-chips', count: 'table-count', search: 'search-box', pop: 'cs-pop' },
     render: 'renderCasesList', api: 'CasesTable',
+    sortReset: 'newest case first',   // no column sorts by the creation time: a column sort shows as a chip whose × goes back
     countText: function (shown, total) { return shown + (shown !== total ? ' of ' + total : '') + ' case' + (total !== 1 ? 's' : ''); },
     cols: [
       { id: 'caseRef', label: 'Case Ref', sort: 'caseRef', sortText: AZ, sortDirs: ASC },

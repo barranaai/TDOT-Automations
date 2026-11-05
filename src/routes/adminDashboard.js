@@ -990,7 +990,11 @@ function loadData() {
           throw new Error('Unauthorized');
         });
       }
-      return r.json();
+      /* Any other failed read is said — never drawn as an empty list over the filters on screen (2026-11-05). */
+      return r.json().catch(function() { return {}; }).then(function(j) {
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        return j;
+      });
     })
     .then(function(data) {
       _data = data;
@@ -1566,7 +1570,8 @@ function renderAtRisk(cases) {
 // filters, the sort AND the page stay as they were — the list never shows every
 // case while a filter is still on screen.
 function initAllCasesTable(data) {
-  CasesTable.setRows(data.cases || []);
+  if (!data || !Array.isArray(data.cases)) throw new Error('the case list did not come back');   // the rows on screen stay
+  CasesTable.setRows(data.cases);
 }
 // The shared engine hands over the filtered, sorted cases. A new filter or sort
 // goes back to page 1; new data keeps the page (pulled back if the list shrank).

@@ -684,11 +684,12 @@ function lsGet(k){ try { return localStorage.getItem(k)||''; } catch(e){ return 
 function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
 /* Filters (the date range too) are kept only until this browser tab is closed (Faran 2026-11-05); Sign Out forgets them. */
 function ssGet(k){ try { return sessionStorage.getItem(k)||''; } catch(e){ return ''; } }
-function ssSet(k,v){ try { sessionStorage.setItem(k,v); } catch(e){} }
+function ssSet(k,v){ if(window.TDOT_SIGNED_OUT) return; try { sessionStorage.setItem(k,v); } catch(e){} }
 var KPIS_LOADED=false;
 function setTab(t,push){
   if(['consultations','retainers','reporting'].indexOf(t)<0) t='consultations';
   TAB=t; lsSet('tdot_consult_tab',t);
+  if(window.ConsultTable) ConsultTable.close(); if(window.RetainerTable) RetainerTable.close();   /* no filter panel left open over another tab */
   Array.prototype.forEach.call(document.querySelectorAll('.tab[data-tab]'),function(b){ var on=b.getAttribute('data-tab')===t; b.classList.toggle('active',on); b.setAttribute('aria-selected',on?'true':'false'); });
   ['consultations','retainers','reporting'].forEach(function(x){ var el=document.getElementById('tab-'+x); if(el){ if(x===t) el.removeAttribute('hidden'); else el.setAttribute('hidden',''); } });
   if(push){ try { var u=new URL(window.location.href); u.searchParams.set('tab',t); history.replaceState(null,'',u.toString()); } catch(e){} }
@@ -712,6 +713,8 @@ function shiftRange(n){
    over the rows that pass; they split into three lists, each row in one: no date / needs an outcome (the
    consultation day has passed, nothing recorded) / the date range. The count is the range list's. */
 function consultBucket(r,t){ var d=String(r.bookedSlot||'').slice(0,10); if(!dParts(d)) return 'nodate'; if(d<t && !r.outcome) return 'needs'; return inRange(r.bookedSlot)?'main':''; }
+/* The counts beside the header choices: the rows a tick can show — the date range plus the two folds (never other dates). */
+function consultCountable(r){ return consultBucket(r,todayStr())!==''; }
 function renderConsultList(keep){
   var t=todayStr();
   var noDate=keep.filter(function(r){ return consultBucket(r,t)==='nodate'; });
