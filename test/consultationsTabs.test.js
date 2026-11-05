@@ -268,6 +268,16 @@ test('routes (2026-11-05): /admin/retainers serves the Retainers page; the old o
   assert.equal(listFor({ bookingStatus: 'Booked', bookedSlot: '2026-11-03 10:00', outcome: 'Follow-Up' }, now), 'retainers', 'a consultation that happened, Follow-Up set');
   assert.equal(listFor({ bookingStatus: 'Booked', bookedSlot: '2026-11-03 10:00' }, now), 'consultations', 'happened, no outcome yet (Needs outcome)');
   assert.equal(listFor({ bookingStatus: 'Not Yet', bookingInvite: 'Sent' }, now), 'leads', 'not booked: the lead page');
+  // the day-of flow: consultation today, outcome set today → on Retainers at once (the board's rule) — the record read carries the time too
+  assert.equal(listFor({ bookingStatus: 'Booked', bookedSlot: '2026-11-05 09:00', outcome: 'Follow-Up', outcomeChangedAt: '2026-11-05T14:30:00Z' }, now), 'retainers');
+  assert.equal(listFor({ bookingStatus: 'Booked', bookedSlot: '2026-11-05 09:00', outcome: 'Follow-Up', outcomeChangedAt: '2026-11-04T14:30:00Z' }, now), 'consultations', 'an outcome left from an earlier day: still today\'s list');
+  const { parseItem } = require('../src/services/leadService');
+  const OC = require('../src/data/newLeadsBoard.json').columns.outcome;
+  assert.equal(parseItem({ id: '1', name: 'X', column_values: [{ id: OC, text: 'Follow-Up', value: JSON.stringify({ index: 2, changed_at: '2026-11-05T14:30:00.000Z' }) }] }).outcomeChangedAt, '2026-11-05T14:30:00.000Z', 'every lead read carries when the Outcome was set');
+  assert.equal(parseItem({ id: '1', name: 'X', column_values: [{ id: OC, text: '', value: null }] }).outcomeChangedAt, '');
+  assert.equal(parseItem({ id: '1', name: 'X', column_values: [{ id: OC, text: 'Retain', value: '{not json' }] }).outcomeChangedAt, '', 'an unreadable value: unknown');
+  const svcSrc = fs.readFileSync(require.resolve('../src/services/leadSnapshot'), 'utf8');
+  assert.ok(!svcSrc.includes('JSON.parse(oc.value).changed_at'), 'one place: parseItem');
   const retPage = require('../src/routes/adminConsultation').buildRetainersHTML();
   assert.ok(retPage.includes("bindRowClicks(tb,'?from=retainers');") && retPage.includes("+encodeURIComponent(res.j.leadId)+'?from=retainers'; };"), 'the Retainers rows and the new-client pop-up say where they came from');
   assert.ok(!require('../src/routes/adminConsultation').buildQueueHTML().includes("'?from=retainers'"), 'the Consultations rows do not');

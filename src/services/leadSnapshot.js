@@ -76,14 +76,7 @@ const io = {
       const page = data?.boards?.[0]?.items_page;
       if (!page) throw new Error('the Lead Board could not be read');
       for (const it of page.items || []) {
-        const lead = leadService.parseItem(it);
-        // When the Outcome was last set — Monday's changed_at on the status value
-        // (the Consultations page tells today's outcome from one left by an earlier
-        // consultation). Here only, not in parseItem: no other reader needs it.
-        const oc = (it.column_values || []).find((cv) => cv.id === COLS.outcome);
-        let at = '';
-        try { at = String((oc && oc.value && JSON.parse(oc.value).changed_at) || ''); } catch (_) { /* unreadable value — unknown */ }
-        lead.outcomeChangedAt = at;
+        const lead = leadService.parseItem(it);   // incl. outcomeChangedAt (when the Outcome was last set — the lists' "today" rule)
         // The lists are lists, not records: the copy keeps whether the client HAS an email
         // (the "No email" markers, 2026-11-04) — never the address.
         lead.hasEmail = !!String(lead.email || '').trim();

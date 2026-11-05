@@ -349,6 +349,13 @@ function parseItem(item) {
   // but never to the "Unnamed Lead" placeholder (handoff should fail loudly
   // for those rather than create a junk-named case + folder).
   if (!lead.fullName && item.name !== 'Unnamed Lead') lead.fullName = item.name;
+  // When the Outcome was last set — Monday's changed_at on the status value. The lists tell today's
+  // outcome from one left by an earlier consultation with it, and so does the consultation record
+  // (its way back to the right list, 2026-11-05) — one place, so a lead read anywhere carries it.
+  const oc = (item.column_values || []).find((cv) => cv.id === COLS.outcome);
+  let outcomeAt = '';
+  try { outcomeAt = String((oc && oc.value && JSON.parse(oc.value).changed_at) || ''); } catch (_) { /* unreadable value — unknown */ }
+  lead.outcomeChangedAt = outcomeAt;
   return lead;
 }
 
