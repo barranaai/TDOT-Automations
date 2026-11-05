@@ -345,6 +345,13 @@ const SHARED_AUTH_JS = `
   function signOut() {
     sessionStorage.removeItem('tdot_admin_key');
     try { localStorage.removeItem('tdot_admin_key_keep'); } catch (e) {}
+    /* The lists' saved filters go too (2026-11-05): a search holds a client's name, and front-desk computers are shared. */
+    try {
+      for (var i = sessionStorage.length - 1; i >= 0; i--) {
+        var sk = sessionStorage.key(i);
+        if (sk && (sk.indexOf('tdot_list_') === 0 || sk === 'tdot_leads_table_v1')) sessionStorage.removeItem(sk);
+      }
+    } catch (e) {}
     var gone = false;
     function leave() { if (!gone) { gone = true; window.location.replace('/admin'); } }
     try {

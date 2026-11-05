@@ -22,7 +22,8 @@ function renderRoute(path) {
   return new Promise((resolve) => layer.route.stack[0].handle({ query: {} }, { type: () => ({ send: resolve }) }));
 }
 
-const CASES_ONLY   = ['all-cases-body', 'search-box', 'filter-stage', 'filter-health', 'filter-manager', 'table-count', 'pagination'];
+// 2026-11-05: Stage / Health / Manager are filters in the column headers (cs-headrow), with chips (cs-chips).
+const CASES_ONLY   = ['all-cases-body', 'search-box', 'cs-headrow', 'cs-chips', 'table-count', 'pagination'];
 const SUMMARY_ONLY = ['kpi-total', 'kpi-red', 'act-count-deadline', 'act-list-behind', 'chart-health', 'chart-stage',
                       'chart-readiness-target', 'readiness-overall', 'mgr-grid', 'atrisk-body',
                       // the needs-attention list (2026-10-01) sits at the top of the summary
@@ -88,8 +89,10 @@ test('the admin-only delete control survives on the cases view', async () => {
 // User directive 2026-08-05: the newest case must be at the top by default.
 test('All Cases defaults to newest-created first', async () => {
   const html = await renderRoute('/');
-  assert.match(html, /var _sortCol\s*=\s*'createdAt'/, 'defaults to the creation timestamp');
-  assert.match(html, /var _sortDir\s*=\s*-1/, 'descending — latest at the top');
+  // 2026-11-05: the list's default sort lives in its spec (listSpecs.js casesListSpec), injected into the page
+  assert.ok(html.includes("defaultSort: { key: 'createdAt', dir: 'desc' },"), 'the creation timestamp, descending — latest at the top');
+  assert.ok(html.includes("createdAt: function (r) { return s(r.createdAt); },"));
+  assert.deepEqual(require('../src/routes/listSpecs').casesListSpec({}).defaultSort, { key: 'createdAt', dir: 'desc' });
 });
 
 test('createdAt ordering: newest first, same-day times honoured, missing timestamps sink', () => {

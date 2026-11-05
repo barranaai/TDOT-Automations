@@ -235,9 +235,12 @@ test('pages: the Paid filter has the new choices, the row pill reads the kind, t
   const { buildQueueHTML, buildDetailHTML } = require('../src/routes/adminConsultation');
   const q = buildQueueHTML(), d = buildDetailHTML('555');
   for (const html of [q, d]) for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
-  for (const s of ['<option value="paid">Paid (any way)</option>', '<option value="app">Paid (app)</option>', '<option value="staff">Paid — recorded by staff</option>', '<option value="waived">Waived</option>', '<option value="none">Not paid</option>',
-    'function paidPill(c){', "(c.paidVerified?'':' (name as typed)')", "if(paid==='staff') return !!(r.paid && r.paid!=='app' && r.paid!=='waived');", "if(paid==='none') return !r.paid;", "if(!paidMatch(r,paid)) return false;",
-    "' recorded by staff'", "' waived'"]) assert.ok(q.includes(s), s);
+  // The Paid filter sits in the column header since 2026-11-05 (listSpecs.js): one value per row — app | staff | waived | none —
+  // and "Paid (any way)" is app + staff ticked together (test/listSpecs.test.js proves it against the old drop-down).
+  for (const s of ['function paidPill(c){', "(c.paidVerified?'':' (name as typed)')", "' recorded by staff'", "' waived'",
+    "paid: { label: 'Paid', get: function (r) { return !s(r.paid) ? 'none' : r.paid === 'waived' ? 'waived' : r.paid === 'app' ? 'app' : 'staff'; },",
+    "text: function (v) { return ({ app: 'Paid (app)', staff: 'Paid — recorded by staff', waived: 'Waived', none: 'Not paid' })[v] || v; }",
+    "{ id: 'paid', label: 'Paid', title: 'The consultation fee', menu: 'facet', facets: ['paid'] }"]) assert.ok(q.includes(s), s);
   assert.ok(!q.includes('Not paid via app'), 'the old wording is gone');
   for (const s of ['id="cp-state"', 'id="cp-body"', 'id="btn-cp-record"', 'id="btn-cp-clear"', 'function hydrateConsultPayment(d){', 'function openConsultPaymentModal(d, clear){',
     "doAction('recordConsultPayment', JSON.stringify(payload), null, by);", 'hydrateConsultPayment(d);',

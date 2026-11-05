@@ -8,6 +8,8 @@
 const express = require('express');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS } = require('./adminShared');
+const { listTableScript, LIST_TABLE_CSS } = require('./listFilters');   // one filter look for every list (2026-11-05)
+const { casesListSpec, casesListOpts } = require('./listSpecs');
 
 // ─── View bodies ──────────────────────────────────────────────────────────
 // The dashboard renders ONE of these (user directive 2026-08-05): /admin/dashboard
@@ -261,40 +263,20 @@ const ALL_CASES_BODY_HTML = `
     <!-- ── All Cases Table ── -->
     <div class="sec-hd">📋 All Cases</div>
     <div class="table-card">
+      <!-- The filters are in the column headers, like every list (2026-11-05): listSpecs.js casesListSpec/Opts. -->
       <div class="table-toolbar">
-        <input type="text" class="search-box" id="search-box" placeholder="Search by client, case ref, type…" oninput="filterTable()" />
-        <select class="filter-sel" id="filter-stage" onchange="filterTable()">
-          <option value="">All Stages</option>
-        </select>
-        <select class="filter-sel" id="filter-health" onchange="filterTable()">
-          <option value="">All Health</option>
-          <option value="Red">Red</option>
-          <option value="Orange">Orange</option>
-          <option value="Green">Green</option>
-        </select>
-        <select class="filter-sel" id="filter-manager" onchange="filterTable()">
-          <option value="">All Managers</option>
-        </select>
-        <span class="table-count" id="table-count"></span>
+        <input type="search" class="search-box" id="search-box" placeholder="Search by client, case ref, type…" aria-label="Search cases by client, case reference or type" autocomplete="off" />
+        <span class="table-count" id="table-count" aria-live="polite"></span>
       </div>
+      <div id="cs-chips" class="q-chips cs-chips" style="display:none" aria-live="polite"></div>
+      <div class="tbl-wrap">
       <table class="data-table" id="all-cases-table">
         <thead>
-          <tr>
-            <th onclick="sortTable('caseRef')"    data-col="caseRef">Case Ref <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('clientName')" data-col="clientName">Client <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('caseType')"   data-col="caseType">Type <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('caseStage')"  data-col="caseStage">Stage <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('health')"     data-col="health">Health <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('slaRisk')"    data-col="slaRisk">SLA Risk <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('manager')"    data-col="manager">Manager <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('overallReadiness')" data-col="overallReadiness">Readiness <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('daysElapsed')"      data-col="daysElapsed">Days <span class="sort-arrow">↕</span></th>
-            <th>Status</th>
-            <th></th>
-          </tr>
+          <tr id="cs-headrow"><th>Case Ref</th><th>Client</th><th>Type</th><th>Stage</th><th>Health</th><th>SLA Risk</th><th>Manager</th><th>Readiness</th><th>Days</th><th>Status</th><th></th></tr>
         </thead>
         <tbody id="all-cases-body"></tbody>
       </table>
+      </div>
       <div class="pagination" id="pagination"></div>
     </div>
 `;
@@ -884,6 +866,12 @@ function buildDashboardHTML(view = 'cases') {
       border-top: 1px solid #e2e8f0; margin-top: 56px; letter-spacing: .3px;
     }
     ${DELETE_UI_CSS}
+    /* The Cases list: the shared filter look (listFilters.js) — header funnels, chips, sort by the column name. */
+    ${LIST_TABLE_CSS}
+    #all-cases-table { min-width:960px; }
+    #all-cases-table th { cursor:default; }
+    #all-cases-table th:hover { background:#f8fafc; color:#94a3b8; }
+    .cs-chips { padding:10px 20px 0; margin:0; }
   </style>
 </head>
 <body>
@@ -945,13 +933,9 @@ var _data     = null;
 // Which view this page is — emitted by the server, never sniffed from the DOM.
 var VIEW = ${JSON.stringify(view)};
 var _filtered = [];
-// Newest case first (user directive 2026-08-05). createdAt is the Monday item's
-// created_at, an ISO-8601 UTC string — lexicographic order IS chronological
-// order, so the generic string compare below sorts it correctly, and a case
-// with no timestamp ('') sorts to the BOTTOM under descending rather than
-// masquerading as the newest. Clicking any column header still re-sorts.
-var _sortCol  = 'createdAt';
-var _sortDir  = -1;  // descending = latest created at the top
+// Newest case first (user directive 2026-08-05) — the list's default sort, in
+// listSpecs.js casesListSpec (createdAt, descending). Clicking a column name
+// still re-sorts; the filters are in the column headers (2026-11-05).
 var _page     = 1;
 var PAGE_SIZE = 25;
 
@@ -1577,97 +1561,26 @@ function renderAtRisk(cases) {
 }
 
 /* ── All Cases Table ──────────────────────────────────────────────── */
+// New data (the first load, Refresh, after a delete): the search, the header
+// filters, the sort AND the page stay as they were — the list never shows every
+// case while a filter is still on screen.
 function initAllCasesTable(data) {
-  var stages   = Object.keys(data.byStage).sort();
-  var managers = Object.keys(data.byManager).sort();
-
-  var stageEl = document.getElementById('filter-stage');
-  stageEl.innerHTML = '<option value="">All Stages</option>';
-  stages.forEach(function(s) {
-    var opt = document.createElement('option');
-    opt.value = s; opt.textContent = s;
-    stageEl.appendChild(opt);
-  });
-
-  var mgrEl = document.getElementById('filter-manager');
-  mgrEl.innerHTML = '<option value="">All Managers</option>';
-  managers.forEach(function(m) {
-    var opt = document.createElement('option');
-    opt.value = m; opt.textContent = m;
-    mgrEl.appendChild(opt);
-  });
-
-  _filtered = data.cases.slice();
-  sortTable('health', true);
+  CasesTable.setRows(data.cases || []);
 }
-
-function filterTable() {
-  var q    = document.getElementById('search-box').value.toLowerCase();
-  var stage = document.getElementById('filter-stage').value;
-  var health = document.getElementById('filter-health').value;
-  var mgr   = document.getElementById('filter-manager').value;
-
-  _filtered = (_data.cases || []).filter(function(c) {
-    if (q && !(
-      (c.clientName || '').toLowerCase().includes(q) ||
-      (c.caseRef    || '').toLowerCase().includes(q) ||
-      (c.caseType   || '').toLowerCase().includes(q)
-    )) return false;
-    if (stage  && c.caseStage !== stage)  return false;
-    if (health && c.health    !== health) return false;
-    if (mgr    && !(c.manager || '').includes(mgr)) return false;
-    return true;
-  });
-
-  _page = 1;
-  applySortAndRender();
-}
-
-function sortTable(col, silent) {
-  if (!silent) {
-    if (_sortCol === col) { _sortDir *= -1; }
-    else                  { _sortCol = col; var numericDesc = { overallReadiness: true, daysElapsed: true }; _sortDir = (col === 'health' || col === 'slaRisk') ? 1 : (numericDesc[col] ? -1 : 1); }
-  }
-
-  document.querySelectorAll('[data-col]').forEach(function(th) {
-    th.classList.toggle('sorted', th.dataset.col === _sortCol);
-    var arrow = th.querySelector('.sort-arrow');
-    if (arrow) {
-      if (th.dataset.col === _sortCol) arrow.textContent = _sortDir > 0 ? '↑' : '↓';
-      else arrow.textContent = '↕';
-    }
-  });
-
-  _filtered.sort(function(a, b) {
-    var av = a[_sortCol], bv = b[_sortCol];
-    if (_sortCol === 'health' || _sortCol === 'slaRisk') {
-      av = HEALTH_ORDER[av] !== undefined ? HEALTH_ORDER[av] : 2;
-      bv = HEALTH_ORDER[bv] !== undefined ? HEALTH_ORDER[bv] : 2;
-    } else if (typeof av === 'number') {
-      // numeric: higher = first by default
-    } else {
-      av = (av || '').toLowerCase();
-      bv = (bv || '').toLowerCase();
-    }
-    if (av < bv) return -1 * _sortDir;
-    if (av > bv) return  1 * _sortDir;
-    return 0;
-  });
-
+// The shared engine hands over the filtered, sorted cases. A new filter or sort
+// goes back to page 1; new data keeps the page (pulled back if the list shrank).
+function renderCasesList(rows, why) {
+  _filtered = rows;
+  if (why !== 'data') _page = 1;
+  var pages = Math.max(1, Math.ceil(_filtered.length / PAGE_SIZE));
+  if (_page > pages) _page = pages;
   renderTablePage();
-}
-
-function applySortAndRender() {
-  sortTable(_sortCol, true);
 }
 
 function renderTablePage() {
   var start = (_page - 1) * PAGE_SIZE;
   var end   = start + PAGE_SIZE;
   var page  = _filtered.slice(start, end);
-
-  document.getElementById('table-count').textContent =
-    _filtered.length + ' case' + (_filtered.length !== 1 ? 's' : '');
 
   var tbody = document.getElementById('all-cases-body');
   tbody.innerHTML = '';
@@ -2163,7 +2076,7 @@ document.addEventListener('DOMContentLoaded', function() {
   loadData();
 });
 </script>
-
+${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER }') + '</script>'}
 </body>
 </html>`;
 }

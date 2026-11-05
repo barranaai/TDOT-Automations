@@ -18,6 +18,8 @@ const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortal
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // the walk-in form's Source / Reference (2026-11-04)
 const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   // Shafoli's screenshot attachments (2026-11-04)
+const { listTableScript, LIST_TABLE_CSS } = require('./listFilters');   // one filter look for every list (2026-11-05)
+const { consultListSpec, consultListOpts, retainerListSpec, retainerListOpts } = require('./listSpecs');
 
 function escAttr(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -108,12 +110,14 @@ function buildQueueHTML() {
   .kpi-mini h4 { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; margin:0 0 8px; }
   .kpi-mini .r2 { display:flex; justify-content:space-between; font-size:13px; padding:3px 0; color:#33425a; }
   .kpi-mini .r2 b { color:var(--navy); font-variant-numeric:tabular-nums; }
-  .q-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin:22px 0 10px; }
-  .q-filters { display:flex; gap:8px; flex-wrap:wrap; }
-  .q-filters input, .q-filters select { padding:7px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:12.5px; font-family:inherit; background:#fff; color:var(--navy); }
-  .q-filters input { width:150px; }
-  .btn-direct { padding:7px 12px; border:1px solid var(--navy); background:var(--navy); color:#fff; border-radius:8px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit; }
-  .btn-direct:hover { opacity:.92; }
+  /* The lists: the shared filter look (listFilters.js, 2026-11-05) — filters in the column headers, chips, one search box. */
+  ${LIST_TABLE_CSS}
+  .tbl-wrap table { min-width:1000px; }
+  .page-top { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:0 0 4px; }
+  .btn-direct { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border:1px solid var(--navy); background:var(--navy); color:#fff; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .btn-direct:hover { filter:brightness(1.12); }
+  .q-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin:6px 0 10px; }
+  .range .cnt { font-size:12.5px; font-weight:500; color:#94a3b8; margin-left:4px; }
   /* Tabs (Gauri point 4): Leads | Consultations | Retainers | Reporting */
   .tabs { display:flex; align-items:center; gap:4px; border-bottom:2px solid #e2e8f0; margin:0 0 16px; flex-wrap:wrap; }
   .tab { appearance:none; background:none; border:0; border-bottom:3px solid transparent; margin-bottom:-2px; padding:10px 14px; font:inherit; font-size:13.5px; font-weight:700; color:#64748b; cursor:pointer; text-decoration:none; }
@@ -178,7 +182,10 @@ ${buildNavHeader('consultations')}
   <div id="loading"><div class="spinner"></div><div class="muted">Loading consultations…</div></div>
   <div id="error-msg"></div>
   <div id="content">
-    <h1 class="page-h">Consultations</h1>
+    <div class="page-top">
+      <h1 class="page-h" style="margin:0">Consultations</h1>
+      <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
+    </div>
     <div class="tabs" role="tablist" aria-label="Views">
       <a class="tab" href="/admin/leads" role="tab">Leads</a>
       <button class="tab" type="button" role="tab" data-tab="consultations">Consultations <span class="tab-n" id="tn-consult"></span></button>
@@ -196,30 +203,24 @@ ${buildNavHeader('consultations')}
           <button type="button" data-range="month">This month</button>
           <button type="button" data-range="all">All</button>
           <button type="button" class="nav" data-nav="1" title="Later">&#9654;</button>
-          <span class="lbl" id="range-label"></span>
+          <span class="lbl" id="range-label"></span><span class="cnt" id="cq-count" aria-live="polite"></span>
         </div>
-        <div class="q-filters">
-          <input id="f-search" type="text" placeholder="Search client…">
-          <select id="f-consultant"><option value="">All consultants</option></select>
-          <select id="f-mode"><option value="">Any mode</option><option>In-person</option><option>Virtual</option><option>Phone Call</option></select>
-          <select id="f-paid"><option value="">Paid: any</option><option value="paid">Paid (any way)</option><option value="app">Paid (app)</option><option value="staff">Paid — recorded by staff</option><option value="waived">Waived</option><option value="none">Not paid</option></select>
-          <select id="f-agree"><option value="">Agreement: any</option><option value="signed">Signed</option><option value="sent">Sent, not signed</option><option value="none">Not sent</option></select>
-          <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
-        </div>
+        <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="cq-search" type="search" placeholder="Search by name…" aria-label="Search consultations by name" autocomplete="off"></div>
       </div>
+      <div id="cq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
       <div class="card attn fold" id="needs-outcome" style="display:none;margin-bottom:12px">
         <div class="attn-h" id="needs-outcome-h" role="button" tabindex="0"><span>&#9888; Needs outcome <span id="needs-outcome-n"></span> <span class="muted">— consultations that have happened with no outcome recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted.</span></span><span class="muted">show / hide</span></div>
-        <table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="needs-outcome-body"></tbody></table>
+        <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="needs-outcome-body"></tbody></table></div>
       </div>
-      <div class="card">
+      <div class="card"><div class="tbl-wrap">
         <table>
-          <thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead>
+          <thead><tr id="cq-headrow"><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead>
           <tbody id="qbody"></tbody>
         </table>
-      </div>
+      </div></div>
       <div class="card fold" id="nodate" style="display:none;margin-top:12px">
         <div class="attn-h" id="nodate-h" role="button" tabindex="0"><span>No date <span id="nodate-n"></span> <span class="muted">— marked Booked by hand with no consultation time. Open one to set its time, or delete it.</span></span><span class="muted">show / hide</span></div>
-        <table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="nodate-body"></tbody></table>
+        <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="nodate-body"></tbody></table></div>
       </div>
     </section>
 
@@ -227,22 +228,16 @@ ${buildNavHeader('consultations')}
       <div class="q-head">
         <div><h2 class="sec-h">Retainers &amp; follow-ups <span id="r-count" class="muted" style="font-weight:500"></span></h2>
           <p class="sec-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation, and drops off once retained (the case is on the Cases page).</p></div>
-        <div class="q-filters">
-          <input id="rf-search" type="text" placeholder="Search client…">
-          <select id="rf-consultant"><option value="">All consultants</option></select>
-          <select id="rf-stage"><option value="">Any stage</option><option>Paid</option><option>Signed</option><option>Sent</option><option>Fee set</option><option>Retain</option><option>New</option></select>
-          <select id="rf-kind"><option value="">Direct + booked</option><option value="direct">Direct retainer clients</option><option value="booked">After a consultation</option></select>
-          <select id="rf-followup"><option value="">Follow-up: any</option><option value="due">Due (today or earlier)</option><option value="has">Has a follow-up date</option></select>
-          <select id="rf-paid" title="The consultation fee — direct retainer clients had no consultation"><option value="">Consult fee: any</option><option value="paid">Paid (any way)</option><option value="app">Paid (app)</option><option value="staff">Paid — recorded by staff</option><option value="waived">Waived</option><option value="none">Not paid</option></select>
-        </div>
+        <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="rq-search" type="search" placeholder="Search by name…" aria-label="Search retainers and follow-ups by name" autocomplete="off"></div>
       </div>
       <div class="quick" id="r-quick" role="group" aria-label="Show by outcome"></div>
-      <div class="card">
+      <div id="rq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
+      <div class="card"><div class="tbl-wrap">
         <table>
-          <thead><tr><th>Client</th><th>Case type</th><th>Consultant</th><th>Outcome</th><th>Consult fee</th><th>Retainer fee</th><th>Sent</th><th>Signed</th><th>Paid</th><th>Stage</th><th>Case</th><th></th></tr></thead>
+          <thead><tr id="rq-headrow"><th>Client</th><th>Case type</th><th>Consultant</th><th>Outcome</th><th>Consult fee</th><th>Retainer fee</th><th>Sent</th><th>Signed</th><th>Paid</th><th>Stage</th><th>Case</th><th></th></tr></thead>
           <tbody id="rbody"></tbody>
         </table>
-      </div>
+      </div></div>
     </section>
 
     <section id="tab-reporting" role="tabpanel" hidden>
@@ -294,7 +289,8 @@ ${ATTACH_UI_JS}
 var DC_REF=tdotRef('dc');      /* the walk-in form's Source / Reference second question (2026-11-04) */
 var DC_ATT=tdotAttach('dc');   /* "Attach a screenshot": only for the staff allowed to (Shafoli), signed in with Monday */
 var DC_PROFILE_ADDR='';        /* the carried address — its "is it current?" tick is asked only while the box still shows it */
-var RET_OUTCOMES=${jsLit(OUTCOME_LABELS)}, ROUT=[];   // the Retainers quick filters: the outcomes switched on (none = all)
+var RET_OUTCOMES=${jsLit(OUTCOME_LABELS)};   // the Retainers quick filters: one button per outcome (the shared list engine keeps which are on)
+var RET_HINTS={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set', 'Follow-Up':'The team calls the client back — not retained', 'Newsletter':'Nothing to do now — the client gets the newsletter', 'Not Wanted':'On the Not Wanted list — staff are warned if they come back' };
 function qpill(cls,txt){ return '<span class="pill '+cls+'">'+escHtml(txt)+'</span>'; }
 function todayStr(){ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto'}).format(new Date()); }   // the Toronto day
 /* ── Calendar-date helpers: 'YYYY-MM-DD' strings only, never a local Date (TZ-safe) ── */
@@ -674,6 +670,9 @@ function submitDirectClient(){
 /* ── Tabs, the date range, and the two lists (one read: /api/consultations-board) ── */
 function lsGet(k){ try { return localStorage.getItem(k)||''; } catch(e){ return ''; } }
 function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+/* Filters (the date range too) are kept only until this browser tab is closed (Faran 2026-11-05); Sign Out forgets them. */
+function ssGet(k){ try { return sessionStorage.getItem(k)||''; } catch(e){ return ''; } }
+function ssSet(k,v){ try { sessionStorage.setItem(k,v); } catch(e){} }
 var KPIS_LOADED=false;
 function setTab(t,push){
   if(['consultations','retainers','reporting'].indexOf(t)<0) t='consultations';
@@ -685,55 +684,27 @@ function setTab(t,push){
 }
 function setRange(r,anchor){
   RANGE=['today','week','month','all'].indexOf(r)>=0?r:'today'; ANCHOR=anchor||todayStr();
-  lsSet('tdot_consult_range',RANGE);
+  ssSet('tdot_list_consult_range',RANGE);
   Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.classList.toggle('on',b.getAttribute('data-range')===RANGE); });
   Array.prototype.forEach.call(document.querySelectorAll('#range .nav'),function(b){ b.disabled=(RANGE==='all'); });
   document.getElementById('range-label').textContent=rangeLabel();
-  applyFilters();
+  Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.setAttribute('aria-pressed',b.getAttribute('data-range')===RANGE?'true':'false'); });
+  if(window.ConsultTable) ConsultTable.apply('filter');
 }
 function shiftRange(n){
   if(RANGE==='all') return;
   var a=ANCHOR||todayStr();
   setRange(RANGE, RANGE==='today'?dAdd(a,n):RANGE==='week'?dAdd(a,7*n):dMonthAdd(a,n));
 }
-function distinctVals(rows,fn){ var s={}; rows.forEach(function(r){ var v=fn(r); if(v) s[v]=1; }); return Object.keys(s).sort(); }
-function fillSel(id,vals,label,extra){ var el=document.getElementById(id); var cur=el.value; el.innerHTML='<option value="">'+label+'</option>'+(extra||'')+vals.map(function(v){return '<option value="'+escHtml(v)+'">'+escHtml(v)+'</option>';}).join(''); el.value=cur; }
-function populateFilters(){
-  fillSel('f-consultant', distinctVals(ALLROWS,function(r){return r.consultant;}), 'All consultants', '<option value="__none">Unassigned</option>');
-  fillSel('rf-consultant', distinctVals(RETAINERS,function(r){return r.consultant;}), 'All consultants', '<option value="__none">Unassigned</option>');
-}
-/* The consultation-fee filter, one rule for both tabs: paid (any way) | app | staff | waived | none */
-function paidMatch(r,paid){
-  if(!paid) return true;
-  if(paid==='paid') return !!(r.paid && r.paid!=='waived');
-  if(paid==='app') return r.paid==='app';
-  if(paid==='staff') return !!(r.paid && r.paid!=='app' && r.paid!=='waived');
-  if(paid==='waived') return r.paid==='waived';
-  if(paid==='none') return !r.paid;
-  return true;
-}
-function passesCommon(r,q,con){
-  if(q && String(r.name||'').toLowerCase().indexOf(q)<0) return false;
-  if(con==='__none'){ if(r.consultant) return false; } else if(con && r.consultant!==con) return false;
-  return true;
-}
-function applyFilters(){
-  var q=(document.getElementById('f-search').value||'').toLowerCase().trim();
-  var con=document.getElementById('f-consultant').value, mode=document.getElementById('f-mode').value, paid=document.getElementById('f-paid').value, ag=document.getElementById('f-agree').value;
+/* The Consultations list: the shared engine (listSpecs.js consultListSpec — the header filters and the search) hands
+   over the rows that pass; they split into three lists, each row in one: no date / needs an outcome (the
+   consultation day has passed, nothing recorded) / the date range. The count is the range list's. */
+function consultBucket(r,t){ var d=String(r.bookedSlot||'').slice(0,10); if(!dParts(d)) return 'nodate'; if(d<t && !r.outcome) return 'needs'; return inRange(r.bookedSlot)?'main':''; }
+function renderConsultList(keep){
   var t=todayStr();
-  var keep=ALLROWS.filter(function(r){
-    if(!passesCommon(r,q,con)) return false;
-    if(mode && r.meetingType!==mode) return false;
-    if(!paidMatch(r,paid)) return false;
-    if(ag==='signed' && !r.agreementSigned) return false;
-    if(ag==='sent' && !(r.agreementSent && !r.agreementSigned)) return false;
-    if(ag==='none' && r.agreementSent) return false;
-    return true;
-  });
-  /* Three lists, each row in one: no date / needs an outcome (the consultation day has passed, nothing recorded) / the range */
-  var noDate=keep.filter(function(r){ return !dParts(String(r.bookedSlot||'').slice(0,10)); });
-  var needs=keep.filter(function(r){ var d=String(r.bookedSlot||'').slice(0,10); return dParts(d) && d<t && !r.outcome; });
-  var main=keep.filter(function(r){ return noDate.indexOf(r)<0 && needs.indexOf(r)<0 && inRange(r.bookedSlot); });
+  var noDate=keep.filter(function(r){ return consultBucket(r,t)==='nodate'; });
+  var needs=keep.filter(function(r){ return consultBucket(r,t)==='needs'; });
+  var main=keep.filter(function(r){ return consultBucket(r,t)==='main'; });
   renderRows(main);
   var nb=document.getElementById('needs-outcome'); nb.style.display=needs.length?'block':'none';
   document.getElementById('needs-outcome-n').textContent='('+needs.length+')';
@@ -742,33 +713,16 @@ function applyFilters(){
   document.getElementById('nodate-n').textContent='('+noDate.length+')';
   var ndbody=document.getElementById('nodate-body'); ndbody.innerHTML=noDate.map(rowHtml).join(''); bindRowClicks(ndbody);
   document.getElementById('tn-consult').textContent=String(ALLROWS.length);
+  return { shown: main.length, total: ALLROWS.filter(function(r){ return consultBucket(r,t)==='main'; }).length };
 }
-/* The Retainers quick filters: one toggle button per outcome, each with how many
-   rows the OTHER filters leave under it; none on = all. Remembered per viewer,
-   and in the address (?outcome=Follow-Up,Newsletter) so a link can open a view. */
-function retGroup(r){ return RET_OUTCOMES.indexOf(r.outcomeGroup)>=0?r.outcomeGroup:RET_OUTCOMES[0]; }
+/* The Retainers quick filters (the outcome buttons above the table) are the shared engine's "quick" facet
+   (listSpecs.js retainerListSpec): counts from the other filters, none on = all. A link can open a view
+   (?outcome=Follow-Up,Newsletter) and the address follows the buttons. */
 function cleanOutcomes(list){ var out=[]; (list||[]).forEach(function(v){ v=String(v||'').trim(); if(RET_OUTCOMES.indexOf(v)>=0 && out.indexOf(v)<0) out.push(v); }); return out; }
-function setRout(list,push,keep){
-  ROUT=cleanOutcomes(list);
-  if(!keep) lsSet('tdot_ret_outcomes',ROUT.join(','));   // keep: a link's choice is shown, not saved over the viewer's own
-  if(push){ try { var u=new URL(window.location.href); u.searchParams.set('tab','retainers'); if(ROUT.length) u.searchParams.set('outcome',ROUT.join(',')); else u.searchParams.delete('outcome'); history.replaceState(null,'',u.toString()); } catch(e){} }
-}
-function toggleRout(v){
-  if(!v){ setRout([],true); }
-  else { var i=ROUT.indexOf(v), next=ROUT.slice(); if(i>=0) next.splice(i,1); else next.push(v); setRout(next,true); }
-  renderRetainers();
-}
-function renderQuick(base){
-  var box=document.getElementById('r-quick'); if(!box) return;
-  var n={}; base.forEach(function(r){ var g=retGroup(r); n[g]=(n[g]||0)+1; });
-  var hint={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set', 'Follow-Up':'The team calls the client back — not retained', 'Newsletter':'Nothing to do now — the client gets the newsletter', 'Not Wanted':'On the Not Wanted list — staff are warned if they come back' };
-  function btn(v,label,count,on){ return '<button type="button" data-rout="'+escHtml(v)+'" aria-pressed="'+(on?'true':'false')+'"'+(count?'':' class="zero"')+(hint[v]?' title="'+escHtml(hint[v])+'"':'')+'>'+escHtml(label)+' <span class="qn">'+count+'</span></button>'; }
-  box.innerHTML='<span class="ql">Show</span>'+btn('','All',base.length,!ROUT.length)+RET_OUTCOMES.map(function(o){ return btn(o,o,n[o]||0,ROUT.indexOf(o)>=0); }).join('');
-  var focusV=box.getAttribute('data-focus'); box.removeAttribute('data-focus');
-  Array.prototype.forEach.call(box.querySelectorAll('button[data-rout]'),function(b){
-    b.onclick=function(){ box.setAttribute('data-focus',b.getAttribute('data-rout')); toggleRout(b.getAttribute('data-rout')); };
-    if(focusV!==null && b.getAttribute('data-rout')===focusV) b.focus();
-  });
+function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return; var l=cleanOutcomes(String(p).split(',')); if(l.length) st.sel.outcome=l; else delete st.sel.outcome; }
+function retOnChange(st){
+  var l=(st.sel&&st.sel.outcome)||[];
+  try { var u=new URL(window.location.href); if(l.length){ u.searchParams.set('tab','retainers'); u.searchParams.set('outcome',l.join(',')); } else u.searchParams.delete('outcome'); history.replaceState(null,'',u.toString()); } catch(e){}
 }
 function outcomeCell(c){
   var o=c.outcome, cls=o==='Retain'?'green':o==='Follow-Up'?'amber':o==='Not Wanted'?'red':'grey';
@@ -776,23 +730,13 @@ function outcomeCell(c){
   if(c.followUpDate) h+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);
   return h;
 }
-function renderRetainers(){
-  var q=(document.getElementById('rf-search').value||'').toLowerCase().trim();
-  var con=document.getElementById('rf-consultant').value, st=document.getElementById('rf-stage').value, kind=document.getElementById('rf-kind').value, fu=document.getElementById('rf-followup').value, paid=document.getElementById('rf-paid').value;
+/* The Retainers list: the shared engine hands over the rows that pass (the header filters, the search, the outcome buttons). */
+function renderRetainerList(rows,why,st,h){
   var t=todayStr(), tp=dParts(t);
-  var base=RETAINERS.filter(function(r){
-    if(!passesCommon(r,q,con)) return false; if(st && r.stage!==st) return false; if(kind && r.kind!==kind) return false;
-    if(fu==='due' && !(r.followUpDate && r.followUpDate<=t)) return false;
-    if(fu==='has' && !r.followUpDate) return false;
-    if(paid && ((r.kind==='direct' && !r.paid) || !paidMatch(r,paid))) return false;   // a direct client had no consultation: "Not paid" never lists one
-    return true;
-  });
-  renderQuick(base);
-  var rows=ROUT.length?base.filter(function(r){ return ROUT.indexOf(retGroup(r))>=0; }):base;
-  document.getElementById('r-count').textContent='('+rows.length+(rows.length!==RETAINERS.length?(' of '+RETAINERS.length):'')+')';
+  var rout=(st&&st.sel&&st.sel.outcome)||[], base=h?h.without('outcome'):rows.length;
   document.getElementById('tn-ret').textContent=String(RETAINERS.length);
   var tb=document.getElementById('rbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="12" class="empty">'+(!RETAINERS.length?'Nobody here right now.':(ROUT.length && base.length)?'Nobody under '+escHtml(ROUT.join(' or '))+(base.length!==RETAINERS.length?' with these filters':'')+' right now.':'No clients match your filters.')+'</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="12" class="empty">'+(!RETAINERS.length?'Nobody here right now.':(rout.length && base)?'Nobody under '+escHtml(rout.join(' or '))+(base!==RETAINERS.length?' with these filters':'')+' right now.':'No clients match your filters.')+'</td></tr>'; return; }
   function age(d){ var p=dParts(d); if(!p||!tp) return ''; var days=Math.round((Date.UTC(tp[0],tp[1]-1,tp[2])-Date.UTC(p[0],p[1]-1,p[2]))/86400000); return days>0?' <span class="muted">('+days+'d)</span>':''; }
   tb.innerHTML=rows.map(function(c){
     var stc=c.stage==='Paid'?'green':(c.stage==='Signed'||c.stage==='Sent')?'blue':'amber';
@@ -826,7 +770,7 @@ function load(force){
    .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); } return r.json(); })
    .then(function(d){
      ALLROWS=(d.consultations||[]); RETAINERS=(d.retainers||[]);
-     populateFilters(); applyFilters(); renderRetainers(); showAge(d);
+     ConsultTable.setRows(ALLROWS); RetainerTable.setRows(RETAINERS); showAge(d);   // the filters stay as they were (a refresh never clears them)
      document.getElementById('loading').style.display='none';
      document.getElementById('content').style.display='block';
    })
@@ -834,8 +778,6 @@ function load(force){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
-['f-search','f-consultant','f-mode','f-paid','f-agree'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', applyFilters); });
-['rf-search','rf-consultant','rf-stage','rf-kind','rf-followup','rf-paid'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener(el.tagName==='SELECT'?'change':'input', renderRetainers); });
 Array.prototype.forEach.call(document.querySelectorAll('.tab[data-tab]'),function(b){ b.onclick=function(){ setTab(b.getAttribute('data-tab'),true); }; });
 Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.onclick=function(){ setRange(b.getAttribute('data-range')); }; });
 Array.prototype.forEach.call(document.querySelectorAll('#range .nav'),function(b){ b.onclick=function(){ shiftRange(Number(b.getAttribute('data-nav'))); }; });
@@ -894,10 +836,11 @@ ${DELETE_UI_JS}
 tdotBindDelete(function(){ load(true); });
 startClock(); checkApiStatus();
 (function(){ var qs=new URLSearchParams(window.location.search); setTab(qs.get('tab')||(qs.get('outcome')!==null?'retainers':'')||lsGet('tdot_consult_tab')||'consultations', false); })();   // an ?outcome= link opens Retainers
-setRange(lsGet('tdot_consult_range')||'today');
-(function(){ var p=new URLSearchParams(window.location.search).get('outcome'); setRout(String(p!==null?p:lsGet('tdot_ret_outcomes')).split(','), false, p!==null); })();
-load();
-</script></body></html>`;
+setRange(ssGet('tdot_list_consult_range')||'today');
+</script>
+<script>${listTableScript(consultListSpec, consultListOpts)}</script>
+<script>${listTableScript(retainerListSpec, retainerListOpts, '{ outcomes: RET_OUTCOMES, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }')}</script>
+<script>load();</script></body></html>`;
 }
 
 // ─── Detail page ────────────────────────────────────────────────────────────────

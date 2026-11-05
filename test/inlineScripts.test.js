@@ -103,7 +103,8 @@ function assertNoMangledRegexes(html, page) {
   }
 }
 
-test('emitted page scripts carry no backslash-mangled regex literals', () => {
+const queue0 = () => require('../src/routes/adminConsultation').buildQueueHTML();
+test('emitted page scripts carry no backslash-mangled regex literals', async () => {
   const consult = require('../src/routes/adminConsultation');
   assertNoMangledRegexes(consult.buildQueueHTML(), 'consultation queue');
   assertNoMangledRegexes(consult.buildDetailHTML('1'), 'consultation detail');
@@ -112,6 +113,15 @@ test('emitted page scripts carry no backslash-mangled regex literals', () => {
   assertNoMangledRegexes(leads.buildLeadDetailHTML('1'), 'lead detail');
   const { buildCockpitHTML } = require('../src/routes/adminCase');
   assertNoMangledRegexes(buildCockpitHTML('2026-XX-000'), 'cockpit');
+  // the Cases and Summary pages (2026-11-05: the Cases list's filters are the shared engine's, injected with toString)
+  const dash = require('../src/routes/adminDashboard');
+  for (const path of ['/', '/summary']) {
+    const layer = dash.stack.find((l) => l.route && l.route.path === path);
+    const html = await new Promise((resolve) => layer.route.stack[0].handle({ query: {} }, { type: () => ({ send: resolve }) }));
+    assertNoMangledRegexes(html, 'dashboard ' + path);
+  }
+  // the shared list engine's date check keeps its real \d once it is on a page
+  assert.ok(queue0().includes('/^\\d{4}-\\d{2}-\\d{2}$/.test(s(x.from))'), 'the list engine emits with real \\d');
   // the two repaired regexes, pinned exactly as EMITTED
   const detail = consult.buildDetailHTML('1');
   assert.ok(detail.includes('[^\\s@]+@[^\\s@]+\\.[^\\s@]+'), 'co-signer email regex emits with real \\s');

@@ -94,9 +94,12 @@ test('pages: the Leads list, its month filter and the detail chip use the Toront
   const leads = fs.readFileSync(require.resolve('../src/routes/adminLeads'), 'utf8');
   assert.match(leads, /function createdOf\(r\)\{ return String\(r\.createdDay\|\|''\); \}/);
   // The Received filter (column header, 2026-10-28) compares the server-made Toronto day; its quick ranges use Toronto today.
+  // (2026-11-05: the Leads spec names the day; the shared list engine compares it and makes Toronto "today")
   const table = fs.readFileSync(require.resolve('../src/routes/leadsTableFilters'), 'utf8');
-  assert.match(table, /var ab = range\(st\), d = s\(r\.createdDay\);/);
-  assert.match(table, /function torontoToday\(now\) \{ return new Date\(now\)\.toLocaleDateString\('en-CA', \{ timeZone: 'America\/Toronto' \}\); \}/);
+  const engine = fs.readFileSync(require.resolve('../src/routes/listFilters'), 'utf8');
+  assert.match(table, /date: \{ key: 'received', chip: 'Received', get: function \(r\) \{ return s\(r\.createdDay\); \} \}/);
+  assert.match(engine, /var ab = range\(st\), d = s\(DATE\.get\(r\)\);/);
+  assert.match(engine, /function torontoToday\(now\) \{ return new Date\(now\)\.toLocaleDateString\('en-CA', \{ timeZone: 'America\/Toronto' \}\); \}/);
   assert.match(table, /label: 'Received', title: 'The day the lead arrived, Toronto time'/);
   assert.match(leads, /'<span class="pk">Received<\/span> '\+escHtml\(d\.createdWhen \? d\.createdWhen\+' \(Toronto\)' : '—'\)/);
   assert.ok(!/String\(r\.createdAt\|\|''\)\.slice\(0,10\)|String\(d\.createdAt\|\|''\)\.slice\(0,10\)/.test(leads), 'no UTC cut of the arrival left');

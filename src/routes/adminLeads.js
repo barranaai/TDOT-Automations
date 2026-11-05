@@ -147,7 +147,7 @@ ${buildNavHeader('leads')}
       </table>
     </div></div>
   </div>
-  <div id="q-pop" role="dialog" aria-modal="false"></div>
+  <div id="q-pop" role="dialog" aria-modal="false" class="lt-pop"></div>
 </main>
 <script>
 ${SHARED_AUTH_JS}
