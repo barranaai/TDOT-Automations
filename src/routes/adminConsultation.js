@@ -226,7 +226,7 @@ ${buildNavHeader('consultations')}
 
     <section id="tab-retainers" role="tabpanel" hidden>
       <div class="q-head">
-        <div><h2 class="sec-h">Retainers &amp; follow-ups <span id="r-count" class="muted" style="font-weight:500"></span></h2>
+        <div><h2 class="sec-h">Retainers &amp; follow-ups <span id="r-count" class="muted" style="font-weight:500" aria-live="polite"></span></h2>
           <p class="sec-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation, and drops off once retained (the case is on the Cases page).</p></div>
         <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="rq-search" type="search" placeholder="Search by name…" aria-label="Search retainers and follow-ups by name" autocomplete="off"></div>
       </div>
@@ -652,7 +652,7 @@ function submitDirectClient(){
       if(!DC_ATT.files().length) return go();
       btn.textContent='Attaching…';
       return DC_ATT.upload(res.j.leadId).then(function(o){
-        if(o.failed.length) window.alert('The client was created. '+o.failed.length+' file(s) were not attached — add them from the client'+String.fromCharCode(8217)+'s lead page:'+String.fromCharCode(10)+o.failed.map(function(x){ return '• '+x.name+' — '+x.error; }).join(String.fromCharCode(10)));
+        if(o.failed.length) window.alert(who+' was created. '+o.failed.length+' file(s) were not attached — add them from the client'+String.fromCharCode(8217)+'s lead page:'+String.fromCharCode(10)+o.failed.map(function(x){ return '• '+x.name+' — '+x.error; }).join(String.fromCharCode(10)));
         go();
       });
     })

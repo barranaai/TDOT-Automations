@@ -136,7 +136,7 @@ ${buildNavHeader('leads')}
     </div>
 
     <div class="q-toolbar">
-      <h2 class="sec-h">Awaiting booking <span id="q-count" class="muted" style="font-weight:500"></span></h2>
+      <h2 class="sec-h">Awaiting booking <span id="q-count" class="muted" style="font-weight:500" aria-live="polite"></span></h2>
       <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="q-search" type="search" placeholder="Search by name…" aria-label="Search leads by name" autocomplete="off"></div>
     </div>
     <div id="q-chips" class="q-chips" style="display:none" aria-live="polite"></div>
@@ -883,6 +883,7 @@ document.getElementById('btn-la-att').onclick=function(){
   LA_ATT.upload(LEAD_ID).then(function(o){
     b.disabled=false;
     if(!o.failed.length){ LA_ATT.reset(); LA_ATT.setStatus(o.sent+' attached — the link is in the updates below.','ok'); }
+    else LA_ATT.setStatus((o.sent?o.sent+' attached; ':'')+o.failed.length+' not attached: '+o.failed.map(function(x){ return x.name+' ('+x.error+')'; }).join('; ')+'. Attaching again sends only these.','err');   /* always said here too */
     var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r();
   });
 };

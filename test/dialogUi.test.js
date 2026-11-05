@@ -40,6 +40,7 @@ function fakeDom() {
       },
       addEventListener(type, fn) { on(n, type, fn); },
       focus() { doc.activeElement = n; }, click() { fire(n, 'click', {}); },
+      closest() { for (let p = n; p && p.tagName; p = p.parentNode) if (['BUTTON', 'A', 'INPUT', 'SELECT', 'TEXTAREA'].includes(p.tagName)) return p; return null; },
       offsetWidth: 10, offsetHeight: 10, getClientRects() { return [1]; },
     };
     return n;
@@ -128,11 +129,21 @@ test('review 2026-11-05: the second click of the double-click that opened it nev
   w.fire(w.ov, 'pointerdown', {}); w.fire(w.ov, 'click', { detail: 1 });
   assert.ok(!c.isOpen(), 'a single click outside still closes an untouched pop-up');
   assert.ok(DIALOG_UI_CSS.includes('html.tdlg-lock { overflow:hidden; }') && !/tdlg-lock body/.test(DIALOG_UI_CSS));
-  assert.ok(DIALOG_UI_JS.includes("window.addEventListener('pageshow'") && DIALOG_UI_JS.includes("d.setBusy(false); d.close(true, 'restore');"), 'Back to the page: no half-saving pop-up');
+  assert.ok(DIALOG_UI_JS.includes("window.addEventListener('pageshow'") && DIALOG_UI_JS.includes("if (!d.busy) return; try { d.setBusy(false); d.close(true, 'restore'); }"), 'Back to the page: no half-saving pop-up — and a half-typed one is kept');
   assert.ok(DIALOG_UI_JS.includes("document.dispatchEvent(new CustomEvent('tdot-dialog-open'))"), 'an open list filter panel is told to close');
   const { listTableUi } = require('../src/routes/listFilters');
   assert.ok(listTableUi.toString().includes("doc.addEventListener('tdot-dialog-open', function () { close(false); });"));
   assert.ok(listTableUi.toString().includes('if (win.TDOT_DLG && win.TDOT_DLG.stack && win.TDOT_DLG.stack.length) return;'), 'Escape under a pop-up is the pop-up\'s');
+});
+
+test('review round 2: Safari (a click does not focus the button) — focus still goes back to the button that was pressed', () => {
+  const w = world(); const c = w.make();
+  w.doc.activeElement = w.doc.body;
+  w.fire(w.opener, 'pointerdown', {});   // the capture listener remembers the press
+  c.open();
+  assert.equal(c.opener, w.opener);
+  c.close();
+  assert.equal(w.doc.activeElement, w.opener);
 });
 
 test('Escape closes the top pop-up only — and not when something inside already used it (the client search list)', () => {

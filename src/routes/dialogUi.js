@@ -106,13 +106,22 @@ const DIALOG_UI_JS = `
       try { d.frame.focus(); } catch (x) {}
     });
   }
-  /* Back to this page from the browser's memory (Back button): no pop-up comes back half-way through saving. */
+  /* Back to this page from the browser's memory (Back button): no pop-up comes back half-way through saving.
+     One that was not saving stays exactly as it was — typed text is never thrown away. */
   if (typeof window === 'object' && window.addEventListener && !TDOT_DLG.pageshow) {
     TDOT_DLG.pageshow = true;
     window.addEventListener('pageshow', function(e){
       if (!e.persisted) return;
-      TDOT_DLG.stack.slice().forEach(function(d){ try { d.setBusy(false); d.close(true, 'restore'); } catch (x) {} });
+      TDOT_DLG.stack.slice().forEach(function(d){ if (!d.busy) return; try { d.setBusy(false); d.close(true, 'restore'); } catch (x) {} });
     });
+  }
+  /* Safari does not focus a clicked button: remember what was pressed, so focus can go back to it when the pop-up closes. */
+  if (typeof document === 'object' && document.addEventListener && !TDOT_DLG.press) {
+    TDOT_DLG.press = true;
+    document.addEventListener('pointerdown', function(e){
+      var t = e.target && e.target.closest ? e.target.closest('button,a[href],[role="button"],input,select,textarea,[tabindex]') : null;
+      TDOT_DLG.lastPress = t || null;
+    }, true);
   }
   function tdotDlgLock(){
     var on = TDOT_DLG.stack.length > 0;
@@ -157,6 +166,7 @@ const DIALOG_UI_JS = `
       if (isOpen()) { try { frame.focus(); } catch (e) {} return c; }
       c.openId++; c.dirty = false; c.setBusy(false);
       c.opener = document.activeElement;
+      if ((!c.opener || c.opener === document.body) && TDOT_DLG.lastPress && document.body.contains(TDOT_DLG.lastPress)) c.opener = TDOT_DLG.lastPress;
       ov.hidden = false; if (ov.style.display === 'none') ov.style.display = '';
       TDOT_DLG.stack.push(c); tdotDlgLock();
       /* An open list filter panel closes (Escape then belongs to the pop-up). */

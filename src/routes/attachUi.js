@@ -85,8 +85,8 @@ function tdotAttach(p){
     });
     setStatus('');
   }
-  var gen=0;   /* bumped by every reset / new pick: an upload still running for the last person never writes into the form */
-  if (input) input.addEventListener('change',function(){ gen++; done={}; draw(); });
+  var gen=0;   /* bumped by reset() only (the form reopened for the next person): an upload still running for the last person never writes into it */
+  if (input) input.addEventListener('change',function(){ done={}; draw(); });   /* a new pick on the same form: the running upload still reports */
   function reset(){ gen++; done={}; if (input) input.value=''; draw(); }
   function check(){
     if (!allowed) return '';
