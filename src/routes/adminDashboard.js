@@ -75,6 +75,14 @@ const SUMMARY_BODY_HTML = `
       </div>
     </div>
 
+    <!-- ── Reporting (the monthly consultation and retainer figures — from the Consultations page until 2026-11-05) ── -->
+    <div class="sec-hd" id="reporting">📈 Reporting</div>
+    <div class="rp-head">
+      <p class="rp-intro">Consultations and retainers by month. Each figure counts by its own date, so one month's steps are not always the same clients.</p>
+      <div class="rp-period"><label for="kpi-month">Period</label><select id="kpi-month" class="filter-sel"><option value="">Loading…</option></select></div>
+    </div>
+    <div id="kpi-body" aria-live="polite"><div class="rp-muted">Loading the figures…</div></div>
+
     <!-- ── Action Required ── -->
     <div class="sec-hd">⚡ Action Required</div>
     <div class="chart-row chart-row-3" style="margin-bottom:28px">
@@ -730,6 +738,28 @@ function buildDashboardHTML(view = 'cases') {
     }
     .search-box:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(30,58,95,.08); }
 
+    /* ── Reporting (monthly figures) ── */
+    .rp-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin:0 0 12px; }
+    .rp-intro { font-size:12.5px; color:#64748b; margin:0; max-width:640px; line-height:1.5; }
+    .rp-period { display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:600; color:#64748b; }
+    .rp-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:14px; }
+    .rp-card { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:13px 15px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .rp-card .rp-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; }
+    .rp-card .rp-num { font-size:23px; font-weight:800; color:var(--navy); margin-top:3px; font-variant-numeric:tabular-nums; }
+    .rp-card .rp-sub { font-size:11px; color:#64748b; margin-top:2px; }
+    .rp-funnel { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:14px 16px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.06); display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+    .rp-funnel .rp-step { text-align:center; min-width:64px; }
+    .rp-funnel .rp-n { font-size:19px; font-weight:800; color:var(--navy); font-variant-numeric:tabular-nums; }
+    .rp-funnel .rp-l { font-size:9.5px; text-transform:uppercase; color:#94a3b8; letter-spacing:.5px; }
+    .rp-funnel .rp-arrow { color:#cbd5e1; font-weight:700; font-size:12px; }
+    .rp-funnel .rp-arrow b { display:block; color:#16a34a; font-size:10px; font-weight:800; }
+    .rp-2col { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:28px; }
+    .rp-mini { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:13px 15px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .rp-mini h4 { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; margin:0 0 8px; }
+    .rp-mini .rp-row { display:flex; justify-content:space-between; font-size:13px; padding:3px 0; color:#33425a; }
+    .rp-mini .rp-row b { color:var(--navy); font-variant-numeric:tabular-nums; }
+    .rp-muted { font-size:12.5px; color:#64748b; margin-bottom:28px; }
+    .rp-muted a { color:#2563eb; }
     .filter-sel {
       padding: 9px 12px; border: 1.5px solid #e2e8f0; border-radius: 9px;
       font-size: 13px; font-family: inherit; outline: none;
@@ -1024,6 +1054,60 @@ function loadData() {
       btn.textContent = '↻ Refresh';
       btn.disabled = false;
     });
+}
+
+/* ── Reporting: the monthly consultation and retainer figures (moved here from the Consultations page, 2026-11-05) ── */
+function kpiMoney(n){ return '$'+Number(n||0).toLocaleString('en-CA'); }
+function kpiCard(label,num,sub){ return '<div class="rp-card"><div class="rp-label">'+label+'</div><div class="rp-num">'+num+'</div>'+(sub?'<div class="rp-sub">'+sub+'</div>':'')+'</div>'; }
+function kpiByList(obj){ var ks=Object.keys(obj||{}); if(!ks.length) return '<div class="rp-muted">None</div>'; return ks.sort(function(a,b){return obj[b]-obj[a];}).map(function(k){ return '<div class="rp-row"><span>'+escHtml(k)+'</span><b>'+obj[k]+'</b></div>'; }).join(''); }
+function renderKpis(d){
+  var c=d.consultations||{}, r=d.retainers||{}, f=d.funnel||{}, rt=(f.rates||{});
+  var cards = kpiCard('Consultations booked', c.booked||0, (c.virtual||0)+' virtual · '+(c.inPerson||0)+' in-person'+((c.phone||0)?' · '+c.phone+' phone':''))
+    + kpiCard('Consultations held', c.held||0, '')
+    + kpiCard('Consultation revenue', kpiMoney(c.revenue||0), 'paid consults, fees before HST'+((c.paidByStaff||0)?' · '+c.paidByStaff+' recorded by staff':'')+((c.waived||0)?' · '+c.waived+' waived':''))
+    + kpiCard('Retainers signed', r.signed||0, (r.sent||0)+' sent · '+(r.paid||0)+' paid')
+    + kpiCard('Retainer value', kpiMoney(r.feeValue||0), 'signed this period')
+    + kpiCard('New / existing', (c.newClients||0)+' / '+(c.existingClients||0), 'clients booked');
+  var arrow=function(rate){ return '<span class="rp-arrow">→'+(rate!=null?'<b>'+rate+'%</b>':'')+'</span>'; };
+  var step=function(n,l){ return '<div class="rp-step"><div class="rp-n">'+n+'</div><div class="rp-l">'+l+'</div></div>'; };
+  var funnel = '<div class="rp-funnel">'
+    + step(f.leads||0,'Leads') + arrow(rt.bookedFromLeads)
+    + step(f.booked||0,'Booked') + '<span class="rp-arrow">→</span>'
+    + step(f.consulted||0,'Consulted') + arrow(rt.retainedFromBooked)
+    + step(f.retained||0,'Retained') + arrow(rt.paidFromRetained)
+    + step(f.paid||0,'Paid')
+    + (f.retainedDirect?'<div class="rp-step" title="Walk-in / referral clients retained without a booking or consultation — kept out of the booked→retained conversion"><div class="rp-n">+'+(f.retainedDirect||0)+'</div><div class="rp-l">Direct</div></div>':'')
+    + '</div>';
+  var unclassified=(r.signed||0)-(r.tr||0)-(r.pr||0);
+  var mini = '<div class="rp-2col">'
+    + '<div class="rp-mini"><h4>Retainers by type</h4>'
+      + '<div class="rp-row"><span>Temporary (TR)</span><b>'+(r.tr||0)+'</b></div>'
+      + '<div class="rp-row"><span>Permanent (PR)</span><b>'+(r.pr||0)+'</b></div>'
+      + (unclassified>0 ? '<div class="rp-muted" style="margin-top:4px">'+unclassified+' unclassified (case type not mapped)</div>' : '')
+      + '</div>'
+    + '<div class="rp-mini"><h4>By consultant (booked)</h4>'+kpiByList(c.byConsultant)+'</div>'
+    + '<div class="rp-mini"><h4>Leads by owner</h4>'+kpiByList(c.byLeadOwner)+'</div>'
+    + '</div>';
+  document.getElementById('kpi-body').innerHTML = '<div class="rp-grid">'+cards+'</div>' + funnel + mini;
+}
+function fillMonths(months, sel){
+  var el=document.getElementById('kpi-month'); if(el.getAttribute('data-filled')) return; el.setAttribute('data-filled','1');
+  var list=(months||[]).slice(); if(sel && list.indexOf(sel)<0) list.unshift(sel);
+  el.innerHTML='<option value="">All time</option>'+list.map(function(m){ return '<option value="'+m+'">'+m+'</option>'; }).join('');
+  el.value=sel||'';
+  el.onchange=function(){ loadKpis(el.value); };
+}
+function loadKpis(month){
+  /* The figures need the team key (the /api routes). A Monday-only sign-in sees the rest of the page; the box says what to do. */
+  var key = peekKey();
+  var body = document.getElementById('kpi-body');
+  if (!key) { body.innerHTML = '<div class="rp-muted">The monthly figures need the team key — sign in on the <a href="/admin">sign-in page</a> to see them.</div>'; return; }
+  var m = (month===undefined) ? new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto',year:'numeric',month:'2-digit'}).format(new Date()) : month;   // the Toronto month
+  body.innerHTML='<div class="rp-muted">Loading the figures…</div>';
+  fetch('/api/kpis'+(m?('?month='+encodeURIComponent(m)):''),{headers:{'X-Api-Key':key}})
+   .then(function(r){ if(r.status===401||r.status===403){ throw new Error('the team key was not accepted — sign in again on the sign-in page'); } return r.json(); })
+   .then(function(d){ fillMonths(d.months, m); renderKpis(d); })
+   .catch(function(e){ body.innerHTML='<div class="rp-muted">The figures could not be read: '+escHtml(e.message)+'</div>'; });
 }
 
 /* ── Render all ──────────────────────────────────────────────────── */
@@ -2080,6 +2164,7 @@ document.addEventListener('DOMContentLoaded', function() {
   startClock();
   if (getKey()) checkApiStatus();
   loadData();
+  if (VIEW === 'summary') loadKpis();   // the monthly figures load on their own, beside the case data
 });
 </script>
 ${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER }') + '</script>'}

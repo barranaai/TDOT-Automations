@@ -14,9 +14,9 @@ const consul = fs.readFileSync(require.resolve('../src/routes/adminConsultation.
 
 test('leads page: convert link exists and targets ?convertLead=<id>', () => {
   assert.match(leads, /id="btn-convert"/);
-  // PLURAL /admin/consultations — the queue page runs the ?convertLead boot
-  // handler; the singular path matched no route and 404'd (fixed 2026-08-21).
-  assert.match(leads, /\/admin\/consultations\?convertLead='\+encodeURIComponent\(d\.leadId\)/);
+  // /admin/retainers (its own page since 2026-11-05) runs the ?convertLead boot handler; the old
+  // /admin/consultations?convertLead= link is redirected there (test/consultationsTabs.test.js).
+  assert.match(leads, /\/admin\/retainers\?convertLead='\+encodeURIComponent\(d\.leadId\)/);
   assert.match(leads, /if\(cr && !d\.clientMasterItemId && d\.bookingStatus!=='Slot Held' && !d\.bookedSlot\)/,
     'never offered when a case exists, a slot is held, or a slot is booked — the server would refuse all three');
 });

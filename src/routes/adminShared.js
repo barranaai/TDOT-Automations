@@ -68,6 +68,7 @@ const SHARED_CSS_VARS = `
 //  activePage: 'leads' | 'consultations' | 'dashboard' (Cases) | 'summary' (others render the bar without an active link)
 function buildNavHeader(activePage) {
   const isConsult = activePage === 'consultations';
+  const isRetain  = activePage === 'retainers';   // Retainers & follow-ups — its own page since 2026-11-05
   const isLeads   = activePage === 'leads';
   // The dashboard's Summary view (needs-attention list + figures and charts).
   const isSummary = activePage === 'summary';
@@ -87,6 +88,9 @@ function buildNavHeader(activePage) {
       </a>
       <a href="/admin/consultations" class="nav-lnk${isConsult ? ' active' : ''}" title="Consultations"${isConsult ? ' aria-current="page"' : ''}>
         <span class="nav-icon" aria-hidden="true">🗓️</span> <span class="nav-txt">Consultations</span>
+      </a>
+      <a href="/admin/retainers" class="nav-lnk${isRetain ? ' active' : ''}" title="Retainers &amp; follow-ups"${isRetain ? ' aria-current="page"' : ''}>
+        <span class="nav-icon" aria-hidden="true">🤝</span> <span class="nav-txt">Retainers</span>
       </a>
       <a href="/admin/dashboard" class="nav-lnk${isCases ? ' active' : ''}" title="Cases"${isCases ? ' aria-current="page"' : ''}>
         <span class="nav-icon" aria-hidden="true">🗂️</span> <span class="nav-txt">Cases</span>
@@ -276,7 +280,10 @@ const NAV_CSS = `
     .who-chip { padding: 5px 10px; }
     .who-chip.on .who-txt { max-width: 110px; }   /* a long name is cut with "…"; the tooltip has it all */
   }
-  @media (max-width: 920px) {   /* a page scrollbar takes ~17px: the words go a little before 900 */
+  /* Six links since 2026-11-05 (Retainers). Measured again with the real bar from 360 to 1920px: the link words
+     need 607px; with "Sign in with Monday" or a name beside them they are squeezed below 1010px, so the chip's
+     words go first (its tooltip still says who); a page scrollbar takes ~17px, hence the margins. */
+  @media (max-width: 1030px) {
     .who-chip .who-txt { display: none; }   /* the icon only; its tooltip names you, or says "Sign in with Monday" */
     .who-chip { padding: 5px 8px; }
   }
@@ -287,7 +294,7 @@ const NAV_CSS = `
     .admin-hdr-right { gap: 8px; }
     #sys-text { display: none; }
   }
-  @media (max-width: 800px) {   /* with a page scrollbar the labels need ~775px */
+  @media (max-width: 900px) {   /* the six link words fit from 881px up; with a page scrollbar, from ~898px */
     .admin-hdr { padding: 0 12px; }
     .nav-lnk .nav-txt { display: none; }   /* each link keeps its title */
     .nav-lnk { padding: 7px 8px; }

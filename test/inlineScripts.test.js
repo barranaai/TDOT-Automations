@@ -67,6 +67,7 @@ test('adminLeads queue + detail: emitted scripts parse', () => {
 test('adminConsultation queue + detail: emitted scripts parse', () => {
   const { buildQueueHTML, buildDetailHTML } = require('../src/routes/adminConsultation');
   assertScriptsParse(buildQueueHTML(), 'consultation queue');
+  assertScriptsParse(require('../src/routes/adminConsultation').buildRetainersHTML(), 'retainers page');
   assertScriptsParse(buildDetailHTML('12345'), 'consultation detail');
 });
 
@@ -107,6 +108,7 @@ const queue0 = () => require('../src/routes/adminConsultation').buildQueueHTML()
 test('emitted page scripts carry no backslash-mangled regex literals', async () => {
   const consult = require('../src/routes/adminConsultation');
   assertNoMangledRegexes(consult.buildQueueHTML(), 'consultation queue');
+  assertNoMangledRegexes(consult.buildRetainersHTML(), 'retainers page');
   assertNoMangledRegexes(consult.buildDetailHTML('1'), 'consultation detail');
   const leads = require('../src/routes/adminLeads');
   assertNoMangledRegexes(leads.buildLeadsQueueHTML(), 'leads queue');

@@ -222,7 +222,7 @@ function renderRoute(router, path) {
 }
 const pages = async () => {
   const al = require('../src/routes/adminLeads'), ac = require('../src/routes/adminConsultation'), ad = require('../src/routes/adminDashboard');
-  return { leads: al.buildLeadsQueueHTML(), lead: al.buildLeadDetailHTML('7'), consultations: ac.buildQueueHTML(), consultation: ac.buildDetailHTML('555'),
+  return { leads: al.buildLeadsQueueHTML(), lead: al.buildLeadDetailHTML('7'), consultations: ac.buildQueueHTML(), retainers: ac.buildRetainersHTML(), consultation: ac.buildDetailHTML('555'),
     cases: await renderRoute(ad, '/'), summary: await renderRoute(ad, '/summary'), cockpit: require('../src/routes/adminCase').buildCockpitHTML('2026-TEST-001') };
 };
 
@@ -246,8 +246,8 @@ test('the old one-off pop-up rules are gone (no second look, no page-level Escap
   assert.ok(!/ov\.remove\(\)/.test(js), 'Delete no longer removes itself behind the shared close');
   assert.ok(!/function onKey\(e\)/.test(js), 'no per-dialog Escape listener');
   const { buildLeadsQueueHTML } = require('../src/routes/adminLeads');
-  const { buildQueueHTML } = require('../src/routes/adminConsultation');
-  const q = buildLeadsQueueHTML(), c = buildQueueHTML();
+  const { buildRetainersHTML } = require('../src/routes/adminConsultation');
+  const q = buildLeadsQueueHTML(), c = buildRetainersHTML();   // the direct-retainer pop-up is on the Retainers page (2026-11-05)
   assert.ok(!q.includes("o.style.display!=='none') alClose()"), 'Add lead: no own Escape handler');
   assert.ok(!c.includes("ev.key==='Escape'&&o&&o.style.display!=='none'"), 'Direct retainer: no own Escape handler');
   assert.ok(q.includes('<div id="al-overlay" class="tdlg-ov" hidden>') && c.includes('<div id="dc-overlay" class="tdlg-ov" hidden>'));
@@ -267,11 +267,11 @@ test('Add lead (Faran 2026-11-05): always opens EMPTY; a late answer for an earl
   assert.ok(q.includes("var go=function(){ if(!dlg.still(run)){ load(); return; }"), 'closed during the attach upload: no jump to the lead');
   assert.ok(q.includes("AL_ALLOW=false; dlg.close(true); window.location.href='/admin/lead/'"), 'saved: the window closes before the page moves on (Back never brings the filled form back)');
   assert.ok(q.includes("window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });"), 'Back to the list: it is read again');
-  assert.ok(require('../src/routes/adminConsultation').buildQueueHTML().includes("dlg.close(true); window.location.href='/admin/consultation/'"));
+  assert.ok(require('../src/routes/adminConsultation').buildRetainersHTML().includes("dlg.close(true); window.location.href='/admin/consultation/'"));
 });
 
 test('New direct retainer client: a duplicate lookup or a 409 for an earlier client never lands in a reopened form', () => {
-  const c = require('../src/routes/adminConsultation').buildQueueHTML();
+  const c = require('../src/routes/adminConsultation').buildRetainersHTML();
   assert.ok(c.includes("DC_MATCHES=null; DC_MATCH_SEQ++; var mb=dcEl('dc-matches');"), 'opening invalidates a lookup still out for the last person');
   assert.ok(c.includes("var dlg=dcDlg(), run=dlg.openId;"));
   assert.ok(c.includes("if(!dlg.still(run)){   /* closed after the long wait: never painted into a later opening — but the outcome is told, not lost */"));

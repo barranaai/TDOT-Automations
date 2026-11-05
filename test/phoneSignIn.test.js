@@ -57,7 +57,7 @@ test('the sign-in page: an unticked-by-default "Keep me signed in on this device
 
 test('phones: every text box, list and note box is 16px on a phone-sized screen (no iPhone zoom); check boxes untouched', () => {
   assert.match(NAV_CSS, /@media \(max-width: 760px\) \{\s*input:not\(\[type=checkbox\]\):not\(\[type=radio\]\):not\(\[type=file\]\):not\(\[type=button\]\):not\(\[type=submit\]\), select, textarea \{ font-size: 16px !important; \}/);
-  for (const page of [require('../src/routes/adminLeads').buildLeadsQueueHTML(), require('../src/routes/adminConsultation').buildQueueHTML()]) {
+  for (const page of [require('../src/routes/adminLeads').buildLeadsQueueHTML(), require('../src/routes/adminConsultation').buildQueueHTML(), require('../src/routes/adminConsultation').buildRetainersHTML()]) {
     assert.ok(page.includes('font-size: 16px !important'), 'the rule reaches the page');
     assert.ok(page.includes('tdotRestoreKey'), 'the kept key is picked up on the page');
   }

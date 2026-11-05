@@ -785,7 +785,7 @@ function render(d){
     var cr=document.getElementById('convert-row');
     if(cr && !d.clientMasterItemId && d.bookingStatus!=='Slot Held' && !d.bookedSlot){
       cr.style.display='flex';
-      document.getElementById('btn-convert').href='/admin/consultations?convertLead='+encodeURIComponent(d.leadId);
+      document.getElementById('btn-convert').href='/admin/retainers?convertLead='+encodeURIComponent(d.leadId);
     }
   }
 }

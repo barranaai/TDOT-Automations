@@ -389,7 +389,7 @@ function render(d) {
   if (d.clientEmail) acts += '<a class="act-btn" href="mailto:' + escHtml(d.clientEmail) + '">✉ Email client</a>';
   // New application for the SAME client — opens the direct-client modal
   // pre-filled from this case's profile (staff review + confirm everything).
-  acts += '<a class="act-btn" href="/admin/consultations?newAppFrom=' + encodeURIComponent(CASE_REF) + '" title="Start a new application for this client — identity and family carried over for review; the current case stays untouched">➕ New application</a>';
+  acts += '<a class="act-btn" href="/admin/retainers?newAppFrom=' + encodeURIComponent(CASE_REF) + '" title="Start a new application for this client — identity and family carried over for review; the current case stays untouched">➕ New application</a>';
   document.getElementById('c-actions').innerHTML = acts;
   var fbtn = document.getElementById('folder-btn');
   if (fbtn) fbtn.addEventListener('click', caseFolder);

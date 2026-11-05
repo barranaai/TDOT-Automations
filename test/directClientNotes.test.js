@@ -106,7 +106,7 @@ test('a note that fails on the case never undoes the client (best-effort)', asyn
 });
 
 test('the popup: a Notes box (required since 2026-11-04), cleared on open, sent with the form; the route passes the signed-in person', () => {
-  const html = require('../src/routes/adminConsultation').buildQueueHTML ? require('../src/routes/adminConsultation').buildQueueHTML() : require('fs').readFileSync(require.resolve('../src/routes/adminConsultation'), 'utf8');
+  const html = require('../src/routes/adminConsultation').buildRetainersHTML();   // the pop-up is on the Retainers page (2026-11-05)
   for (const x of ['<label for="dc-notes">Notes *', '<textarea id="dc-notes" rows="3" maxlength="2000"', "'dc-address','dc-notes'].forEach(", "notes:dcEl('dc-notes').value"]) assert.ok(html.includes(x), x);
   const server = require('fs').readFileSync(require.resolve('../src/server'), 'utf8');
   assert.ok(server.includes("createDirectClient(req.body || {}, { actor: staffActor(req, '') })"));

@@ -231,16 +231,21 @@ test('KPIs: revenue = booking-link fees + staff-recorded fees (before HST); waiv
 
 /* ── the pages ── */
 
-test('pages: the Paid filter has the new choices, the row pill reads the kind, the detail page has the card, the dialog and the handlers; every script parses; the inline-JS rules hold', () => {
+test('pages: the Paid filter has the new choices, the row pill reads the kind, the detail page has the card, the dialog and the handlers; every script parses; the inline-JS rules hold', async () => {
   const { buildQueueHTML, buildDetailHTML } = require('../src/routes/adminConsultation');
   const q = buildQueueHTML(), d = buildDetailHTML('555');
   for (const html of [q, d]) for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   // The Paid filter sits in the column header since 2026-11-05 (listSpecs.js): one value per row — app | staff | waived | none —
   // and "Paid (any way)" is app + staff ticked together (test/listSpecs.test.js proves it against the old drop-down).
-  for (const s of ['function paidPill(c){', "(c.paidVerified?'':' (name as typed)')", "' recorded by staff'", "' waived'",
+  for (const s of ['function paidPill(c){', "(c.paidVerified?'':' (name as typed)')",
     "paid: { label: 'Paid', get: function (r) { return !s(r.paid) ? 'none' : r.paid === 'waived' ? 'waived' : r.paid === 'app' ? 'app' : 'staff'; },",
     "text: function (v) { return ({ app: 'Paid (app)', staff: 'Paid — recorded by staff', waived: 'Waived', none: 'Not paid' })[v] || v; }",
     "{ id: 'paid', label: 'Paid', title: 'The consultation fee', menu: 'facet', facets: ['paid'] }"]) assert.ok(q.includes(s), s);
+  // the Reporting card says how many were recorded by staff / waived — on the Summary page since 2026-11-05
+  const dash = require('../src/routes/adminDashboard');
+  const layer = dash.stack.find((l) => l.route && l.route.path === '/summary');
+  const summary = await new Promise((resolve) => layer.route.stack[0].handle({ query: {} }, { type: () => ({ send: resolve }) }));
+  for (const s of ["' recorded by staff'", "' waived'", "kpiCard('Consultation revenue'"]) assert.ok(summary.includes(s), s);
   assert.ok(!q.includes('Not paid via app'), 'the old wording is gone');
   for (const s of ['id="cp-state"', 'id="cp-body"', 'id="btn-cp-record"', 'id="btn-cp-clear"', 'function hydrateConsultPayment(d){', 'function openConsultPaymentModal(d, clear){',
     "doAction('recordConsultPayment', JSON.stringify(payload), null, by);", 'hydrateConsultPayment(d);',

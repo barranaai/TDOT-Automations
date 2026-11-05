@@ -60,15 +60,17 @@ const jsLit = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
 // config/portalStaff.js (PORTAL_STAFF on Render + the consultants), built in adminShared.
 const { STAFF_OPTS } = require('./adminShared');
 
-// ─── Queue page ────────────────────────────────────────────────────────────────
-function buildQueueHTML() {
-  return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TDOT — Consultations</title><style>
-  ${SHARED_CSS_VARS}
-  ${NAV_CSS}
+// ─── The Consultations and Retainers pages ─────────────────────────────────────
+// Two pages since 2026-11-05 (team meeting: "the Consultations page shows consultations only"):
+//   /admin/consultations — booked consultations: the date range, the "Needs outcome" and "No date" folds;
+//   /admin/retainers     — Retainers & follow-ups, with the "＋ Direct retainer client" pop-up.
+// Both read /api/consultations-board (one read, cached on the server) and share their look and row
+// helpers below. The Reporting figures live on the Summary page (adminDashboard.js). The old
+// /admin/consultations?tab=… and ?outcome= / ?convertLead= / ?newAppFrom= links are redirected (the routes).
+
+const LIST_PAGE_CSS = `
   body { background:#f1f5f9; }
-  /* Full width (staff request 2026-09-09): the queue is a wide table — every
+  /* Full width (staff request 2026-09-09): the lists are wide tables — every
      column gets the screen, with just enough side padding to clear the edge. */
   .wrap { max-width:none; margin:0; padding:22px 14px 80px; }
   #loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:50vh; gap:16px; }
@@ -78,7 +80,8 @@ function buildQueueHTML() {
   #error-msg { display:none; background:#fff1f2; border:1px solid #fda4af; color:#dc2626; padding:14px 18px; border-radius:12px; margin:24px auto; max-width:520px; text-align:center; }
   #content { display:none; }
   .page-h { font-size:22px; font-weight:800; color:var(--navy); letter-spacing:-.5px; margin:0 0 4px; }
-  .page-sub { font-size:12px; color:#94a3b8; margin:0 0 20px; font-weight:500; }
+  .page-h .cnt { font-size:14px; font-weight:500; color:#94a3b8; margin-left:4px; }
+  .page-sub { font-size:12px; color:#94a3b8; margin:0 0 14px; font-weight:500; line-height:1.5; }
   .card { background:white; border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; overflow:hidden; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th { background:#f8fafc; text-align:left; padding:11px 14px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.7px; color:#94a3b8; border-bottom:2px solid #f1f5f9; }
@@ -92,45 +95,24 @@ function buildQueueHTML() {
   .tier { font-weight:700; color:var(--navy); }
   .empty { padding:40px; text-align:center; color:#94a3b8; }
   .sec-h { font-size:15px; font-weight:800; color:var(--navy); margin:0; }
-  .kpi-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin:6px 0 12px; }
-  .kpi-head select { padding:7px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; background:#fff; color:var(--navy); font-weight:600; }
-  .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:14px; }
-  .kpi-card { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:13px 15px; box-shadow:var(--shadow-sm); }
-  .kpi-card .k-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; }
-  .kpi-card .k-num { font-size:23px; font-weight:800; color:var(--navy); margin-top:3px; font-variant-numeric:tabular-nums; }
-  .kpi-card .k-sub { font-size:11px; color:#64748b; margin-top:2px; }
-  .kpi-funnel { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:14px 16px; margin-bottom:14px; box-shadow:var(--shadow-sm); display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
-  .kpi-funnel .f-step { text-align:center; min-width:64px; }
-  .kpi-funnel .f-n { font-size:19px; font-weight:800; color:var(--navy); font-variant-numeric:tabular-nums; }
-  .kpi-funnel .f-l { font-size:9.5px; text-transform:uppercase; color:#94a3b8; letter-spacing:.5px; }
-  .kpi-funnel .f-arrow { color:#cbd5e1; font-weight:700; font-size:12px; }
-  .kpi-funnel .f-arrow b { display:block; color:#16a34a; font-size:10px; font-weight:800; }
-  .kpi-2col { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:20px; }
-  .kpi-mini { background:#fff; border:1px solid #eef2f7; border-radius:12px; padding:13px 15px; box-shadow:var(--shadow-sm); }
-  .kpi-mini h4 { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; margin:0 0 8px; }
-  .kpi-mini .r2 { display:flex; justify-content:space-between; font-size:13px; padding:3px 0; color:#33425a; }
-  .kpi-mini .r2 b { color:var(--navy); font-variant-numeric:tabular-nums; }
   /* The lists: the shared filter look (listFilters.js, 2026-11-05) — filters in the column headers, chips, one search box. */
   ${LIST_TABLE_CSS}
   .tbl-wrap table { min-width:1000px; }
   .page-top { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:0 0 4px; }
-  .btn-direct { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border:1px solid var(--navy); background:var(--navy); color:#fff; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
-  .btn-direct:hover { filter:brightness(1.12); }
+  /* "Updated n s ago · refresh": how old the copy of the board is */
+  .age { font-size:11.5px; color:#94a3b8; }
+  .age button { background:none; border:0; color:#2563eb; cursor:pointer; font:inherit; font-size:11.5px; padding:0 2px; }
   .q-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin:6px 0 10px; }
+  .sec-sub { font-size:12px; color:#94a3b8; margin:0 0 10px; }
+`;
+
+const CONSULT_PAGE_CSS = `
   .range .cnt { font-size:12.5px; font-weight:500; color:#94a3b8; margin-left:4px; }
-  /* Tabs (Gauri point 4): Leads | Consultations | Retainers | Reporting */
-  .tabs { display:flex; align-items:center; gap:4px; border-bottom:2px solid #e2e8f0; margin:0 0 16px; flex-wrap:wrap; }
-  .tab { appearance:none; background:none; border:0; border-bottom:3px solid transparent; margin-bottom:-2px; padding:10px 14px; font:inherit; font-size:13.5px; font-weight:700; color:#64748b; cursor:pointer; text-decoration:none; }
-  .tab:hover { color:var(--navy); } .tab.active { color:var(--navy); border-bottom-color:var(--navy); }
-  .tab .tab-n { display:inline-block; min-width:18px; padding:0 6px; border-radius:10px; background:#f1f5f9; color:#64748b; font-size:11px; margin-left:4px; }
-  .tabs .age { margin-left:auto; font-size:11.5px; color:#94a3b8; }
-  .tabs .age button { background:none; border:0; color:#2563eb; cursor:pointer; font:inherit; font-size:11.5px; padding:0 2px; }
   .range { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
   .range button { padding:6px 10px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; color:var(--navy); font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
   .range button.on { background:var(--navy); border-color:var(--navy); color:#fff; }
   .range .nav { padding:6px 9px; }
   .range .lbl { font-size:13px; font-weight:700; color:var(--navy); margin-left:6px; }
-  .sec-sub { font-size:12px; color:#94a3b8; margin:0 0 10px; }
   .attn { border-color:#fde68a; }
   .fold .attn-h { background:#f8fafc; color:#64748b; font-size:12.5px; font-weight:700; padding:9px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
   .fold.attn .attn-h { background:#fffbeb; color:#92400e; }
@@ -139,7 +121,11 @@ function buildQueueHTML() {
   .fold table { display:none; } .fold.open table { display:table; }
   .time { font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:600; color:var(--navy); }
   .time .d { font-weight:500; color:#64748b; }
-  section[hidden] { display:none; }
+`;
+
+const RETAINERS_PAGE_CSS = `
+  .btn-direct { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border:1px solid var(--navy); background:var(--navy); color:#fff; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .btn-direct:hover { filter:brightness(1.12); }
   /* Retainers quick filters (Faran 2026-10-16, in place of grouping by outcome): toggle buttons, none on = all */
   .quick { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
   .quick .ql { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#475569; margin-right:2px; }
@@ -174,81 +160,10 @@ function buildQueueHTML() {
   ${ATTACH_CSS}
   #dc-modal .al-hint, #dc-modal .dc-note { font-size:12px; color:#64748b; margin-top:3px; }
   #dc-modal .att-row input[type=file] { border:0; padding:6px 0; }
-  ${DELETE_UI_CSS}
-  ${BLACKLIST_UI_CSS}
-</style></head><body>
-${buildNavHeader('consultations')}
-<main class="wrap">
-  <div id="loading"><div class="spinner"></div><div class="muted">Loading consultations…</div></div>
-  <div id="error-msg"></div>
-  <div id="content">
-    <div class="page-top">
-      <h1 class="page-h" style="margin:0">Consultations</h1>
-      <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
-    </div>
-    <div class="tabs" role="tablist" aria-label="Views">
-      <a class="tab" href="/admin/leads" role="tab">Leads</a>
-      <button class="tab" type="button" role="tab" data-tab="consultations">Consultations <span class="tab-n" id="tn-consult"></span></button>
-      <button class="tab" type="button" role="tab" data-tab="retainers">Retainers &amp; follow-ups <span class="tab-n" id="tn-ret"></span></button>
-      <button class="tab" type="button" role="tab" data-tab="reporting">Reporting</button>
-      <span class="age" id="snap-age"></span>
-    </div>
+`;
 
-    <section id="tab-consultations" role="tabpanel">
-      <div class="q-head">
-        <div class="range" id="range" aria-label="Date range">
-          <button type="button" class="nav" data-nav="-1" title="Earlier">&#9664;</button>
-          <button type="button" data-range="today">Today</button>
-          <button type="button" data-range="week">This week</button>
-          <button type="button" data-range="month">This month</button>
-          <button type="button" data-range="all">All</button>
-          <button type="button" class="nav" data-nav="1" title="Later">&#9654;</button>
-          <span class="lbl" id="range-label"></span><span class="cnt" id="cq-count" aria-live="polite"></span>
-        </div>
-        <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="cq-search" type="search" placeholder="Search by name…" aria-label="Search consultations by name" autocomplete="off"></div>
-      </div>
-      <div id="cq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
-      <div class="card attn fold" id="needs-outcome" style="display:none;margin-bottom:12px">
-        <div class="attn-h" id="needs-outcome-h" role="button" tabindex="0" aria-expanded="false" aria-controls="needs-outcome-body"><span>&#9888; Needs outcome <span id="needs-outcome-n"></span> <span class="muted">— consultations that have happened with no outcome recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted.</span></span><span class="muted">show / hide</span></div>
-        <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="needs-outcome-body"></tbody></table></div>
-      </div>
-      <div class="card"><div class="tbl-wrap">
-        <table>
-          <thead><tr id="cq-headrow"><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead>
-          <tbody id="qbody"></tbody>
-        </table>
-      </div></div>
-      <div class="card fold" id="nodate" style="display:none;margin-top:12px">
-        <div class="attn-h" id="nodate-h" role="button" tabindex="0" aria-expanded="false" aria-controls="nodate-body"><span>No date <span id="nodate-n"></span> <span class="muted">— marked Booked by hand with no consultation time. Open one to set its time, or delete it.</span></span><span class="muted">show / hide</span></div>
-        <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="nodate-body"></tbody></table></div>
-      </div>
-    </section>
-
-    <section id="tab-retainers" role="tabpanel" hidden>
-      <div class="q-head">
-        <div><h2 class="sec-h">Retainers &amp; follow-ups <span id="r-count" class="muted" style="font-weight:500" aria-live="polite"></span></h2>
-          <p class="sec-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation, and drops off once retained (the case is on the Cases page).</p></div>
-        <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="rq-search" type="search" placeholder="Search by name…" aria-label="Search retainers and follow-ups by name" autocomplete="off"></div>
-      </div>
-      <div class="quick" id="r-quick" role="group" aria-label="Show by outcome"></div>
-      <div id="rq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
-      <div class="card"><div class="tbl-wrap">
-        <table>
-          <thead><tr id="rq-headrow"><th>Client</th><th>Case type</th><th>Consultant</th><th>Outcome</th><th>Consult fee</th><th>Retainer fee</th><th>Sent</th><th>Signed</th><th>Paid</th><th>Stage</th><th>Case</th><th></th></tr></thead>
-          <tbody id="rbody"></tbody>
-        </table>
-      </div></div>
-    </section>
-
-    <section id="tab-reporting" role="tabpanel" hidden>
-      <div class="kpi-head">
-        <h2 class="sec-h">Reporting</h2>
-        <div><label class="muted" for="kpi-month" style="margin-right:6px">Period</label><select id="kpi-month"></select></div>
-      </div>
-      <div id="kpi-body"><div class="muted">Loading KPIs…</div></div>
-    </section>
-  </div>
-
+// The "New direct retainer client" pop-up (the shared pop-up, dialogUi.js).
+const DIRECT_CLIENT_HTML = `
   <!-- Direct retainer client (walk-in / referral — enters at the retainer stage) -->
   <div id="dc-overlay" class="tdlg-ov" hidden>
     <div id="dc-modal" class="tdlg" role="dialog" aria-modal="true" aria-labelledby="dc-title">
@@ -278,21 +193,51 @@ ${buildNavHeader('consultations')}
       </div>
     </div>
   </div>
-</main>
-<script>
-${SHARED_AUTH_JS}
-${DIALOG_UI_JS}
+`;
+
+// Browser code the two pages share: escaping, the pills, the Toronto day, the "Updated … · refresh" line.
+// Plain template text inside the pages' own template literals: no backtick, no dollar-brace; regexes double their backslashes.
+const LIST_PAGE_JS = `
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-var ALLROWS=[], RETAINERS=[], TAB='consultations', RANGE='today', ANCHOR='';
-${REFERRAL_UI_JS}
-${ATTACH_UI_JS}
-var DC_REF=tdotRef('dc');      /* the walk-in form's Source / Reference second question (2026-11-04) */
-var DC_ATT=tdotAttach('dc');   /* "Attach a screenshot": only for the staff allowed to (Shafoli), signed in with Monday */
-var DC_PROFILE_ADDR='';        /* the carried address — its "is it current?" tick is asked only while the box still shows it */
-var RET_OUTCOMES=${jsLit(OUTCOME_LABELS)};   // the Retainers quick filters: one button per outcome (the shared list engine keeps which are on)
-var RET_HINTS={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set', 'Follow-Up':'The team calls the client back — not retained', 'Newsletter':'Nothing to do now — the client gets the newsletter', 'Not Wanted':'On the Not Wanted list — staff are warned if they come back' };
 function qpill(cls,txt){ return '<span class="pill '+cls+'">'+escHtml(txt)+'</span>'; }
 function todayStr(){ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto'}).format(new Date()); }   // the Toronto day
+/* Filters (the date range too) are kept only until this browser tab is closed (Faran 2026-11-05); Sign Out forgets them. */
+function ssGet(k){ try { return sessionStorage.getItem(k)||''; } catch(e){ return ''; } }
+function ssSet(k,v){ if(window.TDOT_SIGNED_OUT) return; try { sessionStorage.setItem(k,v); } catch(e){} }
+/* The old one-page tabs (before 2026-11-05) kept these on the computer; nothing reads them now. */
+try { ['tdot_consult_tab','tdot_consult_range','tdot_ret_outcomes'].forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}
+/* Paid: the booking link's own payment ("app", incl. HST), or what staff recorded on the
+   consultation page — cash / e-transfer / invoice / other (the fee before HST) or waived. */
+var PAID_LABELS={cash:'Cash','e-transfer':'E-transfer',invoice:'Invoice',other:'Paid (other)',waived:'Waived'};
+function paidPill(c){
+  var amt=(c.paidCents!=null&&c.paidCents>0)?' $'+(c.paidCents/100).toFixed(0):'';
+  if(c.paid==='app') return qpill('green','Paid (app)'+amt);
+  if(!c.paid) return '<span class="pill grey">—</span>';
+  var label=Object.prototype.hasOwnProperty.call(PAID_LABELS,c.paid)?PAID_LABELS[c.paid]:String(c.paid);
+  var who=c.paidBy?(' · recorded by '+c.paidBy+(c.paidVerified?'':' (name as typed)')+(c.paidOn?(' on '+c.paidOn):'')):'';
+  return '<span class="pill '+(c.paid==='waived'?'grey':'green')+'" title="'+escHtml(label+who)+'">'+escHtml(label+amt)+'</span>';
+}
+function outcomeCell(c){
+  var o=c.outcome, cls=o==='Retain'?'green':o==='Follow-Up'?'amber':o==='Not Wanted'?'red':'grey';
+  var h=o?qpill(cls,o):'<span class="pill grey">—</span>';
+  if(c.followUpDate) h+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);
+  return h;
+}
+function bindRowClicks(root){
+  Array.prototype.forEach.call(root.querySelectorAll('tr.row'),function(tr){
+    tr.onclick=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id')); };
+  });
+}
+function showAge(d){
+  var el=document.getElementById('snap-age'); if(!el) return;
+  var secs=Math.round((d.ageMs||0)/1000);
+  el.innerHTML=(d.stale?'<span style="color:#b45309">Monday could not be read — showing the last copy, ':'<span>Updated ')+(secs<90?secs+' s ago':Math.round(secs/60)+' min ago')+'</span> · <button type="button" id="btn-refresh">refresh</button>';
+  var b=document.getElementById('btn-refresh'); if(b) b.onclick=function(){ load(true); };
+}
+`;
+
+// The Consultations page's own browser code: the calendar helpers, the date range, the three lists.
+const CONSULT_PAGE_JS = `
 /* ── Calendar-date helpers: 'YYYY-MM-DD' strings only, never a local Date (TZ-safe) ── */
 function dParts(d){ var m=String(d||'').match(/^(\\d{4})-(\\d{2})-(\\d{2})/); return m?[Number(m[1]),Number(m[2]),Number(m[3])]:null; }
 function dAdd(d,n){ var p=dParts(d); if(!p) return d; var t=new Date(Date.UTC(p[0],p[1]-1,p[2]+n)); return t.toISOString().slice(0,10); }
@@ -320,17 +265,6 @@ function timeCell(c){
   var d=slot.slice(0,10), t=slot.slice(11,16);
   return '<span class="time">'+(RANGE==='today'?'':'<span class="d">'+escHtml(dLabel(d,d.slice(0,4)!==todayStr().slice(0,4)))+' · </span>')+escHtml(t||'')+'</span>';
 }
-/* Paid: the booking link's own payment ("app", incl. HST), or what staff recorded on the
-   consultation page — cash / e-transfer / invoice / other (the fee before HST) or waived. */
-var PAID_LABELS={cash:'Cash','e-transfer':'E-transfer',invoice:'Invoice',other:'Paid (other)',waived:'Waived'};
-function paidPill(c){
-  var amt=(c.paidCents!=null&&c.paidCents>0)?' $'+(c.paidCents/100).toFixed(0):'';
-  if(c.paid==='app') return qpill('green','Paid (app)'+amt);
-  if(!c.paid) return '<span class="pill grey">—</span>';
-  var label=Object.prototype.hasOwnProperty.call(PAID_LABELS,c.paid)?PAID_LABELS[c.paid]:String(c.paid);
-  var who=c.paidBy?(' · recorded by '+c.paidBy+(c.paidVerified?'':' (name as typed)')+(c.paidOn?(' on '+c.paidOn):'')):'';
-  return '<span class="pill '+(c.paid==='waived'?'grey':'green')+'" title="'+escHtml(label+who)+'">'+escHtml(label+amt)+'</span>';
-}
 function rowHtml(c){
   var pc=c.preConsultSubmitted?qpill('green','Submitted'):qpill('amber','Pending');
   var oc=outcomeCell(c);   // the outcome, and a follow-up date amber once it is due (today or earlier)
@@ -345,15 +279,86 @@ function rowHtml(c){
     '<td>'+ag+'</td><td>'+pc+'</td><td>'+pd+'</td><td>'+oc+'</td>'+
     '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this record (careful — removes Monday rows and the OneDrive folder; escalates to the full case if one exists)">'+TDOT_DEL_SVG+'</button></td></tr>';
 }
-function bindRowClicks(root){
-  Array.prototype.forEach.call(root.querySelectorAll('tr.row'),function(tr){
-    tr.onclick=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(tr.getAttribute('data-id')); };
-  });
-}
 function renderRows(rows){
   var tb=document.getElementById('qbody');
   if(!rows.length){ tb.innerHTML='<tr><td colspan="10" class="empty">'+(ALLROWS.length?'No consultations '+(RANGE==='all'?'match your filters.':'in this range match your filters.'):'No booked consultations right now.')+'</td></tr>'; }
   else tb.innerHTML=rows.map(rowHtml).join('');
+  bindRowClicks(tb);
+}
+function setRange(r,anchor){
+  RANGE=['today','week','month','all'].indexOf(r)>=0?r:'today'; ANCHOR=anchor||todayStr();
+  ssSet('tdot_list_consult_range',RANGE);
+  Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.classList.toggle('on',b.getAttribute('data-range')===RANGE); });
+  Array.prototype.forEach.call(document.querySelectorAll('#range .nav'),function(b){ b.disabled=(RANGE==='all'); });
+  document.getElementById('range-label').textContent=rangeLabel();
+  Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.setAttribute('aria-pressed',b.getAttribute('data-range')===RANGE?'true':'false'); });
+  if(window.ConsultTable) ConsultTable.apply('filter');
+}
+function shiftRange(n){
+  if(RANGE==='all') return;
+  var a=ANCHOR||todayStr();
+  setRange(RANGE, RANGE==='today'?dAdd(a,n):RANGE==='week'?dAdd(a,7*n):dMonthAdd(a,n));
+}
+/* The Consultations list: the shared engine (listSpecs.js consultListSpec — the header filters and the search) hands
+   over the rows that pass; they split into three lists, each row in one: no date / needs an outcome (the
+   consultation day has passed, nothing recorded) / the date range. The count is the range list's. */
+function consultBucket(r,t){ var d=String(r.bookedSlot||'').slice(0,10); if(!dParts(d)) return 'nodate'; if(d<t && !r.outcome) return 'needs'; return inRange(r.bookedSlot)?'main':''; }
+/* The counts beside the header choices: the rows a tick can show — the date range plus the two folds (never other dates). */
+function consultCountable(r){ return consultBucket(r,todayStr())!==''; }
+function renderConsultList(keep){
+  var t=todayStr();
+  var noDate=keep.filter(function(r){ return consultBucket(r,t)==='nodate'; });
+  var needs=keep.filter(function(r){ return consultBucket(r,t)==='needs'; });
+  var main=keep.filter(function(r){ return consultBucket(r,t)==='main'; });
+  renderRows(main);
+  var nb=document.getElementById('needs-outcome'); nb.style.display=needs.length?'block':'none';
+  document.getElementById('needs-outcome-n').textContent='('+needs.length+')';
+  var nbody=document.getElementById('needs-outcome-body'); nbody.innerHTML=needs.slice().sort(function(a,b){ return String(b.bookedSlot).localeCompare(String(a.bookedSlot)); }).map(rowHtml).join(''); bindRowClicks(nbody);
+  var nd=document.getElementById('nodate'); nd.style.display=noDate.length?'block':'none';
+  document.getElementById('nodate-n').textContent='('+noDate.length+')';
+  var ndbody=document.getElementById('nodate-body'); ndbody.innerHTML=noDate.map(rowHtml).join(''); bindRowClicks(ndbody);
+  return { shown: main.length, total: ALLROWS.filter(function(r){ return consultBucket(r,t)==='main'; }).length };
+}
+['needs-outcome','nodate'].forEach(function(id){ var h=document.getElementById(id+'-h'); var box=document.getElementById(id); if(h&&box){ var tog=function(){ box.classList.toggle('open'); h.setAttribute('aria-expanded',box.classList.contains('open')?'true':'false'); }; h.onclick=tog; h.onkeydown=function(ev){ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); tog(); } }; } });
+`;
+
+// The Retainers page's own browser code: the outcome buttons' link + address, the list, the pop-up.
+const RETAINERS_PAGE_JS = `
+function dParts(d){ var m=String(d||'').match(/^(\\d{4})-(\\d{2})-(\\d{2})/); return m?[Number(m[1]),Number(m[2]),Number(m[3])]:null; }
+/* The Retainers quick filters (the outcome buttons above the table) are the shared engine's "quick" facet
+   (listSpecs.js retainerListSpec): counts from the other filters, none on = all. A link can open a view
+   (/admin/retainers?outcome=Follow-Up,Newsletter) and the address follows the buttons. */
+function cleanOutcomes(list){ var out=[]; (list||[]).forEach(function(v){ v=String(v||'').trim(); if(RET_OUTCOMES.indexOf(v)>=0 && out.indexOf(v)<0) out.push(v); }); return out; }
+function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return; var l=cleanOutcomes(String(p).split(',')); if(l.length) st.sel.outcome=l; else delete st.sel.outcome; }
+function retOnChange(st){
+  var l=(st.sel&&st.sel.outcome)||[];
+  try { var u=new URL(window.location.href); if(l.length){ u.searchParams.set('outcome',l.join(',')); } else u.searchParams.delete('outcome'); history.replaceState(null,'',u.toString()); } catch(e){}
+}
+/* The Retainers list: the shared engine hands over the rows that pass (the header filters, the search, the outcome buttons). */
+function renderRetainerList(rows,why,st,h){
+  var t=todayStr(), tp=dParts(t);
+  var rout=(st&&st.sel&&st.sel.outcome)||[], base=h?h.without('outcome'):rows.length;
+  var tb=document.getElementById('rbody');
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="12" class="empty">'+(!RETAINERS.length?'Nobody here right now.':(rout.length && base)?'Nobody under '+escHtml(rout.join(' or '))+(base!==RETAINERS.length?' with these filters':'')+' right now.':'No clients match your filters.')+'</td></tr>'; return; }
+  function age(d){ var p=dParts(d); if(!p||!tp) return ''; var days=Math.round((Date.UTC(tp[0],tp[1]-1,tp[2])-Date.UTC(p[0],p[1]-1,p[2]))/86400000); return days>0?' <span class="muted">('+days+'d)</span>':''; }
+  tb.innerHTML=rows.map(function(c){
+    var stc=c.stage==='Paid'?'green':(c.stage==='Signed'||c.stage==='Sent')?'blue':'amber';
+    var cs=c.caseOpen?qpill('green','Open'):c.stage?qpill('grey','Pending'):'<span class="pill grey">—</span>';   // no retainer under way: no case coming yet
+    return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
+      '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+(c.kind==='direct'?(c.originalChannel?' <span class="pill grey" title="Converted from a '+escHtml(c.originalChannel)+' lead — no consultation">direct · '+escHtml(c.originalChannel)+'</span>':(c.directSource?' <span class="pill grey" title="Direct retainer client — came through '+escHtml(c.directSource)+'; no consultation">direct · '+escHtml(c.directSource)+'</span>':' <span class="pill grey" title="Walk-in / referral — no consultation">direct</span>')):'')+
+        /* No email (2026-11-04): the retainer agreement cannot go out until one is added — shown until it is sent. */
+        ((c.hasEmail===false && !c.retainerSent)?' <span class="pill amber" title="No email address — the retainer agreement cannot be emailed until one is added on the lead page">No email</span>':'')+'</td>'+
+      '<td style="color:var(--muted)">'+escHtml(c.caseType||'—')+'</td>'+
+      '<td>'+escHtml(c.consultant||'—')+'</td>'+
+      '<td>'+outcomeCell(c)+'</td>'+
+      '<td>'+((c.kind==='direct' && !c.paid)?'<span class="pill grey" title="Direct retainer client — no consultation">n/a</span>':paidPill(c))+'</td>'+
+      '<td>'+(c.fee?'$'+escHtml(c.fee):'—')+'</td>'+
+      '<td>'+(c.retainerSent?escHtml(c.retainerSent)+(c.retainerSigned?'':age(c.retainerSent)):'—')+'</td>'+
+      '<td>'+(c.retainerSigned?escHtml(c.retainerSigned):'—')+'</td>'+
+      '<td>'+(c.retainerPaid?escHtml(c.retainerPaid):'—')+'</td>'+
+      '<td>'+(c.stage?qpill(stc,c.stage):'<span class="pill grey">—</span>')+'</td><td>'+cs+'</td>'+
+      '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client (careful — removes the case, its checklist, and the OneDrive folder)">'+TDOT_DEL_SVG+'</button></td></tr>';
+  }).join('');
   bindRowClicks(tb);
 }
 /* ── Direct retainer client (walk-in / referral) ── */
@@ -680,113 +685,74 @@ function submitDirectClient(){
   if(convertLead && !newAppFrom){ openDirectClient(); dcLoadConvertLead(convertLead); }
 })();
 
-/* ── Tabs, the date range, and the two lists (one read: /api/consultations-board) ── */
-function lsGet(k){ try { return localStorage.getItem(k)||''; } catch(e){ return ''; } }
-function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
-/* Filters (the date range too) are kept only until this browser tab is closed (Faran 2026-11-05); Sign Out forgets them. */
-function ssGet(k){ try { return sessionStorage.getItem(k)||''; } catch(e){ return ''; } }
-function ssSet(k,v){ if(window.TDOT_SIGNED_OUT) return; try { sessionStorage.setItem(k,v); } catch(e){} }
-var KPIS_LOADED=false;
-function setTab(t,push){
-  if(['consultations','retainers','reporting'].indexOf(t)<0) t='consultations';
-  TAB=t; lsSet('tdot_consult_tab',t);
-  if(window.ConsultTable) ConsultTable.close(); if(window.RetainerTable) RetainerTable.close();   /* no filter panel left open over another tab */
-  Array.prototype.forEach.call(document.querySelectorAll('.tab[data-tab]'),function(b){ var on=b.getAttribute('data-tab')===t; b.classList.toggle('active',on); b.setAttribute('aria-selected',on?'true':'false'); });
-  ['consultations','retainers','reporting'].forEach(function(x){ var el=document.getElementById('tab-'+x); if(el){ if(x===t) el.removeAttribute('hidden'); else el.setAttribute('hidden',''); } });
-  if(push){ try { var u=new URL(window.location.href); u.searchParams.set('tab',t); history.replaceState(null,'',u.toString()); } catch(e){} }
-  if(t==='reporting' && !KPIS_LOADED){ KPIS_LOADED=true; loadKpis(); }
+`;
+
+function listPageHead(title) {
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TDOT — ${title}</title><style>
+  ${SHARED_CSS_VARS}
+  ${NAV_CSS}
+  ${LIST_PAGE_CSS}`;
 }
-function setRange(r,anchor){
-  RANGE=['today','week','month','all'].indexOf(r)>=0?r:'today'; ANCHOR=anchor||todayStr();
-  ssSet('tdot_list_consult_range',RANGE);
-  Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.classList.toggle('on',b.getAttribute('data-range')===RANGE); });
-  Array.prototype.forEach.call(document.querySelectorAll('#range .nav'),function(b){ b.disabled=(RANGE==='all'); });
-  document.getElementById('range-label').textContent=rangeLabel();
-  Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.setAttribute('aria-pressed',b.getAttribute('data-range')===RANGE?'true':'false'); });
-  if(window.ConsultTable) ConsultTable.apply('filter');
-}
-function shiftRange(n){
-  if(RANGE==='all') return;
-  var a=ANCHOR||todayStr();
-  setRange(RANGE, RANGE==='today'?dAdd(a,n):RANGE==='week'?dAdd(a,7*n):dMonthAdd(a,n));
-}
-/* The Consultations list: the shared engine (listSpecs.js consultListSpec — the header filters and the search) hands
-   over the rows that pass; they split into three lists, each row in one: no date / needs an outcome (the
-   consultation day has passed, nothing recorded) / the date range. The count is the range list's. */
-function consultBucket(r,t){ var d=String(r.bookedSlot||'').slice(0,10); if(!dParts(d)) return 'nodate'; if(d<t && !r.outcome) return 'needs'; return inRange(r.bookedSlot)?'main':''; }
-/* The counts beside the header choices: the rows a tick can show — the date range plus the two folds (never other dates). */
-function consultCountable(r){ return consultBucket(r,todayStr())!==''; }
-function renderConsultList(keep){
-  var t=todayStr();
-  var noDate=keep.filter(function(r){ return consultBucket(r,t)==='nodate'; });
-  var needs=keep.filter(function(r){ return consultBucket(r,t)==='needs'; });
-  var main=keep.filter(function(r){ return consultBucket(r,t)==='main'; });
-  renderRows(main);
-  var nb=document.getElementById('needs-outcome'); nb.style.display=needs.length?'block':'none';
-  document.getElementById('needs-outcome-n').textContent='('+needs.length+')';
-  var nbody=document.getElementById('needs-outcome-body'); nbody.innerHTML=needs.slice().sort(function(a,b){ return String(b.bookedSlot).localeCompare(String(a.bookedSlot)); }).map(rowHtml).join(''); bindRowClicks(nbody);
-  var nd=document.getElementById('nodate'); nd.style.display=noDate.length?'block':'none';
-  document.getElementById('nodate-n').textContent='('+noDate.length+')';
-  var ndbody=document.getElementById('nodate-body'); ndbody.innerHTML=noDate.map(rowHtml).join(''); bindRowClicks(ndbody);
-  document.getElementById('tn-consult').textContent=String(ALLROWS.length);
-  return { shown: main.length, total: ALLROWS.filter(function(r){ return consultBucket(r,t)==='main'; }).length };
-}
-/* The Retainers quick filters (the outcome buttons above the table) are the shared engine's "quick" facet
-   (listSpecs.js retainerListSpec): counts from the other filters, none on = all. A link can open a view
-   (?outcome=Follow-Up,Newsletter) and the address follows the buttons. */
-function cleanOutcomes(list){ var out=[]; (list||[]).forEach(function(v){ v=String(v||'').trim(); if(RET_OUTCOMES.indexOf(v)>=0 && out.indexOf(v)<0) out.push(v); }); return out; }
-function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return; var l=cleanOutcomes(String(p).split(',')); if(l.length) st.sel.outcome=l; else delete st.sel.outcome; }
-function retOnChange(st){
-  var l=(st.sel&&st.sel.outcome)||[];
-  try { var u=new URL(window.location.href); if(l.length){ u.searchParams.set('tab','retainers'); u.searchParams.set('outcome',l.join(',')); } else u.searchParams.delete('outcome'); history.replaceState(null,'',u.toString()); } catch(e){}
-}
-function outcomeCell(c){
-  var o=c.outcome, cls=o==='Retain'?'green':o==='Follow-Up'?'amber':o==='Not Wanted'?'red':'grey';
-  var h=o?qpill(cls,o):'<span class="pill grey">—</span>';
-  if(c.followUpDate) h+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);
-  return h;
-}
-/* The Retainers list: the shared engine hands over the rows that pass (the header filters, the search, the outcome buttons). */
-function renderRetainerList(rows,why,st,h){
-  var t=todayStr(), tp=dParts(t);
-  var rout=(st&&st.sel&&st.sel.outcome)||[], base=h?h.without('outcome'):rows.length;
-  document.getElementById('tn-ret').textContent=String(RETAINERS.length);
-  var tb=document.getElementById('rbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="12" class="empty">'+(!RETAINERS.length?'Nobody here right now.':(rout.length && base)?'Nobody under '+escHtml(rout.join(' or '))+(base!==RETAINERS.length?' with these filters':'')+' right now.':'No clients match your filters.')+'</td></tr>'; return; }
-  function age(d){ var p=dParts(d); if(!p||!tp) return ''; var days=Math.round((Date.UTC(tp[0],tp[1]-1,tp[2])-Date.UTC(p[0],p[1]-1,p[2]))/86400000); return days>0?' <span class="muted">('+days+'d)</span>':''; }
-  tb.innerHTML=rows.map(function(c){
-    var stc=c.stage==='Paid'?'green':(c.stage==='Signed'||c.stage==='Sent')?'blue':'amber';
-    var cs=c.caseOpen?qpill('green','Open'):c.stage?qpill('grey','Pending'):'<span class="pill grey">—</span>';   // no retainer under way: no case coming yet
-    return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
-      '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+(c.kind==='direct'?(c.originalChannel?' <span class="pill grey" title="Converted from a '+escHtml(c.originalChannel)+' lead — no consultation">direct · '+escHtml(c.originalChannel)+'</span>':(c.directSource?' <span class="pill grey" title="Direct retainer client — came through '+escHtml(c.directSource)+'; no consultation">direct · '+escHtml(c.directSource)+'</span>':' <span class="pill grey" title="Walk-in / referral — no consultation">direct</span>')):'')+
-        /* No email (2026-11-04): the retainer agreement cannot go out until one is added — shown until it is sent. */
-        ((c.hasEmail===false && !c.retainerSent)?' <span class="pill amber" title="No email address — the retainer agreement cannot be emailed until one is added on the lead page">No email</span>':'')+'</td>'+
-      '<td style="color:var(--muted)">'+escHtml(c.caseType||'—')+'</td>'+
-      '<td>'+escHtml(c.consultant||'—')+'</td>'+
-      '<td>'+outcomeCell(c)+'</td>'+
-      '<td>'+((c.kind==='direct' && !c.paid)?'<span class="pill grey" title="Direct retainer client — no consultation">n/a</span>':paidPill(c))+'</td>'+
-      '<td>'+(c.fee?'$'+escHtml(c.fee):'—')+'</td>'+
-      '<td>'+(c.retainerSent?escHtml(c.retainerSent)+(c.retainerSigned?'':age(c.retainerSent)):'—')+'</td>'+
-      '<td>'+(c.retainerSigned?escHtml(c.retainerSigned):'—')+'</td>'+
-      '<td>'+(c.retainerPaid?escHtml(c.retainerPaid):'—')+'</td>'+
-      '<td>'+(c.stage?qpill(stc,c.stage):'<span class="pill grey">—</span>')+'</td><td>'+cs+'</td>'+
-      '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client (careful — removes the case, its checklist, and the OneDrive folder)">'+TDOT_DEL_SVG+'</button></td></tr>';
-  }).join('');
-  bindRowClicks(tb);
-}
-function showAge(d){
-  var el=document.getElementById('snap-age'); if(!el) return;
-  var secs=Math.round((d.ageMs||0)/1000);
-  el.innerHTML=(d.stale?'<span style="color:#b45309">Monday could not be read — showing the last copy, ':'<span>Updated ')+(secs<90?secs+' s ago':Math.round(secs/60)+' min ago')+'</span> · <button type="button" id="btn-refresh">refresh</button>';
-  var b=document.getElementById('btn-refresh'); if(b) b.onclick=function(){ load(true); };
-}
+
+// ─── Consultations page ────────────────────────────────────────────────────────
+function buildQueueHTML() {
+  return `${listPageHead('Consultations')}
+  ${CONSULT_PAGE_CSS}
+  ${DELETE_UI_CSS}
+</style></head><body>
+${buildNavHeader('consultations')}
+<main class="wrap">
+  <div id="loading"><div class="spinner"></div><div class="muted">Loading consultations…</div></div>
+  <div id="error-msg"></div>
+  <div id="content">
+    <div class="page-top">
+      <h1 class="page-h" style="margin:0">Consultations</h1>
+      <span class="age" id="snap-age"></span>
+    </div>
+    <p class="page-sub">Booked consultations, by day. Once an outcome is set, the client moves to <a href="/admin/retainers">Retainers &amp; follow-ups</a>.</p>
+    <div class="q-head">
+      <div class="range" id="range" aria-label="Date range">
+        <button type="button" class="nav" data-nav="-1" title="Earlier">&#9664;</button>
+        <button type="button" data-range="today">Today</button>
+        <button type="button" data-range="week">This week</button>
+        <button type="button" data-range="month">This month</button>
+        <button type="button" data-range="all">All</button>
+        <button type="button" class="nav" data-nav="1" title="Later">&#9654;</button>
+        <span class="lbl" id="range-label"></span><span class="cnt" id="cq-count" aria-live="polite"></span>
+      </div>
+      <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="cq-search" type="search" placeholder="Search by name…" aria-label="Search consultations by name" autocomplete="off"></div>
+    </div>
+    <div id="cq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
+    <div class="card attn fold" id="needs-outcome" style="display:none;margin-bottom:12px">
+      <div class="attn-h" id="needs-outcome-h" role="button" tabindex="0" aria-expanded="false" aria-controls="needs-outcome-body"><span>&#9888; Needs outcome <span id="needs-outcome-n"></span> <span class="muted">— consultations that have happened with no outcome recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted.</span></span><span class="muted">show / hide</span></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="needs-outcome-body"></tbody></table></div>
+    </div>
+    <div class="card"><div class="tbl-wrap">
+      <table>
+        <thead><tr id="cq-headrow"><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead>
+        <tbody id="qbody"></tbody>
+      </table>
+    </div></div>
+    <div class="card fold" id="nodate" style="display:none;margin-top:12px">
+      <div class="attn-h" id="nodate-h" role="button" tabindex="0" aria-expanded="false" aria-controls="nodate-body"><span>No date <span id="nodate-n"></span> <span class="muted">— marked Booked by hand with no consultation time. Open one to set its time, or delete it.</span></span><span class="muted">show / hide</span></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="nodate-body"></tbody></table></div>
+    </div>
+  </div>
+</main>
+<script>
+${SHARED_AUTH_JS}
+var ALLROWS=[], RANGE='today', ANCHOR='';
+${LIST_PAGE_JS}
+${CONSULT_PAGE_JS}
 function load(force){
   var key=getKey(); if(!key) return;
   fetch('/api/consultations-board'+(force?'?fresh=1':''),{headers:{'X-Api-Key':key}})
    .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); } return r.json(); })
    .then(function(d){
-     ALLROWS=(d.consultations||[]); RETAINERS=(d.retainers||[]);
-     ConsultTable.setRows(ALLROWS); RetainerTable.setRows(RETAINERS); showAge(d);   // the filters stay as they were (a refresh never clears them)
+     ALLROWS=(d.consultations||[]);
+     ConsultTable.setRows(ALLROWS); showAge(d);   // the filters stay as they were (a refresh never clears them)
      document.getElementById('loading').style.display='none';
      document.getElementById('content').style.display='block';
    })
@@ -794,69 +760,81 @@ function load(force){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
-Array.prototype.forEach.call(document.querySelectorAll('.tab[data-tab]'),function(b){ b.onclick=function(){ setTab(b.getAttribute('data-tab'),true); }; });
 Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.onclick=function(){ setRange(b.getAttribute('data-range')); }; });
 Array.prototype.forEach.call(document.querySelectorAll('#range .nav'),function(b){ b.onclick=function(){ shiftRange(Number(b.getAttribute('data-nav'))); }; });
-['needs-outcome','nodate'].forEach(function(id){ var h=document.getElementById(id+'-h'); var box=document.getElementById(id); if(h&&box){ var tog=function(){ box.classList.toggle('open'); h.setAttribute('aria-expanded',box.classList.contains('open')?'true':'false'); }; h.onclick=tog; h.onkeydown=function(ev){ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); tog(); } }; } });
-// ── Reporting / KPIs ──────────────────────────────────────────────────────
-function kpiMoney(n){ return '$'+Number(n||0).toLocaleString('en-CA'); }
-function kpiCard(label,num,sub){ return '<div class="kpi-card"><div class="k-label">'+label+'</div><div class="k-num">'+num+'</div>'+(sub?'<div class="k-sub">'+sub+'</div>':'')+'</div>'; }
-function kpiByList(obj){ var ks=Object.keys(obj||{}); if(!ks.length) return '<div class="muted" style="font-size:12px">None</div>'; return ks.sort(function(a,b){return obj[b]-obj[a];}).map(function(k){ return '<div class="r2"><span>'+escHtml(k)+'</span><b>'+obj[k]+'</b></div>'; }).join(''); }
-function renderKpis(d){
-  var c=d.consultations||{}, r=d.retainers||{}, f=d.funnel||{}, rt=(f.rates||{});
-  var cards = kpiCard('Consultations booked', c.booked||0, (c.virtual||0)+' virtual · '+(c.inPerson||0)+' in-person'+((c.phone||0)?' · '+c.phone+' phone':''))
-    + kpiCard('Consultations held', c.held||0, '')
-    + kpiCard('Consultation revenue', kpiMoney(c.revenue||0), 'paid consults, fees before HST'+((c.paidByStaff||0)?' · '+c.paidByStaff+' recorded by staff':'')+((c.waived||0)?' · '+c.waived+' waived':''))
-    + kpiCard('Retainers signed', r.signed||0, (r.sent||0)+' sent · '+(r.paid||0)+' paid')
-    + kpiCard('Retainer value', kpiMoney(r.feeValue||0), 'signed this period')
-    + kpiCard('New / existing', (c.newClients||0)+' / '+(c.existingClients||0), 'clients booked');
-  var arrow=function(rate){ return '<span class="f-arrow">→'+(rate!=null?'<b>'+rate+'%</b>':'')+'</span>'; };
-  var step=function(n,l){ return '<div class="f-step"><div class="f-n">'+n+'</div><div class="f-l">'+l+'</div></div>'; };
-  var funnel = '<div class="kpi-funnel">'
-    + step(f.leads||0,'Leads') + arrow(rt.bookedFromLeads)
-    + step(f.booked||0,'Booked') + '<span class="f-arrow">→</span>'
-    + step(f.consulted||0,'Consulted') + arrow(rt.retainedFromBooked)
-    + step(f.retained||0,'Retained') + arrow(rt.paidFromRetained)
-    + step(f.paid||0,'Paid')
-    + (f.retainedDirect?'<div class="f-step" title="Walk-in / referral clients retained without a booking or consultation — kept out of the booked→retained conversion"><div class="f-n">+'+(f.retainedDirect||0)+'</div><div class="f-l">Direct</div></div>':'')
-    + '</div>';
-  var unclassified=(r.signed||0)-(r.tr||0)-(r.pr||0);
-  var mini = '<div class="kpi-2col">'
-    + '<div class="kpi-mini"><h4>Retainers by type</h4>'
-      + '<div class="r2"><span>Temporary (TR)</span><b>'+(r.tr||0)+'</b></div>'
-      + '<div class="r2"><span>Permanent (PR)</span><b>'+(r.pr||0)+'</b></div>'
-      + (unclassified>0 ? '<div class="muted" style="font-size:11px;margin-top:4px">'+unclassified+' unclassified (case type not mapped)</div>' : '')
-      + '</div>'
-    + '<div class="kpi-mini"><h4>By consultant (booked)</h4>'+kpiByList(c.byConsultant)+'</div>'
-    + '<div class="kpi-mini"><h4>Leads by owner</h4>'+kpiByList(c.byLeadOwner)+'</div>'
-    + '</div>';
-  document.getElementById('kpi-body').innerHTML = '<div class="kpi-grid">'+cards+'</div>' + funnel + mini;
+${DELETE_UI_JS}
+tdotBindDelete(function(){ load(true); });
+startClock(); checkApiStatus();
+setRange(ssGet('tdot_list_consult_range')||'today');
+</script>
+<script>${listTableScript(consultListSpec, consultListOpts)}</script>
+<script>load(); window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });   /* Back to this page from memory: read the list again */</script></body></html>`;
 }
-function fillMonths(months, sel){
-  var el=document.getElementById('kpi-month'); if(el.getAttribute('data-filled')) return; el.setAttribute('data-filled','1');
-  var list=(months||[]).slice(); if(sel && list.indexOf(sel)<0) list.unshift(sel);
-  el.innerHTML='<option value="">All time</option>'+list.map(function(m){ return '<option value="'+m+'">'+m+'</option>'; }).join('');
-  el.value=sel||'';
-  el.onchange=function(){ loadKpis(el.value); };
-}
-function loadKpis(month){
+
+// ─── Retainers & follow-ups page ───────────────────────────────────────────────
+function buildRetainersHTML() {
+  return `${listPageHead('Retainers & follow-ups')}
+  ${RETAINERS_PAGE_CSS}
+  ${DELETE_UI_CSS}
+  ${BLACKLIST_UI_CSS}
+</style></head><body>
+${buildNavHeader('retainers')}
+<main class="wrap">
+  <div id="loading"><div class="spinner"></div><div class="muted">Loading retainers &amp; follow-ups…</div></div>
+  <div id="error-msg"></div>
+  <div id="content">
+    <div class="page-top">
+      <h1 class="page-h" style="margin:0">Retainers &amp; follow-ups <span id="r-count" class="cnt" aria-live="polite"></span></h1>
+      <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
+    </div>
+    <p class="page-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation, and drops off once retained (the case is on the Cases page). <span class="age" id="snap-age"></span></p>
+    <div class="q-head">
+      <div class="quick" id="r-quick" role="group" aria-label="Show by outcome"></div>
+      <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="rq-search" type="search" placeholder="Search by name…" aria-label="Search retainers and follow-ups by name" autocomplete="off"></div>
+    </div>
+    <div id="rq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
+    <div class="card"><div class="tbl-wrap">
+      <table>
+        <thead><tr id="rq-headrow"><th>Client</th><th>Case type</th><th>Consultant</th><th>Outcome</th><th>Consult fee</th><th>Retainer fee</th><th>Sent</th><th>Signed</th><th>Paid</th><th>Stage</th><th>Case</th><th></th></tr></thead>
+        <tbody id="rbody"></tbody>
+      </table>
+    </div></div>
+  </div>
+${DIRECT_CLIENT_HTML}
+</main>
+<script>
+${SHARED_AUTH_JS}
+${DIALOG_UI_JS}
+var RETAINERS=[];
+${LIST_PAGE_JS}
+${REFERRAL_UI_JS}
+${ATTACH_UI_JS}
+var DC_REF=tdotRef('dc');      /* the walk-in form's Source / Reference second question (2026-11-04) */
+var DC_ATT=tdotAttach('dc');   /* "Attach a screenshot": only for the staff allowed to (Shafoli), signed in with Monday */
+var DC_PROFILE_ADDR='';        /* the carried address — its "is it current?" tick is asked only while the box still shows it */
+var RET_OUTCOMES=${jsLit(OUTCOME_LABELS)};   // the Retainers quick filters: one button per outcome (the shared list engine keeps which are on)
+var RET_HINTS={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set', 'Follow-Up':'The team calls the client back — not retained', 'Newsletter':'Nothing to do now — the client gets the newsletter', 'Not Wanted':'On the Not Wanted list — staff are warned if they come back' };
+${RETAINERS_PAGE_JS}
+function load(force){
   var key=getKey(); if(!key) return;
-  var m = (month===undefined) ? new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto',year:'numeric',month:'2-digit'}).format(new Date()) : month;   // the Toronto month
-  document.getElementById('kpi-body').innerHTML='<div class="muted">Loading KPIs…</div>';
-  fetch('/api/kpis'+(m?('?month='+encodeURIComponent(m)):''),{headers:{'X-Api-Key':key}})
-   .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } return r.json(); })
-   .then(function(d){ fillMonths(d.months, m); renderKpis(d); })
-   .catch(function(e){ if(e.message==='x')return; document.getElementById('kpi-body').innerHTML='<div class="muted">KPIs unavailable: '+escHtml(e.message)+'</div>'; });
+  fetch('/api/consultations-board'+(force?'?fresh=1':''),{headers:{'X-Api-Key':key}})
+   .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); } return r.json(); })
+   .then(function(d){
+     RETAINERS=(d.retainers||[]);
+     RetainerTable.setRows(RETAINERS); showAge(d);   // the filters stay as they were (a refresh never clears them)
+     document.getElementById('loading').style.display='none';
+     document.getElementById('content').style.display='block';
+   })
+   .catch(function(e){ if(e.message==='x')return;
+     document.getElementById('loading').style.display='none';
+     var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
 ${DELETE_UI_JS}
 tdotBindDelete(function(){ load(true); });
 startClock(); checkApiStatus();
-(function(){ var qs=new URLSearchParams(window.location.search); setTab(qs.get('tab')||(qs.get('outcome')!==null?'retainers':'')||lsGet('tdot_consult_tab')||'consultations', false); })();   // an ?outcome= link opens Retainers
-setRange(ssGet('tdot_list_consult_range')||'today');
 </script>
-<script>${listTableScript(consultListSpec, consultListOpts)}</script>
 <script>${listTableScript(retainerListSpec, retainerListOpts, '{ outcomes: RET_OUTCOMES, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }')}</script>
-<script>load(); window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });   /* Back to this page from memory: read the lists again */</script></body></html>`;
+<script>load(); window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });   /* Back to this page from memory: read the list again */</script></body></html>`;
 }
 
 // ─── Detail page ────────────────────────────────────────────────────────────────
@@ -2422,10 +2400,26 @@ startClock(); checkApiStatus(); load(); // render() hydrates the retainer panel 
 </script></body></html>`;
 }
 
-router.get('/consultations', (_req, res) => res.type('html').send(buildQueueHTML()));
+// The Consultations page shows consultations only (2026-11-05). The old one-page links keep working:
+// ?tab=retainers, ?outcome=, ?convertLead=, ?newAppFrom= → the Retainers page; ?tab=reporting → the Summary page.
+router.get('/consultations', (req, res) => {
+  const q = req.query || {};
+  const one = (v) => (Array.isArray(v) ? v[0] : v);
+  const tab = String(one(q.tab) || '');
+  if (tab === 'retainers' || q.outcome !== undefined || q.convertLead !== undefined || q.newAppFrom !== undefined) {
+    const u = new URLSearchParams();
+    for (const k of ['outcome', 'convertLead', 'newAppFrom']) if (q[k] !== undefined) u.set(k, String(one(q[k]) || ''));
+    const qs = u.toString();
+    return res.redirect(302, '/admin/retainers' + (qs ? '?' + qs : ''));
+  }
+  if (tab === 'reporting') return res.redirect(302, '/admin/dashboard/summary#reporting');
+  res.type('html').send(buildQueueHTML());
+});
+router.get('/retainers', (_req, res) => res.type('html').send(buildRetainersHTML()));
 router.get('/consultation/:leadId', (req, res) =>
   res.type('html').send(buildDetailHTML((req.params.leadId || '').trim())));
 
 module.exports = router;
 module.exports.buildDetailHTML = buildDetailHTML;
 module.exports.buildQueueHTML = buildQueueHTML;
+module.exports.buildRetainersHTML = buildRetainersHTML;

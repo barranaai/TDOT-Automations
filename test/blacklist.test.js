@@ -370,7 +370,7 @@ test('wiring: the Lead Board webhook adds on a hand-set Not Wanted (re-reading t
 
 test('pages: four outcome buttons (Retain stays in the retainer panel); "Not Wanted" opens the reason dialog; the banner slot, the dialogs and the Add-lead / direct-client warning blocks are emitted; every script parses; no retired label anywhere', () => {
   const ac = require('../src/routes/adminConsultation'), al = require('../src/routes/adminLeads');
-  const pages = { cq: ac.buildQueueHTML(), cd: ac.buildDetailHTML('555'), lq: al.buildLeadsQueueHTML(), ld: al.buildLeadDetailHTML('555') };
+  const pages = { cq: ac.buildQueueHTML(), rq: ac.buildRetainersHTML(), cd: ac.buildDetailHTML('555'), lq: al.buildLeadsQueueHTML(), ld: al.buildLeadDetailHTML('555') };
   for (const [k, html] of Object.entries(pages)) {
     for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
     assert.ok(!/Ineligible|Don’t Retain/.test(html), `${k}: no retired label`);
@@ -379,7 +379,7 @@ test('pages: four outcome buttons (Retain stays in the retainer panel); "Not Wan
     for (const s of ['var OUTCOMES=["Retain","Follow-Up","Newsletter","Not Wanted"];', 'var OUTCOME_NOT_WANTED="Not Wanted";', 'id="bl-banner"', 'function tdotOpenNotWantedModal(o){', 'function tdotOpenBlacklistRemoveModal(entryId, name, onDone){', 'function tdotBlacklistHtml(r, opts){',
       "if(label===OUTCOME_NOT_WANTED){ tdotOpenNotWantedModal({", "JSON.stringify({label:label, reason:reason})", "fetch('/admin/blacklist/' + encodeURIComponent(entryId) + '/remove'", 'canRemove:true', '.blw {']) assert.ok(html.includes(s), s);
   }
-  for (const s of ['id="dc-blacklist"', 'function dcRenderBlacklist(r){', 'id="dc-bl-ack"', 'dcRenderBlacklist(res.j.blacklist);', "tick the box above if you mean to set them up anyway", 'DC_BL_HIT=false; var blb=dcEl']) assert.ok(pages.cq.includes(s), s);
+  for (const s of ['id="dc-blacklist"', 'function dcRenderBlacklist(r){', 'id="dc-bl-ack"', 'dcRenderBlacklist(res.j.blacklist);', "tick the box above if you mean to set them up anyway", 'DC_BL_HIT=false; var blb=dcEl']) assert.ok(pages.rq.includes(s), s);
   for (const s of ['var bl=tdotBlacklistHtml(res.j.blacklist,{leadLinks:true});', 'To add this person anyway, click <b>Create lead</b> again.']) assert.ok(pages.lq.includes(s), s);
   assert.ok(pages.cq.includes('set Retain / Follow-Up / Newsletter / Not Wanted.'), 'the Needs-outcome banner names the four');
 });
@@ -484,7 +484,7 @@ test('REVIEW: the list copy is generation-stamped — a read that began before a
 
 test('REVIEW: the direct-client modal shows the warning at lookup time, asks for the tick on EVERY hit, sends blacklistAck, and resets between openings; the dialog script has no backslash', () => {
   const ac = require('../src/routes/adminConsultation');
-  const q = ac.buildQueueHTML();
+  const q = ac.buildRetainersHTML();   // the pop-up is on the Retainers page (2026-11-05)
   for (const s of [
     ".then(function(m){ if(m && seq===DC_MATCH_SEQ){ dcRenderMatches(m); dcRenderBlacklist(m.blacklist); } })",
     "box.innerHTML=html+(DC_BL_HIT?'<label",

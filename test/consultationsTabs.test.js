@@ -203,20 +203,55 @@ test('page: Today / week (Mon–Sun) / month ranges are calendar maths on Toront
   assert.equal(f.dDow('2026-10-12'), 1);
 });
 
-test('page: the tabs, the lists, the columns and the controls are emitted; the script parses; the old mixed section is gone', () => {
-  const html = require('../src/routes/adminConsultation').buildQueueHTML();
-  for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
-  for (const s of ['<a class="tab" href="/admin/leads" role="tab">Leads</a>', 'data-tab="consultations"', 'data-tab="retainers"', 'data-tab="reporting"',
-    'data-range="today"', 'data-range="week"', 'data-range="month"', 'data-range="all"', 'data-nav="-1"', 'data-nav="1"',
+test('pages (2026-11-05): Consultations shows consultations only; Retainers & follow-ups is its own page with the direct-retainer pop-up; every script parses; the old tabs and the old mixed section are gone', () => {
+  const ac = require('../src/routes/adminConsultation');
+  const q = ac.buildQueueHTML(), r = ac.buildRetainersHTML();
+  for (const html of [q, r]) for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
+  for (const s of ['data-range="today"', 'data-range="week"', 'data-range="month"', 'data-range="all"', 'data-nav="-1"', 'data-nav="1"',
     'id="needs-outcome"', 'id="nodate"', '<th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th>',
-    // the filters: in the column headers (2026-11-05, the shared list engine), one search box per list
-    'id="cq-headrow"', 'id="rq-headrow"', 'id="cq-search"', 'id="rq-search"', 'id="cq-chips"', 'id="rq-chips"', 'id="cq-count"',
-    "api: 'ConsultTable'", "api: 'RetainerTable'", "consultant: { label: 'Consultant', get: function (r) { return s(r.consultant); }, none: 'Unassigned' },",
-    "fetch('/api/consultations-board'+(force?'?fresh=1':'')", "if(t==='reporting' && !KPIS_LOADED){ KPIS_LOADED=true; loadKpis(); }", 'id="btn-direct-client"']) assert.ok(html.includes(s), s);
-  assert.ok(!html.includes('loadDirectRetainers') && !html.includes('Direct retainer clients <span id="direct-count"'), 'the old mixed direct section is gone');
-  assert.ok(!html.includes('load(); loadKpis();'), 'the KPIs load only when the Reporting tab opens');
+    'id="cq-headrow"', 'id="cq-search"', 'id="cq-chips"', 'id="cq-count"', "api: 'ConsultTable'",
+    "consultant: { label: 'Consultant', get: function (r) { return s(r.consultant); }, none: 'Unassigned' },",
+    "fetch('/api/consultations-board'+(force?'?fresh=1':'')", '<a href="/admin/retainers">Retainers &amp; follow-ups</a>', 'id="snap-age"']) assert.ok(q.includes(s), 'consultations: ' + s);
+  for (const gone of ['data-tab=', 'role="tablist" aria-label="Views"', 'id="tn-consult"', 'id="tn-ret"', 'id="rq-headrow"', "api: 'RetainerTable'", 'id="btn-direct-client"', 'id="dc-overlay"', 'function setTab(', 'loadKpis', 'KPIS_LOADED', "lsGet('tdot_consult_tab')", 'function lsGet(', 'loadDirectRetainers'])
+    assert.ok(!q.includes(gone), 'consultations, gone: ' + gone);
+  for (const page of [q, r]) assert.ok(page.includes("['tdot_consult_tab','tdot_consult_range','tdot_ret_outcomes'].forEach(function(k){ localStorage.removeItem(k); })"), 'the old one-page keys are tidied away');
+  for (const s of ['id="rq-headrow"', 'id="rq-search"', 'id="rq-chips"', 'id="r-count"', 'id="r-quick"', "api: 'RetainerTable'", 'id="btn-direct-client"', '<div id="dc-overlay" class="tdlg-ov" hidden>',
+    "fetch('/api/consultations-board'+(force?'?fresh=1':'')", 'id="snap-age"', 'RetainerTable.setRows(RETAINERS); showAge(d);']) assert.ok(r.includes(s), 'retainers: ' + s);
+  for (const gone of ['data-tab=', 'id="cq-headrow"', "api: 'ConsultTable'", 'id="range"', 'id="needs-outcome"', 'function setTab(', 'loadKpis', "lsGet('tdot_consult_tab')"])
+    assert.ok(!r.includes(gone), 'retainers, gone: ' + gone);
+  assert.ok(q.includes("function dParts(d){") && r.includes("function dParts(d){"), 'both pages read calendar days the TZ-safe way');
   const src = fs.readFileSync(require.resolve('../src/server'), 'utf8');
   assert.match(src, /app\.get\('\/api\/consultations-board', async \(req, res\) => \{\s*try \{\s*res\.json\(await consultantPortalService\.getConsultationsBoard\(\{ fresh: String\(req\.query\.fresh \|\| ''\) === '1' \}\)\);/);
+});
+
+test('routes (2026-11-05): /admin/retainers serves the Retainers page; the old one-page links are redirected — ?tab=retainers / ?outcome= / ?convertLead= / ?newAppFrom= to the Retainers page, ?tab=reporting to the Summary page', () => {
+  const router = require('../src/routes/adminConsultation');
+  const route = (path) => router.stack.find((l) => l.route && l.route.path === path);
+  assert.ok(route('/retainers') && route('/consultations'));
+  const run = (path, query) => {
+    const out = {};
+    const res = { redirect: (code, to) => { out.redirect = [code, to]; }, type: () => ({ send: (html) => { out.html = html; } }) };
+    route(path).route.stack[0].handle({ query }, res);
+    return out;
+  };
+  assert.ok(run('/retainers', {}).html.includes('id="rq-headrow"'));
+  assert.ok(run('/consultations', {}).html.includes('id="cq-headrow"') && !run('/consultations', {}).redirect);
+  assert.ok(run('/consultations', { tab: 'consultations' }).html, 'the old consultations tab link just opens the page');
+  assert.deepEqual(run('/consultations', { tab: 'retainers' }).redirect, [302, '/admin/retainers']);
+  assert.deepEqual(run('/consultations', { tab: 'retainers', outcome: 'Follow-Up,Newsletter' }).redirect, [302, '/admin/retainers?outcome=Follow-Up%2CNewsletter']);
+  assert.deepEqual(run('/consultations', { outcome: 'Follow-Up' }).redirect, [302, '/admin/retainers?outcome=Follow-Up'], 'an ?outcome= link opened Retainers before, and still does');
+  assert.deepEqual(run('/consultations', { outcome: '' }).redirect, [302, '/admin/retainers?outcome='], 'an empty ?outcome= still opens Retainers (on All)');
+  assert.deepEqual(run('/consultations', { convertLead: '12641191022' }).redirect, [302, '/admin/retainers?convertLead=12641191022'], 'the lead page\'s old Convert link');
+  assert.deepEqual(run('/consultations', { newAppFrom: '2026-OSS-005' }).redirect, [302, '/admin/retainers?newAppFrom=2026-OSS-005'], 'the case page\'s old New application link');
+  assert.deepEqual(run('/consultations', { tab: ['retainers', 'x'] }).redirect, [302, '/admin/retainers'], 'a repeated parameter: the first one counts');
+  assert.deepEqual(run('/consultations', { tab: 'reporting' }).redirect, [302, '/admin/dashboard/summary#reporting']);
+  // the pages that link in point at the new page already
+  assert.ok(require('../src/routes/adminLeads').buildLeadDetailHTML('7').includes("href='/admin/retainers?convertLead='"));
+  assert.ok(require('../src/routes/adminCase').buildCockpitHTML('2026-TEST-001').includes("href=\"/admin/retainers?newAppFrom="));
+  // the top bar has the new page
+  const nav = require('../src/routes/adminShared').buildNavHeader('retainers');
+  assert.ok(nav.includes('<a href="/admin/retainers" class="nav-lnk active" title="Retainers &amp; follow-ups" aria-current="page">'));
+  assert.ok(nav.indexOf('/admin/consultations') < nav.indexOf('/admin/retainers') && nav.indexOf('/admin/retainers') < nav.indexOf('/admin/dashboard"'), 'Leads · Consultations · Retainers · Cases · Summary · Guide');
 });
 
 /* ── Cases: batched parallel fetch with a short raw cache ── */
@@ -326,18 +361,19 @@ test('REVIEW: the Cases copy — a delete during an in-flight refresh is not los
 
 test('REVIEW: the page — the warning header keeps its colour; a due follow-up is a cue on the row and a filter; a failed read is said, not shown as an empty list', () => {
   const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const ret = require('../src/routes/adminConsultation').buildRetainersHTML();   // the follow-up filter and the outcome buttons are on the Retainers page (2026-11-05)
   const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
   assert.ok(css.indexOf('.fold .attn-h {') < css.indexOf('.fold.attn .attn-h {'), 'the amber rule comes later AND is more specific');
   assert.ok(css.includes('.fold.attn .attn-h { background:#fffbeb; color:#92400e; }'));
-  assert.ok(html.includes("followUp: { label: 'Follow-up'") && html.includes("due: 'Due (today or earlier)'") && html.includes("{ id: 'outcome', label: 'Outcome', title: 'The outcome buttons are above the table; here: the follow-up date', menu: 'facet', facets: ['followUp'] }"),
+  assert.ok(ret.includes("followUp: { label: 'Follow-up'") && ret.includes("due: 'Due (today or earlier)'") && ret.includes("{ id: 'outcome', label: 'Outcome', title: 'The outcome buttons are above the table; here: the follow-up date', menu: 'facet', facets: ['followUp'] }"),
     'the follow-up filter is on Retainers (its Outcome column), where a follow-up sits once its consultation day has passed');
-  assert.ok(!html.includes('id="f-followup"'), 'and no longer on Consultations (it would find almost nothing there)');
-  assert.ok(html.includes("if(c.followUpDate) h+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);"));
-  assert.ok(html.includes('var oc=outcomeCell(c);'), 'the Consultations row and the Retainers row show the outcome the same way');
-  assert.ok(html.includes("var d = s(r.followUpDate); return !d ? 'none' : d <= ctx.today() ? 'due' : 'later';"), 'due = today or earlier, Toronto today');
-  assert.ok(html.includes('today: todayStr'), 'the page hands its Toronto today to the list');
-  assert.ok(html.includes("if(!r.ok){ return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); }"));
-  for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
+  assert.ok(!html.includes('id="f-followup"') && !html.includes("facets: ['followUp']"), 'and not on Consultations (it would find almost nothing there)');
+  for (const page of [html, ret]) assert.ok(page.includes("if(c.followUpDate) h+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);"), 'the outcome cell is the same on both pages');
+  assert.ok(html.includes('var oc=outcomeCell(c);') && ret.includes("'<td>'+outcomeCell(c)+'</td>'"), 'the Consultations row and the Retainers row show the outcome the same way');
+  assert.ok(ret.includes("var d = s(r.followUpDate); return !d ? 'none' : d <= ctx.today() ? 'due' : 'later';"), 'due = today or earlier, Toronto today');
+  assert.ok(ret.includes('today: todayStr'), 'the page hands its Toronto today to the list');
+  for (const page of [html, ret]) assert.ok(page.includes("if(!r.ok){ return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); }"));
+  for (const page of [html, ret]) for (const m of page.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
 });
 
 /* ── Retainers quick filters (Faran 2026-10-16, in place of grouping by outcome) ── */
@@ -399,10 +435,10 @@ test('getConsultationsBoard: Follow-Up / Newsletter / Not Wanted consultations s
 });
 
 function quickFns() {
-  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const html = require('../src/routes/adminConsultation').buildRetainersHTML();   // the Retainers page (2026-11-05)
   const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
   const outs = js.match(/var RET_OUTCOMES=(\[[^\]]*\])/)[1];
-  const a = js.indexOf('function cleanOutcomes('), b = js.indexOf('function outcomeCell(');
+  const a = js.indexOf('function cleanOutcomes('), b = js.indexOf('function renderRetainerList(');
   const loc = { search: '' };
   const fns = new Function('window', 'history', `var RET_OUTCOMES=${outs}; ${js.slice(a, b)}; return { cleanOutcomes, retInitial, retOnChange, RET_OUTCOMES };`)({ location: loc }, { replaceState() {} });
   // the outcome group of a row is the list spec's (listSpecs.js) — the "quick" facet behind the buttons
@@ -413,7 +449,7 @@ function quickFns() {
 }
 
 test('page: the Retainers quick filters — one button per outcome plus All, counts from the other filters, none on = all; the address and the viewer remember the choice; an Outcome column; a follow-up filter', () => {
-  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const html = require('../src/routes/adminConsultation').buildRetainersHTML();   // its own page since 2026-11-05
   for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   const f = quickFns();
   assert.deepEqual(f.RET_OUTCOMES, require('../config/outcomes').OUTCOME_LABELS, 'the buttons are the four outcomes, from config');
@@ -426,13 +462,12 @@ test('page: the Retainers quick filters — one button per outcome plus All, cou
   for (const s of ['<div class="quick" id="r-quick" role="group" aria-label="Show by outcome"></div>',
     '<th>Consultant</th><th>Outcome</th><th>Consult fee</th><th>Retainer fee</th>',
     "((c.kind==='direct' && !c.paid)?'<span class=\"pill grey\" title=\"Direct retainer client — no consultation\">n/a</span>':paidPill(c))",
-    "setTab(qs.get('tab')||(qs.get('outcome')!==null?'retainers':'')||lsGet('tdot_consult_tab')||'consultations', false);",
-    "u.searchParams.set('tab','retainers');", "u.searchParams.set('outcome',l.join(','));",
+    "u.searchParams.set('outcome',l.join(','));", "function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return;",
     "quick: { facet: 'outcome', box: 'r-quick', label: 'Show', all: 'All', values: ctx.outcomes || [], hints: ctx.hints || {} },",
     "initial: retInitial, onChange: retOnChange", "{ outcomes: RET_OUTCOMES, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }",
     "aria-pressed=\"' + (on ? 'true' : 'false')", "key: 'tdot_list_retainers'",
     '.pill.red {', 'colspan="12"']) assert.ok(html.includes(s), s);
-  for (const gone of ["lsSet('tdot_ret_outcomes'", 'function setRout(', 'function paidMatch(', "['rf-search',"]) assert.ok(!html.includes(gone), 'gone: ' + gone);
+  for (const gone of ["lsSet('tdot_ret_outcomes'", 'function setRout(', 'function paidMatch(', "['rf-search',", "u.searchParams.set('tab'", 'function setTab(']) assert.ok(!html.includes(gone), 'gone: ' + gone);
   assert.ok(html.indexOf('initial: retInitial') < html.indexOf('<script>load();'), 'the link\'s choice is read before the first render');
   // a link opens a view; an empty or junk link opens all
   const st = { sel: {} }; f.loc.search = '?outcome=Follow-Up,junk'; f.retInitial(st); assert.deepEqual(st.sel.outcome, ['Follow-Up']);
@@ -449,10 +484,10 @@ test('page: one consultation-fee rule for both tabs (the Paid / Consult fee head
   assert.deepEqual(['app', 'cash', 'e-transfer', 'waived', ''].map((p) => R.valuesOf('paid', row(p))[0]), ['app', 'staff', 'staff', 'waived', 'none'], 'the same on Retainers');
 });
 
-test('page: the tab is "Retainers & follow-ups" — a Follow-Up client is someone the team calls back, never shown as retained (Faran 2026-10-16)', () => {
-  const html = require('../src/routes/adminConsultation').buildQueueHTML();
-  assert.ok(html.includes('data-tab="retainers">Retainers &amp; follow-ups <span class="tab-n" id="tn-ret"></span></button>'));
-  assert.ok(html.includes('<h2 class="sec-h">Retainers &amp; follow-ups <span id="r-count"'));
+test('page: it is "Retainers & follow-ups" — a Follow-Up client is someone the team calls back, never shown as retained (Faran 2026-10-16); its own page since 2026-11-05', () => {
+  const html = require('../src/routes/adminConsultation').buildRetainersHTML();
+  assert.ok(html.includes('<span class="nav-txt">Retainers</span>') && html.includes('title="Retainers &amp; follow-ups"'), 'the top bar');
+  assert.ok(html.includes('<h1 class="page-h" style="margin:0">Retainers &amp; follow-ups <span id="r-count"'));
   assert.ok(html.includes('<b>Follow-Up</b>: call the client back (not retained)'));
   assert.ok(html.includes("'Follow-Up':'The team calls the client back — not retained'"));
   assert.ok(!html.includes('No clients at the retainer stage') && !html.includes('No retainer clients match'));

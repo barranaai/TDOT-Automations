@@ -56,7 +56,7 @@ test('the staff-name list says Melanie (was the "Melini" typo)', () => {
 
 /** Run the page's own dcRenderMatches against a tiny fake DOM. */
 function renderer(convertLeadId) {
-  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const html = require('../src/routes/adminConsultation').buildRetainersHTML();   // the pop-up is on the Retainers page (2026-11-05)
   const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
   const fn = js.slice(js.indexOf('function dcRenderMatches(m){'), js.indexOf('/* ── "New application" prefill'));
   const els = { 'dc-matches': { style: {}, innerHTML: '' }, 'dc-profile': { style: {}, innerHTML: 'converting…' } };

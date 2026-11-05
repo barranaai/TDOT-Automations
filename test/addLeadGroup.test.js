@@ -224,7 +224,7 @@ test('the Retainers row carries the original channel and the pill says it', asyn
   } finally { r(); snap._reset(); }
   assert.ok(snap.SNAPSHOT_KEYS.includes('originalChannel') && snap.SNAPSHOT_IDS.includes('text_mm85mpjf'));
   assert.equal(require('../src/data/newLeadsBoard.json').columns.originalChannel, 'text_mm85mpjf');
-  const q = require('../src/routes/adminConsultation').buildQueueHTML();
+  const q = require('../src/routes/adminConsultation').buildRetainersHTML();   // the Retainers list (its own page since 2026-11-05)
   assert.ok(q.includes(">direct · '+escHtml(c.originalChannel)+'</span>"));
 });
 

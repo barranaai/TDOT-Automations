@@ -105,7 +105,9 @@ test('pages: the Leads list, its month filter and the detail chip use the Toront
   assert.ok(!/String\(r\.createdAt\|\|''\)\.slice\(0,10\)|String\(d\.createdAt\|\|''\)\.slice\(0,10\)/.test(leads), 'no UTC cut of the arrival left');
   const consult = fs.readFileSync(require.resolve('../src/routes/adminConsultation'), 'utf8');
   assert.match(consult, /function todayStr\(\)\{ return new Intl\.DateTimeFormat\('en-CA',\{timeZone:'America\/Toronto'\}\)\.format\(new Date\(\)\); \}/);
-  assert.match(consult, /new Intl\.DateTimeFormat\('en-CA',\{timeZone:'America\/Toronto',year:'numeric',month:'2-digit'\}\)\.format\(new Date\(\)\)/);
+  // the Reporting figures' default month (on the Summary page since 2026-11-05)
+  const dash = fs.readFileSync(require.resolve('../src/routes/adminDashboard'), 'utf8');
+  assert.match(dash, /new Intl\.DateTimeFormat\('en-CA',\{timeZone:'America\/Toronto',year:'numeric',month:'2-digit'\}\)\.format\(new Date\(\)\)/);
   // what those page expressions produce, run here
   const d = new Date('2026-11-01T02:30:00Z');
   assert.equal(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto' }).format(d), '2026-10-31');

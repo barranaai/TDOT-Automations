@@ -189,7 +189,7 @@ test('payment notes say plainly when nothing was emailed', () => {
 const scriptsOf = (html) => [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
 
 test('the walk-in form: Email and Phone (one of the two), optional address, Source / Reference picker, Notes *, the attach box; every script parses', () => {
-  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const html = require('../src/routes/adminConsultation').buildRetainersHTML();   // on the Retainers page since 2026-11-05
   for (const x of ['<label for="dc-email">Email</label>', '<label for="dc-phone">Phone</label>', 'An email <b>or</b> a phone number', '<label for="dc-address">Residential address <span class="dc-hint">(optional now',
     '<select id="dc-source"><option value="">— choose —</option>', 'id="dc-ref-emp"', 'id="dc-ref-cli"', '<label for="dc-notes">Notes *', 'id="dc-att-row" class="att-row" style="display:none"',
     "var DC_REF=tdotRef('dc');", "var DC_ATT=tdotAttach('dc');", 'sourceChannel:dcEl(\'dc-source\').value, referredBy:DC_REF.value(), referredFrom:DC_REF.from()',
@@ -209,7 +209,7 @@ test('the consultation page: an amber "No email" box pointing to the lead page, 
 test('the lists: "No email" tags on Leads rows and on un-sent Retainers rows; a walk-in shows its source', () => {
   const leads = require('../src/routes/adminLeads').buildLeadsQueueHTML();
   assert.ok(leads.includes("var noEmail=(c.hasEmail===false)?' <span class=\"pill amber\""));
-  const cons = require('../src/routes/adminConsultation').buildQueueHTML();
+  const cons = require('../src/routes/adminConsultation').buildRetainersHTML();   // the Retainers list (its own page since 2026-11-05)
   assert.ok(cons.includes("((c.hasEmail===false && !c.retainerSent)?' <span class=\"pill amber\""));
   assert.ok(cons.includes("direct · '+escHtml(c.directSource)"));
 });
@@ -447,7 +447,7 @@ test('review: the attach box re-asks who is signed in on each opening, never kee
   assert.ok(require('../src/routes/adminLeads').buildLeadDetailHTML('1').includes("else LA_ATT.setStatus((o.sent?o.sent+' attached; ':'')+o.failed.length+' not attached: '"), 'the lead page always says which files failed');
   assert.match(ATTACH_UI_JS, /filter\(function\(f\)\{ return !done\[fkey\(f\)\]; \}\)/);
   assert.ok(require('../src/routes/adminLeads').buildLeadsQueueHTML().includes('AL_ATT.reset(); AL_ATT.refresh();'));
-  const cons = require('../src/routes/adminConsultation').buildQueueHTML();
+  const cons = require('../src/routes/adminConsultation').buildRetainersHTML();
   assert.ok(cons.includes('DC_ATT.refresh();'));
   assert.ok(cons.includes("DC_PROFILE_ADDR=String(id.address||'').split(String.fromCharCode(13)).join('').split(String.fromCharCode(10)).join('');"), 'a two-line carried address still asks for the tick');
 });
