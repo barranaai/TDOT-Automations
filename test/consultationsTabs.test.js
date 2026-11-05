@@ -257,6 +257,25 @@ test('routes (2026-11-05): /admin/retainers serves the Retainers page; the old o
   assert.ok(plain.includes("var list=String(d.onList||''), href='', label='', nav='';") && plain.includes('  pointBackAtList(d);'), 'opened any other way: the SERVER says which list the client is on');
   const svc = fs.readFileSync(require.resolve('../src/services/consultantPortalService'), 'utf8');
   assert.ok(svc.includes("    onList:         listFor(lead),"), 'the record payload carries it');
+  // point 7 (tabs): opened from elsewhere, the way back opens the client's own outcome tab — the rows' rule (retainerTab)
+  assert.ok(svc.includes("    onListTab:      retainerTab(lead),") && svc.includes('        outcomeGroup: retainerTab(l),'), 'one rule for the row and the way back');
+  assert.ok(plain.includes("if(list==='retainers'){ href='/admin/retainers?outcome='+encodeURIComponent(d.onListTab||'All');"), 'the client\'s tab');
+  assert.ok(plain.indexOf("if(!bl||/[?&]from=retainers/.test(window.location.search)) return;") < plain.indexOf("href='/admin/retainers?outcome='"), 'from the Retainers page: the plain link — the tab the person was on');
+  const { retainerTab } = require('../src/services/consultantPortalService');
+  const { canonicalOutcome } = require('../config/outcomes');
+  assert.deepEqual([{ outcome: ' Follow-Up ' }, { outcome: 'Newsletter' }, { outcome: 'Not Wanted' }, { outcome: 'Retain' }, { outcome: '' }, {}, { outcome: 'Junk' }].map(retainerTab),
+    ['Follow-Up', 'Newsletter', 'Not Wanted', 'Retain', 'Retain', 'Retain', 'Retain'], 'the outcome, or Retain when there is none');
+  for (const old of Object.keys(require('../config/outcomes').LEGACY_OUTCOMES || {})) assert.equal(retainerTab({ outcome: old }), canonicalOutcome(old) || 'Retain', 'an old label: the tab of the outcome it now means');
+  // the back link, run in a page-like context: Retainers + the client's tab; from=retainers leaves the plain link
+  const pbSrc = plain.slice(plain.indexOf('function pointBackAtList(d){'), plain.indexOf('function render(d){'));
+  const pb = (search, d) => {
+    const bl = { href: '/admin/consultations' }, txt = { textContent: '' };
+    new Function('window', 'document', pbSrc + '; pointBackAtList(' + JSON.stringify(d) + ');')({ location: { search } }, { getElementById: (id) => (id === 'back-lnk' ? bl : id === 'back-lnk-txt' ? txt : null), querySelectorAll: () => [] });
+    return [bl.href, txt.textContent];
+  };
+  assert.deepEqual(pb('', { onList: 'retainers', onListTab: 'Not Wanted' }), ['/admin/retainers?outcome=Not%20Wanted', 'Retainers & follow-ups']);
+  assert.deepEqual(pb('', { onList: 'retainers' }), ['/admin/retainers?outcome=All', 'Retainers & follow-ups'], 'an older payload with no tab: All, where everyone is');
+  assert.deepEqual(pb('?from=retainers', { onList: 'retainers', onListTab: 'Follow-Up' }), ['/admin/consultations', ''], 'from the Retainers page: untouched here (the page drew the plain /admin/retainers link)');
   // the one rule the lists use (classifyLead + consultationDone), for every kind of client
   const { listFor } = require('../src/services/consultantPortalService');
   const now = new Date('2026-11-05T15:00:00Z');   // 10:00 Toronto
@@ -500,7 +519,7 @@ test('page: the Retainers outcome tabs (like the Leads page, 2026-11-05 point 7)
   for (const s of ['<div class="lt-tabs" id="r-quick" role="tablist" aria-label="Retainers &amp; follow-ups by outcome"></div>', '<div class="q-head r-tools">',
     '<th>Consultant</th><th>Outcome</th><th>Consult fee</th><th>Retainer fee</th>',
     "((c.kind==='direct' && !c.paid)?'<span class=\"pill grey\" title=\"Direct retainer client — no consultation\">n/a</span>':paidPill(c))",
-    "u.searchParams.set('outcome',l.join(','));", "function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return false;",
+    "u.searchParams.set('outcome',l.length?l[0]:'All');", "retOnChange(RetainerTable.state());", "function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return false;",
     "quick: { facet: 'outcome', box: 'r-quick', tabs: true, allLast: true, all: 'All', storeKey: 'tdot_list_retainers_tab', default: (ctx.outcomes || [])[0],",
     "initial: retInitial, onChange: retOnChange", "{ outcomes: RET_OUTCOMES, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }",
     "role=\"tab\" class=\"lt-tab'", "key: 'tdot_list_retainers'",
@@ -513,6 +532,9 @@ test('page: the Retainers outcome tabs (like the Leads page, 2026-11-05 point 7)
   const st2 = { sel: { outcome: ['Retain'] } }; f.loc.search = '?outcome='; assert.equal(f.retInitial(st2), true); assert.equal(st2.sel.outcome, undefined, 'a bare ?outcome= opens All');
   const st3 = { sel: { outcome: ['Retain'] } }; f.loc.search = ''; assert.equal(f.retInitial(st3), false); assert.deepEqual(st3.sel.outcome, ['Retain'], 'no link: the kept tab is used');
   const st4 = { sel: { outcome: ['Retain'] } }; f.loc.search = '?outcome=Follow%20Up'; assert.equal(f.retInitial(st4), false, 'a link naming no outcome we know is not a link: the kept tab is used'); assert.deepEqual(st4.sel.outcome, ['Retain']);
+  const st5 = { sel: { outcome: ['Retain'] } }; f.loc.search = '?outcome=All'; assert.equal(f.retInitial(st5), true); assert.equal(st5.sel.outcome, undefined, '?outcome=All opens All');
+  // the address always names the tab shown, All too — so the address and the tab never disagree
+  assert.ok(html.indexOf('retOnChange(RetainerTable.state());') > html.indexOf("api: 'RetainerTable'"), 'named once the list is set up');
 });
 
 test('page: one consultation-fee rule for both tabs (the Paid / Consult fee header filters)', () => {

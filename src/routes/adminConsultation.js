@@ -319,14 +319,15 @@ const RETAINERS_PAGE_JS = `
 function dParts(d){ var m=String(d||'').match(/^(\\d{4})-(\\d{2})-(\\d{2})/); return m?[Number(m[1]),Number(m[2]),Number(m[3])]:null; }
 /* The Retainers outcome tabs (above the table, like the Leads page — team meeting 2026-11-05) are the shared engine's
    "quick" facet in tabs mode (listSpecs.js retainerListOpts): one at a time, counts from the other filters, "All" last.
-   A new browser tab opens on Retain and the tab chosen is kept until it is closed. A link opens a tab
-   (/admin/retainers?outcome=Follow-Up; an old link naming several opens the first; a bare ?outcome= opens All) without
-   changing the one kept, and the address follows the tabs. A link naming no outcome we know is not a link. */
+   A new browser tab opens on Retain and the tab shown is kept until it is closed — a tab opened from a link too, so the
+   way back from a client's record returns to it. A link opens a tab (/admin/retainers?outcome=Follow-Up; ?outcome=All or
+   a bare ?outcome= opens All; an old link naming several opens the first); a link naming no outcome we know is not a link.
+   The address always names the tab shown (All too), so a saved or shared address opens the same tab. */
 function cleanOutcomes(list){ var out=[]; (list||[]).forEach(function(v){ v=String(v||'').trim(); if(RET_OUTCOMES.indexOf(v)>=0 && out.indexOf(v)<0) out.push(v); }); return out; }
-function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return false; if(!String(p).trim()){ delete st.sel.outcome; return true; } var l=cleanOutcomes(String(p).split(',')); if(!l.length) return false; st.sel.outcome=[l[0]]; return true; }
+function retInitial(st){ var p=new URLSearchParams(window.location.search).get('outcome'); if(p===null) return false; var t=String(p).trim(); if(!t || t.toLowerCase()==='all'){ delete st.sel.outcome; return true; } var l=cleanOutcomes(t.split(',')); if(!l.length) return false; st.sel.outcome=[l[0]]; return true; }
 function retOnChange(st){
   var l=(st.sel&&st.sel.outcome)||[];
-  try { var u=new URL(window.location.href); if(l.length){ u.searchParams.set('outcome',l.join(',')); } else u.searchParams.delete('outcome'); history.replaceState(null,'',u.toString()); } catch(e){}
+  try { var u=new URL(window.location.href); u.searchParams.set('outcome',l.length?l[0]:'All'); history.replaceState(null,'',u.toString()); } catch(e){}
 }
 /* The Retainers list: the shared engine hands over the rows that pass (the header filters, the search, the outcome tab). */
 function renderRetainerList(rows,why,st,h){
@@ -827,7 +828,8 @@ ${DELETE_UI_JS}
 tdotBindDelete(function(){ load(true); });
 startClock(); checkApiStatus();
 </script>
-<script>${listTableScript(retainerListSpec, retainerListOpts, '{ outcomes: RET_OUTCOMES, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }')}</script>
+<script>${listTableScript(retainerListSpec, retainerListOpts, '{ outcomes: RET_OUTCOMES, today: todayStr, hints: RET_HINTS, initial: retInitial, onChange: retOnChange }')}
+retOnChange(RetainerTable.state());   /* the address names the tab shown from the start (a saved address opens the same tab) */</script>
 <script>load(); window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });   /* Back to this page from memory: read the list again */</script></body></html>`;
 }
 
@@ -1536,7 +1538,9 @@ function pointBackAtList(d){
   var bl=document.getElementById('back-lnk'), txt=document.getElementById('back-lnk-txt');
   if(!bl||/[?&]from=retainers/.test(window.location.search)) return;
   var list=String(d.onList||''), href='', label='', nav='';
-  if(list==='retainers'){ href='/admin/retainers'; label='Retainers & follow-ups'; nav='/admin/retainers'; }
+  /* Opened from elsewhere (Consultations, the lead page, an email): back to the tab the client is under (point 7).
+     From the Retainers page itself (?from=retainers, above) the plain link returns to the tab the person was on. */
+  if(list==='retainers'){ href='/admin/retainers?outcome='+encodeURIComponent(d.onListTab||'All'); label='Retainers & follow-ups'; nav='/admin/retainers'; }
   else if(list==='cases'){ var ref=(d.retainerPlan&&d.retainerPlan.caseRef)||''; href=ref?'/admin/case/'+encodeURIComponent(ref):'/admin/dashboard'; label=ref?'Case '+ref:'All cases'; nav='/admin/dashboard'; }
   else if(list==='leads'){ href='/admin/lead/'+encodeURIComponent(d.leadId||''); label='Lead page'; nav='/admin/leads'; }
   if(!href) return;

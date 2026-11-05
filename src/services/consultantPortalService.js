@@ -274,6 +274,7 @@ async function getConsultationDetail(leadId) {
     conversionStatus: lead.conversionStatus || '', // 'Retained' once signed AND paid — locks the send button
     clientMasterItemId: lead.clientMasterItemId || '',
     onList:         listFor(lead),   // the record page's way back: the list the client is on right now (2026-11-05)
+    onListTab:      retainerTab(lead),   // …and on Retainers & follow-ups, the outcome tab the client is under (point 7)
 
     // KPI attribution (staff-entered on the detail page)
     followUpDate:      lead.followUpDate || '',
@@ -2886,6 +2887,13 @@ function listFor(l, now = new Date()) {
 }
 
 /**
+ * Which outcome tab of the Retainers & follow-ups page a client is under (2026-11-05, point 7): the outcome,
+ * or Retain when there is none (a direct retainer client, or a retainer under way with the outcome left blank).
+ * The page's rows (outcomeGroup) and the consultation record's way back use this one rule.
+ */
+function retainerTab(l) { return canonicalOutcome(l && l.outcome) || OUTCOME_RETAIN; }
+
+/**
  * The Consultations page (Gauri point 4): the Consultations and Retainers tabs,
  * from the shared snapshot, one row per lead by classifyLead — plus a booked
  * consultation that has happened and has an outcome moves to Retainers
@@ -2942,9 +2950,9 @@ async function getConsultationsBoard({ fresh = false, now = new Date() } = {}) {
         // Newsletter or Not Wanted client the consultation left here)
         stage: s(l.retainerPaid) ? 'Paid' : s(l.retainerSigned) ? 'Signed' : s(l.retainerSent) ? 'Sent' : s(l.retainerFee) ? 'Fee set'
           : oc === OUTCOME_RETAIN ? 'Retain' : oc ? '' : 'New',
-        // the quick filters: the outcome, or Retain for a row with none (a direct
+        // the outcome tabs: the outcome, or Retain for a row with none (a direct
         // retainer client, or a retainer under way with the outcome left blank)
-        outcomeGroup: oc || OUTCOME_RETAIN,
+        outcomeGroup: retainerTab(l),
         caseOpen: !!s(l.clientMasterItemId), clientMasterItemId: s(l.clientMasterItemId),
         bookedSlot: s(l.bookedSlot), outcome: oc || s(l.outcome), followUpDate: s(l.followUpDate), createdAt: l.createdAt || '',
         paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
@@ -2982,7 +2990,7 @@ module.exports = {
   createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, findClientMatches, DIRECT_SOURCE,
   createStaffLead, STAFF_LEAD_SOURCES,
   invalidateLeadsQueue,
-  classifyLead, consultationDone, listFor, getConsultationsBoard,
+  classifyLead, consultationDone, listFor, retainerTab, getConsultationsBoard,
   _recordPackageView: recordPackageView, _packageResultLine: packageResultLine,   // test seams
   conflictBody, normalizeLeadLocation,
 };

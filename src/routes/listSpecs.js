@@ -86,7 +86,7 @@ function retainerListOpts(ctx) {
     render: 'renderRetainerList', api: 'RetainerTable',
     initial: ctx.initial, onChange: ctx.onChange,
     // Tabs, like the Leads page (team meeting 2026-11-05, point 7): one outcome at a time, "All" last; a new browser tab
-    // opens on Retain; the tab chosen is kept until the browser tab is closed. A link's ?outcome= opens that tab (not kept).
+    // opens on Retain; the tab shown is kept until the browser tab is closed. A link's ?outcome= opens that tab (and keeps it).
     quick: { facet: 'outcome', box: 'r-quick', tabs: true, allLast: true, all: 'All', storeKey: 'tdot_list_retainers_tab', default: (ctx.outcomes || [])[0],
       values: ctx.outcomes || [], hints: ctx.hints || {} },
     cols: [

@@ -304,11 +304,11 @@ test('review 2026-11-05: Sign Out stops a list read still running from saving th
   assert.equal(S.consultListOpts({}).countable, 'consultCountable');
 });
 
-test('2026-11-05 point 7: the Retainers outcome tabs work like the Leads tabs — a new browser tab opens on Retain, the tab chosen is kept until it closes (All too), a link opens its tab without changing the kept one, one tab at a time', () => {
+test('2026-11-05 point 7: the Retainers outcome tabs work like the Leads tabs — a new browser tab opens on Retain, the tab shown is kept until it closes (All too, and a tab a link opened), one tab at a time', () => {
   const { listTableUi } = require('../src/routes/listFilters');
   const el = () => ({ setAttribute() {}, removeAttribute() {}, getAttribute() { return null; }, classList: { add() {}, remove() {}, contains() { return false; } }, appendChild() {}, addEventListener() {}, querySelectorAll() { return []; }, querySelector() { return null; }, contains() { return false; }, style: {} });
-  const start = (store, initial) => {
-    const win = { document: { getElementById: () => null, createElement: el, body: el(), addEventListener() {}, activeElement: null, documentElement: el() },
+  const start = (store, initial, signedOut) => {
+    const win = { TDOT_SIGNED_OUT: !!signedOut, document: { getElementById: () => null, createElement: el, body: el(), addEventListener() {}, activeElement: null, documentElement: el() },
       sessionStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } }, addEventListener() {}, location: { search: '' }, renderRetainerList: () => {} };
     const o = S.retainerListOpts({ outcomes: OUTCOME_LABELS, initial, onChange() {} });
     const api = listTableUi(listCore(S.retainerListSpec({ outcomes: OUTCOME_LABELS, today: () => '' })), o, win) || win[o.api];
@@ -326,7 +326,14 @@ test('2026-11-05 point 7: the Retainers outcome tabs work like the Leads tabs �
   assert.deepEqual(start({ tdot_list_retainers: JSON.stringify({ sel: { outcome: ['Newsletter', 'Follow-Up'] } }), tdot_list_retainers_tab: 'Newsletter' }), ['Newsletter']);
   const store = { tdot_list_retainers_tab: 'Follow-Up' };
   assert.deepEqual(start(store, (st) => { st.sel.outcome = ['Not Wanted', 'Retain']; return true; }), ['Not Wanted'], 'a link wins, one tab');
-  assert.equal(store.tdot_list_retainers_tab, 'Follow-Up', 'and the kept tab is not changed by the link');
+  assert.equal(store.tdot_list_retainers_tab, 'Not Wanted', 'and is kept: the way back from a record (plain /admin/retainers) returns to it');
+  assert.deepEqual(start(store), ['Not Wanted'], 'the way back');
+  const s2 = { tdot_list_retainers_tab: 'Follow-Up' };
+  assert.equal(start(s2, (st) => { delete st.sel.outcome; return true; }), undefined, 'a link to All');
+  assert.equal(s2.tdot_list_retainers_tab, '', 'All kept');
+  const s3 = { tdot_list_retainers_tab: 'Follow-Up' };
+  start(s3, (st) => { st.sel.outcome = ['Newsletter']; return true; }, true);
+  assert.equal(s3.tdot_list_retainers_tab, 'Follow-Up', 'never written after Sign Out');
   assert.deepEqual(start({ tdot_list_retainers_tab: 'Follow-Up' }, () => false), ['Follow-Up'], 'not a link: the kept tab');
   // the click: one value, stored ('' = All) — the same code path as the Leads tabs
   const src = listTableUi.toString();
