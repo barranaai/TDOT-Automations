@@ -249,11 +249,11 @@ test('wiring: the booking page, the checkout, the invite, the reminders, a staff
   assert.ok(p2.includes("await require('../services/consultPriceService').ensureFresh({ reason: 'booking page' });"));
   assert.ok(p2.includes("await require('../services/consultPriceService').ensureFresh({ reason: 'checkout' });\n    const options = routing.consultOptionsFor(consultant);"));
   assert.ok(p2.indexOf("ensureFresh({ reason: 'checkout' })") < p2.indexOf("bookingService.holdSlotIfFree(leadId, slotDate, slotTime"), 'the price is settled before a slot is held');
-  assert.ok(p2.includes("if (Number.isInteger(quotedFee) && quotedFee !== Number(option.feeCents) && bookingService.CONSULT_FEE_CENTS !== 0) {"));
+  assert.ok(p2.includes("if (bookingService.CONSULT_FEE_CENTS !== 0 && (!Number.isInteger(quotedFee) || quotedFee !== Number(option.feeCents))) {"), 'a missing quote is refused too');
   assert.ok(p2.includes("consultPrices: require('../services/consultPriceService').summary(),"));
   const bs = src('../src/services/bookingService.js');
   assert.ok(bs.includes("await require('./consultPriceService').ensureFresh({ reason: 'booking invite' });"));
-  assert.ok(bs.includes(".map((o) => ({ option: o, feeCents: (o.knownFeeCents || [o.feeCents]).find(matchesFee) }))"), 'a payment names its option by every price it may carry, and the fee PAID is the one recorded');
+  assert.ok(bs.includes(".map((o) => ({ option: o, feeCents: prices.knownFeesFor(o.variationId, o.listFeeCents || o.feeCents, formerFor(o)).find(matchesFee) }))"), 'a payment names its option by every price it may carry — former rates only for a lead that had them — and the fee PAID is the one recorded');
   assert.ok(bs.includes('if (candidates.length === 1) {') && bs.includes('} else if (candidates.length > 1) {'), 'an amount naming two options is left to staff');
   assert.ok(src('../src/services/bookingRemindersService.js').includes("if (!dryRun) await require('./consultPriceService').ensureFresh({ reason: 'booking reminders' });"));
   const cp = src('../src/services/consultantPortalService.js');
@@ -264,7 +264,7 @@ test('wiring: the booking page, the checkout, the invite, the reminders, a staff
   assert.ok(sch.includes("cron.schedule('*/15 * * * *', () => consultPrices.refresh({ reason: 'scheduled', force: true }).catch(() => {}));"), 'the scheduled read ignores the failed-read cool-down');
   const srv = src('../src/server.js');
   assert.ok(srv.includes("app.get('/admin/consult-prices', async (req, res) => {\n  if (!resolveAdminOrReject(req, res, 'Only an admin can see the consultation prices.')) return;"));
-  assert.ok(srv.includes("if (req.query.refresh === '1') await prices.refresh({ reason: 'admin' });\n  res.json(prices.status());"));
+  assert.ok(srv.includes("const refresh = req.query.refresh === '1' ? await prices.refresh({ reason: 'admin', force: true }) : null;"), 'the admin read ignores the cool-down');
 });
 
 test('the booking page shows and the checkout charges Square\'s price (end to end over the in-memory Square)', withEnv(ON, async () => {
@@ -287,7 +287,7 @@ test('the booking page shows and the checkout charges Square\'s price (end to en
   ];
   try {
     const page = await new Promise((resolve, reject) => {
-      const res = { type() { return this; }, status() { return this; }, send: (html) => resolve(html) };
+      const res = { type() { return this; }, status() { return this; }, set() { return this; }, send: (html) => resolve(html) };
       phase2.handle({ method: 'GET', url: '/book/700?t=tok', params: { leadId: '700' }, query: { t: 'tok' }, headers: {}, body: {} }, res, reject);
     });
     assert.match(page, /\$325\.00 \+ HST = \$367\.25 CAD/, 'the page shows Square\'s $325 for 30 minutes, with HST');
@@ -322,4 +322,117 @@ test('the booking page shows and the checkout charges Square\'s price (end to en
       assert.ok(!writes.some((f) => f.consultOption), 'nothing stored');
     } finally { sq2.restore(); }
   } finally { restore.forEach((x) => x()); }
+}));
+
+/* ── review round 2 (2026-11-05): former rates only for the leads that had them; the fee paid is always recorded ── */
+
+const reconcileWorld = () => {
+  const bookingService = require('../src/services/bookingService');
+  const leadService = require('../src/services/leadService');
+  const writes = [], notes = [];
+  const restore = [stub(leadService, 'updateLead', async (id, f) => { writes.push(f); }), stub(require('../src/services/mondayApi'), 'query', async (q, v) => { if (/create_update/.test(q)) notes.push(v.b || v.body); return {}; })];
+  return { bookingService, writes, notes, restore, lead: (extra) => ({ id: '700', fullName: 'Pay Test', serviceRequired: 'PNP or OINP', ...extra }) };
+};
+
+test('round 2: a former rate applies only to a lead that existed then — a lead created after the change paying $339 is simply the 30-min option; an older lead is asked', withEnv(ON, async () => {
+  const sq = square();
+  const W = reconcileWorld();
+  try {
+    await prices.refresh({ force: true });
+    // created after the former rates' last day: $339 can only be today's 30-min price
+    await W.bookingService.reconcileConsultOptionWithPayment(W.lead({ createdAt: '2026-12-02T10:00:00Z', consultOption: JSON.stringify({ durationMin: 45, feeCents: 45000, variationId: SH45 }) }), 33900);
+    let o = JSON.parse(W.writes.pop().consultOption);
+    assert.deepEqual([o.durationMin, o.feeCents, o.variationId, o.paidCents, o.provisional], [30, 30000, SH30, 33900, undefined], 'corrected to the option paid — the stale 45-min tab does not win');
+    assert.equal(W.notes.length, 0);
+    // created before: the old 45-min link ($300 + HST) is possible too → the recorded choice is kept, the fee paid recorded, staff asked
+    await W.bookingService.reconcileConsultOptionWithPayment(W.lead({ createdAt: '2026-11-01T10:00:00Z', consultOption: JSON.stringify({ durationMin: 45, feeCents: 45000, variationId: SH45 }) }), 33900);
+    o = JSON.parse(W.writes.pop().consultOption);
+    assert.deepEqual([o.durationMin, o.feeCents, o.variationId, o.paidCents], [45, 30000, SH45, 33900], 'the recorded choice stays; the fee recorded is the one paid');
+    assert.match(W.notes.pop(), /Consultation length needs a look.*could be 30 minutes \(\$300\.00 \+ HST\) or 45 minutes \(\$300\.00 \+ HST\) — the recorded booking choice, <b>45 minutes<\/b>, is kept \(fee recorded as \$300\.00, the one paid\)/);
+    // the date can be set from the environment (the day the change went live)
+    const prev = process.env.CONSULT_FORMER_RATES_UNTIL;
+    process.env.CONSULT_FORMER_RATES_UNTIL = '2026-11-10';
+    try {
+      delete require.cache[require.resolve('../config/consultantRouting')];
+      assert.equal(require('../config/consultantRouting').CONSULTANTS.shafoli.consultOptions[0].formerRates[0].until, '2026-11-10');
+    } finally {
+      if (prev == null) delete process.env.CONSULT_FORMER_RATES_UNTIL; else process.env.CONSULT_FORMER_RATES_UNTIL = prev;
+      delete require.cache[require.resolve('../config/consultantRouting')];
+      require('../config/consultantRouting');
+    }
+  } finally { W.restore.forEach((x) => x()); sq.restore(); }
+}));
+
+test('round 2: an amount naming two options with NO recorded choice — the fee paid is certain and recorded; the consultant’s default length is recorded for now, marked provisional, staff asked', withEnv(ON, async () => {
+  const sq = square();
+  const W = reconcileWorld();
+  try {
+    await prices.refresh({ force: true });
+    const next = await W.bookingService.reconcileConsultOptionWithPayment(W.lead({ createdAt: '2026-11-01T10:00:00Z' }), 33900);
+    const o = JSON.parse(next);
+    assert.deepEqual([o.durationMin, o.feeCents, o.variationId, o.paidCents, o.provisional], [30, 30000, SH30, 33900, true]);
+    assert.equal(W.writes.length, 1);
+    assert.match(W.notes[0], /no booking choice was recorded, so it is recorded as <b>30 minutes<\/b> for now/);
+    // the agreement states what was paid, not the env default
+    const { data } = require('../src/services/consultAgreementService').buildConsultAgreementData({ consultOption: next, bookedSlot: '2026-12-01 10:00' });
+    assert.equal(data.amountPaid, '339.00 (incl. HST)');
+  } finally { W.restore.forEach((x) => x()); sq.restore(); }
+}));
+
+test('round 2: a recorded choice whose price changed since (a 409 re-submit) paying the earlier link — the choice stays, the fee paid is recorded', withEnv(ON, async () => {
+  const sq = square({ objects: [variation(SH30, 35000), variation(SH45, 45000, { minutes: 45 }), variation(SE30, 12000), variation(SE15, 6000, { minutes: 15 })] });
+  const W = reconcileWorld();
+  try {
+    await prices.refresh({ force: true });
+    await W.bookingService.reconcileConsultOptionWithPayment(W.lead({ createdAt: '2026-12-02T10:00:00Z', consultOption: JSON.stringify({ durationMin: 30, feeCents: 35000, variationId: SH30 }) }), 33900);
+    const o = JSON.parse(W.writes.pop().consultOption);
+    assert.deepEqual([o.durationMin, o.feeCents, o.paidCents], [30, 30000, 33900], 'KPI and the agreement see $300, the fee paid');
+    assert.equal(W.notes.length, 0, 'one option only: nothing to ask');
+  } finally { W.restore.forEach((x) => x()); sq.restore(); }
+}));
+
+test('round 2: a booking posted without the price the page showed (a page served before this version) is sent back to the page; nothing held or charged', withEnv(ON, async () => {
+  const sq = square();
+  const phase2 = require('../src/routes/phase2');
+  const bookingService = require('../src/services/bookingService');
+  const leadService = require('../src/services/leadService');
+  let held = 0, checkout = null;
+  const restore = [
+    stub(require('../src/services/leadTokenService'), 'validateToken', async () => true),
+    stub(leadService, 'getLead', async () => ({ id: '700', fullName: 'Pay Test', serviceRequired: 'PNP or OINP', country: 'Canada', bookingStatus: '' })),
+    stub(leadService, 'updateLead', async () => {}),
+    stub(bookingService, 'holdSlotIfFree', async () => { held++; return { ok: true }; }),
+    stub(bookingService, 'createCheckout', async (a) => { checkout = a; return { url: 'x', orderId: 'o' }; }),
+  ];
+  try {
+    const out = await new Promise((resolve, reject) => {
+      const res = { type() { return this; }, status(c) { res.code = c; return this; }, send: (h) => resolve({ code: res.code, html: h }), redirect: (u) => resolve({ redirect: u }) };
+      phase2.handle({ method: 'POST', url: '/book/700?t=tok', params: { leadId: '700' }, query: { t: 'tok' }, headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: { slotDate: '2026-12-01', slotTime: '10:00', durationMin: '30', meetingType: 'Virtual' } }, res, reject);
+    });
+    assert.equal(out.code, 409); assert.match(out.html, /Please review the consultation fee/);
+    assert.equal(held, 0); assert.equal(checkout, null);
+  } finally { restore.forEach((x) => x()); sq.restore(); }
+}));
+
+test('round 2: the booking page is never served from the browser’s history (no-store, reload on restore); the admin read ignores the cool-down and says what it did; a test file run directly never reads Square', withEnv(ON, async () => {
+  const fs = require('fs');
+  const p2 = fs.readFileSync(require.resolve('../src/routes/phase2.js'), 'utf8');
+  assert.ok(p2.includes("res.set('Cache-Control', 'no-store');   // the prices on it are live"));
+  assert.ok(p2.includes("window.addEventListener('pageshow', function(e){\n        if (e && e.persisted) { location.reload(); return; }"));
+  const srv = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
+  assert.ok(srv.includes("const refresh = req.query.refresh === '1' ? await prices.refresh({ reason: 'admin', force: true }) : null;"));
+  assert.ok(srv.includes("res.json({ ...prices.status(), ...(refresh ? { refresh } : {}) });"));
+  // the gate for a test file run as `node test/x.test.js` (no NODE_TEST_CONTEXT)
+  const ctx = process.env.NODE_TEST_CONTEXT, argv1 = process.argv[1];
+  try {
+    delete process.env.NODE_TEST_CONTEXT;
+    process.argv[1] = '/somewhere/test/booking.test.js';
+    delete process.env.CONSULT_PRICES_FROM_SQUARE;
+    assert.equal(prices.enabled(), false, 'off for a test file run directly');
+    process.env.CONSULT_PRICES_FROM_SQUARE = 'on';
+    assert.equal(prices.enabled(), true, 'unless the test says so');
+    process.argv[1] = '/app/src/server.js';
+    delete process.env.CONSULT_PRICES_FROM_SQUARE;
+    assert.equal(prices.enabled(), true, 'the real server reads Square');
+  } finally { process.env.NODE_TEST_CONTEXT = ctx; process.argv[1] = argv1; }
 }));

@@ -53,7 +53,8 @@ let _lastOkAt = 0, _lastError = '', _lastErrorAt = 0, _inFlight = null, _reads =
 function enabled() {
   const sw = String(process.env.CONSULT_PRICES_FROM_SQUARE || '').trim().toLowerCase();
   if (sw === 'off') return false;
-  if (process.env.NODE_TEST_CONTEXT && sw !== 'on') return false;   // a test process reads Square only when it says so
+  // A test process reads Square only when it says so — under node --test (NODE_TEST_CONTEXT) or a test file run directly.
+  if ((process.env.NODE_TEST_CONTEXT || /(^|[\\/])test[\\/][^\\/]+\.test\.js$/.test(String(process.argv[1] || ''))) && sw !== 'on') return false;
   return !!String(process.env.SQUARE_ACCESS_TOKEN || '').trim();
 }
 
@@ -85,7 +86,7 @@ function priceFor(variationId) {
 }
 
 /** Every price (cents) a payment for this variation may legitimately carry: live, listed, and earlier readings. */
-function knownFeesFor(variationId, codeCents, formerCents = []) {
+function knownFeesFor(variationId, codeCents, formerCents = []) {   // formerCents: the former rates that apply (caller-bounded)
   const out = new Set();
   if (Number.isInteger(codeCents) && codeCents > 0) out.add(codeCents);
   for (const c of formerCents || []) if (Number.isInteger(c) && c > 0) out.add(c);

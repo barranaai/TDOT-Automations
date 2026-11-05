@@ -781,8 +781,8 @@ function resolveAdminOrReject(req, res, message = 'Only an admin can delete reco
 app.get('/admin/consult-prices', async (req, res) => {
   if (!resolveAdminOrReject(req, res, 'Only an admin can see the consultation prices.')) return;
   const prices = require('./services/consultPriceService');
-  if (req.query.refresh === '1') await prices.refresh({ reason: 'admin' });
-  res.json(prices.status());
+  const refresh = req.query.refresh === '1' ? await prices.refresh({ reason: 'admin', force: true }) : null;   // an explicit read ignores the failed-read cool-down
+  res.json({ ...prices.status(), ...(refresh ? { refresh } : {}) });
 });
 
 // ─── Email → lead (Faran 2026-10-27): admin status, access check, run now ────

@@ -200,6 +200,7 @@ router.get('/book/:leadId', async (req, res) => {
       const def = options.find((o) => o.default) || options[0];
       sets = [{ ...def, slots: await bookingService.getStaticAvailableSlots(lead.tier || 'T2', weeks, { excludeLeadId: leadId }) }];
     }
+    res.set('Cache-Control', 'no-store');   // the prices on it are live: never a stale copy from the browser's history
     res.type('html').send(buildBookingPageHtml(lead, { sets, weeksAhead: weeks }, req.query.t, consultant));
   } catch (err) {
     console.error('[Book] GET failed:', err.message);
@@ -243,8 +244,9 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
     const option = options.find((o) => o.durationMin === wantedDur)
       || options.find((o) => o.default) || options[0];
     const quotedFee = parseInt(req.body.quotedFeeCents, 10);
-    if (Number.isInteger(quotedFee) && quotedFee !== Number(option.feeCents) && bookingService.CONSULT_FEE_CENTS !== 0) {
-      console.warn(`[Book] lead ${leadId}: the page showed $${(quotedFee / 100).toFixed(2)} for ${option.durationMin} min but the price is now $${(option.feeCents / 100).toFixed(2)} — sent back to the page, nothing charged`);
+    if (bookingService.CONSULT_FEE_CENTS !== 0 && (!Number.isInteger(quotedFee) || quotedFee !== Number(option.feeCents))) {
+      // No quote at all = a page served before this version (its prices may be old): back to the page too.
+      console.warn(`[Book] lead ${leadId}: the page showed ${Number.isInteger(quotedFee) ? `$${(quotedFee / 100).toFixed(2)}` : 'no price it can vouch for'} for ${option.durationMin} min but the price is now $${(option.feeCents / 100).toFixed(2)} — sent back to the page, nothing charged`);
       return res.status(409).type('html').send(buildPriceChangedHtml(leadId, req.query.t));
     }
 
@@ -548,8 +550,11 @@ function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
           if(checked){ var opt=checked.closest('.mtype-opt'); if(opt) opt.classList.add('sel'); }
         });
       }
-      // Coming back (e.g. cancelled on the payment page) must re-enable everything.
-      window.addEventListener('pageshow', function(){
+      // Coming back (e.g. cancelled on the payment page) must re-enable everything —
+      // and a page restored from the browser's history is reloaded, so the prices
+      // shown are current (a Back after "please review the fee" must not loop).
+      window.addEventListener('pageshow', function(e){
+        if (e && e.persisted) { location.reload(); return; }
         var btns = document.querySelectorAll('.slot');
         for (var i = 0; i < btns.length; i++) { btns[i].disabled = false; btns[i].classList.remove('picked'); }
         document.getElementById('slotDate').value = ''; document.getElementById('slotTime').value = '';

@@ -20,6 +20,10 @@
 // a different title, so BOTH the role and the title differ per consultant — hence
 // they are per-consultant fields, not shared constants. All are env-overridable so
 // a credential can be corrected from Render without a code change.
+// The last day the rates BEFORE 2026-11-05 (Shafoli $200 / $300) could still be
+// quoted and paid: links issued until the day the Square-priced version went live.
+const FORMER_RATES_UNTIL = (process.env.CONSULT_FORMER_RATES_UNTIL || '2026-11-30').trim();
+
 const CONSULTANTS = {
   shafoli: {
     key: 'shafoli', name: 'Shafoli Kapur',
@@ -40,11 +44,14 @@ const CONSULTANTS = {
     // Canada). The LIVE price comes from the Square service itself
     // (consultPriceService) — these figures are the fallback until Square has
     // answered, and the sanity band a Square price is checked against.
-    // formerFeeCents = rates charged before (a payment link issued at the old rate
-    // can still be paid after a change: it must still name its option).
+    // formerRates = rates charged before, each with the last day a payment link at
+    // that rate could have been issued (`until`, Toronto date): a client can still
+    // pay such a link after the change, and it must still name its option — but
+    // only for a lead that existed then. (Set CONSULT_FORMER_RATES_UNTIL to the
+    // day this change went live to tighten the date.)
     consultOptions: [
-      { durationMin: 30, feeCents: 30000, formerFeeCents: [20000], variationId: 'TMJIRVYQUD76E7A3YGXSEOQ5', default: true },
-      { durationMin: 45, feeCents: 45000, formerFeeCents: [30000], variationId: 'Z2XFERF43EO567YZGX4Y5WDL' },
+      { durationMin: 30, feeCents: 30000, formerRates: [{ cents: 20000, until: FORMER_RATES_UNTIL }], variationId: 'TMJIRVYQUD76E7A3YGXSEOQ5', default: true },
+      { durationMin: 45, feeCents: 45000, formerRates: [{ cents: 30000, until: FORMER_RATES_UNTIL }], variationId: 'Z2XFERF43EO567YZGX4Y5WDL' },
     ],
   },
   shermin: {
@@ -84,7 +91,7 @@ function consultOptionsFor(consultantOrKey) {
         feeCents: live ? live.feeCents : o.feeCents,
         listFeeCents: o.feeCents,
         feeSource: live ? 'square' : 'code',
-        knownFeeCents: prices.knownFeesFor(o.variationId, o.feeCents, o.formerFeeCents),
+        knownFeeCents: prices.knownFeesFor(o.variationId, o.feeCents, (o.formerRates || []).map((r) => r.cents)),
       };
     });
   }
