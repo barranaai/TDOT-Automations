@@ -379,7 +379,11 @@ function listTableUi(LT, o, win) {
     if (refocus) { var b = headBtn(id); if (b) b.focus(); }
     openBtn = null;
   }
-  doc.addEventListener('keydown', function (e) { if (e.key === 'Escape' && openCol && !e.defaultPrevented) { e.preventDefault(); close(true); } });
+  doc.addEventListener('keydown', function (e) {
+    if (win.TDOT_DLG && win.TDOT_DLG.stack && win.TDOT_DLG.stack.length) return;   /* a pop-up is open: Escape is its */
+    if (e.key === 'Escape' && openCol && !e.defaultPrevented) { e.preventDefault(); close(true); }
+  });
+  doc.addEventListener('tdot-dialog-open', function () { close(false); });
   doc.addEventListener('mousedown', function (e) {
     if (!openCol) return;
     if (pop.contains(e.target) || (e.target.closest && e.target.closest('.th-f'))) return;

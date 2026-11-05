@@ -614,11 +614,23 @@ function submitDirectClient(){
   }
   var key=getKey(); if(!key) return;
   var dlg=dcDlg(), run=dlg.openId;   /* this opening — a late answer for an earlier client is never painted into the form */
+  var who=body.fullName.trim(), hadFiles=DC_ATT.files().length;
   var btn=dcEl('dc-create'); btn.disabled=true; btn.textContent='Creating…'; dlg.setBusy(true);
   fetch('/api/consultation/direct-client',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
     .then(function(res){
-      if(!dlg.still(run)){ if(res.s===200) load(true); return; }   /* closed after the long wait: never painted into a later opening; the list shows the new client */
+      if(!dlg.still(run)){   /* closed after the long wait: never painted into a later opening — but the outcome is told, not lost */
+        if(res.s!==200 || !res.j) return;
+        if(res.j.warning) window.alert(who+': '+res.j.warning);
+        else if(res.j.linked) window.alert(who+': linked to the existing lead — one record for this person, now set up as a direct retainer client.');
+        else if(res.j.reused) window.alert(who+': already exists as a direct retainer lead — no duplicate was created.');
+        if(hadFiles && dlg.openId===run && DC_ATT.files().length){   /* closed, not reopened: the files picked are still this client's */
+          DC_ATT.upload(res.j.leadId).then(function(o){ if(o.failed.length) window.alert(who+' was created. '+o.failed.length+' file(s) were not attached — add them from the client'+String.fromCharCode(8217)+'s lead page:'+String.fromCharCode(10)+o.failed.map(function(x){ return '• '+x.name+' — '+x.error; }).join(String.fromCharCode(10))); load(true); });
+          return;
+        }
+        if(hadFiles) window.alert(who+' was created, but the attached file(s) were not saved — add them from the client'+String.fromCharCode(8217)+'s lead page.');
+        load(true); return;
+      }
       if(res.s!==200) dlg.setBusy(false);
       if(res.s===409 && res.j && res.j.matches){
         // The server found matches the modal hadn't fetched yet — show them (and the Not Wanted warning, if any).

@@ -120,6 +120,21 @@ test('outside click (Faran 2026-11-05): closes an untouched pop-up; never one wi
   assert.ok(c.isOpen(), 'a choice made: an outside click is ignored');
 });
 
+test('review 2026-11-05: the second click of the double-click that opened it never closes it; only html is locked (body stays, so the sticky top bar keeps its place)', () => {
+  const w = world(); const c = w.make();
+  c.open();
+  w.fire(w.ov, 'pointerdown', {}); w.fire(w.ov, 'click', { detail: 2 });
+  assert.ok(c.isOpen(), 'a double-click');
+  w.fire(w.ov, 'pointerdown', {}); w.fire(w.ov, 'click', { detail: 1 });
+  assert.ok(!c.isOpen(), 'a single click outside still closes an untouched pop-up');
+  assert.ok(DIALOG_UI_CSS.includes('html.tdlg-lock { overflow:hidden; }') && !/tdlg-lock body/.test(DIALOG_UI_CSS));
+  assert.ok(DIALOG_UI_JS.includes("window.addEventListener('pageshow'") && DIALOG_UI_JS.includes("d.setBusy(false); d.close(true, 'restore');"), 'Back to the page: no half-saving pop-up');
+  assert.ok(DIALOG_UI_JS.includes("document.dispatchEvent(new CustomEvent('tdot-dialog-open'))"), 'an open list filter panel is told to close');
+  const { listTableUi } = require('../src/routes/listFilters');
+  assert.ok(listTableUi.toString().includes("doc.addEventListener('tdot-dialog-open', function () { close(false); });"));
+  assert.ok(listTableUi.toString().includes('if (win.TDOT_DLG && win.TDOT_DLG.stack && win.TDOT_DLG.stack.length) return;'), 'Escape under a pop-up is the pop-up\'s');
+});
+
 test('Escape closes the top pop-up only — and not when something inside already used it (the client search list)', () => {
   const w = world(); const c = w.make();
   c.open();
@@ -233,7 +248,9 @@ test('Add lead (Faran 2026-11-05): always opens EMPTY; a late answer for an earl
   assert.ok(q.includes("['al-name','al-email','al-phone','al-address','al-note'].forEach(function(id){ var e=alEl(id); if(e) e.value=''; });"));
   assert.ok(q.includes("alEl('al-casetype').selectedIndex=0;"));
   assert.ok(q.includes("var dlg=alDlg(), run=dlg.openId;"));
-  assert.ok(q.includes("if(!dlg.still(run)){ if(res.s<400 && res.j && res.j.leadId) load(); return; }"), 'late answer: never painted, the list refreshed');
+  assert.ok(q.includes("if(!dlg.still(run)){   /* closed after the long wait: never painted into the form; the outcome is not lost either */"), 'late answer: never painted');
+  assert.ok(q.includes("if(hadFiles && dlg.openId===run && AL_ATT.files().length){"), 'closed but not reopened: the files picked are still this person\'s — attached');
+  assert.ok(q.includes("if(hadFiles) window.alert('The lead for '+who+' was created, but its attached file(s) were not saved — add them from the lead page.');"), 'reopened: said, not lost');
   assert.ok(q.includes(".catch(function(){ if(!dlg.still(run)) return;"));
   assert.ok(q.includes(".finally(function(){ if(!dlg.still(run)) return; dlg.setBusy(false);"));
   assert.ok(q.includes("var go=function(){ if(!dlg.still(run)){ load(); return; }"), 'closed during the attach upload: no jump to the lead');
@@ -243,7 +260,9 @@ test('New direct retainer client: a duplicate lookup or a 409 for an earlier cli
   const c = require('../src/routes/adminConsultation').buildQueueHTML();
   assert.ok(c.includes("DC_MATCHES=null; DC_MATCH_SEQ++; var mb=dcEl('dc-matches');"), 'opening invalidates a lookup still out for the last person');
   assert.ok(c.includes("var dlg=dcDlg(), run=dlg.openId;"));
-  assert.ok(c.includes("if(!dlg.still(run)){ if(res.s===200) load(true); return; }"));
+  assert.ok(c.includes("if(!dlg.still(run)){   /* closed after the long wait: never painted into a later opening — but the outcome is told, not lost */"));
+  assert.ok(c.includes("if(res.j.warning) window.alert(who+': '+res.j.warning);"), 'a late "tagging failed" warning is still shown');
+  assert.ok(c.includes("if(hadFiles && dlg.openId===run && DC_ATT.files().length){"));
   assert.ok(c.includes(".catch(function(e){ if(!dlg.still(run)) return; dlg.setBusy(false);"));
   assert.ok(c.includes("if(!dcDlg().still(run)) return;   /* closed or reopened for someone else meanwhile */"), 'the lead-conversion prefill belongs to its own opening');
   assert.ok(c.includes(".then(function(p){ if(!dcDlg().still(run)) return; if(p){ dcApplyProfile(ref,p); dcCheckMatches(); } })"), 'the carried-profile prefill too');

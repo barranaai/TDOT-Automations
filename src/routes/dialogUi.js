@@ -55,7 +55,8 @@ const DIALOG_UI_CSS = `
   .tdlg button:focus-visible, .tdlg a.paym-btn:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
   .tdlg-err, .tdlg .paym-err, .tdlg .delm-err, .tdlg .blm-err { color:#dc2626; font-size:12.5px; line-height:1.45; min-height:16px; margin-top:10px; }
   .tdlg-slow { background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:8px 12px; font-size:12.5px; color:#92400e; margin-top:10px; }
-  html.tdlg-lock, html.tdlg-lock body { overflow:hidden; }
+  /* The page behind does not scroll. Only html: overflow on body too would make body a scroll box and the sticky top bar would jump away. */
+  html.tdlg-lock { overflow:hidden; }
   @media (prefers-reduced-motion: no-preference) {
     .tdlg-ov:not([hidden]) .tdlg { animation:tdlg-in .16s ease-out; }
     @keyframes tdlg-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
@@ -105,6 +106,14 @@ const DIALOG_UI_JS = `
       try { d.frame.focus(); } catch (x) {}
     });
   }
+  /* Back to this page from the browser's memory (Back button): no pop-up comes back half-way through saving. */
+  if (typeof window === 'object' && window.addEventListener && !TDOT_DLG.pageshow) {
+    TDOT_DLG.pageshow = true;
+    window.addEventListener('pageshow', function(e){
+      if (!e.persisted) return;
+      TDOT_DLG.stack.slice().forEach(function(d){ try { d.setBusy(false); d.close(true, 'restore'); } catch (x) {} });
+    });
+  }
   function tdotDlgLock(){
     var on = TDOT_DLG.stack.length > 0;
     try { document.documentElement.classList.toggle('tdlg-lock', on); } catch (e) {}
@@ -137,6 +146,7 @@ const DIALOG_UI_JS = `
     ov.addEventListener('click', function(e){
       var was = downOutside; downOutside = false;
       if (e.target !== ov || !was) return;
+      if (e.detail > 1) return;   /* the second click of the double-click that opened it */
       if (c.dirty) return;   /* something typed or chosen: an outside click never throws it away */
       c.tryClose('outside');
     });
@@ -149,6 +159,8 @@ const DIALOG_UI_JS = `
       c.opener = document.activeElement;
       ov.hidden = false; if (ov.style.display === 'none') ov.style.display = '';
       TDOT_DLG.stack.push(c); tdotDlgLock();
+      /* An open list filter panel closes (Escape then belongs to the pop-up). */
+      try { document.dispatchEvent(new CustomEvent('tdot-dialog-open')); } catch (e) {}
       /* Focus leaves the button at once (Enter pressed twice must not open a second one); the page then focuses its first box. */
       try { frame.focus(); } catch (e) {}
       return c;

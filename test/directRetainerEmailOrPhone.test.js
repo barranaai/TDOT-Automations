@@ -439,7 +439,10 @@ test('review: the attach box re-asks who is signed in on each opening, never kee
   assert.ok(!ATTACH_UI_JS.includes('\\'));
   assert.match(ATTACH_UI_JS, /if \(!v\) TDOT_ATT_VIEWER=null;/);
   assert.match(ATTACH_UI_JS, /refresh:function\(\)\{ TDOT_ATT_VIEWER=null;/);
-  assert.match(ATTACH_UI_JS, /if \(r\.ok\)\{ out\.sent\+\+; done\[fkey\(f\)\]=1; \}/);
+  assert.match(ATTACH_UI_JS, /if \(r\.ok\)\{ out\.sent\+\+; myDone\[fkey\(f\)\]=1; \}/);
+  // 2026-11-05: an upload belongs to the pick it started from — a reset (the form reopened for the next person) stops it writing into the form
+  assert.ok(ATTACH_UI_JS.includes('var i=0, g=gen, myDone=done;') && ATTACH_UI_JS.includes('function say(t,cls){ if (g===gen) setStatus(t,cls); }'));
+  assert.ok(ATTACH_UI_JS.includes('function reset(){ gen++; done={};'));
   assert.match(ATTACH_UI_JS, /filter\(function\(f\)\{ return !done\[fkey\(f\)\]; \}\)/);
   assert.ok(require('../src/routes/adminLeads').buildLeadsQueueHTML().includes('AL_ATT.reset(); AL_ATT.refresh();'));
   const cons = require('../src/routes/adminConsultation').buildQueueHTML();

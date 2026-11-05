@@ -279,11 +279,20 @@ function alSubmit(){
   if(AL_ALLOW) body.allowDuplicate=true;
   var key=getKey(); if(!key) return;
   var dlg=alDlg(), run=dlg.openId;   /* this opening — a late answer for an earlier caller is never painted into the form */
+  var who=body.fullName.trim(), hadFiles=AL_ATT.files().length;
   var btn=alEl('al-create'); btn.disabled=true; btn.textContent='Creating…'; dlg.setBusy(true);
   fetch('/api/leads/create',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
     .then(function(res){
-      if(!dlg.still(run)){ if(res.s<400 && res.j && res.j.leadId) load(); return; }   /* closed after the long wait: just refresh the list */
+      if(!dlg.still(run)){   /* closed after the long wait: never painted into the form; the outcome is not lost either */
+        if(!(res.s<400 && res.j && res.j.leadId)) return;
+        if(hadFiles && dlg.openId===run && AL_ATT.files().length){   /* closed, not reopened: the files picked are still this person's */
+          AL_ATT.upload(res.j.leadId).then(function(o){ if(o.failed.length) window.alert('The lead for '+who+' was created. '+o.failed.length+' file(s) were not attached — add them from the lead page:'+String.fromCharCode(10)+o.failed.map(function(x){ return '• '+x.name+' — '+x.error; }).join(String.fromCharCode(10))); load(); });
+          return;
+        }
+        if(hadFiles) window.alert('The lead for '+who+' was created, but its attached file(s) were not saved — add them from the lead page.');
+        load(); return;
+      }
       if(res.s===409){
         dlg.setBusy(false);
         AL_ALLOW=true;
@@ -310,7 +319,7 @@ function alSubmit(){
       if(!AL_ATT.files().length) return go();
       btn.textContent='Attaching…';
       return AL_ATT.upload(res.j.leadId).then(function(o){
-        if(o.failed.length) window.alert('The lead was created. '+o.failed.length+' file(s) were not attached — add them from the lead page:'+String.fromCharCode(10)+o.failed.map(function(x){ return '• '+x.name+' — '+x.error; }).join(String.fromCharCode(10)));
+        if(o.failed.length) window.alert('The lead for '+who+' was created. '+o.failed.length+' file(s) were not attached — add them from the lead page:'+String.fromCharCode(10)+o.failed.map(function(x){ return '• '+x.name+' — '+x.error; }).join(String.fromCharCode(10)));
         go();
       });
     })

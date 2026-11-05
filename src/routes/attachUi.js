@@ -85,8 +85,9 @@ function tdotAttach(p){
     });
     setStatus('');
   }
-  if (input) input.addEventListener('change',function(){ done={}; draw(); });
-  function reset(){ done={}; if (input) input.value=''; draw(); }
+  var gen=0;   /* bumped by every reset / new pick: an upload still running for the last person never writes into the form */
+  if (input) input.addEventListener('change',function(){ gen++; done={}; draw(); });
+  function reset(){ gen++; done={}; if (input) input.value=''; draw(); }
   function check(){
     if (!allowed) return '';
     var fs=files();
@@ -106,16 +107,17 @@ function tdotAttach(p){
     var fs=(allowed ? files() : []).filter(function(f){ return !done[fkey(f)]; });
     var out={ sent:0, failed:[] };
     if (!fs.length || !leadId) return Promise.resolve(out);
-    var i=0;
+    var i=0, g=gen, myDone=done;
+    function say(t,cls){ if (g===gen) setStatus(t,cls); }
     function next(){
       if (i>=fs.length) return Promise.resolve(out);
       var f=fs[i++];
-      setStatus('Attaching '+i+' of '+fs.length+'…');
-      return uploadOne(leadId,f).then(function(r){ if (r.ok){ out.sent++; done[fkey(f)]=1; } else out.failed.push({ name:f.name, error:r.error }); return next(); });
+      say('Attaching '+i+' of '+fs.length+'…');
+      return uploadOne(leadId,f).then(function(r){ if (r.ok){ out.sent++; myDone[fkey(f)]=1; } else out.failed.push({ name:f.name, error:r.error }); return next(); });
     }
     return next().then(function(o){
-      if (o.failed.length) setStatus((o.sent?o.sent+' attached; ':'')+o.failed.length+' not attached: '+o.failed.map(function(x){ return x.name+' ('+x.error+')'; }).join('; ')+'. Attaching again sends only these.','err');
-      else setStatus(o.sent+' attached.','ok');
+      if (o.failed.length) say((o.sent?o.sent+' attached; ':'')+o.failed.length+' not attached: '+o.failed.map(function(x){ return x.name+' ('+x.error+')'; }).join('; ')+'. Attaching again sends only these.','err');
+      else say(o.sent+' attached.','ok');
       return o;
     });
   }

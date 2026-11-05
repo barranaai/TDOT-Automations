@@ -549,6 +549,7 @@ const DELETE_UI_JS = DIALOG_UI_JS + `
           if (go.disabled) return;
           go.disabled = true; go.textContent = 'Deleting\\u2026'; err.textContent = '';
           sent = true; dlg.setBusy(true);   /* no closing until the answer is in (or the wait is too long) */
+          input.readOnly = true;            /* and no second send by editing the typed confirmation */
           var body = { confirmText: input.value.trim(), kind: p.kind };
           if (target.caseRef) body.caseRef = target.caseRef; else body.leadId = target.leadId;
           fetch('/admin/delete/execute', { method: 'POST', headers: delHeaders(), credentials: 'same-origin', body: JSON.stringify(body) })
@@ -558,7 +559,7 @@ const DELETE_UI_JS = DIALOG_UI_JS + `
               dlg.setBusy(false);
               if (!res.ok) {
                 err.textContent = (res.j && (res.j.message || res.j.error)) || 'Delete failed.';
-                go.disabled = false; go.textContent = 'Delete permanently';
+                input.readOnly = false; go.disabled = false; go.textContent = 'Delete permanently';
                 return;
               }
               var d = res.j.deleted;
@@ -945,16 +946,17 @@ const PAYMENT_UI_JS = DIALOG_UI_JS + `
     go.onclick = function(){
       var cents = payParseCents(amtEl.value);
       if (isNaN(cents) || cents <= 0) { err.textContent = 'Enter the amount actually received.'; amtEl.focus(); return; }
-      go.disabled = true; err.textContent = 'Checking…'; d.setBusy(true);
+      go.disabled = true; err.textContent = 'Checking…';   /* a read only: the window can still be closed */
       fetch('/admin/retainer/' + encodeURIComponent(o.leadId) + '/milestone/' + encodeURIComponent(o.index) + '/correct-preview?amountCents=' + encodeURIComponent(cents), { headers: payHeaders(), credentials: 'same-origin' })
         .then(function(r){ return r.json().then(function(j){ return { status: r.status, j: j }; }); })
         .then(function(res){
-          go.disabled = false; d.setBusy(false);
+          if (!d.ov.parentNode) return;   /* closed meanwhile */
+          go.disabled = false;
           if (res.status !== 200 || !res.j.ok) { err.textContent = (res.j && res.j.error) || ('Could not check it (HTTP ' + res.status + ').'); return; }
           if (!res.j.plan.ok) { err.textContent = res.j.plan.refusal.message; return; }
           renderCorrect(d, o, res.j, T);
         })
-        .catch(function(e){ go.disabled = false; d.setBusy(false); err.textContent = 'Could not check it: ' + e.message; });
+        .catch(function(e){ go.disabled = false; err.textContent = 'Could not check it: ' + e.message; });
     };
     setTimeout(function(){ amtEl.focus(); }, 30);
   }
