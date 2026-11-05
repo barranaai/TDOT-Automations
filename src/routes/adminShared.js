@@ -15,6 +15,8 @@ const TDOT_LOGO_SVG = `<img src="${LOGO_URL}" alt="TDOT Immigration" style="heig
 const TDOT_LOGO_SVG_LARGE = `<img src="${LOGO_URL}" alt="TDOT Immigration" style="height:44px;background:#fff;padding:5px 10px;border-radius:8px;object-fit:contain;display:block">`;
 
 // ─── Shared CSS variables + reset ────────────────────────────────────────────
+const { DIALOG_UI_CSS, DIALOG_UI_JS } = require('./dialogUi');   // the one pop-up for every page (2026-11-05)
+
 const SHARED_CSS_VARS = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -434,12 +436,10 @@ const SHARED_AUTH_JS = `
 // once. The modal fetches /admin/delete/preview, lists exactly what will be
 // removed, and requires re-typing the case reference (or DELETE) to enable
 // the destroy button. Server enforces admin; the UI is only convenience.
-const DELETE_UI_CSS = `
+const DELETE_UI_CSS = DIALOG_UI_CSS + `
   .del-btn { border:none; background:transparent; padding:4px 6px; border-radius:6px; cursor:pointer; color:#94a3b8; line-height:0; }
   .del-btn:hover { background:#fee2e2; color:#dc2626; }
-  .delm-overlay { position:fixed; inset:0; background:rgba(15,23,42,.5); display:flex; align-items:center; justify-content:center; z-index:1200; padding:20px; }
-  .delm { background:#fff; border-radius:14px; padding:22px 24px; width:100%; max-width:520px; max-height:88vh; overflow-y:auto; box-shadow:0 20px 50px rgba(2,6,23,.4); font-size:13.5px; color:#0f172a; }
-  .delm h3 { margin:0 0 4px; font-size:16px; color:#b91c1c; }
+  /* The pop-up itself (backdrop, box, ×, buttons, phone sheet) is the shared one — dialogUi.js. */
   .delm .delm-client { font-size:13px; color:#334155; margin:0 0 12px; }
   .delm ul { margin:8px 0; padding-left:20px; }
   .delm li { margin:3px 0; }
@@ -447,16 +447,11 @@ const DELETE_UI_CSS = `
   .delm .delm-warn p { margin:4px 0; }
   .delm label { display:block; font-size:12px; font-weight:700; margin:14px 0 4px; }
   .delm input { width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; box-sizing:border-box; }
-  .delm-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
-  .delm-btn { padding:9px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:#0f172a; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
-  .delm-btn.danger { background:#dc2626; border-color:#dc2626; color:#fff; }
-  .delm-btn.danger:disabled { opacity:.4; cursor:not-allowed; }
-  .delm-err { color:#dc2626; font-size:12.5px; min-height:16px; margin-top:8px; }
   .delm-result { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:8px 12px; font-size:12.5px; color:#166534; margin-top:10px; }
   .delm-result.bad { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
 `;
 
-const DELETE_UI_JS = `
+const DELETE_UI_JS = DIALOG_UI_JS + `
   var TDOT_DEL_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>';
 
   function delEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -481,23 +476,33 @@ const DELETE_UI_JS = `
     } catch (_) {}
   })();
 
+  /* The shared pop-up (dialogUi.js): Escape, ×, focus back to the bin, one at a time.
+     Once "Delete permanently" has been pressed, EVERY way of closing refreshes the list — and so
+     does an answer that arrives after the window was closed (2026-11-05). */
   function tdotOpenDeleteModal(target, onDone){
     var qs = target.caseRef ? ('caseRef=' + encodeURIComponent(target.caseRef)) : ('leadId=' + encodeURIComponent(target.leadId));
     var ov = document.createElement('div');
-    ov.className = 'delm-overlay';
-    ov.innerHTML = '<div class="delm" role="dialog" aria-modal="true"><h3>Delete record</h3><div class="delm-client">Loading preview&hellip;</div></div>';
+    ov.className = 'delm-overlay tdlg-ov';
+    ov.innerHTML = '<div class="delm tdlg" role="dialog" aria-modal="true" aria-labelledby="delm-title"><button type="button" class="tdlg-x" aria-label="Close">&times;</button>' +
+      '<div class="tdlg-body"><h3 id="delm-title" class="danger">Delete record</h3><div class="delm-client">Loading preview&hellip;</div></div></div>';
     document.body.appendChild(ov);
-    ov.addEventListener('click', function(e){ if (e.target === ov) ov.remove(); });
+    var sent = false;   /* the delete was sent: the list may have changed */
+    function refresh(){ if (onDone) { try { onDone(); } catch (e) {} } }
+    var dlg = tdotDialog(ov, { remove: true, group: 'delm', onClosed: function(){ if (sent) refresh(); },
+      slowText: 'Still deleting \\u2014 no answer yet. You can close this window; the list refreshes. Only retry if the record is still there.' });
+    dlg.open();
+    var box = ov.querySelector('.tdlg-body');
 
     fetch('/admin/delete/preview?' + qs, { headers: delHeaders(), credentials: 'same-origin' })
       .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, status: r.status, j: j }; }); })
       .then(function(res){
-        var box = ov.querySelector('.delm');
+        if (!dlg.isOpen()) return;   /* closed while the preview loaded */
         if (!res.ok) {
           var msg = (res.j && (res.j.message || res.j.error)) || ('HTTP ' + res.status);
-          box.innerHTML = '<h3>Cannot delete</h3><div class="delm-client">' + delEsc(msg) + '</div>' +
-            '<div class="delm-actions"><button class="delm-btn" type="button">Close</button></div>';
-          box.querySelector('.delm-btn').onclick = function(){ ov.remove(); };
+          box.innerHTML = '<h3 id="delm-title" class="danger">Cannot delete</h3><div class="delm-client">' + delEsc(msg) + '</div>' +
+            '<div class="delm-actions"><button class="delm-btn" type="button" data-x>Close</button></div>';
+          box.querySelector('.delm-btn').onclick = function(){ dlg.close(); };
+          box.querySelector('.delm-btn').focus();
           return;
         }
         var p = res.j;
@@ -515,14 +520,14 @@ const DELETE_UI_JS = `
         var warns = '';
         for (var w = 0; w < (p.warnings || []).length; w++) warns += '<p>' + delEsc(p.warnings[w]) + '</p>';
 
-        box.innerHTML = '<h3>Delete ' + (p.kind === 'case' ? 'case ' + delEsc(p.caseRef) : 'lead') + '?</h3>' +
+        box.innerHTML = '<h3 id="delm-title" class="danger">Delete ' + (p.kind === 'case' ? 'case ' + delEsc(p.caseRef) : 'lead') + '?</h3>' +
           '<div class="delm-client">' + delEsc(p.client.name) + (p.client.email ? ' &middot; ' + delEsc(p.client.email) : '') + '</div>' +
           '<div>This permanently removes from the live boards:</div><ul>' + rows.join('') + '</ul>' +
           (warns ? '<div class="delm-warn">' + warns + '</div>' : '') +
           '<label for="delm-confirm">Type <span style="font-family:monospace">' + delEsc(p.confirmText) + '</span> to confirm</label>' +
           '<input id="delm-confirm" type="text" autocomplete="off">' +
           '<div class="delm-err" role="alert"></div>' +
-          '<div class="delm-actions"><button class="delm-btn" type="button" id="delm-cancel">Cancel</button>' +
+          '<div class="delm-actions"><button class="delm-btn" type="button" id="delm-cancel" data-x>Cancel</button>' +
           '<button class="delm-btn danger" type="button" id="delm-go" disabled>Delete permanently</button></div>';
 
         var input = box.querySelector('#delm-confirm');
@@ -530,14 +535,20 @@ const DELETE_UI_JS = `
         var err = box.querySelector('.delm-err');
         input.focus();
         input.oninput = function(){ go.disabled = (input.value.trim() !== p.confirmText); };
-        box.querySelector('#delm-cancel').onclick = function(){ ov.remove(); };
+        box.querySelector('#delm-cancel').onclick = function(){ dlg.close(); };
+        /* Enter in the box deletes, once the typed text matches (the button is the only way otherwise). */
+        input.onkeydown = function(e){ if (e.key === 'Enter' && !go.disabled) { e.preventDefault(); go.click(); } };
         go.onclick = function(){
+          if (go.disabled) return;
           go.disabled = true; go.textContent = 'Deleting\\u2026'; err.textContent = '';
+          sent = true; dlg.setBusy(true);   /* no closing until the answer is in (or the wait is too long) */
           var body = { confirmText: input.value.trim(), kind: p.kind };
           if (target.caseRef) body.caseRef = target.caseRef; else body.leadId = target.leadId;
           fetch('/admin/delete/execute', { method: 'POST', headers: delHeaders(), credentials: 'same-origin', body: JSON.stringify(body) })
             .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); })
             .then(function(res){
+              if (!dlg.isOpen()) { refresh(); return; }   /* closed while waiting: the list is refreshed again with the outcome */
+              dlg.setBusy(false);
               if (!res.ok) {
                 err.textContent = (res.j && (res.j.message || res.j.error)) || 'Delete failed.';
                 go.disabled = false; go.textContent = 'Delete permanently';
@@ -568,21 +579,25 @@ const DELETE_UI_JS = `
               go.style.display = 'none';
               var cancel = box.querySelector('#delm-cancel');
               cancel.textContent = 'Close';
-              cancel.onclick = function(){ ov.remove(); if (onDone) onDone(); };
+              cancel.onclick = function(){ dlg.close(); };   /* the list refreshes on close (however it is closed) */
+              cancel.focus();
             })
             .catch(function(){
+              if (!dlg.isOpen()) { refresh(); return; }
+              dlg.setBusy(false);
               // The server may STILL be finishing the cascade — re-enabling the
               // button here would let a second run interleave with the first.
-              err.textContent = 'Network issue \\u2014 the delete may still be finishing on the server. Close this dialog, refresh the list, and only retry if the record is still there.';
+              err.textContent = 'Network issue \\u2014 the delete may still be finishing on the server. Close this window (the list refreshes) and only retry if the record is still there.';
               go.textContent = 'Delete permanently';
             });
         };
       })
       .catch(function(){
-        var box = ov.querySelector('.delm');
-        box.innerHTML = '<h3>Cannot delete</h3><div class="delm-client">Preview failed (network).</div>' +
-          '<div class="delm-actions"><button class="delm-btn" type="button">Close</button></div>';
-        box.querySelector('.delm-btn').onclick = function(){ ov.remove(); };
+        if (!dlg.isOpen()) return;
+        box.innerHTML = '<h3 id="delm-title" class="danger">Cannot delete</h3><div class="delm-client">Preview failed (network).</div>' +
+          '<div class="delm-actions"><button class="delm-btn" type="button" data-x>Close</button></div>';
+        box.querySelector('.delm-btn').onclick = function(){ dlg.close(); };
+        box.querySelector('.delm-btn').focus();
       });
   }
 
@@ -609,16 +624,13 @@ const DELETE_UI_JS = `
 //
 // Plain template text: NO backticks, NO dollar-brace, NO backslashes — it is
 // interpolated into the pages' own template literals (see inline-script trap).
-const PAYMENT_UI_CSS = `
+const PAYMENT_UI_CSS = DIALOG_UI_CSS + `
   .pay-info { position:relative; display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:50%; background:#e2e8f0; color:#475569; font-size:10px; font-weight:800; font-style:italic; font-family:Georgia,serif; cursor:help; margin-left:6px; vertical-align:middle; flex:none; }
   .pay-info:hover, .pay-info:focus { background:#cbd5e1; outline:none; }
   .pay-info:hover::after, .pay-info:focus::after { content:attr(data-tip); position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%); background:#0f172a; color:#fff; font:500 11.5px/1.45 -apple-system,sans-serif; font-style:normal; padding:6px 9px; border-radius:6px; white-space:pre-line; width:max-content; max-width:280px; z-index:50; box-shadow:0 6px 18px rgba(2,6,23,.25); }
   .pay-fix { display:inline-flex; gap:6px; align-items:center; }
   .pay-fix .pay-signin { font-size:11px; color:#64748b; text-decoration:underline; }
-  .paym-overlay { position:fixed; inset:0; background:rgba(15,23,42,.5); display:flex; align-items:center; justify-content:center; z-index:1200; padding:20px; }
-  .paym { background:#fff; border-radius:14px; padding:22px 24px; width:100%; max-width:520px; max-height:88vh; overflow-y:auto; box-shadow:0 20px 50px rgba(2,6,23,.4); font-size:13.5px; color:#0f172a; }
-  .paym h3 { margin:0 0 4px; font-size:16px; }
-  .paym h3.danger { color:#b91c1c; }
+  /* The pop-up itself (backdrop, box, ×, buttons, phone sheet) is the shared one — dialogUi.js. */
   .paym .paym-client { font-size:13px; color:#334155; margin:0 0 12px; }
   .paym .paym-rec { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; margin:8px 0; }
   .paym .paym-amt { font-weight:700; }
@@ -632,18 +644,12 @@ const PAYMENT_UI_CSS = `
   .paym label { display:block; font-size:12px; font-weight:700; margin:12px 0 4px; }
   .paym input, .paym textarea { width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; box-sizing:border-box; }
   .paym textarea { min-height:64px; resize:vertical; }
-  .paym-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
-  .paym-btn { padding:9px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:#0f172a; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
-  .paym-btn.primary { background:#0f2d52; border-color:#0f2d52; color:#fff; }
-  .paym-btn.danger { background:#dc2626; border-color:#dc2626; color:#fff; }
-  .paym-btn:disabled { opacity:.4; cursor:not-allowed; }
-  .paym-err { color:#dc2626; font-size:12.5px; min-height:16px; margin-top:8px; }
   .paym .paym-hint { font-size:12px; color:#475569; margin-top:4px; min-height:14px; }
   .paym .paym-ledger { font-size:12px; color:#475569; margin-top:6px; }
   .paym-ok { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 12px; font-size:13px; color:#166534; margin-top:10px; }
 `;
 
-const PAYMENT_UI_JS = `
+const PAYMENT_UI_JS = DIALOG_UI_JS + `
   var TDOT_PAY = { viewer: null, waiting: null };
   var TDOT_PAY_NL = String.fromCharCode(10);
 
@@ -737,26 +743,29 @@ const PAYMENT_UI_JS = `
     });
   }
 
+  /* The shared pop-up (dialogUi.js) — Escape, ×, an outside click only when nothing is typed,
+     focus back to the button, and no closing while a request runs (d.setBusy). */
   function payOverlay(){
     /* One payment dialog at a time — a double-click must never stack two. */
-    Array.prototype.forEach.call(document.querySelectorAll('.paym-overlay'), function(x){ if (x.parentNode) x.parentNode.removeChild(x); });
-    var opener = document.activeElement;
+    Array.prototype.forEach.call(document.querySelectorAll('.paym-overlay'), function(x){ if (x.tdotDlg) x.tdotDlg.close(true); if (x.parentNode) x.parentNode.removeChild(x); });
     var ov = document.createElement('div');
-    ov.className = 'paym-overlay';
-    ov.innerHTML = '<div class="paym" role="dialog" aria-modal="true" aria-labelledby="paym-title"></div>';
+    ov.className = 'paym-overlay tdlg-ov';
+    ov.innerHTML = '<div class="paym tdlg" role="dialog" aria-modal="true" aria-labelledby="paym-title"><button type="button" class="tdlg-x" aria-label="Close">&times;</button><div class="tdlg-body"></div></div>';
     document.body.appendChild(ov);
-    var box = ov.querySelector('.paym');
+    var box = ov.querySelector('.tdlg-body');
     var d = { ov: ov, box: box, onClose: null };
-    function close(){
-      if (!ov.parentNode) return;
-      ov.parentNode.removeChild(ov); document.removeEventListener('keydown', onKey);
-      try { if (opener && opener.focus && document.body.contains(opener)) opener.focus(); } catch (e) {}
+    var late = false;   /* closed while a request still ran */
+    var c = tdotDialog(ov, { remove: true, group: 'paym', onClosed: function(how, wasBusy){
+      if (wasBusy) late = true;
       if (d.onClose) { var f = d.onClose; d.onClose = null; f(); }
-    }
-    function onKey(e){ if (e.key === 'Escape') close(); }
-    ov.addEventListener('click', function(e){ if (e.target === ov) close(); });
-    document.addEventListener('keydown', onKey);
-    d.close = close;
+    } });
+    ov.tdotDlg = c;
+    /* A success that lands after the window was closed still refreshes the row (the flows set d.onClose on success). */
+    var pending = null;
+    Object.defineProperty(d, 'onClose', { configurable: true, get: function(){ return pending; }, set: function(f){ pending = f || null; if (late && pending) { var g = pending; pending = null; g(); } } });
+    d.close = function(){ return c.close(); };
+    d.setBusy = function(on){ c.setBusy(on); };
+    c.open();
     return d;
   }
   function payTitle(text, danger){ return '<h3 id="paym-title"' + (danger ? ' class="danger"' : '') + '>' + payEsc(text) + '</h3>'; }
@@ -881,13 +890,14 @@ const PAYMENT_UI_JS = `
     why.oninput = check; conf.oninput = check;
     d.box.querySelector('[data-x]').onclick = d.close;
     go.onclick = function(){
-      go.disabled = true; err.textContent = 'Removing…';
+      go.disabled = true; err.textContent = 'Removing…'; d.setBusy(true);
       fetch('/admin/retainer/' + encodeURIComponent(o.leadId) + '/milestone/' + encodeURIComponent(o.index) + '/undo', {
         method: 'POST', headers: payHeaders(), credentials: 'same-origin',
         body: JSON.stringify({ confirmText: conf.value.trim(), reason: why.value.trim(), expect: p.expect })
       })
       .then(function(r){ return r.json().then(function(j){ return { status: r.status, j: j }; }); })
       .then(function(res){
+        d.setBusy(false);
         if (res.status === 200 && res.j.ok) {
           var removed = res.j.removed && res.j.removed.reference ? '<div class="paym-muted">Removed reference: <b>' + payEsc(res.j.removed.reference) + '</b>' + (res.j.removed.paidAt ? ' (' + payEsc(res.j.removed.paidAt) + ')' : '') + '</div>' : '';
           d.box.innerHTML = head + '<div class="paym-ok">' + payEsc(res.j.message || 'Removed.') + '</div>' + removed +
@@ -903,7 +913,7 @@ const PAYMENT_UI_JS = `
         if (res.j && (res.j.code === 'CHANGED_SINCE_PREVIEW' || res.j.code === 'ONBOARDING_STARTED_DURING_UNDO' || res.j.code === 'UNDO_INCOMPLETE')) { go.disabled = true; }
         else { check(); }
       })
-      .catch(function(){ err.textContent = 'The connection dropped — reload the page and check the row before trying again.'; go.disabled = true; });
+      .catch(function(){ d.setBusy(false); err.textContent = 'The connection dropped — reload the page and check the row before trying again.'; go.disabled = true; });
     };
     setTimeout(function(){ why.focus(); }, 30);
   }
@@ -928,16 +938,16 @@ const PAYMENT_UI_JS = `
     go.onclick = function(){
       var cents = payParseCents(amtEl.value);
       if (isNaN(cents) || cents <= 0) { err.textContent = 'Enter the amount actually received.'; amtEl.focus(); return; }
-      go.disabled = true; err.textContent = 'Checking…';
+      go.disabled = true; err.textContent = 'Checking…'; d.setBusy(true);
       fetch('/admin/retainer/' + encodeURIComponent(o.leadId) + '/milestone/' + encodeURIComponent(o.index) + '/correct-preview?amountCents=' + encodeURIComponent(cents), { headers: payHeaders(), credentials: 'same-origin' })
         .then(function(r){ return r.json().then(function(j){ return { status: r.status, j: j }; }); })
         .then(function(res){
-          go.disabled = false;
+          go.disabled = false; d.setBusy(false);
           if (res.status !== 200 || !res.j.ok) { err.textContent = (res.j && res.j.error) || ('Could not check it (HTTP ' + res.status + ').'); return; }
           if (!res.j.plan.ok) { err.textContent = res.j.plan.refusal.message; return; }
           renderCorrect(d, o, res.j, T);
         })
-        .catch(function(e){ go.disabled = false; err.textContent = 'Could not check it: ' + e.message; });
+        .catch(function(e){ go.disabled = false; d.setBusy(false); err.textContent = 'Could not check it: ' + e.message; });
     };
     setTimeout(function(){ amtEl.focus(); }, 30);
   }
@@ -959,13 +969,14 @@ const PAYMENT_UI_JS = `
     why.oninput = check; conf.oninput = check;
     d.box.querySelector('[data-x]').onclick = d.close;
     go.onclick = function(){
-      go.disabled = true; err.textContent = 'Correcting…';
+      go.disabled = true; err.textContent = 'Correcting…'; d.setBusy(true);
       fetch('/admin/retainer/' + encodeURIComponent(o.leadId) + '/milestone/' + encodeURIComponent(o.index) + '/correct', {
         method: 'POST', headers: payHeaders(), credentials: 'same-origin',
         body: JSON.stringify({ amountCents: p.newAmountCents, confirmText: conf.value.trim(), reason: why.value.trim(), expect: p.expect })
       })
       .then(function(r){ return r.json().then(function(j){ return { status: r.status, j: j }; }); })
       .then(function(res){
+        d.setBusy(false);
         if (res.status === 200 && res.j.ok) {
           d.box.innerHTML = head + '<div class="paym-ok">' + payEsc(res.j.message || 'Corrected.') + '</div>' + payList('', res.j.warnings, 'paym-warn') +
             '<div class="paym-actions"><button type="button" class="paym-btn primary" data-x>Done</button></div>';
@@ -978,7 +989,7 @@ const PAYMENT_UI_JS = `
         if (res.j && (res.j.code === 'CHANGED_SINCE_PREVIEW' || res.j.code === 'NOT_CONFIRMED')) { go.disabled = true; }
         else { check(); }
       })
-      .catch(function(){ err.textContent = 'The connection dropped — reload the page and check the row before trying again.'; go.disabled = true; });
+      .catch(function(){ d.setBusy(false); err.textContent = 'The connection dropped — reload the page and check the row before trying again.'; go.disabled = true; });
     };
     setTimeout(function(){ why.focus(); }, 30);
   }
@@ -1004,12 +1015,13 @@ const PAYMENT_UI_JS = `
       if (note.length < 10) { err.textContent = 'Say briefly what’s wrong (at least 10 characters).'; return; }
       if (!by) { err.textContent = 'Enter your name so the admins know who flagged it.'; return; }
       if (byEl) paySaveName(by);
-      go.disabled = true; err.textContent = 'Sending…';
+      go.disabled = true; err.textContent = 'Sending…'; d.setBusy(true);
       fetch('/admin/retainer/' + encodeURIComponent(o.leadId) + '/milestone/' + encodeURIComponent(m.index) + '/flag-error', {
         method: 'POST', headers: payHeaders(), credentials: 'same-origin', body: JSON.stringify({ note: note, staffName: by })
       })
       .then(function(r){ return r.json().then(function(j){ return { status: r.status, j: j }; }); })
       .then(function(res){
+        d.setBusy(false);
         if (res.status === 200 && res.j.ok) {
           d.box.innerHTML = payTitle('Flag payment as wrong') + '<div class="paym-ok">' + payEsc(res.j.message || 'Flagged.') + '</div><div class="paym-actions"><button type="button" class="paym-btn primary" data-x>Done</button></div>';
           d.onClose = o.onDone || null;
@@ -1019,7 +1031,7 @@ const PAYMENT_UI_JS = `
         }
         go.disabled = false; err.textContent = (res.j && res.j.error) || ('Failed (HTTP ' + res.status + ').');
       })
-      .catch(function(e){ go.disabled = false; err.textContent = 'Failed: ' + e.message; });
+      .catch(function(e){ d.setBusy(false); go.disabled = false; err.textContent = 'Failed: ' + e.message; });
     };
     setTimeout(function(){ var el = d.box.querySelector('.paym-why'); if (el) el.focus(); }, 30);
   }
@@ -1029,7 +1041,7 @@ const PAYMENT_UI_JS = `
 // Used by the lead page, the consultation page (banner + the "Not Wanted" reason
 // dialog) and the Add-lead / direct-client panels (the warning block). Inline
 // JS inside a template literal: no backticks, no "${", no backslashes.
-const BLACKLIST_UI_CSS = `
+const BLACKLIST_UI_CSS = DIALOG_UI_CSS + `
   .blw { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; border-radius:10px; padding:12px 16px; font-size:13px; margin:0 0 14px; display:flex; gap:10px; align-items:flex-start; }
   .blw > .blw-ico { font-size:16px; line-height:1.2; flex:none; }
   .blw .blw-body { flex:1; min-width:0; }
@@ -1040,25 +1052,16 @@ const BLACKLIST_UI_CSS = `
   .blw .blw-btn:disabled { opacity:.5; cursor:not-allowed; }
   .blw.blw-soft { background:#fffbeb; border-color:#fde68a; color:#92400e; }
   .blw.blw-soft b, .blw.blw-soft .blw-sub { color:#92400e; }
-  .blm-overlay { position:fixed; inset:0; background:rgba(15,23,42,.5); display:flex; align-items:center; justify-content:center; z-index:1200; padding:20px; }
-  .blm { background:#fff; border-radius:14px; padding:22px 24px; width:100%; max-width:520px; box-shadow:0 20px 50px rgba(2,6,23,.4); font-size:13.5px; color:#0f172a; }
-  .blm h3 { margin:0 0 6px; font-size:16px; }
-  .blm h3.danger { color:#b91c1c; }
+  /* The pop-up itself (backdrop, box, ×, buttons, phone sheet) is the shared one — dialogUi.js. */
   .blm p { margin:6px 0; color:#334155; }
   .blm .blm-info { background:#f1f5f9; border:1px solid #e2e8f0; border-radius:8px; padding:8px 12px; font-size:12.5px; color:#334155; margin:8px 0; }
   .blm label { display:block; font-size:12px; font-weight:700; margin:12px 0 4px; }
   .blm input, .blm textarea { width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; box-sizing:border-box; }
   .blm textarea { min-height:70px; resize:vertical; }
-  .blm-err { color:#dc2626; font-size:12.5px; min-height:16px; margin-top:8px; }
   .blm-err a { color:#dc2626; }
-  .blm-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
-  .blm-btn { padding:9px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:#0f172a; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
-  .blm-btn.primary { background:#0f2d52; border-color:#0f2d52; color:#fff; }
-  .blm-btn.danger { background:#dc2626; border-color:#dc2626; color:#fff; }
-  .blm-btn:disabled { opacity:.4; cursor:not-allowed; }
 `;
 
-const BLACKLIST_UI_JS = `
+const BLACKLIST_UI_JS = DIALOG_UI_JS + `
   var TDOT_BL = { viewer: null, waiting: null };
   function blEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   function blHeaders(){ var h = { 'Content-Type': 'application/json' }; var k = null; try { k = sessionStorage.getItem('tdot_admin_key'); } catch(e){} if (k) h['X-Api-Key'] = k; return h; }
@@ -1071,18 +1074,19 @@ const BLACKLIST_UI_JS = `
       .then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; })
       .then(function(v){ TDOT_BL.viewer = v || { signedIn:false, name:'', canUndo:false, signInUrl:'/q/auth/monday' }; var w = TDOT_BL.waiting; TDOT_BL.waiting = null; w.forEach(function(f){ try { f(TDOT_BL.viewer); } catch(e){} }); });
   }
+  /* The shared pop-up (dialogUi.js). One Not Wanted dialog at a time. */
   function blOverlay(){
-    Array.prototype.forEach.call(document.querySelectorAll('.blm-overlay'), function(x){ if (x.parentNode) x.parentNode.removeChild(x); });
-    var opener = document.activeElement;
-    var ov = document.createElement('div'); ov.className = 'blm-overlay';
-    ov.innerHTML = '<div class="blm" role="dialog" aria-modal="true" aria-labelledby="blm-title"></div>';
+    Array.prototype.forEach.call(document.querySelectorAll('.blm-overlay'), function(x){ if (x.tdotDlg) x.tdotDlg.close(true); if (x.parentNode) x.parentNode.removeChild(x); });
+    var ov = document.createElement('div'); ov.className = 'blm-overlay tdlg-ov';
+    ov.innerHTML = '<div class="blm tdlg" role="dialog" aria-modal="true" aria-labelledby="blm-title"><button type="button" class="tdlg-x" aria-label="Close">&times;</button><div class="tdlg-body"></div></div>';
     document.body.appendChild(ov);
-    var d = { ov: ov, box: ov.querySelector('.blm') };
-    function onKey(e){ if (e.key === 'Escape') close(); }
-    function close(){ if (!ov.parentNode) return; ov.parentNode.removeChild(ov); document.removeEventListener('keydown', onKey); try { if (opener && opener.focus && document.body.contains(opener)) opener.focus(); } catch (e) {} }
-    ov.addEventListener('click', function(e){ if (e.target === ov) close(); });
-    document.addEventListener('keydown', onKey);
-    d.close = close;
+    var c = tdotDialog(ov, { remove: true, group: 'blm' });
+    ov.tdotDlg = c;
+    var d = { ov: ov, box: ov.querySelector('.tdlg-body') };
+    d.close = function(){ return c.close(); };
+    d.setBusy = function(on){ c.setBusy(on); };
+    d.isOpen = function(){ return c.isOpen(); };
+    c.open();
     return d;
   }
   var BL_HOW = { both: 'email and phone', email: 'email only', phone: 'phone only' };
@@ -1122,15 +1126,17 @@ const BLACKLIST_UI_JS = `
     go.onclick = function(){
       var reason = ta.value.trim();
       if (reason.length < 3) { err.textContent = 'Give the reason — it is recorded with the removal.'; ta.focus(); return; }
-      go.disabled = true; err.textContent = '';
+      go.disabled = true; err.textContent = ''; d.setBusy(true);
       fetch('/admin/blacklist/' + encodeURIComponent(entryId) + '/remove', { method: 'POST', headers: blHeaders(), credentials: 'same-origin', body: JSON.stringify({ reason: reason }) })
         .then(function(r){ return r.json().then(function(j){ return { s: r.status, j: j }; }); })
         .then(function(res){
+          d.setBusy(false);
+          if (!d.isOpen()) { if (res.s === 200 && onDone) onDone(res.j); return; }   /* closed while waiting: still refresh after a removal */
           if (res.s === 401 && res.j && res.j.loginUrl) { go.disabled = false; err.innerHTML = blEsc(res.j.error || 'Sign in required.') + ' <a href="' + blEsc(res.j.loginUrl) + '">Sign in with Monday</a>'; return; }
           if (res.s !== 200) { go.disabled = false; err.textContent = (res.j && res.j.error) || ('HTTP ' + res.s); return; }
           d.close(); if (onDone) onDone(res.j);
         })
-        .catch(function(e){ go.disabled = false; err.textContent = 'Network error — ' + (e.message || 'try again'); });
+        .catch(function(e){ d.setBusy(false); go.disabled = false; err.textContent = 'Network error — ' + (e.message || 'try again'); });
     };
     setTimeout(function(){ ta.focus(); }, 30);
   }
@@ -1162,6 +1168,7 @@ const COUNTRY_OPTS = '<option value="">— choose —</option>' + require('../..
 
 module.exports = {
   STAFF_OPTS, COUNTRY_OPTS,
+  DIALOG_UI_CSS, DIALOG_UI_JS,
   BLACKLIST_UI_CSS, BLACKLIST_UI_JS,
   PAYMENT_UI_CSS, PAYMENT_UI_JS,
   TDOT_LOGO_SVG,

@@ -11,7 +11,7 @@
 
 const express = require('express');
 const router  = express.Router();
-const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS } = require('./adminShared');
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS, DIALOG_UI_JS } = require('./adminShared');
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
@@ -146,15 +146,12 @@ function buildQueueHTML() {
   .quick button[aria-pressed="true"] { background:var(--navy); border-color:var(--navy); color:#fff; }
   .quick button[aria-pressed="true"] .qn { background:rgba(255,255,255,.18); color:#fff; }
   .quick button.zero:not([aria-pressed="true"]) { color:#64748b; border-style:dashed; }
-  #dc-overlay { position:fixed; inset:0; background:rgba(15,23,42,.45); display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px; }
-  #dc-modal { background:#fff; border-radius:14px; padding:22px 24px; width:100%; max-width:460px; max-height:90vh; overflow-y:auto; box-shadow:0 20px 50px rgba(2,6,23,.35); }
-  #dc-modal h3 { margin:0 0 4px; font-size:17px; color:var(--navy); }
-  .dc-sub { font-size:12px; color:#64748b; margin:0 0 14px; }
-  #dc-modal label { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; margin:10px 0 3px; }
+  /* New direct retainer client: the shared pop-up (dialogUi.js); the field look matches Add lead. */
+  .dc-sub { font-size:12.5px; color:#64748b; margin:0 0 12px; line-height:1.45; }
+  #dc-modal label { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:12px 0 4px; }
   #dc-modal textarea { width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; color:var(--navy); background:#fff; box-sizing:border-box; resize:vertical; min-height:64px; }
   #dc-modal input, #dc-modal select { width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:inherit; color:var(--navy); background:#fff; box-sizing:border-box; }
   .dc-hint { font-weight:500; text-transform:none; letter-spacing:0; }
-  #dc-err { color:#dc2626; font-size:12.5px; min-height:16px; margin-top:10px; }
   #dc-matches { background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 12px; margin-top:12px; font-size:12.5px; }
   #dc-matches .dcm-title { font-weight:700; color:#92400e; margin-bottom:6px; }
   /* .dcm-row also neutralises the #dc-modal label styling these radio labels would otherwise inherit */
@@ -168,10 +165,6 @@ function buildQueueHTML() {
   #dc-profile .dcp-fact { color:#7c2d12; background:#fff7ed; border:1px solid #fed7aa; border-radius:6px; padding:6px 9px; margin-top:6px; }
   #dc-profile label.dcp-confirm { display:flex; align-items:flex-start; gap:7px; margin:8px 0 0; text-transform:none; letter-spacing:0; font-weight:600; font-size:12.5px; color:#1e3a8a; }
   #dc-profile label.dcp-confirm input { width:auto; margin-top:2px; flex:none; }
-  .dc-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
-  .dc-btn { padding:9px 14px; border-radius:8px; border:1px solid #e2e8f0; background:#fff; color:var(--navy); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
-  .dc-btn.primary { background:var(--navy); border-color:var(--navy); color:#fff; }
-  .dc-btn:disabled { opacity:.6; cursor:default; }
   /* The walk-in form's Source / Reference picker + attachments (shared pieces, 2026-11-04) */
   ${REFERRAL_CSS}
   ${ATTACH_CSS}
@@ -262,8 +255,10 @@ ${buildNavHeader('consultations')}
   </div>
 
   <!-- Direct retainer client (walk-in / referral — enters at the retainer stage) -->
-  <div id="dc-overlay" style="display:none">
-    <div id="dc-modal" role="dialog" aria-modal="true" aria-labelledby="dc-title">
+  <div id="dc-overlay" class="tdlg-ov" hidden>
+    <div id="dc-modal" class="tdlg" role="dialog" aria-modal="true" aria-labelledby="dc-title">
+      <button type="button" class="tdlg-x" aria-label="Close">&times;</button>
+      <div class="tdlg-body">
       <h3 id="dc-title">New direct retainer client</h3>
       <p class="dc-sub">Walk-in / referral entering at the retainer stage — no booking or consultation. Creates the client fully wired (case type → case reference &amp; checklist, consultant → agreement signatory &amp; case visibility), then opens the retainer panel.</p>
       <label for="dc-name">Full legal name *</label><input id="dc-name" type="text" maxlength="120" autocomplete="off">
@@ -280,16 +275,18 @@ ${buildNavHeader('consultations')}
       <div id="dc-profile" style="display:none" role="region" aria-label="Carried from previous application"></div>
       <div id="dc-blacklist" style="display:none"></div>
       <div id="dc-matches" style="display:none" role="region" aria-label="Possible existing records"></div>
-      <div id="dc-err" role="alert"></div>
+      <div id="dc-err" class="tdlg-err" role="alert"></div>
       <div class="dc-actions">
-        <button class="dc-btn" id="dc-cancel" type="button">Cancel</button>
+        <button class="dc-btn" id="dc-cancel" type="button" data-x>Cancel</button>
         <button class="dc-btn primary" id="dc-create" type="button">Create &amp; open retainer</button>
+      </div>
       </div>
     </div>
   </div>
 </main>
 <script>
 ${SHARED_AUTH_JS}
+${DIALOG_UI_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 var ALLROWS=[], RETAINERS=[], TAB='consultations', RANGE='today', ANCHOR='';
 ${REFERRAL_UI_JS}
@@ -367,6 +364,8 @@ function renderRows(rows){
 var DC_OPTS=null;
 ${BLACKLIST_UI_JS}
 function dcEl(id){ return document.getElementById(id); }
+var DC_DLG=null;   /* the shared pop-up (dialogUi.js): ×, Cancel, Escape; an outside click only while nothing is typed; no closing while saving */
+function dcDlg(){ if(!DC_DLG) DC_DLG=tdotDialog(dcEl('dc-overlay'),{ slowText:'Still waiting for an answer. You can close this window, but check the Retainers list before trying again, so the client is not added twice.' }); return DC_DLG; }
 /* The Not Wanted list (point 5): the server answers 409 with the warning; with no duplicate
    panel to choose from, an explicit tick is the "create anyway". A warning only. */
 var DC_BL_HIT=false;
@@ -388,7 +387,8 @@ function openDirectClient(){
   ['dc-name','dc-email','dc-phone','dc-address','dc-notes'].forEach(function(id){ var e=dcEl(id); if(e) e.value=''; });
   ['dc-casetype','dc-subtype','dc-consultant','dc-source'].forEach(function(id){ var e=dcEl(id); if(e) e.selectedIndex=0; });
   DC_REF.reset(); DC_ATT.reset(); DC_ATT.refresh(); DC_PROFILE_ADDR='';
-  DC_MATCHES=null; var mb=dcEl('dc-matches'); if(mb){ mb.style.display='none'; mb.innerHTML=''; }
+  DC_MATCHES=null; DC_MATCH_SEQ++; var mb=dcEl('dc-matches'); if(mb){ mb.style.display='none'; mb.innerHTML=''; }   /* the seq: a lookup still out for the last person never lands here */
+  var cb=dcEl('dc-create'); if(cb){ cb.disabled=false; cb.textContent='Create & open retainer'; }
   DC_BL_HIT=false; var blb=dcEl('dc-blacklist'); if(blb){ blb.style.display='none'; blb.innerHTML=''; }
   // A carried profile / lead conversion belongs to ONE opening of the modal —
   // reopening it for a different walk-in must never stamp the previous
@@ -396,7 +396,7 @@ function openDirectClient(){
   // (The ?newAppFrom / ?convertLead boots call openDirectClient FIRST.)
   DC_PROFILE_REF=null; DC_CONVERT_LEAD_ID=null;
   var pb=dcEl('dc-profile'); if(pb){ pb.style.display='none'; pb.innerHTML=''; }
-  dcEl('dc-overlay').style.display='flex';
+  dcDlg().open();
   var first=dcEl('dc-name'); if(first) first.focus();
   if(DC_OPTS) return;
   var key=getKey(); if(!key) return;
@@ -504,9 +504,10 @@ function dcApplyProfile(ref,p){
 }
 function dcLoadProfile(ref){
   var key=sessionStorage.getItem('tdot_admin_key'); if(!key) return;
+  var run=dcDlg().openId;
   fetch('/api/consultation/client-profile?caseRef='+encodeURIComponent(ref),{headers:{'X-Api-Key':key}})
     .then(function(r){ return r.ok?r.json():null; })
-    .then(function(p){ if(p){ dcApplyProfile(ref,p); dcCheckMatches(); } })
+    .then(function(p){ if(!dcDlg().still(run)) return; if(p){ dcApplyProfile(ref,p); dcCheckMatches(); } })
     .catch(function(){ /* staff can still fill the form by hand */ });
 }
 var DC_MATCH_SEQ=0;
@@ -527,9 +528,11 @@ function dcClearMatches(){
 var DC_CONVERT_LEAD_ID=null;
 function dcLoadConvertLead(leadId){
   var key=getKey(); if(!key) return;
+  var run=dcDlg().openId;
   fetch('/api/lead/'+encodeURIComponent(leadId),{headers:{'X-Api-Key':key}})
     .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(function(d){
+      if(!dcDlg().still(run)) return;   /* closed or reopened for someone else meanwhile */
       var set=function(elId,v){ var el=dcEl(elId); if(el && v && !el.value) el.value=v; };
       set('dc-name', d.name||'');
       set('dc-email', d.email||'');
@@ -546,7 +549,7 @@ function dcLoadConvertLead(leadId){
         box.style.display='block';
       }
     })
-    .catch(function(){ var err=dcEl('dc-err'); if(err) err.textContent='Could not load that lead — fill the fields manually (the duplicate check will still offer to link it).'; });
+    .catch(function(){ if(!dcDlg().still(run)) return; var err=dcEl('dc-err'); if(err) err.textContent='Could not load that lead — fill the fields manually (the duplicate check will still offer to link it).'; });
 }
 function dcCheckMatches(){
   var email=(dcEl('dc-email').value||'').trim(), phone=(dcEl('dc-phone').value||'').trim();
@@ -614,10 +617,13 @@ function submitDirectClient(){
     body.blacklistAck=true;
   }
   var key=getKey(); if(!key) return;
-  var btn=dcEl('dc-create'); btn.disabled=true; btn.textContent='Creating…';
+  var dlg=dcDlg(), run=dlg.openId;   /* this opening — a late answer for an earlier client is never painted into the form */
+  var btn=dcEl('dc-create'); btn.disabled=true; btn.textContent='Creating…'; dlg.setBusy(true);
   fetch('/api/consultation/direct-client',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
     .then(function(res){
+      if(!dlg.still(run)){ if(res.s===200) load(true); return; }   /* closed after the long wait: never painted into a later opening; the list shows the new client */
+      if(res.s!==200) dlg.setBusy(false);
       if(res.s===409 && res.j && res.j.matches){
         // The server found matches the modal hadn't fetched yet — show them (and the Not Wanted warning, if any).
         dcRenderMatches(res.j.matches);
@@ -634,7 +640,7 @@ function submitDirectClient(){
       else if(res.j.linked) window.alert('Linked to the existing lead — one record for this person, now set up as a direct retainer client.');
       else if(res.j.reused) window.alert('This client already exists as a direct retainer lead — opening it instead of creating a duplicate.');
       /* The client exists: attach the chosen files now (a failed file never undoes the client), then open it. */
-      var go=function(){ window.location.href='/admin/consultation/'+encodeURIComponent(res.j.leadId); };
+      var go=function(){ if(!dlg.still(run)){ load(true); return; } window.location.href='/admin/consultation/'+encodeURIComponent(res.j.leadId); };
       if(!DC_ATT.files().length) return go();
       btn.textContent='Attaching…';
       return DC_ATT.upload(res.j.leadId).then(function(o){
@@ -642,14 +648,13 @@ function submitDirectClient(){
         go();
       });
     })
-    .catch(function(e){ btn.disabled=false; btn.textContent='Create & open retainer'; err.textContent=e.message||'Creation failed — try again.'; });
+    .catch(function(e){ if(!dlg.still(run)) return; dlg.setBusy(false); btn.disabled=false; btn.textContent='Create & open retainer'; err.textContent=e.message||'Creation failed — try again.'; });
 }
 (function initDirectClient(){
   var b=dcEl('btn-direct-client'); if(b) b.onclick=openDirectClient;
-  function closeDc(){ dcEl('dc-overlay').style.display='none'; var bb=dcEl('btn-direct-client'); if(bb) bb.focus(); }
+  function closeDc(){ dcDlg().close(); }   /* focus goes back to the button that opened it (the shared pop-up) */
   var c=dcEl('dc-cancel'); if(c) c.onclick=closeDc;
-  var ov=dcEl('dc-overlay'); if(ov) ov.onclick=function(ev){ if(ev.target===ov) closeDc(); };
-  document.addEventListener('keydown',function(ev){ var o=dcEl('dc-overlay'); if(ev.key==='Escape'&&o&&o.style.display!=='none') closeDc(); });
+  /* ×, Escape and the outside click are the shared pop-up's (dcDlg). */
   var ct=dcEl('dc-casetype'); if(ct) ct.onchange=dcSubtypes;
   var cr=dcEl('dc-create'); if(cr) cr.onclick=submitDirectClient;
   // Duplicate check fires when staff finish typing the identity fields; any
