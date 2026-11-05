@@ -271,7 +271,7 @@ function rowHtml(c){
     '<td>'+escHtml(c.consultant||'—')+'</td>'+
     '<td>'+(c.meetingType?escHtml(c.meetingType):'—')+'</td>'+
     '<td>'+ag+'</td><td>'+pc+'</td><td>'+pd+'</td><td>'+oc+'</td>'+
-    '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this record (careful — removes Monday rows and the OneDrive folder; escalates to the full case if one exists)">'+TDOT_DEL_SVG+'</button></td></tr>';
+    '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this record (careful — removes Monday rows and the OneDrive folder; if there is a case, the case and its folder go too)">'+TDOT_DEL_SVG+'</button></td></tr>';
 }
 function renderRows(rows){
   var tb=document.getElementById('qbody');
@@ -368,7 +368,7 @@ function renderRetainerList(rows,why,st,h){
       '<td>'+(c.retainerPaid?escHtml(c.retainerPaid):'—')+'</td>'+
       '<td>'+(c.stage?qpill(stc,c.stage):'<span class="pill grey">—</span>')+'</td><td>'+cs+'</td>'+
       /* No bin on a retained client: from a list it would delete the whole case (that is done on the Cases page). */
-      '<td>'+(c.retained?'':'<button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client (careful — removes the case, its checklist, and the OneDrive folder)">'+TDOT_DEL_SVG+'</button>')+'</td></tr>';
+      '<td>'+(c.retained?'':'<button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this client and their consultation record (careful — if there is a case, the case, its checklist and the OneDrive folder go too)">'+TDOT_DEL_SVG+'</button>')+'</td></tr>';
   }).join('');
   bindRowClicks(tb,'?from=retainers');   /* the record's back link comes back here */
   return { shown: rows.length, total: kindTotal };
@@ -1301,7 +1301,7 @@ function buildStepper(d){
     { k:'Retainer', done:!!(d.retainerSent && String(d.retainerSent).trim()) },
     { k:'Signed',   done:!!d.retainerSigned },
     { k:'Paid',     done:!!d.retainerPaid },
-    { k:'Case',     done:!!d.clientMasterItemId }
+    { k:(d.caseDeleted?'Case deleted':'Case'), done:!!d.clientMasterItemId }
   ];
   var cur=-1; for(var i=0;i<steps.length;i++){ if(!steps[i].done){ cur=i; break; } } if(cur<0) cur=steps.length-1;
   return steps.map(function(s,i){
@@ -1698,7 +1698,9 @@ function render(d){
     kv('Retainer sent',d.retainerSent)+kv('Retainer signed',d.retainerSigned)+
     kv('Retainer countersigned',(d.retainerCountersign||{}).signedAt)+
     kv('Retainer paid',d.retainerPaid)+
-    (d.clientMasterItemId?kv('Case created','Yes (handed off)'):'');
+    (d.clientMasterItemId?kv('Case created','Yes (handed off)'):'')+
+    /* point 8 (2026-11-05): its case was deleted and this consultation record kept */
+    (d.caseDeleted?kv('Case deleted',d.caseDeleted+' — this consultation record was kept; no new case opens by itself (clear “Case deleted” on the lead in Monday to allow one)'):'');
   // RCIC countersign of the retainer: both buttons appear once the CLIENT has
   // signed. After the countersign completes, "Sign retainer as consultant"
   // stays visible but DISABLED (applyRetainerLock owns the disabled state so

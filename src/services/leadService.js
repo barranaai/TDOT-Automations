@@ -74,6 +74,7 @@ const COL_TYPE = {
   retainerCountersign: 'text', // JSON: retainer e-sign envelope state (same shape as consultCountersign)
   clientAccountId: 'text',     // Clients-board item id — the person this lead belongs to
   previousCaseRef: 'text',     // reuse seam: the prior application this one carries profile data from
+  caseDeleted: 'text',         // "date · case number · who" — set when the case was deleted and this consultation record KEPT (2026-11-05, point 8); while set, no new case opens by itself
 };
 
 const ID_TO_KEY = Object.fromEntries(Object.entries(COLS).map(([k, id]) => [id, k]));

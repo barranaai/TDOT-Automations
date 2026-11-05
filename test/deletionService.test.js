@@ -215,7 +215,9 @@ test('execute: wrong confirmation text → badRequest, NOTHING deleted', async (
   } finally { restore.forEach((x) => x()); }
 });
 
-test('execute (case): children before parents, folders removed, honest summary', async () => {
+// Since 2026-11-05 (point 8) the Cases-page delete KEEPS the consultation record (test/caseDeleteKeepsRecord.test.js);
+// the full cascade below is the bin on a list row — a LEAD that has a case.
+test('execute (a lead\'s bin, escalated to its case): children before parents, folders removed, honest summary', async () => {
   const m = mondayStub({
     cm: { id: '900', name: 'Full Client', caseRef: '2026-VV-042', oneDriveFolderId: 'od-cm-1' },
     rowsByBoard: {
@@ -223,10 +225,12 @@ test('execute (case): children before parents, folders removed, honest summary',
       [QEXEC]:  [{ id: '3', name: 'Q1' }],
       [FAMILY]: [{ id: '4', name: 'Spouse' }],
     },
+    itemBoards: { 500: LEAD_BOARD },
   });
   const droppedFolders = [];
   const restore = [
     stub(mondayApi, 'query', m.fn),
+    stub(leadService, 'getLead', async () => ({ id: '500', fullName: 'Full Client', clientMasterItemId: '900' })),
     stub(leadService, 'findAllByColumnValue', async () => ([{ id: '500', fullName: 'Full Client' }])),
     stub(clientMaster, 'findItemByCaseRef', async () => '900'),
     stub(oneDrive, 'getDriveItemById', async () => ({ id: 'od-cm-1', name: 'Full Client - 2026-VV-042', parentPath: ROOT })),
@@ -234,7 +238,7 @@ test('execute (case): children before parents, folders removed, honest summary',
     stub(oneDrive, 'deleteDriveItem', async (id) => { droppedFolders.push(id); return true; }),
   ];
   try {
-    const r = await deletion.executeDeletion({ caseRef: '2026-VV-042', confirmText: '2026-VV-042', expectedKind: 'case' });
+    const r = await deletion.executeDeletion({ leadId: '500', confirmText: '2026-VV-042', expectedKind: 'case' });
     assert.equal(r.ok, true);
     assert.deepEqual(r.deleted, {
       checklistRows: 1, questionnaireRows: 1, familyMemberRows: 1,
@@ -311,19 +315,21 @@ test('preview by caseRef: unknown reference → badRequest', async () => {
   } finally { restore.forEach((x) => x()); }
 });
 
-test('folder lookup failure degrades to a warning — the Monday delete still previews', async () => {
+test('folder lookup failure degrades to a warning — the Monday delete still previews (a lead\'s bin, escalated)', async () => {
   const m = mondayStub({
     cm: { id: '900', name: 'C', caseRef: '2026-VV-042' },
     rowsByBoard: {},
+    itemBoards: { 500: LEAD_BOARD },
   });
   const restore = [
     stub(mondayApi, 'query', m.fn),
+    stub(leadService, 'getLead', async () => ({ id: '500', fullName: 'C', clientMasterItemId: '900' })),
     stub(leadService, 'findAllByColumnValue', async () => []),
     stub(clientMaster, 'findItemByCaseRef', async () => '900'),
     stub(oneDrive, 'getClientFolderByName', async () => { throw new Error('graph down'); }),
   ];
   try {
-    const p = await deletion.previewDeletion({ caseRef: '2026-VV-042' });
+    const p = await deletion.previewDeletion({ leadId: '500' });
     assert.equal(p.targets.clientMasterRow, 1);
     assert.ok(p.warnings.some((w) => /manual removal/.test(w)), 'warns that the folder needs manual cleanup');
   } finally { restore.forEach((x) => x()); }

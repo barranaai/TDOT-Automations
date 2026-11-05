@@ -694,6 +694,14 @@ function buildRetainerPdf(lead) {
 async function onRetainerSigned(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) return;
+  // Its case was deleted and this consultation record kept (2026-11-05, point 8): a signed date (typed in Monday,
+  // a late e-signature, Retain resuming a held signature) never opens a new case or asks for payment by itself.
+  if (String(lead.caseDeleted || '').trim() && !String(lead.clientMasterItemId || '').trim()) {
+    const typed = String(lead.retainerSigned || '').trim();
+    await postLeadNote(leadId, `⚠ <b>Retainer Signed${typed ? ` (${esc(typed)})` : ''} is recorded, but this client’s case was deleted</b> (${esc(String(lead.caseDeleted).trim())}) — no case was opened and no payment request was sent. To open a new case, clear “Case deleted” on this lead in Monday first.`).catch(() => {});
+    console.warn(`[Retainer2] Retainer Signed for lead ${leadId} ignored — its case was deleted (${String(lead.caseDeleted).trim()})`);
+    return { status: 'case-deleted' };
+  }
   // A date typed in Monday on a lead whose outcome is a decision NOT to retain
   // (Follow-Up / Newsletter / Not Wanted) must not open a case or send the
   // payment link (review 2026-10-15). The date is KEPT as the record of the
@@ -803,6 +811,11 @@ async function _doMaybeSendRetainerPaymentLink(leadId, { notifyIfMissing = false
   const lead = await leadService.getLead(leadId);
   if (!lead) return;
   if (!lead.retainerSigned) return; // fee set early — wait for signing
+  // Its case was deleted and this consultation record kept (point 8): no payment request goes out by itself.
+  if (String(lead.caseDeleted || '').trim() && !String(lead.clientMasterItemId || '').trim()) {
+    console.log(`[Retainer2] Payment request for lead ${leadId} not sent — its case was deleted (${String(lead.caseDeleted).trim()})`);
+    return;
+  }
   // Held: signed while the outcome was not Retain (onRetainerSigned's gate) — the payment
   // request waits until Retain opens the case (round-2 review: a fee edit used to send it).
   if (require('./retainerCountersignService').parseRetainerCountersign(lead).signedHeld

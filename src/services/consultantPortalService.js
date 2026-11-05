@@ -274,6 +274,7 @@ async function getConsultationDetail(leadId) {
     conversionStatus: lead.conversionStatus || '', // 'Retained' once signed AND paid — locks the send button
     clientMasterItemId: lead.clientMasterItemId || '',
     onList:         listFor(lead),   // the record page's way back: the list the client is on right now (2026-11-05)
+    caseDeleted:    String(lead.clientMasterItemId || '').trim() ? '' : String(lead.caseDeleted || '').trim(),   // its case was deleted, this record kept (point 8)
     onListTab:      retainerTab(lead),   // …and on Retainers & follow-ups, the outcome tab the client is under (point 7)
 
     // KPI attribution (staff-entered on the detail page)
@@ -1480,6 +1481,11 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       // handoffService and create a spurious Client Master case.
       if (lead.outcome !== 'Retain') {
         const e = new Error('Set the outcome to “Retain” before marking the retainer signed.');
+        e.badRequest = true; throw e;
+      }
+      // Its case was deleted and this record kept (2026-11-05, point 8): marking signed would open a new case.
+      if (String(lead.caseDeleted || '').trim() && !String(lead.clientMasterItemId || '').trim()) {
+        const e = new Error(`This client’s case was deleted (${String(lead.caseDeleted).trim()}). The app does not open a new case by itself — clear “Case deleted” on the lead in Monday first.`);
         e.badRequest = true; throw e;
       }
       // Idempotent on a DONE deal: once the case is open (handoff succeeded) or the
@@ -2996,6 +3002,7 @@ function retainerRow(l, consultPayment) {
     // retainer client, or a retainer under way with the outcome left blank)
     outcomeGroup: retainerTab(l),
     caseOpen: !!s(l.clientMasterItemId), clientMasterItemId: s(l.clientMasterItemId),
+    caseDeleted: s(l.clientMasterItemId) ? '' : s(l.caseDeleted),   // its case was deleted, this record kept (point 8)
     bookedSlot: s(l.bookedSlot), outcome: oc || s(l.outcome), followUpDate: s(l.followUpDate), createdAt: l.createdAt || '',
     paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
   };

@@ -540,12 +540,22 @@ const DELETE_UI_JS = DIALOG_UI_JS + `
         var sq = t.squareAppointments || [];
         for (var q = 0; q < sq.length; q++) rows.push('<li>Square appointment (will be cancelled): ' + delEsc(sq[q]) + '</li>');
         if (!rows.length) rows.push('<li>Nothing found to remove.</li>');
+        /* What stays (team meeting point 8): the consultation record(s) and the folder. */
+        var keptRows = [];
+        if (p.kept) {
+          for (var k = 0; k < (p.kept.leadRows || []).length; k++) keptRows.push('<li>Consultation record (lead): ' + delEsc(p.kept.leadRows[k]) + '</li>');
+          if (p.kept.folderRename) keptRows.push('<li>OneDrive folder: ' + delEsc(p.kept.folderRename.from) + ' (renamed back to ' + delEsc(p.kept.folderRename.to) + ')</li>');
+          else keptRows.push('<li>OneDrive folder (nothing is deleted from OneDrive)</li>');
+        }
         var warns = '';
         for (var w = 0; w < (p.warnings || []).length; w++) warns += '<p>' + delEsc(p.warnings[w]) + '</p>';
 
-        box.innerHTML = '<h3 id="delm-title" class="danger">Delete ' + (p.kind === 'case' ? 'case ' + delEsc(p.caseRef) : 'lead') + '?</h3>' +
+        /* A lead bin on a client with a case deletes the case AND the consultation record — say so in the title. */
+        var title = p.kind !== 'case' ? 'Delete lead?' : p.keepsLeads ? 'Delete case ' + delEsc(p.caseRef) + '?' : 'Delete case ' + delEsc(p.caseRef) + ' and the consultation record?';
+        box.innerHTML = '<h3 id="delm-title" class="danger">' + title + '</h3>' +
           '<div class="delm-client">' + delEsc(p.client.name) + (p.client.email ? ' &middot; ' + delEsc(p.client.email) : '') + '</div>' +
           '<div>This permanently removes from the live boards:</div><ul>' + rows.join('') + '</ul>' +
+          (keptRows.length ? '<div>Kept:</div><ul>' + keptRows.join('') + '</ul>' : '') +
           (warns ? '<div class="delm-warn">' + warns + '</div>' : '') +
           '<label for="delm-confirm">Type <span style="font-family:monospace">' + delEsc(p.confirmText) + '</span> to confirm</label>' +
           '<input id="delm-confirm" type="text" autocomplete="off">' +
@@ -595,8 +605,10 @@ const DELETE_UI_JS = DIALOG_UI_JS + `
                   ? ' Square appointment' + (d.squareAppointmentsCancelled > 1 ? 's' : '') + ' cancelled: ' + d.squareAppointmentsCancelled + ' — the slot is freed.'
                   : ' Square appointment NOT cancelled (it was already cancelled, in the past, or gone from Square) \\u2014 check the Square calendar if you expected it to be freed.';
               }
+              var kp = res.j.kept, keptTxt = '';
+              if (kp) keptTxt = ' Kept: ' + ((kp.leadRows + kp.leadsAlreadyUnlinked) ? (kp.leadRows + kp.leadsAlreadyUnlinked) + ' consultation record' + ((kp.leadRows + kp.leadsAlreadyUnlinked) > 1 ? 's' : '') + ' (marked “Case deleted”) and ' : '') + 'the OneDrive folder' + (kp.folderRenamed ? ' (renamed back to the lead’s name)' : '') + '.';
               var cls = res.j.ok ? 'delm-result' : 'delm-result bad';
-              var txt = res.j.ok ? ('Deleted: ' + (done.join(', ') || 'nothing found') + '. Recoverable from the Monday / OneDrive recycle bins.' + sqNote)
+              var txt = res.j.ok ? ('Deleted: ' + (done.join(', ') || 'nothing found') + '. ' + (kp ? 'Recoverable from the Monday recycle bin.' + keptTxt : 'Recoverable from the Monday / OneDrive recycle bins.') + sqNote)
                                  : ('Partially deleted (' + (done.join(', ') || 'nothing') + '). FAILED: ' + res.j.failures.join(' | '));
               var wrap = document.createElement('div'); wrap.className = cls; wrap.textContent = txt;
               err.parentNode.insertBefore(wrap, err);

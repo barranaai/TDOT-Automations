@@ -1,4 +1,14 @@
 {
   "pendingGroupId": "group_mm6a68f5",
-  "activeGroupId": "topics"
+  "activeGroupId": "topics",
+  "consultColumns": {
+    "date": "date_mm8t1157",
+    "consultant": "text_mm8t8zhx",
+    "outcome": "text_mm8tmcm7",
+    "fee": "text_mm8tsw2c",
+    "source": "text_mm8tqsa5",
+    "record": "link_mm8txy20",
+    "recording": "link_mm8tcna7",
+    "preConsult": "link_mm8t21rb"
+  }
 }

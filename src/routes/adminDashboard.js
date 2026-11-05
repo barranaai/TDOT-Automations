@@ -1748,7 +1748,7 @@ function renderTablePage() {
       // Delete is ADMIN-ONLY (the server enforces it; hiding it here keeps the
       // control honest for assigned-scope staff) and needs a case reference.
       '<td>' + (window.TDOT_IS_ADMIN && c.caseRef
-        ? '<button class="del-btn" type="button" data-del-case="' + escHtml(c.caseRef) + '" title="Delete this case (careful — removes all its Monday rows, the lead, and the OneDrive folder)">' + TDOT_DEL_SVG + '</button>'
+        ? '<button class="del-btn" type="button" data-del-case="' + escHtml(c.caseRef) + '" title="Delete this case (careful — removes its Monday rows; the consultation record and the OneDrive folder are kept)">' + TDOT_DEL_SVG + '</button>'
         : '') + '</td>';
     tbody.appendChild(tr);
   });

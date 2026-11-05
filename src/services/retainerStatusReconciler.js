@@ -128,6 +128,10 @@ function classifyDrift(lead, cmPaymentStatus) {
   const want = deriveCmPaymentStatus(lead);
   const linked = s(lead.clientMasterItemId);
 
+  if (!linked && s(lead.caseDeleted)) {
+    // Its case was deleted on purpose and this consultation record kept (2026-11-05, point 8) — not a broken handoff.
+    return { action: 'none', reason: `case deleted on purpose (${s(lead.caseDeleted)}) — the consultation record was kept` };
+  }
   if (!linked) {
     // A signed or paid lead with no case row is a broken handoff, not a status
     // drift — it needs a human, so surface it rather than inventing a case.
