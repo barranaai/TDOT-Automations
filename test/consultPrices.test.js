@@ -44,14 +44,15 @@ const withEnv = (vars, fn) => async () => {
     prices._internal._reset();
   }
 };
-const ON = { SQUARE_ACCESS_TOKEN: 'sq0atp-test', CONSULT_PRICES_FROM_SQUARE: null, SQUARE_ENVIRONMENT: 'production' };
+const ON = { SQUARE_ACCESS_TOKEN: 'sq0atp-test', CONSULT_PRICES_FROM_SQUARE: 'on', SQUARE_ENVIRONMENT: 'production' };
 
 test('the app\'s own list carries today\'s rates (Shafoli $300 / $450, Shermin $120 / $60) and is what is used until Square has answered', withEnv(ON, async () => {
   const sh = routing.consultOptionsFor('shafoli'), se = routing.consultOptionsFor('shermin');
   assert.deepEqual(sh.map((o) => [o.durationMin, o.feeCents, o.feeSource]), [[30, 30000, 'code'], [45, 45000, 'code']]);
   assert.deepEqual(se.map((o) => [o.durationMin, o.feeCents, o.feeSource]), [[30, 12000, 'code'], [15, 6000, 'code']]);
   assert.equal(sh.find((o) => o.default).durationMin, 30);
-  assert.deepEqual(sh[0].knownFeeCents, [30000]);
+  assert.deepEqual(sh[0].knownFeeCents.sort(), [20000, 30000], 'today\'s rate and the former one');
+  assert.deepEqual(sh[1].knownFeeCents.sort(), [30000, 45000]);
   assert.equal(prices.summary(), 'code 0/4 (never read)');
 }));
 
@@ -85,16 +86,26 @@ test('a price changed in Square is what the booking page shows and the checkout 
     assert.deepEqual(r.changed, ['Shafoli Kapur 30 min: $300.00 → $350.00']);
     const sh = routing.consultOptionsFor('shafoli');
     assert.equal(sh[0].feeCents, 35000);
-    assert.deepEqual(sh[0].knownFeeCents.sort(), [30000, 35000], 'the listed and the earlier price are still known');
-    // the webhook: a payment made at the price quoted before the change names the 30-min option
+    assert.deepEqual(sh[0].knownFeeCents.sort(), [20000, 30000, 35000], 'the listed, the former and the earlier price are still known');
+    // the webhook: a payment made at the former 30-min rate names the 30-min option and records the fee PAID
     const bookingService = require('../src/services/bookingService');
     const leadService = require('../src/services/leadService');
-    const writes = [];
-    const restore = [stub(leadService, 'updateLead', async (id, f) => { writes.push(f); }), stub(require('../src/services/mondayApi'), 'query', async () => ({}))];
+    const writes = [], notes = [];
+    const restore = [stub(leadService, 'updateLead', async (id, f) => { writes.push(f); }), stub(require('../src/services/mondayApi'), 'query', async (q, v) => { if (/create_update/.test(q)) notes.push(v.b || v.body); return {}; })];
     try {
-      await bookingService.reconcileConsultOptionWithPayment({ id: '700', fullName: 'Pay Test', serviceRequired: 'PNP or OINP' }, 33900);   // $300 + HST, no stored option
+      await bookingService.reconcileConsultOptionWithPayment({ id: '700', fullName: 'Pay Test', serviceRequired: 'PNP or OINP' }, 22600);   // $200 + HST, no stored option
       const o = JSON.parse(writes.find((f) => f.consultOption).consultOption);
-      assert.equal(o.durationMin, 30); assert.equal(o.variationId, SH30); assert.equal(o.paidCents, 33900);
+      assert.deepEqual([o.durationMin, o.variationId, o.feeCents, o.paidCents], [30, SH30, 20000, 22600], 'the fee recorded is the fee paid, not today\'s price');
+      // an amount that could be two options (the old 45-min rate = today's 30-min rate) is never guessed
+      writes.length = 0;
+      await bookingService.reconcileConsultOptionWithPayment({ id: '701', fullName: 'Pay Test', serviceRequired: 'PNP or OINP', consultOption: JSON.stringify({ durationMin: 45, feeCents: 30000, variationId: SH45 }) }, 33900);
+      assert.ok(!writes.some((f) => f.consultOption && JSON.parse(f.consultOption).durationMin !== 45), 'the stored 45-min choice stays');
+      assert.equal(notes.length, 0, 'the stored option matches: no question for staff');
+      writes.length = 0;
+      await bookingService.reconcileConsultOptionWithPayment({ id: '702', fullName: 'Pay Test', serviceRequired: 'PNP or OINP', consultOption: JSON.stringify({ durationMin: 30, feeCents: 20000, variationId: SH30 }) }, 33900);
+      assert.ok(!writes.some((f) => f.consultOption && JSON.parse(f.consultOption).durationMin !== 30), 'a stored 30-min choice is not silently rewritten');
+      assert.ok(notes.some((n) => /could be 30 minutes \(\$300\.00 \+ HST\) or 45 minutes \(\$300\.00 \+ HST\)/.test(n)), notes.join(' | '));
+      assert.equal(JSON.parse(writes.find((f) => f.consultOption).consultOption).paidCents, 33900, 'the amount collected is still recorded');
     } finally { restore.forEach((x) => x()); }
   } finally { sq.restore(); }
 }));
@@ -108,10 +119,15 @@ test('Square cannot be read: the last reading stays (or the app\'s own list); no
     assert.match(prices.summary(), /^code 0\/4 \(never read; last error: HTTP 503/);
   } finally { sq.restore(); }
   sq = square();
-  try { await prices.refresh(); } finally { sq.restore(); }
+  try {
+    assert.equal((await prices.refresh()).skipped, true, 'within a minute of a failure no new read is started (the pages are not held again)');
+    assert.deepEqual(await prices.ensureFresh({ maxAgeMs: 0, waitMs: 50 }), { fresh: false, ageMs: null, skipped: 'cooling down after a failed read' });
+    assert.equal(sq.calls.length, 0);
+    assert.equal((await prices.refresh({ force: true })).ok, true, 'the scheduled read goes ahead');
+  } finally { sq.restore(); }
   sq = square({ fail: 'ETIMEDOUT' });
   try {
-    await prices.refresh();
+    await prices.refresh({ force: true });
     assert.equal(routing.consultOptionsFor('shafoli')[0].feeSource, 'square', 'the last good reading is kept');
     assert.equal(prices.status().lastError, 'error: ETIMEDOUT');
     assert.equal(prices.status().lastOkAt !== null, true);
@@ -123,7 +139,7 @@ test('unusable Square figures are refused and the app\'s own price used: deleted
     variation(SH30, 30000, { deleted: true }),
     variation(SH45, null, { minutes: 45 }),
     variation(SE30, 12000, { currency: 'USD' }),
-    variation(SE15, 300, { minutes: 15 }),   // $3.00 for a $60 service
+    variation(SE15, 600, { minutes: 15 }),   // $6.00 for a $60 service — one zero short
   ] });
   try {
     const r = await prices.refresh();
@@ -132,25 +148,38 @@ test('unusable Square figures are refused and the app\'s own price used: deleted
     assert.ok(r.rejected.some((x) => /Shafoli Kapur 30 min: the service is deleted in Square/.test(x)));
     assert.ok(r.rejected.some((x) => /Shafoli Kapur 45 min: no price on the service in Square/.test(x)));
     assert.ok(r.rejected.some((x) => /Shermin Teymouri Mofrad 30 min: a price in USD, not CAD/.test(x)));
-    assert.ok(r.rejected.some((x) => /Shermin Teymouri Mofrad 15 min: a price of \$3\.00 in Square, too far from the \$60\.00 in the app's own list \(a typo\?\)/.test(x)));
+    assert.ok(r.rejected.some((x) => /Shermin Teymouri Mofrad 15 min: a price of \$6\.00 in Square, too far from the \$60\.00 in the app's own list \(a typo\?\)/.test(x)));
     for (const [k, i] of [['shafoli', 0], ['shafoli', 1], ['shermin', 0], ['shermin', 1]]) assert.equal(routing.consultOptionsFor(k)[i].feeSource, 'code', `${k}#${i}`);
     const st = prices.status();
     assert.equal(st.options.find((o) => o.variationId === SE15).rejected.includes('a typo?'), true);
-    assert.equal(st.options.find((o) => o.variationId === SE15).squareCents, 300, 'the refused figure is shown');
+    assert.equal(st.options.find((o) => o.variationId === SE15).squareCents, 600, 'the refused figure is shown');
     assert.equal(st.allFromSquare, false);
   } finally { sq.restore(); }
-  // the sanity band itself
+  // the sanity band itself: a zero too many or too few ($3,000 / $30 for $300) is refused; a real change is not
   const rv = prices._internal.readVariation;
-  assert.equal(rv(variation('x', 3000), 30000).feeCents, 3000, '0.1× is inside the band');
-  assert.equal(rv(variation('x', 300000), 30000).feeCents, 300000, '10× is inside the band');
-  assert.match(rv(variation('x', 2999), 30000).reject, /too far/);
-  assert.match(rv(variation('x', 300001), 30000).reject, /too far/);
+  for (const [list, bad] of [[30000, 300000], [30000, 3000], [45000, 450000], [45000, 4500], [12000, 120000], [12000, 1200], [6000, 60000], [6000, 600]]) assert.match(rv(variation('x', bad), list).reject, /too far/, `${bad} for ${list}`);
+  assert.match(rv(variation('x', 7500), 30000).reject, /too far/, 'a quarter exactly is refused');
+  assert.match(rv(variation('x', 120000), 30000).reject, /too far/, 'four times exactly is refused');
+  assert.equal(rv(variation('x', 7501), 30000).feeCents, 7501);
+  assert.equal(rv(variation('x', 119999), 30000).feeCents, 119999);
+  assert.equal(rv(variation('x', 20000), 30000).feeCents, 20000, 'the last real change ($200 → $300) would have passed either way');
   assert.match(rv(variation('x', 10.5), 30000).reject, /unusable price/);
+  // a figure refused AFTER a good reading: the list price is used (what the warning says), the refusal shown
+  let ok = square(); try { await prices.refresh({ force: true }); } finally { ok.restore(); }
+  ok = square({ objects: [variation(SH30, 300000), variation(SH45, 45000, { minutes: 45 }), variation(SE30, 12000), variation(SE15, 6000, { minutes: 15 })] });
+  try {
+    await prices.refresh({ force: true });
+    const o = routing.consultOptionsFor('shafoli')[0];
+    assert.deepEqual([o.feeCents, o.feeSource], [30000, 'code'], 'a $3,000 typo after a good $300 reading: the list price, not the stale reading');
+    const st = prices.status().options.find((x) => x.variationId === SH30);
+    assert.deepEqual([st.source, st.inUseCents, st.squareCents], ['code', 30000, 300000]);
+    assert.match(st.rejected, /too far/);
+  } finally { ok.restore(); }
   // a service missing from the answer keeps the last reading
-  let ok = square(); try { await prices.refresh(); } finally { ok.restore(); }
+  ok = square(); try { await prices.refresh({ force: true }); } finally { ok.restore(); }
   ok = square({ objects: [variation(SH45, 45000, { minutes: 45 }), variation(SE30, 12000), variation(SE15, 6000, { minutes: 15 })] });
   try {
-    const r = await prices.refresh();
+    const r = await prices.refresh({ force: true });
     assert.deepEqual(r.missing, ['Shafoli Kapur 30 min']);
     assert.equal(routing.consultOptionsFor('shafoli')[0].feeSource, 'square');
   } finally { ok.restore(); }
@@ -159,7 +188,8 @@ test('unusable Square figures are refused and the app\'s own price used: deleted
 test('ensureFresh: a reading within 15 minutes is enough; a stale one is refreshed; a slow Square is waited for at most the bound and the page goes on with what it has', withEnv(ON, async () => {
   let sq = square();
   try {
-    assert.deepEqual(await prices.ensureFresh({ waitMs: 50 }), { fresh: true, ageMs: 0 });
+    const first = await prices.ensureFresh({ waitMs: 50 });
+    assert.equal(first.fresh, true); assert.ok(first.ageMs < 1000);
     assert.equal(sq.calls.length, 1);
     const again = await prices.ensureFresh({ waitMs: 50 });
     assert.equal(again.fresh, true); assert.equal(sq.calls.length, 1, 'no second read within the fresh window');
@@ -180,6 +210,9 @@ test('ensureFresh: a reading within 15 minutes is enough; a stale one is refresh
   try {
     const r = await prices.ensureFresh({ maxAgeMs: 0, waitMs: 50 });
     assert.equal(r.fresh, false, 'never throws');
+    const again = await prices.ensureFresh({ maxAgeMs: 0, waitMs: 50 });
+    assert.equal(again.skipped, 'cooling down after a failed read');
+    assert.equal(sq.calls.length, 1, 'a Square outage does not make every page wait the bound again');
   } finally { sq.restore(); }
 }));
 
@@ -200,6 +233,12 @@ test('two refreshes at once share one read; the switch and a missing token mean 
   } finally { off.restore(); }
   delete process.env.CONSULT_PRICES_FROM_SQUARE; delete process.env.SQUARE_ACCESS_TOKEN;
   assert.equal(prices.summary(), 'off (no Square token)');
+  // a test process (node --test sets NODE_TEST_CONTEXT) never reads Square unless the test says 'on'
+  process.env.SQUARE_ACCESS_TOKEN = 'sq0atp-test';
+  assert.ok(process.env.NODE_TEST_CONTEXT, 'this file runs under node --test');
+  assert.equal(prices.enabled(), false);
+  assert.equal(prices.summary(), 'off (no Square token)');
+  assert.deepEqual(await prices.ensureFresh(), { fresh: false, ageMs: null, off: true });
 }));
 
 test('wiring: the booking page, the checkout, the invite, the reminders, a staff-recorded booking and the lead page read a fresh price first; boot + every 15 min; the health check and the admin page show it', () => {
@@ -208,17 +247,20 @@ test('wiring: the booking page, the checkout, the invite, the reminders, a staff
   const p2 = src('../src/routes/phase2.js');
   assert.ok(p2.includes("await require('../services/consultPriceService').ensureFresh({ reason: 'booking page' });"));
   assert.ok(p2.includes("await require('../services/consultPriceService').ensureFresh({ reason: 'checkout' });\n    const options = routing.consultOptionsFor(consultant);"));
+  assert.ok(p2.indexOf("ensureFresh({ reason: 'checkout' })") < p2.indexOf("bookingService.holdSlotIfFree(leadId, slotDate, slotTime"), 'the price is settled before a slot is held');
+  assert.ok(p2.includes("if (Number.isInteger(quotedFee) && quotedFee !== Number(option.feeCents) && bookingService.CONSULT_FEE_CENTS !== 0) {"));
   assert.ok(p2.includes("consultPrices: require('../services/consultPriceService').summary(),"));
   const bs = src('../src/services/bookingService.js');
   assert.ok(bs.includes("await require('./consultPriceService').ensureFresh({ reason: 'booking invite' });"));
-  assert.ok(bs.includes(".find((o) => (o.knownFeeCents || [o.feeCents]).some(matchesFee));"));
+  assert.ok(bs.includes(".map((o) => ({ option: o, feeCents: (o.knownFeeCents || [o.feeCents]).find(matchesFee) }))"), 'a payment names its option by every price it may carry, and the fee PAID is the one recorded');
+  assert.ok(bs.includes('if (candidates.length === 1) {') && bs.includes('} else if (candidates.length > 1) {'), 'an amount naming two options is left to staff');
   assert.ok(src('../src/services/bookingRemindersService.js').includes("if (!dryRun) await require('./consultPriceService').ensureFresh({ reason: 'booking reminders' });"));
   const cp = src('../src/services/consultantPortalService.js');
   assert.ok(cp.includes("await require('./consultPriceService').ensureFresh({ reason: 'recorded booking' });"));
   assert.ok(cp.includes("await require('./consultPriceService').ensureFresh({ reason: 'lead page' });"));
   const sch = src('../src/services/scheduler.js');
   assert.ok(sch.includes("consultPrices.refresh({ reason: 'boot' }).catch(() => {});"));
-  assert.ok(sch.includes("cron.schedule('*/15 * * * *', () => consultPrices.refresh({ reason: 'scheduled' }).catch(() => {}));"));
+  assert.ok(sch.includes("cron.schedule('*/15 * * * *', () => consultPrices.refresh({ reason: 'scheduled', force: true }).catch(() => {}));"), 'the scheduled read ignores the failed-read cool-down');
   const srv = src('../src/server.js');
   assert.ok(srv.includes("app.get('/admin/consult-prices', async (req, res) => {\n  if (!resolveAdminOrReject(req, res, 'Only an admin can see the consultation prices.')) return;"));
   assert.ok(srv.includes("if (req.query.refresh === '1') await prices.refresh({ reason: 'admin' });\n  res.json(prices.status());"));
@@ -252,12 +294,31 @@ test('the booking page shows and the checkout charges Square\'s price (end to en
     assert.equal(sq.calls.length, 1);
     await new Promise((resolve, reject) => {
       const res = { type() { return this; }, status() { return this; }, send: resolve, redirect: resolve };
-      phase2.handle({ method: 'POST', url: '/book/700?t=tok', params: { leadId: '700' }, query: { t: 'tok' }, headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: { slotDate: '2026-12-01', slotTime: '10:00', durationMin: '30', meetingType: 'Virtual' } }, res, reject);
+      phase2.handle({ method: 'POST', url: '/book/700?t=tok', params: { leadId: '700' }, query: { t: 'tok' }, headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: { slotDate: '2026-12-01', slotTime: '10:00', durationMin: '30', meetingType: 'Virtual', quotedFeeCents: '32500' } }, res, reject);
     });
     assert.ok(checkout, 'a checkout was created');
     assert.equal(checkout.amount, 32500, 'charged at Square\'s price');
     assert.equal(checkout.taxPct, 13);
     const stored = JSON.parse(writes.find((f) => f.consultOption).consultOption);
     assert.deepEqual([stored.durationMin, stored.feeCents, stored.variationId], [30, 32500, SH30], 'the booking keeps the price it was charged');
-  } finally { restore.forEach((x) => x()); sq.restore(); }
+    assert.match(page, /name="durationChoice" value="30" data-fee="32500" checked/, 'the page posts the price it showed with the choice');
+    assert.match(page, /name="quotedFeeCents" id="quotedFeeCents"/);
+    // the price changes in Square after the page was shown: the click charges nothing and sends the client back
+    sq.restore();
+    const sq2 = square({ objects: [variation(SH30, 34000), variation(SH45, 45000, { minutes: 45 }), variation(SE30, 12000), variation(SE15, 6000, { minutes: 15 })] });
+    let held = 0;
+    restore.push(stub(bookingService, 'holdSlotIfFree', async () => { held++; return { ok: true }; }));
+    try {
+      await prices.refresh({ force: true });   // the scheduled read landed
+      checkout = null; writes.length = 0;
+      const out = await new Promise((resolve, reject) => {
+        const res = { type() { return this; }, status(c) { res.code = c; return this; }, send: (h) => resolve({ code: res.code, html: h }), redirect: (u) => resolve({ redirect: u }) };
+        phase2.handle({ method: 'POST', url: '/book/700?t=tok', params: { leadId: '700' }, query: { t: 'tok' }, headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: { slotDate: '2026-12-01', slotTime: '10:00', durationMin: '30', meetingType: 'Virtual', quotedFeeCents: '32500' } }, res, reject);
+      });
+      assert.equal(out.code, 409);
+      assert.match(out.html, /Please review the consultation fee/); assert.match(out.html, /Nothing has been charged/);
+      assert.equal(checkout, null, 'nothing charged'); assert.equal(held, 0, 'nothing held');
+      assert.ok(!writes.some((f) => f.consultOption), 'nothing stored');
+    } finally { sq2.restore(); }
+  } finally { restore.forEach((x) => x()); }
 }));

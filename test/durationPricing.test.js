@@ -48,8 +48,8 @@ test('booking page: duration picker with prices + per-duration slot lists + vali
     { durationMin: 45, feeCents: 30000, slots: [fakeSlot('2026-08-11', '14:00')] },
   ];
   const html = phase2.buildBookingPageHtml({ id: '1', tier: 'T2' }, { sets }, 'tok', { name: 'Shafoli Kapur' });
-  assert.match(html, /name="durationChoice" value="30" checked/, '30-min pre-selected (default)');
-  assert.match(html, /name="durationChoice" value="45"/);
+  assert.match(html, /name="durationChoice" value="30" data-fee="20000" checked/, '30-min pre-selected (default), its price travels with the choice');
+  assert.match(html, /name="durationChoice" value="45" data-fee="30000"/);
   assert.match(html, /\$200\.00.*CAD/, 'shows the 30-min price');
   assert.match(html, /\$300\.00.*CAD/, 'shows the 45-min price');
   assert.match(html, /data-dur="30" style="display:block"/, 'default duration list visible');

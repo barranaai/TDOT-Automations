@@ -192,7 +192,7 @@ function startScheduler() {
   // itself (bounded). A failed read keeps the last reading / the app's own list.
   const consultPrices = require('./consultPriceService');
   consultPrices.refresh({ reason: 'boot' }).catch(() => {});
-  cron.schedule('*/15 * * * *', () => consultPrices.refresh({ reason: 'scheduled' }).catch(() => {}));
+  cron.schedule('*/15 * * * *', () => consultPrices.refresh({ reason: 'scheduled', force: true }).catch(() => {}));
   console.log('[Scheduler] Job registered — consultation prices from Square at boot, then every 15 min');
 
   // ── Post-consultation (provider-agnostic; replaces Zoom-webhook reliance for Teams) ──

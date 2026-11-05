@@ -15,13 +15,20 @@
  * client). A reading is kept until the next good one; a failed read changes nothing.
  *
  * What counts as usable: a CAD price, a whole positive number of cents, on a service
- * that is not deleted — and within a sanity band of the code's figure (0.1× to 10×):
- * a price typed wrongly in Square ($3.00 for $300) is refused with a warning rather
- * than charged. Every earlier price seen is remembered (knownFeeCents), so a payment
- * made at a price that changed meanwhile still maps to its option.
+ * that is not deleted — and within a sanity band of the code's figure (more than a
+ * quarter, less than four times): a price typed wrongly in Square — one zero too many
+ * or too few ($3,000 or $30 for $300) — is refused with a warning rather than charged,
+ * and the app's own figure is used until Square or the list is corrected. (A real rate
+ * change beyond the band: update the list in the code first.) Every earlier price seen
+ * is remembered (knownFeeCents), so a payment made at a price that changed meanwhile
+ * still maps to its option.
+ *
+ * After a failed read, no new read is started for a minute (the scheduled read excepted):
+ * a Square outage never makes every page wait the bound again and again.
  *
  * Switch: CONSULT_PRICES_FROM_SQUARE=off → the code's prices only (also when there is
- * no Square token). Status: /phase2/health (summary) and /admin/consult-prices (full).
+ * no Square token; and in a test process unless the test sets it to 'on' — a test must
+ * never read production). Status: /phase2/health (summary) and /admin/consult-prices (full).
  */
 
 const axios = require('axios');
@@ -30,7 +37,8 @@ const SQUARE_VERSION = '2025-01-23';
 const FRESH_MS       = 15 * 60 * 1000;   // a reading older than this is refreshed before a quote
 const QUOTE_WAIT_MS  = 4000;             // a page waits at most this long for that refresh
 const READ_TIMEOUT_MS = 10000;
-const BAND_LOW = 0.1, BAND_HIGH = 10;    // Square price ÷ code price must sit inside this band
+const BAND_LOW = 0.25, BAND_HIGH = 4;    // Square price ÷ code price must sit strictly inside this band
+const FAIL_COOLDOWN_MS = 60 * 1000;      // after a failed read, no new read for this long (the scheduled read excepted)
 
 const base = () => (process.env.SQUARE_ENVIRONMENT === 'production' ? 'https://connect.squareup.com' : 'https://connect.squareupsandbox.com');
 
@@ -43,7 +51,9 @@ const _rejected = new Map();
 let _lastOkAt = 0, _lastError = '', _lastErrorAt = 0, _inFlight = null, _reads = 0;
 
 function enabled() {
-  if (String(process.env.CONSULT_PRICES_FROM_SQUARE || '').trim().toLowerCase() === 'off') return false;
+  const sw = String(process.env.CONSULT_PRICES_FROM_SQUARE || '').trim().toLowerCase();
+  if (sw === 'off') return false;
+  if (process.env.NODE_TEST_CONTEXT && sw !== 'on') return false;   // a test process reads Square only when it says so
   return !!String(process.env.SQUARE_ACCESS_TOKEN || '').trim();
 }
 
@@ -75,9 +85,10 @@ function priceFor(variationId) {
 }
 
 /** Every price (cents) a payment for this variation may legitimately carry: live, listed, and earlier readings. */
-function knownFeesFor(variationId, codeCents) {
+function knownFeesFor(variationId, codeCents, formerCents = []) {
   const out = new Set();
   if (Number.isInteger(codeCents) && codeCents > 0) out.add(codeCents);
+  for (const c of formerCents || []) if (Number.isInteger(c) && c > 0) out.add(c);
   const live = priceFor(variationId);
   if (live) out.add(live.feeCents);
   for (const c of _known.get(String(variationId)) || []) out.add(c);
@@ -97,7 +108,7 @@ function readVariation(obj, codeCents) {
   if (String(pm.currency || '').toUpperCase() !== 'CAD') return { reject: `a price in ${pm.currency || 'an unknown currency'}, not CAD` };
   if (Number.isInteger(codeCents) && codeCents > 0) {
     const ratio = amount / codeCents;
-    if (ratio < BAND_LOW || ratio > BAND_HIGH) {
+    if (ratio <= BAND_LOW || ratio >= BAND_HIGH) {
       return { reject: `a price of ${money(amount)} in Square, too far from the ${money(codeCents)} in the app's own list (a typo?) — the app keeps ${money(codeCents)} until Square or the list is corrected` };
     }
   }
@@ -114,9 +125,10 @@ function readVariation(obj, codeCents) {
  * read in flight. Never throws: a failed read keeps the previous readings and records the
  * error. Returns { ok, read, changed[], rejected[], error }.
  */
-async function refresh({ reason = 'manual' } = {}) {
+async function refresh({ reason = 'manual', force = false } = {}) {
   if (!enabled()) return { ok: false, skipped: true, reason: 'off' };
   if (_inFlight) return _inFlight;
+  if (!force && _lastErrorAt && Date.now() - _lastErrorAt < FAIL_COOLDOWN_MS) return { ok: false, skipped: true, reason: 'cooling down after a failed read' };
   _inFlight = (async () => {
     const opts = listedOptions();
     const ids = opts.map((o) => o.variationId);
@@ -139,7 +151,10 @@ async function refresh({ reason = 'manual' } = {}) {
         }
         const r = readVariation(obj, o.codeCents);
         if (r.reject) {
+          // A refused figure means the app's own price — also after a good reading (what the
+          // warning, the status and the guide say): the reading is dropped, its price stays known.
           _rejected.set(o.variationId, { feeCents: Number((obj.item_variation_data || {}).price_money && obj.item_variation_data.price_money.amount) || null, why: r.reject, at: now });
+          _live.delete(o.variationId);
           result.rejected.push(`${label}: ${r.reject}`);
           console.warn(`[ConsultPrice] ${label}: ${r.reject}`);
           continue;
@@ -188,6 +203,7 @@ async function ensureFresh({ maxAgeMs = FRESH_MS, waitMs = QUOTE_WAIT_MS, reason
   const wait = new Promise((resolve) => { timer = setTimeout(() => resolve({ timedOut: true }), waitMs); if (timer.unref) timer.unref(); });
   const r = await Promise.race([refresh({ reason }).catch(() => ({ ok: false })), wait]);
   clearTimeout(timer);
+  if (r && r.skipped) return { fresh: false, ageMs: age, skipped: r.reason };
   if (r && r.timedOut) console.warn(`[ConsultPrice] ${reason}: Square has not answered within ${waitMs} ms — ${_live.size ? 'the last readings are used' : "the app's own prices are used"} (the read goes on in the background)`);
   const ageNow = _lastOkAt ? Date.now() - _lastOkAt : null;
   return { fresh: !!(r && r.ok), ageMs: ageNow };
@@ -238,6 +254,6 @@ function _reset() { _live.clear(); _known.clear(); _rejected.clear(); _lastOkAt 
 
 module.exports = {
   enabled, refresh, ensureFresh, priceFor, knownFeesFor, status, summary, listedOptions,
-  FRESH_MS, QUOTE_WAIT_MS,
+  FRESH_MS, QUOTE_WAIT_MS, FAIL_COOLDOWN_MS, BAND_LOW, BAND_HIGH,
   _internal: { readVariation, _reset, _live },
 };

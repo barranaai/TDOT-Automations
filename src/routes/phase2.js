@@ -135,6 +135,16 @@ function buildSlotUnavailableHtml(leadId, token, reason) {
   <p style="font-size:13px;color:${BRAND.mutedOnLight}">Nothing has been charged.</p></body></html>`;
 }
 
+/** The consultation price changed between the page and the click: back to the page, which shows the new price. */
+function buildPriceChangedHtml(leadId, token) {
+  const back = `/book/${encodeURIComponent(String(leadId))}?t=${encodeURIComponent(String(token || ''))}`;
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Please review the price</title></head>
+  <body style="font-family:-apple-system,sans-serif;padding:48px 24px;color:${BRAND.textOnLight};max-width:560px;margin:0 auto;">
+  <h1 style="font-size:22px">Please review the consultation fee</h1><p>The consultation fee was updated while you were on the booking page. Please go back, check the fee shown, and choose your time again.</p>
+  <p><a href="${back}" style="display:inline-block;padding:10px 18px;border-radius:8px;background:${BRAND.darkPanel};color:${BRAND.textOnDark};text-decoration:none">Back to the booking page</a></p>
+  <p style="font-size:13px;color:${BRAND.mutedOnLight}">Nothing has been charged.</p></body></html>`;
+}
+
 function buildErrorHtml(message) {
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title></head>
   <body style="font-family:-apple-system,sans-serif;padding:48px;color:${BRAND.textOnLight};">
@@ -218,6 +228,26 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
     }
     const routing = require('../../config/consultantRouting');
     const consultant = routing.resolveConsultant(lead);   // pinned override wins (2026-08-17)
+
+    // Resolve the chosen consultation option (duration ↔ fee ↔ Square variation)
+    // against the ROUTED consultant's list — the posted value is untrusted.
+    // Missing/invalid → the consultant's default option. The fee charged is
+    // Square's current price for that service (read fresh here, bounded wait) —
+    // and it must be the price the page SHOWED: the page posts the figure the
+    // client saw with the choice; a price that changed since (a Square edit
+    // between the page and the click) is never charged unseen — the client is
+    // sent back to the page, which shows the new price. Nothing held, nothing charged.
+    await require('../services/consultPriceService').ensureFresh({ reason: 'checkout' });
+    const options = routing.consultOptionsFor(consultant);
+    const wantedDur = parseInt(req.body.durationMin, 10);
+    const option = options.find((o) => o.durationMin === wantedDur)
+      || options.find((o) => o.default) || options[0];
+    const quotedFee = parseInt(req.body.quotedFeeCents, 10);
+    if (Number.isInteger(quotedFee) && quotedFee !== Number(option.feeCents) && bookingService.CONSULT_FEE_CENTS !== 0) {
+      console.warn(`[Book] lead ${leadId}: the page showed $${(quotedFee / 100).toFixed(2)} for ${option.durationMin} min but the price is now $${(option.feeCents / 100).toFixed(2)} — sent back to the page, nothing charged`);
+      return res.status(409).type('html').send(buildPriceChangedHtml(leadId, req.query.t));
+    }
+
     // Hold the time only if no other client holds or has booked it with this
     // consultant — checked against the whole Lead Board at this moment (2026-10-14:
     // two clients got the same Friday slot). A read that fails refuses rather than
@@ -227,16 +257,6 @@ router.post('/book/:leadId', express.urlencoded({ extended: true }), async (req,
       return res.status(held.reason === 'taken' ? 409 : 503).type('html')
         .send(buildSlotUnavailableHtml(leadId, req.query.t, held.reason));
     }
-
-    // Resolve the chosen consultation option (duration ↔ fee ↔ Square variation)
-    // against the ROUTED consultant's list — the posted value is untrusted.
-    // Missing/invalid → the consultant's default option. The fee charged is
-    // Square's current price for that service (read fresh here, bounded wait).
-    await require('../services/consultPriceService').ensureFresh({ reason: 'checkout' });
-    const options = routing.consultOptionsFor(consultant);
-    const wantedDur = parseInt(req.body.durationMin, 10);
-    const option = options.find((o) => o.durationMin === wantedDur)
-      || options.find((o) => o.default) || options[0];
 
     // Persist the meeting-type choice — drives the confirmation (Teams link vs
     // office address) and the Square appointment note.
@@ -404,7 +424,7 @@ function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
   const durationSection = multiDuration ? `
       <div class="mtype">
         <div class="mtype-q">Consultation length? <span style="color:${BRAND.primary}">*</span></div>
-        ${sets.map((s) => `<label class="mtype-opt dur-opt${s.default ? ' sel' : ''}"><input type="radio" name="durationChoice" value="${s.durationMin}" ${s.default ? 'checked' : ''} required>
+        ${sets.map((s) => `<label class="mtype-opt dur-opt${s.default ? ' sel' : ''}"><input type="radio" name="durationChoice" value="${s.durationMin}" data-fee="${Number(s.feeCents) || 0}" ${s.default ? 'checked' : ''} required>
           <span class="mtype-t">⏱ ${s.durationMin} minutes</span><span class="mtype-s">${leadHstPct > 0 ? `${cad(s.feeCents)} + HST = ${cad(bookingService.consultTotalWithTaxForLead(s.feeCents, lead))} CAD` : `${cad(s.feeCents)} CAD`}</span></label>`).join('')}
       </div>` : '';
   const slotSections = multiDuration
@@ -453,7 +473,7 @@ function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
     <p style="margin:0;opacity:0.85;font-size:14px;">${consultant && consultant.name ? `Your consultation will be with <b>${consultant.name}</b>. ` : ''}Choose a time that works for you.</p></div>
     <form class="card" method="POST" action="/book/${lead.id}?t=${encodeURIComponent(token)}" onsubmit="return prep(event)">
       <input type="hidden" name="slotDate" id="slotDate"><input type="hidden" name="slotTime" id="slotTime">
-      <input type="hidden" name="meetingType" id="meetingType"><input type="hidden" name="durationMin" id="durationMin">
+      <input type="hidden" name="meetingType" id="meetingType"><input type="hidden" name="durationMin" id="durationMin"><input type="hidden" name="quotedFeeCents" id="quotedFeeCents" value="${multiDuration ? '' : (Number((sets[0] || {}).feeCents) || '')}">
       <div class="mtype" id="mtype-box">
         <div class="mtype-q">How would you like to meet? <span style="color:${BRAND.primary}">*</span></div>
         <label class="mtype-opt"><input type="radio" name="meetingTypeChoice" value="Virtual" required>
@@ -488,7 +508,7 @@ function buildBookingPageHtml(lead, slotsOrSets, token, consultant) {
           e.preventDefault(); alert('Please pick a time from the list for your selected consultation length.'); return false;
         }
         document.getElementById('meetingType').value=mt.value;
-        if(dc) document.getElementById('durationMin').value=dc.value;
+        if(dc){ document.getElementById('durationMin').value=dc.value; document.getElementById('quotedFeeCents').value=dc.getAttribute('data-fee')||''; }
         const [d,t]=b.value.split('|');document.getElementById('slotDate').value=d;document.getElementById('slotTime').value=t;
         lockSlots(b);
         return true;}

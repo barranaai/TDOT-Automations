@@ -846,17 +846,35 @@ async function reconcileConsultOptionWithPayment(lead, paidCents) {
 
   const routing = require('../../config/consultantRouting');
   const consultant = routing.resolveConsultant(lead);   // pinned override wins (2026-08-17)
-  // A payment at the live price, the listed price, or a price read earlier (it changed
-  // in Square between the quote and the payment) all name the same option (2026-11-05).
-  const paidOption = routing.consultOptionsFor(consultant).find((o) => (o.knownFeeCents || [o.feeCents]).some(matchesFee));
-  if (paidOption) {
+  // A payment at the live price, the listed price, a former rate, or a price read earlier
+  // (it changed in Square between the quote and the payment) names its option (2026-11-05).
+  // The fee recorded is the fee the client PAID (pre-tax), never today's price. An amount
+  // that names MORE THAN ONE option (the old 45-min rate equals today's 30-min rate) is
+  // never guessed: the stored choice stays and staff are asked.
+  const candidates = routing.consultOptionsFor(consultant)
+    .map((o) => ({ option: o, feeCents: (o.knownFeeCents || [o.feeCents]).find(matchesFee) }))
+    .filter((c) => c.feeCents != null);
+  if (candidates.length === 1) {
+    const { option: paidOption, feeCents } = candidates[0];
     const next = JSON.stringify({
-      durationMin: paidOption.durationMin, feeCents: paidOption.feeCents,
+      durationMin: paidOption.durationMin, feeCents,
       variationId: paidOption.variationId, consultant: consultant.name, paidCents,
     });
     await leadService.updateLead(lead.id, { consultOption: next });
-    console.warn(`[Booking] Lead ${lead.id}: paid ${paidCents}c = the ${paidOption.durationMin}-min option — recorded option corrected (was ${stored ? `${stored.durationMin}min/${stored.feeCents}c` : 'none'})`);
+    console.warn(`[Booking] Lead ${lead.id}: paid ${paidCents}c = the ${paidOption.durationMin}-min option at ${feeCents}c — recorded option corrected (was ${stored ? `${stored.durationMin}min/${stored.feeCents}c` : 'none'})`);
     return next;
+  } else if (candidates.length > 1) {
+    const names = candidates.map((c) => `${c.option.durationMin} minutes ($${(c.feeCents / 100).toFixed(2)} + HST)`).join(' or ');
+    console.warn(`[Booking] Lead ${lead.id}: paid ${paidCents}c could be ${names} — ${stored ? 'keeping the stored option' : 'no stored option'}, flagging staff`);
+    await postInviteNote(lead.id,
+      `⚠️ <b>Consultation payment amount needs a look:</b> the client paid <b>$${(paidCents / 100).toFixed(2)}</b>, which could be ${names}` +
+      `${stored ? ` — the recorded booking choice is <b>${stored.durationMin} minutes ($${(Number(stored.feeCents) / 100).toFixed(2)} + HST)</b>` : ''}. ` +
+      'Please confirm the intended duration with the client and adjust the Square appointment if needed.').catch(() => {});
+    if (stored && Number(stored.paidCents) !== paidCents) {
+      const next = JSON.stringify({ ...stored, paidCents });
+      await leadService.updateLead(lead.id, { consultOption: next });
+      return next;
+    }
   } else if (stored) {
     console.warn(`[Booking] Lead ${lead.id}: paid ${paidCents}c matches NO option (stored ${stored.durationMin}min/${stored.feeCents}c) — keeping stored, flagging staff`);
     await postInviteNote(lead.id,

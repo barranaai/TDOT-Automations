@@ -40,9 +40,11 @@ const CONSULTANTS = {
     // Canada). The LIVE price comes from the Square service itself
     // (consultPriceService) — these figures are the fallback until Square has
     // answered, and the sanity band a Square price is checked against.
+    // formerFeeCents = rates charged before (a payment link issued at the old rate
+    // can still be paid after a change: it must still name its option).
     consultOptions: [
-      { durationMin: 30, feeCents: 30000, variationId: 'TMJIRVYQUD76E7A3YGXSEOQ5', default: true },
-      { durationMin: 45, feeCents: 45000, variationId: 'Z2XFERF43EO567YZGX4Y5WDL' },
+      { durationMin: 30, feeCents: 30000, formerFeeCents: [20000], variationId: 'TMJIRVYQUD76E7A3YGXSEOQ5', default: true },
+      { durationMin: 45, feeCents: 45000, formerFeeCents: [30000], variationId: 'Z2XFERF43EO567YZGX4Y5WDL' },
     ],
   },
   shermin: {
@@ -82,7 +84,7 @@ function consultOptionsFor(consultantOrKey) {
         feeCents: live ? live.feeCents : o.feeCents,
         listFeeCents: o.feeCents,
         feeSource: live ? 'square' : 'code',
-        knownFeeCents: prices.knownFeesFor(o.variationId, o.feeCents),
+        knownFeeCents: prices.knownFeesFor(o.variationId, o.feeCents, o.formerFeeCents),
       };
     });
   }
