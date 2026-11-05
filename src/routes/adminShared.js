@@ -606,10 +606,13 @@ const DELETE_UI_JS = DIALOG_UI_JS + `
                   : ' Square appointment NOT cancelled (it was already cancelled, in the past, or gone from Square) \\u2014 check the Square calendar if you expected it to be freed.';
               }
               var kp = res.j.kept, keptTxt = '';
-              if (kp) keptTxt = ' Kept: ' + ((kp.leadRows + kp.leadsAlreadyUnlinked) ? (kp.leadRows + kp.leadsAlreadyUnlinked) + ' consultation record' + ((kp.leadRows + kp.leadsAlreadyUnlinked) > 1 ? 's' : '') + ' (marked “Case deleted”) and ' : '') + 'the OneDrive folder' + (kp.folderRenamed ? ' (renamed back to the lead’s name)' : '') + '.';
+              if (kp) keptTxt = ' Kept: ' + ((kp.leadRows + kp.leadsAlreadyUnlinked) ? (kp.leadRows + kp.leadsAlreadyUnlinked) + ' consultation record' + ((kp.leadRows + kp.leadsAlreadyUnlinked) > 1 ? 's' : '') + ' (marked “Case deleted”) and ' : '') + 'the OneDrive folder' + (kp.folderRenamed ? ' (renamed back to the lead’s name)' : '') + '.' +
+                (kp.notesFailed ? ' The note with the undo steps could not be posted on ' + kp.notesFailed + ' record' + (kp.notesFailed > 1 ? 's' : '') + ' — the steps are in the staff guide (Delete a record or a case).' : '');
+              /* A run that stopped part-way says what it already changed (a re-run finishes the rest). */
+              var partTxt = (kp && kp.folderRenamed) ? ' The OneDrive folder was already renamed back to the lead’s name — running the delete again finishes the rest.' : '';
               var cls = res.j.ok ? 'delm-result' : 'delm-result bad';
               var txt = res.j.ok ? ('Deleted: ' + (done.join(', ') || 'nothing found') + '. ' + (kp ? 'Recoverable from the Monday recycle bin.' + keptTxt : 'Recoverable from the Monday / OneDrive recycle bins.') + sqNote)
-                                 : ('Partially deleted (' + (done.join(', ') || 'nothing') + '). FAILED: ' + res.j.failures.join(' | '));
+                                 : ('Partially deleted (' + (done.join(', ') || 'nothing') + '). FAILED: ' + res.j.failures.join(' | ') + partTxt);
               var wrap = document.createElement('div'); wrap.className = cls; wrap.textContent = txt;
               err.parentNode.insertBefore(wrap, err);
               go.style.display = 'none';

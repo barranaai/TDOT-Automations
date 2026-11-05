@@ -133,11 +133,12 @@ test('Cases-page delete: the case rows go, the consultation record is KEPT (unli
     assert.deepEqual([kept.retainerSigned, kept.retainerPaid, kept.conversionStatus, kept.oneDriveFolderId], ['2026-10-01', '2026-10-02', 'Retained', 'od-cm-1'], 'the record itself is untouched');
     const note = m.notes.find((n) => n.id === '500').body;
     assert.match(note, /Case 2026-VV-042 was deleted/);
-    assert.match(note, /restore the case row 2026-VV-042 \(item 900\) and its 1 checklist, 1 questionnaire, 1 family rows/, 'the undo names every row to restore');
+    assert.match(note, /restore the case row 2026-VV-042 \(item 900\) and every checklist, questionnaire and family row of 2026-VV-042/, 'the undo names every row to restore — whatever this run did');
     assert.match(note, /rename the folder “Full Client - LEAD-500” back to “Full Client - 2026-VV-042”/, 'and the exact folder names');
-    assert.match(note, /Type 900 back into this lead’s “Client Master Item ID” column and clear “Case deleted”/);
+    assert.match(note, /Type 900 back into the “Client Master Item ID” column, and clear “Case deleted”, on this lead\./);
     assert.match(note, /A new case instead\?/);
     assert.ok(note.indexOf('rename the folder') < note.indexOf('Type 900 back'), 'the folder is renamed back BEFORE the case is linked again');
+    assert.equal(r.kept.notesFailed, undefined);
   } finally { restore.forEach((x) => x()); }
 });
 
@@ -187,10 +188,11 @@ test('Cases-page delete, order for a safe re-run: a failed rename stops before a
 });
 
 test('Cases-page delete: when OneDrive cannot answer, NOTHING is deleted (preview and execute refuse) — a delete without the rename would leave the record unable to find its files', async () => {
-  for (const fail of ['byRef', 'byId']) {
+  // byRef: the case-number lookup itself; byId: the re-run check of the case row's own folder (no folder carries the number)
+  for (const [fail, folders] of [['byRef', [caseFolder()]], ['byId', [{ id: 'od-cm-1', name: 'Full Client - LEAD-500' }]]]) {
     const m = world({ rowsByBoard: CHILDREN });
-    const L = leads([{ id: '500', fullName: 'Full Client', clientMasterItemId: '900', oneDriveFolderId: 'od-own' }]);
-    const D = drive([caseFolder(), { id: 'od-own', name: 'Full Client - LEAD-500x' }], { fail });
+    const L = leads([{ id: '500', fullName: 'Full Client', clientMasterItemId: '900', oneDriveFolderId: 'od-cm-1' }]);
+    const D = drive(folders, { fail });
     const restore = stubs(m, L, D.stubs());
     try {
       await assert.rejects(() => deletion.previewDeletion({ caseRef: CASE }), (e) => e.badRequest && /OneDrive could not be checked/.test(e.message) && /nothing was deleted/.test(e.message), fail);
@@ -201,7 +203,7 @@ test('Cases-page delete: when OneDrive cannot answer, NOTHING is deleted (previe
   }
 });
 
-test('Cases-page delete: the folder is NOT renamed when the record already has a folder of its own (found by its " - LEAD-{id}" ending, not an exact name, or by its stored id), or when two records share the case and neither owns the folder; a lead re-linked meanwhile is left alone', async () => {
+test('Cases-page delete: the folder is NOT renamed when the record already has a folder of its own (found by its " - LEAD-{id}" ending, not an exact name), or when two records share the case and neither owns the folder; a lead re-linked meanwhile is left alone', async () => {
   // own LEAD folder under a drifted name ("Jon" vs "John") → kept as it is, no second LEAD-500 folder
   let m = world({ cm: { id: '900', name: 'John Smith', caseRef: CASE }, rowsByBoard: {} });
   let L = leads([{ id: '500', fullName: 'John Smith', clientMasterItemId: '900', oneDriveFolderId: '' }]);
@@ -214,17 +216,6 @@ test('Cases-page delete: the folder is NOT renamed when the record already has a
     const r = await deletion.executeDeletion({ caseRef: CASE, confirmText: CASE, expectedKind: 'case' });
     assert.equal(r.ok, true);
     assert.deepEqual(D.renamed, [], 'never two folders ending " - LEAD-500"');
-  } finally { restore.forEach((x) => x()); }
-
-  // the record's stored folder id names another root folder → kept as it is
-  m = world({ rowsByBoard: {} });
-  L = leads([{ id: '500', fullName: 'Full Client', clientMasterItemId: '900', oneDriveFolderId: 'od-own' }]);
-  D = drive([caseFolder(), { id: 'od-own', name: 'Full Client intake' }]);
-  restore = stubs(m, L, D.stubs());
-  try {
-    const p = await deletion.previewDeletion({ caseRef: CASE });
-    assert.equal(p.kept.folderRename, null);
-    assert.ok(p.warnings.some((w) => /already has its own folder "Full Client intake"/.test(w)));
   } finally { restore.forEach((x) => x()); }
 
   // two records, neither holds the folder id → kept as it is; then one is re-linked meanwhile → left alone
@@ -441,4 +432,81 @@ test('review 2026-11-05: a retained record with no case never says "the case is 
     assert.ok(!/the case is open/.test(r.message), r.message);
     assert.match(r.message, /No case is linked/); assert.match(r.message, /clear the Retainer Signed date and type it again/);
   } finally { restore.forEach((x) => x()); }
+});
+
+test('review round 2: a re-run after a partial failure still posts the WHOLE way back — every row of the case, and the folder already renamed by the first run', async () => {
+  const m = world({ rowsByBoard: CHILDREN });
+  const L = leads([{ id: '500', fullName: 'Full Client', clientMasterItemId: '900', oneDriveFolderId: 'od-cm-1' }]);
+  const realUpdate = L.updateLead;
+  L.updateLead = async () => { throw new Error('monday 500'); };
+  const D = drive([caseFolder()]);
+  let restore = stubs(m, L, D.stubs());
+  try {
+    const r = await deletion.executeDeletion({ caseRef: CASE, confirmText: CASE, expectedKind: 'case' });
+    assert.equal(r.ok, false); assert.equal(r.kept.folderRenamed, 1, 'the partial result says the folder was renamed');
+    assert.equal(m.notes.length, 0);
+  } finally { restore.forEach((x) => x()); }
+  // the re-run: no rows left, no folder ending with the case number — the case row's own folder now ends " - LEAD-500"
+  L.updateLead = realUpdate;
+  restore = stubs(m, L, D.stubs());
+  try {
+    const p = await deletion.previewDeletion({ caseRef: CASE });
+    assert.equal(p.kept.folderRename, null);
+    assert.ok(p.warnings.some((w) => /already renamed back to “Full Client - LEAD-500” \(an earlier run of this delete\)/.test(w)), p.warnings.join(' | '));
+    const r = await deletion.executeDeletion({ caseRef: CASE, confirmText: CASE, expectedKind: 'case' });
+    assert.equal(r.ok, true, JSON.stringify(r.failures));
+    const note = m.notes.find((n) => n.id === '500').body;
+    assert.match(note, /every checklist, questionnaire and family row of 2026-VV-042/, 'the rows the FIRST run deleted are in the undo');
+    assert.match(note, /rename the folder “Full Client - LEAD-500” back to “Full Client - 2026-VV-042”/, 'so is the rename the first run made');
+    assert.match(note, /Its OneDrive folder was kept and renamed back to “Full Client - LEAD-500”/);
+  } finally { restore.forEach((x) => x()); }
+  // the window says what a stopped run already changed
+  const { DELETE_UI_JS } = require('../src/routes/adminShared');
+  assert.ok(DELETE_UI_JS.includes("var partTxt = (kp && kp.folderRenamed) ? ' The OneDrive folder was already renamed back to the lead’s name — running the delete again finishes the rest.' : '';"));
+});
+
+test('review round 2: every kept record gets the case-level undo — the folder step and every record to re-link — not only the folder’s owner', async () => {
+  const m = world({ rowsByBoard: CHILDREN });
+  const L = leads([{ id: '500', fullName: 'Full Client', clientMasterItemId: '900', oneDriveFolderId: 'od-cm-1' }, { id: '501', fullName: 'Full Client', clientMasterItemId: '900', oneDriveFolderId: 'od-l-501' }]);
+  const D = drive([caseFolder(), { id: 'od-l-501', name: 'Full Client second booking' }]);
+  const restore = stubs(m, L, D.stubs());
+  try {
+    const r = await deletion.executeDeletion({ caseRef: CASE, confirmText: CASE, expectedKind: 'case' });
+    assert.equal(r.ok, true, JSON.stringify(r.failures));
+    assert.deepEqual(D.renamed.map((x) => x.newName), ['Full Client - LEAD-500']);
+    const n500 = m.notes.find((n) => n.id === '500').body, n501 = m.notes.find((n) => n.id === '501').body;
+    for (const [n, other] of [[n500, 'Full Client (501)'], [n501, 'Full Client (500)']]) {
+      assert.match(n, /rename the folder “Full Client - LEAD-500” back to “Full Client - 2026-VV-042”/);
+      assert.ok(n.includes(`on this lead and on ${other}.`), n);
+    }
+    assert.match(n501, /The case’s OneDrive folder was kept and renamed back to “Full Client - LEAD-500”/);
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('review round 2: a client name with characters OneDrive does not allow is stripped (as every folder the app makes), never a reason to leave the record without its folder; a stored id naming a folder WITHOUT the LEAD ending does not block the rename', async () => {
+  let m = world({ cm: { id: '900', name: 'Raj/Simran Patel', caseRef: CASE }, rowsByBoard: {} });
+  let L = leads([{ id: '500', fullName: 'Raj/Simran Patel', clientMasterItemId: '900' }]);
+  let D = drive([{ id: 'od-cm-1', name: `RajSimran Patel - ${CASE}` }]);
+  let restore = stubs(m, L, D.stubs());
+  try {
+    const p = await deletion.previewDeletion({ caseRef: CASE });
+    assert.deepEqual(p.kept.folderRename, { from: `RajSimran Patel - ${CASE}`, to: 'RajSimran Patel - LEAD-500' });
+    const r = await deletion.executeDeletion({ caseRef: CASE, confirmText: CASE, expectedKind: 'case' });
+    assert.equal(r.ok, true);
+    assert.deepEqual(D.renamed, [{ itemId: 'od-cm-1', newName: 'RajSimran Patel - LEAD-500' }]);
+  } finally { restore.forEach((x) => x()); }
+  // 2026-OINP-045 shape: the stored id names "… (was 2026-OINP-045)" — the record could never find that one by name
+  m = world({ rowsByBoard: {} });
+  L = leads([{ id: '500', fullName: 'Full Client', clientMasterItemId: '900', oneDriveFolderId: 'od-was' }]);
+  D = drive([caseFolder(), { id: 'od-was', name: 'Full Client (was 2026-VV-042)' }]);
+  restore = stubs(m, L, D.stubs());
+  try {
+    const p = await deletion.previewDeletion({ caseRef: CASE });
+    assert.deepEqual(p.kept.folderRename, { from: `Full Client - ${CASE}`, to: 'Full Client - LEAD-500' }, 'the case folder becomes the record’s — what the record could find before stays findable');
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('review round 2: a retained client whose case is gone has the bin on the Retained tab (the explicit "delete the record"); one with a case does not', () => {
+  const ret = require('../src/routes/adminConsultation').buildRetainersHTML();
+  assert.ok(ret.includes("'<td>'+((c.retained && c.clientMasterItemId)?'':'<button class=\"del-btn\""));
 });
