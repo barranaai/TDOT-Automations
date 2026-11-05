@@ -1536,15 +1536,19 @@ function renderBlacklist(d){
   });
 }
 var LAST_DETAIL=null; // the detail last rendered — the send button's confirm text reads the package state from it
-/* Opened without ?from=: a client who sits on the Retainers & follow-ups list (a direct client, a retainer under way,
-   Outcome Retain — consultantPortalService.classifyLead) gets that page as the way back, and in the top bar. */
+/* Opened without ?from=: the way back is the list the client is on right now — the server says which (d.onList, the
+   lists' own rule): Retainers & follow-ups, the case (once retained) or the lead page; the top bar follows. */
 function pointBackAtList(d){
-  var onRetainers=!!(d.directRetainer||d.retainerSent||d.retainerSigned||d.retainerPaid||String(d.outcome||'')==='Retain');
   var bl=document.getElementById('back-lnk'), txt=document.getElementById('back-lnk-txt');
-  if(!bl||!onRetainers||/[?&]from=retainers/.test(window.location.search)) return;
-  bl.href='/admin/retainers'; if(txt) txt.textContent='Retainers & follow-ups';
+  if(!bl||/[?&]from=retainers/.test(window.location.search)) return;
+  var list=String(d.onList||''), href='', label='', nav='';
+  if(list==='retainers'){ href='/admin/retainers'; label='Retainers & follow-ups'; nav='/admin/retainers'; }
+  else if(list==='cases'){ var ref=(d.retainerPlan&&d.retainerPlan.caseRef)||''; href=ref?'/admin/case/'+encodeURIComponent(ref):'/admin/dashboard'; label=ref?'Case '+ref:'All cases'; nav='/admin/dashboard'; }
+  else if(list==='leads'){ href='/admin/lead/'+encodeURIComponent(d.leadId||''); label='Lead page'; nav='/admin/leads'; }
+  if(!href) return;
+  bl.href=href; if(txt) txt.textContent=label;
   Array.prototype.forEach.call(document.querySelectorAll('.admin-nav .nav-lnk'),function(a){
-    var on=a.getAttribute('href')==='/admin/retainers';
+    var on=a.getAttribute('href')===nav;
     a.classList.toggle('active',on); if(on) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current');
   });
 }

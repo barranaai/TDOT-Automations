@@ -254,8 +254,20 @@ test('routes (2026-11-05): /admin/retainers serves the Retainers page; the old o
   assert.ok(plain.includes('<a href="/admin/consultations" class="back-lnk" id="back-lnk">') && plain.includes('<span id="back-lnk-txt">All consultations</span>'));
   assert.ok(fromRet.includes('<a href="/admin/retainers" class="back-lnk" id="back-lnk">') && fromRet.includes('<span id="back-lnk-txt">Retainers &amp; follow-ups</span>'));
   assert.ok(fromRet.includes('<a href="/admin/retainers" class="nav-lnk active"') && plain.includes('<a href="/admin/consultations" class="nav-lnk active"'), 'the top bar follows');
-  assert.ok(plain.includes("var onRetainers=!!(d.directRetainer||d.retainerSent||d.retainerSigned||d.retainerPaid||String(d.outcome||'')==='Retain');"), 'opened any other way: the record itself says which list (classifyLead)');
-  assert.ok(plain.includes('  pointBackAtList(d);'));
+  assert.ok(plain.includes("var list=String(d.onList||''), href='', label='', nav='';") && plain.includes('  pointBackAtList(d);'), 'opened any other way: the SERVER says which list the client is on');
+  const svc = fs.readFileSync(require.resolve('../src/services/consultantPortalService'), 'utf8');
+  assert.ok(svc.includes("    onList:         listFor(lead),"), 'the record payload carries it');
+  // the one rule the lists use (classifyLead + consultationDone), for every kind of client
+  const { listFor } = require('../src/services/consultantPortalService');
+  const now = new Date('2026-11-05T15:00:00Z');   // 10:00 Toronto
+  assert.equal(listFor({ directClient: 'Yes', sourceChannel: 'Walk-in', conversionStatus: 'Qualified' }, now), 'retainers', 'a direct client with nothing sent yet');
+  assert.equal(listFor({ retainerSent: '2026-11-01', bookingStatus: 'Booked' }, now), 'retainers');
+  assert.equal(listFor({ outcome: 'Retain', bookingStatus: 'Booked', bookedSlot: '2026-11-20 10:00' }, now), 'retainers');
+  assert.equal(listFor({ conversionStatus: 'Retained', retainerSigned: '2026-10-01', retainerPaid: '2026-10-02' }, now), 'cases', 'retained: on the Cases page, on neither list');
+  assert.equal(listFor({ bookingStatus: 'Booked', bookedSlot: '2026-11-20 10:00' }, now), 'consultations', 'booked for a later day');
+  assert.equal(listFor({ bookingStatus: 'Booked', bookedSlot: '2026-11-03 10:00', outcome: 'Follow-Up' }, now), 'retainers', 'a consultation that happened, Follow-Up set');
+  assert.equal(listFor({ bookingStatus: 'Booked', bookedSlot: '2026-11-03 10:00' }, now), 'consultations', 'happened, no outcome yet (Needs outcome)');
+  assert.equal(listFor({ bookingStatus: 'Not Yet', bookingInvite: 'Sent' }, now), 'leads', 'not booked: the lead page');
   const retPage = require('../src/routes/adminConsultation').buildRetainersHTML();
   assert.ok(retPage.includes("bindRowClicks(tb,'?from=retainers');") && retPage.includes("+encodeURIComponent(res.j.leadId)+'?from=retainers'; };"), 'the Retainers rows and the new-client pop-up say where they came from');
   assert.ok(!require('../src/routes/adminConsultation').buildQueueHTML().includes("'?from=retainers'"), 'the Consultations rows do not');

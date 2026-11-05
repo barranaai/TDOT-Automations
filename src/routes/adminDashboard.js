@@ -1123,7 +1123,7 @@ function loadKpis(month){
    .catch(function(e){
      body.innerHTML='<div class="rp-muted">The figures could not be read: '+escHtml(e.message)+' — choose a period again, or reload the page.</div>';
      /* the Period box stays usable: choosing again is the retry */
-     if (sel && !sel.getAttribute('data-filled')) { sel.innerHTML='<option value="">All time</option>'; sel.onchange=function(){ loadKpis(sel.value); }; }
+     if (sel && !sel.getAttribute('data-filled')) { sel.innerHTML='<option value="">All time</option>'+(m?'<option value="'+m+'" selected>'+m+'</option>':''); sel.onchange=function(){ loadKpis(sel.value); }; }
    });
 }
 

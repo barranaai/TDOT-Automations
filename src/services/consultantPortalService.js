@@ -273,6 +273,7 @@ async function getConsultationDetail(leadId) {
     })(),
     conversionStatus: lead.conversionStatus || '', // 'Retained' once signed AND paid — locks the send button
     clientMasterItemId: lead.clientMasterItemId || '',
+    onList:         listFor(lead),   // the record page's way back: the list the client is on right now (2026-11-05)
 
     // KPI attribution (staff-entered on the detail page)
     followUpDate:      lead.followUpDate || '',
@@ -2873,6 +2874,18 @@ function consultationDone(l, today) {
 }
 
 /**
+ * Which staff list the client is on right now — the consultation record's way back (2026-11-05):
+ * 'leads' | 'consultations' | 'retainers' | 'cases'. The one rule the lists use (classifyLead + consultationDone).
+ */
+function listFor(l, now = new Date()) {
+  const kind = classifyLead(l);
+  if (kind === 'gone') return 'cases';
+  if (kind === 'retainer') return 'retainers';
+  if (kind === 'consultation') return consultationDone(l, torontoDay(now.toISOString())) ? 'retainers' : 'consultations';
+  return 'leads';
+}
+
+/**
  * The Consultations page (Gauri point 4): the Consultations and Retainers tabs,
  * from the shared snapshot, one row per lead by classifyLead — plus a booked
  * consultation that has happened and has an outcome moves to Retainers
@@ -2969,7 +2982,7 @@ module.exports = {
   createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, findClientMatches, DIRECT_SOURCE,
   createStaffLead, STAFF_LEAD_SOURCES,
   invalidateLeadsQueue,
-  classifyLead, consultationDone, getConsultationsBoard,
+  classifyLead, consultationDone, listFor, getConsultationsBoard,
   _recordPackageView: recordPackageView, _packageResultLine: packageResultLine,   // test seams
   conflictBody, normalizeLeadLocation,
 };

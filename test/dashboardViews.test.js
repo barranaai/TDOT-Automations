@@ -101,7 +101,7 @@ test('Reporting on the Summary (review 2026-11-05): a failed /api/kpis read is s
   const html = await renderRoute('/summary');
   assert.ok(html.includes("return r.json().catch(function(){ return {}; }).then(function(j){ if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; });"), 'a 500 goes to the catch');
   assert.ok(html.includes('<select id="kpi-month" class="filter-sel"><option value="">All time</option></select>'));
-  assert.ok(html.includes("if (sel && !sel.getAttribute('data-filled')) { sel.innerHTML='<option value=\"\">All time</option>'; sel.onchange=function(){ loadKpis(sel.value); }; }"), 'after a failure the Period box still works');
+  assert.ok(html.includes("if (sel && !sel.getAttribute('data-filled')) { sel.innerHTML='<option value=\"\">All time</option>'+(m?'<option value=\"'+m+'\" selected>'+m+'</option>':''); sel.onchange=function(){ loadKpis(sel.value); }; }"), 'after a first-load failure the Period box shows the month tried + All time: choosing again is a real retry');
   assert.ok(html.includes("if (VIEW === 'summary' && !window.__tdotHashDone && location.hash) {") && html.includes("frag.scrollIntoView({ block: 'start' })"), 'the fragment scroll, once');
   assert.ok(html.includes('#reporting { scroll-margin-top: calc(var(--header-h) + 12px); }'));
   assert.ok(!(await renderRoute('/')).includes('__tdotHashDone') || true);
