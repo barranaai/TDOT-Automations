@@ -52,7 +52,12 @@ const CM = {
   internalDeadline: 'date_mm3t66pa',  // the promised submission date
   portalLink:     'link_mm2vta5',
   folderLink:     'link_mm47dng8',
+  automationLock: 'color_mm0x3x1x',   // the document reminders' gate (block 2): Yes = no reminder from here
+  escalationLastNotified: 'date_mm1gqbd',   // the escalation engine's last client email (read-only here: the 24-hour check)
 };
+// Document reminders (block 2): the case's newest notes ride on the same Client
+// Master read — the "Sent:" line is read from them, never a second expensive read.
+const CM_NOTES_LIMIT = 50;
 
 function clampPct(raw) {
   if (raw === '' || raw == null) return 0;
@@ -79,13 +84,16 @@ async function readClientMaster(itemId) {
   const ids = fetchIds.map((c) => `"${c}"`).join(', ');
   const data = await mondayApi.query(
     `query($itemId: ID!) {
-       items(ids: [$itemId]) {
+       items(ids: [$itemId], limit: 1) {
+         group { id title }
          column_values(ids: [${ids}]) { id text value }
+         updates(limit: ${CM_NOTES_LIMIT}) { id created_at text_body body }
        }
      }`,
     { itemId: String(itemId) }
   );
-  const cols = data?.items?.[0]?.column_values || [];
+  const item = data?.items?.[0] || {};
+  const cols = item.column_values || [];
   const by = {};
   for (const c of cols) by[c.id] = c;
   const txt = (id) => (by[id]?.text || '').trim();
@@ -104,9 +112,15 @@ async function readClientMaster(itemId) {
     manager:         txt(CM.caseManager) || 'Unassigned',
     deadline:        txt(CM.hardDeadline) || '',
     clientDeadline:  require('./deadlineService').describe({ ok: true, type: txt(CM.deadlineType), actualDeadline: txt(CM.actualDeadline), promisedSubmissionDate: txt(CM.internalDeadline) }),
+    // the same answer as stored (the reminders fill {Deadline} / {PromisedDate} from it)
+    clientDeadlineRaw: require('./deadlineService').fromLead({ deadlineType: txt(CM.deadlineType), actualDeadline: txt(CM.actualDeadline), promisedSubmissionDate: txt(CM.internalDeadline) }),
     portalLink:      linkUrl(by[CM.portalLink]?.value) || txt(CM.portalLink),
     folderLink:      linkUrl(by[CM.folderLink]?.value) || txt(CM.folderLink),
     assignees:       caseAccess.assigneesFromColumnValues(valueByColId), // { personIds, teamIds }
+    group:           { id: (item.group && item.group.id) || '', title: (item.group && item.group.title) || '' },
+    automationLock:  txt(CM.automationLock),
+    escalationLastNotified: txt(CM.escalationLastNotified).slice(0, 10),
+    notes:           require('./docReminderService').rawNotes(item.updates),   // newest CM_NOTES_LIMIT, for the reminders record
   };
 }
 
@@ -346,6 +360,19 @@ async function getCaseOverview(caseRef) {
     docItems:   docSummary.items || [],
   });
 
+  // ── Document reminders (block 2): the card's facts from the reads above ───
+  // The three buttons + the "Sent:" line; the record is the case's notes (read
+  // with the Client Master columns). Hidden with its reason when the case has
+  // no email / no access code / no checklist rows, or the CM read failed.
+  const group = cm.group || { id: '', title: '' };
+  const automationLock = cm._unavailable ? '' : (cm.automationLock || '');
+  const clientDeadlineRaw = cm.clientDeadlineRaw || { type: '', actualDeadline: '', promisedSubmissionDate: '' };
+  const reminders = require('./docReminderService').describeForCase({
+    overview: { cmUnavailable: cm._unavailable === true, clientEmail: cm.clientEmail || '', accessToken, group, automationLock },
+    items: docSummary.items || [],
+    notes: cm.notes || [],
+  });
+
   return {
     caseRef,
     itemId,
@@ -368,6 +395,11 @@ async function getCaseOverview(caseRef) {
     slaRisk:         cm.slaRisk || '—',
     deadline:        cm.deadline || '',
     clientDeadline:  cm._unavailable ? '' : (cm.clientDeadline || 'Not set'),   // the client's own deadline (block 1) — the case page pill (review 2026-11-06: it was read but never passed on)
+    clientDeadlineRaw,          // { type, actualDeadline, promisedSubmissionDate } as stored (the reminders' merge fields)
+    group,                      // the board group ({ id, title }) — a reminder goes only from a live case group
+    automationLock,             // 'Yes' = the reminders refuse (the ladder's own gate)
+    escalationLastNotified: cm._unavailable ? '' : (cm.escalationLastNotified || ''),   // the escalation engine's last client email (the 24-hour check)
+    reminders,                  // the Reminders card: { available, reason, message, canSend, blocked, sent, auto, failures }
     // Questionnaire % from the SAVED ANSWERS when they could be read (the
     // Monday number used to be written only at Submit); Monday is the fallback.
     qReadinessPct:   htmlQ.deriveQuestionnaireProgress({ members: qMembers, mondayPct: cm.qReadinessPct || 0 }).pct,

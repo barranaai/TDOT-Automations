@@ -168,6 +168,33 @@ function buildCockpitHTML(caseRef) {
     .sp-form input { padding:8px 10px; border:1px solid var(--border); border-radius:7px; font-size:12.5px; font-family:inherit; }
     @media (max-width: 820px) { .sp-form { grid-template-columns:1fr; } }
 
+    /* Document reminders card + dialog (block 2, 2026-11-06) */
+    .rem-card { margin-bottom:16px; }
+    .rem-btns { display:flex; gap:8px; flex-wrap:wrap; }
+    .rem-sent { font-size:12.5px; color:var(--navy); margin-top:12px; line-height:1.6; }
+    .rem-blocked, .rem-fail { font-size:12px; color:#b45309; background:#fffbeb; border-radius:7px; padding:6px 10px; margin-top:10px; }
+    .rem-hint { font-size:11.5px; color:var(--light); margin-top:8px; line-height:1.5; }
+    .rem-to { font-size:13px; color:var(--navy); margin:4px 0 10px; }
+    .rem-to .k { color:var(--muted); margin-right:6px; }
+    .rem-warn { font-size:12.5px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:7px 10px; margin:0 0 8px; }
+    .rem-lbl { display:block; font-size:12px; font-weight:700; color:var(--navy); margin:12px 0 4px; }
+    .rem-lbl .muted { font-weight:500; }
+    .rem-in { width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid var(--border); border-radius:7px; font-size:13px; font-family:inherit; }
+    textarea.rem-in { resize:vertical; min-height:150px; line-height:1.5; }
+    .rem-missing { background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:10px 12px; font-size:12.5px; max-height:220px; overflow:auto; }
+    .rem-member { font-weight:700; color:var(--navy); margin:6px 0 2px; }
+    .rem-cat { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#9a3412; margin:8px 0 2px; }
+    .rem-list { margin:0; padding-left:18px; }
+    .rem-list li { margin:2px 0; }
+    .tdlg.rem-dlg { max-width:640px; }
+    /* Phones: the three buttons stack full width (16px / 44px), the preview is a full-screen sheet, nothing scrolls sideways. */
+    @media (max-width: 600px) {
+      .rem-btns .sbtn { width:100%; justify-content:center; font-size:16px; min-height:44px; }
+      .tdlg-ov.rem-ov { padding:0; align-items:stretch; }
+      .tdlg.rem-dlg { max-width:none; width:100%; height:100%; max-height:100vh; max-height:100dvh; border-radius:0; }
+      .rem-in { font-size:16px; }
+    }
+
     .tl { position:relative; padding-left:24px; }
     .tl::before { content:""; position:absolute; left:7px; top:6px; bottom:6px; width:2px; background:#e8edf4; border-radius:1px; }
     .tl-ev { position:relative; padding:0 0 16px 8px; }
@@ -243,6 +270,9 @@ ${buildNavHeader('dashboard')}
         </div>
       </div>
 
+      <!-- Document reminders (block 2) — the three buttons + the "Sent:" line; hidden with a reason when the case cannot be reminded -->
+      <div class="card rem-card" id="rem-ov" style="display:none"></div>
+
       <div class="grid grid-2">
         <div class="card">
           <div class="card-title">👪 Family on this case <span class="cnt" id="fam-cnt"></span></div>
@@ -272,6 +302,7 @@ ${buildNavHeader('dashboard')}
 
     <!-- Documents tab — inline review actions -->
     <div class="tab-panel" id="panel-documents">
+      <div class="card rem-card" id="rem-doc" style="display:none"></div>
       <div class="card">
         <div class="card-title">📂 Document review
           <span class="cnt"><a class="act-btn" id="doc-review-lnk" target="_blank" rel="noopener" style="font-size:11px;padding:5px 10px">Full review page (uploads &amp; replies) →</a></span>
@@ -474,6 +505,8 @@ function render(d) {
 
   // Sponsor / inviter card (hidden when the case type has no sponsor role)
   renderSponsor(d.sponsor, d.cmUnavailable);
+  // Document reminders card (block 2) — on the Overview and Documents tabs
+  renderReminders(d.reminders);
 
   // Review-page link + the tab panels
   document.getElementById('doc-review-lnk').href = '/d/' + encodeURIComponent(CASE_REF) + '/review';
@@ -1080,6 +1113,132 @@ function renderTimelineTab(d) {
       '<div class="tl-title">' + escHtml(e.title) + '</div>' +
       (e.detail ? '<div class="tl-detail">' + escHtml(e.detail) + '</div>' : '') + '</div>';
   }).join('') + '</div>') : '<div class="muted">No recorded events yet.</div>';
+}
+
+// ── Document reminders (block 2, 2026-11-06): three buttons + the "Sent:" line ──
+// The record is the case's notes (the server reads them with the case). This
+// only shows what the server reports, previews before every send (editable
+// subject / text, an optional line, the final's last day) and never redraws
+// the card while the dialog is open. Inline-JS rules: single quotes and
+// concatenation — no backtick, no dollar-brace, no backslash.
+var REM_OPEN = false;      // the dialog is open: a reload must not redraw the card under it
+var REM_LAST = null;       // the last facts shown (redrawn when the dialog closes)
+function remMsg(cls, txt) {
+  Array.prototype.forEach.call(document.querySelectorAll('.rem-msg'), function(el) { el.className = 'act-msg rem-msg ' + cls; el.textContent = txt; });
+}
+function remSentLine(rm) {
+  var parts = [];
+  [1, 2, 3].forEach(function(n) {
+    var x = rm.sent && rm.sent[n];
+    var label = n === 3 ? 'Final' : (n === 1 ? '1st' : '2nd');
+    parts.push(label + ' ' + (x ? escHtml(x.label) + (x.by ? ' (' + escHtml(x.by) + ')' : '') + (n === 3 && x.lastDay ? ', last day ' + escHtml(x.lastDay) : '') : '—'));
+  });
+  var auto = (rm.auto || []).map(function(a) { return escHtml(a.label); });
+  parts.push('Auto: ' + (auto.length ? auto.join(', ') : '—'));
+  return parts.join(' · ');
+}
+function renderReminders(rm) {
+  REM_LAST = rm || null;
+  if (REM_OPEN) return;
+  var cards = document.querySelectorAll('.rem-card');
+  if (!rm) { Array.prototype.forEach.call(cards, function(c) { c.style.display = 'none'; }); return; }
+  var html = '<div class="card-title">📨 Document reminders</div>';
+  if (!rm.available) {
+    html += '<div class="muted">' + escHtml(rm.message || 'Reminders are not available for this case.') + '</div>';
+  } else {
+    var off = rm.canSend ? '' : ' disabled';
+    html += '<div class="rem-btns">' +
+      '<button type="button" class="sbtn" data-rem-level="1"' + off + '>Send reminder 1 · friendly</button>' +
+      '<button type="button" class="sbtn" data-rem-level="2"' + off + '>Send reminder 2 · firm</button>' +
+      '<button type="button" class="sbtn danger" data-rem-level="3"' + off + '>Send final reminder</button></div>';
+    if (rm.blocked) html += '<div class="rem-blocked">' + escHtml(rm.blocked) + '</div>';
+    html += '<div class="rem-sent">Sent: ' + remSentLine(rm) + '</div>';
+    if (rm.lastFailed && rm.failures && rm.failures[0]) html += '<div class="rem-fail">Last attempt did not go out (' + escHtml(rm.failures[0].label) + ') — the note on the case says when.</div>';
+    html += '<div class="rem-hint">Each click opens a preview you can edit before it goes. The missing documents are listed by the app (never questionnaire items); a note on the case is the record.</div>';
+  }
+  html += '<div class="act-msg rem-msg"></div>';
+  Array.prototype.forEach.call(cards, function(c) {
+    c.style.display = 'block'; c.innerHTML = html;
+    Array.prototype.forEach.call(c.querySelectorAll('[data-rem-level]'), function(b) { b.onclick = function() { remOpen(Number(b.getAttribute('data-rem-level'))); }; });
+  });
+}
+function remFail(res, fallback) {
+  if (res.status === 401) {
+    var login = (res.j && res.j.loginUrl) || '/q/auth/monday';
+    if (login.indexOf('?') === -1) login += '?returnTo=' + encodeURIComponent(location.pathname + location.search);   // come back to this case
+    Array.prototype.forEach.call(document.querySelectorAll('.rem-msg'), function(el) { el.className = 'act-msg rem-msg err'; el.innerHTML = escHtml((res.j && res.j.error) || 'Please sign in again.') + ' <a href="' + escHtml(login) + '">Sign in with Monday</a>'; });
+    return;
+  }
+  remMsg('err', res.status === 403 ? 'You are not assigned to this case.' : ((res.j && res.j.error) || fallback));
+}
+function remOpen(level) {
+  var key = peekKey();
+  var headers = key ? { 'X-Api-Key': key } : {};
+  remMsg('info', 'Preparing the preview…');
+  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/reminder/preview?level=' + encodeURIComponent(level), { headers: headers, credentials: 'same-origin' })
+  .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
+  .then(function(res) {
+    if (!res.ok) { remFail(res, 'The preview could not be prepared.'); return; }
+    remMsg('', ''); remDialog(level, res.j);
+  })
+  .catch(function(e) { remMsg('err', 'Failed: ' + e.message); });
+}
+function remMissingHtml(missing) {
+  var groups = (missing && missing.groups) || [], list = '';
+  groups.forEach(function(g) {
+    if (groups.length > 1) list += '<div class="rem-member">' + escHtml(g.member) + '</div>';
+    (g.categories || []).forEach(function(cat) {
+      list += '<div class="rem-cat">' + escHtml(cat.category) + '</div><ul class="rem-list">' +
+        (cat.items || []).map(function(it) { return '<li>' + escHtml(it.name) + (it.instruction ? ' <span class="muted">— ' + escHtml(it.instruction) + '</span>' : '') + '</li>'; }).join('') + '</ul>';
+    });
+  });
+  return list || '<div class="muted">None</div>';
+}
+function remDialog(level, p) {
+  var title = level === 3 ? 'Send the final reminder' : 'Send reminder ' + level + (level === 1 ? ' · friendly' : ' · firm');
+  var c = tdotDialogNew({ cls: 'rem-dlg', ovClass: 'rem-ov', group: 'rem', onClosed: function() { REM_OPEN = false; if (REM_LAST) renderReminders(REM_LAST); } });
+  REM_OPEN = true;
+  var warn = (p.warnings || []).map(function(w) { return '<div class="rem-warn">⚠ ' + escHtml(w) + '</div>'; }).join('');
+  var html = '<h3>' + escHtml(title) + '</h3>' +
+    '<div class="rem-to"><span class="k">To</span>' + escHtml(p.to || '') + ' <span class="muted">· ' + escHtml(p.deadlineLine || '') + '</span></div>' +
+    warn +
+    '<label class="rem-lbl" for="rem-subject">Subject</label><input class="rem-in" id="rem-subject" maxlength="200">' +
+    '<label class="rem-lbl" for="rem-body">Text <span class="muted">— the missing list goes where {MissingList} is, the portal link where {PortalLink} is' + (level === 3 ? ', the date below where {LastDay} is' : '') + '</span></label>' +
+    '<textarea class="rem-in" id="rem-body" rows="8" maxlength="6000"></textarea>' +
+    '<label class="rem-lbl" for="rem-extra">Add a line for the client <span class="muted">(optional — shown right under the list)</span></label><input class="rem-in" id="rem-extra" maxlength="1000" placeholder="e.g. We are still waiting for the lease agreement.">' +
+    (level === 3 ? '<label class="rem-lbl" for="rem-lastday">Last day we will wait</label><input class="rem-in" type="date" id="rem-lastday">' : '') +
+    '<div class="rem-lbl">Missing documents <span class="muted">(' + escHtml(String(p.missingCount || 0)) + ' — inserted by the app, read-only)</span></div><div class="rem-missing">' + remMissingHtml(p.missing) + '</div>' +
+    '<div class="tdlg-err" id="rem-err"></div>' +
+    '<div class="tdlg-actions"><button type="button" class="sbtn" data-x="1" id="rem-cancel">Cancel</button><button type="button" class="sbtn primary" data-x="1" id="rem-send">Send</button></div>';
+  c.box.innerHTML = html;
+  var subj = c.box.querySelector('#rem-subject'), body = c.box.querySelector('#rem-body'), extra = c.box.querySelector('#rem-extra'), last = c.box.querySelector('#rem-lastday');
+  subj.value = p.subject || ''; body.value = p.body || '';
+  if (last) { last.value = p.lastDay || ''; if (p.minLastDay) last.min = p.minLastDay; }
+  c.box.querySelector('#rem-cancel').onclick = function() { c.tryClose('cancel'); };
+  c.box.querySelector('#rem-send').onclick = function() { remSend(c, level, { subject: subj.value, body: body.value, extra: extra.value, lastDay: last ? last.value : '' }); };
+  try { subj.focus(); } catch (e) {}
+}
+function remSend(c, level, v) {
+  var err = c.box.querySelector('#rem-err');
+  if (!(v.subject || '').trim()) { err.textContent = 'The subject is empty.'; return; }
+  if (!(v.body || '').trim()) { err.textContent = 'The text is empty.'; return; }
+  if (level === 3 && !v.lastDay) { err.textContent = 'Enter the last day you will wait for the documents.'; return; }
+  err.textContent = ''; c.setBusy(true);
+  var id = c.openId;
+  var key = peekKey();
+  var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
+  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/reminder', { method: 'POST', headers: headers, credentials: 'same-origin', body: JSON.stringify({ level: level, subject: v.subject, body: v.body, extra: v.extra, lastDay: v.lastDay }) })
+  .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
+  .then(function(res) {
+    if (!c.still(id)) return;   // closed meanwhile (after the long wait): the answer is on the case, the reload shows it
+    c.setBusy(false);
+    if (res.ok) { c.close(true, 'sent'); remMsg('ok', 'Sent to ' + (res.j.to || 'the client') + ' — noted on the case.'); loadCase(); return; }
+    if (res.status === 401) { c.close(true, 'auth'); remFail(res, ''); return; }
+    err.textContent = res.status === 403 ? 'You are not assigned to this case.' : ((res.j && res.j.error) || 'The reminder could not be sent.');
+    // another send got there first, or the list changed under the dialog: the case reloads
+    if (res.status === 409 && res.j && (res.j.reason === 'lost-race' || res.j.reason === 'no-rows')) { c.close(true, 'refused'); remMsg('err', err.textContent); loadCase(); }
+  })
+  .catch(function(e) { if (!c.still(id)) return; c.setBusy(false); err.textContent = 'Failed: ' + e.message; });
 }
 
 function loadCase() {

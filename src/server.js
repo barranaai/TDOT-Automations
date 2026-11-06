@@ -1257,6 +1257,15 @@ app.post('/admin/case-action/:caseRef/sponsor', express.json(), async (req, res)
   res.json({ ok: true, sent: !!r.sent, to: r.to || '', emailedAt: r.emailedAt || null, variant: r.variant || null, created, inviterSaved: !!r.inviterSaved, sectionLabel: r.sectionLabel || '', reason: r.sent ? null : (r.reason || null) });
 });
 
+// ─── Document reminders (block 2, 2026-11-06): the three cockpit buttons ─────
+// Preview (read-only) and send, for any staffer who may write the case
+// (resolveCaseForWrite: sign-in + assigned-or-admin; 401 carries loginUrl).
+// The handlers live in routes/docReminderRoutes.js so tests run them with
+// fakes; who clicked is the Monday sign-in (staffActor), never a typed name.
+const docReminderRoutes = require('./routes/docReminderRoutes');
+app.get('/admin/case-action/:caseRef/reminder/preview', (req, res) => docReminderRoutes.preview(req, res, { resolveCaseForWrite, staffActor }));
+app.post('/admin/case-action/:caseRef/reminder', express.json(), (req, res) => docReminderRoutes.send(req, res, { resolveCaseForWrite, staffActor }));
+
 // ─── Create case folder (2026-10-10) ────────────────────────────────────────
 // For a case that has NO OneDrive folder (an old client added after the ITA,
 // never a lead): the folder + the four working folders, linked on the case row,
