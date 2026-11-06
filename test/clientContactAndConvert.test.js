@@ -32,7 +32,8 @@ test('no client email or page tells the client to reply (the sender is a no-repl
   // the files that carried one now use the shared line, as a real template expression
   for (const f of ['intakeFormService', 'paymentService', 'sponsorOnboardingService', 'consultationFormService', 'retainerCountersignService', 'bookingService',
     'htmlQuestionnaireReviewService', 'emailService', 'consultAgreementService', 'milestonePaymentService', 'chasingLoopService', 'escalationRoutingService',
-    'revisionNotificationService', 'missingFieldsEmailService', 'consultationService', 'retainerService2', 'clientPortalService']) {
+    'revisionNotificationService', 'missingFieldsEmailService', 'consultationService', 'retainerService2', 'clientPortalService',
+    'docReminderService']) {   // the document reminders (block 2, 2026-11-06): the closing line is added outside the template
     const src = fs.readFileSync(path.join(SERVICES, `${f}.js`), 'utf8');
     assert.match(src, /\$\{require\('\.\.\/utils\/clientContact'\)\.(EMAIL_US|CLIENT_CONTACT_EMAIL)\}/, f);
   }

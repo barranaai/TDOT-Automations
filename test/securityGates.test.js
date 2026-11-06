@@ -81,6 +81,9 @@ test('every email that links to the documents page carries the case\'s access co
   assert.match(read('../src/services/escalationRoutingService.js'), /docLink\s*=\s*accessToken \? `\$\{BASE_URL\}\/documents\/\$\{encodeURIComponent\(caseRef\)\}\?t=\$\{encodeURIComponent\(accessToken\)\}` : ''/);
   assert.match(read('../src/services/revisionNotificationService.js'), /\$\{tokenParam \? `<a href="\$\{documentsUrl\}"/, 'no code → no dead documents button');
   assert.match(read('../src/services/clientPortalService.js'), /`\$\{BASE_URL\}\/documents\/\$\{encodedRef\}\$\{tokenParam\}`/, 'the portal already carried it');
+  // the document reminders (block 2, 2026-11-06): the builder refuses to run without the code, so the link always carries it
+  assert.match(read('../src/services/docReminderService.js'), /documentsUrl = `\$\{BASE_URL\}\/documents\/\$\{encodedRef\}\?t=\$\{encodeURIComponent\(accessToken\)\}`/);
+  assert.match(read('../src/services/docReminderService.js'), /if \(!accessToken\) throw new Error\(/);
 });
 
 test('deleting and the hand-run engines use the NAMED-admin gate — the shared key is not enough', () => {
