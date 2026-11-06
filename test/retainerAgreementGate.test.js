@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // The retainer agreement must NEVER be emailed before the per-client fee is
 // set, because the agreement states the fee. These tests stub the I/O and
 // verify maybeSendRetainerAgreement's gating decisions.

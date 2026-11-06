@@ -241,7 +241,12 @@ test('the lead page and the record page carry the answer, its wording and whethe
   assert.ok(C.buildRetainersHTML().includes('Deadline *') && C.buildRetainersHTML().includes("var dlErr=DC_DL.check(!DC_OPTS || DC_OPTS.deadlineRequired!==false)"), 'required on the direct-retainer form');
   assert.ok(C.buildDetailHTML('1').includes("st+=kv('Deadline'") || C.buildDetailHTML('1').includes("kv('Deadline',(d.deadline&&d.deadline.text)||'Not set')"));
   assert.ok(L.buildLeadDetailHTML('1').includes("st+=kv('Deadline', (d.deadline&&d.deadline.text)||'Not set');"));
-  assert.ok(C.buildDetailHTML('1').includes("if(CD_DL.blank() && !(RP_CT_OPTS && RP_CT_OPTS.deadlineRequired===false)){"), 'Retain & send checks the box before the confirm');
+  const rec = C.buildDetailHTML('1');
+  assert.ok(rec.includes("if(CD_DIRTY){ setMsg('Click \"Save deadline\" first — the deadline in the box is not saved yet.','err'); CD_DL.focus(); return; }") && rec.includes('if(!(dlInfo && dlInfo.set)){'), 'Retain & send checks the SAVED answer (the detail payload), and names an unsaved box');
+  assert.ok(rec.includes('if(!(dlInfo && dlInfo.required===false)){') && !rec.includes('RP_CT_OPTS.deadlineRequired'), 'the switch is read from the detail, not the options fetch');
+  assert.ok(!/CD_DIRTY=false;\s*doAction\('saveDeadline'/.test(rec) && rec.includes("if(action==='saveDeadline'){ CD_DIRTY=false; cdMsg(res.j.message||'Done.','ok'); }"), 'the box keeps the typed answer until the server has saved it; feedback in the box');
+  assert.ok(rec.includes("if(action==='saveDeadline') cdMsg(netErr(e),'err')"), 'a refused save is said in the box');
+  assert.ok(C.buildRetainersHTML().includes('#dc-modal .dlx .al-yn input { width:auto; padding:0; border:0;') && C.buildRetainersHTML().includes('if(d.deadline && d.deadline.set && DC_DL.blank()) DC_DL.set(d.deadline);'), 'the modal: radios not stretched; converting a lead shows its deadline');
   const src = fs.readFileSync(require.resolve('../src/routes/deadlineBox.js'), 'utf8');
   assert.ok(!/`|\$\{/.test(require('../src/routes/deadlineBox').DEADLINE_BOX_JS), 'plain template text: no backtick, no dollar-brace');
   void src;
@@ -293,28 +298,50 @@ test('a board edit of the deadline columns is copied back to the linked lead wit
   const lead = { id: '1', deadlineType: 'Imaginary', promisedSubmissionDate: '2099-12-15', clientMasterItemId: '7001' };
   const restore = [
     stub(sync.io, 'readCase', async () => ({ type: 'Deadline', actualDeadline: '2099-01-15', promisedSubmissionDate: '' })),
-    stub(sync.io, 'findLead', async () => ({ ...lead })),
+    stub(sync.io, 'findLeads', async () => [{ ...lead }]),
     stub(sync.io, 'updateLead', async (id, f, o) => { calls.updates.push({ id, f, o }); }),
     stub(sync.io, 'note', async (id, b) => { calls.notes.push(b); }),
   ];
   try {
     const r = await sync.onCaseEdited('7001');
-    assert.deepEqual(r, { ok: true, leadId: '1' });
+    assert.deepEqual(r, { ok: true, leadId: '1', leadIds: ['1'] });
     assert.deepEqual(calls.updates[0], { id: '1', f: { deadlineType: 'Deadline', actualDeadline: '2099-01-15' }, o: { clearKeys: ['promisedSubmissionDate'] } });
     assert.match(calls.notes[0], /Deadline changed on the case row in Monday: Real deadline Jan 15, 2099 \(was Imaginary — promised Dec 15, 2099\)\.$/);
     assert.ok(sync.isDeadlineColumn('color_mm6w7cdd') && sync.isDeadlineColumn('date_mm3t66pa') && !sync.isDeadlineColumn('text_mm0xw6bp'));
   } finally { restore.reverse().forEach((r) => r()); }
-  const quiet = [stub(sync.io, 'readCase', async () => ({ type: 'Imaginary', actualDeadline: '', promisedSubmissionDate: '2099-12-15' })), stub(sync.io, 'findLead', async () => ({ ...lead })), stub(sync.io, 'updateLead', async () => { throw new Error('must not write'); })];
+  const quiet = [stub(sync.io, 'readCase', async () => ({ type: 'Imaginary', actualDeadline: '', promisedSubmissionDate: '2099-12-15' })), stub(sync.io, 'findLeads', async () => [{ ...lead }]), stub(sync.io, 'updateLead', async () => { throw new Error('must not write'); })];
   try { assert.deepEqual(await sync.onCaseEdited('7001'), { skipped: 'same' }); } finally { quiet.reverse().forEach((r) => r()); }
-  const none = [stub(sync.io, 'readCase', async () => ({ type: 'Deadline', actualDeadline: '2099-01-15', promisedSubmissionDate: '' })), stub(sync.io, 'findLead', async () => null)];
+  const none = [stub(sync.io, 'readCase', async () => ({ type: 'Deadline', actualDeadline: '2099-01-15', promisedSubmissionDate: '' })), stub(sync.io, 'findLeads', async () => [])];
   try { assert.deepEqual(await sync.onCaseEdited('7001'), { skipped: 'no lead' }); } finally { none.reverse().forEach((r) => r()); }
   const err = [stub(sync.io, 'readCase', async () => { throw new Error('monday 503'); })];
   try { assert.deepEqual(await sync.onCaseEdited('7001'), { error: 'monday 503' }); } finally { err.reverse().forEach((r) => r()); }
   // an incomplete hand edit is copied as it is, and the note says what is missing
-  const partial = [stub(sync.io, 'readCase', async () => ({ type: 'Deadline', actualDeadline: '', promisedSubmissionDate: '' })), stub(sync.io, 'findLead', async () => ({ ...lead })), stub(sync.io, 'updateLead', async () => {}), stub(sync.io, 'note', async (id, b) => { calls.notes.push(b); })];
+  const partial = [stub(sync.io, 'readCase', async () => ({ type: 'Deadline', actualDeadline: '', promisedSubmissionDate: '' })), stub(sync.io, 'findLeads', async () => [{ ...lead }]), stub(sync.io, 'updateLead', async () => {}), stub(sync.io, 'note', async (id, b) => { calls.notes.push(b); })];
   try { await sync.onCaseEdited('7001'); assert.match(calls.notes.pop(), /⚠ A real deadline needs the actual deadline date\./); } finally { partial.reverse().forEach((r) => r()); }
-  const src = require('fs').readFileSync(require.resolve('../src/routes/mondayWebhook.js'), 'utf8');
-  assert.ok(src.includes("if (require('../services/deadlineCaseSync').isDeadlineColumn(columnId)) {"), 'the webhook branch');
+  // two leads on one case (a consultation lead and a later direct-retainer row): both are brought in step
+  const two = [stub(sync.io, 'readCase', async () => ({ type: 'Deadline', actualDeadline: '2099-01-15', promisedSubmissionDate: '' })),
+    stub(sync.io, 'findLeads', async () => [{ ...lead }, { id: '2', deadlineType: 'Deadline', actualDeadline: '2099-01-15', clientMasterItemId: '7001' }, { id: '3', clientMasterItemId: '7001' }]),
+    stub(sync.io, 'updateLead', async (id, f, o) => { calls.updates.push({ id, f, o }); }), stub(sync.io, 'note', async (id, b) => { calls.notes.push(b); })];
+  calls.updates.length = 0;
+  try {
+    assert.deepEqual(await sync.onCaseEdited('7001'), { ok: true, leadId: '1', leadIds: ['1', '3'] });
+    assert.deepEqual(calls.updates.map((u) => u.id), ['1', '3'], 'the lead that already agrees is left alone');
+  } finally { two.reverse().forEach((r) => r()); }
+  // the Client Master webhook reaches the copy for a deadline column only — driven through the router itself
+  const router = require('../src/routes/mondayWebhook');
+  const { clientMasterBoardId } = require('../config/monday');
+  const seen = [];
+  const wh = [stub(sync, 'onCaseEdited', async (id) => { seen.push(String(id)); return { ok: true }; }), stub(mondayApi, 'query', async () => ({}))];
+  try {
+    const drive = (columnId) => new Promise((resolve) => {
+      const req = { method: 'POST', url: '/', body: { event: { type: 'update_column_value', boardId: clientMasterBoardId, pulseId: 7001, columnId, value: {} } } };
+      const res = { json() { setTimeout(resolve, 30); return this; }, status() { return this; } };
+      router.handle(req, res, () => resolve());
+    });
+    await drive(CM_COLS.actual);
+    await drive('text_mm0xw6bp');
+    assert.deepEqual(seen, ['7001'], 'reached once for a deadline column, not for another column');
+  } finally { wh.reverse().forEach((r) => r()); }
 });
 
 test('the case page pill and Needs attention: a new case without a deadline is listed (medium); older or closed cases and legacy groups are not', async () => {
@@ -343,4 +370,133 @@ test('the case page pill and Needs attention: a new case without a deadline is l
   } finally { restore.forEach((r) => r()); }
   const page = require('fs').readFileSync(require.resolve('../src/routes/adminCase.js'), 'utf8');
   assert.ok(page.includes(`<span class="pk">Client deadline</span> ' + escHtml(d.clientDeadline)`) && page.includes('<span class="pk">SLA deadline</span>'));
+});
+
+
+/* ── review 2026-11-06: the dates reach the board; stale dates go; Retain is gated everywhere; the held send is released ── */
+
+test('createLead itself writes the two date columns into create_item (the whitelist used to drop them)', async () => {
+  const COLS = require('../src/data/newLeadsBoard.json').columns;
+  const writes = [];
+  const restore = [
+    stub(mondayApi, 'query', async (q, v) => {
+      if (/create_item/.test(q)) { writes.push(JSON.parse(v.cols)); return { create_item: { id: '9301' } }; }
+      if (/change_multiple_column_values/.test(q)) return { change_multiple_column_values: { id: v.itemId } };
+      return { boards: [{ groups: [{ items_page: { items: [] } }] }] };
+    }),
+    stub(require('../src/services/leadTokenService'), 'ensureToken', async () => 'tok'),
+    stub(require('../src/services/oneDriveService'), 'ensureLeadFolder', () => new Promise(() => {})),
+  ];
+  try {
+    await leadService.createLead({ fullName: 'A', email: 'a@x.com', sourceChannel: 'Phone', actualDeadline: '2099-01-15', promisedSubmissionDate: '2098-12-15' });
+    assert.deepEqual(writes[0][COLS.actualDeadline], { date: '2099-01-15' });
+    assert.deepEqual(writes[0][COLS.promisedSubmissionDate], { date: '2098-12-15' });
+    writes.length = 0;
+    await leadService.createLead({ fullName: 'B', email: 'b@x.com', sourceChannel: 'Phone' });
+    assert.ok(!(COLS.actualDeadline in writes[0]) && !(COLS.promisedSubmissionDate in writes[0]), 'nothing written when there is no answer');
+  } finally { restore.reverse().forEach((r) => r()); }
+});
+
+test('Direct retainer on an EXISTING lead: the dates the new answer lacks are cleared on the lead, so the case opens with the new answer; a blank answer (switch off) keeps what the lead holds', async () => {
+  const handoff = require('../src/services/handoffService');
+  const existing = { id: '777', fullName: 'Walkin Client', email: 'walkin@example.com', phone: '4165550100', sourceChannel: 'Website', deadlineType: 'Deadline', actualDeadline: '2099-01-15', promisedSubmissionDate: '2098-12-15' };
+  const calls = { updates: [] };
+  const restore = [
+    stub(leadService, 'getLead', async () => ({ ...existing })),
+    stub(leadService, 'updateLead', async (id, f, o) => { calls.updates.push({ id, f, o }); }),
+    stub(mondayApi, 'query', async () => ({})),
+    stub(registry, 'getCaseTypes', async () => { throw new Error('no monday in tests'); }),
+    stub(handoff, 'openCaseEarly', async () => 'CM-1'),
+  ];
+  const stored = (link) => { const m = { ...existing, ...link.f }; for (const k of ((link.o && link.o.clearKeys) || [])) m[k] = ''; return m; };
+  try {
+    let r = await portal.createDirectClient({ ...DIRECT, linkLeadId: '777', deadlineType: 'Imaginary', promisedSubmissionDate: '2099-06-01' });
+    assert.equal(r.linked, true);
+    let link = calls.updates.find((u) => u.id === '777');
+    assert.deepEqual(link.o.clearKeys, ['actualDeadline'], 'the old actual date goes');
+    assert.deepEqual(handoff._internal.deadlineCellsOf(stored(link))[CM_COLS.type], { label: 'Imaginary' }, 'the case opens with the Imaginary answer');
+    calls.updates.length = 0;
+    r = await portal.createDirectClient({ ...DIRECT, linkLeadId: '777', deadlineType: 'Deadline', actualDeadline: '2099-03-01' });
+    link = calls.updates.find((u) => u.id === '777');
+    assert.deepEqual(link.o.clearKeys, ['promisedSubmissionDate'], 'a real deadline without a promised date drops the old promised date');
+    assert.equal(stored(link).promisedSubmissionDate, '');
+    calls.updates.length = 0;
+    await withEnv({ DEADLINE_REQUIRED: '0' }, async () => {
+      await portal.createDirectClient({ ...DIRECT, linkLeadId: '777' });
+      link = calls.updates.find((u) => u.id === '777');
+      assert.deepEqual(link.o.clearKeys, [], 'blank keeps the lead\'s own answer');
+      assert.equal(stored(link).actualDeadline, '2099-01-15');
+    })();
+  } finally { restore.reverse().forEach((r) => r()); }
+});
+
+test('the outcome action: Retain is refused without the deadline (nothing written), allowed with it, and with the switch off', async () => {
+  const base = { id: '1', fullName: 'A', email: 'a@b.co', retainerFee: '2000', outcome: '', confirmedCaseType: CASE_TYPE };
+  const stubNotify = () => stub(portal, 'notifyOutcomeChange', async () => {});
+  let w = actionWorld(base), n = stubNotify();
+  try {
+    await assert.rejects(portal.applyAction({ leadId: '1', action: 'outcome', value: 'Retain' }), (e) => e.badRequest && /Set the deadline first \(the Deadline box\)/.test(e.message));
+    assert.equal(w.calls.updates.length, 0, 'the Outcome is not written');
+    assert.equal((await portal.applyAction({ leadId: '1', action: 'outcome', value: 'Follow-Up' })).ok, true, 'other outcomes need no deadline');
+  } finally { n(); w.done(); }
+  w = actionWorld({ ...base, deadlineType: 'Imaginary', promisedSubmissionDate: '2099-12-15' }); n = stubNotify();
+  try {
+    assert.equal((await portal.applyAction({ leadId: '1', action: 'outcome', value: 'Retain' })).ok, true);
+    assert.ok(w.calls.updates.some((u) => u.f.outcome === 'Retain'));
+  } finally { n(); w.done(); }
+  await withEnv({ DEADLINE_REQUIRED: '0' }, async () => {
+    const w3 = actionWorld(base), n3 = stubNotify();
+    try { assert.equal((await portal.applyAction({ leadId: '1', action: 'outcome', value: 'Retain' })).ok, true); } finally { n3(); w3.done(); }
+  })();
+});
+
+test('the agreement send itself (Outcome=Retain typed on the board): held with a note until the deadline is set; a void-and-reissue is exempt; the switch off is exempt', async () => {
+  const notes = [];
+  const lead = { id: '1', fullName: 'A', email: '', outcome: 'Retain', retainerFee: '3000', retainerSent: '', retainerSigned: '', conversionStatus: 'Qualified' };
+  const restore = [
+    stub(leadService, 'getLead', async () => ({ ...lead })),
+    stub(mondayApi, 'query', async (q, v) => { if (/create_update/.test(q)) notes.push(v.b || v.body); return {}; }),
+  ];
+  try {
+    assert.deepEqual(await retainer.maybeSendRetainerAgreement('1', { notifyIfMissing: true }), { status: 'no-deadline' });
+    assert.match(notes.pop(), /⚠ Outcome is set to "Retain", but the deadline is not set\. The retainer agreement has NOT been emailed yet/);
+    assert.deepEqual(await retainer.maybeSendRetainerAgreement('1'), { status: 'no-deadline' });
+    assert.equal(notes.length, 0, 'no note unless asked (a fee retype must not spam notes)');
+    // a reissue corrects the agreement of a client already retained — it passes the gate and stops at the next check (no email here)
+    assert.deepEqual(await retainer.maybeSendRetainerAgreement('1', { notifyIfMissing: true, assumeUnsent: true }), { status: 'no-email' });
+    await withEnv({ DEADLINE_REQUIRED: '0' }, async () => {
+      assert.deepEqual(await retainer.maybeSendRetainerAgreement('1'), { status: 'no-email' });
+    })();
+  } finally { restore.reverse().forEach((r) => r()); }
+});
+
+test('Save deadline on a lead already set to Retain with no agreement out releases the held send (once, guarded); not when the agreement is out, not when the outcome is not Retain, not on a blank', async () => {
+  const sends = [];
+  const r1 = stub(retainer, 'maybeSendRetainerAgreement', async (id, o) => { sends.push({ id, o }); return { status: 'sent' }; });
+  const value = JSON.stringify({ deadlineType: 'Deadline', actualDeadline: '2099-01-15' });
+  let w = actionWorld({ id: '1', fullName: 'A', outcome: 'Retain', retainerFee: '3000', retainerSent: '' });
+  try {
+    const r = await portal.applyAction({ leadId: '1', action: 'saveDeadline', value });
+    assert.deepEqual(sends, [{ id: '1', o: { notifyIfMissing: true } }]);
+    assert.match(r.message, /The retainer agreement is being emailed to the client\./);
+  } finally { w.done(); }
+  sends.length = 0;
+  w = actionWorld({ id: '1', fullName: 'A', outcome: 'Retain', retainerFee: '3000', retainerSent: '2026-11-01' });
+  try { await portal.applyAction({ leadId: '1', action: 'saveDeadline', value }); assert.equal(sends.length, 0, 'already out'); } finally { w.done(); }
+  w = actionWorld({ id: '1', fullName: 'A', outcome: 'Follow-Up', retainerFee: '3000' });
+  try { await portal.applyAction({ leadId: '1', action: 'saveDeadline', value }); assert.equal(sends.length, 0, 'not Retain'); } finally { w.done(); }
+  w = actionWorld({ id: '1', fullName: 'A', outcome: 'Retain', retainerFee: '3000', deadlineType: 'Deadline', actualDeadline: '2099-01-15' });
+  try { await portal.applyAction({ leadId: '1', action: 'saveDeadline', value: JSON.stringify({}) }); assert.equal(sends.length, 0, 'a blank never sends'); } finally { w.done(); }
+  r1();
+});
+
+test('Needs attention: the cut-off is the Toronto day (a case opened the evening of Nov 6 Toronto is not listed; Nov 7 is)', () => {
+  const NA = require('../src/services/needsAttentionService');
+  const NOW = Date.parse('2026-12-01T15:00:00Z');
+  const item = (id, createdAt) => ({ id, name: 'Client', created_at: createdAt, group: { id: 'group_x', title: 'December 2026' }, updates: [],
+    column_values: [['text_mm142s49', `2026-SV-0${id}`], ['color_mm0x8faa', 'Document Collection Started'], ['color_mm0x9fnn', 'Paid'], ['color_mm6w7cdd', '']].map(([cid, text]) => ({ id: cid, text, value: null })) });
+  NA.io.now = () => NOW; NA._resetForTests();
+  const items = [item('61', '2026-11-07T03:00:00Z'), item('62', '2026-11-07T06:00:00Z')];
+  const out = NA.detect({ cases: items.map(NA.parseCase), checklist: new Map(items.map((i) => [`2026-SV-0${i.id}`, true])), now: NOW }).filter((e) => e.kind === 'no-deadline');
+  assert.deepEqual(out.map((e) => e.caseRef), ['2026-SV-062']);
 });

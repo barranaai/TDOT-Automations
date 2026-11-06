@@ -451,6 +451,21 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false, 
     }
     return { status: 'no-fee' };
   }
+  // The deadline (team meeting 2026-11-05): no client is retained before it is known. Outcome=Retain typed on the
+  // Lead board (or the 'outcome' action) reaches here without the portal's gate — held, with a note, until the
+  // deadline is saved (Save deadline on the record page then releases the send). A void-and-reissue (assumeUnsent)
+  // is exempt: that client was retained already; the reissue only corrects the agreement.
+  {
+    const DL = require('./deadlineService');
+    if (!assumeUnsent && DL.required() && !DL.isSet(lead)) {
+      console.log(`[Retainer2] Outcome is Retain but no deadline set for lead ${leadId} — agreement HELD`);
+      if (notifyIfMissing) {
+        await postLeadNote(leadId,
+          '⚠ Outcome is set to "Retain", but the deadline is not set. The retainer agreement has NOT been emailed yet — open the client\'s record in the app and set the Deadline box (a real deadline with its date, or imaginary with the submission date promised to the client); the agreement is then emailed automatically.');
+      }
+      return { status: 'no-deadline' };
+    }
+  }
 
   // Invariant: mark retainerSent (the idempotency lock) ONLY when the agreement
   // was actually DELIVERED. A no-email lead or a failed send must NOT lock the

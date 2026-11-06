@@ -31,7 +31,7 @@ const io = {
     'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
     { b: String(clientMasterBoardId), i: String(cmItemId), c: JSON.stringify(cells) },
   ),
-  findLead: (cmItemId) => leadService.findByColumnValue('clientMasterItemId', String(cmItemId)),
+  findLeads: (cmItemId) => leadService.findAllByColumnValue('clientMasterItemId', String(cmItemId)),
   getLead: (id) => leadService.getLead(String(id)),
   updateLead: (id, fields, opts) => leadService.updateLead(String(id), fields, opts),
   note: (id, body) => mondayApi.query('mutation($id:ID!,$b:String!){ create_update(item_id:$id, body:$b){ id } }', { id: String(id), b: body }),
@@ -61,19 +61,26 @@ async function onCaseEdited(cmItemId, { who = '' } = {}) {
   try {
     const onCase = await io.readCase(cmItemId);
     if (!onCase) return { skipped: 'no case' };
-    const lead = await io.findLead(cmItemId);
-    if (!lead) return { skipped: 'no lead' };
-    const onLead = deadline.fromLead(lead);
-    if (deadline.same(onCase, onLead)) return { skipped: 'same' };
+    // Every lead linked to this case (a consultation lead AND a later direct-retainer row can share one case —
+    // review 2026-11-06): each one that differs is brought in step.
+    const leads = ((await io.findLeads(cmItemId)) || []).filter(Boolean);
+    if (!leads.length) return { skipped: 'no lead' };
     const fields = {}, clearKeys = [];
     for (const [k, key] of [['type', 'deadlineType'], ['actualDeadline', 'actualDeadline'], ['promisedSubmissionDate', 'promisedSubmissionDate']]) {
       if (onCase[k]) fields[key] = onCase[k]; else clearKeys.push(key);
     }
-    await io.updateLead(lead.id, fields, { clearKeys });
     const check = deadline.validate({ deadlineType: onCase.type, actualDeadline: onCase.actualDeadline, promisedSubmissionDate: onCase.promisedSubmissionDate }, { required: false });
-    await io.note(lead.id, `Deadline changed on the case row in Monday${who ? ` by ${who}` : ''}: ${deadline.describe(onCase)} (was ${deadline.describe(onLead)}).${check.ok ? '' : ` ⚠ ${check.error}`}`).catch(() => {});
-    console.log(`[Deadline] case ${cmItemId} edited on the board → lead ${lead.id}: ${deadline.describe(onCase)}`);
-    return { ok: true, leadId: String(lead.id) };
+    const done = [];
+    for (const lead of leads) {
+      const onLead = deadline.fromLead(lead);
+      if (deadline.same(onCase, onLead)) continue;
+      await io.updateLead(lead.id, fields, { clearKeys });
+      await io.note(lead.id, `Deadline changed on the case row in Monday${who ? ` by ${who}` : ''}: ${deadline.describe(onCase)} (was ${deadline.describe(onLead)}).${check.ok ? '' : ` ⚠ ${check.error}`}`).catch(() => {});
+      console.log(`[Deadline] case ${cmItemId} edited on the board → lead ${lead.id}: ${deadline.describe(onCase)}`);
+      done.push(String(lead.id));
+    }
+    if (!done.length) return { skipped: 'same' };
+    return { ok: true, leadId: done[0], leadIds: done };
   } catch (err) {
     console.warn(`[Deadline] board edit on case ${cmItemId} could not be copied to the lead: ${err.message}`);
     return { error: err.message };

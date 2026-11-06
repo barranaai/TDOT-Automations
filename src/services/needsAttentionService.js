@@ -46,7 +46,7 @@ const COL = {
   deadlineType:   'color_mm6w7cdd',   // the client's deadline (2026-11-05): Deadline / Imaginary
 };
 // Cases opened from this day on are expected to carry a deadline (the question is asked at retain since then).
-const DEADLINE_SINCE = Date.parse(process.env.DEADLINE_ASKED_SINCE || '2026-11-07T00:00:00Z');
+const DEADLINE_SINCE = Date.parse(process.env.DEADLINE_ASKED_SINCE || '2026-11-07T05:00:00Z');   // 2026-11-07 00:00 Toronto (EST)
 const FETCH_COLS = [...new Set([...Object.values(COL), ...caseAccess.PEOPLE_COLUMNS])];
 const EXEC_REF_COL = 'text_mm0z2cck';            // Documents board: the case reference
 // Board groups that are not live cases. By id, with the title as a fallback

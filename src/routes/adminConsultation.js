@@ -157,6 +157,7 @@ const RETAINERS_PAGE_CSS = `
   #dc-modal .dlx .al-yn { display:flex; gap:18px; font-size:13.5px; margin:2px 0; }
   #dc-modal .dlx .al-yn label { display:flex; gap:6px; align-items:center; cursor:pointer; text-transform:none; letter-spacing:0; font-weight:400; margin:0; }
   #dc-modal .dlx input[type=date] { width:auto; }
+  #dc-modal .dlx .al-yn input { width:auto; padding:0; border:0; border-radius:0; background:none; flex:none; }  /* the #dc-modal input width:100% must not stretch the radios */
   #dc-modal .al-hint, #dc-modal .dc-note { font-size:12px; color:#64748b; margin-top:3px; }
   #dc-modal .att-row input[type=file] { border:0; padding:6px 0; }
 `;
@@ -562,6 +563,8 @@ function dcLoadConvertLead(leadId){
       /* How they first reached us carries over as the Source / Reference (and its referrer) — staff can change it. */
       var srcSel=dcEl('dc-source'), lsrc=String(d.sourceChannel||'');
       if(srcSel && !srcSel.value && lsrc && [].some.call(srcSel.options,function(o){ return o.value===lsrc; })){ srcSel.value=lsrc; DC_REF.load(lsrc, d.referredBy||''); }
+      /* The deadline the lead already holds is shown in the box — staff confirm or change it, never retype it blind. */
+      if(d.deadline && d.deadline.set && DC_DL.blank()) DC_DL.set(d.deadline);
       DC_CONVERT_LEAD_ID=String(leadId);
       var box=dcEl('dc-profile');
       if(box){
@@ -1798,6 +1801,7 @@ function load(){
 
 // ── Phase B: write actions ────────────────────────────────────────────────
 function setMsg(text,kind){ var el=document.getElementById('act-msg'); el.className='act-msg '+kind; el.textContent=text; }
+function cdMsg(text,kind){ var el=document.getElementById('cd-msg'); if(el){ el.className='act-msg '+kind; el.textContent=text; } }   /* the Deadline card's own line */
 function actButtons(){ return Array.prototype.slice.call(document.querySelectorAll('.actions button:not(.rmk-chip):not(#rmk-post)')); } // the remarks widget manages its own busy state
 function disableActions(on){
   actButtons().forEach(function(b){ b.disabled=on; });
@@ -1827,11 +1831,12 @@ function doAction(action,value,confirmMsg,staffNameOverride){
      if(res.status===401||res.status===403){ window.location.href='/admin'; return; }
      if(res.status!==200) throw new Error((res.j&&res.j.error)||('HTTP '+res.status));
      setMsg(res.j.message||'Done.','ok');
+     if(action==='saveDeadline'){ CD_DIRTY=false; cdMsg(res.j.message||'Done.','ok'); }   // saved — the box may follow the server again
      if(action==='saveRetainerSelections'||action==='sendMilestoneEtransferRequest'||action==='markMilestonePaid'||action==='retainAndSend') RP_HYDRATED=false; // re-hydrate the panel (fresh plan / send state)
      // Setting the fee doesn't re-hydrate (keeps in-progress plan edits) — flip the gate here.
      if(action==='retainerFee'){ RP_FEE_SET=true; PERSISTED_FEE=String(value==null?'':value); }
      load(); // refresh consultation state (pills, status, outcome highlight) — render() re-locks + resets amend
-   }).catch(function(e){ disableActions(false); setMsg(netErr(e),'err'); });
+   }).catch(function(e){ disableActions(false); setMsg(netErr(e),'err'); if(action==='saveDeadline') cdMsg(netErr(e),'err'); });
 }
 
 // Lock/unlock the retainer fee + plan once the agreement is sent. A disabled
@@ -2409,8 +2414,8 @@ function initActions(){
   var cdBtn=document.getElementById('btn-cd-save');
   if(cdBtn) cdBtn.onclick=function(){
     if(!CD_DL) CD_DL=window.tdotDeadlineBox('cd');
-    var e=CD_DL.check(false); if(e){ setMsg(e,'err'); CD_DL.focus(); return; }
-    CD_DIRTY=false;
+    var e=CD_DL.check(false); if(e){ cdMsg(e,'err'); CD_DL.focus(); return; }
+    /* CD_DIRTY stays on until the server has saved — a refused save must not let the next load() wipe the typed answer. */
     doAction('saveDeadline', JSON.stringify(CD_DL.read()));
   };
   rpEl('btn-retain-send').onclick=function(){
@@ -2428,9 +2433,13 @@ function initActions(){
     if(errEl) errEl.style.display='none';
     // The deadline (2026-11-05): a client is retained only once it is known — the server refuses too.
     if(!CD_DL) CD_DL=window.tdotDeadlineBox('cd');
-    if(CD_DL.blank() && !(RP_CT_OPTS && RP_CT_OPTS.deadlineRequired===false)){
-      setMsg('Set the deadline first (the Deadline box): a real deadline with its date, or imaginary with the submission date promised to the client — then Save deadline.','err');
-      CD_DL.focus(); return;
+    var dlInfo=(LAST_DETAIL&&LAST_DETAIL.deadline)||null;
+    if(!(dlInfo && dlInfo.required===false)){   /* the switch, as the server reports it on this record */
+      if(CD_DIRTY){ setMsg('Click "Save deadline" first — the deadline in the box is not saved yet.','err'); CD_DL.focus(); return; }
+      if(!(dlInfo && dlInfo.set)){
+        setMsg('Set the deadline first (the Deadline box): a real deadline with its date, or imaginary with the submission date promised to the client — then Save deadline.','err');
+        CD_DL.focus(); return;
+      }
     }
     var svMsg=svSendCheck();
     if(svMsg && !window.confirm(svMsg+'\\n\\nOK sends the agreement as it is. Cancel to change the family list first.')){

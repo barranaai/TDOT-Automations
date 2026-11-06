@@ -1137,6 +1137,14 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       };
       if (isNotWanted && bl.enabled()) await tryList();
 
+      // Retain needs the deadline (team meeting 2026-11-05) — the same gate as "Retain & send", BEFORE anything changes.
+      if (v.normalized === OUTCOME_RETAIN) {
+        const DL = require('./deadlineService');
+        if (DL.required() && !DL.isSet(lead)) {
+          const e = new Error('Set the deadline first (the Deadline box): a real deadline with its date, or imaginary with the submission date promised to the client — then Save deadline.');
+          e.badRequest = true; throw e;
+        }
+      }
       await leadService.updateLead(leadId, { outcome: v.normalized });
       await postPortalNote(leadId, `Outcome set to “${v.normalized}”${byName ? ` by ${escHtmlNote(byName)}` : ''}${isNotWanted ? ` — reason: ${escHtmlNote(v.reason)}` : ''}.`);
       await module.exports.notifyOutcomeChange({ leadId, lead, from: lead.outcome, to: v.normalized, staffName: byName });
@@ -1247,7 +1255,14 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       const cmId = String(lead.clientMasterItemId || '').trim();
       const onCase = cmId ? await require('./deadlineCaseSync').writeToCase(cmId, n, { reason: `edited by ${byName || 'staff'}` }) : null;
       await postPortalNote(leadId, `Deadline: ${escHtmlNote(DL.describe(n))} (was ${escHtmlNote(DL.describe(before))})${byName ? ` — set by ${escHtmlNote(byName)}` : ''}.${cmId && onCase === false ? ' ⚠ The case row could not be updated — set it on the case in Monday.' : ''}`);
-      return { ok: true, message: `Saved — ${DL.describe(n)}.${cmId ? (onCase ? ' The case row is updated too.' : ' ⚠ The case row could not be updated — set it on the case in Monday.') : ''}` };
+      // Outcome already "Retain" (set on the board, or before the question existed) and the agreement not out yet:
+      // the send the deadline gate held goes now — the same guarded, once-only send the fee webhook drives.
+      let released = '';
+      if (lead.outcome === 'Retain' && !n.blank && !String(lead.retainerSent || '').trim()) {
+        const r = await require('./retainerService2').maybeSendRetainerAgreement(leadId, { notifyIfMissing: true }).catch((err) => ({ status: 'error', error: err.message }));
+        if (r && r.status === 'sent') released = ' The retainer agreement is being emailed to the client.';
+      }
+      return { ok: true, message: `Saved — ${DL.describe(n)}.${cmId ? (onCase ? ' The case row is updated too.' : ' ⚠ The case row could not be updated — set it on the case in Monday.') : ''}${released}` };
     }
     case 'saveLocation': {
       const n = v.normalized;
@@ -2279,10 +2294,14 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
       residentialAddress: address,   // '' keeps the lead's own address (empty values are never written)
       ...(priorReferredBy ? {} : { referredBy }),
       conversionStatus:   'Qualified',
-      // The deadline typed on the form wins over whatever the lead held (the person retaining them knows).
+      // The deadline typed on the form wins over whatever the lead held (the person retaining them knows);
+      // the dates it does NOT carry are cleared below (review 2026-11-06: a stale promised date next to a
+      // new real deadline — or an old actual date next to "Imaginary" — left the case row with no deadline).
       ...DL.leadFields(dl).fields,
       ...reuseExtras,
     };
+    // A blank answer (the switch off) keeps whatever the lead holds; a real answer clears the dates it lacks.
+    const linkClearKeys = dl.blank ? [] : DL.leadFields(dl).clearKeys;
     if (chosenAccountId) linkWiring.clientAccountId = chosenAccountId;
     // Keep how they first reached us (Add-lead group, 2026-10-15) in its own column — once,
     // never overwritten: it says this client was a LEAD first (the KPIs still count them as
@@ -2290,7 +2309,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     // Only a real LEAD was "a lead first" — an existing direct client (old label or new marker) never is.
     const wasLead = !!priorChannel && !isDirectClient(existing);
     if (wasLead && !String(existing.originalChannel || '').trim()) linkWiring.originalChannel = priorChannel;
-    await leadService.updateLead(String(linkLeadId), linkWiring);
+    await leadService.updateLead(String(linkLeadId), linkWiring, { clearKeys: linkClearKeys });
     _directQueueCache = { at: 0, rows: null };
     invalidateLeadsQueue(); // the lead just left the funnel — drop it from the funnel queue too
     let caseOpened = false, linkCmId = '';

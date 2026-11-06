@@ -157,6 +157,10 @@ async function createLead(formData, { groupId, createRetries } = {}) {
     sourceChannel:        formData.sourceChannel || 'Website',
     directClient:         formData.directClient,   // "Yes" for a Direct retainer form client — AT creation, so the row is never a funnel lead (2026-11-04)
     leadOwner:            formData.leadOwner,   // staff-added leads: who added it (Add-lead group, 2026-10-15)
+    // The client's deadline dates (2026-11-05): date columns, AT creation — the direct retainer's case opens from
+    // this row at once. (Review 2026-11-06: the keys were handed in but this whitelist dropped them.)
+    actualDeadline:          formData.actualDeadline,
+    promisedSubmissionDate:  formData.promisedSubmissionDate,
     conversionStatus:     'New',
   };
 
