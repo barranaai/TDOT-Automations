@@ -770,8 +770,7 @@ function docAction(btn) {
     else if (res.status === 401) {
       btn.disabled = false;
       var em = document.getElementById('doc-act-msg');
-      var login = (res.j && res.j.loginUrl) || '/q/auth/monday';
-      if (login.indexOf('?') === -1) login += '?returnTo=' + encodeURIComponent(location.pathname + location.search);   // come back to this case
+      var login = ((res.j && res.j.loginUrl) || '/q/auth/monday').split('?')[0] + '?returnTo=' + encodeURIComponent(location.pathname + location.search);   // come back to this case (the server's own returnTo points at the dashboard)
       if (em) { em.className = 'act-msg err'; em.innerHTML = escHtml((res.j && res.j.error) || 'Please sign in again.') + ' <a href="' + escHtml(login) + '">Sign in with Monday</a>'; }
     }
     else { btn.disabled = false; actMsg('doc-act-msg', 'err', res.status === 403 ? 'You are not assigned to this case.' : ((res.j && res.j.error) || 'Action failed.')); }
@@ -1123,6 +1122,7 @@ function renderTimelineTab(d) {
 // concatenation — no backtick, no dollar-brace, no backslash.
 var REM_OPEN = false;      // the dialog is open: a reload must not redraw the card under it
 var REM_LAST = null;       // the last facts shown (redrawn when the dialog closes)
+var REM_STALE = false;     // the server noted a failed attempt while the dialog was open: closing it reads the case again
 function remMsg(cls, txt) {
   Array.prototype.forEach.call(document.querySelectorAll('.rem-msg'), function(el) { el.className = 'act-msg rem-msg ' + cls; el.textContent = txt; });
 }
@@ -1133,8 +1133,10 @@ function remSentLine(rm) {
     var label = n === 3 ? 'Final' : (n === 1 ? '1st' : '2nd');
     parts.push(label + ' ' + (x ? escHtml(x.label) + (x.by ? ' (' + escHtml(x.by) + ')' : '') + (n === 3 && x.lastDay ? ', last day ' + escHtml(x.lastDay) : '') : '—'));
   });
-  var auto = (rm.auto || []).map(function(a) { return escHtml(a.label); });
-  parts.push('Auto: ' + (auto.length ? auto.join(', ') : '—'));
+  // the automatic email goes once a day: the newest day + the count, never every date
+  var al = rm.autoLast || (rm.auto && rm.auto[0]) || null;
+  var n = Number(rm.autoCount || (rm.auto ? rm.auto.length : 0)) || 1;
+  parts.push('Auto: ' + (al ? 'last ' + escHtml(al.label) + ' (' + n + ' so far)' : '—'));
   return parts.join(' · ');
 }
 function renderReminders(rm) {
@@ -1152,9 +1154,9 @@ function renderReminders(rm) {
       '<button type="button" class="sbtn" data-rem-level="2"' + off + '>Send reminder 2 · firm</button>' +
       '<button type="button" class="sbtn danger" data-rem-level="3"' + off + '>Send final reminder</button></div>';
     if (rm.blocked) html += '<div class="rem-blocked">' + escHtml(rm.blocked) + '</div>';
-    html += '<div class="rem-sent">Sent: ' + remSentLine(rm) + '</div>';
+    html += '<div class="rem-sent">' + (rm.recentNotes ? 'Sent (recent notes): ' : 'Sent: ') + remSentLine(rm) + '</div>';
     if (rm.lastFailed && rm.failures && rm.failures[0]) html += '<div class="rem-fail">Last attempt did not go out (' + escHtml(rm.failures[0].label) + ') — the note on the case says when.</div>';
-    html += '<div class="rem-hint">Each click opens a preview you can edit before it goes. The missing documents are listed by the app (never questionnaire items); a note on the case is the record.</div>';
+    html += '<div class="rem-hint">Each click opens a preview you can edit before it goes. The missing documents are listed by the app (never questionnaire items); a note on the case is the record' + (rm.recentNotes ? ' — the Sent line reads the newest ' + Number(rm.recentNotes) + ' notes, so an older send may be further down the notes' : '') + '.</div>';
   }
   html += '<div class="act-msg rem-msg"></div>';
   Array.prototype.forEach.call(cards, function(c) {
@@ -1164,8 +1166,7 @@ function renderReminders(rm) {
 }
 function remFail(res, fallback) {
   if (res.status === 401) {
-    var login = (res.j && res.j.loginUrl) || '/q/auth/monday';
-    if (login.indexOf('?') === -1) login += '?returnTo=' + encodeURIComponent(location.pathname + location.search);   // come back to this case
+    var login = ((res.j && res.j.loginUrl) || '/q/auth/monday').split('?')[0] + '?returnTo=' + encodeURIComponent(location.pathname + location.search);   // come back to this case (the server's own returnTo points at the dashboard)
     Array.prototype.forEach.call(document.querySelectorAll('.rem-msg'), function(el) { el.className = 'act-msg rem-msg err'; el.innerHTML = escHtml((res.j && res.j.error) || 'Please sign in again.') + ' <a href="' + escHtml(login) + '">Sign in with Monday</a>'; });
     return;
   }
@@ -1196,7 +1197,12 @@ function remMissingHtml(missing) {
 }
 function remDialog(level, p) {
   var title = level === 3 ? 'Send the final reminder' : 'Send reminder ' + level + (level === 1 ? ' · friendly' : ' · firm');
-  var c = tdotDialogNew({ cls: 'rem-dlg', ovClass: 'rem-ov', group: 'rem', onClosed: function() { REM_OPEN = false; if (REM_LAST) renderReminders(REM_LAST); } });
+  var c = tdotDialogNew({ cls: 'rem-dlg', ovClass: 'rem-ov', group: 'rem', onClosed: function() {
+    REM_OPEN = false;
+    // a failed attempt was noted on the case while the dialog was open: read the case again so the card shows it (never the facts from before the send)
+    if (REM_STALE) { REM_STALE = false; loadCase(); return; }
+    if (REM_LAST) renderReminders(REM_LAST);
+  } });
   REM_OPEN = true;
   var warn = (p.warnings || []).map(function(w) { return '<div class="rem-warn">⚠ ' + escHtml(w) + '</div>'; }).join('');
   var html = '<h3>' + escHtml(title) + '</h3>' +
@@ -1232,11 +1238,14 @@ function remSend(c, level, v) {
   .then(function(res) {
     if (!c.still(id)) return;   // closed meanwhile (after the long wait): the answer is on the case, the reload shows it
     c.setBusy(false);
-    if (res.ok) { c.close(true, 'sent'); remMsg('ok', 'Sent to ' + (res.j.to || 'the client') + ' — noted on the case.'); loadCase(); return; }
+    if (res.ok) { REM_STALE = false; c.close(true, 'sent'); remMsg('ok', 'Sent to ' + (res.j.to || 'the client') + ' — noted on the case.'); loadCase(); return; }
     if (res.status === 401) { c.close(true, 'auth'); remFail(res, ''); return; }
     err.textContent = res.status === 403 ? 'You are not assigned to this case.' : ((res.j && res.j.error) || 'The reminder could not be sent.');
+    // the email did not go out (502) or the day's tries are used up (409 max-tries): the server noted it on the case —
+    // the dialog stays open with the text, and closing it reads the case again so the card shows the failure line
+    if (res.status === 502 || (res.status === 409 && res.j && res.j.reason === 'max-tries')) REM_STALE = true;
     // another send got there first, or the list changed under the dialog: the case reloads
-    if (res.status === 409 && res.j && (res.j.reason === 'lost-race' || res.j.reason === 'no-rows')) { c.close(true, 'refused'); remMsg('err', err.textContent); loadCase(); }
+    if (res.status === 409 && res.j && (res.j.reason === 'lost-race' || res.j.reason === 'no-rows')) { REM_STALE = false; c.close(true, 'refused'); remMsg('err', err.textContent); loadCase(); }
   })
   .catch(function(e) { if (!c.still(id)) return; c.setBusy(false); err.textContent = 'Failed: ' + e.message; });
 }

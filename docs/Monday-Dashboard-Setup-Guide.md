@@ -267,7 +267,8 @@ Widget 3 — Client Blocked Cases
     Widget type: Table
     Board: Client Master Board
     Filter: Client-Blocked Status = Yes
-    Columns to show: Case Reference Number, Client Full Name, Case Type, Chasing Stage, Reminder Count, Last Client Activity Date, Assigned Case Manager
+    Columns to show: Case Reference Number, Client Full Name, Case Type, Last Client Activity Date, Assigned Case Manager
+    (Chasing Stage and Reminder Count are retired columns — no longer updated since November 2026; what was sent is on the case page's Document reminders card)
     Title: Client Blocked — Action Required
 
 Widget 4 — Escalated Items (Documents)

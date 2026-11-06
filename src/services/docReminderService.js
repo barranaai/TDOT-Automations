@@ -762,12 +762,18 @@ function gateStaff(overview) {
   if (!s(o.accessToken)) throw refuse(409, 'no-token', 'This case has no access code, so no portal link can be made — nothing was sent.');
 }
 
-/** What the card needs to decide whether the buttons show (pure; the overview builds it). */
-function describeForCase({ overview, items, notes }) {
+/**
+ * What the card needs to decide whether the buttons show (pure; the overview builds it).
+ * notesLimit = how many notes the caller read (the newest N): the card then says
+ * "Sent (recent notes)" — `recentNotes` — because an older send may sit beyond them.
+ * docsUnavailable = the checklist read failed: named as such, never "no rows".
+ */
+function describeForCase({ overview, items, notes, notesLimit, docsUnavailable }) {
   const o = overview || {};
   const h = readReminderHistory(notes || []);
-  const base = { available: true, reason: '', message: '', canSend: true, blocked: '', ...historyView(h) };
+  const base = { available: true, reason: '', message: '', canSend: true, blocked: '', recentNotes: Number(notesLimit) > 0 ? Number(notesLimit) : 0, ...historyView(h) };
   if (o.cmUnavailable) return { ...base, available: false, reason: 'cm-unavailable', message: 'Case data is temporarily unavailable — reload in a moment.', canSend: false };
+  if (docsUnavailable) return { ...base, available: false, reason: 'docs-unavailable', message: 'The checklist could not be read just now — reload in a moment.', canSend: false };
   if (!s(o.clientEmail)) return { ...base, available: false, reason: 'no-email', message: 'No client email on the case — reminders cannot be sent.', canSend: false };
   if (!s(o.accessToken)) return { ...base, available: false, reason: 'no-token', message: 'No access code on the case — no portal link can be made, so no reminder.', canSend: false };
   const rows = Array.isArray(items) ? items : [];
@@ -834,7 +840,8 @@ async function previewStaffReminder({ overview, level, lastDay, actor, now } = {
     deadlineLine: dl.actualDeadline ? `Deadline ${fmtDay(dl.actualDeadline)}` : (dl.promisedSubmissionDate ? `Promised submission ${fmtDay(dl.promisedSubmissionDate)}` : 'No deadline on the case'),
     lastDay: last,
     minLastDay: today,
-    warnings: [...p.warnings, ...base.warnings],
+    // a board row that could not be used is said so (review 2026-11-07 [23]) — the dialog's amber line, never a silent fallback
+    warnings: [...p.warnings, ...base.warnings, ...(base.source === 'default' ? [templates.boardProblemFor(base.name)].filter(Boolean) : [])],
     template: { name: base.name, source: base.source },
     history: historyView(p.history),
   };
@@ -1068,10 +1075,14 @@ async function runDocReminders({ dryRun = false, reason = '' } = {}) {
       if (sel.decision !== 'candidate') { candidates.push({ caseRef: row.ref, itemId: row.id, client: row.name, decision: sel.decision, reason: sel.reason }); continue; }
       candidates.push(await runCandidate(row, sel, { now, today, dryRun }).catch((err) => ({ caseRef: row.ref, itemId: row.id, client: row.name, decision: 'error', reason: s(err.message).slice(0, 200) })));
     }
+    // the Reminder Templates board's state rides on the answer (review 2026-11-07 [23]): a row that
+    // could not be used is named in the Engine Controls preview — a cached load, no read when the env is unset
+    await templates.loadTemplates().catch((err) => io.warn(`[DocReminders] templates: ${err.message}`));
+    const templateProblems = templates.boardProblems();
     const count = (d) => candidates.filter((x) => x.decision === d).length;
     const sent = count('sent'), failed = count('failed') + count('error'), attention = count('attention');
     io.log(`[DocReminders] ${dryRun ? 'preview' : 'run'}${reason ? ` (${reason})` : ''}: ${rows.length} row(s) at Document Collection, ${dryRun ? `${count('would-send')} would be emailed` : `${sent} emailed`}, ${attention} for a person, ${failed} problem(s), ${Math.round((io.now() - startedAt) / 1000)}s`);
-    return { ok: true, enabled, dryRun, imaginary: opts.imaginary, allowList: opts.only, hour: autoHour(), today, checked: rows.length, candidates, sent, failed, attention, wouldSend: count('would-send'), tookMs: io.now() - startedAt };
+    return { ok: true, enabled, dryRun, imaginary: opts.imaginary, allowList: opts.only, hour: autoHour(), today, checked: rows.length, candidates, sent, failed, attention, wouldSend: count('would-send'), templateProblems, tookMs: io.now() - startedAt };
   } finally { if (dryRun) _previewing = false; else _running = false; }
 }
 

@@ -944,6 +944,9 @@ ${buildNavHeader('engines')}
         txt.textContent = head;
         addLog(d.ok === false ? 'error' : 'success', escHtml(label + ' — ' + head));
         var lines = [];
+        // a Reminder Templates board row that could not be used (the built-in text is in use) is said first
+        var tp = d.templateProblems || [];
+        for (var t = 0; t < tp.length; t++) lines.push('Template: ' + tp[t]);
         for (var i = 0; i < list.length; i++) { var c = list[i]; lines.push((c.caseRef || c.itemId || '?') + '  ' + c.decision + (c.reason ? ' — ' + c.reason : '')); }
         out.textContent = lines.length ? lines.join(String.fromCharCode(10)) : (d.candidates ? 'No rows at Document Collection Started.' : '');
         out.style.display = (lines.length || d.candidates) ? 'block' : 'none';

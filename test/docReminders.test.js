@@ -177,6 +177,29 @@ test('an invalid board row → its code default + a diagnostic naming the row an
   });
 });
 
+test('boardProblemFor / boardProblems (review 2026-11-07 [23]): the staff-facing line for a row that fell back to the built-in text; nothing for a fine row or an unwritten one', async () => {
+  await withBoard([
+    { name: 'Reminder 1', body: 'No list here' },
+    { name: 'Reminder 2', body: 'Fine {MissingList}' },
+    { name: 'Final', body: 'Please reply to this email {MissingList}' },
+  ], async () => {
+    await tpl.loadTemplates();
+    assert.equal(tpl.boardProblemFor('Reminder 1'), 'The Reminder 1 text on the Monday board could not be used (the body has no {MissingList} — the missing documents would not be listed) — the built-in text is used instead.');
+    assert.equal(tpl.boardProblemFor('Reminder 2'), '', 'a board row in use');
+    assert.equal(tpl.boardProblemFor('Automatic'), '', 'not written yet is not a fault');
+    assert.match(tpl.boardProblemFor('Final'), /^The Final text on the Monday board could not be used \(the text tells the client to reply[^)]*\) — the built-in text is used instead\.$/);
+    assert.deepEqual(tpl.boardProblems().map((x) => x.slice(0, 14)), ['The Reminder 1', 'The Final text']);
+    assert.equal(tpl.diagnostics()[0].reason, 'the body has no {MissingList} — the missing documents would not be listed');
+  });
+  await withBoard([], async () => {
+    await tpl.loadTemplates();
+    assert.match(tpl.boardProblemFor('Reminder 2'), /^The Reminder 2 text on the Monday board could not be used \(the Reminder Templates board could not be read \(monday down\)\) — the built-in text is used instead\.$/);
+    assert.equal(tpl.boardProblems().length, 4);
+  }, { fail: true });
+  tpl._resetForTests();
+  assert.deepEqual([tpl.boardProblemFor('Reminder 1'), tpl.boardProblems()], ['', []], 'nothing loaded = nothing to say');
+});
+
 test('a board that cannot be read, or has no Body column → every default + a diagnostic per row; the failure is cached briefly, not retried per send', async () => {
   await withBoard([], async (calls) => {
     assert.equal((await tpl.templateFor(1)).source, 'default');
@@ -658,6 +681,15 @@ test('describeForCase (the card\'s facts): hidden with its reason when the CM re
   assert.deepEqual([unpaid.available, unpaid.canSend], [true, false]); assert.equal(unpaid.blocked, 'Payment Status is Unpaid, not Paid — no reminder until the case is paid.');
   assert.match(svc.describeForCase({ ...base, overview: OV({ paymentStatus: '' }) }).blocked, /Payment Status is blank, not Paid/);
   assert.deepEqual([svc.caseGateProblem(OV()), svc.caseGateProblem(OV({ manualOverride: 'no' })), svc.caseGateProblem(OV({ paymentStatus: 'Partially Paid' })).reason], [null, null, 'not-paid']);
+  // review 2026-11-07 [4]: a failed checklist read is named — never "No checklist rows yet" as fact (staff would re-seed)
+  const docsDown = svc.describeForCase({ ...base, items: [], docsUnavailable: true });
+  assert.deepEqual([docsDown.available, docsDown.reason, docsDown.canSend, docsDown.message], [false, 'docs-unavailable', false, 'The checklist could not be read just now — reload in a moment.']);
+  assert.doesNotMatch(docsDown.message, /No checklist rows/);
+  assert.equal(svc.describeForCase({ ...base, overview: OV({ cmUnavailable: true }), docsUnavailable: true }).reason, 'cm-unavailable', 'the case read failing is named first');
+  // review [2]/[16]/[24]: the card is told the facts come from the newest N notes (recentNotes) — 0 when the caller read them all
+  assert.equal(ok.recentNotes, 0);
+  assert.equal(svc.describeForCase({ ...base, notesLimit: 100 }).recentNotes, 100);
+  assert.equal(svc.describeForCase({ ...base, notesLimit: 'x' }).recentNotes, 0);
   for (const group of [{ id: 'group_x', title: 'Cancel / Did not retained' }, { id: 'group_mm2tz8e1', title: 'Leads' }]) {
     const g = svc.describeForCase({ ...base, overview: OV({ group }) });
     assert.equal(g.canSend, false, group.title); assert.match(g.blocked, /not a live case/);
@@ -721,6 +753,13 @@ test('previewStaffReminder: the template with the merge fields filled except the
     assert.deepEqual(p.warnings, ['Reminder 1 already went on 3 Nov 2026 (Mahesh Sharma)']);
     assert.equal(p.history.sent[1].label, '3 Nov 2026');
     assert.deepEqual([p.template.name, p.template.source], ['Reminder 1', 'default']);
+    // review 2026-11-07 [23]: a board row that could not be used is said in the dialog's amber warnings — never a silent fallback
+    await withBoard([{ name: 'Reminder 1', body: 'No list here' }, { name: 'Reminder 2', body: 'Fine {MissingList}' }], async () => {
+      const bad = await svc.previewStaffReminder({ overview: OV(), level: 1 });
+      assert.deepEqual([bad.template.source, bad.warnings], ['default', ['Reminder 1 already went on 3 Nov 2026 (Mahesh Sharma)', 'The Reminder 1 text on the Monday board could not be used (the body has no {MissingList} — the missing documents would not be listed) — the built-in text is used instead.']]);
+      const good = await svc.previewStaffReminder({ overview: OV(), level: 2 });
+      assert.deepEqual([good.template.source, good.warnings], ['board', []], 'a board row in use: no such line');
+    });
     const f = await svc.previewStaffReminder({ overview: OV(), level: 3 });
     assert.equal(f.lastDay, '2026-11-14', 'today (7 Nov Toronto) + 7');
     assert.equal(f.minLastDay, '2026-11-07');
@@ -977,7 +1016,9 @@ test('source pins: server.js registers the two routes with its own gate helpers 
   assert.match(routesSrc, /const key = caseRef\.toUpperCase\(\);/, 'one cool-down slot per case whatever the letter case');
   const cockpit = read('src/services/caseCockpitService.js');
   assert.match(cockpit, /items\(ids: \[\$itemId\], limit: 1\) \{\n\s+group \{ id title \}\n\s+column_values\(ids: \[\$\{ids\}\]\) \{ id text value \}\n\s+updates\(limit: \$\{CM_NOTES_LIMIT\}\) \{ id created_at text_body body \}/, 'one read: group + columns + the newest notes');
-  assert.match(cockpit, /const CM_NOTES_LIMIT = 50;/);
+  assert.match(cockpit, /const CM_NOTES_LIMIT = 100;/, "Monday's maximum for updates on an item read (review 2026-11-07 [2]/[16]/[24]: 50 lost an older send on a busy case)");
+  assert.match(cockpit, /return \{ items: \[\], _unavailable: true \}; \}\)/, 'a failed checklist read is flagged, never passed on as an empty list (review [4])');
+  assert.match(cockpit, /docsUnavailable: docSummary\._unavailable === true,\n\s+notes: cm\.notes \|\| \[\],\n\s+notesLimit: CM_NOTES_LIMIT,/, 'the card is told how many notes it read and whether the checklist read failed');
   assert.match(cockpit, /automationLock: 'color_mm0x3x1x'/);
   assert.match(cockpit, /escalationLastNotified: 'date_mm1gqbd'/);
   // step C: the list is no longer a copy — both modules read the ONE array in src/utils/caseGroups.js
@@ -1200,6 +1241,13 @@ test('AUTO dry run (the Engine Controls preview): every row listed with its deci
     const on = await svc.runDocReminders({ dryRun: true });
     assert.equal(on.enabled, true); assert.equal(on.wouldSend, 1);
     assert.equal(w.sent.length, 0); assert.equal(w.posted.length, 0);
+    assert.deepEqual(r.templateProblems, [], 'no templates board set: nothing to say');
+    // review 2026-11-07 [23]: the Engine Controls preview names a Reminder Templates row that could not be used
+    await withBoard([{ name: 'Automatic', body: 'No list here' }, { name: 'Reminder 1', body: 'Fine {MissingList}' }], async () => {
+      const t = await svc.runDocReminders({ dryRun: true });
+      assert.deepEqual(t.templateProblems, ['The Automatic text on the Monday board could not be used (the body has no {MissingList} — the missing documents would not be listed) — the built-in text is used instead.']);
+      assert.equal(t.wouldSend, 1, 'the preview itself is unchanged');
+    });
   } finally { w.restore(); }
 });
 

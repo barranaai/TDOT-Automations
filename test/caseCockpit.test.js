@@ -265,7 +265,7 @@ const docRem = require('../src/services/docReminderService');
 const T_REM = Date.parse('2026-11-07T15:14:00Z');   // 7 Nov 2026, 10:14 am Toronto
 
 /** The cockpit fan-out with the Client Master read answering group + columns + notes (the one read the card uses). */
-function reminderStubs({ cmFail = false, updates = [], items = [{ id: '1', name: 'Passport', status: 'Missing', category: 'Identity', applicantType: 'Principal Applicant', applicantLabel: 'Principal Applicant', optional: false }], lock = 'No', override = '', stage = 'Document Collection Started', payment = 'Paid', group = { id: 'group_sv', title: 'Super Visa' } } = {}) {
+function reminderStubs({ cmFail = false, docsFail = false, updates = [], items = [{ id: '1', name: 'Passport', status: 'Missing', category: 'Identity', applicantType: 'Principal Applicant', applicantLabel: 'Principal Applicant', optional: false }], lock = 'No', override = '', stage = 'Document Collection Started', payment = 'Paid', group = { id: 'group_sv', title: 'Super Visa' } } = {}) {
   const cockpit     = require('../src/services/caseCockpitService');
   const mondayApi   = require('../src/services/mondayApi');
   const htmlQ       = require('../src/services/htmlQuestionnaireService');
@@ -278,12 +278,13 @@ function reminderStubs({ cmFail = false, updates = [], items = [{ id: '1', name:
       if (cmFail) throw new Error('monday down');
       assert.match(q, /items\(ids: \[\$itemId\], limit: 1\)/, 'the Client Master read carries an explicit limit');
       assert.match(q, /"color_mm0x975e"/, 'Manual Override rides on the same read (the send gate, review 2026-11-07)');
+      assert.match(q, /updates\(limit: 100\) \{ id created_at text_body body \}/, "the newest 100 notes (Monday's maximum) ride on the same read — review 2026-11-07 [2]/[16]/[24]");
       return { items: [{ group, updates, column_values: [
         { id: 'color_mm0x8faa', text: stage }, { id: 'color_mm0x9fnn', text: payment }, { id: 'text_mm0xw6bp', text: 'aisha@example.com' },
         { id: 'color_mm6w7cdd', text: 'Deadline', value: '{"index":1}' }, { id: 'date_mm33sj6t', text: '2026-12-16' }, { id: 'color_mm0x3x1x', text: lock }, { id: 'color_mm0x975e', text: override }, { id: 'date_mm1gqbd', text: '2026-11-06' },
       ] }] };
     }),
-    stub(docSvc, 'getCaseSummary', async () => ({ items })),
+    stub(docSvc, 'getCaseSummary', async () => { if (docsFail) throw new Error('monday timeout'); return { items }; }),
     stub(composition, 'readForCase', async () => ({ members: [] })),
     stub(htmlQ, 'loadMembers', async () => [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', submittedAt: '' }]),
     stub(htmlQ, 'getMemberStatuses', async ({ members }) => members.map((m) => ({ ...m, status: 'In Progress', hasData: true, completionPct: 40 }))),
@@ -306,8 +307,25 @@ test('getCaseOverview: the reminders card facts come from the SAME Client Master
     assert.equal(o.clientDeadline, 'Real deadline Dec 16, 2026', 'the pill is unchanged');
     assert.deepEqual([o.reminders.available, o.reminders.canSend, o.reminders.reason, o.reminders.missingCount], [true, true, '', 1]);
     assert.deepEqual([o.reminders.sent[1].label, o.reminders.sent[1].by, o.reminders.sent[2], o.reminders.auto], ['3 Nov 2026', 'Mahesh Sharma', null, []]);
+    assert.equal(o.reminders.recentNotes, 100, 'the card says its facts come from the newest 100 notes (review 2026-11-07 [2]/[16]/[24])');
     assert.ok(!JSON.stringify(o.reminders).includes('aisha@'), 'the card facts never carry the client address');
   } finally { restore.reverse().forEach((r) => r()); }
+  // the 100th note still counts: a claim behind 99 newer notes is on the Sent line
+  const old1 = docRem.claimNote({ level: 2, to: 'a***@example.com', actor: 'Deeksha Sharma', count: 2, now: T_REM - 9 * 86400e3 });
+  const filler = Array.from({ length: 99 }, (_, i) => ({ id: String(900 - i), created_at: new Date(T_REM - (i + 1) * 3600e3).toISOString(), text_body: 'Upload ' + i, body: '<p>📎 Upload ' + i + '</p>' }));
+  const busy = reminderStubs({ updates: [...filler, { id: '70', created_at: new Date(T_REM - 9 * 86400e3).toISOString(), text_body: old1.replace(/<[^>]*>/g, ''), body: old1 }] });
+  try {
+    const o = await cockpit.getCaseOverview('2026-SV-021');
+    assert.deepEqual([o.reminders.sent[2].label, o.reminders.sent[2].by, o.reminders.recentNotes], ['29 Oct 2026', 'Deeksha Sharma', 100]);
+  } finally { busy.reverse().forEach((r) => r()); }
+  // review [4]: a failed checklist read is named — never "No checklist rows yet" as fact
+  const docsDown = reminderStubs({ docsFail: true });
+  try {
+    const o = await cockpit.getCaseOverview('2026-SV-021');
+    assert.deepEqual([o.reminders.available, o.reminders.reason, o.reminders.canSend, o.reminders.message], [false, 'docs-unavailable', false, 'The checklist could not be read just now — reload in a moment.']);
+    assert.doesNotMatch(o.reminders.message, /No checklist rows/);
+    assert.equal(o.cmUnavailable, false, 'the case read itself was fine');
+  } finally { docsDown.reverse().forEach((r) => r()); }
   const locked = reminderStubs({ lock: 'Yes', group: { id: 'group_mm3b9tap', title: 'Cancel / Did not retained' } });
   try {
     const o = await cockpit.getCaseOverview('2026-SV-021');
@@ -414,7 +432,7 @@ function remSandbox({ responses = [] } = {}) {
   const flush = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r)); };
   return { ctx, cards, msgs, fetches, dialogs, loads: () => loads, flush, buttons: (i = 0) => cards[i].querySelectorAll('[data-rem-level]') };
 }
-const FACTS = (over = {}) => ({ available: true, reason: '', message: '', canSend: true, blocked: '', missingCount: 4, sent: { 1: { day: '2026-11-03', label: '3 Nov 2026', by: 'Mahesh Sharma', at: '', lastDay: '' }, 2: null, 3: null }, auto: [{ day: '2026-11-06', label: '6 Nov 2026' }], failures: [], lastFailed: false, ...over });
+const FACTS = (over = {}) => ({ available: true, reason: '', message: '', canSend: true, blocked: '', recentNotes: 100, missingCount: 4, sent: { 1: { day: '2026-11-03', label: '3 Nov 2026', by: 'Mahesh Sharma', at: '', lastDay: '' }, 2: null, 3: null }, auto: [{ day: '2026-11-06', label: '6 Nov 2026' }], autoLast: { day: '2026-11-06', label: '6 Nov 2026' }, autoCount: 1, failures: [], lastFailed: false, ...over });
 const PREVIEW = (over = {}) => ({ ok: true, level: 1, to: 'a***@example.com', subject: 'Documents still needed — 2026-SV-021', body: 'Dear Aisha Khan,\n\n{MissingList}\n\n{PortalLink}', tokensLeft: ['{MissingList}', '{PortalLink}'],
   missing: { groups: [{ member: 'Principal Applicant', categories: [{ category: 'Identity', items: [{ name: 'Passport <all pages>', instruction: 'Colour scan & all pages.' }] }] }], count: 1 }, missingList: '  - Passport', missingCount: 1,
   deadlineLine: 'Deadline 16 Dec 2026', lastDay: '', minLastDay: '2026-11-07', warnings: ['Reminder 1 already went on 3 Nov 2026 (Mahesh Sharma)'], template: { name: 'Reminder 1', source: 'default' }, history: {}, ...over });
@@ -426,15 +444,26 @@ test('case page (sandbox): renderReminders draws the three buttons and the Sent 
     assert.equal(s.cards[i].style.display, 'block');
     const btns = s.buttons(i);
     assert.deepEqual(btns.map((b) => [b.getAttribute('data-rem-level'), b.textContent.trim(), b.hasAttribute('disabled')]), [['1', 'Send reminder 1 · friendly', false], ['2', 'Send reminder 2 · firm', false], ['3', 'Send final reminder', false]]);
-    assert.match(s.cards[i].innerHTML, /Sent: 1st 3 Nov 2026 \(Mahesh Sharma\) · 2nd — · Final — · Auto: 6 Nov 2026/);
+    assert.match(s.cards[i].innerHTML, /Sent \(recent notes\): 1st 3 Nov 2026 \(Mahesh Sharma\) · 2nd — · Final — · Auto: last 6 Nov 2026 \(1 so far\)</);
     assert.match(s.cards[i].innerHTML, /never questionnaire items/);
+    assert.match(s.cards[i].innerHTML, /the Sent line reads the newest 100 notes, so an older send may be further down the notes\.<\/div>/, 'the card says where its facts come from (review [2]/[16]/[24])');
     assert.match(s.cards[i].innerHTML, /<div class="act-msg rem-msg"><\/div>$/, 'the message slot is part of the card');
   }
   s.ctx.renderReminders(FACTS({ canSend: false, blocked: 'Automation Lock is on for this case — reminders are off until it is cleared in Monday.' }));
   assert.ok(s.buttons(0).every((b) => b.hasAttribute('disabled')));
   assert.match(s.cards[0].innerHTML, /<div class="rem-blocked">Automation Lock is on/);
-  s.ctx.renderReminders(FACTS({ sent: { 1: null, 2: null, 3: { day: '2026-11-07', label: '7 Nov 2026', by: 'Deeksha Sharma', at: '', lastDay: '14 Nov 2026' } }, auto: [], lastFailed: true, failures: [{ day: '2026-11-07', label: '7 Nov 2026', reason: 'x', at: '' }] }));
-  assert.match(s.cards[1].innerHTML, /Sent: 1st — · 2nd — · Final 7 Nov 2026 \(Deeksha Sharma\), last day 14 Nov 2026 · Auto: —/);
+  // plan §3b conditions 2–4 (review 2026-11-07 [1]/[5]/[11]): the same line and off buttons for Manual Override, the stage and Paid
+  for (const blocked of ['Manual Override is on for this case — reminders are off until it is cleared in Monday.', 'This case is at Internal Review, not Document Collection — reminders are for cases collecting documents.', 'Payment Status is Unpaid, not Paid — no reminder until the case is paid.']) {
+    s.ctx.renderReminders(FACTS({ canSend: false, blocked }));
+    assert.ok(s.buttons(0).every((b) => b.hasAttribute('disabled')), blocked);
+    assert.ok(s.cards[1].innerHTML.includes('<div class="rem-blocked">' + blocked + '</div>'), blocked);
+  }
+  // the automatic days: the newest + the count, never the whole list (review [29]); none = "—"; 0 recentNotes = the plain "Sent:" label
+  s.ctx.renderReminders(FACTS({ auto: [], autoLast: { day: '2026-11-20', label: '20 Nov 2026' }, autoCount: 14, recentNotes: 0 }));
+  assert.match(s.cards[0].innerHTML, /<div class="rem-sent">Sent: 1st 3 Nov 2026 \(Mahesh Sharma\) · 2nd — · Final — · Auto: last 20 Nov 2026 \(14 so far\)<\/div>/);
+  assert.doesNotMatch(s.cards[0].innerHTML, /recent notes|newest 100/);
+  s.ctx.renderReminders(FACTS({ sent: { 1: null, 2: null, 3: { day: '2026-11-07', label: '7 Nov 2026', by: 'Deeksha Sharma', at: '', lastDay: '14 Nov 2026' } }, auto: [], autoLast: null, autoCount: 0, lastFailed: true, failures: [{ day: '2026-11-07', label: '7 Nov 2026', reason: 'x', at: '' }] }));
+  assert.match(s.cards[1].innerHTML, /Sent \(recent notes\): 1st — · 2nd — · Final 7 Nov 2026 \(Deeksha Sharma\), last day 14 Nov 2026 · Auto: —/);
   assert.match(s.cards[1].innerHTML, /<div class="rem-fail">Last attempt did not go out \(7 Nov 2026\)/);
   s.ctx.renderReminders({ available: false, reason: 'no-token', message: 'No access code on the case <x>', canSend: false });
   assert.equal(s.buttons(0).length, 0);
@@ -445,15 +474,15 @@ test('case page (sandbox): renderReminders draws the three buttons and the Sent 
   s.ctx.renderReminders(FACTS());
   const before = s.cards[0].innerHTML;
   s.ctx.REM_OPEN = true;
-  s.ctx.renderReminders(FACTS({ sent: { 1: null, 2: null, 3: null }, auto: [] }));
+  s.ctx.renderReminders(FACTS({ sent: { 1: null, 2: null, 3: null }, auto: [], autoLast: null, autoCount: 0 }));
   assert.equal(s.cards[0].innerHTML, before, 'no redraw under the dialog');
   s.ctx.REM_OPEN = false;
   s.ctx.renderReminders(s.ctx.REM_LAST);
-  assert.match(s.cards[0].innerHTML, /Sent: 1st — · 2nd — · Final — · Auto: —/);
+  assert.match(s.cards[0].innerHTML, /Sent \(recent notes\): 1st — · 2nd — · Final — · Auto: —/);
 });
 
 test('case page (sandbox): a click previews first (GET), the dialog carries To / subject / text / extra line / the read-only list / amber warnings, the final adds the last-day box; a 401 preview shows the sign-in link', async () => {
-  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW() }, { status: 200, body: PREVIEW({ level: 3, lastDay: '2026-11-14', warnings: [] }) }, { status: 401, body: { ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday' } }] });
+  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW() }, { status: 200, body: PREVIEW({ level: 3, lastDay: '2026-11-14', warnings: [] }) }, { status: 401, body: { ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' } }] });   // the real server shape (server.js resolveCaseForWrite): its returnTo points at the dashboard
   s.ctx.renderReminders(FACTS());
   // the real page binds onclick on the card's buttons (parsed nodes here are copies) — call remOpen as the binding does
   s.ctx.remOpen(1); await s.flush();
@@ -485,8 +514,11 @@ test('case page (sandbox): a click previews first (GET), the dialog carries To /
   f.els['rem-cancel'].onclick();
   s.ctx.remOpen(2); await s.flush();
   assert.equal(s.dialogs.length, 2, 'a 401 opens no dialog');
-  assert.match(s.msgs[0].innerHTML, /Sign in required <a href="\/q\/auth\/monday\?returnTo=%2Fadmin%2Fcase%2F2026-SV-021">Sign in with Monday<\/a>/);
+  assert.match(s.msgs[0].innerHTML, /Sign in required <a href="\/q\/auth\/monday\?returnTo=%2Fadmin%2Fcase%2F2026-SV-021">Sign in with Monday<\/a>/, 'the sign-in comes back to THIS case, not the dashboard the server named (review 2026-11-07 [26])');
   assert.equal(s.msgs[1].className, 'act-msg rem-msg err');
+  // the same rule on the document-action handler earlier in the page (the pre-existing sibling)
+  const { js: pageSrc } = pageJs();
+  assert.equal((pageSrc.match(/\.split\('\?'\)\[0\] \+ '\?returnTo=' \+ encodeURIComponent\(location\.pathname \+ location\.search\)/g) || []).length, 2, 'both 401 handlers replace the server\'s returnTo with this page');
 });
 
 test('case page (sandbox): Send posts the edited text (level, subject, body, extra, lastDay), goes busy, closes on success and reloads; a 502 stays open with the server\'s neutral words; a lost race closes and reloads; an empty box never posts', async () => {
@@ -495,7 +527,10 @@ test('case page (sandbox): Send posts the edited text (level, subject, body, ext
     { status: 200, body: { ok: true, noted: true, to: 'a***@example.com', level: 3, day: '2026-11-07' } },
     { status: 200, body: PREVIEW() },
     { status: 502, body: { ok: false, reason: 'send-failed', error: 'The email could not be sent — please try again in a moment.' } },
+    { status: 200, body: PREVIEW() },
     { status: 409, body: { ok: false, reason: 'lost-race', error: 'This reminder is being sent right now by someone else — nothing was sent twice. Reload the page in a moment.' } },
+    { status: 200, body: PREVIEW() },
+    { status: 409, body: { ok: false, reason: 'max-tries', error: 'This reminder did not go out 3 times today — the email system is having a temporary problem. Please try again tomorrow, or email the client by hand.' } },
   ] });
   s.ctx.renderReminders(FACTS());
   s.ctx.remOpen(3); await s.flush();
@@ -518,9 +553,27 @@ test('case page (sandbox): Send posts the edited text (level, subject, body, ext
   e.els['rem-send'].onclick(); await s.flush();
   assert.equal(e.els['rem-err'].textContent, 'The email could not be sent — please try again in a moment.');
   assert.deepEqual(e.closed, [], 'still open');
-  assert.equal(s.loads(), 1);
-  e.els['rem-send'].onclick(); await s.flush();   // the lost race
-  assert.deepEqual(e.closed, ['refused']);
-  assert.equal(s.loads(), 2);
+  assert.equal(s.loads(), 1, 'no reload under the open dialog');
+  assert.equal(s.ctx.REM_STALE, true, 'the server noted the failed attempt on the case');
+  // review 2026-11-07 [32]: Cancel after the failure reads the case again (the "did not go out" line comes from the notes), never the facts from before the send
+  const beforeCancel = s.cards[0].innerHTML;
+  e.els['rem-cancel'].onclick();
+  assert.deepEqual(e.closed, ['cancel']);
+  assert.equal(s.loads(), 2, 'closing the failed dialog reloads the case');
+  assert.equal(s.ctx.REM_STALE, false);
+  assert.equal(s.cards[0].innerHTML, beforeCancel, 'no redraw from the stale facts — the reload draws the card');
+  s.ctx.remOpen(1); await s.flush();
+  const g = s.dialogs[2];
+  g.els['rem-send'].onclick(); await s.flush();   // the lost race
+  assert.deepEqual(g.closed, ['refused']);
+  assert.equal(s.loads(), 3, 'one reload, not two');
   assert.match(s.msgs[1].textContent, /nothing was sent twice/);
+  // the day's tries used up (409 max-tries): the dialog stays open with the words, Cancel reloads
+  s.ctx.remOpen(1); await s.flush();
+  const h = s.dialogs[3];
+  h.els['rem-send'].onclick(); await s.flush();
+  assert.match(h.els['rem-err'].textContent, /did not go out 3 times today/);
+  assert.deepEqual([h.closed, s.loads(), s.ctx.REM_STALE], [[], 3, true]);
+  h.els['rem-cancel'].onclick();
+  assert.equal(s.loads(), 4);
 });

@@ -486,8 +486,8 @@
           <tr><td>Q Template Applied</td><td>Questionnaire service on Document Collection Started</td></tr>
           <tr><td>Stage Start Date</td><td>Resets automatically on every stage advance</td></tr>
           <tr><td>Payment Date</td><td>Set automatically when Retainer is marked Paid</td></tr>
-          <tr><td>Chasing Stage</td><td>Chasing loop (Pending → Reminder 1 → Reminder 2 → Final Notice → Client Blocked → Resolved)</td></tr>
-          <tr><td>Reminder Count</td><td>Chasing loop</td></tr>
+          <tr><td>Chasing Stage</td><td>Retired (November 2026) — no longer updated. Document reminders are now the three buttons on the case page (Reminder 1 friendly, Reminder 2 firm, Final naming the last day) plus the automatic daily email; the record is the notes on the case (see Section 9).</td></tr>
+          <tr><td>Reminder Count</td><td>Retired — no longer updated</td></tr>
           <tr><td>Last Client Activity</td><td>Updated automatically when client uploads a file or saves questionnaire</td></tr>
           <tr><td>SLA Risk Band</td><td>SLA engine (Green / Orange / Red)</td></tr>
           <tr><td>SLA Risk Flag</td><td>SLA engine</td></tr>
@@ -551,7 +551,7 @@
     <ul>
       <li>If the agreement is not yet fully signed, onboarding is <strong>on hold</strong> (a ⛔ note says so). The case moves to Document Collection Started and waits; everything starts by itself the moment the last signature lands.</li>
       <li>If the case is <strong>already past Document Collection</strong> (for example Internal Review), marking Paid only records the payment date. The case stays where it is and nothing is sent — a 💵 note on the case says what to do if the client never had their checklist or portal email.</li>
-      <li>A second "Paid" on a case that was already set up only refreshes the payment date — except while the case is at Document Collection Started, where it also restarts the document-reminder clock (Stage Start Date, Chasing Stage, Reminder Count), so avoid toggling Paid on a client who is being chased.</li>
+      <li>A second "Paid" on a case that was already set up only refreshes the payment date — except while the case is at Document Collection Started, where it also resets Stage Start Date (the automatic document reminder waits 3 days after it), so avoid toggling Paid on a client who is being chased.</li>
     </ul>
 
     <div class="subhead">When Client Email is Corrected</div>
@@ -564,7 +564,7 @@
         <tbody>
           <tr><td>Readiness Scan</td><td>Counts documents and questionnaire answers. Updates Q Readiness %, Doc Readiness %, and Blocking Doc Count on the Client Master Board.</td></tr>
           <tr><td>Stage Gates</td><td>If readiness meets the threshold (typically 80%) with zero blocking items, the case automatically advances from Document Collection Started to Internal Review, or from Internal Review to Submission Preparation.</td></tr>
-          <tr><td>Chasing Loop</td><td>If a client has not responded in a set number of days (configured per case type in the SLA Config board), reminder emails are sent automatically. Escalates through: Reminder 1 → Reminder 2 → Final Notice → Client Blocked.</td></tr>
+          <tr><td>Chasing Loop</td><td>Retired (November 2026) — replaced by Document reminders: the three buttons on the case page (a preview with editable text before every send; a note on the case is the record) and the automatic daily missing-documents email for Paid cases at Document Collection Started with a real deadline 4+ days away and documents under 50 % uploaded (switch DOC_REMINDERS_AUTO; off for now). The automatic email is not part of the overnight run — it goes at about 9 a.m. Toronto time.</td></tr>
           <tr><td>SLA Engine</td><td>Calculates days elapsed, expected deadlines, and SLA Risk Band (Green / Orange / Red). Updates SLA columns on the board.</td></tr>
           <tr><td>Case Health Engine</td><td>Scores overall case health based on multiple signals (SLA, client responsiveness, blocking items). Sets Case Health Status.</td></tr>
           <tr><td>Expiry Engine</td><td>Checks passport, IELTS, and medical expiry dates. Flags and emails the case manager if any are approaching.</td></tr>
@@ -650,7 +650,7 @@
       <li>The Doc Readiness % on the Client Master Board updates the following morning (daily scan), or immediately after the client's next upload.</li>
     </ol>
     <div class="note">
-      <p>You do not need to chase the client manually. The chasing loop sends reminder emails automatically based on inactivity days. See Section 9.</p>
+      <p>To chase the client, use the Document reminders card on the case page: Reminder 1 (friendly), Reminder 2 (firm) or the Final reminder naming the last day — each opens a preview you can edit, and a note on the case records the send. When its switch is on, the app also emails a Paid client with a real deadline and documents under 50 % by itself every morning. The old chasing loop is retired. See Section 9.</p>
     </div>
   </div>
 
@@ -748,7 +748,7 @@
       <p>Setting any terminal stage (Submitted, Approved, Refused, Closed, Withdrawn, Cancelled, Archived) automatically:</p>
       <ul>
         <li>Sets Automation Lock to Yes — all daily engines skip this case</li>
-        <li>Sets Chasing Stage to Resolved — stops all client reminder emails</li>
+        <li>Sets Chasing Stage to Resolved (a retired column) — the document reminders skip a locked case</li>
         <li>Clears Escalation Required</li>
         <li>Posts an audit comment on the item</li>
       </ul>
@@ -789,21 +789,20 @@
     </ul>
     <p>When Case Health turns Red, you receive a Monday.com notification automatically.</p>
 
-    <div class="subhead">Chasing Stage (client follow-up)</div>
-    <p>The chasing loop sends emails automatically. You can monitor where it is:</p>
+    <div class="subhead">Document reminders (client follow-up)</div>
+    <p>The old chasing loop is retired (November 2026): the Chasing Stage and Reminder Count columns are no longer updated. Reminders are sent from the Document reminders card on the case page (Overview and Documents tabs):</p>
     <div class="tbl-wrap">
       <table>
-        <thead><tr><th>Chasing Stage value</th><th>Meaning</th></tr></thead>
+        <thead><tr><th>Reminder</th><th>What it does</th></tr></thead>
         <tbody>
-          <tr><td>(blank) or Pending</td><td>Not started — client has not been chased yet</td></tr>
-          <tr><td>Reminder 1 Sent</td><td>First reminder sent</td></tr>
-          <tr><td>Reminder 2 Sent</td><td>Second reminder sent</td></tr>
-          <tr><td>Final Notice Sent</td><td>Final warning sent</td></tr>
-          <tr><td>Client Blocked</td><td>Client has not responded after all reminders — escalation triggered</td></tr>
-          <tr><td>Resolved</td><td>Client has responded or the case has moved forward — chasing stopped</td></tr>
+          <tr><td>Send reminder 1 · friendly</td><td>Lists the missing documents by family member and category with the portal link; you see a preview and can edit the text before it goes</td></tr>
+          <tr><td>Send reminder 2 · firm</td><td>The same list, firmer wording — any order, repeatable</td></tr>
+          <tr><td>Send final reminder</td><td>Names the last day you will wait; the email says what happens after it — the app itself moves nothing</td></tr>
+          <tr><td>Automatic daily email</td><td>Only while the switch DOC_REMINDERS_AUTO is on (off for now): a Paid case at Document Collection Started with a real deadline 4+ days away and documents under 50 % uploaded gets the missing-documents email at about 9 a.m. Toronto time, once a day; never within 3 days of the deadline — those cases are listed under Needs attention for a call</td></tr>
         </tbody>
       </table>
     </div>
+    <p>Every send is a note on the case ("📨 Document reminder …"); the card's "Sent" line reads the newest notes. The buttons refuse when the case is not Paid, not at Document Collection Started, locked or on Manual Override.</p>
 
     <div class="subhead">Escalation Required column</div>
     <p>When this is set to Yes (either automatically or by you):</p>
@@ -814,7 +813,7 @@
     <p>When set back to No, the escalation reason is cleared automatically.</p>
 
     <div class="subhead">Manual Override column</div>
-    <p>Set this to Yes if a client has a valid reason for delay and you want to pause the chasing loop for that case. This stops reminder emails without locking the whole case. The SLA and health engines still run.</p>
+    <p>Set this to Yes if a client has a valid reason for delay and you want to pause the document reminders for that case: the automatic email skips it and the case-page reminder buttons refuse to send. This does not lock the whole case. The SLA and health engines still run.</p>
     <div class="note">
       <p>Use this for situations like: client is travelling, client is waiting on third-party documents, or client has spoken to you directly.</p>
     </div>
@@ -1009,29 +1008,33 @@
     <p>The Soft Deadline is the "should be done by" target — an internal prompt that the case needs to be wrapping up. It is always earlier than the Hard Deadline. The system also calculates a Submission Prep Deadline = Soft Deadline − 7 days, which is when all documents should be compiled and ready for the application package.</p>
     <p>Example: 60-day SLA, offset 10 → Soft Deadline = Day 50, Prep Deadline = Day 43.</p>
 
-    <div class="subhead">Reminder 1 Offset (Chasing — First Reminder)</div>
+    <div class="note">
+      <p>Retired (November 2026): the four chasing offsets below are no longer read. The chasing loop that used them is retired, replaced by Document reminders (Section 9). The settings stay on the board but change nothing.</p>
+    </div>
+
+    <div class="subhead">Reminder 1 Offset (Chasing — First Reminder) — retired</div>
     <p>Type: Number (days of inactivity, e.g., 7) &nbsp;—&nbsp; Default: 7 days</p>
-    <p>If a client has not uploaded any documents or submitted their questionnaire within this many days of the case opening, the chasing loop sends the first reminder email automatically. The inactivity clock is reset every time the client uploads a document or saves questionnaire answers.</p>
+    <p>If a client has not uploaded any documents or submitted their questionnaire within this many days of the case opening, the chasing loop used to send the first reminder email automatically. The inactivity clock was reset every time the client uploads a document or saves questionnaire answers.</p>
 
-    <div class="subhead">Reminder 2 Offset (Chasing — Second Reminder)</div>
+    <div class="subhead">Reminder 2 Offset (Chasing — Second Reminder) — retired</div>
     <p>Type: Number (days, e.g., 14) &nbsp;—&nbsp; Default: 14 days</p>
-    <p>If the client still has not responded after Reminder 1, a second, firmer reminder is sent after this many total days of inactivity.</p>
+    <p>If the client still has not responded after Reminder 1, a second, firmer reminder used to go after this many total days of inactivity.</p>
 
-    <div class="subhead">Final Notice Offset (Chasing — Final Warning)</div>
+    <div class="subhead">Final Notice Offset (Chasing — Final Warning) — retired</div>
     <p>Type: Number (days, e.g., 21) &nbsp;—&nbsp; Default: 21 days</p>
-    <p>After this many total days of inactivity, the chasing loop sends a final notice — a clear warning that the case will be escalated if there is no response.</p>
+    <p>After this many total days of inactivity, the chasing loop used to send a final notice — a clear warning that the case will be escalated if there is no response.</p>
 
-    <div class="subhead">Escalation Offset (Chasing — Client Blocked)</div>
+    <div class="subhead">Escalation Offset (Chasing — Client Blocked) — retired</div>
     <p>Type: Number (days, e.g., 30) &nbsp;—&nbsp; Default: 30 days</p>
-    <p>If the client has still not responded after the Final Notice and this many total days of inactivity, the system:</p>
+    <p>If the client had still not responded after the Final Notice and this many total days of inactivity, the system used to:</p>
     <ul>
       <li>Sets Chasing Stage to Client Blocked</li>
       <li>Sets Escalation Required to Yes</li>
       <li>Notifies the Ops Supervisor</li>
     </ul>
-    <p>This is the automatic escalation trigger for non-responsive clients.</p>
+    <p>This was the automatic escalation trigger for non-responsive clients; a client who has not answered the Final reminder now shows under Needs attention ("Final reminder: last day passed, nothing uploaded since") for a call.</p>
     <div class="note">
-      <p>The four chasing offsets work as a ladder: Reminder 1 → Reminder 2 → Final Notice → Escalation. Each fires only once per period of inactivity. If the client responds at any point, the chain resets.</p>
+      <p>The four chasing offsets used to work as a ladder: Reminder 1 → Reminder 2 → Final Notice → Escalation. That ladder is retired — nothing sends from these settings any more. Document reminders are sent from the case page and, when the switch is on, by the automatic daily email (Section 9).</p>
     </div>
 
     <div class="subhead">Expiry Warning Days</div>
@@ -1060,7 +1063,7 @@
           <tr><td>Orange / Red Threshold</td><td>SLA Risk Engine</td></tr>
           <tr><td>Hard / Soft Deadline Offset</td><td>SLA Risk Engine</td></tr>
           <tr><td>Expiry Warning Days</td><td>SLA Risk Engine and Expiry Engine</td></tr>
-          <tr><td>Reminder 1 / 2 / Final / Escalation Offset</td><td>Chasing Loop</td></tr>
+          <tr><td>Reminder 1 / 2 / Final / Escalation Offset</td><td>Retired — the chasing loop no longer runs (Document reminders replaced it)</td></tr>
           <tr><td>Urgency Weight</td><td>Escalation Routing Engine</td></tr>
           <tr><td>Expiry Sensitivity</td><td>Escalation Routing Engine</td></tr>
         </tbody>

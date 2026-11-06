@@ -58,7 +58,10 @@ const CM = {
 };
 // Document reminders (block 2): the case's newest notes ride on the same Client
 // Master read — the "Sent:" line is read from them, never a second expensive read.
-const CM_NOTES_LIMIT = 50;
+// 100 is Monday's maximum for updates on an item read (review 2026-11-07: 50 lost
+// an older reminder on a busy case); the card says its facts come from the
+// recent notes, since a case can hold more.
+const CM_NOTES_LIMIT = 100;
 
 function clampPct(raw) {
   if (raw === '' || raw == null) return 0;
@@ -321,7 +324,7 @@ async function getCaseOverview(caseRef) {
   // Fan out the independent reads; degrade each section to empty on failure.
   const [cm, docSummary, composition, members] = await Promise.all([
     readClientMaster(itemId).catch((e) => { console.warn(`[Cockpit] CM read failed for ${caseRef}: ${e.message}`); return { _unavailable: true }; }),
-    documentFormSvc.getCaseSummary(caseRef).catch((e) => { console.warn(`[Cockpit] doc read failed for ${caseRef}: ${e.message}`); return { items: [] }; }),
+    documentFormSvc.getCaseSummary(caseRef).catch((e) => { console.warn(`[Cockpit] doc read failed for ${caseRef}: ${e.message}`); return { items: [], _unavailable: true }; }),   // _unavailable: the Reminders card says "could not be read", never "no rows" (review 2026-11-07)
     compositionAdapter.readForCase(caseRef).catch((e) => { console.warn(`[Cockpit] family read failed for ${caseRef}: ${e.message}`); return { members: [] }; }),
     htmlQ.loadMembers({ clientName, caseRef }).catch((e) => { console.warn(`[Cockpit] members read failed for ${caseRef}: ${e.message}`); return []; }),
   ]);
@@ -375,7 +378,9 @@ async function getCaseOverview(caseRef) {
   const reminders = require('./docReminderService').describeForCase({
     overview: { cmUnavailable: cm._unavailable === true, clientEmail: cm.clientEmail || '', accessToken, group, automationLock, manualOverride, caseStage, paymentStatus },
     items: docSummary.items || [],
+    docsUnavailable: docSummary._unavailable === true,
     notes: cm.notes || [],
+    notesLimit: CM_NOTES_LIMIT,   // the card says "Sent (recent notes)": the facts come from the newest 100, never a second read
   });
 
   return {
