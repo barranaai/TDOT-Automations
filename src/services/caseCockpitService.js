@@ -367,6 +367,7 @@ async function getCaseOverview(caseRef) {
     health:          cm.health || '—',
     slaRisk:         cm.slaRisk || '—',
     deadline:        cm.deadline || '',
+    clientDeadline:  cm._unavailable ? '' : (cm.clientDeadline || 'Not set'),   // the client's own deadline (block 1) — the case page pill (review 2026-11-06: it was read but never passed on)
     // Questionnaire % from the SAVED ANSWERS when they could be read (the
     // Monday number used to be written only at Submit); Monday is the fallback.
     qReadinessPct:   htmlQ.deriveQuestionnaireProgress({ members: qMembers, mondayPct: cm.qReadinessPct || 0 }).pct,

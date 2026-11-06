@@ -368,6 +368,8 @@ test('the case page pill and Needs attention: a new case without a deadline is l
     const d = await cockpit.readClientMaster('CM-1');
     assert.equal(d.clientDeadline, 'Imaginary — promised Dec 15, 2026');
   } finally { restore.forEach((r) => r()); }
+  const ov = require('fs').readFileSync(require.resolve('../src/services/caseCockpitService.js'), 'utf8');
+  assert.ok(/clientDeadline:\s+cm\._unavailable \? '' : \(cm\.clientDeadline \|\| 'Not set'\)/.test(ov), 'the overview passes the client deadline on to the case page (it was read but never passed, found 2026-11-06)');
   const page = require('fs').readFileSync(require.resolve('../src/routes/adminCase.js'), 'utf8');
   assert.ok(page.includes(`<span class="pk">Client deadline</span> ' + escHtml(d.clientDeadline)`) && page.includes('<span class="pk">SLA deadline</span>'));
 });

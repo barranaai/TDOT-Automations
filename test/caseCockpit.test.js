@@ -170,7 +170,7 @@ const OVERVIEW_KEYS = [
   'caseRef', 'itemId', 'clientName', 'caseType', 'caseSubType',
   'familyAddTypes',   // the member types the case page may add (2026-10-07)
   'accessToken', 'cmUnavailable', 'clientEmail', 'manager', 'assignees',
-  'paymentStatus', 'caseStage', 'health', 'slaRisk', 'deadline', 'qReadinessPct', 'docReadinessPct', 'docReviewedPct', 'portalLink', 'folderLink',
+  'paymentStatus', 'caseStage', 'health', 'slaRisk', 'deadline', 'clientDeadline', 'qReadinessPct', 'docReadinessPct', 'docReviewedPct', 'portalLink', 'folderLink',
   'family', 'questionnaire', 'documents', 'lead', 'payments', 'timeline',
 ];
 
