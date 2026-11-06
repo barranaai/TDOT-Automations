@@ -171,9 +171,9 @@ const OVERVIEW_KEYS = [
   'familyAddTypes',   // the member types the case page may add (2026-10-07)
   'accessToken', 'cmUnavailable', 'clientEmail', 'manager', 'assignees',
   'paymentStatus', 'caseStage', 'health', 'slaRisk', 'deadline', 'clientDeadline',
-  // document reminders (block 2, 2026-11-06): the stored deadline answer, the board group, the lock and the
-  // escalation engine's last client email (the send gate + the 24-hour check), and the Reminders card's facts
-  'clientDeadlineRaw', 'group', 'automationLock', 'escalationLastNotified', 'reminders',
+  // document reminders (block 2, 2026-11-06): the stored deadline answer, the board group, the lock, Manual Override
+  // (the send gate, review 2026-11-07) and the escalation engine's stamp (a preview warning only), and the Reminders card's facts
+  'clientDeadlineRaw', 'group', 'automationLock', 'manualOverride', 'escalationLastNotified', 'reminders',
   'qReadinessPct', 'docReadinessPct', 'docReviewedPct', 'portalLink', 'folderLink',
   'family', 'questionnaire', 'documents', 'lead', 'payments', 'timeline',
 ];
@@ -265,7 +265,7 @@ const docRem = require('../src/services/docReminderService');
 const T_REM = Date.parse('2026-11-07T15:14:00Z');   // 7 Nov 2026, 10:14 am Toronto
 
 /** The cockpit fan-out with the Client Master read answering group + columns + notes (the one read the card uses). */
-function reminderStubs({ cmFail = false, updates = [], items = [{ id: '1', name: 'Passport', status: 'Missing', category: 'Identity', applicantType: 'Principal Applicant', applicantLabel: 'Principal Applicant', optional: false }], lock = 'No', group = { id: 'group_sv', title: 'Super Visa' } } = {}) {
+function reminderStubs({ cmFail = false, updates = [], items = [{ id: '1', name: 'Passport', status: 'Missing', category: 'Identity', applicantType: 'Principal Applicant', applicantLabel: 'Principal Applicant', optional: false }], lock = 'No', override = '', stage = 'Document Collection Started', payment = 'Paid', group = { id: 'group_sv', title: 'Super Visa' } } = {}) {
   const cockpit     = require('../src/services/caseCockpitService');
   const mondayApi   = require('../src/services/mondayApi');
   const htmlQ       = require('../src/services/htmlQuestionnaireService');
@@ -277,9 +277,10 @@ function reminderStubs({ cmFail = false, updates = [], items = [{ id: '1', name:
     stub(mondayApi, 'query', async (q) => {
       if (cmFail) throw new Error('monday down');
       assert.match(q, /items\(ids: \[\$itemId\], limit: 1\)/, 'the Client Master read carries an explicit limit');
+      assert.match(q, /"color_mm0x975e"/, 'Manual Override rides on the same read (the send gate, review 2026-11-07)');
       return { items: [{ group, updates, column_values: [
-        { id: 'color_mm0x8faa', text: 'Document Collection Started' }, { id: 'color_mm0x9fnn', text: 'Paid' }, { id: 'text_mm0xw6bp', text: 'aisha@example.com' },
-        { id: 'color_mm6w7cdd', text: 'Deadline', value: '{"index":1}' }, { id: 'date_mm33sj6t', text: '2026-12-16' }, { id: 'color_mm0x3x1x', text: lock }, { id: 'date_mm1gqbd', text: '2026-11-06' },
+        { id: 'color_mm0x8faa', text: stage }, { id: 'color_mm0x9fnn', text: payment }, { id: 'text_mm0xw6bp', text: 'aisha@example.com' },
+        { id: 'color_mm6w7cdd', text: 'Deadline', value: '{"index":1}' }, { id: 'date_mm33sj6t', text: '2026-12-16' }, { id: 'color_mm0x3x1x', text: lock }, { id: 'color_mm0x975e', text: override }, { id: 'date_mm1gqbd', text: '2026-11-06' },
       ] }] };
     }),
     stub(docSvc, 'getCaseSummary', async () => ({ items })),
@@ -300,6 +301,7 @@ test('getCaseOverview: the reminders card facts come from the SAME Client Master
     assert.deepEqual(o.clientDeadlineRaw, { type: 'Deadline', actualDeadline: '2026-12-16', promisedSubmissionDate: '' });
     assert.deepEqual(o.group, { id: 'group_sv', title: 'Super Visa' });
     assert.equal(o.automationLock, 'No');
+    assert.equal(o.manualOverride, '');
     assert.equal(o.escalationLastNotified, '2026-11-06');
     assert.equal(o.clientDeadline, 'Real deadline Dec 16, 2026', 'the pill is unchanged');
     assert.deepEqual([o.reminders.available, o.reminders.canSend, o.reminders.reason, o.reminders.missingCount], [true, true, '', 1]);
@@ -317,6 +319,16 @@ test('getCaseOverview: the reminders card facts come from the SAME Client Master
     const o = await cockpit.getCaseOverview('2026-SV-021');
     assert.deepEqual([o.reminders.available, o.reminders.reason], [false, 'no-rows']);
   } finally { noRows.reverse().forEach((r) => r()); }
+  // plan §3b conditions 2–4 (review 2026-11-07): not Paid, not at Document Collection, Manual Override = Yes → the card shows the line, the buttons are off
+  for (const [over, re] of [[{ payment: 'Unpaid' }, /Payment Status is Unpaid, not Paid/], [{ stage: 'Internal Review' }, /at Internal Review, not Document Collection/], [{ override: 'Yes' }, /Manual Override is on/]]) {
+    const r = reminderStubs(over);
+    try {
+      const o = await cockpit.getCaseOverview('2026-SV-021');
+      assert.deepEqual([o.reminders.available, o.reminders.canSend], [true, false], JSON.stringify(over));
+      assert.match(o.reminders.blocked, re);
+      if (over.override) assert.equal(o.manualOverride, 'Yes');
+    } finally { r.reverse().forEach((x) => x()); }
+  }
 });
 
 test('getCaseOverview: a failed Client Master read hides the Reminders card with its reason (no fabricated card) and blanks the gate facts', async () => {
@@ -327,7 +339,7 @@ test('getCaseOverview: a failed Client Master read hides the Reminders card with
     assert.equal(o.cmUnavailable, true);
     assert.deepEqual([o.reminders.available, o.reminders.reason, o.reminders.canSend], [false, 'cm-unavailable', false]);
     assert.match(o.reminders.message, /temporarily unavailable/);
-    assert.deepEqual([o.group, o.automationLock, o.escalationLastNotified], [{ id: '', title: '' }, '', '']);
+    assert.deepEqual([o.group, o.automationLock, o.manualOverride, o.escalationLastNotified], [{ id: '', title: '' }, '', '', '']);
   } finally { restore.reverse().forEach((r) => r()); }
 });
 

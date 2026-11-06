@@ -271,6 +271,31 @@ test('buildReminderEmail: every token filled for every level; the list sits wher
   assert.match(r1.html, /1 document is waiting for a new copy/);
   const single = await svc.buildReminderEmail(baseOpts({ missing: svc.missingFromItems(ITEMS.filter((i) => i.applicantType === 'Principal Applicant')) }));
   assert.doesNotMatch(single.html, /Principal Applicant<\/div>/, 'no member heading for one member');
+  // a lone member who is NOT the principal applicant keeps the heading — the client must be told whose passport is missing (review 2026-11-07)
+  const spouseOnly = svc.missingFromItems(ITEMS.filter((i) => i.applicantType === 'Spouse / Common-Law Partner'));
+  assert.deepEqual(spouseOnly.groups.map((g) => [g.member, g.type]), [['Spouse / Common-Law Partner', 'Spouse / Common-Law Partner']]);
+  const spouse = await svc.buildReminderEmail(baseOpts({ missing: spouseOnly }));
+  assert.match(spouse.html, /Spouse \/ Common-Law Partner<\/div>/, 'the heading names the spouse');
+  assert.match(svc._internal.missingListText(spouseOnly), /^Spouse \/ Common-Law Partner:\n  Identity\n    - Passport \(spouse\)/);
+  assert.doesNotMatch(svc._internal.missingListText(svc.missingFromItems(ITEMS.filter((i) => i.applicantType === 'Principal Applicant'))), /Principal Applicant:/);
+});
+
+test('buildReminderEmail: a blank or placeholder case type ("—", "-", "Not set" — the cockpit\'s display value) reads "immigration", never "your — application"', async () => {
+  for (const caseType of ['—', '-', ' – ', 'Not set', 'not set', '', null, undefined]) {
+    const r = await svc.buildReminderEmail(baseOpts({ caseType }));
+    assert.equal(r.subject, 'Documents still needed for your immigration application — 2026-TEST-001', JSON.stringify(caseType));
+    assert.match(r.html, /your immigration application/);
+    assert.doesNotMatch(r.html, /your — application|your - application/);
+  }
+  assert.equal((await svc.buildReminderEmail(baseOpts({ caseType: 'PGWP' }))).subject, 'Documents still needed for your PGWP application — 2026-TEST-001');
+  assert.deepEqual(['—', '-', 'Not set', 'x', 'Super Visa'].map(svc._internal.caseTypeText), ['', '', '', 'x', 'Super Visa']);
+  // the staff preview takes the same path (the overview hands over the display value)
+  const S = staffStubs();
+  try {
+    const p = await svc.previewStaffReminder({ overview: OV({ caseType: '—' }), level: 1 });
+    assert.equal(p.subject, 'Documents still needed for your immigration application — 2026-TEST-001');
+    assert.match(p.body, /your immigration application/);
+  } finally { S.restore(); }
 });
 
 test('buildReminderEmail: the layout — logo header like the intake email, the EMAIL_US closing line and the no-reply line OUTSIDE the template, no nested <p>, ?t= on every link, the portal button + the plain documents link', async () => {
@@ -332,6 +357,17 @@ test('buildReminderEmail: the staff edits — subject and body overrides are re-
   assert.match(r2.html, /by not set\./);
   await assert.rejects(svc.buildReminderEmail(baseOpts({ bodyOverride: 'Just reply to this message with {MissingList}' })), /cannot be sent: the text tells the client to reply/);
   await assert.rejects(svc.buildReminderEmail(baseOpts({ bodyOverride: '{MissingList}', subjectOverride: 'Reply to the email' })), /tells the client to reply/);
+  // review 2026-11-07: a subject-only edit and the staff's extra line obey the same rule (they used to slip past the body branch)
+  await assert.rejects(svc.buildReminderEmail(baseOpts({ subjectOverride: 'Please reply to this message' })), /cannot be sent: the subject tells the client to reply/);
+  await assert.rejects(svc.buildReminderEmail(baseOpts({ extraLine: 'Just reply with the file attached.' })), /cannot be sent: the extra line tells the client to reply/);
+  await assert.rejects(svc.buildReminderEmail(baseOpts({ extraLine: 'You can <b>simply reply</b> to us.' })), /extra line tells the client to reply/, 'tags do not hide it');
+  const fine = await svc.buildReminderEmail(baseOpts({ subjectOverride: 'Documents — {CaseRef}', extraLine: 'Please email us if a document is hard to get.' }));
+  assert.equal(fine.subject, 'Documents — 2026-TEST-001');
+  assert.ok(tpl.tellsToReply('Reply to the email') && !tpl.tellsToReply('Please email us at info@tdotimm.com'));
+  // the real variant warns when the SUBJECT names a deadline the case does not have (it used to check the body only)
+  const sdl = await svc.buildReminderEmail(baseOpts({ subjectOverride: 'Documents by {Deadline} — {CaseRef}', deadline: { type: '', actualDeadline: '', promisedSubmissionDate: '' } }));
+  assert.equal(sdl.subject, 'Documents by not set — 2026-TEST-001');
+  assert.deepEqual(sdl.warnings, ['the text names the deadline, but this case has no actual deadline — it reads "not set"']);
 });
 
 test('buildReminderEmail refuses what cannot be a safe email: no token (never a bare link), no client email, no case ref, no last day on the final, an unknown level', async () => {
@@ -398,7 +434,8 @@ const DAY_MS = 24 * 3600 * 1000;
 const stub = (obj, key, fn) => { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; };
 const OV = (over = {}) => ({
   caseRef: REF, itemId: '4001', clientName: 'Asha Client', clientEmail: 'asha.client@example.com', caseType: 'Super Visa', accessToken: TOKEN,
-  cmUnavailable: false, group: { id: 'group_sv', title: 'Super Visa' }, automationLock: 'No', escalationLastNotified: '',
+  cmUnavailable: false, group: { id: 'group_sv', title: 'Super Visa' }, automationLock: 'No', manualOverride: '', escalationLastNotified: '',
+  caseStage: 'Document Collection Started', paymentStatus: 'Paid',
   clientDeadlineRaw: { type: 'Deadline', actualDeadline: '2026-12-16', promisedSubmissionDate: '' }, ...over,
 });
 /** Monday renders a note's HTML into text_body (tags stripped); the API also hands back the raw body. */
@@ -415,7 +452,12 @@ test('note builders: the claim note names the level, tone, masked address, actor
   assert.equal(auto, '📨 <b>Document reminder (automatic)</b> emailed to a***@example.com — deadline 16 Dec 2026, 5 documents missing (15 % uploaded) — 7 Nov 2026, 10:14 am (Toronto)<span style="display:none">DOCREM:auto:2026-11-07</span>');
   const f = svc.failureNote({ level: 1, reason: 'the email could not be sent', now: T0 + 60000 });
   assert.equal(f, '📨 <b>Document reminder did not go out</b> — the email could not be sent — 7 Nov 2026, 10:15 am (Toronto)<span style="display:none">DOCREM-FAIL:btn1:2026-11-07</span>');
-  for (const n of [c1, c3, auto, f]) assert.ok(n.startsWith(svc.NOTE_HEAD), 'every note starts with the stable head');
+  // the failure note names its claim (the note id the claim post answered) — review 2026-11-07; a non-id is left out
+  const fid = svc.failureNote({ level: 1, reason: 'the email could not be sent', now: T0 + 60000, claimId: '1000' });
+  assert.equal(fid, '📨 <b>Document reminder did not go out</b> — the email could not be sent — 7 Nov 2026, 10:15 am (Toronto)<span style="display:none">DOCREM-FAIL:btn1:2026-11-07:1000</span>');
+  assert.match(svc.failureNote({ level: 'auto', reason: 'x', now: T0, claimId: 7000 }), /DOCREM-FAIL:auto:2026-11-07:7000<\/span>$/);
+  assert.match(svc.failureNote({ level: 'auto', reason: 'x', now: T0, claimId: 'race' }), /DOCREM-FAIL:auto:2026-11-07<\/span>$/);
+  for (const n of [c1, c3, auto, f, fid]) assert.ok(n.startsWith(svc.NOTE_HEAD), 'every note starts with the stable head');
   assert.throws(() => svc.claimNote({ level: 4, now: T0 }), /Unknown reminder level/);
   // the Toronto day in the marker is the Toronto day, not the UTC one (11:30 pm Toronto = 04:30 UTC next day)
   assert.match(svc.claimNote({ level: 1, to: 'a@b', actor: 'x', count: 1, now: Date.parse('2026-11-08T04:30:00Z') }), /DOCREM:btn1:2026-11-07/);
@@ -434,8 +476,14 @@ test('parseNote reads the marker and the facts from BOTH forms of a note: the ra
   const fail = svc.failureNote({ level: 1, reason: 'the email could not be sent', now: T0 });
   for (const u of [rendered(13, T0, fail), raw(13, T0, fail)]) {
     const p = svc.parseNote(svc.rawNotes([u])[0]);
-    assert.deepEqual([p.kind, p.origin, p.day, p.reason], ['fail', 'btn1', '2026-11-07', 'the email could not be sent']);
+    assert.deepEqual([p.kind, p.origin, p.day, p.claimId, p.reason], ['fail', 'btn1', '2026-11-07', '', 'the email could not be sent']);
   }
+  const failId = svc.failureNote({ level: 1, reason: 'the email could not be sent', now: T0, claimId: '1000' });
+  for (const u of [rendered(14, T0, failId), raw(14, T0, failId)]) {
+    const p = svc.parseNote(svc.rawNotes([u])[0]);
+    assert.deepEqual([p.kind, p.origin, p.day, p.claimId, p.reason], ['fail', 'btn1', '2026-11-07', '1000', 'the email could not be sent']);
+  }
+  assert.equal(svc.parseNote({ id: '15', at: T0, text: svc.failureNote({ level: 1, reason: 'x', now: Date.parse('2026-09-30T15:00:00Z') }).replace(/<[^>]*>/g, '') }).reason, 'x', 'a September note ("30 Sept") still gives its reason');
   assert.equal(svc.parseNote({ id: '1', at: T0, text: '🔄 Document Flagged for Client Rework' }).kind, null);
   assert.equal(svc.parseNote({ id: '2', at: T0, text: 'DOCREM:btn9:2026-11-07' }).kind, null, 'an unknown origin is not a marker');
   assert.deepEqual(svc.rawNotes(null), []);
@@ -469,12 +517,32 @@ test('readReminderHistory: a failure cancels the newest open claim of the same o
   assert.deepEqual(v.sent[1], { day: '2026-11-03', label: '3 Nov 2026', by: 'Mahesh Sharma', at: new Date(T0 - 4 * DAY_MS).toISOString(), lastDay: '' });
   assert.equal(v.sent[3], null);
   assert.deepEqual(v.auto, [{ day: '2026-11-06', label: '6 Nov 2026' }]);
+  assert.deepEqual([v.autoLast, v.autoCount], [{ day: '2026-11-06', label: '6 Nov 2026' }, 1]);
   assert.equal(v.lastFailed, true, 'the newest attempt (the final) did not go out');
   assert.equal(v.failures[0].reason, 'the email could not be sent');
-  assert.equal(svc.historyView(svc.readReminderHistory([])).lastFailed, false);
+  const v0 = svc.historyView(svc.readReminderHistory([]));
+  assert.deepEqual([v0.lastFailed, v0.auto, v0.autoLast, v0.autoCount], [false, [], null, 0]);
   // a failure never cancels a claim BELOW it (posted later) or of another level
   const h2 = svc.readReminderHistory([N(50, T0, svc.failureNote({ level: 1, reason: 'x', now: T0 })), N(51, T0 + 1000, svc.claimNote({ level: 1, to: 'a@b', actor: 'x', count: 1, now: T0 + 1000 }))]);
   assert.deepEqual(h2.sends.map((x) => x.id), ['51']);
+  // review 2026-11-07: a failure note that NAMES its claim cancels that one, even when a newer open claim of the same
+  // origin + day sits above it (a lost-race loser whose delete failed) — the loser's orphan is no longer read as the send
+  const twoOpen = [
+    N(60, T0, svc.claimNote({ level: 1, to: 'a@b', actor: 'Mahesh Sharma', count: 1, now: T0 })),                 // the winner's claim …
+    N(61, T0 + 500, svc.claimNote({ level: 1, to: 'a@b', actor: 'Deeksha Sharma', count: 1, now: T0 + 500 })),    // … the loser's orphan (its delete failed)
+    N(62, T0 + 9000, svc.failureNote({ level: 1, reason: 'the email could not be sent', now: T0 + 9000, claimId: '60' })),   // the winner's send failed
+  ];
+  const h3 = svc.readReminderHistory(twoOpen);
+  assert.deepEqual(h3.claims.map((x) => [x.id, x.failed]), [['61', false], ['60', true]], 'the named claim is the failed one');
+  assert.equal(svc.failedTries(h3, 'btn1', '2026-11-07'), 1);
+  const old = svc.readReminderHistory([twoOpen[0], twoOpen[1], N(62, T0 + 9000, svc.failureNote({ level: 1, reason: 'x', now: T0 + 9000 }))]);
+  assert.deepEqual(old.claims.map((x) => [x.id, x.failed]), [['61', true], ['60', false]], 'a note with no id (before 2026-11-07) keeps the old rule: the newest open claim');
+  const gone = svc.readReminderHistory([twoOpen[1], twoOpen[2]]);   // the named claim was deleted: nothing else is cancelled by it
+  assert.deepEqual(gone.claims.map((x) => [x.id, x.failed]), [['61', false]]);
+  // the "Auto:" view on a daily-chased case: the whole list stays for the guards, the card gets the newest day + a count
+  const daily = Array.from({ length: 12 }, (_, i) => N(100 + i, T0 - (12 - i) * DAY_MS, svc.claimNote({ level: 'auto', to: 'a@b', count: 1, now: T0 - (12 - i) * DAY_MS })));
+  const hv = svc.historyView(svc.readReminderHistory(daily));
+  assert.equal(hv.auto.length, 12); assert.equal(hv.autoCount, 12); assert.deepEqual(hv.autoLast, { day: '2026-11-06', label: '6 Nov 2026' });
 });
 
 test('readCaseNotes pages past the 50-note window: full pages are followed while the oldest note is inside 90 days; a short page or an old page stops; bounded; de-duplicated', async () => {
@@ -505,26 +573,39 @@ test('readCaseNotes pages past the 50-note window: full pages are followed while
   } finally { restore(); }
 });
 
-test('recentClientSend + autoSkipReasons: a reminder, a rework batch note, the portal email or the escalation engine within 24 h; the once-per-day guard sees auto AND button markers', () => {
+test('recentClientSend + autoSkipReasons: a button reminder, a rework batch note or the portal email within 24 h; the automatic reminder and the escalation stamp never count; the once-per-day guard sees auto AND button markers', () => {
   const N = (id, at, html) => svc.rawNotes([rendered(id, at, html)])[0];
   const none = [{ id: '1', at: T0 - 3 * DAY_MS, text: '🔄 Document Flagged for Client Rework' }];
   assert.equal(svc.recentClientSend(none, { now: T0 }), '');
   assert.deepEqual(svc.autoSkipReasons(none, { now: T0 }), []);
   assert.match(svc.recentClientSend([N(2, T0 - 2 * 3600e3, svc.claimNote({ level: 2, to: 'a@b', actor: 'x', count: 1, now: T0 - 2 * 3600e3 }))], { now: T0 }), /^a document reminder went \(reminder 2\) at 7 Nov 2026, 8:14 am$/);
-  assert.match(svc.recentClientSend([N(3, T0 - 3600e3, svc.claimNote({ level: 'auto', to: 'a@b', count: 1, now: T0 - 3600e3 }))], { now: T0 }), /went automatically at/);
+  assert.equal(svc.recentClientSend([N(3, T0 - 3600e3, svc.claimNote({ level: 'auto', to: 'a@b', count: 1, now: T0 - 3600e3 }))], { now: T0 }), '', 'the automatic reminder is governed by the once-per-day marker, never by the 24-hour rule (review 2026-11-07)');
   assert.equal(svc.recentClientSend([N(4, T0 - 3600e3, svc.claimNote({ level: 1, to: 'a@b', actor: 'x', count: 1, now: T0 - 3600e3 })), N(5, T0 - 3500e3, svc.failureNote({ level: 1, reason: 'x', now: T0 - 3500e3 }))], { now: T0 }), '', 'a failed try is not a send');
   assert.match(svc.recentClientSend([{ id: '6', at: T0 - 5 * 3600e3, text: '🔄 Document Flagged for Client Rework\n\nDocument: Passport' }], { now: T0 }), /emailed about a document to redo at 7 Nov 2026, 5:14 am/);
   assert.match(svc.recentClientSend([{ id: '7', at: T0 - 23 * 3600e3, text: '✉️ Intake email sent to a***@x' }], { now: T0 }), /the portal email went to the client/);
   assert.equal(svc.recentClientSend([{ id: '8', at: T0 - 25 * 3600e3, text: 'Intake email resent — client email address was corrected.' }], { now: T0 }), '', '25 h ago is outside the window');
-  assert.match(svc.recentClientSend([], { now: T0, escalationLastNotified: '2026-11-06' }), /escalation engine emailed the client on 6 Nov 2026/);
-  assert.match(svc.recentClientSend([], { now: T0, escalationLastNotified: '2026-11-07' }), /on 7 Nov 2026/);
-  assert.equal(svc.recentClientSend([], { now: T0, escalationLastNotified: '2026-11-05' }), '');
-  assert.equal(svc.recentClientSend([], { now: T0, escalationLastNotified: 'soon' }), '');
+  // "Escalation Last Notified" is stamped on EVERY matched escalation rule (staff notifications, priority bumps — escalationRoutingService.js:413),
+  // so it is never read as a client send; it is a preview warning on the buttons only (review 2026-11-07)
+  for (const esc of ['2026-11-06', '2026-11-07']) {
+    assert.equal(svc.recentClientSend([], { now: T0, escalationLastNotified: esc }), '', esc);
+    assert.deepEqual(svc.autoSkipReasons([], { now: T0, escalationLastNotified: esc }), [], esc);
+  }
+  assert.deepEqual(['2026-11-06', '2026-11-07', '2026-11-05', 'soon', ''].map((d) => svc.recentEscalationStamp(d, T0)), ['2026-11-06', '2026-11-07', '', '', '']);
+  const h0 = svc.readReminderHistory([]);
+  assert.deepEqual(svc.previewWarnings({ history: h0, level: 1, now: T0, escalationLastNotified: '2026-11-06' }), ['The escalation engine ran on this case on 6 Nov 2026 — it may have emailed the client']);
+  assert.deepEqual(svc.previewWarnings({ history: h0, level: 1, now: T0, escalationLastNotified: '2026-11-05' }), []);
   // the once-per-day guard: any marker for today, from the buttons or the automatic email
   const today = [N(9, T0 - 3600e3, svc.claimNote({ level: 3, to: 'a@b', actor: 'x', count: 1, lastDay: '2026-11-14', now: T0 - 3600e3 }))];
   assert.deepEqual(svc.autoSkipReasons(today, { now: T0 }), ['a document reminder already went today (reminder 3)', 'another email reached the client in the last 24 hours: a document reminder went (reminder 3) at 7 Nov 2026, 9:14 am']);
-  const yesterdayLate = [N(10, T0 - 11 * 3600e3, svc.claimNote({ level: 'auto', to: 'a@b', count: 1, now: T0 - 11 * 3600e3 }))];   // 11:14 pm Toronto the day before
-  assert.deepEqual(svc.autoSkipReasons(yesterdayLate, { now: T0 }), ['another email reached the client in the last 24 hours: a document reminder went automatically at 6 Nov 2026, 11:14 pm'], 'yesterday\'s marker is not today\'s — only the 24-hour rule holds it');
+  const autoToday = [N(11, T0 - 3600e3, svc.claimNote({ level: 'auto', to: 'a@b', count: 1, now: T0 - 3600e3 }))];
+  assert.deepEqual(svc.autoSkipReasons(autoToday, { now: T0 }), ['a document reminder already went today (automatic)'], 'today\'s automatic send is held by the marker alone');
+  // yesterday's automatic reminder — 11:14 pm the day before, or 23 h ago from a 09:00 run — never holds today's: the email is DAILY (review 2026-11-07, findings 8/14)
+  const yesterdayLate = [N(10, T0 - 11 * 3600e3, svc.claimNote({ level: 'auto', to: 'a@b', count: 1, now: T0 - 11 * 3600e3 }))];
+  assert.deepEqual(svc.autoSkipReasons(yesterdayLate, { now: T0 }), [], 'yesterday\'s marker is not today\'s, and the 24-hour rule does not count the app\'s own automatic send');
+  const auto23h = [N(12, T0 - 23 * 3600e3, svc.claimNote({ level: 'auto', to: 'a@b', count: 1, now: T0 - 23 * 3600e3 }))];
+  assert.deepEqual(svc.autoSkipReasons(auto23h, { now: T0 }), []);
+  const btn23h = [N(13, T0 - 23 * 3600e3, svc.claimNote({ level: 2, to: 'a@b', actor: 'x', count: 1, now: T0 - 23 * 3600e3 }))];
+  assert.deepEqual(svc.autoSkipReasons(btn23h, { now: T0 }), ['another email reached the client in the last 24 hours: a document reminder went (reminder 2) at 6 Nov 2026, 11:14 am'], 'a staff reminder yesterday still holds the automatic one for 24 h');
 });
 
 test('previewWarnings: already went, skipped levels, out of order, automatic / a reminder today, the client emailed in 24 h, the deadline close or passed — amber words, never a block', () => {
@@ -567,6 +648,16 @@ test('describeForCase (the card\'s facts): hidden with its reason when the CM re
   assert.deepEqual([allIn.available, allIn.reason, allIn.message], [false, 'no-rows', 'Nothing is missing — every required document is in.']);
   const locked = svc.describeForCase({ ...base, overview: OV({ automationLock: 'Yes' }) });
   assert.deepEqual([locked.available, locked.canSend], [true, false]); assert.match(locked.blocked, /Automation Lock is on/);
+  // plan §3b conditions 2–4 (review 2026-11-07): Manual Override, the stage, Paid — the card shows the reason, the buttons are off, the count stays
+  const over = svc.describeForCase({ ...base, overview: OV({ manualOverride: 'Yes' }) });
+  assert.deepEqual([over.available, over.canSend, over.missingCount], [true, false, 4]); assert.equal(over.blocked, 'Manual Override is on for this case — reminders are off until it is cleared in Monday.');
+  const stage = svc.describeForCase({ ...base, overview: OV({ caseStage: 'Internal Review' }) });
+  assert.deepEqual([stage.available, stage.canSend], [true, false]); assert.equal(stage.blocked, 'This case is at Internal Review, not Document Collection — reminders are for cases collecting documents.');
+  assert.match(svc.describeForCase({ ...base, overview: OV({ caseStage: '' }) }).blocked, /at no stage, not Document Collection/);
+  const unpaid = svc.describeForCase({ ...base, overview: OV({ paymentStatus: 'Unpaid' }) });
+  assert.deepEqual([unpaid.available, unpaid.canSend], [true, false]); assert.equal(unpaid.blocked, 'Payment Status is Unpaid, not Paid — no reminder until the case is paid.');
+  assert.match(svc.describeForCase({ ...base, overview: OV({ paymentStatus: '' }) }).blocked, /Payment Status is blank, not Paid/);
+  assert.deepEqual([svc.caseGateProblem(OV()), svc.caseGateProblem(OV({ manualOverride: 'no' })), svc.caseGateProblem(OV({ paymentStatus: 'Partially Paid' })).reason], [null, null, 'not-paid']);
   for (const group of [{ id: 'group_x', title: 'Cancel / Did not retained' }, { id: 'group_mm2tz8e1', title: 'Leads' }]) {
     const g = svc.describeForCase({ ...base, overview: OV({ group }) });
     assert.equal(g.canSend, false, group.title); assert.match(g.blocked, /not a live case/);
@@ -644,6 +735,14 @@ test('previewStaffReminder: the template with the merge fields filled except the
     await assert.rejects(svc.previewStaffReminder({ overview: OV({ cmUnavailable: true }), level: 1 }), (e) => e.status === 503 && e.reason === 'cm-unavailable');
     await assert.rejects(svc.previewStaffReminder({ overview: OV({ group: { id: 'group_mm3b9tap', title: 'Cancel / Did not retained' } }), level: 1 }), (e) => e.status === 409 && e.reason === 'not-a-case' && /Cancel/.test(e.message));
     await assert.rejects(svc.previewStaffReminder({ overview: OV({ automationLock: 'Yes' }), level: 1 }), (e) => e.status === 409 && e.reason === 'locked');
+    // plan §3b conditions 2–4 (review 2026-11-07): the buttons refuse off-stage, unpaid and overridden cases
+    await assert.rejects(svc.previewStaffReminder({ overview: OV({ manualOverride: 'Yes' }), level: 1 }), (e) => e.status === 409 && e.reason === 'override' && /Manual Override is on/.test(e.message));
+    await assert.rejects(svc.previewStaffReminder({ overview: OV({ caseStage: 'Submitted' }), level: 1 }), (e) => e.status === 409 && e.reason === 'not-dcs' && /at Submitted, not Document Collection/.test(e.message));
+    await assert.rejects(svc.previewStaffReminder({ overview: OV({ paymentStatus: 'Unpaid' }), level: 1 }), (e) => e.status === 409 && e.reason === 'not-paid' && /Payment Status is Unpaid, not Paid/.test(e.message));
+    await assert.rejects(svc.sendStaffReminder({ overview: OV({ paymentStatus: 'Unpaid' }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.status === 409 && e.reason === 'not-paid');
+    await assert.rejects(svc.sendStaffReminder({ overview: OV({ caseStage: 'Not Started' }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.status === 409 && e.reason === 'not-dcs');
+    await assert.rejects(svc.sendStaffReminder({ overview: OV({ manualOverride: 'YES' }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.status === 409 && e.reason === 'override');
+    assert.equal(S.sent.length + S.posted.length, 0, 'nothing posted, nothing sent');
     await assert.rejects(svc.previewStaffReminder({ overview: OV({ clientEmail: '' }), level: 1 }), (e) => e.status === 409 && e.reason === 'no-email');
     await assert.rejects(svc.previewStaffReminder({ overview: OV({ accessToken: '' }), level: 1 }), (e) => e.status === 409 && e.reason === 'no-token');
   } finally { S.restore(); }
@@ -712,7 +811,7 @@ test('sendStaffReminder: a send failure posts the failure note after the claim, 
     await assert.rejects(svc.sendStaffReminder({ overview: OV(), level: 1, subject: 'x', body: '{MissingList}', actor: { name: 'Mahesh Sharma' } }), (e) => e.status === 502 && e.sendFailed && e.message === 'The email could not be sent — please try again in a moment.');
     assert.equal(S.posted.length, 2, 'the claim, then the failure note');
     assert.match(S.posted[0].body, /^📨 <b>Document reminder 1 sent<\/b>/);
-    assert.equal(S.posted[1].body, '📨 <b>Document reminder did not go out</b> — the email could not be sent — 7 Nov 2026, 10:14 am (Toronto)<span style="display:none">DOCREM-FAIL:btn1:2026-11-07</span>');
+    assert.equal(S.posted[1].body, '📨 <b>Document reminder did not go out</b> — the email could not be sent — 7 Nov 2026, 10:14 am (Toronto)<span style="display:none">DOCREM-FAIL:btn1:2026-11-07:1000</span>', 'the failure note names the claim it cancels (its note id)');
     assert.ok(!/spam|credit|Graph|Quota/i.test(S.posted[1].body), 'the note never carries the provider\'s words');
     const h = svc.readReminderHistory(svc.rawNotes(S.store.map((e) => e.u)));
     assert.equal(h.latest[1], null, 'no sent record');
@@ -741,6 +840,25 @@ test('sendStaffReminder: two instances — the earliest open claim wins; the los
     const r = await svc.sendStaffReminder({ overview: OV(), level: 1, subject: 'x', body: '{MissingList}' });
     assert.equal(r.ok, true); assert.equal(S2.sent.length, 1); assert.deepEqual(S2.deleted, []);
   } finally { S2.restore(); }
+  // review 2026-11-07 (finding 13): an earlier SUCCESSFUL send of the same level today is a finished send, not a competitor —
+  // a deliberate second send goes out (the preview warned "already went today"); only a claim within the race window competes
+  const S3 = staffStubs({ notes: [rendered(900, T0 - 10 * 60e3, svc.claimNote({ level: 1, to: 'a***@example.com', actor: 'Mahesh Sharma', count: 4, now: T0 - 10 * 60e3 }))] });
+  try {
+    const r = await svc.sendStaffReminder({ overview: OV(), level: 1, subject: 'x', body: '{MissingList}', actor: { name: 'Mahesh Sharma' } });
+    assert.equal(r.ok, true, 'a claim 10 minutes old does not block');
+    assert.equal(S3.sent.length, 1); assert.deepEqual(S3.deleted, []);
+    const h = svc.readReminderHistory(svc.rawNotes(S3.store.map((e) => e.u)));
+    assert.equal(h.sends.filter((x) => x.level === 1).length, 2, 'two sends on the record');
+  } finally { S3.restore(); }
+  const S4 = staffStubs({ raceWith: svc.claimNote({ level: 1, to: 'a***@example.com', actor: 'Deeksha Sharma', count: 4, now: T0 - 5000 }) });
+  const r4 = stub(svc.io, 'readNotes', (function (orig) { return async (itemId, page) => { const out = await orig(itemId, page); for (const n of out) if (n.id === 'race') n.at = T0 - 5000; return out; }; })(svc.io.readNotes));
+  try {
+    await assert.rejects(svc.sendStaffReminder({ overview: OV(), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.reason === 'lost-race');
+    assert.equal(S4.sent.length, 0); assert.deepEqual(S4.deleted, ['1000'], 'two claims 5 s apart: the earliest wins, ours is withdrawn');
+  } finally { r4(); S4.restore(); }
+  assert.equal(svc.RACE_WINDOW_MS, 3 * 60 * 1000);
+  const hr = svc.readReminderHistory([rendered(1, T0 - 4 * 60e3, svc.claimNote({ level: 1, to: 'a@b', actor: 'x', count: 1, now: T0 - 4 * 60e3 })), rendered(2, T0 - 60e3, svc.claimNote({ level: 1, to: 'a@b', actor: 'y', count: 1, now: T0 - 60e3 })), rendered(3, T0, svc.claimNote({ level: 1, to: 'a@b', actor: 'z', count: 1, now: T0 }))].map((u) => svc.rawNotes([u])[0]));
+  assert.deepEqual(svc.racingClaims(hr, 'btn1', '2026-11-07', '3', T0).map((x) => x.id), ['2', '3'], 'the 4-minute-old claim is finished; the 1-minute-old one competes');
 });
 
 // ─── The routes (src/routes/docReminderRoutes.js), run with fakes ────────────
@@ -822,6 +940,11 @@ test('routes: the service\'s refusals keep their status and reason; the text lim
     assert.equal(res.statusCode, 400); assert.equal(res.body.reason, 'bad-last-day');
     res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'x', body: 'please reply to this email {MissingList}' } }), res, deps('staff'));
     assert.equal(res.statusCode, 400); assert.equal(res.body.reason, 'bad-text');
+    res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'x', body: '{MissingList}', extra: 'Just reply to this email with the lease.' } }), res, deps('staff'));
+    assert.equal(res.statusCode, 400); assert.equal(res.body.reason, 'bad-text'); assert.match(res.body.error, /extra line tells the client to reply/);
+    res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'Reply to the email', body: '{MissingList}' } }), res, deps('staff'));
+    assert.equal(res.statusCode, 400); assert.equal(res.body.reason, 'bad-text'); assert.match(res.body.error, /subject tells the client to reply/);
+    assert.equal(S.posted.length + S.sent.length, 0, 'a refused text posts no note and sends nothing');
     res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'x'.repeat(201), body: '{MissingList}' } }), res, deps('staff'));
     assert.equal(res.statusCode, 400); assert.match(res.body.error, /subject is too long/);
     res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'x', body: '{MissingList}' + 'y'.repeat(6000) } }), res, deps('staff'));
@@ -883,7 +1006,7 @@ function autoRow(over = {}) {
     id: '5001', name: 'Asha Client', group: { id: 'group_live', title: 'November 2026' },
     ref: '2026-ISS-009', caseType: 'Super Visa', stage: 'Document Collection Started', payment: 'Paid', lock: 'No', override: '',
     deadlineType: 'Deadline', actualDeadline: day9(30), promised: '', docUploaded: '15', email: 'asha.client@example.com', token: TOKEN,
-    stageStart: day9(-10), lastActivity: day9(-4), escalationLastNotified: '', ...over,
+    stageStart: day9(-10), lastActivity: day9(-4), ...over,
   };
   const cv = Object.entries(AUTO).map(([k, id]) => ({ id, text: v[k] == null ? '' : String(v[k]) }));
   return { id: v.id, name: v.name, group: v.group, column_values: cv };
@@ -968,7 +1091,8 @@ test('AUTO selectByColumns: every column-only skip reason, the "deadline close" 
   assert.match(reason({ docUploaded: 'n/a' }), /never been computed/);
   assert.match(reason({ docUploaded: '50' }), /documents at 50 % \(50 % or more\)/);
   assert.equal(sel({ docUploaded: '49.6' }).decision, 'candidate');
-  assert.match(reason({ deadlineType: 'Deadline', actualDeadline: '' }), /date is blank/);
+  const blankDate = sel({ deadlineType: 'Deadline', actualDeadline: '' });   // review 2026-11-07: a person fixes the record — never a silent daily skip
+  assert.equal(blankDate.decision, 'attention'); assert.equal(blankDate.reason, 'deadline type is Deadline but the date is blank — set the date on the case');
   for (const n of [3, 1, 0]) { const r = sel({ actualDeadline: day9(n) }); assert.equal(r.decision, 'attention', `${n} days`); assert.match(r.reason, n === 0 ? /deadline in 0 days/ : new RegExp(`deadline in ${n} day`)); assert.match(r.reason, /a person should call/); }
   const past = sel({ actualDeadline: day9(-2) }); assert.equal(past.decision, 'attention'); assert.match(past.reason, /deadline passed on 8 Nov 2026/);
   assert.equal(sel({ actualDeadline: day9(4) }).decision, 'candidate', '4 days away is the first day an email may go');
@@ -988,14 +1112,17 @@ test('AUTO selectByColumns: every column-only skip reason, the "deadline close" 
 test('AUTO run: one row is emailed (claim note BEFORE the email, to the real address, marker + % + deadline), the others skipped for the record, the live recount, the checklist, or handed to a person', async () => {
   const A = autoRow();
   const B = autoRow({ id: '5002', ref: '2026-ISS-014', email: 'b@example.com' });      // a button reminder already went today
-  const C = autoRow({ id: '5003', ref: '2026-SPE-014', email: 'c@example.com', escalationLastNotified: day9(-1) });   // the escalation engine emailed yesterday
+  const C = autoRow({ id: '5003', ref: '2026-SPE-014', email: 'c@example.com' });   // the rework batch email went to the client 2 h ago
   const D = autoRow({ id: '5004', ref: '2026-SV-020', email: 'd@example.com' });       // stored 15 %, live 60 %
   const E = autoRow({ id: '5005', ref: '2026-VRE-048', email: 'e@example.com' });      // nothing missing
   const F = autoRow({ id: '5006', ref: '2026-LBW-004', email: 'f@example.com', actualDeadline: day9(1), docUploaded: '0' });   // deadline tomorrow
   const G = autoRow({ id: '5007', ref: '2026-APPL-002', email: 'g@example.com' });     // 0 checklist rows
   const w = autoStubs({
     rows: [A, B, C, D, E, F, G], env: { DOC_REMINDERS_AUTO: '1' },
-    notes: { 5002: [rendered(10, T9 - 3600e3, svc.claimNote({ level: 2, to: 'b***@example.com', actor: 'Mahesh Sharma', count: 3, now: T9 - 3600e3 }))] },
+    notes: {
+      5002: [rendered(10, T9 - 3600e3, svc.claimNote({ level: 2, to: 'b***@example.com', actor: 'Mahesh Sharma', count: 3, now: T9 - 3600e3 }))],
+      5003: [{ id: '11', created_at: new Date(T9 - 2 * 3600e3).toISOString(), text_body: '🔄 Document Flagged for Client Rework\n\nDocument: Passport', body: '' }],
+    },
     itemsByRef: { '2026-VRE-048': ITEMS.filter((it) => it.status !== 'Missing'), '2026-APPL-002': [] },
     live: { '2026-SV-020': 60 },
   });
@@ -1005,11 +1132,12 @@ test('AUTO run: one row is emailed (claim note BEFORE the email, to the real add
     assert.deepEqual([r.sent, r.failed, r.attention], [1, 0, 1]);
     assert.equal(byRef(r, '2026-ISS-009').decision, 'sent');
     assert.match(byRef(r, '2026-ISS-014').reason, /already went today \(reminder 2\)/);
-    assert.match(byRef(r, '2026-SPE-014').reason, /escalation engine emailed the client on 9 Nov 2026/);
+    assert.match(byRef(r, '2026-SPE-014').reason, /emailed about a document to redo at 10 Nov 2026, 7:05 am/);
     assert.match(byRef(r, '2026-SV-020').reason, /live recount says 60 % \(the board said 15 %\)/);
     assert.match(byRef(r, '2026-VRE-048').reason, /nothing missing on the checklist/);
     assert.equal(byRef(r, '2026-LBW-004').decision, 'attention');
-    assert.match(byRef(r, '2026-APPL-002').reason, /no checklist rows/);
+    assert.equal(byRef(r, '2026-APPL-002').reason, 'no checklist rows — seed the checklist from the case page', 'no promise about a Needs-attention listing (review 2026-11-07)');
+    assert.ok(!Object.values(AUTO).includes('date_mm1gqbd') && !('escalationLastNotified' in svc.parseAutoRow(A)), 'the automatic run never reads Escalation Last Notified (the engine stamps it on every matched rule)');
     // exactly one email, to the real address, with the list and the deadline
     assert.equal(w.sent.length, 1);
     assert.equal(w.sent[0].to, 'asha.client@example.com');
@@ -1032,7 +1160,30 @@ test('AUTO run: one row is emailed (claim note BEFORE the email, to the real add
     const r2 = await svc.runDocReminders();
     assert.match(byRef(r2, '2026-ISS-009').reason, /already went today \(automatic\)/);
     assert.equal(w.sent.length, 1);
+    // the next morning's 09:00 tick (and a 23-hour one, the clock-change day) sends AGAIN: the email is daily — yesterday's own
+    // claim, posted seconds after yesterday's run started, is not "another email in the last 24 hours" (review 2026-11-07, findings 8/14)
+    const keep = svc.io.now; svc.io.now = () => T9 + DAY_MS;
+    try {
+      const r3 = await svc.runDocReminders();
+      assert.equal(byRef(r3, '2026-ISS-009').decision, 'sent', 'the next morning');
+      assert.match(w.posted.find((p) => p.itemId === '5001' && p.id !== w.posted[0].id).body, /DOCREM:auto:2026-11-11/);
+      assert.equal(w.sent.filter((m) => m.to === 'asha.client@example.com').length, 2, 'one email a day to the same client');
+      assert.deepEqual([byRef(r3, '2026-ISS-014').decision, byRef(r3, '2026-SPE-014').decision], ['sent', 'sent'], 'yesterday\'s button reminder and rework email are now over 24 h old');
+      const r4 = await svc.runDocReminders();
+      assert.match(byRef(r4, '2026-ISS-009').reason, /already went today \(automatic\)/, 'and once that day');
+      assert.equal(w.sent.length, 4);
+    } finally { svc.io.now = keep; }
   } finally { w.restore(); }
+  // yesterday's claim posted 12 s AFTER the tick (the notes read + the checklist + the recount take seconds), today's tick at the
+  // same minute → still sent; so is a 23-hour gap (the clock-change day)
+  for (const [label, ago, later] of [['12 s after yesterday\'s tick', DAY_MS - 12e3, 0], ['23 h', 23 * 3600e3, 0]]) {
+    const fresh = autoStubs({ rows: [autoRow()], env: { DOC_REMINDERS_AUTO: '1' }, notes: { 5001: [rendered(30, T9 - ago, svc.claimNote({ level: 'auto', to: 'a***@example.com', count: 4, deadline: '10 Dec 2026', pct: 15, now: T9 - ago }))] } });
+    try {
+      const r5 = await svc.runDocReminders();
+      assert.equal(byRef(r5, '2026-ISS-009').decision, 'sent', label);
+      assert.equal(fresh.sent.length, 1 + later);
+    } finally { fresh.restore(); }
+  }
 });
 
 test('AUTO dry run (the Engine Controls preview): every row listed with its decision and reason, nothing sent, nothing written — also while the switch is OFF (and it says so)', async () => {
@@ -1076,7 +1227,7 @@ test('AUTO: a send that fails posts the failure note after the claim (a try, not
     assert.equal(w.posted.length, 2);
     assert.match(w.posted[0].body, /DOCREM:auto:2026-11-10/);
     assert.match(w.posted[1].body, /📨 <b>Document reminder did not go out<\/b> — the email could not be sent/);
-    assert.match(w.posted[1].body, /DOCREM-FAIL:auto:2026-11-10/);
+    assert.match(w.posted[1].body, /DOCREM-FAIL:auto:2026-11-10:7000<\/span>$/, 'the failure note names its claim');
     assert.ok(!w.posted[1].body.includes('Graph'), 'the provider never appears in a note');
     const h = svc.readReminderHistory(await svc.io.readNotes('5001', 1));
     assert.equal(h.sends.length, 0); assert.equal(svc.failedTries(h, 'auto', '2026-11-10'), 1);
@@ -1097,6 +1248,16 @@ test('AUTO: a send that fails posts the failure note after the claim (a try, not
     assert.equal(race.sent.length, 0);
     assert.deepEqual(race.deleted, [race.posted[0].id], 'the loser removes its own claim');
   } finally { r1(); race.restore(); }
+  // an open automatic claim of today that is OLDER than the race window is a finished send — not a competitor (the once-per-day
+  // guard is what stops a second automatic email; here it is bypassed by a claim on a row the guard did not see yet)
+  const stale = autoStubs({ rows: [autoRow()], env: { DOC_REMINDERS_AUTO: '1' } });
+  const origPost2 = svc.io.postNote;
+  const r2 = stub(svc.io, 'postNote', async (itemId, body) => { const id = await origPost2(itemId, body); stale.store.push({ itemId: String(itemId), u: rendered('6998', T9 - 10 * 60e3, svc.claimNote({ level: 'auto', to: 'a***@example.com', count: 4, now: T9 - 10 * 60e3 })) }); return id; });
+  try {
+    const r = await svc.runDocReminders();
+    assert.equal(byRef(r, '2026-ISS-009').decision, 'sent', 'a 10-minute-old claim does not make this a lost race');
+    assert.deepEqual(stale.deleted, []);
+  } finally { r2(); stale.restore(); }
 });
 
 test('AUTO imaginary branch: only with DOC_REMINDERS_IMAGINARY, every 3rd day, the "Automatic" template with the promised-date lead instead of the deadline sentence', async () => {
@@ -1123,6 +1284,15 @@ test('AUTO imaginary branch: only with DOC_REMINDERS_IMAGINARY, every 3rd day, t
     // a staff level never gets the variant
     const e = await svc.buildReminderEmail(baseOpts({ level: 1, variant: 'imaginary' }));
     assert.equal(e.template.variant, 'real');
+    // review 2026-11-07 (finding 28): a board "Automatic" subject naming {Deadline} — or a second {Deadline} in the body — is the promised
+    // date in the imaginary variant, never "not set"; the subject's use is flagged
+    const im = await svc.buildReminderEmail(baseOpts({ level: 'auto', variant: 'imaginary', subjectOverride: 'Documents needed by {Deadline} — {CaseRef}', bodyOverride: 'Dear {ClientName},\n\nSubmit by {Deadline}.\n\n{MissingList}\n\nAgain: {Deadline}.', deadline: { type: 'Imaginary', actualDeadline: '', promisedSubmissionDate: '2026-12-05' } }));
+    assert.equal(im.subject, 'Documents needed by 5 Dec 2026 — 2026-TEST-001');
+    assert.match(im.html, /Again: 5 Dec 2026\./); assert.doesNotMatch(im.html, /not set/); assert.doesNotMatch(im.text, /not set/);
+    assert.deepEqual(im.warnings, ['the subject named {Deadline} — this case has an imaginary deadline, so the promised date was used']);
+    const imBody = await svc.buildReminderEmail(baseOpts({ level: 'auto', variant: 'imaginary', deadline: { type: 'Imaginary', actualDeadline: '', promisedSubmissionDate: '2026-12-05' } }));
+    assert.deepEqual(imBody.warnings, [], 'the default subject names no deadline: no warning');
+    assert.doesNotMatch(imBody.html, /not set/);
   } finally { due.restore(); }
 });
 

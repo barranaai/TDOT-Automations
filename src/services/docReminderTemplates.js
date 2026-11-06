@@ -42,6 +42,9 @@ function stripHtml(s) {
     .replace(/\r\n?/g, '\n').trim();
 }
 
+/** Does a text (tags stripped) tell the client to reply? The one check for the subject, the body and the staff's extra line. */
+function tellsToReply(text) { return REPLY_WORDING.test(stripHtml(text)); }
+
 /** The token names used in a text that are not merge tokens ({Foo} stays visible in the email). */
 function unknownTokens(text) {
   const out = new Set();
@@ -151,4 +154,4 @@ function diagnostics() { return _cache ? _cache.diagnostics.map((d) => ({ row: d
 
 function _resetForTests() { _cache = null; _cacheAge = 0; _cacheTtl = CACHE_TTL_MS; }
 
-module.exports = { loadTemplates, templateFor, validate, stripHtml, unknownTokens, diagnostics, TOKENS, ROW_NAMES, LEVEL_ROWS, DEFAULTS, _resetForTests };
+module.exports = { loadTemplates, templateFor, validate, stripHtml, unknownTokens, tellsToReply, diagnostics, TOKENS, ROW_NAMES, LEVEL_ROWS, DEFAULTS, _resetForTests };
