@@ -500,3 +500,19 @@ test('Needs attention: the cut-off is the Toronto day (a case opened the evening
   const out = NA.detect({ cases: items.map(NA.parseCase), checklist: new Map(items.map((i) => [`2026-SV-0${i.id}`, true])), now: NOW }).filter((e) => e.kind === 'no-deadline');
   assert.deepEqual(out.map((e) => e.caseRef), ['2026-SV-062']);
 });
+
+test('a clear reaches Monday: the lead write emits an empty value for every listed clear key, even when the fields leave it out (live-found 2026-11-06)', async () => {
+  const COLS = require('../src/data/newLeadsBoard.json').columns;
+  const sent = [];
+  const restore = [stub(mondayApi, 'query', async (q, v) => { if (/change_multiple_column_values/.test(q)) sent.push(JSON.parse(v.cols)); return {}; })];
+  try {
+    const blank = DL.leadFields(DL.validate({}, { required: false }));
+    await leadService.updateLead('1', blank.fields, { clearKeys: blank.clearKeys });
+    assert.deepEqual(sent.pop(), { [COLS.deadlineType]: '', [COLS.actualDeadline]: '', [COLS.promisedSubmissionDate]: '' }, 'a blank answer clears all three');
+    const imag = DL.leadFields(DL.validate({ deadlineType: 'Imaginary', promisedSubmissionDate: '2099-12-15' }, { today: TODAY }));
+    await leadService.updateLead('1', imag.fields, { clearKeys: imag.clearKeys });
+    assert.deepEqual(sent.pop(), { [COLS.deadlineType]: { label: 'Imaginary' }, [COLS.promisedSubmissionDate]: { date: '2099-12-15' }, [COLS.actualDeadline]: '' }, 'Real → Imaginary clears the old actual date');
+    await leadService.updateLead('1', { outcome: 'Retain' }, { clearKeys: ['outcome'] });
+    assert.deepEqual(sent.pop(), { [COLS.outcome]: { label: 'Retain' } }, 'a value carried in the fields still wins over its clear key');
+  } finally { restore.forEach((r) => r()); }
+});

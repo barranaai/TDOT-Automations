@@ -117,7 +117,11 @@ function formatValue(type, value) {
 function buildCols(fields, clearKeys = []) {
   const clear = new Set(clearKeys);
   const cols = {};
-  for (const [key, value] of Object.entries(fields)) {
+  // A key listed in clearKeys is cleared even when the caller left it out of `fields` (live-found 2026-11-06:
+  // the deadline's clears listed the keys without carrying them, so a cleared date stayed on the lead).
+  const entries = Object.entries(fields);
+  for (const key of clear) if (!(key in fields)) entries.push([key, '']);
+  for (const [key, value] of entries) {
     const isEmpty = (value === undefined || value === null || value === '');
     if (isEmpty && !clear.has(key)) continue;
     const colId = COLS[key];
