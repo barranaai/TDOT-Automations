@@ -67,6 +67,8 @@ const COL_TYPE = {
   empCompanyPhone: 'text', empRepPhone: 'text', empRepEmail: 'text',
   consultAgreementSent: 'date', consultAgreementSigned: 'date',
   consultOption: 'text', // JSON: the booking-page choice {durationMin, feeCents, variationId, consultant}
+  // The client's deadline, asked at retain (team meeting 2026-11-05): Deadline / Imaginary, the real date, the promised date
+  deadlineType: 'status', actualDeadline: 'date', promisedSubmissionDate: 'date',
   directClient: 'text',    // "Yes" = a direct retainer (walk-in) client — set by the app's Direct retainer form (2026-11-04); see src/utils/directClient.js
   originalChannel: 'text', // how a lead first reached us — kept when it is converted to a direct-retainer client (it still counts as a lead in the KPIs)
   consultPayment: 'text', // JSON: a consultation fee settled outside the booking link (cash / e-transfer / invoice / waived), who recorded it — consultPaymentService alone writes it

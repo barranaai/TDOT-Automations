@@ -409,7 +409,9 @@ function render(d) {
   }
   pills += '<span class="pill ' + healthCls + '"><span class="pk">Health</span> ' + escHtml(d.health) + '</span>';
   pills += '<span class="pill grey"><span class="pk">Manager</span> ' + escHtml(d.manager) + '</span>';
-  if (d.deadline) pills += '<span class="pill amber"><span class="pk">Deadline</span> ' + escHtml(d.deadline) + '</span>';
+  if (d.clientDeadline && d.clientDeadline !== 'Not set') pills += '<span class="pill ' + (/^Real/.test(d.clientDeadline) ? 'red' : 'amber') + '"><span class="pk">Client deadline</span> ' + escHtml(d.clientDeadline) + '</span>';
+  else pills += '<span class="pill grey"><span class="pk">Client deadline</span> Not set</span>';
+  if (d.deadline) pills += '<span class="pill amber"><span class="pk">SLA deadline</span> ' + escHtml(d.deadline) + '</span>';
   document.getElementById('c-pills').innerHTML = pills;
 
   // Readiness meters

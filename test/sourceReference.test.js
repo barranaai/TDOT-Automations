@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // "Source / Reference" (team meeting, Faran 2026-11-04): the lead source list grew
 // (social sites, Website, the referral kinds, three named referrers); Employee
 // Referral asks which employee, Existing Client / Client Referral ask which client

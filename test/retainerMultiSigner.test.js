@@ -125,7 +125,7 @@ test('the retainer panel makes the co-signer details compulsory before sending',
   assert.ok(html.includes('rp-inviter-err'), 'inline error element exists');
   const js = scripts.join('\n');
   assert.match(js, /function inviterGaps\(\)/, 'gap detector present');
-  const click = js.slice(js.indexOf("rpEl('btn-retain-send').onclick"), js.indexOf("rpEl('btn-retain-send').onclick") + 1200);
+  const click = js.slice(js.indexOf("rpEl('btn-retain-send').onclick"), js.indexOf("rpEl('btn-retain-send').onclick") + 2400);   // the handler also checks the deadline box (2026-11-05)
   assert.match(click, /inviterGaps\(\)/, 'Retain & send validates the co-signer first');
   assert.match(click, /return;/, 'and refuses to send while gaps exist');
   assert.match(click, /BOTH signers/, 'the confirm names both signers on co-signed agreements');

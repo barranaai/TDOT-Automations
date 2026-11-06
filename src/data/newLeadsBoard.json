@@ -115,6 +115,9 @@
     "consultPayment": "text_mm8533r9",
     "originalChannel": "text_mm85mpjf",
     "directClient": "text_mm8smgwh",
-    "caseDeleted": "text_mm8t4mcd"
+    "caseDeleted": "text_mm8t4mcd",
+    "deadlineType": "",
+    "actualDeadline": "",
+    "promisedSubmissionDate": ""
   }
 }

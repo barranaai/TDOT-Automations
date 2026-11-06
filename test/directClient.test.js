@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // Direct retainer clients (walk-in / referral — enter at the retainer stage,
 // no booking or consultation): creation wiring, honest labeling, and KPI split.
 

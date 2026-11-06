@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // Blank-Sub-Type seeding gate. Live incident 2026-CEC-PR-002 (2026-07-29): a
 // direct-retainer case reached Document Collection with NO Case Sub Type; no
 // schema matched, and the Template-Board fallback — which applies NO sub-type

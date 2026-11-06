@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // Cross-application profile reuse (client accounts Phase 4). The rules protect
 // legal documents: identity carries, slow circumstance carries as a CANDIDATE,
 // volatile status is never carried, refusal history is display-only, and

@@ -18,6 +18,7 @@ const { OUTCOME_LABELS, REMARK_PRESETS, RETAINER_TABS, RETAINED_TAB } = require(
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // the walk-in form's Source / Reference (2026-11-04)
 const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   // Shafoli's screenshot attachments (2026-11-04)
+const { deadlineBoxHtml, DEADLINE_BOX_JS, DEADLINE_BOX_CSS } = require('./deadlineBox');   // the deadline box (2026-11-05)
 const { listTableScript, LIST_TABLE_CSS } = require('./listFilters');   // one filter look for every list (2026-11-05)
 const { consultListSpec, consultListOpts, retainerListSpec, retainerListOpts } = require('./listSpecs');
 
@@ -151,6 +152,11 @@ const RETAINERS_PAGE_CSS = `
   /* The walk-in form's Source / Reference picker + attachments (shared pieces, 2026-11-04) */
   ${REFERRAL_CSS}
   ${ATTACH_CSS}
+  ${DEADLINE_BOX_CSS}
+  #dc-modal .dlx .al-l { display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:#64748b; margin:12px 0 4px; font-weight:700; }
+  #dc-modal .dlx .al-yn { display:flex; gap:18px; font-size:13.5px; margin:2px 0; }
+  #dc-modal .dlx .al-yn label { display:flex; gap:6px; align-items:center; cursor:pointer; text-transform:none; letter-spacing:0; font-weight:400; margin:0; }
+  #dc-modal .dlx input[type=date] { width:auto; }
   #dc-modal .al-hint, #dc-modal .dc-note { font-size:12px; color:#64748b; margin-top:3px; }
   #dc-modal .att-row input[type=file] { border:0; padding:6px 0; }
 `;
@@ -175,6 +181,7 @@ const DIRECT_CLIENT_HTML = `
       <label for="dc-source">Source / Reference *</label>
       <select id="dc-source">${sourceOptionsHtml({ blank: true })}</select>${referralFieldsHtml('dc')}
       <label for="dc-notes">Notes * <span class="dc-hint">(what the client needs + the amount quoted · saved as an update on the client and their case in Monday)</span></label><textarea id="dc-notes" rows="3" maxlength="2000" placeholder="What the client needs, the amount quoted, documents mentioned, next steps…"></textarea>${attachFieldHtml('dc')}
+      ${deadlineBoxHtml('dc', { required: true, title: 'Deadline', hint: 'Real: the actual deadline date. Imaginary: no real deadline — the submission date you promised the client (documents are needed 10–15 days before it). Lands on the case.' })}
       <div id="dc-profile" style="display:none" role="region" aria-label="Carried from previous application"></div>
       <div id="dc-blacklist" style="display:none"></div>
       <div id="dc-matches" style="display:none" role="region" aria-label="Possible existing records"></div>
@@ -400,7 +407,7 @@ function openDirectClient(){
   // this and re-populates intentionally.
   ['dc-name','dc-email','dc-phone','dc-address','dc-notes'].forEach(function(id){ var e=dcEl(id); if(e) e.value=''; });
   ['dc-casetype','dc-subtype','dc-consultant','dc-source'].forEach(function(id){ var e=dcEl(id); if(e) e.selectedIndex=0; });
-  DC_REF.reset(); DC_ATT.reset(); DC_ATT.refresh(); DC_PROFILE_ADDR='';
+  DC_REF.reset(); DC_ATT.reset(); DC_ATT.refresh(); DC_PROFILE_ADDR=''; DC_DL.reset();
   DC_MATCHES=null; DC_MATCH_SEQ++; var mb=dcEl('dc-matches'); if(mb){ mb.style.display='none'; mb.innerHTML=''; }   /* the seq: a lookup still out for the last person never lands here */
   var cb=dcEl('dc-create'); if(cb){ cb.disabled=false; cb.textContent='Create & open retainer'; }
   DC_BL_HIT=false; var blb=dcEl('dc-blacklist'); if(blb){ blb.style.display='none'; blb.innerHTML=''; }
@@ -586,6 +593,7 @@ function submitDirectClient(){
              caseSubType:dcEl('dc-subtype').value, consultant:dcEl('dc-consultant').value,
              sourceChannel:dcEl('dc-source').value, referredBy:DC_REF.value(), referredFrom:DC_REF.from(),
              notes:dcEl('dc-notes').value };
+  var dlv=DC_DL.read(); body.deadlineType=dlv.deadlineType; body.actualDeadline=dlv.actualDeadline; body.promisedSubmissionDate=dlv.promisedSubmissionDate;
   /* Required (Faran 2026-11-04): the name, an email OR a phone, the case type, the consultant, the source / reference
      (+ who referred them, for a referral) and a note. The address is optional now. The server checks the same. */
   if(body.fullName.trim().length<2){ err.textContent='Enter the client'+String.fromCharCode(8217)+'s full legal name.'; dcEl('dc-name').focus(); return; }
@@ -598,6 +606,7 @@ function submitDirectClient(){
   if(!body.sourceChannel){ err.textContent='Choose the source / reference.'; dcEl('dc-source').focus(); return; }
   var refErr=DC_REF.check(); if(refErr){ err.textContent=refErr; DC_REF.focus(); return; }
   if(body.notes.trim().length<3){ err.textContent='Add a note — what the client needs and the amount quoted.'; dcEl('dc-notes').focus(); return; }
+  var dlErr=DC_DL.check(!DC_OPTS || DC_OPTS.deadlineRequired!==false); if(dlErr){ err.textContent=dlErr; DC_DL.focus(); return; }
   var attErr=DC_ATT.check(); if(attErr){ err.textContent=attErr; return; }
   var subOpts=(DC_OPTS&&DC_OPTS.subTypesByCase&&DC_OPTS.subTypesByCase[body.caseType])||[];
   if(subOpts.length && !body.caseSubType){
@@ -822,7 +831,9 @@ var RETAINERS=[];
 ${LIST_PAGE_JS}
 ${REFERRAL_UI_JS}
 ${ATTACH_UI_JS}
+${DEADLINE_BOX_JS}
 var DC_REF=tdotRef('dc');      /* the walk-in form's Source / Reference second question (2026-11-04) */
+var DC_DL=window.tdotDeadlineBox('dc');   /* the deadline (2026-11-05): required here — this client is being retained */
 var DC_ATT=tdotAttach('dc');   /* "Attach a screenshot": only for the staff allowed to (Shafoli), signed in with Monday */
 var DC_PROFILE_ADDR='';        /* the carried address — its "is it current?" tick is asked only while the box still shows it */
 var RET_TABS=${jsLit(RETAINER_TABS)};   // the Retainers tabs: one per outcome, Retain first, then Retained (the shared list engine keeps which is on)
@@ -1037,6 +1048,11 @@ ${REMARKS_CSS}
   .ms-meta { font-size:11px; color:#64748b; font-variant-numeric:tabular-nums; }
   .ms-row button { padding:6px 12px; font-size:12px; }
 
+  ${DEADLINE_BOX_CSS}
+  .dlx .al-l { display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:#64748b; margin:10px 0 4px; font-weight:700; }
+  .dlx .al-yn { display:flex; gap:18px; font-size:13.5px; margin:2px 0; }
+  .dlx .al-yn label { display:flex; gap:6px; align-items:center; cursor:pointer; }
+  .dlx .al-hint { font-size:12px; color:#64748b; margin-top:4px; }
   a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }
 </style></head><body>
 ${buildNavHeader(fromRetainers ? 'retainers' : 'consultations')}
@@ -1124,6 +1140,14 @@ ${buildNavHeader(fromRetainers ? 'retainers' : 'consultations')}
           </div>
         </div>
         <div class="card"><div class="card-t">${I.flag} Case status</div><div id="c-status" class="kvgrid"></div></div>
+        <!-- The client's deadline (team meeting 2026-11-05): asked at retain (Retain & send refuses without it);
+             real (its date) or imaginary (the date promised to the client); kept in step with the case row. -->
+        <div class="card actions" id="c-dl-card">
+          <div class="card-t">${I.flag} Deadline <span class="muted">(required to retain · lands on the case)</span></div>
+          ${deadlineBoxHtml('cd', { required: true, title: 'Deadline', hint: 'Real: the actual deadline date. Imaginary: no real deadline — the submission date promised to the client (documents are needed 10–15 days before it).' })}
+          <div class="frow" style="margin-top:10px"><button class="btn" id="btn-cd-save">${I.save} Save deadline</button></div>
+          <div id="cd-msg" class="act-msg"></div>
+        </div>
       </div>
     </div>
 
@@ -1263,6 +1287,7 @@ ${buildNavHeader(fromRetainers ? 'retainers' : 'consultations')}
 </main>
 <script>
 var LEAD_ID=${jsLit(leadId)};
+${DEADLINE_BOX_JS}
 ${UPDATES_WIDGET_JS}
 var OUTCOMES=${jsLit(OUTCOME_LABELS)};
 var OUTCOME_NOT_WANTED=${jsLit(OUTCOME_NOT_WANTED)};
@@ -1570,9 +1595,15 @@ function pointBackAtList(d){
     a.classList.toggle('active',on); if(on) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current');
   });
 }
+var CD_DIRTY=false, CD_DL=null;
+function hydrateDeadline(d){
+  if(!CD_DL){ CD_DL=window.tdotDeadlineBox('cd'); Array.prototype.forEach.call(document.querySelectorAll('#cd-dl input'),function(i){ i.addEventListener('change',function(){ CD_DIRTY=true; }); }); }
+  if(!CD_DIRTY) CD_DL.set(d.deadline||{});
+}
 function render(d){
   LAST_DETAIL=d;
   pointBackAtList(d);
+  hydrateDeadline(d);
   document.getElementById('c-avatar').textContent=initials(d.name||d.leadId);
   document.getElementById('c-name').textContent=d.name||d.leadId;
   document.getElementById('c-sub').textContent=(d.serviceRequired||'—')+'  ·  '+(d.tier?('Tier '+d.tier):'')+'  ·  lead '+d.leadId;
@@ -1702,6 +1733,7 @@ function render(d){
     kv('Retainer sent',d.retainerSent)+kv('Retainer signed',d.retainerSigned)+
     kv('Retainer countersigned',(d.retainerCountersign||{}).signedAt)+
     kv('Retainer paid',d.retainerPaid)+
+    kv('Deadline',(d.deadline&&d.deadline.text)||'Not set')+
     (d.clientMasterItemId?kv('Case created','Yes (handed off)'):'')+
     /* point 8 (2026-11-05): its case was deleted and this consultation record kept */
     (d.caseDeleted?kv('Case deleted',d.caseDeleted+' — this consultation record was kept; no new case opens by itself (clear “Case deleted” on the lead in Monday to allow one)'):'');
@@ -2374,6 +2406,13 @@ function initActions(){
   rpEl('rp-hst').oninput=updateMileSum;
   rpEl('btn-retainer-preview').onclick=previewRetainer;
   rpEl('btn-retainer-save').onclick=saveRetainer;
+  var cdBtn=document.getElementById('btn-cd-save');
+  if(cdBtn) cdBtn.onclick=function(){
+    if(!CD_DL) CD_DL=window.tdotDeadlineBox('cd');
+    var e=CD_DL.check(false); if(e){ setMsg(e,'err'); CD_DL.focus(); return; }
+    CD_DIRTY=false;
+    doAction('saveDeadline', JSON.stringify(CD_DL.read()));
+  };
   rpEl('btn-retain-send').onclick=function(){
     // The pa-inviter agreement is CO-SIGNED: the inviter/sponsor/dependent is a
     // named signatory, so their details are compulsory before anything is sent.
@@ -2387,6 +2426,12 @@ function initActions(){
       return;
     }
     if(errEl) errEl.style.display='none';
+    // The deadline (2026-11-05): a client is retained only once it is known — the server refuses too.
+    if(!CD_DL) CD_DL=window.tdotDeadlineBox('cd');
+    if(CD_DL.blank() && !(RP_CT_OPTS && RP_CT_OPTS.deadlineRequired===false)){
+      setMsg('Set the deadline first (the Deadline box): a real deadline with its date, or imaginary with the submission date promised to the client — then Save deadline.','err');
+      CD_DL.focus(); return;
+    }
     var svMsg=svSendCheck();
     if(svMsg && !window.confirm(svMsg+'\\n\\nOK sends the agreement as it is. Cancel to change the family list first.')){
       var box=rpEl('rp-sv'); if(box&&box.scrollIntoView) box.scrollIntoView({block:'center'});

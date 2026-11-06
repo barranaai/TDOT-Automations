@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // The new direct-retainer popup has a Notes field (Faran 2026-10-28): what staff
 // type there is saved as an update on the client's lead row AND on their case
 // (Client Master) in Monday — once, with the signed-in name, line breaks kept,

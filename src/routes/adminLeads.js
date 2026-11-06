@@ -15,6 +15,7 @@ const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 const { leadsTableScript, LEADS_TABLE_CSS } = require('./leadsTableFilters');
 const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // Source / Reference second question (2026-11-04)   // header filters + sorting on the Leads list
 const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   // Shafoli's screenshot attachments (2026-11-04)
+const { deadlineBoxHtml, DEADLINE_BOX_JS, DEADLINE_BOX_CSS } = require('./deadlineBox');   // the deadline box (2026-11-05)
 const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const router  = express.Router();
@@ -90,6 +91,7 @@ function buildLeadsQueueHTML() {
   ${BLACKLIST_UI_CSS}
   ${REFERRAL_CSS}
   ${ATTACH_CSS}
+  ${DEADLINE_BOX_CSS}
 </style></head><body>
 ${buildNavHeader('leads')}
 <main class="wrap">
@@ -117,6 +119,7 @@ ${buildNavHeader('leads')}
         <div class="al-yn" role="radiogroup" aria-labelledby="al-incanada-l"><label><input type="radio" name="al-incanada" value="Yes"> Yes</label><label><input type="radio" name="al-incanada" value="No"> No</label></div>
         <div class="al-hint">Decides the HST on the consultation fee — no HST for clients outside Canada. Not sure yet? Leave it: HST is charged until it is set on the lead page.</div>
         <div id="al-country-row" style="display:none"><label class="al-l" for="al-country">Which country? *</label><select id="al-country">${COUNTRY_OPTS}</select></div>
+        ${deadlineBoxHtml('al', { required: false, title: 'Deadline (if known)', hint: 'Is there a real deadline, or a date you promised the client? Optional here — it is asked again when the client is retained. Documents are needed 10–15 days before a promised date.' })}
         <div id="al-addedby-row"><label class="al-l" for="al-addedby">Added by</label><select id="al-addedby">${STAFF_OPTS}</select><div class="al-hint">Becomes the lead owner. Signed in with Monday? Your name is filled in for you.</div></div>
         <div id="al-signedin" class="al-hint" style="display:none;margin-top:10px"></div>
         <label class="al-l" for="al-source">Source / Reference *</label>
@@ -153,6 +156,7 @@ ${buildNavHeader('leads')}
 <script>
 ${SHARED_AUTH_JS}
 ${DIALOG_UI_JS}
+${DEADLINE_BOX_JS}
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 var ALLROWS=[];
 function qpill(cls,txt){ return '<span class="pill '+cls+'">'+escHtml(txt)+'</span>'; }
@@ -230,6 +234,7 @@ function load(){
 ${REFERRAL_UI_JS}
 var AL_ALLOW=false, AL_SIGNED=false;
 var AL_REF=tdotRef('al');   /* Source / Reference second question: which employee / which client (2026-11-04) */
+var AL_DL=window.tdotDeadlineBox('al');   /* the deadline (2026-11-05): optional on this form, asked again at retain */
 ${ATTACH_UI_JS}
 var AL_ATT=tdotAttach('al');   /* "Attach a screenshot": shows only for the staff allowed to (Shafoli), signed in with Monday */
 function alEl(id){ return document.getElementById(id); }
@@ -247,6 +252,7 @@ function alOpen(){
   Array.prototype.forEach.call(document.querySelectorAll('input[name="al-incanada"]'),function(r){ r.checked=false; });
   alEl('al-country').value=''; alEl('al-country-row').style.display='none'; alEl('al-addedby').value='';
   alEl('al-source').value='';   /* the source is a real choice each time — no carried-over pick */
+  AL_DL.reset();
   AL_REF.reset();
   AL_ATT.reset(); AL_ATT.refresh();
   TDOT_BL.viewer=null;   /* re-check the Monday sign-in every time (the session lasts 8 h; the page may be open longer) */
@@ -274,6 +280,7 @@ function alSubmit(){
     residentialAddress:alEl('al-address').value,
     sourceChannel:alEl('al-source').value, referredBy:AL_REF.value(), referredFrom:AL_REF.from(), caseTypeInterest:alEl('al-casetype').value, note:alEl('al-note').value,
     inCanada:alLoc(), currentCountry:alEl('al-country').value, addedBy:alEl('al-addedby').value };
+  var dlv=AL_DL.read(); body.deadlineType=dlv.deadlineType; body.actualDeadline=dlv.actualDeadline; body.promisedSubmissionDate=dlv.promisedSubmissionDate;
   /* Required (2026-11-04): the full name, an email OR a phone number, and the source; what IS typed must make sense. The server checks the same. */
   if(!body.fullName.trim()){ err.textContent='Enter the full name.'; alEl('al-name').focus(); return; }
   if(!body.email.trim() && !body.phone.trim()){ err.textContent='Enter an email or a phone number — one of the two is required.'; alEl('al-email').focus(); return; }
@@ -282,6 +289,7 @@ function alSubmit(){
   if(!body.sourceChannel){ err.textContent='Choose the source / reference.'; alEl('al-source').focus(); return; }
   var refErr=AL_REF.check(); if(refErr){ err.textContent=refErr; AL_REF.focus(); return; }
   if(body.inCanada==='No' && !body.currentCountry){ err.textContent='Choose the country the client is in now (or leave "In Canada now?" unanswered).'; alEl('al-country').focus(); return; }
+  var dlErr=AL_DL.check(false); if(dlErr){ err.textContent=dlErr; AL_DL.focus(); return; }
   var attErr=AL_ATT.check(); if(attErr){ err.textContent=attErr; return; }
   if(AL_ALLOW) body.allowDuplicate=true;
   var key=getKey(); if(!key) return;
@@ -407,6 +415,7 @@ function buildLeadDetailHTML(leadId) {
   ${BLACKLIST_UI_CSS}
   ${REFERRAL_CSS}
   ${ATTACH_CSS}
+  ${DEADLINE_BOX_CSS}
   .alert { background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; border-radius:var(--r); padding:12px 16px; font-size:13px; font-weight:700; margin-bottom:14px; display:flex; gap:9px; align-items:flex-start; }
   .alert svg { font-size:16px; flex:none; margin-top:1px; }
   /* "No email" caution (2026-11-04): amber, not the red "review urgently" */
@@ -526,6 +535,13 @@ ${buildNavHeader('leads')}
           <div style="margin-top:8px"><button class="btn" id="btn-lead-loc">Save location</button></div>
           <div id="lead-loc-msg" class="act-msg"></div>
         </div>
+        <!-- The client's deadline (team meeting 2026-11-05): real (its date) or imaginary (the date promised to the
+             client). Asked at retain; kept in step with the case row. -->
+        <div class="card" id="lead-dl-card"><div class="card-t">${I.clip} Deadline <span class="muted">(real or imaginary — asked when the client is retained; lands on the case)</span></div>
+          ${deadlineBoxHtml('lead', { required: false, title: 'Deadline', hint: 'Real: the actual deadline date. Imaginary: no real deadline — the submission date promised to the client (documents are needed 10–15 days before it).' })}
+          <div style="margin-top:8px"><button class="btn" id="btn-lead-dl">Save deadline</button></div>
+          <div id="lead-dl-msg" class="act-msg"></div>
+        </div>
         <div id="c-sections"></div>
         <div class="card" id="c-attach-card" style="display:none"><div class="card-t">${I.file} Attachments <span class="muted">(OneDrive · Intake)</span></div><div id="c-attach"></div></div>
       </div>
@@ -585,6 +601,7 @@ ${buildNavHeader('leads')}
 </main>
 <script>
 ${SHARED_AUTH_JS}
+${DEADLINE_BOX_JS}
 var LEAD_ID=${jsLit(String(leadId))};
 var OUTCOMES=${jsLit(OUTCOME_LABELS)};
 var OUTCOME_NOT_WANTED=${jsLit(OUTCOME_NOT_WANTED)};
@@ -632,6 +649,7 @@ function render(d){
   if(la && !ADDR_DIRTY && document.activeElement!==la) la.value=d.address||'';   // never overwrite what the staffer is typing
   hydrateOwnerLocation(d);
   hydrateBasic(d);
+  hydrateDeadline(d);
   INQ_TEXT=d.situationDescription||'';
   var iw=document.getElementById('invite-warn');
   if(iw){
@@ -710,6 +728,7 @@ function render(d){
   if(d.referredBy && tdotRefKind(d.sourceChannel)) st+=kv('Referred by', d.referredBy);
   if(d.originalChannel) st+=kv('Original channel', d.originalChannel);
   st+=kv('Lead owner', d.leadOwner||'Not set');
+  st+=kv('Deadline', (d.deadline&&d.deadline.text)||'Not set');
   if(d.caseTypeInterest && d.caseTypeInterest!==d.service) st+=kv('Case type interest', d.caseTypeInterest);
   st+=kv('Intake archive', d.hasIntakeArchive?('Submitted '+String(d.intakeSubmittedAt||'').slice(0,10)):(d.staffAdded?((d.originalChannel==='Email'&&!d.leadOwner)?'None — came in by email':'None — added by staff'):'Not found'));
   if(d.consentsAt) st+=kv('Consents', String(d.consentsAt).slice(0,10));
@@ -961,6 +980,20 @@ if(_addrBtn) _addrBtn.onclick=function(){
 // Owner + where the client is: unsaved choices survive any re-render (same guard as the address).
 var OWNER_DIRTY=false, LOC_DIRTY=false;
 function leadLoc(){ var r=document.querySelector('input[name="lead-incanada"]:checked'); return r?r.value:''; }
+var DL_DIRTY=false, LEAD_DL=null;
+function hydrateDeadline(d){
+  if(!LEAD_DL){ LEAD_DL=window.tdotDeadlineBox('lead'); Array.prototype.forEach.call(document.querySelectorAll('#lead-dl input'),function(i){ i.addEventListener('change',function(){ DL_DIRTY=true; }); }); }
+  if(!DL_DIRTY) LEAD_DL.set(d.deadline||{});
+}
+(function(){
+  var b=document.getElementById('btn-lead-dl');
+  if(b) b.onclick=function(){
+    if(!LEAD_DL) LEAD_DL=window.tdotDeadlineBox('lead');
+    var e=LEAD_DL.check(false); if(e){ actMsg('lead-dl-msg','err',e); LEAD_DL.focus(); return; }
+    var p=doAction(b,'saveDeadline',null,JSON.stringify(LEAD_DL.read()),'lead-dl-msg'); if(!p) return;
+    p.then(function(res){ if(res&&res.ok){ DL_DIRTY=false; load(); var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r(); } });
+  };
+})();
 function hydrateOwnerLocation(d){
   var os=document.getElementById('lead-owner');
   if(os && !OWNER_DIRTY){

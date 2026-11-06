@@ -495,6 +495,8 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
     }
     await setClientPhone(existing.id, lead);
     await stampClientAccount(lead, existing.id);
+    // The client's deadline onto a reused case — only when the case has none (never over the team's own entry).
+    await carryDeadlineToReusedCase(existing.id, lead);
     // The consultation copy (point 8) — only onto a reused case that has none; never over another consultation's.
     await require('./consultCopyService').copyOnCaseOpen(existing.id, lead, { reused: true });
     return existing.id;
@@ -534,6 +536,9 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
     ...(noEmail ? (phoneColValue(lead.phone) ? { [CM.clientPhone]: phoneColValue(lead.phone) } : {}) : { [CM.clientEmail]: lead.email }),
     ...(presigned ? {} : { [CM.paymentStatus]: { label: 'Signed (Unpaid)' } }),
     [CM.caseStage]:     { label: 'Pre-Onboarding' },
+    // The client's deadline (team meeting 2026-11-05): the lead's answer onto the case's Deadline Type /
+    // Actual Deadline / Internal Deadline, in the same write that creates the row.
+    ...deadlineCellsOf(lead),
   };
   // Carry the intake-stage OneDrive folder across (caseRefService renames it
   // to "{name} - {caseRef}" when the reference is generated).
@@ -681,6 +686,25 @@ async function _doHandoff(leadId, { presigned = false } = {}) {
   return newId;
 }
 
+/** The lead's deadline answer as case cells ({} when the lead has none or the answer is not usable). */
+function deadlineCellsOf(lead) {
+  const DL = require('./deadlineService');
+  if (!DL.isSet(lead)) return {};
+  const a = DL.fromLead(lead);
+  const r = DL.validate({ deadlineType: a.type, actualDeadline: a.actualDeadline, promisedSubmissionDate: a.promisedSubmissionDate }, { required: false, today: '0000-01-01' });
+  return r.ok && !r.blank ? DL.caseCells(r) : {};
+}
+async function carryDeadlineToReusedCase(cmId, lead) {
+  const cells = deadlineCellsOf(lead);
+  if (!Object.keys(cells).length) return;
+  try {
+    const sync = require('./deadlineCaseSync');
+    const onCase = await sync.io.readCase(cmId);
+    if (onCase && onCase.type) return;   // the case already has the team's own answer
+    await sync.io.writeCase(cmId, cells);
+  } catch (err) { console.warn(`[Handoff] deadline carry to reused CM ${cmId} failed: ${err.message}`); }
+}
+
 /**
  * Apply the SIGNED-state effects to a lead whose case ALREADY exists — the
  * case-first (direct retainer) flow opens the case at creation with neutral
@@ -805,4 +829,5 @@ async function openCaseEarly({ leadId }) {
 
 module.exports = { onRetainerSigned, openCaseEarly, findClientMasterSamePerson, ensureSignedState, resolveCaseType, resolveValidatedCaseType, pickSamePersonMatch, normName, decideCaseReuse, stampClientAccount, transferLeadUpdates, buildImportedHistoryChunks, phoneColValue, setClientPhone,
   // Exported for tests: the bounded wait that keeps a client to ONE folder.
-  ensureLeadFolderNow, leadFolderWaitMs };
+  ensureLeadFolderNow, leadFolderWaitMs,
+  _internal: { carryDeadlineToReusedCase, deadlineCellsOf } };

@@ -273,6 +273,7 @@ async function getConsultationDetail(leadId) {
     })(),
     conversionStatus: lead.conversionStatus || '', // 'Retained' once signed AND paid — locks the send button
     clientMasterItemId: lead.clientMasterItemId || '',
+    deadline:       deadlineView(lead),   // the client's deadline (2026-11-05): shown and edited on the record page
     onList:         listFor(lead),   // the record page's way back: the list the client is on right now (2026-11-05)
     caseDeleted:    String(lead.clientMasterItemId || '').trim() ? '' : String(lead.caseDeleted || '').trim(),   // its case was deleted, this record kept (point 8)
     onListTab:      retainerTab(lead),   // …and on Retainers & follow-ups, the outcome tab the client is under (point 7)
@@ -666,6 +667,7 @@ async function getLeadDetail(leadId) {
     referredBy:       (lead.referredBy || '').trim(),   // Source / Reference's second answer (2026-11-04)
     insideCanada:     (lead.insideCanada || '').trim(),
     country:          (lead.country || '').trim(),
+    deadline:         deadlineView(lead),   // the client's deadline (2026-11-05)
 
     bookingStatus: lead.bookingStatus || 'Not Yet',
     bookedSlot:    lead.bookedSlot || '',
@@ -941,6 +943,13 @@ function validateAction(action, value) {
       return { ok: true, normalized: msg };
     }
     // Add-lead group (2026-10-15): where the client is now (sets the consultation HST); the lead owner.
+    case 'saveDeadline': {
+      // The deadline (team meeting 2026-11-05): checked as the forms check it; a blank answer clears it
+      // (allowed from here — the gates at retain ask again).
+      let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid deadline.' }; }
+      const r = require('./deadlineService').validate(o || {}, { required: false });
+      return r.ok ? { ok: true, normalized: r } : { ok: false, error: r.error };
+    }
     case 'saveLocation': {
       let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid location.' }; }
       const r = normalizeLeadLocation(o || {});
@@ -1225,6 +1234,21 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       return { ok: true, message: 'Attribution saved.' };
     }
 
+    case 'saveDeadline': {
+      const DL = require('./deadlineService');
+      const n = v.normalized;
+      const before = DL.fromLead(lead);
+      const after = { type: n.type, actualDeadline: n.actualDeadline, promisedSubmissionDate: n.promisedSubmissionDate };
+      if (DL.same(before, after)) return { ok: true, message: 'No change.' };
+      const { fields, clearKeys } = DL.leadFields(n);
+      await leadService.updateLead(leadId, fields, { clearKeys });
+      const byName = (actor && actor.verified && String(actor.name || '').trim()) ? String(actor.name).trim().slice(0, 60) : who;
+      // The linked case row, in step at once (the team reads it there) — a failure is said, never silent.
+      const cmId = String(lead.clientMasterItemId || '').trim();
+      const onCase = cmId ? await require('./deadlineCaseSync').writeToCase(cmId, n, { reason: `edited by ${byName || 'staff'}` }) : null;
+      await postPortalNote(leadId, `Deadline: ${escHtmlNote(DL.describe(n))} (was ${escHtmlNote(DL.describe(before))})${byName ? ` — set by ${escHtmlNote(byName)}` : ''}.${cmId && onCase === false ? ' ⚠ The case row could not be updated — set it on the case in Monday.' : ''}`);
+      return { ok: true, message: `Saved — ${DL.describe(n)}.${cmId ? (onCase ? ' The case row is updated too.' : ' ⚠ The case row could not be updated — set it on the case in Monday.') : ''}` };
+    }
     case 'saveLocation': {
       const n = v.normalized;
       const before = { insideCanada: String(lead.insideCanada || '').trim(), country: String(lead.country || '').trim() };
@@ -1453,6 +1477,15 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         const subs = canon.caseTypes.includes(ct) ? (canon.subTypesByCase[ct] || []) : [];
         if (subs.length && !String(lead.selectedSubType || '').trim()) {
           const e = new Error(`"${ct}" needs a Sub-type before sending — pick one in the retainer plan (it selects the document checklist).`);
+          e.badRequest = true; throw e;
+        }
+      }
+      {
+        // The deadline (team meeting 2026-11-05): a client is retained only once it is known whether there is a
+        // real deadline (and its date) or an imaginary one (and the date promised). Refused BEFORE anything changes.
+        const DL = require('./deadlineService');
+        if (DL.required() && !DL.isSet(lead)) {
+          const e = new Error('Set the deadline first (the Deadline box above): a real deadline with its date, or imaginary with the submission date promised to the client.');
           e.badRequest = true; throw e;
         }
       }
@@ -1907,6 +1940,11 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
   const askedLoc = String(payload.inCanada == null ? '' : payload.inCanada).trim() !== '';
   const loc = askedLoc ? normalizeLeadLocation({ inCanada: payload.inCanada, country: payload.currentCountry }) : { ok: true, insideCanada: '', country: '' };
   if (!loc.ok) bad(loc.error);
+  // The deadline (team meeting 2026-11-05): optional on this form — it is asked for real when the
+  // client is retained (the direct-retainer form, the consultation outcome Retain).
+  const DL = require('./deadlineService');
+  const dl = DL.validate(payload, { required: false });
+  if (!dl.ok) bad(dl.error);
   // Who added it → the Lead Owner (Faran 2026-10-15): the Monday sign-in when
   // there is one (matched to the roster name), else the name picked in the form.
   const roster = require('../../config/portalStaff');
@@ -1939,6 +1977,8 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
     ...(phone ? { phone } : {}),
     ...(address ? { residentialAddress: address } : {}),
     ...(loc.country ? { country: loc.country } : {}),   // text column, AT creation: an invite sent at once already prices the HST right
+    ...(dl.actualDeadline ? { actualDeadline: dl.actualDeadline } : {}),            // dates AT creation (no label risk)
+    ...(dl.promisedSubmissionDate ? { promisedSubmissionDate: dl.promisedSubmissionDate } : {}),
     ...(addedBy ? { leadOwner: addedBy } : {}),
     ...(note ? { situationDescription: note } : {}),
   });
@@ -1948,7 +1988,7 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
   // in a follow-up updateLead instead, whose mutation auto-creates labels —
   // the SAME sanctioned path createDirectClient uses for confirmedCaseType.
   // Status / dropdown values follow via updateLead (create_item mints no labels).
-  const follow = { ...(loc.insideCanada ? { insideCanada: loc.insideCanada } : {}), ...(caseTypeInterest ? { caseTypeInterest } : {}) };
+  const follow = { ...(loc.insideCanada ? { insideCanada: loc.insideCanada } : {}), ...(caseTypeInterest ? { caseTypeInterest } : {}), ...(dl.type ? { deadlineType: dl.type } : {}) };
   if (Object.keys(follow).length) {
     await leadService.updateLead(lead.id, follow)
       .catch((err) => console.warn(`[Leads] follow-up write (In Canada / case type) failed for staff lead ${lead.id}: ${err.message} — the lead itself is created`));
@@ -1958,6 +1998,7 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
   if (!phone) missing.push('phone');
   if (!address) missing.push('residential address (the consultation agreement prints it)');
   if (!loc.insideCanada) missing.push('where the client is now (HST is charged on the consultation fee until it is set)');
+  if (dl.blank) missing.push('the deadline — real or imaginary, and the date (asked again when the client is retained)');
   await postPortalNote(lead.id,
     `Lead added${addedBy ? ` by ${escHtmlNote(addedBy)}` : ''}${signedIn ? ' (signed in with Monday)' : ''} — source / reference: ${escHtmlNote(sourceChannel)}` +
     `${referredBy ? ` (referred by ${escHtmlNote(referredBy)}${LEAD_SRC.referralKind(sourceChannel) === 'client' ? (referredFrom === 'list' ? ', picked from the old Consultations board' : ', name typed by hand') : ''})` : ''}` +
@@ -1968,6 +2009,13 @@ async function createStaffLead(payload = {}, { actor = null } = {}) {
   if (blacklist.hit) await require('./blacklistService').noteOnLead(lead.id, blacklist, 'Staff saw the warning and added this lead anyway.');
   invalidateLeadsQueue(); // the new lead must appear on the next queue load
   return { leadId: String(lead.id), blacklist };
+}
+
+/** The client's deadline as the pages show it: the stored answer, its wording, and whether the question is mandatory. */
+function deadlineView(lead) {
+  const DL = require('./deadlineService');
+  const a = DL.fromLead(lead);
+  return { ...a, text: DL.describe(a), set: DL.isSet(lead), required: DL.required() };
 }
 
 /**
@@ -2130,6 +2178,12 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
   if (!ref.ok) bad(ref.error);
   const referredBy = ref.referredBy;
   if (notes.length < 3) bad('Add a note — what the client needs and the amount quoted.');
+  // The deadline (team meeting 2026-11-05): REQUIRED here — this client is being retained now. A real
+  // deadline with its date, or an imaginary one with the date promised to the client. (DEADLINE_REQUIRED=0
+  // makes it optional.) It lands on the case row when the case opens a few lines below.
+  const DL = require('./deadlineService');
+  const dl = DL.validate(payload, { missingMessage: 'Set the deadline: a real deadline with its date, or imaginary with the submission date promised to the client.' });
+  if (!dl.ok) bad(dl.error);
   const labels = await directCaseTypeLabels();
   if (!labels.caseTypes.includes(caseType)) bad('Choose a case type — it generates the case reference and the document checklist.');
   {
@@ -2225,6 +2279,8 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
       residentialAddress: address,   // '' keeps the lead's own address (empty values are never written)
       ...(priorReferredBy ? {} : { referredBy }),
       conversionStatus:   'Qualified',
+      // The deadline typed on the form wins over whatever the lead held (the person retaining them knows).
+      ...DL.leadFields(dl).fields,
       ...reuseExtras,
     };
     if (chosenAccountId) linkWiring.clientAccountId = chosenAccountId;
@@ -2330,6 +2386,9 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     sourceChannel: clientSource,
     directClient:  DIRECT_MARK,
     referredBy,
+    // The deadline's dates AT creation (the case opens from this row below); the type (a status label) follows in the wiring.
+    ...(dl.actualDeadline ? { actualDeadline: dl.actualDeadline } : {}),
+    ...(dl.promisedSubmissionDate ? { promisedSubmissionDate: dl.promisedSubmissionDate } : {}),
     situationDescription: `Direct retainer client — entered at the retainer stage, no consultation. Source / reference: ${clientSource}${referredBy ? ` · Referred by: ${referredBy}` : ''}`,
   }, { groupId: directGroupId });
   const leadId = created.id;
@@ -2343,6 +2402,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     residentialAddress: address,
     referredBy,
     conversionStatus:   'Qualified', // honest: qualified to retain, never booked/consulted
+    ...(dl.type ? { deadlineType: dl.type } : {}),
     ...reuseExtras,
   };
   if (chosenAccountId) wiring.clientAccountId = chosenAccountId; // staff-explicit account link from the modal
@@ -2388,6 +2448,7 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
     (caseOpened ? `The Client Master case is open (case-first — this client is never a funnel lead). ` : '') +
     (!email ? `⚠ <b>No email address yet</b> — the retainer agreement is sent by email, so add the client’s email on this lead before “Retain &amp; send agreement”. ` : '') +
     (!address ? `No residential address yet — the agreement prints it; add it before sending. ` : '') +
+    (dl.blank ? '' : `Deadline: ${escHtmlNote(DL.describe(dl))}. `) +
     `Next: set the retainer fee + plan and click “Retain &amp; send agreement”.`);
   await noteBlacklist(leadId, 'Staff saw the warning and created this direct retainer client anyway.');
   // After the "created" note, so the team reads them in order.
@@ -3053,10 +3114,13 @@ async function addCaseRefs(rows, waitMs = CASE_REFS_WAIT_MS) {
 async function getDirectClientOptions() {
   const labels = await directCaseTypeLabels();
   const { CONSULTANTS } = require('../../config/consultantRouting');
+  const DL = require('./deadlineService');
   return {
     caseTypes: labels.caseTypes,
     subTypesByCase: labels.subTypesByCase,
     consultants: Object.values(CONSULTANTS).map((c) => c.name),
+    deadlineRequired: DL.required(),   // the deadline question (2026-11-05): mandatory at retain unless DEADLINE_REQUIRED=0
+    deadlineTypes: DL.TYPES,
   };
 }
 

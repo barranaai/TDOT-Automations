@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // Team feedback 2026-08-13: notify staff (Kamal) when a lead's OUTCOME changes,
 // so nobody has to read the board every morning. Same shape as the retainer
 // signature notification: recipients in an env var, unset = off, best-effort.

@@ -10,5 +10,11 @@
     "record": "link_mm8txy20",
     "recording": "link_mm8tcna7",
     "preConsult": "link_mm8t21rb"
+  },
+  "deadlineColumns": {
+    "type": "color_mm6w7cdd",
+    "actual": "date_mm33sj6t",
+    "promised": "date_mm3t66pa",
+    "phase": "color_mm3tf1ys"
   }
 }

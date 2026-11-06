@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // The Direct retainer form (Faran 2026-11-04, team meeting point 1 part 2):
 //  - an email OR a phone (either one) — a phone-only walk-in still gets a case;
 //  - staff see a "No email" caution, and the retainer refuses BEFORE changing anything;

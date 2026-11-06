@@ -43,7 +43,10 @@ const COL = {
   paidDate:       'date_mm0xgk76',
   manager:        'multiple_person_mm0xhmgk',
   submissionTeam: 'multiple_person_mm2nhsx1',
+  deadlineType:   'color_mm6w7cdd',   // the client's deadline (2026-11-05): Deadline / Imaginary
 };
+// Cases opened from this day on are expected to carry a deadline (the question is asked at retain since then).
+const DEADLINE_SINCE = Date.parse(process.env.DEADLINE_ASKED_SINCE || '2026-11-07T00:00:00Z');
 const FETCH_COLS = [...new Set([...Object.values(COL), ...caseAccess.PEOPLE_COLUMNS])];
 const EXEC_REF_COL = 'text_mm0z2cck';            // Documents board: the case reference
 // Board groups that are not live cases. By id, with the title as a fallback
@@ -116,6 +119,7 @@ const KINDS = {
   'sponsor-email': { order: 61, severity: 'medium', label: 'Sponsor email not sent' },
   'payment-flag':  { order: 62, severity: 'medium', label: 'Payment flagged for an admin' },
   'assign':        { order: 63, severity: 'medium', label: 'Ready for the next step, nobody assigned' },
+  'no-deadline':   { order: 64, severity: 'medium', label: 'Deadline not set (real or imaginary)' },
   'folder-split':  { order: 70, severity: 'medium', label: 'Two folders for one case' },
   'other-warning': { order: 80, severity: 'low',    label: 'Other app warnings' },
 };
@@ -546,6 +550,15 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
       other(c, au, `The case number was given while OneDrive could not be checked (${dateWord(au.at)}).`,
         'Tell an admin, so they can check no other client\'s folder ends with this number.');
     }
+    // 9. The client's deadline (team meeting 2026-11-05): every case opened since the question is asked must
+    //    say whether there is a real deadline or an imaginary one — the reminders and the Deadlines view read it.
+    if (!isLegacy(c) && c.created >= DEADLINE_SINCE && !CLOSED_STAGES.includes(c.stage) && !s(c.deadlineType)) {
+      add('no-deadline', c, `${c.id}|deadline`, {
+        since: c.created,
+        why: 'No deadline is set for this client — neither a real deadline nor an imaginary one with a promised submission date.',
+        todo: 'Open the client\'s record (Retainers → the client) and set the Deadline box; it lands on the case row too.',
+      });
+    }
   }
 
   return out;
@@ -711,7 +724,7 @@ function parseCase(item) {
     id: s(item.id), name: s(item.name), groupId: s(item.group && item.group.id), groupTitle: s(item.group && item.group.title),
     created: tms(item.created_at),
     ref: cv[COL.ref], caseType: cv[COL.caseType], subType: cv[COL.subType],
-    stage: cv[COL.stage], payment: cv[COL.payment], paidDate: paid,
+    stage: cv[COL.stage], payment: cv[COL.payment], paidDate: paid, deadlineType: cv[COL.deadlineType],
     manager: cv[COL.manager], managerSet: !!cv[COL.manager], submissionSet: !!cv[COL.submissionTeam],
     assignees: caseAccess.assigneesFromColumnValues(raw),
     notes: caseNotes(item.updates),

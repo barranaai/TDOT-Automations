@@ -47,6 +47,9 @@ const CM = {
   slaRiskBand:    'color_mm0xszmm',
   caseManager:    'multiple_person_mm0xhmgk',
   hardDeadline:   'date_mm0x5pqd',
+  deadlineType:   'color_mm6w7cdd',   // the client's deadline (2026-11-05): Deadline / Imaginary
+  actualDeadline: 'date_mm33sj6t',
+  internalDeadline: 'date_mm3t66pa',  // the promised submission date
   portalLink:     'link_mm2vta5',
   folderLink:     'link_mm47dng8',
 };
@@ -100,6 +103,7 @@ async function readClientMaster(itemId) {
     slaRisk:         txt(CM.slaRiskBand) || '—',
     manager:         txt(CM.caseManager) || 'Unassigned',
     deadline:        txt(CM.hardDeadline) || '',
+    clientDeadline:  require('./deadlineService').describe({ ok: true, type: txt(CM.deadlineType), actualDeadline: txt(CM.actualDeadline), promisedSubmissionDate: txt(CM.internalDeadline) }),
     portalLink:      linkUrl(by[CM.portalLink]?.value) || txt(CM.portalLink),
     folderLink:      linkUrl(by[CM.folderLink]?.value) || txt(CM.folderLink),
     assignees:       caseAccess.assigneesFromColumnValues(valueByColId), // { personIds, teamIds }
@@ -391,4 +395,4 @@ async function getCaseOverview(caseRef) {
   };
 }
 
-module.exports = { getCaseOverview, getLeadExtras, buildTimeline, summariseDocuments, pickLeadFields, _CM: CM };
+module.exports = { getCaseOverview, getLeadExtras, buildTimeline, summariseDocuments, pickLeadFields, readClientMaster, _CM: CM };

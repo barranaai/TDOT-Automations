@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // Canonical case-type + sub-type end to end (user directive 2026-07-30): the
 // retainer panel's new pickers, the lead columns, Client Master, and the
 // checklist/questionnaire seeders must share ONE vocabulary. saveRetainerSelections

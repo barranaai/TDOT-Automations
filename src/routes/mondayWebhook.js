@@ -162,6 +162,12 @@ router.post('/', async (req, res) => {
       );
     }
 
+    // Deadline Type / Actual Deadline / Internal Deadline edited on the board (team meeting 2026-11-05):
+    // copied back to the linked lead — the app's one truth for the client's deadline.
+    if (require('../services/deadlineCaseSync').isDeadlineColumn(columnId)) {
+      require('../services/deadlineCaseSync').onCaseEdited(pulseId).catch(() => {});
+    }
+
     // Client Email corrected → resend intake email if already sent to wrong address
     if (columnId === CLIENT_EMAIL_COL_ID) {
       emailService.onClientEmailChanged(pulseId).catch(err =>

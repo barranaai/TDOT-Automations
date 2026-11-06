@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // Super Visa: both parents usually apply, but the second parent is on the case
 // only when someone adds them — as an accompanying Spouse. On 2026-10-23 none
 // of the 21 Super Visa cases had one (2026-SV-021, SV-017, SV-004 named two

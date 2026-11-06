@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // Regression: a client who has already SIGNED / been RETAINED must never be sent
 // a fresh retainer agreement — even when `retainerSent` was never stamped (manual
 // signing, a failed stamp, or a legacy path). This is the server-side twin of the

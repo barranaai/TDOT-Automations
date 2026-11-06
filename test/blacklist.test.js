@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // Gauri point 5 (2026-10-08), Faran's decisions 2026-10-15: FOUR outcomes
 // (Retain / Follow-Up / Newsletter / Not Wanted); "Not Wanted" puts the person
 // on the Not Wanted list — a separate board, one row per person — and staff are

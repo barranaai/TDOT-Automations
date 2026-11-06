@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // Case-first direct retainer clients: the Client Master case opens at CREATION
 // (neutral labels), the engine row lives in its own Lead Board group and never
 // appears among leads, and SIGNING later upgrades the same case idempotently

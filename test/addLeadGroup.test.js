@@ -1,5 +1,8 @@
 'use strict';
 
+// The deadline question (2026-11-05) is pinned by test/deadlineAtRetain.test.js; these tests cover other rules.
+process.env.DEADLINE_REQUIRED = '0';
+
 // The Add-lead group (Faran 2026-10-15 "yes. go ahead"):
 //  1. "In Canada now?" on Add lead and on the lead page — it sets the HST on the
 //     consultation fee (no HST outside Canada; Melanie's rule 2026-08-24).
