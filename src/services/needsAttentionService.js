@@ -612,16 +612,28 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
   // ── 10. The Reminder Templates board (block 2, §3b) ───────────────────────
   // A row the reminders could not use: the built-in text is used instead, and nobody
   // would know (review 2026-11-07 [23]). Not a case — no row, no case number, no
-  // "handled" note; it leaves the list by itself once the board row is fixed.
+  // "handled" note; it leaves the list at the next check once the board row is fixed.
+  // A board-level problem (not found, unreadable, no Subject/Body column) is ONE item,
+  // never four "fix that row" items the rows cannot answer (review round 2 [4]).
+  const boardProblem = templateProblems.find((t) => t && t.board);
+  if (boardProblem) {
+    out.push({
+      key: keyOf('reminder-template-invalid|template|board'), kind: 'reminder-template-invalid',
+      itemIds: [], caseRef: '', client: 'Reminder Templates board', stage: '', payment: '', manager: '', rows: [],
+      since: '',
+      why: `The Reminder Templates board could not be read (${oneLine(reminderTemplates.boardCause(boardProblem.reason), 160) || 'no reason given'}) — the built-in texts are in use.`,
+      todo: 'A one-off read problem clears itself. If it stays: an admin checks that the board id in the app settings (MONDAY_REMINDER_TEMPLATES_BOARD_ID) is the Reminder Templates board and that the board has a Subject column and a Body column. It leaves the list at the next check (07:00, or Check now once the board has been re-read — a few minutes after the fix).',
+    });
+  }
   for (const t of templateProblems) {
     const row = s(t && t.row);
-    if (!row) continue;
+    if (!row || (t && t.board)) continue;
     out.push({
       key: keyOf(`reminder-template-invalid|template|${row}`), kind: 'reminder-template-invalid',
       itemIds: [], caseRef: '', client: `Reminder Templates board — the "${row}" row`, stage: '', payment: '', manager: '', rows: [],
       since: '',
       why: `The ${row} text on the Monday Reminder Templates board cannot be used (${oneLine(t.reason, 160) || 'the row does not pass the checks'}). The reminders use the built-in text instead.`,
-      todo: 'Fix that row on the Reminder Templates board: plain text, the body must contain {MissingList}, and it must not tell the client to reply. The item leaves this list by itself within half an hour of the fix (Check now reads the board again sooner).',
+      todo: 'Fix that row on the Reminder Templates board: plain text, the body must contain {MissingList}, and it must not tell the client to reply. It leaves the list at the next check (07:00, or Check now once the board has been re-read — up to half an hour after the fix).',
     });
   }
 
@@ -647,6 +659,20 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
           since: tms(`${c.actualDeadline}T12:00:00Z`) - 3 * 24 * 3600 * 1000,
           why: `The client's deadline ${when} and ${figure}. The automatic reminder does not email this close to a deadline.`,
           todo: 'Call the client about the missing documents today (the case page lists them under Document reminders). If the deadline has moved, update it on the client\'s record; if the file is going to Stuck, set the Case Stage by hand.',
+        });
+      }
+    } else if (isPaid(c) && c.deadlineType === 'Imaginary' && isDayText(c.promised) && (pct == null || under50(c.docUploaded))) {
+      // a'. An imaginary deadline whose promised submission date is 3 days away or past, with the documents
+      //     under 50 %: the automatic email would tell the client "we plan to submit by <a date that has gone>"
+      //     every 3rd day — so it never does; a person updates the promised date or calls (review round 2 [3]).
+      const n = daysUntil(c.promised, today);
+      if (Number.isFinite(n) && n <= 3) {
+        const when = n < 0 ? `passed on ${dateWord(tms(`${c.promised}T12:00:00Z`))}` : n === 0 ? 'is today' : `is in ${n} day${n === 1 ? '' : 's'} (${dateWord(tms(`${c.promised}T12:00:00Z`))})`;
+        const figure = pct == null ? 'no upload figure has been computed yet' : `only ${pct} % of the documents are uploaded`;
+        add('deadline-close-under-50', c, `${c.id}|promised-close|${c.promised}`, {
+          since: tms(`${c.promised}T12:00:00Z`) - 3 * 24 * 3600 * 1000,
+          why: `The submission date promised to the client ${when} and ${figure}. The automatic reminder does not email about a promised date this close or passed.`,
+          todo: 'Update the promised submission date on the client\'s record (Retainers → the client, the Deadline box) to the next window, or call the client about the missing documents today (the case page lists them under Document reminders).',
         });
       }
     }
@@ -675,10 +701,12 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
     //    (a client retained before the app, set up for the reminders by a typed deadline): nothing to list,
     //    so no email can go. Any other Paid case with a typed deadline the generic rule did not list — and
     //    that is not in its set-up grace (just paid, just started) — lands here too, so no such case falls
-    //    between the two kinds (review 2026-11-07 [19]).
+    //    between the two kinds (review 2026-11-07 [19]). A legacy case already explained by a hold /
+    //    Sub Type / seed item is not listed a second time (review round 2 [6]); a note-less legacy case
+    //    is listed whatever its set-up grace.
     const startedNote = newest(notes, NOTE.started);
     const settling = (c.paidDate && now - c.paidDate < GRACE_PAID_DAY_MS) || now - c.created < GRACE_SETUP_MS || (startedNote && now - startedNote.at < GRACE_SETUP_MS);
-    if (rows === false && isPaid(c) && s(c.deadlineType) && (isLegacy(c) || (!checklistListed && !settling))) {
+    if (rows === false && isPaid(c) && s(c.deadlineType) && !checklistListed && (isLegacy(c) || !settling)) {
       add('dcs-no-checklist-rows', c, `${c.id}|dcs-no-rows`, {
         since: c.paidDate || c.created,
         why: 'The case is collecting documents with a deadline recorded, but it has no document checklist rows — the reminders (automatic or from the case page) have nothing to list.',
@@ -946,11 +974,11 @@ const io = {
     return ((d && d.items_page_by_column_values && d.items_page_by_column_values.items) || []).length > 0;
   },
   listRootFolders: () => require('./oneDriveService').listCaseFoldersInRoot(),
-  /** The Reminder Templates board's unusable rows: [{ row, reason }]. No read at all when the board env is unset; otherwise the templates' own cached load (half an hour). */
+  /** The Reminder Templates board's problems: [{ row, reason, board }] — board: true = the board itself (not found / unreadable / no Subject or Body column), row = '' then. No read at all when the board env is unset; otherwise the templates' own cached load (half an hour; a few minutes after a read failure). */
   async reminderTemplateProblems() {
     if (!s(process.env.MONDAY_REMINDER_TEMPLATES_BOARD_ID)) return [];
     await reminderTemplates.loadTemplates();
-    return reminderTemplates.diagnostics().map((d) => ({ row: d.row, reason: d.reason || (d.problems || []).join('; ') }));
+    return reminderTemplates.diagnostics().map((d) => ({ row: d.row, reason: d.reason || (d.problems || []).join('; '), board: !!d.board }));
   },
   async workFoldersPresent(folderId) {
     const r = await require('./oneDriveService').ensureCaseWorkFolders({ folderId, dryRun: true });   // list only

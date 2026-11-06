@@ -519,7 +519,8 @@ const noteEsc = (v) => s(v).replace(/[<>]/g, '').replace(/\s+/g, ' ').slice(0, 1
 
 /**
  * The claim note — the record that this reminder is going out (posted BEFORE the email).
- * @param {object} o  { level: 1|2|3|'auto', to (masked), actor (name), count, lastDay?, deadline?, pct?, now }
+ * @param {object} o  { level: 1|2|3|'auto', to (masked), actor (name), count, lastDay?, deadline?, pct?, now, day? }
+ *                    day = the marker's Toronto day (the caller's "today"); taken from `now` when not given
  */
 function claimNote(o) {
   const level = o.level, origin = ORIGIN_OF[level];
@@ -527,7 +528,8 @@ function claimNote(o) {
   // The marker's Toronto day is taken at CLAIM time. A send that straddles midnight (claim
   // 23:59:58, email 00:00:02) is accepted as that day's send — the next day's run may then
   // email again, which is one extra reminder, never a lost one (review 2026-11-07, left as is).
-  const day = torontoDay(o.now), when = `${torontoTime(o.now)} (Toronto)`;
+  // The callers pass their own `today` so the claim and its failure note carry ONE day.
+  const day = o.day || torontoDay(o.now), when = `${torontoTime(o.now)} (Toronto)`;
   const docs = `${Number(o.count) || 0} document${Number(o.count) === 1 ? '' : 's'} missing`;
   if (level === 'auto') {
     const pct = o.pct == null || o.pct === '' ? '' : ` (${Number(o.pct)} % uploaded)`;
@@ -537,11 +539,15 @@ function claimNote(o) {
   return `${NOTE_HEAD} ${level} sent</b> (${TONE[level]}) to ${noteEsc(o.to)} by ${noteEsc(o.actor) || 'staff'} — ${docs}${last} — ${when}${marker(origin, day)}`;
 }
 
-/** The failure note — after a send that did not go out; cancels its claim (named by `claimId` — the note id the claim post answered). */
+/**
+ * The failure note — after a send that did not go out; cancels its claim (named by `claimId` —
+ * the note id the claim post answered). `day` = the claim's Toronto day (the caller's "today"),
+ * so a send that fails after midnight still pairs with its claim; taken from `now` when not given.
+ */
 function failureNote(o) {
   const origin = ORIGIN_OF[o.level];
   if (!origin) throw new Error(`Unknown reminder level: ${o.level}`);
-  const day = torontoDay(o.now);
+  const day = o.day || torontoDay(o.now);
   return `${NOTE_HEAD} did not go out</b> — ${noteEsc(o.reason).slice(0, 200) || 'the email could not be sent'} — ${torontoTime(o.now)} (Toronto)${failMarker(origin, day, o.claimId)}`;
 }
 
@@ -584,7 +590,7 @@ function readReminderHistory(notes) {
     if (n.kind === 'claim') { claims.push({ ...n, failed: false }); continue; }
     failures.push(n);
     const open = n.claimId
-      ? claims.find((c) => c.id === n.claimId && !c.failed && c.origin === n.origin && c.day === n.day && idNum(c) < idNum(n))   // by id: never another instance's claim
+      ? claims.find((c) => c.id === n.claimId && !c.failed && c.origin === n.origin && idNum(c) < idNum(n))   // by id (unique): never another instance's claim; no day test — a send that fails after midnight still cancels its claim (review round 2 [0])
       : [...claims].reverse().find((c) => !c.failed && c.origin === n.origin && c.day === n.day && idNum(c) < idNum(n));         // old notes: the newest open one
     if (open) open.failed = true;
   }
@@ -597,14 +603,18 @@ function readReminderHistory(notes) {
 
 /** The sends (auto or button) recorded for a Toronto day — the once-per-day guard's input. */
 const sentOn = (history, day) => history.sends.filter((x) => x.day === day);
-/** Claims of one origin on one day, in id order — the race reads the earliest open one. */
+/** Claims of one origin on one day, in id order. */
 const openClaims = (history, origin, day) => [...history.claims].filter((c) => c.origin === origin && c.day === day && !c.failed).sort((a, b) => idNum(a) - idNum(b));
+/** Open claims of EVERY origin on one day, in id order — the race reads the earliest one. */
+const openClaimsAnyOrigin = (history, day) => [...history.claims].filter((c) => c.day === day && !c.failed).sort((a, b) => idNum(a) - idNum(b));
 /**
- * The race's competitors: our own claim plus the open claims posted within RACE_WINDOW_MS
- * of now. An older open claim of the same level today is a FINISHED send (the preview
- * already warns "already went today") — a second send the same day is not a lost race.
+ * The race's competitors: our own claim plus the open claims OF ANY ORIGIN posted within
+ * RACE_WINDOW_MS of now — a staff send and the automatic run in the same seconds are one
+ * race, and the lower note id wins (review round 2 [1]). An older open claim today is a
+ * FINISHED send (the preview already warns "already went today") — a deliberate second
+ * send the same day is not a lost race.
  */
-const racingClaims = (history, origin, day, mine, now) => openClaims(history, origin, day).filter((c) => c.id === mine || (Number.isFinite(c.at) && c.at >= now - RACE_WINDOW_MS));
+const racingClaims = (history, day, mine, now) => openClaimsAnyOrigin(history, day).filter((c) => c.id === mine || (Number.isFinite(c.at) && c.at >= now - RACE_WINDOW_MS));
 /** Failed tries of one origin on one day. */
 const failedTries = (history, origin, day) => history.claims.filter((c) => c.origin === origin && c.day === day && c.failed).length;
 
@@ -877,19 +887,19 @@ async function sendStaffReminder({ overview, level, subject, body, extra, lastDa
   // 1. The claim — the record that this reminder is going out (before the email).
   let mine;
   try {
-    mine = await io.postNote(overview.itemId, claimNote({ level: lv, to: email.to, actor: actor && actor.name, count: p.missing.count, lastDay: last, now: t }));
+    mine = await io.postNote(overview.itemId, claimNote({ level: lv, to: email.to, actor: actor && actor.name, count: p.missing.count, lastDay: last, now: t, day: today }));
   } catch (err) { throw refuse(503, 'note-failed', `The note could not be saved on the case (${s(err.message).slice(0, 120)}) — nothing was sent. Try again in a minute.`); }
 
   // 2. Only the earliest open claim of the last few minutes sends (a second app
-  //    instance, or a second person, may have claimed the same reminder in the same
-  //    seconds). An earlier FINISHED send of this level today is not a competitor —
-  //    a deliberate second send the same day goes out (the preview warned).
+  //    instance, a second person, or the automatic run may have claimed a reminder
+  //    for this client in the same seconds — any origin counts). An earlier FINISHED
+  //    send today is not a competitor — a deliberate second send goes out (the preview warned).
   try {
     const after = readReminderHistory(await io.readNotes(overview.itemId, 1));
-    const open = racingClaims(after, origin, today, mine, io.now());
+    const open = racingClaims(after, today, mine, io.now());
     if (open.length && open[0].id !== mine && open.some((x) => x.id === mine)) {
       await Promise.resolve(io.deleteNote(mine)).catch(() => {});
-      throw refuse(409, 'lost-race', 'This reminder is being sent right now by someone else — nothing was sent twice. Reload the page in a moment.');
+      throw refuse(409, 'lost-race', 'A document reminder is going to this client right now (someone else, or the automatic run) — nothing was sent twice. Reload the page in a moment.');
     }
   } catch (err) { if (err.refused) throw err; /* cannot re-read: our claim stands, send */ }
 
@@ -898,7 +908,7 @@ async function sendStaffReminder({ overview, level, subject, body, extra, lastDa
     await io.sendEmail({ to: email.recipient, subject: email.subject, html: email.html, ...(email.replyTo ? { replyTo: email.replyTo } : {}) });
   } catch (err) {
     io.warn(`[DocReminders] ${p.caseRef}: reminder ${lv} did not go out: ${err.message}`);
-    await Promise.resolve(io.postNote(overview.itemId, failureNote({ level: lv, reason: 'the email could not be sent', now: io.now(), claimId: mine })))
+    await Promise.resolve(io.postNote(overview.itemId, failureNote({ level: lv, reason: 'the email could not be sent', now: io.now(), day: today, claimId: mine })))
       .catch((e) => io.warn(`[DocReminders] failure note also failed for ${p.caseRef}: ${e.message}`));
     throw Object.assign(new Error('The email could not be sent — please try again in a moment.'), { status: 502, reason: 'send-failed', sendFailed: true });
   }
@@ -976,6 +986,8 @@ function selectByColumns(row, { today, imaginary = false, only = [] } = {}) {
   } else if (row.deadlineType === 'Imaginary') {
     if (!imaginary) return skip('imaginary deadline — the imaginary branch is off (DOC_REMINDERS_IMAGINARY)');
     if (!isDay(row.promised)) return skip('imaginary deadline with no promised submission date');
+    const n = daysUntil(row.promised, today);   // a promised date that has gone, or is days away, is never emailed as a plan (review round 2 [3])
+    if (n < DEADLINE_MIN_DAYS) return { decision: 'attention', reason: n < 0 ? `promised submission date passed on ${fmtDay(row.promised)} — no email; update the promised date on the client's record (listed under Needs attention)` : `promised submission date in ${n} day${n === 1 ? '' : 's'} (${fmtDay(row.promised)}) — no email; update the promised date on the client's record or call the client (listed under Needs attention)` };
     variant = 'imaginary';
   } else {
     return skip('no deadline recorded on the case (listed under Needs attention)');
@@ -1022,15 +1034,16 @@ async function runCandidate(row, sel, { now, today, dryRun }) {
   // 1. the claim (the record, before the email)
   let mine;
   try {
-    mine = await io.postNote(row.id, claimNote({ level: 'auto', to: email.to, count: missing.count, deadline: fmtDay(out.deadline), pct: live, now: io.now() }));
+    mine = await io.postNote(row.id, claimNote({ level: 'auto', to: email.to, count: missing.count, deadline: fmtDay(out.deadline), pct: live, now: io.now(), day: today }));
   } catch (err) { return { ...out, decision: 'error', reason: `the note could not be saved on the case — nothing sent (${s(err.message).slice(0, 120)})` }; }
-  // 2. the earliest open claim of the last few minutes sends (two app instances)
+  // 2. the earliest open claim of the last few minutes sends (two app instances, or a staff
+  //    button pressed in the same seconds — any origin)
   try {
     const after = readReminderHistory(await io.readNotes(row.id, 1));
-    const open = racingClaims(after, 'auto', today, mine, io.now());
+    const open = racingClaims(after, today, mine, io.now());
     if (open.length && open[0].id !== mine && open.some((x) => x.id === mine)) {
       await Promise.resolve(io.deleteNote(mine)).catch(() => {});
-      return { ...out, decision: 'lost-race', reason: 'another instance is sending this reminder right now — nothing sent twice' };
+      return { ...out, decision: 'lost-race', reason: open[0].level === 'auto' ? 'another instance is sending this reminder right now — nothing sent twice' : `a staff reminder (reminder ${open[0].level}) is going to the client right now — nothing sent twice` };
     }
   } catch (_) { /* cannot re-read: our claim stands, send */ }
   // 3. the email
@@ -1038,7 +1051,7 @@ async function runCandidate(row, sel, { now, today, dryRun }) {
     await io.sendEmail({ to: email.recipient, subject: email.subject, html: email.html, ...(email.replyTo ? { replyTo: email.replyTo } : {}) });
   } catch (err) {
     io.warn(`[DocReminders] ${row.ref}: the automatic reminder did not go out: ${err.message}`);
-    await Promise.resolve(io.postNote(row.id, failureNote({ level: 'auto', reason: 'the email could not be sent', now: io.now(), claimId: mine })))
+    await Promise.resolve(io.postNote(row.id, failureNote({ level: 'auto', reason: 'the email could not be sent', now: io.now(), day: today, claimId: mine })))
       .catch((e) => io.warn(`[DocReminders] failure note also failed for ${row.ref}: ${e.message}`));
     return { ...out, decision: 'failed', reason: 'the email could not be sent (noted on the case; listed under Needs attention)' };
   }
@@ -1095,7 +1108,7 @@ module.exports = {
   buildReminderEmail,
   // the record
   io, claimNote, failureNote, parseNote, rawNotes, readReminderHistory, readCaseNotes, recentClientSend, recentEscalationStamp, autoSkipReasons, previewWarnings, historyView,
-  sentOn, openClaims, racingClaims, failedTries, isCaseGroup, describeForCase, caseGateProblem,
+  sentOn, openClaims, openClaimsAnyOrigin, racingClaims, failedTries, isCaseGroup, describeForCase, caseGateProblem,
   // the staff buttons
   gateStaff, parseLevel, senderName, previewStaffReminder, sendStaffReminder,
   NOTE_HEAD, NOTE_HEAD_TEXT, NOT_CASE_GROUPS, MAX_TRIES, NOTES_PAGE, NOTES_MAX_PAGES, FINAL_DEFAULT_DAYS, RACE_WINDOW_MS,

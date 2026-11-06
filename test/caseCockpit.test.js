@@ -528,7 +528,7 @@ test('case page (sandbox): Send posts the edited text (level, subject, body, ext
     { status: 200, body: PREVIEW() },
     { status: 502, body: { ok: false, reason: 'send-failed', error: 'The email could not be sent — please try again in a moment.' } },
     { status: 200, body: PREVIEW() },
-    { status: 409, body: { ok: false, reason: 'lost-race', error: 'This reminder is being sent right now by someone else — nothing was sent twice. Reload the page in a moment.' } },
+    { status: 409, body: { ok: false, reason: 'lost-race', error: 'A document reminder is going to this client right now (someone else, or the automatic run) — nothing was sent twice. Reload the page in a moment.' } },
     { status: 200, body: PREVIEW() },
     { status: 409, body: { ok: false, reason: 'max-tries', error: 'This reminder did not go out 3 times today — the email system is having a temporary problem. Please try again tomorrow, or email the client by hand.' } },
   ] });

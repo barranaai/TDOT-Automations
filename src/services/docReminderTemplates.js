@@ -114,7 +114,7 @@ async function loadTemplates() {
   const useDefault = (name, why, reason) => {
     const d = validate(DEFAULTS[name]);
     templates[name] = { name, subject: d.subject, body: d.body, source: 'default', warnings: d.warnings };
-    if (why) diagnostics.push({ row: name, problems: [why], reason: reason || why });   // reason = the bare cause, for the staff-facing line (boardProblemFor)
+    if (why) diagnostics.push({ row: name, board: false, problems: [why], reason: reason || why });   // reason = the bare cause, for the staff-facing line (boardProblemFor)
   };
   if (!id) {
     for (const name of ROW_NAMES) useDefault(name, '');
@@ -124,9 +124,11 @@ async function loadTemplates() {
   let read;
   try { read = await readBoard(id); }
   catch (err) { read = { rows: {}, problem: `the Reminder Templates board could not be read (${err.message})` }; }
+  // a board-level problem is ONE diagnostic (row: '', board: true), never one per row — the rows are not at fault (review round 2 [4])
+  if (read.problem) diagnostics.push({ row: '', board: true, problems: [read.problem], reason: read.problem });
   for (const name of ROW_NAMES) {
     const row = read.rows[name];
-    if (read.problem) { useDefault(name, read.problem); continue; }
+    if (read.problem) { useDefault(name, ''); continue; }
     if (!row) { useDefault(name, ''); continue; }                       // no row = not written yet, not a fault
     if (!row.active) { useDefault(name, ''); continue; }                 // switched off on purpose
     const v = validate(row);
@@ -146,25 +148,35 @@ async function templateFor(level) {
 }
 
 /**
- * What the last load found wrong: [{ row, problems: [...] }] — empty when every row is
- * fine. Read by the Needs-attention layer (later step); never a board write. Reflects
- * the cached load (nothing is read here).
+ * What the last load found wrong: [{ row, board, problems: [...], reason }] — empty when
+ * every row is fine. board: true = the board itself could not be used (not found, unreadable,
+ * no Subject/Body column; row = ''), one entry for the whole board. Read by the Needs-attention
+ * layer; never a board write. Reflects the cached load (nothing is read here).
  */
-function diagnostics() { return _cache ? _cache.diagnostics.map((d) => ({ row: d.row, problems: [...d.problems], reason: d.reason || '' })) : []; }
+function diagnostics() { return _cache ? _cache.diagnostics.map((d) => ({ row: d.row, board: !!d.board, problems: [...d.problems], reason: d.reason || '' })) : []; }
+
+/** The board-level problem of the last load ('' when the board read fine, or nothing is loaded). */
+function boardProblem() { const d = _cache && _cache.diagnostics.find((x) => x.board); return d ? d.reason || d.problems.join('; ') : ''; }
+/** The bare cause of a board-level problem: "the Reminder Templates board could not be read (monday down)" → "monday down". */
+const boardCause = (reason) => String(reason || '').replace(/^the Reminder Templates board could not be read \((.*)\)$/, '$1');
 
 /**
  * The line staff read when a board row could not be used (review 2026-11-07 [23]: the
  * fallback used to be silent): "The Reminder 2 text on the Monday board could not be used
- * (…) — the built-in text is used instead." '' when the row is fine. Reflects the cached
- * load — call after templateFor / loadTemplates.
+ * (…) — the built-in text is used instead." '' when the row is fine. A board-level problem
+ * applies to every row. Reflects the cached load — call after templateFor / loadTemplates.
  */
 function boardProblemFor(name) {
-  const d = _cache && _cache.diagnostics.find((x) => x.row === name);
-  return d ? `The ${d.row} text on the Monday board could not be used (${d.reason || d.problems.join('; ')}) — the built-in text is used instead.` : '';
+  const d = _cache && (_cache.diagnostics.find((x) => x.row === name) || _cache.diagnostics.find((x) => x.board));
+  return d ? `The ${name} text on the Monday board could not be used (${d.reason || d.problems.join('; ')}) — the built-in text is used instead.` : '';
 }
-/** Every row's line (the Engine Controls preview). */
-function boardProblems() { return _cache ? _cache.diagnostics.map((d) => boardProblemFor(d.row)).filter(Boolean) : []; }
+/** The lines for the Engine Controls preview: one for the board when it could not be read, else one per row that fell back. */
+function boardProblems() {
+  if (!_cache) return [];
+  const b = boardProblem();
+  return b ? [`The Reminder Templates board could not be read (${boardCause(b)}) — the built-in texts are in use.`] : _cache.diagnostics.map((d) => boardProblemFor(d.row)).filter(Boolean);
+}
 
 function _resetForTests() { _cache = null; _cacheAge = 0; _cacheTtl = CACHE_TTL_MS; }
 
-module.exports = { loadTemplates, templateFor, validate, stripHtml, unknownTokens, tellsToReply, diagnostics, boardProblemFor, boardProblems, TOKENS, ROW_NAMES, LEVEL_ROWS, DEFAULTS, _resetForTests };
+module.exports = { loadTemplates, templateFor, validate, stripHtml, unknownTokens, tellsToReply, diagnostics, boardProblem, boardCause, boardProblemFor, boardProblems, TOKENS, ROW_NAMES, LEVEL_ROWS, DEFAULTS, _resetForTests };
