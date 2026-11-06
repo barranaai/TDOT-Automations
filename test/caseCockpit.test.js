@@ -379,6 +379,10 @@ test('case page: the Reminders card markup sits under the Document readiness met
   assert.ok(docs < remDoc && remDoc < review, 'Documents tab: the card before the review card');
   assert.equal((html.match(/class="card rem-card"/g) || []).length, 2);
   assert.match(html, /<div class="card rem-card" id="rem-ov" style="display:none"><\/div>/, 'hidden until the server reports the facts');
+  // review round 2 [8]: the message slot is a static sibling of each card (like #doc-act-msg), never part of the redrawn card
+  assert.match(html, /<div class="card rem-card" id="rem-ov" style="display:none"><\/div>\n\s+<div class="act-msg rem-msg" id="rem-msg-ov"><\/div>/);
+  assert.match(html, /<div class="card rem-card" id="rem-doc" style="display:none"><\/div>\n\s+<div class="act-msg rem-msg" id="rem-msg-doc"><\/div>/);
+  assert.equal((html.match(/class="act-msg rem-msg"/g) || []).length, 2);
   assert.match(js, /renderSponsor\(d\.sponsor, d\.cmUnavailable\);\n  \/\/ Document reminders card \(block 2\)[^\n]*\n  renderReminders\(d\.reminders\);/, 'render() draws the card right after the sponsor card');
   assert.match(html, /@media \(max-width: 600px\) \{\n\s+\.rem-btns \.sbtn \{ width:100%; justify-content:center; font-size:16px; min-height:44px; \}/, 'phones: full-width 16px / 44px buttons');
   assert.match(html, /\.tdlg\.rem-dlg \{ max-width:none; width:100%; height:100%; max-height:100vh; max-height:100dvh; border-radius:0; \}/, 'phones: a full-screen sheet');
@@ -415,7 +419,7 @@ function remSandbox({ responses = [] } = {}) {
       const els = {};
       const el = (id) => els[id] || (els[id] = { id, value: '', min: '', textContent: '', onclick: null, focus() { this.focused = true; } });
       const c = { opts, openId: 1, closed: [], busy: [], box: { innerHTML: '', querySelector: (sel) => el(sel.slice(1)) },
-        tryClose(how) { c.close(true, how); }, close(force, how) { c.closed.push(how); if (opts.onClosed) opts.onClosed(how); },
+        tryClose(how) { c.close(true, how); }, close(force, how) { c.closed.push(how); if (opts.onClosed) opts.onClosed(how, c.busy.length > 0 && c.busy[c.busy.length - 1] === true); },
         setBusy(on) { c.busy.push(on); }, still(id) { return id === c.openId && !c.closed.length; }, els };
       dialogs.push(c); return c;
     },
@@ -447,7 +451,7 @@ test('case page (sandbox): renderReminders draws the three buttons and the Sent 
     assert.match(s.cards[i].innerHTML, /Sent \(recent notes\): 1st 3 Nov 2026 \(Mahesh Sharma\) · 2nd — · Final — · Auto: last 6 Nov 2026 \(1 so far\)</);
     assert.match(s.cards[i].innerHTML, /never questionnaire items/);
     assert.match(s.cards[i].innerHTML, /the Sent line reads the newest 100 notes, so an older send may be further down the notes\.<\/div>/, 'the card says where its facts come from (review [2]/[16]/[24])');
-    assert.match(s.cards[i].innerHTML, /<div class="act-msg rem-msg"><\/div>$/, 'the message slot is part of the card');
+    assert.doesNotMatch(s.cards[i].innerHTML, /rem-msg/, 'the message slot is NOT part of the card — it sits beside it, so the reload after a send cannot wipe the message (review round 2 [8])');
   }
   s.ctx.renderReminders(FACTS({ canSend: false, blocked: 'Automation Lock is on for this case — reminders are off until it is cleared in Monday.' }));
   assert.ok(s.buttons(0).every((b) => b.hasAttribute('disabled')));
@@ -482,7 +486,10 @@ test('case page (sandbox): renderReminders draws the three buttons and the Sent 
 });
 
 test('case page (sandbox): a click previews first (GET), the dialog carries To / subject / text / extra line / the read-only list / amber warnings, the final adds the last-day box; a 401 preview shows the sign-in link', async () => {
-  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW() }, { status: 200, body: PREVIEW({ level: 3, lastDay: '2026-11-14', warnings: [] }) }, { status: 401, body: { ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' } }] });   // the real server shape (server.js resolveCaseForWrite): its returnTo points at the dashboard
+  const SPOUSE = { member: 'Spouse / Common-Law Partner', type: 'Spouse / Common-Law Partner', categories: [{ category: 'Identity', items: [{ name: 'Passport', instruction: '' }] }] };
+  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW() }, { status: 200, body: PREVIEW({ level: 3, lastDay: '2026-11-14', warnings: [] }) }, { status: 401, body: { ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' } },
+    { status: 200, body: PREVIEW({ missing: { groups: [SPOUSE], count: 1 }, missingCount: 1 }) },
+    { status: 200, body: PREVIEW({ missing: { groups: [{ member: 'Principal Applicant', type: 'Principal Applicant', categories: [{ category: 'Identity', items: [{ name: 'Passport', instruction: '' }] }] }, SPOUSE], count: 2 }, missingCount: 2 }) }] });   // the real server shape (server.js resolveCaseForWrite): its returnTo points at the dashboard
   s.ctx.renderReminders(FACTS());
   // the real page binds onclick on the card's buttons (parsed nodes here are copies) — call remOpen as the binding does
   s.ctx.remOpen(1); await s.flush();
@@ -498,6 +505,7 @@ test('case page (sandbox): a click previews first (GET), the dialog carries To /
   assert.match(d.box.innerHTML, /the missing list goes where \{MissingList\} is, the portal link where \{PortalLink\} is<\/span>/);
   assert.match(d.box.innerHTML, /<li>Passport &lt;all pages&gt; <span class="muted">— Colour scan &amp; all pages\.<\/span><\/li>/, 'the list is read-only, escaped');
   assert.doesNotMatch(d.box.innerHTML, /rem-lastday/, 'no last-day box on reminder 1');
+  assert.doesNotMatch(d.box.innerHTML, /rem-member/, 'a lone principal-applicant group (no type = principal): no member heading');
   assert.equal(d.els['rem-subject'].value, 'Documents still needed — 2026-SV-021');
   assert.equal(d.els['rem-body'].value, 'Dear Aisha Khan,\n\n{MissingList}\n\n{PortalLink}');
   assert.equal(d.els['rem-subject'].focused, true);
@@ -516,6 +524,16 @@ test('case page (sandbox): a click previews first (GET), the dialog carries To /
   assert.equal(s.dialogs.length, 2, 'a 401 opens no dialog');
   assert.match(s.msgs[0].innerHTML, /Sign in required <a href="\/q\/auth\/monday\?returnTo=%2Fadmin%2Fcase%2F2026-SV-021">Sign in with Monday<\/a>/, 'the sign-in comes back to THIS case, not the dashboard the server named (review 2026-11-07 [26])');
   assert.equal(s.msgs[1].className, 'act-msg rem-msg err');
+  // review round 2 [2]: the read-only list names the member under the same rule as the email — a spouse-only list says whose passport is missing
+  s.ctx.remOpen(1); await s.flush();
+  const sp = s.dialogs[2];
+  assert.match(sp.box.innerHTML, /<div class="rem-missing"><div class="rem-member">Spouse \/ Common-Law Partner<\/div><div class="rem-cat">Identity<\/div><ul class="rem-list"><li>Passport<\/li><\/ul><\/div>/, 'the lone non-principal member is named');
+  sp.els['rem-cancel'].onclick();
+  s.ctx.remOpen(1); await s.flush();
+  const two = s.dialogs[3];
+  assert.equal((two.box.innerHTML.match(/<div class="rem-member">/g) || []).length, 2, 'two members: both headings');
+  assert.match(two.box.innerHTML, /<div class="rem-member">Principal Applicant<\/div>/);
+  two.els['rem-cancel'].onclick();
   // the same rule on the document-action handler earlier in the page (the pre-existing sibling)
   const { js: pageSrc } = pageJs();
   assert.equal((pageSrc.match(/\.split\('\?'\)\[0\] \+ '\?returnTo=' \+ encodeURIComponent\(location\.pathname \+ location\.search\)/g) || []).length, 2, 'both 401 handlers replace the server\'s returnTo with this page');
@@ -576,4 +594,61 @@ test('case page (sandbox): Send posts the edited text (level, subject, body, ext
   assert.deepEqual([h.closed, s.loads(), s.ctx.REM_STALE], [[], 3, true]);
   h.els['rem-cancel'].onclick();
   assert.equal(s.loads(), 4);
+});
+
+test('case page (sandbox): the "Sent to …" and lost-race messages survive the reload that redraws the card; a send answered after the dialog was closed (slow wait) still reads the case again', async () => {
+  const s = remSandbox({ responses: [
+    { status: 200, body: PREVIEW() },
+    { status: 200, body: { ok: true, noted: true, to: 'a***@example.com', level: 1, day: '2026-11-07' } },
+    { status: 200, body: PREVIEW() },
+    { status: 409, body: { ok: false, reason: 'lost-race', error: 'A document reminder is going to this client right now (someone else, or the automatic run) — nothing was sent twice. Reload the page in a moment.' } },
+    { status: 200, body: PREVIEW() },
+    { status: 200, body: { ok: true, noted: true, to: 'a***@example.com', level: 1, day: '2026-11-07' } },
+    { status: 200, body: PREVIEW() },
+    { status: 502, body: { ok: false, reason: 'send-failed', error: 'The email could not be sent — please try again in a moment.' } },
+    { status: 200, body: PREVIEW() },
+    'network',
+  ] });
+  // the real loadCase re-renders the card from the server's answer (render → renderReminders)
+  let reloads = 0;
+  const AFTER = FACTS({ sent: { 1: { day: '2026-11-07', label: '7 Nov 2026', by: 'Mahesh Sharma', at: '', lastDay: '' }, 2: null, 3: null } });
+  s.ctx.loadCase = function() { reloads++; s.ctx.renderReminders(AFTER); };
+  s.ctx.renderReminders(FACTS());
+  // review round 2 [8]: the confirmation is still there after the reload redrew the card
+  s.ctx.remOpen(1); await s.flush();
+  s.dialogs[0].els['rem-send'].onclick(); await s.flush();
+  assert.deepEqual([s.dialogs[0].closed, reloads], [['sent'], 1]);
+  assert.match(s.cards[0].innerHTML, /1st 7 Nov 2026 \(Mahesh Sharma\)/, 'the card was redrawn from the reload');
+  assert.doesNotMatch(s.cards[0].innerHTML, /rem-msg/, 'the redrawn card carries no message slot');
+  for (const m of s.msgs) assert.deepEqual([m.className, m.textContent], ['act-msg rem-msg ok', 'Sent to a***@example.com — noted on the case.'], 'the message outlives the redraw');
+  // the lost-race line — the one a staffer most needs to read — likewise
+  s.ctx.remOpen(1); await s.flush();
+  assert.deepEqual([s.msgs[0].className, s.msgs[0].textContent], ['act-msg rem-msg ', ''], 'the next attempt clears the old line');
+  s.dialogs[1].els['rem-send'].onclick(); await s.flush();
+  assert.deepEqual([s.dialogs[1].closed, reloads], [['refused'], 2]);
+  assert.match(s.msgs[1].textContent, /nothing was sent twice/);
+  assert.equal(s.msgs[1].className, 'act-msg rem-msg err');
+  // review round 2 [7]: closed during the slow wait, the answer lands later → the case is read again (the card never keeps the pre-send facts)
+  s.ctx.remOpen(1); await s.flush();
+  const late = s.dialogs[2];
+  late.els['rem-send'].onclick();            // the POST is pending
+  late.tryClose('cancel');                   // closed after the grace time, while the request still runs
+  assert.deepEqual([late.closed, late.busy, s.ctx.REM_OPEN], [['cancel'], [true], false]);
+  assert.equal(reloads, 2, 'closing a busy dialog did not reload by itself');
+  await s.flush();                           // the 200 answer lands after the close
+  assert.equal(reloads, 3, 'the late answer reads the case again');
+  assert.deepEqual(late.busy, [true], 'the closed dialog is not touched');
+  assert.deepEqual([s.msgs[0].className, s.msgs[0].textContent], ['act-msg rem-msg ', ''], 'no "Sent to" line for an answer nobody is watching — the reloaded card shows it');
+  // the same for an error answer after the close (502): the failure note is on the case, read it again
+  s.ctx.remOpen(1); await s.flush();
+  const lateErr = s.dialogs[3];
+  lateErr.els['rem-send'].onclick(); lateErr.tryClose('cancel'); await s.flush();
+  assert.deepEqual([reloads, lateErr.busy, lateErr.els['rem-err'].textContent, s.ctx.REM_STALE], [4, [true], '', false]);
+  // and for a network failure after the close
+  s.ctx.remOpen(1); await s.flush();
+  const lateNet = s.dialogs[4];
+  lateNet.els['rem-send'].onclick(); lateNet.tryClose('cancel'); await s.flush();
+  assert.deepEqual([reloads, lateNet.busy, lateNet.els['rem-err'].textContent], [5, [true], '']);
+  // the open-dialog path is unchanged: an answer that lands while the dialog is still open does NOT reload twice
+  assert.equal(s.fetches.filter((f) => f[1] === 'POST').length, 5);
 });

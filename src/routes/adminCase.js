@@ -170,6 +170,7 @@ function buildCockpitHTML(caseRef) {
 
     /* Document reminders card + dialog (block 2, 2026-11-06) */
     .rem-card { margin-bottom:16px; }
+    .rem-msg.info, .rem-msg.ok, .rem-msg.err { margin-top:-4px; margin-bottom:16px; }
     .rem-btns { display:flex; gap:8px; flex-wrap:wrap; }
     .rem-sent { font-size:12.5px; color:var(--navy); margin-top:12px; line-height:1.6; }
     .rem-blocked, .rem-fail { font-size:12px; color:#b45309; background:#fffbeb; border-radius:7px; padding:6px 10px; margin-top:10px; }
@@ -272,6 +273,7 @@ ${buildNavHeader('dashboard')}
 
       <!-- Document reminders (block 2) — the three buttons + the "Sent:" line; hidden with a reason when the case cannot be reminded -->
       <div class="card rem-card" id="rem-ov" style="display:none"></div>
+      <div class="act-msg rem-msg" id="rem-msg-ov"></div>
 
       <div class="grid grid-2">
         <div class="card">
@@ -303,6 +305,7 @@ ${buildNavHeader('dashboard')}
     <!-- Documents tab — inline review actions -->
     <div class="tab-panel" id="panel-documents">
       <div class="card rem-card" id="rem-doc" style="display:none"></div>
+      <div class="act-msg rem-msg" id="rem-msg-doc"></div>
       <div class="card">
         <div class="card-title">📂 Document review
           <span class="cnt"><a class="act-btn" id="doc-review-lnk" target="_blank" rel="noopener" style="font-size:11px;padding:5px 10px">Full review page (uploads &amp; replies) →</a></span>
@@ -1158,7 +1161,7 @@ function renderReminders(rm) {
     if (rm.lastFailed && rm.failures && rm.failures[0]) html += '<div class="rem-fail">Last attempt did not go out (' + escHtml(rm.failures[0].label) + ') — the note on the case says when.</div>';
     html += '<div class="rem-hint">Each click opens a preview you can edit before it goes. The missing documents are listed by the app (never questionnaire items); a note on the case is the record' + (rm.recentNotes ? ' — the Sent line reads the newest ' + Number(rm.recentNotes) + ' notes, so an older send may be further down the notes' : '') + '.</div>';
   }
-  html += '<div class="act-msg rem-msg"></div>';
+  // the message slot (.rem-msg) sits beside each card, not inside it: the reload after a send redraws the card and must not wipe "Sent to …" or the lost-race line
   Array.prototype.forEach.call(cards, function(c) {
     c.style.display = 'block'; c.innerHTML = html;
     Array.prototype.forEach.call(c.querySelectorAll('[data-rem-level]'), function(b) { b.onclick = function() { remOpen(Number(b.getAttribute('data-rem-level'))); }; });
@@ -1187,7 +1190,8 @@ function remOpen(level) {
 function remMissingHtml(missing) {
   var groups = (missing && missing.groups) || [], list = '';
   groups.forEach(function(g) {
-    if (groups.length > 1) list += '<div class="rem-member">' + escHtml(g.member) + '</div>';
+    // the same rule as the email: the member heading when there is more than one member, or the one member is not the principal applicant (a spouse-only list must say whose passport is missing)
+    if (groups.length > 1 || (g.type || 'Principal Applicant') !== 'Principal Applicant') list += '<div class="rem-member">' + escHtml(g.member) + '</div>';
     (g.categories || []).forEach(function(cat) {
       list += '<div class="rem-cat">' + escHtml(cat.category) + '</div><ul class="rem-list">' +
         (cat.items || []).map(function(it) { return '<li>' + escHtml(it.name) + (it.instruction ? ' <span class="muted">— ' + escHtml(it.instruction) + '</span>' : '') + '</li>'; }).join('') + '</ul>';
@@ -1236,7 +1240,7 @@ function remSend(c, level, v) {
   fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/reminder', { method: 'POST', headers: headers, credentials: 'same-origin', body: JSON.stringify({ level: level, subject: v.subject, body: v.body, extra: v.extra, lastDay: v.lastDay }) })
   .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
   .then(function(res) {
-    if (!c.still(id)) return;   // closed meanwhile (after the long wait): the answer is on the case, the reload shows it
+    if (!c.still(id)) { loadCase(); return; }   // closed meanwhile (after the long wait): the answer is on the case — read it again so the card shows it, not the facts from before the send
     c.setBusy(false);
     if (res.ok) { REM_STALE = false; c.close(true, 'sent'); remMsg('ok', 'Sent to ' + (res.j.to || 'the client') + ' — noted on the case.'); loadCase(); return; }
     if (res.status === 401) { c.close(true, 'auth'); remFail(res, ''); return; }
@@ -1247,7 +1251,7 @@ function remSend(c, level, v) {
     // another send got there first, or the list changed under the dialog: the case reloads
     if (res.status === 409 && res.j && (res.j.reason === 'lost-race' || res.j.reason === 'no-rows')) { REM_STALE = false; c.close(true, 'refused'); remMsg('err', err.textContent); loadCase(); }
   })
-  .catch(function(e) { if (!c.still(id)) return; c.setBusy(false); err.textContent = 'Failed: ' + e.message; });
+  .catch(function(e) { if (!c.still(id)) { loadCase(); return; } c.setBusy(false); err.textContent = 'Failed: ' + e.message; });
 }
 
 function loadCase() {

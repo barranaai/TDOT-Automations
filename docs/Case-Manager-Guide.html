@@ -458,7 +458,7 @@
         <thead><tr><th>Column</th><th>What to set</th><th>When</th></tr></thead>
         <tbody>
           <tr><td>Case Stage</td><td>Advance manually for: Submission Ready, Submitted, and all terminal stages</td><td>After your review confirms the case is ready, or when the outcome is received. All other stage advances happen automatically.</td></tr>
-          <tr><td>Manual Override</td><td>Set to Yes</td><td>When a client has a legitimate reason for not responding (travelling, waiting on third-party, spoken to you directly). Pauses chasing emails only. Set back to No when ready to resume.</td></tr>
+          <tr><td>Manual Override</td><td>Set to Yes</td><td>When a client has a legitimate reason for not responding (travelling, waiting on third-party, spoken to you directly). Pauses the document reminders only (the case-page buttons refuse to send and the automatic email skips the case). Set back to No when ready to resume.</td></tr>
           <tr><td>Automation Lock</td><td>Set to Yes</td><td>When you need to put the entire case on hold — stops all daily engines. Set back to No to resume. Note: the system sets this automatically at case closure.</td></tr>
           <tr><td>Escalation Required</td><td>Set to Yes</td><td>If you identify an escalation need that the system has not flagged automatically (e.g., legal complication, complaint). Set to No once resolved — clears the escalation reason automatically.</td></tr>
         </tbody>
@@ -486,8 +486,8 @@
           <tr><td>Q Template Applied</td><td>Questionnaire service on Document Collection Started</td></tr>
           <tr><td>Stage Start Date</td><td>Resets automatically on every stage advance</td></tr>
           <tr><td>Payment Date</td><td>Set automatically when Retainer is marked Paid</td></tr>
-          <tr><td>Chasing Stage</td><td>Retired (November 2026) — no longer updated. Document reminders are now the three buttons on the case page (Reminder 1 friendly, Reminder 2 firm, Final naming the last day) plus the automatic daily email; the record is the notes on the case (see Section 9).</td></tr>
-          <tr><td>Reminder Count</td><td>Retired — no longer updated</td></tr>
+          <tr><td>Chasing Stage</td><td>Retired (November 2026) — no reminder advances it any more; the app still clears it when Paid lands at Document Collection Started (or a held case resumes) and sets it to Resolved on stage moves. Document reminders are now the three buttons on the case page (Reminder 1 friendly, Reminder 2 firm, Final naming the last day) plus the automatic daily email; the record is the notes on the case (see Section 9).</td></tr>
+          <tr><td>Reminder Count</td><td>Retired — no reminder advances it any more; the app still sets it to 0 when Paid lands at Document Collection Started and on stage moves</td></tr>
           <tr><td>Last Client Activity</td><td>Updated automatically when client uploads a file or saves questionnaire</td></tr>
           <tr><td>SLA Risk Band</td><td>SLA engine (Green / Orange / Red)</td></tr>
           <tr><td>SLA Risk Flag</td><td>SLA engine</td></tr>
@@ -551,7 +551,7 @@
     <ul>
       <li>If the agreement is not yet fully signed, onboarding is <strong>on hold</strong> (a ⛔ note says so). The case moves to Document Collection Started and waits; everything starts by itself the moment the last signature lands.</li>
       <li>If the case is <strong>already past Document Collection</strong> (for example Internal Review), marking Paid only records the payment date. The case stays where it is and nothing is sent — a 💵 note on the case says what to do if the client never had their checklist or portal email.</li>
-      <li>A second "Paid" on a case that was already set up only refreshes the payment date — except while the case is at Document Collection Started, where it also resets Stage Start Date (the automatic document reminder waits 3 days after it), so avoid toggling Paid on a client who is being chased.</li>
+      <li>A second "Paid" on a case that was already set up only refreshes the payment date — except while the case is at Document Collection Started, where it also resets Stage Start Date (the automatic document reminder waits 3 days after it) and clears the retired Chasing Stage / Reminder Count columns, so avoid toggling Paid on a client who is being chased.</li>
     </ul>
 
     <div class="subhead">When Client Email is Corrected</div>
@@ -739,7 +739,7 @@
         <thead><tr><th>Stage</th><th>When you set it</th><th>What happens</th></tr></thead>
         <tbody>
           <tr><td>Submission Ready</td><td>When you have reviewed everything and the case is ready for the application to be filed</td><td>Locks the case — no more automatic stage advances</td></tr>
-          <tr><td>Submitted</td><td>After the application has been submitted to immigration authorities</td><td>Locks all automation — chasing, SLA, health, and escalation all stop</td></tr>
+          <tr><td>Submitted</td><td>After the application has been submitted to immigration authorities</td><td>Locks all automation — the document reminders, SLA, health, and escalation all stop</td></tr>
           <tr><td>Approved / Refused / Closed / Withdrawn / Cancelled / Archived</td><td>When the case outcome is known or the case ends</td><td>Locks all automation</td></tr>
         </tbody>
       </table>
@@ -790,7 +790,7 @@
     <p>When Case Health turns Red, you receive a Monday.com notification automatically.</p>
 
     <div class="subhead">Document reminders (client follow-up)</div>
-    <p>The old chasing loop is retired (November 2026): the Chasing Stage and Reminder Count columns are no longer updated. Reminders are sent from the Document reminders card on the case page (Overview and Documents tabs):</p>
+    <p>The old chasing loop is retired (November 2026): no reminder advances the Chasing Stage and Reminder Count columns any more (the app still clears them on Paid at Document Collection Started and sets Resolved / 0 on stage moves). Reminders are sent from the Document reminders card on the case page (Overview and Documents tabs):</p>
     <div class="tbl-wrap">
       <table>
         <thead><tr><th>Reminder</th><th>What it does</th></tr></thead>
@@ -839,7 +839,7 @@
           <tr><td>Case Health turns Red</td><td>Case Manager</td></tr>
           <tr><td>Expiry date approaching (passport, IELTS, medical)</td><td>Case Manager and Ops Supervisor</td></tr>
           <tr><td>Escalation Required is set to Yes</td><td>Ops Supervisor and Case Manager</td></tr>
-          <tr><td>Client is Blocked (chasing exhausted)</td><td>Ops Supervisor</td></tr>
+          <tr><td>Client is Blocked (chasing exhausted) — retired: nothing sets Client Blocked any more, so this notification no longer happens; a client who does not answer the reminders shows under Needs attention instead</td><td>Ops Supervisor (retired)</td></tr>
         </tbody>
       </table>
     </div>
@@ -893,7 +893,7 @@
           <tr><td>Client Master Board</td><td>All cases — your main workspace</td></tr>
           <tr><td>Document Checklist Execution Board</td><td>Review uploaded documents per case</td></tr>
           <tr><td>Questionnaire Execution Board</td><td>Legacy Q items (older cases only)</td></tr>
-          <tr><td>SLA Config Board</td><td>Thresholds, chasing intervals, escalation rules (admin use)</td></tr>
+          <tr><td>SLA Config Board</td><td>Thresholds and escalation rules (admin use) — its chasing intervals are retired and not read</td></tr>
         </tbody>
       </table>
     </div>
@@ -932,8 +932,8 @@
       <table>
         <thead><tr><th>Control</th><th>Stops</th><th>Use when</th></tr></thead>
         <tbody>
-          <tr><td>Manual Override = Yes</td><td>Chasing emails only</td><td>Client has a valid reason for delay — do not want to chase them but the case is still active</td></tr>
-          <tr><td>Automation Lock = Yes</td><td>Everything (SLA, health, chasing, escalation)</td><td>Case is on hold, disputed, or needs manual handling only</td></tr>
+          <tr><td>Manual Override = Yes</td><td>Document reminders only (the case-page buttons and the automatic email)</td><td>Client has a valid reason for delay — do not want to chase them but the case is still active</td></tr>
+          <tr><td>Automation Lock = Yes</td><td>Everything (SLA, health, document reminders, escalation)</td><td>Case is on hold, disputed, or needs manual handling only</td></tr>
         </tbody>
       </table>
     </div>
@@ -963,7 +963,7 @@
     <p>Type: Status (Yes / No) &nbsp;—&nbsp; Default if missing: Profile is ignored</p>
     <p>This is the on/off switch for the entire row. Set to Yes to enable all automation for that case type. Set to No to disable it without deleting the row (useful for case types under review or not yet in use).</p>
     <div class="note">
-      <p>If a case type has no active profile, it falls back to system defaults: 60-day SLA, 80% readiness threshold, 7/14/21/30-day chasing intervals.</p>
+      <p>If a case type has no active profile, it falls back to system defaults: 60-day SLA, 80% readiness threshold. (The 7/14/21/30-day chasing intervals are retired and no longer read.)</p>
     </div>
 
     <div class="subhead">SLA Total Days</div>
@@ -1057,7 +1057,7 @@
       <table>
         <thead><tr><th>Column</th><th>Read by</th></tr></thead>
         <tbody>
-          <tr><td>Profile Active</td><td>All 4 engines (readiness, SLA, chasing, expiry)</td></tr>
+          <tr><td>Profile Active</td><td>The 3 engines still running (readiness, SLA, expiry) — chasing is retired</td></tr>
           <tr><td>SLA Total Days</td><td>SLA Risk Engine</td></tr>
           <tr><td>Min Threshold</td><td>Readiness Engine and Stage Gate</td></tr>
           <tr><td>Orange / Red Threshold</td><td>SLA Risk Engine</td></tr>
