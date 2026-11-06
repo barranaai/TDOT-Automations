@@ -380,7 +380,12 @@ const FINAL_DEFAULT_DAYS = 7;              // the final reminder's "last day we 
 const REWORK_NOTE_RE = /🔄 Document Flagged for Client Rework/;
 const INTAKE_NOTE_RE = /Intake email sent\b|Intake email resent\b|Portal access email re-sent|Portal link email re-sent/i;
 // The board groups that are not live cases — the ONE list shared with needsAttentionService (src/utils/caseGroups.js).
-const { NOT_CASE_GROUPS, isCaseGroup } = require('../utils/caseGroups');
+const { NOT_CASE_GROUPS, isCaseGroup, isTestGroup } = require('../utils/caseGroups');
+// A TEST-group row (the office's own test records, their mailbox ours) may be used by the
+// staff buttons, and by the automatic run only when its ref is on DOC_REMINDERS_ONLY —
+// that is how the plan's live check (§8 step 13) runs without a real client. Leads and
+// Cancel rows are never let through by anything.
+const liveOrTest = (group) => isCaseGroup(group) || isTestGroup(group);
 
 // The automatic run (step C): the Client Master columns it reads, one page of rows.
 const DCS_STAGE = 'Document Collection Started';
@@ -684,7 +689,7 @@ const refuse = (status, reason, message) => Object.assign(new Error(message), { 
 function gateStaff(overview) {
   const o = overview || {};
   if (o.cmUnavailable) throw refuse(503, 'cm-unavailable', 'Case data is temporarily unavailable — nothing was sent. Reload in a moment.');
-  if (!isCaseGroup(o.group)) throw refuse(409, 'not-a-case', `This row is in the "${s(o.group && o.group.title) || 'non-case'}" group, not a live case — no reminder is sent from here.`);
+  if (!liveOrTest(o.group)) throw refuse(409, 'not-a-case', `This row is in the "${s(o.group && o.group.title) || 'non-case'}" group, not a live case — no reminder is sent from here.`);
   if (/^yes$/i.test(s(o.automationLock))) throw refuse(409, 'locked', 'Automation Lock is on for this case — reminders are off until it is cleared in Monday.');
   if (!s(o.clientEmail)) throw refuse(409, 'no-email', 'This case has no client email — nothing to send to.');
   if (!s(o.accessToken)) throw refuse(409, 'no-token', 'This case has no access code, so no portal link can be made — nothing was sent.');
@@ -702,7 +707,7 @@ function describeForCase({ overview, items, notes }) {
   if (!rows.length) return { ...base, available: false, reason: 'no-rows', message: 'No checklist rows yet — there is nothing to remind the client about.', canSend: false };
   const missing = missingFromItems(rows);
   if (!missing.count) return { ...base, available: false, reason: 'no-rows', message: 'Nothing is missing — every required document is in.', canSend: false };
-  if (!isCaseGroup(o.group)) return { ...base, canSend: false, blocked: `This row is in the "${s(o.group && o.group.title) || 'non-case'}" group, not a live case.` };
+  if (!liveOrTest(o.group)) return { ...base, canSend: false, blocked: `This row is in the "${s(o.group && o.group.title) || 'non-case'}" group, not a live case.` };
   if (/^yes$/i.test(s(o.automationLock))) return { ...base, canSend: false, blocked: 'Automation Lock is on for this case — reminders are off until it is cleared in Monday.' };
   return { ...base, missingCount: missing.count };
 }
@@ -874,8 +879,9 @@ function selectByColumns(row, { today, imaginary = false, only = [] } = {}) {
   const skip = (reason) => ({ decision: 'skip', reason });
   const yes = (v) => /^yes$/i.test(s(v));
   if (!row.ref) return skip('no case number');
-  if (only.length && !only.includes(row.ref.toUpperCase())) return skip('not on the allow-list (DOC_REMINDERS_ONLY)');
-  if (!isCaseGroup(row.group)) return skip(`in the "${s(row.group && row.group.title) || 'non-case'}" group, not a live case`);
+  const listed = only.length > 0 && only.includes(row.ref.toUpperCase());
+  if (only.length && !listed) return skip('not on the allow-list (DOC_REMINDERS_ONLY)');
+  if (!isCaseGroup(row.group) && !(listed && isTestGroup(row.group))) return skip(`in the "${s(row.group && row.group.title) || 'non-case'}" group, not a live case`);
   if (row.stage !== DCS_STAGE) return skip(`not at Document Collection Started (${row.stage || 'blank'})`);
   if (row.payment !== 'Paid') return skip(`Payment Status is ${row.payment || 'blank'}, not Paid`);
   if (yes(row.lock)) return skip('Automation Lock is Yes');

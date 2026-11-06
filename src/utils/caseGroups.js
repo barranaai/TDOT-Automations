@@ -22,4 +22,10 @@ function isCaseGroup(group) {
   return !NOT_CASE_GROUPS.some((x) => str(g.id) === x.id || x.title.test(str(g.title)));
 }
 
-module.exports = { TEST_GROUP_ID, NOT_CASE_GROUPS, isCaseGroup };
+/** True for the TEST group only (the office's own test records — never Leads or Cancel). */
+function isTestGroup(group) {
+  const g = group || {};
+  return str(g.id) === TEST_GROUP_ID || NOT_CASE_GROUPS[0].title.test(str(g.title));
+}
+
+module.exports = { TEST_GROUP_ID, NOT_CASE_GROUPS, isCaseGroup, isTestGroup };

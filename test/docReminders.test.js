@@ -567,9 +567,14 @@ test('describeForCase (the card\'s facts): hidden with its reason when the CM re
   assert.deepEqual([allIn.available, allIn.reason, allIn.message], [false, 'no-rows', 'Nothing is missing — every required document is in.']);
   const locked = svc.describeForCase({ ...base, overview: OV({ automationLock: 'Yes' }) });
   assert.deepEqual([locked.available, locked.canSend], [true, false]); assert.match(locked.blocked, /Automation Lock is on/);
-  for (const group of [{ id: 'group_mm3842s', title: 'TEST' }, { id: 'group_x', title: 'Cancel / Did not retained' }, { id: 'group_mm2tz8e1', title: 'Leads' }]) {
+  for (const group of [{ id: 'group_x', title: 'Cancel / Did not retained' }, { id: 'group_mm2tz8e1', title: 'Leads' }]) {
     const g = svc.describeForCase({ ...base, overview: OV({ group }) });
     assert.equal(g.canSend, false, group.title); assert.match(g.blocked, /not a live case/);
+  }
+  // the office's own TEST records may be used by the buttons (their mailbox is ours) — the plan's live check
+  for (const group of [{ id: 'group_mm3842s', title: 'TEST' }, { id: 'group_new', title: 'test' }]) {
+    const g = svc.describeForCase({ ...base, overview: OV({ group }) });
+    assert.equal(g.canSend, true, group.title); assert.equal(g.blocked, '');
   }
   assert.equal(svc.isCaseGroup({ id: 'group_mm3t4kda', title: 'Retainers before May 2026' }), true, 'legacy cases are live cases');
   assert.equal(svc.isCaseGroup(null), true, 'no group read (older stub) is not a refusal — the server gate reads it fresh');
@@ -685,7 +690,8 @@ test('sendStaffReminder refusals (nothing posted, nothing sent): bad level, the 
     await assert.rejects(svc.sendStaffReminder({ overview: OV(), level: 3, subject: 'x', body: '{MissingList}', lastDay: 'next week' }), (e) => e.status === 400 && e.reason === 'bad-last-day'); nothing();
     await assert.rejects(svc.sendStaffReminder({ overview: OV(), level: 1, subject: 'x', body: 'Just reply to this email with {MissingList}' }), (e) => e.status === 400 && e.reason === 'bad-text' && /tells the client to reply/.test(e.message)); nothing();
     await assert.rejects(svc.sendStaffReminder({ overview: OV({ automationLock: 'Yes' }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.status === 409 && e.reason === 'locked'); nothing();
-    await assert.rejects(svc.sendStaffReminder({ overview: OV({ group: { id: '', title: 'TEST' } }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.reason === 'not-a-case'); nothing();
+    await assert.rejects(svc.sendStaffReminder({ overview: OV({ group: { id: '', title: 'Leads' } }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.reason === 'not-a-case'); nothing();
+    await assert.rejects(svc.sendStaffReminder({ overview: OV({ group: { id: 'group_mm3b9tap', title: 'Cancel /Did not retained' } }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.reason === 'not-a-case'); nothing();
   } finally { S.restore(); }
   const empty = staffStubs({ items: ITEMS.filter((it) => it.status !== 'Missing') });
   try { await assert.rejects(svc.sendStaffReminder({ overview: OV(), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.status === 409 && e.reason === 'no-rows'); assert.equal(empty.posted.length, 0); } finally { empty.restore(); }
@@ -948,6 +954,10 @@ test('AUTO selectByColumns: every column-only skip reason, the "deadline close" 
   assert.equal(sel({ ref: '2026-vv-006' }, { only: ['2026-VV-006'] }).decision, 'candidate', 'the allow-list ignores letter case');
   assert.match(reason({ group: { id: 'group_mm3b9tap', title: 'Cancel /Did not retained' } }), /"Cancel \/Did not retained" group, not a live case/);
   assert.match(reason({ group: { id: 'group_x', title: 'TEST' } }), /not a live case/);
+  assert.match(reason({ group: { id: 'group_mm3842s', title: 'TEST' } }), /not a live case/, 'a TEST row is never emailed without the allow-list');
+  assert.equal(sel({ ref: '2026-OSS-005', group: { id: 'group_mm3842s', title: 'TEST' } }, { only: ['2026-OSS-005'] }).decision, 'candidate', 'a TEST row on the allow-list is let through (the live check)');
+  assert.match(reason({ ref: '2026-LBW-004', group: { id: 'group_mm3b9tap', title: 'Cancel /Did not retained' } }, { only: ['2026-LBW-004'] }), /not a live case/, 'the allow-list never lets a Cancel row through');
+  assert.match(reason({ ref: '2026-X-001', group: { id: 'group_mm2tz8e1', title: 'Leads' } }, { only: ['2026-X-001'] }), /not a live case/, 'nor a Leads row');
   assert.match(reason({ stage: 'Internal Review' }), /not at Document Collection Started \(Internal Review\)/);
   assert.match(reason({ payment: 'Already Sent' }), /Payment Status is Already Sent, not Paid/);
   assert.match(reason({ lock: 'Yes' }), /Automation Lock is Yes/);
