@@ -1430,3 +1430,26 @@ test('AUTO source pins: the board read lives inside the io seam (the stage colum
   assert.equal(n.lastDay, '17 Nov 2026'); assert.equal(n.lastDayIso, '2026-11-17');
   assert.equal(svc._internal.dayFromWords('3 Feb 2027'), '2027-02-03'); assert.equal(svc._internal.dayFromWords('30 Sept 2026'), '2026-09-30'); assert.equal(svc._internal.dayFromWords('tomorrow'), '');
 });
+
+test('AUTO: the automatic intake path leaves the "Intake email sent" note (review 2026-11-07 [30]) — a case whose portal email went 20 h ago is not chased the next morning, whatever its Stage Start says; 30 h ago it is', async () => {
+  const A = autoRow({ stageStart: day9(-10) });   // paid and staged 10 days ago, the portal email only yesterday (a resumed onboarding)
+  const intakeNote = (agoMs) => rendered(12, T9 - agoMs, '📬 <b>Intake email sent</b> ("Your case is ready") to a***@example.com — 9 Nov 2026 (Toronto)');
+  const w = autoStubs({ rows: [A], env: { DOC_REMINDERS_AUTO: '1' }, notes: { 5001: [intakeNote(20 * 3600e3)] } });
+  try {
+    const r = await svc.runDocReminders({ reason: 'test' });
+    assert.equal(byRef(r, '2026-ISS-009').decision, 'skip');
+    assert.match(byRef(r, '2026-ISS-009').reason, /another email reached the client in the last 24 hours: the portal email went to the client at 9 Nov 2026, 1:05 pm/);
+    assert.equal(w.sent.length, 0); assert.equal(w.posted.length, 0);
+  } finally { w.restore(); }
+  const w2 = autoStubs({ rows: [A], env: { DOC_REMINDERS_AUTO: '1' }, notes: { 5001: [intakeNote(30 * 3600e3)] } });
+  try {
+    const r = await svc.runDocReminders({ reason: 'test' });
+    assert.equal(byRef(r, '2026-ISS-009').decision, 'sent', 'a day and more after the portal email the reminder goes');
+    assert.equal(w2.sent.length, 1);
+  } finally { w2.restore(); }
+  // the source: the automatic sender posts the note on success, with the head INTAKE_NOTE_RE matches and a masked address
+  const es = fs.readFileSync(require.resolve('../src/services/emailService'), 'utf8');
+  const fn = es.slice(es.indexOf('async function sendIntakeEmailAuto'));
+  assert.match(fn, /if \(r && r\.sent\) \{[\s\S]*?create_update[\s\S]*?<b>Intake email sent<\/b> \("Your case is ready"\) to \$\{maskAddr\(r\.to\)\}/);
+  assert.match(svc.recentClientSend([{ id: '12', at: T9 - 20 * 3600e3, text: '📬 Intake email sent ("Your case is ready") to a***@x — 9 Nov 2026 (Toronto)' }], { now: T9 }), /the portal email went to the client/);
+});

@@ -343,6 +343,18 @@ function maskAddr(email) {
  */
 async function sendIntakeEmailAuto(itemId) {
   const r = await module.exports.sendIntakeEmail(itemId);   // via exports: tests stub it
+  if (r && r.sent) {
+    // The record the admin resend tool leaves (server.js): the automatic document reminder's
+    // 24-hour check reads it (docReminderService INTAKE_NOTE_RE), the held-onboarding resume
+    // reads it as "already sent", and the Summary's "not confirmed" item clears on it. Until
+    // 2026-11-07 the automatic path left none, so a case resumed days after its payment could
+    // be chased the morning after its portal email (review [30]). Best-effort: never throws.
+    const { torontoTime } = require('../utils/torontoTime');
+    await mondayApi.query('mutation($id: ID!, $b: String!) { create_update(item_id: $id, body: $b) { id } }', {
+      id: String(itemId),
+      b: `📬 <b>Intake email sent</b> ("Your case is ready") to ${maskAddr(r.to)} — ${torontoTime(Date.now())} (Toronto)`,
+    }).catch((err) => console.warn(`[Email] intake-sent note failed for item ${itemId}: ${err.message}`));
+  }
   if (r && !r.sent && /no client email/i.test(String(r.reason || ''))) {
     await mondayApi.query('mutation($id: ID!, $b: String!) { create_update(item_id: $id, body: $b) { id } }', {
       id: String(itemId),

@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 
 const NA = require('../src/services/needsAttentionService');
+const REAL_TEMPLATE_SEAM = NA.io.reminderTemplateProblems;   // the harness stubs it; one test drives the real one
 
 const H = 3600 * 1000, D = 24 * H;
 const NOW = Date.parse('2026-10-01T15:00:00Z');
@@ -300,6 +301,7 @@ function harness({ items, checklist = {}, folders = [], deep = new Map(), deepFa
   NA.io.readDeepNotes = async (ids) => { calls.deep.push(ids); return { notes: new Map([...deep].filter(([id]) => ids.includes(id) && !deepFail.includes(id))), failed: ids.filter((id) => deepFail.includes(id)) }; };
   NA.io.newestChecklistRowAt = async (ref) => newestRow[ref] || 0;
   NA.io.postNote = async (itemId, body) => { calls.notes.push({ itemId, body }); };
+  NA.io.reminderTemplateProblems = async () => [];   // the Reminder Templates board: not set up (no read)
   NA.io.leadBalances = async (id) => { calls.balances = (calls.balances || []).concat(id); if (balances[id] instanceof Error) throw balances[id]; return balances[id] || []; };
   return calls;
 }
@@ -724,10 +726,10 @@ const DR = require('../src/services/docReminderService');
 const TODAY = '2026-10-01';                                   // NOW in Toronto
 const dayN = (n) => DR._internal.dayPlus(TODAY, n);
 /** item() with the reminder columns (deadline date, Documents Uploaded %, Last Client Activity). */
-function itemR({ actualDeadline = '', pct = '', lastActivity = '', deadlineType = '', ...rest } = {}) {
+function itemR({ actualDeadline = '', pct = '', lastActivity = '', deadlineType = '', promised = '', ...rest } = {}) {
   const it = item(rest);
   it.column_values.push({ id: 'color_mm6w7cdd', text: deadlineType, value: null }, { id: 'date_mm33sj6t', text: actualDeadline, value: null },
-    { id: 'numeric_mm2njqk1', text: pct, value: null }, { id: 'date_mm1amqyr', text: lastActivity, value: null });
+    { id: 'numeric_mm2njqk1', text: pct, value: null }, { id: 'date_mm1amqyr', text: lastActivity, value: null }, { id: 'date_mm3t66pa', text: promised, value: null });
   return it;
 }
 const stripped = (html) => html.replace(/<[^>]+>/g, '');
@@ -749,7 +751,7 @@ test('REMINDERS: a real deadline 3 days away or less (or past) with the document
   assert.deepEqual(kinds(run([itemR({ ...base, actualDeadline: dayN(4) })], { checklist: { '2026-ISS-009': true } })), [], '4 days away: the automatic email still runs');
   assert.deepEqual(kinds(run([itemR({ ...base, pct: '50', actualDeadline: dayN(1) })], { checklist: { '2026-ISS-009': true } })), [], 'at 50 % the buttons are the tool');
   assert.deepEqual(kinds(run([itemR({ ...base, actualDeadline: dayN(1), stage: 'Internal Review' })], { checklist: { '2026-ISS-009': true } })), []);
-  assert.deepEqual(kinds(run([itemR({ ...base, actualDeadline: dayN(1), deadlineType: 'Imaginary' })], { checklist: { '2026-ISS-009': true } })), [], 'an imaginary deadline is never "close"');
+  assert.deepEqual(kinds(run([itemR({ ...base, actualDeadline: dayN(1), deadlineType: 'Imaginary', promised: dayN(20) })], { checklist: { '2026-ISS-009': true } })), [], 'an imaginary deadline is never "close"');
   assert.deepEqual(kinds(run([itemR({ ...base, actualDeadline: dayN(1), payment: 'Unpaid' })], { checklist: { '2026-ISS-009': true } })), [], 'not Paid: not the automation\'s case');
   // a new deadline date is a new item (a handled mark covers one date)
   const k1 = close[0].key, k2 = run([itemR({ ...base, actualDeadline: dayN(1) })], { checklist: { '2026-ISS-009': true } })[0].key;
@@ -761,12 +763,14 @@ test('REMINDERS: the final reminder\'s last day has passed with no upload since 
   const ref = '2026-SV-020';
   const out = run([itemR({ ref, updates: [finalNote(dayN(-1), 8 * D, '101')] })], { checklist: { [ref]: true } });
   assert.deepEqual(kinds(out), ['final-last-day-passed']);
-  assert.match(out[0].why, /final reminder went on 23 Sep naming 30 Sep as the last day, and the client has uploaded nothing since/);
+  assert.match(out[0].why, /final reminder went on 23 Sep naming 30 Sep as the last day, and no upload is recorded on or after the day it went/);
   assert.match(out[0].todo, /never move the row to another group/);
   assert.deepEqual(kinds(run([itemR({ ref, updates: [finalNote(dayN(0), 8 * D, '101')] })], { checklist: { [ref]: true } })), ['final-last-day-passed'], 'the last day itself counts');
   assert.deepEqual(kinds(run([itemR({ ref, updates: [finalNote(dayN(1), 8 * D, '101')] })], { checklist: { [ref]: true } })), [], 'still ahead');
   assert.deepEqual(kinds(run([itemR({ ref, lastActivity: dayN(-3), updates: [finalNote(dayN(-1), 8 * D, '101')] })], { checklist: { [ref]: true } })), [], 'uploaded after the final went');
-  assert.deepEqual(kinds(run([itemR({ ref, lastActivity: dayN(-8), updates: [finalNote(dayN(-1), 8 * D, '101')] })], { checklist: { [ref]: true } })), ['final-last-day-passed'], 'an upload on the final\'s own day does not settle it');
+  // Last Client Activity is a day, not a time (review 2026-11-07 [31]): an upload on the final's own day — after it went at 10:00 — counts as "since"
+  assert.deepEqual(kinds(run([itemR({ ref, lastActivity: dayN(-8), updates: [finalNote(dayN(-1), 8 * D, '101')] })], { checklist: { [ref]: true } })), [], 'an upload on the final\'s own day settles it');
+  assert.deepEqual(kinds(run([itemR({ ref, lastActivity: dayN(-9), updates: [finalNote(dayN(-1), 8 * D, '101')] })], { checklist: { [ref]: true } })), ['final-last-day-passed'], 'an upload the day before the final does not');
   const failed = note(stripped(DR.failureNote({ level: 3, reason: 'the email could not be sent', now: NOW - 8 * D + 60e3 })), 8 * D - 60e3, '102');
   assert.deepEqual(kinds(run([itemR({ ref, updates: [finalNote(dayN(-1), 8 * D, '101'), failed] })], { checklist: { [ref]: true } })), [], 'a final that did not go out is a try, not a send');
   assert.deepEqual(kinds(run([itemR({ ref, stage: 'Stuck', updates: [finalNote(dayN(-1), 8 * D, '101')] })], { checklist: { [ref]: true } })), [], 'moved on: nothing to decide');
@@ -809,7 +813,8 @@ test('REMINDERS: an older Paid case at Document Collection under 50 % with no de
   assert.match(out[0].todo, /chased by hand, mark this handled/);
   assert.deepEqual(kinds(run([itemR({ ...older, pct: '50' })], { checklist: { '2026-CEC-PS-091': true } })), []);
   assert.deepEqual(kinds(run([itemR({ ...older, pct: '' })], { checklist: { '2026-CEC-PS-091': true } })), [], 'no figure: listed elsewhere, if at all');
-  assert.deepEqual(kinds(run([itemR({ ...older, pct: '20', deadlineType: 'Imaginary' })], { checklist: { '2026-CEC-PS-091': true } })), [], 'a deadline of either kind settles it');
+  assert.deepEqual(kinds(run([itemR({ ...older, pct: '20', deadlineType: 'Imaginary', promised: dayN(30) })], { checklist: { '2026-CEC-PS-091': true } })), [], 'a deadline of either kind settles it');
+  assert.deepEqual(kinds(run([itemR({ ...older, pct: '20', deadlineType: 'Deadline', actualDeadline: dayN(30) })], { checklist: { '2026-CEC-PS-091': true } })), []);
   assert.deepEqual(kinds(run([itemR({ ...older, pct: '20', stage: 'Internal Review' })], { checklist: { '2026-CEC-PS-091': true } })), []);
   assert.deepEqual(kinds(run([itemR({ ...older, pct: '20', payment: 'Unpaid' })], { checklist: { '2026-CEC-PS-091': true } })), []);
   assert.deepEqual(kinds(run([itemR({ ...older, pct: '20', group: 'group_mm3t4kda', groupTitle: 'Retainers before May 2026' })], { checklist: { '2026-CEC-PS-091': true } })), []);
@@ -829,9 +834,143 @@ test('REMINDERS: the new kinds are in the table with the guide\'s wording, the n
   for (const k of Object.keys(NA.KINDS)) assert.ok(guide.needs_attention.some((e) => e.problem === NA.KINDS[k].label), `guide entry for ${k}`);
   assert.equal(NA.NOT_CASE_GROUPS, DR.NOT_CASE_GROUPS);
   assert.equal(NA.NOT_CASE_GROUPS, require('../src/utils/caseGroups').NOT_CASE_GROUPS);
-  for (const id of ['date_mm33sj6t', 'numeric_mm2njqk1', 'date_mm1amqyr']) assert.ok(Object.values(NA.COL).includes(id), id);
+  for (const id of ['date_mm33sj6t', 'numeric_mm2njqk1', 'date_mm1amqyr', 'date_mm3t66pa']) assert.ok(Object.values(NA.COL).includes(id), id);
+  assert.equal(NA.COL.promised, DR.AUTO_COLS.promised, 'the promised date is the column the automatic run reads');
+  assert.equal(parse(itemR({ deadlineType: 'Imaginary', promised: '2026-12-20' })).promised, '2026-12-20');
+  assert.equal(NA.KINDS['reminder-template-invalid'].order, 66); assert.equal(NA.KINDS['reminder-template-invalid'].severity, 'medium');
   const c = parse(itemR({ deadlineType: 'Deadline', actualDeadline: '2026-12-16', pct: '15', lastActivity: '2026-09-30' }));
   assert.deepEqual([c.deadlineType, c.actualDeadline, c.docUploaded, c.lastActivity], ['Deadline', '2026-12-16', '15', '2026-09-30']);
   const old = parse(item());   // a row read without the new columns (an older fixture) parses to blanks, never throws
   assert.deepEqual([old.actualDeadline, old.docUploaded, old.lastActivity], ['', '', '']);
+});
+
+test('REMINDERS: a typed deadline with a blank date is "not set" too — Deadline with no Actual Deadline, Imaginary with no promised date — on a new case (firm) and on an older Paid case under 50 % (nudge); its own key, never with "deadline close"', () => {
+  // an older case (before 2026-11-07): the softer nudge, at Document Collection, Paid, under 50 % only
+  const older = { ref: '2026-CEC-PS-092', createdAgo: 60 * D, pct: '15' };
+  const d = run([itemR({ ...older, deadlineType: 'Deadline', actualDeadline: '' })], { checklist: { '2026-CEC-PS-092': true } });
+  assert.deepEqual(kinds(d), ['no-deadline']);
+  assert.match(d[0].why, /^Deadline Type is Deadline but the date is blank — set the Actual Deadline on the case\. The automatic document reminder cannot run for this client \(15 % of the documents uploaded\)\./);
+  assert.match(d[0].todo, /type the deadline date in the Deadline box.*mark this handled/);
+  const p = run([itemR({ ...older, deadlineType: 'Imaginary', promised: '' })], { checklist: { '2026-CEC-PS-092': true } });
+  assert.deepEqual(kinds(p), ['no-deadline']);
+  assert.match(p[0].why, /^Deadline Type is Imaginary but the promised submission date is blank — set the promised date on the case\./);
+  const none = run([itemR({ ...older, deadlineType: '' })], { checklist: { '2026-CEC-PS-092': true } });
+  assert.equal(new Set([d[0].key, p[0].key, none[0].key]).size, 3, 'each state has its own key (a handled mark covers one of them)');
+  assert.deepEqual(kinds(run([itemR({ ...older, deadlineType: 'Deadline', actualDeadline: 'not a date' })], { checklist: { '2026-CEC-PS-092': true } })), ['no-deadline'], 'an unreadable date is blank');
+  assert.deepEqual(kinds(run([itemR({ ...older, deadlineType: 'Deadline', actualDeadline: '', pct: '50' })], { checklist: { '2026-CEC-PS-092': true } })), [], 'at 50 % the older nudge stays quiet');
+  assert.deepEqual(kinds(run([itemR({ ...older, deadlineType: 'Deadline', actualDeadline: '', stage: 'Internal Review' })], { checklist: { '2026-CEC-PS-092': true } })), []);
+  assert.deepEqual(kinds(run([itemR({ ...older, deadlineType: 'Deadline', actualDeadline: '', payment: 'Unpaid' })], { checklist: { '2026-CEC-PS-092': true } })), []);
+  assert.deepEqual(kinds(run([itemR({ ...older, deadlineType: 'Deadline', actualDeadline: '', group: 'group_mm3t4kda', groupTitle: 'Retainers before May 2026' })], { checklist: { '2026-CEC-PS-092': true } })), [], 'legacy: staff-managed');
+  // a case opened since the question is asked: the firm rule, whatever the stage or %
+  const later = Date.parse('2026-11-20T15:00:00Z');
+  const keepNow = NA.io.now; NA.io.now = () => later;
+  try {
+    const mk = (over) => NA.detect({ cases: [parse(itemR({ ref: '2026-NEW-002', createdAgo: 0, ...over }))].map((c) => ({ ...c, created: Date.parse('2026-11-15T15:00:00Z') })), checklist: new Map(), folders: null, now: later });
+    const firm = mk({ deadlineType: 'Deadline', actualDeadline: '', stage: 'Pre-Onboarding', payment: 'Unpaid', pct: '' });
+    assert.deepEqual(kinds(firm), ['no-deadline']);
+    assert.match(firm[0].why, /^Deadline Type is Deadline but the date is blank — set the Actual Deadline on the case\. The automatic document reminder cannot run for this client until it is set\.$/);
+    assert.match(firm[0].todo, /type the deadline date in the Deadline box/);
+    assert.doesNotMatch(firm[0].todo, /mark this handled/);
+    assert.match(only(mk({ deadlineType: 'Imaginary', promised: '' }), 'no-deadline')[0].why, /promised submission date is blank/);
+    assert.notEqual(firm[0].key, only(mk({ deadlineType: '' }), 'no-deadline')[0].key);
+    assert.deepEqual(kinds(mk({ deadlineType: 'Deadline', actualDeadline: '2026-12-20', pct: '15' })), [], 'a real date: nothing');
+    assert.deepEqual(kinds(mk({ deadlineType: 'Deadline', actualDeadline: '', stage: 'Application Submitted' })), [], 'a finished case is left alone');
+  } finally { NA.io.now = keepNow; }
+});
+
+test('REMINDERS: no Paid case at Document Collection with a typed deadline and no checklist rows falls between "no checklist" and "no checklist rows" — each is on exactly one list, except in its set-up grace', async () => {
+  const dl = { stage: DCS(), payment: 'Paid', deadlineType: 'Deadline', actualDeadline: dayN(40), pct: '0' };
+  const cases = [
+    itemR({ ...dl, id: 'plain', ref: 'R-PLAIN' }),
+    itemR({ ...dl, id: 'hold', ref: 'R-HOLD', updates: [note('💤 Payment marked, but onboarding is on hold — waiting for: the client signature', 3 * D)] }),
+    itemR({ ...dl, id: 'sub', ref: 'R-SUB', updates: [note('⚠️ Document checklist NOT created yet — Case Sub Type required', 3 * D)] }),
+    itemR({ ...dl, id: 'seed', ref: 'R-SEED', updates: [note('❌ Document checklist auto-seed FAILED: boom', 3 * D)] }),
+    itemR({ ...dl, id: 'started', ref: 'R-STARTED', updates: [note('🚀 Onboarding started automatically', 5 * H)] }),
+    itemR({ ...dl, id: 'legacy', ref: 'R-LEGACY', group: 'group_mm3t4kda', groupTitle: 'Retainers before May 2026' }),
+    // in the set-up grace: the checklist is being built right now
+    itemR({ ...dl, id: 'justpaid', ref: 'R-JUSTPAID', paidDate: '2026-10-01' }),
+    itemR({ ...dl, id: 'justnow', ref: 'R-JUSTNOW', createdAgo: 10 * 60 * 1000 }),
+    itemR({ ...dl, id: 'building', ref: 'R-BUILDING', updates: [note('🚀 Onboarding started automatically', 1 * H)] }),
+  ];
+  const refs = cases.map((it) => it.column_values.find((c) => c.id === 'text_mm142s49').text);
+  assert.deepEqual(NA.refsNeedingChecklist(cases.map(parse)).sort(), refs.slice().sort(), 'every one of them is asked for its rows (one existence read each)');
+  const out = run(cases, { checklist: Object.fromEntries(refs.map((r) => [r, false])) });
+  const perCase = Object.fromEntries(refs.map((r) => [r, out.filter((e) => e.caseRef === r).map((e) => e.kind)]));
+  assert.deepEqual(perCase, {
+    'R-PLAIN': ['no-checklist'], 'R-HOLD': ['on-hold'], 'R-SUB': ['subtype'], 'R-SEED': ['no-checklist'], 'R-STARTED': ['no-checklist'],
+    'R-LEGACY': ['dcs-no-checklist-rows'],
+    'R-JUSTPAID': [], 'R-JUSTNOW': [], 'R-BUILDING': [],
+  });
+  // the grace is a grace, not a gap: once it is over the case is listed (by the generic rule — never twice)
+  const laterOut = NA.detect({ cases: cases.slice(6).map(parse), checklist: new Map(refs.slice(6).map((r) => [r, false])), folders: null, now: NOW + 2 * D });
+  assert.deepEqual(laterOut.map((e) => [e.caseRef, e.kind]).sort(), [['R-BUILDING', 'no-checklist'], ['R-JUSTNOW', 'no-checklist'], ['R-JUSTPAID', 'no-checklist']]);
+  // the reminder rule's own guard: with the generic rule silent on a plain Paid case outside the grace, the rows rule lists it (pinned by source — today the generic rule always speaks first)
+  const srcText = fs.readFileSync(require.resolve('../src/services/needsAttentionService'), 'utf8');
+  assert.match(srcText, /rows === false && isPaid\(c\) && s\(c\.deadlineType\) && \(isLegacy\(c\) \|\| \(!checklistListed && !settling\)\)/);
+  // a case with no typed deadline keeps the generic item only; a legacy one without a deadline is never asked
+  assert.deepEqual(kinds(run([itemR({ ...dl, deadlineType: '', ref: 'R-NOTYPE' })], { checklist: { 'R-NOTYPE': false } })).filter((k) => k !== 'no-deadline'), ['no-checklist']);
+  assert.deepEqual(NA.refsNeedingChecklist([parse(itemR({ ...dl, deadlineType: '', ref: 'R-OLDNOTYPE', group: 'group_mm3t4kda', groupTitle: 'Retainers before May 2026' }))]), []);
+});
+
+test('REMINDERS: a Reminder Templates board row the reminders could not use is listed for admins — about no case, no "Mark handled", gone when the board is fixed; nothing is read when the board is not set up', async () => {
+  const tpl = require('../src/services/docReminderTemplates');
+  const mondayApi = require('../src/services/mondayApi');
+  // the pure rule: the entry's shape
+  const out = NA.detect({ cases: [], checklist: new Map(), folders: null, templateProblems: [{ row: 'Reminder 2', reason: 'the body has no {MissingList} — the missing documents would not be listed' }, { row: '', reason: 'x' }], now: NOW });
+  assert.equal(out.length, 1);
+  const e = out[0];
+  assert.equal(e.kind, 'reminder-template-invalid');
+  assert.deepEqual([e.caseRef, e.itemIds, e.rows, e.stage, e.since], ['', [], [], '', '']);
+  assert.equal(e.client, 'Reminder Templates board — the "Reminder 2" row');
+  assert.match(e.why, /^The Reminder 2 text on the Monday Reminder Templates board cannot be used \(the body has no \{MissingList\} — the missing documents would not be listed\)\. The reminders use the built-in text instead\.$/);
+  assert.match(e.todo, /Fix that row on the Reminder Templates board.*\{MissingList\}.*leaves this list by itself/);
+  assert.equal(e.key, NA.detect({ cases: [], checklist: new Map(), folders: null, templateProblems: [{ row: 'Reminder 2', reason: 'another reason' }], now: NOW })[0].key, 'keyed by the row, not the reason');
+  // the snapshot: the board env unset → no templates read at all (the io seam answers [] before any query)
+  const prevEnv = process.env.MONDAY_REMINDER_TEMPLATES_BOARD_ID;
+  delete process.env.MONDAY_REMINDER_TEMPLATES_BOARD_ID;
+  tpl._resetForTests();
+  const keepQuery = mondayApi.query;
+  const queries = [];
+  mondayApi.query = async (q) => { queries.push(q); throw new Error('no read expected'); };
+  try {
+    harness({ items: () => [] });
+    NA.io.reminderTemplateProblems = REAL_TEMPLATE_SEAM;   // the real seam
+    let snap = await NA.buildSnapshot();
+    assert.deepEqual([snap.entries, snap.partial, queries], [[], [], []]);
+    // the board set up and unreadable: one read, the default text, the item on the list; the failure is the templates' own diagnostic (never a thrown check)
+    process.env.MONDAY_REMINDER_TEMPLATES_BOARD_ID = '12345';
+    tpl._resetForTests();
+    snap = await NA.buildSnapshot();
+    assert.equal(queries.length, 1);
+    assert.equal(snap.entries.length, 4, 'every row falls back when the board cannot be read');
+    assert.match(snap.entries[0].why, /the Reminder Templates board could not be read \(no read expected\)/);
+    assert.deepEqual(snap.partial, []);
+    // a readable board with one bad row: that row only
+    tpl._resetForTests();
+    mondayApi.query = async () => ({ boards: [{ columns: [{ id: 'c1', title: 'Subject', type: 'text' }, { id: 'c2', title: 'Body', type: 'long_text' }, { id: 'c3', title: 'Active', type: 'status' }],
+      items_page: { items: [
+        { name: 'Reminder 1', column_values: [{ id: 'c1', text: 'Documents for {CaseRef}', value: '"x"' }, { id: 'c2', text: 'Hello {FirstName}\n{MissingList}', value: '"x"' }, { id: 'c3', text: 'Yes', value: '{}' }] },
+        { name: 'Reminder 2', column_values: [{ id: 'c1', text: 'Documents for {CaseRef}', value: '"x"' }, { id: 'c2', text: 'Hello, send them please', value: '"x"' }, { id: 'c3', text: 'Yes', value: '{}' }] },
+      ] } }] });
+    snap = await NA.buildSnapshot();
+    assert.deepEqual(snap.entries.map((x) => [x.kind, x.client]), [['reminder-template-invalid', 'Reminder Templates board — the "Reminder 2" row']]);
+    assert.match(snap.entries[0].why, /no \{MissingList\}/);
+    // who sees it, and Mark handled has nowhere to write
+    await NA.refresh();
+    assert.equal(NA.view({ isAdmin: true, scope: 'all' }).entries.length, 1);
+    assert.equal(NA.view({ userId: '1', teamIds: [], isAdmin: false, scope: 'all' }).entries.length, 1, 'a viewer who sees every case sees it');
+    assert.equal(NA.view({ userId: '1', teamIds: [], isAdmin: false, scope: 'assigned' }).entries.length, 0, 'a limited viewer does not');
+    const key = NA.view({ isAdmin: true, scope: 'all' }).entries[0].key;
+    await assert.rejects(NA.markHandled({ key, viewer: { isAdmin: true, scope: 'all' }, actor: 'x' }), (err) => err.status === 409 && /about no case/.test(err.message));
+    assert.equal(NA.view({ isAdmin: true, scope: 'all' }).entries.length, 1, 'still listed');
+    // the seam that fails outright: the list is still built and says so
+    NA.io.reminderTemplateProblems = async () => { throw new Error('templates down'); };
+    snap = await NA.buildSnapshot();
+    assert.deepEqual(snap.entries, []);
+    assert.match(snap.partial.join(' '), /The Reminder Templates board could not be checked \(templates down\)/);
+  } finally {
+    mondayApi.query = keepQuery;
+    tpl._resetForTests();
+    if (prevEnv === undefined) delete process.env.MONDAY_REMINDER_TEMPLATES_BOARD_ID; else process.env.MONDAY_REMINDER_TEMPLATES_BOARD_ID = prevEnv;
+  }
 });

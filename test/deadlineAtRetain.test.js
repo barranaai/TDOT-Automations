@@ -348,16 +348,20 @@ test('the case page pill and Needs attention: a new case without a deadline is l
   const NA = require('../src/services/needsAttentionService');
   const NOW = Date.parse('2026-12-01T15:00:00Z'), D = 86400000;
   const item = (over = {}) => {
-    const o = { id: '1', ref: '2026-SV-050', stage: 'Document Collection Started', payment: 'Paid', createdAgo: 3 * D, type: '', group: 'group_x', title: 'December 2026', ...over };
+    const o = { id: '1', ref: '2026-SV-050', stage: 'Document Collection Started', payment: 'Paid', createdAgo: 3 * D, type: '', date: '', promised: '', group: 'group_x', title: 'December 2026', ...over };
     return { id: o.id, name: 'Client', created_at: new Date(NOW - o.createdAgo).toISOString(), group: { id: o.group, title: o.title }, updates: [],
-      column_values: [['text_mm142s49', o.ref], ['color_mm0x8faa', o.stage], ['color_mm0x9fnn', o.payment], ['color_mm6w7cdd', o.type]].map(([id, text]) => ({ id, text, value: null })) };
+      column_values: [['text_mm142s49', o.ref], ['color_mm0x8faa', o.stage], ['color_mm0x9fnn', o.payment], ['color_mm6w7cdd', o.type], ['date_mm33sj6t', o.date], ['date_mm3t66pa', o.promised]].map(([id, text]) => ({ id, text, value: null })) };
   };
   NA.io.now = () => NOW; NA._resetForTests();
   const run = (items) => NA.detect({ cases: items.map(NA.parseCase), checklist: new Map(items.map((i) => ['2026-SV-050', true])), now: NOW }).filter((e) => e.kind === 'no-deadline');
   assert.equal(run([item()]).length, 1);
   assert.equal(run([item()])[0].why, 'No deadline is set for this client — neither a real deadline nor an imaginary one with a promised submission date.');
   assert.equal(NA.KINDS['no-deadline'].severity, 'medium');
-  assert.equal(run([item({ type: 'Imaginary' })]).length, 0, 'set');
+  assert.equal(run([item({ type: 'Imaginary', promised: '2026-12-15' })]).length, 0, 'set');
+  assert.equal(run([item({ type: 'Deadline', date: '2026-12-20' })]).length, 0, 'set (real)');
+  // a type with no date is not set (review 2026-11-07 [3]: the automatic reminder would skip it every day)
+  assert.match(run([item({ type: 'Imaginary' })])[0].why, /^Deadline Type is Imaginary but the promised submission date is blank/);
+  assert.match(run([item({ type: 'Deadline' })])[0].why, /^Deadline Type is Deadline but the date is blank — set the Actual Deadline on the case\./);
   assert.equal(run([item({ createdAgo: 60 * D })]).length, 0, 'opened before the question was asked');
   assert.equal(run([item({ stage: 'Application Submitted' })]).length, 0, 'closed');
   assert.equal(run([item({ group: 'group_mm3t4kda', title: 'Retainers before May 2026' })]).length, 0, 'legacy');

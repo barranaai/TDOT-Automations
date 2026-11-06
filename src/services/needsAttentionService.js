@@ -47,6 +47,7 @@ const COL = {
   actualDeadline: 'date_mm33sj6t',    // …its date (the document reminders' "deadline close" rule)
   docUploaded:    'numeric_mm2njqk1', // Documents Uploaded % — the automatic reminder's 50 % line
   lastActivity:   'date_mm1amqyr',    // Last Client Activity (uploads only)
+  promised:       'date_mm3t66pa',    // an imaginary deadline's promised submission date (blank = not set, review 2026-11-07 [3])
 };
 // Cases opened from this day on are expected to carry a deadline (the question is asked at retain since then).
 const DEADLINE_SINCE = Date.parse(process.env.DEADLINE_ASKED_SINCE || '2026-11-07T05:00:00Z');   // 2026-11-07 00:00 Toronto (EST)
@@ -57,6 +58,8 @@ const EXEC_REF_COL = 'text_mm0z2cck';            // Documents board: the case re
 const { TEST_GROUP_ID, NOT_CASE_GROUPS } = require('../utils/caseGroups');
 // The document reminders' record on a case (block 2): the claim / failure notes and their hidden markers.
 const docReminders = require('./docReminderService');
+// The Reminder Templates board's state (block 2, §3b): a row the reminders could not use is listed here (review 2026-11-07 [23]).
+const reminderTemplates = require('./docReminderTemplates');
 // Clients retained before the app ran (staff-managed): only the case-number and
 // folder checks apply — the app never set them up, so "no checklist", "no case
 // number" or "payment not marked" says nothing about them.
@@ -125,6 +128,7 @@ const KINDS = {
   'assign':        { order: 63, severity: 'medium', label: 'Ready for the next step, nobody assigned' },
   'no-deadline':   { order: 64, severity: 'medium', label: 'Deadline not set (real or imaginary)' },
   'auto-reminder-failed': { order: 65, severity: 'medium', label: 'Automatic document reminder did not go out' },
+  'reminder-template-invalid': { order: 66, severity: 'medium', label: 'Reminder template on the Monday board cannot be used' },   // not a case: admins / everyone-sees-all viewers
   'folder-split':  { order: 70, severity: 'medium', label: 'Two folders for one case' },
   'other-warning': { order: 80, severity: 'low',    label: 'Other app warnings' },
 };
@@ -196,6 +200,19 @@ const isPaid = (c) => c.payment === 'Paid';
 // The document reminders' numbers: a stored Uploaded % ('' = never computed), Toronto days.
 const pctOf = (v) => (s(v) === '' ? null : Number(s(v)));
 const under50 = (v) => pctOf(v) != null && Number.isFinite(pctOf(v)) && pctOf(v) < 50;
+const isDayText = (v) => /^\d{4}-\d{2}-\d{2}$/.test(s(v));
+/** A typed deadline whose date is blank (review 2026-11-07 [3]): { tag, why, todo } or null. */
+function deadlineBlank(c) {
+  if (c.deadlineType === 'Deadline' && !isDayText(c.actualDeadline)) {
+    return { tag: 'deadline-date-blank', why: 'Deadline Type is Deadline but the date is blank — set the Actual Deadline on the case.',
+      todo: 'Open the client\'s record (Retainers → the client) and type the deadline date in the Deadline box; it lands on the case row too.' };
+  }
+  if (c.deadlineType === 'Imaginary' && !isDayText(c.promised)) {
+    return { tag: 'promised-date-blank', why: 'Deadline Type is Imaginary but the promised submission date is blank — set the promised date on the case.',
+      todo: 'Open the client\'s record (Retainers → the client) and type the promised submission date in the Deadline box; it lands on the case row too.' };
+  }
+  return null;
+}
 const torontoDayOf = (ms) => require('../utils/torontoTime').torontoDay(new Date(ms).toISOString());
 const daysUntil = (day, today) => Math.round((Date.parse(`${day}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / (24 * 3600 * 1000));
 
@@ -283,7 +300,7 @@ function needsSecondParentCheck(c) {
   return !!c.ref && !isTestCase(c) && !isClosed(c) && isPaid(c) && !BEFORE_CHECKLIST.includes(c.stage) && isSuperVisa(c.caseType) && TWO_PEOPLE_RE.test(String(c.name || ''));
 }
 
-function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), checklistFamily = new Map(), manifestFamily = new Map(), balances = new Map(), now }) {
+function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), checklistFamily = new Map(), manifestFamily = new Map(), balances = new Map(), templateProblems = [], now }) {
   const out = [];
   const live = cases.filter((c) => !isTestCase(c));
   const add = (kind, rowsIn, fingerprint, { since = 0, why, todo }) => {
@@ -465,11 +482,13 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
     }
 
     // 4. The document checklist (one item per case at most).
+    const before = out.length;
     if (rows === false) checklistProblem(c, notes);
+    const checklistListed = out.length > before;   // the case is on the list under some kind (no checklist / Sub Type / on hold)
 
     // 5. The client's intake email.
     // 4b. Document reminders (block 2): what the automatic email leaves to a person.
-    reminderRules(c, notes, rows);
+    reminderRules(c, notes, rows, checklistListed);
 
     const unconf = newest(notes, NOTE.unconfirmed);
     if (unconf && !after(notes, NOTE.intakeSent, unconf.at) && !after(notes, NOTE.intakeFailed, unconf.at)) {
@@ -565,21 +584,45 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
     }
     // 9. The client's deadline (team meeting 2026-11-05): every case opened since the question is asked must
     //    say whether there is a real deadline or an imaginary one — the reminders and the Deadlines view read it.
-    if (!isLegacy(c) && c.created >= DEADLINE_SINCE && !CLOSED_STAGES.includes(c.stage) && !s(c.deadlineType)) {
-      add('no-deadline', c, `${c.id}|deadline`, {
+    //    A typed deadline with a blank date counts as not set (review 2026-11-07 [3]): the automatic
+    //    reminder skips such a case every morning, so somebody has to be told.
+    const blank = deadlineBlank(c);
+    if (!isLegacy(c) && c.created >= DEADLINE_SINCE && !CLOSED_STAGES.includes(c.stage) && (!s(c.deadlineType) || blank)) {
+      add('no-deadline', c, `${c.id}|${blank ? blank.tag : 'deadline'}`, blank ? {
+        since: c.created,
+        why: `${blank.why} The automatic document reminder cannot run for this client until it is set.`,
+        todo: blank.todo,
+      } : {
         since: c.created,
         why: 'No deadline is set for this client — neither a real deadline nor an imaginary one with a promised submission date.',
         todo: 'Open the client\'s record (Retainers → the client) and set the Deadline box; it lands on the case row too.',
       });
-    } else if (!isLegacy(c) && c.created < DEADLINE_SINCE && c.stage === DCS && isPaid(c) && !s(c.deadlineType) && under50(c.docUploaded)) {
+    } else if (!isLegacy(c) && c.created < DEADLINE_SINCE && c.stage === DCS && isPaid(c) && (!s(c.deadlineType) || blank) && under50(c.docUploaded)) {
       // An older case still collecting documents under 50 %: the automatic reminder
       // (block 2) runs only with a recorded deadline — a softer nudge than the rule above.
-      add('no-deadline', c, `${c.id}|deadline-old`, {
+      add('no-deadline', c, `${c.id}|${blank ? blank.tag : 'deadline-old'}`, {
         since: c.created,
-        why: `Deadline not recorded — the automatic document reminder cannot run for this client (${pctOf(c.docUploaded)} % of the documents uploaded).`,
-        todo: 'Open the client\'s record (Retainers → the client) and set the Deadline box (a real deadline, or an imaginary one with a promised submission date); it lands on the case row too. If the client is being chased by hand, mark this handled.',
+        why: `${blank ? blank.why : 'Deadline not recorded —'} ${blank ? 'The' : 'the'} automatic document reminder cannot run for this client (${pctOf(c.docUploaded)} % of the documents uploaded).`,
+        todo: blank ? `${blank.todo} If the client is being chased by hand, mark this handled.`
+          : 'Open the client\'s record (Retainers → the client) and set the Deadline box (a real deadline, or an imaginary one with a promised submission date); it lands on the case row too. If the client is being chased by hand, mark this handled.',
       });
     }
+  }
+
+  // ── 10. The Reminder Templates board (block 2, §3b) ───────────────────────
+  // A row the reminders could not use: the built-in text is used instead, and nobody
+  // would know (review 2026-11-07 [23]). Not a case — no row, no case number, no
+  // "handled" note; it leaves the list by itself once the board row is fixed.
+  for (const t of templateProblems) {
+    const row = s(t && t.row);
+    if (!row) continue;
+    out.push({
+      key: keyOf(`reminder-template-invalid|template|${row}`), kind: 'reminder-template-invalid',
+      itemIds: [], caseRef: '', client: `Reminder Templates board — the "${row}" row`, stage: '', payment: '', manager: '', rows: [],
+      since: '',
+      why: `The ${row} text on the Monday Reminder Templates board cannot be used (${oneLine(t.reason, 160) || 'the row does not pass the checks'}). The reminders use the built-in text instead.`,
+      todo: 'Fix that row on the Reminder Templates board: plain text, the body must contain {MissingList}, and it must not tell the client to reply. The item leaves this list by itself within half an hour of the fix (Check now reads the board again sooner).',
+    });
   }
 
   return out;
@@ -590,7 +633,7 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
    * send; and the app does nothing after the final reminder's last day — each of those
    * is a person's call, so it is listed here.
    */
-  function reminderRules(c, notes, rows) {
+  function reminderRules(c, notes, rows, checklistListed = false) {
     if (c.stage !== DCS) return;                                   // only while documents are being collected
     const today = torontoDayOf(now);
     const pct = pctOf(c.docUploaded);
@@ -610,10 +653,12 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
     // b. The final reminder's last day has passed and the client has not uploaded since it went.
     const h = docReminders.readReminderHistory(notes);
     const fin = h.latest[3];
-    if (fin && fin.lastDayIso && fin.lastDayIso <= today && !(c.lastActivity && c.lastActivity > fin.day)) {
+    //    Last Client Activity is a DAY, not a time: an upload on the final's own day counts as "since"
+    //    (review 2026-11-07 [31]) — a same-day upload must never read as "nothing uploaded".
+    if (fin && fin.lastDayIso && fin.lastDayIso <= today && !(c.lastActivity && c.lastActivity >= fin.day)) {
       add('final-last-day-passed', c, `${c.id}|final-last-day|${fin.id}`, {
         since: tms(`${fin.lastDayIso}T12:00:00Z`),
-        why: `The final reminder went on ${dateWord(fin.at)} naming ${dateWord(tms(`${fin.lastDayIso}T12:00:00Z`))} as the last day, and the client has uploaded nothing since. The app moves nothing by itself.`,
+        why: `The final reminder went on ${dateWord(fin.at)} naming ${dateWord(tms(`${fin.lastDayIso}T12:00:00Z`))} as the last day, and no upload is recorded on or after the day it went. The app moves nothing by itself.`,
         todo: 'Decide with the consultant: wait longer, move the file to Stuck (set the Case Stage on the Cases board — never move the row to another group), or arrange the refund outside the app. Then mark this handled.',
       });
     }
@@ -628,8 +673,12 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
     }
     // d. No checklist rows at Document Collection on a case the generic "no checklist" rule leaves alone
     //    (a client retained before the app, set up for the reminders by a typed deadline): nothing to list,
-    //    so no email can go.
-    if (rows === false && isPaid(c) && isLegacy(c) && s(c.deadlineType)) {
+    //    so no email can go. Any other Paid case with a typed deadline the generic rule did not list — and
+    //    that is not in its set-up grace (just paid, just started) — lands here too, so no such case falls
+    //    between the two kinds (review 2026-11-07 [19]).
+    const startedNote = newest(notes, NOTE.started);
+    const settling = (c.paidDate && now - c.paidDate < GRACE_PAID_DAY_MS) || now - c.created < GRACE_SETUP_MS || (startedNote && now - startedNote.at < GRACE_SETUP_MS);
+    if (rows === false && isPaid(c) && s(c.deadlineType) && (isLegacy(c) || (!checklistListed && !settling))) {
       add('dcs-no-checklist-rows', c, `${c.id}|dcs-no-rows`, {
         since: c.paidDate || c.created,
         why: 'The case is collecting documents with a deadline recorded, but it has no document checklist rows — the reminders (automatic or from the case page) have nothing to list.',
@@ -803,6 +852,7 @@ function parseCase(item) {
     ref: cv[COL.ref], caseType: cv[COL.caseType], subType: cv[COL.subType],
     stage: cv[COL.stage], payment: cv[COL.payment], paidDate: paid, deadlineType: cv[COL.deadlineType],
     actualDeadline: s(cv[COL.actualDeadline]).slice(0, 10), docUploaded: s(cv[COL.docUploaded]), lastActivity: s(cv[COL.lastActivity]).slice(0, 10),
+    promised: s(cv[COL.promised]).slice(0, 10),
     manager: cv[COL.manager], managerSet: !!cv[COL.manager], submissionSet: !!cv[COL.submissionTeam],
     assignees: caseAccess.assigneesFromColumnValues(raw),
     notes: caseNotes(item.updates),
@@ -896,6 +946,12 @@ const io = {
     return ((d && d.items_page_by_column_values && d.items_page_by_column_values.items) || []).length > 0;
   },
   listRootFolders: () => require('./oneDriveService').listCaseFoldersInRoot(),
+  /** The Reminder Templates board's unusable rows: [{ row, reason }]. No read at all when the board env is unset; otherwise the templates' own cached load (half an hour). */
+  async reminderTemplateProblems() {
+    if (!s(process.env.MONDAY_REMINDER_TEMPLATES_BOARD_ID)) return [];
+    await reminderTemplates.loadTemplates();
+    return reminderTemplates.diagnostics().map((d) => ({ row: d.row, reason: d.reason || (d.problems || []).join('; ') }));
+  },
   async workFoldersPresent(folderId) {
     const r = await require('./oneDriveService').ensureCaseWorkFolders({ folderId, dryRun: true });   // list only
     return !(r.wouldCreate || []).length;
@@ -993,7 +1049,12 @@ async function buildSnapshot() {
   balTargets.forEach((c, i) => { balances.set(c.id, balAnswers[i].ok ? balAnswers[i].value : null); if (!balAnswers[i].ok) balUnknown++; });
   if (balUnknown) partial.push(`${balUnknown} case${balUnknown === 1 ? '' : 's'} at submission could not be checked for a balance still owed.`);
 
-  const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, family, checklistFamily, manifestFamily, balances, now: io.now() });
+  // The Reminder Templates board (block 2): rows the reminders could not use (nothing is read when the board is not set up).
+  let templateProblems = [];
+  try { templateProblems = await io.reminderTemplateProblems(); }
+  catch (err) { partial.push(`The Reminder Templates board could not be checked (${oneLine(err.message, 120)}).`); }
+
+  const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, family, checklistFamily, manifestFamily, balances, templateProblems, now: io.now() });
 
   // "Handled" notes: from the notes read, plus a deeper read for an item on a
   // case whose notes were not read far back yet (an older handled note must count).
@@ -1075,9 +1136,11 @@ function visibleRows(entry, viewer) {
  * them names only those — never the other client.
  */
 function shapeFor(entry, viewer) {
+  const { rows: _all, ...out } = entry;
+  // An item about no case (a Reminder Templates board row): admins and viewers who see every case.
+  if (!entry.rows.length) return viewer && (viewer.isAdmin || viewer.scope === 'all') ? out : null;
   const rows = visibleRows(entry, viewer);
   if (!rows.length) return null;
-  const { rows: _all, ...out } = entry;
   if (rows.length === entry.rows.length) return out;
   return {
     ...out,
@@ -1153,6 +1216,7 @@ async function markHandled({ key, viewer, actor }) {
   }
   const k = s(key);
   const entry = _snap.entries.find((e) => e.key === k);
+  if (entry && !entry.rows.length) throw fail(409, 'This item is about no case, so there is nowhere to note it. It leaves the list by itself once the row on the Reminder Templates board is fixed.');
   const rows = entry ? visibleRows(entry, viewer) : [];
   if (!rows.length) throw fail(404, 'This item is no longer on the list. Press Check now to see the current list.');
   if (_handledHere.has(k)) return { ok: true, already: true };

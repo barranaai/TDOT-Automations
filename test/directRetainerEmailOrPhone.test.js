@@ -324,7 +324,7 @@ test('one Source / Reference column (Faran 2026-11-04): "Walk-in" is a choice; t
   assert.ok(snap.SNAPSHOT_KEYS.includes('directClient') && snap.SNAPSHOT_IDS.includes('text_mm8smgwh'));
 });
 
-test('review: an automatic onboarding start with no client email leaves a case note the Summary reads; a sent email leaves none', async () => {
+test('review: an automatic onboarding start with no client email leaves a case note the Summary reads; a sent email leaves the "Intake email sent" note (masked address) the reminders\' 24-hour check reads', async () => {
   const email = require('../src/services/emailService');
   const notes = [];
   const restore = [stub(mondayApi, 'query', async (q, v) => { if (/create_update/.test(q)) notes.push(v); return {}; })];
@@ -336,9 +336,16 @@ test('review: an automatic onboarding start with no client email leaves a case n
     assert.match(require('fs').readFileSync(require.resolve('../src/services/needsAttentionService'), 'utf8'), /intakeFailed:\s+\/The client.s intake email did not go out\/i/);
     restore.push(stub(email, 'sendIntakeEmail', async () => ({ sent: false, to: 'a@b.co', caseRef: '', reason: 'This case has no case reference yet.' })));
     await email.sendIntakeEmailAuto('CM-7');
-    restore.push(stub(email, 'sendIntakeEmail', async () => ({ sent: true })));
+    restore.push(stub(email, 'sendIntakeEmail', async () => ({ sent: true, to: 'asha.client@example.com', caseRef: 'X' })));
     await email.sendIntakeEmailAuto('CM-7');
-    assert.equal(notes.length, 1, 'only the no-email skip is noted');
+    assert.equal(notes.length, 2, 'the no-email skip and the send are noted; the no-ref skip is not');
+    assert.equal(notes[1].id, 'CM-7');
+    assert.match(notes[1].b, /^📬 <b>Intake email sent<\/b> \("Your case is ready"\) to a\*\*\*@example\.com — \d{1,2} \w{3} \d{4}, \d{1,2}:\d{2} [ap]m \(Toronto\)$/);
+    assert.ok(!notes[1].b.includes('asha.client'), 'the address is masked in the note');
+    assert.match(require('fs').readFileSync(require.resolve('../src/services/docReminderService'), 'utf8'), /INTAKE_NOTE_RE = \/Intake email sent\\b/);
+    // a failed note never fails the send
+    restore.push(stub(mondayApi, 'query', async () => { throw new Error('Monday down'); }));
+    assert.deepEqual(await email.sendIntakeEmailAuto('CM-7'), { sent: true, to: 'asha.client@example.com', caseRef: 'X' });
   } finally { restore.reverse().forEach((r) => r()); }
   const fs = require('fs');
   for (const f of ['../src/routes/mondayWebhook', '../src/services/retainerService', '../src/services/caseRefService']) {
