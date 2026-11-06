@@ -959,6 +959,14 @@ test('sendStaffReminder: two instances — the earliest open claim wins; the los
   const hx = svc.readReminderHistory([rendered(1, T0 - 5000, svc.claimNote({ level: 'auto', to: 'a@b', count: 1, now: T0 - 5000 })), rendered(2, T0, svc.claimNote({ level: 2, to: 'a@b', actor: 'z', count: 1, now: T0 }))].map((u) => svc.rawNotes([u])[0]));
   assert.deepEqual(svc.openClaimsAnyOrigin(hx, '2026-11-07').map((x) => x.id), ['1', '2']);
   assert.deepEqual(svc.racingClaims(hx, '2026-11-07', '2', T0).map((x) => [x.id, x.origin]), [['1', 'auto'], ['2', 'btn2']], 'the automatic claim competes with the button');
+  // two DIFFERENT button levels never race: reminder 1 a minute ago, then reminder 2 on the same call — both go
+  const hy = svc.readReminderHistory([rendered(1, T0 - 60e3, svc.claimNote({ level: 1, to: 'a@b', actor: 'z', count: 1, now: T0 - 60e3 })), rendered(2, T0, svc.claimNote({ level: 2, to: 'a@b', actor: 'z', count: 1, now: T0 }))].map((u) => svc.rawNotes([u])[0]));
+  assert.deepEqual(svc.racingClaims(hy, '2026-11-07', '2', T0).map((x) => x.id), ['2'], 'reminder 1 a minute earlier is not a rival of reminder 2');
+  const S7 = staffStubs({ notes: [rendered(900, T0 - 60e3, svc.claimNote({ level: 1, to: 'a***@example.com', actor: 'Mahesh Sharma', count: 4, now: T0 - 60e3 }))] });
+  try {
+    const r = await svc.sendStaffReminder({ overview: OV(), level: 2, subject: 'x', body: '{MissingList}', actor: { name: 'Mahesh Sharma' } });
+    assert.equal(r.ok, true); assert.equal(S7.sent.length, 1); assert.deepEqual(S7.deleted, [], 'a deliberate second level a minute later is sent');
+  } finally { S7.restore(); }
 });
 
 // ─── The routes (src/routes/docReminderRoutes.js), run with fakes ────────────

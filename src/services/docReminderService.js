@@ -614,7 +614,15 @@ const openClaimsAnyOrigin = (history, day) => [...history.claims].filter((c) => 
  * FINISHED send (the preview already warns "already went today") — a deliberate second
  * send the same day is not a lost race.
  */
-const racingClaims = (history, day, mine, now) => openClaimsAnyOrigin(history, day).filter((c) => c.id === mine || (Number.isFinite(c.at) && c.at >= now - RACE_WINDOW_MS));
+const racingClaims = (history, day, mine, now) => {
+  const all = openClaimsAnyOrigin(history, day);
+  const me = all.find((c) => c.id === mine);
+  // Two DIFFERENT button levels never race: a person who sent reminder 1 and then, on the
+  // same call, chooses reminder 2 a minute later meant both (the preview warned them).
+  // The same level twice, or a button against the automatic run, is one race.
+  const rival = (c) => !me || c.origin === me.origin || c.origin === 'auto' || me.origin === 'auto';
+  return all.filter((c) => c.id === mine || (rival(c) && Number.isFinite(c.at) && c.at >= now - RACE_WINDOW_MS));
+};
 /** Failed tries of one origin on one day. */
 const failedTries = (history, origin, day) => history.claims.filter((c) => c.origin === origin && c.day === day && c.failed).length;
 
