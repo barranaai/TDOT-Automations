@@ -419,13 +419,35 @@ app.post('/api/escalation/run', async (req, res) => {
   );
 });
 
-// Manual trigger — run Client Chasing Loop immediately
+// Client Chasing Loop — RETIRED 2026-11 (replaced by the document reminders). The
+// route stays so an old button gets a plain answer; nothing is read or sent.
 app.post('/api/chasing/run', async (req, res) => {
   if (!resolveNamedAdminViewerOrReject(req, res, 'run the overnight checks by hand')) return;   // named admins only (2026-10-31)
-  res.json({ status: 'triggered', message: 'Client Chasing Loop running in background…' });
-  chasingLoopService.runChasingLoop().catch((err) =>
-    console.error('[ChasingLoop] Manual run failed:', err.message)
-  );
+  res.json({ status: 'retired', ...(await chasingLoopService.runChasingLoop()), message: 'Retired — replaced by Document reminders' });
+});
+
+// Document reminders (team meeting 2026-11-05, block 2) — named admins only:
+// preview = every Document Collection row's decision and reason, nothing sent,
+// nothing written (also while the switch is off); run = one run now (sends what
+// is due; answers { off: true } while DOC_REMINDERS_AUTO is off).
+app.get('/api/doc-reminders/preview', async (req, res) => {
+  if (!resolveNamedAdminViewerOrReject(req, res, 'preview the document reminders')) return;
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json(await require('./services/docReminderService').runDocReminders({ dryRun: true, reason: 'preview by hand' }));
+  } catch (err) {
+    console.error('[DocReminders] Preview failed:', err.message);
+    res.status(500).json({ error: 'The preview could not be completed — please try again in a moment.' });
+  }
+});
+app.post('/api/doc-reminders/run', async (req, res) => {
+  if (!resolveNamedAdminViewerOrReject(req, res, 'run the document reminders by hand')) return;
+  try {
+    res.json(await require('./services/docReminderService').runDocReminders({ reason: 'run by hand' }));
+  } catch (err) {
+    console.error('[DocReminders] Manual run failed:', err.message);
+    res.status(500).json({ error: 'The run could not be completed — please try again in a moment.' });
+  }
 });
 
 // Document Code Generator — preview (dry run, returns counts + sample)

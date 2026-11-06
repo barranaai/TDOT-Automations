@@ -215,6 +215,10 @@ function buildEnginesHTML() {
 
     .run-btn:hover:not(:disabled) { background: var(--navy-light); }
     .run-btn:disabled  { opacity: .45; cursor: not-allowed; }
+    /* the document reminders' decision list (one line per case) */
+    .docrem-out { margin-top: 10px; max-height: 240px; overflow: auto; font-size: 11px; line-height: 1.5;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; color: var(--navy);
+      background: #fafbfd; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
     .run-btn.running   { background: #92400e; }
     .run-btn.success   { background: var(--green); }
     .run-btn.error     { background: var(--red); }
@@ -545,7 +549,7 @@ ${buildNavHeader('engines')}
     <div class="run-all-icon">⚡</div>
     <div class="run-all-text">
       <div class="run-all-title">Run Full Daily Sequence</div>
-      <div class="run-all-sub">Triggers all 6 engines in order: Readiness → SLA → Expiry → Health → Escalation → Chasing</div>
+      <div class="run-all-sub">Triggers the 5 overnight engines in order: Readiness → SLA → Expiry → Health → Escalation (the chasing loop is retired; the document reminders have their own buttons below)</div>
     </div>
     <button class="run-all-btn" id="run-all-btn" onclick="runAll()">▶ Run All</button>
   </div>
@@ -660,21 +664,43 @@ ${buildNavHeader('engines')}
 
     <div class="engine-card">
       <div class="engine-hd">
-        <div class="engine-icon" style="background:#fffbeb">📧</div>
+        <div class="engine-icon" style="background:#f1f5f9">📧</div>
         <div>
-          <div class="engine-badge">Step 6 of 6</div>
+          <div class="engine-badge" style="background:#f1f5f9;color:#64748b">Retired</div>
           <div class="engine-name">Client Chasing Loop</div>
         </div>
       </div>
       <div class="engine-body">
-        <p class="engine-desc">Sends timed reminder emails based on SLA offsets (R1 → R2 → Final Notice). Advances stage and sets Client Blocked when unresponsive.</p>
+        <p class="engine-desc">Retired — replaced by Document reminders (the case page's Document reminders card and the automatic daily email). Nothing runs here any more; the Chasing Stage column is no longer updated.</p>
         <div class="e-status-row">
           <div class="e-dot" id="dot-chasing"></div>
-          <span class="e-status-txt" id="txt-chasing">Ready</span>
+          <span class="e-status-txt" id="txt-chasing">Retired — replaced by Document reminders</span>
         </div>
       </div>
       <div class="engine-ft">
-        <button class="run-btn" id="btn-chasing" onclick="triggerEngine('/api/chasing/run','Client Chasing Loop','chasing')">▶ Run Now</button>
+        <button class="run-btn" id="btn-chasing" disabled title="Retired — replaced by Document reminders">Retired</button>
+      </div>
+    </div>
+
+    <div class="engine-card">
+      <div class="engine-hd">
+        <div class="engine-icon" style="background:#fff7ed">📨</div>
+        <div>
+          <div class="engine-badge">Daily · Toronto morning</div>
+          <div class="engine-name">Document reminders</div>
+        </div>
+      </div>
+      <div class="engine-body">
+        <p class="engine-desc">The automatic "these documents are still missing" email: a Paid case at Document Collection Started with a real deadline 4+ days away and documents under 50 % uploaded (no email within 3 days of the deadline — those are listed under Needs attention). Preview lists every row's decision and reason without sending. Run sends what is due now; each send is noted on the case. Nothing goes out while the switch DOC_REMINDERS_AUTO is off.</p>
+        <div class="e-status-row">
+          <div class="e-dot" id="dot-docrem"></div>
+          <span class="e-status-txt" id="txt-docrem">Ready</span>
+        </div>
+        <div class="docrem-out" id="docrem-out" style="display:none"></div>
+      </div>
+      <div class="engine-ft" style="display:flex;gap:8px">
+        <button class="run-btn" id="btn-docrem-preview" data-label="Preview (no send)" onclick="docRemindersPreview()">Preview (no send)</button>
+        <button class="run-btn" id="btn-docrem-run" data-label="▶ Run Now" onclick="docRemindersRun()">▶ Run Now</button>
       </div>
     </div>
 
@@ -893,14 +919,54 @@ ${buildNavHeader('engines')}
     { ep: '/api/expiry/run',     label: 'Expiry Risk Engine',    id: 'expiry'     },
     { ep: '/api/health/run',     label: 'Case Health Engine',    id: 'health'     },
     { ep: '/api/escalation/run', label: 'Escalation Routing',    id: 'escalation' },
-    { ep: '/api/chasing/run',    label: 'Client Chasing Loop',   id: 'chasing'    },
+    // the client chasing loop is retired (2026-11) — replaced by the document reminders below
   ];
+
+  /* ── Document reminders (block 2): preview (no send) + run now ─────── */
+  function escHtml(x) { return String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function docRemindersCall(method, ep, btn, label) {
+    var key = getKey(); if (!key) return;
+    var dot = document.getElementById('dot-docrem'), txt = document.getElementById('txt-docrem'), out = document.getElementById('docrem-out');
+    btn.disabled = true; btn.classList.add('running'); btn.textContent = '⟳ Working…';
+    dot.classList.add('running'); txt.textContent = label + '…';
+    addLog('running', label + ' — started…');
+    fetch(ep, { method: method, headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' }, credentials: 'same-origin' })
+      .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.error || d.message || 'Failed (' + r.status + ')'); return d; }); })
+      .then(function(d) {
+        btn.classList.remove('running'); btn.disabled = false; btn.textContent = btn.getAttribute('data-label');
+        dot.classList.remove('running'); dot.classList.add('success');
+        var list = d.candidates || [];
+        var head;
+        if (d.off) head = 'Switched off (DOC_REMINDERS_AUTO) — nothing read, nothing sent.';
+        else if (d.skipped) head = d.skipped + '.';
+        else if (d.ok === false) head = 'Could not run: ' + (d.error || 'unknown problem') + '.';
+        else head = (d.checked || 0) + ' row(s) at Document Collection — ' + (d.dryRun ? (d.wouldSend || 0) + ' would be emailed' : (d.sent || 0) + ' emailed') + ', ' + (d.attention || 0) + ' for a person to call, ' + (d.failed || 0) + ' problem(s)' + (d.dryRun && d.enabled === false ? '. The switch is OFF — nothing goes out until DOC_REMINDERS_AUTO is on' : '') + '.';
+        txt.textContent = head;
+        addLog(d.ok === false ? 'error' : 'success', escHtml(label + ' — ' + head));
+        var lines = [];
+        for (var i = 0; i < list.length; i++) { var c = list[i]; lines.push((c.caseRef || c.itemId || '?') + '  ' + c.decision + (c.reason ? ' — ' + c.reason : '')); }
+        out.textContent = lines.length ? lines.join(String.fromCharCode(10)) : (d.candidates ? 'No rows at Document Collection Started.' : '');
+        out.style.display = (lines.length || d.candidates) ? 'block' : 'none';
+        setTimeout(function() { dot.classList.remove('success'); }, 4000);
+      })
+      .catch(function(e) {
+        btn.classList.remove('running'); btn.disabled = false; btn.textContent = btn.getAttribute('data-label');
+        dot.classList.remove('running'); dot.classList.add('error'); txt.textContent = 'Error: ' + e.message;
+        addLog('error', escHtml(label + ' — ' + e.message));
+        setTimeout(function() { dot.classList.remove('error'); }, 5000);
+      });
+  }
+  function docRemindersPreview() { docRemindersCall('GET', '/api/doc-reminders/preview', document.getElementById('btn-docrem-preview'), 'Document reminders preview'); }
+  function docRemindersRun() {
+    if (!confirm('Send the automatic document reminders now? Every case that is due gets its email, with a note on the case. (Nothing goes out while DOC_REMINDERS_AUTO is off.)')) return;
+    docRemindersCall('POST', '/api/doc-reminders/run', document.getElementById('btn-docrem-run'), 'Document reminders run');
+  }
 
   function runAll() {
     var btn = document.getElementById('run-all-btn');
     btn.disabled = true;
     btn.textContent = '\u27f3 Running sequence\u2026';
-    addLog('info', 'Full daily sequence started \u2014 triggering all 6 engines\u2026');
+    addLog('info', 'Full daily sequence started \u2014 triggering the 5 overnight engines\u2026');
     var chain = Promise.resolve();
     ENGINES.forEach(function(eng) {
       chain = chain
@@ -909,7 +975,7 @@ ${buildNavHeader('engines')}
     });
     chain.then(function() {
       btn.disabled = false; btn.textContent = '\u25b6 Run All';
-      addLog('success', 'Full sequence complete \u2014 all 6 engines triggered.');
+      addLog('success', 'Full sequence complete \u2014 the 5 overnight engines triggered.');
     }).catch(function() {
       btn.disabled = false; btn.textContent = '\u25b6 Run All';
     });
@@ -1131,3 +1197,4 @@ router.get('/', (_req, res) => {
 });
 
 module.exports = router;
+module.exports.buildEnginesHTML = buildEnginesHTML;   // tests parse the emitted <script> (the inline-script trap)

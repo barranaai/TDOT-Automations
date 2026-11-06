@@ -399,7 +399,22 @@ async function processCase(item, offsets) {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
+// RETIRED 2026-11 (team meeting 2026-11-05, block 2). The ladder never sent one
+// email: Chasing Stage's empty slot reads "Resolved", so the start test in
+// processCase never matched. The document reminders (docReminderService: the
+// case page's buttons and the automatic daily email) replace it. runChasingLoop
+// returns at once and reads nothing. The code below is kept exactly as it was,
+// unreachable, on purpose: repairing the start test or any Chasing Stage writer
+// would fire a three-morning catch-up (14 → 6 → 4 emails) to clients never warned.
+const RETIRED = Object.freeze({ retired: true, reason: 'replaced by document reminders (2026-11)' });
+
 async function runChasingLoop() {
+  console.log('[ChasingLoop] Retired — replaced by the document reminders (2026-11); nothing read, nothing sent.');
+  return { ...RETIRED };
+}
+
+// eslint-disable-next-line no-unused-vars
+async function runChasingLoopLegacy() {
   console.log('[ChasingLoop] Starting client chasing loop…');
   const startTime = Date.now();
 

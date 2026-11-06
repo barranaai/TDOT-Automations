@@ -8,7 +8,8 @@
  * no sending. The second (step B) is the RECORD and the staff send: the case's notes
  * are the only record of a reminder (the booking-reminders pattern — no column), the
  * three cockpit buttons preview, edit and send through sendStaffReminder, and the
- * automatic daily email (a later step) reuses the same guards. Every outbound call —
+ * automatic daily email (step C: runDocReminders, at the end) reuses the same
+ * guards. Every outbound call —
  * notes read/post/delete, the email — goes through the `io` seam so tests replace it.
  * The Monday READS of the first half are the case's checklist
  * (documentFormService.getCaseSummary) and, when the templates board is set, the
@@ -191,6 +192,19 @@ function fillTokens(text, values) {
 
 const LEVEL_NAMES = { 1: 'Reminder 1', 2: 'Reminder 2', 3: 'Final reminder', auto: 'Document reminder' };
 
+// The imaginary-deadline variant of the automatic email (DOC_REMINDERS_IMAGINARY, ships
+// OFF): the same "Automatic" template with its "must be submitted by {Deadline}" sentence
+// swapped for a promised-date lead. The wording is a stand-in until Gauri settles "two
+// weeks" vs "delayed" (plan §3a); the board template is not edited.
+const IMAGINARY_LEAD = 'We plan to submit your {CaseType} application by {PromisedDate}. To keep that date we need the documents below as soon as possible — if they arrive later, your submission moves to the next window.';
+function imaginaryBody(body) {
+  const paras = String(body || '').split(/\n\s*\n/);
+  const i = paras.findIndex((p) => p.includes('{Deadline}'));
+  if (i < 0) { paras.splice(1, 0, IMAGINARY_LEAD); return paras.join('\n\n'); }   // after the greeting
+  paras[i] = paras[i].split(/(?<=[.!?])\s+/).map((x) => (x.includes('{Deadline}') ? IMAGINARY_LEAD : x)).join(' ');
+  return paras.join('\n\n');
+}
+
 /**
  * The reminder email, ready to send: { subject, html, text, to (masked), recipient, warnings, template }.
  * Never sends. Throws when it cannot be a safe email (no token, no email, no last day on the
@@ -227,6 +241,8 @@ async function buildReminderEmail(o = {}) {
   const base = await templates.templateFor(level);
   const warnings = [];   // unknown tokens are found once, on the final text (board or edited)
   let subject = base.subject, body = base.body;
+  const variant = level === 'auto' && o.variant === 'imaginary' ? 'imaginary' : 'real';
+  if (variant === 'imaginary') body = imaginaryBody(body);
   if (o.subjectOverride != null && String(o.subjectOverride).trim()) subject = templates.stripHtml(o.subjectOverride).replace(/\s*\n\s*/g, ' ');
   let listAppended = false;
   if (o.bodyOverride != null && String(o.bodyOverride).trim()) {
@@ -339,7 +355,7 @@ ${progressLine ? `        <p style="font-size:13px;color:#64748b;margin:0 0 20px
     recipient: clientEmail,
     replyTo: EMAIL_REPLY_TO || undefined,
     warnings,
-    template: { name: base.name, source: base.source, edited: Boolean(o.bodyOverride || o.subjectOverride), listAppended },
+    template: { name: base.name, source: base.source, edited: Boolean(o.bodyOverride || o.subjectOverride), listAppended, variant },
     links: { portalUrl, documentsUrl },
   };
 }
@@ -363,12 +379,20 @@ const FINAL_DEFAULT_DAYS = 7;              // the final reminder's "last day we 
 // Other client-facing sends the 24-hour check looks for (their note heads as posted today).
 const REWORK_NOTE_RE = /🔄 Document Flagged for Client Rework/;
 const INTAKE_NOTE_RE = /Intake email sent\b|Intake email resent\b|Portal access email re-sent|Portal link email re-sent/i;
-// The board groups that are not live cases — the same list as needsAttentionService.js (pinned by a test).
-const NOT_CASE_GROUPS = [
-  { id: 'group_mm3842s',  title: /^test$/i },                   // TEST
-  { id: 'group_mm2tz8e1', title: /^leads$/i },                  // Leads
-  { id: 'group_mm3b9tap', title: /cancel|did not retain/i },    // Cancel / Did not retained
-];
+// The board groups that are not live cases — the ONE list shared with needsAttentionService (src/utils/caseGroups.js).
+const { NOT_CASE_GROUPS, isCaseGroup } = require('../utils/caseGroups');
+
+// The automatic run (step C): the Client Master columns it reads, one page of rows.
+const DCS_STAGE = 'Document Collection Started';
+const AUTO_PAGE = 100;
+const AUTO_COLS = {
+  ref: 'text_mm142s49', caseType: 'dropdown_mm0xd1qn', stage: 'color_mm0x8faa', payment: 'color_mm0x9fnn',
+  lock: 'color_mm0x3x1x', override: 'color_mm0x975e',
+  deadlineType: 'color_mm6w7cdd', actualDeadline: 'date_mm33sj6t', promised: 'date_mm3t66pa',   // the client's deadline (block 1)
+  docUploaded: 'numeric_mm2njqk1',                                                              // Documents Uploaded % (Faran: the 50 % line)
+  email: 'text_mm0xw6bp', token: 'text_mm0x6haq',
+  stageStart: 'date_mm0xjm1z', lastActivity: 'date_mm1amqyr', escalationLastNotified: 'date_mm1gqbd',
+};
 
 const s = (v) => String(v == null ? '' : v).trim();
 const idNum = (x) => Number(x && x.id) || 0;
@@ -385,10 +409,18 @@ function dayPlus(day, n) {
 }
 /** Whole days from Toronto `today` to a YYYY-MM-DD day (negative = past). */
 function daysUntil(day, today) { return Math.round((Date.parse(`${day}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / DAY); }
-/** True when a board row sits in a group that is not a live case (TEST, Leads, Cancel). */
-function isCaseGroup(group) {
-  const g = group || {};
-  return !NOT_CASE_GROUPS.some((x) => s(g.id) === x.id || x.title.test(s(g.title)));
+/** '14 Nov 2026' / '30 Sept 2026' (as a note prints a day — en-GB writes "Sept") → '2026-11-14'; '' when it is not such a date. */
+function dayFromWords(words) {
+  const m = /^(\d{1,2}) ([A-Za-z]{3,4}) (\d{4})$/.exec(s(words));
+  if (!m) return '';
+  const mi = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(m[2].slice(0, 3).toLowerCase());
+  if (mi < 0) return '';
+  return `${m[3]}-${String(mi + 1).padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+}
+/** Is it this hour in Toronto now? (the daily automatic run comes from an hourly tick — see scheduler.js) */
+function isTorontoHour(hour, ms = io.now()) {
+  const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Toronto', hour: 'numeric', hourCycle: 'h23' }).format(new Date(ms)));
+  return h === hour;
 }
 
 /** The side effects behind one seam (tests replace them). */
@@ -411,6 +443,35 @@ const io = {
   },
   deleteNote: (id) => require('./mondayApi').query('mutation($i: ID!){ delete_update(id: $i){ id } }', { i: String(id) }),
   sendEmail: (msg) => require('./microsoftMailService').sendEmail(msg),
+  /**
+   * The automatic run's ONE list read: the Cases-board rows at Document Collection
+   * Started (the stage column filtered on the board, explicit limit, cursor followed),
+   * with the columns the selector reads — never the whole board with its notes.
+   */
+  async listDcsRows() {
+    const q = require('./mondayApi');
+    const { clientMasterBoardId } = require('../../config/monday');
+    const cols = JSON.stringify(Object.values(AUTO_COLS));
+    const FIELDS = `cursor items { id name group { id title } column_values(ids:${cols}) { id text } }`;
+    const first = await q.query(
+      `query($b:ID!,$v:String!){ items_page_by_column_values(limit:${AUTO_PAGE}, board_id:$b, columns:[{column_id:"${AUTO_COLS.stage}", column_values:[$v]}]) { ${FIELDS} } }`,
+      { b: String(clientMasterBoardId), v: DCS_STAGE });
+    let page = first && first.items_page_by_column_values;
+    if (!page) throw new Error('the Cases board could not be read');
+    const rows = [...(page.items || [])];
+    let pages = 0;
+    while (page && page.cursor && ++pages < 20) {
+      const d = await q.query(`query($c:String!){ next_items_page(limit:${AUTO_PAGE}, cursor:$c) { ${FIELDS} } }`, { c: page.cursor });
+      page = d && d.next_items_page;
+      rows.push(...((page && page.items) || []));
+    }
+    return rows;
+  },
+  /** The Documents Uploaded % recounted now from the checklist (the readiness engine's own formula, dry run — nothing written); null when the case has no rows. */
+  async liveUploadedPct(caseRef, itemId) {
+    const r = await require('./caseReadinessService')._internal.refreshDocNumbers({ masterItemId: itemId, caseRef, dryRun: true });
+    return r && r.after && r.after.uploadedPct != null ? Number(r.after.uploadedPct) : null;
+  },
   log: (m) => console.log(m),
   warn: (m) => console.warn(m),
 };
@@ -465,7 +526,7 @@ function parseNote(note) {
     const by = (/\bby (.+?) — \d+ documents? missing/.exec(text) || [])[1] || '';
     const to = (/\b(?:to|emailed to) (\S+@\S+?)(?: by | —)/.exec(text) || [])[1] || '';
     const lastDay = (/— last day (.+?) —/.exec(text) || [])[1] || '';
-    return { ...base, kind: 'claim', origin, level: LEVEL_OF[origin], day: m[2], by: s(by), to: s(to), lastDay: s(lastDay) };
+    return { ...base, kind: 'claim', origin, level: LEVEL_OF[origin], day: m[2], by: s(by), to: s(to), lastDay: s(lastDay), lastDayIso: dayFromWords(lastDay) };
   }
   const f = FAIL_RE.exec(text);
   if (f) {
@@ -764,8 +825,185 @@ async function sendStaffReminder({ overview, level, subject, body, extra, lastDa
   return { ok: true, noted: true, noteId: mine, to: email.to, warnings: email.warnings, level: lv, day: today, lastDay: last };
 }
 
+// ─── The automatic daily email (step C) ──────────────────────────────────────
+//
+// Plan §3a: once a day, at DOC_REMINDERS_HOUR Toronto, every live case at Document
+// Collection Started that is Paid, not locked, has a REAL deadline at least 4 days
+// away, documents under 50 % (the stored number AND a live recount), at least one
+// missing document, an email and an access code, no reminder of any origin today,
+// no other client email in 24 h, documents started 3+ days ago and no upload today
+// or yesterday — gets the "Automatic" template with the missing list. The record is
+// the same claim / failure note pair as the buttons (origin "auto"). The switch
+// DOC_REMINDERS_AUTO ships OFF, and OFF means no read at all from the tick;
+// DOC_REMINDERS_ONLY (comma list of case refs) is the first-days allow-list;
+// DOC_REMINDERS_IMAGINARY adds the imaginary-deadline branch (every 3rd day).
+
+const envFlag = (name) => { const v = s(process.env[name]).toLowerCase(); return v === '1' || v === 'true'; };
+/** DOC_REMINDERS_IMAGINARY — the imaginary-deadline branch. OFF unless exactly "1"/"true". */
+function isImaginaryEnabled() { return envFlag('DOC_REMINDERS_IMAGINARY'); }
+/** DOC_REMINDERS_ONLY — case refs allowed to be emailed (empty = every case). */
+function allowList() { return s(process.env.DOC_REMINDERS_ONLY).split(',').map((x) => x.trim().toUpperCase()).filter(Boolean); }
+/** DOC_REMINDERS_HOUR — the Toronto hour of the daily run (0–23), default 9. */
+function autoHour() { const raw = s(process.env.DOC_REMINDERS_HOUR); const n = Number(raw); return /^\d{1,2}$/.test(raw) && n <= 23 ? n : 9; }
+const FIRST_AUTO_AFTER_DAYS = 3;     // no automatic reminder in the first days after documents start (the portal email just went)
+const DEADLINE_MIN_DAYS = 4;         // 3 days or less (or past) is a phone call, not an email (listed under Needs attention)
+const IMAGINARY_EVERY_DAYS = 3;      // the imaginary branch's cadence (nobody set one — never daily)
+const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+/** One Cases-board row as the selector reads it. */
+function parseAutoRow(item) {
+  const cv = {};
+  for (const c of (item && item.column_values) || []) cv[c.id] = s(c.text);
+  const col = (k) => s(cv[AUTO_COLS[k]]);
+  return {
+    id: s(item && item.id), name: s(item && item.name), group: (item && item.group) || null,
+    ref: col('ref'), caseType: col('caseType'), stage: col('stage'), payment: col('payment'),
+    lock: col('lock'), override: col('override'),
+    deadlineType: col('deadlineType'), actualDeadline: col('actualDeadline').slice(0, 10), promised: col('promised').slice(0, 10),
+    docUploaded: col('docUploaded'), email: col('email'), token: col('token'),
+    stageStart: col('stageStart').slice(0, 10), lastActivity: col('lastActivity').slice(0, 10), escalationLastNotified: col('escalationLastNotified').slice(0, 10),
+  };
+}
+
+/**
+ * PURE — the column-only conditions (plan §3a 1–6a, 8, 11, 12 and the allow-list),
+ * in the order that costs nothing. Returns { decision: 'skip'|'attention'|'candidate',
+ * reason, variant }; the notes, the checklist and the live recount come after.
+ */
+function selectByColumns(row, { today, imaginary = false, only = [] } = {}) {
+  const skip = (reason) => ({ decision: 'skip', reason });
+  const yes = (v) => /^yes$/i.test(s(v));
+  if (!row.ref) return skip('no case number');
+  if (only.length && !only.includes(row.ref.toUpperCase())) return skip('not on the allow-list (DOC_REMINDERS_ONLY)');
+  if (!isCaseGroup(row.group)) return skip(`in the "${s(row.group && row.group.title) || 'non-case'}" group, not a live case`);
+  if (row.stage !== DCS_STAGE) return skip(`not at Document Collection Started (${row.stage || 'blank'})`);
+  if (row.payment !== 'Paid') return skip(`Payment Status is ${row.payment || 'blank'}, not Paid`);
+  if (yes(row.lock)) return skip('Automation Lock is Yes');
+  if (yes(row.override)) return skip('Manual Override is Yes');
+  if (!row.email) return skip('no client email');
+  if (!row.token) return skip('no access code — no portal link can be made');
+  const pct = row.docUploaded === '' ? null : Number(row.docUploaded);
+  if (pct == null || !Number.isFinite(pct)) return skip('Documents Uploaded % has never been computed');
+  if (pct >= 50) return skip(`documents at ${pct} % (50 % or more)`);
+  let variant;
+  if (row.deadlineType === 'Deadline') {
+    if (!isDay(row.actualDeadline)) return skip('deadline type is Deadline but the date is blank');
+    const n = daysUntil(row.actualDeadline, today);
+    if (n < DEADLINE_MIN_DAYS) return { decision: 'attention', reason: n < 0 ? `deadline passed on ${fmtDay(row.actualDeadline)} — no email; a person should call (listed under Needs attention)` : `deadline in ${n} day${n === 1 ? '' : 's'} (${fmtDay(row.actualDeadline)}) — no email; a person should call (listed under Needs attention)` };
+    variant = 'real';
+  } else if (row.deadlineType === 'Imaginary') {
+    if (!imaginary) return skip('imaginary deadline — the imaginary branch is off (DOC_REMINDERS_IMAGINARY)');
+    if (!isDay(row.promised)) return skip('imaginary deadline with no promised submission date');
+    variant = 'imaginary';
+  } else {
+    return skip('no deadline recorded on the case (listed under Needs attention)');
+  }
+  if (!isDay(row.stageStart)) return skip('Stage Start Date is blank');
+  const started = -daysUntil(row.stageStart, today);
+  if (started < FIRST_AUTO_AFTER_DAYS) return skip(`documents started ${started} day${started === 1 ? '' : 's'} ago — the first automatic reminder waits ${FIRST_AUTO_AFTER_DAYS} days`);
+  if (isDay(row.lastActivity) && (row.lastActivity === today || row.lastActivity === dayPlus(today, -1))) return skip(`the client uploaded ${row.lastActivity === today ? 'today' : 'yesterday'}`);
+  return { decision: 'candidate', reason: '', variant, pct };
+}
+
+/** The per-case reads and the send (or the dry-run answer) for one column-selected candidate. */
+async function runCandidate(row, sel, { now, today, dryRun }) {
+  const out = { caseRef: row.ref, itemId: row.id, client: row.name, variant: sel.variant, pct: sel.pct, deadline: sel.variant === 'imaginary' ? row.promised : row.actualDeadline };
+  const skip = (reason) => ({ ...out, decision: 'skip', reason });
+  // the record: once a day of any origin, no other client email in 24 h, the imaginary cadence, failed tries
+  const notes = await readCaseNotes(row.id, { now });
+  const blocks = autoSkipReasons(notes, { now, escalationLastNotified: row.escalationLastNotified });
+  if (blocks.length) return skip(blocks.join('; '));
+  const history = readReminderHistory(notes);
+  if (sel.variant === 'imaginary' && history.auto[0] && -daysUntil(history.auto[0], today) < IMAGINARY_EVERY_DAYS) return skip(`imaginary cadence: an automatic reminder went on ${fmtDay(history.auto[0])} (every ${IMAGINARY_EVERY_DAYS}rd day)`);
+  if (failedTries(history, 'auto', today) >= MAX_TRIES) return skip(`did not go out ${MAX_TRIES} times today — not tried again until tomorrow`);
+  // the checklist: at least one missing required document
+  const missing = await missingDocuments(row.ref);
+  out.missing = missing.count;
+  if (!missing.count) return skip(missing.progress.total ? `nothing missing on the checklist (${missing.progress.received} of ${missing.progress.total} received)` : 'no checklist rows (listed under Needs attention)');
+  // the live recount: the stored number may be stale
+  let live;
+  try { live = await io.liveUploadedPct(row.ref, row.id); }
+  catch (err) { return skip(`the documents could not be recounted (${s(err.message).slice(0, 120)})`); }
+  out.livePct = live;
+  if (live == null) return skip('no checklist rows (listed under Needs attention)');
+  if (live >= 50) return skip(`the live recount says ${live} % (the board said ${sel.pct} %) — 50 % or more`);
+  if (dryRun) return { ...out, decision: 'would-send', reason: `${missing.count} missing, ${live} % uploaded, ${sel.variant === 'imaginary' ? 'promised' : 'deadline'} ${fmtDay(out.deadline)}` };
+
+  // the email (built first — a text problem must never leave a claim note behind)
+  let email;
+  try {
+    email = await buildReminderEmail({
+      level: 'auto', variant: sel.variant, caseRef: row.ref, clientName: row.name, clientEmail: row.email, caseType: row.caseType, accessToken: row.token,
+      missing, deadline: { type: row.deadlineType, actualDeadline: row.actualDeadline, promisedSubmissionDate: row.promised }, staffName: 'TDOT Immigration',
+    });
+  } catch (err) { return { ...out, decision: 'error', reason: `the email could not be built: ${s(err.message).slice(0, 160)}` }; }
+  // 1. the claim (the record, before the email)
+  let mine;
+  try {
+    mine = await io.postNote(row.id, claimNote({ level: 'auto', to: email.to, count: missing.count, deadline: fmtDay(out.deadline), pct: live, now: io.now() }));
+  } catch (err) { return { ...out, decision: 'error', reason: `the note could not be saved on the case — nothing sent (${s(err.message).slice(0, 120)})` }; }
+  // 2. the earliest open claim of today sends (two app instances)
+  try {
+    const after = readReminderHistory(await io.readNotes(row.id, 1));
+    const open = openClaims(after, 'auto', today);
+    if (open.length && open[0].id !== mine && open.some((x) => x.id === mine)) {
+      await Promise.resolve(io.deleteNote(mine)).catch(() => {});
+      return { ...out, decision: 'lost-race', reason: 'another instance is sending this reminder right now — nothing sent twice' };
+    }
+  } catch (_) { /* cannot re-read: our claim stands, send */ }
+  // 3. the email
+  try {
+    await io.sendEmail({ to: email.recipient, subject: email.subject, html: email.html, ...(email.replyTo ? { replyTo: email.replyTo } : {}) });
+  } catch (err) {
+    io.warn(`[DocReminders] ${row.ref}: the automatic reminder did not go out: ${err.message}`);
+    await Promise.resolve(io.postNote(row.id, failureNote({ level: 'auto', reason: 'the email could not be sent', now: io.now() })))
+      .catch((e) => io.warn(`[DocReminders] failure note also failed for ${row.ref}: ${e.message}`));
+    return { ...out, decision: 'failed', reason: 'the email could not be sent (noted on the case; listed under Needs attention)' };
+  }
+  io.log(`[DocReminders] ${row.ref}: automatic reminder sent to ${email.to} (${missing.count} missing, ${live} %, ${sel.variant})`);
+  return { ...out, decision: 'sent', reason: `${missing.count} missing, ${live} % uploaded`, noteId: mine };
+}
+
+let _running = false, _previewing = false;   // a preview never holds up the daily run
+
+/**
+ * The daily run (or, with dryRun, the preview: every row's decision and reason, nothing
+ * sent, nothing written). With the switch OFF a real run returns { off: true } before
+ * any read; a dry run still reads so the Engine Controls preview can be checked before
+ * the switch is flipped.
+ *
+ * @returns {Promise<{ ok: boolean, off?: boolean, enabled: boolean, dryRun: boolean, skipped?: string, checked?: number,
+ *   candidates?: object[], sent?: number, failed?: number, attention?: number, error?: string }>}
+ */
+async function runDocReminders({ dryRun = false, reason = '' } = {}) {
+  const enabled = isAutoEnabled();
+  if (!enabled && !dryRun) return { ok: true, off: true, enabled, dryRun, skipped: 'switched off (DOC_REMINDERS_AUTO)' };
+  if (dryRun ? _previewing : _running) return { ok: true, enabled, dryRun, skipped: `a ${dryRun ? 'preview' : 'run'} is already in progress` };
+  if (dryRun) _previewing = true; else _running = true;
+  const startedAt = io.now();
+  try {
+    const now = io.now(), today = torontoDay(now);
+    const opts = { today, imaginary: isImaginaryEnabled(), only: allowList() };
+    let rows;
+    try { rows = (await io.listDcsRows()).map(parseAutoRow); }
+    catch (err) { io.warn(`[DocReminders] the Cases board could not be read: ${err.message}`); return { ok: false, enabled, dryRun, error: err.message }; }
+    const candidates = [];
+    for (const row of rows) {
+      const sel = selectByColumns(row, opts);
+      if (sel.decision !== 'candidate') { candidates.push({ caseRef: row.ref, itemId: row.id, client: row.name, decision: sel.decision, reason: sel.reason }); continue; }
+      candidates.push(await runCandidate(row, sel, { now, today, dryRun }).catch((err) => ({ caseRef: row.ref, itemId: row.id, client: row.name, decision: 'error', reason: s(err.message).slice(0, 200) })));
+    }
+    const count = (d) => candidates.filter((x) => x.decision === d).length;
+    const sent = count('sent'), failed = count('failed') + count('error'), attention = count('attention');
+    io.log(`[DocReminders] ${dryRun ? 'preview' : 'run'}${reason ? ` (${reason})` : ''}: ${rows.length} row(s) at Document Collection, ${dryRun ? `${count('would-send')} would be emailed` : `${sent} emailed`}, ${attention} for a person, ${failed} problem(s), ${Math.round((io.now() - startedAt) / 1000)}s`);
+    return { ok: true, enabled, dryRun, imaginary: opts.imaginary, allowList: opts.only, hour: autoHour(), today, checked: rows.length, candidates, sent, failed, attention, wouldSend: count('would-send'), tookMs: io.now() - startedAt };
+  } finally { if (dryRun) _previewing = false; else _running = false; }
+}
+
 module.exports = {
   isAutoEnabled,
+  // the automatic run
+  runDocReminders, selectByColumns, parseAutoRow, isImaginaryEnabled, allowList, autoHour, isTorontoHour, AUTO_COLS,
   missingDocuments,
   missingFromItems,
   buildReminderEmail,
@@ -776,5 +1014,5 @@ module.exports = {
   gateStaff, parseLevel, senderName, previewStaffReminder, sendStaffReminder,
   NOTE_HEAD, NOTE_HEAD_TEXT, NOT_CASE_GROUPS, MAX_TRIES, NOTES_PAGE, NOTES_MAX_PAGES, FINAL_DEFAULT_DAYS,
   // pure — exported for tests
-  _internal: { fmtDay, oneLine, fillTokens, missingListText, missingListHtml, LEVEL_NAMES, torontoDay, dayPlus, daysUntil, marker, failMarker },
+  _internal: { fmtDay, oneLine, fillTokens, missingListText, missingListHtml, LEVEL_NAMES, torontoDay, dayPlus, daysUntil, marker, failMarker, dayFromWords, imaginaryBody, IMAGINARY_LEAD },
 };

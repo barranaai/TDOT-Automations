@@ -851,9 +851,354 @@ test('source pins: server.js registers the two routes with its own gate helpers 
   assert.match(cockpit, /const CM_NOTES_LIMIT = 50;/);
   assert.match(cockpit, /automationLock: 'color_mm0x3x1x'/);
   assert.match(cockpit, /escalationLastNotified: 'date_mm1gqbd'/);
-  const na = read('src/services/needsAttentionService.js');
-  const ids = [...na.slice(na.indexOf('const NOT_CASE_GROUPS = ['), na.indexOf('];', na.indexOf('const NOT_CASE_GROUPS = ['))).matchAll(/\{ id: (TEST_GROUP_ID|'[^']+'),\s+title: (\/[^\n]+?\/i) \}/g)]
-    .map((m) => [m[1] === 'TEST_GROUP_ID' ? (na.match(/const TEST_GROUP_ID = '([^']+)'/) || [])[1] : m[1].slice(1, -1), m[2]]);
-  assert.deepEqual(svc.NOT_CASE_GROUPS.map((x) => [x.id, String(x.title)]), ids, 'the same three groups as the Needs-attention reader');
-  assert.equal(ids.length, 3);
+  // step C: the list is no longer a copy — both modules read the ONE array in src/utils/caseGroups.js
+  const NA = require('../src/services/needsAttentionService');
+  assert.equal(svc.NOT_CASE_GROUPS, NA.NOT_CASE_GROUPS, 'the same array object as the Needs-attention reader');
+  assert.equal(svc.NOT_CASE_GROUPS, require('../src/utils/caseGroups').NOT_CASE_GROUPS);
+  assert.deepEqual(svc.NOT_CASE_GROUPS.map((x) => [x.id, String(x.title)]), [['group_mm3842s', '/^test$/i'], ['group_mm2tz8e1', '/^leads$/i'], ['group_mm3b9tap', '/cancel|did not retain/i']]);
+  assert.doesNotMatch(read('src/services/needsAttentionService.js'), /const NOT_CASE_GROUPS = \[/, 'no second copy of the ids');
+  assert.doesNotMatch(read('src/services/docReminderService.js'), /const NOT_CASE_GROUPS = \[/, 'no second copy of the ids');
+});
+
+
+// ═══════════════════════════ step C: the automatic daily email, the ladder retired, the scheduler ═══════════════════════════
+//
+// runDocReminders reads the Document Collection rows through svc.io.listDcsRows, the notes
+// through svc.io.readNotes, the checklist through documentFormService.getCaseSummary and
+// the live recount through svc.io.liveUploadedPct — all replaced here. The switch OFF
+// means no read at all; a dry run reads but never writes or sends.
+
+const AUTO = svc.AUTO_COLS;
+const T9 = Date.parse('2026-11-10T14:05:00Z');   // 10 Nov 2026, 9:05 am Toronto (EST)
+const day9 = (n) => svc._internal.dayPlus('2026-11-10', n);
+/** A Cases-board row as the automatic run reads it (every column present; override what a test needs). */
+function autoRow(over = {}) {
+  const v = {
+    id: '5001', name: 'Asha Client', group: { id: 'group_live', title: 'November 2026' },
+    ref: '2026-ISS-009', caseType: 'Super Visa', stage: 'Document Collection Started', payment: 'Paid', lock: 'No', override: '',
+    deadlineType: 'Deadline', actualDeadline: day9(30), promised: '', docUploaded: '15', email: 'asha.client@example.com', token: TOKEN,
+    stageStart: day9(-10), lastActivity: day9(-4), escalationLastNotified: '', ...over,
+  };
+  const cv = Object.entries(AUTO).map(([k, id]) => ({ id, text: v[k] == null ? '' : String(v[k]) }));
+  return { id: v.id, name: v.name, group: v.group, column_values: cv };
+}
+/** The whole run, stubbed: rows on the board, notes per row, the checklist per ref, the live recount per ref, the email. */
+function autoStubs({ rows = [], notes = {}, items = ITEMS, itemsByRef = {}, live = {}, sendFail = null, env = {} } = {}) {
+  const store = [];   // { itemId, u }
+  for (const [itemId, list] of Object.entries(notes)) for (const u of list) store.push({ itemId, u });
+  let nextId = 7000;
+  const sent = [], posted = [], deleted = [], liveCalls = [], summaryCalls = [];
+  const keepEnv = {};
+  for (const k of ['DOC_REMINDERS_AUTO', 'DOC_REMINDERS_IMAGINARY', 'DOC_REMINDERS_ONLY', 'DOC_REMINDERS_HOUR', 'MONDAY_REMINDER_TEMPLATES_BOARD_ID']) { keepEnv[k] = process.env[k]; delete process.env[k]; }
+  for (const [k, val] of Object.entries(env)) process.env[k] = val;
+  const restores = [
+    stub(docForm, 'getCaseSummary', async (ref) => { summaryCalls.push(ref); return { items: ref in itemsByRef ? itemsByRef[ref] : items }; }),
+    stub(svc.io, 'now', () => T9),
+    stub(svc.io, 'listDcsRows', async () => { if (rows instanceof Error) throw rows; return rows; }),
+    stub(svc.io, 'readNotes', async (itemId, page) => {
+      const newest = store.filter((e) => e.itemId === String(itemId)).map((e) => e.u).sort((a, b) => Number(b.id) - Number(a.id));
+      return svc.rawNotes(newest.slice((page - 1) * 50, page * 50));
+    }),
+    stub(svc.io, 'postNote', async (itemId, body) => { const id = String(nextId++); store.push({ itemId: String(itemId), u: rendered(id, T9 + posted.length, body) }); posted.push({ itemId: String(itemId), body, id }); return id; }),
+    stub(svc.io, 'deleteNote', async (id) => { deleted.push(id); const i = store.findIndex((e) => e.u.id === String(id)); if (i >= 0) store.splice(i, 1); }),
+    stub(svc.io, 'liveUploadedPct', async (ref) => { liveCalls.push(ref); const x = live[ref]; if (x instanceof Error) throw x; return x === undefined ? 15 : x; }),
+    stub(svc.io, 'sendEmail', async (msg) => { if (sendFail) throw new Error(sendFail); sent.push(msg); }),
+    stub(svc.io, 'log', () => {}), stub(svc.io, 'warn', () => {}),
+  ];
+  tpl._resetForTests();
+  return { store, sent, posted, deleted, liveCalls, summaryCalls, restore: () => {
+    restores.reverse().forEach((r) => r());
+    for (const [k, val] of Object.entries(keepEnv)) { if (val === undefined) delete process.env[k]; else process.env[k] = val; }
+    tpl._resetForTests();
+  } };
+}
+const byRef = (r, ref) => r.candidates.find((c) => c.caseRef === ref);
+
+test('AUTO: the switch OFF → a real run answers { off: true } before ANY read (no Monday query, no row read); the env helpers', async () => {
+  const w = autoStubs({ rows: [autoRow()] });
+  const q = stub(mondayApi, 'query', async () => { throw new Error('a read happened'); });
+  let listed = 0;
+  const l = stub(svc.io, 'listDcsRows', async () => { listed++; return []; });
+  try {
+    for (const v of [undefined, '', '0', 'false', 'yes', 'on', ' 1 ']) {
+      if (v === undefined) delete process.env.DOC_REMINDERS_AUTO; else process.env.DOC_REMINDERS_AUTO = v;
+      const r = await svc.runDocReminders();
+      assert.equal(r.off, v === ' 1 ' ? undefined : true, JSON.stringify(v));
+    }
+    assert.equal(listed, 1, 'only " 1 " (trimmed) switches it on');
+    delete process.env.DOC_REMINDERS_AUTO;
+    assert.equal(svc.isImaginaryEnabled(), false);
+    process.env.DOC_REMINDERS_IMAGINARY = 'true'; assert.equal(svc.isImaginaryEnabled(), true);
+    process.env.DOC_REMINDERS_ONLY = ' 2026-oss-005, 2026-VV-006 ,,'; assert.deepEqual(svc.allowList(), ['2026-OSS-005', '2026-VV-006']);
+    delete process.env.DOC_REMINDERS_ONLY; assert.deepEqual(svc.allowList(), []);
+    assert.equal(svc.autoHour(), 9);
+    process.env.DOC_REMINDERS_HOUR = '7'; assert.equal(svc.autoHour(), 7);
+    process.env.DOC_REMINDERS_HOUR = '25'; assert.equal(svc.autoHour(), 9);
+    process.env.DOC_REMINDERS_HOUR = 'nine'; assert.equal(svc.autoHour(), 9);
+  } finally { l(); q(); w.restore(); }
+});
+
+test('AUTO selectByColumns: every column-only skip reason, the "deadline close" hand-off, the imaginary branch behind its switch, and the happy path', () => {
+  const today = '2026-11-10';
+  const sel = (over, opts) => svc.selectByColumns(svc.parseAutoRow(autoRow(over)), { today, ...opts });
+  const reason = (over, opts) => { const r = sel(over, opts); assert.equal(r.decision, 'skip', JSON.stringify(over)); return r.reason; };
+  assert.deepEqual(sel({}), { decision: 'candidate', reason: '', variant: 'real', pct: 15 });
+  assert.match(reason({ ref: '' }), /no case number/);
+  assert.match(reason({}, { only: ['2026-VV-006'] }), /allow-list/);
+  assert.equal(sel({ ref: '2026-vv-006' }, { only: ['2026-VV-006'] }).decision, 'candidate', 'the allow-list ignores letter case');
+  assert.match(reason({ group: { id: 'group_mm3b9tap', title: 'Cancel /Did not retained' } }), /"Cancel \/Did not retained" group, not a live case/);
+  assert.match(reason({ group: { id: 'group_x', title: 'TEST' } }), /not a live case/);
+  assert.match(reason({ stage: 'Internal Review' }), /not at Document Collection Started \(Internal Review\)/);
+  assert.match(reason({ payment: 'Already Sent' }), /Payment Status is Already Sent, not Paid/);
+  assert.match(reason({ lock: 'Yes' }), /Automation Lock is Yes/);
+  assert.match(reason({ override: 'yes' }), /Manual Override is Yes/);
+  assert.match(reason({ email: '' }), /no client email/);
+  assert.match(reason({ token: '' }), /no access code/);
+  assert.match(reason({ docUploaded: '' }), /never been computed/);
+  assert.match(reason({ docUploaded: 'n/a' }), /never been computed/);
+  assert.match(reason({ docUploaded: '50' }), /documents at 50 % \(50 % or more\)/);
+  assert.equal(sel({ docUploaded: '49.6' }).decision, 'candidate');
+  assert.match(reason({ deadlineType: 'Deadline', actualDeadline: '' }), /date is blank/);
+  for (const n of [3, 1, 0]) { const r = sel({ actualDeadline: day9(n) }); assert.equal(r.decision, 'attention', `${n} days`); assert.match(r.reason, n === 0 ? /deadline in 0 days/ : new RegExp(`deadline in ${n} day`)); assert.match(r.reason, /a person should call/); }
+  const past = sel({ actualDeadline: day9(-2) }); assert.equal(past.decision, 'attention'); assert.match(past.reason, /deadline passed on 8 Nov 2026/);
+  assert.equal(sel({ actualDeadline: day9(4) }).decision, 'candidate', '4 days away is the first day an email may go');
+  assert.match(reason({ deadlineType: 'Imaginary', actualDeadline: '', promised: day9(20) }), /imaginary branch is off \(DOC_REMINDERS_IMAGINARY\)/);
+  assert.match(reason({ deadlineType: 'Imaginary', actualDeadline: '', promised: '' }, { imaginary: true }), /no promised submission date/);
+  assert.deepEqual(sel({ deadlineType: 'Imaginary', actualDeadline: '', promised: day9(20) }, { imaginary: true }), { decision: 'candidate', reason: '', variant: 'imaginary', pct: 15 });
+  assert.match(reason({ deadlineType: '', actualDeadline: '' }), /no deadline recorded/);
+  assert.match(reason({ stageStart: '' }), /Stage Start Date is blank/);
+  assert.match(reason({ stageStart: day9(-2) }), /started 2 days ago — the first automatic reminder waits 3 days/);
+  assert.equal(sel({ stageStart: day9(-3) }).decision, 'candidate');
+  assert.match(reason({ lastActivity: today }), /uploaded today/);
+  assert.match(reason({ lastActivity: day9(-1) }), /uploaded yesterday/);
+  assert.equal(sel({ lastActivity: day9(-2) }).decision, 'candidate');
+  assert.equal(sel({ lastActivity: '' }).decision, 'candidate', 'no activity date is not a reason to skip');
+});
+
+test('AUTO run: one row is emailed (claim note BEFORE the email, to the real address, marker + % + deadline), the others skipped for the record, the live recount, the checklist, or handed to a person', async () => {
+  const A = autoRow();
+  const B = autoRow({ id: '5002', ref: '2026-ISS-014', email: 'b@example.com' });      // a button reminder already went today
+  const C = autoRow({ id: '5003', ref: '2026-SPE-014', email: 'c@example.com', escalationLastNotified: day9(-1) });   // the escalation engine emailed yesterday
+  const D = autoRow({ id: '5004', ref: '2026-SV-020', email: 'd@example.com' });       // stored 15 %, live 60 %
+  const E = autoRow({ id: '5005', ref: '2026-VRE-048', email: 'e@example.com' });      // nothing missing
+  const F = autoRow({ id: '5006', ref: '2026-LBW-004', email: 'f@example.com', actualDeadline: day9(1), docUploaded: '0' });   // deadline tomorrow
+  const G = autoRow({ id: '5007', ref: '2026-APPL-002', email: 'g@example.com' });     // 0 checklist rows
+  const w = autoStubs({
+    rows: [A, B, C, D, E, F, G], env: { DOC_REMINDERS_AUTO: '1' },
+    notes: { 5002: [rendered(10, T9 - 3600e3, svc.claimNote({ level: 2, to: 'b***@example.com', actor: 'Mahesh Sharma', count: 3, now: T9 - 3600e3 }))] },
+    itemsByRef: { '2026-VRE-048': ITEMS.filter((it) => it.status !== 'Missing'), '2026-APPL-002': [] },
+    live: { '2026-SV-020': 60 },
+  });
+  try {
+    const r = await svc.runDocReminders({ reason: 'test' });
+    assert.equal(r.ok, true); assert.equal(r.enabled, true); assert.equal(r.checked, 7);
+    assert.deepEqual([r.sent, r.failed, r.attention], [1, 0, 1]);
+    assert.equal(byRef(r, '2026-ISS-009').decision, 'sent');
+    assert.match(byRef(r, '2026-ISS-014').reason, /already went today \(reminder 2\)/);
+    assert.match(byRef(r, '2026-SPE-014').reason, /escalation engine emailed the client on 9 Nov 2026/);
+    assert.match(byRef(r, '2026-SV-020').reason, /live recount says 60 % \(the board said 15 %\)/);
+    assert.match(byRef(r, '2026-VRE-048').reason, /nothing missing on the checklist/);
+    assert.equal(byRef(r, '2026-LBW-004').decision, 'attention');
+    assert.match(byRef(r, '2026-APPL-002').reason, /no checklist rows/);
+    // exactly one email, to the real address, with the list and the deadline
+    assert.equal(w.sent.length, 1);
+    assert.equal(w.sent[0].to, 'asha.client@example.com');
+    assert.match(w.sent[0].subject, /Documents needed for your Super Visa application — 2026-ISS-009/);
+    assert.match(w.sent[0].html, /must be submitted by <strong>10 Dec 2026<\/strong>|must be submitted by 10 Dec 2026/);
+    assert.match(w.sent[0].html, /Still missing \(4\)/);
+    assert.ok(w.sent[0].html.includes(`?t=${TOKEN}`));
+    assert.doesNotMatch(w.sent[0].html, /just reply/i);
+    assert.ok(w.sent[0].html.includes(require('../src/utils/clientContact').EMAIL_US), 'the shared "email us" closing line');
+    // the claim note went first, on the right case, with the hidden marker, the %, the deadline and the masked address
+    assert.equal(w.posted.length, 1);
+    assert.equal(w.posted[0].itemId, '5001');
+    assert.match(w.posted[0].body, /📨 <b>Document reminder \(automatic\)<\/b> emailed to a\*\*\*@example\.com — deadline 10 Dec 2026, 4 documents missing \(15 % uploaded\)/);
+    assert.match(w.posted[0].body, /DOCREM:auto:2026-11-10/);
+    assert.ok(!w.posted[0].body.includes('asha.client'), 'never the real address in the note');
+    // the reads that cost: no notes, checklist or recount for a row the columns already settled
+    assert.deepEqual(w.liveCalls.sort(), ['2026-ISS-009', '2026-SV-020', '2026-VRE-048'].sort().filter((x) => x !== '2026-VRE-048'), 'the recount is asked only after the checklist shows something missing');
+    assert.ok(!w.summaryCalls.includes('2026-LBW-004') && !w.summaryCalls.includes('2026-ISS-014'), 'a hand-off or a record skip reads no checklist');
+    // the second run the same day: the marker says no
+    const r2 = await svc.runDocReminders();
+    assert.match(byRef(r2, '2026-ISS-009').reason, /already went today \(automatic\)/);
+    assert.equal(w.sent.length, 1);
+  } finally { w.restore(); }
+});
+
+test('AUTO dry run (the Engine Controls preview): every row listed with its decision and reason, nothing sent, nothing written — also while the switch is OFF (and it says so)', async () => {
+  const w = autoStubs({ rows: [autoRow(), autoRow({ id: '5002', ref: '2026-X-002', payment: 'Unpaid' })], env: {} });
+  try {
+    const r = await svc.runDocReminders({ dryRun: true });
+    assert.equal(r.ok, true); assert.equal(r.enabled, false); assert.equal(r.dryRun, true); assert.equal(r.off, undefined);
+    assert.equal(r.checked, 2); assert.equal(r.wouldSend, 1);
+    assert.equal(byRef(r, '2026-ISS-009').decision, 'would-send');
+    assert.match(byRef(r, '2026-ISS-009').reason, /4 missing, 15 % uploaded, deadline 10 Dec 2026/);
+    assert.match(byRef(r, '2026-X-002').reason, /not Paid/);
+    assert.equal(w.sent.length, 0); assert.equal(w.posted.length, 0); assert.equal(w.deleted.length, 0);
+    process.env.DOC_REMINDERS_AUTO = '1';
+    const on = await svc.runDocReminders({ dryRun: true });
+    assert.equal(on.enabled, true); assert.equal(on.wouldSend, 1);
+    assert.equal(w.sent.length, 0); assert.equal(w.posted.length, 0);
+  } finally { w.restore(); }
+});
+
+test('AUTO: the allow-list (DOC_REMINDERS_ONLY) keeps every other case out; a board that cannot be read ends the run with ok:false and nothing sent', async () => {
+  const w = autoStubs({ rows: [autoRow(), autoRow({ id: '5002', ref: '2026-VV-006', email: 'v@example.com' })], env: { DOC_REMINDERS_AUTO: 'true', DOC_REMINDERS_ONLY: '2026-vv-006' } });
+  try {
+    const r = await svc.runDocReminders();
+    assert.equal(byRef(r, '2026-ISS-009').decision, 'skip'); assert.match(byRef(r, '2026-ISS-009').reason, /allow-list/);
+    assert.equal(byRef(r, '2026-VV-006').decision, 'sent');
+    assert.deepEqual(w.sent.map((m) => m.to), ['v@example.com']);
+    assert.deepEqual(r.allowList, ['2026-VV-006']);
+  } finally { w.restore(); }
+  const bad = autoStubs({ rows: new Error('Monday 502'), env: { DOC_REMINDERS_AUTO: '1' } });
+  try {
+    const r = await svc.runDocReminders();
+    assert.equal(r.ok, false); assert.match(r.error, /Monday 502/); assert.equal(bad.sent.length, 0);
+  } finally { bad.restore(); }
+});
+
+test('AUTO: a send that fails posts the failure note after the claim (a try, not a send); after 3 failed tries today the case is left until tomorrow; a lost race deletes its own note', async () => {
+  const w = autoStubs({ rows: [autoRow()], env: { DOC_REMINDERS_AUTO: '1' }, sendFail: 'Graph 503' });
+  try {
+    const r = await svc.runDocReminders();
+    assert.equal(byRef(r, '2026-ISS-009').decision, 'failed'); assert.equal(r.failed, 1);
+    assert.equal(w.posted.length, 2);
+    assert.match(w.posted[0].body, /DOCREM:auto:2026-11-10/);
+    assert.match(w.posted[1].body, /📨 <b>Document reminder did not go out<\/b> — the email could not be sent/);
+    assert.match(w.posted[1].body, /DOCREM-FAIL:auto:2026-11-10/);
+    assert.ok(!w.posted[1].body.includes('Graph'), 'the provider never appears in a note');
+    const h = svc.readReminderHistory(await svc.io.readNotes('5001', 1));
+    assert.equal(h.sends.length, 0); assert.equal(svc.failedTries(h, 'auto', '2026-11-10'), 1);
+    // a failure does not count as "sent today": the run tries again, up to 3
+    const r2 = await svc.runDocReminders(); assert.equal(byRef(r2, '2026-ISS-009').decision, 'failed');
+    const r3 = await svc.runDocReminders(); assert.equal(byRef(r3, '2026-ISS-009').decision, 'failed');
+    const r4 = await svc.runDocReminders();
+    assert.equal(byRef(r4, '2026-ISS-009').decision, 'skip'); assert.match(byRef(r4, '2026-ISS-009').reason, /did not go out 3 times today/);
+    assert.equal(w.posted.length, 6);
+  } finally { w.restore(); }
+  // the race: another instance's claim with a lower id shows up on the re-read
+  const race = autoStubs({ rows: [autoRow()], env: { DOC_REMINDERS_AUTO: '1' } });
+  const origPost = svc.io.postNote;
+  const r1 = stub(svc.io, 'postNote', async (itemId, body) => { const id = await origPost(itemId, body); race.store.push({ itemId: String(itemId), u: rendered('6999', T9 - 1, svc.claimNote({ level: 'auto', to: 'a***@example.com', count: 4, now: T9 - 1 })) }); return id; });
+  try {
+    const r = await svc.runDocReminders();
+    assert.equal(byRef(r, '2026-ISS-009').decision, 'lost-race');
+    assert.equal(race.sent.length, 0);
+    assert.deepEqual(race.deleted, [race.posted[0].id], 'the loser removes its own claim');
+  } finally { r1(); race.restore(); }
+});
+
+test('AUTO imaginary branch: only with DOC_REMINDERS_IMAGINARY, every 3rd day, the "Automatic" template with the promised-date lead instead of the deadline sentence', async () => {
+  const row = autoRow({ deadlineType: 'Imaginary', actualDeadline: '', promised: day9(25) });
+  const twoDaysAgo = rendered(20, T9 - 2 * DAY_MS, svc.claimNote({ level: 'auto', to: 'a***@example.com', count: 4, now: T9 - 2 * DAY_MS }));
+  const threeDaysAgo = rendered(21, T9 - 3 * DAY_MS, svc.claimNote({ level: 'auto', to: 'a***@example.com', count: 4, now: T9 - 3 * DAY_MS }));
+  const off = autoStubs({ rows: [row], env: { DOC_REMINDERS_AUTO: '1' } });
+  try { const r = await svc.runDocReminders(); assert.match(byRef(r, '2026-ISS-009').reason, /imaginary branch is off/); assert.equal(off.sent.length, 0); } finally { off.restore(); }
+  const soon = autoStubs({ rows: [row], env: { DOC_REMINDERS_AUTO: '1', DOC_REMINDERS_IMAGINARY: '1' }, notes: { 5001: [twoDaysAgo] } });
+  try { const r = await svc.runDocReminders(); assert.match(byRef(r, '2026-ISS-009').reason, /imaginary cadence: an automatic reminder went on 8 Nov 2026 \(every 3rd day\)/); assert.equal(soon.sent.length, 0); } finally { soon.restore(); }
+  const due = autoStubs({ rows: [row], env: { DOC_REMINDERS_AUTO: '1', DOC_REMINDERS_IMAGINARY: '1' }, notes: { 5001: [threeDaysAgo] } });
+  try {
+    const r = await svc.runDocReminders();
+    assert.equal(byRef(r, '2026-ISS-009').decision, 'sent'); assert.equal(byRef(r, '2026-ISS-009').variant, 'imaginary');
+    assert.equal(due.sent.length, 1);
+    const html = due.sent[0].html;
+    assert.match(html, /We plan to submit your Super Visa application by 5 Dec 2026\. To keep that date we need the documents below as soon as possible/);
+    assert.doesNotMatch(html, /must be submitted by/); assert.doesNotMatch(html, /\{Deadline\}|not set/);
+    assert.match(html, /We can only proceed once we have the documents below/, 'the rest of the paragraph stays');
+    assert.match(due.posted[0].body, /deadline 5 Dec 2026/);
+    // the helper alone: no {Deadline} sentence → the lead goes after the greeting
+    const b = svc._internal.imaginaryBody('Dear X,\n\nHere are the documents:\n\n{MissingList}');
+    assert.equal(b.split('\n\n')[1], svc._internal.IMAGINARY_LEAD);
+    // a staff level never gets the variant
+    const e = await svc.buildReminderEmail(baseOpts({ level: 1, variant: 'imaginary' }));
+    assert.equal(e.template.variant, 'real');
+  } finally { due.restore(); }
+});
+
+test('AUTO: the daily hour — isTorontoHour hits exactly one hour a day across both clock changes; the scheduler ticks hourly, checks the switch BEFORE the hour, and never uses node-cron\'s timezone', () => {
+  for (const day of ['2027-03-14', '2026-11-01', '2026-10-01', '2027-01-15']) {
+    const hits = Array.from({ length: 24 }, (_, h) => Date.parse(`${day}T${String(h).padStart(2, '0')}:00:00Z`)).filter((ms) => svc.isTorontoHour(9, ms));
+    assert.equal(hits.length, 1, day);
+  }
+  assert.equal(svc.isTorontoHour(9, Date.parse('2026-11-10T14:00:00Z')), true, '14:00 UTC = 09:00 EST');
+  assert.equal(svc.isTorontoHour(9, Date.parse('2026-07-10T14:00:00Z')), false, '14:00 UTC = 10:00 EDT');
+  const sched = fs.readFileSync(path.join(__dirname, '../src/services/scheduler.js'), 'utf8');
+  assert.match(sched, /cron\.schedule\('0 \* \* \* \*', \(\) => \{\s*const dr = require\('\.\/docReminderService'\);\s*if \(!dr\.isAutoEnabled\(\)\) return;\s*if \(!dr\.isTorontoHour\(dr\.autoHour\(\)\)\) return;\s*withTimeout\('Document reminders', \(\) => dr\.runDocReminders\(/);
+  assert.ok(!/docReminderService[\s\S]{0,600}timezone:/.test(sched));
+});
+
+test('RETIRED: the daily chain no longer calls the chasing loop; runChasingLoop() answers { retired: true } at once with no Monday read; the :386 start test and the Chasing Stage writers are untouched', async () => {
+  const sched = fs.readFileSync(path.join(__dirname, '../src/services/scheduler.js'), 'utf8');
+  assert.ok(!sched.includes('runChasingLoop'), 'step 6 is gone from the chain');
+  assert.ok(!sched.includes("require('./chasingLoopService')"));
+  const chasing = require('../src/services/chasingLoopService');
+  let reads = 0;
+  const q = stub(mondayApi, 'query', async () => { reads++; throw new Error('a read happened'); });
+  const logs = [];
+  const l = stub(console, 'log', (m) => logs.push(String(m)));
+  try {
+    const r = await chasing.runChasingLoop();
+    assert.deepEqual(r, { retired: true, reason: 'replaced by document reminders (2026-11)' });
+    assert.equal(reads, 0);
+    assert.equal(logs.filter((m) => /\[ChasingLoop\] Retired/.test(m)).length, 1, 'one console line');
+  } finally { l(); q(); }
+  const src = fs.readFileSync(path.join(__dirname, '../src/services/chasingLoopService.js'), 'utf8');
+  assert.match(src, /if \(\(chasingStage === '' \|\| chasingStage === 'Pending'\) && daysElapsed >= profile\.r1\)/, 'the start test is NOT repaired (a repair would fire a three-morning catch-up)');
+  assert.match(src, /\[CM\.chasingStage\]:\s+\{ label: 'Reminder 1 Sent' \}/, 'the writers stay as they were (unreachable)');
+  assert.ok(typeof chasing.buildChasingEmail === 'function');
+  const server = fs.readFileSync(path.join(__dirname, '../src/server.js'), 'utf8');
+  const i = server.indexOf("app.post('/api/chasing/run'");
+  assert.match(server.slice(i, i + 400), /resolveNamedAdminViewerOrReject[\s\S]*status: 'retired'[\s\S]*Retired — replaced by Document reminders/);
+  assert.doesNotMatch(server.slice(i, i + 400), /running in background/);
+});
+
+test('RETIRED wording + the new row: the Engine Controls page (emitted script parses; chasing button off, out of Run All; preview + run buttons on the document reminders row), the Summary chart title, the guide, .env.example', () => {
+  const vm = require('vm');
+  const html = require('../src/routes/adminEngines').buildEnginesHTML();
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  assert.ok(scripts.length >= 1);
+  for (const sc of scripts) new vm.Script(sc);   // throws on a syntax error (the inline-script trap)
+  assert.match(html, /<span class="e-status-txt" id="txt-chasing">Retired — replaced by Document reminders<\/span>/);
+  assert.match(html, /<button class="run-btn" id="btn-chasing" disabled/);
+  assert.doesNotMatch(html, /ep: '\/api\/chasing\/run'/, 'Run All no longer triggers it');
+  assert.match(html, /Triggers the 5 overnight engines/);
+  assert.match(html, /id="btn-docrem-preview"[^>]*onclick="docRemindersPreview\(\)"/);
+  assert.match(html, /id="btn-docrem-run"[^>]*onclick="docRemindersRun\(\)"/);
+  assert.match(html, /fetch\(ep, \{ method: method, headers: \{ 'X-Api-Key': key/);
+  assert.match(html, /'\/api\/doc-reminders\/preview'/); assert.match(html, /'\/api\/doc-reminders\/run'/);
+  assert.match(html, /if \(!confirm\(/, 'a run asks first');
+  // the two routes: named admins only; the preview is read-only (dry run) and no-store
+  const server = fs.readFileSync(path.join(__dirname, '../src/server.js'), 'utf8');
+  const g = server.indexOf("app.get('/api/doc-reminders/preview'"), p = server.indexOf("app.post('/api/doc-reminders/run'");
+  assert.ok(g > 0 && p > g);
+  assert.match(server.slice(g, p), /resolveNamedAdminViewerOrReject\(req, res, 'preview the document reminders'\)[\s\S]*no-store[\s\S]*runDocReminders\(\{ dryRun: true/);
+  assert.match(server.slice(p, p + 500), /resolveNamedAdminViewerOrReject\(req, res, 'run the document reminders by hand'\)[\s\S]*runDocReminders\(\{ reason: 'run by hand' \}\)/);
+  const dash = fs.readFileSync(path.join(__dirname, '../src/routes/adminDashboard.js'), 'utf8');
+  assert.match(dash, /Chasing Stage Breakdown — retired \(replaced by Document reminders/);
+  assert.match(dash, /function renderChasingChart\(byChasingStage\)/, 'the chart logic is unchanged');
+  const guide = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/staffGuide/guide-data.json'), 'utf8'));
+  const NA = require('../src/services/needsAttentionService');
+  for (const kind of ['deadline-close-under-50', 'final-last-day-passed', 'dcs-no-checklist-rows', 'auto-reminder-failed']) {
+    assert.ok(guide.needs_attention.some((e) => e.problem === NA.KINDS[kind].label), `guide entry for ${kind}`);
+  }
+  assert.ok(guide.automatic.some((e) => e.id === 'auto-doc-reminder-daily' && e.switch === 'DOC_REMINDERS_AUTO'));
+  assert.match(guide.automatic.find((e) => e.id === 'auto-night-chasing').name, /RETIRED/);
+  assert.ok(!JSON.stringify(guide).includes('watch the Chasing Stage column on the Cases board and chase the client yourself'));
+  const env = fs.readFileSync(path.join(__dirname, '../.env.example'), 'utf8');
+  for (const k of ['DOC_REMINDERS_AUTO=', 'DOC_REMINDERS_IMAGINARY=', 'DOC_REMINDERS_ONLY=', 'DOC_REMINDERS_HOUR=', 'MONDAY_REMINDER_TEMPLATES_BOARD_ID=']) assert.ok(env.includes(k), k);
+});
+
+test('AUTO source pins: the board read lives inside the io seam (the stage column filtered on the board, explicit limits, cursor followed); the live recount is the readiness engine\'s own dry run; parseNote hands back the final\'s last day as a date', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/services/docReminderService.js'), 'utf8');
+  const a = src.indexOf('const io = {'), b = src.indexOf('\n};', a);
+  const io = src.slice(a, b);
+  assert.match(io, /items_page_by_column_values\(limit:\$\{AUTO_PAGE\}, board_id:\$b, columns:\[\{column_id:"\$\{AUTO_COLS\.stage\}", column_values:\[\$v\]\}\]\)/);
+  assert.match(io, /next_items_page\(limit:\$\{AUTO_PAGE\}, cursor:\$c\)/);
+  assert.match(io, /refreshDocNumbers\(\{ masterItemId: itemId, caseRef, dryRun: true \}\)/);
+  assert.doesNotMatch(src.slice(0, a) + src.slice(b), /items_page_by_column_values|caseReadinessService/, 'no board read outside io');
+  assert.equal(svc.AUTO_COLS.docUploaded, 'numeric_mm2njqk1'); assert.equal(svc.AUTO_COLS.actualDeadline, 'date_mm33sj6t'); assert.equal(svc.AUTO_COLS.lastActivity, 'date_mm1amqyr');
+  const n = svc.parseNote({ id: '1', at: T9, text: svc.claimNote({ level: 3, to: 'a***@x', actor: 'Mahesh', count: 2, lastDay: '2026-11-17', now: T9 }).replace(/<[^>]*>/g, '') });
+  assert.equal(n.lastDay, '17 Nov 2026'); assert.equal(n.lastDayIso, '2026-11-17');
+  assert.equal(svc._internal.dayFromWords('3 Feb 2027'), '2027-02-03'); assert.equal(svc._internal.dayFromWords('30 Sept 2026'), '2026-09-30'); assert.equal(svc._internal.dayFromWords('tomorrow'), '');
 });

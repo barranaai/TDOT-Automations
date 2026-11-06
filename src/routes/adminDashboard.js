@@ -193,7 +193,7 @@ const SUMMARY_BODY_HTML = `
     <!-- ── Chasing Stage Row ── -->
     <div class="chart-row chart-row-1" style="margin-bottom:28px">
       <div class="chart-card" style="grid-column:1/-1">
-        <div class="chart-title">📬 Client Engagement — Chasing Stage Breakdown</div>
+        <div class="chart-title">📬 Chasing Stage Breakdown — retired (replaced by Document reminders; the column is no longer updated)</div>
         <div class="chart-wrap" style="height:180px">
           <canvas id="chart-chasing"></canvas>
         </div>

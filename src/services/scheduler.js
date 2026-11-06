@@ -3,7 +3,6 @@ const caseReadinessService      = require('./caseReadinessService');
 const slaRiskEngine             = require('./slaRiskEngine');
 const expiryRiskEngine          = require('./expiryRiskEngine');
 const caseHealthEngine          = require('./caseHealthEngine');
-const chasingLoopService        = require('./chasingLoopService');
 const escalationRoutingService  = require('./escalationRoutingService');
 
 const ENGINE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes max per engine
@@ -40,7 +39,7 @@ function withTimeout(label, fn, timeout = ENGINE_TIMEOUT_MS) {
  *                              and Client-Blocked Status
  *   5. Escalation Routing    — matches each case to Escalation Routing Matrix rules,
  *                              notifies supervisors/directors, applies stage/SLA actions
- *   6. Chasing Loop          — sends timed reminder emails based on SLA offsets
+ *   (6. Chasing Loop — RETIRED 2026-11; the document reminders below replace it)
  */
 let _running = false;
 
@@ -89,19 +88,15 @@ function startScheduler() {
       console.error('[Scheduler] Escalation Routing Engine failed:', err.message);
     }
 
-    // Step 6 — Client Chasing Loop
-    try {
-      await withTimeout('Chasing Loop', () => chasingLoopService.runChasingLoop());
-    } catch (err) {
-      console.error('[Scheduler] Chasing Loop failed:', err.message);
-    }
+    // (Step 6, the client chasing loop, was retired 2026-11 — replaced by the
+    // document reminders below. It never sent an email: see chasingLoopService.)
 
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
     console.log(`[Scheduler] ── Daily jobs complete (${elapsed}s) ──`);
     _running = false;
   });
 
-  console.log('[Scheduler] Jobs registered — Readiness → SLA → Expiry → Health → Escalation → Chasing at 07:00');
+  console.log('[Scheduler] Jobs registered — Readiness → SLA → Expiry → Health → Escalation at 07:00 (the chasing loop is retired)');
 
   // ── Phase 2 — release expired consultation slot holds every 5 minutes ──
   cron.schedule('*/5 * * * *', async () => {
@@ -254,6 +249,21 @@ function startScheduler() {
       console.error('[Scheduler] Needs-attention check failed:', err.message));
   });
   console.log('[Scheduler] Job registered — needs-attention list daily 07:00 Toronto');
+
+  // ── Document reminders (team meeting 2026-11-05, block 2): the automatic
+  // "these documents are still missing" email, once a day at DOC_REMINDERS_HOUR
+  // Toronto (default 9) — the same hourly tick + Toronto-hour check as the
+  // needs-attention list (never node-cron's timezone option). OFF unless
+  // DOC_REMINDERS_AUTO=1, and OFF means no read at all. A missed hour is
+  // skipped, never sent late; the service's own guard refuses an overlapping run.
+  cron.schedule('0 * * * *', () => {
+    const dr = require('./docReminderService');
+    if (!dr.isAutoEnabled()) return;
+    if (!dr.isTorontoHour(dr.autoHour())) return;
+    withTimeout('Document reminders', () => dr.runDocReminders({ reason: 'daily tick' }))
+      .catch((err) => console.error('[Scheduler] Document reminders failed:', err.message));
+  });
+  console.log('[Scheduler] Job registered — document reminders daily at DOC_REMINDERS_HOUR Toronto (switch DOC_REMINDERS_AUTO)');
 }
 
 module.exports = { startScheduler };

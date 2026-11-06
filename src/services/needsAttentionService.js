@@ -44,19 +44,19 @@ const COL = {
   manager:        'multiple_person_mm0xhmgk',
   submissionTeam: 'multiple_person_mm2nhsx1',
   deadlineType:   'color_mm6w7cdd',   // the client's deadline (2026-11-05): Deadline / Imaginary
+  actualDeadline: 'date_mm33sj6t',    // …its date (the document reminders' "deadline close" rule)
+  docUploaded:    'numeric_mm2njqk1', // Documents Uploaded % — the automatic reminder's 50 % line
+  lastActivity:   'date_mm1amqyr',    // Last Client Activity (uploads only)
 };
 // Cases opened from this day on are expected to carry a deadline (the question is asked at retain since then).
 const DEADLINE_SINCE = Date.parse(process.env.DEADLINE_ASKED_SINCE || '2026-11-07T05:00:00Z');   // 2026-11-07 00:00 Toronto (EST)
 const FETCH_COLS = [...new Set([...Object.values(COL), ...caseAccess.PEOPLE_COLUMNS])];
 const EXEC_REF_COL = 'text_mm0z2cck';            // Documents board: the case reference
-// Board groups that are not live cases. By id, with the title as a fallback
-// should a group be re-made.
-const TEST_GROUP_ID = 'group_mm3842s';
-const NOT_CASE_GROUPS = [
-  { id: TEST_GROUP_ID,      title: /^test$/i },                          // TEST
-  { id: 'group_mm2tz8e1',   title: /^leads$/i },                         // Leads (enquiries kept here by staff)
-  { id: 'group_mm3b9tap',   title: /cancel|did not retain/i },           // Cancel / Did not retained
-];
+// Board groups that are not live cases — the one list shared with the document
+// reminders (src/utils/caseGroups.js), so both ignore the same rows.
+const { TEST_GROUP_ID, NOT_CASE_GROUPS } = require('../utils/caseGroups');
+// The document reminders' record on a case (block 2): the claim / failure notes and their hidden markers.
+const docReminders = require('./docReminderService');
 // Clients retained before the app ran (staff-managed): only the case-number and
 // folder checks apply — the app never set them up, so "no checklist", "no case
 // number" or "payment not marked" says nothing about them.
@@ -114,12 +114,17 @@ const KINDS = {
   'not-started':   { order: 42, severity: 'high',   label: 'Signed and paid, but onboarding did not start' },
   'family-missing':{ order: 43, severity: 'high',   label: 'Accompanying family not recorded' },
   'sv-second-parent':{ order: 44, severity: 'high', label: 'Super Visa: second parent not on the case' },
+  // Document reminders (block 2, 2026-11-06): what the automatic email leaves to a person.
+  'deadline-close-under-50': { order: 45, severity: 'high', label: 'Deadline close, documents under 50 %' },
+  'final-last-day-passed':   { order: 46, severity: 'high', label: 'Final reminder: last day passed, nothing uploaded since' },
+  'dcs-no-checklist-rows':   { order: 47, severity: 'high', label: 'Collecting documents, but no checklist rows' },
   'on-hold':       { order: 50, severity: 'medium', label: 'Paid, onboarding waiting for signatures' },
   'intake-email':  { order: 60, severity: 'medium', label: '"Your case is ready" email not confirmed' },
   'sponsor-email': { order: 61, severity: 'medium', label: 'Sponsor email not sent' },
   'payment-flag':  { order: 62, severity: 'medium', label: 'Payment flagged for an admin' },
   'assign':        { order: 63, severity: 'medium', label: 'Ready for the next step, nobody assigned' },
   'no-deadline':   { order: 64, severity: 'medium', label: 'Deadline not set (real or imaginary)' },
+  'auto-reminder-failed': { order: 65, severity: 'medium', label: 'Automatic document reminder did not go out' },
   'folder-split':  { order: 70, severity: 'medium', label: 'Two folders for one case' },
   'other-warning': { order: 80, severity: 'low',    label: 'Other app warnings' },
 };
@@ -188,6 +193,11 @@ const isClosed = (c) => CLOSED_STAGES.includes(c.stage);
 const isTestCase = (c) => inGroups(c, NOT_CASE_GROUPS) || /\btest client\b|\be2e\b/i.test(c.name);
 const isLegacy = (c) => inGroups(c, LEGACY_GROUPS);
 const isPaid = (c) => c.payment === 'Paid';
+// The document reminders' numbers: a stored Uploaded % ('' = never computed), Toronto days.
+const pctOf = (v) => (s(v) === '' ? null : Number(s(v)));
+const under50 = (v) => pctOf(v) != null && Number.isFinite(pctOf(v)) && pctOf(v) < 50;
+const torontoDayOf = (ms) => require('../utils/torontoTime').torontoDay(new Date(ms).toISOString());
+const daysUntil = (day, today) => Math.round((Date.parse(`${day}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / (24 * 3600 * 1000));
 
 /** The case's notes, newest first: [{ id, at, text }] (the imported lead history left out). */
 function caseNotes(updates) {
@@ -458,6 +468,9 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
     if (rows === false) checklistProblem(c, notes);
 
     // 5. The client's intake email.
+    // 4b. Document reminders (block 2): what the automatic email leaves to a person.
+    reminderRules(c, notes, rows);
+
     const unconf = newest(notes, NOTE.unconfirmed);
     if (unconf && !after(notes, NOTE.intakeSent, unconf.at) && !after(notes, NOTE.intakeFailed, unconf.at)) {
       add('intake-email', c, `${c.id}|${unconf.id}`, {
@@ -558,10 +571,72 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
         why: 'No deadline is set for this client — neither a real deadline nor an imaginary one with a promised submission date.',
         todo: 'Open the client\'s record (Retainers → the client) and set the Deadline box; it lands on the case row too.',
       });
+    } else if (!isLegacy(c) && c.created < DEADLINE_SINCE && c.stage === DCS && isPaid(c) && !s(c.deadlineType) && under50(c.docUploaded)) {
+      // An older case still collecting documents under 50 %: the automatic reminder
+      // (block 2) runs only with a recorded deadline — a softer nudge than the rule above.
+      add('no-deadline', c, `${c.id}|deadline-old`, {
+        since: c.created,
+        why: `Deadline not recorded — the automatic document reminder cannot run for this client (${pctOf(c.docUploaded)} % of the documents uploaded).`,
+        todo: 'Open the client\'s record (Retainers → the client) and set the Deadline box (a real deadline, or an imaginary one with a promised submission date); it lands on the case row too. If the client is being chased by hand, mark this handled.',
+      });
     }
   }
 
   return out;
+
+  /**
+   * Document reminders (block 2, 2026-11-06). The automatic email never sends when the
+   * deadline is 3 days away or past, when the checklist has no rows, or after a failed
+   * send; and the app does nothing after the final reminder's last day — each of those
+   * is a person's call, so it is listed here.
+   */
+  function reminderRules(c, notes, rows) {
+    if (c.stage !== DCS) return;                                   // only while documents are being collected
+    const today = torontoDayOf(now);
+    const pct = pctOf(c.docUploaded);
+    // a. A real deadline 3 days away or past, with the documents under 50 %: a phone call, not an email.
+    if (isPaid(c) && c.deadlineType === 'Deadline' && /^\d{4}-\d{2}-\d{2}$/.test(c.actualDeadline) && (pct == null || under50(c.docUploaded))) {
+      const n = daysUntil(c.actualDeadline, today);
+      if (Number.isFinite(n) && n <= 3) {
+        const when = n < 0 ? `passed on ${dateWord(tms(`${c.actualDeadline}T12:00:00Z`))}` : n === 0 ? 'is today' : `is in ${n} day${n === 1 ? '' : 's'} (${dateWord(tms(`${c.actualDeadline}T12:00:00Z`))})`;
+        const figure = pct == null ? 'no upload figure has been computed yet' : `only ${pct} % of the documents are uploaded`;
+        add('deadline-close-under-50', c, `${c.id}|deadline-close|${c.actualDeadline}`, {
+          since: tms(`${c.actualDeadline}T12:00:00Z`) - 3 * 24 * 3600 * 1000,
+          why: `The client's deadline ${when} and ${figure}. The automatic reminder does not email this close to a deadline.`,
+          todo: 'Call the client about the missing documents today (the case page lists them under Document reminders). If the deadline has moved, update it on the client\'s record; if the file is going to Stuck, set the Case Stage by hand.',
+        });
+      }
+    }
+    // b. The final reminder's last day has passed and the client has not uploaded since it went.
+    const h = docReminders.readReminderHistory(notes);
+    const fin = h.latest[3];
+    if (fin && fin.lastDayIso && fin.lastDayIso <= today && !(c.lastActivity && c.lastActivity > fin.day)) {
+      add('final-last-day-passed', c, `${c.id}|final-last-day|${fin.id}`, {
+        since: tms(`${fin.lastDayIso}T12:00:00Z`),
+        why: `The final reminder went on ${dateWord(fin.at)} naming ${dateWord(tms(`${fin.lastDayIso}T12:00:00Z`))} as the last day, and the client has uploaded nothing since. The app moves nothing by itself.`,
+        todo: 'Decide with the consultant: wait longer, move the file to Stuck (set the Case Stage on the Cases board — never move the row to another group), or arrange the refund outside the app. Then mark this handled.',
+      });
+    }
+    // c. The automatic reminder did not go out (today or yesterday) and no automatic send followed.
+    const fail = h.failures.find((f) => f.level === 'auto' && (f.day === today || f.day === torontoDayOf(now - 24 * 3600 * 1000)));
+    if (fail && !h.sends.some((x) => x.level === 'auto' && Number(x.id) > Number(fail.id))) {
+      add('auto-reminder-failed', c, `${c.id}|auto-failed|${fail.id}`, {
+        since: fail.at,
+        why: `The automatic document reminder did not go out on ${dateWord(fail.at)}${fail.reason ? ` (${oneLine(fail.reason, 90)})` : ''}. It is tried again on the next morning's run.`,
+        todo: 'If it keeps failing, send reminder 1 from the case page (Document reminders card) or email the client by hand, and tell an admin.',
+      });
+    }
+    // d. No checklist rows at Document Collection on a case the generic "no checklist" rule leaves alone
+    //    (a client retained before the app, set up for the reminders by a typed deadline): nothing to list,
+    //    so no email can go.
+    if (rows === false && isPaid(c) && isLegacy(c) && s(c.deadlineType)) {
+      add('dcs-no-checklist-rows', c, `${c.id}|dcs-no-rows`, {
+        since: c.paidDate || c.created,
+        why: 'The case is collecting documents with a deadline recorded, but it has no document checklist rows — the reminders (automatic or from the case page) have nothing to list.',
+        todo: 'Set the Case Sub Type if it is blank, then flip Re-seed Checklist → Run on the case. If this client is handled outside the app, mark this handled.',
+      });
+    }
+  }
 
   function paymentFlag(c) {
     const pf = newest(c.notes, NOTE.paymentFlagged);
@@ -692,6 +767,8 @@ function refsNeedingChecklist(cases) {
   for (const c of cases) {
     if (!c.ref || isTestCase(c) || isClosed(c)) continue;
     if ((isPaid(c) && BEFORE_DOCS.includes(c.stage) && !isLegacy(c)) || c.notes.some((n) => family.some((re) => re.test(n.text)))) refs.add(c.ref);
+    // a legacy case set up for the document reminders (a typed deadline): its rows matter too
+    else if (isPaid(c) && c.stage === DCS && isLegacy(c) && s(c.deadlineType)) refs.add(c.ref);
   }
   return [...refs];
 }
@@ -725,6 +802,7 @@ function parseCase(item) {
     created: tms(item.created_at),
     ref: cv[COL.ref], caseType: cv[COL.caseType], subType: cv[COL.subType],
     stage: cv[COL.stage], payment: cv[COL.payment], paidDate: paid, deadlineType: cv[COL.deadlineType],
+    actualDeadline: s(cv[COL.actualDeadline]).slice(0, 10), docUploaded: s(cv[COL.docUploaded]), lastActivity: s(cv[COL.lastActivity]).slice(0, 10),
     manager: cv[COL.manager], managerSet: !!cv[COL.manager], submissionSet: !!cv[COL.submissionTeam],
     assignees: caseAccess.assigneesFromColumnValues(raw),
     notes: caseNotes(item.updates),
@@ -1104,5 +1182,5 @@ module.exports = {
   refresh, view, requestRefresh, markHandled, isTorontoHour,
   detect, parseCase, caseNotes, newestPaymentNote, heldFor, handledKeys, handledNoteBody,   // pure
   refsNeedingChecklist, refsNeedingWorkFolders, buildSnapshot,
-  io, KINDS, NOTE, COL, CLOSED_STAGES, BEFORE_DOCS, _resetForTests,
+  io, KINDS, NOTE, COL, CLOSED_STAGES, BEFORE_DOCS, NOT_CASE_GROUPS, DEADLINE_SINCE, _resetForTests,
 };
