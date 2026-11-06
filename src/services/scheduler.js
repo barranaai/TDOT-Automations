@@ -187,6 +187,14 @@ function startScheduler() {
       console.error('[Scheduler] Case-type drift check failed:', err.message)));
   console.log('[Scheduler] Job registered — case-type canon drift check daily 06:45');
 
+  // ── Consultation prices from Square (Faran 2026-11-05): read at boot and every
+  // 15 minutes; every page that quotes or charges also refreshes a stale reading
+  // itself (bounded). A failed read keeps the last reading / the app's own list.
+  const consultPrices = require('./consultPriceService');
+  consultPrices.refresh({ reason: 'boot' }).catch(() => {});
+  cron.schedule('*/15 * * * *', () => consultPrices.refresh({ reason: 'scheduled', force: true }).catch(() => {}));
+  console.log('[Scheduler] Job registered — consultation prices from Square at boot, then every 15 min');
+
   // ── Post-consultation (provider-agnostic; replaces Zoom-webhook reliance for Teams) ──
   cron.schedule('*/15 * * * *', () =>      // "set the Outcome" nudge once the slot has passed
     require('./postConsultService').sendPostConsultNudges().catch((err) =>

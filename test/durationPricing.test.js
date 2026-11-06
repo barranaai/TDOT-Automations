@@ -16,9 +16,9 @@ const kpi                 = require('../src/services/kpiService');
 
 // ─── the per-consultant option registry ──────────────────────────────────────
 
-test('consultOptionsFor: Shafoli 30/$200 + 45/$300, Shermin 30/$120 + 15/$60, all mapped to TDOT Automation variations', () => {
+test('consultOptionsFor: Shafoli 30/$300 + 45/$450 (2026-11-05), Shermin 30/$120 + 15/$60, all mapped to TDOT Automation variations', () => {
   const sh = routing.consultOptionsFor('shafoli');
-  assert.deepEqual(sh.map((o) => [o.durationMin, o.feeCents]), [[30, 20000], [45, 30000]]);
+  assert.deepEqual(sh.map((o) => [o.durationMin, o.feeCents]), [[30, 30000], [45, 45000]]);
   assert.equal(sh.find((o) => o.default).durationMin, 30);
   assert.ok(sh.every((o) => /^[A-Z0-9]{24,}$/i.test(o.variationId)), 'real Square variation ids');
 
@@ -48,8 +48,8 @@ test('booking page: duration picker with prices + per-duration slot lists + vali
     { durationMin: 45, feeCents: 30000, slots: [fakeSlot('2026-08-11', '14:00')] },
   ];
   const html = phase2.buildBookingPageHtml({ id: '1', tier: 'T2' }, { sets }, 'tok', { name: 'Shafoli Kapur' });
-  assert.match(html, /name="durationChoice" value="30" checked/, '30-min pre-selected (default)');
-  assert.match(html, /name="durationChoice" value="45"/);
+  assert.match(html, /name="durationChoice" value="30" data-fee="20000" checked/, '30-min pre-selected (default), its price travels with the choice');
+  assert.match(html, /name="durationChoice" value="45" data-fee="30000"/);
   assert.match(html, /\$200\.00.*CAD/, 'shows the 30-min price');
   assert.match(html, /\$300\.00.*CAD/, 'shows the 45-min price');
   assert.match(html, /data-dur="30" style="display:block"/, 'default duration list visible');
@@ -117,14 +117,14 @@ test('paid amount ≠ stored option → the recorded option is CORRECTED to the 
     stub(mondayApi, 'query', async () => ({})),
   ];
   try {
-    // stored says 30-min/$200, but the client paid the stale $300 (45-min) link
+    // stored says 30-min/$300, but the client paid the stale $450 (45-min) link
     await bookingService.reconcileConsultOptionWithPayment(
-      shafoliLead({ consultOption: '{"durationMin":30,"feeCents":20000,"variationId":"TMJIRVYQUD76E7A3YGXSEOQ5"}' }), 30000);
+      shafoliLead({ consultOption: '{"durationMin":30,"feeCents":30000,"variationId":"TMJIRVYQUD76E7A3YGXSEOQ5"}' }), 45000);
     const w = writes.find((f) => f.consultOption);
     assert.ok(w, 'the option was corrected');
     const o = JSON.parse(w.consultOption);
     assert.equal(o.durationMin, 45, 'corrected to the 45-min option the client paid for');
-    assert.equal(o.feeCents, 30000);
+    assert.equal(o.feeCents, 45000);
     assert.equal(o.variationId, 'Z2XFERF43EO567YZGX4Y5WDL', 'the 45-min Square variation gets booked');
   } finally { restore.forEach((x) => x()); }
 });

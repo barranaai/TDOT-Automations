@@ -775,6 +775,16 @@ function resolveAdminOrReject(req, res, message = 'Only an admin can delete reco
   return viewer;
 }
 
+// ─── Consultation prices from Square (Faran 2026-11-05): what is in use now ──
+// Read-only — openable in the browser by an admin: per option the price in the
+// app's own list, the price Square gives, the one in use and where it came from.
+app.get('/admin/consult-prices', async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can see the consultation prices.')) return;
+  const prices = require('./services/consultPriceService');
+  const refresh = req.query.refresh === '1' ? await prices.refresh({ reason: 'admin', force: true }) : null;   // an explicit read ignores the failed-read cool-down
+  res.json({ ...prices.status(), ...(refresh ? { refresh } : {}) });
+});
+
 // ─── Email → lead (Faran 2026-10-27): admin status, access check, run now ────
 // The office inbox (EMAIL_LEADS_MAILBOX, default info@tdotimm.com) is read every
 // 5 minutes by the scheduler; these let an admin see what it did, check that

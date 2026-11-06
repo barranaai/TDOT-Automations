@@ -573,6 +573,8 @@ async function getLeadsQueue() {
 async function getLeadDetail(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Lead not found'); e.notFound = true; throw e; }
+  // The consultation fees the page offers (Record payment) are Square's current prices (bounded wait).
+  await require('./consultPriceService').ensureFresh({ reason: 'lead page' });
 
   // Where the booking-invite reminders stand (one line; invited leads only).
   // Started now, read alongside the intake; time-boxed so it never slows the page.
@@ -2608,6 +2610,7 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
 async function writeRecordedBooking(leadId, lead, booking, staffName, lines, { noMeeting = false } = {}) {
   const s = (v) => String(v == null ? '' : v).trim();
   const { CONSULTANTS, consultOptionsFor } = require('../../config/consultantRouting');
+  await require('./consultPriceService').ensureFresh({ reason: 'recorded booking' });   // the fee stored is Square's current price
   const reg = Object.values(CONSULTANTS).find((c) => c.name === booking.consultant);
   const opt = (reg ? consultOptionsFor(reg) : []).find((o) => o.durationMin === booking.durationMin) || {};
   let raw = {};
