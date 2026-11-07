@@ -17,11 +17,21 @@
  * One send per case per minute from here (the sponsor route's cool-down), so a
  * double-click cannot email twice. The failure wording staff see is neutral —
  * never "spam", never "credits" (Faran 2026-11-02).
+ *
+ * Speed (Faran 2026-11-07, "the popup opening time is long"): the preview and the email
+ * view read the case through caseCockpitService.getReminderFacts (the gate + email facts,
+ * without the family / lead / sponsor reads the pop-up never uses); the preview's answer
+ * carries the first email view; and the email view reuses what the preview prepared
+ * (docReminderPrepCache). The SEND keeps the full fresh read, unchanged.
  */
 
+const { SUBJECT_MAX, BODY_MAX, EXTRA_MAX } = require('../services/docReminderService');
+const prepCache = require('../services/docReminderPrepCache');
 const COOLDOWN_MS = 60 * 1000;
-const SUBJECT_MAX = 200, BODY_MAX = 6000, EXTRA_MAX = 1000;
 const _lastSendAt = new Map();   // caseRef (upper) → ms of the last real send
+
+/** The pop-up's case read (preview + email view): the facts it needs, read in parallel. */
+const readFacts = (deps) => deps.readFacts || require('../services/caseCockpitService').getReminderFacts;
 
 const str = (v, max) => String(v == null ? '' : v).replace(/\r\n?/g, '\n').slice(0, max);
 
@@ -33,16 +43,23 @@ function answerError(res, err, caseRef) {
   return res.status(500).json({ ok: false, error: 'Internal server error' });
 }
 
-/** GET preview — read-only: the filled template, the list, the warnings, the record. */
+/**
+ * GET preview — read-only: the filled template, the list, the warnings, the record, and
+ * the first email view (`email`, so the pop-up needs no second ask to show it). What it
+ * prepared is kept for the email view under `prepHandle` (docReminderPrepCache).
+ */
 async function preview(req, res, deps) {
   const caseRef = (req.params.caseRef || '').trim();
-  const ctx = await deps.resolveCaseForWrite(req, res, caseRef);
+  const ctx = await deps.resolveCaseForWrite(req, res, caseRef, { read: readFacts(deps) });
   if (!ctx) return;
   const svc = deps.service || require('../services/docReminderService');
   res.set('Cache-Control', 'no-store');
   try {
-    const p = await svc.previewStaffReminder({ overview: ctx.overview, level: req.query.level, lastDay: req.query.lastDay, actor: deps.staffActor(req) });   // {StaffName} = the sign-in
-    res.json({ ok: true, ...p });
+    let prepared = null;
+    const p = await svc.previewStaffReminder({ overview: ctx.overview, level: req.query.level, lastDay: req.query.lastDay, actor: deps.staffActor(req),   // {StaffName} = the sign-in
+      reuse: true, onPrepared: (core) => { prepared = core; } });
+    const prepHandle = prepared ? prepCache.put({ who: prepCache.whoOf(ctx.viewer), caseRef, level: p.level, assignees: ctx.overview.assignees, overview: ctx.overview, core: prepared }) : '';
+    res.json({ ok: true, ...p, prepHandle });
   } catch (err) { answerError(res, err, caseRef); }
 }
 
@@ -65,12 +82,14 @@ async function send(req, res, deps) {
   if (wait > 0) return res.status(429).json({ ok: false, reason: 'cooldown', error: `A reminder was sent for this case less than a minute ago — try again in ${Math.ceil(wait / 1000)}s.` });
   let r;
   try {
+    // the send never uses the pop-up's kept facts (no handle is read here): its own fresh gate, list, notes and race check
     r = await svc.sendStaffReminder({
       overview: ctx.overview, level, subject, body: text, extra,
       lastDay: String(body.lastDay == null ? '' : body.lastDay).trim().slice(0, 10),
       actor: deps.staffActor(req),   // the Monday sign-in, else the shared-key placeholder — never a name from the body
     });
   } catch (err) { return answerError(res, err, caseRef); }
+  finally { prepCache.dropCase(caseRef); }   // whatever happened, the next pop-up for this case starts from a fresh read
   _lastSendAt.set(key, Date.now());   // only a real send starts the cool-down
   console.log(`[DocReminders] ${caseRef}: reminder ${r.level} sent to ${r.to} by ${(ctx.viewer && ctx.viewer.email) || 'admin'}`);
   res.json({ ok: true, noted: r.noted, to: r.to, level: r.level, day: r.day, lastDay: r.lastDay || '', warnings: r.warnings || [] });
@@ -109,6 +128,32 @@ function releaseRender(key, at) {
   if (!list.length) _renders.delete(key);
 }
 
+/**
+ * The email view with a handle from the preview (docReminderPrepCache) skips the case read.
+ * Why that is safe — it does NOT skip the checks, it skips re-reading the same facts:
+ *  - a handle exists only after THIS person (the same Monday sign-in, or the shared key)
+ *    passed the full gate for THIS case and level — sign-in, assigned-or-admin, and the
+ *    reminder gate (gateStaff) on a fresh Client Master read — at most 10 minutes ago;
+ *  - the sign-in is still checked on every ask (a signed-out person gets the 401 above,
+ *    before the handle is looked at), assignment is checked again against the assignees of
+ *    that read, and the reminder gate runs again on its facts;
+ *  - the email view writes nothing, notes nothing and sends nothing: it shows facts this
+ *    person already saw in the preview, built around their own typing;
+ *  - the handle is 128 random bits tied to who, case and level — useless to anyone else.
+ * What is left: someone unassigned, or a case locked, inside those minutes still sees an
+ * updated view of an email they already saw. The SEND reads everything fresh and refuses.
+ */
+function handleHit(body, viewer, caseRef, deps) {
+  const who = prepCache.whoOf(viewer);
+  const handle = String((body && body.handle) || '');
+  if (!handle || !who) return null;
+  const e = prepCache.take(handle, { who, caseRef, level: body.level });
+  if (!e) return null;
+  const caseAccess = deps.caseAccess || require('../services/caseAccessService');
+  if (!viewer.isAdmin && !caseAccess.viewerCanSee(e.assignees, viewer)) { prepCache.drop(handle, who); return null; }   // the full read answers (403)
+  return e;
+}
+
 /** POST render — never writes, never sends, never notes, no cool-down; a text problem is a 200 with problems. */
 async function render(req, res, deps) {
   const caseRef = (req.params.caseRef || '').trim();
@@ -117,7 +162,8 @@ async function render(req, res, deps) {
   if (bytes > RENDER_MAX_BYTES) return res.status(413).json({ ok: false, reason: 'too-large', error: 'The text is too long for the email view.' });
   // a caller with no sign-in and no key hears 401 first, exactly as preview and send answer — never a 429
   // that would tell a stranger the case exists and is being worked on
-  if (!deps.resolveViewer(req)) return res.status(401).json({ ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
+  const viewer = deps.resolveViewer(req);
+  if (!viewer) return res.status(401).json({ ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
   // who: the Monday sign-in; without one, the shared admin key (one slot for everyone using it)
   const actor = deps.staffActor(req);
   const key = `${actor && actor.verified && actor.email ? `staff:${String(actor.email).toLowerCase()}` : 'key'}|${caseRef.toUpperCase()}`;
@@ -126,24 +172,42 @@ async function render(req, res, deps) {
   // retryAfter: the pop-up asks once more by itself after the wait, so the line below is true
   if (wait > 0) return res.status(429).json({ ok: false, reason: 'too-many', retryAfter: wait, error: `The email view was updated too often — it updates again in ${wait}s. Nothing you typed is lost.` });
   countRender(key, now);   // taken in the same step as the check — no await between them
-  const ctx = await deps.resolveCaseForWrite(req, res, caseRef);
-  if (!ctx) { releaseRender(key, now); return; }   // refused by the gate: the slot is given back
   const svc = deps.service || require('../services/docReminderService');
   const body = req.body || {};
-  const problem = (message) => res.json({ ok: true, html: '', subject: '', warnings: [], problems: [message] });
-  const subject = str(body.subject, SUBJECT_MAX + 1), text = str(body.body, BODY_MAX + 1), extra = str(body.extra, EXTRA_MAX + 1);
-  if (subject.length > SUBJECT_MAX) return problem(`The subject is too long (max ${SUBJECT_MAX} characters).`);
-  if (text.length > BODY_MAX) return problem(`The text is too long (max ${BODY_MAX} characters).`);
-  if (extra.length > EXTRA_MAX) return problem(`The extra line is too long (max ${EXTRA_MAX} characters).`);
+  const input = () => ({ level: body.level, subject: str(body.subject, SUBJECT_MAX + 1), body: str(body.body, BODY_MAX + 1), extra: str(body.extra, EXTRA_MAX + 1),
+    lastDay: String(body.lastDay == null ? '' : body.lastDay).trim().slice(0, 10),
+    actor,   // the sign-off is the verified sign-in, exactly as the send signs — never a name from the body
+  });
+  const answer = (r, extraKeys) => res.json({ ok: true, html: r.html || '', subject: r.subject || '', warnings: r.warnings || [], problems: r.problems || [], ...(extraKeys || {}) });
+  // the pop-up's kept facts (see handleHit): no case read — the reminder gate still runs on them
+  const hit = handleHit(body, viewer, caseRef, deps);
+  if (hit) {
+    const v = input();
+    const tooLong = svc.textProblem(v.subject, v.body, v.extra);
+    if (tooLong) return answer({ problems: [tooLong] });
+    try { return answer(await svc.renderStaffReminder({ ...v, overview: hit.overview, core: hit.core })); }
+    catch (err) { prepCache.drop(body.handle, prepCache.whoOf(viewer)); return answerError(res, err, caseRef); }
+  }
+  const ctx = await deps.resolveCaseForWrite(req, res, caseRef, { read: readFacts(deps) });
+  const mine = prepCache.whoOf(viewer);   // a handle is only ever ended by its own person
+  if (!ctx) { releaseRender(key, now); if (body.handle) prepCache.drop(body.handle, mine); return; }   // refused by the gate: the slot is given back
+  const v = input();
+  const tooLong = svc.textProblem(v.subject, v.body, v.extra);
+  if (tooLong) return answer({ problems: [tooLong] });
   try {
-    const r = await svc.renderStaffReminder({
-      overview: ctx.overview, level: body.level, subject, body: text, extra,
-      lastDay: String(body.lastDay == null ? '' : body.lastDay).trim().slice(0, 10),
-      actor,   // the sign-off is the verified sign-in, exactly as the send signs — never a name from the body
-    });
-    res.json({ ok: true, html: r.html || '', subject: r.subject || '', warnings: r.warnings || [], problems: r.problems || [] });
-  } catch (err) { answerError(res, err, caseRef); }
+    let prepared = null;
+    const r = await svc.renderStaffReminder({ ...v, overview: ctx.overview, reuse: true, onPrepared: (core) => { prepared = core; } });
+    // a pop-up whose handle ran out gets a new one from this full read, so its next asks are quick again
+    let renewed = null;
+    if (body.handle) {
+      prepCache.drop(body.handle, mine);
+      const lv = Number(body.level);
+      const h = prepared && [1, 2, 3].includes(lv) ? prepCache.put({ who: mine, caseRef, level: lv, assignees: ctx.overview.assignees, overview: ctx.overview, core: prepared }) : '';
+      if (h) renewed = { prepHandle: h };
+    }
+    answer(r, renewed);
+  } catch (err) { if (body.handle) prepCache.drop(body.handle, mine); answerError(res, err, caseRef); }
 }
 
 module.exports = { preview, send, render, COOLDOWN_MS, SUBJECT_MAX, BODY_MAX, EXTRA_MAX, RENDER_PER_MIN, RENDER_MAX_BYTES, _lastSendAt, _renders,
-  _resetForTests: () => { _lastSendAt.clear(); _renders.clear(); } };
+  _resetForTests: () => { _lastSendAt.clear(); _renders.clear(); prepCache._resetForTests(); } };

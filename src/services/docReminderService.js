@@ -875,12 +875,20 @@ function autoSkipReasons(notes, o = {}) {
  * note read is still inside the 90-day window and the page was full — so the
  * "Sent:" history and the 24-hour check never stop at the Needs-attention
  * reader's 50-note window on a busy case. Bounded at NOTES_MAX_PAGES.
+ *
+ * seed / seedLimit (the pop-up, 2026-11-07): the newest notes the case read of THIS
+ * request already holds (updates(limit: seedLimit), newest first — the same order as the
+ * pages). Its first seedLimit / 50 pages are taken from it instead of Monday, the same
+ * stop rule applied page by page, so the answer is exactly what the paged read gives;
+ * only a page past the seed is read. A seedLimit that is not whole pages is not used.
  */
-async function readCaseNotes(itemId, { now } = {}) {
+async function readCaseNotes(itemId, { now, seed, seedLimit } = {}) {
   const t = now || io.now();
   const seen = new Map();
+  const lim = Number(seedLimit);
+  const seedPages = Array.isArray(seed) && lim > 0 && lim % NOTES_PAGE === 0 && seed.length <= lim ? lim / NOTES_PAGE : 0;
   for (let page = 1; page <= NOTES_MAX_PAGES; page++) {
-    const batch = await io.readNotes(itemId, page);
+    const batch = page <= seedPages ? seed.slice((page - 1) * NOTES_PAGE, page * NOTES_PAGE) : await io.readNotes(itemId, page);
     for (const n of batch) if (n.id && !seen.has(n.id)) seen.set(n.id, n);
     if (batch.length < NOTES_PAGE) break;
     const oldest = Math.min(...batch.map((n) => (Number.isFinite(n.at) ? n.at : Infinity)));
@@ -1016,11 +1024,21 @@ function parseLevel(v) {
   return n;
 }
 
-/** The common first half of a preview and a send: the gate, the fresh list, the record. */
-async function prepareStaff({ overview, level, now }) {
+/**
+ * The first half of a preview, the email view and a send: the gate, the list, the
+ * questionnaire, the deadline — what the email is built from.
+ *
+ * reuse (preview + email view only, never the send): the overview is the pop-up's case
+ * read of THIS request (caseCockpitService.getReminderFacts), which already holds the
+ * checklist rows — the list is made from them instead of reading the checklist a second
+ * time (the same rows, read moments ago). A read that failed there is read again here.
+ */
+async function prepareCore({ overview, reuse } = {}) {
   gateStaff(overview);
   const caseRef = s(overview.caseRef);
-  const missing = await missingDocuments(caseRef);
+  const missing = reuse && Array.isArray(overview.docItems) && overview.docsUnavailable !== true
+    ? missingFromItems(overview.docItems)
+    : await missingDocuments(caseRef);
   // the questionnaire facts came with the overview (a fresh case read on every request — no second read)
   const q = questionnaireFromMembers(overview.questionnaire);
   if (!docsOpen(missing)) {   // a row waiting for a new copy is something to remind about (review round 2 [2])
@@ -1029,13 +1047,30 @@ async function prepareStaff({ overview, level, now }) {
     if (q && q.unavailable) throw refuse(503, 'q-unavailable', 'Every document is in, and the questionnaire progress could not be read just now — nothing was sent. Reload in a moment.');
     if (!questionnaireOpen(q)) throw refuse(409, 'no-rows', q ? nothingToRemind(q) : 'Nothing is missing on the checklist — there is nothing to remind the client about.');
   }
-  const notes = await readCaseNotes(overview.itemId, { now });
+  const deadline = overview.clientDeadlineRaw || {};
+  return { caseRef, missing, q, deadline };
+}
+
+/**
+ * The second half of a preview and a send: the record (the case's notes) and the amber
+ * warnings. reuse (preview only): the notes start from the newest ones the case read of
+ * this request holds (overview.notes / notesLimit) — exactly the paged read's answer.
+ */
+async function prepareHistory({ overview, level, now, reuse, core }) {
+  const seed = reuse && Array.isArray(overview.notes) ? { seed: overview.notes, seedLimit: overview.notesLimit } : {};
+  const notes = await readCaseNotes(overview.itemId, { now, ...seed });
   const history = readReminderHistory(notes);
   const recent = recentClientSend(notes, { now });
-  const deadline = overview.clientDeadlineRaw || {};
-  const warnings = previewWarnings({ history, level, now, deadline, recent, escalationLastNotified: overview.escalationLastNotified });
-  if (q && q.unavailable) warnings.push(Q_UNAVAILABLE_WARNING);
-  return { caseRef, missing, q, notes, history, recent, deadline, warnings };
+  const warnings = previewWarnings({ history, level, now, deadline: core.deadline, recent, escalationLastNotified: overview.escalationLastNotified });
+  if (core.q && core.q.unavailable) warnings.push(Q_UNAVAILABLE_WARNING);
+  return { notes, history, recent, warnings };
+}
+
+/** Both halves: the gate, the fresh list, the record (the send: always fresh — never `reuse`). */
+async function prepareStaff({ overview, level, now, reuse }) {
+  const core = await prepareCore({ overview, reuse });
+  const rest = await prepareHistory({ overview, level, now, reuse, core });
+  return { ...core, ...rest };
 }
 
 /**
@@ -1045,10 +1080,10 @@ async function prepareStaff({ overview, level, now }) {
  * after {MissingList} when the questionnaire is unfinished (a warning says so).
  * Never sends, never writes.
  */
-async function previewStaffReminder({ overview, level, lastDay, actor, now } = {}) {
+async function previewStaffReminder({ overview, level, lastDay, actor, now, reuse, onPrepared } = {}) {
   const t = now || io.now();
   const lv = parseLevel(level);
-  const p = await prepareStaff({ overview, level: lv, now: t });
+  const p = await prepareStaff({ overview, level: lv, now: t, reuse });
   const base = await templates.templateFor(lv);
   const dl = p.deadline;
   const values = {
@@ -1064,11 +1099,18 @@ async function previewStaffReminder({ overview, level, lastDay, actor, now } = {
   let body = base.body;
   if (questionnaireOpen(p.q) && !body.includes(Q_TOKEN)) { body = withQuestionnaireToken(body); qWarn.push(`The ${base.name} text has no {QuestionnaireList} — the unfinished questionnaire was added after the documents list.`); }
   if (p.q && p.q.notApplicable && mentionsQuestionnaire(base.subject, body)) qWarn.push(Q_NO_FORM_WARNING);
+  const subject = fillTokens(base.subject, values).replace(/\s+/g, ' ').trim();
+  const filled = fillTokens(body, values);
+  const core = { caseRef: p.caseRef, missing: p.missing, q: p.q, deadline: p.deadline };
+  if (onPrepared) onPrepared(core);   // the route keeps it for the pop-up's email view (docReminderPrepCache)
+  // the first email view rides on the preview (one round trip on open): the email the view would
+  // make from the boxes as the dialog fills them — the text box hands back its lines as \n
+  const email = await emailFromPrepared({ overview, core, level: lv, subject, body: filled.replace(/\r\n?/g, '\n'), extra: '', lastDay: last, actor, now: t });
   return {
     level: lv,
     to: clientPortalService.maskEmail(overview.clientEmail),
-    subject: fillTokens(base.subject, values).replace(/\s+/g, ' ').trim(),
-    body: fillTokens(body, values),
+    subject,
+    body: filled,
     tokensLeft,
     missing: p.missing,
     missingList: missingListText(p.missing),
@@ -1082,6 +1124,7 @@ async function previewStaffReminder({ overview, level, lastDay, actor, now } = {
     warnings: [...p.warnings, ...base.warnings, ...qWarn, ...(base.source === 'default' ? [templates.boardProblemFor(base.name)].filter(Boolean) : [])],
     template: { name: base.name, source: base.source },
     history: historyView(p.history),
+    email,                                           // { ok, html, subject, warnings, problems } — what POST …/render answers for these boxes
   };
 }
 
@@ -1147,21 +1190,63 @@ function previewSafeHtml(html, { token } = {}) {
  * blank or past, an unknown level, an empty subject or text — is an answer, not an error:
  * { ok: true, html: '', problems: [...] }, so the pop-up shows it while staff type.
  */
-async function renderStaffReminder({ overview, level, subject, body, extra, lastDay, actor, now } = {}) {
+const SUBJECT_MAX = 200, BODY_MAX = 6000, EXTRA_MAX = 1000;
+/** The boxes' size limits — one wording for the send route, the email view and the preview's first view. '' when fine. */
+function textProblem(subject, body, extra) {
+  if (String(subject == null ? '' : subject).length > SUBJECT_MAX) return `The subject is too long (max ${SUBJECT_MAX} characters).`;
+  if (String(body == null ? '' : body).length > BODY_MAX) return `The text is too long (max ${BODY_MAX} characters).`;
+  if (String(extra == null ? '' : extra).length > EXTRA_MAX) return `The extra line is too long (max ${EXTRA_MAX} characters).`;
+  return '';
+}
+const viewProblem = (message) => ({ ok: true, html: '', subject: '', warnings: [], problems: [message] });
+
+/** The level and the final's last day as the email view reads them: { lv, last } or { problem } (an answer, not an error). */
+function viewInputs({ level, lastDay, subject, body, now }) {
+  let lv, last;
+  try { lv = parseLevel(level); last = finalLastDay(lv, lastDay, torontoDay(now)); }
+  catch (err) { if (err.refused && err.status === 400) return { problem: viewProblem(err.message) }; throw err; }
+  // the dialog never sends an empty box (remSend says so) — the view says it too, never the board text in its place
+  if (!s(subject)) return { problem: viewProblem('The subject is empty.') };
+  if (!s(body)) return { problem: viewProblem('The text is empty.') };
+  return { lv, last };
+}
+
+/**
+ * The email view from facts already prepared (prepareCore's { caseRef, missing, q, deadline }):
+ * no read at all — the boxes, the stand-in code, links switched off. The preview's first
+ * view and every later ask of the email view come from here, so they are the same email.
+ */
+async function emailFromPrepared({ overview, core, level, subject, body, extra, lastDay, actor, now }) {
+  const t = now || io.now();
+  const v = viewInputs({ level, lastDay, subject, body, now: t });
+  if (v.problem) return v.problem;
+  const tooLong = textProblem(subject, body, extra);
+  if (tooLong) return viewProblem(tooLong);
+  let email;
+  try { email = await buildReminderEmail(staffEmailOptions({ overview, p: core, level: v.lv, lastDay: v.last, subject, body, extra, actor, accessToken: PREVIEW_TOKEN })); }
+  catch (err) { return viewProblem(err.message); }
+  return { ok: true, html: previewSafeHtml(email.html, { token: overview.accessToken }), subject: email.subject, warnings: email.warnings || [], problems: [] };
+}
+
+/**
+ * core (the email view's per-dialog cache, docReminderPrepCache): the facts the preview
+ * prepared for this person, case and level a moment ago — the list is not read again.
+ * The gate (gateStaff) still runs on the overview it is given, every time.
+ * reuse: the overview is the case read of this request (getReminderFacts) — see prepareCore.
+ * onPrepared(core): called with the facts read here, so the route can keep them.
+ */
+async function renderStaffReminder({ overview, level, subject, body, extra, lastDay, actor, now, core, reuse, onPrepared } = {}) {
   const t = now || io.now();
   gateStaff(overview);
-  const problem = (message) => ({ ok: true, html: '', subject: '', warnings: [], problems: [message] });
-  let lv, last;
-  try { lv = parseLevel(level); last = finalLastDay(lv, lastDay, torontoDay(t)); }
-  catch (err) { if (err.refused && err.status === 400) return problem(err.message); throw err; }
-  // the dialog never sends an empty box (remSend says so) — the view says it too, never the board text in its place
-  if (!s(subject)) return problem('The subject is empty.');
-  if (!s(body)) return problem('The text is empty.');
-  const p = await prepareStaff({ overview, level: lv, now: t });
-  let email;
-  try { email = await buildReminderEmail(staffEmailOptions({ overview, p, level: lv, lastDay: last, subject, body, extra, actor, accessToken: PREVIEW_TOKEN })); }
-  catch (err) { return problem(err.message); }
-  return { ok: true, html: previewSafeHtml(email.html, { token: overview.accessToken }), subject: email.subject, warnings: email.warnings || [], problems: [] };
+  const v = viewInputs({ level, lastDay, subject, body, now: t });
+  if (v.problem) return v.problem;
+  let c = core;
+  if (!c) {
+    const p = await prepareCore({ overview, reuse });
+    c = { caseRef: p.caseRef, missing: p.missing, q: p.q, deadline: p.deadline };
+    if (onPrepared) onPrepared(c);
+  }
+  return emailFromPrepared({ overview, core: c, level: v.lv, subject, body, extra, lastDay: v.last, actor, now: t });
 }
 
 /**
@@ -1419,6 +1504,7 @@ module.exports = {
   sentOn, openClaims, openClaimsAnyOrigin, racingClaims, failedTries, isCaseGroup, describeForCase, caseGateProblem,
   // the staff buttons
   gateStaff, parseLevel, senderName, previewStaffReminder, sendStaffReminder, renderStaffReminder, previewSafeHtml, PREVIEW_TOKEN,
+  prepareCore, prepareHistory, prepareStaff, emailFromPrepared, textProblem, SUBJECT_MAX, BODY_MAX, EXTRA_MAX,
   NOTE_HEAD, NOTE_HEAD_TEXT, NOT_CASE_GROUPS, MAX_TRIES, NOTES_PAGE, NOTES_MAX_PAGES, FINAL_DEFAULT_DAYS, RACE_WINDOW_MS,
   // pure — exported for tests
   _internal: { fmtDay, oneLine, fillTokens, missingListText, missingListHtml, LEVEL_NAMES, torontoDay, dayPlus, daysUntil, marker, failMarker, dayFromWords, imaginaryBody, IMAGINARY_LEAD, caseTypeText,

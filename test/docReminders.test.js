@@ -2299,6 +2299,330 @@ test('source pins (the email view): server.js registers the render route with th
   const fn = src.slice(src.indexOf('async function render('), src.indexOf('module.exports'));
   assert.ok(fn.includes('renderStaffReminder') && !/sendStaffReminder|_lastSendAt\.set|postNote|sendEmail/.test(fn));
   const svcSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'docReminderService.js'), 'utf8');
-  const rfn = svcSrc.slice(svcSrc.indexOf('async function renderStaffReminder('), svcSrc.indexOf('/**\n * POST send:'));
+  // 2026-11-07: the view is built in emailFromPrepared (the preview's first view and every later ask), then renderStaffReminder
+  const rfn = svcSrc.slice(svcSrc.indexOf('async function emailFromPrepared('), svcSrc.indexOf('/**\n * POST send:'));
+  assert.ok(rfn.includes('async function renderStaffReminder('), 'the range covers both');
   assert.ok(rfn.includes('accessToken: PREVIEW_TOKEN') && !/io\.(postNote|sendEmail|deleteNote)|overview\.accessToken \}\)\)/.test(rfn.replace('previewSafeHtml(email.html, { token: overview.accessToken })', '')), 'the view is built with the stand-in code and never writes');
+});
+
+// ═══════════════════ the pop-up's speed (Faran 2026-11-07: "the popup opening time is long") ═══════════════════
+//
+// The preview carries the first email view; the email view reuses what the preview prepared
+// (docReminderPrepCache, per person + case + level, 2 min / 10 min / 200 entries); the reads
+// the pop-up makes inside one request are reused, never repeated. The SEND reads fresh.
+
+const prepCache = require('../src/services/docReminderPrepCache');
+
+/** Counters on the three expensive reads: the case gate, the checklist, the notes pages. */
+function countReads(d) {
+  const c = { gate: 0, summary: 0, notes: 0, pages: [] };
+  const inner = d.resolveCaseForWrite;
+  d.resolveCaseForWrite = async (...a) => { c.gate++; return inner(...a); };
+  const ks = docForm.getCaseSummary, kn = svc.io.readNotes;
+  docForm.getCaseSummary = async (...a) => { c.summary++; return ks(...a); };
+  svc.io.readNotes = async (itemId, page) => { c.notes++; c.pages.push(page); return kn(itemId, page); };
+  c.restore = () => { docForm.getCaseSummary = ks; svc.io.readNotes = kn; };
+  c.reset = () => { c.gate = 0; c.summary = 0; c.notes = 0; c.pages = []; };
+  return c;
+}
+const HANDLE_RE = /^[0-9a-f]{32}$/;
+
+test('one trip on open: the preview carries `email` — exactly what the email view (renderStaffReminder) answers for the unedited boxes, at every level; a template the view would refuse is a problem in it, not an error', async () => {
+  const S = staffStubs();
+  try {
+    for (const level of [1, 2, 3]) {
+      const actor = { name: 'Mahesh Sharma', email: 'mahesh@tdotimm.com', verified: true };
+      const p = await svc.previewStaffReminder({ overview: OV(), level, actor });
+      const r = await svc.renderStaffReminder({ overview: OV(), level, subject: p.subject, body: p.body, extra: '', lastDay: p.lastDay, actor });
+      assert.deepEqual(p.email, r, `level ${level}`);
+      assert.deepEqual([p.email.ok, p.email.problems], [true, []]);
+      assert.ok(p.email.html.includes('Mahesh Sharma') && !p.email.html.includes(TOKEN), 'the verified sign-off, the stand-in code');
+      assert.doesNotMatch(p.email.html, /\shref\s*=/i, 'links switched off');
+    }
+    // the shared key signs as the office in the view too
+    const k = await svc.previewStaffReminder({ overview: OV(), level: 1, actor: { name: 'Unidentified (shared admin key)', verified: false } });
+    assert.match(k.email.html, /TDOT Immigration/);
+    // a board row with reply wording is refused by the templates (the built-in text is used), so the first view is a real email
+    await withBoard([{ name: 'Reminder 2', subject: 'Please reply to this email', body: 'Fine {MissingList}' }], async () => {
+      const p = await svc.previewStaffReminder({ overview: OV(), level: 2 });
+      assert.deepEqual([p.template.source, p.email.problems], ['default', []]);
+      assert.ok(p.email.html.length > 0);
+    });
+    assert.equal(svc.textProblem('x'.repeat(201), '', ''), 'The subject is too long (max 200 characters).');
+    assert.equal(svc.textProblem('', 'y'.repeat(6001), ''), 'The text is too long (max 6000 characters).');
+    assert.equal(svc.textProblem('', '', 'e'.repeat(1001)), 'The extra line is too long (max 1000 characters).');
+    assert.equal(svc.textProblem('ok', 'ok', ''), '');
+    assert.deepEqual([routes.SUBJECT_MAX, routes.BODY_MAX, routes.EXTRA_MAX], [200, 6000, 1000], 'one set of limits (the routes take the service\'s)');
+    assert.equal(S.posted.length + S.sent.length, 0);
+  } finally { S.restore(); }
+});
+
+test('readCaseNotes with the notes already read (seed): exactly the paged read\'s answer — under 100 notes no Monday read at all; 100+ continues at page 3; an old page stops as before; a seed that is not whole pages is not used', async () => {
+  const mk = (n, step = DAY_MS / 4) => Array.from({ length: n }, (_, i) => rendered(5000 - i, T0 - i * step, 'note ' + i));   // newest first
+  for (const [n, step, wantPages] of [[12, DAY_MS, []], [50, DAY_MS / 10, []], [100, DAY_MS / 10, [3]], [130, DAY_MS / 10, [3]], [100, 2 * DAY_MS, []], [180, DAY_MS / 10, [3, 4]]]) {
+    const S = staffStubs({ notes: mk(n, step) });
+    const c = countReads({ resolveCaseForWrite: async () => null });
+    try {
+      const fresh = await svc.readCaseNotes('4001', { now: T0 });
+      const freshPages = c.pages.slice(); c.reset();
+      const seedNotes = svc.rawNotes(mk(n, step).slice(0, 100));
+      const seeded = await svc.readCaseNotes('4001', { now: T0, seed: seedNotes, seedLimit: 100 });
+      assert.deepEqual(seeded, fresh, `${n} notes`);
+      assert.deepEqual(c.pages, wantPages, `${n} notes: only the pages past the seed are read (the paged read read pages ${freshPages})`);
+      c.reset();
+      const odd = await svc.readCaseNotes('4001', { now: T0, seed: seedNotes.slice(0, 70), seedLimit: 70 });
+      assert.deepEqual(odd, fresh);
+      assert.deepEqual(c.pages, freshPages, 'not whole pages: the plain paged read');
+    } finally { c.restore(); S.restore(); }
+  }
+});
+
+test('prepareCore / prepareHistory with reuse give the SAME facts as the fresh reads (the checklist rows and the newest notes of the same request) — without reading them again; a checklist that could not be read there is read again; the send never reuses', async () => {
+  const notes = Array.from({ length: 120 }, (_, i) => rendered(9000 - i, T0 - i * 3600e3, i === 7 ? svc.claimNote({ level: 1, to: 'a***@example.com', actor: 'Mahesh Sharma', count: 3, now: T0 - 7 * 3600e3 }) : 'note ' + i));
+  const S = staffStubs({ notes });
+  const c = countReads({ resolveCaseForWrite: async () => null });
+  try {
+    const fresh = await svc.prepareStaff({ overview: OV(), level: 2, now: T0 });
+    assert.deepEqual([c.summary, c.pages], [1, [1, 2, 3]]);
+    c.reset();
+    const ov = OV({ docItems: ITEMS, docsUnavailable: false, notes: svc.rawNotes(notes.slice(0, 100)), notesLimit: 100 });
+    const reused = await svc.prepareStaff({ overview: ov, level: 2, now: T0, reuse: true });
+    assert.deepEqual(reused, fresh, 'identical facts');
+    assert.deepEqual([c.summary, c.pages], [0, [3]], 'no checklist read; the notes continue at page 3 only');
+    assert.ok(fresh.warnings.some((w) => /Reminder 1 already went/.test(w)) || fresh.history.latest[1], 'the record was read');
+    c.reset();
+    const core = await svc.prepareCore({ overview: ov, reuse: true });
+    assert.deepEqual(core, { caseRef: fresh.caseRef, missing: fresh.missing, q: fresh.q, deadline: fresh.deadline });
+    assert.equal(c.summary + c.notes, 0, 'the email view\'s half reads nothing');
+    // the checklist read failed in the case read: read it again (never a "no rows" from a blip)
+    c.reset();
+    const again = await svc.prepareCore({ overview: { ...ov, docItems: [], docsUnavailable: true }, reuse: true });
+    assert.deepEqual([again.missing, c.summary], [fresh.missing, 1]);
+    // no reuse asked (the send): fresh reads even with the rows on the overview
+    c.reset();
+    await svc.prepareStaff({ overview: ov, level: 2, now: T0 });
+    assert.deepEqual([c.summary, c.pages], [1, [1, 2, 3]]);
+    c.reset();
+    await svc.sendStaffReminder({ overview: ov, level: 1, subject: 'x', body: '{MissingList}', actor: { name: 'Mahesh Sharma' } });
+    assert.ok(c.summary === 1 && c.pages.includes(1) && c.pages.includes(2), 'the send reads the checklist and the notes fresh');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'docReminderService.js'), 'utf8');
+    const sendFn = src.slice(src.indexOf('async function sendStaffReminder('), src.indexOf('// ─── The automatic daily email'));
+    assert.match(sendFn, /const p = await prepareStaff\(\{ overview, level: lv, now: t \}\);/, 'the send: no reuse, no kept facts');
+    assert.doesNotMatch(sendFn, /reuse|core:|prepCache|handle/);
+  } finally { c.restore(); S.restore(); }
+});
+
+test('docReminderPrepCache: tied to who + case + level; 2 minutes after the last use, 10 minutes after the full read at most; 200 entries, the least recently used goes first; who = the sign-in email or the shared key, never nobody', () => {
+  prepCache._resetForTests();
+  const keep = prepCache.io.now; let now = T0; prepCache.io.now = () => now;
+  try {
+    const put = (o = {}) => prepCache.put({ who: 'staff:mahesh@tdotimm.com', caseRef: REF, level: 1, assignees: { personIds: ['55'], teamIds: [] }, overview: OV({ junk: 'x', docItems: ITEMS }), core: { caseRef: REF }, ...o });
+    const h = put();
+    assert.match(h, HANDLE_RE);
+    const e = prepCache.take(h, { who: 'staff:mahesh@tdotimm.com', caseRef: REF.toLowerCase(), level: '1' });
+    assert.ok(e, 'case ref in any letter case, level as text');
+    assert.ok(!('junk' in e.overview) && !('docItems' in e.overview), 'only the gate + email fields are kept');
+    assert.deepEqual(Object.keys(e.overview).sort(), prepCache.OVERVIEW_FIELDS.filter((k) => k in OV()).sort());
+    for (const miss of [{ who: 'staff:deeksha@tdotimm.com', caseRef: REF, level: 1 }, { who: 'key', caseRef: REF, level: 1 }, { who: 'staff:mahesh@tdotimm.com', caseRef: '2026-TEST-002', level: 1 }, { who: 'staff:mahesh@tdotimm.com', caseRef: REF, level: 2 }, { who: '', caseRef: REF, level: 1 }])
+      assert.equal(prepCache.take(h, miss), null, JSON.stringify(miss));
+    assert.ok(prepCache.take(h, { who: 'staff:mahesh@tdotimm.com', caseRef: REF, level: 1 }), 'a miss by someone else does not end it');
+    assert.equal(prepCache.take('not-a-handle', { who: 'staff:mahesh@tdotimm.com', caseRef: REF, level: 1 }), null);
+    // sliding 2 minutes
+    now += prepCache.TTL_MS - 1;
+    assert.ok(prepCache.take(h, { who: 'staff:mahesh@tdotimm.com', caseRef: REF, level: 1 }), 'used inside 2 minutes: kept, and refreshed');
+    now += prepCache.TTL_MS;
+    assert.equal(prepCache.take(h, { who: 'staff:mahesh@tdotimm.com', caseRef: REF, level: 1 }), null, '2 minutes unused: gone');
+    assert.equal(prepCache.size(), 0);
+    // the 10-minute cap: used every minute, still gone 10 minutes after the full read
+    const h2 = put();
+    for (let m = 1; m < 10; m++) { now += 60e3; assert.ok(prepCache.take(h2, { who: 'staff:mahesh@tdotimm.com', caseRef: REF, level: 1 }), `minute ${m}`); }
+    now += 60e3;
+    assert.equal(prepCache.take(h2, { who: 'staff:mahesh@tdotimm.com', caseRef: REF, level: 1 }), null, 'never older than 10 minutes');
+    assert.deepEqual([prepCache.TTL_MS, prepCache.MAX_AGE_MS, prepCache.MAX_ENTRIES], [120000, 600000, 200]);
+    // LRU: 200 entries; the 201st pushes out the least recently used; a hit moves its entry to the end
+    prepCache._resetForTests();
+    const hs = Array.from({ length: 200 }, (_, i) => put({ level: 1 + (i % 3) }));
+    assert.equal(prepCache.size(), 200);
+    assert.ok(prepCache.take(hs[0], { who: 'staff:mahesh@tdotimm.com', caseRef: REF, level: 1 }), 'the oldest is used again');
+    put();
+    assert.equal(prepCache.size(), 200, 'never more than 200');
+    assert.ok(prepCache._entries.has(hs[0]), 'the one just used stays');
+    assert.ok(!prepCache._entries.has(hs[1]), 'the least recently used went');
+    // expired entries go first when there is room to make
+    now += prepCache.TTL_MS;
+    put();
+    assert.equal(prepCache.size(), 1, 'the expired ones were swept');
+    // dropCase / drop
+    put({ caseRef: '2026-TEST-002' });
+    const hOther = put({ caseRef: '2026-TEST-002', who: 'staff:deeksha@tdotimm.com' });
+    prepCache.drop(hOther, 'staff:mahesh@tdotimm.com');
+    assert.ok(prepCache._entries.has(hOther), 'drop with another person: kept');
+    prepCache.drop(hOther, 'staff:deeksha@tdotimm.com');
+    assert.ok(!prepCache._entries.has(hOther), 'drop by its own person: gone');
+    prepCache.dropCase(REF.toLowerCase());
+    assert.deepEqual([...prepCache._entries.values()].map((x) => x.caseRef), ['2026-TEST-002']);
+    // who
+    assert.deepEqual([prepCache.whoOf({ email: 'Mahesh@TDOTimm.com', isAdmin: false }), prepCache.whoOf({ email: '', isAdmin: true }), prepCache.whoOf({ email: '', isAdmin: false }), prepCache.whoOf(null)], ['staff:mahesh@tdotimm.com', 'key', '', '']);
+    assert.equal(prepCache.put({ who: '', caseRef: REF, level: 1 }), '', 'nobody: nothing kept');
+  } finally { prepCache.io.now = keep; prepCache._resetForTests(); }
+});
+
+test('routes (the pop-up\'s speed): the preview answers with `email` + a handle; an email-view ask with that handle reads NOTHING (no case gate, no checklist, no notes) and gives the same email as a full read; another person, case or level, 2 minutes unused, or 10 minutes after the read → the full read, and a renewed handle', async () => {
+  const S = staffStubs();
+  routes._resetForTests();
+  const keep = prepCache.io.now; let now = T0; prepCache.io.now = () => now;
+  const d = deps('staff');
+  const c = countReads(d);
+  try {
+    let res = fakeRes(); await routes.preview(req({ query: { level: '1' } }), res, d);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body).slice(0, 200));
+    const p = res.body;
+    assert.match(p.prepHandle, HANDLE_RE);
+    assert.deepEqual(Object.keys(p.email).sort(), ['html', 'ok', 'problems', 'subject', 'warnings']);
+    assert.equal(c.gate, 1);
+    const ask = (over = {}) => ({ level: 1, subject: p.subject, body: p.body, extra: '', lastDay: '', handle: p.prepHandle, ...over });
+    // the hit
+    c.reset();
+    res = fakeRes(); await routes.render(req({ body: ask() }), res, d);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual([c.gate, c.summary, c.notes], [0, 0, 0], 'no case read, no checklist read, no notes read');
+    assert.deepEqual({ ...res.body }, { ...p.email }, 'the same email the preview showed');
+    const edited = ask({ body: 'Edited.\n\n{MissingList}', extra: 'We still need <the lease>.' });
+    res = fakeRes(); await routes.render(req({ body: edited }), res, d);
+    const fast = res.body;
+    assert.deepEqual([c.gate, c.summary, c.notes], [0, 0, 0]);
+    // the same ask with no handle: a full read, the same answer
+    res = fakeRes(); await routes.render(req({ body: { ...edited, handle: undefined } }), res, d);
+    assert.deepEqual([c.gate, c.summary, c.notes], [1, 1, 0], 'the full read (the email view never reads the notes)');
+    assert.deepEqual(res.body, fast, 'the kept facts give byte for byte the same email');
+    assert.ok(!('prepHandle' in res.body), 'no handle asked, none given');
+    // the size limit and a text problem still answer on the quick path
+    c.reset();
+    res = fakeRes(); await routes.render(req({ body: ask({ subject: 'x'.repeat(201) }) }), res, d);
+    assert.deepEqual([res.statusCode, res.body.problems, c.gate], [200, ['The subject is too long (max 200 characters).'], 0]);
+    res = fakeRes(); await routes.render(req({ body: ask({ subject: 'Reply to this email' }) }), res, d);
+    assert.deepEqual([res.statusCode, res.body.html, c.gate], [200, '', 0]); assert.match(res.body.problems[0], /reply/);
+    // misses: another person, another case, another level → the full read (and that person's own handle back)
+    const other = { ...deps('staff'), resolveViewer: () => ({ isAdmin: false, email: 'deeksha@tdotimm.com' }), staffActor: () => ({ name: 'Deeksha Sharma', email: 'deeksha@tdotimm.com', verified: true }),
+      resolveCaseForWrite: async () => ({ viewer: { isAdmin: false, email: 'deeksha@tdotimm.com' }, overview: OV() }) };
+    const co = countReads(other);
+    try {
+      res = fakeRes(); await routes.render(req({ body: ask() }), res, other);
+      assert.deepEqual([res.statusCode, co.gate, co.summary], [200, 1, 1], 'another person: the full read');
+      assert.match(res.body.prepHandle, HANDLE_RE);
+      assert.notEqual(res.body.prepHandle, p.prepHandle);
+      assert.ok(prepCache._entries.has(p.prepHandle), 'someone else\'s ask never ends the owner\'s handle');
+      assert.equal(prepCache._entries.get(res.body.prepHandle).who, 'staff:deeksha@tdotimm.com');
+    } finally { co.restore(); }
+    c.reset();
+    res = fakeRes(); await routes.render(req({ params: { caseRef: '2026-TEST-002' }, body: ask() }), res, deps('staff', { overview: OV({ caseRef: '2026-TEST-002', itemId: '4002' }) }));
+    assert.equal(c.summary, 1, 'another case: the full read');
+    c.reset();
+    res = fakeRes(); await routes.render(req({ body: ask({ level: 2 }) }), res, d);
+    assert.deepEqual([c.gate, c.summary], [1, 1], 'another level: the full read');
+    // the shared key cannot use a staffer's handle either
+    res = fakeRes(); await routes.preview(req({ query: { level: '1' } }), res, d);
+    const h = res.body.prepHandle;
+    c.reset();
+    const key = deps('admin'); const ck = countReads(key);
+    try { res = fakeRes(); await routes.render(req({ body: ask({ handle: h }) }), res, key); assert.equal(ck.gate, 1); } finally { ck.restore(); }
+    // 2 minutes unused → the full read, and a renewed handle the pop-up takes up
+    res = fakeRes(); await routes.preview(req({ query: { level: '1' } }), res, d);
+    const h3 = res.body.prepHandle;
+    now += prepCache.TTL_MS;
+    c.reset();
+    res = fakeRes(); await routes.render(req({ body: ask({ handle: h3 }) }), res, d);
+    assert.deepEqual([c.gate, c.summary], [1, 1], 'expired: the full read');
+    const renewed = res.body.prepHandle;
+    assert.match(renewed, HANDLE_RE);
+    c.reset();
+    res = fakeRes(); await routes.render(req({ body: ask({ handle: renewed }) }), res, d);
+    assert.deepEqual([c.gate, c.summary], [0, 0], 'the renewed handle is quick again');
+    // the 10-minute cap from the full read, however often it is used
+    for (let m = 0; m < 9; m++) { now += 60e3; res = fakeRes(); await routes.render(req({ body: ask({ handle: renewed }) }), res, d); }
+    assert.deepEqual([c.gate, c.summary], [0, 0]);
+    now += 60e3; c.reset();
+    routes._renders.clear();   // the per-minute limit is not what this checks
+    res = fakeRes(); await routes.render(req({ body: ask({ handle: renewed }) }), res, d);
+    assert.deepEqual([c.gate, c.summary], [1, 1], '10 minutes after the full read: read again');
+    assert.equal(S.posted.length + S.sent.length + S.deleted.length, 0, 'nothing written, nothing sent');
+  } finally { c.restore(); prepCache.io.now = keep; S.restore(); routes._resetForTests(); }
+});
+
+test('routes (the pop-up\'s speed): the quick path still checks — a stranger is a 401 before the handle is looked at; a staffer no longer assigned falls to the full read (its 403); the reminder gate runs on the kept facts (a locked case answers 409 and the handle is dropped); a gate refusal on the full read drops the handle', async () => {
+  const S = staffStubs();
+  routes._resetForTests();
+  const keepVis = process.env.CASE_VISIBILITY;
+  try {
+    const assigned = OV({ assignees: { personIds: ['55'], teamIds: [] } });
+    const me = (userId) => ({ ...deps('staff', { overview: assigned }), resolveViewer: () => ({ isAdmin: false, email: 'mahesh@tdotimm.com', userId, teamIds: [] }) });
+    let res = fakeRes(); await routes.preview(req({ query: { level: '1' } }), res, me('55'));
+    const h = res.body.prepHandle;
+    const body = { level: 1, subject: 'Docs', body: '{MissingList}', handle: h };
+    // a stranger: 401, the handle is not even looked at (and stays for its owner)
+    const stranger = { ...deps('none') };
+    res = fakeRes(); await routes.render(req({ body }), res, stranger);
+    assert.equal(res.statusCode, 401);
+    assert.equal(prepCache.size(), 1);
+    // assignment checked again against the kept assignees (only with the assigned-only policy)
+    process.env.CASE_VISIBILITY = 'assigned';
+    const moved = me('66'); const c = countReads(moved);
+    try {
+      res = fakeRes(); await routes.render(req({ body }), res, moved);
+      assert.equal(c.gate, 1, 'not on the kept assignees: the full read decides (the server answers 403 there)');
+      assert.ok(!prepCache._entries.has(h), 'and the handle is dropped');
+    } finally { c.restore(); }
+    // the reminder gate runs on the kept facts every time
+    const lockedH = prepCache.put({ who: 'staff:mahesh@tdotimm.com', caseRef: REF, level: 1, assignees: { personIds: ['55'], teamIds: [] }, overview: OV({ automationLock: 'Yes' }), core: { caseRef: REF, missing: svc.missingFromItems(ITEMS), q: null, deadline: {} } });
+    const mine = me('55'); const c2 = countReads(mine);
+    try {
+      res = fakeRes(); await routes.render(req({ body: { ...body, handle: lockedH } }), res, mine);
+      assert.deepEqual([res.statusCode, res.body.reason, c2.gate], [409, 'locked', 0]);
+      assert.ok(!prepCache._entries.has(lockedH), 'a refused handle is dropped');
+    } finally { c2.restore(); }
+    // a refusal on the full read drops the handle it came with
+    process.env.CASE_VISIBILITY = 'all';
+    res = fakeRes(); await routes.preview(req({ query: { level: '1' } }), res, me('55'));
+    const h2 = res.body.prepHandle;
+    const refusedFull = { ...me('55'), resolveCaseForWrite: async (rq, rs) => { rs.status(403).json({ ok: false, error: 'You are not assigned to this case.' }); return null; } };
+    prepCache.io.now = () => Date.now() + prepCache.TTL_MS;   // expired, so the full read runs
+    try { res = fakeRes(); await routes.render(req({ body: { ...body, handle: h2 } }), res, refusedFull); } finally { prepCache.io.now = () => Date.now(); }
+    assert.equal(res.statusCode, 403);
+    assert.ok(!prepCache._entries.has(h2));
+  } finally { if (keepVis === undefined) delete process.env.CASE_VISIBILITY; else process.env.CASE_VISIBILITY = keepVis; S.restore(); routes._resetForTests(); }
+});
+
+test('routes (the pop-up\'s speed): the SEND never uses the kept facts — a handle in its body is ignored: the fresh gate, the fresh checklist, the fresh notes, the race check; afterwards the case\'s kept facts are gone (also after a refusal)', async () => {
+  const S = staffStubs();
+  routes._resetForTests();
+  const d = deps('staff');
+  const c = countReads(d);
+  try {
+    let res = fakeRes(); await routes.preview(req({ query: { level: '1' } }), res, d);
+    const h = res.body.prepHandle;
+    assert.equal(prepCache.size(), 1);
+    c.reset();
+    res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'Docs', body: '{MissingList}', handle: h } }), res, d);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    assert.equal(c.gate, 1, 'the fresh gate');
+    assert.equal(c.summary, 1, 'the fresh checklist');
+    assert.ok(c.pages.filter((pg) => pg === 1).length >= 2, 'the fresh notes AND the race check re-read');
+    assert.equal(S.sent.length, 1);
+    assert.equal(prepCache.size(), 0, 'the case\'s kept facts are dropped after the send');
+    // after a refusal too
+    routes._resetForTests();
+    res = fakeRes(); await routes.preview(req({ query: { level: '1' } }), res, d);
+    res = fakeRes(); await routes.send(req({ body: { level: 3, subject: 'Docs', body: '{MissingList}', lastDay: '' } }), res, d);
+    assert.equal(res.statusCode, 400);
+    assert.equal(prepCache.size(), 0);
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'docReminderRoutes.js'), 'utf8');
+    const sendFn = src.slice(src.indexOf('async function send('), src.indexOf('// ─── The pop-up\'s live view'));
+    assert.doesNotMatch(sendFn, /body\.handle|prepCache\.take|readFacts|\{ read:/, 'the send reads no handle and uses the full case read');
+    assert.match(sendFn, /const ctx = await deps\.resolveCaseForWrite\(req, res, caseRef\);/);
+    // server.js: the preview and the email view read the narrower facts, the send the whole overview
+    const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+    assert.match(server, /async function resolveCaseForWrite\(req, res, caseRef, \{ read \} = \{\}\) \{/);
+    assert.match(server, /try \{ overview = await \(read \|\| caseCockpitService\.getCaseOverview\)\(caseRef\); \}/);
+    assert.match(src, /const readFacts = \(deps\) => deps\.readFacts \|\| require\('\.\.\/services\/caseCockpitService'\)\.getReminderFacts;/);
+  } finally { c.restore(); S.restore(); routes._resetForTests(); }
 });

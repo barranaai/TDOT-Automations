@@ -773,11 +773,15 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
 // Shared gate for cockpit WRITE actions: resolve the viewer + confirm they're
 // assigned to (or admin for) this case, returning the case overview so callers
 // can derive the linked lead server-side (never trust a client-supplied leadId).
-async function resolveCaseForWrite(req, res, caseRef) {
+// `read` (optional): a narrower FRESH case read for a caller that needs less than the
+// whole overview — the reminder pop-up's preview and email view pass
+// caseCockpitService.getReminderFacts (the same gate facts, assignees included, without
+// the family / lead / sponsor reads). The sign-in and assignment checks are the same.
+async function resolveCaseForWrite(req, res, caseRef, { read } = {}) {
   const viewer = resolveViewer(req);
   if (!viewer) { res.status(401).json({ ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' }); return null; }
   let overview;
-  try { overview = await caseCockpitService.getCaseOverview(caseRef); }
+  try { overview = await (read || caseCockpitService.getCaseOverview)(caseRef); }
   catch (err) { res.status(/not found/i.test(err.message || '') ? 404 : 500).json({ ok: false, error: err.message }); return null; }
   if (!viewer.isAdmin && !caseAccess.viewerCanSee(overview.assignees, viewer)) {
     res.status(403).json({ ok: false, error: 'You are not assigned to this case.' }); return null;

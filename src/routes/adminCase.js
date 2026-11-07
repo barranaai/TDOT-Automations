@@ -200,6 +200,14 @@ function buildCockpitHTML(caseRef) {
     .rem-mail-note { font-size:11.5px; color:var(--light); margin-top:6px; line-height:1.5; }
     .rem-mail-subj { font-size:13px; color:var(--navy); margin:0 0 8px; overflow-wrap:anywhere; }
     .rem-mail-subj .k { color:var(--muted); margin-right:6px; }
+    /* The pop-up opens at once with a spinner while the email is prepared (Faran 2026-11-07); a small one beside "Updating…". */
+    .rem-loading { display:flex; align-items:center; justify-content:center; min-height:220px; font-size:14px; color:var(--navy); text-align:center; }
+    .rem-spin { display:inline-block; flex:none; width:16px; height:16px; box-sizing:border-box; border:2px solid #e2e8f0; border-top-color:var(--navy); border-radius:50%; vertical-align:-3px; margin-right:8px; animation:spin .7s linear infinite; }
+    .rem-spin[hidden] { display:none; }
+    .rem-loading .rem-spin { width:28px; height:28px; border-width:3px; margin-right:12px; }
+    .rem-mail-spin { width:12px; height:12px; margin:0 0 0 6px; vertical-align:-2px; }
+    .rem-load-err { font-size:13.5px; color:#991b1b; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:12px 14px; margin:14px 0; line-height:1.5; }
+    @media (prefers-reduced-motion: reduce) { .rem-spin { display:none; } }
     @media (min-width: 901px) {
       .tdlg.rem-dlg { max-width:1180px; }
       .rem-split { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:20px; align-items:start; }
@@ -1189,25 +1197,61 @@ function renderReminders(rm) {
     Array.prototype.forEach.call(c.querySelectorAll('[data-rem-level]'), function(b) { b.onclick = function() { remOpen(Number(b.getAttribute('data-rem-level'))); }; });
   });
 }
+// a 401: sign in again and come back to this case (the server's own returnTo points at the dashboard)
+function remSignInHtml(res) {
+  var login = ((res.j && res.j.loginUrl) || '/q/auth/monday').split('?')[0] + '?returnTo=' + encodeURIComponent(location.pathname + location.search);
+  return escHtml((res.j && res.j.error) || 'Please sign in again.') + ' <a href="' + escHtml(login) + '">Sign in with Monday</a>';
+}
 function remFail(res, fallback) {
   if (res.status === 401) {
-    var login = ((res.j && res.j.loginUrl) || '/q/auth/monday').split('?')[0] + '?returnTo=' + encodeURIComponent(location.pathname + location.search);   // come back to this case (the server's own returnTo points at the dashboard)
-    Array.prototype.forEach.call(document.querySelectorAll('.rem-msg'), function(el) { el.className = 'act-msg rem-msg err'; el.innerHTML = escHtml((res.j && res.j.error) || 'Please sign in again.') + ' <a href="' + escHtml(login) + '">Sign in with Monday</a>'; });
+    Array.prototype.forEach.call(document.querySelectorAll('.rem-msg'), function(el) { el.className = 'act-msg rem-msg err'; el.innerHTML = remSignInHtml(res); });
     return;
   }
   remMsg('err', res.status === 403 ? 'You are not assigned to this case.' : ((res.j && res.j.error) || fallback));
 }
+function remTitle(level) { return level === 3 ? 'Send the final reminder' : 'Send reminder ' + level + (level === 1 ? ' · friendly' : ' · firm'); }
+// the three buttons on both cards: off while a pop-up is loading or open (no second one), back on when it closes
+function remButtons(off) {
+  Array.prototype.forEach.call(document.querySelectorAll('[data-rem-level]'), function(b) { b.disabled = !!off; });
+}
+// the pop-up before the email is ready: the title, the To line, and what is happening (a spinner + words, or the reason it failed)
+function remShell(c, level, to, inner) {
+  c.box.innerHTML = '<h3>' + escHtml(remTitle(level)) + '</h3>' +
+    '<div class="rem-to"><span class="k">To</span>' + escHtml(to) + '</div>' + inner +
+    '<div class="tdlg-actions"><button type="button" class="sbtn" data-x="1" id="rem-cancel">Close</button></div>';
+  c.box.querySelector('#rem-cancel').onclick = function() { c.tryClose('cancel'); };
+}
+// the preview could not be prepared: the reason inside the pop-up (never a silent nothing), with Close
+function remDialogFail(c, level, res, fallback) {
+  var msg = res.status === 401 ? remSignInHtml(res) : escHtml(res.status === 403 ? 'You are not assigned to this case.' : ((res.j && res.j.error) || fallback));
+  remShell(c, level, '…', '<div class="rem-load-err" role="alert">' + msg + '</div>');
+}
+// a click opens the pop-up AT ONCE with a spinner (reading the case takes a few seconds); the email replaces it when the preview answers
 function remOpen(level) {
+  if (REM_OPEN) return;   // a pop-up is already loading or open: no second one
+  REM_OPEN = true;        // and a reload in the meantime does not redraw the card under it
+  remButtons(true);
+  remMsg('', '');
+  var c = tdotDialogNew({ cls: 'rem-dlg', ovClass: 'rem-ov', group: 'rem', onClosed: function() {
+    REM_OPEN = false;
+    remButtons(false);   // the buttons work again (a redraw below sets them from the facts)
+    if (c && c.remTimer) { clearTimeout(c.remTimer); c.remTimer = null; }   // no email view is asked for after the close
+    // a failed attempt was noted on the case while the dialog was open: read the case again so the card shows it (never the facts from before the send)
+    if (REM_STALE) { REM_STALE = false; loadCase(); return; }
+    if (REM_LAST) renderReminders(REM_LAST);
+  } });
+  remShell(c, level, '…', '<div class="rem-loading" id="rem-loading" role="status" aria-live="polite"><span class="rem-spin" aria-hidden="true"></span>Preparing the email…</div>');
+  var id = c.openId;
   var key = peekKey();
   var headers = key ? { 'X-Api-Key': key } : {};
-  remMsg('info', 'Preparing the preview…');
   fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/reminder/preview?level=' + encodeURIComponent(level), { headers: headers, credentials: 'same-origin' })
   .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
   .then(function(res) {
-    if (!res.ok) { remFail(res, 'The preview could not be prepared.'); return; }
-    remMsg('', ''); remDialog(level, res.j);
+    if (!c.still(id)) return;   // closed while it loaded: nothing to fill
+    if (!res.ok) { remDialogFail(c, level, res, 'The preview could not be prepared.'); return; }
+    remDialog(c, level, res.j);
   })
-  .catch(function(e) { remMsg('err', 'Failed: ' + e.message); });
+  .catch(function(e) { if (!c.still(id)) return; remDialogFail(c, level, { status: 0, j: { error: 'Failed: ' + e.message } }, ''); });
 }
 function remMissingHtml(missing) {
   var groups = (missing && missing.groups) || [], list = '';
@@ -1231,16 +1275,10 @@ function remQuestionnaireHtml(q) {
   if (q.done || !(q.pending && q.pending.length)) return '<div class="muted">The questionnaire is complete.</div>';
   return '<ul class="rem-list">' + q.pending.map(function(m) { return '<li>' + escHtml(m.line || m.label || '') + '</li>'; }).join('') + '</ul>';
 }
-function remDialog(level, p) {
-  var title = level === 3 ? 'Send the final reminder' : 'Send reminder ' + level + (level === 1 ? ' · friendly' : ' · firm');
-  var c = tdotDialogNew({ cls: 'rem-dlg', ovClass: 'rem-ov', group: 'rem', onClosed: function() {
-    REM_OPEN = false;
-    if (c && c.remTimer) { clearTimeout(c.remTimer); c.remTimer = null; }   // no email view is asked for after the close
-    // a failed attempt was noted on the case while the dialog was open: read the case again so the card shows it (never the facts from before the send)
-    if (REM_STALE) { REM_STALE = false; loadCase(); return; }
-    if (REM_LAST) renderReminders(REM_LAST);
-  } });
-  REM_OPEN = true;
+// the preview's answer fills the pop-up that is already open (remOpen)
+function remDialog(c, level, p) {
+  var title = remTitle(level);
+  c.remHandle = p.prepHandle || '';   // the email view's asks carry it: the server reuses what this preview read (never the send)
   var warn = (p.warnings || []).map(function(w) { return '<div class="rem-warn">⚠ ' + escHtml(w) + '</div>'; }).join('');
   var html = '<h3>' + escHtml(title) + '</h3>' +
     '<div class="rem-to"><span class="k">To</span>' + escHtml(p.to || '') + ' <span class="muted">· ' + escHtml(p.deadlineLine || '') + '</span></div>' +
@@ -1255,7 +1293,7 @@ function remDialog(level, p) {
     '<div class="rem-lbl">Missing documents <span class="muted">(' + escHtml(String(p.missingCount || 0)) + ' — inserted by the app, read-only)</span></div><div class="rem-missing">' + remMissingHtml(p.missing) + '</div>' +
     (p.questionnaire && !p.questionnaire.unavailable ? '<div class="rem-lbl">Questionnaire still to finish <span class="muted">(inserted by the app, read-only)</span></div><div class="rem-q">' + remQuestionnaireHtml(p.questionnaire) + '</div>' : '') +
     '</div><div class="rem-mail">' +
-    '<div class="rem-lbl">The email as the client will see it <span class="rem-mail-state muted" id="rem-mail-state">Updating…</span></div>' +
+    '<div class="rem-lbl">The email as the client will see it <span class="rem-spin rem-mail-spin" id="rem-mail-spin" aria-hidden="true"></span><span class="rem-mail-state muted" id="rem-mail-state">Updating…</span></div>' +
     '<div id="rem-mail-prob"></div>' +
     '<div class="rem-mail-subj" id="rem-mail-subj"><span class="k">Subject</span><span id="rem-mail-subj-text"></span></div>' +
     '<iframe class="rem-frame" id="rem-frame" sandbox="" tabindex="-1" title="The email as the client will see it"></iframe>' +
@@ -1281,7 +1319,8 @@ function remDialog(level, p) {
   c.box.querySelector('#rem-tab-mail').onclick = function() { remPane(c, true); };
   c.box.querySelector('#rem-cancel').onclick = function() { c.tryClose('cancel'); };
   c.box.querySelector('#rem-send').onclick = function() { remSend(c, level, read()); };
-  remRenderNow(c, level, read());
+  // the first email view came with the preview (one round trip); an older server without it: ask for it
+  if (p.email) remShowMail(c, p.email); else remRenderNow(c, level, read());
   try { subj.focus(); } catch (e) {}
 }
 // narrow screens: "Edit" or "See email" (wide screens show both side by side — the CSS ignores the switch there)
@@ -1295,6 +1334,8 @@ var REM_RENDER_WAIT = 600;   // ms of no typing before the email view is asked f
 function remMailState(c, cls, txt) {
   var el = c.box.querySelector('#rem-mail-state');
   el.className = 'rem-mail-state ' + cls; el.textContent = txt;
+  var spin = c.box.querySelector('#rem-mail-spin');
+  if (spin) spin.hidden = txt !== 'Updating…';   // the small spinner only while an update is on its way
 }
 function remRenderSoon(c, level, read) {
   if (c.remTimer) clearTimeout(c.remTimer);
@@ -1310,7 +1351,9 @@ function remRenderNow(c, level, v) {
   remMailState(c, 'muted', 'Updating…');
   var key = peekKey();
   var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
-  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/reminder/render', { method: 'POST', headers: headers, credentials: 'same-origin', body: JSON.stringify({ level: level, subject: v.subject, body: v.body, extra: v.extra, lastDay: v.lastDay }) })
+  var ask = { level: level, subject: v.subject, body: v.body, extra: v.extra, lastDay: v.lastDay };
+  if (c.remHandle) ask.handle = c.remHandle;   // the preview's kept facts: the server builds the email without reading the case again
+  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/reminder/render', { method: 'POST', headers: headers, credentials: 'same-origin', body: JSON.stringify(ask) })
   .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
   .then(function(res) {
     if (!c.still(id) || seq !== c.remSeq) return;   // closed, or a newer edit has been asked for since: this answer is out of date
@@ -1324,6 +1367,7 @@ function remRenderNow(c, level, v) {
       }
       return;
     }
+    if (res.j.prepHandle) c.remHandle = res.j.prepHandle;   // the old one had run out: the server read the case again and kept it under a new one
     remShowMail(c, res.j);
   })
   .catch(function() { if (!c.still(id) || seq !== c.remSeq) return; remMailState(c, 'rem-mail-fail', 'The preview could not be updated — the text you typed is kept.'); });

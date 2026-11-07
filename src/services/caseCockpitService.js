@@ -316,35 +316,51 @@ async function getLeadExtras(itemId, caseRef) {
 }
 
 /**
- * Aggregate one case into a single overview snapshot for the staff cockpit.
- * @param {string} caseRef
- * @returns {Promise<object>} the unified snapshot (throws only if the case itself can't be resolved)
+ * The part of the case read the reminder pop-up needs (the gate, the email, the card's
+ * facts) — and the first half of getCaseOverview, so the two can never drift apart.
+ *
+ * The reads that do not wait for each other run together (2026-11-07, the pop-up took
+ * ~10 s per ask): the checklist summary needs only the case ref, so it starts at once,
+ * beside the case lookup; after the lookup the Client Master row (with its notes) and
+ * the questionnaire (the member list, then the member files) run side by side. The SAME
+ * reads as before, only no longer one after the other.
+ *
+ * `afterLookup(validated)` (optional) is called once the case is found, so the full
+ * overview can start its own extra reads (the lead) at the same moment.
+ *
+ * Besides the overview fields it hands back the raw inputs the reminders reuse inside the
+ * same request (never a second read): docItems / docsUnavailable (the checklist rows) and
+ * notes / notesLimit (the newest CM_NOTES_LIMIT notes) — plus the Client Master row, the
+ * member list and the member statuses for getCaseOverview (the _ fields). getReminderFacts strips those back off.
  */
-async function getCaseOverview(caseRef) {
+async function readReminderCore(caseRef, { afterLookup } = {}) {
+  // _unavailable: the Reminders card says "could not be read", never "no rows" (review 2026-11-07)
+  const docP = documentFormSvc.getCaseSummary(caseRef).catch((e) => { console.warn(`[Cockpit] doc read failed for ${caseRef}: ${e.message}`); return { items: [], _unavailable: true }; });
   const validated = await htmlQ.validateAccessForStaff(caseRef); // throws if case not found
   const { itemId, clientName, caseType, caseSubType, accessToken, formFiles } = validated;
+  if (afterLookup) afterLookup(validated);
   let qUnavailable = false;   // set by the questionnaire reads below
-
-  // Fan out the independent reads; degrade each section to empty on failure.
-  const [cm, docSummary, composition, members] = await Promise.all([
-    readClientMaster(itemId).catch((e) => { console.warn(`[Cockpit] CM read failed for ${caseRef}: ${e.message}`); return { _unavailable: true }; }),
-    documentFormSvc.getCaseSummary(caseRef).catch((e) => { console.warn(`[Cockpit] doc read failed for ${caseRef}: ${e.message}`); return { items: [], _unavailable: true }; }),   // _unavailable: the Reminders card says "could not be read", never "no rows" (review 2026-11-07)
-    compositionAdapter.readForCase(caseRef).catch((e) => { console.warn(`[Cockpit] family read failed for ${caseRef}: ${e.message}`); return { members: [] }; }),
-    htmlQ.loadMembers({ clientName, caseRef }).catch((e) => { console.warn(`[Cockpit] members read failed for ${caseRef}: ${e.message}`); qUnavailable = true; return []; }),
-  ]);
 
   // Questionnaire member statuses (needs the member list + form files).
   // qUnavailable: the member list or a member file could not be read — the
   // reminders then leave the questionnaire out (never a nudge on a blip — the
   // portal's qUnavailable rule); the page still shows the degraded statuses.
-  let qMembers = [];
-  try {
-    qMembers = await htmlQ.getMemberStatuses({ clientName, caseRef, members, formFiles });
-  } catch (e) {
-    console.warn(`[Cockpit] q-status read failed for ${caseRef}: ${e.message}`);
-    qUnavailable = true;
-    qMembers = members.map((m) => ({ ...m, status: m.submittedAt ? 'Submitted' : 'Not Started', hasData: false, hasAdditionalData: false, completionPct: 0 }));
-  }
+  const membersP = htmlQ.loadMembers({ clientName, caseRef }).catch((e) => { console.warn(`[Cockpit] members read failed for ${caseRef}: ${e.message}`); qUnavailable = true; return []; });
+  const qP = membersP.then(async (members) => {
+    try {
+      return await htmlQ.getMemberStatuses({ clientName, caseRef, members, formFiles });
+    } catch (e) {
+      console.warn(`[Cockpit] q-status read failed for ${caseRef}: ${e.message}`);
+      qUnavailable = true;
+      return members.map((m) => ({ ...m, status: m.submittedAt ? 'Submitted' : 'Not Started', hasData: false, hasAdditionalData: false, completionPct: 0 }));
+    }
+  });
+  // Fan out the independent reads; degrade each section to empty on failure.
+  const [cm, docSummary, members, qMembers] = await Promise.all([
+    readClientMaster(itemId).catch((e) => { console.warn(`[Cockpit] CM read failed for ${caseRef}: ${e.message}`); return { _unavailable: true }; }),
+    docP, membersP, qP,
+  ]);
+
   const questionnaire = {
     members:   require('../utils/familyRoleLabels').decorateMembers(caseType, qMembers, caseSubType).map((m) => ({ key: m.key, type: m.type, badge: m.badge || '', label: m.label, status: m.status, hasData: !!m.hasData, hasAdditionalData: !!m.hasAdditionalData, completionPct: Number(m.completionPct) || 0, submittedAt: torontoWallClock(m.submittedAt) })),
     submitted: qMembers.filter((m) => m.status === 'Submitted').length,
@@ -355,12 +371,73 @@ async function getCaseOverview(caseRef) {
     embedsAllMembers: require('../../config/questionnaireFormMap').formEmbedsMembers(caseType, caseSubType),   // spousal F10: one form for everyone — the principal's submission is the questionnaire [1]
   };
 
-  const documents = summariseDocuments(docSummary.items || []);
+  const unavailable = cm._unavailable === true;
+  return {
+    caseRef,
+    itemId,
+    clientName,
+    caseType:    caseType || '—',
+    caseSubType: caseSubType || null,
+    accessToken,
+    cmUnavailable:   unavailable,
+    clientEmail:     cm.clientEmail || '',
+    assignees:       cm.assignees || { personIds: [], teamIds: [] }, // for per-user access control
+    group:           cm.group || { id: '', title: '' },
+    automationLock:  unavailable ? '' : (cm.automationLock || ''),
+    manualOverride:  unavailable ? '' : (cm.manualOverride || ''),
+    caseStage:       unavailable ? '' : (cm.caseStage || 'Not Started'),
+    paymentStatus:   unavailable ? '' : (cm.paymentStatus || 'Unpaid'),
+    clientDeadlineRaw: cm.clientDeadlineRaw || { type: '', actualDeadline: '', promisedSubmissionDate: '' },
+    escalationLastNotified: unavailable ? '' : (cm.escalationLastNotified || ''),
+    questionnaire,
+    // the raw inputs (reused inside the same request, never sent to the page)
+    docItems:        docSummary.items || [],
+    docsUnavailable: docSummary._unavailable === true,
+    notes:           cm.notes || [],
+    notesLimit:      CM_NOTES_LIMIT,
+    _cm: cm, _members: members, _qMembers: qMembers, _rawCaseType: caseType, _rawCaseSubType: caseSubType,
+  };
+}
 
+/** The fields readReminderCore adds for its callers only — never part of an answer. */
+const CORE_ONLY = ['_cm', '_members', '_qMembers', '_rawCaseType', '_rawCaseSubType'];
+
+/**
+ * The reminder pop-up's case read (preview and the email view): the gate facts, the email
+ * fields, the questionnaire, and the raw checklist rows + newest notes — without the
+ * family, lead, payments, sponsor and timeline reads the pop-up never uses (those were
+ * six Monday/OneDrive reads in a row, ~40% of each ask). The same values as the same
+ * fields of getCaseOverview (a test holds them equal). The SEND keeps getCaseOverview.
+ */
+async function getReminderFacts(caseRef) {
+  const core = await readReminderCore(caseRef);
+  for (const k of CORE_ONLY) delete core[k];
+  return core;
+}
+
+/**
+ * Aggregate one case into a single overview snapshot for the staff cockpit.
+ * @param {string} caseRef
+ * @returns {Promise<object>} the unified snapshot (throws only if the case itself can't be resolved)
+ */
+async function getCaseOverview(caseRef) {
+  // the family board read needs only the case ref: it runs beside everything else
+  const compositionP = compositionAdapter.readForCase(caseRef).catch((e) => { console.warn(`[Cockpit] family read failed for ${caseRef}: ${e.message}`); return { members: [] }; });
   // ── Lead link → meetings, payments, timeline (all best-effort) ────────────
   // The lead is the pre-handoff record; legacy cases may have none, and each
-  // section degrades to null/empty rather than failing the page.
-  const { lead, payments } = await getLeadExtras(itemId, caseRef);
+  // section degrades to null/empty rather than failing the page. It needs only
+  // the Client Master id, so it starts as soon as the case is found.
+  let leadP = null;
+  const core = await readReminderCore(caseRef, { afterLookup: (v) => { leadP = getLeadExtras(v.itemId, caseRef); } });
+  const { itemId, clientName, accessToken, questionnaire, group, automationLock, manualOverride, caseStage, paymentStatus, clientDeadlineRaw } = core;
+  const cm = core._cm, members = core._members, qMembers = core._qMembers;
+  const caseType = core._rawCaseType, caseSubType = core._rawCaseSubType;
+  const docSummary = { items: core.docItems, _unavailable: core.docsUnavailable };
+  const composition = await compositionP;
+
+  const documents = summariseDocuments(docSummary.items || []);
+
+  const { lead, payments } = await leadP;
 
   // ── Sponsor / inviter (best-effort) ───────────────────────────────────────
   // Who the in-Canada partner is, whether their portal email went out, and
@@ -386,12 +463,6 @@ async function getCaseOverview(caseRef) {
   // The three buttons + the "Sent:" line; the record is the case's notes (read
   // with the Client Master columns). Hidden with its reason when the case has
   // no email / no access code / no checklist rows, or the CM read failed.
-  const group = cm.group || { id: '', title: '' };
-  const automationLock = cm._unavailable ? '' : (cm.automationLock || '');
-  const manualOverride = cm._unavailable ? '' : (cm.manualOverride || '');
-  const caseStage = cm._unavailable ? '' : (cm.caseStage || 'Not Started');
-  const paymentStatus = cm._unavailable ? '' : (cm.paymentStatus || 'Unpaid');
-  const clientDeadlineRaw = cm.clientDeadlineRaw || { type: '', actualDeadline: '', promisedSubmissionDate: '' };
   const reminders = require('./docReminderService').describeForCase({
     overview: { cmUnavailable: cm._unavailable === true, clientEmail: cm.clientEmail || '', accessToken, group, automationLock, manualOverride, caseStage, paymentStatus },
     items: docSummary.items || [],
@@ -416,7 +487,7 @@ async function getCaseOverview(caseRef) {
     cmUnavailable:   cm._unavailable === true,
     clientEmail:     cm.clientEmail || '',
     manager:         cm.manager || 'Unassigned',
-    assignees:       cm.assignees || { personIds: [], teamIds: [] }, // for per-user access control
+    assignees:       core.assignees, // for per-user access control
     paymentStatus,
     caseStage,
     health:          cm.health || '—',
@@ -427,7 +498,7 @@ async function getCaseOverview(caseRef) {
     group,                      // the board group ({ id, title }) — a reminder goes only from a live case group
     automationLock,             // 'Yes' = the reminders refuse (the ladder's own gate)
     manualOverride,             // 'Yes' = the reminders refuse (plan §3b condition 4)
-    escalationLastNotified: cm._unavailable ? '' : (cm.escalationLastNotified || ''),   // the escalation engine's rule-match stamp — a preview warning on the buttons only
+    escalationLastNotified: core.escalationLastNotified,   // the escalation engine's rule-match stamp — a preview warning on the buttons only
     reminders,                  // the Reminders card: { available, reason, message, canSend, blocked, sent, auto, failures }
     // Questionnaire % from the SAVED ANSWERS when they could be read (the
     // Monday number used to be written only at Submit); Monday is the fallback.
@@ -453,4 +524,4 @@ async function getCaseOverview(caseRef) {
   };
 }
 
-module.exports = { getCaseOverview, getLeadExtras, buildTimeline, summariseDocuments, pickLeadFields, readClientMaster, _CM: CM };
+module.exports = { getCaseOverview, getReminderFacts, readReminderCore, getLeadExtras, buildTimeline, summariseDocuments, pickLeadFields, readClientMaster, _CM: CM };

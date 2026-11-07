@@ -476,13 +476,15 @@ function remSandbox({ responses = [], renderAnswer = () => ({ status: 200, body:
   const cards = [cardEl(), cardEl()];
   const msgs = [{ className: '', textContent: '', innerHTML: '' }, { className: '', textContent: '', innerHTML: '' }];
   const fetches = [], queue = responses.slice(), renders = [], timers = [];
+  // the card buttons as document.querySelectorAll('[data-rem-level]') finds them (the pop-up turns them off while it loads / is open)
+  const remBtns = [1, 2, 3].map((n) => ({ level: n, disabled: false }));
   let timerId = 0;
   let loads = 0;
   const dialogs = [];
   const ctx = {
     CASE_REF: PAGE_REF, JSON, encodeURIComponent, String, Number, Array, Boolean,
     location: { pathname: '/admin/case/' + PAGE_REF, search: '' },
-    document: { querySelectorAll: (sel) => (sel === '.rem-card' ? cards : sel === '.rem-msg' ? msgs : []) },
+    document: { querySelectorAll: (sel) => (sel === '.rem-card' ? cards : sel === '.rem-msg' ? msgs : sel === '[data-rem-level]' ? remBtns : []) },
     peekKey: () => '', loadCase: () => { loads++; },
     tdotDialogNew(opts) {
       const els = {};
@@ -506,14 +508,15 @@ function remSandbox({ responses = [], renderAnswer = () => ({ status: 200, body:
       const next = queue.shift();
       if (!next) return Promise.reject(new Error('no scripted answer'));
       if (next === 'network') return Promise.reject(new TypeError('Failed to fetch'));
-      return Promise.resolve({ ok: next.status < 300, status: next.status, json: () => Promise.resolve(next.body) });
+      const answer = Promise.resolve({ ok: next.status < 300, status: next.status, json: () => Promise.resolve(next.body) });
+      return next.gate ? next.gate.then(() => answer) : answer;   // gate: the answer is held back until the test lets it go
     },
   };
   vm.createContext(ctx);
   vm.runInContext(helpers + '\n' + block, ctx);
   const flush = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r)); };
   const tick = () => { const due = timers.splice(0); due.forEach((t) => t.fn()); return due.map((t) => t.ms); };
-  return { ctx, cards, msgs, fetches, renders, timers, tick, dialogs, loads: () => loads, flush, buttons: (i = 0) => cards[i].querySelectorAll('[data-rem-level]') };
+  return { ctx, cards, msgs, fetches, renders, timers, tick, dialogs, remBtns, loads: () => loads, flush, buttons: (i = 0) => cards[i].querySelectorAll('[data-rem-level]') };
 }
 const FACTS = (over = {}) => ({ available: true, reason: '', message: '', canSend: true, blocked: '', recentNotes: 100, missingCount: 4, sent: { 1: { day: '2026-11-03', label: '3 Nov 2026', by: 'Mahesh Sharma', at: '', lastDay: '' }, 2: null, 3: null }, auto: [{ day: '2026-11-06', label: '6 Nov 2026' }], autoLast: { day: '2026-11-06', label: '6 Nov 2026' }, autoCount: 1, failures: [], lastFailed: false, ...over });
 const PREVIEW = (over = {}) => ({ ok: true, level: 1, to: 'a***@example.com', subject: 'Documents still needed — 2026-SV-021', body: 'Dear Aisha Khan,\n\n{MissingList}\n\n{PortalLink}', tokensLeft: ['{MissingList}', '{PortalLink}'],
@@ -601,16 +604,21 @@ test('case page (sandbox): a click previews first (GET), the dialog carries To /
   assert.deepEqual([f.els['rem-lastday'].value, f.els['rem-lastday'].min], ['2026-11-14', '2026-11-07']);
   f.els['rem-cancel'].onclick();
   s.ctx.remOpen(2); await s.flush();
-  assert.equal(s.dialogs.length, 2, 'a 401 opens no dialog');
-  assert.match(s.msgs[0].innerHTML, /Sign in required <a href="\/q\/auth\/monday\?returnTo=%2Fadmin%2Fcase%2F2026-SV-021">Sign in with Monday<\/a>/, 'the sign-in comes back to THIS case, not the dashboard the server named (review 2026-11-07 [26])');
-  assert.equal(s.msgs[1].className, 'act-msg rem-msg err');
+  // 2026-11-07 (the loader): the pop-up is already open when the preview answers — a 401 shows the sign-in INSIDE it, with Close
+  assert.equal(s.dialogs.length, 3, 'the pop-up opened at the click');
+  const signIn = s.dialogs[2];
+  assert.match(signIn.box.innerHTML, /<div class="rem-load-err" role="alert">Sign in required <a href="\/q\/auth\/monday\?returnTo=%2Fadmin%2Fcase%2F2026-SV-021">Sign in with Monday<\/a><\/div>/, 'the sign-in comes back to THIS case, not the dashboard the server named (review 2026-11-07 [26])');
+  assert.match(signIn.box.innerHTML, /<button type="button" class="sbtn" data-x="1" id="rem-cancel">Close<\/button>/);
+  assert.equal(s.msgs[1].className, 'act-msg rem-msg ', 'nothing on the card: the reason is in the pop-up');
+  signIn.els['rem-cancel'].onclick();
+  assert.equal(s.ctx.REM_OPEN, false);
   // review round 2 [2]: the read-only list names the member under the same rule as the email — a spouse-only list says whose passport is missing
   s.ctx.remOpen(1); await s.flush();
-  const sp = s.dialogs[2];
+  const sp = s.dialogs[3];
   assert.match(sp.box.innerHTML, /<div class="rem-missing"><div class="rem-member">Spouse \/ Common-Law Partner<\/div><div class="rem-cat">Identity<\/div><ul class="rem-list"><li>Passport<\/li><\/ul><\/div>/, 'the lone non-principal member is named');
   sp.els['rem-cancel'].onclick();
   s.ctx.remOpen(1); await s.flush();
-  const two = s.dialogs[3];
+  const two = s.dialogs[4];
   assert.equal((two.box.innerHTML.match(/<div class="rem-member">/g) || []).length, 2, 'two members: both headings');
   assert.match(two.box.innerHTML, /<div class="rem-member">Principal Applicant<\/div>/);
   two.els['rem-cancel'].onclick();
@@ -1001,4 +1009,202 @@ test('case page: the email view CSS — side by side from 901 px (the dialog wid
   assert.match(html, /\.rem-frame \{ display:block; width:100%; height:62vh; min-height:380px;/);
   assert.ok(html.indexOf('.tdlg.rem-dlg { max-width:640px; }') < html.indexOf('@media (min-width: 901px)'), 'the wide rule comes after the base width');
   assert.ok(html.indexOf('@media (min-width: 901px)') < html.indexOf('.tdlg.rem-dlg { max-width:none; width:100%; height:100%;'), 'the phone sheet still wins on a phone');
+});
+
+// ── The pop-up opens at once with a loader, shows the email in one trip, reuses the preview's facts (Faran 2026-11-07) ──
+
+test('case page (sandbox, loader): the click opens the pop-up AT ONCE — title, "To …", a spinner + "Preparing the email…" (role=status) and Close — before the preview answers; the card buttons are off, a second click opens nothing; the answer fills the SAME pop-up; closing turns the buttons back on', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW(), gate: held }] });
+  s.ctx.renderReminders(FACTS());
+  s.ctx.remOpen(1);
+  assert.equal(s.dialogs.length, 1, 'open before the answer');
+  const d = s.dialogs[0];
+  assert.equal(d.box.innerHTML, '<h3>Send reminder 1 · friendly</h3><div class="rem-to"><span class="k">To</span>…</div><div class="rem-loading" id="rem-loading" role="status" aria-live="polite"><span class="rem-spin" aria-hidden="true"></span>Preparing the email…</div><div class="tdlg-actions"><button type="button" class="sbtn" data-x="1" id="rem-cancel">Close</button></div>');
+  assert.deepEqual(d.busy, [], 'not busy: it can always be closed while it loads');
+  assert.deepEqual(s.remBtns.map((b) => b.disabled), [true, true, true], 'the card buttons are off while it loads');
+  assert.equal(s.ctx.REM_OPEN, true, 'a reload meanwhile does not redraw the card under it');
+  assert.deepEqual([s.msgs[0].className, s.msgs[0].textContent], ['act-msg rem-msg ', ''], 'no "Preparing the preview…" line on the card any more');
+  s.ctx.remOpen(2); s.ctx.remOpen(1);
+  assert.deepEqual([s.dialogs.length, s.fetches.length], [1, 1], 'a second click while loading opens nothing and asks nothing');
+  release(); await s.flush();
+  assert.equal(s.dialogs.length, 1, 'the answer fills the pop-up that is open — no second one');
+  assert.match(d.box.innerHTML, /<span class="k">To<\/span>a\*\*\*@example\.com/);
+  assert.doesNotMatch(d.box.innerHTML, /rem-loading|Preparing the email/);
+  assert.equal(d.els['rem-subject'].value, 'Documents still needed — 2026-SV-021');
+  assert.deepEqual(s.remBtns.map((b) => b.disabled), [true, true, true], 'still off while the pop-up is open');
+  d.els['rem-cancel'].onclick();
+  assert.deepEqual(s.remBtns.map((b) => b.disabled), [false, false, false], 'back on after the close');
+  assert.equal(s.ctx.REM_OPEN, false);
+  assert.ok(s.buttons(0).every((b) => !b.hasAttribute('disabled')), 'the card is redrawn from the last facts');
+  // no facts kept (REM_LAST empty): the buttons still come back on
+  const t = remSandbox({ responses: [{ status: 409, body: { ok: false, reason: 'locked', error: 'Automation Lock is on for this case — reminders are off until it is cleared in Monday.' } }] });
+  t.ctx.remOpen(1); await t.flush();
+  t.dialogs[0].els['rem-cancel'].onclick();
+  assert.deepEqual(t.remBtns.map((b) => b.disabled), [false, false, false]);
+});
+
+test('case page (sandbox, loader): a preview that fails shows its reason INSIDE the pop-up with Close — 401 the sign-in link back to this case, 403 not assigned, 409 the gate\'s reason, 502 / 500 the server words, a network failure — escaped; never a silent nothing; closed while loading = the late answer is ignored', async () => {
+  const cases = [
+    [{ status: 401, body: { ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' } }, 'Sign in required <a href="/q/auth/monday?returnTo=%2Fadmin%2Fcase%2F2026-SV-021">Sign in with Monday</a>'],
+    [{ status: 403, body: { ok: false, error: 'You are not assigned to this case.' } }, 'You are not assigned to this case.'],
+    [{ status: 409, body: { ok: false, reason: 'not-dcs', error: 'This case is at Internal Review, not Document Collection — reminders are for cases <collecting> documents.' } }, 'This case is at Internal Review, not Document Collection — reminders are for cases &lt;collecting&gt; documents.'],
+    [{ status: 502, body: { ok: false, error: 'Case data is temporarily unavailable — reload in a moment.' } }, 'Case data is temporarily unavailable — reload in a moment.'],
+    [{ status: 500, body: { ok: false } }, 'The preview could not be prepared.'],
+    ['network', 'Failed: Failed to fetch'],
+  ];
+  for (const [answer, want] of cases) {
+    const s = remSandbox({ responses: [answer] });
+    s.ctx.renderReminders(FACTS());
+    s.ctx.remOpen(2); await s.flush();
+    const d = s.dialogs[0];
+    assert.equal(d.box.innerHTML, '<h3>Send reminder 2 · firm</h3><div class="rem-to"><span class="k">To</span>…</div><div class="rem-load-err" role="alert">' + want + '</div><div class="tdlg-actions"><button type="button" class="sbtn" data-x="1" id="rem-cancel">Close</button></div>', JSON.stringify(answer).slice(0, 60));
+    assert.equal(s.renders.length, 0, 'no email view is asked for');
+    assert.deepEqual([s.msgs[0].textContent, s.msgs[1].textContent], ['', ''], 'the reason is in the pop-up, not on the card');
+    d.els['rem-cancel'].onclick();
+    assert.deepEqual([d.closed, s.ctx.REM_OPEN, s.remBtns.every((b) => !b.disabled)], [['cancel'], false, true]);
+  }
+  // closed while it loads: the answer that lands later touches nothing
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW({ email: RENDERED() }), gate: held }] });
+  s.ctx.renderReminders(FACTS());
+  s.ctx.remOpen(1);
+  const d = s.dialogs[0], loading = d.box.innerHTML;
+  d.els['rem-cancel'].onclick();
+  assert.equal(s.ctx.REM_OPEN, false);
+  release(); await s.flush();
+  assert.equal(d.box.innerHTML, loading, 'never filled after the close');
+  assert.equal(s.renders.length, 0);
+  // and a new click after the close opens a new pop-up
+  s.ctx.remOpen(1);
+  assert.equal(s.dialogs.length, 2);
+});
+
+test('case page (sandbox, one trip): a preview that carries the email shows it at once — no second ask on open; the edits then carry the preview\'s handle (and a renewed one from the server); the send never does', async () => {
+  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW({ email: RENDERED({ html: '<p>from the preview</p>', subject: 'Filled subject' }), prepHandle: 'a'.repeat(32) }) }, { status: 200, body: { ok: true, noted: true, to: 'a***@example.com', level: 1, day: '2026-11-07' } }],
+    renderAnswer: (n) => ({ status: 200, body: RENDERED({ html: '<p>view ' + n + '</p>', ...(n === 1 ? { prepHandle: 'b'.repeat(32) } : {}) }) }) });
+  s.ctx.renderReminders(FACTS());
+  s.ctx.remOpen(1); await s.flush();
+  const d = s.dialogs[0];
+  assert.equal(s.renders.length, 0, 'no render request on open');
+  assert.equal(d.els['rem-frame'].srcdoc, '<p>from the preview</p>', 'the preview\'s email, through the srcdoc property');
+  assert.equal(d.els['rem-mail-subj-text'].textContent, 'Filled subject');
+  assert.deepEqual([d.els['rem-mail-state'].textContent, d.els['rem-mail-spin'].hidden], ['', true], 'no "Updating…", no spinner');
+  // an edit: the ask carries the handle
+  d.els['rem-body'].value = 'v2 {MissingList}'; d.els['rem-body'].oninput();
+  assert.deepEqual([d.els['rem-mail-state'].textContent, d.els['rem-mail-spin'].hidden], ['Updating…', false], 'the small spinner beside "Updating…"');
+  s.tick(); await s.flush();
+  assert.deepEqual(s.renders[0][2], { level: 1, subject: 'Documents still needed — 2026-SV-021', body: 'v2 {MissingList}', extra: '', lastDay: '', handle: 'a'.repeat(32) });
+  assert.deepEqual([d.els['rem-frame'].srcdoc, d.els['rem-mail-spin'].hidden], ['<p>view 1</p>', true]);
+  // the server read the case again and kept it under a new handle: the next ask carries that one
+  d.els['rem-body'].oninput(); s.tick(); await s.flush();
+  assert.equal(s.renders[1][2].handle, 'b'.repeat(32));
+  // the send: no handle in its body
+  d.els['rem-send'].onclick(); await s.flush();
+  assert.deepEqual(s.fetches[1], ['/admin/case-action/2026-SV-021/reminder', 'POST', { level: 1, subject: 'Documents still needed — 2026-SV-021', body: 'v2 {MissingList}', extra: '', lastDay: '' }]);
+  assert.ok(!('handle' in s.fetches[1][2]), 'the send never carries the handle');
+  // a preview with no handle: the asks carry none (the old shape)
+  const t = remSandbox({ responses: [{ status: 200, body: PREVIEW() }] });
+  t.ctx.renderReminders(FACTS());
+  t.ctx.remOpen(1); await t.flush();
+  assert.equal(t.renders.length, 1, 'no email in the preview: asked for once, as before');
+  assert.ok(!('handle' in t.renders[0][2]));
+  // a failed update hides the spinner and says so
+  const u = remSandbox({ responses: [{ status: 200, body: PREVIEW({ email: RENDERED() }) }], renderAnswer: () => 'network' });
+  u.ctx.renderReminders(FACTS());
+  u.ctx.remOpen(1); await u.flush();
+  u.dialogs[0].els['rem-body'].oninput(); u.tick(); await u.flush();
+  assert.deepEqual([u.dialogs[0].els['rem-mail-state'].className, u.dialogs[0].els['rem-mail-spin'].hidden], ['rem-mail-state rem-mail-fail', true]);
+});
+
+test('case page: the loader CSS — the spinner reuses the page\'s spin animation, is hidden with the [hidden] attribute, and does not move for prefers-reduced-motion (the words stay); the email view markup carries the small spinner before "Updating…"; the block keeps the inline-JS rules and the emitted script parses', () => {
+  const { html, js } = pageJs();
+  assert.match(html, /\.rem-loading \{ display:flex; align-items:center; justify-content:center; min-height:220px;/);
+  assert.match(html, /\.rem-spin \{ display:inline-block;[^}]*border-top-color:var\(--navy\); border-radius:50%;[^}]*animation:spin \.7s linear infinite; \}/);
+  assert.match(html, /\.rem-spin\[hidden\] \{ display:none; \}/, 'display:inline-block would otherwise beat the hidden attribute');
+  assert.match(html, /@media \(prefers-reduced-motion: reduce\) \{ \.rem-spin \{ display:none; \} \}/, 'reduced motion: text only, no spinning');
+  assert.match(html, /@keyframes spin \{ to \{ transform: rotate\(360deg\); \} \}/, 'the shared animation is there');
+  const block = js.slice(js.indexOf('// ── Document reminders (block 2'), js.indexOf('function loadCase()'));
+  assert.ok(block.includes("<span class=\"rem-spin rem-mail-spin\" id=\"rem-mail-spin\" aria-hidden=\"true\"></span><span class=\"rem-mail-state muted\" id=\"rem-mail-state\">Updating…</span>"));
+  assert.ok(block.includes("if (spin) spin.hidden = txt !== 'Updating…';"));
+  assert.ok(block.includes("if (p.email) remShowMail(c, p.email); else remRenderNow(c, level, read());"));
+  assert.ok(block.includes('if (REM_OPEN) return;'), 'no double open');
+  assert.ok(!block.includes('`') && !block.includes('${') && !block.includes('\\'), 'no backtick, no dollar-brace, no backslash');
+  assert.doesNotThrow(() => new vm.Script(js), 'the emitted page script parses');
+});
+
+test('getReminderFacts (the pop-up\'s case read): every field it gives equals the same field of getCaseOverview under the same reads; it carries the raw checklist rows + newest notes for reuse, and never the family / lead / sponsor reads', async () => {
+  const cockpit = require('../src/services/caseCockpitService');
+  const S2 = require('../src/services/sponsorOnboardingService');
+  const updates = [{ id: '7', created_at: '2026-11-03T15:00:00Z', text_body: 'a note', body: '' }];
+  const run = async (fn, opts) => { const r = reminderStubs(opts); const calls = { lead: 0, family: 0, sponsor: 0 };
+    const composition = require('../src/services/compositionAdapter');
+    const kf = composition.readForCase; composition.readForCase = async () => { calls.family++; return { members: [] }; };
+    const ks = S2.describe; S2.describe = async () => { calls.sponsor++; return { available: false }; };
+    const leadSvc = require('../src/services/leadService');
+    const kl = leadSvc.findByColumnValue; leadSvc.findByColumnValue = async () => { calls.lead++; return null; };
+    try { return { o: await fn(), calls }; } finally { composition.readForCase = kf; S2.describe = ks; leadSvc.findByColumnValue = kl; r.reverse().forEach((x) => x()); } };
+  for (const opts of [{ updates }, { cmFail: true }, { docsFail: true }, { qFail: true }, { lock: 'Yes', stage: 'Internal Review' }]) {
+    const { o: full, calls: fullCalls } = await run(() => cockpit.getCaseOverview('2026-SV-021'), opts);
+    assert.deepEqual(fullCalls, { lead: 1, family: 1, sponsor: 1 }, 'the counters see the full overview\'s reads');
+    const { o: facts, calls } = await run(() => cockpit.getReminderFacts('2026-SV-021'), opts);
+    const raw = ['docItems', 'docsUnavailable', 'notes', 'notesLimit'];
+    for (const k of Object.keys(facts).filter((x) => !raw.includes(x))) assert.deepEqual(facts[k], full[k], `${k} (${JSON.stringify(opts).slice(0, 40)})`);
+    assert.deepEqual(Object.keys(facts).sort(), ['accessToken', 'assignees', 'caseRef', 'caseStage', 'caseSubType', 'caseType', 'clientDeadlineRaw', 'clientEmail', 'clientName', 'cmUnavailable', 'docItems', 'docsUnavailable', 'escalationLastNotified', 'group', 'itemId', 'manualOverride', 'automationLock', 'notes', 'notesLimit', 'paymentStatus', 'questionnaire'].sort());
+    assert.equal(facts.notesLimit, 100);
+    assert.equal(facts.docsUnavailable, opts.docsFail === true);
+    assert.deepEqual(calls, { lead: 0, family: 0, sponsor: 0 }, 'no family, lead or sponsor read');
+    for (const k of raw) assert.ok(!(k in full), `${k} never rides on the full overview (the page JSON is unchanged)`);
+  }
+  const { o } = await run(() => cockpit.getReminderFacts('2026-SV-021'), { updates });
+  assert.deepEqual(o.notes.map((n) => n.id), ['7']);
+  assert.deepEqual(o.docItems.map((it) => it.name), ['Passport']);
+});
+
+test('getCaseOverview / getReminderFacts: the reads that do not wait for each other run together — the checklist starts beside the case lookup; the Client Master row and the questionnaire files run side by side; the family board beside everything', async () => {
+  const cockpit = require('../src/services/caseCockpitService');
+  const mondayApi   = require('../src/services/mondayApi');
+  const htmlQ       = require('../src/services/htmlQuestionnaireService');
+  const docSvc      = require('../src/services/documentFormService');
+  const composition = require('../src/services/compositionAdapter');
+  const stub = (obj, key, fn) => { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; };
+  const started = [];
+  const gates = {};   // name → the resolvers still waiting
+  let free = false;   // once set, every read answers at once
+  const wait = (name) => { started.push(name); if (free) return Promise.resolve(); return new Promise((r) => { (gates[name] = gates[name] || []).push(r); }); };
+  const open = (name) => { (gates[name] || []).splice(0).forEach((r) => r()); };
+  const restore = [
+    stub(htmlQ, 'validateAccessForStaff', async () => { await wait('lookup'); return { itemId: '4001', clientName: 'Aisha Khan', caseType: 'Super Visa', caseSubType: 'Parent', accessToken: 'tok-1', formFiles: { primary: 'f.html' } }; }),
+    stub(mondayApi, 'query', async () => { await wait('cm'); return { items: [{ column_values: [] }] }; }),
+    stub(docSvc, 'getCaseSummary', async () => { await wait('docs'); return { items: [] }; }),
+    stub(composition, 'readForCase', async () => { await wait('family'); return { members: [] }; }),
+    stub(htmlQ, 'loadMembers', async () => { await wait('members'); return [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', submittedAt: '' }]; }),
+    stub(htmlQ, 'getMemberStatuses', async ({ members }) => { await wait('files'); return members.map((m) => ({ ...m, status: 'In Progress', hasData: true, completionPct: 40 })); }),
+    stub(require('../src/services/sponsorOnboardingService'), 'describe', async () => ({ available: false })),
+  ];
+  const tickN = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
+  try {
+    const p = cockpit.getReminderFacts('2026-SV-021');
+    await tickN();
+    assert.deepEqual(started.slice().sort(), ['docs', 'lookup'], 'the checklist does not wait for the lookup');
+    open('lookup'); await tickN();
+    assert.deepEqual(started.slice().sort(), ['cm', 'docs', 'lookup', 'members'], 'the row and the member list start together');
+    open('members'); await tickN();
+    assert.ok(started.includes('files'), 'the member files start while the row is still out');
+    assert.ok(!started.includes('family'), 'the pop-up never reads the family board');
+    open('cm'); open('docs'); open('files');
+    const facts = await p;
+    assert.equal(facts.questionnaire.members.length, 1);
+    started.length = 0;
+    const q = cockpit.getCaseOverview('2026-SV-021');
+    await tickN();
+    assert.deepEqual(started.slice().sort(), ['docs', 'family', 'lookup'], 'the full overview starts the family board at once too');
+    open('lookup'); await tickN();
+    assert.ok(started.filter((x) => x === 'cm').length >= 2, 'the lead read starts beside the Client Master row, as soon as the case is found');
+    free = true; Object.keys(gates).forEach(open);
+    const o = await q;
+    assert.equal(o.caseRef, '2026-SV-021');
+  } finally { restore.reverse().forEach((r) => r()); }
 });

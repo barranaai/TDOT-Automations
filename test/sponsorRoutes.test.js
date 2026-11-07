@@ -205,8 +205,9 @@ test('the cockpit overview describes the sponsor (with the client name the marke
   assert.match(call, /cmUnavailable: cm\._unavailable === true/);
   assert.match(call, /composition, qMembers/);
   assert.match(call, /\}\)\.catch\(\(e\) => \{[\s\S]{0,160}return \{ available: false \}; \}\)/, 'a failed describe hides the card, never fails the page');
-  const extras = src.indexOf('await getLeadExtras(itemId, caseRef)');
-  assert.ok(extras !== -1 && extras < i, 'after getLeadExtras, which keeps its first-hit lead for display');
+  // 2026-11-07: the lead read starts as soon as the case is found (beside the other reads) and is awaited before describe
+  const extras = src.indexOf('leadP = getLeadExtras(v.itemId, caseRef)'), awaited = src.indexOf('const { lead, payments } = await leadP;');
+  assert.ok(extras !== -1 && awaited !== -1 && extras < awaited && awaited < i, 'after getLeadExtras, which keeps its first-hit lead for display');
   assert.match(src, /\n\s+sponsor,\n\s+\};/, 'one new top-level key');
 });
 
