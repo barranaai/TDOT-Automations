@@ -1082,6 +1082,43 @@ test('case page (sandbox, loader): a preview that fails shows its reason INSIDE 
   assert.equal(s.dialogs.length, 2);
 });
 
+test('case page (sandbox, one trip — review round 1): a renewed handle in an OUT-OF-DATE answer is still kept, so the next edit carries it (no dead handle, no full read on every pause); a closed pop-up keeps nothing', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const A = 'a'.repeat(32), B = 'b'.repeat(32);
+  const answers = {
+    1: { status: 200, body: RENDERED({ html: '<p>stale</p>', prepHandle: B }), gate: held },   // sent with A (run out): the server read again, kept it under B
+    2: { status: 200, body: RENDERED({ html: '<p>second</p>' }) },
+    3: { status: 200, body: RENDERED({ html: '<p>third</p>' }) },
+  };
+  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW({ email: RENDERED(), prepHandle: A }) }], renderAnswer: (n) => answers[n] });
+  s.ctx.renderReminders(FACTS());
+  s.ctx.remOpen(1); await s.flush();
+  const d = s.dialogs[0];
+  d.els['rem-body'].value = 'a {MissingList}'; d.els['rem-body'].oninput(); s.tick(); await s.flush();   // render 1 out with A, its answer held
+  assert.equal(s.renders[0][2].handle, A);
+  d.els['rem-body'].value = 'ab {MissingList}'; d.els['rem-body'].oninput(); s.tick(); await s.flush();  // render 2 out (still A) before 1 answers
+  assert.equal(s.renders[1][2].handle, A);
+  release(); await s.flush();                                                                              // 1 comes back out of date, carrying B
+  assert.equal(d.els['rem-frame'].srcdoc, '<p>second</p>', 'the out-of-date email is still not shown');
+  d.els['rem-body'].value = 'abc {MissingList}'; d.els['rem-body'].oninput(); s.tick(); await s.flush();
+  assert.equal(s.renders[2][2].handle, B, 'the next ask carries the renewed handle from the out-of-date answer');
+  assert.equal(d.els['rem-frame'].srcdoc, '<p>third</p>');
+  // a failed answer never replaces the handle; an answer that lands after a close changes nothing
+  let rel2;
+  const held2 = new Promise((r) => { rel2 = r; });
+  const t = remSandbox({ responses: [{ status: 200, body: PREVIEW({ email: RENDERED(), prepHandle: A }) }],
+    renderAnswer: (n) => (n === 1 ? { status: 500, body: { ok: false, error: 'x', prepHandle: B } } : n === 2 ? { status: 200, body: RENDERED({ prepHandle: B }), gate: held2 } : { status: 200, body: RENDERED() }) });
+  t.ctx.renderReminders(FACTS());
+  t.ctx.remOpen(1); await t.flush();
+  const e = t.dialogs[0];
+  e.els['rem-body'].oninput(); t.tick(); await t.flush();
+  e.els['rem-body'].oninput(); t.tick(); await t.flush();
+  assert.equal(t.renders[1][2].handle, A, 'a failed answer leaves the handle as it was');
+  e.close(true, 'cancel'); rel2(); await t.flush();
+  assert.equal(e.remHandle, A, 'closed: the late answer keeps nothing');
+});
+
 test('case page (sandbox, one trip): a preview that carries the email shows it at once — no second ask on open; the edits then carry the preview\'s handle (and a renewed one from the server); the send never does', async () => {
   const s = remSandbox({ responses: [{ status: 200, body: PREVIEW({ email: RENDERED({ html: '<p>from the preview</p>', subject: 'Filled subject' }), prepHandle: 'a'.repeat(32) }) }, { status: 200, body: { ok: true, noted: true, to: 'a***@example.com', level: 1, day: '2026-11-07' } }],
     renderAnswer: (n) => ({ status: 200, body: RENDERED({ html: '<p>view ' + n + '</p>', ...(n === 1 ? { prepHandle: 'b'.repeat(32) } : {}) }) }) });

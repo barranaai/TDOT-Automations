@@ -1356,7 +1356,11 @@ function remRenderNow(c, level, v) {
   fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/reminder/render', { method: 'POST', headers: headers, credentials: 'same-origin', body: JSON.stringify(ask) })
   .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
   .then(function(res) {
-    if (!c.still(id) || seq !== c.remSeq) return;   // closed, or a newer edit has been asked for since: this answer is out of date
+    if (!c.still(id)) return;   // closed
+    // a renewed handle is kept even from an out-of-date answer: it is still good for this same person, case and level, and dropping it
+    // would make every next edit (sent with the old, dead one) do the full slow read again
+    if (res.ok && res.j && res.j.prepHandle) c.remHandle = res.j.prepHandle;
+    if (seq !== c.remSeq) return;   // a newer edit has been asked for since: this email is out of date
     if (!res.ok) {
       remMailState(c, 'rem-mail-fail', 'The preview could not be updated — the text you typed is kept.' + (res.j && res.j.error ? ' ' + res.j.error : ''));
       // too often: ask once more by itself after the wait the server gave (a new key press replaces this, a close drops it)
@@ -1367,7 +1371,6 @@ function remRenderNow(c, level, v) {
       }
       return;
     }
-    if (res.j.prepHandle) c.remHandle = res.j.prepHandle;   // the old one had run out: the server read the case again and kept it under a new one
     remShowMail(c, res.j);
   })
   .catch(function() { if (!c.still(id) || seq !== c.remSeq) return; remMailState(c, 'rem-mail-fail', 'The preview could not be updated — the text you typed is kept.'); });
