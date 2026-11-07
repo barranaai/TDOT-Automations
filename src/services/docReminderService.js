@@ -166,6 +166,12 @@ function paragraphsHtml(text, rich) {
  */
 const showMember = (missing, g) => missing.groups.length > 1 || (g.type || 'Principal Applicant') !== 'Principal Applicant';
 
+/** Whether the documents block prints: a missing row, or a row waiting for a new copy (Rework Required — review round 2 of Gauri's texts [2]). */
+const docsOpen = (missing) => Boolean(missing) && (missing.count > 0 || missing.rework > 0);
+const reworkSentence = (n, lead) => `${lead ? '' : '...and '}${n} document${n === 1 ? ' is' : 's are'} waiting for a new copy (see the note on each in your portal).`;
+/** The documents block's lead line: the missing count, or — nothing missing, only new copies due — "Documents to upload again (N):". */
+const docsLead = (missing) => (missing.count > 0 ? `Documents still needed (${missing.count}):` : `Documents to upload again (${missing.rework}):`);
+
 /** The missing list as the email shows it, under its lead line "Documents still needed (N):" (member heading only when there is more than one member, or the one member is not the principal applicant). */
 function missingListHtml(missing) {
   const blocks = missing.groups.map((g) => {
@@ -178,11 +184,13 @@ ${c.items.map((it) => `              <li style="font-size:14px;color:#1e293b;lin
     return `${multi ? `<div style="font-size:14px;font-weight:700;color:#1e293b;margin:14px 0 2px;">${esc(g.member)}</div>` : ''}${cats}`;
   }).join('');
   const rework = missing.rework > 0
-    ? `<div style="font-size:13px;color:#64748b;margin:12px 0 0;">…and ${missing.rework} document${missing.rework === 1 ? ' is' : 's are'} waiting for a new copy (see the note on each in your portal).</div>`
+    ? (missing.count > 0
+      ? `<div style="font-size:13px;color:#64748b;margin:12px 0 0;">…and ${esc(reworkSentence(missing.rework, true))}</div>`
+      : `<div style="font-size:14px;color:#1e293b;line-height:1.55;margin:8px 0 0;">${esc(reworkSentence(missing.rework, true))}</div>`)
     : '';
   return `<table width="100%" cellpadding="0" cellspacing="0" style="background:#fff7ed;border-radius:10px;border:1px solid #fed7aa;margin:4px 0 20px;">
           <tr><td style="padding:14px 20px 16px;">
-            <div style="font-size:13px;font-weight:700;color:#9a3412;">Documents still needed (${missing.count}):</div>${blocks}${rework}
+            <div style="font-size:13px;font-weight:700;color:#9a3412;">${esc(docsLead(missing))}</div>${blocks}${rework}
           </td></tr>
         </table>`;
 }
@@ -197,7 +205,7 @@ function missingListText(missing) {
       for (const it of c.items) lines.push(`${multi ? '  ' : ''}  - ${it.name}${it.instruction ? ` — ${it.instruction}` : ''}`);
     }
   }
-  if (missing.rework > 0) lines.push(`...and ${missing.rework} document${missing.rework === 1 ? ' is' : 's are'} waiting for a new copy (see the note on each in your portal).`);
+  if (missing.rework > 0) lines.push(reworkSentence(missing.rework, missing.count === 0));
   return lines.join('\n');
 }
 
@@ -308,6 +316,10 @@ function qPlacedWarning(before, after) {
     : 'the text had no {QuestionnaireList} — the unfinished questionnaire was added before the sign-off';
 }
 const Q_UNAVAILABLE_WARNING = 'The questionnaire progress could not be read — the email will not mention it.';
+// A case type with no questionnaire form (resolveForm → null): the list is left out, but the
+// wording may still ask for one — Gauri's texts do — so staff are told to edit it (review round 2 [1][3])
+const Q_NO_FORM_WARNING = 'This case type has no questionnaire, but the text still asks the client to complete one — edit it before sending.';
+const mentionsQuestionnaire = (...texts) => texts.some((t) => /questionnaire/i.test(String(t || '').split(Q_TOKEN).join('')));
 
 /** The {Token} values of one email; the two rich tokens are placeholders filled at render. */
 function fillTokens(text, values) {
@@ -388,7 +400,7 @@ async function buildReminderEmail(o = {}) {
     if (hard.length) throw new Error(`The reminder text cannot be sent: ${hard.join('; ')}.`);
     body = v.body;
     // only when there IS a documents list: with every document in, nothing is added and nothing said (review round 1 [6])
-    if (!body.includes('{MissingList}') && missing.count > 0) { body += '\n\n{MissingList}'; listAppended = true; warnings.push('the edited text had no {MissingList} — the missing documents were added at the end'); }
+    if (!body.includes('{MissingList}') && docsOpen(missing)) { body += '\n\n{MissingList}'; listAppended = true; warnings.push('the edited text had no {MissingList} — the missing documents were added at the end'); }
     // (v.warnings — unknown tokens — are found again below on the final text, once)
   }
   // the questionnaire: its block where {QuestionnaireList} sits; a text (board or edited) without
@@ -397,6 +409,7 @@ async function buildReminderEmail(o = {}) {
   let questionnaireAppended = false;
   if (questionnaireOpen(q) && !body.includes(Q_TOKEN)) { const before = body; body = withQuestionnaireToken(body); questionnaireAppended = true; warnings.push(qPlacedWarning(before, body)); }
   if (q && q.unavailable) warnings.push('the questionnaire progress could not be read — the email does not mention it');
+  if (q && q.notApplicable && mentionsQuestionnaire(subject, body)) warnings.push(Q_NO_FORM_WARNING);
 
   const dl = o.deadline || {};
   const portalUrl    = clientPortalService.buildPortalUrl({ caseRef, accessToken });
@@ -424,7 +437,9 @@ async function buildReminderEmail(o = {}) {
   const extra = String(o.extraLine || '').replace(/<[^>]*>/g, '').trim();
   if (extra && templates.tellsToReply(extra)) throw new Error(REPLY_REFUSAL('extra line'));   // the staff's free line obeys the same rule as the template
   const progress = o.progress || missing.progress;
-  const progressLine = progress && progress.total > 0 ? `${progress.received} of ${progress.total} documents received` : '';
+  // a Rework Required row counts as received (IN_PIPELINE) — the line says it still needs a new copy (review round 2 [2])
+  const progressLine = progress && progress.total > 0
+    ? `${progress.received} of ${progress.total} documents received${missing.rework > 0 ? ` — ${missing.rework} need${missing.rework === 1 ? 's' : ''} a new copy` : ''}` : '';
 
   // HTML: the template's paragraphs, the documents block where {MissingList} sits and the
   // questionnaire block where {QuestionnaireList} sits (each its own block, never inside a <p>;
@@ -432,9 +447,9 @@ async function buildReminderEmail(o = {}) {
   // ("we are still looking for…") — also when the documents are all in
   const extraHtml = extra ? `        <p style="font-size:15px;color:#1e293b;line-height:1.65;margin:0 0 16px;background:#f8fafc;border-left:3px solid #C9A84C;padding:10px 14px;">${esc(extra).replace(/\n/g, '<br>')}</p>` : '';
   const portalA  = `<a href="${esc(portalUrl)}" style="color:#8B0000;word-break:break-all;">${esc(portalUrl)}</a>`;
-  const docsHtml = missing.count ? missingListHtml(missing) : '';
+  const docsHtml = docsOpen(missing) ? missingListHtml(missing) : '';
   const qHtml    = questionnaireListHtml(q);
-  const docsText = missing.count ? `Documents still needed (${missing.count}):\n${missingListText(missing)}` : '';
+  const docsText = docsOpen(missing) ? `${docsLead(missing)}\n${missingListText(missing)}` : '';
   const qText    = questionnaireListText(q);
   const parts    = bodyFilled.split(/(\{MissingList\}|\{QuestionnaireList\})/);
   const isList   = (p) => p === '{MissingList}' || p === Q_TOKEN;
@@ -980,8 +995,8 @@ function describeForCase({ overview, items, notes, notesLimit, docsUnavailable, 
   const missing = missingFromItems(rows);
   const q = questionnaireFromMembers(questionnaire !== undefined ? questionnaire : o.questionnaire);
   const qFacts = q ? { questionnaire: { done: q.done, unavailable: q.unavailable, notApplicable: q.notApplicable === true, pct: q.pct, pending: q.pending.length } } : {};
-  if (!missing.count && q && q.unavailable) return { ...base, ...qFacts, available: false, reason: 'q-unavailable', message: Q_UNREAD_ALL_IN, canSend: false };
-  if (!missing.count && !questionnaireOpen(q)) return { ...base, ...qFacts, available: false, reason: 'no-rows', message: q ? nothingToRemind(q) : 'Nothing is missing — every required document is in.', canSend: false };
+  if (!docsOpen(missing) && q && q.unavailable) return { ...base, ...qFacts, available: false, reason: 'q-unavailable', message: Q_UNREAD_ALL_IN, canSend: false };
+  if (!docsOpen(missing) && !questionnaireOpen(q)) return { ...base, ...qFacts, available: false, reason: 'no-rows', message: q ? nothingToRemind(q) : 'Nothing is missing — every required document is in.', canSend: false };
   const problem = caseGateProblem(o);   // the same five checks as the send gate: the card shows the line, the buttons are off
   if (problem) return { ...base, ...qFacts, canSend: false, blocked: problem.message, missingCount: missing.count };
   return { ...base, ...qFacts, missingCount: missing.count };
@@ -1008,7 +1023,7 @@ async function prepareStaff({ overview, level, now }) {
   const missing = await missingDocuments(caseRef);
   // the questionnaire facts came with the overview (a fresh case read on every request — no second read)
   const q = questionnaireFromMembers(overview.questionnaire);
-  if (!missing.count) {
+  if (!docsOpen(missing)) {   // a row waiting for a new copy is something to remind about (review round 2 [2])
     // the card's own test (describeForCase): rows at all, N/A and optional ones included (review round 1 [4])
     if (!missing.rows) throw refuse(409, 'no-rows', 'No checklist rows yet — there is nothing to remind the client about.');
     if (q && q.unavailable) throw refuse(503, 'q-unavailable', 'Every document is in, and the questionnaire progress could not be read just now — nothing was sent. Reload in a moment.');
@@ -1048,6 +1063,7 @@ async function previewStaffReminder({ overview, level, lastDay, actor, now } = {
   const qWarn = [];
   let body = base.body;
   if (questionnaireOpen(p.q) && !body.includes(Q_TOKEN)) { body = withQuestionnaireToken(body); qWarn.push(`The ${base.name} text has no {QuestionnaireList} — the unfinished questionnaire was added after the documents list.`); }
+  if (p.q && p.q.notApplicable && mentionsQuestionnaire(base.subject, body)) qWarn.push(Q_NO_FORM_WARNING);
   return {
     level: lv,
     to: clientPortalService.maskEmail(overview.clientEmail),
@@ -1337,5 +1353,5 @@ module.exports = {
   NOTE_HEAD, NOTE_HEAD_TEXT, NOT_CASE_GROUPS, MAX_TRIES, NOTES_PAGE, NOTES_MAX_PAGES, FINAL_DEFAULT_DAYS, RACE_WINDOW_MS,
   // pure — exported for tests
   _internal: { fmtDay, oneLine, fillTokens, missingListText, missingListHtml, LEVEL_NAMES, torontoDay, dayPlus, daysUntil, marker, failMarker, dayFromWords, imaginaryBody, IMAGINARY_LEAD, caseTypeText,
-    questionnaireListHtml, questionnaireListText, questionnaireOpen, questionnaireView, withQuestionnaireToken, Q_UNAVAILABLE_WARNING, NOTHING_TO_REMIND, NOTHING_NO_FORM },
+    questionnaireListHtml, questionnaireListText, questionnaireOpen, questionnaireView, withQuestionnaireToken, Q_UNAVAILABLE_WARNING, Q_NO_FORM_WARNING, mentionsQuestionnaire, NOTHING_TO_REMIND, NOTHING_NO_FORM },
 };

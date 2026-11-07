@@ -1198,6 +1198,9 @@ function remMissingHtml(missing) {
         (cat.items || []).map(function(it) { return '<li>' + escHtml(it.name) + (it.instruction ? ' <span class="muted">— ' + escHtml(it.instruction) + '</span>' : '') + '</li>'; }).join('') + '</ul>';
     });
   });
+  // a row waiting for a new copy (Rework Required) is said, as the email says it (review round 2 of Gauri's texts [2])
+  var rw = Number(missing && missing.rework) || 0;
+  if (rw > 0) list += '<div class="muted">' + (list ? '…and ' : 'Documents to upload again: ') + escHtml(String(rw)) + ' document' + (rw === 1 ? ' is' : 's are') + ' waiting for a new copy.</div>';
   return list || '<div class="muted">All documents are in.</div>';
 }
 // the questionnaire lines the email prints (one per family member who has not submitted) — read-only, escaped

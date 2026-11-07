@@ -733,7 +733,7 @@ test('describeForCase (the card\'s facts): hidden with its reason when the CM re
   assert.deepEqual([svc.describeForCase({ ...base, overview: OV({ clientEmail: ' ' }) }).reason, svc.describeForCase({ ...base, overview: OV({ accessToken: '' }) }).reason], ['no-email', 'no-token']);
   const noRows = svc.describeForCase({ ...base, items: [] });
   assert.deepEqual([noRows.available, noRows.reason, noRows.message], [false, 'no-rows', 'No checklist rows yet — there is nothing to remind the client about.']);
-  const allIn = svc.describeForCase({ ...base, items: ITEMS.map((it) => ({ ...it, status: it.status === 'Missing' ? 'Received' : it.status })) });
+  const allIn = svc.describeForCase({ ...base, items: ITEMS.map((it) => ({ ...it, status: it.status === 'Missing' || it.status === 'Rework Required' ? 'Received' : it.status })) });
   assert.deepEqual([allIn.available, allIn.reason, allIn.message], [false, 'no-rows', 'Nothing is missing — every required document is in.']);
   const locked = svc.describeForCase({ ...base, overview: OV({ automationLock: 'Yes' }) });
   assert.deepEqual([locked.available, locked.canSend], [true, false]); assert.match(locked.blocked, /Automation Lock is on/);
@@ -898,7 +898,7 @@ test('sendStaffReminder refusals (nothing posted, nothing sent): bad level, the 
     await assert.rejects(svc.sendStaffReminder({ overview: OV({ group: { id: '', title: 'Leads' } }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.reason === 'not-a-case'); nothing();
     await assert.rejects(svc.sendStaffReminder({ overview: OV({ group: { id: 'group_mm3b9tap', title: 'Cancel /Did not retained' } }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.reason === 'not-a-case'); nothing();
   } finally { S.restore(); }
-  const empty = staffStubs({ items: ITEMS.filter((it) => it.status !== 'Missing') });
+  const empty = staffStubs({ items: ITEMS.filter((it) => it.status !== 'Missing' && it.status !== 'Rework Required') });
   try { await assert.rejects(svc.sendStaffReminder({ overview: OV(), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.status === 409 && e.reason === 'no-rows'); assert.equal(empty.posted.length, 0); } finally { empty.restore(); }
   const tries = [];
   for (let i = 0; i < 3; i++) { tries.push(rendered(100 + 2 * i, T0 - 3600e3 + i * 60e3, svc.claimNote({ level: 1, to: 'a@b', actor: 'x', count: 1, now: T0 - 3600e3 + i * 60e3 }))); tries.push(rendered(101 + 2 * i, T0 - 3600e3 + i * 60e3 + 5e3, svc.failureNote({ level: 1, reason: 'x', now: T0 - 3600e3 + i * 60e3 + 5e3 }))); }
@@ -1601,7 +1601,7 @@ const Q_FAMILY = () => ({ members: [
   QM({ key: 'child-1', type: 'Dependent Child', label: 'Aarav', completionPct: 100 }),
   QM({ key: 'child-2', type: 'Dependent Child', label: 'Mira', status: 'Submitted', completionPct: 90, submittedAt: '1 Nov 2026, 9:00 am' }),
 ], unavailable: false, mondayDone: false });
-const ALL_IN = () => ITEMS.map((it) => ({ ...it, status: it.status === 'Missing' ? 'Received' : it.status }));
+const ALL_IN = () => ITEMS.map((it) => ({ ...it, status: it.status === 'Missing' || it.status === 'Rework Required' ? 'Received' : it.status }));
 
 test('questionnaireFromMembers: one line per member who has not submitted (submitted members left out, the second form never a line of its own); a lone principal reads "Your questionnaire"; done = every member submitted OR the board says Done with no stamps (the portal\'s rule); an empty list or a blip is unknown, never done', () => {
   const q = svc.questionnaireFromMembers(Q_FAMILY());
@@ -1847,10 +1847,11 @@ test('review r1 [0]: a case type with no questionnaire form is "not applicable" 
     const r = await svc.buildReminderEmail(baseOpts({ level, lastDay: '2026-11-14', questionnaire: NO_FORM() }));
     assert.doesNotMatch(r.html + r.text, /Questionnaire still to finish|not started yet/, String(level));
     assert.equal(r.template.questionnaireAppended, false, String(level));
-    assert.deepEqual(r.warnings.filter((w) => /questionnaire/i.test(w)), [], String(level));
+    // Gauri's three texts still ask for a questionnaire: only the "edit it" line (review round 2 [1]); the automatic text does not
+    assert.deepEqual(r.warnings.filter((w) => /questionnaire/i.test(w)), level === 'auto' ? [] : [svc._internal.Q_NO_FORM_WARNING], String(level));
   }
   // an edited text without {QuestionnaireList}: nothing added on a no-form case
-  const e = await svc.buildReminderEmail(baseOpts({ bodyOverride: 'Hello {ClientName},\n\n{MissingList}\n\nThanks.', questionnaire: NO_FORM() }));
+  const e = await svc.buildReminderEmail(baseOpts({ subjectOverride: 'Documents for {CaseRef}', bodyOverride: 'Hello {ClientName},\n\n{MissingList}\n\nThanks.', questionnaire: NO_FORM() }));
   assert.deepEqual([e.template.questionnaireAppended, e.warnings], [false, []]);
 });
 
@@ -1983,4 +1984,75 @@ test('review r1 [3]: the claim note says what the reminder was about — parseNo
   assert.deepEqual([n.docsMissing, n.questionnaire, n.lastDayIso], [0, true, '2026-11-17']);
   const d = svc.parseNote({ id: '3', at: T0, text: svc.claimNote({ level: 3, to: 'a***@x', actor: 'Mahesh', count: 4, lastDay: '2026-11-17', now: T0 }) });
   assert.deepEqual([d.docsMissing, d.questionnaire], [4, false]);
+});
+
+// ═══════════════════════ Review round 2 of Gauri's texts (2026-11-07) ═══════════════════════
+
+test('review r2 [1][3]: a case type with no questionnaire — the preview warns that the wording still asks for one (all three levels); an edited text without the word gets no warning; a questionnaire case never gets it', async () => {
+  const S = staffStubs();
+  try {
+    for (const level of [1, 2, 3]) {
+      const p = await svc.previewStaffReminder({ overview: OV({ questionnaire: NO_FORM() }), level, lastDay: '2026-11-20' });
+      assert.ok(p.warnings.includes(svc._internal.Q_NO_FORM_WARNING), String(level));
+      assert.equal(p.questionnaireList, '');
+      const ok = await svc.previewStaffReminder({ overview: OV({ questionnaire: { members: [QM()] } }), level, lastDay: '2026-11-20' });
+      assert.ok(!ok.warnings.includes(svc._internal.Q_NO_FORM_WARNING), `${level}: a questionnaire case`);
+    }
+    // the send hands the same line back when the staff kept the wording; an edited text without it sends clean
+    const kept = await svc.sendStaffReminder({ overview: OV({ questionnaire: NO_FORM() }), level: 1, subject: 'Documents for {CaseRef}', body: 'Hello {ClientName},\n\nPlease finish the questionnaire.\n\n{MissingList}' });
+    assert.ok(kept.warnings.includes(svc._internal.Q_NO_FORM_WARNING));
+    const clean = await svc.sendStaffReminder({ overview: OV({ questionnaire: NO_FORM() }), level: 2, subject: 'Documents for {CaseRef}', body: 'Hello {ClientName},\n\n{MissingList}' });
+    assert.ok(!clean.warnings.includes(svc._internal.Q_NO_FORM_WARNING));
+  } finally { S.restore(); }
+  // the token alone is not "a mention"
+  assert.equal(svc._internal.mentionsQuestionnaire('Docs', 'Hi\n\n{QuestionnaireList}'), false);
+  // the guide says what really happens
+  const guide = fs.readFileSync(path.join(__dirname, '../docs/Case-Manager-Guide.html'), 'utf8');
+  assert.doesNotMatch(guide, /never told about one/);
+  assert.match(guide, /the questionnaire list is left out, but Gauri's wording still mentions the questionnaire/);
+});
+
+test('review r2 [2]: nothing missing but a document waiting for a new copy (Rework Required) — the buttons work, the email names it under "Documents to upload again", the progress line says it needs a new copy; never "Every document is in"', async () => {
+  const items = [
+    { id: '1', name: 'Passport', status: 'Rework Required', category: 'Identity', applicantType: 'Principal Applicant', applicantLabel: 'Principal Applicant', optional: false, clientInstructions: '' },
+    { id: '2', name: 'Photo', status: 'Received', category: 'Identity', applicantType: 'Principal Applicant', applicantLabel: 'Principal Applicant', optional: false, clientInstructions: '' },
+  ];
+  const m = svc.missingFromItems(items);
+  assert.deepEqual([m.count, m.rework], [0, 1]);
+  const open = { members: [QM()] };
+  const done = { members: [QM({ submittedAt: '1 Nov', status: 'Submitted' })] };
+  for (const q of [open, done]) {
+    const r = await svc.buildReminderEmail(baseOpts({ missing: m, questionnaire: q }));
+    assert.match(r.html, /Documents to upload again \(1\):/);
+    assert.match(r.html, /1 document is waiting for a new copy/);
+    assert.match(r.text, /Documents to upload again \(1\):\n1 document is waiting for a new copy \(see the note on each in your portal\)\./);
+    assert.doesNotMatch(r.html + r.text, /Documents still needed|\.\.\.and|…and/);
+    assert.match(r.html, /2 of 2 documents received — 1 needs a new copy/);
+    assert.match(r.text, /2 of 2 documents received — 1 needs a new copy/);
+    // an edited text without {MissingList} still gets the block
+    const e = await svc.buildReminderEmail(baseOpts({ missing: m, questionnaire: q, bodyOverride: 'Hello {ClientName},\n\n{QuestionnaireList}\n\nThanks.' }));
+    assert.equal(e.template.listAppended, true);
+    assert.match(e.text, /Documents to upload again \(1\):/);
+    // the card and the preview agree: something to remind about
+    const card = svc.describeForCase({ overview: OV(), items, notes: [], questionnaire: q });
+    assert.equal(card.available, true, 'rework is something to remind about');
+  }
+  // with a missing row too: the old "…and 1 document is waiting" line, the usual lead
+  const both = await svc.buildReminderEmail(baseOpts());
+  assert.match(both.html, /Documents still needed \(\d+\):/);
+  assert.match(both.html, /…and 1 document is waiting for a new copy/);
+  assert.match(both.text, /\.\.\.and 1 document is waiting for a new copy/);
+  // the preview + send path: no refusal, the email names the rework
+  const S = staffStubs({ items });
+  try {
+    const ov = OV({ questionnaire: { members: [QM({ submittedAt: '1 Nov', status: 'Submitted' })] } });
+    const p = await svc.previewStaffReminder({ overview: ov, level: 1 });
+    assert.equal(p.missing.rework, 1);
+    const r = await svc.sendStaffReminder({ overview: ov, level: 1, subject: p.subject, body: p.body });
+    assert.equal(r.ok, true);
+    assert.match(S.sent[0].html, /Documents to upload again \(1\):/);
+  } finally { S.restore(); }
+  // the dialog says it too (the cockpit's read-only list)
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/adminCase.js'), 'utf8');
+  assert.match(src, /Documents to upload again: /);
 });
