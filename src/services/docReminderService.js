@@ -1085,6 +1085,82 @@ async function previewStaffReminder({ overview, level, lastDay, actor, now } = {
   };
 }
 
+/** The final's "last day we will wait" as the send checks it ('' for reminders 1 and 2), or a 400 refusal. */
+function finalLastDay(lv, lastDay, today) {
+  if (lv !== 3) return '';
+  const last = require('./deadlineService').cleanDay(lastDay);
+  if (!last) throw refuse(400, 'bad-last-day', 'Enter the last day you will wait for the documents (a date).');
+  if (last < today) throw refuse(400, 'bad-last-day', `The last day ${fmtDay(last)} is in the past.`);
+  return last;
+}
+
+/**
+ * The ONE place a staff reminder's email inputs are put together — the send and the
+ * pop-up's live view (renderStaffReminder) both use it, so what staff see is the email.
+ * The sign-off is the VERIFIED Monday sign-in (senderName), never a typed name.
+ */
+function staffEmailOptions({ overview, p, level, lastDay, subject, body, extra, actor, accessToken }) {
+  return {
+    level, caseRef: p.caseRef, clientName: overview.clientName, clientEmail: overview.clientEmail, caseType: overview.caseType,
+    accessToken, missing: p.missing, deadline: p.deadline, lastDay,
+    staffName: senderName(actor), extraLine: extra, subjectOverride: subject, bodyOverride: body,
+    questionnaire: overview.questionnaire,
+  };
+}
+
+// ─── The pop-up's live view of the email (Faran 2026-11-07) ──────────────────
+// "display the email in the popup so that Mahesh or any team member who is sending
+// it can review or edit it before sending". The view is built by the SAME code as the
+// send, from the same fresh list — but with a stand-in access code, and every link
+// switched off, so the page never holds the client's working link.
+
+const PREVIEW_TOKEN = 'preview-only';
+const LINK_NOTE = 'switched off in this preview';
+
+/**
+ * The email html made safe to show staff: the client's code (if it ever got in) replaced by
+ * the stand-in, every link pointed at "#" (data-link-note says why), and anything that could
+ * run or navigate taken out — scripts, on* handlers, forms, frames, base, meta refresh. The
+ * email has none of these (the tests assert it); this is the belt to the iframe's braces.
+ * Attributes are only touched INSIDE tags: the staff's own text is escaped, so a typed
+ * "one=two" is text and stays as typed.
+ */
+function previewSafeHtml(html, { token } = {}) {
+  let h = String(html == null ? '' : html);
+  const tk = s(token);
+  if (tk.length >= 6) h = h.split(encodeURIComponent(tk)).join(PREVIEW_TOKEN).split(tk).join(PREVIEW_TOKEN);
+  h = h.replace(/<script\b[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<\/?(?:script|iframe|frame|object|embed|base|form)\b[^>]*>/gi, '')
+    .replace(/<meta\b[^>]*http-equiv[^>]*>/gi, '');
+  return h.replace(/<[a-z][^>]*>/gi, (tag) => tag
+    .replace(/\s(?:on[a-z]+|action|formaction|srcdoc)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\shref\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, ` href="#" data-link-note="${LINK_NOTE}"`));
+}
+
+/**
+ * POST render: the finished email for the pop-up — read-only (no note, no email, no
+ * cool-down; it reads the case's list and notes exactly as a preview does). The gate keeps
+ * its refusals (409 / 503); a text that cannot go yet — reply wording, the final's last day
+ * blank or past, an unknown level, an empty subject or text — is an answer, not an error:
+ * { ok: true, html: '', problems: [...] }, so the pop-up shows it while staff type.
+ */
+async function renderStaffReminder({ overview, level, subject, body, extra, lastDay, actor, now } = {}) {
+  const t = now || io.now();
+  gateStaff(overview);
+  const problem = (message) => ({ ok: true, html: '', subject: '', warnings: [], problems: [message] });
+  let lv, last;
+  try { lv = parseLevel(level); last = finalLastDay(lv, lastDay, torontoDay(t)); }
+  catch (err) { if (err.refused && err.status === 400) return problem(err.message); throw err; }
+  // the dialog never sends an empty box (remSend says so) — the view says it too, never the board text in its place
+  if (!s(subject)) return problem('The subject is empty.');
+  if (!s(body)) return problem('The text is empty.');
+  const p = await prepareStaff({ overview, level: lv, now: t });
+  let email;
+  try { email = await buildReminderEmail(staffEmailOptions({ overview, p, level: lv, lastDay: last, subject, body, extra, actor, accessToken: PREVIEW_TOKEN })); }
+  catch (err) { return problem(err.message); }
+  return { ok: true, html: previewSafeHtml(email.html, { token: overview.accessToken }), subject: email.subject, warnings: email.warnings || [], problems: [] };
+}
+
 /**
  * POST send: the gate again, the staff's text re-checked, the claim note, the race,
  * the email, the failure note. Resolves { ok, noted, noteId, to, warnings, level, day }
@@ -1094,23 +1170,13 @@ async function sendStaffReminder({ overview, level, subject, body, extra, lastDa
   const t = now || io.now();
   const lv = parseLevel(level);
   const today = torontoDay(t);
-  let last = '';
-  if (lv === 3) {
-    last = require('./deadlineService').cleanDay(lastDay);
-    if (!last) throw refuse(400, 'bad-last-day', 'Enter the last day you will wait for the documents (a date).');
-    if (last < today) throw refuse(400, 'bad-last-day', `The last day ${fmtDay(last)} is in the past.`);
-  }
+  const last = finalLastDay(lv, lastDay, today);
   const p = await prepareStaff({ overview, level: lv, now: t });
   const origin = ORIGIN_OF[lv];
   if (failedTries(p.history, origin, today) >= MAX_TRIES) throw refuse(409, 'max-tries', `This reminder did not go out ${MAX_TRIES} times today — the email system is having a temporary problem. Please try again tomorrow, or email the client by hand.`);
   let email;
   try {
-    email = await buildReminderEmail({
-      level: lv, caseRef: p.caseRef, clientName: overview.clientName, clientEmail: overview.clientEmail, caseType: overview.caseType,
-      accessToken: overview.accessToken, missing: p.missing, deadline: p.deadline, lastDay: last,
-      staffName: senderName(actor), extraLine: extra, subjectOverride: subject, bodyOverride: body,
-      questionnaire: overview.questionnaire,
-    });
+    email = await buildReminderEmail(staffEmailOptions({ overview, p, level: lv, lastDay: last, subject, body, extra, actor, accessToken: overview.accessToken }));
   } catch (err) { throw refuse(400, 'bad-text', err.message); }
 
   // 1. The claim — the record that this reminder is going out (before the email).
@@ -1349,7 +1415,7 @@ module.exports = {
   io, claimNote, failureNote, parseNote, rawNotes, readReminderHistory, readCaseNotes, recentClientSend, recentEscalationStamp, autoSkipReasons, previewWarnings, historyView,
   sentOn, openClaims, openClaimsAnyOrigin, racingClaims, failedTries, isCaseGroup, describeForCase, caseGateProblem,
   // the staff buttons
-  gateStaff, parseLevel, senderName, previewStaffReminder, sendStaffReminder,
+  gateStaff, parseLevel, senderName, previewStaffReminder, sendStaffReminder, renderStaffReminder, previewSafeHtml, PREVIEW_TOKEN,
   NOTE_HEAD, NOTE_HEAD_TEXT, NOT_CASE_GROUPS, MAX_TRIES, NOTES_PAGE, NOTES_MAX_PAGES, FINAL_DEFAULT_DAYS, RACE_WINDOW_MS,
   // pure — exported for tests
   _internal: { fmtDay, oneLine, fillTokens, missingListText, missingListHtml, LEVEL_NAMES, torontoDay, dayPlus, daysUntil, marker, failMarker, dayFromWords, imaginaryBody, IMAGINARY_LEAD, caseTypeText,

@@ -2057,3 +2057,166 @@ test('review r2 [2]: nothing missing but a document waiting for a new copy (Rewo
   const src = fs.readFileSync(path.join(__dirname, '../src/routes/adminCase.js'), 'utf8');
   assert.match(src, /Documents to upload again: /);
 });
+
+// ─── The pop-up's live view of the email (Faran 2026-11-07) ──────────────────
+
+const RENDER_BODY = 'Dear {ClientName},\n\nLast call.\n\n{MissingList}\n\nWe wait until {LastDay}. {PortalLink}\n\n{StaffName}';
+const tagsOf = (html) => [...html.matchAll(/<[a-z][^>]*>/gi)].map((m) => m[0]);
+
+test('renderStaffReminder: the SAME email the send makes from the same boxes — only the access code is a stand-in and every link is switched off; never a note, never an email', async () => {
+  const S = staffStubs();
+  try {
+    const input = { overview: OV(), level: 3, subject: 'Final notice — {CaseRef}', body: RENDER_BODY, extra: 'We are still <b>looking</b> for the lease & one=two', lastDay: '2026-11-21', actor: { name: 'Mahesh Sharma', email: 'mahesh@tdotimm.com', verified: true } };
+    const r = await svc.renderStaffReminder(input);
+    assert.deepEqual([r.ok, r.problems, r.subject], [true, [], 'Final notice — 2026-TEST-001']);
+    assert.equal(S.posted.length + S.sent.length + S.deleted.length, 0, 'the view never writes, sends or deletes');
+    // the client's code is nowhere in it; the links are "#" with the note, the stand-in only in the shown text
+    assert.ok(!r.html.includes(TOKEN) && !r.html.includes(encodeURIComponent(TOKEN)), 'no access code');
+    const links = [...r.html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]);
+    assert.ok(links.length >= 3, 'the body link, the portal button and the upload link (and the contact line) are all there');
+    assert.ok(links.every((u) => u === '#'), JSON.stringify(links));
+    assert.equal((r.html.match(/data-link-note="switched off in this preview"/g) || []).length, links.length);
+    assert.match(r.html, /\/client\/2026-TEST-001\?t=preview-only/, 'the shown address uses the stand-in code');
+    // nothing that could run: no script, no on* handler, no form / frame / base / meta refresh
+    for (const tag of tagsOf(r.html)) assert.doesNotMatch(tag, /^<(script|iframe|frame|object|embed|base|form)\b|\son[a-z]+\s*=|http-equiv|\saction\s*=/i, tag);
+    assert.match(r.html, /We are still looking for the lease &amp; one=two/, 'the staff text is escaped and a typed "one=two" stays as typed');
+    assert.match(r.html, /Mahesh Sharma/, '{StaffName} = the verified sign-in');
+    // the send, from the same boxes: its email, made safe the same way, IS the view
+    const sent = await svc.sendStaffReminder(input);
+    assert.equal(sent.ok, true);
+    const m = S.sent[0];
+    for (const tag of tagsOf(m.html)) assert.doesNotMatch(tag, /^<script\b|\son[a-z]+\s*=/i, 'the email itself has no script and no handler: ' + tag);
+    assert.match(m.html, PORTAL, 'the client gets the working link');
+    assert.equal(svc.previewSafeHtml(m.html, { token: TOKEN }), r.html, 'byte for byte the same email apart from the code and the links');
+    assert.equal(m.subject, r.subject);
+  } finally { S.restore(); }
+});
+
+test('renderStaffReminder: the sign-off is the VERIFIED sign-in only — the shared key reads "TDOT Immigration"; the questionnaire and the edited-text warnings ride along', async () => {
+  const S = staffStubs();
+  try {
+    const base = { overview: OV(), level: 1, subject: 'Docs', body: 'Hello {ClientName},\n\nPlease upload.\n\n{StaffName}' };
+    const key = await svc.renderStaffReminder({ ...base, actor: { name: 'Unidentified (shared admin key)', email: '', verified: false } });
+    assert.match(key.html, /TDOT Immigration/);
+    assert.doesNotMatch(key.html, /Unidentified/);
+    assert.deepEqual(key.warnings, ['the edited text had no {MissingList} — the missing documents were added at the end']);
+    const none = await svc.renderStaffReminder({ ...base, actor: null });
+    assert.doesNotMatch(none.html, /Unidentified/);
+    assert.equal(S.posted.length + S.sent.length, 0);
+  } finally { S.restore(); }
+});
+
+test('renderStaffReminder: a text that cannot go yet is an ANSWER with problems (no html) — bad level, the final\'s last day blank or past, reply wording in the subject / text / extra line, an empty box; the gate keeps its refusals', async () => {
+  const S = staffStubs();
+  try {
+    const ok = { overview: OV(), level: 1, subject: 'Docs', body: '{MissingList}', extra: '', lastDay: '', actor: { name: 'Mahesh Sharma', verified: true } };
+    const cases = [
+      [{ level: 'x' }, /Choose reminder 1, 2 or the final reminder/],
+      [{ level: 3, lastDay: '' }, /Enter the last day you will wait/],
+      [{ level: 3, lastDay: '2026-11-01' }, /is in the past/],
+      [{ subject: 'Reply to this email' }, /tells the client to reply/],
+      [{ body: 'Please reply to this email. {MissingList}' }, /tells the client to reply/],
+      [{ extra: 'Just reply with the lease.' }, /extra line tells the client to reply/],
+      [{ subject: '   ' }, /^The subject is empty\.$/],
+      [{ body: '' }, /^The text is empty\.$/],
+    ];
+    for (const [over, re] of cases) {
+      const r = await svc.renderStaffReminder({ ...ok, ...over });
+      assert.deepEqual([r.ok, r.html, r.problems.length], [true, '', 1], JSON.stringify(over));
+      assert.match(r.problems[0], re, JSON.stringify(over));
+    }
+    for (const [over, status, reason] of [[{ automationLock: 'Yes' }, 409, 'locked'], [{ cmUnavailable: true }, 503, 'cm-unavailable'], [{ caseStage: 'Internal Review' }, 409, 'not-dcs'], [{ accessToken: '' }, 409, 'no-token']]) {
+      await assert.rejects(svc.renderStaffReminder({ ...ok, level: 'x', overview: OV(over) }), (e) => e.refused && e.status === status && e.reason === reason, JSON.stringify(over));
+    }
+    assert.equal(S.posted.length + S.sent.length, 0);
+  } finally { S.restore(); }
+  const none = staffStubs({ items: ITEMS.map((it) => ({ ...it, status: 'Received' })) });
+  try {
+    await assert.rejects(svc.renderStaffReminder({ overview: OV(), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.status === 409 && e.reason === 'no-rows');
+  } finally { none.restore(); }
+});
+
+test('previewSafeHtml: links off, the code replaced (plain and URL-encoded), anything that runs or navigates taken out — and only inside tags', () => {
+  const T = 'tok-ABC/123';
+  const out = svc.previewSafeHtml(`<p onclick="x()" style="a">Hi one=two ${T} ${encodeURIComponent(T)}</p><a href='https://x/?t=${T}'>a</a><a href=https://y>b</a><form action="/go"><input formaction="/z"></form><script>alert(1)</script><iframe srcdoc="x"></iframe><meta http-equiv="refresh" content="0;url=/x"><base href="/evil"><img src="https://logo" onerror="y()">`, { token: T });
+  assert.equal(out, '<p style="a">Hi one=two preview-only preview-only</p><a href="#" data-link-note="switched off in this preview">a</a><a href="#" data-link-note="switched off in this preview">b</a><input><img src="https://logo">');
+  assert.equal(svc.previewSafeHtml('<p>abc</p>', { token: 'a' }), '<p>abc</p>', 'a too-short code is never used to cut the html up');
+});
+
+test('routes.render: 401 (loginUrl) / 403 keep their codes, every answer is no-store, a text problem or a too-long box is a 200 with problems, a gate refusal keeps its status; nothing is ever written or sent; the name in the body is ignored', async () => {
+  const S = staffStubs();
+  routes._resetForTests();
+  try {
+    let res = fakeRes(); await routes.render(req({ body: { level: 1, subject: 'x', body: '{MissingList}' } }), res, deps('none'));
+    assert.deepEqual([res.statusCode, res.body.loginUrl, res.headers['Cache-Control']], [401, '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard', 'no-store']);
+    res = fakeRes(); await routes.render(req({ body: { level: 1, subject: 'x', body: '{MissingList}' } }), res, deps('other'));
+    assert.deepEqual([res.statusCode, res.headers['Cache-Control']], [403, 'no-store']);
+    res = fakeRes(); await routes.render(req({ body: { level: 1, subject: 'Docs', body: 'Hi,\n{MissingList}\n{StaffName}', extra: '', lastDay: '', actor: 'Evil Name', staffName: 'Evil' } }), res, deps('staff'));
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    assert.deepEqual(Object.keys(res.body).sort(), ['html', 'ok', 'problems', 'subject', 'warnings']);
+    assert.deepEqual([res.body.ok, res.body.subject, res.body.problems, res.headers['Cache-Control']], [true, 'Docs', [], 'no-store']);
+    assert.match(res.body.html, /Mahesh Sharma/); assert.doesNotMatch(res.body.html, /Evil/);
+    assert.ok(!res.body.html.includes(TOKEN));
+    res = fakeRes(); await routes.render(req({ body: { level: 1, subject: 'Docs', body: '{StaffName}', extra: '' } }), res, deps('admin'));
+    assert.match(res.body.html, /TDOT Immigration/); assert.doesNotMatch(res.body.html, /Unidentified/);
+    for (const [body, re] of [
+      [{ level: 1, subject: 'x'.repeat(201), body: '{MissingList}' }, /The subject is too long \(max 200 characters\)\./],
+      [{ level: 1, subject: 'x', body: '{MissingList}' + 'y'.repeat(6000) }, /The text is too long \(max 6000 characters\)\./],
+      [{ level: 1, subject: 'x', body: '{MissingList}', extra: 'e'.repeat(1001) }, /The extra line is too long \(max 1000 characters\)\./],
+      [{ level: 3, subject: 'x', body: '{MissingList}', lastDay: '' }, /Enter the last day/],
+      [{ level: 1, subject: 'x', body: 'please reply to this email {MissingList}' }, /tells the client to reply/],
+      [{ level: 7, subject: 'x', body: '{MissingList}' }, /Choose reminder 1, 2 or the final reminder/],
+    ]) {
+      res = fakeRes(); await routes.render(req({ body }), res, deps('staff'));
+      assert.deepEqual([res.statusCode, res.body.ok, res.body.html], [200, true, ''], JSON.stringify(body).slice(0, 80));
+      assert.match(res.body.problems[0], re);
+    }
+    res = fakeRes(); await routes.render(req({ body: { level: 1, subject: 'x', body: '{MissingList}' } }), res, deps('staff', { overview: OV({ automationLock: 'Yes' }) }));
+    assert.deepEqual([res.statusCode, res.body.ok, res.body.reason], [409, false, 'locked']);
+    res = fakeRes(); await routes.render(req({ body: { level: 1, subject: 'x', body: '{MissingList}' } }), res, deps('staff', { overview: OV({ cmUnavailable: true }) }));
+    assert.deepEqual([res.statusCode, res.body.reason], [503, 'cm-unavailable']);
+    assert.equal(S.posted.length + S.sent.length + S.deleted.length, 0, 'the view never writes or sends');
+    assert.equal(routes._lastSendAt.size, 0, 'and never starts the send cool-down');
+    // a render does not hold up a send that follows it
+    res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'Docs', body: '{MissingList}' } }), res, deps('staff'));
+    assert.equal(res.statusCode, 200);
+  } finally { S.restore(); routes._resetForTests(); }
+});
+
+test('routes.render: 30 a minute per person per case — the 31st is a plain 429 BEFORE the case is read; another case, another person each have their own minute; refused sign-ins are not counted', async () => {
+  const S = staffStubs();
+  routes._resetForTests();
+  try {
+    assert.equal(routes.RENDER_PER_MIN, 30);
+    let reads = 0;
+    const counted = (who, opts) => { const d = deps(who, opts); const inner = d.resolveCaseForWrite; d.resolveCaseForWrite = async (...a) => { reads++; return inner(...a); }; return d; };
+    const body = { level: 1, subject: 'x', body: '{MissingList}' };
+    // a stranger hammering the case (401) uses up nobody's minute
+    for (let i = 0; i < 40; i++) { const res = fakeRes(); await routes.render(req({ body }), res, counted('none')); assert.equal(res.statusCode, 401); }
+    reads = 0;
+    for (let i = 0; i < 30; i++) { const res = fakeRes(); await routes.render(req({ body }), res, counted('staff')); assert.equal(res.statusCode, 200, `ask ${i + 1}`); }
+    assert.equal(reads, 30);
+    let res = fakeRes(); await routes.render(req({ params: { caseRef: REF.toLowerCase() }, body }), res, counted('staff'));
+    assert.equal(res.statusCode, 429);
+    assert.deepEqual([res.body.ok, res.body.reason, res.headers['Cache-Control']], [false, 'too-many', 'no-store']);
+    assert.match(res.body.error, /^The email view was updated too often — it updates again in \d+s\. Nothing you typed is lost\.$/);
+    assert.equal(reads, 30, 'refused before the case read');
+    res = fakeRes(); await routes.render(req({ params: { caseRef: '2026-TEST-002' }, body }), res, counted('staff', { overview: OV({ caseRef: '2026-TEST-002', itemId: '4002' }) }));
+    assert.equal(res.statusCode, 200, 'another case has its own minute');
+    res = fakeRes(); await routes.render(req({ body }), res, counted('admin'));
+    assert.equal(res.statusCode, 200, 'the shared key has its own minute');
+    assert.equal(S.posted.length + S.sent.length, 0);
+  } finally { S.restore(); routes._resetForTests(); }
+});
+
+test('source pins (the email view): server.js registers the render route with the same gate helpers and a small body limit; the handler never touches the send path', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  assert.match(server, /app\.post\('\/admin\/case-action\/:caseRef\/reminder\/render', express\.json\(\{ limit: docReminderRoutes\.RENDER_LIMIT_BYTES \}\), \(req, res\) => docReminderRoutes\.render\(req, res, \{ resolveCaseForWrite, staffActor \}\)\);/);
+  assert.equal(routes.RENDER_LIMIT_BYTES, '64kb');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'docReminderRoutes.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function render('), src.indexOf('module.exports'));
+  assert.ok(fn.includes('renderStaffReminder') && !/sendStaffReminder|_lastSendAt\.set|postNote|sendEmail/.test(fn));
+  const svcSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'docReminderService.js'), 'utf8');
+  const rfn = svcSrc.slice(svcSrc.indexOf('async function renderStaffReminder('), svcSrc.indexOf('/**\n * POST send:'));
+  assert.ok(rfn.includes('accessToken: PREVIEW_TOKEN') && !/io\.(postNote|sendEmail|deleteNote)|overview\.accessToken \}\)\)/.test(rfn.replace('previewSafeHtml(email.html, { token: overview.accessToken })', '')), 'the view is built with the stand-in code and never writes');
+});

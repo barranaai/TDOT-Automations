@@ -189,6 +189,25 @@ function buildCockpitHTML(caseRef) {
     .rem-list li { margin:2px 0; }
     .rem-q { background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:10px 12px; font-size:12.5px; max-height:160px; overflow:auto; }
     .tdlg.rem-dlg { max-width:640px; }
+    /* The email as the client will see it (Faran 2026-11-07): beside the edit boxes on a wide screen, behind an "Edit" / "See email" switch on a narrow one. */
+    .rem-tabs { display:none; gap:8px; margin:6px 0 10px; }
+    .rem-tabs .rem-tab { flex:1 1 0; justify-content:center; min-height:44px; font-size:16px; }
+    .rem-tabs .rem-tab.on { background:var(--navy); border-color:var(--navy); color:#fff; }
+    .rem-mail-state { font-weight:500; margin-left:6px; }
+    .rem-mail-state.rem-mail-fail { color:#b45309; font-weight:600; }
+    .rem-prob { font-size:12.5px; color:#991b1b; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:7px 10px; margin:0 0 8px; }
+    .rem-frame { display:block; width:100%; height:62vh; min-height:380px; border:1px solid var(--border); border-radius:8px; background:#FAF8F4; }
+    .rem-mail-note { font-size:11.5px; color:var(--light); margin-top:6px; line-height:1.5; }
+    @media (min-width: 901px) {
+      .tdlg.rem-dlg { max-width:1180px; }
+      .rem-split { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:20px; align-items:start; }
+    }
+    @media (max-width: 900px) {
+      .rem-tabs { display:flex; }
+      .rem-split .rem-mail { display:none; }
+      .rem-split.rem-show-mail .rem-edit { display:none; }
+      .rem-split.rem-show-mail .rem-mail { display:block; }
+    }
     /* Phones: the three buttons stack full width (16px / 44px), the preview is a full-screen sheet, nothing scrolls sideways. */
     @media (max-width: 600px) {
       .rem-btns .sbtn { width:100%; justify-content:center; font-size:16px; min-height:44px; }
@@ -1214,6 +1233,7 @@ function remDialog(level, p) {
   var title = level === 3 ? 'Send the final reminder' : 'Send reminder ' + level + (level === 1 ? ' · friendly' : ' · firm');
   var c = tdotDialogNew({ cls: 'rem-dlg', ovClass: 'rem-ov', group: 'rem', onClosed: function() {
     REM_OPEN = false;
+    if (c && c.remTimer) { clearTimeout(c.remTimer); c.remTimer = null; }   // no email view is asked for after the close
     // a failed attempt was noted on the case while the dialog was open: read the case again so the card shows it (never the facts from before the send)
     if (REM_STALE) { REM_STALE = false; loadCase(); return; }
     if (REM_LAST) renderReminders(REM_LAST);
@@ -1223,6 +1243,8 @@ function remDialog(level, p) {
   var html = '<h3>' + escHtml(title) + '</h3>' +
     '<div class="rem-to"><span class="k">To</span>' + escHtml(p.to || '') + ' <span class="muted">· ' + escHtml(p.deadlineLine || '') + '</span></div>' +
     warn +
+    '<div class="rem-tabs"><button type="button" class="sbtn rem-tab on" id="rem-tab-edit" aria-pressed="true">Edit</button><button type="button" class="sbtn rem-tab" id="rem-tab-mail" aria-pressed="false">See email</button></div>' +
+    '<div class="rem-split" id="rem-split"><div class="rem-edit">' +
     '<label class="rem-lbl" for="rem-subject">Subject</label><input class="rem-in" id="rem-subject" maxlength="200">' +
     '<label class="rem-lbl" for="rem-body">Text <span class="muted">— the missing documents go where {MissingList} is, the unfinished questionnaire where {QuestionnaireList} is, the portal link where {PortalLink} is' + (level === 3 ? ', the date below where {LastDay} is' : '') + '</span></label>' +
     '<textarea class="rem-in" id="rem-body" rows="8" maxlength="6000"></textarea>' +
@@ -1230,15 +1252,73 @@ function remDialog(level, p) {
     (level === 3 ? '<label class="rem-lbl" for="rem-lastday">Last day we will wait</label><input class="rem-in" type="date" id="rem-lastday">' : '') +
     '<div class="rem-lbl">Missing documents <span class="muted">(' + escHtml(String(p.missingCount || 0)) + ' — inserted by the app, read-only)</span></div><div class="rem-missing">' + remMissingHtml(p.missing) + '</div>' +
     (p.questionnaire && !p.questionnaire.unavailable ? '<div class="rem-lbl">Questionnaire still to finish <span class="muted">(inserted by the app, read-only)</span></div><div class="rem-q">' + remQuestionnaireHtml(p.questionnaire) + '</div>' : '') +
+    '</div><div class="rem-mail">' +
+    '<div class="rem-lbl">The email as the client will see it <span class="rem-mail-state muted" id="rem-mail-state">Updating…</span></div>' +
+    '<div id="rem-mail-prob"></div>' +
+    '<iframe class="rem-frame" id="rem-frame" sandbox="" title="The email as the client will see it"></iframe>' +
+    '<div class="rem-mail-note">Links in this preview are switched off. The client’s email has their working portal and upload links.</div>' +
+    '</div></div>' +
     '<div class="tdlg-err" id="rem-err"></div>' +
     '<div class="tdlg-actions"><button type="button" class="sbtn" data-x="1" id="rem-cancel">Cancel</button><button type="button" class="sbtn primary" data-x="1" id="rem-send">Send</button></div>';
   c.box.innerHTML = html;
   var subj = c.box.querySelector('#rem-subject'), body = c.box.querySelector('#rem-body'), extra = c.box.querySelector('#rem-extra'), last = c.box.querySelector('#rem-lastday');
   subj.value = p.subject || ''; body.value = p.body || '';
   if (last) { last.value = p.lastDay || ''; if (p.minLastDay) last.min = p.minLastDay; }
+  var read = function() { return { subject: subj.value, body: body.value, extra: extra.value, lastDay: last ? last.value : '' }; };
+  // every edit brings the email view up to date after a short pause in typing
+  [subj, body, extra, last].forEach(function(el) { if (el) el.oninput = function() { remRenderSoon(c, level, read); }; });
+  if (last) last.onchange = last.oninput;
+  c.box.querySelector('#rem-tab-edit').onclick = function() { remPane(c, false); };
+  c.box.querySelector('#rem-tab-mail').onclick = function() { remPane(c, true); };
   c.box.querySelector('#rem-cancel').onclick = function() { c.tryClose('cancel'); };
-  c.box.querySelector('#rem-send').onclick = function() { remSend(c, level, { subject: subj.value, body: body.value, extra: extra.value, lastDay: last ? last.value : '' }); };
+  c.box.querySelector('#rem-send').onclick = function() { remSend(c, level, read()); };
+  remRenderNow(c, level, read());
   try { subj.focus(); } catch (e) {}
+}
+// narrow screens: "Edit" or "See email" (wide screens show both side by side — the CSS ignores the switch there)
+function remPane(c, mail) {
+  c.box.querySelector('#rem-split').className = 'rem-split' + (mail ? ' rem-show-mail' : '');
+  var te = c.box.querySelector('#rem-tab-edit'), tm = c.box.querySelector('#rem-tab-mail');
+  te.className = 'sbtn rem-tab' + (mail ? '' : ' on'); te.setAttribute('aria-pressed', mail ? 'false' : 'true');
+  tm.className = 'sbtn rem-tab' + (mail ? ' on' : ''); tm.setAttribute('aria-pressed', mail ? 'true' : 'false');
+}
+var REM_RENDER_WAIT = 600;   // ms of no typing before the email view is asked for again
+function remMailState(c, cls, txt) {
+  var el = c.box.querySelector('#rem-mail-state');
+  el.className = 'rem-mail-state ' + cls; el.textContent = txt;
+}
+function remRenderSoon(c, level, read) {
+  if (c.remTimer) clearTimeout(c.remTimer);
+  remMailState(c, 'muted', 'Updating…');
+  var id = c.openId;
+  c.remTimer = setTimeout(function() { c.remTimer = null; if (c.still(id)) remRenderNow(c, level, read()); }, REM_RENDER_WAIT);
+}
+// the email the send would make from the same boxes, built by the server (links switched off); only the newest ask counts
+function remRenderNow(c, level, v) {
+  var seq = (c.remSeq || 0) + 1; c.remSeq = seq;
+  var id = c.openId;
+  remMailState(c, 'muted', 'Updating…');
+  var key = peekKey();
+  var headers = { 'Content-Type': 'application/json' }; if (key) headers['X-Api-Key'] = key;
+  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/reminder/render', { method: 'POST', headers: headers, credentials: 'same-origin', body: JSON.stringify({ level: level, subject: v.subject, body: v.body, extra: v.extra, lastDay: v.lastDay }) })
+  .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
+  .then(function(res) {
+    if (!c.still(id) || seq !== c.remSeq) return;   // closed, or a newer edit has been asked for since: this answer is out of date
+    if (!res.ok) { remMailState(c, 'rem-mail-fail', 'The preview could not be updated — the text you typed is kept.' + (res.j && res.j.error ? ' ' + res.j.error : '')); return; }
+    remShowMail(c, res.j);
+  })
+  .catch(function() { if (!c.still(id) || seq !== c.remSeq) return; remMailState(c, 'rem-mail-fail', 'The preview could not be updated — the text you typed is kept.'); });
+}
+function remShowMail(c, j) {
+  var probs = j.problems || [], warns = j.warnings || [];
+  remMailState(c, 'muted', '');
+  c.box.querySelector('#rem-mail-prob').innerHTML = probs.map(function(x) { return '<div class="rem-prob">' + escHtml(x) + '</div>'; }).join('') +
+    warns.map(function(w) { return '<div class="rem-warn">⚠ ' + escHtml(w) + '</div>'; }).join('');
+  var frame = c.box.querySelector('#rem-frame');
+  // a text that cannot go yet shows its reason, not an email it cannot send
+  if (probs.length) { frame.style.display = 'none'; return; }
+  frame.style.display = '';
+  frame.srcdoc = String(j.html || '');   // the DOM property: the email is never pasted into this page's own markup
 }
 function remSend(c, level, v) {
   var err = c.box.querySelector('#rem-err');

@@ -4,6 +4,8 @@
  * The two cockpit routes behind the three reminder buttons (block 2, step B):
  *   GET  /admin/case-action/:caseRef/reminder/preview?level=1|2|3[&lastDay=]
  *   POST /admin/case-action/:caseRef/reminder  { level, subject, body, extra, lastDay }
+ *   POST /admin/case-action/:caseRef/reminder/render  { the same } → the finished email for the
+ *        pop-up (Faran 2026-11-07): read-only, links switched off, 30 a minute per person per case
  *
  * server.js registers them and hands in its own gate helpers (resolveCaseForWrite:
  * sign-in + assigned-or-admin, a fresh case overview; staffActor: the Monday
@@ -74,4 +76,54 @@ async function send(req, res, deps) {
   res.json({ ok: true, noted: r.noted, to: r.to, level: r.level, day: r.day, lastDay: r.lastDay || '', warnings: r.warnings || [] });
 }
 
-module.exports = { preview, send, COOLDOWN_MS, SUBJECT_MAX, BODY_MAX, EXTRA_MAX, _lastSendAt, _resetForTests: () => _lastSendAt.clear() };
+// ─── The pop-up's live view of the email (Faran 2026-11-07) ──────────────────
+// Every pause in typing asks for the email again. Each ask reads the case like a preview
+// does (the case, the checklist, the notes), so it is limited per person per case. A full
+// minute is refused BEFORE the case read (a flood never reaches Monday); an ask is counted
+// only once the sign-in let it through, so a stranger can never use up a staffer's minute.
+// In memory: a restart forgets it.
+const RENDER_PER_MIN = 30, RENDER_WINDOW_MS = 60 * 1000;
+const _renders = new Map();   // "who|CASE" → ms of the asks in the last minute
+
+const recentRenders = (key, now) => (_renders.get(key) || []).filter((t) => now - t < RENDER_WINDOW_MS);
+/** 0 when this person's minute for this case still has room, else the seconds to wait. */
+function renderWait(key, now) {
+  const recent = recentRenders(key, now);
+  return recent.length >= RENDER_PER_MIN ? Math.max(1, Math.ceil((RENDER_WINDOW_MS - (now - recent[0])) / 1000)) : 0;
+}
+function countRender(key, now) {
+  _renders.set(key, [...recentRenders(key, now), now]);
+  if (_renders.size > 2000) for (const [k, v] of _renders) if (!v.length || now - v[v.length - 1] >= RENDER_WINDOW_MS) _renders.delete(k);
+}
+
+/** POST render — never writes, never sends, never notes, no cool-down; a text problem is a 200 with problems. */
+async function render(req, res, deps) {
+  const caseRef = (req.params.caseRef || '').trim();
+  res.set('Cache-Control', 'no-store');
+  // who: the Monday sign-in; without one, the shared admin key (one slot for everyone using it)
+  const actor = deps.staffActor(req);
+  const key = `${actor && actor.verified && actor.email ? `staff:${String(actor.email).toLowerCase()}` : 'key'}|${caseRef.toUpperCase()}`;
+  const wait = renderWait(key, Date.now());
+  if (wait > 0) return res.status(429).json({ ok: false, reason: 'too-many', error: `The email view was updated too often — it updates again in ${wait}s. Nothing you typed is lost.` });
+  const ctx = await deps.resolveCaseForWrite(req, res, caseRef);
+  if (!ctx) return;
+  countRender(key, Date.now());
+  const svc = deps.service || require('../services/docReminderService');
+  const body = req.body || {};
+  const problem = (message) => res.json({ ok: true, html: '', subject: '', warnings: [], problems: [message] });
+  const subject = str(body.subject, SUBJECT_MAX + 1), text = str(body.body, BODY_MAX + 1), extra = str(body.extra, EXTRA_MAX + 1);
+  if (subject.length > SUBJECT_MAX) return problem(`The subject is too long (max ${SUBJECT_MAX} characters).`);
+  if (text.length > BODY_MAX) return problem(`The text is too long (max ${BODY_MAX} characters).`);
+  if (extra.length > EXTRA_MAX) return problem(`The extra line is too long (max ${EXTRA_MAX} characters).`);
+  try {
+    const r = await svc.renderStaffReminder({
+      overview: ctx.overview, level: body.level, subject, body: text, extra,
+      lastDay: String(body.lastDay == null ? '' : body.lastDay).trim().slice(0, 10),
+      actor,   // the sign-off is the verified sign-in, exactly as the send signs — never a name from the body
+    });
+    res.json({ ok: true, html: r.html || '', subject: r.subject || '', warnings: r.warnings || [], problems: r.problems || [] });
+  } catch (err) { answerError(res, err, caseRef); }
+}
+
+module.exports = { preview, send, render, COOLDOWN_MS, SUBJECT_MAX, BODY_MAX, EXTRA_MAX, RENDER_PER_MIN, RENDER_LIMIT_BYTES: '64kb', _lastSendAt, _renders,
+  _resetForTests: () => { _lastSendAt.clear(); _renders.clear(); } };

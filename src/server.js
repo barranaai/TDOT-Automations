@@ -1287,6 +1287,8 @@ app.post('/admin/case-action/:caseRef/sponsor', express.json(), async (req, res)
 const docReminderRoutes = require('./routes/docReminderRoutes');
 app.get('/admin/case-action/:caseRef/reminder/preview', (req, res) => docReminderRoutes.preview(req, res, { resolveCaseForWrite, staffActor }));
 app.post('/admin/case-action/:caseRef/reminder', express.json(), (req, res) => docReminderRoutes.send(req, res, { resolveCaseForWrite, staffActor }));
+// the pop-up's live view of the email (Faran 2026-11-07): read-only, a small body, limited per person per case
+app.post('/admin/case-action/:caseRef/reminder/render', express.json({ limit: docReminderRoutes.RENDER_LIMIT_BYTES }), (req, res) => docReminderRoutes.render(req, res, { resolveCaseForWrite, staffActor }));
 
 // ─── Create case folder (2026-10-10) ────────────────────────────────────────
 // For a case that has NO OneDrive folder (an old client added after the ITA,
