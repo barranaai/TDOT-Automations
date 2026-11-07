@@ -128,7 +128,9 @@ function missingFromItems(items) {
         .map(([category, list]) => ({ category, items: list }));
       return { member: g.member, type: g.type, categories };
     });
-  return { groups, count: missing.length, rework, progress: { received, total } };
+  // rows = every checklist row, N/A and optional ones too: "no checklist rows" is judged on this,
+  // never on progress.total (an all-N/A checklist has rows — review round 1 of Gauri's texts [4])
+  return { groups, count: missing.length, rework, progress: { received, total }, rows: rows.length };
 }
 
 /** The case's missing documents, read fresh (the client-visible member filter and labels applied). */
@@ -207,8 +209,10 @@ const pctOf = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.max
  * Pure: what is unfinished in the client's questionnaire, one line per family member
  * who has not submitted. Input = the members as getMemberStatuses (+ decorateMembers)
  * hand them over — { key, type, label, badge?, status, hasData, completionPct, submittedAt } —
- * plus `unavailable` (the member list or a member file could not be read) and
- * `mondayDone` (the Client Master questionnaire status reads Done).
+ * plus `unavailable` (the member list or a member file could not be read),
+ * `mondayDone` (the Client Master questionnaire status reads Done), `notApplicable` (the case
+ * type has no questionnaire form — done, nothing listed) and `embedsAllMembers` (one form holds
+ * every member — spousal F10 — so only the principal's submission counts).
  *
  * "Done" is the portal's rule (clientPortalService): every member submitted, OR the
  * board says Done and the manifest has no evidence either way (a pre-manifest case, a
@@ -220,8 +224,16 @@ const pctOf = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.max
  */
 function questionnaireFromMembers(q) {
   if (!q || typeof q !== 'object') return null;
+  // a case type with no questionnaire form (CEC, ETA, Child Sponsorship…): the client's link shows
+  // only a placeholder page — there is nothing to chase, so it reads as done, no block, no warning
+  // (review round 1 of Gauri's texts [0])
+  if (q.notApplicable === true) return { unavailable: false, done: true, notApplicable: true, pct: null, total: 0, pending: [] };
   const htmlQ = require('./htmlQuestionnaireService');
-  const list = (Array.isArray(q.members) ? q.members : []).filter((m) => m && typeof m === 'object');
+  let list = (Array.isArray(q.members) ? q.members : []).filter((m) => m && typeof m === 'object');
+  // a form that holds every member (spousal F10, embedsAllMembers): the client fills and submits ONE
+  // form — the principal's; the other rows have no questionnaire of their own, so only the principal
+  // is judged (no principal row: the whole list, as before) (review round 1 [1])
+  if (q.embedsAllMembers === true && list.some((m) => m.key === 'primary')) list = list.filter((m) => m.key === 'primary');
   const unread = q.unavailable === true || list.length === 0;
   const stamps = list.some((m) => m.submittedAt);
   const d = htmlQ.deriveQuestionnaireProgress({ members: list, mondayPct: 0 });
@@ -236,7 +248,8 @@ function questionnaireFromMembers(q) {
     const name = s(m.label) || s(m.type) || 'Family member';
     const badge = s(m.badge);
     const label = lone ? 'Your questionnaire' : (badge && badge.toLowerCase() !== name.toLowerCase() ? `${name} (${badge})` : name);
-    const state = !started ? 'not started yet' : (pct >= 100 ? 'all filled in, not submitted yet' : `${pct}% complete, not submitted yet`);
+    // started with 0 % stored (a legacy CSV / plain-array file, answers only in the second form): "started", never "0% complete" (review round 1 [2])
+    const state = !started ? 'not started yet' : (pct >= 100 ? 'all filled in, not submitted yet' : (pct > 0 ? `${pct}% complete, not submitted yet` : 'started, not submitted yet'));
     return { label, line: `${label} — ${state}`, pct, started };
   });
   return { unavailable: false, done: false, pct: d.pct, total: list.length, pending };
@@ -267,17 +280,33 @@ function questionnaireListText(q) {
 /** The lines the staff dialog shows read-only (the same lines the email prints). */
 function questionnaireView(q) {
   if (!q) return null;
-  return { unavailable: q.unavailable, done: q.done, pct: q.pct, pending: q.pending.map((m) => ({ label: m.label, line: m.line })) };
+  return { unavailable: q.unavailable, done: q.done, notApplicable: q.notApplicable === true, pct: q.pct, pending: q.pending.map((m) => ({ label: m.label, line: m.line })) };
 }
 
 const Q_TOKEN = '{QuestionnaireList}';
-/** A text without {QuestionnaireList}: the token goes right after the first {MissingList} (or at the end). */
+// the closing paragraphs a list must never sit under ("Thank you for your cooperation.", "Kind regards,…")
+const SIGN_OFF_RE = /^(?:thank you for your cooperation|(?:kind |best |warm )?regards\b|sincerely\b)/i;
+/**
+ * A text without {QuestionnaireList}: the token goes right after the first {MissingList}; a text
+ * without either goes before the sign-off (never under the signature — review round 1 [6]), else at the end.
+ */
 function withQuestionnaireToken(body) {
   const b = String(body || '');
   if (b.includes(Q_TOKEN)) return b;
-  return b.includes('{MissingList}') ? b.replace('{MissingList}', `{MissingList}\n\n${Q_TOKEN}`) : `${b}\n\n${Q_TOKEN}`;
+  if (b.includes('{MissingList}')) return b.replace('{MissingList}', `{MissingList}\n\n${Q_TOKEN}`);
+  const paras = b.split(/\n\s*\n/);
+  const i = paras.findIndex((p, k) => k > 0 && SIGN_OFF_RE.test(p.trim()));
+  if (i < 0) return `${b}\n\n${Q_TOKEN}`;
+  paras.splice(i, 0, Q_TOKEN);
+  return paras.join('\n\n');
 }
 const Q_APPENDED_WARNING = 'the text had no {QuestionnaireList} — the unfinished questionnaire was added after the documents list';
+/** The warning for a token the app placed: where it went (the documents list, the sign-off, the end). */
+function qPlacedWarning(before, after) {
+  if (before.includes('{MissingList}')) return Q_APPENDED_WARNING;
+  return after.endsWith(Q_TOKEN) ? 'the text had no {QuestionnaireList} — the unfinished questionnaire was added at the end'
+    : 'the text had no {QuestionnaireList} — the unfinished questionnaire was added before the sign-off';
+}
 const Q_UNAVAILABLE_WARNING = 'The questionnaire progress could not be read — the email will not mention it.';
 
 /** The {Token} values of one email; the two rich tokens are placeholders filled at render. */
@@ -328,7 +357,7 @@ function imaginaryBody(body) {
  * @param {string} [o.subjectOverride] the edited subject (staff dialog)
  * @param {string} [o.bodyOverride]    the edited body (staff dialog) — plain text, same tokens
  * @param {{received:number,total:number}} [o.progress]  when known; defaults to missing.progress
- * @param {object} [o.questionnaire]   { members, unavailable, mondayDone } (questionnaireFromMembers' input) —
+ * @param {object} [o.questionnaire]   { members, unavailable, mondayDone, notApplicable?, embedsAllMembers? } (questionnaireFromMembers' input) —
  *                                     absent = not given: no questionnaire block, no warning
  */
 async function buildReminderEmail(o = {}) {
@@ -358,14 +387,15 @@ async function buildReminderEmail(o = {}) {
     const hard = v.problems.filter((p) => !/\{MissingList\}/.test(p));
     if (hard.length) throw new Error(`The reminder text cannot be sent: ${hard.join('; ')}.`);
     body = v.body;
-    if (!body.includes('{MissingList}')) { body += '\n\n{MissingList}'; listAppended = true; warnings.push('the edited text had no {MissingList} — the missing documents were added at the end'); }
+    // only when there IS a documents list: with every document in, nothing is added and nothing said (review round 1 [6])
+    if (!body.includes('{MissingList}') && missing.count > 0) { body += '\n\n{MissingList}'; listAppended = true; warnings.push('the edited text had no {MissingList} — the missing documents were added at the end'); }
     // (v.warnings — unknown tokens — are found again below on the final text, once)
   }
   // the questionnaire: its block where {QuestionnaireList} sits; a text (board or edited) without
   // the token gets it after the documents list when there is something to list (decision 7)
   const q = questionnaireFromMembers(o.questionnaire);
   let questionnaireAppended = false;
-  if (questionnaireOpen(q) && !body.includes(Q_TOKEN)) { body = withQuestionnaireToken(body); questionnaireAppended = true; warnings.push(Q_APPENDED_WARNING); }
+  if (questionnaireOpen(q) && !body.includes(Q_TOKEN)) { const before = body; body = withQuestionnaireToken(body); questionnaireAppended = true; warnings.push(qPlacedWarning(before, body)); }
   if (q && q.unavailable) warnings.push('the questionnaire progress could not be read — the email does not mention it');
 
   const dl = o.deadline || {};
@@ -629,11 +659,14 @@ const io = {
     const htmlQ = require('./htmlQuestionnaireService');
     try {
       const v = await htmlQ.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+      // no form for this case type: no questionnaire to chase — and no OneDrive read (review round 1 [0])
+      if (!v.formFiles) return { members: [], notApplicable: true, unavailable: false };
       const clientName = v.clientName;
       const manifest = await htmlQ.readMembersManifest({ clientName, caseRef });
       const members = manifest || [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant' }];
       const qMembers = await htmlQ.getMemberStatuses({ clientName, caseRef, members, formFiles: v.formFiles });
-      return { members: require('../utils/familyRoleLabels').decorateMembers(v.caseType, qMembers, v.caseSubType), unavailable: false };
+      return { members: require('../utils/familyRoleLabels').decorateMembers(v.caseType, qMembers, v.caseSubType), unavailable: false,
+        embedsAllMembers: require('../../config/questionnaireFormMap').formEmbedsMembers(v.caseType, v.caseSubType) };   // spousal F10: the principal's form is the whole questionnaire
     } catch (err) {
       return { members: [], unavailable: true, error: s(err && err.message).slice(0, 160) };
     }
@@ -704,7 +737,11 @@ function parseNote(note) {
     const by = (/\bby (.+?) — \d+ documents? missing/.exec(text) || [])[1] || '';
     const to = (/\b(?:to|emailed to) (\S+@\S+?)(?: by | —)/.exec(text) || [])[1] || '';
     const lastDay = (/— last day (.+?) —/.exec(text) || [])[1] || '';
-    return { ...base, kind: 'claim', origin, level: LEVEL_OF[origin], day: m[2], by: s(by), to: s(to), lastDay: s(lastDay), lastDayIso: dayFromWords(lastDay) };
+    // what the reminder was about: the document count (null on a note that names none) and whether
+    // the questionnaire was listed — a final sent for the questionnaire alone is judged on it (review round 1 [3])
+    const docs = /— (\d+) documents? missing/.exec(text);
+    return { ...base, kind: 'claim', origin, level: LEVEL_OF[origin], day: m[2], by: s(by), to: s(to), lastDay: s(lastDay), lastDayIso: dayFromWords(lastDay),
+      docsMissing: docs ? Number(docs[1]) : null, questionnaire: /, questionnaire not finished/.test(text) };
   }
   const f = FAIL_RE.exec(text);
   if (f) {
@@ -942,14 +979,16 @@ function describeForCase({ overview, items, notes, notesLimit, docsUnavailable, 
   if (!rows.length) return { ...base, available: false, reason: 'no-rows', message: 'No checklist rows yet — there is nothing to remind the client about.', canSend: false };
   const missing = missingFromItems(rows);
   const q = questionnaireFromMembers(questionnaire !== undefined ? questionnaire : o.questionnaire);
-  const qFacts = q ? { questionnaire: { done: q.done, unavailable: q.unavailable, pct: q.pct, pending: q.pending.length } } : {};
+  const qFacts = q ? { questionnaire: { done: q.done, unavailable: q.unavailable, notApplicable: q.notApplicable === true, pct: q.pct, pending: q.pending.length } } : {};
   if (!missing.count && q && q.unavailable) return { ...base, ...qFacts, available: false, reason: 'q-unavailable', message: Q_UNREAD_ALL_IN, canSend: false };
-  if (!missing.count && !questionnaireOpen(q)) return { ...base, ...qFacts, available: false, reason: 'no-rows', message: q ? NOTHING_TO_REMIND : 'Nothing is missing — every required document is in.', canSend: false };
+  if (!missing.count && !questionnaireOpen(q)) return { ...base, ...qFacts, available: false, reason: 'no-rows', message: q ? nothingToRemind(q) : 'Nothing is missing — every required document is in.', canSend: false };
   const problem = caseGateProblem(o);   // the same five checks as the send gate: the card shows the line, the buttons are off
   if (problem) return { ...base, ...qFacts, canSend: false, blocked: problem.message, missingCount: missing.count };
   return { ...base, ...qFacts, missingCount: missing.count };
 }
 const NOTHING_TO_REMIND = 'Every document is in and the questionnaire is complete — there is nothing to remind the client about.';
+const NOTHING_NO_FORM = 'Every document is in, and this case type has no questionnaire — there is nothing to remind the client about.';
+const nothingToRemind = (q) => (q && q.notApplicable ? NOTHING_NO_FORM : NOTHING_TO_REMIND);
 const Q_UNREAD_ALL_IN = 'Every document is in, and the questionnaire progress could not be read just now — reload in a moment.';
 
 /** The name a client email signs with: the VERIFIED Monday sign-in, else the office — never the shared-key placeholder. */
@@ -970,9 +1009,10 @@ async function prepareStaff({ overview, level, now }) {
   // the questionnaire facts came with the overview (a fresh case read on every request — no second read)
   const q = questionnaireFromMembers(overview.questionnaire);
   if (!missing.count) {
-    if (!missing.progress.total) throw refuse(409, 'no-rows', 'No checklist rows yet — there is nothing to remind the client about.');
+    // the card's own test (describeForCase): rows at all, N/A and optional ones included (review round 1 [4])
+    if (!missing.rows) throw refuse(409, 'no-rows', 'No checklist rows yet — there is nothing to remind the client about.');
     if (q && q.unavailable) throw refuse(503, 'q-unavailable', 'Every document is in, and the questionnaire progress could not be read just now — nothing was sent. Reload in a moment.');
-    if (!questionnaireOpen(q)) throw refuse(409, 'no-rows', q ? NOTHING_TO_REMIND : 'Nothing is missing on the checklist — there is nothing to remind the client about.');
+    if (!questionnaireOpen(q)) throw refuse(409, 'no-rows', q ? nothingToRemind(q) : 'Nothing is missing on the checklist — there is nothing to remind the client about.');
   }
   const notes = await readCaseNotes(overview.itemId, { now });
   const history = readReminderHistory(notes);
@@ -1199,7 +1239,8 @@ async function runCandidate(row, sel, { now, today, dryRun }) {
 
   // the questionnaire (one read per candidate): a read failure never holds the email up — it goes without the questionnaire block
   const qState = await Promise.resolve().then(() => io.questionnaireState(row.ref)).catch((err) => ({ members: [], unavailable: true, error: s(err && err.message) }));
-  const questionnaire = { members: (qState && qState.members) || [], unavailable: !qState || qState.unavailable === true, mondayDone: row.qStatus === 'Done' };
+  const questionnaire = { members: (qState && qState.members) || [], unavailable: !qState || qState.unavailable === true, mondayDone: row.qStatus === 'Done',
+    notApplicable: Boolean(qState && qState.notApplicable === true), embedsAllMembers: Boolean(qState && qState.embedsAllMembers === true) };
   if (questionnaire.unavailable && !(row.qStatus === 'Done')) io.warn(`[DocReminders] ${row.ref}: the questionnaire could not be read${qState && qState.error ? ` (${qState.error})` : ''} — the reminder goes without it`);
   const qOpen = questionnaireOpen(questionnaireFromMembers(questionnaire));
 
@@ -1296,5 +1337,5 @@ module.exports = {
   NOTE_HEAD, NOTE_HEAD_TEXT, NOT_CASE_GROUPS, MAX_TRIES, NOTES_PAGE, NOTES_MAX_PAGES, FINAL_DEFAULT_DAYS, RACE_WINDOW_MS,
   // pure — exported for tests
   _internal: { fmtDay, oneLine, fillTokens, missingListText, missingListHtml, LEVEL_NAMES, torontoDay, dayPlus, daysUntil, marker, failMarker, dayFromWords, imaginaryBody, IMAGINARY_LEAD, caseTypeText,
-    questionnaireListHtml, questionnaireListText, questionnaireOpen, questionnaireView, withQuestionnaireToken, Q_UNAVAILABLE_WARNING, NOTHING_TO_REMIND },
+    questionnaireListHtml, questionnaireListText, questionnaireOpen, questionnaireView, withQuestionnaireToken, Q_UNAVAILABLE_WARNING, NOTHING_TO_REMIND, NOTHING_NO_FORM },
 };

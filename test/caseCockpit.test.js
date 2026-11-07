@@ -266,7 +266,7 @@ const T_REM = Date.parse('2026-11-07T15:14:00Z');   // 7 Nov 2026, 10:14 am Toro
 
 /** The cockpit fan-out with the Client Master read answering group + columns + notes (the one read the card uses). */
 function reminderStubs({ cmFail = false, docsFail = false, updates = [], items = [{ id: '1', name: 'Passport', status: 'Missing', category: 'Identity', applicantType: 'Principal Applicant', applicantLabel: 'Principal Applicant', optional: false }], lock = 'No', override = '', stage = 'Document Collection Started', payment = 'Paid', group = { id: 'group_sv', title: 'Super Visa' },
-  qMembers = null, membersFail = false, qFail = false, qDoneText = '' } = {}) {
+  qMembers = null, membersFail = false, qFail = false, qDoneText = '', access = {} } = {}) {
   const cockpit     = require('../src/services/caseCockpitService');
   const mondayApi   = require('../src/services/mondayApi');
   const htmlQ       = require('../src/services/htmlQuestionnaireService');
@@ -274,7 +274,7 @@ function reminderStubs({ cmFail = false, docsFail = false, updates = [], items =
   const composition = require('../src/services/compositionAdapter');
   const stub = (obj, key, fn) => { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; };
   return [
-    stub(htmlQ, 'validateAccessForStaff', async () => ({ itemId: '4001', clientName: 'Aisha Khan', caseType: 'Super Visa', caseSubType: 'Parent', accessToken: 'tok-1', formFiles: { primary: 'f.html' } })),
+    stub(htmlQ, 'validateAccessForStaff', async () => ({ itemId: '4001', clientName: 'Aisha Khan', caseType: 'Super Visa', caseSubType: 'Parent', accessToken: 'tok-1', formFiles: { primary: 'f.html' }, ...access })),
     stub(mondayApi, 'query', async (q) => {
       if (cmFail) throw new Error('monday down');
       assert.match(q, /items\(ids: \[\$itemId\], limit: 1\)/, 'the Client Master read carries an explicit limit');
@@ -358,7 +358,7 @@ test('getCaseOverview (Gauri\'s texts, 2026-11-07): the questionnaire facts ride
   // documents missing, questionnaire 40 %: the facts the reminders read, no new top-level key
   let o = await run({});
   assert.deepEqual([o.questionnaire.unavailable, o.questionnaire.mondayDone, o.questionnaire.members[0].completionPct], [false, false, 40]);
-  assert.deepEqual(o.reminders.questionnaire, { done: false, unavailable: false, pct: 40, pending: 1 });
+  assert.deepEqual(o.reminders.questionnaire, { done: false, unavailable: false, notApplicable: false, pct: 40, pending: 1 });
   // every document in, the questionnaire unfinished: the buttons stay
   o = await run({ items: ALL_IN });
   assert.deepEqual([o.reminders.available, o.reminders.canSend, o.reminders.missingCount, o.reminders.reason], [true, true, 0, '']);
@@ -380,6 +380,34 @@ test('getCaseOverview (Gauri\'s texts, 2026-11-07): the questionnaire facts ride
     const withDocs = await run(blip);
     assert.deepEqual([withDocs.reminders.available, withDocs.reminders.canSend, withDocs.reminders.questionnaire.unavailable], [true, true, true], JSON.stringify(blip));
   }
+});
+
+test('getCaseOverview (review r1 of Gauri\'s texts): a case type with no questionnaire form is "not applicable" (no block, buttons off once the documents are in); a spousal F10 case is judged on the principal alone; hasAdditionalData rides along', async () => {
+  const cockpit = require('../src/services/caseCockpitService');
+  const ALL_IN = [{ id: '1', name: 'Passport', status: 'Received', category: 'Identity', applicantType: 'Principal Applicant', applicantLabel: 'Principal Applicant', optional: false }];
+  const run = async (opts) => { const r = reminderStubs(opts); try { return await cockpit.getCaseOverview('2026-SV-021'); } finally { r.reverse().forEach((x) => x()); } };
+  // [0] no form (CEC): the default primary member is built, but nothing is chased
+  const noForm = { access: { caseType: 'CEC', caseSubType: '', formFiles: null }, qMembers: [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', submittedAt: '', status: 'Not Started', hasData: false, completionPct: 0 }] };
+  let o = await run({ ...noForm, items: ALL_IN });
+  assert.equal(o.questionnaire.notApplicable, true);
+  assert.deepEqual([o.reminders.available, o.reminders.reason, o.reminders.message], [false, 'no-rows', 'Every document is in, and this case type has no questionnaire — there is nothing to remind the client about.']);
+  o = await run(noForm);
+  assert.deepEqual([o.reminders.available, o.reminders.canSend, o.reminders.questionnaire.notApplicable, o.reminders.questionnaire.pending, o.reminders.questionnaire.unavailable], [true, true, true, 0, false]);
+  assert.equal(docRem.questionnaireFromMembers(o.questionnaire).pending.length, 0, 'no "Your questionnaire — not started yet" line');
+  // [1] Inland Spousal Sponsorship (F10 embeds every member): principal submitted, the Sponsor row never had a form of its own
+  const f10 = { access: { caseType: 'Inland Spousal Sponsorship', caseSubType: '', formFiles: { primary: 'f10.html' } }, items: ALL_IN, qMembers: [
+    { key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', submittedAt: '2026-11-01T15:00:00Z', status: 'Submitted', hasData: true, completionPct: 95 },
+    { key: 'sponsor', type: 'Sponsor', label: 'Raj Kumar', submittedAt: '', status: 'Not Started', hasData: false, completionPct: 0 }] };
+  o = await run(f10);
+  assert.equal(o.questionnaire.embedsAllMembers, true);
+  assert.equal(o.questionnaire.members.length, 2, 'the page still shows every member (the flag, not a filter)');
+  assert.deepEqual([o.reminders.available, o.reminders.message], [false, 'Every document is in and the questionnaire is complete — there is nothing to remind the client about.']);
+  // [2] answers only in the second form, 0 % stored: carried through → "started", never "not started yet"
+  o = await run({ qMembers: [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', submittedAt: '', status: 'In Progress', hasData: false, hasAdditionalData: true, completionPct: 0 }] });
+  assert.equal(o.questionnaire.members[0].hasAdditionalData, true);
+  assert.equal(docRem.questionnaireFromMembers(o.questionnaire).pending[0].line, 'Your questionnaire — started, not submitted yet');
+  o = await run({ qFail: true });
+  assert.equal(o.questionnaire.members[0].hasAdditionalData, false, 'the degraded branch sets it too');
 });
 
 test('getCaseOverview: a failed Client Master read hides the Reminders card with its reason (no fabricated card) and blanks the gate facts', async () => {

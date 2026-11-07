@@ -16,8 +16,8 @@
  *     deadline, qReadinessPct, docReadinessPct, portalLink, folderLink,
  *     accessToken,
  *     family:        [{ role, name, memberKey, flags }],
- *     questionnaire: { members:[{ key, type, badge, label, status, hasData, completionPct, submittedAt }],
- *                      submitted, total, unavailable, mondayDone },
+ *     questionnaire: { members:[{ key, type, badge, label, status, hasData, hasAdditionalData, completionPct, submittedAt }],
+ *                      submitted, total, unavailable, mondayDone, notApplicable, embedsAllMembers },
  *     documents:     { counts:{ total, received, reviewed, rework, missing },
  *                      byCategory:[{ category, items:[...] }], rework:[...] },
  *     sponsor:       sponsorOnboardingService.describe() — the inviter / sponsor
@@ -343,14 +343,16 @@ async function getCaseOverview(caseRef) {
   } catch (e) {
     console.warn(`[Cockpit] q-status read failed for ${caseRef}: ${e.message}`);
     qUnavailable = true;
-    qMembers = members.map((m) => ({ ...m, status: m.submittedAt ? 'Submitted' : 'Not Started', hasData: false, completionPct: 0 }));
+    qMembers = members.map((m) => ({ ...m, status: m.submittedAt ? 'Submitted' : 'Not Started', hasData: false, hasAdditionalData: false, completionPct: 0 }));
   }
   const questionnaire = {
-    members:   require('../utils/familyRoleLabels').decorateMembers(caseType, qMembers, caseSubType).map((m) => ({ key: m.key, type: m.type, badge: m.badge || '', label: m.label, status: m.status, hasData: !!m.hasData, completionPct: Number(m.completionPct) || 0, submittedAt: torontoWallClock(m.submittedAt) })),
+    members:   require('../utils/familyRoleLabels').decorateMembers(caseType, qMembers, caseSubType).map((m) => ({ key: m.key, type: m.type, badge: m.badge || '', label: m.label, status: m.status, hasData: !!m.hasData, hasAdditionalData: !!m.hasAdditionalData, completionPct: Number(m.completionPct) || 0, submittedAt: torontoWallClock(m.submittedAt) })),
     submitted: qMembers.filter((m) => m.status === 'Submitted').length,
     total:     qMembers.length,
     unavailable: qUnavailable,                          // the reminders' "could not be read" (an empty list is unknown too)
     mondayDone:  cm._unavailable ? false : cm.qDone === true,   // the board's questionnaire status reads Done
+    notApplicable: !formFiles,                          // no questionnaire form for this case type: the reminders never chase one (review round 1 of Gauri's texts [0])
+    embedsAllMembers: require('../../config/questionnaireFormMap').formEmbedsMembers(caseType, caseSubType),   // spousal F10: one form for everyone — the principal's submission is the questionnaire [1]
   };
 
   const documents = summariseDocuments(docSummary.items || []);

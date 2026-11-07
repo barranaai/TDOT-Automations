@@ -1203,6 +1203,7 @@ function remMissingHtml(missing) {
 // the questionnaire lines the email prints (one per family member who has not submitted) — read-only, escaped
 function remQuestionnaireHtml(q) {
   if (!q || q.unavailable) return '';
+  if (q.notApplicable) return '<div class="muted">This case type has no questionnaire.</div>';
   if (q.done || !(q.pending && q.pending.length)) return '<div class="muted">The questionnaire is complete.</div>';
   return '<ul class="rem-list">' + q.pending.map(function(m) { return '<li>' + escHtml(m.line || m.label || '') + '</li>'; }).join('') + '</ul>';
 }

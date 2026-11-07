@@ -48,6 +48,7 @@ const COL = {
   docUploaded:    'numeric_mm2njqk1', // Documents Uploaded % — the automatic reminder's 50 % line
   lastActivity:   'date_mm1amqyr',    // Last Client Activity (uploads only)
   promised:       'date_mm3t66pa',    // an imaginary deadline's promised submission date (blank = not set, review 2026-11-07 [3])
+  qStatus:        'color_mm0x9s08',   // questionnaire status — Done = submitted (a final sent for the questionnaire alone is judged on it); read only
 };
 // Cases opened from this day on are expected to carry a deadline (the question is asked at retain since then).
 const DEADLINE_SINCE = Date.parse(process.env.DEADLINE_ASKED_SINCE || '2026-11-07T05:00:00Z');   // 2026-11-07 00:00 Toronto (EST)
@@ -681,10 +682,16 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
     const fin = h.latest[3];
     //    Last Client Activity is a DAY, not a time: an upload on the final's own day counts as "since"
     //    (review 2026-11-07 [31]) — a same-day upload must never read as "nothing uploaded".
-    if (fin && fin.lastDayIso && fin.lastDayIso <= today && !(c.lastActivity && c.lastActivity >= fin.day)) {
+    //    A final sent for the questionnaire ALONE (its note: 0 documents missing, questionnaire not
+    //    finished) is judged on the questionnaire — Last Client Activity counts uploads only, so a client
+    //    who finished it would otherwise be listed (review round 1 of Gauri's texts [3]).
+    const qOnly = Boolean(fin && fin.docsMissing === 0 && fin.questionnaire);
+    if (fin && fin.lastDayIso && fin.lastDayIso <= today && (qOnly ? c.qStatus !== 'Done' : !(c.lastActivity && c.lastActivity >= fin.day))) {
       add('final-last-day-passed', c, `${c.id}|final-last-day|${fin.id}`, {
         since: tms(`${fin.lastDayIso}T12:00:00Z`),
-        why: `The final reminder went on ${dateWord(fin.at)} naming ${dateWord(tms(`${fin.lastDayIso}T12:00:00Z`))} as the last day, and no upload is recorded on or after the day it went. The app moves nothing by itself.`,
+        why: qOnly
+          ? `The final reminder went on ${dateWord(fin.at)} naming ${dateWord(tms(`${fin.lastDayIso}T12:00:00Z`))} as the last day — every document was in, it was about the questionnaire — and the questionnaire is still not finished. The app moves nothing by itself.`
+          : `The final reminder went on ${dateWord(fin.at)} naming ${dateWord(tms(`${fin.lastDayIso}T12:00:00Z`))} as the last day, and no upload is recorded on or after the day it went. The app moves nothing by itself.`,
         todo: 'Decide with the consultant: wait longer, move the file to Stuck (set the Case Stage on the Cases board — never move the row to another group), or arrange the refund outside the app. Then mark this handled.',
       });
     }
@@ -880,7 +887,7 @@ function parseCase(item) {
     ref: cv[COL.ref], caseType: cv[COL.caseType], subType: cv[COL.subType],
     stage: cv[COL.stage], payment: cv[COL.payment], paidDate: paid, deadlineType: cv[COL.deadlineType],
     actualDeadline: s(cv[COL.actualDeadline]).slice(0, 10), docUploaded: s(cv[COL.docUploaded]), lastActivity: s(cv[COL.lastActivity]).slice(0, 10),
-    promised: s(cv[COL.promised]).slice(0, 10),
+    promised: s(cv[COL.promised]).slice(0, 10), qStatus: cv[COL.qStatus],
     manager: cv[COL.manager], managerSet: !!cv[COL.manager], submissionSet: !!cv[COL.submissionTeam],
     assignees: caseAccess.assigneesFromColumnValues(raw),
     notes: caseNotes(item.updates),

@@ -726,10 +726,11 @@ const DR = require('../src/services/docReminderService');
 const TODAY = '2026-10-01';                                   // NOW in Toronto
 const dayN = (n) => DR._internal.dayPlus(TODAY, n);
 /** item() with the reminder columns (deadline date, Documents Uploaded %, Last Client Activity). */
-function itemR({ actualDeadline = '', pct = '', lastActivity = '', deadlineType = '', promised = '', ...rest } = {}) {
+function itemR({ actualDeadline = '', pct = '', lastActivity = '', deadlineType = '', promised = '', qStatus = '', ...rest } = {}) {
   const it = item(rest);
   it.column_values.push({ id: 'color_mm6w7cdd', text: deadlineType, value: null }, { id: 'date_mm33sj6t', text: actualDeadline, value: null },
-    { id: 'numeric_mm2njqk1', text: pct, value: null }, { id: 'date_mm1amqyr', text: lastActivity, value: null }, { id: 'date_mm3t66pa', text: promised, value: null });
+    { id: 'numeric_mm2njqk1', text: pct, value: null }, { id: 'date_mm1amqyr', text: lastActivity, value: null }, { id: 'date_mm3t66pa', text: promised, value: null },
+    { id: 'color_mm0x9s08', text: qStatus, value: null });
   return it;
 }
 const stripped = (html) => html.replace(/<[^>]+>/g, '');
@@ -774,6 +775,19 @@ test('REMINDERS: the final reminder\'s last day has passed with no upload since 
   const failed = note(stripped(DR.failureNote({ level: 3, reason: 'the email could not be sent', now: NOW - 8 * D + 60e3 })), 8 * D - 60e3, '102');
   assert.deepEqual(kinds(run([itemR({ ref, updates: [finalNote(dayN(-1), 8 * D, '101'), failed] })], { checklist: { [ref]: true } })), [], 'a final that did not go out is a try, not a send');
   assert.deepEqual(kinds(run([itemR({ ref, stage: 'Stuck', updates: [finalNote(dayN(-1), 8 * D, '101')] })], { checklist: { [ref]: true } })), [], 'moved on: nothing to decide');
+});
+
+test('REMINDERS (review r1 of Gauri\'s texts): a final sent for the questionnaire ALONE (0 documents missing) is judged on the questionnaire — finished = not listed, whatever the uploads; unfinished = listed with its own wording; a final with documents missing keeps the upload test', () => {
+  const qFinal = (lastDay, agoMs, id, count = 0) => note(stripped(DR.claimNote({ level: 3, to: 'a***@x.com', actor: 'Mahesh Sharma', count, questionnaire: true, lastDay, now: NOW - agoMs })), agoMs, id);
+  const ref = '2026-SV-020';
+  assert.deepEqual(kinds(run([itemR({ ref, qStatus: 'Done', updates: [qFinal(dayN(-1), 8 * D, '101')] })], { checklist: { [ref]: true } })), [], 'the client finished the questionnaire before the last day — no upload needed');
+  const open = run([itemR({ ref, qStatus: 'Working on it', lastActivity: dayN(-3), updates: [qFinal(dayN(-1), 8 * D, '101')] })], { checklist: { [ref]: true } });
+  assert.deepEqual(kinds(open), ['final-last-day-passed'], 'an upload does not settle a questionnaire-only final');
+  assert.match(open[0].why, /every document was in, it was about the questionnaire — and the questionnaire is still not finished/);
+  assert.doesNotMatch(open[0].why, /no upload/);
+  // documents were missing too: today's upload test, the questionnaire status not read
+  assert.deepEqual(kinds(run([itemR({ ref, qStatus: 'Done', updates: [qFinal(dayN(-1), 8 * D, '101', 3)] })], { checklist: { [ref]: true } })), ['final-last-day-passed']);
+  assert.deepEqual(kinds(run([itemR({ ref, lastActivity: dayN(-3), updates: [qFinal(dayN(-1), 8 * D, '101', 3)] })], { checklist: { [ref]: true } })), []);
 });
 
 test('REMINDERS: the automatic reminder did not go out today or yesterday → listed until an automatic send follows; older failures are not', () => {

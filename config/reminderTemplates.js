@@ -27,9 +27,11 @@
  * questionnaire — one line per family member who has not submitted yet, under
  * "Questionnaire still to finish:" — filled per client by the app. Both blocks
  * are left out cleanly (heading and all) when there is nothing to list; the
- * questionnaire block is also left out when its progress could not be read.
+ * questionnaire block is also left out when its progress could not be read,
+ * and when the case type has no questionnaire form at all.
  * A text without {QuestionnaireList} gets it added after the documents list
- * (with a warning) when the client's questionnaire is unfinished. Keep each
+ * (with a warning) when the client's questionnaire is unfinished — or, when the
+ * text has no documents list either, before the sign-off. Keep each
  * list token on its own paragraph. The portal button and the "email us"
  * closing line are added by the app OUTSIDE the template, so they cannot be
  * edited away. Never write "just reply" / "reply to this email": the sender is
