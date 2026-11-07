@@ -16,7 +16,8 @@
  * rule 'final-last-day-passed' reads that date), two grammar fixes in the final
  * ("and/or your completed questionnaire", "started again, and additional charges
  * will apply"), her first reminder's lines 3 and 4 joined into one paragraph,
- * a "Your client portal:" line after the lists and the "Kind regards" sign-off.
+ * and the "Kind regards" sign-off. No portal line in the text: the app adds the
+ * portal and upload links at the end of every email (they were shown twice).
  *
  * Plain text only. Blank line = new paragraph. Merge tokens, exact spelling:
  *   {ClientName} {CaseRef} {CaseType} {MissingList} {QuestionnaireList}
@@ -57,9 +58,6 @@ Please ensure that you complete the questionnaire to 100% and upload at least 80
 
 {QuestionnaireList}
 
-Your client portal:
-{PortalLink}
-
 We kindly request you to complete the questionnaire and upload the pending documents as soon as possible to avoid any delays in your application process.
 
 If you have any questions or require assistance with uploading the documents or completing the questionnaire, please feel free to contact us.
@@ -82,9 +80,6 @@ To assign your application to a Case Officer and begin the review process, at le
 {MissingList}
 
 {QuestionnaireList}
-
-Your client portal:
-{PortalLink}
 
 If your current immigration status is approaching expiry, please keep track of the expiry date and inform our office well in advance. Please do not wait until the last minute, as sufficient time is required to review and prepare your application.
 
@@ -112,9 +107,6 @@ Despite previous reminders, we have not yet received all the required documents 
 
 {QuestionnaireList}
 
-Your client portal:
-{PortalLink}
-
 You are requested to complete the questionnaire and upload all pending documents immediately, and no later than {LastDay}. Failure to do so may result in your file being closed or marked inactive.
 
 If the file is closed due to non-submission, any future request to proceed may require the application to be started again, and additional charges will apply.
@@ -139,8 +131,7 @@ Your {CaseType} application must be submitted by {Deadline}. We can only proceed
 
 {QuestionnaireList}
 
-Please upload them through your client portal as soon as you can:
-{PortalLink}
+Please upload them through your client portal as soon as you can, using the link below.
 
 If any document is not available yet, let us know when you expect to have it, so we can plan around the deadline.
 

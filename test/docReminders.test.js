@@ -81,7 +81,7 @@ test('the code defaults: four rows, every body valid, every body has {MissingLis
     assert.deepEqual(v.problems, [], `${name}: ${v.problems.join('; ')}`);
     assert.deepEqual(v.warnings, [], `${name}: no unknown tokens`);
     assert.ok(cfg.DEFAULTS[name].body.includes('{MissingList}'), name);
-    assert.ok(cfg.DEFAULTS[name].body.includes('{PortalLink}'), `${name} points at the portal`);
+    assert.ok(!cfg.DEFAULTS[name].body.includes('{PortalLink}'), `${name}: no portal line in the text — the app adds the portal + upload links at the end (shown once)`);
     assert.doesNotMatch(cfg.DEFAULTS[name].body, /<[a-z]/i, `${name} is plain text`);
     // each list token is a paragraph of its own (a token mid-sentence would cut the sentence in two), the questionnaire right after the documents
     assert.match(cfg.DEFAULTS[name].body, /\n\n\{MissingList\}\n\n\{QuestionnaireList\}\n\n/, `${name}: the two lists, each on its own paragraph`);
@@ -380,7 +380,7 @@ test('buildReminderEmail: the layout — logo header like the intake email, the 
   assert.doesNotMatch(r.html, /<p[^>]*>(?:(?!<\/p>)[\s\S])*<p\b/, 'no <p> inside a <p>');
   assert.doesNotMatch(r.html, /<p[^>]*>(?:(?!<\/p>)[\s\S])*<(?:table|ul|div)\b/, 'no block inside a <p>');
   const links = hrefs(r.html);
-  assert.equal(links.length, 3, 'the portal link where {PortalLink} sits, the button, the upload-page link');
+  assert.equal(links.length, 2, 'the portal button and the upload-page link (the built-in texts carry no {PortalLink})');
   for (const u of links) assert.match(u, /\?t=tok-ABC123$/, u);
   assert.ok(links.some((u) => PORTAL.test(u)) && links.some((u) => DOCS.test(u)));
   assert.doesNotMatch(r.html, /staff=1/);
@@ -809,9 +809,9 @@ test('previewStaffReminder: the template with the merge fields filled except the
     assert.equal(p.to, 'a***@example.com');
     assert.equal(p.subject, 'Reminder: documents and questionnaire for your Super Visa application — 2026-TEST-001');
     assert.match(p.body, /^Hello Asha Client,\n/);
-    assert.ok(p.body.includes('{MissingList}') && p.body.includes('{QuestionnaireList}') && p.body.includes('{PortalLink}'), 'the app-inserted tokens stay');
+    assert.ok(p.body.includes('{MissingList}') && p.body.includes('{QuestionnaireList}'), 'the app-inserted tokens stay');
     assert.ok(!/\{(ClientName|CaseRef|CaseType|MissingCount|Deadline|PromisedDate|StaffName)\}/.test(p.body), 'every other merge field is filled');
-    assert.deepEqual(p.tokensLeft, ['{MissingList}', '{QuestionnaireList}', '{PortalLink}']);
+    assert.deepEqual(p.tokensLeft, ['{MissingList}', '{QuestionnaireList}', '{PortalLink}'], 'the tokens the app fills if staff type them');
     assert.equal(p.questionnaire, null, 'no questionnaire facts on the overview: none shown');
     assert.equal(p.missingCount, 4);
     assert.match(p.missingList, /Passport\n/);
@@ -1650,7 +1650,7 @@ test('buildReminderEmail (Gauri\'s texts): "Hello <name>," then BOTH of the clie
   // a staff extra line follows the LAST list
   const ex = await svc.buildReminderEmail(baseOpts({ questionnaire: Q_FAMILY(), extraLine: 'We still need the lease.' }));
   assert.ok(ex.html.indexOf('Aarav — all filled in') < ex.html.indexOf('We still need the lease.'));
-  assert.match(ex.text, /Aarav — all filled in, not submitted yet\n\nWe still need the lease\.\n\nYour client portal:/);
+  assert.match(ex.text, /Aarav — all filled in, not submitted yet\n\nWe still need the lease\.\n\nWe kindly request/);
 });
 
 test('buildReminderEmail (Gauri\'s texts): a block with nothing to list is left out cleanly — questionnaire done, documents all in (the staff line still shows), progress unreadable (a warning, no block); never an empty heading or a gap', async () => {
@@ -1665,7 +1665,8 @@ test('buildReminderEmail (Gauri\'s texts): a block with nothing to list is left 
   assert.doesNotMatch(b.html + b.text, /Documents still needed|Still missing|waiting for a new copy/);
   assert.match(b.html, /Questionnaire still to finish:/);
   assert.match(b.html, /Your questionnaire — 40% complete, not submitted yet/);
-  assert.match(b.text, /to an officer for further processing\.\n\nQuestionnaire still to finish:\n  - Your questionnaire — 40% complete, not submitted yet\n\nOnly the questionnaire is left\.\n\nYour client portal:/);
+  assert.match(b.text, /to an officer for further processing\.\n\nQuestionnaire still to finish:\n  - Your questionnaire — 40% complete, not submitted yet\n\nOnly the questionnaire is left\.\n\nWe kindly request/);
+  assert.equal((b.text.match(/\/client\/2026-/g) || []).length, 1, 'the portal link shows once (the app adds it at the end)');
   assert.doesNotMatch(b.text, /\n\n\n/);
   // could not be read: no block, a warning
   const c = await svc.buildReminderEmail(baseOpts({ level: 1, questionnaire: { members: [QM()], unavailable: true } }));
