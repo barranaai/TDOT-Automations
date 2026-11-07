@@ -78,9 +78,11 @@ async function send(req, res, deps) {
 
 // ─── The pop-up's live view of the email (Faran 2026-11-07) ──────────────────
 // Every pause in typing asks for the email again. Each ask reads the case like a preview
-// does (the case, the checklist, the notes), so it is limited per person per case. A full
-// minute is refused BEFORE the case read (a flood never reaches Monday); an ask is counted
-// only once the sign-in let it through, so a stranger can never use up a staffer's minute.
+// does (the case, the checklist, the notes), so it is limited per person per case. The slot
+// is checked AND taken in one step, before any wait, so asks sent all at once cannot all slip
+// past an empty minute (review round 2): a full minute is refused BEFORE the case read and a
+// flood never reaches Monday. A stranger is refused (401) before a slot is taken, and an ask
+// the case gate refuses gives its slot back, so nobody can use up a staffer's minute.
 // In memory: a restart forgets it.
 const RENDER_PER_MIN = 30, RENDER_WINDOW_MS = 60 * 1000;
 // The size cap is checked HERE: the app-wide JSON parser (2 MB) reads the body before any
@@ -98,6 +100,14 @@ function countRender(key, now) {
   _renders.set(key, [...recentRenders(key, now), now]);
   if (_renders.size > 2000) for (const [k, v] of _renders) if (!v.length || now - v[v.length - 1] >= RENDER_WINDOW_MS) _renders.delete(k);
 }
+/** Give back one slot taken at `at` (the ask was refused before it read anything). */
+function releaseRender(key, at) {
+  const list = _renders.get(key);
+  if (!list) return;
+  const i = list.lastIndexOf(at);
+  if (i >= 0) list.splice(i, 1);
+  if (!list.length) _renders.delete(key);
+}
 
 /** POST render — never writes, never sends, never notes, no cool-down; a text problem is a 200 with problems. */
 async function render(req, res, deps) {
@@ -111,12 +121,13 @@ async function render(req, res, deps) {
   // who: the Monday sign-in; without one, the shared admin key (one slot for everyone using it)
   const actor = deps.staffActor(req);
   const key = `${actor && actor.verified && actor.email ? `staff:${String(actor.email).toLowerCase()}` : 'key'}|${caseRef.toUpperCase()}`;
-  const wait = renderWait(key, Date.now());
+  const now = Date.now();
+  const wait = renderWait(key, now);
   // retryAfter: the pop-up asks once more by itself after the wait, so the line below is true
   if (wait > 0) return res.status(429).json({ ok: false, reason: 'too-many', retryAfter: wait, error: `The email view was updated too often — it updates again in ${wait}s. Nothing you typed is lost.` });
+  countRender(key, now);   // taken in the same step as the check — no await between them
   const ctx = await deps.resolveCaseForWrite(req, res, caseRef);
-  if (!ctx) return;
-  countRender(key, Date.now());
+  if (!ctx) { releaseRender(key, now); return; }   // refused by the gate: the slot is given back
   const svc = deps.service || require('../services/docReminderService');
   const body = req.body || {};
   const problem = (message) => res.json({ ok: true, html: '', subject: '', warnings: [], problems: [message] });

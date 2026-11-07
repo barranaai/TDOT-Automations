@@ -486,8 +486,8 @@ function remSandbox({ responses = [], renderAnswer = () => ({ status: 200, body:
     peekKey: () => '', loadCase: () => { loads++; },
     tdotDialogNew(opts) {
       const els = {};
-      const el = (id) => els[id] || (els[id] = { id, value: '', min: '', textContent: '', className: '', innerHTML: '', style: {}, attrs: {}, onclick: null, oninput: null, focus() { this.focused = true; }, setAttribute(k, v) { this.attrs[k] = String(v); } });
-      const c = { opts, openId: 1, closed: [], busy: [], box: { innerHTML: '', querySelector: (sel) => el(sel.slice(1)) },
+      const el = (id) => els[id] || (els[id] = { id, value: '', min: '', textContent: '', className: '', innerHTML: '', style: {}, attrs: {}, listeners: {}, onclick: null, oninput: null, focus() { this.focused = true; }, setAttribute(k, v) { this.attrs[k] = String(v); }, addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); } });
+      const c = { opts, openId: 1, closed: [], busy: [], frame: { focusCalls: 0, focus() { this.focusCalls++; } }, box: { innerHTML: '', querySelector: (sel) => el(sel.slice(1)) },
         tryClose(how) { c.close(true, how); }, close(force, how) { c.closed.push(how); if (opts.onClosed) opts.onClosed(how, c.busy.length > 0 && c.busy[c.busy.length - 1] === true); },
         setBusy(on) { c.busy.push(on); }, still(id) { return id === c.openId && !c.closed.length; }, els };
       dialogs.push(c); return c;
@@ -769,6 +769,28 @@ test('case page (sandbox, Gauri\'s texts 2026-11-07): the dialog shows the unfin
 
 // ── The email as the client will see it, in the pop-up (Faran 2026-11-07) ──
 
+test('case page (sandbox, email view): a click inside the email gives the keyboard back to the pop-up (Escape and Tab keep working) — and never after the pop-up has closed (review round 2)', async () => {
+  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW() }] });
+  s.ctx.renderReminders(FACTS());
+  s.ctx.remOpen(1); await s.flush();
+  const d = s.dialogs[0];
+  const fl = d.els['rem-frame'].listeners.focus || [];
+  assert.equal(fl.length, 1, 'one focus listener on the frame');
+  s.timers.splice(0);   // nothing else due
+  fl[0]();
+  assert.equal(d.frame.focusCalls, 0, 'handed back after the click has landed, not inside it');
+  assert.deepEqual(s.tick(), [0]);
+  assert.equal(d.frame.focusCalls, 1, 'the pop-up has the keyboard again');
+  // closed meanwhile: the page is left alone
+  d.tryClose('cancel');
+  fl[0](); s.tick();
+  assert.equal(d.frame.focusCalls, 1, 'no focus grab once the pop-up is closed');
+  // the source pin: the hand-back waits a tick and checks this opening is still the one open
+  const { js } = pageJs();
+  const block = js.slice(js.indexOf('// ── Document reminders (block 2'), js.indexOf('function loadCase()'));
+  assert.ok(block.includes("rf.addEventListener('focus', function() { setTimeout(function() { if (c.still(rfId)) { try { c.frame.focus(); } catch (e) {} } }, 0); });"));
+});
+
 test('case page (sandbox, email view): opening asks for the email ONCE with the boxes as they are; the answer goes into a sandboxed iframe through the srcdoc PROPERTY; the links-off line sits under it', async () => {
   const s = remSandbox({ responses: [{ status: 200, body: PREVIEW() }] });
   s.ctx.renderReminders(FACTS());
@@ -781,7 +803,8 @@ test('case page (sandbox, email view): opening asks for the email ONCE with the 
   assert.deepEqual([d.els['rem-mail-state'].className, d.els['rem-mail-state'].textContent], ['rem-mail-state muted', ''], 'no "Updating…" once it has arrived');
   assert.equal(s.fetches.length, 1, 'the preview GET only — the email view never posts to the send route');
   // the frame: sandbox="" (no scripts, no same-origin, no top navigation), no srcdoc attribute in the markup
-  // tabindex="-1": Tab never goes into the frame, so Escape and Tab stay with the pop-up
+  // tabindex="-1": Tab never goes into the frame; a mouse click into it is handed back by the focus
+  // listener (the test 'a click inside the email gives the keyboard back to the pop-up')
   assert.match(d.box.innerHTML, /<span class="rem-mail-state muted" id="rem-mail-state">Updating…<\/span><\/div><div id="rem-mail-prob"><\/div><div class="rem-mail-subj" id="rem-mail-subj"><span class="k">Subject<\/span><span id="rem-mail-subj-text"><\/span><\/div><iframe class="rem-frame" id="rem-frame" sandbox="" tabindex="-1" title="The email as the client will see it"><\/iframe>/);
   // the subject the client gets, above the email
   assert.equal(d.els['rem-mail-subj-text'].textContent, 'Documents still needed — 2026-SV-021');

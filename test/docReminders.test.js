@@ -2219,6 +2219,40 @@ test('routes.render: 30 a minute per person per case — the 31st is a plain 429
   } finally { S.restore(); routes._resetForTests(); }
 });
 
+test('routes.render: asks sent ALL AT ONCE cannot beat the minute — the slot is taken before the case read, so 40 parallel asks read the case at most 30 times; a gate refusal (403) gives its slot back (review round 2)', async () => {
+  const S = staffStubs();
+  routes._resetForTests();
+  try {
+    const body = { level: 1, subject: 'x', body: '{MissingList}' };
+    // a slow case read (Monday taking its time): every ask is in flight together
+    let reads = 0, open;
+    const gate = new Promise((r) => { open = r; });
+    const slow = (who) => { const d = deps(who); const inner = d.resolveCaseForWrite; d.resolveCaseForWrite = async (...a) => { reads++; await gate; return inner(...a); }; return d; };
+    const all = Array.from({ length: 40 }, () => { const res = fakeRes(); return routes.render(req({ body }), res, slow('staff')).then(() => res); });
+    await new Promise((r) => setImmediate(r));
+    assert.ok(reads <= 30, `at most 30 case reads while in flight (got ${reads})`);
+    open();
+    const answers = await Promise.all(all);
+    assert.equal(reads, 30);
+    assert.equal(answers.filter((r) => r.statusCode === 200).length, 30);
+    const refused = answers.filter((r) => r.statusCode === 429);
+    assert.equal(refused.length, 10);
+    assert.ok(refused.every((r) => r.body.reason === 'too-many' && r.headers['Cache-Control'] === 'no-store'));
+    assert.equal(S.posted.length + S.sent.length, 0);
+
+    // a refusal by the case gate costs nothing: 40 asks answered 403, then a full minute still renders
+    routes._resetForTests();
+    for (let i = 0; i < 40; i++) { const res = fakeRes(); await routes.render(req({ body }), res, deps('other')); assert.equal(res.statusCode, 403, `refused ask ${i + 1}`); }
+    assert.equal(routes._renders.size, 0, 'no slot kept for a refused ask');
+    // ...even when the refusals are in flight together with real asks
+    const mixed = await Promise.all(Array.from({ length: 30 }, (_, i) => { const res = fakeRes(); return routes.render(req({ body }), res, deps(i % 2 ? 'other' : 'staff')).then(() => res); }));
+    assert.deepEqual([mixed.filter((r) => r.statusCode === 200).length, mixed.filter((r) => r.statusCode === 403).length], [15, 15]);
+    for (let i = 0; i < 15; i++) { const res = fakeRes(); await routes.render(req({ body }), res, deps('staff')); assert.equal(res.statusCode, 200, `room left: ask ${i + 1}`); }
+    const res = fakeRes(); await routes.render(req({ body }), res, deps('staff'));
+    assert.equal(res.statusCode, 429, 'the 31st real ask is refused');
+  } finally { S.restore(); routes._resetForTests(); }
+});
+
 test('routes.render: a body over 64 KB is a 413 BEFORE anything else — no sign-in look-up, no case read, no slot used; just under the cap still renders', async () => {
   const S = staffStubs();
   routes._resetForTests();

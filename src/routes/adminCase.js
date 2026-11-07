@@ -1269,6 +1269,11 @@ function remDialog(level, p) {
   if (last) { last.value = p.lastDay || ''; if (p.minLastDay) last.min = p.minLastDay; }
   var read = function() { return { subject: subj.value, body: body.value, extra: extra.value, lastDay: last ? last.value : '' }; };
   c.remRead = read;   // the one quiet retry after a too-often answer asks with the boxes as they are then
+  // a click inside the email moves the keyboard into the sandboxed frame, where the pop-up cannot
+  // hear Escape or Tab: hand it straight back (scrolling the email still works; copying a line
+  // from the email with the keyboard does not — the boxes on the left hold the same text)
+  var rf = c.box.querySelector('#rem-frame'), rfId = c.openId;
+  rf.addEventListener('focus', function() { setTimeout(function() { if (c.still(rfId)) { try { c.frame.focus(); } catch (e) {} } }, 0); });
   // every edit brings the email view up to date after a short pause in typing
   [subj, body, extra, last].forEach(function(el) { if (el) el.oninput = function() { remRenderSoon(c, level, read); }; });
   if (last) last.onchange = last.oninput;

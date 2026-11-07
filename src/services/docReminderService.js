@@ -1134,8 +1134,9 @@ function previewSafeHtml(html, { token } = {}) {
     .replace(/<meta\b[^>]*http-equiv[^>]*>/gi, '');
   return h.replace(/<[a-z][^>]*>/gi, (tag) => tag
     .replace(/\s(?:on[a-z]+|action|formaction|srcdoc)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    // the href is taken OUT (not set to "#"): a link with no address cannot take keyboard focus inside the
-    // frame, so Escape and Tab stay with the pop-up (review 2026-11-07)
+    // the href is taken OUT (not set to "#"): a link with no address cannot be tabbed to inside the frame.
+    // That alone is not enough — a mouse click in the email still moves the keyboard into the frame, so
+    // the pop-up hands focus straight back when the frame gets it (adminCase.js remDialog, review round 2)
     .replace(/\shref\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, ` data-link-note="${LINK_NOTE}"`));
 }
 
