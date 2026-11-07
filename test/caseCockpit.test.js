@@ -461,7 +461,7 @@ test('case page: the Reminders card markup sits under the Document readiness met
 });
 
 /** The email view's answer as the render route gives it (links already switched off server-side). */
-const RENDERED = (over = {}) => ({ ok: true, html: '<!DOCTYPE html><html><body><p>Hello Aisha Khan,</p><a href="#" data-link-note="switched off in this preview">Open your portal</a></body></html>', subject: 'Documents still needed — 2026-SV-021', warnings: [], problems: [], ...over });
+const RENDERED = (over = {}) => ({ ok: true, html: '<!DOCTYPE html><html><body><p>Hello Aisha Khan,</p><a data-link-note="switched off in this preview">Open your portal</a></body></html>', subject: 'Documents still needed — 2026-SV-021', warnings: [], problems: [], ...over });
 
 /**
  * The reminders block run in a sandbox: two card slots, a message list, a fake pop-up, scripted fetch answers.
@@ -781,7 +781,11 @@ test('case page (sandbox, email view): opening asks for the email ONCE with the 
   assert.deepEqual([d.els['rem-mail-state'].className, d.els['rem-mail-state'].textContent], ['rem-mail-state muted', ''], 'no "Updating…" once it has arrived');
   assert.equal(s.fetches.length, 1, 'the preview GET only — the email view never posts to the send route');
   // the frame: sandbox="" (no scripts, no same-origin, no top navigation), no srcdoc attribute in the markup
-  assert.match(d.box.innerHTML, /<iframe class="rem-frame" id="rem-frame" sandbox="" title="The email as the client will see it"><\/iframe>/);
+  // tabindex="-1": Tab never goes into the frame, so Escape and Tab stay with the pop-up
+  assert.match(d.box.innerHTML, /<span class="rem-mail-state muted" id="rem-mail-state">Updating…<\/span><\/div><div id="rem-mail-prob"><\/div><div class="rem-mail-subj" id="rem-mail-subj"><span class="k">Subject<\/span><span id="rem-mail-subj-text"><\/span><\/div><iframe class="rem-frame" id="rem-frame" sandbox="" tabindex="-1" title="The email as the client will see it"><\/iframe>/);
+  // the subject the client gets, above the email
+  assert.equal(d.els['rem-mail-subj-text'].textContent, 'Documents still needed — 2026-SV-021');
+  assert.equal(d.els['rem-mail-subj'].style.display, '');
   assert.doesNotMatch(d.box.innerHTML, /allow-|srcdoc/);
   assert.match(d.box.innerHTML, /<\/iframe><div class="rem-mail-note">Links in this preview are switched off\. The client’s email has their working portal and upload links\.<\/div>/);
   // the order: To at the top, then the warnings, the switch, the edit boxes (with the read-only lists), then the email
@@ -871,8 +875,8 @@ test('case page (sandbox, email view): only the newest ask counts — an older a
   assert.equal(s.renders.length, 8, 'the send asked for no email view');
 });
 
-test('case page (sandbox, email view): the narrow-screen switch — "Edit" / "See email" swap the pane (class + aria-pressed); a failed send never blocks on the view', async () => {
-  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW() }], renderAnswer: () => 'network' });
+test('case page (sandbox, email view): the narrow-screen switch — "Edit" / "See email" swap the pane (class + aria-pressed); a failed email view never blocks Send', async () => {
+  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW() }, { status: 200, body: { ok: true, noted: true, to: 'a***@example.com', level: 1, day: '2026-11-07' } }], renderAnswer: () => 'network' });
   s.ctx.renderReminders(FACTS());
   s.ctx.remOpen(1); await s.flush();
   const d = s.dialogs[0];
@@ -882,7 +886,87 @@ test('case page (sandbox, email view): the narrow-screen switch — "Edit" / "Se
   d.els['rem-tab-edit'].onclick();
   assert.deepEqual([d.els['rem-split'].className, d.els['rem-tab-edit'].className, d.els['rem-tab-edit'].attrs['aria-pressed'], d.els['rem-tab-mail'].attrs['aria-pressed']], ['rem-split', 'sbtn rem-tab on', 'true', 'false']);
   assert.match(d.els['rem-mail-state'].textContent, /could not be updated/);
-  assert.ok(d.els['rem-send'].onclick, 'Send is there whatever the view says');
+  // Send still goes out with what is in the boxes, though the view failed
+  d.els['rem-subject'].value = 'Documents'; d.els['rem-body'].value = 'v {MissingList}';
+  assert.equal(d.els['rem-mail-state'].className, 'rem-mail-state rem-mail-fail', 'the view had failed when Send was clicked');
+  d.els['rem-send'].onclick(); await s.flush();
+  assert.deepEqual(s.fetches[1], ['/admin/case-action/2026-SV-021/reminder', 'POST', { level: 1, subject: 'Documents', body: 'v {MissingList}', extra: '', lastDay: '' }]);
+  assert.deepEqual(d.closed, ['sent']);
+});
+
+test('case page (sandbox, email view): an answer still on its way when a new key is pressed is out of date at once — it never shows, never clears "Updating…"; the same for a failure; the newer ask then shows', async () => {
+  for (const late of ['ok', 'fail']) {
+    let release;
+    const held = new Promise((r) => { release = r; });
+    const answers = {
+      1: { status: 200, body: RENDERED({ html: '<p>first</p>' }) },
+      2: late === 'ok' ? { status: 200, body: RENDERED({ html: '<p>stale</p>' }), gate: held } : { status: 500, body: { ok: false, error: 'Internal server error' }, gate: held },
+      3: { status: 200, body: RENDERED({ html: '<p>latest</p>', subject: 'Latest' }) },
+    };
+    const s = remSandbox({ responses: [{ status: 200, body: PREVIEW() }], renderAnswer: (n) => answers[n] });
+    s.ctx.renderReminders(FACTS());
+    s.ctx.remOpen(1); await s.flush();
+    const d = s.dialogs[0], frame = d.els['rem-frame'], state = d.els['rem-mail-state'];
+    d.els['rem-body'].value = 'a {MissingList}'; d.els['rem-body'].oninput(); s.tick(); await s.flush();   // ask 2 is out, its answer held
+    d.els['rem-body'].value = 'ab {MissingList}'; d.els['rem-body'].oninput();                                // a new key during the round trip
+    release(); await s.flush();
+    assert.equal(frame.srcdoc, '<p>first</p>', late + ': the older answer is not shown');
+    assert.deepEqual([state.className, state.textContent], ['rem-mail-state muted', 'Updating…'], late + ': still waiting for the newer one');
+    s.tick(); await s.flush();
+    assert.equal(s.renders[2][2].body, 'ab {MissingList}');
+    assert.deepEqual([frame.srcdoc, state.textContent, d.els['rem-mail-subj-text'].textContent], ['<p>latest</p>', '', 'Latest']);
+  }
+});
+
+test('case page (sandbox, email view): "too often" (429) asks once more by itself after the wait the server gave, with the boxes as they are then; a newer key press or a close drops that ask', async () => {
+  const run = async (between) => {
+    const answers = { 1: { status: 200, body: RENDERED({ html: '<p>first</p>' }) }, 2: { status: 429, body: { ok: false, reason: 'too-many', retryAfter: 12, error: 'The email view was updated too often — it updates again in 12s. Nothing you typed is lost.' } } };
+    const s = remSandbox({ responses: [{ status: 200, body: PREVIEW() }], renderAnswer: (n) => answers[n] || { status: 200, body: RENDERED({ html: '<p>again ' + n + '</p>' }) } });
+    s.ctx.renderReminders(FACTS());
+    s.ctx.remOpen(1); await s.flush();
+    const d = s.dialogs[0];
+    d.els['rem-body'].value = 'x {MissingList}'; d.els['rem-body'].oninput(); s.tick(); await s.flush();
+    assert.match(d.els['rem-mail-state'].textContent, /updates again in 12s/);
+    assert.deepEqual(s.timers.map((t) => t.ms), [12250], 'one quiet retry, after the wait');
+    await between(s, d);
+    return { s, d };
+  };
+  // nothing typed: the retry asks with the boxes as they are now and shows the email
+  let { s, d } = await run(async (s2, d2) => { d2.els['rem-subject'].value = 'Later subject'; });
+  s.tick(); await s.flush();
+  assert.equal(s.renders.length, 3);
+  assert.equal(s.renders[2][2].subject, 'Later subject');
+  assert.deepEqual([d.els['rem-frame'].srcdoc, d.els['rem-mail-state'].textContent], ['<p>again 3</p>', '']);
+  assert.equal(s.timers.length, 0, 'only once');
+  // a key press first: it replaces the retry with its own 600 ms wait
+  ({ s, d } = await run(async (s2, d2) => { d2.els['rem-body'].value = 'y {MissingList}'; d2.els['rem-body'].oninput(); }));
+  assert.deepEqual(s.timers.map((t) => t.ms), [600]);
+  s.tick(); await s.flush();
+  assert.equal(s.renders.length, 3);
+  assert.equal(s.renders[2][2].body, 'y {MissingList}');
+  // closed: nothing more is asked
+  ({ s, d } = await run(async (s2, d2) => { d2.els['rem-cancel'].onclick(); }));
+  assert.equal(s.timers.length, 0);
+  assert.equal(s.renders.length, 2);
+});
+
+test('case page (sandbox, email view): the Subject line above the email is the server\'s finished subject ({LastDay} filled in), set as TEXT; hidden with the email when the text has a problem', async () => {
+  const answers = {
+    1: { status: 200, body: RENDERED({ subject: 'Final reminder: documents needed by 21 Nov 2026 <b>now</b>' }) },
+    2: { status: 200, body: RENDERED({ html: '', subject: '', problems: ['Enter the last day you will wait for the documents.'] }) },
+  };
+  const s = remSandbox({ responses: [{ status: 200, body: PREVIEW({ level: 3, subject: 'Final reminder: documents needed by {LastDay}', lastDay: '2026-11-21' }) }], renderAnswer: (n) => answers[n] });
+  s.ctx.renderReminders(FACTS());
+  s.ctx.remOpen(3); await s.flush();
+  const d = s.dialogs[0], subj = d.els['rem-mail-subj-text'];
+  assert.equal(d.els['rem-subject'].value, 'Final reminder: documents needed by {LastDay}', 'the box keeps the token');
+  assert.equal(subj.textContent, 'Final reminder: documents needed by 21 Nov 2026 <b>now</b>', 'the line shows the filled subject, as text');
+  assert.equal(subj.innerHTML, '', 'never as markup');
+  d.els['rem-lastday'].value = ''; d.els['rem-lastday'].oninput(); s.tick(); await s.flush();
+  assert.deepEqual([subj.textContent, d.els['rem-mail-subj'].style.display, d.els['rem-frame'].style.display], ['', 'none', 'none']);
+  const { js } = pageJs();
+  const block = js.slice(js.indexOf('// ── Document reminders (block 2'), js.indexOf('function loadCase()'));
+  assert.doesNotMatch(block, /innerHTML[^;]*j\.subject/);
 });
 
 test('case page: the email view CSS — side by side from 901 px (the dialog widens), the switch only at 900 px and under with 44 px / 16 px buttons; the phone sheet is unchanged', () => {

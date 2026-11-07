@@ -83,6 +83,9 @@ async function send(req, res, deps) {
 // only once the sign-in let it through, so a stranger can never use up a staffer's minute.
 // In memory: a restart forgets it.
 const RENDER_PER_MIN = 30, RENDER_WINDOW_MS = 60 * 1000;
+// The size cap is checked HERE: the app-wide JSON parser (2 MB) reads the body before any
+// route-level parser could, so a limit on the route alone would never apply (review 2026-11-07).
+const RENDER_MAX_BYTES = 64 * 1024;
 const _renders = new Map();   // "who|CASE" → ms of the asks in the last minute
 
 const recentRenders = (key, now) => (_renders.get(key) || []).filter((t) => now - t < RENDER_WINDOW_MS);
@@ -100,11 +103,17 @@ function countRender(key, now) {
 async function render(req, res, deps) {
   const caseRef = (req.params.caseRef || '').trim();
   res.set('Cache-Control', 'no-store');
+  const bytes = Math.max(req.rawBody ? req.rawBody.length : 0, Number(req.headers && req.headers['content-length']) || 0);
+  if (bytes > RENDER_MAX_BYTES) return res.status(413).json({ ok: false, reason: 'too-large', error: 'The text is too long for the email view.' });
+  // a caller with no sign-in and no key hears 401 first, exactly as preview and send answer — never a 429
+  // that would tell a stranger the case exists and is being worked on
+  if (!deps.resolveViewer(req)) return res.status(401).json({ ok: false, error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
   // who: the Monday sign-in; without one, the shared admin key (one slot for everyone using it)
   const actor = deps.staffActor(req);
   const key = `${actor && actor.verified && actor.email ? `staff:${String(actor.email).toLowerCase()}` : 'key'}|${caseRef.toUpperCase()}`;
   const wait = renderWait(key, Date.now());
-  if (wait > 0) return res.status(429).json({ ok: false, reason: 'too-many', error: `The email view was updated too often — it updates again in ${wait}s. Nothing you typed is lost.` });
+  // retryAfter: the pop-up asks once more by itself after the wait, so the line below is true
+  if (wait > 0) return res.status(429).json({ ok: false, reason: 'too-many', retryAfter: wait, error: `The email view was updated too often — it updates again in ${wait}s. Nothing you typed is lost.` });
   const ctx = await deps.resolveCaseForWrite(req, res, caseRef);
   if (!ctx) return;
   countRender(key, Date.now());
@@ -125,5 +134,5 @@ async function render(req, res, deps) {
   } catch (err) { answerError(res, err, caseRef); }
 }
 
-module.exports = { preview, send, render, COOLDOWN_MS, SUBJECT_MAX, BODY_MAX, EXTRA_MAX, RENDER_PER_MIN, RENDER_LIMIT_BYTES: '64kb', _lastSendAt, _renders,
+module.exports = { preview, send, render, COOLDOWN_MS, SUBJECT_MAX, BODY_MAX, EXTRA_MAX, RENDER_PER_MIN, RENDER_MAX_BYTES, _lastSendAt, _renders,
   _resetForTests: () => { _lastSendAt.clear(); _renders.clear(); } };

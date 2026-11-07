@@ -198,6 +198,8 @@ function buildCockpitHTML(caseRef) {
     .rem-prob { font-size:12.5px; color:#991b1b; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:7px 10px; margin:0 0 8px; }
     .rem-frame { display:block; width:100%; height:62vh; min-height:380px; border:1px solid var(--border); border-radius:8px; background:#FAF8F4; }
     .rem-mail-note { font-size:11.5px; color:var(--light); margin-top:6px; line-height:1.5; }
+    .rem-mail-subj { font-size:13px; color:var(--navy); margin:0 0 8px; overflow-wrap:anywhere; }
+    .rem-mail-subj .k { color:var(--muted); margin-right:6px; }
     @media (min-width: 901px) {
       .tdlg.rem-dlg { max-width:1180px; }
       .rem-split { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:20px; align-items:start; }
@@ -1255,7 +1257,8 @@ function remDialog(level, p) {
     '</div><div class="rem-mail">' +
     '<div class="rem-lbl">The email as the client will see it <span class="rem-mail-state muted" id="rem-mail-state">Updating…</span></div>' +
     '<div id="rem-mail-prob"></div>' +
-    '<iframe class="rem-frame" id="rem-frame" sandbox="" title="The email as the client will see it"></iframe>' +
+    '<div class="rem-mail-subj" id="rem-mail-subj"><span class="k">Subject</span><span id="rem-mail-subj-text"></span></div>' +
+    '<iframe class="rem-frame" id="rem-frame" sandbox="" tabindex="-1" title="The email as the client will see it"></iframe>' +
     '<div class="rem-mail-note">Links in this preview are switched off. The client’s email has their working portal and upload links.</div>' +
     '</div></div>' +
     '<div class="tdlg-err" id="rem-err"></div>' +
@@ -1265,6 +1268,7 @@ function remDialog(level, p) {
   subj.value = p.subject || ''; body.value = p.body || '';
   if (last) { last.value = p.lastDay || ''; if (p.minLastDay) last.min = p.minLastDay; }
   var read = function() { return { subject: subj.value, body: body.value, extra: extra.value, lastDay: last ? last.value : '' }; };
+  c.remRead = read;   // the one quiet retry after a too-often answer asks with the boxes as they are then
   // every edit brings the email view up to date after a short pause in typing
   [subj, body, extra, last].forEach(function(el) { if (el) el.oninput = function() { remRenderSoon(c, level, read); }; });
   if (last) last.onchange = last.oninput;
@@ -1289,6 +1293,7 @@ function remMailState(c, cls, txt) {
 }
 function remRenderSoon(c, level, read) {
   if (c.remTimer) clearTimeout(c.remTimer);
+  c.remSeq = (c.remSeq || 0) + 1;   // an answer still on its way is out of date from the first new key press
   remMailState(c, 'muted', 'Updating…');
   var id = c.openId;
   c.remTimer = setTimeout(function() { c.remTimer = null; if (c.still(id)) remRenderNow(c, level, read()); }, REM_RENDER_WAIT);
@@ -1304,7 +1309,16 @@ function remRenderNow(c, level, v) {
   .then(function(r) { return r.json().then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
   .then(function(res) {
     if (!c.still(id) || seq !== c.remSeq) return;   // closed, or a newer edit has been asked for since: this answer is out of date
-    if (!res.ok) { remMailState(c, 'rem-mail-fail', 'The preview could not be updated — the text you typed is kept.' + (res.j && res.j.error ? ' ' + res.j.error : '')); return; }
+    if (!res.ok) {
+      remMailState(c, 'rem-mail-fail', 'The preview could not be updated — the text you typed is kept.' + (res.j && res.j.error ? ' ' + res.j.error : ''));
+      // too often: ask once more by itself after the wait the server gave (a new key press replaces this, a close drops it)
+      var after = res.status === 429 && res.j ? Math.min(Number(res.j.retryAfter) || 0, 60) : 0;
+      if (after > 0 && c.remRead) {
+        if (c.remTimer) clearTimeout(c.remTimer);
+        c.remTimer = setTimeout(function() { c.remTimer = null; if (c.still(id) && seq === c.remSeq) remRenderNow(c, level, c.remRead()); }, after * 1000 + 250);
+      }
+      return;
+    }
     remShowMail(c, res.j);
   })
   .catch(function() { if (!c.still(id) || seq !== c.remSeq) return; remMailState(c, 'rem-mail-fail', 'The preview could not be updated — the text you typed is kept.'); });
@@ -1314,10 +1328,12 @@ function remShowMail(c, j) {
   remMailState(c, 'muted', '');
   c.box.querySelector('#rem-mail-prob').innerHTML = probs.map(function(x) { return '<div class="rem-prob">' + escHtml(x) + '</div>'; }).join('') +
     warns.map(function(w) { return '<div class="rem-warn">⚠ ' + escHtml(w) + '</div>'; }).join('');
-  var frame = c.box.querySelector('#rem-frame');
+  var frame = c.box.querySelector('#rem-frame'), subjRow = c.box.querySelector('#rem-mail-subj');
+  // the subject as the client gets it ({LastDay} and the other tokens filled in) — as text, never as markup
+  c.box.querySelector('#rem-mail-subj-text').textContent = probs.length ? '' : String(j.subject || '');
   // a text that cannot go yet shows its reason, not an email it cannot send
-  if (probs.length) { frame.style.display = 'none'; return; }
-  frame.style.display = '';
+  if (probs.length) { frame.style.display = 'none'; subjRow.style.display = 'none'; return; }
+  frame.style.display = ''; subjRow.style.display = '';
   frame.srcdoc = String(j.html || '');   // the DOM property: the email is never pasted into this page's own markup
 }
 function remSend(c, level, v) {

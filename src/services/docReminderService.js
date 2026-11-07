@@ -1119,7 +1119,7 @@ const LINK_NOTE = 'switched off in this preview';
 
 /**
  * The email html made safe to show staff: the client's code (if it ever got in) replaced by
- * the stand-in, every link pointed at "#" (data-link-note says why), and anything that could
+ * the stand-in, every link address taken out (data-link-note says why), and anything that could
  * run or navigate taken out — scripts, on* handlers, forms, frames, base, meta refresh. The
  * email has none of these (the tests assert it); this is the belt to the iframe's braces.
  * Attributes are only touched INSIDE tags: the staff's own text is escaped, so a typed
@@ -1134,7 +1134,9 @@ function previewSafeHtml(html, { token } = {}) {
     .replace(/<meta\b[^>]*http-equiv[^>]*>/gi, '');
   return h.replace(/<[a-z][^>]*>/gi, (tag) => tag
     .replace(/\s(?:on[a-z]+|action|formaction|srcdoc)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/\shref\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, ` href="#" data-link-note="${LINK_NOTE}"`));
+    // the href is taken OUT (not set to "#"): a link with no address cannot take keyboard focus inside the
+    // frame, so Escape and Tab stay with the pop-up (review 2026-11-07)
+    .replace(/\shref\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, ` data-link-note="${LINK_NOTE}"`));
 }
 
 /**
