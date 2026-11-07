@@ -265,7 +265,8 @@ const docRem = require('../src/services/docReminderService');
 const T_REM = Date.parse('2026-11-07T15:14:00Z');   // 7 Nov 2026, 10:14 am Toronto
 
 /** The cockpit fan-out with the Client Master read answering group + columns + notes (the one read the card uses). */
-function reminderStubs({ cmFail = false, docsFail = false, updates = [], items = [{ id: '1', name: 'Passport', status: 'Missing', category: 'Identity', applicantType: 'Principal Applicant', applicantLabel: 'Principal Applicant', optional: false }], lock = 'No', override = '', stage = 'Document Collection Started', payment = 'Paid', group = { id: 'group_sv', title: 'Super Visa' } } = {}) {
+function reminderStubs({ cmFail = false, docsFail = false, updates = [], items = [{ id: '1', name: 'Passport', status: 'Missing', category: 'Identity', applicantType: 'Principal Applicant', applicantLabel: 'Principal Applicant', optional: false }], lock = 'No', override = '', stage = 'Document Collection Started', payment = 'Paid', group = { id: 'group_sv', title: 'Super Visa' },
+  qMembers = null, membersFail = false, qFail = false, qDoneText = '' } = {}) {
   const cockpit     = require('../src/services/caseCockpitService');
   const mondayApi   = require('../src/services/mondayApi');
   const htmlQ       = require('../src/services/htmlQuestionnaireService');
@@ -282,12 +283,13 @@ function reminderStubs({ cmFail = false, docsFail = false, updates = [], items =
       return { items: [{ group, updates, column_values: [
         { id: 'color_mm0x8faa', text: stage }, { id: 'color_mm0x9fnn', text: payment }, { id: 'text_mm0xw6bp', text: 'aisha@example.com' },
         { id: 'color_mm6w7cdd', text: 'Deadline', value: '{"index":1}' }, { id: 'date_mm33sj6t', text: '2026-12-16' }, { id: 'color_mm0x3x1x', text: lock }, { id: 'color_mm0x975e', text: override }, { id: 'date_mm1gqbd', text: '2026-11-06' },
+        { id: 'color_mm0x9s08', text: qDoneText },
       ] }] };
     }),
     stub(docSvc, 'getCaseSummary', async () => { if (docsFail) throw new Error('monday timeout'); return { items }; }),
     stub(composition, 'readForCase', async () => ({ members: [] })),
-    stub(htmlQ, 'loadMembers', async () => [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', submittedAt: '' }]),
-    stub(htmlQ, 'getMemberStatuses', async ({ members }) => members.map((m) => ({ ...m, status: 'In Progress', hasData: true, completionPct: 40 }))),
+    stub(htmlQ, 'loadMembers', async () => { if (membersFail) { const e = new Error('graph timeout'); e.transient = true; throw e; } return qMembers ? qMembers.map(({ status, hasData, completionPct, ...m }) => m) : [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', submittedAt: '' }]; }),
+    stub(htmlQ, 'getMemberStatuses', async ({ members }) => { if (qFail) { const e = new Error('graph 503'); e.transient = true; throw e; } return qMembers || members.map((m) => ({ ...m, status: 'In Progress', hasData: true, completionPct: 40 })); }),
     stub(cockpit, 'getLeadExtras', async () => ({ lead: null, payments: null })),
     stub(S, 'describe', async () => ({ available: false })),
   ];
@@ -346,6 +348,37 @@ test('getCaseOverview: the reminders card facts come from the SAME Client Master
       assert.match(o.reminders.blocked, re);
       if (over.override) assert.equal(o.manualOverride, 'Yes');
     } finally { r.reverse().forEach((x) => x()); }
+  }
+});
+
+test('getCaseOverview (Gauri\'s texts, 2026-11-07): the questionnaire facts ride inside overview.questionnaire (completion %, unavailable, the board\'s Done) — the buttons work when only the questionnaire is unfinished, are off only when both are complete, and a blip is named, never a nudge', async () => {
+  const cockpit = require('../src/services/caseCockpitService');
+  const ALL_IN = [{ id: '1', name: 'Passport', status: 'Received', category: 'Identity', applicantType: 'Principal Applicant', applicantLabel: 'Principal Applicant', optional: false }];
+  const run = async (opts) => { const r = reminderStubs(opts); try { return await cockpit.getCaseOverview('2026-SV-021'); } finally { r.reverse().forEach((x) => x()); } };
+  // documents missing, questionnaire 40 %: the facts the reminders read, no new top-level key
+  let o = await run({});
+  assert.deepEqual([o.questionnaire.unavailable, o.questionnaire.mondayDone, o.questionnaire.members[0].completionPct], [false, false, 40]);
+  assert.deepEqual(o.reminders.questionnaire, { done: false, unavailable: false, pct: 40, pending: 1 });
+  // every document in, the questionnaire unfinished: the buttons stay
+  o = await run({ items: ALL_IN });
+  assert.deepEqual([o.reminders.available, o.reminders.canSend, o.reminders.missingCount, o.reminders.reason], [true, true, 0, '']);
+  // both complete: the card says so
+  const SUBMITTED = [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', submittedAt: '2026-11-01T15:00:00Z', status: 'Submitted', hasData: true, completionPct: 92 }];
+  o = await run({ items: ALL_IN, qMembers: SUBMITTED });
+  assert.deepEqual([o.reminders.available, o.reminders.reason, o.reminders.message], [false, 'no-rows', 'Every document is in and the questionnaire is complete — there is nothing to remind the client about.']);
+  // a legacy case: no submission stamps, the board says Done — complete (the portal's rule)
+  o = await run({ items: ALL_IN, qMembers: [{ ...SUBMITTED[0], submittedAt: '', status: 'In Progress', completionPct: 0, hasData: false }], qDoneText: 'Done' });
+  assert.equal(o.questionnaire.mondayDone, true);
+  assert.deepEqual([o.reminders.available, o.reminders.reason], [false, 'no-rows']);
+  // a blip on the member files or the member list: flagged unavailable — the card names it when the documents are all in
+  for (const blip of [{ qFail: true }, { membersFail: true }]) {
+    o = await run({ items: ALL_IN, ...blip });
+    assert.equal(o.questionnaire.unavailable, true, JSON.stringify(blip));
+    assert.deepEqual([o.reminders.available, o.reminders.reason, o.reminders.canSend], [false, 'q-unavailable', false], JSON.stringify(blip));
+    assert.match(o.reminders.message, /questionnaire progress could not be read just now — reload in a moment/);
+    // with documents missing the buttons stay (the email will leave the questionnaire out — the preview says so)
+    const withDocs = await run(blip);
+    assert.deepEqual([withDocs.reminders.available, withDocs.reminders.canSend, withDocs.reminders.questionnaire.unavailable], [true, true, true], JSON.stringify(blip));
   }
 });
 
@@ -449,7 +482,7 @@ test('case page (sandbox): renderReminders draws the three buttons and the Sent 
     const btns = s.buttons(i);
     assert.deepEqual(btns.map((b) => [b.getAttribute('data-rem-level'), b.textContent.trim(), b.hasAttribute('disabled')]), [['1', 'Send reminder 1 · friendly', false], ['2', 'Send reminder 2 · firm', false], ['3', 'Send final reminder', false]]);
     assert.match(s.cards[i].innerHTML, /Sent \(recent notes\): 1st 3 Nov 2026 \(Mahesh Sharma\) · 2nd — · Final — · Auto: last 6 Nov 2026 \(1 so far\)</);
-    assert.match(s.cards[i].innerHTML, /never questionnaire items/);
+    assert.match(s.cards[i].innerHTML, /The app lists the missing documents and, separately, who has not finished the questionnaire/);
     assert.match(s.cards[i].innerHTML, /the Sent line reads the newest 100 notes, so an older send may be further down the notes\.<\/div>/, 'the card says where its facts come from (review [2]/[16]/[24])');
     assert.doesNotMatch(s.cards[i].innerHTML, /rem-msg/, 'the message slot is NOT part of the card — it sits beside it, so the reload after a send cannot wipe the message (review round 2 [8])');
   }
@@ -502,7 +535,8 @@ test('case page (sandbox): a click previews first (GET), the dialog carries To /
   assert.match(d.box.innerHTML, /<span class="k">To<\/span>a\*\*\*@example\.com <span class="muted">· Deadline 16 Dec 2026<\/span>/);
   assert.match(d.box.innerHTML, /<div class="rem-warn">⚠ Reminder 1 already went on 3 Nov 2026 \(Mahesh Sharma\)<\/div>/);
   assert.match(d.box.innerHTML, /<textarea class="rem-in" id="rem-body" rows="8" maxlength="6000">/);
-  assert.match(d.box.innerHTML, /the missing list goes where \{MissingList\} is, the portal link where \{PortalLink\} is<\/span>/);
+  assert.match(d.box.innerHTML, /the missing documents go where \{MissingList\} is, the unfinished questionnaire where \{QuestionnaireList\} is, the portal link where \{PortalLink\} is<\/span>/);
+  assert.doesNotMatch(d.box.innerHTML, /rem-q/, 'no questionnaire facts in the preview: no questionnaire block');
   assert.match(d.box.innerHTML, /<li>Passport &lt;all pages&gt; <span class="muted">— Colour scan &amp; all pages\.<\/span><\/li>/, 'the list is read-only, escaped');
   assert.doesNotMatch(d.box.innerHTML, /rem-lastday/, 'no last-day box on reminder 1');
   assert.doesNotMatch(d.box.innerHTML, /rem-member/, 'a lone principal-applicant group (no type = principal): no member heading');
@@ -651,4 +685,38 @@ test('case page (sandbox): the "Sent to …" and lost-race messages survive the 
   assert.deepEqual([reloads, lateNet.busy, lateNet.els['rem-err'].textContent], [5, [true], '']);
   // the open-dialog path is unchanged: an answer that lands while the dialog is still open does NOT reload twice
   assert.equal(s.fetches.filter((f) => f[1] === 'POST').length, 5);
+});
+
+test('case page (sandbox, Gauri\'s texts 2026-11-07): the dialog shows the unfinished questionnaire read-only under the documents (escaped), "complete" when done, nothing when it could not be read (the amber warning says so); an empty documents list reads "All documents are in."', async () => {
+  const Q = { unavailable: false, done: false, pct: 40, pending: [{ label: 'Meena <Shah> (Second parent)', line: 'Meena <Shah> (Second parent) — 40% complete, not submitted yet' }] };
+  const s = remSandbox({ responses: [
+    { status: 200, body: PREVIEW({ questionnaire: Q, questionnaireList: 'Questionnaire still to finish:' }) },
+    { status: 200, body: PREVIEW({ missing: { groups: [], count: 0 }, missingCount: 0, questionnaire: Q }) },
+    { status: 200, body: PREVIEW({ questionnaire: { unavailable: false, done: true, pct: 100, pending: [] } }) },
+    { status: 200, body: PREVIEW({ questionnaire: { unavailable: true, done: false, pct: null, pending: [] }, warnings: ['The questionnaire progress could not be read — the email will not mention it.'] }) },
+  ] });
+  s.ctx.renderReminders(FACTS());
+  s.ctx.remOpen(1); await s.flush();
+  const d = s.dialogs[0];
+  assert.match(d.box.innerHTML, /<div class="rem-lbl">Questionnaire still to finish <span class="muted">\(inserted by the app, read-only\)<\/span><\/div><div class="rem-q"><ul class="rem-list"><li>Meena &lt;Shah&gt; \(Second parent\) — 40% complete, not submitted yet<\/li><\/ul><\/div>/);
+  assert.ok(d.box.innerHTML.indexOf('class="rem-missing"') < d.box.innerHTML.indexOf('class="rem-q"'), 'under the documents list');
+  d.els['rem-cancel'].onclick();
+  s.ctx.remOpen(1); await s.flush();
+  const docsIn = s.dialogs[1];
+  assert.match(docsIn.box.innerHTML, /<div class="rem-missing"><div class="muted">All documents are in\.<\/div><\/div>/);
+  assert.match(docsIn.box.innerHTML, /class="rem-q"/);
+  docsIn.els['rem-cancel'].onclick();
+  s.ctx.remOpen(1); await s.flush();
+  assert.match(s.dialogs[2].box.innerHTML, /<div class="rem-q"><div class="muted">The questionnaire is complete\.<\/div><\/div>/);
+  s.dialogs[2].els['rem-cancel'].onclick();
+  s.ctx.remOpen(1); await s.flush();
+  const blip = s.dialogs[3];
+  assert.doesNotMatch(blip.box.innerHTML, /rem-q/, 'progress that could not be read: no list at all');
+  assert.match(blip.box.innerHTML, /<div class="rem-warn">⚠ The questionnaire progress could not be read — the email will not mention it\.<\/div>/);
+  // the emitted block still obeys the inline-JS rules and parses
+  const { js } = pageJs();
+  const block = js.slice(js.indexOf('// ── Document reminders (block 2'), js.indexOf('function loadCase()'));
+  assert.ok(block.includes('function remQuestionnaireHtml('));
+  assert.ok(!block.includes('`') && !block.includes('${') && !block.includes('\\'));
+  assert.doesNotThrow(() => new vm.Script(js), 'the emitted page script parses');
 });

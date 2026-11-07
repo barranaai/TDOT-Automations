@@ -11,7 +11,10 @@
  *
  * Every row is checked at load AND the chosen text is checked again at send
  * (docReminderService): plain text only (tags stripped), {MissingList} present, no
- * "just reply" wording, unknown {Token}s left visible and flagged. A row that fails,
+ * "just reply" wording, unknown {Token}s left visible and flagged. {QuestionnaireList}
+ * is a known token but NOT required here — this check knows nothing about the case;
+ * the email builder adds it after the documents list (with a warning) when the
+ * client's questionnaire is unfinished and the text lacks it. A row that fails,
  * is switched off, is missing, or a board that cannot be read → the code default
  * from config/reminderTemplates.js for that row, and a diagnostic the Needs-attention
  * layer can read (diagnostics() — a getter, this module writes nothing to Monday).

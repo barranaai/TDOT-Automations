@@ -187,6 +187,7 @@ function buildCockpitHTML(caseRef) {
     .rem-cat { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#9a3412; margin:8px 0 2px; }
     .rem-list { margin:0; padding-left:18px; }
     .rem-list li { margin:2px 0; }
+    .rem-q { background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:10px 12px; font-size:12.5px; max-height:160px; overflow:auto; }
     .tdlg.rem-dlg { max-width:640px; }
     /* Phones: the three buttons stack full width (16px / 44px), the preview is a full-screen sheet, nothing scrolls sideways. */
     @media (max-width: 600px) {
@@ -1159,7 +1160,7 @@ function renderReminders(rm) {
     if (rm.blocked) html += '<div class="rem-blocked">' + escHtml(rm.blocked) + '</div>';
     html += '<div class="rem-sent">' + (rm.recentNotes ? 'Sent (recent notes): ' : 'Sent: ') + remSentLine(rm) + '</div>';
     if (rm.lastFailed && rm.failures && rm.failures[0]) html += '<div class="rem-fail">Last attempt did not go out (' + escHtml(rm.failures[0].label) + ') — the note on the case says when.</div>';
-    html += '<div class="rem-hint">Each click opens a preview you can edit before it goes. The missing documents are listed by the app (never questionnaire items); a note on the case is the record' + (rm.recentNotes ? ' — the Sent line reads the newest ' + Number(rm.recentNotes) + ' notes, so an older send may be further down the notes' : '') + '.</div>';
+    html += '<div class="rem-hint">Each click opens a preview you can edit before it goes. The app lists the missing documents and, separately, who has not finished the questionnaire; a note on the case is the record' + (rm.recentNotes ? ' — the Sent line reads the newest ' + Number(rm.recentNotes) + ' notes, so an older send may be further down the notes' : '') + '.</div>';
   }
   // the message slot (.rem-msg) sits beside each card, not inside it: the reload after a send redraws the card and must not wipe "Sent to …" or the lost-race line
   Array.prototype.forEach.call(cards, function(c) {
@@ -1197,7 +1198,13 @@ function remMissingHtml(missing) {
         (cat.items || []).map(function(it) { return '<li>' + escHtml(it.name) + (it.instruction ? ' <span class="muted">— ' + escHtml(it.instruction) + '</span>' : '') + '</li>'; }).join('') + '</ul>';
     });
   });
-  return list || '<div class="muted">None</div>';
+  return list || '<div class="muted">All documents are in.</div>';
+}
+// the questionnaire lines the email prints (one per family member who has not submitted) — read-only, escaped
+function remQuestionnaireHtml(q) {
+  if (!q || q.unavailable) return '';
+  if (q.done || !(q.pending && q.pending.length)) return '<div class="muted">The questionnaire is complete.</div>';
+  return '<ul class="rem-list">' + q.pending.map(function(m) { return '<li>' + escHtml(m.line || m.label || '') + '</li>'; }).join('') + '</ul>';
 }
 function remDialog(level, p) {
   var title = level === 3 ? 'Send the final reminder' : 'Send reminder ' + level + (level === 1 ? ' · friendly' : ' · firm');
@@ -1213,11 +1220,12 @@ function remDialog(level, p) {
     '<div class="rem-to"><span class="k">To</span>' + escHtml(p.to || '') + ' <span class="muted">· ' + escHtml(p.deadlineLine || '') + '</span></div>' +
     warn +
     '<label class="rem-lbl" for="rem-subject">Subject</label><input class="rem-in" id="rem-subject" maxlength="200">' +
-    '<label class="rem-lbl" for="rem-body">Text <span class="muted">— the missing list goes where {MissingList} is, the portal link where {PortalLink} is' + (level === 3 ? ', the date below where {LastDay} is' : '') + '</span></label>' +
+    '<label class="rem-lbl" for="rem-body">Text <span class="muted">— the missing documents go where {MissingList} is, the unfinished questionnaire where {QuestionnaireList} is, the portal link where {PortalLink} is' + (level === 3 ? ', the date below where {LastDay} is' : '') + '</span></label>' +
     '<textarea class="rem-in" id="rem-body" rows="8" maxlength="6000"></textarea>' +
-    '<label class="rem-lbl" for="rem-extra">Add a line for the client <span class="muted">(optional — shown right under the list)</span></label><input class="rem-in" id="rem-extra" maxlength="1000" placeholder="e.g. We are still waiting for the lease agreement.">' +
+    '<label class="rem-lbl" for="rem-extra">Add a line for the client <span class="muted">(optional — shown right under the lists)</span></label><input class="rem-in" id="rem-extra" maxlength="1000" placeholder="e.g. We are still waiting for the lease agreement.">' +
     (level === 3 ? '<label class="rem-lbl" for="rem-lastday">Last day we will wait</label><input class="rem-in" type="date" id="rem-lastday">' : '') +
     '<div class="rem-lbl">Missing documents <span class="muted">(' + escHtml(String(p.missingCount || 0)) + ' — inserted by the app, read-only)</span></div><div class="rem-missing">' + remMissingHtml(p.missing) + '</div>' +
+    (p.questionnaire && !p.questionnaire.unavailable ? '<div class="rem-lbl">Questionnaire still to finish <span class="muted">(inserted by the app, read-only)</span></div><div class="rem-q">' + remQuestionnaireHtml(p.questionnaire) + '</div>' : '') +
     '<div class="tdlg-err" id="rem-err"></div>' +
     '<div class="tdlg-actions"><button type="button" class="sbtn" data-x="1" id="rem-cancel">Cancel</button><button type="button" class="sbtn primary" data-x="1" id="rem-send">Send</button></div>';
   c.box.innerHTML = html;

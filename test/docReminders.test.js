@@ -73,7 +73,7 @@ const hrefs = (html) => [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]).f
 
 // ─── templates ───────────────────────────────────────────────────────────────
 
-test('the code defaults: four rows, every body valid, every body has {MissingList}, the final names {LastDay} and its consequence, the automatic names {Deadline}', () => {
+test('the code defaults: four rows, every body valid, every body has {MissingList} AND {QuestionnaireList} on their own paragraphs; reminders 1/2/final are Gauri\'s texts ("Hello {ClientName},", the no-reply-safe second reminder, the final\'s {LastDay}); the automatic names {Deadline}', () => {
   assert.deepEqual(cfg.ROW_NAMES, ['Reminder 1', 'Reminder 2', 'Final', 'Automatic']);
   assert.deepEqual(cfg.LEVEL_ROWS, { 1: 'Reminder 1', 2: 'Reminder 2', 3: 'Final', auto: 'Automatic' });
   for (const name of cfg.ROW_NAMES) {
@@ -83,15 +83,39 @@ test('the code defaults: four rows, every body valid, every body has {MissingLis
     assert.ok(cfg.DEFAULTS[name].body.includes('{MissingList}'), name);
     assert.ok(cfg.DEFAULTS[name].body.includes('{PortalLink}'), `${name} points at the portal`);
     assert.doesNotMatch(cfg.DEFAULTS[name].body, /<[a-z]/i, `${name} is plain text`);
+    // each list token is a paragraph of its own (a token mid-sentence would cut the sentence in two), the questionnaire right after the documents
+    assert.match(cfg.DEFAULTS[name].body, /\n\n\{MissingList\}\n\n\{QuestionnaireList\}\n\n/, `${name}: the two lists, each on its own paragraph`);
+    assert.ok(!tpl.tellsToReply(cfg.DEFAULTS[name].body) && !tpl.tellsToReply(cfg.DEFAULTS[name].subject), `${name}: no reply wording (the sender is a no-reply mailbox)`);
   }
-  assert.match(cfg.DEFAULTS['Reminder 2'].body, /still missing/);
-  const fin = cfg.DEFAULTS.Final.body;
-  assert.match(fin, /We will wait until \{LastDay\}/);
-  assert.match(fin, /moved out of document collection/);
-  assert.match(fin, /refund the fee paid, less the non-refundable administration fee/);
-  assert.match(fin, /stuck applications until you are ready/);
+  // Gauri's three texts (2026-11-07): personalised greeting, her wording, the sign-off
+  for (const name of ['Reminder 1', 'Reminder 2', 'Final']) {
+    const b = cfg.DEFAULTS[name].body;
+    assert.match(b, /^Hello \{ClientName\},\n\n/, `${name}: "Hello {ClientName},"`);
+    assert.match(b, /\n\nKind regards,\n\{StaffName\}\nTDOT Immigration Services$/, `${name}: the sign-off`);
+  }
+  const r1 = cfg.DEFAULTS['Reminder 1'].body, r2 = cfg.DEFAULTS['Reminder 2'].body, fin = cfg.DEFAULTS.Final.body;
+  assert.match(r1, /I hope you are doing well\.\n\nPlease ensure that you complete the questionnaire to 100% and upload at least 80% of the required documents to your client portal\. Please note that both requirements must be fulfilled before we can assign your application to an officer for further processing\.\n\n\{MissingList\}/);
+  assert.match(r1, /We kindly request you to complete the questionnaire and upload the pending documents as soon as possible to avoid any delays in your application process\./);
+  assert.match(r1, /\n\nThank you for your cooperation\.\n\nKind regards,/);
+  // the second reminder: "Please reply to this email once…" is a no-reply-safe sentence
+  assert.match(r2, /^Hello \{ClientName\},\n\nPlease let us know once you have uploaded your documents and completed the questionnaire\.\n\n/);
+  assert.doesNotMatch(r2, /reply/i);
+  assert.match(r2, /at least 80% of the requested documents and information must be completed and available in your file\.\n\n\{MissingList\}/);
+  assert.match(r2, /If your current immigration status is approaching expiry, please keep track of the expiry date and inform our office well in advance\./);
+  assert.match(r2, /We will be happy to assist\.\n\nThank you for your cooperation\./);
+  // the final: the last day sits in the "immediately" sentence; the old refund / stuck wording is gone
+  assert.match(fin, /You are requested to complete the questionnaire and upload all pending documents immediately, and no later than \{LastDay\}\. Failure to do so may result in your file being closed or marked inactive\./);
+  assert.match(fin, /Despite previous reminders, we have not yet received all the required documents and\/or your completed questionnaire\./);
+  assert.match(fin, /may require the application to be started again, and additional charges will apply\./);
+  assert.match(fin, /kindly inform us so we can verify and update your file\./);
+  assert.doesNotMatch(fin, /refund|stuck applications|moved out of document collection/);
+  assert.match(cfg.DEFAULTS.Final.subject, /\{LastDay\}/);
   assert.match(cfg.DEFAULTS.Automatic.body, /must be submitted by \{Deadline\}/);
-  assert.deepEqual(cfg.TOKENS, ['ClientName', 'CaseRef', 'CaseType', 'MissingList', 'MissingCount', 'Deadline', 'PromisedDate', 'LastDay', 'PortalLink', 'StaffName']);
+  assert.match(cfg.DEFAULTS.Automatic.body, /^Dear \{ClientName\},/, 'the automatic email keeps its own text');
+  assert.deepEqual(cfg.TOKENS, ['ClientName', 'CaseRef', 'CaseType', 'MissingList', 'QuestionnaireList', 'MissingCount', 'Deadline', 'PromisedDate', 'LastDay', 'PortalLink', 'StaffName']);
+  // a board text without {QuestionnaireList} stays VALID (the check knows nothing about the case — the builder adds it when needed)
+  assert.equal(tpl.validate({ subject: '', body: 'Dear {ClientName},\n\n{MissingList}' }).ok, true);
+  assert.deepEqual(tpl.validate({ subject: '', body: '{MissingList} {QuestionnaireList}' }).warnings, [], '{QuestionnaireList} is a known merge field');
 });
 
 test('validate: tags are stripped, a body without {MissingList} or with "reply" wording is refused, an unknown {Token} is a warning only', () => {
@@ -280,8 +304,11 @@ test('buildReminderEmail: every token filled for every level; the list sits wher
     assert.doesNotMatch(r.html, /\{[A-Za-z]+\}/, `level ${level}: no token left in the html`);
     assert.doesNotMatch(r.text, /\{[A-Za-z]+\}/, `level ${level}: no token left in the text`);
     assert.doesNotMatch(r.subject, /\{[A-Za-z]+\}/, `level ${level}: subject`);
-    assert.match(r.html, /Dear Asha Client,/);
-    assert.match(r.html, /Still missing \(4\):/);
+    assert.match(r.html, level === 'auto' ? /Dear Asha Client,/ : /Hello Asha Client,/);
+    assert.match(r.html, /Documents still needed \(4\):/);
+    assert.match(r.text, /\nDocuments still needed \(4\):\n/, 'the plain text carries the same lead line');
+    assert.doesNotMatch(r.html + r.text, /Questionnaire still to finish/, 'no questionnaire given: no questionnaire block');
+    assert.doesNotMatch(r.text, /\n\n\n/, 'no empty gap where the questionnaire list would sit');
     assert.match(r.html, /<strong>Passport<\/strong>/);
     assert.match(r.html, /3 of 7 documents received/);
     assert.match(r.text, /3 of 7 documents received/);
@@ -293,14 +320,15 @@ test('buildReminderEmail: every token filled for every level; the list sits wher
     assert.equal(r.template.source, 'default');
   }
   const r1 = await svc.buildReminderEmail(baseOpts({ level: 1 }));
-  assert.equal(r1.subject, 'Documents still needed for your Super Visa application — 2026-TEST-001');
+  assert.equal(r1.subject, 'Reminder: documents and questionnaire for your Super Visa application — 2026-TEST-001');
   assert.match(r1.html, /Mahesh Sharma/);
   const r2 = await svc.buildReminderEmail(baseOpts({ level: 2 }));
-  assert.equal(r2.subject, 'Second reminder: 4 documents still missing — 2026-TEST-001');
+  assert.equal(r2.subject, 'Second reminder: documents and questionnaire for your Super Visa application — 2026-TEST-001');
   const r3 = await svc.buildReminderEmail(baseOpts({ level: 3, lastDay: '2026-11-14' }));
-  assert.equal(r3.subject, 'Final reminder: documents required by 14 Nov 2026 — 2026-TEST-001');
-  assert.match(r3.html, /We will wait until 14 Nov 2026/);
-  assert.match(r3.html, /moved out of document collection/);
+  assert.equal(r3.subject, 'Final reminder: please complete your documents and questionnaire by 14 Nov 2026 — 2026-TEST-001');
+  assert.match(r3.html, /upload all pending documents immediately, and no later than 14 Nov 2026\./);
+  assert.match(r3.text, /upload all pending documents immediately, and no later than 14 Nov 2026\./);
+  assert.match(r3.html, /closed or marked inactive/);
   const ra = await svc.buildReminderEmail(baseOpts({ level: 'auto' }));
   assert.match(ra.html, /must be submitted by 16 Dec 2026\./);
   assert.match(ra.text, /must be submitted by 16 Dec 2026\./);
@@ -322,18 +350,20 @@ test('buildReminderEmail: every token filled for every level; the list sits wher
 test('buildReminderEmail: a blank or placeholder case type ("—", "-", "Not set" — the cockpit\'s display value) reads "immigration", never "your — application"', async () => {
   for (const caseType of ['—', '-', ' – ', 'Not set', 'not set', '', null, undefined]) {
     const r = await svc.buildReminderEmail(baseOpts({ caseType }));
-    assert.equal(r.subject, 'Documents still needed for your immigration application — 2026-TEST-001', JSON.stringify(caseType));
+    assert.equal(r.subject, 'Reminder: documents and questionnaire for your immigration application — 2026-TEST-001', JSON.stringify(caseType));
     assert.match(r.html, /your immigration application/);
     assert.doesNotMatch(r.html, /your — application|your - application/);
+    const a = await svc.buildReminderEmail(baseOpts({ level: 'auto', caseType }));
+    assert.match(a.html, /Your immigration application must be submitted/, 'the body too (the automatic text names the case type)');
   }
-  assert.equal((await svc.buildReminderEmail(baseOpts({ caseType: 'PGWP' }))).subject, 'Documents still needed for your PGWP application — 2026-TEST-001');
+  assert.equal((await svc.buildReminderEmail(baseOpts({ caseType: 'PGWP' }))).subject, 'Reminder: documents and questionnaire for your PGWP application — 2026-TEST-001');
   assert.deepEqual(['—', '-', 'Not set', 'x', 'Super Visa'].map(svc._internal.caseTypeText), ['', '', '', 'x', 'Super Visa']);
   // the staff preview takes the same path (the overview hands over the display value)
   const S = staffStubs();
   try {
     const p = await svc.previewStaffReminder({ overview: OV({ caseType: '—' }), level: 1 });
-    assert.equal(p.subject, 'Documents still needed for your immigration application — 2026-TEST-001');
-    assert.match(p.body, /your immigration application/);
+    assert.equal(p.subject, 'Reminder: documents and questionnaire for your immigration application — 2026-TEST-001');
+    assert.doesNotMatch(p.subject + p.body, /your — application|your - application/);
   } finally { S.restore(); }
 });
 
@@ -373,7 +403,7 @@ test('buildReminderEmail: HTML in a board template, a document name or the staff
     assert.match(r.html, /We still need the lease &amp; the letter/);
     // the staff's line sits right under the missing list, before the template's closing text
     const at = (re) => r.html.search(re);
-    assert.ok(at(/Still missing \(4\)/) < at(/We still need the lease/) && at(/We still need the lease/) < at(/Tom &amp; Jerry/), 'list → staff line → rest of the template');
+    assert.ok(at(/Documents still needed \(4\)/) < at(/We still need the lease/) && at(/We still need the lease/) < at(/Tom &amp; Jerry/), 'list → staff line → rest of the template');
     assert.match(r.text, /    - Birth certificate\n\.\.\.and 1 document is waiting for a new copy[^\n]*\n\nWe still need the lease & the letter\n\nTom & Jerry <3/);
     assert.equal(r.template.source, 'board');
   });
@@ -387,7 +417,7 @@ test('buildReminderEmail: the staff edits — subject and body overrides are re-
   assert.deepEqual(r.warnings, ['unknown merge field left as typed: {Deadlne}']);
   assert.equal(r.template.edited, true);
   const r2 = await svc.buildReminderEmail(baseOpts({ bodyOverride: 'Dear {ClientName}, please send everything by {Deadline}.', deadline: { type: '', actualDeadline: '', promisedSubmissionDate: '' } }));
-  assert.ok(r2.html.indexOf('Still missing (4)') > r2.html.indexOf('please send everything'), 'the list follows the text');
+  assert.ok(r2.html.indexOf('Documents still needed (4)') > r2.html.indexOf('please send everything'), 'the list follows the text');
   assert.equal(r2.template.listAppended, true);
   assert.deepEqual(r2.warnings, [
     'the edited text had no {MissingList} — the missing documents were added at the end',
@@ -419,13 +449,14 @@ test('buildReminderEmail refuses what cannot be a safe email: no token (never a 
   await assert.rejects(svc.buildReminderEmail({}), /Unknown reminder level/);
 });
 
-test('buildReminderEmail with an empty list still builds (the callers decide not to send); progress only when the totals are known', async () => {
+test('buildReminderEmail with an empty list still builds (the callers decide not to send) — the documents block is left out, heading and all; progress only when the totals are known', async () => {
   const r = await svc.buildReminderEmail(baseOpts({ missing: svc.missingFromItems([]) }));
-  assert.match(r.html, /Still missing \(0\):/);
+  assert.doesNotMatch(r.html + r.text, /Documents still needed|Still missing/, 'no empty heading');
   assert.doesNotMatch(r.html, /documents received/);
+  assert.doesNotMatch(r.text, /\n\n\n/);
   const r2 = await svc.buildReminderEmail(baseOpts({ missing: undefined, progress: { received: 2, total: 9 } }));
   assert.match(r2.html, /2 of 9 documents received/);
-  assert.equal(r2.subject, 'Documents still needed for your Super Visa application — 2026-TEST-001');
+  assert.equal(r2.subject, 'Reminder: documents and questionnaire for your Super Visa application — 2026-TEST-001');
 });
 
 test('the helpers: dates read "16 Dec 2026"; one instruction line; the automatic switch is OFF unless exactly 1/true', () => {
@@ -776,11 +807,12 @@ test('previewStaffReminder: the template with the merge fields filled except the
     assert.match(shared.body, /\nTDOT Immigration\n/);
     assert.equal(svc.senderName(null), 'TDOT Immigration');
     assert.equal(p.to, 'a***@example.com');
-    assert.equal(p.subject, 'Documents still needed for your Super Visa application — 2026-TEST-001');
-    assert.match(p.body, /Dear Asha Client,/);
-    assert.ok(p.body.includes('{MissingList}') && p.body.includes('{PortalLink}'), 'the two app-inserted tokens stay');
+    assert.equal(p.subject, 'Reminder: documents and questionnaire for your Super Visa application — 2026-TEST-001');
+    assert.match(p.body, /^Hello Asha Client,\n/);
+    assert.ok(p.body.includes('{MissingList}') && p.body.includes('{QuestionnaireList}') && p.body.includes('{PortalLink}'), 'the app-inserted tokens stay');
     assert.ok(!/\{(ClientName|CaseRef|CaseType|MissingCount|Deadline|PromisedDate|StaffName)\}/.test(p.body), 'every other merge field is filled');
-    assert.deepEqual(p.tokensLeft, ['{MissingList}', '{PortalLink}']);
+    assert.deepEqual(p.tokensLeft, ['{MissingList}', '{QuestionnaireList}', '{PortalLink}']);
+    assert.equal(p.questionnaire, null, 'no questionnaire facts on the overview: none shown');
     assert.equal(p.missingCount, 4);
     assert.match(p.missingList, /Passport\n/);
     assert.equal(p.deadlineLine, 'Deadline 16 Dec 2026');
@@ -799,7 +831,7 @@ test('previewStaffReminder: the template with the merge fields filled except the
     assert.equal(f.lastDay, '2026-11-14', 'today (7 Nov Toronto) + 7');
     assert.equal(f.minLastDay, '2026-11-07');
     assert.ok(f.body.includes('{LastDay}'), 'the final keeps {LastDay} for the date box');
-    assert.deepEqual(f.tokensLeft, ['{MissingList}', '{PortalLink}', '{LastDay}']);
+    assert.deepEqual(f.tokensLeft, ['{MissingList}', '{QuestionnaireList}', '{PortalLink}', '{LastDay}']);
     assert.equal((await svc.previewStaffReminder({ overview: OV(), level: 3, lastDay: '2026-11-20' })).lastDay, '2026-11-20', 'a chosen last day is kept');
     const nodl = await svc.previewStaffReminder({ overview: OV({ clientDeadlineRaw: { type: '', actualDeadline: '', promisedSubmissionDate: '' } }), level: 2 });
     assert.equal(nodl.deadlineLine, 'No deadline on the case');
@@ -841,7 +873,7 @@ test('sendStaffReminder: the claim note goes BEFORE the email, to the real addre
     assert.match(m.html, /We are still looking for the lease &amp; the letter/, 'the free text is tag-stripped and escaped');
     assert.match(m.html, /Mahesh Sharma/, '{StaffName} = the verified sender');
     assert.doesNotMatch(m.html, /<b>looking/);
-    assert.match(m.html, /Still missing \(4\)/);
+    assert.match(m.html, /Documents still needed \(4\)/);
     assert.match(m.html, PORTAL); assert.match(m.html, DOCS);
     assert.ok(!('replyTo' in m) || m.replyTo, 'no empty Reply-To');
     // the claim is in the record before the email went: readNotes saw it when the race was checked
@@ -1122,11 +1154,12 @@ function autoRow(over = {}) {
   return { id: v.id, name: v.name, group: v.group, column_values: cv };
 }
 /** The whole run, stubbed: rows on the board, notes per row, the checklist per ref, the live recount per ref, the email. */
-function autoStubs({ rows = [], notes = {}, items = ITEMS, itemsByRef = {}, live = {}, sendFail = null, env = {} } = {}) {
+const Q_IN_PROGRESS = () => ({ members: [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', status: 'In Progress', hasData: true, completionPct: 40, submittedAt: '' }], unavailable: false });
+function autoStubs({ rows = [], notes = {}, items = ITEMS, itemsByRef = {}, live = {}, sendFail = null, env = {}, qByRef = {} } = {}) {
   const store = [];   // { itemId, u }
   for (const [itemId, list] of Object.entries(notes)) for (const u of list) store.push({ itemId, u });
   let nextId = 7000;
-  const sent = [], posted = [], deleted = [], liveCalls = [], summaryCalls = [];
+  const sent = [], posted = [], deleted = [], liveCalls = [], summaryCalls = [], qCalls = [];
   const keepEnv = {};
   for (const k of ['DOC_REMINDERS_AUTO', 'DOC_REMINDERS_IMAGINARY', 'DOC_REMINDERS_ONLY', 'DOC_REMINDERS_HOUR', 'MONDAY_REMINDER_TEMPLATES_BOARD_ID']) { keepEnv[k] = process.env[k]; delete process.env[k]; }
   for (const [k, val] of Object.entries(env)) process.env[k] = val;
@@ -1141,11 +1174,13 @@ function autoStubs({ rows = [], notes = {}, items = ITEMS, itemsByRef = {}, live
     stub(svc.io, 'postNote', async (itemId, body) => { const id = String(nextId++); store.push({ itemId: String(itemId), u: rendered(id, T9 + posted.length, body) }); posted.push({ itemId: String(itemId), body, id }); return id; }),
     stub(svc.io, 'deleteNote', async (id) => { deleted.push(id); const i = store.findIndex((e) => e.u.id === String(id)); if (i >= 0) store.splice(i, 1); }),
     stub(svc.io, 'liveUploadedPct', async (ref) => { liveCalls.push(ref); const x = live[ref]; if (x instanceof Error) throw x; return x === undefined ? 15 : x; }),
+    // the questionnaire reader (one read per candidate): in progress unless a test says otherwise; an Error = the read failed
+    stub(svc.io, 'questionnaireState', async (ref) => { qCalls.push(ref); const x = qByRef[ref]; if (x instanceof Error) throw x; return x === undefined ? Q_IN_PROGRESS() : x; }),
     stub(svc.io, 'sendEmail', async (msg) => { if (sendFail) throw new Error(sendFail); sent.push(msg); }),
     stub(svc.io, 'log', () => {}), stub(svc.io, 'warn', () => {}),
   ];
   tpl._resetForTests();
-  return { store, sent, posted, deleted, liveCalls, summaryCalls, restore: () => {
+  return { store, sent, posted, deleted, liveCalls, summaryCalls, qCalls, restore: () => {
     restores.reverse().forEach((r) => r());
     for (const [k, val] of Object.entries(keepEnv)) { if (val === undefined) delete process.env[k]; else process.env[k] = val; }
     tpl._resetForTests();
@@ -1259,7 +1294,7 @@ test('AUTO run: one row is emailed (claim note BEFORE the email, to the real add
     assert.equal(w.sent[0].to, 'asha.client@example.com');
     assert.match(w.sent[0].subject, /Documents needed for your Super Visa application — 2026-ISS-009/);
     assert.match(w.sent[0].html, /must be submitted by <strong>10 Dec 2026<\/strong>|must be submitted by 10 Dec 2026/);
-    assert.match(w.sent[0].html, /Still missing \(4\)/);
+    assert.match(w.sent[0].html, /Documents still needed \(4\)/);
     assert.ok(w.sent[0].html.includes(`?t=${TOKEN}`));
     assert.doesNotMatch(w.sent[0].html, /just reply/i);
     assert.ok(w.sent[0].html.includes(require('../src/utils/clientContact').EMAIL_US), 'the shared "email us" closing line');
@@ -1550,4 +1585,250 @@ test('AUTO: the automatic intake path leaves the "Intake email sent" note (revie
   const fn = es.slice(es.indexOf('async function sendIntakeEmailAuto'));
   assert.match(fn, /if \(r && r\.sent\) \{[\s\S]*?create_update[\s\S]*?<b>Intake email sent<\/b> \("Your case is ready"\) to \$\{maskAddr\(r\.to\)\}/);
   assert.match(svc.recentClientSend([{ id: '12', at: T9 - 20 * 3600e3, text: '📬 Intake email sent ("Your case is ready") to a***@x — 9 Nov 2026 (Toronto)' }], { now: T9 }), /the portal email went to the client/);
+});
+
+// ═══════════════════════ Gauri's texts (2026-11-07): the client's own questionnaire list ═══════════════════════
+//
+// {QuestionnaireList}: one line per family member who has not submitted, from the saved
+// answers (never a section list — which sections apply is decided only in the browser).
+// Left out cleanly when the questionnaire is done or could not be read; the buttons work
+// when only the questionnaire is unfinished and refuse only when both are complete.
+
+const QM = (over = {}) => ({ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant', status: 'In Progress', hasData: true, completionPct: 40, submittedAt: '', ...over });
+const Q_FAMILY = () => ({ members: [
+  QM({ label: 'Asha Client', completionPct: 62 }),
+  QM({ key: 'spouse', type: 'Spouse / Common-Law Partner', label: 'Ravi <b>Client</b>', badge: 'Second parent', status: 'Not Started', hasData: false, completionPct: 0 }),
+  QM({ key: 'child-1', type: 'Dependent Child', label: 'Aarav', completionPct: 100 }),
+  QM({ key: 'child-2', type: 'Dependent Child', label: 'Mira', status: 'Submitted', completionPct: 90, submittedAt: '1 Nov 2026, 9:00 am' }),
+], unavailable: false, mondayDone: false });
+const ALL_IN = () => ITEMS.map((it) => ({ ...it, status: it.status === 'Missing' ? 'Received' : it.status }));
+
+test('questionnaireFromMembers: one line per member who has not submitted (submitted members left out, the second form never a line of its own); a lone principal reads "Your questionnaire"; done = every member submitted OR the board says Done with no stamps (the portal\'s rule); an empty list or a blip is unknown, never done', () => {
+  const q = svc.questionnaireFromMembers(Q_FAMILY());
+  assert.deepEqual([q.done, q.unavailable, q.total, q.pct], [false, false, 4, 63]);
+  assert.deepEqual(q.pending.map((m) => m.line), [
+    'Asha Client — 62% complete, not submitted yet',
+    'Ravi <b>Client</b> (Second parent) — not started yet',
+    'Aarav — all filled in, not submitted yet',
+  ]);
+  assert.equal(svc.questionnaireFromMembers({ members: [QM()] }).pending[0].line, 'Your questionnaire — 40% complete, not submitted yet');
+  assert.equal(svc.questionnaireFromMembers({ members: [QM({ hasData: false, completionPct: 0, status: 'Not Started' })] }).pending[0].line, 'Your questionnaire — not started yet');
+  // a pre-fill-only file is not the client's work: getMemberStatuses says hasData false, 0 % → "not started"
+  const done = svc.questionnaireFromMembers({ members: [QM({ submittedAt: '1 Nov', status: 'Submitted' }), QM({ key: 'spouse', type: 'Spouse / Common-Law Partner', label: 'Spouse', submittedAt: '2 Nov' })] });
+  assert.deepEqual([done.done, done.pending, done.unavailable], [true, [], false]);
+  assert.equal(svc.questionnaireFromMembers({ members: [QM({ completionPct: 0, hasData: false })], mondayDone: true }).done, true, 'a pre-manifest submission: the board says Done, no stamps');
+  assert.equal(svc.questionnaireFromMembers({ members: [QM({ submittedAt: '1 Nov' }), QM({ key: 'child-1', type: 'Dependent Child', label: 'Child' })], mondayDone: true }).done, false, 'stamps exist but not for everyone (a member added after the submission): not done, whatever the board says');
+  const blip = svc.questionnaireFromMembers({ members: [QM()], unavailable: true });
+  assert.deepEqual([blip.unavailable, blip.done, blip.pending], [true, false, []]);
+  assert.equal(svc.questionnaireFromMembers({ members: [] }).unavailable, true, 'an empty member list is unknown');
+  assert.equal(svc.questionnaireFromMembers({ members: [], unavailable: true, mondayDone: true }).done, true, 'the board says Done and nothing could be read: done (the portal\'s rule)');
+  assert.equal(svc.questionnaireFromMembers(null), null);
+  assert.equal(svc.questionnaireFromMembers(undefined), null);
+  const { questionnaireListText, questionnaireListHtml } = svc._internal;
+  assert.equal(questionnaireListText(q), 'Questionnaire still to finish:\n  - Asha Client — 62% complete, not submitted yet\n  - Ravi <b>Client</b> (Second parent) — not started yet\n  - Aarav — all filled in, not submitted yet');
+  assert.match(questionnaireListHtml(q), /<li [^>]*>Ravi &lt;b&gt;Client&lt;\/b&gt; \(Second parent\) — not started yet<\/li>/, 'labels escaped');
+  for (const x of [done, blip, null]) { assert.equal(questionnaireListText(x), ''); assert.equal(questionnaireListHtml(x), ''); }
+});
+
+test('buildReminderEmail (Gauri\'s texts): "Hello <name>," then BOTH of the client\'s own lists in their own blocks, each under its lead line, the questionnaire right after the documents; labels escaped; the plain text mirrors the html', async () => {
+  for (const level of [1, 2, 3, 'auto']) {
+    const r = await svc.buildReminderEmail(baseOpts({ level, lastDay: '2026-11-14', questionnaire: Q_FAMILY() }));
+    assert.doesNotMatch(r.html + r.text + r.subject, /\{[A-Za-z]+\}/, `level ${level}: every token filled`);
+    assert.deepEqual(r.warnings, [], `level ${level}`);
+    assert.match(r.html, level === 'auto' ? /Dear Asha Client,/ : /<p [^>]*>Hello Asha Client,<\/p>/);
+    const docs = r.html.indexOf('Documents still needed (4):'), qs = r.html.indexOf('Questionnaire still to finish:');
+    assert.ok(docs > 0 && qs > docs, `level ${level}: documents, then the questionnaire`);
+    assert.match(r.html, /Ravi &lt;b&gt;Client&lt;\/b&gt; \(Second parent\) — not started yet/);
+    assert.doesNotMatch(r.html, /<b>Client<\/b>/, 'a member label is never rendered as HTML');
+    assert.doesNotMatch(r.html, /Mira/, 'a submitted member is not listed');
+    assert.doesNotMatch(r.html, /<p[^>]*>(?:(?!<\/p>)[\s\S])*<(?:table|ul|div)\b/, 'no block inside a <p>');
+    assert.match(r.text, /Documents still needed \(4\):\n[\s\S]*\n\nQuestionnaire still to finish:\n  - Asha Client — 62% complete, not submitted yet\n  - Ravi <b>Client<\/b> \(Second parent\) — not started yet\n  - Aarav — all filled in, not submitted yet\n\n/);
+    assert.equal(r.questionnaire.pending.length, 3);
+  }
+  const r1 = await svc.buildReminderEmail(baseOpts({ questionnaire: Q_FAMILY() }));
+  assert.match(r1.text, /^Hello Asha Client,\n\nI hope you are doing well\.\n\nPlease ensure that you complete the questionnaire to 100%/);
+  // a staff extra line follows the LAST list
+  const ex = await svc.buildReminderEmail(baseOpts({ questionnaire: Q_FAMILY(), extraLine: 'We still need the lease.' }));
+  assert.ok(ex.html.indexOf('Aarav — all filled in') < ex.html.indexOf('We still need the lease.'));
+  assert.match(ex.text, /Aarav — all filled in, not submitted yet\n\nWe still need the lease\.\n\nYour client portal:/);
+});
+
+test('buildReminderEmail (Gauri\'s texts): a block with nothing to list is left out cleanly — questionnaire done, documents all in (the staff line still shows), progress unreadable (a warning, no block); never an empty heading or a gap', async () => {
+  const doneQ = { members: [QM({ submittedAt: '1 Nov 2026', status: 'Submitted' })] };
+  const a = await svc.buildReminderEmail(baseOpts({ level: 2, questionnaire: doneQ }));
+  assert.doesNotMatch(a.html + a.text, /Questionnaire still to finish/);
+  assert.match(a.html, /Documents still needed \(4\)/);
+  assert.doesNotMatch(a.text, /\n\n\n/);
+  assert.deepEqual(a.warnings, []);
+  // documents all in, the questionnaire unfinished: only the questionnaire block
+  const b = await svc.buildReminderEmail(baseOpts({ level: 1, missing: svc.missingFromItems(ALL_IN()), questionnaire: { members: [QM()] }, extraLine: 'Only the questionnaire is left.' }));
+  assert.doesNotMatch(b.html + b.text, /Documents still needed|Still missing|waiting for a new copy/);
+  assert.match(b.html, /Questionnaire still to finish:/);
+  assert.match(b.html, /Your questionnaire — 40% complete, not submitted yet/);
+  assert.match(b.text, /to an officer for further processing\.\n\nQuestionnaire still to finish:\n  - Your questionnaire — 40% complete, not submitted yet\n\nOnly the questionnaire is left\.\n\nYour client portal:/);
+  assert.doesNotMatch(b.text, /\n\n\n/);
+  // could not be read: no block, a warning
+  const c = await svc.buildReminderEmail(baseOpts({ level: 1, questionnaire: { members: [QM()], unavailable: true } }));
+  assert.doesNotMatch(c.html + c.text, /Questionnaire still to finish/);
+  assert.deepEqual(c.warnings, ['the questionnaire progress could not be read — the email does not mention it']);
+  assert.doesNotMatch(c.text, /\n\n\n/);
+});
+
+test('buildReminderEmail: a text (board or edited) without {QuestionnaireList} gets the questionnaire after the documents list + a warning — only when there is something to list; {QuestionnaireList} in a subject reads "questionnaire"', async () => {
+  const e = await svc.buildReminderEmail(baseOpts({ bodyOverride: 'Hello {ClientName},\n\n{MissingList}\n\nThanks.', questionnaire: { members: [QM()] } }));
+  assert.ok(e.html.indexOf('Documents still needed (4)') < e.html.indexOf('Questionnaire still to finish') && e.html.indexOf('Questionnaire still to finish') < e.html.indexOf('Thanks.'));
+  assert.equal(e.template.questionnaireAppended, true);
+  assert.deepEqual(e.warnings, ['the text had no {QuestionnaireList} — the unfinished questionnaire was added after the documents list']);
+  const none = await svc.buildReminderEmail(baseOpts({ bodyOverride: 'Hello {ClientName},\n\n{MissingList}', questionnaire: { members: [QM({ submittedAt: 'x' })] } }));
+  assert.deepEqual([none.template.questionnaireAppended, none.warnings], [false, []], 'a complete questionnaire: nothing added, nothing said');
+  // a board row without the token: still valid, the questionnaire added at build time
+  await withBoard([{ name: 'Reminder 1', subject: 'Docs and {QuestionnaireList} — {CaseRef}', body: 'Dear {ClientName},\n\n{MissingList}\n\nBye' }], async () => {
+    const r = await svc.buildReminderEmail(baseOpts({ questionnaire: { members: [QM()] } }));
+    assert.equal(r.template.source, 'board');
+    assert.equal(r.subject, 'Docs and questionnaire — 2026-TEST-001');
+    assert.match(r.html, /Questionnaire still to finish:/);
+    assert.deepEqual(r.warnings, ['the text had no {QuestionnaireList} — the unfinished questionnaire was added after the documents list']);
+  });
+  // the staff preview shows the token where the email will put it, with the same warning
+  const S = staffStubs();
+  try {
+    await withBoard([{ name: 'Reminder 1', subject: 'Docs — {CaseRef}', body: 'Dear {ClientName},\n\n{MissingList}\n\nBye' }], async () => {
+      const p = await svc.previewStaffReminder({ overview: OV({ questionnaire: { members: [QM()] } }), level: 1 });
+      assert.match(p.body, /\{MissingList\}\n\n\{QuestionnaireList\}\n\nBye/);
+      assert.ok(p.warnings.includes('The Reminder 1 text has no {QuestionnaireList} — the unfinished questionnaire was added after the documents list.'));
+      const plain = await svc.previewStaffReminder({ overview: OV(), level: 1 });
+      assert.match(plain.body, /\{MissingList\}\n\nBye$/, 'no questionnaire facts: nothing added');
+    });
+  } finally { S.restore(); }
+});
+
+test('staff buttons (Gauri\'s texts): available when documents are missing OR the questionnaire is unfinished; refused only when both are complete; a questionnaire that could not be read → the amber preview line and an email without it (or, with every document in, a "reload" refusal); the claim note names the questionnaire', async () => {
+  const both = { members: [QM({ submittedAt: '1 Nov', status: 'Submitted' })] };
+  // the card
+  const card = (items, questionnaire) => svc.describeForCase({ overview: OV(), items, notes: [], questionnaire });
+  assert.deepEqual([card(ALL_IN(), { members: [QM()] }).available, card(ALL_IN(), { members: [QM()] }).canSend], [true, true], 'documents in, questionnaire open: the buttons stay');
+  assert.deepEqual([card(ALL_IN(), both).available, card(ALL_IN(), both).reason, card(ALL_IN(), both).message], [false, 'no-rows', 'Every document is in and the questionnaire is complete — there is nothing to remind the client about.']);
+  assert.equal(card(ITEMS, both).available, true, 'documents missing: the buttons stay');
+  assert.deepEqual([card(ALL_IN(), { members: [QM()], unavailable: true }).reason, card(ALL_IN(), { members: [QM()], unavailable: true }).available], ['q-unavailable', false]);
+  assert.equal(card(ITEMS, { members: [], unavailable: true }).available, true, 'documents missing, questionnaire unread: the buttons stay');
+  assert.equal(card([], { members: [QM()] }).reason, 'no-rows', 'no checklist rows at all: the case is not set up — still refused');
+  assert.equal(svc.describeForCase({ overview: OV({ questionnaire: { members: [QM()] } }), items: ALL_IN(), notes: [] }).available, true, 'read from the overview when not passed');
+
+  // preview + send with only the questionnaire unfinished
+  const S = staffStubs({ items: ALL_IN() });
+  try {
+    const ov = OV({ questionnaire: { members: [QM({ label: 'Asha <Client>' }), QM({ key: 'spouse', type: 'Spouse / Common-Law Partner', label: 'Ravi', hasData: false, completionPct: 0 })] } });
+    const p = await svc.previewStaffReminder({ overview: ov, level: 2 });
+    assert.equal(p.missingCount, 0);
+    assert.deepEqual(p.questionnaire.pending.map((m) => m.line), ['Asha <Client> — 40% complete, not submitted yet', 'Ravi — not started yet']);
+    assert.match(p.questionnaireList, /^Questionnaire still to finish:\n  - Asha <Client>/);
+    const r = await svc.sendStaffReminder({ overview: ov, level: 2, subject: p.subject, body: p.body, actor: { name: 'Mahesh Sharma', verified: true } });
+    assert.equal(r.ok, true);
+    const m = S.sent[0];
+    assert.doesNotMatch(m.html, /Documents still needed/);
+    assert.match(m.html, /Asha &lt;Client&gt; — 40% complete, not submitted yet/);
+    assert.match(m.html, /<p [^>]*>Please let us know once you have uploaded your documents and completed the questionnaire\.<\/p>/);
+    assert.equal(S.posted[0].body, '📨 <b>Document reminder 2 sent</b> (firm) to a***@example.com by Mahesh Sharma — 0 documents missing, questionnaire not finished — 7 Nov 2026, 10:14 am (Toronto)<span style="display:none">DOCREM:btn2:2026-11-07</span>');
+    const n = svc.parseNote({ id: '1', at: T0, text: S.posted[0].body });
+    assert.deepEqual([n.kind, n.by, n.level], ['claim', 'Mahesh Sharma', 2], 'the record still parses');
+    const f = svc.parseNote({ id: '2', at: T0, text: svc.claimNote({ level: 3, to: 'a***@x', actor: 'Mahesh', count: 0, questionnaire: true, lastDay: '2026-11-17', now: T0 }) });
+    assert.deepEqual([f.by, f.lastDayIso], ['Mahesh', '2026-11-17'], 'the final\'s last day still parses');
+  } finally { S.restore(); }
+
+  // both complete: refused, nothing posted or sent
+  const B = staffStubs({ items: ALL_IN() });
+  try {
+    for (const call of [() => svc.previewStaffReminder({ overview: OV({ questionnaire: both }), level: 1 }), () => svc.sendStaffReminder({ overview: OV({ questionnaire: both }), level: 1, subject: 'x', body: '{MissingList}' })]) {
+      await assert.rejects(call(), (e) => e.status === 409 && e.reason === 'no-rows' && e.message === 'Every document is in and the questionnaire is complete — there is nothing to remind the client about.');
+    }
+    // every document in, the questionnaire unreadable: refused with "reload" — never an empty reminder
+    await assert.rejects(svc.previewStaffReminder({ overview: OV({ questionnaire: { members: [QM()], unavailable: true } }), level: 1 }), (e) => e.status === 503 && e.reason === 'q-unavailable' && /could not be read just now/.test(e.message));
+    assert.equal(B.posted.length + B.sent.length, 0);
+  } finally { B.restore(); }
+
+  // documents missing, the questionnaire unreadable: the amber line, the email without it
+  const U = staffStubs();
+  try {
+    const ov = OV({ questionnaire: { members: [QM()], unavailable: true } });
+    const p = await svc.previewStaffReminder({ overview: ov, level: 1 });
+    assert.ok(p.warnings.includes('The questionnaire progress could not be read — the email will not mention it.'));
+    assert.equal(p.questionnaire.unavailable, true);
+    assert.equal(p.questionnaireList, '');
+    const r = await svc.sendStaffReminder({ overview: ov, level: 1, subject: p.subject, body: p.body });
+    assert.ok(r.warnings.includes('the questionnaire progress could not be read — the email does not mention it'));
+    assert.doesNotMatch(U.sent[0].html, /Questionnaire still to finish/);
+    assert.match(U.sent[0].html, /Documents still needed \(4\)/);
+    assert.doesNotMatch(U.posted[0].body, /questionnaire/, 'the claim note does not claim a questionnaire list it did not send');
+  } finally { U.restore(); }
+});
+
+test('AUTO (Gauri\'s texts): the automatic email carries the questionnaire block (one reader call per candidate, after the dry-run line); a reader failure never holds the email up — it goes without the block; the trigger is unchanged (documents all in → no email)', async () => {
+  const A = autoRow();
+  const w = autoStubs({ rows: [A], env: { DOC_REMINDERS_AUTO: '1' } });
+  try {
+    const r = await svc.runDocReminders({ reason: 'test' });
+    assert.equal(byRef(r, '2026-ISS-009').decision, 'sent');
+    assert.deepEqual(w.qCalls, ['2026-ISS-009']);
+    assert.match(w.sent[0].html, /Questionnaire still to finish:[\s\S]*Your questionnaire — 40% complete, not submitted yet/);
+    assert.ok(w.sent[0].html.indexOf('Documents still needed (4)') < w.sent[0].html.indexOf('Questionnaire still to finish'));
+    assert.match(w.posted[0].body, /4 documents missing \(15 % uploaded\), questionnaire not finished — /);
+  } finally { w.restore(); }
+  for (const fail of [new Error('graph down'), { members: [], unavailable: true }]) {
+    const f = autoStubs({ rows: [A], env: { DOC_REMINDERS_AUTO: '1' }, qByRef: { '2026-ISS-009': fail } });
+    try {
+      const r = await svc.runDocReminders({ reason: 'test' });
+      assert.equal(byRef(r, '2026-ISS-009').decision, 'sent', 'the email still goes');
+      assert.doesNotMatch(f.sent[0].html, /Questionnaire still to finish/);
+      assert.match(f.sent[0].html, /Documents still needed \(4\)/);
+      assert.doesNotMatch(f.posted[0].body, /questionnaire/);
+    } finally { f.restore(); }
+  }
+  // the board says Done (a legacy submission with no stamps): no block
+  const d = autoStubs({ rows: [autoRow({ qStatus: 'Done' })], env: { DOC_REMINDERS_AUTO: '1' }, qByRef: { '2026-ISS-009': { members: [QM({ hasData: false, completionPct: 0 })], unavailable: false } } });
+  try {
+    await svc.runDocReminders({ reason: 'test' });
+    assert.doesNotMatch(d.sent[0].html, /Questionnaire still to finish/);
+  } finally { d.restore(); }
+  // documents all in: the automatic run still skips (Faran: the 50 % documents trigger) and never reads the questionnaire
+  const n = autoStubs({ rows: [A], env: { DOC_REMINDERS_AUTO: '1' }, items: ALL_IN() });
+  try {
+    const r = await svc.runDocReminders({ reason: 'test' });
+    assert.match(byRef(r, '2026-ISS-009').reason, /nothing missing on the checklist/);
+    assert.deepEqual([n.sent.length, n.qCalls.length], [0, 0]);
+  } finally { n.restore(); }
+  // the dry run (Engine Controls preview) reads no questionnaire
+  const p = autoStubs({ rows: [A] });
+  try { await svc.runDocReminders({ dryRun: true }); assert.deepEqual(p.qCalls, []); } finally { p.restore(); }
+  assert.equal(svc.AUTO_COLS.qStatus, 'color_mm0x9s08');
+});
+
+test('io.questionnaireState: READ ONLY — the case lookup without form versioning, the manifest WITHOUT seeding (readMembersManifest, never loadMembers), the member files; no manifest = the principal alone; any read failure = { unavailable: true }', async () => {
+  const htmlQ = require('../src/services/htmlQuestionnaireService');
+  const calls = [];
+  const restores = [
+    stub(htmlQ, 'validateAccessForStaff', async (ref, opts) => { calls.push(['access', ref, opts]); return { itemId: '1', clientName: 'Asha Client', caseType: 'Super Visa', caseSubType: 'Parent', formFiles: { primary: 'f.html' } }; }),
+    stub(htmlQ, 'readMembersManifest', async (a) => { calls.push(['manifest', a.caseRef]); return [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant' }, { key: 'spouse', type: 'Spouse / Common-Law Partner', label: 'Spouse' }]; }),
+    stub(htmlQ, 'loadMembers', async () => { throw new Error('loadMembers may seed + write the manifest — never from the reminders'); }),
+    stub(htmlQ, 'getMemberStatuses', async ({ members }) => { calls.push(['statuses', members.length]); return members.map((m) => ({ ...m, status: 'Not Started', hasData: false, completionPct: 0 })); }),
+  ];
+  try {
+    const q = await svc.io.questionnaireState(REF);
+    assert.deepEqual(calls, [['access', REF, { skipFormVersioning: true }], ['manifest', REF], ['statuses', 2]]);
+    assert.equal(q.unavailable, false);
+    assert.deepEqual(q.members.map((m) => m.label), ['First parent (principal applicant)', 'Second parent'], 'decorated as the pages show them (Super Visa)');
+    htmlQ.readMembersManifest = async () => null;
+    assert.deepEqual((await svc.io.questionnaireState(REF)).members.map((m) => m.key), ['primary'], 'no manifest: the principal applicant alone, nothing seeded');
+    htmlQ.readMembersManifest = async () => { const e = new Error('graph 503'); e.transient = true; throw e; };
+    assert.deepEqual(await svc.io.questionnaireState(REF), { members: [], unavailable: true, error: 'graph 503' });
+  } finally { restores.reverse().forEach((r) => r()); }
+  const src = fs.readFileSync(path.join(__dirname, '../src/services/docReminderService.js'), 'utf8');
+  assert.doesNotMatch(src, /loadMembers\(|writeProgressToMonday|syncProgressToMonday|saveMembers\(/, 'the reminders never seed the manifest or write the questionnaire columns');
+});
+
+test('no reply wording anywhere in the defaults (the no-reply sender) — the same phrases test/clientContactAndConvert scans the services for', () => {
+  const PHRASES = /just reply|simply reply|reply to this email|reply to the email|reply with it attached/i;
+  for (const name of cfg.ROW_NAMES) {
+    assert.doesNotMatch(cfg.DEFAULTS[name].subject + '\n' + cfg.DEFAULTS[name].body, PHRASES, name);
+    assert.equal(tpl.tellsToReply(cfg.DEFAULTS[name].body), false, name);
+  }
 });

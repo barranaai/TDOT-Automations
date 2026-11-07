@@ -16,7 +16,14 @@
  * templates (docReminderTemplates, cached).
  *
  * Rules that must not be undone:
- *  - the list is DOCUMENT checklist rows only, never questionnaire items (Faran, L64);
+ *  - {MissingList} is DOCUMENT checklist rows only, never questionnaire items (Faran, L64);
+ *    the questionnaire is its OWN block ({QuestionnaireList}, Gauri's texts 2026-11-07):
+ *    one line per family member who has not submitted, from the saved answers
+ *    (deriveQuestionnaireProgress over getMemberStatuses — a pre-fill-only file is not
+ *    the client's work), never a section list (which sections apply is decided only in
+ *    the browser — a server list would tell a single applicant to fill the spouse
+ *    section), never written to Monday; progress that could not be read is left out of
+ *    the email (never a nudge on a blip — the portal's qUnavailable rule);
  *  - computed fresh from getCaseSummary(ref).items — never a stored list, never the raw
  *    board label (a never-uploaded row's status is EMPTY on the board; only the code's
  *    'Missing' default makes it listable);
@@ -157,7 +164,7 @@ function paragraphsHtml(text, rich) {
  */
 const showMember = (missing, g) => missing.groups.length > 1 || (g.type || 'Principal Applicant') !== 'Principal Applicant';
 
-/** The missing list as the email shows it (member heading only when there is more than one member, or the one member is not the principal applicant). */
+/** The missing list as the email shows it, under its lead line "Documents still needed (N):" (member heading only when there is more than one member, or the one member is not the principal applicant). */
 function missingListHtml(missing) {
   const blocks = missing.groups.map((g) => {
     const multi = showMember(missing, g);
@@ -173,7 +180,7 @@ ${c.items.map((it) => `              <li style="font-size:14px;color:#1e293b;lin
     : '';
   return `<table width="100%" cellpadding="0" cellspacing="0" style="background:#fff7ed;border-radius:10px;border:1px solid #fed7aa;margin:4px 0 20px;">
           <tr><td style="padding:14px 20px 16px;">
-            <div style="font-size:13px;font-weight:700;color:#9a3412;">Still missing (${missing.count}):</div>${blocks}${rework}
+            <div style="font-size:13px;font-weight:700;color:#9a3412;">Documents still needed (${missing.count}):</div>${blocks}${rework}
           </td></tr>
         </table>`;
 }
@@ -191,6 +198,87 @@ function missingListText(missing) {
   if (missing.rework > 0) lines.push(`...and ${missing.rework} document${missing.rework === 1 ? ' is' : 's are'} waiting for a new copy (see the note on each in your portal).`);
   return lines.join('\n');
 }
+
+// ─── The questionnaire list ({QuestionnaireList}) ─────────────────────────────
+
+const pctOf = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0; };
+
+/**
+ * Pure: what is unfinished in the client's questionnaire, one line per family member
+ * who has not submitted. Input = the members as getMemberStatuses (+ decorateMembers)
+ * hand them over — { key, type, label, badge?, status, hasData, completionPct, submittedAt } —
+ * plus `unavailable` (the member list or a member file could not be read) and
+ * `mondayDone` (the Client Master questionnaire status reads Done).
+ *
+ * "Done" is the portal's rule (clientPortalService): every member submitted, OR the
+ * board says Done and the manifest has no evidence either way (a pre-manifest case, a
+ * submission whose manifest write failed, a read failure). An empty member list is
+ * UNKNOWN, never done. null in → null out ("not given": no block, no warning).
+ *
+ * @returns {null | { unavailable: boolean, done: boolean, pct: number|null, total: number,
+ *                    pending: Array<{ label: string, line: string, pct: number, started: boolean }> }}
+ */
+function questionnaireFromMembers(q) {
+  if (!q || typeof q !== 'object') return null;
+  const htmlQ = require('./htmlQuestionnaireService');
+  const list = (Array.isArray(q.members) ? q.members : []).filter((m) => m && typeof m === 'object');
+  const unread = q.unavailable === true || list.length === 0;
+  const stamps = list.some((m) => m.submittedAt);
+  const d = htmlQ.deriveQuestionnaireProgress({ members: list, mondayPct: 0 });
+  const done = (!unread && d.submitted) || (q.mondayDone === true && (unread || !stamps));
+  if (done) return { unavailable: false, done: true, pct: unread ? null : d.pct, total: list.length, pending: [] };
+  if (unread) return { unavailable: true, done: false, pct: null, total: 0, pending: [] };
+  // one member who is the principal applicant: "Your questionnaire" (the documents list hides that heading too)
+  const lone = list.length === 1 && (list[0].type || 'Principal Applicant') === 'Principal Applicant';
+  const pending = list.filter((m) => !m.submittedAt).map((m) => {
+    const pct = pctOf(m.completionPct);
+    const started = Boolean(m.hasData || m.hasAdditionalData) || pct > 0;
+    const name = s(m.label) || s(m.type) || 'Family member';
+    const badge = s(m.badge);
+    const label = lone ? 'Your questionnaire' : (badge && badge.toLowerCase() !== name.toLowerCase() ? `${name} (${badge})` : name);
+    const state = !started ? 'not started yet' : (pct >= 100 ? 'all filled in, not submitted yet' : `${pct}% complete, not submitted yet`);
+    return { label, line: `${label} — ${state}`, pct, started };
+  });
+  return { unavailable: false, done: false, pct: d.pct, total: list.length, pending };
+}
+
+/** Is there something to list ({QuestionnaireList} has content)? */
+const questionnaireOpen = (q) => Boolean(q && !q.unavailable && !q.done && q.pending.length);
+
+/** The questionnaire block as the email shows it — its own block, never inside a <p>; '' when there is nothing to list. */
+function questionnaireListHtml(q) {
+  if (!questionnaireOpen(q)) return '';
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border-radius:10px;border:1px solid #bfdbfe;margin:4px 0 20px;">
+          <tr><td style="padding:14px 20px 16px;">
+            <div style="font-size:13px;font-weight:700;color:#1e3a8a;">Questionnaire still to finish:</div>
+            <ul style="margin:8px 0 0;padding-left:20px;">
+${q.pending.map((m) => `              <li style="font-size:14px;color:#1e293b;line-height:1.55;margin:0 0 4px;">${esc(m.line)}</li>`).join('\n')}
+            </ul>
+          </td></tr>
+        </table>`;
+}
+
+/** The plain-text mirror of questionnaireListHtml ('' when there is nothing to list). */
+function questionnaireListText(q) {
+  if (!questionnaireOpen(q)) return '';
+  return ['Questionnaire still to finish:', ...q.pending.map((m) => `  - ${m.line}`)].join('\n');
+}
+
+/** The lines the staff dialog shows read-only (the same lines the email prints). */
+function questionnaireView(q) {
+  if (!q) return null;
+  return { unavailable: q.unavailable, done: q.done, pct: q.pct, pending: q.pending.map((m) => ({ label: m.label, line: m.line })) };
+}
+
+const Q_TOKEN = '{QuestionnaireList}';
+/** A text without {QuestionnaireList}: the token goes right after the first {MissingList} (or at the end). */
+function withQuestionnaireToken(body) {
+  const b = String(body || '');
+  if (b.includes(Q_TOKEN)) return b;
+  return b.includes('{MissingList}') ? b.replace('{MissingList}', `{MissingList}\n\n${Q_TOKEN}`) : `${b}\n\n${Q_TOKEN}`;
+}
+const Q_APPENDED_WARNING = 'the text had no {QuestionnaireList} — the unfinished questionnaire was added after the documents list';
+const Q_UNAVAILABLE_WARNING = 'The questionnaire progress could not be read — the email will not mention it.';
 
 /** The {Token} values of one email; the two rich tokens are placeholders filled at render. */
 function fillTokens(text, values) {
@@ -240,6 +328,8 @@ function imaginaryBody(body) {
  * @param {string} [o.subjectOverride] the edited subject (staff dialog)
  * @param {string} [o.bodyOverride]    the edited body (staff dialog) — plain text, same tokens
  * @param {{received:number,total:number}} [o.progress]  when known; defaults to missing.progress
+ * @param {object} [o.questionnaire]   { members, unavailable, mondayDone } (questionnaireFromMembers' input) —
+ *                                     absent = not given: no questionnaire block, no warning
  */
 async function buildReminderEmail(o = {}) {
   const level = o.level;
@@ -271,6 +361,12 @@ async function buildReminderEmail(o = {}) {
     if (!body.includes('{MissingList}')) { body += '\n\n{MissingList}'; listAppended = true; warnings.push('the edited text had no {MissingList} — the missing documents were added at the end'); }
     // (v.warnings — unknown tokens — are found again below on the final text, once)
   }
+  // the questionnaire: its block where {QuestionnaireList} sits; a text (board or edited) without
+  // the token gets it after the documents list when there is something to list (decision 7)
+  const q = questionnaireFromMembers(o.questionnaire);
+  let questionnaireAppended = false;
+  if (questionnaireOpen(q) && !body.includes(Q_TOKEN)) { body = withQuestionnaireToken(body); questionnaireAppended = true; warnings.push(Q_APPENDED_WARNING); }
+  if (q && q.unavailable) warnings.push('the questionnaire progress could not be read — the email does not mention it');
 
   const dl = o.deadline || {};
   const portalUrl    = clientPortalService.buildPortalUrl({ caseRef, accessToken });
@@ -293,19 +389,38 @@ async function buildReminderEmail(o = {}) {
   if (!dl.actualDeadline && !imaginaryFill && /\{Deadline\}/.test(`${subject}\n${body}`)) warnings.push('the text names the deadline, but this case has no actual deadline — it reads "not set"');
   if (imaginaryFill && /\{Deadline\}/.test(subject)) warnings.push('the subject named {Deadline} — this case has an imaginary deadline, so the promised date was used');
 
-  const subjectOut = fillTokens(subject, { ...values, MissingList: `${missing.count} documents`, PortalLink: '' }).replace(/\s+/g, ' ').trim();
-  const bodyFilled = fillTokens(body, { ...values, MissingList: '{MissingList}', PortalLink: '{PortalLink}' });
+  const subjectOut = fillTokens(subject, { ...values, MissingList: `${missing.count} documents`, QuestionnaireList: 'questionnaire', PortalLink: '' }).replace(/\s+/g, ' ').trim();
+  const bodyFilled = fillTokens(body, { ...values, MissingList: '{MissingList}', QuestionnaireList: Q_TOKEN, PortalLink: '{PortalLink}' });
   const extra = String(o.extraLine || '').replace(/<[^>]*>/g, '').trim();
   if (extra && templates.tellsToReply(extra)) throw new Error(REPLY_REFUSAL('extra line'));   // the staff's free line obeys the same rule as the template
   const progress = o.progress || missing.progress;
   const progressLine = progress && progress.total > 0 ? `${progress.received} of ${progress.total} documents received` : '';
 
-  // HTML: the template's paragraphs, the list block where {MissingList} sits (its own block,
-  // never inside a <p>), the staff's own line right under the list ("we are still looking for…")
-  const extraHtml = extra ? `\n        <p style="font-size:15px;color:#1e293b;line-height:1.65;margin:0 0 16px;background:#f8fafc;border-left:3px solid #C9A84C;padding:10px 14px;">${esc(extra).replace(/\n/g, '<br>')}</p>` : '';
-  const listHtml = missingListHtml(missing) + extraHtml;
+  // HTML: the template's paragraphs, the documents block where {MissingList} sits and the
+  // questionnaire block where {QuestionnaireList} sits (each its own block, never inside a <p>;
+  // an empty one is left out, heading and all), the staff's own line right under the last list
+  // ("we are still looking for…") — also when the documents are all in
+  const extraHtml = extra ? `        <p style="font-size:15px;color:#1e293b;line-height:1.65;margin:0 0 16px;background:#f8fafc;border-left:3px solid #C9A84C;padding:10px 14px;">${esc(extra).replace(/\n/g, '<br>')}</p>` : '';
   const portalA  = `<a href="${esc(portalUrl)}" style="color:#8B0000;word-break:break-all;">${esc(portalUrl)}</a>`;
-  const bodyHtml = bodyFilled.split('{MissingList}').map((part) => paragraphsHtml(part, { '{PortalLink}': portalA })).join(`\n${listHtml}\n`);
+  const docsHtml = missing.count ? missingListHtml(missing) : '';
+  const qHtml    = questionnaireListHtml(q);
+  const docsText = missing.count ? `Documents still needed (${missing.count}):\n${missingListText(missing)}` : '';
+  const qText    = questionnaireListText(q);
+  const parts    = bodyFilled.split(/(\{MissingList\}|\{QuestionnaireList\})/);
+  const isList   = (p) => p === '{MissingList}' || p === Q_TOKEN;
+  const blockOf  = (p, kind) => (p === '{MissingList}' ? (kind === 'html' ? docsHtml : docsText) : (kind === 'html' ? qHtml : qText));
+  // the staff line follows the last list that printed something (else the last list token)
+  let extraAt = -1;
+  parts.forEach((p, i) => { if (isList(p) && blockOf(p, 'html')) extraAt = i; });
+  if (extraAt < 0) parts.forEach((p, i) => { if (isList(p)) extraAt = i; });
+  const bodyHtml = parts.map((p, i) => {
+    const h = isList(p) ? blockOf(p, 'html') : paragraphsHtml(p, { '{PortalLink}': portalA });
+    return i === extraAt && extraHtml ? [h, extraHtml].filter(Boolean).join('\n') : h;
+  }).filter(Boolean).join('\n');
+  const bodyText = parts.map((p, i) => {
+    const t = isList(p) ? blockOf(p, 'text') : fillTokens(p, { PortalLink: portalUrl });
+    return i === extraAt && extra ? (t ? `${t}\n\n${extra}` : extra) : t;
+  }).join('').replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n').trim();
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -362,7 +477,7 @@ ${progressLine ? `        <p style="font-size:13px;color:#64748b;margin:0 0 20px
 
   const contact = require('../utils/clientContact');
   const text = [
-    fillTokens(bodyFilled, { MissingList: missingListText(missing) + (extra ? `\n\n${extra}` : ''), PortalLink: portalUrl }),
+    bodyText,
     progressLine,
     `Open your portal: ${portalUrl}\nUpload page: ${documentsUrl}`,
     `Questions? Please email us at ${contact.CLIENT_CONTACT_EMAIL} and include your case reference ${caseRef}. ${contact.NO_REPLY}`,
@@ -376,7 +491,8 @@ ${progressLine ? `        <p style="font-size:13px;color:#64748b;margin:0 0 20px
     recipient: clientEmail,
     replyTo: EMAIL_REPLY_TO || undefined,
     warnings,
-    template: { name: base.name, source: base.source, edited: Boolean(o.bodyOverride || o.subjectOverride), listAppended, variant },
+    template: { name: base.name, source: base.source, edited: Boolean(o.bodyOverride || o.subjectOverride), listAppended, questionnaireAppended, variant },
+    questionnaire: questionnaireView(q),
     links: { portalUrl, documentsUrl },
   };
 }
@@ -419,6 +535,7 @@ const AUTO_COLS = {
   docUploaded: 'numeric_mm2njqk1',                                                              // Documents Uploaded % (Faran: the 50 % line)
   email: 'text_mm0xw6bp', token: 'text_mm0x6haq',
   stageStart: 'date_mm0xjm1z', lastActivity: 'date_mm1amqyr',
+  qStatus: 'color_mm0x9s08',                                                                    // questionnaire status — Done = submitted (the portal's fallback when the manifest has no stamps); read only
   // not read: Escalation Last Notified (date_mm1gqbd) — the engine stamps it on every matched rule, not only on a client email
 };
 
@@ -500,6 +617,27 @@ const io = {
     const r = await require('./caseReadinessService')._internal.refreshDocNumbers({ masterItemId: itemId, caseRef, dryRun: true });
     return r && r.after && r.after.uploadedPct != null ? Number(r.after.uploadedPct) : null;
   },
+  /**
+   * The questionnaire's state for one case — READ ONLY (the automatic run's one extra read per
+   * candidate): the case lookup (one Monday read, limit 1, no form versioning), the members
+   * manifest WITHOUT seeding it (readMembersManifest never writes; no file = the principal
+   * applicant alone), then every member's saved file (getMemberStatuses — a pre-fill-only file
+   * is not the client's work). Decorated as the pages show members. Any read failure →
+   * { unavailable: true } — the email then leaves the questionnaire out. Never writes Monday.
+   */
+  async questionnaireState(caseRef) {
+    const htmlQ = require('./htmlQuestionnaireService');
+    try {
+      const v = await htmlQ.validateAccessForStaff(caseRef, { skipFormVersioning: true });
+      const clientName = v.clientName;
+      const manifest = await htmlQ.readMembersManifest({ clientName, caseRef });
+      const members = manifest || [{ key: 'primary', type: 'Principal Applicant', label: 'Primary Applicant' }];
+      const qMembers = await htmlQ.getMemberStatuses({ clientName, caseRef, members, formFiles: v.formFiles });
+      return { members: require('../utils/familyRoleLabels').decorateMembers(v.caseType, qMembers, v.caseSubType), unavailable: false };
+    } catch (err) {
+      return { members: [], unavailable: true, error: s(err && err.message).slice(0, 160) };
+    }
+  },
   log: (m) => console.log(m),
   warn: (m) => console.warn(m),
 };
@@ -519,7 +657,9 @@ const noteEsc = (v) => s(v).replace(/[<>]/g, '').replace(/\s+/g, ' ').slice(0, 1
 
 /**
  * The claim note — the record that this reminder is going out (posted BEFORE the email).
- * @param {object} o  { level: 1|2|3|'auto', to (masked), actor (name), count, lastDay?, deadline?, pct?, now, day? }
+ * @param {object} o  { level: 1|2|3|'auto', to (masked), actor (name), count, lastDay?, deadline?, pct?, questionnaire?, now, day? }
+ *                    questionnaire = true when the email listed an unfinished questionnaire (", questionnaire not finished"
+ *                    goes right after the count — parseNote reads "by X — N documents missing" and "— last day D —")
  *                    day = the marker's Toronto day (the caller's "today"); taken from `now` when not given
  */
 function claimNote(o) {
@@ -531,12 +671,13 @@ function claimNote(o) {
   // The callers pass their own `today` so the claim and its failure note carry ONE day.
   const day = o.day || torontoDay(o.now), when = `${torontoTime(o.now)} (Toronto)`;
   const docs = `${Number(o.count) || 0} document${Number(o.count) === 1 ? '' : 's'} missing`;
+  const qPart = o.questionnaire ? ', questionnaire not finished' : '';
   if (level === 'auto') {
     const pct = o.pct == null || o.pct === '' ? '' : ` (${Number(o.pct)} % uploaded)`;
-    return `${NOTE_HEAD} (automatic)</b> emailed to ${noteEsc(o.to)} — deadline ${noteEsc(o.deadline) || 'not set'}, ${docs}${pct} — ${when}${marker(origin, day)}`;
+    return `${NOTE_HEAD} (automatic)</b> emailed to ${noteEsc(o.to)} — deadline ${noteEsc(o.deadline) || 'not set'}, ${docs}${pct}${qPart} — ${when}${marker(origin, day)}`;
   }
   const last = level === 3 && o.lastDay ? ` — last day ${fmtDay(o.lastDay)}` : '';
-  return `${NOTE_HEAD} ${level} sent</b> (${TONE[level]}) to ${noteEsc(o.to)} by ${noteEsc(o.actor) || 'staff'} — ${docs}${last} — ${when}${marker(origin, day)}`;
+  return `${NOTE_HEAD} ${level} sent</b> (${TONE[level]}) to ${noteEsc(o.to)} by ${noteEsc(o.actor) || 'staff'} — ${docs}${qPart}${last} — ${when}${marker(origin, day)}`;
 }
 
 /**
@@ -785,8 +926,11 @@ function gateStaff(overview) {
  * notesLimit = how many notes the caller read (the newest N): the card then says
  * "Sent (recent notes)" — `recentNotes` — because an older send may sit beyond them.
  * docsUnavailable = the checklist read failed: named as such, never "no rows".
+ * questionnaire = the overview's questionnaire facts ({ members, unavailable, mondayDone } — read
+ * with the case, never a second read): the buttons also work when every document is in but the
+ * questionnaire is unfinished; they are off only when both are complete.
  */
-function describeForCase({ overview, items, notes, notesLimit, docsUnavailable }) {
+function describeForCase({ overview, items, notes, notesLimit, docsUnavailable, questionnaire }) {
   const o = overview || {};
   const h = readReminderHistory(notes || []);
   const base = { available: true, reason: '', message: '', canSend: true, blocked: '', recentNotes: Number(notesLimit) > 0 ? Number(notesLimit) : 0, ...historyView(h) };
@@ -797,11 +941,16 @@ function describeForCase({ overview, items, notes, notesLimit, docsUnavailable }
   const rows = Array.isArray(items) ? items : [];
   if (!rows.length) return { ...base, available: false, reason: 'no-rows', message: 'No checklist rows yet — there is nothing to remind the client about.', canSend: false };
   const missing = missingFromItems(rows);
-  if (!missing.count) return { ...base, available: false, reason: 'no-rows', message: 'Nothing is missing — every required document is in.', canSend: false };
+  const q = questionnaireFromMembers(questionnaire !== undefined ? questionnaire : o.questionnaire);
+  const qFacts = q ? { questionnaire: { done: q.done, unavailable: q.unavailable, pct: q.pct, pending: q.pending.length } } : {};
+  if (!missing.count && q && q.unavailable) return { ...base, ...qFacts, available: false, reason: 'q-unavailable', message: Q_UNREAD_ALL_IN, canSend: false };
+  if (!missing.count && !questionnaireOpen(q)) return { ...base, ...qFacts, available: false, reason: 'no-rows', message: q ? NOTHING_TO_REMIND : 'Nothing is missing — every required document is in.', canSend: false };
   const problem = caseGateProblem(o);   // the same five checks as the send gate: the card shows the line, the buttons are off
-  if (problem) return { ...base, canSend: false, blocked: problem.message, missingCount: missing.count };
-  return { ...base, missingCount: missing.count };
+  if (problem) return { ...base, ...qFacts, canSend: false, blocked: problem.message, missingCount: missing.count };
+  return { ...base, ...qFacts, missingCount: missing.count };
 }
+const NOTHING_TO_REMIND = 'Every document is in and the questionnaire is complete — there is nothing to remind the client about.';
+const Q_UNREAD_ALL_IN = 'Every document is in, and the questionnaire progress could not be read just now — reload in a moment.';
 
 /** The name a client email signs with: the VERIFIED Monday sign-in, else the office — never the shared-key placeholder. */
 const senderName = (actor) => (actor && actor.verified && s(actor.name) ? s(actor.name) : 'TDOT Immigration');
@@ -818,18 +967,28 @@ async function prepareStaff({ overview, level, now }) {
   gateStaff(overview);
   const caseRef = s(overview.caseRef);
   const missing = await missingDocuments(caseRef);
-  if (!missing.count) throw refuse(409, 'no-rows', 'Nothing is missing on the checklist — there is nothing to remind the client about.');
+  // the questionnaire facts came with the overview (a fresh case read on every request — no second read)
+  const q = questionnaireFromMembers(overview.questionnaire);
+  if (!missing.count) {
+    if (!missing.progress.total) throw refuse(409, 'no-rows', 'No checklist rows yet — there is nothing to remind the client about.');
+    if (q && q.unavailable) throw refuse(503, 'q-unavailable', 'Every document is in, and the questionnaire progress could not be read just now — nothing was sent. Reload in a moment.');
+    if (!questionnaireOpen(q)) throw refuse(409, 'no-rows', q ? NOTHING_TO_REMIND : 'Nothing is missing on the checklist — there is nothing to remind the client about.');
+  }
   const notes = await readCaseNotes(overview.itemId, { now });
   const history = readReminderHistory(notes);
   const recent = recentClientSend(notes, { now });
   const deadline = overview.clientDeadlineRaw || {};
-  return { caseRef, missing, notes, history, recent, deadline, warnings: previewWarnings({ history, level, now, deadline, recent, escalationLastNotified: overview.escalationLastNotified }) };
+  const warnings = previewWarnings({ history, level, now, deadline, recent, escalationLastNotified: overview.escalationLastNotified });
+  if (q && q.unavailable) warnings.push(Q_UNAVAILABLE_WARNING);
+  return { caseRef, missing, q, notes, history, recent, deadline, warnings };
 }
 
 /**
- * GET preview: the template with every merge field filled except the three the app
- * inserts itself ({MissingList}, {PortalLink}, and on the final {LastDay} — the date
- * box in the dialog). Never sends, never writes.
+ * GET preview: the template with every merge field filled except the ones the app
+ * inserts itself ({MissingList}, {QuestionnaireList}, {PortalLink}, and on the final
+ * {LastDay} — the date box in the dialog). A text without {QuestionnaireList} gets it
+ * after {MissingList} when the questionnaire is unfinished (a warning says so).
+ * Never sends, never writes.
  */
 async function previewStaffReminder({ overview, level, lastDay, actor, now } = {}) {
   const t = now || io.now();
@@ -844,22 +1003,27 @@ async function previewStaffReminder({ overview, level, lastDay, actor, now } = {
   };
   const today = torontoDay(t);
   const last = lv === 3 ? (require('./deadlineService').cleanDay(lastDay) || dayPlus(today, FINAL_DEFAULT_DAYS)) : '';
-  const tokensLeft = ['{MissingList}', '{PortalLink}', ...(lv === 3 ? ['{LastDay}'] : [])];
+  const tokensLeft = ['{MissingList}', Q_TOKEN, '{PortalLink}', ...(lv === 3 ? ['{LastDay}'] : [])];
   if (lv !== 3) values.LastDay = '';
+  const qWarn = [];
+  let body = base.body;
+  if (questionnaireOpen(p.q) && !body.includes(Q_TOKEN)) { body = withQuestionnaireToken(body); qWarn.push(`The ${base.name} text has no {QuestionnaireList} — the unfinished questionnaire was added after the documents list.`); }
   return {
     level: lv,
     to: clientPortalService.maskEmail(overview.clientEmail),
     subject: fillTokens(base.subject, values).replace(/\s+/g, ' ').trim(),
-    body: fillTokens(base.body, values),
+    body: fillTokens(body, values),
     tokensLeft,
     missing: p.missing,
     missingList: missingListText(p.missing),
     missingCount: p.missing.count,
+    questionnaire: questionnaireView(p.q),          // the dialog's read-only list (null = not given)
+    questionnaireList: questionnaireListText(p.q),
     deadlineLine: dl.actualDeadline ? `Deadline ${fmtDay(dl.actualDeadline)}` : (dl.promisedSubmissionDate ? `Promised submission ${fmtDay(dl.promisedSubmissionDate)}` : 'No deadline on the case'),
     lastDay: last,
     minLastDay: today,
     // a board row that could not be used is said so (review 2026-11-07 [23]) — the dialog's amber line, never a silent fallback
-    warnings: [...p.warnings, ...base.warnings, ...(base.source === 'default' ? [templates.boardProblemFor(base.name)].filter(Boolean) : [])],
+    warnings: [...p.warnings, ...base.warnings, ...qWarn, ...(base.source === 'default' ? [templates.boardProblemFor(base.name)].filter(Boolean) : [])],
     template: { name: base.name, source: base.source },
     history: historyView(p.history),
   };
@@ -889,13 +1053,14 @@ async function sendStaffReminder({ overview, level, subject, body, extra, lastDa
       level: lv, caseRef: p.caseRef, clientName: overview.clientName, clientEmail: overview.clientEmail, caseType: overview.caseType,
       accessToken: overview.accessToken, missing: p.missing, deadline: p.deadline, lastDay: last,
       staffName: senderName(actor), extraLine: extra, subjectOverride: subject, bodyOverride: body,
+      questionnaire: overview.questionnaire,
     });
   } catch (err) { throw refuse(400, 'bad-text', err.message); }
 
   // 1. The claim — the record that this reminder is going out (before the email).
   let mine;
   try {
-    mine = await io.postNote(overview.itemId, claimNote({ level: lv, to: email.to, actor: actor && actor.name, count: p.missing.count, lastDay: last, now: t, day: today }));
+    mine = await io.postNote(overview.itemId, claimNote({ level: lv, to: email.to, actor: actor && actor.name, count: p.missing.count, questionnaire: questionnaireOpen(p.q), lastDay: last, now: t, day: today }));
   } catch (err) { throw refuse(503, 'note-failed', `The note could not be saved on the case (${s(err.message).slice(0, 120)}) — nothing was sent. Try again in a minute.`); }
 
   // 2. Only the earliest open claim of the last few minutes sends (a second app
@@ -961,6 +1126,7 @@ function parseAutoRow(item) {
     deadlineType: col('deadlineType'), actualDeadline: col('actualDeadline').slice(0, 10), promised: col('promised').slice(0, 10),
     docUploaded: col('docUploaded'), email: col('email'), token: col('token'),
     stageStart: col('stageStart').slice(0, 10), lastActivity: col('lastActivity').slice(0, 10),
+    qStatus: col('qStatus'),
   };
 }
 
@@ -1031,18 +1197,25 @@ async function runCandidate(row, sel, { now, today, dryRun }) {
   if (live >= 50) return skip(`the live recount says ${live} % (the board said ${sel.pct} %) — 50 % or more`);
   if (dryRun) return { ...out, decision: 'would-send', reason: `${missing.count} missing, ${live} % uploaded, ${sel.variant === 'imaginary' ? 'promised' : 'deadline'} ${fmtDay(out.deadline)}` };
 
+  // the questionnaire (one read per candidate): a read failure never holds the email up — it goes without the questionnaire block
+  const qState = await Promise.resolve().then(() => io.questionnaireState(row.ref)).catch((err) => ({ members: [], unavailable: true, error: s(err && err.message) }));
+  const questionnaire = { members: (qState && qState.members) || [], unavailable: !qState || qState.unavailable === true, mondayDone: row.qStatus === 'Done' };
+  if (questionnaire.unavailable && !(row.qStatus === 'Done')) io.warn(`[DocReminders] ${row.ref}: the questionnaire could not be read${qState && qState.error ? ` (${qState.error})` : ''} — the reminder goes without it`);
+  const qOpen = questionnaireOpen(questionnaireFromMembers(questionnaire));
+
   // the email (built first — a text problem must never leave a claim note behind)
   let email;
   try {
     email = await buildReminderEmail({
       level: 'auto', variant: sel.variant, caseRef: row.ref, clientName: row.name, clientEmail: row.email, caseType: row.caseType, accessToken: row.token,
       missing, deadline: { type: row.deadlineType, actualDeadline: row.actualDeadline, promisedSubmissionDate: row.promised }, staffName: 'TDOT Immigration',
+      questionnaire,
     });
   } catch (err) { return { ...out, decision: 'error', reason: `the email could not be built: ${s(err.message).slice(0, 160)}` }; }
   // 1. the claim (the record, before the email)
   let mine;
   try {
-    mine = await io.postNote(row.id, claimNote({ level: 'auto', to: email.to, count: missing.count, deadline: fmtDay(out.deadline), pct: live, now: io.now(), day: today }));
+    mine = await io.postNote(row.id, claimNote({ level: 'auto', to: email.to, count: missing.count, deadline: fmtDay(out.deadline), pct: live, questionnaire: qOpen, now: io.now(), day: today }));
   } catch (err) { return { ...out, decision: 'error', reason: `the note could not be saved on the case — nothing sent (${s(err.message).slice(0, 120)})` }; }
   // 2. the earliest open claim of the last few minutes sends (two app instances, or a staff
   //    button pressed in the same seconds — any origin)
@@ -1113,6 +1286,7 @@ module.exports = {
   runDocReminders, selectByColumns, parseAutoRow, isImaginaryEnabled, allowList, autoHour, isTorontoHour, AUTO_COLS,
   missingDocuments,
   missingFromItems,
+  questionnaireFromMembers,
   buildReminderEmail,
   // the record
   io, claimNote, failureNote, parseNote, rawNotes, readReminderHistory, readCaseNotes, recentClientSend, recentEscalationStamp, autoSkipReasons, previewWarnings, historyView,
@@ -1121,5 +1295,6 @@ module.exports = {
   gateStaff, parseLevel, senderName, previewStaffReminder, sendStaffReminder,
   NOTE_HEAD, NOTE_HEAD_TEXT, NOT_CASE_GROUPS, MAX_TRIES, NOTES_PAGE, NOTES_MAX_PAGES, FINAL_DEFAULT_DAYS, RACE_WINDOW_MS,
   // pure — exported for tests
-  _internal: { fmtDay, oneLine, fillTokens, missingListText, missingListHtml, LEVEL_NAMES, torontoDay, dayPlus, daysUntil, marker, failMarker, dayFromWords, imaginaryBody, IMAGINARY_LEAD, caseTypeText },
+  _internal: { fmtDay, oneLine, fillTokens, missingListText, missingListHtml, LEVEL_NAMES, torontoDay, dayPlus, daysUntil, marker, failMarker, dayFromWords, imaginaryBody, IMAGINARY_LEAD, caseTypeText,
+    questionnaireListHtml, questionnaireListText, questionnaireOpen, questionnaireView, withQuestionnaireToken, Q_UNAVAILABLE_WARNING, NOTHING_TO_REMIND },
 };

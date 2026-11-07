@@ -16,7 +16,8 @@
  *     deadline, qReadinessPct, docReadinessPct, portalLink, folderLink,
  *     accessToken,
  *     family:        [{ role, name, memberKey, flags }],
- *     questionnaire: { members:[{ key, type, label, status, hasData }], submitted, total },
+ *     questionnaire: { members:[{ key, type, badge, label, status, hasData, completionPct, submittedAt }],
+ *                      submitted, total, unavailable, mondayDone },
  *     documents:     { counts:{ total, received, reviewed, rework, missing },
  *                      byCategory:[{ category, items:[...] }], rework:[...] },
  *     sponsor:       sponsorOnboardingService.describe() — the inviter / sponsor
@@ -55,6 +56,7 @@ const CM = {
   automationLock: 'color_mm0x3x1x',   // the document reminders' gate (block 2): Yes = no reminder from here
   manualOverride: 'color_mm0x975e',   // the same gate (plan §3b condition 4): Yes = no reminder from here
   escalationLastNotified: 'date_mm1gqbd',   // the escalation engine's last rule-match stamp (any rule, not only a client email) — a preview warning on the buttons, never a block
+  qCompletionStatus: 'color_mm0x9s08',      // questionnaire status — Done = submitted; the reminders' fallback when the manifest has no stamps (the portal's rule). Read only.
 };
 // Document reminders (block 2): the case's newest notes ride on the same Client
 // Master read — the "Sent:" line is read from them, never a second expensive read.
@@ -125,6 +127,7 @@ async function readClientMaster(itemId) {
     automationLock:  txt(CM.automationLock),
     manualOverride:  txt(CM.manualOverride),
     escalationLastNotified: txt(CM.escalationLastNotified).slice(0, 10),
+    qDone:           txt(CM.qCompletionStatus) === 'Done',
     notes:           require('./docReminderService').rawNotes(item.updates),   // newest CM_NOTES_LIMIT, for the reminders record
   };
 }
@@ -320,23 +323,35 @@ async function getLeadExtras(itemId, caseRef) {
 async function getCaseOverview(caseRef) {
   const validated = await htmlQ.validateAccessForStaff(caseRef); // throws if case not found
   const { itemId, clientName, caseType, caseSubType, accessToken, formFiles } = validated;
+  let qUnavailable = false;   // set by the questionnaire reads below
 
   // Fan out the independent reads; degrade each section to empty on failure.
   const [cm, docSummary, composition, members] = await Promise.all([
     readClientMaster(itemId).catch((e) => { console.warn(`[Cockpit] CM read failed for ${caseRef}: ${e.message}`); return { _unavailable: true }; }),
     documentFormSvc.getCaseSummary(caseRef).catch((e) => { console.warn(`[Cockpit] doc read failed for ${caseRef}: ${e.message}`); return { items: [], _unavailable: true }; }),   // _unavailable: the Reminders card says "could not be read", never "no rows" (review 2026-11-07)
     compositionAdapter.readForCase(caseRef).catch((e) => { console.warn(`[Cockpit] family read failed for ${caseRef}: ${e.message}`); return { members: [] }; }),
-    htmlQ.loadMembers({ clientName, caseRef }).catch((e) => { console.warn(`[Cockpit] members read failed for ${caseRef}: ${e.message}`); return []; }),
+    htmlQ.loadMembers({ clientName, caseRef }).catch((e) => { console.warn(`[Cockpit] members read failed for ${caseRef}: ${e.message}`); qUnavailable = true; return []; }),
   ]);
 
   // Questionnaire member statuses (needs the member list + form files).
+  // qUnavailable: the member list or a member file could not be read — the
+  // reminders then leave the questionnaire out (never a nudge on a blip — the
+  // portal's qUnavailable rule); the page still shows the degraded statuses.
   let qMembers = [];
   try {
     qMembers = await htmlQ.getMemberStatuses({ clientName, caseRef, members, formFiles });
   } catch (e) {
     console.warn(`[Cockpit] q-status read failed for ${caseRef}: ${e.message}`);
+    qUnavailable = true;
     qMembers = members.map((m) => ({ ...m, status: m.submittedAt ? 'Submitted' : 'Not Started', hasData: false, completionPct: 0 }));
   }
+  const questionnaire = {
+    members:   require('../utils/familyRoleLabels').decorateMembers(caseType, qMembers, caseSubType).map((m) => ({ key: m.key, type: m.type, badge: m.badge || '', label: m.label, status: m.status, hasData: !!m.hasData, completionPct: Number(m.completionPct) || 0, submittedAt: torontoWallClock(m.submittedAt) })),
+    submitted: qMembers.filter((m) => m.status === 'Submitted').length,
+    total:     qMembers.length,
+    unavailable: qUnavailable,                          // the reminders' "could not be read" (an empty list is unknown too)
+    mondayDone:  cm._unavailable ? false : cm.qDone === true,   // the board's questionnaire status reads Done
+  };
 
   const documents = summariseDocuments(docSummary.items || []);
 
@@ -381,6 +396,7 @@ async function getCaseOverview(caseRef) {
     docsUnavailable: docSummary._unavailable === true,
     notes: cm.notes || [],
     notesLimit: CM_NOTES_LIMIT,   // the card says "Sent (recent notes)": the facts come from the newest 100, never a second read
+    questionnaire,                // the buttons also work when only the questionnaire is unfinished (Gauri's texts, 2026-11-07)
   });
 
   return {
@@ -426,11 +442,7 @@ async function getCaseOverview(caseRef) {
       memberKey: m.memberKey || '',
       flags:     Object.keys(m.flags || {}),
     })),
-    questionnaire: {
-      members:   require('../utils/familyRoleLabels').decorateMembers(caseType, qMembers, caseSubType).map((m) => ({ key: m.key, type: m.type, badge: m.badge || '', label: m.label, status: m.status, hasData: !!m.hasData, submittedAt: torontoWallClock(m.submittedAt) })),
-      submitted: qMembers.filter((m) => m.status === 'Submitted').length,
-      total:     qMembers.length,
-    },
+    questionnaire,
     documents,
     lead: pickLeadFields(lead),
     payments,
