@@ -629,9 +629,13 @@ app.get('/api/dashboard/stats', async (req, res) => {
 // Deliberately NOT under app.use('/api', requireApiKey) so the staff cookie
 // works without the shared key — and so staff-cookie access is scoped to THIS
 // endpoint, not the whole /api surface.
-function resolveViewer(req) {
+/** The request carries the shared admin key (header, or ?key= as the pages have always allowed). */
+function hasAdminKey(req) {
   const key = req.headers['x-api-key'] || req.query.key || '';
-  if (ADMIN_API_KEY && key === ADMIN_API_KEY) {
+  return !!(ADMIN_API_KEY && key === ADMIN_API_KEY);
+}
+function resolveViewer(req) {
+  if (hasAdminKey(req)) {
     return { isAdmin: true, scope: 'all', name: 'Admin', email: '' };
   }
   const staff = tryStaffAuth(req);
@@ -652,7 +656,10 @@ app.get('/admin/dashboard-stats', async (req, res) => {
   try {
     // ?fresh=1 = the page's Refresh: Monday is asked again only when the copy is older than 30 s
     const stats = await dashboardService.getDashboardStats(viewer.scope === 'all' ? undefined : viewer, { fresh: req.query.fresh === '1' });
-    res.json({ ...stats, viewer: { name: viewer.name, email: viewer.email, scope: viewer.scope, isAdmin: viewer.isAdmin } });
+    // Assign… (block 3): only for a Monday sign-in, and per row only where the write would be allowed — the
+    // write's access check uses the Monday identity and ignores the shared key (a page convenience; the route re-checks).
+    const canAssign = require('./services/caseAssignService').markAssignable(stats.cases, tryStaffAuth(req));
+    res.json({ ...stats, viewer: { name: viewer.name, email: viewer.email, scope: viewer.scope, isAdmin: viewer.isAdmin, canAssign } });
   } catch (err) {
     console.error('[Dashboard] Identity stats failed:', err.stack || err.message);
     res.status(500).json({ error: 'Internal server error' });
@@ -1342,6 +1349,35 @@ app.post('/admin/case-action/:caseRef/folder', express.json(), async (req, res) 
     const r = await require('./services/caseFolderCreateService').createCaseFolder({ caseRef, expectName, actor: staffActor(req), canSee: who.canSee });
     res.json(r);
   } catch (err) { caseFolderError(res, caseRef, err); }
+});
+
+// ─── Assign the Case Support Officer from the Client Master page (block 3) ────
+// Monday sign-in only (the note names the person; the shared key alone is refused).
+// Writes ONE column (Case Support Officer), replacing it, then a note — see caseAssignService.
+function assignWho(req) { return { staff: tryStaffAuth(req), hasKey: hasAdminKey(req) }; }
+app.get('/admin/client-master/assignable-users', async (req, res) => {
+  const svc = require('./services/caseAssignService');
+  const { staff, hasKey } = assignWho(req);
+  const g = svc.gate(staff, hasKey);
+  if (!g.ok) return res.status(g.status).json({ ok: false, error: g.error, ...(g.loginUrl ? { loginUrl: g.loginUrl } : {}) });
+  try {
+    const u = await svc.assignableUsers();
+    res.set('Cache-Control', 'no-store');
+    res.json({ ok: true, users: u.list.map((x) => ({ id: x.id, name: x.name })) });
+  } catch (err) {
+    console.warn('[Assign] staff list read failed:', err.message);
+    res.status(502).json({ ok: false, error: 'The staff list could not be read from Monday. Please try again.' });
+  }
+});
+app.post('/admin/client-master/assign', express.json(), async (req, res) => {
+  const { staff, hasKey } = assignWho(req);
+  try {
+    res.json(await require('./services/caseAssignService').assign({ staff, hasKey, body: req.body }));
+  } catch (err) {
+    if (err.status && err.body) return res.status(err.status).json(err.body);
+    console.error('[Assign] failed:', err.stack || err.message);
+    res.status(500).json({ ok: false, error: 'The result is unknown — check the case in Monday before trying again.' });
+  }
 });
 
 // Cockpit Documents tab — inline mark-reviewed / request-rework. Same service

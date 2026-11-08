@@ -340,13 +340,24 @@ const CM_CSS = `
     .cm-flag { display:inline-block; border-radius:6px; padding:1px 6px; font-size:10px; font-weight:700; white-space:nowrap; }
     .cm-flag.slide { background:#fff7ed; color:#c2410c; border:1px solid #fed7aa; }
     .cm-flag.passed { background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; }
-    @media (max-width: 760px) { .cm-print { font-size:16px; } }
+    .cm-assign { margin-left:4px; border:1px solid #cbd5e1; background:#fff; color:var(--navy); border-radius:6px; padding:1px 7px; font:inherit; font-size:11px; font-weight:700; cursor:pointer; }
+    .cm-assign:hover { border-color:var(--navy); background:#f8fafc; }
+    .cm-asg-ok { margin-left:4px; font-size:11px; font-weight:700; color:#15803d; }
+    .cm-asg-case { font-size:13px; color:#334155; margin:2px 0 8px; }
+    .cm-asg-now { font-size:13px; color:#334155; margin-bottom:12px; }
+    .cm-asg-lbl { display:block; font-size:12px; font-weight:700; color:#475569; margin-bottom:4px; }
+    .cm-asg-sel { width:100%; min-height:38px; border:1px solid #cbd5e1; border-radius:8px; padding:6px 10px; font:inherit; font-size:14px; background:#fff; color:#0f172a; }
+    .cm-asg-what { font-size:12.5px; color:#475569; margin-top:10px; }
+    .cm-asg-rm { font-size:12.5px; color:#92400e; margin-top:6px; }
+    .cm-asg-rm:empty { display:none; }
+    .cm-asg-tell { font-size:12.5px; color:#475569; margin-top:6px; }
+    @media (max-width: 760px) { .cm-print { font-size:16px; } .cm-asg-sel, .cm-asg-dlg .tdlg-btn { font-size:16px; } }
     /* Print (all four view tabs): landscape; the tab name, the data time, the counts or windows, and the groups with their counts —
        without the top bar, the tabs, the filters, the pages, the delete column or any button. */
     @page { size: landscape; margin: 10mm; }
     @media print {
       body { background:#fff; }
-      .admin-hdr, .refresh-bar, .view-switch, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .pagination, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop { display:none !important; }
+      .admin-hdr, .refresh-bar, .view-switch, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .pagination, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop, .cm-assign, .cm-asg-ok { display:none !important; }
       #cs-headrow th:last-child, #all-cases-table td.cm-del { display:none; }
       .wrap { padding:0; }
       .dash-header { margin:0 0 6px; }
@@ -1936,7 +1947,10 @@ function caseRow(c, v, today) {
     var f = CMW.flagOf(c, today);
     if (f) pr += ' <span class="cm-flag ' + f.kind + '" data-flag="' + f.kind + '" title="' + escHtml(f.tip) + '">' + escHtml(f.label) + '</span>';
   }
-  var off = c.officer ? escHtml(c.officer) : '<span style="color:var(--light);font-size:11px">Nobody</span>';
+  var off = (c.officer ? escHtml(c.officer) : '<span style="color:var(--light);font-size:11px">Nobody</span>') +
+    // Assign… (block 3): only where the server says the write is allowed (a Monday sign-in; the access check on that person)
+    (c.canAssign ? ' <button type="button" class="cm-assign" data-assign="' + escHtml(String(c.id)) + '" title="Set the Case Support Officer in Monday (replaces who is there now; a note is added on the case)">Assign…</button>' : '') +
+    (cmFlashText(c.id) ? ' <span class="cm-asg-ok" data-asg-ok="' + escHtml(String(c.id)) + '" role="status">' + escHtml(cmFlashText(c.id)) + '</span>' : '');
   tr.innerHTML =
     '<td style="font-weight:600;color:var(--navy);white-space:nowrap">' + refCell + '</td>' +
     '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(c.clientName) + '</td>' +
@@ -1967,7 +1981,184 @@ function caseRow(c, v, today) {
     '<td class="cm-del">' + (window.TDOT_IS_ADMIN && c.caseRef
       ? '<button class="del-btn" type="button" data-del-case="' + escHtml(c.caseRef) + '" title="Delete this case (careful — removes its Monday rows; the consultation record and the OneDrive folder are kept)">' + TDOT_DEL_SVG + '</button>'
       : '') + '</td>';
+  var ab = tr.querySelector('.cm-assign');
+  // the button never opens the case (the row's own click does that)
+  if (ab) ab.onclick = function(e) { e.stopPropagation(); cmAssignDlg(String(c.id)); };
   return tr;
+}
+
+/* ── Assign the Case Support Officer (block 3) ───────────────────────
+   The standard pop-up: who is there now, the staff list (people usually assigned first), what will happen.
+   The server writes ONE Monday column (Case Support Officer), replacing it, and adds a note on the case.
+   The row is updated in place: the tab, the filters, the page and the scroll stay. */
+var CM_STAFF = null;     // the staff list, read once for this page (the server keeps it an hour)
+var CM_FLASH = {};       // item id → { text, until }: "✓ Assigned" beside the name for a few seconds
+function cmFlashText(id) { var f = CM_FLASH[String(id)]; return f && f.until > Date.now() ? f.text : ''; }
+function cmFlash(id, text) {
+  id = String(id);
+  CM_FLASH[id] = { text: text, until: Date.now() + 6000 };
+  setTimeout(function() {
+    if (CM_FLASH[id] && CM_FLASH[id].until <= Date.now()) delete CM_FLASH[id];
+    var e = document.querySelector('.cm-asg-ok[data-asg-ok="' + id + '"]');
+    if (e && !cmFlashText(id) && e.parentNode) e.parentNode.removeChild(e);
+  }, 6100);
+}
+function cmRowById(id) { var a = (_data && _data.cases) || []; for (var i = 0; i < a.length; i++) if (String(a[i].id) === String(id)) return a[i]; return null; }
+function cmIdsOf(c) { var o = (c && c.officerIds) || {}; return { personIds: (o.personIds || []).map(String), teamIds: (o.teamIds || []).map(String) }; }
+function cmNamesOf(c) { return String((c && c.officer) || '').split(',').map(function(x) { return x.trim(); }).filter(Boolean); }
+function cmAnd(list) { return list.length < 2 ? (list[0] || '') : list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1]; }
+function cmAsgHeaders(json) { var k = peekKey(), h = k ? { 'X-Api-Key': k } : {}; if (json) h['Content-Type'] = 'application/json'; return h; }
+function cmAsgSignIn(j) {
+  var login = ((j && j.loginUrl) || '/q/auth/monday').split('?')[0] + '?returnTo=' + encodeURIComponent(location.pathname + location.search);
+  return escHtml((j && j.error) || 'Please sign in with Monday.') + ' <a href="' + escHtml(login) + '">Sign in with Monday</a>';
+}
+/* The row's officer, from the server's answer (the read-back, or the value now on Monday); the list redraws in place.
+   canAssign false = this person may no longer assign this case (they took themselves off it while only their cases are shown). */
+function cmAsgApply(itemId, off, canAssign) {
+  var row = cmRowById(itemId);
+  if (!row || !off) return;
+  row.officer = (off.names || []).join(', ');
+  row.officerIds = { personIds: (off.personIds || []).map(String), teamIds: (off.teamIds || []).map(String) };
+  if (canAssign === false) row.canAssign = false;
+  CasesTable.setRows(_data.cases);
+}
+function cmAssignDlg(itemId) {
+  var row = cmRowById(itemId);
+  if (!row) return;
+  var st = { itemId: String(itemId), expected: cmIdsOf(row), names: cmNamesOf(row) };
+  var c = tdotDialogNew({ cls: 'cm-asg-dlg', group: 'cm-asg', labelledBy: 'cm-asg-h' });
+  c.box.innerHTML = '<h3 id="cm-asg-h">Assign a Case Support Officer</h3>' +
+    '<div class="cm-asg-case"><b>' + escHtml(row.caseRef || 'No case number yet') + '</b> · ' + escHtml(row.clientName || '') + '</div>' +
+    '<div class="cm-asg-now" id="cm-asg-now"></div>' +
+    '<label class="cm-asg-lbl" for="cm-asg-sel">New Case Support Officer</label>' +
+    '<select id="cm-asg-sel" class="cm-asg-sel" disabled><option value="">Loading the staff list…</option></select>' +
+    '<div class="cm-asg-what">Replaces the Case Support Officer in Monday and adds a note on the case. Nothing else changes.</div>' +
+    '<div class="cm-asg-rm" id="cm-asg-rm"></div>' +
+    '<div class="cm-asg-tell" id="cm-asg-tell"></div>' +
+    '<div class="tdlg-err" id="cm-asg-err" role="alert"></div>' +
+    '<div class="tdlg-actions" id="cm-asg-acts"><button type="button" class="tdlg-btn" data-x="1" id="cm-asg-cancel">Cancel</button><button type="button" class="tdlg-btn primary" id="cm-asg-go">Assign</button></div>';
+  var sel = c.box.querySelector('#cm-asg-sel');
+  st.sel = sel;
+  c.box.querySelector('#cm-asg-cancel').onclick = function() { c.tryClose('cancel'); };
+  c.box.querySelector('#cm-asg-go').onclick = function() { cmAsgSend(c, st); };
+  sel.onchange = function() { cmAsgSync(c, st); };
+  cmAsgSync(c, st);
+  var id = c.openId;
+  if (CM_STAFF) { cmAsgFill(c, st); return; }
+  fetch('/admin/client-master/assignable-users', { headers: cmAsgHeaders(false), credentials: 'same-origin' })
+    .then(function(r) { return r.json().catch(function() { return {}; }).then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
+    .then(function(res) {
+      if (!c.still(id)) return;
+      if (!res.ok) {
+        sel.innerHTML = '<option value="">The staff list could not be loaded</option>';
+        c.box.querySelector('#cm-asg-err').innerHTML = res.status === 401 ? cmAsgSignIn(res.j) : escHtml((res.j && res.j.error) || 'The staff list could not be loaded. Close this and try again.');
+        cmAsgSync(c, st);
+        return;
+      }
+      CM_STAFF = res.j.users || [];
+      cmAsgFill(c, st);
+    })
+    .catch(function() {
+      if (!c.still(id)) return;
+      sel.innerHTML = '<option value="">The staff list could not be loaded</option>';
+      c.box.querySelector('#cm-asg-err').textContent = 'The staff list could not be loaded (no answer). Close this and try again.';
+      cmAsgSync(c, st);
+    });
+}
+/* The list: people who are Support Officers on other cases first ("usually assigned"), then everyone else; A → Z in each. */
+function cmAsgFill(c, st) {
+  var usual = {};
+  ((_data && _data.cases) || []).forEach(function(r) { cmIdsOf(r).personIds.forEach(function(p) { usual[p] = true; }); });
+  var a = [], b = [];
+  (CM_STAFF || []).forEach(function(u) { (usual[String(u.id)] ? a : b).push(u); });
+  var opt = function(u) { return '<option value="' + escHtml(String(u.id)) + '">' + escHtml(u.name) + '</option>'; };
+  st.sel.innerHTML = '<option value="">Choose a person…</option>' +
+    (a.length ? '<optgroup label="Usually assigned">' + a.map(opt).join('') + '</optgroup>' : '') +
+    (b.length ? '<optgroup label="' + (a.length ? 'Everyone else' : 'Staff') + '">' + b.map(opt).join('') + '</optgroup>' : '');
+  st.sel.disabled = false;
+  cmAsgSync(c, st);
+  try { st.sel.focus(); } catch (e) {}
+}
+function cmAsgChosen(st) {
+  var v = st.sel && st.sel.value;
+  if (!v) return null;
+  for (var i = 0; i < (CM_STAFF || []).length; i++) if (String(CM_STAFF[i].id) === v) return CM_STAFF[i];
+  return null;
+}
+/* The Now line, who will be removed (two or more there now), who Monday will tell, and the Assign button. */
+function cmAsgSync(c, st) {
+  var box = c.box, ch = cmAsgChosen(st), n = st.expected.personIds.length + st.expected.teamIds.length;
+  box.querySelector('#cm-asg-now').innerHTML = 'Now: <b>' + escHtml(st.names.length ? st.names.join(', ') : 'Nobody') + '</b>';
+  var rm = '';
+  if (n >= 2) {
+    if (!ch) rm = 'There are ' + n + ' on this case now. The one you choose replaces all of them.';
+    else {
+      // who stays is decided by the id; the names are Monday's own text for the cell
+      var at = st.expected.personIds.indexOf(String(ch.id)), keep = at >= 0;
+      var gone = st.names.filter(function(x) { return x !== ch.name; });
+      if (keep && gone.length === st.names.length && !st.expected.teamIds.length && st.names.length === st.expected.personIds.length) {
+        gone = st.names.filter(function(x, i) { return i !== at; });   // the name is spelled differently on the cell: drop it by its place
+      }
+      rm = 'This removes ' + cmAnd(gone) + (keep ? ' and keeps ' : ' and sets ') + ch.name + '.';
+    }
+  }
+  box.querySelector('#cm-asg-rm').textContent = rm;
+  box.querySelector('#cm-asg-tell').textContent = ch ? 'Monday will tell ' + ch.name + ' they were assigned.' : 'Monday will tell the person you choose that they were assigned.';
+  // not a data-x button: the long-wait timer that lets Cancel and × close the pop-up must never let Assign be sent twice
+  var go = box.querySelector('#cm-asg-go');
+  if (go) go.disabled = !!c.busy || !ch;
+}
+function cmAsgSend(c, st) {
+  var ch = cmAsgChosen(st), err = c.box.querySelector('#cm-asg-err');
+  if (!ch) { err.textContent = 'Choose a person first.'; return; }
+  err.textContent = '';
+  c.setBusy(true);
+  st.sel.disabled = true;
+  cmAsgSync(c, st);
+  var id = c.openId, itemId = st.itemId;
+  var done = function() { if (!c.still(id)) return false; c.setBusy(false); st.sel.disabled = false; cmAsgSync(c, st); return true; };
+  fetch('/admin/client-master/assign', { method: 'POST', headers: cmAsgHeaders(true), credentials: 'same-origin',
+    body: JSON.stringify({ itemId: itemId, userId: String(ch.id), expected: st.expected }) })
+    .then(function(r) { return r.json().catch(function() { return {}; }).then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
+    .then(function(res) {
+      var j = res.j || {};
+      if (res.ok) {
+        // the row follows what Monday kept, even when the pop-up was closed after the long wait
+        cmFlash(itemId, j.unchanged ? 'No change needed' : '✓ Assigned');
+        cmAsgApply(itemId, j.officer, j.canAssign);
+        if (!c.still(id)) return;
+        if (j.noteFailed) {
+          c.setBusy(false);
+          c.box.querySelector('#cm-asg-sel').disabled = true;
+          err.textContent = 'Assigned. The note may not have been added — check the case’s updates before adding it by hand.';
+          c.box.querySelector('#cm-asg-acts').innerHTML = '<button type="button" class="tdlg-btn primary" id="cm-asg-close">Close</button>';
+          c.box.querySelector('#cm-asg-close').onclick = function() { c.tryClose('cancel'); };
+          return;
+        }
+        c.close(true, 'done');
+        // focus goes back to the row's (redrawn) Assign button
+        var nb = document.querySelector('.cm-assign[data-assign="' + itemId + '"]');
+        if (nb) { try { nb.focus(); } catch (e) {} }
+        return;
+      }
+      if (res.status === 409 && j.code === 'changed' && j.current) {
+        // Monday has someone else now: the row and the pop-up show it, and Assign asks again with the new value
+        cmAsgApply(itemId, j.current);
+        if (!c.still(id)) return;
+        st.expected = { personIds: (j.current.personIds || []).map(String), teamIds: (j.current.teamIds || []).map(String) };
+        st.names = (j.current.names || []).slice();
+        done();
+        err.textContent = (j.error || 'This changed since your page loaded.') + ' Press Assign again to replace it.';
+        return;
+      }
+      if (!done()) return;
+      if (res.status === 401) { err.innerHTML = cmAsgSignIn(j); return; }
+      err.textContent = j.error || ('Something went wrong (' + res.status + '). The result is unknown — check the case before trying again.');
+    })
+    .catch(function() {
+      if (!done()) return;
+      err.textContent = 'No answer — the result is unknown. Check the case before trying again.';
+    });
 }
 
 function renderPagination(total) {

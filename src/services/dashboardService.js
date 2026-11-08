@@ -544,4 +544,4 @@ async function getDashboardStats(viewer, { fresh = false } = {}) {
 module.exports = {
   fetchAllItems, invalidateCases, patchCachedColumn, getCasesMeta,
   _casesIo: { refresh: _refreshCases, io: _io, overrides: _overrides, parseMeta: _parseMeta, FRESH_MIN_AGE_MS, OVERRIDE_MAX_MS, CASES_HARD_MS },
-  getDashboardStats, parseItem: parseRow, COLS };
+  getDashboardStats, parseItem: parseRow, peopleIds, COLS };

@@ -231,7 +231,7 @@ test('every page with a pop-up carries the shared pop-up code and CSS, and every
   assert.ok(Object.keys(all).length >= 5, Object.keys(all).join(','));
   for (const [name, html] of Object.entries(all)) {
     for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1], { filename: name });
-    const uses = /payOverlay\(\)|blOverlay\(\)|tdotOpenDeleteModal\(|alDlg\(\)|dcDlg\(\)/.test(html);
+    const uses = /payOverlay\(\)|blOverlay\(\)|tdotOpenDeleteModal\(|alDlg\(\)|dcDlg\(\)|cmAssignDlg\(/.test(html);
     if (!uses) continue;
     assert.ok(html.includes('function tdotDialog(ov, opts){'), name + ': has the shared pop-up code');
     assert.ok(html.includes('.tdlg-ov {'), name + ': has the shared pop-up CSS');
