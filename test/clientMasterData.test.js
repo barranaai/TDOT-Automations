@@ -265,11 +265,24 @@ test('an invalidation still wins over Refresh: the next load waits for a read be
   try {
     reset();
     await dash.getDashboardStats();
-    board.items = [item(1)];                             // a case deleted
+    // an OLDER background read begins (its listing still has both cases)…
+    clock += 61 * 1000;
+    board.holdNext = true;
+    await dash.getDashboardStats();
+    await tick();
+    assert.equal(board.listings(), 2, 'an older background read is in flight');
+    // …then a case is deleted, and the copy is more than 30 s old (so Refresh would re-read)
+    board.items = [item(1)];
     dash.invalidateCases();
-    const s = await dash.getDashboardStats(undefined, { fresh: true });
+    const invAt = clock;
+    clock += 1000;
+    const p = dash.getDashboardStats(undefined, { fresh: true });
+    await tick();
+    board.release();
+    const s = await p;
     assert.deepEqual(s.cases.map((c) => c.id), ['1']);
-  } finally { restoreClock(); board.restore(); reset(); }
+    assert.ok(Date.parse(s.dataAt) >= invAt + 1000, 'the answer comes from a read begun after the invalidation, not the older one it could have joined');
+  } finally { board.holdNext = false; while (board.holds.length) board.release(); restoreClock(); board.restore(); reset(); }
 });
 
 test('patchCachedColumn: the row changes at once (officer, ids, RBAC assignees, views) without re-reading the board', async () => {

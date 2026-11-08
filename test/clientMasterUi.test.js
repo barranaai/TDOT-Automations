@@ -180,6 +180,22 @@ test('the engine tells the page whether a column sort is chosen (h.defaultSort),
   assert.deepEqual(seen, [true, false, true]);
 });
 
+test('api.clearFilters (the Client Master "Filtered" line) clears the filters and puts focus in the search box, like the chips\' Clear filters', () => {
+  const { listTableUi } = require('../src/routes/listFilters');
+  const el = () => ({ setAttribute() {}, removeAttribute() {}, getAttribute() { return null; }, classList: { add() {}, remove() {}, contains() { return false; } }, appendChild() {}, addEventListener() {}, querySelectorAll() { return []; }, querySelector() { return null; }, contains() { return false; }, style: {} });
+  const opts = S.casesListOpts({ views: cmv.pageViews() });
+  let focused = 0, last = null;
+  const search = { ...el(), value: '', focus() { focused++; } };
+  const win = { document: { getElementById: (id) => (id === opts.ids.search ? search : null), createElement: el, body: el(), addEventListener() {}, activeElement: null, documentElement: el() },
+    sessionStorage: { getItem: () => null, setItem() {} }, addEventListener() {}, location: { search: '' }, renderCasesList: (rows, why, st) => { last = st; } };
+  const api = listTableUi(listCore(S.casesListSpec({ healthOrder: {}, views: cmv.pageViews() })), opts, win);
+  api.setRows([{ id: '1' }]);
+  search.value = 'asha'; api.state().q = 'asha'; api.apply('filter');
+  api.clearFilters();
+  assert.equal(search.value, ''); assert.equal(last.q, '');
+  assert.equal(focused, 1, 'focus goes to the search box, not the page body');
+});
+
 test('sortBlanksLast: a blank Actual Deadline / Promised date / Phase / Support Officer goes last in BOTH directions (Cases only — Leads and Retainers sort as before)', () => {
   const LT = listCore(S.casesListSpec({ healthOrder: {} }));
   const rows = [{ id: 'a', actualDeadline: '' }, { id: 'b', actualDeadline: '2026-12-01' }, { id: 'c', actualDeadline: '2026-11-01' }, { id: 'd', actualDeadline: '' }];

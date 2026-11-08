@@ -510,8 +510,8 @@ function listTableUi(LT, o, win) {
     apply: function (why) { apply(why || 'filter'); },
     close: function () { close(false); },
     label: function (facet, v) { return LT.labelOf(facet, v); },
-    /** "Clear filters" from elsewhere on the page (the Client Master "Filtered" line): the same as the chips' button — the tab and the sort stay. */
-    clearFilters: function () { state = LT.clearAll(state); setSearch(''); close(false); apply('filter'); },
+    /** "Clear filters" from elsewhere on the page (the Client Master "Filtered" line): the same as the chips' button (focus goes to the search box, as there) — the tab and the sort stay. */
+    clearFilters: function () { state = LT.clearAll(state); setSearch(''); close(false); apply('filter'); var s = doc.getElementById(ids.search); if (s) s.focus(); },
   };
   win[o.api] = api;
   return api;

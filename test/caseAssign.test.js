@@ -264,12 +264,59 @@ test('the staff list is read page by page (200 a page), never cut at the first p
   assert.ok(m.calls.filter((c) => /users\(kind/.test(c.gql)).every((c) => /limit: 200, page: \$p/.test(c.gql)));
 });
 
-test('a write checks the staff list as Monday has it NOW: someone disabled since the pop-up\'s list was read is refused', async () => {
+const userReads = (m) => m.calls.filter((c) => /users\(kind/.test(c.gql)).length;
+
+test('a write uses the cached staff list (plan §5.4 step 2): a warm cache and a failing Monday user read still assign, with no user read', async () => {
   const m = fakeMonday();
   await svc.assignableUsers();   // the pop-up's list (kept an hour)
-  m.users = USERS.map((u) => (u.id === 13 ? { ...u, enabled: false } : u));
-  await refused({ staff: STAFF, hasKey: false, body: body() }, 400, /Not a staff member/);
-  assert.equal(m.writes.length, 0);
+  m.usersFail = true;
+  const before = userReads(m);
+  const r = await svc.assign({ staff: STAFF, hasKey: false, body: body() });
+  assert.equal(r.ok, true); assert.equal(m.writes.length, 1);
+  assert.equal(userReads(m), before, 'no Monday user read');
+});
+
+test('a busy case (409) costs no Monday call at all — not even the staff list', async () => {
+  const m = fakeMonday();
+  svc._inFlight.add(ITEM);
+  await refused({ staff: STAFF, hasKey: false, body: body() }, 409, /already being assigned/);
+  assert.equal(m.calls.length, 0);
+  // and with an empty cache too
+  svc._resetUsers();
+  await refused({ staff: STAFF, hasKey: false, body: body() }, 409, /already being assigned/);
+  assert.equal(userReads(m), 0);
+});
+
+test('someone not on the cached list (added to Monday since) triggers ONE fresh read, then is assigned', async () => {
+  const m = fakeMonday();
+  m.users = USERS.filter((u) => u.id !== 13);
+  await svc.assignableUsers();   // the cached list does not have Chen (13)
+  m.users = USERS;               // Chen is added in Monday
+  const before = userReads(m);
+  const r = await svc.assign({ staff: STAFF, hasKey: false, body: body() });
+  assert.equal(r.ok, true); assert.equal(m.writes.length, 1);
+  assert.equal(userReads(m), before + 1, 'one fresh read');
+  // still not on the list after that read → 400, the lock released
+  await refused({ staff: STAFF, hasKey: false, body: body({ userId: '999' }) }, 400, /Not a staff member/);
+  assert.equal(svc._inFlight.size, 0);
+});
+
+test('502 only when there is no usable list: an empty or hour-old cache and a failing read; nothing read or written, lock released', async () => {
+  const m = fakeMonday({ usersFail: true });
+  await refused({ staff: STAFF, hasKey: false, body: body() }, 502, /staff list could not be read/);
+  assert.equal(m.reads, 0); assert.equal(m.writes.length, 0); assert.equal(svc._inFlight.size, 0);
+  // an hour-old cache is not used
+  const realNow = svc._io.now;
+  let t = Date.parse('2026-11-08T15:00:00Z');
+  svc._io.now = () => t;
+  try {
+    m.usersFail = false;
+    await svc.assignableUsers();
+    t += 60 * 60 * 1000 + 1;
+    m.usersFail = true;
+    await refused({ staff: STAFF, hasKey: false, body: body() }, 502, /staff list could not be read/);
+    assert.equal(m.writes.length, 0);
+  } finally { svc._io.now = realNow; }
 });
 
 test('the answer says whether this person may still assign the case (under "assigned" they can take themselves off it)', async () => {

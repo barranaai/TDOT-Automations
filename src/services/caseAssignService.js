@@ -17,6 +17,7 @@
  * "all" any signed-in staffer passes.
  *
  * Order of a write (plan-v2 §5.4): who → validate → one at a time per case →
+ * the staff list (the cached one; re-read only when the person is not on it) →
  * fresh read → access → stale check → no-op → the write → read-back → the note
  * (never retried) → the cached Cases rows PATCHED (never invalidated: that
  * would make the next page load by anyone wait for a whole board read).
@@ -31,7 +32,7 @@ const { clientMasterBoardId } = require('../../config/monday');
 
 const OFFICER_COL = 'multiple_person_mm0xm710';
 const CASE_REF_COL = 'text_mm142s49';
-const USERS_TTL_MS = 60 * 60 * 1000;   // the pop-up's staff list is read at most once an hour (a write always checks a fresh one)
+const USERS_TTL_MS = 60 * 60 * 1000;   // the staff list is read at most once an hour (a write reads it again only when the person is not on it)
 const USERS_PAGE = 200, USERS_MAX_PAGES = 10;
 const LOGIN_URL = '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard';
 const NO_KEY_ONLY = 'Sign in with Monday to assign, so the note can say who did it.';
@@ -165,15 +166,19 @@ async function assign({ staff, hasKey, body }) {
       ![...ex.personIds, ...ex.teamIds].every((v) => DIGITS.test(s(v)))) {
     throw fail(400, 'Reload the page and try again.');
   }
-  let users;
-  try { users = await assignableUsers({ fresh: true }); }
-  catch (err) { console.warn(`[Assign] staff list read failed: ${err.message}`); throw fail(502, 'The staff list could not be read from Monday. Nothing was changed — please try again.'); }
-  const person = users.list.find((u) => u.id === userId);
-  if (!person) throw fail(400, 'Not a staff member who can be assigned. Nothing was changed.');
-  // 3. one at a time per case
+  // 3. one at a time per case (before any Monday call: a busy request costs nothing)
   if (_inFlight.has(itemId)) throw fail(409, 'This case is already being assigned. Wait a moment, then check it.', { code: 'busy' });
   _inFlight.add(itemId);
   try {
+    // 2b. the person must be on the staff list: the hour-long cached list when it has them
+    // (plan §5.4 step 2), else ONE fresh read — someone just added to Monday can still be assigned
+    let users = _users && io.now() - _users.at < USERS_TTL_MS ? _users : null;
+    if (!users || !users.list.some((u) => u.id === userId)) {
+      try { users = await assignableUsers({ fresh: true }); }
+      catch (err) { console.warn(`[Assign] staff list read failed: ${err.message}`); throw fail(502, 'The staff list could not be read from Monday. Nothing was changed — please try again.'); }
+    }
+    const person = users.list.find((u) => u.id === userId);
+    if (!person) throw fail(400, 'Not a staff member who can be assigned. Nothing was changed.');
     // 4. fresh read
     let item;
     try { item = await io.readItem(itemId); }
