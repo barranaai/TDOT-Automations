@@ -366,6 +366,7 @@ test('cases board: ids listed cheaply, rows fetched in parallel batches of 100 W
   const restore = [stub(mondayApi, 'query', async (q, v) => {
     calls.push({ q, v });
     if (/items_page\(limit: 500/.test(q)) return { boards: [{ items_page: { cursor: null, items: Array.from({ length: 230 }, (_, i) => ({ id: String(i + 1) })) } }] };
+    if (/\{ groups \{ id title position \}/.test(q)) return { boards: [{ groups: [], columns: [] }] };   // the board meta (block 3)
     assert.match(q, /items\(ids: \$ids, limit: 100\)/);
     return { items: v.ids.map((id) => ({ id, name: `C${id}`, created_at: '', column_values: [] })) };
   })];
@@ -373,7 +374,12 @@ test('cases board: ids listed cheaply, rows fetched in parallel batches of 100 W
     dash.invalidateCases();
     const items = await dash.fetchAllItems({ fresh: true });
     assert.equal(items.length, 230);
-    assert.deepEqual(calls.slice(1).map((c) => c.v.ids.length), [100, 100, 30]);
+    assert.match(calls[0].q, /items_page\(limit: 500/, 'the id listing is still the first call');
+    // calls picked by what they are (the meta read runs beside the batches), not by position
+    const batchCalls = calls.filter((c) => /items\(ids: \$ids, limit: 100\)/.test(c.q));
+    assert.deepEqual(batchCalls.map((c) => c.v.ids.length), [100, 100, 30]);
+    assert.equal(calls.filter((c) => /\{ groups \{ id title position \}/.test(c.q)).length, 1, 'one meta read per fresh read');
+    assert.equal(calls.length, 1 + 3 + 1);
     assert.equal(items[0].id, '1'); assert.equal(items[229].id, '230');
     const n = calls.length;
     await dash.fetchAllItems();
@@ -448,6 +454,8 @@ test('REVIEW: the Cases copy — a delete during an in-flight refresh is not los
   const pending = [];
   const restore = [stub(mondayApi, 'query', (q, v) => {
     if (/items_page\(limit: 500/.test(q)) { const snapshotIds = ids.slice(); return new Promise((res) => pending.push(() => res({ boards: [{ items_page: { cursor: null, items: snapshotIds.map((id) => ({ id })) } }] }))); }
+    if (/\{ groups \{ id title position \}/.test(q)) return Promise.resolve({ boards: [{ groups: [], columns: [] }] });   // the board meta (block 3)
+    assert.match(q, /items\(ids: \$ids, limit: 100\)/);
     return Promise.resolve({ items: v.ids.map((id) => ({ id, name: 'C' + id, created_at: '', column_values: [] })) });
   })];
   try {

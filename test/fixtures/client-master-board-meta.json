@@ -1,0 +1,436 @@
+{
+ "note": "READ-ONLY copy of the Client Master board meta (no client data): groups with positions, and the status / dropdown label settings the views use.",
+ "capturedAt": "2026-11-08T12:54:44.456Z",
+ "groups": [
+  {
+   "id": "group_mm6a68f5",
+   "title": "⏳ Pending — signatures & payment",
+   "position": "32754.0"
+  },
+  {
+   "id": "group_mm2tz8e1",
+   "title": "Leads",
+   "position": "65668.0"
+  },
+  {
+   "id": "group_mm8qqjyz",
+   "title": "November 2026",
+   "position": "65798.0"
+  },
+  {
+   "id": "group_mm7qvmt1",
+   "title": "October 2026",
+   "position": "65928.0"
+  },
+  {
+   "id": "group_mm6sykds",
+   "title": "September  2026",
+   "position": "66448.0"
+  },
+  {
+   "id": "group_mm5xmxw",
+   "title": "August 2026",
+   "position": "73728.0"
+  },
+  {
+   "id": "group_mm4tfdqf",
+   "title": "July 2026",
+   "position": "90112.0"
+  },
+  {
+   "id": "group_mm3twy0r",
+   "title": "June 2026",
+   "position": "98304.0"
+  },
+  {
+   "id": "group_mm7zakk6",
+   "title": "New Group",
+   "position": "114688.0"
+  },
+  {
+   "id": "group_mm83rxxk",
+   "title": "New Group",
+   "position": "163840.0"
+  },
+  {
+   "id": "group_mm344zdp",
+   "title": "April 2026",
+   "position": "196608.0"
+  },
+  {
+   "id": "group_mm3b9tap",
+   "title": "Cancel /Did not retained",
+   "position": "229376.0"
+  },
+  {
+   "id": "group_mm7zfqf2",
+   "title": "New Group",
+   "position": "245760.0"
+  },
+  {
+   "id": "group_mm7ze1p7",
+   "title": "New Group",
+   "position": "262144.0"
+  },
+  {
+   "id": "group_mm347b6q",
+   "title": "May 2026",
+   "position": "278528.0"
+  },
+  {
+   "id": "group_mm3842s",
+   "title": "TEST",
+   "position": "294912.0"
+  },
+  {
+   "id": "group_mm3t4kda",
+   "title": "Retainers before May 2026",
+   "position": "327680.0"
+  }
+ ],
+ "columns": {
+  "dropdown_mm0xd1qn": {
+   "title": "Primary Case Type",
+   "type": "dropdown",
+   "settings": {
+    "limit_select": true,
+    "labels": [
+     {
+      "id": 1,
+      "name": "AAIP"
+     },
+     {
+      "id": 2,
+      "name": "BOWP"
+     },
+     {
+      "id": 3,
+      "name": "Citizenship"
+     },
+     {
+      "id": 4,
+      "name": "Co-op WP"
+     },
+     {
+      "id": 5,
+      "name": "Concurrent WP"
+     },
+     {
+      "id": 6,
+      "name": "Canadian Experience Class (EE after ITA)"
+     },
+     {
+      "id": 7,
+      "name": "ETA"
+     },
+     {
+      "id": 8,
+      "name": "Federal PR"
+     },
+     {
+      "id": 9,
+      "name": "Inland Spousal Sponsorship"
+     },
+     {
+      "id": 10,
+      "name": "LMIA"
+     },
+     {
+      "id": 11,
+      "name": "LMIA Based WP"
+     },
+     {
+      "id": 12,
+      "name": "LMIA Exempt WP"
+     },
+     {
+      "id": 13,
+      "name": "Miscellaneous"
+     },
+     {
+      "id": 14,
+      "name": "NSNP"
+     },
+     {
+      "id": 15,
+      "name": "OINP"
+     },
+     {
+      "id": 16,
+      "name": "Outland Spousal Sponsorship"
+     },
+     {
+      "id": 17,
+      "name": "Parents/Grandparents Sponsorship"
+     },
+     {
+      "id": 18,
+      "name": "PGWP"
+     },
+     {
+      "id": 19,
+      "name": "PFL"
+     },
+     {
+      "id": 20,
+      "name": "PR Card Renewal"
+     },
+     {
+      "id": 21,
+      "name": "PRTD"
+     },
+     {
+      "id": 22,
+      "name": "Reconsideration"
+     },
+     {
+      "id": 23,
+      "name": "Refugee"
+     },
+     {
+      "id": 24,
+      "name": "Refugee WP"
+     },
+     {
+      "id": 25,
+      "name": "Request Letter"
+     },
+     {
+      "id": 26,
+      "name": "Visitor Record / Extension"
+     },
+     {
+      "id": 28,
+      "name": "SCLPC WP"
+     },
+     {
+      "id": 29,
+      "name": "SOWP"
+     },
+     {
+      "id": 30,
+      "name": "Study Permit"
+     },
+     {
+      "id": 31,
+      "name": "Study Permit Extension"
+     },
+     {
+      "id": 32,
+      "name": "Supervisa"
+     },
+     {
+      "id": 33,
+      "name": "TRV"
+     },
+     {
+      "id": 34,
+      "name": "USA Visa"
+     },
+     {
+      "id": 36,
+      "name": "Visitor Visa"
+     },
+     {
+      "id": 42,
+      "name": "Addition of Spouse"
+     },
+     {
+      "id": 43,
+      "name": "Amendment of Document"
+     },
+     {
+      "id": 44,
+      "name": "Appeal"
+     },
+     {
+      "id": 45,
+      "name": "BCPNP"
+     },
+     {
+      "id": 46,
+      "name": "Canadian Experience Class (Profile Recreation+ITA+Submission)"
+     },
+     {
+      "id": 47,
+      "name": "Canadian Experience Class (Profile+ITA+Submission)"
+     },
+     {
+      "id": 48,
+      "name": "Child Sponsorship"
+     },
+     {
+      "id": 49,
+      "name": "Employer Portal"
+     },
+     {
+      "id": 50,
+      "name": "Francophone Mobility WP"
+     },
+     {
+      "id": 51,
+      "name": "H & C"
+     },
+     {
+      "id": 52,
+      "name": "ICAS/WES/IQAS"
+     },
+     {
+      "id": 53,
+      "name": "Invitation Letter"
+     },
+     {
+      "id": 54,
+      "name": "Manitoba PNP"
+     },
+     {
+      "id": 55,
+      "name": "NB WP Extension"
+     },
+     {
+      "id": 56,
+      "name": "Notary"
+     },
+     {
+      "id": 57,
+      "name": "OCI / Passport Surrender"
+     },
+     {
+      "id": 58,
+      "name": "PRAA"
+     },
+     {
+      "id": 59,
+      "name": "RCIP"
+     },
+     {
+      "id": 60,
+      "name": "RNIP"
+     },
+     {
+      "id": 61,
+      "name": "Renunciation of PR"
+     },
+     {
+      "id": 62,
+      "name": "SNIP"
+     },
+     {
+      "id": 63,
+      "name": "TRP"
+     },
+     {
+      "id": 64,
+      "name": "CEC"
+     },
+     {
+      "id": 65,
+      "name": "MPNP"
+     }
+    ],
+    "deactivated_labels": [],
+    "label_limit_count": 1
+   }
+  },
+  "color_mm6w7cdd": {
+   "title": "Deadline Type",
+   "type": "status",
+   "settings": {
+    "done_colors": [
+     1
+    ],
+    "deactivated_labels": [],
+    "labels": {
+     "0": "Imaginary",
+     "1": "Deadline"
+    },
+    "labels_positions_v2": {
+     "0": 1,
+     "1": 0,
+     "5": 2
+    }
+   }
+  },
+  "color_mm3tf1ys": {
+   "title": "Phase",
+   "type": "status",
+   "settings": {
+    "done_colors": [
+     1
+    ],
+    "deactivated_labels": [],
+    "labels": {
+     "0": "Phase 8",
+     "1": "Phase 7",
+     "2": "Phase 9",
+     "3": "Phase 10",
+     "4": "Profile",
+     "6": "Phase 11",
+     "7": "N/A",
+     "8": "Phase 12"
+    },
+    "labels_positions_v2": {
+     "0": 1,
+     "1": 0,
+     "2": 2,
+     "3": 3,
+     "4": 5,
+     "5": 4,
+     "6": 6,
+     "7": 7,
+     "8": 8
+    }
+   }
+  },
+  "color_mm0x8faa": {
+   "title": "Case Stage",
+   "type": "status",
+   "settings": {
+    "done_colors": [
+     1
+    ],
+    "labels": {
+     "0": "Document Collection Started",
+     "1": "Internal Review",
+     "2": "Stuck",
+     "3": "Retainer Confirmed",
+     "4": "Submission Preparation",
+     "6": "Application Submitted",
+     "7": "Submission Ready",
+     "8": "Cancelled",
+     "9": "Profile Created",
+     "10": "Task Done",
+     "11": "Ads posted",
+     "12": "Pre-Onboarding",
+     "13": "Profile Linked",
+     "14": "Reconsideration",
+     "15": "LMIA Submitted",
+     "16": "ADR",
+     "17": "Profile Reviewed but not linked",
+     "18": "Profile Updated"
+    },
+    "labels_positions_v2": {
+     "0": 1,
+     "1": 2,
+     "2": 6,
+     "3": 0,
+     "4": 3,
+     "5": 7,
+     "6": 5,
+     "7": 4,
+     "8": 8,
+     "9": 9,
+     "10": 10,
+     "11": 11,
+     "12": 14,
+     "13": 12,
+     "14": 13,
+     "15": 15,
+     "16": 16,
+     "17": 17,
+     "18": 18
+    }
+   }
+  }
+ }
+}

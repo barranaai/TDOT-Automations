@@ -1,0 +1,242 @@
+{
+ "260858028": {
+  "name": "Assigning",
+  "filter": {
+   "operator": "AND",
+   "groups": [
+    {
+     "operator": "AND",
+     "rules": [
+      {
+       "column_id": "color_mm0x8faa",
+       "compare_value": [
+        6,
+        5,
+        8,
+        9,
+        10,
+        11,
+        13,
+        15,
+        17,
+        18
+       ],
+       "compare_attribute": "",
+       "operator": "NOT_ANY_OF"
+      }
+     ]
+    },
+    {
+     "operator": "AND",
+     "rules": [
+      {
+       "column_id": "group",
+       "compare_value": [
+        "group_mm2tz8e1",
+        "topics",
+        "group_mm3b9tap",
+        "group_mm3842s"
+       ],
+       "compare_attribute": "",
+       "operator": "NOT_ANY_OF"
+      }
+     ]
+    }
+   ]
+  },
+  "sort": [],
+  "settings": {
+   "group_by": {
+    "conditions": [
+     {
+      "columnId": "color_mm0x8faa"
+     }
+    ]
+   }
+  },
+  "filter_user_id": null,
+  "filter_team_id": null
+ },
+ "260886949": {
+  "name": "Deadlines",
+  "filter": {
+   "operator": "AND",
+   "groups": [
+    {
+     "operator": "AND",
+     "rules": [
+      {
+       "column_id": "color_mm0x8faa",
+       "compare_value": [
+        6,
+        9,
+        10,
+        13,
+        15,
+        17,
+        18,
+        16
+       ],
+       "compare_attribute": "",
+       "operator": "NOT_ANY_OF"
+      }
+     ]
+    },
+    {
+     "operator": "AND",
+     "rules": [
+      {
+       "column_id": "color_mm3tf1ys",
+       "compare_value": [
+        5
+       ],
+       "compare_attribute": "",
+       "operator": "NOT_ANY_OF"
+      }
+     ]
+    }
+   ]
+  },
+  "sort": [],
+  "settings": {
+   "group_by": {
+    "conditions": [
+     {
+      "columnId": "color_mm3tf1ys",
+      "config": {
+       "sortSettings": {
+        "direction": "ASC"
+       }
+      }
+     }
+    ]
+   }
+  },
+  "filter_user_id": null,
+  "filter_team_id": null
+ },
+ "283824419": {
+  "name": "Mahesh",
+  "filter": {
+   "operator": "AND",
+   "groups": [
+    {
+     "operator": "AND",
+     "rules": [
+      {
+       "column_id": "color_mm0x8faa",
+       "compare_value": [
+        6,
+        8,
+        9,
+        10,
+        13,
+        15,
+        17,
+        18
+       ],
+       "compare_attribute": "",
+       "operator": "NOT_ANY_OF"
+      }
+     ]
+    },
+    {
+     "operator": "AND",
+     "rules": [
+      {
+       "column_id": "color_mm3tf1ys",
+       "compare_value": [
+        5
+       ],
+       "compare_attribute": "",
+       "operator": "NOT_ANY_OF"
+      }
+     ]
+    }
+   ]
+  },
+  "sort": [
+   {
+    "column_id": "date_mm33sj6t",
+    "direction": "ASC"
+   }
+  ],
+  "settings": {
+   "group_by": {
+    "conditions": [
+     {
+      "columnId": "color_mm3tf1ys",
+      "config": {
+       "sortSettings": {
+        "direction": "ASC"
+       }
+      }
+     }
+    ]
+   }
+  },
+  "filter_user_id": null,
+  "filter_team_id": null
+ },
+ "287709906": {
+  "name": "EE after ITA",
+  "filter": {
+   "operator": "AND",
+   "groups": [
+    {
+     "operator": "AND",
+     "rules": [
+      {
+       "column_id": "color_mm0x8faa",
+       "compare_value": [
+        6,
+        8,
+        9,
+        10,
+        11,
+        13,
+        15,
+        17,
+        18
+       ],
+       "compare_attribute": "",
+       "operator": "NOT_ANY_OF"
+      }
+     ]
+    },
+    {
+     "operator": "AND",
+     "rules": [
+      {
+       "column_id": "group",
+       "compare_value": [
+        "group_mm2tz8e1",
+        "group_mm3b9tap",
+        "group_mm3842s"
+       ],
+       "compare_attribute": "",
+       "operator": "NOT_ANY_OF"
+      }
+     ]
+    },
+    {
+     "operator": "AND",
+     "rules": [
+      {
+       "column_id": "dropdown_mm0xd1qn",
+       "compare_value": [
+        6
+       ],
+       "compare_attribute": "",
+       "operator": "ANY_OF"
+      }
+     ]
+    }
+   ]
+  },
+  "sort": [],
+  "settings": {},
+  "filter_user_id": null,
+  "filter_team_id": null
+ }
+}

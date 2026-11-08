@@ -648,7 +648,8 @@ app.get('/admin/dashboard-stats', async (req, res) => {
     return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
   }
   try {
-    const stats = await dashboardService.getDashboardStats(viewer.scope === 'all' ? undefined : viewer);
+    // ?fresh=1 = the page's Refresh: Monday is asked again only when the copy is older than 30 s
+    const stats = await dashboardService.getDashboardStats(viewer.scope === 'all' ? undefined : viewer, { fresh: req.query.fresh === '1' });
     res.json({ ...stats, viewer: { name: viewer.name, email: viewer.email, scope: viewer.scope, isAdmin: viewer.isAdmin } });
   } catch (err) {
     console.error('[Dashboard] Identity stats failed:', err.stack || err.message);
