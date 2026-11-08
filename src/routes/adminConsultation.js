@@ -349,7 +349,7 @@ function retCase(c){
   if(c.caseRef) return '<a class="case-lnk" href="/admin/case/'+encodeURIComponent(c.caseRef)+'" title="Open the case">'+escHtml(c.caseRef)+'</a>';
   if(c.caseFound===false) return '<span class="pill grey" title="This client is linked to a case row that is not on the Cases board any more">Case not found</span>';
   if(c.caseOpen) return qpill('green','Open');
-  return '<span class="pill amber" title="Retained, but no case is linked — check the Cases page">No case</span>';
+  return '<span class="pill amber" title="Retained, but no case is linked — check the Client Master page">No case</span>';
 }
 function renderRetainerList(rows,why,st,h){
   var t=todayStr(), tp=dParts(t);
@@ -375,7 +375,7 @@ function renderRetainerList(rows,why,st,h){
       '<td>'+(c.retainerSigned?escHtml(c.retainerSigned):'—')+'</td>'+
       '<td>'+(c.retainerPaid?escHtml(c.retainerPaid):'—')+'</td>'+
       '<td>'+(c.stage?qpill(stc,c.stage):'<span class="pill grey">—</span>')+'</td><td>'+cs+'</td>'+
-      /* No bin on a retained client WITH a case (that is deleted on the Cases page, which keeps this record); one whose
+      /* No bin on a retained client WITH a case (that is deleted on the Client Master page, which keeps this record); one whose
          case is gone (deleted — the record kept — or never opened) has it: the explicit "delete the record" (review 2026-11-05). */
       '<td>'+((c.retained && c.clientMasterItemId && c.caseFound!==false)?'':'<button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'"'+(c.retained?' data-del-record-only="1" title="Delete this consultation record and its OneDrive folder (careful — a folder carrying a case number is kept; refused while the client’s case is still on the Cases board: delete the case there first)"':' title="Delete this client, their consultation record and their OneDrive folder (careful — if there is a case, the case and its checklist go too)"')+'>'+TDOT_DEL_SVG+'</button>')+'</td></tr>';
   }).join('');
@@ -812,7 +812,7 @@ ${buildNavHeader('retainers')}
       <h1 class="page-h" style="margin:0">Retainers &amp; follow-ups <span id="r-count" class="cnt" aria-live="polite"></span></h1>
       <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
     </div>
-    <p class="page-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation; once retained (signed and paid) they move to the <b>Retained</b> tab, and the case is on the Cases page. <b>All</b> = everyone still being worked (not Retained). <span class="age" id="snap-age"></span></p>
+    <p class="page-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation; once retained (signed and paid) they move to the <b>Retained</b> tab, and the case is on the Client Master page. <b>All</b> = everyone still being worked (not Retained). <span class="age" id="snap-age"></span></p>
     <div class="lt-tabs" id="r-quick" role="tablist" aria-label="Retainers &amp; follow-ups by outcome"></div>
     <div class="q-head r-tools">
       <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="rq-search" type="search" placeholder="Search by name…" aria-label="Search retainers and follow-ups by name" autocomplete="off"></div>
@@ -841,7 +841,7 @@ var DC_ATT=tdotAttach('dc');   /* "Attach a screenshot": only for the staff allo
 var DC_PROFILE_ADDR='';        /* the carried address — its "is it current?" tick is asked only while the box still shows it */
 var RET_TABS=${jsLit(RETAINER_TABS)};   // the Retainers tabs: one per outcome, Retain first, then Retained (the shared list engine keeps which is on)
 var RET_APART=${jsLit([RETAINED_TAB])};   // never counted under All: shown only on its own tab, after All
-var RET_HINTS={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set — until retained', 'Follow-Up':'The team calls the client back — not retained', 'Newsletter':'Nothing to do now — the client gets the newsletter', 'Not Wanted':'On the Not Wanted list — staff are warned if they come back', 'Retained':'Signed and paid (a part-payment of the first milestone counts) — the case is on the Cases page. Not counted under All.' };
+var RET_HINTS={ 'Retain':'Outcome Retain, direct retainer clients, and anyone whose retainer is under way with no outcome set — until retained', 'Follow-Up':'The team calls the client back — not retained', 'Newsletter':'Nothing to do now — the client gets the newsletter', 'Not Wanted':'On the Not Wanted list — staff are warned if they come back', 'Retained':'Signed and paid (a part-payment of the first milestone counts) — the case is on the Client Master page. Not counted under All.' };
 ${RETAINERS_PAGE_JS}
 function load(force){
   var key=getKey(); if(!key) return;
@@ -1589,7 +1589,7 @@ function pointBackAtList(d){
   /* Opened from elsewhere (Consultations, the lead page, an email): back to the tab the client is under (point 7).
      From the Retainers page itself (?from=retainers, above) the plain link returns to the tab the person was on. */
   if(list==='retainers'){ href='/admin/retainers?outcome='+encodeURIComponent(d.onListTab||'All'); label='Retainers & follow-ups'; nav='/admin/retainers'; }
-  else if(list==='cases'){ var ref=(d.retainerPlan&&d.retainerPlan.caseRef)||''; href=ref?'/admin/case/'+encodeURIComponent(ref):'/admin/dashboard'; label=ref?'Case '+ref:'All cases'; nav='/admin/dashboard'; }
+  else if(list==='cases'){ var ref=(d.retainerPlan&&d.retainerPlan.caseRef)||''; href=ref?'/admin/case/'+encodeURIComponent(ref):'/admin/dashboard'; label=ref?'Case '+ref:'Client Master'; nav='/admin/dashboard'; }
   else if(list==='leads'){ href='/admin/lead/'+encodeURIComponent(d.leadId||''); label='Lead page'; nav='/admin/leads'; }
   if(!href) return;
   bl.href=href; if(txt) txt.textContent=label;

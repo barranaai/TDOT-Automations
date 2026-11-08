@@ -245,7 +245,9 @@ test('Cases: the sort — newest case first by default; each column sorts the sa
   }
   // the first click goes the way the old header did: Health / SLA risk Red first, Readiness / Days highest first, the rest A → Z
   const first = Object.fromEntries(opts.cols.filter((c) => c.sort).map((c) => [c.sort, c.sortDirs[0]]));
-  assert.deepEqual(first, { caseRef: 'asc', clientName: 'asc', caseType: 'asc', caseStage: 'asc', health: 'asc', slaRisk: 'asc', manager: 'asc', overallReadiness: 'desc', daysElapsed: 'desc' });
+  // block 3 adds only the four new columns' sorts (Phase, Deadline, Promised, Support Officer), each A → Z / soonest first
+  assert.deepEqual(first, { caseRef: 'asc', clientName: 'asc', caseType: 'asc', caseStage: 'asc', health: 'asc', slaRisk: 'asc', manager: 'asc', overallReadiness: 'desc', daysElapsed: 'desc',
+    officer: 'asc', phase: 'asc', actualDeadline: 'asc', promisedDate: 'asc' });
 });
 
 test('Cases: deliberate — a manager is chosen by whole name (no "Ana" matching "Anabel"), and "Unassigned" can be chosen', () => {
@@ -302,7 +304,9 @@ test('review 2026-11-05: Sign Out stops a list read still running from saving th
   const sv = listTableUi.toString(), sf = sv.slice(sv.indexOf('function save() {'), sv.indexOf('function countRows()'));
   assert.ok(sf.indexOf('if (win.TDOT_SIGNED_OUT) return;') >= 0 && sf.indexOf('if (win.TDOT_SIGNED_OUT) return;') < sf.indexOf('win.sessionStorage.setItem(o.quick.storeKey, (state.sel[o.quick.facet]'), 'in save(): the guard first');
   assert.ok(require('../src/routes/adminConsultation').buildQueueHTML().includes("function ssSet(k,v){ if(window.TDOT_SIGNED_OUT) return;"));
-  assert.equal(S.casesListOpts({}).sortReset, 'newest case first');
+  // block 3: the words depend on the tab — newest case first on All, Monday's order on a view tab
+  assert.equal(S.casesListOpts({}).sortReset({ sel: {} }), 'newest case first');
+  assert.equal(S.casesListOpts({}).sortReset({ sel: { view: ['mahesh'] } }), "Monday's order for this view");
   assert.equal(S.consultListOpts({}).countable, 'consultCountable');
 });
 

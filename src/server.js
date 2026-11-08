@@ -85,7 +85,9 @@ app.use('/q',              htmlQuestionnaireRouter);
 app.use('/d',              documentReviewRouter);   // staff document review page
 app.use('/client',         clientPortalRouter);     // unified client landing page
 // Admin routes — order matters (most specific first)
-app.use('/admin/dashboard', adminDashboardRouter);  // landing page after login
+// The page is called Client Master since block 3: its new address opens it (query kept); a plain app.get, never a router.
+app.get(['/admin/client-master', '/admin/client-master/'], adminDashboardRouter.clientMasterAlias);
+app.use('/admin/dashboard', adminDashboardRouter);  // landing page after login (the Client Master page)
 app.use('/admin/engines',   adminEnginesRouter);    // engine control panel
 app.use('/admin/case',      adminCaseRouter);        // per-case staff cockpit
 app.use('/admin',           adminConsultationRouter); // consultant portal (/admin/consultations, /admin/consultation/:id)

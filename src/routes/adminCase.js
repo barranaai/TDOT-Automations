@@ -246,7 +246,7 @@ function buildCockpitHTML(caseRef) {
 ${buildNavHeader('dashboard')}
 
 <main class="wrap">
-  <a href="/admin/dashboard" class="back-lnk">← Back to dashboard</a>
+  <a href="/admin/dashboard" class="back-lnk">← Back to Client Master</a>
 
   <div id="loading">
     <div class="spinner"></div>

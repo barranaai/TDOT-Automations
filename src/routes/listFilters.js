@@ -26,6 +26,7 @@
  *                          apart: [values] (rows with one of these values show only when that choice is on — never under
  *                          "no choice" / All; the Retainers page's Retained tab) } },
  *         sorts: { key: get(r) }, defaultSort: { key, dir } | null (null = keep the server order),
+ *         sortBlanksLast: [sort keys] (their blank values go last in both directions),
  *         search: { text(r) -> string | string[], chip }, flags: { key: { chip, test(r) } },
  *         date: { key, chip, get(r) -> 'YYYY-MM-DD' } | null }
  */
@@ -35,6 +36,7 @@ function listCore(spec) {
   var NONE = '__none__';
   var FACETS = spec.facets || {}, SORTS = spec.sorts || {}, FLAGS = spec.flags || {}, DATE = spec.date || null, SEARCH = spec.search || null;
   var DEFAULT_SORT = spec.defaultSort || null;
+  var BLANKS_LAST = spec.sortBlanksLast || [];   // sort keys whose blank values go last in BOTH directions (Cases: the dates)
   function s(v) { return String(v == null ? '' : v).trim(); }
   /** A row's value(s) for a facet; '' = the "none" choice. A facet may give several (a case's managers). */
   function valuesOf(f, r) {
@@ -116,13 +118,19 @@ function listCore(spec) {
       .map(function (v) { return { value: v, label: labelOf(f, v), count: counts[v] }; });
   }
 
-  /** Sorted by the chosen column; an unknown column falls back to the list's default; no sort at all = the server order. Ties keep the server order. */
+  /** Sorted by the chosen column; an unknown column falls back to the list's default; no sort at all = the server order. Ties keep the server order.
+      A key in spec.sortBlanksLast puts its blank values ('' / null) last whichever way it sorts. */
   function sortRows(rows, sort) {
     var key = sort && SORTS[sort.key] ? sort.key : (DEFAULT_SORT ? DEFAULT_SORT.key : null);
     if (!key) return (rows || []).slice();
     var dir = sort ? (sort.dir === 'asc' ? 1 : -1) : (DEFAULT_SORT.dir === 'asc' ? 1 : -1), get = SORTS[key];
+    var bl = BLANKS_LAST.indexOf(key) >= 0;
+    function isBlank(k) { return k == null || k === ''; }
     return (rows || []).map(function (r, i) { return { r: r, i: i, k: get(r) }; })
-      .sort(function (a, b) { var c = a.k < b.k ? -1 : a.k > b.k ? 1 : 0; return (c * dir) || (a.i - b.i); })
+      .sort(function (a, b) {
+        if (bl) { var ab = isBlank(a.k), bb = isBlank(b.k); if (ab !== bb) return ab ? 1 : -1; if (ab) return a.i - b.i; }
+        var c = a.k < b.k ? -1 : a.k > b.k ? 1 : 0; return (c * dir) || (a.i - b.i);
+      })
       .map(function (o) { return o.r; });
   }
 
@@ -181,7 +189,8 @@ function listCore(spec) {
  *        quick.storeKey + quick.default: a new browser tab opens on the default; the choice (All too) is kept for this tab
  *        (a link chosen by initial() returning true wins, and is kept),
  *      countable: window function name (r) -> boolean — only these rows are counted beside the choices (Consultations: the date range),
- *      sortReset: 'newest case first' — the list's normal order has no column, so a column sort shows as a chip whose × goes back to it }
+ *      sortReset: 'newest case first' (or a function(state) giving the words) — the list's normal order has no column, so a column
+        sort shows as a chip whose × goes back to it }
  * A column: { id, label, title, menu, facets: [...], flags: [...], date: true, note, sort, sortText: [..], sortDirs: [first, second] }
  */
 function listTableUi(LT, o, win) {
@@ -264,14 +273,16 @@ function listTableUi(LT, o, win) {
   }
 
   function countText(shown, total) { return o.countText ? o.countText(shown, total) : '(' + shown + (shown !== total ? ' of ' + total : '') + ')'; }
-  /* The list's normal order has no column (Cases: newest case first): a column sort shows as a chip; its × goes back. */
+  /* The list's normal order has no column (Cases: newest case first; on a view tab Monday's order): a column sort shows as
+     a chip; its × goes back. o.sortReset is the words for the normal order, or a function(state) giving them. */
+  function resetText() { return typeof o.sortReset === 'function' ? o.sortReset(state) : o.sortReset; }
   function sortChip() {
-    var d = LT.DEFAULT_SORT, st = state.sort;
-    if (!o.sortReset || !d || !st || (st.key === d.key && st.dir === d.dir)) return '';
+    var d = LT.DEFAULT_SORT, st = state.sort, reset = resetText();
+    if (!reset || !d || !st || (st.key === d.key && st.dir === d.dir)) return '';
     var c = null; for (var i = 0; i < COLS.length; i++) if (COLS[i].sort === st.key) c = COLS[i];
     if (!c) return '';
     var t = 'Sorted: ' + c.label + ' (' + c.sortText[Math.max(0, (c.sortDirs || []).indexOf(st.dir))] + ')';
-    return '<span class="q-chip q-chip-sort">' + esc(t) + '<button type="button" data-sortreset="1" aria-label="Back to the normal order: ' + esc(o.sortReset) + '" title="Back to ' + esc(o.sortReset) + '">×</button></span>';
+    return '<span class="q-chip q-chip-sort">' + esc(t) + '<button type="button" data-sortreset="1" aria-label="Back to the normal order: ' + esc(reset) + '" title="Back to ' + esc(reset) + '">×</button></span>';
   }
   function renderChips(shown, total) {
     var box = doc.getElementById(ids.chips), list = LT.chips(state), cnt = doc.getElementById(ids.count), sc = sortChip();
@@ -347,8 +358,11 @@ function listTableUi(LT, o, win) {
   var started = false;
   function apply(why) {
     var rows = LT.sortRows(LT.filterRows(ROWS, state), state.sort);
-    /* h.without(f): how many rows pass every filter except f (an empty list can say why it is empty) */
-    var h = { total: ROWS.length, without: function (f) { return countRows().filter(function (r) { return LT.passes(r, state, f); }).length; } };
+    /* h.without(f): how many rows pass every filter except f (an empty list can say why it is empty);
+       h.defaultSort: true when the list is in its normal order (no column sort chosen) */
+    var d = LT.DEFAULT_SORT, cur = state.sort;
+    var h = { total: ROWS.length, without: function (f) { return countRows().filter(function (r) { return LT.passes(r, state, f); }).length; },
+      defaultSort: !d || !cur || (cur.key === d.key && cur.dir === d.dir) };
     var out = win[o.render](rows, why || 'filter', state, h);
     var shown = rows.length, total = ROWS.length;
     if (typeof out === 'number') shown = out;
@@ -496,6 +510,8 @@ function listTableUi(LT, o, win) {
     apply: function (why) { apply(why || 'filter'); },
     close: function () { close(false); },
     label: function (facet, v) { return LT.labelOf(facet, v); },
+    /** "Clear filters" from elsewhere on the page (the Client Master "Filtered" line): the same as the chips' button — the tab and the sort stay. */
+    clearFilters: function () { state = LT.clearAll(state); setSearch(''); close(false); apply('filter'); },
   };
   win[o.api] = api;
   return api;

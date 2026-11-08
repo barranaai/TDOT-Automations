@@ -23,7 +23,8 @@ function renderRoute(path) {
 }
 
 // 2026-11-05: Stage / Health / Manager are filters in the column headers (cs-headrow), with chips (cs-chips).
-const CASES_ONLY   = ['all-cases-body', 'search-box', 'cs-headrow', 'cs-chips', 'table-count', 'pagination'];
+// Block 3: the view tabs (cs-quick) and the box above the table (cm-head).
+const CASES_ONLY   = ['all-cases-body', 'search-box', 'cs-headrow', 'cs-chips', 'table-count', 'pagination', 'cs-quick', 'cm-head'];
 const SUMMARY_ONLY = ['kpi-total', 'kpi-red', 'act-count-deadline', 'act-list-behind', 'chart-health', 'chart-stage',
                       // the monthly Reporting figures (from the Consultations page until 2026-11-05)
                       'reporting', 'kpi-month', 'kpi-body',
@@ -131,13 +132,15 @@ test('dashboardService requests and maps the Monday created_at', () => {
   assert.match(src, /createdAt:\s+item\.created_at/, 'and mapped onto the case object');
 });
 
-test('the top bar has a Summary tab; it is the active one on the summary view, Cases on the cases view', async () => {
+test('the top bar has a Summary tab; it is the active one on the summary view, Client Master (was Cases) on the cases view', async () => {
   const active = (html) => [...html.matchAll(/<a href="([^"]+)" class="nav-lnk active"/g)].map((m) => m[1]);
   const summary = await renderRoute('/summary');
   const cases = await renderRoute('/');
   for (const html of [summary, cases]) assert.match(html, /<a href="\/admin\/dashboard\/summary" class="nav-lnk[^"]*"[^>]*>[\s\S]{0,120}Summary<\/span>/);
   assert.deepEqual(active(summary), ['/admin/dashboard/summary']);
   assert.deepEqual(active(cases), ['/admin/dashboard']);
+  // block 3: the same link and active key, the label "Client Master"
+  for (const html of [summary, cases]) assert.match(html, /<a href="\/admin\/dashboard" class="nav-lnk[^"]*" title="Client Master"[^>]*>[\s\S]{0,120}Client Master<\/span>/);
 });
 
 test('the needs-attention list loads with the summary page and only there, and sits above the KPI figures', async () => {

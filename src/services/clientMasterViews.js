@@ -236,8 +236,36 @@ function dropdownIds(rawValue) {
   } catch (_) { return []; }
 }
 
+// The tab tooltips: each says the Monday view's filter in plain words.
+const HINTS = {
+  assigning: "Like Monday's Assigning view: open stages (not Application Submitted, Cancelled, Profile Created/Linked/Reviewed/Updated, Task Done, Ads posted, LMIA Submitted or empty), not in Leads, Cancel or TEST. Grouped by Case Stage.",
+  deadlines: "Like Monday's Deadlines view: Phase filled in, and the stage is not Application Submitted, ADR, Profile Created/Linked/Reviewed/Updated, Task Done or LMIA Submitted. So Cancelled, Ads posted and no-stage cases with a Phase show too, and so do rows in the Leads, Cancel or TEST groups, as on Monday. Grouped by Phase.",
+  mahesh: "Like Monday's Mahesh view: Phase filled in, and the stage is not Application Submitted, Cancelled, Profile Created/Linked/Reviewed/Updated, Task Done or LMIA Submitted. So ADR, Ads posted and no-stage cases with a Phase show too, and so do rows in the Leads, Cancel or TEST groups, as on Monday. Grouped by Phase, soonest Actual Deadline first (no date last).",
+  eeita: "Like Monday's EE after ITA view: case type Canadian Experience Class (EE after ITA), open stages (not Application Submitted, Cancelled, Profile Created/Linked/Reviewed/Updated, Task Done, Ads posted or LMIA Submitted), not in Leads, Cancel or TEST. Grouped by board group.",
+};
+const PRE_ONBOARDING_INDEX = 12;   // Case Stage "Pre-Onboarding" (label ids read 2026-11-08)
+// What the page adds above / inside each tab (display only): Assigning the stage counts and the no-officer line;
+// Deadlines and Mahesh the half-month windows, the Real / Imaginary counts on each Phase heading and the two flags.
+const PAGE_EXTRAS = { assigning: { stageStrip: true }, deadlines: { deadlineBox: true }, mahesh: { deadlineBox: true } };
+
+/**
+ * What the page needs to draw the tabs (plain data, JSON for the page script):
+ * per view its key, label, tooltip, what it groups by ('stage' | 'phase' | 'board'),
+ * the heading order mode + direction, and its sort (Mahesh: Actual Deadline).
+ */
+function pageViews() {
+  const BY = { stageIdx: 'stage', phaseIdx: 'phase', groupId: 'board' };
+  return VIEWS.map((v) => ({
+    key: v.key, label: v.label, hint: HINTS[v.key] || '', mondayViewId: v.mondayViewId,
+    by: BY[v.groupBy.field], dir: v.groupBy.direction, groupOrder: v.groupOrder,
+    sort: v.sort.length ? { field: v.sort[0].field, dir: v.sort[0].direction } : null,
+    stageStrip: !!(PAGE_EXTRAS[v.key] && PAGE_EXTRAS[v.key].stageStrip),
+    deadlineBox: !!(PAGE_EXTRAS[v.key] && PAGE_EXTRAS[v.key].deadlineBox),
+  }));
+}
+
 module.exports = {
-  VIEWS, VIEW_KEYS, VIEW_LABELS, EMPTY_INDEX, STAGE_COL, PHASE_COL, TYPE_COL,
+  VIEWS, VIEW_KEYS, VIEW_LABELS, EMPTY_INDEX, STAGE_COL, PHASE_COL, TYPE_COL, PRE_ONBOARDING_INDEX, pageViews,
   view: (key) => BY_KEY[key] || null,
   viewsOf, statusIndex, dropdownIds, compileView,
   _DEFINITIONS: DEFINITIONS,

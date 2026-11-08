@@ -65,15 +65,15 @@ const SHARED_CSS_VARS = `
 //  destinations — the Dashboard + Engine Controls links were retired so the
 //  portal reads as a consultants-only tool. Those pages still render this bar
 //  and remain reachable by direct URL (/admin/dashboard, /admin/engines).
-//  activePage: 'leads' | 'consultations' | 'dashboard' (Cases) | 'summary' (others render the bar without an active link)
+//  activePage: 'leads' | 'consultations' | 'dashboard' (Client Master) | 'summary' (others render the bar without an active link)
 function buildNavHeader(activePage) {
   const isConsult = activePage === 'consultations';
   const isRetain  = activePage === 'retainers';   // Retainers & follow-ups — its own page since 2026-11-05
   const isLeads   = activePage === 'leads';
   // The dashboard's Summary view (needs-attention list + figures and charts).
   const isSummary = activePage === 'summary';
-  // The dashboard is the firm-wide Cases hub; the per-case cockpit also passes
-  // 'dashboard', so "Cases" stays highlighted while viewing a single case.
+  // The dashboard is the firm-wide Client Master page (called "Cases" until block 3); the per-case
+  // cockpit also passes 'dashboard', so "Client Master" stays highlighted while viewing a single case.
   const isCases   = activePage === 'dashboard';
 
   return `<header class="admin-hdr">
@@ -92,8 +92,8 @@ function buildNavHeader(activePage) {
       <a href="/admin/retainers" class="nav-lnk${isRetain ? ' active' : ''}" title="Retainers &amp; follow-ups"${isRetain ? ' aria-current="page"' : ''}>
         <span class="nav-icon" aria-hidden="true">🤝</span> <span class="nav-txt">Retainers</span>
       </a>
-      <a href="/admin/dashboard" class="nav-lnk${isCases ? ' active' : ''}" title="Cases"${isCases ? ' aria-current="page"' : ''}>
-        <span class="nav-icon" aria-hidden="true">🗂️</span> <span class="nav-txt">Cases</span>
+      <a href="/admin/dashboard" class="nav-lnk${isCases ? ' active' : ''}" title="Client Master"${isCases ? ' aria-current="page"' : ''}>
+        <span class="nav-icon" aria-hidden="true">🗂️</span> <span class="nav-txt">Client Master</span>
       </a>
       <a href="/admin/dashboard/summary" class="nav-lnk${isSummary ? ' active' : ''}" title="Summary"${isSummary ? ' aria-current="page"' : ''}>
         <span class="nav-icon" aria-hidden="true">📊</span> <span class="nav-txt">Summary</span>
@@ -270,8 +270,10 @@ const NAV_CSS = `
   }
   /* Tighter, so the words "Sign in with Monday" stay in view. Max-width only
      (no "min-width: 901px"): at a scaled screen's in-between widths such as
-     900.8px a min/max pair would leave a gap. The blocks below override it. */
-  @media (max-width: 1140px) {
+     900.8px a min/max pair would leave a gap. The blocks below override it.
+     1190px since "Client Master" (2026-11-08): with a long name beside them the link words are squeezed
+     below 1168px; a page scrollbar takes ~17px. */
+  @media (max-width: 1190px) {
     .admin-hdr-right:has(.hdr-who:not(:empty)) #sys-text { display: none; }   /* the light keeps its dot and tooltip */
     .admin-brand { padding-right: 12px; }
     .admin-divider { margin-right: 10px; }
@@ -280,21 +282,22 @@ const NAV_CSS = `
     .who-chip { padding: 5px 10px; }
     .who-chip.on .who-txt { max-width: 110px; }   /* a long name is cut with "…"; the tooltip has it all */
   }
-  /* Six links since 2026-11-05 (Retainers). Measured again with the real bar from 360 to 1920px: the link words
-     need 607px; with "Sign in with Monday" or a name beside them they are squeezed below 1010px, so the chip's
-     words go first (its tooltip still says who); a page scrollbar takes ~17px, hence the margins. */
-  @media (max-width: 1030px) {
+  /* Six links since 2026-11-05 (Retainers); "Cases" became "Client Master" in block 3 (2026-11-08). Measured again
+     with the real bar from 360 to 1920px: the link words need 651px; with "Sign in with Monday" or a name beside
+     them they are squeezed below 1051px, so the chip's words go first (its tooltip still says who); a page
+     scrollbar takes ~17px, hence the margins. */
+  @media (max-width: 1070px) {
     .who-chip .who-txt { display: none; }   /* the icon only; its tooltip names you, or says "Sign in with Monday" */
     .who-chip { padding: 5px 8px; }
   }
-  @media (max-width: 900px) {
+  @media (max-width: 945px) {
     .admin-brand { padding-right: 12px; }
     .admin-divider { margin-right: 10px; }
     .nav-lnk { padding: 7px 10px; }
     .admin-hdr-right { gap: 8px; }
     #sys-text { display: none; }
   }
-  @media (max-width: 900px) {   /* the six link words fit from 881px up; with a page scrollbar, from ~898px */
+  @media (max-width: 945px) {   /* the six link words fit from 925px up (2026-11-08, "Client Master"); with a page scrollbar, from ~942px */
     .admin-hdr { padding: 0 12px; }
     .nav-lnk .nav-txt { display: none; }   /* each link keeps its title */
     .nav-lnk { padding: 7px 8px; }

@@ -108,19 +108,26 @@ function retainerListOpts(ctx) {
   };
 }
 
-/* ctx: { healthOrder: { Red: 0, Orange: 1, Green: 2 } } */
+/* ctx: { healthOrder: { Red: 0, Orange: 1, Green: 2 },
+          views: the Client Master view tabs (clientMasterViews.pageViews(): [{ key, label, hint }…]), initial(state), onChange(state) } */
 function casesListSpec(ctx) {
   function s(v) { return String(v == null ? '' : v).trim(); }
   var HO = ctx.healthOrder || { Red: 0, Orange: 1, Green: 2 };
   function health(v) { return HO[v] !== undefined ? HO[v] : 2; }
   function num(v) { var n = Number(v); return (v === '' || v == null || isNaN(n)) ? -Infinity : n; }
   function txt(v) { return s(v).toLowerCase(); }
+  /* "Phase 8" before "Phase 11": numbers inside the text compare as numbers */
+  function natural(v) { return txt(v).replace(/[0-9]+/g, function (d) { return ('00000' + d).slice(-6); }); }
+  var VIEWS = ctx.views || [], VK = VIEWS.map(function (v) { return v.key; }), VL = {};
+  VIEWS.forEach(function (v) { VL[v.key] = v.label; });
   return {
     facets: {
       stage: { label: 'Stage', get: function (r) { return s(r.caseStage); }, none: 'No stage' },
       health: { label: 'Health', get: function (r) { return s(r.health); }, none: 'Not set', order: ['Red', 'Orange', 'Green'], fixed: true },
       // A case can have several managers ("A, B"): each is its own choice; whole names only.
       manager: { label: 'Manager', get: function (r) { return s(r.manager).split(',').map(s).filter(function (m) { return m && m !== 'Unassigned'; }); }, none: 'Unassigned' },
+      // The view tabs above the table (block 3): a row is in every Monday view it passes (worked out on the server).
+      view: { label: 'View', quick: true, fixed: true, order: VK, text: function (v) { return VL[v] || v; }, get: function (r) { return r.views || []; }, none: 'No view' },
     },
     sorts: {
       createdAt: function (r) { return s(r.createdAt); },
@@ -128,31 +135,49 @@ function casesListSpec(ctx) {
       clientName: function (r) { return txt(r.clientName); },
       caseType: function (r) { return txt(r.caseType); },
       caseStage: function (r) { return txt(r.caseStage); },
+      phase: function (r) { return natural(r.phase); },
+      actualDeadline: function (r) { return s(r.actualDeadline); },
+      promisedDate: function (r) { return s(r.promisedDate); },
       health: function (r) { return health(r.health); },
       slaRisk: function (r) { return health(r.slaRisk); },
+      officer: function (r) { return txt(r.officer); },
       manager: function (r) { return txt(r.manager); },
       overallReadiness: function (r) { return num(r.overallReadiness); },
       daysElapsed: function (r) { return num(r.daysElapsed); },
     },
+    // a case with no date / phase / officer goes last, whichever way the column sorts (A → Z must not open on every blank)
+    sortBlanksLast: ['actualDeadline', 'promisedDate', 'phase', 'officer'],
     defaultSort: { key: 'createdAt', dir: 'desc' },   // newest case first
-    search: { chip: 'Search', text: function (r) { return [r.clientName, r.caseRef, r.caseType]; } },
+    search: { chip: 'Search', text: function (r) { return [r.clientName, r.caseRef, r.caseType, r.officer]; } },
   };
 }
 function casesListOpts(ctx) {
-  var AZ = ['A → Z', 'Z → A'], ASC = ['asc', 'desc'];
+  var AZ = ['A → Z', 'Z → A'], ASC = ['asc', 'desc'], SOON = ['Soonest first', 'Latest first'];
+  var VIEWS = ctx.views || [], hints = {};
+  VIEWS.forEach(function (v) { if (v.hint) hints[v.key] = v.hint; });
   return {
     key: 'tdot_list_cases',
     ids: { head: 'cs-headrow', chips: 'cs-chips', count: 'table-count', search: 'search-box', pop: 'cs-pop' },
     render: 'renderCasesList', api: 'CasesTable',
-    sortReset: 'newest case first',   // no column sorts by the creation time: a column sort shows as a chip whose × goes back
+    initial: ctx.initial, onChange: ctx.onChange,
+    /* The view tabs (block 3): All first (every case, newest first), then one per Monday view. No default: a new browser
+       tab opens on All; the tab shown is kept until the browser tab is closed. A link's ?view= opens that tab. */
+    quick: { facet: 'view', box: 'cs-quick', tabs: true, allLast: false, all: 'All', storeKey: 'tdot_list_cases_tab',
+      values: VIEWS.map(function (v) { return v.key; }), hints: hints },
+    /* No column sorts by the creation time (All) or by Monday's order (a view tab): a column sort shows as a chip whose × goes back. */
+    sortReset: function (st) { var v = st && st.sel && st.sel.view; return v && v.length ? "Monday's order for this view" : 'newest case first'; },
     countText: function (shown, total) { return shown + (shown !== total ? ' of ' + total : '') + ' case' + (total !== 1 ? 's' : ''); },
     cols: [
       { id: 'caseRef', label: 'Case Ref', sort: 'caseRef', sortText: AZ, sortDirs: ASC },
       { id: 'clientName', label: 'Client', sort: 'clientName', sortText: AZ, sortDirs: ASC },
       { id: 'caseType', label: 'Type', sort: 'caseType', sortText: AZ, sortDirs: ASC },
       { id: 'caseStage', label: 'Stage', menu: 'facet', facets: ['stage'], sort: 'caseStage', sortText: AZ, sortDirs: ASC },
+      { id: 'phase', label: 'Phase', sort: 'phase', sortText: AZ, sortDirs: ASC },
+      { id: 'deadline', label: 'Deadline', title: 'Deadline Type (Real or Imaginary), the Actual Deadline, and its half-month window', sort: 'actualDeadline', sortText: SOON, sortDirs: ASC },
+      { id: 'promised', label: 'Promised', title: 'The Internal Deadline (the date promised on an Imaginary deadline)', sort: 'promisedDate', sortText: SOON, sortDirs: ASC },
       { id: 'health', label: 'Health', menu: 'facet', facets: ['health'], sort: 'health', sortText: ['Red first', 'Green first'], sortDirs: ASC },
       { id: 'slaRisk', label: 'SLA Risk', sort: 'slaRisk', sortText: ['Red first', 'Green first'], sortDirs: ASC },
+      { id: 'officer', label: 'Support Officer', title: 'Case Support Officer', sort: 'officer', sortText: AZ, sortDirs: ASC },
       { id: 'manager', label: 'Manager', menu: 'facet', facets: ['manager'], sort: 'manager', sortText: AZ, sortDirs: ASC },
       { id: 'overallReadiness', label: 'Readiness', sort: 'overallReadiness', sortText: ['Highest first', 'Lowest first'], sortDirs: ['desc', 'asc'] },
       { id: 'daysElapsed', label: 'Days', sort: 'daysElapsed', sortText: ['Most first', 'Fewest first'], sortDirs: ['desc', 'asc'] },

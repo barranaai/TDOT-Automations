@@ -10,10 +10,15 @@ const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS } = require('./adminShared');
 const { listTableScript, LIST_TABLE_CSS } = require('./listFilters');   // one filter look for every list (2026-11-05)
 const { casesListSpec, casesListOpts } = require('./listSpecs');
+// The Client Master view tabs (block 3): the Monday views as data, and the page's pure helpers (injected with toString).
+const clientMasterViews = require('../services/clientMasterViews');
+const { clientMasterWindows } = require('./clientMasterWindows');
+const { clientMasterUi } = require('./clientMasterUi');
 
 // ─── View bodies ──────────────────────────────────────────────────────────
 // The dashboard renders ONE of these (user directive 2026-08-05): /admin/dashboard
-// is the All Cases table only; everything else lives on /admin/dashboard/summary.
+// is the Client Master table only (renamed from "All Cases", block 3); everything
+// else lives on /admin/dashboard/summary.
 // Hoisted verbatim as static markup (neither block interpolates) so the split is
 // a swap, not a rewrite — and so the two views can never drift apart in the shell.
 const SUMMARY_BODY_HTML = `
@@ -268,8 +273,11 @@ const NEEDS_ATTENTION_HTML = `
 `;
 
 const ALL_CASES_BODY_HTML = `
-    <!-- ── All Cases Table ── -->
-    <div class="sec-hd">📋 All Cases</div>
+    <!-- ── Client Master table (was "All Cases"), with the Monday views as tabs (block 3) ── -->
+    <div class="sec-hd">📋 Client Master</div>
+    <div class="lt-tabs" id="cs-quick" role="tablist" aria-label="Client Master views"></div>
+    <!-- On a view tab: the data time, Print, the counts (Assigning) or the half-month windows (Deadlines, Mahesh). -->
+    <div id="cm-head" class="cm-head" aria-live="polite"></div>
     <div class="table-card">
       <!-- The filters are in the column headers, like every list (2026-11-05): listSpecs.js casesListSpec/Opts. -->
       <div class="table-toolbar">
@@ -280,13 +288,79 @@ const ALL_CASES_BODY_HTML = `
       <div class="tbl-wrap">
       <table class="data-table" id="all-cases-table">
         <thead>
-          <tr id="cs-headrow"><th>Case Ref</th><th>Client</th><th>Type</th><th>Stage</th><th>Health</th><th>SLA Risk</th><th>Manager</th><th>Readiness</th><th>Days</th><th>Status</th><th></th></tr>
+          <tr id="cs-headrow"><th>Case Ref</th><th>Client</th><th>Type</th><th>Stage</th><th>Phase</th><th>Deadline</th><th>Promised</th><th>Health</th><th>SLA Risk</th><th>Support Officer</th><th>Manager</th><th>Readiness</th><th>Days</th><th>Status</th><th></th></tr>
         </thead>
         <tbody id="all-cases-body"></tbody>
       </table>
       </div>
       <div class="pagination" id="pagination"></div>
     </div>
+`;
+
+// The Client Master page's own look (block 3): the view tabs' header box, the group headings,
+// the deadline cells and flags, and print (landscape, the groups with their counts, no controls).
+const CM_CSS = `
+    #all-cases-table { min-width:1260px; }   /* 15 columns: the table scrolls sideways inside its box on a narrow screen */
+    /* the header's hidden "Actions" words are position:absolute: without this they are placed against the page, at the table's
+       far right, and the whole page scrolls sideways on a phone (found by the 375 px check) */
+    .table-card .tbl-wrap { position:relative; }
+    #cs-quick { margin:0 0 10px; }
+    .cm-head { margin:0 0 12px; display:flex; flex-direction:column; gap:8px; }
+    .cm-head:empty { display:none; }
+    .cm-top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    .cm-title { font-size:15px; font-weight:800; color:var(--navy); }
+    .cm-dataat { font-size:12px; color:#64748b; font-weight:600; }
+    .cm-print { margin-left:auto; border:1px solid #e2e8f0; background:#fff; color:var(--navy); border-radius:8px; padding:6px 12px; font:inherit; font-size:12.5px; font-weight:700; cursor:pointer; }
+    .cm-print:hover { border-color:var(--navy); }
+    .cm-filtered { font-size:12.5px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:6px 10px; display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
+    .cm-clear { border:none; background:none; color:#92400e; font:inherit; font-weight:700; text-decoration:underline; cursor:pointer; padding:2px 4px; }
+    .cm-note { font-size:12px; color:#64748b; }
+    .cm-strip { display:flex; flex-wrap:wrap; gap:6px; }
+    .cm-st { background:#fff; border:1px solid #e2e8f0; border-radius:999px; padding:3px 11px; font-size:12px; color:#334155; }
+    .cm-st b { color:var(--navy); margin-left:2px; font-variant-numeric:tabular-nums; }
+    .cm-line { font-size:12.5px; color:#334155; }
+    .cm-wins { display:flex; flex-wrap:wrap; gap:8px; }
+    .cm-win-box { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:7px 11px; font-size:12px; color:#334155; }
+    .cm-win-box.now { border-color:#93c5fd; background:#eff6ff; }
+    .cm-win-box.rest { align-self:stretch; display:flex; align-items:center; color:#64748b; }
+    .cm-win-l { font-weight:700; color:var(--navy); }
+    .cm-win-l b, .cm-win-n b { font-variant-numeric:tabular-nums; }
+    .cm-win-n { font-size:11.5px; color:#64748b; }
+    .data-table tr.cm-grp td { background:#f1f5f9; padding:8px 14px; font-size:12px; color:#334155; border-bottom:1px solid #e2e8f0; }
+    .data-table tr.cm-grp:hover td { background:#f1f5f9; }
+    /* the heading's words stay in view when the table is scrolled sideways (sticky on the td itself does nothing: it is as wide as the table) */
+    .cm-grp-t { position:sticky; left:14px; display:inline-block; white-space:nowrap; }
+    .cm-grp-t b { color:var(--navy); }
+    .cm-grp-c { color:#64748b; font-weight:500; }
+    .cm-type { display:inline-block; border-radius:6px; padding:1px 6px; font-size:10px; font-weight:700; }
+    .cm-type.real { background:#fef2f2; color:#b91c1c; }
+    .cm-type.imag { background:#f5f3ff; color:#6d28d9; }
+    .cm-date { white-space:nowrap; }
+    .cm-win { display:inline-block; border-radius:6px; padding:1px 6px; font-size:10px; font-weight:600; background:#f1f5f9; color:#475569; white-space:nowrap; }
+    .cm-flag { display:inline-block; border-radius:6px; padding:1px 6px; font-size:10px; font-weight:700; white-space:nowrap; }
+    .cm-flag.slide { background:#fff7ed; color:#c2410c; border:1px solid #fed7aa; }
+    .cm-flag.passed { background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; }
+    @media (max-width: 760px) { .cm-print { font-size:16px; } }
+    /* Print (all four view tabs): landscape; the tab name, the data time, the counts or windows, and the groups with their counts —
+       without the top bar, the tabs, the filters, the pages, the delete column or any button. */
+    @page { size: landscape; margin: 10mm; }
+    @media print {
+      body { background:#fff; }
+      .admin-hdr, .refresh-bar, .view-switch, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .pagination, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop { display:none !important; }
+      #cs-headrow th:last-child, #all-cases-table td.cm-del { display:none; }
+      .wrap { padding:0; }
+      .dash-header { margin:0 0 6px; }
+      .sec-hd { display:none; }
+      .table-card { box-shadow:none; border:0; overflow:visible; margin:0; }
+      .tbl-wrap { overflow:visible; }
+      #all-cases-table { min-width:0; font-size:10pt; }
+      .data-table th, .data-table td { padding:3px 5px; }
+      .data-table th { font-size:8pt; }
+      .data-table tr.row-red, .data-table tr.row-orange { background:none; }
+      tr.cm-grp { break-after:avoid; page-break-after:avoid; }
+      .cm-grp-t { position:static; }
+      .cm-head { gap:4px; }
+    }
 `;
 
 function buildDashboardHTML(view = 'cases') {
@@ -296,7 +370,7 @@ function buildDashboardHTML(view = 'cases') {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TDOT — ${isSummary ? 'Summary' : 'All Cases'}</title>
+  <title>TDOT — ${isSummary ? 'Summary' : 'Client Master'}</title>
   ${isSummary ? '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>' : '<!-- Chart.js: summary view only. `Chart` is referenced ONLY inside the chart renderers, which the cases view never calls — keep it that way, or this page throws on load. -->'}
   <style>
     ${SHARED_CSS_VARS}
@@ -358,7 +432,7 @@ function buildDashboardHTML(view = 'cases') {
       letter-spacing: -.6px; margin: 0 0 4px;
     }
     .dash-subtitle { font-size: 12px; color: #94a3b8; margin: 0; font-weight: 500; }
-    /* Switch between the two dashboard views (All Cases ⇄ Summary). */
+    /* Switch between the two dashboard views (Client Master ⇄ Summary). */
     .view-switch {
       align-self: center; text-decoration: none; white-space: nowrap;
       padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 700;
@@ -713,7 +787,7 @@ function buildDashboardHTML(view = 'cases') {
     .mgr-readiness-label { color: #94a3b8; font-weight: 600; }
     .mgr-readiness-val   { font-weight: 800; color: var(--navy); }
 
-    /* ── At-Risk / All Cases Tables ─────────────────────────────── */
+    /* ── At-Risk / Client Master Tables ─────────────────────────── */
     .table-card {
       background: white; border-radius: 14px;
       box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
@@ -899,11 +973,11 @@ function buildDashboardHTML(view = 'cases') {
     ${DELETE_UI_CSS}
     /* The Cases list: the shared filter look (listFilters.js) — header funnels, chips, sort by the column name. */
     ${LIST_TABLE_CSS}
-    #all-cases-table { min-width:960px; }
     /* Headers sort through their name buttons now (Cases) — and the Summary at-risk table never sorted: no pointer, no hover. */
     .data-table th { cursor:default; }
     .data-table th:hover { background:#f8fafc; color:#94a3b8; }
     .cs-chips { padding:10px 20px 0; margin:0; }
+    ${isSummary ? '' : CM_CSS}
   </style>
 </head>
 <body>
@@ -918,7 +992,7 @@ ${buildNavHeader(isSummary ? 'summary' : 'dashboard')}
   </div>
   <div class="refresh-bar-right">
     <span id="hdr-updated" class="refresh-updated"></span>
-    <button id="refresh-btn" class="refresh-btn" onclick="loadData()">↻ Refresh</button>
+    <button id="refresh-btn" class="refresh-btn" onclick="loadData(true)" title="Read Monday again (when the data shown is more than 30 seconds old)">↻ Refresh</button>
   </div>
 </div>
 
@@ -928,12 +1002,12 @@ ${buildNavHeader(isSummary ? 'summary' : 'dashboard')}
   <!-- ── Page Header (shown at once, not only after the figures load) ── -->
   <div class="dash-header">
     <div>
-      <h1 class="dash-title">${isSummary ? 'Summary' : 'All Cases'}</h1>
+      <h1 class="dash-title">${isSummary ? 'Summary' : 'Client Master'}</h1>
       <p class="dash-subtitle">${isSummary
         ? 'Portfolio overview, workload and cases needing attention · TDOT Immigration Platform'
-        : 'Every case, searchable and sortable · TDOT Immigration Platform'}</p>
+        : 'The Client Master board, with its Monday views as tabs'}</p>
     </div>
-    <a class="view-switch" href="${isSummary ? '/admin/dashboard' : '/admin/dashboard/summary'}">${isSummary ? '📋 All Cases' : '📊 Summary'}</a>
+    <a class="view-switch" href="${isSummary ? '/admin/dashboard' : '/admin/dashboard/summary'}">${isSummary ? '📋 Client Master' : '📊 Summary'}</a>
   </div>
 
   ${isSummary ? NEEDS_ATTENTION_HTML : ''}
@@ -972,6 +1046,11 @@ var _page     = 1;
 var PAGE_SIZE = 25;
 
 var HEALTH_ORDER = { Red: 0, Orange: 1, Green: 2 };
+// The Client Master view tabs (block 3) — from clientMasterViews.pageViews(): key, label, hint, grouping, order.
+var CM_VIEWS = ${JSON.stringify(clientMasterViews.pageViews())};
+var CM_PRE_ONBOARDING = ${clientMasterViews.PRE_ONBOARDING_INDEX};   // Case Stage "Pre-Onboarding" (label index)
+var CS_COLSPAN = ${casesListOpts({}).cols.length};   // the table's columns (listSpecs casesListOpts), for full-width rows
+${isSummary ? '' : 'var CMW = (' + clientMasterWindows.toString() + ')(); var CMU = (' + clientMasterUi.toString() + ')(CMW);'}
 
 /* ── Count-up animation ──────────────────────────────────────────── */
 function countUp(id, target) {
@@ -994,7 +1073,9 @@ function countUp(id, target) {
 ${SHARED_AUTH_JS}
 
 /* ── Load data ───────────────────────────────────────────────────── */
-function loadData() {
+// fresh: the Refresh button — the server asks Monday again when its copy is more than 30 s old
+// (the first load and a reload after a delete use the copy as usual).
+function loadData(fresh) {
   var key = getKey();
   if (VIEW === 'summary') naLoad();   // the needs-attention list loads on its own
   var btn = document.getElementById('refresh-btn');
@@ -1008,7 +1089,7 @@ function loadData() {
   // Identity-aware endpoint: send the admin key if we have one (→ see all),
   // otherwise the Monday staff cookie is sent automatically (→ your cases).
   var headers = key ? { 'X-Api-Key': key } : {};
-  fetch('/admin/dashboard-stats', { headers: headers, credentials: 'same-origin' })
+  fetch('/admin/dashboard-stats' + (fresh === true ? '?fresh=1' : ''), { headers: headers, credentials: 'same-origin' })
     .then(function(r) {
       if (r.status === 401) {
         return r.json().then(function(j) {
@@ -1028,6 +1109,8 @@ function loadData() {
       });
     })
     .then(function(data) {
+      /* a bad answer never replaces the data the rows on screen came from (the tab counts and headings read _data) */
+      if (VIEW !== 'summary' && (!data || !Array.isArray(data.cases))) throw new Error('the case list did not come back');
       _data = data;
       window.TDOT_IS_ADMIN = !!(data.viewer && data.viewer.isAdmin);
       render(data);
@@ -1047,8 +1130,10 @@ function loadData() {
       } else if (data.viewer && data.viewer.scope === 'all') {
         scope = ' · 🗂️ All cases' + (data.viewer.name && data.viewer.name !== 'Admin' ? ' — ' + data.viewer.name : '');
       }
-      document.getElementById('hdr-updated').textContent =
-        'Updated: ' + gen.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + scope;
+      /* The Client Master page says when MONDAY was read (dataAt), not when this answer was made: the copy can be up to 20 min old. */
+      document.getElementById('hdr-updated').textContent = VIEW === 'summary'
+        ? 'Updated: ' + gen.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + scope
+        : (cmDataTimeText(data) || 'Monday data') + scope;
     })
     .catch(function(e) {
       if (e.message === 'Unauthorized') return; // page is navigating away — suppress error flash
@@ -1666,22 +1751,126 @@ function renderAtRisk(cases) {
   });
 }
 
-/* ── All Cases Table ──────────────────────────────────────────────── */
+/* ── Client Master table (was "All Cases") ───────────────────────── */
 // New data (the first load, Refresh, after a delete): the search, the header
-// filters, the sort AND the page stay as they were — the list never shows every
-// case while a filter is still on screen.
+// filters, the sort, the tab AND the page stay as they were — the list never
+// shows every case while a filter is still on screen.
 function initAllCasesTable(data) {
   if (!data || !Array.isArray(data.cases)) throw new Error('the case list did not come back');   // the rows on screen stay
   CasesTable.setRows(data.cases);
 }
-// The shared engine hands over the filtered, sorted cases. A new filter or sort
-// goes back to page 1; new data keeps the page (pulled back if the list shrank).
-function renderCasesList(rows, why) {
+
+/* ── The view tabs (block 3) ──────────────────────────────────────
+   All = every case you may see, newest first, 25 a page (as before). The other tabs are
+   exact copies of four Monday views on the Client Master board (the same rows, grouping
+   and order — worked out on the server, clientMasterViews.js): grouped, all rows on one
+   page. The counts above the table come from the rows on screen and never change them.
+   A link opens a tab: /admin/dashboard?view=assigning (deadlines, mahesh, eeita; all). */
+function cmViewDef(key) { for (var i = 0; i < CM_VIEWS.length; i++) if (CM_VIEWS[i].key === key) return CM_VIEWS[i]; return null; }
+function cmView(st) { var v = st && st.sel && st.sel.view; return v && v.length ? cmViewDef(v[0]) : null; }
+function cmInitial(st) {
+  var p = null;
+  try { p = new URLSearchParams(window.location.search).get('view'); } catch (e) { return false; }
+  if (p === null) return false;
+  var t = String(p).trim().toLowerCase();
+  if (!t || t === 'all') { delete st.sel.view; return true; }
+  if (!cmViewDef(t)) {   // a tab we do not have: not a link — and the address stops naming it
+    try { var u = new URL(window.location.href); u.searchParams.delete('view'); history.replaceState(null, '', u.toString()); } catch (e) {}
+    return false;
+  }
+  st.sel.view = [t];
+  return true;
+}
+function cmOnChange(st) {
+  var v = cmView(st);
+  try { var u = new URL(window.location.href); if (v) u.searchParams.set('view', v.key); else u.searchParams.delete('view'); history.replaceState(null, '', u.toString()); } catch (e) {}
+}
+function cmToday() { return CMW.torontoToday(Date.now()); }
+function cmDay(day) { var t = CMW.shortDay(day); return t ? t + ', ' + String(day).slice(0, 4) : ''; }
+function cmHm(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
+/* when MONDAY was read (dataAt) — never when the answer was made (generatedAt): that would make an old copy look new */
+function cmDataTimeText(data) { var t = cmHm((data && data.dataAt) || ''); return t ? 'Monday data from ' + t : ''; }
+/* The rows of a view this person may see (after RBAC on the server, before their own search and filters). */
+function cmInView(key) { return ((_data && _data.cases) || []).filter(function(c) { return (c.views || []).indexOf(key) >= 0; }).length; }
+function cmNoneDash() { return '<span style="color:var(--light)">—</span>'; }
+
+// The shared engine hands over the filtered, sorted cases. A new filter, sort or
+// tab goes back to page 1; new data keeps the page (pulled back if the list shrank).
+function renderCasesList(rows, why, st, h) {
   _filtered = rows;
   if (why !== 'data') _page = 1;
+  var v = cmView(st);
+  if (v) return renderViewTable(v, rows, st, !(h && h.defaultSort === false));
   var pages = Math.max(1, Math.ceil(_filtered.length / PAGE_SIZE));
   if (_page > pages) _page = pages;
+  renderCmHead(null, rows, st);
   renderTablePage();
+}
+
+/* A view tab: Monday's grouping, Monday's order inside (unless a column sort is chosen — mondayOrder false), no pages. */
+function renderViewTable(v, rows, st, mondayOrder) {
+  var ordered = mondayOrder ? CMU.viewOrder(v, rows) : rows;
+  var groups = CMU.groupRows(v, ordered, (_data && _data.meta) || null);
+  var tbody = document.getElementById('all-cases-body');
+  tbody.innerHTML = '';
+  var inView = cmInView(v.key);
+  renderCmHead(v, rows, st, groups, inView);
+  document.getElementById('pagination').innerHTML = '';
+  if (!rows.length) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="' + CS_COLSPAN + '" style="text-align:center;color:var(--muted);padding:32px">' +
+      (inView ? 'No cases match the current filters.' : 'No cases in the ' + escHtml(v.label) + ' view right now.') + '</td>';
+    tbody.appendChild(tr);
+    return { shown: 0, total: inView };
+  }
+  var today = cmToday(), deadlineTab = !!v.deadlineBox;
+  groups.forEach(function(g) {
+    var h = document.createElement('tr');
+    h.className = 'cm-grp';
+    var extra = '';
+    if (deadlineTab) {
+      var tc = CMU.typeCounts(g.rows);
+      extra = ' <span class="cm-grp-c">— Real ' + tc.real + ' · Imaginary ' + tc.imaginary + ' · Not recorded ' + tc.none + '</span>';
+    }
+    h.innerHTML = '<td colspan="' + CS_COLSPAN + '"><span class="cm-grp-t"><b>' + escHtml(g.title) + '</b> · ' + g.rows.length + extra + '</span></td>';
+    tbody.appendChild(h);
+    g.rows.forEach(function(c) { tbody.appendChild(caseRow(c, v, today)); });
+  });
+  return { shown: rows.length, total: inView };
+}
+
+/* Above the table, on a view tab only: the tab name + the data time + Print, the Filtered line,
+   then Assigning's stage counts and no-officer line, or the half-month windows (Deadlines, Mahesh). */
+function renderCmHead(v, rows, st, groups, inView) {
+  var el = document.getElementById('cm-head');
+  if (!el) return;
+  if (!v) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  el.style.display = '';
+  var h = '<div class="cm-top"><span class="cm-title">' + escHtml(v.label) + '</span>' +
+    '<span class="cm-dataat" id="cm-dataat">' + escHtml(cmDataTimeText(_data)) + '</span>' +
+    '<button type="button" class="cm-print" id="cm-print" onclick="window.print()" title="Print this view (landscape)">🖨 Print</button></div>';
+  var fl = CMU.filteredLine(rows.length, inView, CMU.hasUserFilter(st, 'view'));
+  if (fl) h += '<div class="cm-filtered" id="cm-filtered">' + escHtml(fl.text) + '<span class="cm-clear-w"> · <button type="button" class="cm-clear" id="cm-clear" onclick="CasesTable.clearFilters()">Clear filters</button></span></div>';
+  if (_data && _data.viewer && _data.viewer.scope === 'assigned') h += '<div class="cm-note">Showing only your cases; ask an admin to see everyone’s.</div>';
+  if (v.stageStrip) {
+    h += '<div class="cm-strip" id="cm-strip">' + (groups || []).map(function(g) {
+      return '<span class="cm-st">' + escHtml(g.title) + ' <b>' + g.rows.length + '</b></span>';
+    }).join('') + '</div>';
+    var no = CMU.noOfficerCount(rows, CM_PRE_ONBOARDING);
+    h += '<div class="cm-line" id="cm-noofficer">No Support Officer: <b>' + no.n + '</b>' + (no.preOnboarding ? ' (' + no.preOnboarding + ' of them Pre-Onboarding)' : '') + '</div>';
+  }
+  if (v.deadlineBox) {
+    var box = CMW.windowsBox(rows, cmToday());
+    if (box) {
+      h += '<div class="cm-wins" id="cm-wins" role="group" aria-label="Half-month windows">' + box.windows.map(function(w, i) {
+        return '<div class="cm-win-box' + (i === 0 ? ' now' : '') + '" data-win="' + escHtml(w.key) + '"><div class="cm-win-l">' + (i === 0 ? 'Now · ' : '') + escHtml(w.label) + ' · <b>' + w.total + '</b></div>' +
+          '<div class="cm-win-n">Real ' + w.real + ' · Imaginary ' + w.imaginary + ' · Not recorded ' + w.none + '</div></div>';
+      }).join('') +
+      '<div class="cm-win-box rest"><div class="cm-win-n">Later <b data-n="later">' + box.later + '</b> · Earlier dates <b data-n="earlier">' + box.earlier + '</b> · No date <b data-n="nodate">' + box.noDate + '</b></div></div>' +
+      '</div>';
+    }
+  }
+  el.innerHTML = h;
 }
 
 function renderTablePage() {
@@ -1694,66 +1883,91 @@ function renderTablePage() {
 
   if (page.length === 0) {
     var tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="11" style="text-align:center;color:var(--muted);padding:32px">No cases match the current filters.</td>';
+    tr.innerHTML = '<td colspan="' + CS_COLSPAN + '" style="text-align:center;color:var(--muted);padding:32px">No cases match the current filters.</td>';
     tbody.appendChild(tr);
     renderPagination(0);
     return;
   }
 
-  page.forEach(function(c) {
-    var r = c.overallReadiness || 0;
-    var barCls = r >= 70 ? '' : (r >= 40 ? ' mid' : ' low');
-    var tr = document.createElement('tr');
-    tr.className = c.health === 'Red' ? 'row-red' : (c.health === 'Orange' ? 'row-orange' : '');
-    if (c.caseRef) {
-      tr.style.cursor = 'pointer';
-      tr.title = 'Open case cockpit';
-      tr.onclick = function() { window.location.href = '/admin/case/' + encodeURIComponent(c.caseRef); };
-    } else {
-      tr.title = 'No case reference yet — set the Case Type on this item in Monday and the reference (and cockpit) is created automatically.';
-    }
-    // No reference = the cockpit can't open. Say WHY and what unblocks it,
-    // instead of a silent dash: missing Case Type is the usual cause (the
-    // reference is derived from it); if the type IS set, assignment is just
-    // pending (caseRefService runs off the Case Type webhook).
-    var refCell;
-    if (c.caseRef) {
-      refCell = escHtml(c.caseRef);
-    } else if (!c.caseType || c.caseType === 'Unknown') {
-      refCell = '<span class="badge orange">Needs Case Type</span>';
-    } else {
-      refCell = '<span class="badge blue">Ref pending</span>';
-    }
-    tr.innerHTML =
-      '<td style="font-weight:600;color:var(--navy);white-space:nowrap">' + refCell + '</td>' +
-      '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(c.clientName) + '</td>' +
-      '<td style="color:var(--muted);font-size:11px">' + shortType(c.caseType) + '</td>' +
-      '<td style="font-size:11px">' + escHtml(c.caseStage) + '</td>' +
-      '<td>' + healthBadge(c.health) + '</td>' +
-      '<td>' + healthBadge(c.slaRisk) + '</td>' +
-      '<td style="color:var(--muted);font-size:11px">' + escHtml(c.manager) + '</td>' +
-      '<td>' +
-        '<div class="readiness-bar">' +
-          '<div class="r-bar-bg"><div class="r-bar-fill' + barCls + '" style="width:' + r + '%"></div></div>' +
-          '<span class="r-bar-pct">' + r + '%</span>' +
-        '</div>' +
-      '</td>' +
-      '<td style="text-align:center;font-weight:600;color:var(--muted)">' + (c.daysElapsed || 0) + '</td>' +
-      '<td>' +
-        (c.clientBlocked      ? '<span class="badge orange" style="margin-right:3px">Blocked</span>' : '') +
-        (c.escalationRequired ? '<span class="badge red" style="margin-right:3px">Esc</span>'       : '') +
-        (c.expiryFlagged      ? '<span class="badge blue">Expiry</span>'                            : '') +
-        (!c.clientBlocked && !c.escalationRequired && !c.expiryFlagged ? '<span style="color:var(--light);font-size:11px">—</span>' : '') +
-      '</td>' +
-      // Delete is ADMIN-ONLY (the server enforces it; hiding it here keeps the
-      // control honest for assigned-scope staff) and needs a case reference.
-      '<td>' + (window.TDOT_IS_ADMIN && c.caseRef
-        ? '<button class="del-btn" type="button" data-del-case="' + escHtml(c.caseRef) + '" title="Delete this case (careful — removes its Monday rows; the consultation record and the OneDrive folder are kept)">' + TDOT_DEL_SVG + '</button>'
-        : '') + '</td>';
-    tbody.appendChild(tr);
-  });
+  var today = cmToday();
+  page.forEach(function(c) { tbody.appendChild(caseRow(c, null, today)); });
 
   renderPagination(_filtered.length);
+}
+
+/* One case row. v = the view tab (null on All): there an empty Case Stage and an empty Manager show "—",
+   as Monday shows a blank, and the Deadlines / Mahesh tabs show the two flags in the Promised cell. */
+function caseRow(c, v, today) {
+  var r = c.overallReadiness || 0;
+  var barCls = r >= 70 ? '' : (r >= 40 ? ' mid' : ' low');
+  var tr = document.createElement('tr');
+  tr.className = c.health === 'Red' ? 'row-red' : (c.health === 'Orange' ? 'row-orange' : '');
+  if (c.caseRef) {
+    tr.style.cursor = 'pointer';
+    tr.title = 'Open case cockpit';
+    tr.onclick = function() { window.location.href = '/admin/case/' + encodeURIComponent(c.caseRef); };
+  } else {
+    tr.title = 'No case reference yet — set the Case Type on this item in Monday and the reference (and cockpit) is created automatically.';
+  }
+  // No reference = the cockpit can't open. Say WHY and what unblocks it,
+  // instead of a silent dash: missing Case Type is the usual cause (the
+  // reference is derived from it); if the type IS set, assignment is just
+  // pending (caseRefService runs off the Case Type webhook).
+  var refCell;
+  if (c.caseRef) {
+    refCell = escHtml(c.caseRef);
+  } else if (!c.caseType || c.caseType === 'Unknown') {
+    refCell = '<span class="badge orange">Needs Case Type</span>';
+  } else {
+    refCell = '<span class="badge blue">Ref pending</span>';
+  }
+  var stage = v && (typeof c.stageIdx !== 'number' || c.stageIdx === CMU.EMPTY) ? cmNoneDash() : escHtml(c.caseStage);
+  var mgr = v && (!c.manager || c.manager === 'Unassigned') ? cmNoneDash() : escHtml(c.manager);
+  // Deadline: the type (Real / Imaginary), the Actual Deadline, and the half-month window the row is counted in
+  var t = CMW.typeOf(c);
+  var typeTag = t === 'real' ? '<span class="cm-type real" title="Deadline Type: Deadline (a real deadline)">Real</span>'
+    : t === 'imaginary' ? '<span class="cm-type imag" title="Deadline Type: Imaginary (a date we promised, not a real deadline)">Imaginary</span>' : '';
+  var win = CMW.windowOf(CMW.bucketDate(c));
+  var dl = typeTag + (c.actualDeadline ? ' <span class="cm-date">' + escHtml(cmDay(c.actualDeadline)) + '</span>' : '') +
+    (win ? ' <span class="cm-win" title="Counted in this half-month window' + (t === 'imaginary' ? ' (by the promised date)' : '') + '">' + escHtml(win.label) + '</span>' : '');
+  // Promised: the Internal Deadline, and on Deadlines / Mahesh the flag (display only — nothing is changed)
+  var pr = c.promisedDate ? '<span class="cm-date">' + escHtml(cmDay(c.promisedDate)) + '</span>' : '';
+  if (v && v.deadlineBox) {
+    var f = CMW.flagOf(c, today);
+    if (f) pr += ' <span class="cm-flag ' + f.kind + '" data-flag="' + f.kind + '" title="' + escHtml(f.tip) + '">' + escHtml(f.label) + '</span>';
+  }
+  var off = c.officer ? escHtml(c.officer) : '<span style="color:var(--light);font-size:11px">Nobody</span>';
+  tr.innerHTML =
+    '<td style="font-weight:600;color:var(--navy);white-space:nowrap">' + refCell + '</td>' +
+    '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(c.clientName) + '</td>' +
+    '<td style="color:var(--muted);font-size:11px">' + shortType(c.caseType) + '</td>' +
+    '<td style="font-size:11px">' + stage + '</td>' +
+    '<td style="font-size:11px;white-space:nowrap">' + (c.phase ? escHtml(c.phase) : cmNoneDash()) + '</td>' +
+    '<td class="cm-dl" style="font-size:11px">' + (dl || cmNoneDash()) + '</td>' +
+    '<td class="cm-pr" style="font-size:11px">' + (pr || cmNoneDash()) + '</td>' +
+    '<td>' + healthBadge(c.health) + '</td>' +
+    '<td>' + healthBadge(c.slaRisk) + '</td>' +
+    '<td class="cm-off" style="font-size:11px">' + off + '</td>' +
+    '<td style="color:var(--muted);font-size:11px">' + mgr + '</td>' +
+    '<td>' +
+      '<div class="readiness-bar">' +
+        '<div class="r-bar-bg"><div class="r-bar-fill' + barCls + '" style="width:' + r + '%"></div></div>' +
+        '<span class="r-bar-pct">' + r + '%</span>' +
+      '</div>' +
+    '</td>' +
+    '<td style="text-align:center;font-weight:600;color:var(--muted)">' + (c.daysElapsed || 0) + '</td>' +
+    '<td>' +
+      (c.clientBlocked      ? '<span class="badge orange" style="margin-right:3px">Blocked</span>' : '') +
+      (c.escalationRequired ? '<span class="badge red" style="margin-right:3px">Esc</span>'       : '') +
+      (c.expiryFlagged      ? '<span class="badge blue">Expiry</span>'                            : '') +
+      (!c.clientBlocked && !c.escalationRequired && !c.expiryFlagged ? '<span style="color:var(--light);font-size:11px">—</span>' : '') +
+    '</td>' +
+    // Delete is ADMIN-ONLY (the server enforces it; hiding it here keeps the
+    // control honest for assigned-scope staff) and needs a case reference.
+    '<td class="cm-del">' + (window.TDOT_IS_ADMIN && c.caseRef
+      ? '<button class="del-btn" type="button" data-del-case="' + escHtml(c.caseRef) + '" title="Delete this case (careful — removes its Monday rows; the consultation record and the OneDrive folder are kept)">' + TDOT_DEL_SVG + '</button>'
+      : '') + '</td>';
+  return tr;
 }
 
 function renderPagination(total) {
@@ -2184,12 +2398,12 @@ document.addEventListener('DOMContentLoaded', function() {
   if (VIEW === 'summary') loadKpis();   // the monthly figures load on their own, beside the case data
 });
 </script>
-${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER }') + '</script>'}
+${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange }') + '</script>'}
 </body>
 </html>`;
 }
 
-// The landing view is the All Cases table (user directive 2026-08-05).
+// The landing view is the Client Master table (user directive 2026-08-05; renamed from All Cases, block 3).
 router.get('/', (_req, res) => {
   res.type('html').send(buildDashboardHTML('cases'));
 });
@@ -2200,4 +2414,13 @@ router.get('/summary', (_req, res) => {
   res.type('html').send(buildDashboardHTML('summary'));
 });
 
+// /admin/client-master (and with a slash) opens the page (block 3), keeping the query (?view=…).
+// Mounted in server.js as a plain app.get (not under this router), so it can never catch /admin/dashboard/summary.
+function clientMasterAlias(req, res) {
+  const url = String(req.originalUrl || req.url || '');
+  const q = url.indexOf('?');
+  res.redirect(302, '/admin/dashboard' + (q >= 0 ? url.slice(q) : ''));
+}
+
 module.exports = router;
+module.exports.clientMasterAlias = clientMasterAlias;
