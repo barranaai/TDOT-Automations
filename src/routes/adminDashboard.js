@@ -277,11 +277,11 @@ const ALL_CASES_BODY_HTML = `
     <div class="sec-hd">📋 Client Master</div>
     <div class="lt-tabs" id="cs-quick" role="tablist" aria-label="Client Master views"></div>
     <!-- On a view tab: the data time, Print, the counts (Assigning) or the half-month windows (Deadlines, Mahesh). -->
-    <div id="cm-head" class="cm-head" aria-live="polite"></div>
+    <div id="cm-head" class="cm-head"></div>
     <div class="table-card">
       <!-- The filters are in the column headers, like every list (2026-11-05): listSpecs.js casesListSpec/Opts. -->
       <div class="table-toolbar">
-        <input type="search" class="search-box" id="search-box" placeholder="Search by client, case ref, type…" aria-label="Search cases by client, case reference or type" autocomplete="off" />
+        <input type="search" class="search-box" id="search-box" placeholder="Search by client, case ref, type, officer…" aria-label="Search cases by client, case reference, type or Support Officer" autocomplete="off" />
         <span class="table-count" id="table-count" aria-live="polite"></span>
       </div>
       <div id="cs-chips" class="q-chips cs-chips" style="display:none" aria-live="polite"></div>

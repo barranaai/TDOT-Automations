@@ -94,6 +94,25 @@ test('groupRows: board positions are numbers ("32754.0" before "114688.0"), titl
   assert.deepEqual(titles(U.groupRows(V.deadlines, [{ phaseIdx: 6, phase: '' }], null)), ['—']);
 });
 
+test('review round 1: a failed meta read (null meta) with a column sort chosen keeps the EE after ITA headings in board order, not the sort order', () => {
+  // board order: g_pend (0, 1), g_oct (2, 3), g_sep (4); the column sort (client A → Z) brings October first
+  const rows = [
+    { id: 'a', name: 'Aaron', boardIdx: 2, groupId: 'g_oct', groupTitle: 'October 2026' }, { id: 'b', name: 'Bina', boardIdx: 4, groupId: 'g_sep', groupTitle: 'September 2026' },
+    { id: 'c', name: 'Chen', boardIdx: 0, groupId: 'g_pend', groupTitle: 'Pending' }, { id: 'd', name: 'Dev', boardIdx: 3, groupId: 'g_oct', groupTitle: 'October 2026' },
+    { id: 'e', name: 'Esha', boardIdx: 1, groupId: 'g_pend', groupTitle: 'Pending' },
+  ];
+  const ids = (list) => list.map((r) => r.id).join('');
+  const out = U.groupRows(V.eeita, rows, null);
+  assert.deepEqual(titles(out), ['Pending', 'October 2026', 'September 2026']);
+  assert.deepEqual(titles(out), titles(U.groupRows(V.eeita, U.viewOrder(V.eeita, rows), null)), 'the same headings as with no column sort');
+  assert.deepEqual(out.map((g) => ids(g.rows)), ['ce', 'ad', 'b'], 'the column sort is kept inside each heading');
+  // a group missing from meta (added after the read) still goes last, and the unknown ones keep board order between them
+  const meta = dash._casesIo.parseMeta({ groups: [{ id: 'g_sep', title: 'September 2026', position: '1.0' }], columns: [] });
+  assert.deepEqual(titles(U.groupRows(V.eeita, rows, meta)), ['September 2026', 'Pending', 'October 2026']);
+  // rows without a board place fall back to the order first seen, after the placed ones
+  assert.deepEqual(titles(U.groupRows(V.eeita, [{ groupId: 'x', groupTitle: 'X' }, ...rows], null)), ['Pending', 'October 2026', 'September 2026', 'X']);
+});
+
 test('viewOrder: board order on Assigning / Deadlines / EE; Mahesh by Actual Deadline ascending, blanks LAST, ties in board order; a chosen column sort is kept inside each group', () => {
   const rows = [
     { id: 'p', boardIdx: 4, actualDeadline: '' }, { id: 'q', boardIdx: 1, actualDeadline: '2026-12-01' }, { id: 'r', boardIdx: 3, actualDeadline: '2026-11-20' },
@@ -199,6 +218,11 @@ test('the page: renamed Client Master; tabs + header box above the toolbar; ever
   assert.ok(html.includes('<div class="sec-hd">📋 Client Master</div>'));
   assert.ok(html.indexOf('id="cs-quick"') < html.indexOf('id="cm-head"') && html.indexOf('id="cm-head"') < html.indexOf('id="search-box"'), 'tabs, then the header box, then the toolbar');
   assert.ok(html.includes('<div class="lt-tabs" id="cs-quick" role="tablist" aria-label="Client Master views"></div>'));
+  // review round 1: the box above the table is redrawn on every search letter, so it is not a live region (#table-count says the count)
+  assert.ok(html.includes('<div id="cm-head" class="cm-head"></div>'), 'no aria-live on #cm-head');
+  assert.ok(html.includes('<span class="table-count" id="table-count" aria-live="polite"></span>'));
+  // review round 1: the search also matches the Support Officer, and the box says so
+  assert.ok(html.includes('placeholder="Search by client, case ref, type, officer…" aria-label="Search cases by client, case reference, type or Support Officer"'));
   for (const s of inlineScripts(html)) new vm.Script(s);
   assert.ok(html.includes('var CMW = (function clientMasterWindows() {') && html.includes('var CMU = (function clientMasterUi(W) {'));
   assert.ok(html.includes('var CM_VIEWS = [{"key":"assigning"'));

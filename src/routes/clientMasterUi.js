@@ -66,14 +66,16 @@ function clientMasterUi(W) {
   /**
    * The rows split into headings: [{ key, title, rows }] — a STABLE split (each heading keeps the rows' order).
    * Heading order: the view's groupOrder ('position': Monday's label / group order from meta; 'index'; 'alpha'),
-   * reversed for DESC; a key the meta does not know goes last (in the order first seen), never dropped.
+   * reversed for DESC; a key the meta does not know goes last (in board order: its first row's boardIdx, then the
+   * order first seen), never dropped — so a failed meta read keeps board order even with a column sort chosen.
    */
   function groupRows(view, rows, meta) {
     var groups = [], byKey = {};
     (rows || []).forEach(function (r) {
       var k = keyOf(view, r), id = typeof k + ':' + k;
       var g = byKey[id];
-      if (!g) { g = byKey[id] = { key: k, title: titleOf(view, r, meta), rows: [], seen: groups.length }; groups.push(g); }
+      if (!g) { g = byKey[id] = { key: k, title: titleOf(view, r, meta), rows: [], seen: groups.length, minIdx: Infinity }; groups.push(g); }
+      if (typeof r.boardIdx === 'number' && r.boardIdx < g.minIdx) g.minIdx = r.boardIdx;
       g.rows.push(r);
     });
     var alpha = view.groupOrder === 'alpha';
@@ -82,7 +84,7 @@ function clientMasterUi(W) {
     groups.sort(function (a, b) {
       var ua = !alpha && a.rank === null, ub = !alpha && b.rank === null;
       if (ua !== ub) return ua ? 1 : -1;                 // unknown keys last, whatever the direction
-      if (ua && ub) return a.seen - b.seen;
+      if (ua && ub) return (a.minIdx === b.minIdx ? 0 : a.minIdx < b.minIdx ? -1 : 1) || (a.seen - b.seen);   // board order, whatever the column sort
       var c = alpha ? a.title.toLowerCase().localeCompare(b.title.toLowerCase()) : a.rank - b.rank;
       if (desc) c = -c;
       return c || (a.seen - b.seen);
