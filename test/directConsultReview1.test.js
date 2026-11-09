@@ -188,7 +188,9 @@ test('2/8 directView.canChangeTime: off, a list switch with the shared key or an
       assert.equal(dcs.directView(lead).canChangeTime, false, 'no viewer given → never shown');
     });
   });
-  await withEnv({ DIRECT_CONSULTATION: '1' }, () => assert.equal(dcs.directView(lead, { actor: FARAN }).canChangeTime, false, 'the column id ships empty'));
+  { const col = C.directConsult; C.directConsult = ''; dcs._resetForTests();
+    try { await withEnv({ DIRECT_CONSULTATION: '1' }, () => assert.equal(dcs.directView(lead, { actor: FARAN }).canChangeTime, false, 'the column not set up')); }
+    finally { C.directConsult = col; dcs._resetForTests(); } }
 });
 
 test('2/8 the detail route passes the viewer; the action route forwards loginUrl; the pop-up keeps a list-switch 401 in the dialog', () => {

@@ -120,8 +120,7 @@ test('a New direct row counts exactly like the same consultation booked any othe
   assert.deepEqual(a, b);
 });
 
-test('the marker in consultOption alone is enough (the Monday column is not made yet: its id ships empty)', () => {
-  assert.equal(C.directConsult, '', 'the column id ships empty');
+test('the marker in consultOption alone is enough (a row written before the column id was set)', () => {
   const withCol = computeKpis([...OCTOBER(), ...DIRECT_OCTOBER()], '2026-10');
   const noCol = DIRECT_OCTOBER().map((l) => { const x = { ...l }; delete x.directConsult; return x; });
   const k = computeKpis([...OCTOBER(), ...noCol], '2026-10');

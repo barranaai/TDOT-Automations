@@ -73,10 +73,11 @@ function pagedMonday(items, { pageSize = 100, onOther } = {}) {
 
 /* ── the shipped config: the column is not made yet ── */
 
-test('config: the Direct Consultation column id ships EMPTY (Faran has not OK\'d the Monday column), typed as text', () => {
-  assert.equal(C.directConsult, '', 'leave it empty until the column is made');
-  assert.equal(dc.columnId(), '');
-  assert.equal(dc.isSetUp(), false);
+test('config: the Direct Consultation column id is the Monday column made with Faran\'s OK (text_mm8y8ngs), typed as text', async () => {
+  assert.equal(C.directConsult, 'text_mm8y8ngs');
+  assert.equal(dc.columnId(), 'text_mm8y8ngs');
+  assert.equal(dc.isSetUp(), true);
+  await withColumn('', () => { assert.equal(dc.columnId(), ''); assert.equal(dc.isSetUp(), false); });
   const src = require('fs').readFileSync(require.resolve('../src/services/leadService'), 'utf8');
   assert.match(src, /directConsult: 'text'/);
 });
@@ -88,7 +89,7 @@ test('paging: pages of 100, the cursor followed to the end, updates(limit: 25) o
   const m = pagedMonday(items);
   const r = stub(mondayApi, 'query', m.fn);
   try {
-    const got = await leadService.readBookedLeadItems({ columnIds: [C.bookedSlot, '', null, C.bookedSlot, dc.columnId()], updates: true });
+    const got = await withColumn('', () => leadService.readBookedLeadItems({ columnIds: [C.bookedSlot, '', null, C.bookedSlot, dc.columnId()], updates: true }));
     assert.equal(got.length, 250, 'rows past the old 200 are read');
     assert.deepEqual(got.map((x) => x.id), items.map((x) => x.id));
     assert.equal(m.calls.length, 3, 'one first page + two next pages');
@@ -266,7 +267,7 @@ for (const sw of [undefined, '0']) {
 
 /* ── fails closed at use when the column is not made ── */
 
-test('missing mapping: nothing fails at load; a create that needs the column refuses with 503 before any Monday call', async () => {
+test('missing mapping: nothing fails at load; a create that needs the column refuses with 503 before any Monday call', () => withColumn('', async () => {
   assert.doesNotThrow(() => { for (const f of ['consultationService', 'postConsultService', 'teamsTranscriptService', 'leadService', 'leadSnapshot', 'consultantPortalService']) require(`../src/services/${f}`); });
   assert.ok(!snap.SNAPSHOT_IDS.includes(''), 'the snapshot never asks for an empty column id');
   assert.throws(() => dc.assertSetUp(), (e) => e.status === 503 && e.code === 'DIRECT_CONSULT_NOT_SET_UP' && /not set up yet/.test(e.message));
@@ -276,7 +277,7 @@ test('missing mapping: nothing fails at load; a create that needs the column ref
     await assert.rejects(leadService.createLead({ fullName: 'ZZ TEST', email: 'z@x.co', directConsult: 'New', bookedSlot: '2026-11-20 10:00' }), (e) => e.status === 503);
     assert.equal(calls.length, 0, 'no row is made without its marker column');
   } finally { r(); }
-});
+}));
 
 /* ── createLead: the create-time keys on the direct path only ── */
 

@@ -115,7 +115,8 @@ test('switch: unset / 0 → 404 (no button); 1 → everyone; an email list → t
 });
 
 test('fail closed: switch off → 404 even with the column; switch on but the column not made (the shipped "") → 503 and NO Monday call', async () => {
-  assert.equal(C.directConsult, '', 'the column id ships empty');
+  const col = C.directConsult; C.directConsult = '';
+  if (dcs._resetForTests) dcs._resetForTests();
   const w = world();
   try {
     await withEnv({ DIRECT_CONSULTATION: undefined }, async () => {
@@ -128,7 +129,7 @@ test('fail closed: switch off → 404 even with the column; switch on but the co
       await assert.rejects(dcs.changeTime({ leadId: '1', lead: {}, value: {}, actor: FARAN }), (e) => e.status === 503);
     });
     assert.equal(w.calls.monday.length, 0, 'nothing read or written');
-  } finally { w.restore(); }
+  } finally { w.restore(); C.directConsult = col; if (dcs._resetForTests) dcs._resetForTests(); }
 });
 
 test('routes: registered before /api/consultation/:leadId; errors mapped (409 bodies, 404, 401 with the sign-in link, 503); Retain confirm forwarded', () => {
