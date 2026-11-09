@@ -1165,10 +1165,11 @@ function kpiCard(label,num,sub){ return '<div class="rp-card"><div class="rp-lab
 function kpiByList(obj){ var ks=Object.keys(obj||{}); if(!ks.length) return '<div class="rp-muted">None</div>'; return ks.sort(function(a,b){return obj[b]-obj[a];}).map(function(k){ return '<div class="rp-row"><span>'+escHtml(k)+'</span><b>'+obj[k]+'</b></div>'; }).join(''); }
 function renderKpis(d){
   var c=d.consultations||{}, r=d.retainers||{}, f=d.funnel||{}, rt=(f.rates||{});
-  var cards = kpiCard('Consultations booked', c.booked||0, (c.virtual||0)+' virtual · '+(c.inPerson||0)+' in-person'+((c.phone||0)?' · '+c.phone+' phone':''))
-    + kpiCard('Consultations held', c.held||0, '')
+  var cards = kpiCard('Consultations booked', c.booked||0, (c.virtual||0)+' virtual · '+(c.inPerson||0)+' in-person'+((c.phone||0)?' · '+c.phone+' phone':'')+' · Abandoned holds: '+(c.abandonedHolds||0)+((c.holdsInProgress||0)?' · '+c.holdsInProgress+' on hold now':''))
+    + kpiCard('Consultations held', c.held||0, 'Upcoming: '+(c.upcoming||0))
     + kpiCard('Consultation revenue', kpiMoney(c.revenue||0), 'paid consults, fees before HST'+((c.paidByStaff||0)?' · '+c.paidByStaff+' recorded by staff':'')+((c.waived||0)?' · '+c.waived+' waived':''))
-    + kpiCard('Retainers signed', r.signed||0, (r.sent||0)+' sent · '+(r.paid||0)+' paid')
+    + kpiCard('Retainers signed', r.signed||0, (r.sent||0)+' sent')
+    + kpiCard('Paid this month', f.paid||0, 'Of this month&#39;s signers: '+(f.signersPaid||0)+' of '+(f.retained||0)+' paid'+(rt.paidOfSigners!=null?' ('+rt.paidOfSigners+'%)':''))
     + kpiCard('Retainer value', kpiMoney(r.feeValue||0), 'signed this period')
     + kpiCard('New / existing', (c.newClients||0)+' / '+(c.existingClients||0), 'clients booked');
   var arrow=function(rate){ return '<span class="rp-arrow">→'+(rate!=null?'<b>'+rate+'%</b>':'')+'</span>'; };
@@ -1176,11 +1177,14 @@ function renderKpis(d){
   var funnel = '<div class="rp-funnel">'
     + step(f.leads||0,'Leads') + arrow(rt.bookedFromLeads)
     + step(f.booked||0,'Booked') + '<span class="rp-arrow">→</span>'
-    + step(f.consulted||0,'Consulted') + arrow(rt.retainedFromBooked)
-    + step(f.retained||0,'Retained') + arrow(rt.paidFromRetained)
-    + step(f.paid||0,'Paid')
-    + (f.retainedDirect?'<div class="rp-step" title="Walk-in / referral clients retained without a booking or consultation — kept out of the booked→retained conversion"><div class="rp-n">+'+(f.retainedDirect||0)+'</div><div class="rp-l">Direct</div></div>':'')
+    + step(f.consulted||0,'Consulted') + '<span class="rp-arrow">→</span>'
+    + step(f.retained||0,'Retained') + arrow(rt.paidOfSigners)
+    + step(f.signersPaid||0,'Paid')
     + '</div>';
+  var rf=f.retainedFrom||{};
+  var split = '<div class="rp-muted" style="margin-top:6px">Retained: '+(rf.booked||0)+' from a booked consultation · '+(rf.converted||0)+' from a lead turned into a direct retainer · '+(rf.walkIn||0)+' walk-in (direct)'
+    + (rt.retainedFromBooked!=null?' · '+rt.retainedFromBooked+'% of booked consultations became a retainer':'')+'</div>'
+    + '<div class="rp-muted" style="margin-top:4px">Counting changed on 9 Nov 2026: abandoned holds and future consultations no longer count, and retained now includes walk-ins. Earlier months are shown the new way.</div>';
   var unclassified=(r.signed||0)-(r.tr||0)-(r.pr||0);
   var mini = '<div class="rp-2col">'
     + '<div class="rp-mini"><h4>Retainers by type</h4>'
@@ -1189,9 +1193,10 @@ function renderKpis(d){
       + (unclassified>0 ? '<div class="rp-muted" style="margin-top:4px">'+unclassified+' unclassified (case type not mapped)</div>' : '')
       + '</div>'
     + '<div class="rp-mini"><h4>By consultant (booked)</h4>'+kpiByList(c.byConsultant)+'</div>'
-    + '<div class="rp-mini"><h4>Leads by owner</h4>'+kpiByList(c.byLeadOwner)+'</div>'
+    + '<div class="rp-mini"><h4>Bookings by owner</h4>'+kpiByList(c.byLeadOwner)+'</div>'
+    + '<div class="rp-mini"><h4>Retainers signed by consultant</h4>'+kpiByList(r.byConsultant)+'</div>'
     + '</div>';
-  document.getElementById('kpi-body').innerHTML = '<div class="rp-grid">'+cards+'</div>' + funnel + mini;
+  document.getElementById('kpi-body').innerHTML = '<div class="rp-grid">'+cards+'</div>' + funnel + split + mini;
 }
 function fillMonths(months, sel){
   var el=document.getElementById('kpi-month'); if(el.getAttribute('data-filled')) return; el.setAttribute('data-filled','1');

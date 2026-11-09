@@ -279,11 +279,13 @@ test('computeKpis: TAGGED direct retentions do not inflate booked→retained con
   const K = kpi.computeKpis(leads, '2026-07');
   assert.equal(K.funnel.leads, 1, 'direct clients never enter the booking funnel (bookedFromLeads honest)');
   assert.equal(K.funnel.booked, 1);
-  assert.equal(K.funnel.retained, 1, 'only the booked lead counts in the funnel');
+  assert.equal(K.funnel.retained, 2, 'step 6: retained counts every signed retainer, the walk-in included');
+  assert.equal(K.funnel.retainedFrom.booked, 1);
+  assert.equal(K.funnel.retainedFrom.walkIn, 1);
   assert.equal(K.funnel.retainedDirect, 1, 'the tagged walk-in counts as a DIRECT retention');
-  assert.equal(K.funnel.rates.retainedFromBooked, 100, '1/1 — not 200%');
+  assert.equal(K.funnel.rates.retainedFromBooked, 100, '1/1 from a booked consultation — not 200%');
   assert.equal(K.funnel.paid, 2);
-  assert.equal(K.funnel.rates.paidFromRetained, 100, '2 paid over (1 funnel + 1 direct) retentions');
+  assert.equal(K.funnel.rates.paidOfSigners, 100, 'both of this month\'s signers have paid');
   assert.equal(K.retainers.signed, 2, 'total signed still counts both');
 });
 

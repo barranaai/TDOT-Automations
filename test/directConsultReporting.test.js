@@ -78,8 +78,8 @@ test('October with no direct rows: the numbers the app showed before step 2', ()
   assert.deepEqual([k.consultations.virtual, k.consultations.inPerson, k.consultations.phone], [1, 1, 1]);
   assert.deepEqual([k.consultations.newClients, k.consultations.existingClients], [2, 1]);
   assert.deepEqual(k.consultations.byConsultant, { [SHAFOLI]: 2, [SHERMIN]: 1 });
-  assert.deepEqual(funnelOf(k), { leads: 4, booked: 3, consulted: 3, retained: 1, retainedDirect: 1, paid: 1 });
-  assert.deepEqual(k.funnel.rates, { bookedFromLeads: 75, retainedFromBooked: 33.3, paidFromRetained: 50 });
+  assert.deepEqual(funnelOf(k), { leads: 4, booked: 3, consulted: 3, retained: 2, retainedDirect: 1, paid: 1 });   // step 6: retained counts the walk-in too
+  assert.deepEqual(k.funnel.rates, { bookedFromLeads: 75, retainedFromBooked: 33.3, paidOfSigners: 50 });
 });
 
 test('October with the direct rows: every consultation is counted, only the New one enters the funnel', () => {

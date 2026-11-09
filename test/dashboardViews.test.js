@@ -156,3 +156,28 @@ test('the needs-attention list loads with the summary page and only there, and s
   const fn = summary.slice(summary.indexOf('function naItemHtml'), summary.indexOf('function naRender'));
   for (const field of ['e.caseRef', 'e.client', 'e.why', 'e.todo', 'e.key']) assert.match(fn, new RegExp('escHtml\\(' + field.replace('.', '\\.')), field + ' is escaped');
 });
+
+test('Reporting step 6: the page scripts parse; renderKpis draws Bookings by owner, retainers by consultant, the retained split, both paid figures and the counting note', async () => {
+  const vm = require('vm');
+  const html = await renderRoute('/summary');
+  const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
+  for (const src of scripts) new vm.Script(src);   // throws on a syntax error inside the template literal
+  const src = scripts.find((x) => x.includes('function renderKpis('));
+  const pick = (name) => { const i = src.indexOf('function ' + name + '('); const j = src.indexOf('\nfunction ', i + 1); return src.slice(i, j); };
+  const body = { innerHTML: '' };
+  const ctx = { document: { getElementById: () => body }, escHtml: (x) => String(x) };
+  vm.createContext(ctx);
+  vm.runInContext(['kpiMoney', 'kpiCard', 'kpiByList', 'renderKpis'].map(pick).join('\n'), ctx);
+  ctx.renderKpis({
+    consultations: { booked: 3, held: 1, upcoming: 2, abandonedHolds: 1, byConsultant: { A: 3 }, byLeadOwner: { P: 2 } },
+    retainers: { signed: 3, byConsultant: { Shafoli: 2, Shermin: 1 } },
+    funnel: { leads: 5, booked: 3, consulted: 1, retained: 3, signersPaid: 2, paid: 4, retainedFrom: { booked: 1, converted: 1, walkIn: 1 }, rates: { paidOfSigners: 66.7 } },
+  });
+  const out = body.innerHTML;
+  assert.ok(out.includes('Bookings by owner') && !out.includes('Leads by owner'));
+  assert.ok(out.includes('Retainers signed by consultant') && out.includes('Shafoli'));
+  assert.ok(out.includes('1 from a booked consultation') && out.includes('1 walk-in (direct)'));
+  assert.ok(out.includes('Paid this month') && out.includes('2 of 3 paid (66.7%)'));
+  assert.ok(out.includes('Abandoned holds: 1') && out.includes('Upcoming: 2'));
+  assert.ok(out.includes('Counting changed on 9 Nov 2026'));
+});

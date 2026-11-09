@@ -19,6 +19,24 @@
  * card whatever its relationship label says. The kind is read from the row
  * (utils/directConsult.kindOf); a marked row whose kind cannot be read counts like any
  * lead, as before.
+ *
+ * COUNTING RULES (step 6, Faran 2026-11-09 — every month, past ones included):
+ *   - Booked = a booked time in the month whose Booking Status is a real booking: "Booked",
+ *     or a time recorded by hand with no hold status (leadStatusService.bookedByHand). A
+ *     "Slot Held" hold still running and an "Abandoned" hold (it ran out unpaid) are NOT
+ *     bookings: abandoned holds are their own number (consultations.abandonedHolds), holds
+ *     still running are consultations.holdsInProgress. By consultant / by owner, the mode
+ *     split, new/existing and the booking-link revenue use the same rule.
+ *   - Consulted / held = a consultation in the month that has already happened (its booked
+ *     time — or, with none, its held date — on or before NOW). A later one is "Upcoming".
+ *     NOW is injected (opts.now) so the numbers are testable.
+ *   - Retained = EVERY row with a Retainer Signed date in the month, walk-ins (direct
+ *     retainers) included, split by where it came from: a booked consultation, a lead
+ *     converted into a direct retainer, or a walk-in. retainedDirect (the old "+Direct")
+ *     is kept only as converted + walk-in.
+ *   - Paid: signersPaid = of the rows SIGNED in the month, how many have any paid date
+ *     (rates.paidOfSigners); paid = rows with a paid date IN the month, whenever (or
+ *     whether) they were signed.
  */
 
 'use strict';
@@ -59,14 +77,38 @@ function isExistingClient(lead) {
   // (changing it now would move the months already reported). Direct rows are checked first.
   return /exist|return|prior|current/i.test(lead.relationshipWithTdot || '') || !!String(lead.existingFileType || '').trim();
 }
+/** 'YYYY-MM-DD HH:MM' in Toronto for an instant (ms or Date). */
+function nowWall(now) { return torontoWallClock(new Date(now).toISOString()); }
+
+/**
+ * Is this booking a real one? (not a hold still running, not an abandoned hold)
+ * A row that was paid (Square / staff-recorded) or whose consultation was held IS a booking,
+ * whatever the status still says (a missed webhook leaves 'Slot Held'; a late payment after the
+ * hold ran out leaves 'Abandoned') — the same signs leadStatusService reads. A 'Slot Held' whose
+ * Slot Held Until has passed is a dead hold: abandoned, not running.
+ */
+function bookingKind(l, now = Date.now()) {
+  const s = (v) => String(v || '').trim();
+  const st = s(l.bookingStatus);
+  if (st !== 'Abandoned' && st !== 'Slot Held') return 'booked';
+  let paid = false;
+  try { paid = !!consultPayment.paidState(l).paid; } catch (_) { /* unreadable: not paid */ }
+  if (paid || s(l.squareConsultTxnId) || s(l.consultPayment) || s(l.consultationHeld)) return 'booked';
+  if (st === 'Abandoned') return 'abandoned';
+  const until = Date.parse(s(l.slotHeldUntil));
+  if (Number.isFinite(until) && until <= now) return 'abandoned';
+  return 'held';
+}
+
 function inc(o, k) { o[k] = (o[k] || 0) + 1; }
 
 /** Distinct 'YYYY-MM' present across the KPI dates, newest first — drives the month picker. */
-function distinctMonths(leads) {
+function distinctMonths(leads, now = Date.now()) {
+  const cur = nowWall(now).slice(0, 7);   // no future months in the picker
   const set = new Set();
   for (const l of leads) {
     for (const d of [l.bookedSlot, l.consultationHeld, l.retainerSent, l.retainerSigned, l.retainerPaid, l.createdAt]) {
-      const mk = monthKey(d); if (mk) set.add(mk);
+      const mk = monthKey(d); if (mk && mk <= cur) set.add(mk);
     }
   }
   return [...set].sort().reverse();
@@ -76,15 +118,25 @@ function distinctMonths(leads) {
  * Compute the KPI bundle for `month` ('YYYY-MM'), or all-time when month is ''.
  * PURE — no I/O. `leads` is the parsed Lead Board (leadService.parseItem shape).
  */
-function computeKpis(leads = [], month = '') {
+function computeKpis(leads = [], month = '', opts = {}) {
   const fee = consultFeeDollars();
+  const nowMs = opts.now == null ? Date.now() : opts.now;
+  const nowW = nowWall(nowMs);
+  // Has this consultation happened? Its booked time, or (none) its held date, on or before now.
+  const happened = (l) => {
+    const slot = torontoWallClock(l.bookedSlot).trim();
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(slot)) return slot.slice(0, 16) <= nowW;
+    const d = torontoWallClock(l.consultationHeld).slice(0, 10);
+    return !!d && d <= nowW.slice(0, 10);
+  };
   const inM = (d) => { const mk = monthKey(d); return month ? mk === month : !!mk; };
   const K = {
     month: month || 'all',
     totalLeads: leads.length,
-    consultations: { booked: 0, held: 0, revenue: 0, paidByStaff: 0, waived: 0, virtual: 0, inPerson: 0, phone: 0, newClients: 0, existingClients: 0, byConsultant: {}, byLeadOwner: {} },
+    consultations: { booked: 0, held: 0, upcoming: 0, abandonedHolds: 0, holdsInProgress: 0, revenue: 0, paidByStaff: 0, waived: 0, virtual: 0, inPerson: 0, phone: 0, newClients: 0, existingClients: 0, byConsultant: {}, byLeadOwner: {} },
     retainers: { sent: 0, signed: 0, paid: 0, tr: 0, pr: 0, feeValue: 0, byConsultant: {} },
-    funnel: { leads: 0, booked: 0, consulted: 0, retained: 0, retainedDirect: 0, paid: 0 },
+    funnel: { leads: 0, booked: 0, consulted: 0, retained: 0, retainedDirect: 0, signersPaid: 0, paid: 0,
+      retainedFrom: { booked: 0, converted: 0, walkIn: 0 } },
   };
   // Walk-in/referral clients enter at the retainer stage with no booking or
   // consultation — count their retentions separately so booked→retained
@@ -103,7 +155,10 @@ function computeKpis(leads = [], month = '') {
     // A lead CONVERTED to a direct retainer was a lead first (Faran 2026-10-15): it still counts.
     if (inM(l.createdAt) && inFunnel && !(isDirect(l) && !String(l.originalChannel || '').trim())) K.funnel.leads++;
     const ps = consultPayment.paidState(l);
-    if (inM(l.bookedSlot)) {
+    const bk = bookingKind(l, nowMs);
+    if (inM(l.bookedSlot) && bk === 'abandoned') K.consultations.abandonedHolds++;
+    if (inM(l.bookedSlot) && bk === 'held') K.consultations.holdsInProgress++;
+    if (inM(l.bookedSlot) && bk === 'booked') {
       K.consultations.booked++;           // every consultation, direct ones too
       if (inFunnel) K.funnel.booked++;     // the funnel: not a follow-up or an existing client's own file
       inc(K.consultations.byConsultant, l.assignedConsultant || 'Unassigned');
@@ -128,15 +183,25 @@ function computeKpis(leads = [], month = '') {
     // a consultation with no booked time (the page's "No date" list: hand-booked
     // consults, exactly the ones paid outside the app), in the month it was received
     // (review 2026-10-15: those were never counted at all).
-    if (ps.paid && ps.paid !== 'app' && inM(l.bookedSlot || ps.on)) {
+    if (ps.paid && ps.paid !== 'app' && bk === 'booked' && inM(l.bookedSlot || ps.on)) {
       if (ps.paid === 'waived') K.consultations.waived++;
       else { K.consultations.paidByStaff++; if (ps.paidCents != null) K.consultations.revenue += ps.paidCents / 100; }
     }
-    if (inM(l.consultationHeld)) { K.consultations.held++; if (inFunnel) K.funnel.consulted++; }
+    // Consulted: held (date in the month) and its time has passed. Upcoming: a confirmed booking
+    // whose time is still ahead — counted in its booked month (Consultation Held is normally blank
+    // before the meeting), or the held month when there is no booked time.
+    if (bk === 'booked') {
+      if (happened(l)) {
+        if (inM(l.consultationHeld)) { K.consultations.held++; if (inFunnel) K.funnel.consulted++; }
+      } else if (inM(l.bookedSlot || l.consultationHeld)) K.consultations.upcoming++;
+    }
     if (inM(l.retainerSent)) K.retainers.sent++;
     if (inM(l.retainerSigned)) {
       K.retainers.signed++;
-      if (isDirect(l)) K.funnel.retainedDirect++; else K.funnel.retained++;
+      K.funnel.retained++;   // every signed retainer, walk-ins included
+      if (!isDirect(l)) K.funnel.retainedFrom.booked++;
+      else { K.funnel.retainedDirect++; if (String(l.originalChannel || '').trim()) K.funnel.retainedFrom.converted++; else K.funnel.retainedFrom.walkIn++; }
+      if (String(l.retainerPaid || '').trim() && monthKey(l.retainerPaid)) K.funnel.signersPaid++;
       K.retainers.feeValue += feeToNum(l.retainerFee);
       const t = trPrOf(l.confirmedCaseType || l.caseTypeInterest);
       if (t === 'TR') K.retainers.tr++; else if (t === 'PR') K.retainers.pr++;
@@ -149,11 +214,11 @@ function computeKpis(leads = [], month = '') {
   const pct = (a, b) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
   K.funnel.rates = {
     bookedFromLeads: pct(K.funnel.booked, K.funnel.leads),
-    // Booked-only retentions over booked — direct (walk-in) retentions excluded
-    // so a month with walk-ins can't show >100% conversion.
-    retainedFromBooked: pct(K.funnel.retained, K.funnel.booked),
-    // Paid covers ALL retentions (funnel + direct), so the denominator does too.
-    paidFromRetained: pct(K.funnel.paid, K.funnel.retained + K.funnel.retainedDirect),
+    // Retained from a booked consultation over booked — walk-ins and converted leads are
+    // left out so a month with walk-ins can't show >100% conversion.
+    retainedFromBooked: pct(K.funnel.retainedFrom.booked, K.funnel.booked),
+    // Of this month's signers, how many have paid (same group on both sides: never >100%).
+    paidOfSigners: pct(K.funnel.signersPaid, K.funnel.retained),
   };
   return K;
 }
@@ -166,7 +231,8 @@ async function loadLeads() { return require('./leadSnapshot').leads(); }
 /** Fetch (cached) + compute. Returns the KPI bundle plus the months that have data. */
 async function getKpis(month = '') {
   const leads = await loadLeads();
-  return { ...computeKpis(leads, month), months: distinctMonths(leads) };
+  const now = Date.now();
+  return { ...computeKpis(leads, month, { now }), months: distinctMonths(leads, now) };
 }
 
-module.exports = { getKpis, computeKpis, distinctMonths, monthKey, trPrOf };
+module.exports = { getKpis, computeKpis, distinctMonths, monthKey, trPrOf, bookingKind };
