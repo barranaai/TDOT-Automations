@@ -796,6 +796,11 @@ test('subject words: EMAIL_LEADS_SKIP_WORDS adds words, "off" switches the check
   await withEnv({ EMAIL_LEADS_SKIP_WORDS: 'off' }, () => assert.equal(EL.subjectSkipWord('My resume'), ''));
 }));
 
+test('round 2 review: a dash joined to the next word is not a separator (Application-form stays a lead)', () => {
+  for (const s of ['Application-form question', 'Application-fee refund', 'Re: Application\u2013form']) assert.equal(EL.subjectSkipWord(s), '', s);
+  for (const s of ['Application - PR', 'Application \u2013Sales', 'Application:form', 'Application -', 'Application\u2014 Sales']) assert.equal(EL.subjectSkipWord(s), 'application: (at start)', s);
+});
+
 test('round 2 (Faran 2026-11-09): application-at-start, application for a position, position + role word, job/career fair, apply for a job, magazine, business acquisition', () => {
   const hit = {
     'Application: Sales Specialist and Client Intake Specialist': 'application: (at start)',

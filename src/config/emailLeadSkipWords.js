@@ -22,12 +22,13 @@ const SKIP_SUBJECT_WORDS = [
 /**
  * Round 2 shapes a plain word list cannot say (Faran 2026-11-09). Each is tested on the subject
  * with "Re:"/"Fwd:" taken off; the label is what the status shows as the reason.
- *  - "Application:" / "Application -" / "Application –" at the very START of the subject.
+ *  - "Application:" / "Application -" / "Application –" at the very START of the subject. A dash joined
+ *    straight onto the next word ("Application-form") is part of a word, not a separator, and is kept.
  *  - "application for ... position(s)" anywhere.
  *  - "position(s)" together with officer, specialist, support or RCIC anywhere in the subject.
  */
 const SKIP_SUBJECT_PATTERNS = [
-  { label: 'application: (at start)', start: true, re: /^application\s*[:\-\u2010-\u2015]/u },
+  { label: 'application: (at start)', start: true, re: /^application(?:\s*:|\s+[\-\u2010-\u2015]|[\-\u2010-\u2015](?![\p{L}\p{N}]))/u },
   { label: 'application for ... position', re: /(?<![\p{L}\p{N}])application for(?![\p{L}\p{N}]).*(?<![\p{L}\p{N}])positions?(?![\p{L}\p{N}])/u },
   {
     label: 'position + officer/specialist/support/rcic',
