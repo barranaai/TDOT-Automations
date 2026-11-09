@@ -48,7 +48,10 @@ function updatesWidgetHtml(prefix, opts = {}) {
     `<div id="${p}-list" class="updw-list"><div class="updw-empty">Loading updates…</div></div>`,
     `<div class="updw-compose" id="${p}-compose">`,
     opts.otter ? `<label class="updw-otter"><input type="checkbox" id="${p}-otter"> Consultation summary (Otter) <span>— paste the whole summary, up to ${MAX_OTTER.toLocaleString('en-CA')} characters</span></label>` : '',
-    `<textarea id="${p}-text" maxlength="4000" placeholder="Write an update… (posts to this item's Monday thread)"></textarea>`,
+    // With the Otter tick the box takes MAX_OTTER from the start (review round 1): a summary pasted
+    // BEFORE ticking is never cut by the browser. Unticked posts over MAX_UPDATE are refused by the
+    // page check below (it tells staff to tick), never silently shortened.
+    `<textarea id="${p}-text" maxlength="${opts.otter ? MAX_OTTER : MAX_UPDATE}" placeholder="Write an update… (posts to this item's Monday thread)"></textarea>`,
     `<div class="updw-row">`,
     `<input id="${p}-name" type="text" maxlength="60" placeholder="Your name" title="Shown as [Name] on the update — the API posts as the integration account">`,
     `<button class="btn primary" id="${p}-post" type="button">Post update</button>`,
@@ -125,7 +128,7 @@ const UPDATES_WIDGET_JS = [
   '  function syncOtter(){',
   '    if (!otterEl) return;',
   '    var on = otterEl.checked, ta = el("text");',
-  '    ta.maxLength = on ? ' + MAX_OTTER + ' : ' + MAX_UPDATE + ';',
+  '    ta.maxLength = ' + MAX_OTTER + ';   /* never shrinks back: unticking must not cut what is already typed */',
   '    ta.placeholder = on ? "Paste the Otter summary of the consultation (it is posted in full, with a Consultation summary heading)" : "Write an update… (posts to this item' + "'" + 's Monday thread)";',
   '    if (el("compose")) el("compose").classList.toggle("otter", on);',
   '  }',

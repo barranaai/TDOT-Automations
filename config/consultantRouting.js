@@ -223,8 +223,19 @@ function isNonRcicConsultant(name) {
   return !!n && DIRECT_ONLY_CONSULTANTS.includes(n);
 }
 
+/**
+ * A consultant named on a lead that no agreement can name: not blank, and not one of
+ * CONSULTANTS — matched exactly as resolveConsultant matches (trimmed), so any name it
+ * would NOT resolve (Gauri, a spelling the DIRECT_ONLY list no longer holds, a name typed
+ * on Monday) counts. Blank stays auto-routed (false). PURE. (step 2 review round 1)
+ */
+function isUnknownConsultant(name) {
+  const n = String(name == null ? '' : name).trim();
+  return !!n && !Object.values(CONSULTANTS).some((c) => c.name === n);
+}
+
 module.exports = {
   routeConsultant, resolveConsultant, consultantMergeFields, consultOptionsFor,
   CONSULTANTS, EE_SERVICES, PNP_SERVICES, HC_SERVICES, CRS_THRESHOLD,
-  DIRECT_ONLY_CONSULTANTS, isNonRcicConsultant,
+  DIRECT_ONLY_CONSULTANTS, isNonRcicConsultant, isUnknownConsultant,
 };

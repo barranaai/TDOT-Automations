@@ -1405,7 +1405,7 @@ function hydrateConsultPayment(d){
 /* The consultation package on a recorded payment (2026-10-16): the booking staff
    made by hand + email the agreement and form, yes or no. Waived starts with no
    answer; a NEW paid record starts on "yes"; a change keeps what was stored. */
-var CP_WHY={ outcome:'An outcome is already set — the consultation has happened, so no consultation package is sent.', 'case':'This client already has a case — no consultation package is sent.', retainer:'A retainer is already under way — no consultation package is sent.', direct:'A direct retainer client has no consultation — no consultation package is sent.' };
+var CP_WHY={ outcome:'An outcome is already set — the consultation has happened, so no consultation package is sent.', 'case':'This client already has a case — no consultation package is sent.', retainer:'A retainer is already under way — no consultation package is sent.', direct:'A direct retainer client has no consultation — no consultation package is sent.', 'direct-consult':'A direct consultation — this box records the fee only: no booking, no meeting and no package. Change its time with Change time.' };
 /* ?record=1 (the lead page's "Record payment / Waived" button): open the box once, then
    drop the flag from the address so a reload does not open it again. */
 var CP_OPEN_FROM_LINK=(function(){ try { return new URLSearchParams(window.location.search).get('record')==='1'; } catch(e){ return false; } })();
@@ -1644,9 +1644,13 @@ function render(d){
   if(d.transcriptLink) acts+='<a class="iconbtn" title="Transcript" aria-label="Transcript" href="'+escHtml(safeUrl(d.transcriptLink))+'" target="_blank" rel="noopener">'+ICONS.file+'</a>';
   if(d.email) acts+='<a class="iconbtn" title="Email client" aria-label="Email client" href="'+escHtml(safeUrl('mailto:'+d.email))+'">'+ICONS.mail+'</a>';
   /* A direct consultation (step 2): a wrongly typed time would block a real slot on the booking page — change it here (until an outcome is set). */
-  if(d.direct && !d.outcome) acts+='<button type="button" class="btn" id="btn-dq-time" title="Change the date, time or length of this direct consultation (no email goes to the client)">'+ICONS.clock+' Change time</button>';
+  /* Only for someone the server accepts (the switch, a list switch's Monday sign-in, the column made): never a button that always fails. */
+  if(d.direct && d.direct.canChangeTime && !d.outcome) acts+='<button type="button" class="btn" id="btn-dq-time" title="Change the date, time or length of this direct consultation (no email goes to the client)">'+ICONS.clock+' Change time</button>';
+  /* The consultant is not an RCIC (Gauri, or a name typed on Monday): Retain needs an RCIC — choose one here. */
+  if(d.direct && d.direct.needsRcic && !d.outcome) acts+='<button type="button" class="btn" id="btn-dq-cons" title="Retain needs an RCIC as the consultant — choose one">'+ICONS.userCheck+' Change consultant</button>';
   document.getElementById('c-acts').innerHTML=acts;
   var dqtBtn=document.getElementById('btn-dq-time'); if(dqtBtn) dqtBtn.onclick=function(){ openChangeTime(LAST_DETAIL||d); };
+  var dqcBtn=document.getElementById('btn-dq-cons'); if(dqcBtn) dqcBtn.onclick=function(){ openChangeConsultant(LAST_DETAIL||d); };
 
   var pills='';
   pills+='<span class="chip blue">'+ICONS.clock+'<span class="pk">Slot</span> '+escHtml(d.bookedSlot||'—')+'</span>';
@@ -1917,19 +1921,55 @@ function openChangeTime(d){
         if(!dlg.still(run)){ if(res.s===200){ setMsg(j.message||'Time changed.','ok'); load(); } return; }
         dlg.setBusy(false); go.disabled=false; go.textContent='Save time';
         if(res.s===200){ dlg.close(true); setMsg(j.message||'Time changed.','ok'); load(); return; }
+        /* The switch is a list of Monday sign-ins and this is the shared key: say so here, keep the typed time. */
+        if(res.s===401 && j.loginUrl){ err.innerHTML=escHtml(j.error||'Sign in with Monday first.')+' <a href="'+escHtml(j.loginUrl+'?returnTo='+encodeURIComponent(location.pathname))+'">Sign in with Monday</a>'; return; }
         if(res.s===401||res.s===403){ window.location.href='/admin'; return; }
         if(res.s===409 && j.code==='clash'){
           dlg.box.querySelector('#dqt-clash').innerHTML='<div class="dqt-warn">'+escHtml(j.error||'The consultant already has a consultation at that time.')+'<div style="margin-top:8px"><button type="button" class="tdlg-btn" id="dqt-anyway">Save anyway (different client)</button></div></div>';
           dlg.box.querySelector('#dqt-anyway').onclick=function(){ clashAck=true; send(); };
           return;
         }
-        if(res.s===404){ err.textContent='Direct consultation is switched off — the time was not changed.'; return; }
+        if(res.s===404){ err.textContent='Direct consultation is not available to you (or is switched off) — the time was not changed.'; return; }
         err.textContent=j.error||('Could not change the time (HTTP '+res.s+').');
       })
       .catch(function(e){ if(!dlg.still(run)) return; dlg.setBusy(false); go.disabled=false; go.textContent='Save time'; err.textContent=netErr(e); });
   }
   go.onclick=send;
   setTimeout(function(){ if(dlg.still(run)) when.focus(); },30);
+}
+
+/* "Change consultant" on a direct row whose consultant is not an RCIC (review round 1): the RCICs only, through setConsultant. */
+function openChangeConsultant(d){
+  var dv=(d&&d.direct)||{}, names=dv.rcics||[];
+  var dlg=tdotDialogNew({ cls:'dqt tdlg-narrow', labelledBy:'dqc-title' }), run=dlg.openId;
+  var cur=String((d.assignedConsultant&&d.assignedConsultant.name)||'');
+  dlg.box.innerHTML='<h3 id="dqc-title">Change the consultant</h3>'+
+    '<p>'+(cur?escHtml(cur)+' is not an RCIC. ':'')+'Retain needs an RCIC — the agreements name them. No email goes to the client.</p>'+
+    '<label class="dqt-l" for="dqc-sel">RCIC</label><select id="dqc-sel"><option value="">Choose…</option>'+names.map(function(n){ return '<option value="'+escHtml(n)+'">'+escHtml(n)+'</option>'; }).join('')+'</select>'+
+    '<div class="tdlg-err" role="alert"></div>'+
+    '<div class="tdlg-actions"><button type="button" class="tdlg-btn" data-x>Cancel</button><button type="button" class="tdlg-btn primary" data-go>Save consultant</button></div>';
+  var err=dlg.box.querySelector('.tdlg-err'), go=dlg.box.querySelector('[data-go]'), sel=dlg.box.querySelector('#dqc-sel');
+  dlg.box.querySelector('[data-x]').onclick=function(){ dlg.tryClose('cancel'); };
+  go.onclick=function(){
+    err.textContent='';
+    if(!sel.value){ err.textContent='Choose the RCIC.'; sel.focus(); return; }
+    var key=getKey(); if(!key) return;
+    var staffName=(window.tdotRemarksName_rmk ? window.tdotRemarksName_rmk() : '');
+    go.disabled=true; go.textContent='Saving…'; dlg.setBusy(true);
+    fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{ method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'setConsultant', value: sel.value, staffName: staffName }) })
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return {s:r.status,j:j}; }); })
+      .then(function(res){
+        var j=res.j||{};
+        if(!dlg.still(run)){ if(res.s===200){ setMsg(j.message||'Consultant changed.','ok'); load(); } return; }
+        dlg.setBusy(false); go.disabled=false; go.textContent='Save consultant';
+        if(res.s===200){ dlg.close(true); setMsg(j.message||'Consultant changed.','ok'); load(); return; }
+        if(res.s===401||res.s===403){ window.location.href='/admin'; return; }
+        err.textContent=j.error||('Could not change the consultant (HTTP '+res.s+').');
+      })
+      .catch(function(e){ if(!dlg.still(run)) return; dlg.setBusy(false); go.disabled=false; go.textContent='Save consultant'; err.textContent=netErr(e); });
+  };
+  setTimeout(function(){ if(dlg.still(run)) sel.focus(); },30);
 }
 
 // Lock/unlock the retainer fee + plan once the agreement is sent. A disabled

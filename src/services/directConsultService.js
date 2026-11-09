@@ -368,7 +368,10 @@ async function createLocked(n, actor) {
   const today = String(require('./consultPaymentService').torontoNowWall()).slice(0, 10);
   const others = rawLeads.filter((l) => String(l.id) !== n.useLeadId);
   if (!n.differentConsultation) {
+    // Live = still ahead (today or later, Toronto) — a consultation that already happened (an earlier
+    // Existing-client row, a held one awaiting its outcome) is never "the same consultation" (review round 1).
     const live = others.filter((l) => s(l.bookingStatus) === 'Booked' && !s(l.outcome) && slotDay(l.bookedSlot)
+      && slotDay(l.bookedSlot) >= today
       && Math.abs(dayNum(slotDay(l.bookedSlot)) - dayNum(b.date)) <= LIVE_WINDOW_DAYS);
     if (live.length) {
       const first = live.sort((x, y) => s(x.bookedSlot).localeCompare(s(y.bookedSlot)))[0];
@@ -440,7 +443,13 @@ async function createLocked(n, actor) {
     const head = { directConsult: kind, conversionStatus: 'Booked', bookedBy: n.bookedBy, fullName: n.fullName,
       ...(n.email ? { email: n.email } : {}), ...(n.residentialAddress ? { residentialAddress: n.residentialAddress } : {}),
       ...(n.country ? { country: n.country } : {}) };
-    await leadService.updateLead(leadId, head);   // a failure here leaves the lead as it was — the error reaches staff
+    // The booking goes in the SAME write as the marker (review round 1), as createLead does for a new row:
+    // a row carrying the marker is then a Booked consultation even if the booking write below fails —
+    // never hidden from Leads AND missing from Consultations.
+    const bookingNow = { bookingStatus: 'Booked', bookedSlot: b.slot, consultationHeld: b.date, assignedConsultant: b.consultant, meetingType: b.meetingType };
+    await leadService.updateLead(leadId, { ...head, ...bookingNow });   // a failure here leaves the lead as it was — the error reaches staff
+    // base keeps the reused lead's OLD booking fields: writeRecordedBooking compares them with the new
+    // booking, so a stale meeting link left from the abandoned hold is still dropped.
     base = { ...reuse, ...head };
   } else {
     const created = await leadService.createLead({
@@ -490,8 +499,10 @@ async function createLocked(n, actor) {
     if (n.payment) {
       try {
         const before = reuse ? require('./consultPaymentService').parseConsultPayment(reuse) : null;
+        // The HST follows what the pop-up showed (review round 1): the location typed there, never a
+        // country left on a reused lead while "Not known" was answered.
         rec = portal().buildConsultPaymentRecord({
-          n: n.payment, lead, before, name: recorder, verified,
+          n: n.payment, lead: { ...lead, country: n.country || '' }, before, name: recorder, verified,
           pkgChoice: n.package ? 'send' : 'skip', pkgNote: n.package ? '' : 'Direct consultation — booked outside the app',
         });
         await leadService.updateLead(leadId, { consultPayment: JSON.stringify(rec) });
@@ -627,14 +638,27 @@ async function changeTime({ leadId, lead, value, actor = null, who = '' }) {
 }
 
 /** What the record page and the list show about a direct consultation (null when it is not one). PURE. */
-function directView(lead) {
+/**
+ * The record page's view of a direct row (null for any other row). PURE apart from the switch.
+ * canChangeTime: the Change time button shows only for someone the endpoint accepts (the switch,
+ * a list switch's Monday sign-in) and once the column is made — never a button that always fails.
+ * needsRcic + rcics: the consultant is not an RCIC, so "Change consultant" offers the RCICs
+ * (Retain needs one; setConsultant allows this move on a direct row). (review round 1)
+ * @param {object} lead
+ * @param {{ actor?: object }} [opts]  staffActor(req) of the viewer; none → canChangeTime false
+ */
+function directView(lead, { actor } = {}) {
   if (!DC.isDirectConsult(lead)) return null;
   const d = DC.optionMarker(lead).detail || {};
+  const r = routing();
   return {
     kind: DC.kindOf(lead), bookedBy: s(lead.bookedBy),
     inSquare: d.inSquare === true ? true : d.inSquare === false ? false : null,
     followUpOf: s(d.followUpOf), caseRef: s(d.caseRef), by: s(d.by),
     durationMin: durationOf(lead),   // the record page's "Change time" starts from it
+    canChangeTime: actor !== undefined && enabledFor(actor) && DC.isSetUp(),
+    needsRcic: r.isUnknownConsultant(lead.assignedConsultant),
+    rcics: Object.values(r.CONSULTANTS).map((c) => c.name),
   };
 }
 

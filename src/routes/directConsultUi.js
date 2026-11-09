@@ -168,6 +168,8 @@ function dqInitButton(){
     .catch(function(){ b.hidden=true; });
 }
 
+/* A server error or a lost answer: it may or may not have been saved. */
+var DQ_CHECK_LIST='Something went wrong on the server — it may or may not have been saved. Check the Consultations list before trying again, so it is not added twice.';
 function dqShowDone(text,link,warn){
   var el=document.getElementById('dq-done'); if(!el) return;
   el.className=warn?'warn':'';
@@ -308,7 +310,8 @@ function openDirectConsult(){
     var uses=[];
     ((m&&m.leads)||[]).forEach(function(l){
       person(l.name).lines.push(leadLine(l));
-      if(l.bookingStatus==='Booked' && !l.outcome && l.bookedSlot && (!s || Math.abs(dqDayDiff(s.slice(0,10),String(l.bookedSlot).slice(0,10)))<=30)) st.live.push(l);
+      /* Live = still ahead (today or later), as the server counts it: a consultation that already happened is never this one. */
+      if(l.bookingStatus==='Booked' && !l.outcome && l.bookedSlot && String(l.bookedSlot).slice(0,10)>=dqNowWall().slice(0,10) && (!s || Math.abs(dqDayDiff(s.slice(0,10),String(l.bookedSlot).slice(0,10)))<=30)) st.live.push(l);
       if(!existing && reusable(l)) uses.push(l);
     });
     var h='<div class="dq-box info"><div class="dq-t">Already in the app for this email / phone</div>'+order.map(function(k){ var p=people[k]; return '<div class="dq-person"><div class="dq-who">'+dqEsc(p.name)+'</div>'+p.lines.map(function(x){ return '<div class="dq-line">'+x+'</div>'; }).join('')+'</div>'; }).join('');
@@ -401,6 +404,7 @@ function openDirectConsult(){
         var j=res.j||{};
         if(!dlg.still(run)){   /* closed after the long wait: the outcome is still told, never lost */
           if(res.s===200){ dqShowDone(j.message||'Saved.',j.link,!!(j.left&&j.left.length)); load(true); }
+          else dqShowDone((res.s>=500&&res.s!==503)?DQ_CHECK_LIST:('Not saved: '+(j.error||('HTTP '+res.s))),j.link||'',true);
           return;
         }
         dlg.setBusy(false); btn.disabled=false; btn.textContent='Save';
@@ -413,9 +417,14 @@ function openDirectConsult(){
         if(res.s===409) return showConflict(j);
         if(res.s===401 && j.loginUrl){ q('dq-err').innerHTML=dqEsc(j.error||'Sign in with Monday first.')+' <a href="'+dqEsc(j.loginUrl+'?returnTo='+encodeURIComponent(location.pathname))+'">Sign in with Monday</a>'; return; }
         if(res.s===404) return fail('Direct consultation is switched off — nothing was saved.');
+        /* A server error may come after the row was made: never say "nothing was saved". */
+        if(res.s>=500 && res.s!==503) return fail(DQ_CHECK_LIST);
         fail(j.error||('Could not save (HTTP '+res.s+') — nothing was saved. Try again.'));
       })
-      .catch(function(e){ if(!dlg.still(run)) return; dlg.setBusy(false); btn.disabled=false; btn.textContent='Save'; fail('Network error — check the Consultations list before trying again, so it is not added twice.'); });
+      .catch(function(e){
+        if(!dlg.still(run)){ dqShowDone(DQ_CHECK_LIST,'',true); return; }
+        dlg.setBusy(false); btn.disabled=false; btn.textContent='Save'; fail('Network error — check the Consultations list before trying again, so it is not added twice.');
+      });
   }
   /* What the server found that the pop-up must show: a re-submit, the Not Wanted list, the same consultation, a clash. */
   function showConflict(j){

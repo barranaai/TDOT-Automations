@@ -446,11 +446,16 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false, 
   // A consultant who is not an RCIC (a direct-only consultant, step 2 — Gauri): no agreement
   // can name them, and routing would put ANOTHER RCIC's name on it. Retain typed straight on
   // the Lead board reaches here without the portal's refusal — held, with a note.
-  if (require('../../config/consultantRouting').isNonRcicConsultant(lead.assignedConsultant)) {
+  // A direct row also holds for ANY name that is not one of the RCICs (review round 1): a name the
+  // DIRECT_ONLY list no longer spells the same way, or one typed on Monday, would otherwise route.
+  const routingCfg = require('../../config/consultantRouting');
+  const nonRcic = routingCfg.isNonRcicConsultant(lead.assignedConsultant);
+  if (nonRcic || (require('../utils/directConsult').isDirectConsult(lead) && routingCfg.isUnknownConsultant(lead.assignedConsultant))) {
     console.log(`[Retainer2] Outcome is Retain but the consultant is not an RCIC for lead ${leadId} — agreement HELD`);
     if (notifyIfMissing) {
+      const who = esc(String(lead.assignedConsultant || '').trim());
       await postLeadNote(leadId,
-        `⚠ Outcome is set to "Retain", but the consultant (${esc(String(lead.assignedConsultant || '').trim())}) is not an RCIC. The retainer agreement names the RCIC, so it has NOT been emailed — change the consultant to an RCIC on the client's record in the app, then set Retain again.`);
+        `⚠ Outcome is set to "Retain", but the consultant (${who}) ${nonRcic ? 'is not an RCIC' : 'is not one of our RCICs (name not recognised)'}. The retainer agreement names the RCIC, so it has NOT been emailed — change the consultant to an RCIC on the client's record in the app ("Change consultant"), then set Retain again.`);
     }
     return { status: 'non-rcic' };
   }

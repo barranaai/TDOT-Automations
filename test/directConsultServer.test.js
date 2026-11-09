@@ -465,7 +465,7 @@ test('Retain: refused while the consultant is not an RCIC (outcome + Retain & se
   const writes = [];
   const r = [quiet(), stub(leadService, 'getLead', async () => ({ ...lead })), stub(leadService, 'updateLead', async (id, f) => { writes.push(f); })];
   try {
-    await assert.rejects(portal.applyAction({ leadId: '800', action: 'outcome', value: 'Retain', actor: FARAN }), (e) => e.badRequest && /not an RCIC/.test(e.message) && /Change the consultant/.test(e.message));
+    await assert.rejects(portal.applyAction({ leadId: '800', action: 'outcome', value: 'Retain', actor: FARAN }), (e) => e.badRequest && /not an RCIC/.test(e.message) && /Change consultant/.test(e.message));
     await assert.rejects(portal.applyAction({ leadId: '800', action: 'retainAndSend', actor: FARAN }), (e) => e.badRequest && /not an RCIC/.test(e.message));
     assert.equal(writes.length, 0, 'nothing changed');
   } finally { r.reverse().forEach((x) => x()); }
@@ -580,7 +580,8 @@ test('recordConsultPaymentAction still writes the record through the shared buil
   const i = src.indexOf('async function recordConsultPaymentAction');
   const body = src.slice(i, src.indexOf('\n}\n', i));
   assert.match(body, /buildConsultPaymentRecord\(\{ n, lead, before, name, verified, pkgChoice, pkgNote \}\)/);
-  assert.match(body, /writeRecordedBooking\(leadId, lead, booking, name, lines, \{ noMeeting: notWanted \}\)/, 'Record payment never passes meeting: none');
+  // review round 1: meeting 'none' only on a direct row (defence in depth — a direct row is never asked for a booking)
+  assert.match(body, /writeRecordedBooking\(leadId, lead, booking, name, lines, \{ noMeeting: notWanted, \.\.\.\(direct \? \{ meeting: 'none' \} : \{\}\) \}\)/, 'Record payment passes meeting: none for a direct row only');
 });
 
 /* ── deleting a direct row never touches Square ── */
@@ -645,7 +646,8 @@ test('the Consultations list row and the record carry the direct kind and who bo
     assert.equal(byId['1'].direct, 'Existing client'); assert.equal(byId['1'].bookedBy, 'Melanie');
     assert.equal('direct' in byId['2'], false, 'a normal row is unchanged');
   } finally { r.forEach((x) => x()); snap._reset(); }
-  assert.deepEqual(dcs.directView(rows[0]), { kind: 'Existing client', bookedBy: 'Melanie', inSquare: true, followUpOf: '', caseRef: '', by: '', durationMin: 30 });
+  assert.deepEqual(dcs.directView(rows[0]), { kind: 'Existing client', bookedBy: 'Melanie', inSquare: true, followUpOf: '', caseRef: '', by: '', durationMin: 30,
+    canChangeTime: false, needsRcic: false, rcics: [SHAFOLI, SHERMIN] });
   assert.equal(dcs.directView(rows[1]), null);
 });
 

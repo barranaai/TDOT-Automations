@@ -2083,7 +2083,8 @@ app.get('/api/consultations', async (_req, res) => {
 // Consultant portal — one consultation, fully assembled
 app.get('/api/consultation/:leadId', async (req, res) => {
   try {
-    const detail = await consultantPortalService.getConsultationDetail((req.params.leadId || '').trim());
+    // the viewer: whether the record page offers "Change time" on a direct consultation (step 2)
+    const detail = await consultantPortalService.getConsultationDetail((req.params.leadId || '').trim(), { actor: staffActor(req, '') });
     res.json(detail);
   } catch (err) {
     if (err.notFound) return res.status(404).json({ error: err.message });
@@ -2114,7 +2115,7 @@ app.post('/api/consultation/:leadId/action', express.json(), async (req, res) =>
     if (err.conflict) return res.status(409).json({ error: err.message, code: err.code || '', ...(err.clash ? { clash: err.clash } : {}) });
     if (err.badRequest) return res.status(400).json({ error: err.message });
     if (err.notFound)   return res.status(404).json({ error: err.message });
-    if (err.status === 404 || err.status === 401 || err.status === 503) return res.status(err.status).json({ error: err.status === 404 ? 'Not found' : err.message });
+    if (err.status === 404 || err.status === 401 || err.status === 503) return res.status(err.status).json({ error: err.status === 404 ? 'Not found' : err.message, ...(err.loginUrl ? { loginUrl: err.loginUrl } : {}) });
     console.error('[Consultant] Action failed:', err.stack || err.message);
     res.status(500).json({ error: 'Internal server error' });
   }

@@ -96,7 +96,10 @@ test('record page: the "direct" chip, the Added-as lines, Change time (direct ro
   const d = C.buildDetailHTML('555');
   for (const s of [
     "if(d.direct){ var dqTip=(d.direct.bookedBy?'Booked by '+d.direct.bookedBy+' · ':'')+(d.direct.kind||'Direct consultation');",
-    "if(d.direct && !d.outcome) acts+='<button type=\"button\" class=\"btn\" id=\"btn-dq-time\"",
+    "if(d.direct && d.direct.canChangeTime && !d.outcome) acts+='<button type=\"button\" class=\"btn\" id=\"btn-dq-time\"",
+    "if(d.direct && d.direct.needsRcic && !d.outcome) acts+='<button type=\"button\" class=\"btn\" id=\"btn-dq-cons\"",
+    'function openChangeConsultant(d){', "action:'setConsultant', value: sel.value",
+    "'direct-consult':'A direct consultation — this box records the fee only: no booking, no meeting and no package.",
     "kv('Added as','Direct consultation · '",
     "kv('In Square',d.direct.inSquare===true?",
     'function openChangeTime(d){', "action:'changeDirectTime'", "Save anyway (different client)",
@@ -151,7 +154,7 @@ test('Updates box: ticked, the post says kind "otter" and the box takes 20,000 c
   assert.equal(posts.length, 1);
   assert.deepEqual(posts[0], { body: 'x'.repeat(5000), staffName: 'Gauri', kind: 'otter' });
   assert.equal(el('updw-otter').checked, false, 'unticked after posting');
-  assert.equal(el('updw-text').maxLength, 4000);
+  assert.equal(el('updw-text').maxLength, 20000, 'the box never shrinks back — unticking must not cut typed text (review round 1)');
   el('updw-text').value = 'a normal update'; el('updw-post').onclick();
   await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(posts[1], { body: 'a normal update', staffName: 'Gauri' }, 'a normal update has no kind');

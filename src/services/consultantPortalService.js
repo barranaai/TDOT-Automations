@@ -180,7 +180,7 @@ async function readLeadJson(lead, filename) {
  * @param {string} leadId
  * @returns {Promise<object>} throws only if the lead itself is not found
  */
-async function getConsultationDetail(leadId) {
+async function getConsultationDetail(leadId, { actor } = {}) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Consultation not found'); e.notFound = true; throw e; }
 
@@ -284,7 +284,8 @@ async function getConsultationDetail(leadId) {
     bookedBy:          lead.bookedBy || '',
     paymentReviewedBy: lead.paymentReviewedBy || '',
     // A direct consultation (step 2): { kind, bookedBy, inSquare, followUpOf, caseRef, by } — null for any other row.
-    direct:            require('./directConsultService').directView(lead),
+    // canChangeTime is for the viewer (actor): the switch and the column decide whether Change time shows.
+    direct:            require('./directConsultService').directView(lead, { actor: actor || null }),
 
     // The Not Wanted list (point 5): { checked, hit, matchedOn, entries[] } — a staff warning, never a block.
     blacklist,
@@ -690,7 +691,7 @@ async function getLeadDetail(leadId) {
     paidOnline:   !!String(lead.squareConsultTxnId || '').trim(),
     heldOnline:   (String(lead.bookingStatus || '').trim() === 'Slot Held' && Date.parse(String(lead.slotHeldUntil || '')) > Date.now()),
     // "(and book)" only when the box will really ask for the booking (same test as the dialog)
-    recordBooks:  (() => { const cs = require('./consultationService'); return cs.packageOnRecordEnabled(lead.id) && cs.packageApplicable(lead).ok && !cs.packageAlreadySent(lead); })(),
+    recordBooks:  (() => { const cs = require('./consultationService'); return cs.packageOnRecordEnabled(lead.id) && !isDirectConsult(lead) && cs.packageApplicable(lead).ok && !cs.packageAlreadySent(lead); })(),
     // a fee staff already recorded (the booking link would charge again)
     feeRecorded:  (() => { const cp = require('./consultPaymentService'); const ps = cp.paidState(lead); return ps.record && ps.paid !== 'app' ? cp.describe(ps.record) : ''; })(),
     inviteMessage,
@@ -1117,9 +1118,12 @@ async function postPortalNote(leadId, text) {
 function directRetainGuard(lead, confirm) {
   const routing = require('../../config/consultantRouting');
   const name = String(lead.assignedConsultant || '').trim();
-  if (routing.isNonRcicConsultant(name)) {
+  // Any lead: a direct-only consultant (as before). A direct row: also any name that is not an RCIC
+  // (review round 1) — resolveConsultant would route it to another RCIC's name. Blank stays routed.
+  const nonRcic = routing.isNonRcicConsultant(name);
+  if (nonRcic || (isDirectConsult(lead) && routing.isUnknownConsultant(name))) {
     const rcics = Object.values(routing.CONSULTANTS).map((c) => c.name).join(' or ');
-    const e = new Error(`${name} is not an RCIC, so this client can't be retained with them as the consultant — the agreements name the RCIC. Change the consultant to ${rcics} first.`);
+    const e = new Error(`${name} ${nonRcic ? 'is not an RCIC' : 'is not one of our RCICs (name not recognised)'}, so this client can't be retained with them as the consultant — the agreements name the RCIC. Use "Change consultant" on this page to choose ${rcics} first.`);
     e.badRequest = true; throw e;
   }
   const kind = require('../utils/directConsult').kindOf(lead);
@@ -1549,7 +1553,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         case 'held':     return { ok: true, message: `Not sent — the retainer plan isn’t complete: ${(r.warnings || []).join(' · ')}. Fix these, save, and click again.` };
         case 'no-email': return { ok: true, message: 'Not sent — no client email on file. Add the client’s email, then click again.' };
         case 'no-fee':   return { ok: true, message: 'Not sent — set the retainer fee first.' };
-        case 'non-rcic': return { ok: true, message: 'Not sent — the consultant is not an RCIC. Change the consultant to an RCIC, then click again.' };
+        case 'non-rcic': return { ok: true, message: 'Not sent — the consultant is not an RCIC. Use "Change consultant" to choose an RCIC, then click again.' };
         case 'held-cosigner':
           // This agreement is signed by the PA AND the inviter/sponsor/
           // dependent — the send is held until both signers are addressable.
@@ -1772,7 +1776,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       // One exception (step 2): a direct consultation held by a consultant who is not an RCIC may
       // move to an RCIC — Retain needs one, and the app holds no calendar booking for it.
       const directToRcic = isDirectConsult(lead) && !!v.normalized
-        && require('../../config/consultantRouting').isNonRcicConsultant(lead.assignedConsultant);
+        && require('../../config/consultantRouting').isUnknownConsultant(lead.assignedConsultant);
       if (!directToRcic && ((lead.bookedSlot || '').trim() || (lead.bookingStatus || '').trim() === 'Booked')) {
         const e = new Error('Already booked — the consultation is on the assigned consultant\'s calendar. Cancel/rebook to change it.');
         e.badRequest = true; throw e;
@@ -2602,7 +2606,11 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
   // ── The package question: asked only with the switch on, for a client the package
   // is for, when none has gone out (an emailed package keeps the time it stated).
   const alreadySent = cs.packageAlreadySent(lead);
-  const applicable = cs.packageApplicable(lead);
+  // A direct consultation (step 2 review round 1): this box never books, makes a meeting or asks
+  // about the package for it — its time is changed with "Change time", and its package was the
+  // pop-up's choice. packageApplicable itself is unchanged (the pop-up's package goes through it).
+  const direct = isDirectConsult(lead);
+  const applicable = direct ? { ok: false, why: 'direct-consult' } : cs.packageApplicable(lead);
   const pendingNow = (() => { const st = consultAgreementService.parseCountersign(lead); return st.packagePending && !st.packageStalled && (Date.now() - Date.parse(st.packagePending)) < cs.PACKAGE_STALE_MS; })();
   if (onRecord && pendingNow && n.booking) throw bad('The consultation package is being sent right now — nothing was saved. Wait a minute, reload the page and try again.');
   const asks = onRecord && !alreadySent && applicable.ok;
@@ -2631,7 +2639,9 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
   } else if (n.booking) {
     // A page opened before the package went out (or before an outcome was set) still
     // carried a booking: it is NOT written — and staff are told so.
-    lines.push(`The booking you entered was NOT saved — ${alreadySent ? 'the consultation package already went out with the time on the lead' : !onRecord ? 'booking from this box is switched off' : 'this client no longer has a consultation to book'}. Change the booking in Monday if it really moved.`);
+    lines.push(direct && !alreadySent
+      ? 'The booking you entered was NOT saved — this is a direct consultation: change its time with "Change time" on this page.'
+      : `The booking you entered was NOT saved — ${alreadySent ? 'the consultation package already went out with the time on the lead' : !onRecord ? 'booking from this box is switched off' : 'this client no longer has a consultation to book'}. Change the booking in Monday if it really moved.`);
   }
 
   // A Not Wanted person is never emailed automatically — not the package, not a Teams invite.
@@ -2676,7 +2686,7 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
   let bookingOverrides = {}, bookingOk = !booking;
   if (booking) {
     try {
-      const w = await writeRecordedBooking(leadId, lead, booking, name, lines, { noMeeting: notWanted });
+      const w = await writeRecordedBooking(leadId, lead, booking, name, lines, { noMeeting: notWanted, ...(direct ? { meeting: 'none' } : {}) });
       bookingOverrides = w.overrides;
       bookingOk = !w.meetingFailed;
     } catch (err) {
@@ -2693,7 +2703,9 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
       .catch((err) => ({ status: 'failed', reason: err.message }));
   }
   const futureTime = (slot) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s(slot)) && s(slot) > cp.torontoNowWall();
-  const pkgLine = packageResultLine(pkg, { pkgChoice, pkgNote, kind: n.kind, alreadySent, applicable, onRecord,
+  // A direct row whose pop-up asked for the package (still waiting for the address) is re-checked
+  // through the one gate above; its line then says what that run did, not "direct consultation".
+  const pkgLine = packageResultLine(pkg, { pkgChoice, pkgNote, kind: n.kind, alreadySent, applicable: (direct && pkg) ? { ok: true } : applicable, onRecord,
     hasTime: bookingOk && booking ? true : (s(lead.bookingStatus) === 'Booked' && futureTime(lead.bookedSlot)) });
   if (pkgLine) lines.push(pkgLine);
 
@@ -2838,7 +2850,8 @@ function recordPackageView(lead, ps) {
   if (!cs.packageOnRecordEnabled(lead.id)) return { enabled: false };
   const s = (v) => String(v == null ? '' : v).trim();
   const { CONSULTANTS, consultOptionsFor, routeConsultant } = require('../../config/consultantRouting');
-  const app = cs.packageApplicable(lead);
+  // A direct consultation (review round 1): no booking section and no package question here.
+  const app = isDirectConsult(lead) ? { ok: false, why: 'direct-consult' } : cs.packageApplicable(lead);
   const slot = s(lead.bookedSlot), status = s(lead.bookingStatus);
   // Only a BOOKED time still ahead is offered: a time left from an expired online hold
   // may not be the real one, and a past one cannot be emailed (review 2026-10-16).
@@ -2878,6 +2891,7 @@ function packageResultLine(pkg, { pkgChoice, pkgNote, kind, alreadySent, applica
       case: 'No consultation package: this client already has a case.',
       retainer: 'No consultation package: a retainer is already under way.',
       direct: 'No consultation package: a direct retainer client has no consultation.',
+      'direct-consult': 'A direct consultation — this box sends no package and makes no meeting; change its time with "Change time".',
     })[applicable.why] || '';
   }
   if (pkgChoice === 'skip') {
