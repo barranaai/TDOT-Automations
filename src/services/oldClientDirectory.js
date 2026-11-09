@@ -160,23 +160,22 @@ function publicView(p, matchedOn) {
 const PLUS_ONE = /^\s*(\+\s*1|1[\s\-.(])/;
 
 /**
- * PURE. Search people.
+ * PURE. Every person matching a query (no cap, unranked) → { hits, mode }.
  *  - 4+ digits and no letters → phone:
  *      typed with +1 ("+1 416 5…")  → the digits after the 1 start a number;
  *      otherwise                     → the digits appear anywhere in a number as stored ("+91 98765" finds "+91 98765 43210"),
  *                                      and a full number with any country code matches on its last 10 digits;
  *  - contains "@"             → email (starts with);
  *  - otherwise                → name: every word of one of the query's forms starts a word of the name (2+ letters in all).
- * Ranked: the exact name, then names starting with the query, then the newest consultation.
  */
-function searchPeople(people, rawQ) {
+function matchPeople(people, rawQ) {
   const q = String(rawQ == null ? '' : rawQ).trim().slice(0, MAX_Q);
   const hasLetters = /[a-z]/.test(fold(q));
   const digits = q.replace(/\D/g, '');
   let hits = [], mode = '';
   if (q.includes('@')) {
     const e = q.toLowerCase();
-    if (e.length < 3) return { results: [], more: false, mode: 'short' };
+    if (e.length < 3) return { hits: [], mode: 'short' };
     mode = 'email';
     hits = people.filter((p) => p.emails.some((x) => x.startsWith(e)));
   } else if (!hasLetters && digits.length >= 4) {
@@ -195,15 +194,42 @@ function searchPeople(people, rawQ) {
   } else {
     const forms = wordForms(q);
     const cq = compact(q);
-    if (cq.replace(/[0-9]/g, '').length < 2) return { results: [], more: false, mode: 'short' };
+    if (cq.replace(/[0-9]/g, '').length < 2) return { hits: [], mode: 'short' };
     mode = 'name';
     hits = people.filter((p) => forms.some((ws) => ws.every((w) => p.words.some((pw) => pw.startsWith(w)))));
+  }
+  return { hits, mode };
+}
+
+/** PURE. matchPeople, ranked, the first MAX_RESULTS as public views (the "Which client?" answer). */
+function searchPeople(people, rawQ) {
+  const { hits, mode } = matchPeople(people, rawQ);
+  if (mode === 'short') return { results: [], more: false, mode: 'short' };
+  if (mode === 'name') {
+    const cq = compact(String(rawQ == null ? '' : rawQ).trim().slice(0, MAX_Q));
     hits.forEach((p) => { p._rank = p.groupKey === cq ? 2 : p.groupKey.startsWith(cq) ? 1 : 0; });
   }
   hits.sort((a, b) => ((b._rank || 0) - (a._rank || 0)) || String(b.lastConsult).localeCompare(String(a.lastConsult)) || a.name.localeCompare(b.name));
   const results = hits.slice(0, MAX_RESULTS).map((p) => publicView(p, mode));
   hits.forEach((p) => { delete p._rank; });
   return { results, more: hits.length > MAX_RESULTS, mode };
+}
+
+/**
+ * One searchable entry for ONE record (no grouping — the id maps 1:1 to the row), in the shape
+ * matchPeople reads. Used by the Leads search (leadSearch.js).
+ */
+function buildIndexEntry({ id, name, phone, email }) {
+  return {
+    id: String(id),
+    name: String(name || '').replace(/\s+/g, ' ').trim(),
+    groupKey: compact(name),
+    words: [...new Set(wordForms(name).flat())],
+    phones: phoneDigits(phone) ? [phoneDigits(phone)] : [],
+    phoneRaw: phoneRaw(phone) ? [phoneRaw(phone)] : [],
+    emails: emailKeys(email),
+    lastConsult: '',
+  };
 }
 
 let _copy = null;      // { people, rows, at }
@@ -299,4 +325,4 @@ async function warm() {
 /** For tests only. */
 function _reset() { _copy = null; _inFlight = null; }
 
-module.exports = { search, warm, buildPeople, searchPeople, fold, compact, wordForms, io, TTL_MS, MAX_RESULTS, _reset };
+module.exports = { search, warm, buildPeople, searchPeople, matchPeople, buildIndexEntry, fold, compact, wordForms, io, TTL_MS, MAX_RESULTS, _reset };

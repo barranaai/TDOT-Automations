@@ -102,7 +102,7 @@ test('Consultations: the header choices read like the old drop-downs; the server
   assert.ok(LT.facetCounts(rows, LT.emptyState(), 'consultant').some((o) => o.label === 'Unassigned' && o.value === LT.NONE));
   assert.equal(ids(LT.sortRows(rows, LT.emptyState().sort)), ids(rows), 'earliest consultation first, as the server sent them');
   assert.deepEqual(LT.chips(consultState(LT, { q: 'asha', paid: 'paid', con: '__none' })).map((c) => c.text),
-    ['Name contains “asha”', 'Consultant: Unassigned', 'Paid: Paid (app), Paid — recorded by staff']);
+    ['Search “asha”', 'Consultant: Unassigned', 'Paid: Paid (app), Paid — recorded by staff']);
 });
 
 test('a short fixed list shows every choice even when none of the rows has it (like the old drop-down); open lists show only what is there', () => {

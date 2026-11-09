@@ -92,7 +92,7 @@ test('sorting: newest first by default; name, Received, status, priority, tier b
 
 test('chips: one per active filter, readable; removing one clears only it; a saved state is cleaned', () => {
   const s1 = st({ q: 'asha', urgent: true, from: '2026-10-01', to: '2026-10-28', sel: { owner: [LT.NONE, 'Gauri'], status: ['remark', 'outcome:Outcome: Follow-Up'] } });
-  assert.deepEqual(LT.chips(s1).map((c) => c.text), ['Name contains “asha”', 'Urgent only', 'Received Oct 1 – Oct 28', 'Owner: No owner, Gauri', 'Current status: A remark, Outcome: Follow-Up']);
+  assert.deepEqual(LT.chips(s1).map((c) => c.text), ['Search “asha”', 'Urgent only', 'Received Oct 1 – Oct 28', 'Owner: No owner, Gauri', 'Current status: A remark, Outcome: Follow-Up']);
   assert.equal(LT.chips(st({ from: '2026-10-05', to: '2026-10-05' }))[0].text, 'Received Oct 5');
   assert.equal(LT.chips(st({ to: '2026-10-05' }))[0].text, 'Received until Oct 5');
   LT.clearKey(s1, 'owner');

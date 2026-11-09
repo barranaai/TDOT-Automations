@@ -56,7 +56,7 @@ function leadsTableSpec() {
       tier:     function (r) { return s(r.tier) || '~'; },
     },
     defaultSort: { key: 'received', dir: 'desc' },
-    search: { chip: 'Name contains', text: function (r) { return r.name; } },
+    search: { chip: 'Search', text: function (r) { return r.name; }, id: function (r) { return r.id; } },
     flags: { urgent: { chip: 'Urgent only', test: function (r) { return !!r.urgent; } } },
     // The Received filter compares the server-made Toronto day.
     date: { key: 'received', chip: 'Received', get: function (r) { return s(r.createdDay); } },
@@ -76,6 +76,7 @@ function leadsTableOpts() {
   return {
     key: 'tdot_leads_table_v1',
     ids: { head: 'q-headrow', chips: 'q-chips', count: 'q-count', search: 'q-search', pop: 'q-pop' },
+    serverSearch: '/api/leads/search',   // name, phone or email (step 3, 2026-11-09)
     render: 'renderRows', api: 'LeadsTable',
     // Tabs by stage (Faran 2026-11-05): two reminders; booking in progress sits under Invite sent; a new browser tab opens on New.
     quick: { facet: 'phase', box: 'q-phase', tabs: true, allLast: true, all: 'All', storeKey: 'tdot_list_leads_tab', default: 'new',
@@ -86,7 +87,7 @@ function leadsTableOpts() {
         expired: 'No booking 7 days after the first invite', '': 'Every lead on this list' } },
     // menu: what the header's panel offers.
     cols: [
-      { id: 'lead', label: 'Lead', menu: 'lead', flags: ['urgent'], note: 'Search by name in the box above the table.', sort: 'name', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
+      { id: 'lead', label: 'Lead', menu: 'lead', flags: ['urgent'], note: 'Search by name, phone or email in the box above the table.', sort: 'name', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
       { id: 'service', label: 'Service', menu: 'facet', facets: ['service'] },
       { id: 'source', label: 'Source / Reference', title: 'How they reached us · the lead owner underneath', menu: 'facet', facets: ['source', 'owner'] },
       { id: 'referred', label: 'Referred By', title: 'Who referred them: the employee or client chosen by staff, or the answer the client gave on the website form', menu: 'facet', facets: ['referredBy'] },

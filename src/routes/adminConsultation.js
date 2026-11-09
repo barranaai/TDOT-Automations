@@ -759,7 +759,7 @@ ${buildNavHeader('consultations')}
         <button type="button" class="nav" data-nav="1" title="Later">&#9654;</button>
         <span class="lbl" id="range-label"></span><span class="cnt" id="cq-count" aria-live="polite"></span>
       </div>
-      <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="cq-search" type="search" placeholder="Search by name…" aria-label="Search consultations by name" autocomplete="off"></div>
+      <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="cq-search" type="search" placeholder="Search by name, phone or email…" aria-label="Search consultations by name, phone or email" autocomplete="off"></div>
     </div>
     <div id="cq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
     <div class="card attn fold" id="needs-outcome" style="display:none;margin-bottom:12px">
@@ -834,7 +834,7 @@ ${buildNavHeader('retainers')}
     <p class="page-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation; once retained (signed and paid) they move to the <b>Retained</b> tab, and the case is on the Client Master page. <b>All</b> = everyone still being worked (not Retained). <span class="age" id="snap-age"></span></p>
     <div class="lt-tabs" id="r-quick" role="tablist" aria-label="Retainers &amp; follow-ups by outcome"></div>
     <div class="q-head r-tools">
-      <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="rq-search" type="search" placeholder="Search by name…" aria-label="Search retainers and follow-ups by name" autocomplete="off"></div>
+      <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="rq-search" type="search" placeholder="Search by name, phone or email…" aria-label="Search retainers and follow-ups by name, phone or email" autocomplete="off"></div>
     </div>
     <div id="rq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
     <div class="card"><div class="tbl-wrap">

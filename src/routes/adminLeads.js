@@ -141,7 +141,7 @@ ${buildNavHeader('leads')}
     <div class="lt-tabs" id="q-phase" role="tablist" aria-label="Leads by stage"></div>
     <div class="q-toolbar">
       <h2 class="sec-h">Awaiting booking <span id="q-count" class="muted" style="font-weight:500" aria-live="polite"></span></h2>
-      <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="q-search" type="search" placeholder="Search by name…" aria-label="Search leads by name" autocomplete="off"></div>
+      <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="q-search" type="search" placeholder="Search by name, phone or email…" aria-label="Search leads by name, phone or email" autocomplete="off"></div>
     </div>
     <div id="q-chips" class="q-chips" style="display:none" aria-live="polite"></div>
     <div class="card"><div class="tbl-wrap">

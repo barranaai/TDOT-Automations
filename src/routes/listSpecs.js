@@ -32,13 +32,14 @@ function consultListSpec(ctx) {
     },
     sorts: {},
     defaultSort: null,   // the server order: earliest consultation first
-    search: { chip: 'Name contains', text: function (r) { return r.name; } },
+    search: { chip: 'Search', text: function (r) { return r.name; }, id: function (r) { return r.id; } },
   };
 }
 function consultListOpts(ctx) {
   return {
     key: 'tdot_list_consultations',
     ids: { head: 'cq-headrow', chips: 'cq-chips', count: 'cq-count', search: 'cq-search', pop: 'cq-pop' },
+    serverSearch: '/api/leads/search',   // name, phone or email (step 3, 2026-11-09)
     render: 'renderConsultList', api: 'ConsultTable',
     countable: 'consultCountable',   // the counts beside the choices: only the date range on view (and its two folds)
     cols: [
@@ -78,13 +79,14 @@ function retainerListSpec(ctx) {
     },
     sorts: {},
     defaultSort: null,   // the server order: by stage, then date
-    search: { chip: 'Name contains', text: function (r) { return r.name; } },
+    search: { chip: 'Search', text: function (r) { return r.name; }, id: function (r) { return r.id; } },
   };
 }
 function retainerListOpts(ctx) {
   return {
     key: 'tdot_list_retainers',
     ids: { head: 'rq-headrow', chips: 'rq-chips', count: 'r-count', search: 'rq-search', pop: 'rq-pop' },
+    serverSearch: '/api/leads/search',   // name, phone or email (step 3, 2026-11-09)
     render: 'renderRetainerList', api: 'RetainerTable',
     initial: ctx.initial, onChange: ctx.onChange,
     // Tabs, like the Leads page (team meeting 2026-11-05, point 7): one outcome at a time, "All" last; a new browser tab

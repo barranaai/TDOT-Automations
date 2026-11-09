@@ -1910,6 +1910,11 @@ app.post('/api/old-clients/search', express.json(), async (req, res) => {
   }
 });
 
+// Leads / Consultations / Retainers search by name, phone or email (step 3, Faran 2026-11-09). Same team
+// key as /api/leads (/api). POST so a phone or email never sits in a URL or access log; the search text is
+// never logged; never cached; rate-limited per IP. Answers ONLY lead ids — never a phone or email.
+app.post('/api/leads/search', express.json({ limit: '2kb' }), require('./services/leadSearch').httpHandler());
+
 app.get('/api/leads', async (_req, res) => {
   try {
     const leads = await consultantPortalService.getLeadsQueue();

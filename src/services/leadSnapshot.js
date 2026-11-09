@@ -45,6 +45,7 @@ const SNAPSHOT_KEYS = [
   'relationshipWithTdot', 'existingFileType', 'assignedConsultant', 'leadOwner', 'bookingInvite', 'inviteSentAt',
   'referredBy',   // the Leads list's "Referred By" column (2026-11-04)
   'email',        // ONLY to know whether there is one: kept as hasEmail, the address itself is dropped (2026-11-04)
+  'phone',        // with the email: ONLY for the server-side search (leadSearch.js) — never on a lead the lists send (2026-11-09)
   'directClient', // "Yes" = a direct retainer client (the Leads / Retainers split, the KPIs; 2026-11-04)
   'caseDeleted',  // the case was deleted and this record kept (2026-11-05) — the Retainers rows say "Case deleted"
   'recordingLink', 'preConsultPdf',   // the Client Master consultation copy's hourly refresh compares against these (point 8)
@@ -54,6 +55,11 @@ const SNAPSHOT_KEYS = [
   ...(COLS.directConsult ? ['directConsult'] : []),
 ];
 const SNAPSHOT_IDS = SNAPSHOT_KEYS.map((k) => COLS[k]).filter(Boolean);
+
+/** Where a snapshot lead keeps its phone + email (server only — see fetchLeads). */
+const CONTACT = Symbol('leadContact');
+/** The search index per copy (rebuilt when the copy changes). */
+const _indexFor = new WeakMap();
 
 let _copy = null;          // { leads, at, gen }  gen: the invalidation generation the read began at
 let _inFlight = null;      // { promise, gen }
@@ -86,7 +92,11 @@ const io = {
         // The lists are lists, not records: the copy keeps whether the client HAS an email
         // (the "No email" markers, 2026-11-04) — never the address.
         lead.hasEmail = !!String(lead.email || '').trim();
+        // The phone and email stay on the SERVER for the Leads search (step 3, 2026-11-09): a
+        // non-enumerable symbol, so JSON, Object.keys and {...lead} never carry them to a page.
+        Object.defineProperty(lead, CONTACT, { value: { phone: String(lead.phone || ''), email: String(lead.email || '') }, enumerable: false });
         delete lead.email;
+        delete lead.phone;
         out.push(lead);
       }
       cursor = page.cursor || null;
@@ -155,8 +165,26 @@ async function warm() {
   try { await _refresh(); } catch (err) { console.warn(`[LeadSnapshot] warm-up failed: ${err.message}`); }
 }
 
+/**
+ * SERVER ONLY. The current copy as search entries — one per lead row: { id, name, phone, email } turned
+ * into oldClientDirectory's matcher shape. Never sent to a page (leadSearch returns ids only).
+ */
+async function contactIndex(opts) {
+  const snap = await getLeadSnapshot(opts);
+  let idx = _indexFor.get(snap.leads);
+  if (!idx) {
+    const { buildIndexEntry } = require('./oldClientDirectory');
+    idx = snap.leads.map((l) => {
+      const c = l[CONTACT] || {};
+      return buildIndexEntry({ id: l.id, name: l.fullName || l.name || '', phone: c.phone, email: c.email });
+    });
+    _indexFor.set(snap.leads, idx);
+  }
+  return { index: idx, stale: !!snap.stale };
+}
+
 /** For tests only. */
 function _reset() { _copy = null; _inFlight = null; _gen = 0; _invalidatedAt = 0; }
 function _state() { return { gen: _gen, invalidatedAt: _invalidatedAt, copyGen: _copy ? _copy.gen : null, inFlight: !!_inFlight }; }
 
-module.exports = { getLeadSnapshot, leads, invalidate, warm, io, SNAPSHOT_KEYS, SNAPSHOT_IDS, TTL_MS, HARD_MAX_MS, _reset, _state };
+module.exports = { getLeadSnapshot, leads, contactIndex, invalidate, warm, io, CONTACT, SNAPSHOT_KEYS, SNAPSHOT_IDS, TTL_MS, HARD_MAX_MS, _reset, _state };

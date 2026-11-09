@@ -27,7 +27,8 @@
  *                          "no choice" / All; the Retainers page's Retained tab) } },
  *         sorts: { key: get(r) }, defaultSort: { key, dir } | null (null = keep the server order),
  *         sortBlanksLast: [sort keys] (their blank values go last in both directions),
- *         search: { text(r) -> string | string[], chip }, flags: { key: { chip, test(r) } },
+ *         search: { text(r) -> string | string[], chip, id(r) (the row's lead id — the server search answers ids) },
+ *         flags: { key: { chip, test(r) } },
  *         date: { key, chip, get(r) -> 'YYYY-MM-DD' } | null }
  */
 
@@ -76,11 +77,24 @@ function listCore(spec) {
   }
   function range(st) { var a = s(st.from), b = s(st.to); return a && b && a > b ? [b, a] : [a, b]; }
 
+  /* The server search's answer (name, phone or email → lead ids; step 3, 2026-11-09) for ONE search text. Kept out of
+     the saved state. While there is no answer for the text in the box, the search is the name-contains one. */
+  var serverHit = null;
+  function setServerHits(q, ids) {
+    if (!ids) { serverHit = null; return; }
+    var set = {};
+    ids.forEach(function (x) { set[s(x)] = true; });
+    serverHit = { q: s(q).toLowerCase(), set: set };
+  }
+  function hasServerHits(q) { return !!(serverHit && serverHit.q === s(q).toLowerCase()); }
+
   /** Does the row pass every filter except `skip` (a facet key, a flag key, or 'date')? */
   function passes(r, st, skip) {
     if (SEARCH) {
       var q = s(st.q).toLowerCase();
-      if (q) {
+      if (q && SEARCH.id && serverHit && serverHit.q === q) {
+        if (!serverHit.set[s(SEARCH.id(r))]) return false;
+      } else if (q) {
         var t = SEARCH.text(r), list = Array.isArray(t) ? t : [t];
         if (!list.some(function (x) { return s(x).toLowerCase().indexOf(q) >= 0; })) return false;
       }
@@ -176,7 +190,7 @@ function listCore(spec) {
     return next;
   }
 
-  return { NONE: NONE, FACETS: FACETS, FLAGS: FLAGS, DATE: DATE, DEFAULT_SORT: DEFAULT_SORT, emptyState: emptyState, normalizeState: normalizeState, passes: passes,
+  return { NONE: NONE, FACETS: FACETS, FLAGS: FLAGS, DATE: DATE, DEFAULT_SORT: DEFAULT_SORT, emptyState: emptyState, normalizeState: normalizeState, passes: passes, setServerHits: setServerHits, hasServerHits: hasServerHits,
     filterRows: filterRows, facetCounts: facetCounts, sortRows: sortRows, presetRange: presetRange, chips: chips, clearKey: clearKey, clearAll: clearAll, range: range,
     valuesOf: valuesOf, labelOf: labelOf, apartOf: apartOf };
 }
@@ -188,6 +202,7 @@ function listCore(spec) {
  *        quick.tabs: drawn as tabs (one at a time, arrow keys move); quick.allLast: "All" is the last tab;
  *        quick.storeKey + quick.default: a new browser tab opens on the default; the choice (All too) is kept for this tab
  *        (a link chosen by initial() returning true wins, and is kept),
+ *      serverSearch: a POST url ('/api/leads/search') — the search box also finds phone and email on the server (answers lead ids),
  *      countable: window function name (r) -> boolean — only these rows are counted beside the choices (Consultations: the date range),
  *      sortReset: 'newest case first' (or a function(state) giving the words) — the list's normal order has no column, so a column
         sort shows as a chip whose × goes back to it }
@@ -500,8 +515,41 @@ function listTableUi(LT, o, win) {
   win.addEventListener('scroll', function () { if (openCol) place(); }, true);
 
   var search = doc.getElementById(ids.search);
-  function setSearch(v) { if (search) search.value = v; }
-  if (search) { search.value = state.q; search.addEventListener('input', function () { state.q = search.value; apply('filter'); }); }
+  function setSearch(v) { if (search) search.value = v; if (!v && LT.setServerHits) LT.setServerHits('', null); }
+  /* Search by phone and email on the server (step 3, 2026-11-09): the box text is POSTed (never in a URL), the answer is
+     lead ids only. Until it comes — and when it fails — the list shows the name-contains search, and says so on failure. */
+  var srvSeq = 0, srvTimer = null, srvNote = null;
+  function srvSay(msg) {
+    if (!search) return;
+    if (!srvNote) {
+      srvNote = doc.createElement('div'); srvNote.className = 'q-search-note'; srvNote.setAttribute('aria-live', 'polite');
+      var box = search.parentNode; if (box && box.parentNode) box.parentNode.insertBefore(srvNote, box.nextSibling);
+    }
+    srvNote.textContent = msg || ''; srvNote.style.display = msg ? '' : 'none';
+  }
+  function srvKey() { try { return win.sessionStorage.getItem('tdot_admin_key') || ''; } catch (e) { return ''; } }
+  function serverSearch() {
+    if (!o.serverSearch || typeof win.fetch !== 'function') return;
+    var q = String(state.q || '').replace(/^\s+|\s+$/g, '');
+    var my = ++srvSeq;
+    if (srvTimer) win.clearTimeout(srvTimer);
+    if (!q) { LT.setServerHits('', null); srvSay(''); return; }
+    if (LT.hasServerHits(q)) return;
+    srvTimer = win.setTimeout(function () {
+      win.fetch(o.serverSearch, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Api-Key': srvKey() }, body: JSON.stringify({ q: q }) })
+        .then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
+        .then(function (res) {
+          if (my !== srvSeq) return;   /* an older answer: the box changed since */
+          if (res.s !== 200 || !res.j || !res.j.ok || !Array.isArray(res.j.ids)) { srvSay('Phone and email search is not available right now — searching names only.'); return; }
+          srvSay('');
+          if (res.j.mode === 'short') return;   /* too short to search: the name-contains search stays */
+          LT.setServerHits(q, res.j.ids); apply('filter');
+        })
+        .catch(function () { if (my === srvSeq) srvSay('Phone and email search is not available right now — searching names only.'); });
+    }, 250);
+  }
+  if (search) { search.value = state.q; search.addEventListener('input', function () { state.q = search.value; apply('filter'); serverSearch(); }); }
+  if (state.q) serverSearch();
 
   var api = {
     /** New rows from the server: the filters, the sort and the page stay as they are. */
@@ -521,6 +569,7 @@ const LIST_TABLE_CSS = `
   .q-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin:2px 0 10px; }
   .q-search { position:relative; }
   .q-search input { width:260px; max-width:70vw; padding:8px 12px 8px 32px; border:1px solid #e2e8f0; border-radius:9px; font:inherit; font-size:13px; color:var(--navy); background:#fff; }
+  .q-search-note { font-size:12px; color:#64748b; }
   .q-search input:focus { outline:2px solid #bfdbfe; border-color:#93c5fd; }
   .q-search svg { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:#94a3b8; pointer-events:none; }
   .q-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 10px; }
