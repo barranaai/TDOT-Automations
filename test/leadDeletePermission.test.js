@@ -142,5 +142,30 @@ test('the server: both delete routes use the deleter gate, refuse a case for lea
   const svc = fs.readFileSync(require.resolve('../src/services/deletionService.js'), 'utf8');
   assert.match(svc, /\$\{leadOnly \? ' \(lead-only permission\)' : ''\} deleted/);
   const shared = fs.readFileSync(require.resolve('../src/routes/adminShared.js'), 'utf8');
-  assert.ok(shared.includes("v.canDeleteLeads ? '.del-btn:not([data-del-lead]),.del-btn[data-del-record-only]{display:none!important}'"));
+  assert.ok(shared.includes("v.canDeleteLeads ? '.del-btn:not([data-del-lead]),.del-btn[data-del-record-only],.del-btn[data-del-admin-only]{display:none!important}'"));
+});
+
+test('lead-only staff see no bin on a Consultations/Retainers row the server would refuse (review 2026-11-09)', async () => {
+  const snap = require('../src/services/leadSnapshot');
+  const portal = require('../src/services/consultantPortalService');
+  snap._reset();
+  const L = (id, over = {}) => ({ id: String(id), name: 'Lead ' + id, fullName: 'Lead ' + id, createdAt: '2026-10-01T12:00:00Z', ...over });
+  const rows = [
+    L(1, { bookingStatus: 'Booked', bookedSlot: '2026-10-20 11:00' }),
+    L(2, { bookingStatus: 'Booked', bookedSlot: '2026-10-21 11:00', clientMasterItemId: '77' }),
+    L(3, { bookingStatus: 'Booked', outcome: 'Retain', bookedSlot: '2026-10-09 10:00' }),
+    L(4, { bookingStatus: 'Booked', bookedSlot: '2026-10-09 10:00', retainerSent: '2026-10-10' }),
+    L(5, { sourceChannel: 'Direct Retainer' }),
+  ];
+  const orig = snap.io.fetchLeads; snap.io.fetchLeads = async () => rows;
+  try {
+    const b = await portal.getConsultationsBoard({ now: new Date('2026-10-15T16:00:00Z') });
+    const flag = (list) => Object.fromEntries(list.map((r) => [r.id, !!r.adminDelete]));
+    assert.deepEqual(flag(b.consultations), { 1: false, 2: true });
+    assert.deepEqual(flag(b.retainers), { 3: false, 4: true, 5: true });
+  } finally { snap.io.fetchLeads = orig; snap._reset(); }
+  const page = fs.readFileSync(require.resolve('../src/routes/adminConsultation.js'), 'utf8');
+  assert.equal(page.split(`(c.adminDelete?' data-del-admin-only="1"':'')`).length - 1, 2, 'both bins carry the mark');
+  const shared = fs.readFileSync(require.resolve('../src/routes/adminShared.js'), 'utf8');
+  assert.ok(shared.includes('.del-btn[data-del-admin-only]{display:none!important}'));
 });

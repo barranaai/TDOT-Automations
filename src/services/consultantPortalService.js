@@ -3154,6 +3154,7 @@ async function getConsultationsBoard({ fresh = false, now = new Date(), withReta
         outcome: s(l.outcome), followUpDate: s(l.followUpDate),
         consultationHeld: s(l.consultationHeld), hasMeeting: !!s(l.meetingLink),
         tier: s(l.tier), createdAt: l.createdAt || '',
+        ...adminOnlyDelete(l),
         // A direct consultation (step 2): its kind for the "direct" pill and who booked it — only on such a row.
         ...(isDirectConsult(l) ? { direct: require('../utils/directConsult').kindOf(l) || '?', bookedBy: s(l.bookedBy) } : {}),
       });
@@ -3218,7 +3219,14 @@ function retainerRow(l, consultPayment) {
     caseDeleted: s(l.clientMasterItemId) ? '' : s(l.caseDeleted),   // its case was deleted, this record kept (point 8)
     bookedSlot: s(l.bookedSlot), outcome: oc || s(l.outcome), followUpDate: s(l.followUpDate), createdAt: l.createdAt || '',
     paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
+    ...adminOnlyDelete(l),
   };
+}
+
+/** { adminDelete: true } when the lead-only delete would refuse this lead (a case, a retainer, a direct client,
+ *  Retained): staff on LEAD_DELETE_EMAILS then get no bin on its row. The server checks again anyway (review 2026-11-09). */
+function adminOnlyDelete(l) {
+  return require('./deletionService')._internal.leadOnlyRefusal(l || {}) ? { adminDelete: true } : {};
 }
 
 /**

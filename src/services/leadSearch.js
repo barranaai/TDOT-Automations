@@ -31,7 +31,7 @@ async function search(q) {
  * Per-IP sliding-window limit (in memory). `hit(ip)` → true when allowed.
  * The map is pruned as it is used.
  */
-function rateLimiter({ max = 60, windowMs = 60 * 1000, now = () => Date.now() } = {}) {
+function rateLimiter({ max = 600, windowMs = 60 * 1000, now = () => Date.now() } = {}) {
   const seen = new Map();
   return function hit(ip) {
     const t = now();
@@ -46,13 +46,23 @@ function rateLimiter({ max = 60, windowMs = 60 * 1000, now = () => Date.now() } 
 }
 
 /**
+ * The caller's address: the LAST X-Forwarded-For hop (Render's proxy appends the real peer; the first entry is
+ * client-supplied) — as phase2.js's intake limit. Without it every request counts as the proxy's address. The whole
+ * office still shares one address, so the limit (600 a minute) sits far above normal office typing (review 2026-11-09).
+ */
+function clientIp(req) {
+  const xff = String((req && req.headers && req.headers['x-forwarded-for']) || '').split(',').map((s) => s.trim()).filter(Boolean);
+  return xff[xff.length - 1] || (req && req.ip) || 'unknown';
+}
+
+/**
  * The POST /api/leads/search handler (mounted under /api — the team key). Body { q } only; the text is
  * never logged; never cached; per-IP limit; the answer is { ok, mode, ids } — never a phone or email.
  */
 function httpHandler(limit = rateLimiter()) {
   return async function leadSearchRoute(req, res) {
     res.set('Cache-Control', 'private, no-store');
-    if (!limit(req.ip)) return res.status(429).json({ ok: false, error: 'Too many searches — wait a moment.' });
+    if (!limit(clientIp(req))) return res.status(429).json({ ok: false, error: 'Too many searches — wait a moment.' });
     try {
       const q = String((req.body && req.body.q) || '').slice(0, 100);
       const r = await search(q);
@@ -64,4 +74,4 @@ function httpHandler(limit = rateLimiter()) {
   };
 }
 
-module.exports = { search, rateLimiter, httpHandler, io, MAX_IDS };
+module.exports = { search, rateLimiter, httpHandler, clientIp, io, MAX_IDS };

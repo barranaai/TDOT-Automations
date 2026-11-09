@@ -810,7 +810,7 @@ test('review round 4: the Retained tab’s bin deletes a record only — a clien
   assert.ok(DELETE_UI_JS.includes('if (target.recordOnly) body.recordOnly = true;'));
   assert.ok(DELETE_UI_JS.includes("recordOnly: btn.getAttribute('data-del-record-only') === '1'"));
   const ret = require('../src/routes/adminConsultation').buildRetainersHTML();
-  assert.ok(ret.includes(`data-del-lead="'+escHtml(c.id)+'"'+(c.retained?' data-del-record-only="1" title="Delete this consultation record and its OneDrive folder (careful — a folder carrying a case number is kept; refused while the client’s case is still on the Cases board: delete the case there first)"':' title="Delete this client, their consultation record and their OneDrive folder (careful — if there is a case, the case and its checklist go too)"')+'>'`));
+  assert.ok(ret.includes(`data-del-lead="'+escHtml(c.id)+'"'+(c.adminDelete?' data-del-admin-only="1"':'')+(c.retained?' data-del-record-only="1" title="Delete this consultation record and its OneDrive folder (careful — a folder carrying a case number is kept; refused while the client’s case is still on the Cases board: delete the case there first)"':' title="Delete this client, their consultation record and their OneDrive folder (careful — if there is a case, the case and its checklist go too)"')+'>'`));
   const srv = require('fs').readFileSync(require.resolve('../src/server.js'), 'utf8');
   assert.ok(srv.includes("recordOnly: req.query.recordOnly === '1',") && srv.includes('recordOnly: recordOnly === true,'));
 });

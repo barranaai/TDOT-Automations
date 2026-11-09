@@ -498,7 +498,7 @@ const DELETE_UI_JS = DIALOG_UI_JS + `
         .then(function(v){
           /* Lead-only delete (step 3, 2026-11-09): staff on LEAD_DELETE_EMAILS keep the bins that delete a lead by its id
              (never a case's bin, never the Retained tab's record bin) — the server refuses a lead with a case. */
-          if (v && !v.canUndo) { var s = document.createElement('style'); s.textContent = v.canDeleteLeads ? '.del-btn:not([data-del-lead]),.del-btn[data-del-record-only]{display:none!important}' : '.del-btn{display:none!important}'; document.head.appendChild(s); }
+          if (v && !v.canUndo) { var s = document.createElement('style'); s.textContent = v.canDeleteLeads ? '.del-btn:not([data-del-lead]),.del-btn[data-del-record-only],.del-btn[data-del-admin-only]{display:none!important}' : '.del-btn{display:none!important}'; document.head.appendChild(s); }
         })
         .catch(function(){});
     } catch (_) {}

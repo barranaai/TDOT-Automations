@@ -202,3 +202,31 @@ test('the browser: POSTs the text (never in the URL) with the key, filters to th
   assert.deepEqual(f.shown(), ['2'], 'names only');
   assert.equal(f.note().textContent, 'Phone and email search is not available right now — searching names only.');
 });
+
+test('the limit counts the real caller (last X-Forwarded-For hop), not the proxy, and two staff on one office address are not cut off by normal typing (review 2026-11-09)', async () => {
+  await withSnapshot(async () => {
+    const restore = quiet();
+    try {
+      const h = leadSearch.httpHandler();   // the real default limit
+      const proxy = '10.0.0.1';
+      // two staff behind one office address, ~150 searches each in a minute
+      for (let i = 0; i < 300; i++) {
+        const res = fakeRes();
+        await h({ ip: proxy, headers: { 'x-forwarded-for': 'spoofed, 203.0.113.7' }, body: { q: 'asha' } }, res);
+        assert.equal(res.statusCode, 200, 'search ' + i + ' still allowed');
+      }
+      // a different office behind the same proxy has its own budget
+      const lim = leadSearch.rateLimiter({ max: 1 });
+      const h2 = leadSearch.httpHandler(lim);
+      let res = fakeRes();
+      await h2({ ip: proxy, headers: { 'x-forwarded-for': '203.0.113.7' }, body: { q: 'asha' } }, res);
+      assert.equal(res.statusCode, 200);
+      res = fakeRes();
+      await h2({ ip: proxy, headers: { 'x-forwarded-for': '198.51.100.9' }, body: { q: 'asha' } }, res);
+      assert.equal(res.statusCode, 200, 'counted by the forwarded address, not the proxy');
+      res = fakeRes();
+      await h2({ ip: proxy, headers: { 'x-forwarded-for': 'fresh-spoof, 203.0.113.7' }, body: { q: 'asha' } }, res);
+      assert.equal(res.statusCode, 429, 'a spoofed first hop does not mint a new budget');
+    } finally { restore(); }
+  });
+});
