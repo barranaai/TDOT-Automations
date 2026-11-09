@@ -10,12 +10,22 @@
  * the flat fee) plus the fees staff recorded as paid another way (consultPaymentService:
  * cash / e-transfer / invoice / other; waived counts separately, adds nothing);
  * retainer value = summed retainerFee of signed cases.
+ *
+ * Direct consultations (step 2, "＋ Direct consultation": booked outside the app, added
+ * by hand) count in the consultation figures like any booking. In the FUNNEL (leads →
+ * booked → consulted) only a "New" one counts: a "Follow-up" (the person's earlier
+ * consultation already counted them) and an "Existing client" (about their current
+ * file) are not new leads. An "Existing client" row is "existing" on the new / existing
+ * card whatever its relationship label says. The kind is read from the row
+ * (utils/directConsult.kindOf); a marked row whose kind cannot be read counts like any
+ * lead, as before.
  */
 
 'use strict';
 
 const { torontoWallClock } = require('../utils/torontoTime');
 const consultPayment = require('./consultPaymentService');
+const directConsult = require('../utils/directConsult');
 
 function consultFeeDollars() {
   try { return (Number(require('./bookingService').CONSULT_FEE_CENTS) || 20000) / 100; }
@@ -45,6 +55,8 @@ function trPrOf(caseType) {
   } catch (_) { return null; }
 }
 function isExistingClient(lead) {
+  // NOTE: misses "Previous client with completed or inactive application" — fixed in step 6
+  // (changing it now would move the months already reported). Direct rows are checked first.
   return /exist|return|prior|current/i.test(lead.relationshipWithTdot || '') || !!String(lead.existingFileType || '').trim();
 }
 function inc(o, k) { o[k] = (o[k] || 0) + 1; }
@@ -82,19 +94,24 @@ function computeKpis(leads = [], month = '') {
   // leads whose booking fields simply weren't stamped.
   const isDirect = (l) => require('../utils/directClient').isDirectClient(l);   // the marker column, or the old "Direct Retainer" source
   for (const l of leads) {
+    // A direct consultation (step 2): its kind — 'New' / 'Follow-up' / 'Existing client', or ''
+    // (not one, or no kind readable). Only Follow-up and Existing client stay out of the funnel.
+    const dcKind = directConsult.isDirectConsult(l) ? directConsult.kindOf(l) : '';
+    const inFunnel = dcKind !== 'Follow-up' && dcKind !== directConsult.EXISTING;
     // Direct clients never enter the booking funnel — they'd deflate the
     // booked-from-leads rate. totalLeads still counts them.
     // A lead CONVERTED to a direct retainer was a lead first (Faran 2026-10-15): it still counts.
-    if (inM(l.createdAt) && !(isDirect(l) && !String(l.originalChannel || '').trim())) K.funnel.leads++;
+    if (inM(l.createdAt) && inFunnel && !(isDirect(l) && !String(l.originalChannel || '').trim())) K.funnel.leads++;
     const ps = consultPayment.paidState(l);
     if (inM(l.bookedSlot)) {
-      K.consultations.booked++; K.funnel.booked++;
+      K.consultations.booked++;           // every consultation, direct ones too
+      if (inFunnel) K.funnel.booked++;     // the funnel: not a follow-up or an existing client's own file
       inc(K.consultations.byConsultant, l.assignedConsultant || 'Unassigned');
       inc(K.consultations.byLeadOwner, l.leadOwner || 'Unattributed');
       if (/person/i.test(l.meetingType || '')) K.consultations.inPerson++;
       else if (/phone/i.test(l.meetingType || '')) K.consultations.phone++;
       else if (String(l.meetingType || '').trim()) K.consultations.virtual++;
-      if (isExistingClient(l)) K.consultations.existingClients++; else K.consultations.newClients++;
+      if (dcKind === directConsult.EXISTING || isExistingClient(l)) K.consultations.existingClients++; else K.consultations.newClients++;
       if (ps.paid === 'app') {
         // Per-lead fee (the booking-page duration choice) when recorded; the
         // flat env fee covers legacy leads booked before per-duration pricing.
@@ -115,7 +132,7 @@ function computeKpis(leads = [], month = '') {
       if (ps.paid === 'waived') K.consultations.waived++;
       else { K.consultations.paidByStaff++; if (ps.paidCents != null) K.consultations.revenue += ps.paidCents / 100; }
     }
-    if (inM(l.consultationHeld)) { K.consultations.held++; K.funnel.consulted++; }
+    if (inM(l.consultationHeld)) { K.consultations.held++; if (inFunnel) K.funnel.consulted++; }
     if (inM(l.retainerSent)) K.retainers.sent++;
     if (inM(l.retainerSigned)) {
       K.retainers.signed++;
