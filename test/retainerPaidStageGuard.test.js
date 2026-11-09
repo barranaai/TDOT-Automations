@@ -175,14 +175,21 @@ test('HELD setup write: fails once → retried after a beat, lands before the no
   } finally { mondayApi.query = real2; h2.done(); }
 });
 
-test('stage guard: the pending→active group move still happens when the agreement is complete (lead-less passes), not when unsigned', async () => {
-  const a = harness({ applied: '', stage: 'Internal Review' });
-  const restoreA = stub(leadService, 'findAllByColumnValue', async () => []);
-  try { await retainerService.onRetainerPaid({ itemId: '603' }); assert.ok(a.order.includes('group'), 'moved to the active group'); }
-  finally { restoreA(); a.done(); }
-  const b = harness({ applied: '', stage: 'Internal Review', leads: UNSIGNED });
-  try { await retainerService.onRetainerPaid({ itemId: '604' }); assert.ok(!b.order.includes('group'), 'an unsigned case stays in the pending group'); }
-  finally { b.done(); }
+test('stage guard: the pending→active group move is ATTEMPTED when the agreement is complete (lead-less passes), not when unsigned', async () => {
+  // Faran 2026-11-09: the move itself is on hold (no active group configured — see test/caseGroupMoveHold.test.js),
+  // so this pins the gate's decision to attempt it, not a Monday call.
+  const gate = require('../src/services/caseGateService');
+  const attempts = [];
+  const restoreG = stub(gate, 'moveCaseToActiveGroup', async (id) => { attempts.push(String(id)); return false; });
+  try {
+    const a = harness({ applied: '', stage: 'Internal Review' });
+    const restoreA = stub(leadService, 'findAllByColumnValue', async () => []);
+    try { await retainerService.onRetainerPaid({ itemId: '603' }); assert.ok(attempts.includes('603'), 'the move to the active group is attempted'); assert.ok(!a.order.includes('group'), 'no group move reaches Monday while it is on hold'); }
+    finally { restoreA(); a.done(); }
+    const b = harness({ applied: '', stage: 'Internal Review', leads: UNSIGNED });
+    try { await retainerService.onRetainerPaid({ itemId: '604' }); assert.ok(!attempts.includes('604'), 'an unsigned case stays in the pending group'); }
+    finally { b.done(); }
+  } finally { restoreG(); }
 });
 
 test('state unreadable: the note names the right recovery step, and ONE guarded retry is scheduled', async () => {

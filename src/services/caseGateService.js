@@ -89,6 +89,23 @@ async function moveCaseToGroup(cmItemId, groupId, label) {
   }
 }
 
-async function moveCaseToActiveGroup(cmItemId) { return moveCaseToGroup(cmItemId, activeGroupId(), 'active group'); }
+/**
+ * Moves a fully signed + paid case out of Pending into the active group.
+ * HOLD (Faran, 2026-11-09): the board is organised by MONTH groups and the old
+ * single active group ("topics", titled Applications → Retainer Sent) was
+ * deleted on 2026-08-21, so every move since then failed without a word. The
+ * setting is now empty on purpose: no move is attempted, the case stays in
+ * Pending, and staff move it to its month group by hand (as Asmita does).
+ * The monthly-group move is a separate, held decision — do not put a group id
+ * back here without it.
+ */
+async function moveCaseToActiveGroup(cmItemId) {
+  const groupId = activeGroupId();
+  if (!groupId) {
+    if (cmItemId) console.log(`[CaseGate] CM ${cmItemId}: signed + paid — stays in Pending; staff move it to its month group (no automatic group move)`);
+    return false;
+  }
+  return moveCaseToGroup(cmItemId, groupId, 'active group');
+}
 
 module.exports = { signatureGateForLead, pendingGroupId, activeGroupId, moveCaseToGroup, moveCaseToActiveGroup };
