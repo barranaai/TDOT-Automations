@@ -403,6 +403,7 @@ function buildLeadDetailHTML(leadId) {
   .btn.primary { background:var(--navy); color:white; border-color:var(--navy); } .btn.primary:hover:not(:disabled) { background:var(--navy-light); }
   .iconbtn { width:36px; height:36px; border-radius:var(--r-sm); border:1px solid var(--border); background:#fff; color:var(--muted); display:inline-flex; align-items:center; justify-content:center; font-size:17px; cursor:pointer; text-decoration:none; transition:all .15s; }
   .iconbtn:hover { border-color:var(--navy); color:var(--navy); background:#f5f8fc; }
+  #btn-convert.disabled { opacity:.5; cursor:not-allowed; pointer-events:none; }
   .edit-email { font-size:12.5px; font-weight:600; color:#1d4ed8; text-decoration:underline; cursor:pointer; white-space:nowrap; }
   .ctx-meta { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:14px; }
   .chip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; padding:5px 11px; border-radius:20px; background:#f1f5f9; color:#475569; }
@@ -505,6 +506,10 @@ ${buildNavHeader('leads')}
           <div class="al-hint" id="bd-lock" style="display:none;margin-top:8px"></div>
           <div style="margin-top:10px"><button class="btn" id="btn-bd-save" type="button">Save details</button></div>
           <div id="bd-msg" class="act-msg"></div>
+          <div class="btn-row" id="convert-row" style="margin-top:12px;align-items:center">
+            <a class="btn" id="btn-convert" title="Reuse THIS lead (no duplicate) and go straight to the retainer panel — also after a consultation">→ Convert to direct retainer</a>
+            <span class="muted" id="convert-why" style="font-size:12px"></span>
+          </div>
         </div>
         <div class="card" id="la-att-card" style="display:none"><div class="card-t">${I.clip} Attachments <span class="muted">(staff only — saved in the client’s folder)</span></div>${attachFieldHtml('la')}
           <div style="margin-top:8px"><button class="btn" id="btn-la-att" type="button">Attach</button></div>
@@ -567,9 +572,6 @@ ${buildNavHeader('leads')}
           <div class="btn-row" id="record-pay-row" style="display:none;margin-bottom:10px">
             <a class="btn" id="btn-record-pay" title="Paid by cash, e-transfer or an invoice the team sent — or waived: record it on the consultation page">${I.clip} <span id="btn-record-pay-lbl">Record payment / Waived</span></a>
             <span class="muted" id="record-pay-fee" style="font-size:12px;align-self:center"></span>
-          </div>
-          <div class="btn-row" id="convert-row" style="display:none;margin-bottom:10px">
-            <a class="btn" id="btn-convert" title="Returning/existing client who doesn't need a consultation — reuse THIS lead (no duplicate) and go straight to the retainer panel">→ Convert to direct retainer</a>
           </div>
           <div class="btn-row">
             <button class="btn" id="btn-save-msg" title="Save the message without sending">${I.clip} Save draft</button>
@@ -795,13 +797,6 @@ function render(d){
       var rb=document.getElementById('btn-resend'); if(rb) rb.style.display='none'; // no meeting to resend
     }
   } else {
-    // Un-booked, non-direct lead: returning clients can skip the consultation
-    // entirely (team feedback 2026-08-13) — convert THIS lead into a direct
-    // retainer client. The Consultations page opens with the modal pre-filled
-    // and linked to this lead, so no duplicate row is minted; the server still
-    // refuses leads that are already booked/sent/retained.
-    // Mirror the server's link-conversion guards (booked / slot held / open
-    // case are refused there) — never offer a button that's guaranteed to 409.
     // Paid another way (cash / e-transfer / invoice) or waived, and not booked in the app:
     // record it — with the switch on, the same box takes the booking and emails the
     // agreement and form. Never while the client is paying online, or once paid online.
@@ -814,11 +809,25 @@ function render(d){
       document.getElementById('btn-record-pay-lbl').textContent=d.feeRecorded?'Change payment record':(d.recordBooks?'Record payment / Waived (and book)':'Record payment / Waived');
       document.getElementById('record-pay-fee').textContent=d.feeRecorded?('Recorded: '+d.feeRecorded):'';
     }
-    var cr=document.getElementById('convert-row');
-    if(cr && !d.clientMasterItemId && d.bookingStatus!=='Slot Held' && !d.bookedSlot){
-      cr.style.display='flex';
-      document.getElementById('btn-convert').href='/admin/retainers?convertLead='+encodeURIComponent(d.leadId);
-    }
+  }
+  renderConvert(d);
+}
+
+/* "Convert to direct retainer" (step 3, Faran 2026-11-09): ALWAYS on the lead page — also after booking and after the
+   consultation. When the server would refuse, it is greyed out with the reason (the server keeps its refusals). */
+var CONVERT_WHY={ 'case':'Has a case — open it', 'retainer':'A retainer is already in progress — continue on the Retainers page', 'booked':'Consultation booked, not held yet — convert after it', 'direct':'Already a direct retainer client' };
+function renderConvert(d){
+  var b=document.getElementById('btn-convert'), why=document.getElementById('convert-why'); if(!b) return;
+  var code=d.convertBlock ? d.convertBlock.code : (d.directRetainer ? 'direct' : '');
+  if(code){
+    b.removeAttribute('href'); b.setAttribute('aria-disabled','true'); b.classList.add('disabled');
+    b.title=(d.convertBlock && d.convertBlock.message) || CONVERT_WHY[code] || '';
+    why.textContent=CONVERT_WHY[code] || '';
+  } else {
+    b.href='/admin/retainers?convertLead='+encodeURIComponent(d.leadId);
+    b.removeAttribute('aria-disabled'); b.classList.remove('disabled');
+    b.title='Reuse THIS lead (no duplicate) and go straight to the retainer panel — also after a consultation';
+    why.textContent='';
   }
 }
 

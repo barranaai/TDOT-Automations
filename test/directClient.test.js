@@ -402,10 +402,12 @@ test('findClientMatches: merges lead/case/account sources, dedupes, and survives
 
 // ─── Review-earned rails on warn-and-link (2026-08-04) ───────────────────────
 
-test('linkLeadId: a BOOKED lead is refused — converting it would corrupt the KPI funnel', async () => {
+// Step 3 (Faran 2026-11-09, decision 7): a lead whose consultation already HAPPENED may be converted; one booked for a
+// time still to come (or a held time) is refused until Faran decides (Needs Faran).
+test('linkLeadId: a lead booked for a consultation still to come is refused', async () => {
   const restore = [
     stubRegistryDown(),
-    stub(leadService, 'getLead', async () => ({ id: '310', fullName: 'Booked Person', email: 'b@x.co', sourceChannel: 'Website', bookingStatus: 'Booked', bookedSlot: '2026-08-10 10:00', clientMasterItemId: '', retainerSent: '' })),
+    stub(leadService, 'getLead', async () => ({ id: '310', fullName: 'Booked Person', email: 'b@x.co', sourceChannel: 'Website', bookingStatus: 'Booked', bookedSlot: '2099-08-10 10:00', clientMasterItemId: '', retainerSent: '' })),
     stub(leadService, 'createLead', async () => { throw new Error('must not create'); }),
     stub(leadService, 'updateLead', async () => { throw new Error('must not write'); }),
     stub(mondayApi, 'query', async () => ({})),
@@ -414,6 +416,22 @@ test('linkLeadId: a BOOKED lead is refused — converting it would corrupt the K
     await assert.rejects(
       () => portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', fullName: 'Booked Person', email: 'b@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT, linkLeadId: '310' }),
       (e) => e.badRequest === true && /consultation booked/.test(e.message));
+  } finally { restore.forEach((x) => x()); }
+});
+
+test('linkLeadId: a lead whose consultation was held passes the booking check (step 3)', async () => {
+  const restore = [
+    stubRegistryDown(),
+    stub(leadService, 'getLead', async () => ({ id: '312', fullName: 'Held Person', email: 'h@x.co', sourceChannel: 'Website', bookingStatus: 'Booked', bookedSlot: '2026-08-10 10:00', consultationHeld: '2026-08-10', clientMasterItemId: '', retainerSent: '' })),
+    stub(leadService, 'createLead', async () => { throw new Error('must not create'); }),
+    stub(leadService, 'updateLead', async () => { throw new Error('must not write'); }),
+    stub(mondayApi, 'query', async () => ({})),
+  ];
+  try {
+    // a mismatched identity: refused by the NEXT check — proof the booking check let it through
+    await assert.rejects(
+      () => portal.createDirectClient({ sourceChannel: 'Phone', notes: 'Needs a work permit — quoted $2,500.', fullName: 'Someone Else', email: 'other@x.co', phone: '4165550100', residentialAddress: '1 Main St', caseType: CASE_TYPE, consultant: CONSULTANT, linkLeadId: '312' }),
+      (e) => e.badRequest === true && /does not match/.test(e.message));
   } finally { restore.forEach((x) => x()); }
 });
 

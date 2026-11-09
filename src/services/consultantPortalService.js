@@ -576,6 +576,40 @@ async function getLeadsQueue() {
  * labelled sections. Works for un-booked leads (the Consultations detail only
  * makes sense once a slot is booked).
  */
+/**
+ * Why a lead can NOT be converted to a direct retainer client (the warn-and-link "convert" path), or null.
+ * One rule for the server refusal and the lead page's greyed-out button (step 3, Faran 2026-11-09, decision 7:
+ * the button is always on the lead page — also after booking and after the consultation).
+ *  - a case already (Client Master id, or Retained)            → code 'case'
+ *  - a retainer already sent, or a retainer plan in progress   → code 'retainer'
+ *  - a consultation booked that has NOT happened yet, or a time held → code 'booked'
+ *    (NEEDS FARAN: convert anyway / refuse / cancel the appointment? Refused until he decides.)
+ * A consultation that already happened (Consultation Held set, or its booked time is in the past) does not stop it:
+ * the booking fields are left as they are (the KPIs keep the consultation).
+ */
+function convertRefusal(lead, nowWall) {
+  const t = (v) => String(v == null ? '' : v).trim();
+  if (t(lead.clientMasterItemId) || t(lead.conversionStatus) === 'Retained') {
+    return { code: 'case', message: 'That lead already has an open case — open the case instead of creating a direct client.' };
+  }
+  if (t(lead.retainerSent)) {
+    return { code: 'retainer', message: 'That lead has already been sent a retainer — open it from the Retainers & follow-ups page instead.' };
+  }
+  const held = !!t(lead.consultationHeld);
+  const slot = t(lead.bookedSlot);
+  const now = nowWall || require('./consultPaymentService').torontoNowWall();
+  const slotPast = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$/.test(slot) && slot.slice(0, 16) <= now;
+  const booking = t(lead.bookingStatus);
+  if (!held && (booking === 'Slot Held' || (slot && !slotPast) || (booking === 'Booked' && !slot))) {
+    return { code: 'booked', message: 'That lead has a consultation booked that has not happened yet — manage it from the Consultations page. It can be converted once the consultation is held.' };
+  }
+  // An in-progress retainer plan: the old plan's template/annex/milestones would be stale under the new case type.
+  if ([lead.retainerMilestones, lead.selectedTemplate, lead.retainerFee].some((v) => t(v))) {
+    return { code: 'retainer', message: 'That lead already has a retainer plan in progress — open it from the Retainers & follow-ups page and continue there.' };
+  }
+  return null;
+}
+
 async function getLeadDetail(leadId) {
   const lead = await leadService.getLead(leadId);
   if (!lead) { const e = new Error('Lead not found'); e.notFound = true; throw e; }
@@ -686,6 +720,8 @@ async function getLeadDetail(leadId) {
     consultant:    (lead.assignedConsultant || '').trim(),
     preConsultSubmitted: (lead.preConsultSubmitted || '') === 'Yes',
     clientMasterItemId:  lead.clientMasterItemId || '',
+    // "Convert to direct retainer" (step 3): why it is greyed out, or null — the server refuses the same.
+    convertBlock: (() => { const r = convertRefusal(lead); return r ? { code: r.code, message: r.message } : null; })(),
     // "Record payment / Waived" from the lead page (review 2026-10-16): a client booked by
     // hand is often never set to Booked — the box must be reachable before that.
     paidOnline:   !!String(lead.squareConsultTxnId || '').trim(),
@@ -2295,24 +2331,8 @@ async function createDirectClient(payload = {}, { actor = null } = {}) {
   if (linkLeadId) {
     const existing = await leadService.getLead(String(linkLeadId));
     if (!existing) bad('The lead you chose to link no longer exists — refresh and try again.');
-    if (existing.clientMasterItemId || String(existing.conversionStatus || '').trim() === 'Retained') {
-      bad('That lead already has an open case — open the case instead of creating a direct client.');
-    }
-    if (existing.retainerSent && String(existing.retainerSent).trim()) {
-      bad('That lead has already been sent a retainer — open it from the Retainers & follow-ups page instead.');
-    }
-    // A lead that is mid-funnel must NOT be hijacked into the direct pipeline:
-    // converting a booked lead corrupts the KPI funnel (booked without being a
-    // lead), leaves a live Square appointment dangling, and dual-lists the
-    // person in two queues. Same for an in-progress retainer plan — the old
-    // plan's template/annex/milestones would be stale under the new case type.
-    const booking = String(existing.bookingStatus || '').trim();
-    if (booking === 'Booked' || booking === 'Slot Held' || (existing.bookedSlot && String(existing.bookedSlot).trim()) || (existing.consultationHeld && String(existing.consultationHeld).trim())) {
-      bad('That lead has a consultation booked or held — manage it from the Consultations page instead of converting it to a direct client.');
-    }
-    if ([existing.retainerMilestones, existing.selectedTemplate, existing.retainerFee].some((v) => v && String(v).trim())) {
-      bad('That lead already has a retainer plan in progress — open it from the Retainers & follow-ups page and continue there.');
-    }
+    const refusal = convertRefusal(existing);
+    if (refusal) bad(refusal.message);
     // The chosen lead must actually BE the person staff just typed — a stale
     // match panel (email edited after the radios rendered) or a mispick must
     // never route the new client into someone else's record.
@@ -3259,7 +3279,7 @@ module.exports = {
   createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, findClientMatches, DIRECT_SOURCE,
   createStaffLead, STAFF_LEAD_SOURCES,
   invalidateLeadsQueue,
-  classifyLead, consultationDone, listFor, retainerTab, RETAINED_TAB, RETAINER_TABS, getConsultationsBoard, CASE_REFS_WAIT_MS, addCaseRefs,
+  classifyLead, consultationDone, listFor, convertRefusal, retainerTab, RETAINED_TAB, RETAINER_TABS, getConsultationsBoard, CASE_REFS_WAIT_MS, addCaseRefs,
   _recordPackageView: recordPackageView, _packageResultLine: packageResultLine,   // test seams
   // Direct consultation (step 2): the shared pieces its service reuses.
   buildConsultPaymentRecord, writeRecordedBooking, slotsOverlap, withRecordLock, postPortalNote, escHtmlNote,
