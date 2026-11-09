@@ -337,7 +337,9 @@ async function createLocked(n, actor) {
   // The person's own rows (by email / phone) — read ONCE, used by every check below.
   let matches;
   try {
-    matches = await portal().findClientMatches({ email: n.email, phone: n.phone, withLeads: true });
+    // strict (review round 2): a failed lead or case look-up refuses the save — an empty answer
+    // would silently skip the live-booking, follow-up and existing-case checks below.
+    matches = await portal().findClientMatches({ email: n.email, phone: n.phone, withLeads: true, strict: true });
   } catch (err) {
     throw badRequest('Could not look this person up just now — nothing was saved. Try again in a minute.');
   }
@@ -433,6 +435,8 @@ async function createLocked(n, actor) {
   const left = [];
   const marker = {
     kind, inSquare: n.inSquare, ...(followUpOf ? { followUpOf } : {}), ...(caseRef ? { caseRef } : {}),
+    // The pop-up's package tick (review round 2): only this asks for the package on a direct row.
+    ...(n.package ? { package: true } : {}),
     by: recorder, at: new Date().toISOString(),
   };
 
@@ -573,6 +577,15 @@ function optionOf(lead) {
   try { const o = JSON.parse(s(lead && lead.consultOption)); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch (_) { return {}; }
 }
 
+/** A consultation fee record, or any consultation-package state (waiting, held, sending, sent). PURE. */
+function hasFeeOrPackage(lead) {
+  if (require('./consultPaymentService').parseConsultPayment(lead)) return true;
+  if (s(lead.consultAgreementSent)) return true;
+  const st = require('./consultAgreementService').parseCountersign(lead);
+  return Object.keys(st).some((k) => /^package/.test(k) && st[k] !== null && st[k] !== undefined && st[k] !== '' && st[k] !== false && st[k] !== 0)
+    || !!st.clientEnvelopeId;
+}
+
 /**
  * "Use this lead" (a new matter): why this lead may NOT become the direct consultation,
  * or '' when it may. Refuses anything further along — an outcome, a case, a retainer,
@@ -588,6 +601,9 @@ function reuseRefusal(lead, n, now = Date.now()) {
   if (s(lead.retainerSent) || s(lead.retainerSigned)) return R('a retainer is already under way.');
   if ([lead.retainerMilestones, lead.selectedTemplate, lead.retainerFee].some((x) => s(x))) return R('a retainer plan is in progress.');
   if (s(lead.squareConsultTxnId)) return R('it paid through the booking link — open its record instead.');
+  // A fee record or a consultation package on it (review round 2): an old "send" or a waiting
+  // package would otherwise go out later with the new booking, with no tick in the pop-up.
+  if (hasFeeOrPackage(lead)) return R('a consultation fee or a consultation package is already recorded on it — add this as a new row instead (leave "Use this lead" off).');
   const st = s(lead.bookingStatus);
   if (st === 'Booked') return R('it already has a booked consultation — open its record instead.');
   const heldUntil = Date.parse(s(lead.slotHeldUntil));

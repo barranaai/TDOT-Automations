@@ -122,6 +122,10 @@ function packageAlreadySent(lead) {
 function recordedPackageWanted(lead) {
   const rec = require('./consultPaymentService').parseConsultPayment(lead);
   if (!rec || rec.package !== 'send') return { ok: false, why: 'not-chosen' };
+  // A direct consultation (step 2 review round 2): only the pop-up's own tick asks for the
+  // package — never a "send" inherited from a reused lead's old fee record (the sweep and
+  // the address box release through here too).
+  if (!require('../utils/directConsult').packageAsked(lead)) return { ok: false, why: 'not-chosen' };
   return packageApplicable(lead);
 }
 

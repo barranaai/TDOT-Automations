@@ -162,7 +162,12 @@ function dqInitButton(){
     .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return {s:r.status,j:j}; }); })
     .then(function(res){
       if(res.s===200){ DQ_OPTS=res.j; b.hidden=false; b.disabled=false; b.onclick=openDirectConsult; return; }
-      if(res.s===503){ b.hidden=false; b.disabled=true; b.title=(res.j&&res.j.error)||'Direct consultation is not set up yet.'; return; }
+      if(res.s===503){
+        var why=(res.j&&res.j.error)||'Direct consultation is not set up yet.';
+        b.hidden=false; b.disabled=true; b.title=why;
+        dqShowDone(why,'',true);   /* in words too: a greyed button shows no tooltip on a phone or tablet (review round 2) */
+        return;
+      }
       b.hidden=true;   /* 404 = switched off; 401 = this list is for Monday sign-ins only */
     })
     .catch(function(){ b.hidden=true; });
@@ -353,7 +358,10 @@ function openDirectConsult(){
 
   /* ── Save ── */
   function fail(msg,focusEl){ q('dq-err').textContent=msg; if(focusEl && focusEl.focus) focusEl.focus(); }
+  /* One save at a time (review round 2): a double click on Save or "Save anyway" sends once. */
+  function anywayBtn(on){ var a=q('dq-anyway'); if(a) a.disabled=on; }
   function save(){
+    if(st.saving||dlg.busy) return;
     q('dq-err').textContent='';
     var choice=radio('dq-choice'), existing=choice==='existing';
     var name=q('dq-name').value.trim(), email=q('dq-email').value.trim(), phone=q('dq-phone').value.trim();
@@ -397,11 +405,12 @@ function openDirectConsult(){
       clashAck:st.clashAck
     };
     var key=dqKey(); if(!key) return;
-    var btn=q('dq-save'); btn.disabled=true; btn.textContent='Saving…'; dlg.setBusy(true);
+    var btn=q('dq-save'); st.saving=true; anywayBtn(true); btn.disabled=true; btn.textContent='Saving…'; dlg.setBusy(true);
     fetch('/api/consultation/direct-consult',{method:'POST',credentials:'same-origin',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify(body)})
       .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return {s:r.status,j:j}; }); })
       .then(function(res){
         var j=res.j||{};
+        st.saving=false; anywayBtn(false);
         if(!dlg.still(run)){   /* closed after the long wait: the outcome is still told, never lost */
           if(res.s===200){ dqShowDone(j.message||'Saved.',j.link,!!(j.left&&j.left.length)); load(true); }
           else dqShowDone((res.s>=500&&res.s!==503)?DQ_CHECK_LIST:('Not saved: '+(j.error||('HTTP '+res.s))),j.link||'',true);
@@ -422,6 +431,7 @@ function openDirectConsult(){
         fail(j.error||('Could not save (HTTP '+res.s+') — nothing was saved. Try again.'));
       })
       .catch(function(e){
+        st.saving=false; anywayBtn(false);
         if(!dlg.still(run)){ dqShowDone(DQ_CHECK_LIST,'',true); return; }
         dlg.setBusy(false); btn.disabled=false; btn.textContent='Save'; fail('Network error — check the Consultations list before trying again, so it is not added twice.');
       });

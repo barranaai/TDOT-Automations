@@ -93,7 +93,19 @@ function nudgeAllowed(lead) {
   return KINDS.includes(col) || KINDS.includes(k);
 }
 
+/**
+ * Did the pop-up itself ask for the consultation package on this row? (review round 2)
+ * Any non-direct row: true (its own fee record decides). A direct row: only when its
+ * marker says package === true — a "send" left on a reused lead's old fee record is
+ * never acted on (fail closed: an unreadable marker = not asked).
+ */
+function packageAsked(lead) {
+  if (!isDirectConsult(lead)) return true;
+  const { detail } = optionMarker(lead);
+  return !!detail && detail.package === true;
+}
+
 module.exports = {
   KINDS, EXISTING, columnId, isSetUp, notSetUpError, assertSetUp,
-  optionMarker, isDirectConsult, kindOf, clientRemindersAllowed, nudgeAllowed,
+  optionMarker, isDirectConsult, kindOf, clientRemindersAllowed, nudgeAllowed, packageAsked,
 };

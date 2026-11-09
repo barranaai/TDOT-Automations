@@ -1405,7 +1405,14 @@ function hydrateConsultPayment(d){
 /* The consultation package on a recorded payment (2026-10-16): the booking staff
    made by hand + email the agreement and form, yes or no. Waived starts with no
    answer; a NEW paid record starts on "yes"; a change keeps what was stored. */
-var CP_WHY={ outcome:'An outcome is already set — the consultation has happened, so no consultation package is sent.', 'case':'This client already has a case — no consultation package is sent.', retainer:'A retainer is already under way — no consultation package is sent.', direct:'A direct retainer client has no consultation — no consultation package is sent.', 'direct-consult':'A direct consultation — this box records the fee only: no booking, no meeting and no package. Change its time with Change time.' };
+var CP_WHY={ outcome:'An outcome is already set — the consultation has happened, so no consultation package is sent.', 'case':'This client already has a case — no consultation package is sent.', retainer:'A retainer is already under way — no consultation package is sent.', direct:'A direct retainer client has no consultation — no consultation package is sent.', 'direct-consult':'A direct consultation — this box records the fee only: no booking, no meeting and no package.' };
+/* The time pointer names "Change time" only when that button is on this page (review round 2). */
+function cpDirectWhy(d){
+  var t=CP_WHY['direct-consult'];
+  if(d&&d.outcome) return t;
+  if(d&&d.direct&&d.direct.canChangeTime) return t+' Change its time with Change time.';
+  return t+' If its time is wrong, change it in Monday.';
+}
 /* ?record=1 (the lead page's "Record payment / Waived" button): open the box once, then
    drop the flag from the address so a reload does not open it again. */
 var CP_OPEN_FROM_LINK=(function(){ try { return new URLSearchParams(window.location.search).get('record')==='1'; } catch(e){ return false; } })();
@@ -1427,7 +1434,7 @@ function cpLooksTaxed(c,orc){
 function cpPackageSection(orc, asks){
   if(!orc||!orc.enabled) return '';
   if(orc.alreadySent) return '<div class="paym-info">The consultation package already went out'+(orc.sentOn?' on '+payEsc(orc.sentOn):'')+' — recording the fee does not send it again.</div>';
-  if(!asks) return '<div class="paym-info">'+payEsc(CP_WHY[orc.why]||'No consultation package is sent for this client.')+'</div>';
+  if(!asks) return '<div class="paym-info">'+payEsc((orc.why==='direct-consult'?cpDirectWhy(LAST_DETAIL):CP_WHY[orc.why])||'No consultation package is sent for this client.')+'</div>';
   var pf=orc.prefill||{};
   var cons=(pf.consultant?'':'<option value="">Choose…</option>')+(orc.consultants||[]).map(function(k){ return '<option value="'+payEsc(k.name)+'"'+(k.name===pf.consultant?' selected':'')+'>'+payEsc(k.name)+'</option>'; }).join('');
   var types=[['','Choose…'],['In-person','In person (at the office)'],['Virtual','Video (Teams)'],['Phone Call','Phone call']];
@@ -1906,18 +1913,24 @@ function openChangeTime(d){
   function edited(){ clashAck=false; dlg.box.querySelector('#dqt-clash').innerHTML=''; }
   when.addEventListener('input',edited); lenEl.addEventListener('change',edited);
   dlg.box.querySelector('[data-x]').onclick=function(){ dlg.tryClose('cancel'); };
+  /* One save at a time (review round 2): a double click on Save time or Save anyway sends once. */
+  var saving=false;
+  function anyway(on){ var a=dlg.box.querySelector('#dqt-anyway'); if(a) a.disabled=on; }
+  function done(){ saving=false; anyway(false); }
   function send(){
+    if(saving||dlg.busy) return;
     err.textContent='';
     var v=String(when.value||'');
     if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}/.test(v)){ err.textContent='Enter the new date and time.'; when.focus(); return; }
     var key=getKey(); if(!key) return;
     var staffName=(window.tdotRemarksName_rmk ? window.tdotRemarksName_rmk() : '');
-    go.disabled=true; go.textContent='Saving…'; dlg.setBusy(true);
+    saving=true; anyway(true); go.disabled=true; go.textContent='Saving…'; dlg.setBusy(true);
     fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{ method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'},
       body: JSON.stringify({ action:'changeDirectTime', value: JSON.stringify({ date:v.slice(0,10), time:v.slice(11,16), durationMin:Number(lenEl.value), clashAck:clashAck }), staffName: staffName }) })
       .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return {s:r.status,j:j}; }); })
       .then(function(res){
         var j=res.j||{};
+        done();
         if(!dlg.still(run)){ if(res.s===200){ setMsg(j.message||'Time changed.','ok'); load(); } return; }
         dlg.setBusy(false); go.disabled=false; go.textContent='Save time';
         if(res.s===200){ dlg.close(true); setMsg(j.message||'Time changed.','ok'); load(); return; }
@@ -1932,7 +1945,7 @@ function openChangeTime(d){
         if(res.s===404){ err.textContent='Direct consultation is not available to you (or is switched off) — the time was not changed.'; return; }
         err.textContent=j.error||('Could not change the time (HTTP '+res.s+').');
       })
-      .catch(function(e){ if(!dlg.still(run)) return; dlg.setBusy(false); go.disabled=false; go.textContent='Save time'; err.textContent=netErr(e); });
+      .catch(function(e){ done(); if(!dlg.still(run)) return; dlg.setBusy(false); go.disabled=false; go.textContent='Save time'; err.textContent=netErr(e); });
   }
   go.onclick=send;
   setTimeout(function(){ if(dlg.still(run)) when.focus(); },30);

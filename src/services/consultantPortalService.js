@@ -2615,6 +2615,10 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
   if (onRecord && pendingNow && n.booking) throw bad('The consultation package is being sent right now — nothing was saved. Wait a minute, reload the page and try again.');
   const asks = onRecord && !alreadySent && applicable.ok;
   let pkgChoice = before ? before.package : '', pkgNote = before ? before.packageNote : '';
+  // A direct row never inherits "send" from a fee record its own pop-up did not ask for
+  // (review round 2: a reused lead's old record) — it is kept as "No". Other leads unchanged.
+  const inheritedSendDropped = direct && pkgChoice === 'send' && !require('../utils/directConsult').packageAsked(lead);
+  if (inheritedSendDropped) { pkgChoice = 'skip'; pkgNote = 'Direct consultation — booked outside the app'; }
   let booking = null;
   const lines = [];   // what happened after the record, for the reply and the note
   if (asks) {
@@ -2640,7 +2644,7 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
     // A page opened before the package went out (or before an outcome was set) still
     // carried a booking: it is NOT written — and staff are told so.
     lines.push(direct && !alreadySent
-      ? 'The booking you entered was NOT saved — this is a direct consultation: change its time with "Change time" on this page.'
+      ? 'The booking you entered was NOT saved — this is a direct consultation: change its time with "Change time" on this page, or in Monday if that button is not shown.'
       : `The booking you entered was NOT saved — ${alreadySent ? 'the consultation package already went out with the time on the lead' : !onRecord ? 'booking from this box is switched off' : 'this client no longer has a consultation to book'}. Change the booking in Monday if it really moved.`);
   }
 
@@ -2696,7 +2700,7 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
 
   // 3) The package — only through the one automatic path.
   let pkg = null;
-  if (onRecord && !alreadySent && (pkgChoice === 'send' || (before && before.package === 'send'))) {
+  if (onRecord && !alreadySent && (pkgChoice === 'send' || (before && before.package === 'send' && !inheritedSendDropped))) {
     // Always through the gate (it re-checks the Not Wanted list and retires a package an
     // earlier save left waiting) — a failed booking or meeting is passed in as a block.
     pkg = await cs.autoSendConsultationPackage(leadId, { trigger: 'recorded', ...(pkgChoice === 'send' && !bookingOk ? { block: 'booking-failed' } : {}), overrides: { consultPayment: JSON.stringify(rec), ...bookingOverrides } })
@@ -2891,7 +2895,7 @@ function packageResultLine(pkg, { pkgChoice, pkgNote, kind, alreadySent, applica
       case: 'No consultation package: this client already has a case.',
       retainer: 'No consultation package: a retainer is already under way.',
       direct: 'No consultation package: a direct retainer client has no consultation.',
-      'direct-consult': 'A direct consultation — this box sends no package and makes no meeting; change its time with "Change time".',
+      'direct-consult': 'A direct consultation — this box sends no package and makes no meeting; change its time with "Change time" on this page, or in Monday if that button is not shown.',
     })[applicable.why] || '';
   }
   if (pkgChoice === 'skip') {
@@ -2937,7 +2941,7 @@ function conflictBody(err) {
  * cases, and leads. Each lookup is independent and best-effort: one source
  * failing must not blind staff to the others.
  */
-async function findClientMatches({ email, phone, withLeads = false } = {}) {
+async function findClientMatches({ email, phone, withLeads = false, strict = false } = {}) {
   const e = String(email || '').trim();
   const p = String(phone || '').trim();
   const out = { clients: [], cases: [], leads: [], matchedOn: { email: !!e, phone: !!p } };
@@ -2947,6 +2951,10 @@ async function findClientMatches({ email, phone, withLeads = false } = {}) {
   const clientAccounts = require('./clientAccountService');
 
   const settle = async (fn) => { try { return await fn(); } catch (err) { console.warn(`[Consultant] client-match lookup failed: ${err.message}`); return []; } };
+  // strict (Direct consultation, step 2 review round 2): a failed LEAD or CASE look-up throws, so the
+  // caller refuses before any write instead of deciding on an empty answer. The client-accounts
+  // registry stays best-effort. Every other caller (the warn-and-link panel) keeps settle.
+  const must = strict ? (fn) => fn() : settle;
 
   // Lead phone columns store the digits of whatever was submitted — a
   // formatted or '+'-prefixed staff entry never matches raw, so query the
@@ -2956,12 +2964,12 @@ async function findClientMatches({ email, phone, withLeads = false } = {}) {
   const phoneVariants = pDigits.length >= 7 ? [...new Set([pDigits, pBare, `1${pBare}`])] : [];
 
   const [leadsByEmail, leadsByPhone, casesByEmail, casesByPhone, clients] = await Promise.all([
-    e ? settle(() => leadService.findAllByColumnValue('email', e)) : [],
+    e ? must(() => leadService.findAllByColumnValue('email', e)) : [],
     phoneVariants.length
-      ? settle(async () => (await Promise.all(phoneVariants.map((v) => leadService.findAllByColumnValue('phone', v)))).flat())
+      ? must(async () => (await Promise.all(phoneVariants.map((v) => leadService.findAllByColumnValue('phone', v)))).flat())
       : [],
-    e ? settle(() => clientMaster.findCasesByEmail(e)) : [],
-    p ? settle(() => clientMaster.findCasesByPhone(p)) : [],
+    e ? must(() => clientMaster.findCasesByEmail(e)) : [],
+    p ? must(() => clientMaster.findCasesByPhone(p)) : [],
     settle(() => clientAccounts.findMatches({ email: e, phone: p })),
   ]);
 
