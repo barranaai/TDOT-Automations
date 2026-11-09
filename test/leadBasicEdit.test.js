@@ -193,3 +193,24 @@ test('2026-11-04: a lead WITH a case can still get its EMPTY email / phone fille
   assert.deepEqual(c.calls.updates[0].f, { phone: '647 555 0199' });
   assert.equal(c.caseWrites.length, 1, 'the phone goes on the case');
 });
+
+// Step 3 (Faran 2026-11-09, decision 5): the email edit box is easier to find. The lock rules are unchanged.
+test('lead page: a "Change" link beside the email (and "Add it here" on No email) jumps to the Basic details email box — only while it can be edited', () => {
+  const html = require('../src/routes/adminLeads').buildLeadDetailHTML('5');
+  const src = html.slice(html.indexOf('function emailEditable'), html.indexOf('function kv('));
+  const focused = [];
+  const ctx = { escHtml: (v) => String(v), window: {}, document: { getElementById: (id) => (id === 'bd-email' ? { focus() { focused.push(id); }, value: '' } : { scrollIntoView() {} }) } };
+  vm.runInNewContext(src + ';this.E=emailEditable;this.L=emailEditLink;', ctx);
+  assert.equal(ctx.E({ email: 'a@b.c' }), true, 'no case: editable');
+  assert.equal(ctx.E({ clientMasterItemId: '9', email: 'a@b.c' }), false, 'a case and an email: locked, no link');
+  assert.equal(ctx.E({ clientMasterItemId: '9', email: '' }), true, 'a case but no email: it can still be added');
+  assert.match(ctx.L('Change'), /href="#basic-card"[^>]*onclick="return tdotEditEmail\(\)"/);
+  assert.equal(ctx.window.tdotEditEmail(), false);
+  assert.deepEqual(focused, ['bd-email']);
+  assert.ok(html.includes("if(d.email && emailEditable(d)) acts+=' '+emailEditLink('Change email');"));
+  assert.ok(html.includes("(emailEditable(d)?' '+emailEditLink('Change'):'')"));
+  assert.ok(html.includes("below: '+emailEditLink('Add it here')"));
+  assert.ok(html.includes('id="basic-card"') && html.includes('id="bd-email"'));
+  // the lock rules themselves are unchanged
+  assert.ok(html.includes("bdEl('email').readOnly=caseOpen && !!String(d.email||'').trim();"));
+});

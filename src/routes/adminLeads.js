@@ -403,6 +403,7 @@ function buildLeadDetailHTML(leadId) {
   .btn.primary { background:var(--navy); color:white; border-color:var(--navy); } .btn.primary:hover:not(:disabled) { background:var(--navy-light); }
   .iconbtn { width:36px; height:36px; border-radius:var(--r-sm); border:1px solid var(--border); background:#fff; color:var(--muted); display:inline-flex; align-items:center; justify-content:center; font-size:17px; cursor:pointer; text-decoration:none; transition:all .15s; }
   .iconbtn:hover { border-color:var(--navy); color:var(--navy); background:#f5f8fc; }
+  .edit-email { font-size:12.5px; font-weight:600; color:#1d4ed8; text-decoration:underline; cursor:pointer; white-space:nowrap; }
   .ctx-meta { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:14px; }
   .chip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; padding:5px 11px; border-radius:20px; background:#f1f5f9; color:#475569; }
   .chip svg { font-size:13px; }
@@ -641,6 +642,17 @@ var FEE_RECORDED=''; // a consultation fee staff already recorded — the invite
 var ICONS=${jsLit({ flag: I.flag, file: I.file, user: I.user, clock: I.clock })};
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function initials(n){ return String(n||'?').split(/\\s+/).map(function(w){return w.charAt(0);}).join('').slice(0,2).toUpperCase(); }
+/* The email edit box is easier to find (step 3, 2026-11-09 — the lock rules are unchanged): a "Change" link
+   beside the email (and "Add it here" on the No email warning) jumps to Basic details. Shown only while the
+   email can be edited there: no case yet, or the email is empty. */
+function emailEditable(d){ return !d.clientMasterItemId || !String(d.email||'').trim(); }
+function emailEditLink(text){ return '<a class="edit-email" href="#basic-card" data-edit-email="1" onclick="return tdotEditEmail()">'+escHtml(text)+'</a>'; }
+window.tdotEditEmail=function(){
+  var card=document.getElementById('basic-card'), el=document.getElementById('bd-email');
+  if(card && card.scrollIntoView) card.scrollIntoView({behavior:'smooth',block:'start'});
+  if(el){ try{ el.focus({preventScroll:true}); }catch(e){ el.focus(); } if(el.select && el.value) el.select(); }
+  return false;
+};
 function kv(k,v){ return '<div class="kv"><div class="k">'+escHtml(k)+'</div><div class="v">'+escHtml(v)+'</div></div>'; }
 
 function render(d){
@@ -664,6 +676,7 @@ function render(d){
 
   var acts='';
   if(d.email) acts+='<a class="iconbtn" title="Email client" aria-label="Email client" href="mailto:'+escHtml(d.email)+'">'+'✉'+'</a>';
+  if(d.email && emailEditable(d)) acts+=' '+emailEditLink('Change email');
   document.getElementById('c-acts').innerHTML=acts;
 
   var pills='';
@@ -682,7 +695,7 @@ function render(d){
 
   // No email (2026-11-04: an email OR a phone is enough to add a client): say plainly what cannot go out.
   document.getElementById('email-warn').innerHTML=String(d.email||'').trim() ? ''
-    : '<div class="alert amber" role="status">'+ICONS.flag+'<div><b>No email address on file.</b> The booking invite, the retainer agreement, payment links and receipts are sent by email, so the system can'+String.fromCharCode(8217)+'t send them to this client. Add the client'+String.fromCharCode(8217)+'s email in <b>Basic details</b> below'+(d.phone?' (phone: '+escHtml(d.phone)+')':'')+'.</div></div>';
+    : '<div class="alert amber" role="status">'+ICONS.flag+'<div><b>No email address on file.</b> The booking invite, the retainer agreement, payment links and receipts are sent by email, so the system can'+String.fromCharCode(8217)+'t send them to this client. Add the client'+String.fromCharCode(8217)+'s email in <b>Basic details</b> below: '+emailEditLink('Add it here')+(d.phone?' (phone: '+escHtml(d.phone)+')':'')+'.</div></div>';
 
   // The Not Wanted list (point 5): the staff-only warning under the header; named admins get "Remove from the list…".
   (function(){
@@ -732,7 +745,7 @@ function render(d){
   if(d.caseTypeInterest && d.caseTypeInterest!==d.service) st+=kv('Case type interest', d.caseTypeInterest);
   st+=kv('Intake archive', d.hasIntakeArchive?('Submitted '+String(d.intakeSubmittedAt||'').slice(0,10)):(d.staffAdded?((d.originalChannel==='Email'&&!d.leadOwner)?'None — came in by email':'None — added by staff'):'Not found'));
   if(d.consentsAt) st+=kv('Consents', String(d.consentsAt).slice(0,10));
-  if(d.email) st+=kv('Email', d.email);
+  if(d.email) st+='<div class="kv"><div class="k">Email</div><div class="v">'+escHtml(d.email)+(emailEditable(d)?' '+emailEditLink('Change'):'')+'</div></div>';
   if(d.phone) st+=kv('Phone', d.phone);
   document.getElementById('c-status').innerHTML=st;
 
