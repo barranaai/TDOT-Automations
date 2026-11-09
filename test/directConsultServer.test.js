@@ -645,7 +645,7 @@ test('the Consultations list row and the record carry the direct kind and who bo
     assert.equal(byId['1'].direct, 'Existing client'); assert.equal(byId['1'].bookedBy, 'Melanie');
     assert.equal('direct' in byId['2'], false, 'a normal row is unchanged');
   } finally { r.forEach((x) => x()); snap._reset(); }
-  assert.deepEqual(dcs.directView(rows[0]), { kind: 'Existing client', bookedBy: 'Melanie', inSquare: true, followUpOf: '', caseRef: '', by: '' });
+  assert.deepEqual(dcs.directView(rows[0]), { kind: 'Existing client', bookedBy: 'Melanie', inSquare: true, followUpOf: '', caseRef: '', by: '', durationMin: 30 });
   assert.equal(dcs.directView(rows[1]), null);
 });
 

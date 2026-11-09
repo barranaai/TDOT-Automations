@@ -21,6 +21,7 @@ const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   /
 const { deadlineBoxHtml, DEADLINE_BOX_JS, DEADLINE_BOX_CSS } = require('./deadlineBox');   // the deadline box (2026-11-05)
 const { listTableScript, LIST_TABLE_CSS } = require('./listFilters');   // one filter look for every list (2026-11-05)
 const { consultListSpec, consultListOpts, retainerListSpec, retainerListOpts } = require('./listSpecs');
+const { DQ_CSS, DQ_JS, DQ_BUTTON_HTML, DQ_DONE_HTML, dqFormHtml } = require('./directConsultUi');   // "＋ Direct consultation" (step 2, 2026-11-09)
 
 function escAttr(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -209,7 +210,7 @@ function ssSet(k,v){ if(window.TDOT_SIGNED_OUT) return; try { sessionStorage.set
 try { ['tdot_consult_tab','tdot_consult_range','tdot_ret_outcomes'].forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}
 /* Paid: the booking link's own payment ("app", incl. HST), or what staff recorded on the
    consultation page — cash / e-transfer / invoice / other (the fee before HST) or waived. */
-var PAID_LABELS={cash:'Cash','e-transfer':'E-transfer',invoice:'Invoice',other:'Paid (other)',waived:'Waived'};
+var PAID_LABELS={cash:'Cash','e-transfer':'E-transfer',square:'Paid in Square',invoice:'Invoice',other:'Paid (other)',waived:'Waived'};
 function paidPill(c){
   var amt=(c.paidCents!=null&&c.paidCents>0)?' $'+(c.paidCents/100).toFixed(0):'';
   if(c.paid==='app') return qpill('green','Paid (app)'+amt);
@@ -267,6 +268,12 @@ function timeCell(c){
   var d=slot.slice(0,10), t=slot.slice(11,16);
   return '<span class="time">'+(RANGE==='today'?'':'<span class="d">'+escHtml(dLabel(d,d.slice(0,4)!==todayStr().slice(0,4)))+' · </span>')+escHtml(t||'')+'</span>';
 }
+/* A consultation added by hand with "＋ Direct consultation" (step 2): the "direct" pill, who booked it and its kind on hover. */
+function directPill(c){
+  if(!c.direct) return '';
+  var tip=(c.bookedBy?'Booked by '+c.bookedBy+' · ':'')+(c.direct==='?'?'Direct consultation':c.direct);
+  return ' <span class="pill grey dq-pill" title="'+escHtml(tip)+'" aria-label="Direct consultation: '+escHtml(tip)+'">direct</span>';
+}
 function rowHtml(c){
   var pc=c.preConsultSubmitted?qpill('green','Submitted'):qpill('amber','Pending');
   var oc=outcomeCell(c);   // the outcome, and a follow-up date amber once it is due (today or earlier)
@@ -274,7 +281,7 @@ function rowHtml(c){
   var pd=paidPill(c);
   return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
     '<td>'+timeCell(c)+'</td>'+
-    '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+'</td>'+
+    '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+directPill(c)+'</td>'+
     '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
     '<td>'+escHtml(c.consultant||'—')+'</td>'+
     '<td>'+(c.meetingType?escHtml(c.meetingType):'—')+'</td>'+
@@ -304,7 +311,8 @@ function shiftRange(n){
 /* The Consultations list: the shared engine (listSpecs.js consultListSpec — the header filters and the search) hands
    over the rows that pass; they split into three lists, each row in one: no date / needs an outcome (the
    consultation day has passed, nothing recorded) / the date range. The count is the range list's. */
-function consultBucket(r,t){ var d=String(r.bookedSlot||'').slice(0,10); if(!dParts(d)) return 'nodate'; if(d<t && !r.outcome) return 'needs'; return inRange(r.bookedSlot)?'main':''; }
+/* A direct consultation about the client's current file ("Existing client", step 2) has no outcome to set: never under "Needs outcome". */
+function consultBucket(r,t){ var d=String(r.bookedSlot||'').slice(0,10); if(!dParts(d)) return 'nodate'; if(d<t && !r.outcome && r.direct!=='Existing client') return 'needs'; return inRange(r.bookedSlot)?'main':''; }
 /* The counts beside the header choices: the rows a tick can show — the date range plus the two folds (never other dates). */
 function consultCountable(r){ return consultBucket(r,todayStr())!==''; }
 function renderConsultList(keep){
@@ -726,6 +734,9 @@ function buildQueueHTML() {
   return `${listPageHead('Consultations')}
   ${CONSULT_PAGE_CSS}
   ${DELETE_UI_CSS}
+  ${BLACKLIST_UI_CSS}
+  ${REFERRAL_CSS}
+  ${DQ_CSS}
 </style></head><body>
 ${buildNavHeader('consultations')}
 <main class="wrap">
@@ -734,8 +745,9 @@ ${buildNavHeader('consultations')}
   <div id="content">
     <div class="page-top">
       <h1 class="page-h" style="margin:0">Consultations</h1>
-      <span class="age" id="snap-age"></span>
+      <span class="top-r"><span class="age" id="snap-age"></span>${DQ_BUTTON_HTML}</span>
     </div>
+    ${DQ_DONE_HTML}
     <p class="page-sub">Booked consultations, by day. Once an outcome is set, the client moves to <a href="/admin/retainers">Retainers &amp; follow-ups</a>.</p>
     <div class="q-head">
       <div class="range" id="range" aria-label="Date range">
@@ -791,6 +803,13 @@ ${DELETE_UI_JS}
 tdotBindDelete(function(){ load(true); });
 startClock(); checkApiStatus();
 setRange(ssGet('tdot_list_consult_range')||'today');
+</script>
+<script>
+${BLACKLIST_UI_JS}
+${REFERRAL_UI_JS}
+var DQ_FORM=${jsLit(dqFormHtml())};
+${DQ_JS}
+dqInitButton();
 </script>
 <script>${listTableScript(consultListSpec, consultListOpts)}</script>
 <script>load(); window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });   /* Back to this page from memory: read the list again */</script></body></html>`;
@@ -1057,6 +1076,13 @@ ${REMARKS_CSS}
   .dlx .al-yn label { display:flex; gap:6px; align-items:center; cursor:pointer; }
   .dlx .al-hint { font-size:12px; color:#64748b; margin-top:4px; }
   a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }
+  /* A direct consultation (step 2): the chip's tooltip, and the Change time / Retain-confirm pop-ups (dialogUi.js) */
+  .chip.direct { background:#f1f5f9; color:#334155; cursor:help; }
+  .dqt label.dqt-l { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:12px 0 4px; }
+  .dqt input, .dqt select { width:100%; padding:9px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:16px; font-family:inherit; color:var(--navy); background:#fff; box-sizing:border-box; min-height:42px; }
+  .dqt p { margin:6px 0; color:#334155; line-height:1.5; }
+  .dqt .dqt-warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:8px; padding:9px 12px; font-size:13px; margin-top:10px; line-height:1.45; }
+  .dqt .dqt-warn a { color:#1d4ed8; }
 </style></head><body>
 ${buildNavHeader(fromRetainers ? 'retainers' : 'consultations')}
 <main class="wrap">
@@ -1088,7 +1114,7 @@ ${buildNavHeader(fromRetainers ? 'retainers' : 'consultations')}
         <div class="card"><div class="card-t">${I.clip} Intake context</div><div id="c-intake" class="kvgrid"></div></div>
         <div class="card"><div class="card-t">${I.cap} Eligibility profile <span class="when" id="c-elig-when"></span></div><div id="c-elig" class="kvgrid"></div></div>
         <div class="card"><div class="card-t">${I.cpu} AI triage notes</div><div id="c-ai"></div></div>
-        <div class="card"><div class="card-t">💬 Updates</div>${updatesWidgetHtml('updw')}</div>
+        <div class="card"><div class="card-t">💬 Updates</div>${updatesWidgetHtml('updw', { otter: true })}</div>
       </div>
 
       <div class="col">
@@ -1349,7 +1375,7 @@ function hydrateAttribution(d){
 // ── Consultation fee (Gauri point 4, part 2) ──────────────────────────────
 // paid 'app' = the booking link's Square payment (nothing to record, no button);
 // a kind = staff recorded it (change / remove); '' = the record button.
-var CP_LABELS={cash:'Cash','e-transfer':'E-transfer',invoice:'Invoice sent by the team',other:'Other',waived:'Waived'};
+var CP_LABELS={cash:'Cash','e-transfer':'E-transfer',square:'Paid in Square',invoice:'Invoice sent by the team',other:'Other',waived:'Waived'};
 function cpMoney(c){ return '$'+(Number(c||0)/100).toFixed(2); }
 function cpTodayStr(){ try { return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); } catch(e){ return new Date().toISOString().slice(0,10); } }
 function hydrateConsultPayment(d){
@@ -1506,7 +1532,7 @@ function openConsultPaymentModal(d, clear){
     if(clear&&!cur) return;
     var dlg=payOverlay();
     var feeDefault=(cur&&cur.paid!=='waived'&&cur.paidCents)?cur.paidCents:(cp.feeCents||null);
-    var kinds=[['cash','Cash'],['e-transfer','E-transfer'],['invoice','Invoice sent by the team (not the booking link)'],['other','Other'],['waived','Waived — no fee']];
+    var kinds=[['cash','Cash'],['e-transfer','E-transfer'],['square','Paid in Square (booked by the team, not the booking link)'],['invoice','Invoice sent by the team (not the booking link)'],['other','Other'],['waived','Waived — no fee']];
     var orc=cp.onRecord||{};
     var asks=!clear && !!(orc.enabled && orc.applicable && !orc.alreadySent);
     var h=payTitle(clear?'Remove the payment record':(cur?'Change the consultation payment record':'Record the consultation payment'), clear)+
@@ -1617,13 +1643,17 @@ function render(d){
   if(d.recordingLink) acts+='<a class="iconbtn" title="Recording" aria-label="Recording" href="'+escHtml(safeUrl(d.recordingLink))+'" target="_blank" rel="noopener">'+ICONS.disc+'</a>';
   if(d.transcriptLink) acts+='<a class="iconbtn" title="Transcript" aria-label="Transcript" href="'+escHtml(safeUrl(d.transcriptLink))+'" target="_blank" rel="noopener">'+ICONS.file+'</a>';
   if(d.email) acts+='<a class="iconbtn" title="Email client" aria-label="Email client" href="'+escHtml(safeUrl('mailto:'+d.email))+'">'+ICONS.mail+'</a>';
+  /* A direct consultation (step 2): a wrongly typed time would block a real slot on the booking page — change it here (until an outcome is set). */
+  if(d.direct && !d.outcome) acts+='<button type="button" class="btn" id="btn-dq-time" title="Change the date, time or length of this direct consultation (no email goes to the client)">'+ICONS.clock+' Change time</button>';
   document.getElementById('c-acts').innerHTML=acts;
+  var dqtBtn=document.getElementById('btn-dq-time'); if(dqtBtn) dqtBtn.onclick=function(){ openChangeTime(LAST_DETAIL||d); };
 
   var pills='';
   pills+='<span class="chip blue">'+ICONS.clock+'<span class="pk">Slot</span> '+escHtml(d.bookedSlot||'—')+'</span>';
   pills+='<span class="chip '+(d.preConsultSubmitted?'green':'amber')+'"><span class="pk">Pre-consult</span> '+(d.preConsultSubmitted?'Submitted':'Pending')+'</span>';
   pills+='<span class="chip '+(d.outcome?'blue':'grey')+'"><span class="pk">Outcome</span> '+escHtml(d.outcome||'Not set')+'</span>';
   if(d.retainerFee) pills+='<span class="chip grey"><span class="pk">Fee</span> $'+escHtml(d.retainerFee)+'</span>';
+  if(d.direct){ var dqTip=(d.direct.bookedBy?'Booked by '+d.direct.bookedBy+' · ':'')+(d.direct.kind||'Direct consultation'); pills+='<span class="chip direct" title="'+escHtml(dqTip)+'" aria-label="Direct consultation: '+escHtml(dqTip)+'">direct</span>'; }
   document.getElementById('c-pills').innerHTML=pills;
 
   var ac=d.assignedConsultant||{};
@@ -1739,7 +1769,10 @@ function render(d){
     kv('Deadline',(d.deadline&&d.deadline.text)||'Not set')+
     (d.clientMasterItemId?kv('Case created','Yes (handed off)'):'')+
     /* point 8 (2026-11-05): its case was deleted and this consultation record kept */
-    (d.caseDeleted?kv('Case deleted',d.caseDeleted+' — this consultation record was kept; no new case opens by itself (clear “Case deleted” on the lead in Monday to allow one)'):'');
+    (d.caseDeleted?kv('Case deleted',d.caseDeleted+' — this consultation record was kept; no new case opens by itself (clear “Case deleted” on the lead in Monday to allow one)'):'')+
+    (d.direct?kv('Added as','Direct consultation · '+(d.direct.kind||'?')+(d.direct.followUpOf?' (follow-up of lead '+d.direct.followUpOf+')':'')+(d.direct.caseRef?' · case '+d.direct.caseRef:''))+
+      kv('In Square',d.direct.inSquare===true?'Yes — the app sends the client no reminders':d.direct.inSquare===false?'No — the app sends the reminders':'')+
+      kv('Added by',d.direct.by):'');
   // RCIC countersign of the retainer: both buttons appear once the CLIENT has
   // signed. After the countersign completes, "Sign retainer as consultant"
   // stays visible but DISABLED (applyRetainerLock owns the disabled state so
@@ -1818,17 +1851,23 @@ function fetchT(url,opts,ms){ var ac=new AbortController(); var to=setTimeout(fu
 function netErr(e){ return e&&e.name==='AbortError' ? 'Timed out — please try again.' : ('Failed: '+(e&&e.message||e)); }
 
 var ADDR_DIRTY=false;   // the residential-address box has unsaved typing (render() leaves it alone)
-function doAction(action,value,confirmMsg,staffNameOverride){
+function doAction(action,value,confirmMsg,staffNameOverride,confirmed){
   if(confirmMsg && !window.confirm(confirmMsg)) return;
   var key=getKey(); if(!key) return;
   setMsg('Working…','info'); disableActions(true);
   fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{
     method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'},
-    body: JSON.stringify({ action:action, value:value, amend: RP_AMEND, staffName: (staffNameOverride || (window.tdotRemarksName_rmk ? window.tdotRemarksName_rmk() : '')) })
+    body: JSON.stringify({ action:action, value:value, amend: RP_AMEND, confirm: confirmed===true, staffName: (staffNameOverride || (window.tdotRemarksName_rmk ? window.tdotRemarksName_rmk() : '')) })
   }).then(function(r){ return r.json().then(function(j){ return {status:r.status,j:j}; }); })
    .then(function(res){
      disableActions(false);
      if(res.status===401||res.status===403){ window.location.href='/admin'; return; }
+     /* The server asks first (a direct consultation added as Follow-up / Existing client, step 2): nothing changed yet. */
+     if(res.status===409 && res.j && res.j.needsConfirm && confirmed!==true){
+       setMsg('Not done yet — read the question.','info');
+       dqAskFirst(res.j.error||'Are you sure?', function(){ doAction(action,value,null,staffNameOverride,true); });
+       return;
+     }
      if(res.status!==200) throw new Error((res.j&&res.j.error)||('HTTP '+res.status));
      setMsg(res.j.message||'Done.','ok');
      if(action==='saveDeadline'){ CD_DIRTY=false; cdMsg(res.j.message||'Done.','ok'); }   // saved — the box may follow the server again
@@ -1837,6 +1876,60 @@ function doAction(action,value,confirmMsg,staffNameOverride){
      if(action==='retainerFee'){ RP_FEE_SET=true; PERSISTED_FEE=String(value==null?'':value); }
      load(); // refresh consultation state (pills, status, outcome highlight) — render() re-locks + resets amend
    }).catch(function(e){ disableActions(false); setMsg(netErr(e),'err'); if(action==='saveDeadline') cdMsg(netErr(e),'err'); });
+}
+
+/* ── Direct consultation (step 2): the shared pop-up (dialogUi.js tdotDialogNew) for "asks first" and "Change time" ── */
+function dqAskFirst(text, onYes){
+  var dlg=tdotDialogNew({ cls:'dqt tdlg-narrow', labelledBy:'dqa-title' });
+  dlg.box.innerHTML='<h3 id="dqa-title">Open a new case from this row?</h3><p>'+escHtml(text)+'</p>'+
+    '<div class="tdlg-actions"><button type="button" class="tdlg-btn" data-x>Cancel</button><button type="button" class="tdlg-btn primary" data-go>Yes, go ahead</button></div>';
+  dlg.box.querySelector('[data-x]').onclick=function(){ dlg.tryClose('cancel'); setMsg('Nothing was changed.','info'); };
+  dlg.box.querySelector('[data-go]').onclick=function(){ dlg.close(true); onYes(); };
+  setTimeout(function(){ var b=dlg.box.querySelector('[data-x]'); if(b) b.focus(); },30);
+}
+function openChangeTime(d){
+  var dv=(d&&d.direct)||{}, cur=String(d.bookedSlot||''), len=Number(dv.durationMin||30);
+  var lens=[]; for(var n=15;n<=120;n+=15) lens.push(n);
+  var dlg=tdotDialogNew({ cls:'dqt tdlg-narrow', labelledBy:'dqt-title' }), run=dlg.openId;
+  dlg.box.innerHTML='<h3 id="dqt-title">Change the consultation time</h3>'+
+    '<p>For <b>'+escHtml(d.name||'this client')+'</b>'+(cur?' · now '+escHtml(cur):'')+'. Toronto time. No email goes to the client — if it is booked in Square, change it there too.</p>'+
+    '<label class="dqt-l" for="dqt-when">New date and time</label><input id="dqt-when" type="datetime-local" step="300" value="'+escHtml(/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}/.test(cur)?cur.slice(0,10)+'T'+cur.slice(11,16):'')+'">'+
+    '<label class="dqt-l" for="dqt-len">Length</label><select id="dqt-len">'+lens.map(function(n){ return '<option value="'+n+'"'+(n===len?' selected':'')+'>'+n+' minutes</option>'; }).join('')+'</select>'+
+    '<div id="dqt-clash"></div><div class="tdlg-err" role="alert"></div>'+
+    '<div class="tdlg-actions"><button type="button" class="tdlg-btn" data-x>Cancel</button><button type="button" class="tdlg-btn primary" data-go>Save time</button></div>';
+  var err=dlg.box.querySelector('.tdlg-err'), go=dlg.box.querySelector('[data-go]'), when=dlg.box.querySelector('#dqt-when'), lenEl=dlg.box.querySelector('#dqt-len');
+  var clashAck=false;
+  function edited(){ clashAck=false; dlg.box.querySelector('#dqt-clash').innerHTML=''; }
+  when.addEventListener('input',edited); lenEl.addEventListener('change',edited);
+  dlg.box.querySelector('[data-x]').onclick=function(){ dlg.tryClose('cancel'); };
+  function send(){
+    err.textContent='';
+    var v=String(when.value||'');
+    if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}/.test(v)){ err.textContent='Enter the new date and time.'; when.focus(); return; }
+    var key=getKey(); if(!key) return;
+    var staffName=(window.tdotRemarksName_rmk ? window.tdotRemarksName_rmk() : '');
+    go.disabled=true; go.textContent='Saving…'; dlg.setBusy(true);
+    fetchT('/api/consultation/'+encodeURIComponent(LEAD_ID)+'/action',{ method:'POST', headers:{'X-Api-Key':key,'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'changeDirectTime', value: JSON.stringify({ date:v.slice(0,10), time:v.slice(11,16), durationMin:Number(lenEl.value), clashAck:clashAck }), staffName: staffName }) })
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return {s:r.status,j:j}; }); })
+      .then(function(res){
+        var j=res.j||{};
+        if(!dlg.still(run)){ if(res.s===200){ setMsg(j.message||'Time changed.','ok'); load(); } return; }
+        dlg.setBusy(false); go.disabled=false; go.textContent='Save time';
+        if(res.s===200){ dlg.close(true); setMsg(j.message||'Time changed.','ok'); load(); return; }
+        if(res.s===401||res.s===403){ window.location.href='/admin'; return; }
+        if(res.s===409 && j.code==='clash'){
+          dlg.box.querySelector('#dqt-clash').innerHTML='<div class="dqt-warn">'+escHtml(j.error||'The consultant already has a consultation at that time.')+'<div style="margin-top:8px"><button type="button" class="tdlg-btn" id="dqt-anyway">Save anyway (different client)</button></div></div>';
+          dlg.box.querySelector('#dqt-anyway').onclick=function(){ clashAck=true; send(); };
+          return;
+        }
+        if(res.s===404){ err.textContent='Direct consultation is switched off — the time was not changed.'; return; }
+        err.textContent=j.error||('Could not change the time (HTTP '+res.s+').');
+      })
+      .catch(function(e){ if(!dlg.still(run)) return; dlg.setBusy(false); go.disabled=false; go.textContent='Save time'; err.textContent=netErr(e); });
+  }
+  go.onclick=send;
+  setTimeout(function(){ if(dlg.still(run)) when.focus(); },30);
 }
 
 // Lock/unlock the retainer fee + plan once the agreement is sent. A disabled

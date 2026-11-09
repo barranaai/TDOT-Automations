@@ -30,13 +30,24 @@ const UPDATES_WIDGET_CSS = [
   '.updw-row { display:flex; gap:8px; align-items:center; margin-top:8px; }',
   '.updw-row input { flex:0 0 170px; border:1px solid #e2e8f0; border-radius:8px; padding:7px 10px; font:inherit; font-size:12.5px; }',
   '.updw-msg { font-size:12px; margin-left:auto; }',
+  '.updw-otter { display:flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600; color:#334155; margin:0 0 6px; cursor:pointer; }',
+  '.updw-otter input { margin:0; flex:none; }',
+  '.updw-otter span { font-weight:400; color:#64748b; }',
+  '.updw-compose.otter textarea { min-height:180px; }',
 ].join('\n');
 
-function updatesWidgetHtml(prefix) {
+// opts.otter (the consultation record page, step 2 2026-11-09): a "Consultation summary (Otter)"
+// tick — the post gets that header and may run to MAX_OTTER characters (updatesService checks
+// the same); without the tick the normal MAX_UPDATE cap stays.
+const MAX_UPDATE = 4000;
+const MAX_OTTER = 20000;
+
+function updatesWidgetHtml(prefix, opts = {}) {
   const p = String(prefix || 'updw');
   return [
     `<div id="${p}-list" class="updw-list"><div class="updw-empty">Loading updates…</div></div>`,
-    `<div class="updw-compose">`,
+    `<div class="updw-compose" id="${p}-compose">`,
+    opts.otter ? `<label class="updw-otter"><input type="checkbox" id="${p}-otter"> Consultation summary (Otter) <span>— paste the whole summary, up to ${MAX_OTTER.toLocaleString('en-CA')} characters</span></label>` : '',
     `<textarea id="${p}-text" maxlength="4000" placeholder="Write an update… (posts to this item's Monday thread)"></textarea>`,
     `<div class="updw-row">`,
     `<input id="${p}-name" type="text" maxlength="60" placeholder="Your name" title="Shown as [Name] on the update — the API posts as the integration account">`,
@@ -109,12 +120,25 @@ const UPDATES_WIDGET_JS = [
   '      .catch(function(){ el("list").innerHTML = ""; var e = document.createElement("div"); e.className = "updw-empty"; e.textContent = "Could not load updates — refresh to retry."; el("list").appendChild(e); });',
   '  }',
   '',
+  '  /* The Otter tick (when the page has it): a longer box and a longer cap, and the post says what it is. */',
+  '  var otterEl = el("otter");',
+  '  function syncOtter(){',
+  '    if (!otterEl) return;',
+  '    var on = otterEl.checked, ta = el("text");',
+  '    ta.maxLength = on ? ' + MAX_OTTER + ' : ' + MAX_UPDATE + ';',
+  '    ta.placeholder = on ? "Paste the Otter summary of the consultation (it is posted in full, with a Consultation summary heading)" : "Write an update… (posts to this item' + "'" + 's Monday thread)";',
+  '    if (el("compose")) el("compose").classList.toggle("otter", on);',
+  '  }',
+  '  if (otterEl) otterEl.onchange = syncOtter;',
+  '',
   '  var postBtn = el("post");',
   '  if (postBtn) postBtn.onclick = function(){',
   '    var text = (el("text").value || "").trim();',
   '    var name = (el("name").value || "").trim();',
   '    var msg = el("msg");',
   '    if (!text) { msg.textContent = "Write something first."; msg.style.color = "#c0392b"; return; }',
+  '    var otter = !!(otterEl && otterEl.checked);',
+  '    if (!otter && text.length > ' + MAX_UPDATE + ') { msg.textContent = "Updates are limited to ' + MAX_UPDATE + ' characters" + (otterEl ? " — tick Consultation summary (Otter) for a longer summary." : "."); msg.style.color = "#c0392b"; return; }',
   '    if (!name) { msg.textContent = "Add your name so the team knows who posted."; msg.style.color = "#c0392b"; el("name").focus(); return; }',
   '    if (!postTarget) { msg.textContent = "No Monday item to post to."; msg.style.color = "#c0392b"; return; }',
   '    try { localStorage.setItem(NAME_KEY, name); } catch (e) {}',
@@ -123,12 +147,13 @@ const UPDATES_WIDGET_JS = [
   '    postBtn.disabled = true; msg.textContent = "Posting…"; msg.style.color = "#64748b";',
   '    fetch("/api/updates/" + encodeURIComponent(postTarget), {',
   '      method: "POST", headers: { "X-Api-Key": key, "Content-Type": "application/json" },',
-  '      body: JSON.stringify({ body: text, staffName: name }),',
+  '      body: JSON.stringify(otter ? { body: text, staffName: name, kind: "otter" } : { body: text, staffName: name }),',
   '    })',
   '      .then(function(r){ return r.json().then(function(j){ return { s: r.status, j: j }; }); })',
   '      .then(function(res){',
   '        if (res.s >= 400) { msg.textContent = res.j.error || ("HTTP " + res.s); msg.style.color = "#c0392b"; return; }',
-  '        el("text").value = ""; msg.textContent = "Posted."; msg.style.color = "#16a34a";',
+  '        el("text").value = ""; msg.textContent = otter ? "Consultation summary posted." : "Posted."; msg.style.color = "#16a34a";',
+  '        if (otterEl) { otterEl.checked = false; syncOtter(); }',
   '        load();',
   '      })',
   '      .catch(function(){ msg.textContent = "Network error — not posted."; msg.style.color = "#c0392b"; })',
@@ -140,4 +165,4 @@ const UPDATES_WIDGET_JS = [
   '}',
 ].join('\n');
 
-module.exports = { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS };
+module.exports = { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS, MAX_UPDATE, MAX_OTTER };

@@ -634,6 +634,7 @@ function directView(lead) {
     kind: DC.kindOf(lead), bookedBy: s(lead.bookedBy),
     inSquare: d.inSquare === true ? true : d.inSquare === false ? false : null,
     followUpOf: s(d.followUpOf), caseRef: s(d.caseRef), by: s(d.by),
+    durationMin: durationOf(lead),   // the record page's "Change time" starts from it
   };
 }
 

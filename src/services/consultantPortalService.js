@@ -2969,6 +2969,13 @@ async function findClientMatches({ email, phone, withLeads = false } = {}) {
           || !!(l.bookedSlot && String(l.bookedSlot).trim())
           || !!(l.consultationHeld && String(l.consultationHeld).trim()),
         planInProgress: [l.retainerMilestones, l.selectedTemplate, l.retainerFee].some((v) => v && String(v).trim()),
+        // For the "＋ Direct consultation" look-up (step 2): where this lead stands — its outcome, its
+        // booking, its consultant, and whether it is itself a direct consultation (its kind, or '').
+        outcome: String(l.outcome || '').trim(),
+        bookingStatus: String(l.bookingStatus || '').trim(),
+        bookedSlot: String(l.bookedSlot || '').trim(),
+        consultant: String(l.assignedConsultant || '').trim(),
+        directConsult: isDirectConsult(l) ? (require('../utils/directConsult').kindOf(l) || '?') : '',
       });
     }
   }
