@@ -383,3 +383,9 @@ test('client-matches: each lead says its outcome, booking, consultant and whethe
     assert.equal('rawLeads' in m, false, 'the raw rows never go to a page');
   } finally { restore.reverse().forEach((f) => f()); }
 });
+
+test('live fix 2026-11-09: the hidden button really hides (the .btn-direct display rule beats the hidden attribute)', () => {
+  const { DQ_CSS, DQ_BUTTON_HTML } = require('../src/routes/directConsultUi');
+  assert.match(DQ_BUTTON_HTML, /id="btn-direct-consult"[^>]*\bhidden\b/);
+  assert.match(DQ_CSS, /#btn-direct-consult\[hidden\]\s*\{\s*display:\s*none/);
+});

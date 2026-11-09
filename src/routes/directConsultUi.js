@@ -30,6 +30,7 @@ const DQ_CSS = `
   .btn-direct { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border:1px solid var(--navy); background:var(--navy); color:#fff; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
   .btn-direct:hover:not(:disabled) { filter:brightness(1.12); }
   .btn-direct:disabled { opacity:.5; cursor:not-allowed; }
+  #btn-direct-consult[hidden] { display:none; }   /* .btn-direct sets display, which beats the hidden attribute: switched off or not on the list = no button */
   .page-top .top-r { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
   #dq-done { display:none; background:#f0fdf4; border:1px solid #bbf7d0; color:#14532d; border-radius:10px; padding:10px 14px; font-size:13px; margin:0 0 12px; line-height:1.5; }
   #dq-done.warn { background:#fffbeb; border-color:#fde68a; color:#92400e; }
