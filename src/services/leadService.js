@@ -69,6 +69,7 @@ const COL_TYPE = {
   consultOption: 'text', // JSON: the booking-page choice {durationMin, feeCents, variationId, consultant}
   // The client's deadline, asked at retain (team meeting 2026-11-05): Deadline / Imaginary, the real date, the promised date
   deadlineType: 'status', actualDeadline: 'date', promisedSubmissionDate: 'date',
+  directConsult: 'text',   // New / Follow-up / Existing client = a consultation staff added with "Direct consultation" (step 2, 2026-11-09); the app alone writes it — see src/utils/directConsult.js
   directClient: 'text',    // "Yes" = a direct retainer (walk-in) client — set by the app's Direct retainer form (2026-11-04); see src/utils/directClient.js
   originalChannel: 'text', // how a lead first reached us — kept when it is converted to a direct-retainer client (it still counts as a lead in the KPIs)
   consultPayment: 'text', // JSON: a consultation fee settled outside the booking link (cash / e-transfer / invoice / waived), who recorded it — consultPaymentService alone writes it
@@ -145,6 +146,12 @@ function buildCols(fields, clearKeys = []) {
  */
 async function createLead(formData, { groupId, createRetries } = {}) {
   const name = (formData.fullName || '').trim() || 'Unnamed Lead';
+  // A direct consultation (step 2, 2026-11-09) is created already BOOKED, with its
+  // marker — so the row is never a "New" lead on the Leads list, even for a moment.
+  // Without the marker column (not made yet) it must not be created at all: a booked
+  // row with no marker would get the client reminders (fails closed, 503).
+  const direct = String(formData.directConsult == null ? '' : formData.directConsult).trim();
+  if (direct) require('../utils/directConsult').assertSetUp();
   console.log(`[Lead] Creating lead for ${formData.email || '(no email)'}${groupId ? ` (group ${groupId})` : ''}`);
 
   // Phone is set in a follow-up update so a bad phone format can't block creation.
@@ -153,7 +160,8 @@ async function createLead(formData, { groupId, createRetries } = {}) {
     email:                formData.email,
     country:              formData.country,
     preferredContact:     formData.preferredContact,
-    caseTypeInterest:     formData.caseTypeInterest,
+    // a dropdown: create_item cannot add a missing label, so on the direct path it is never sent here (updateLead adds it)
+    caseTypeInterest:     direct ? undefined : formData.caseTypeInterest,
     situationDescription: formData.situationDescription,
     residentialAddress:   formData.residentialAddress,
     howHeard:             formData.howHeard,
@@ -165,7 +173,19 @@ async function createLead(formData, { groupId, createRetries } = {}) {
     // this row at once. (Review 2026-11-06: the keys were handed in but this whitelist dropped them.)
     actualDeadline:          formData.actualDeadline,
     promisedSubmissionDate:  formData.promisedSubmissionDate,
-    conversionStatus:     'New',
+    // Direct consultation only: the booking AT creation. All text / date columns, or
+    // status labels that already exist (Booked) — create_item cannot fail on a label.
+    // (caseTypeInterest is a dropdown: the direct path writes it with updateLead, which adds labels.)
+    ...(direct ? {
+      directConsult:      direct,
+      bookingStatus:      'Booked',
+      bookedSlot:         formData.bookedSlot,
+      consultationHeld:   formData.consultationHeld,
+      assignedConsultant: formData.assignedConsultant,
+      meetingType:        formData.meetingType,
+      bookedBy:           formData.bookedBy,
+    } : {}),
+    conversionStatus:     direct ? 'Booked' : 'New',
   };
 
   // ALWAYS name the target group. create_item without group_id drops the item
@@ -317,9 +337,11 @@ async function findByColumnValue(key, value) {
  * that must reason about all of them (duplicate guards) need the full set.
  * @returns {Promise<object[]>} matching leads (camelCase), newest-id last
  */
-async function findAllByColumnValue(key, value, { limit = 50 } = {}) {
+async function findAllByColumnValue(key, value, { limit = 50, allPages = false } = {}) {
   const colId = COLS[key];
   if (!colId || !value) return [];
+  // Every matching row, page after page (the Booked population only grows — 123 on 2026-11-09).
+  if (allPages) return (await pageItemsByColumnValue(key, value)).map(parseItem);
   const data = await mondayApi.query(
     `query($boardId: ID!, $colId: String!, $val: String!, $limit: Int!) {
        items_page_by_column_values(limit: $limit, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) {
@@ -331,6 +353,50 @@ async function findAllByColumnValue(key, value, { limit = 50 } = {}) {
   const items = data?.items_page_by_column_values?.items || [];
   return items.map(parseItem);
 }
+
+/**
+ * THE paged reader for rows matched on one column (step 2, 2026-11-09): pages of
+ * 100 with the cursor followed, so no row past the first page is ever missed — the
+ * four Booked-lead jobs (reminders, the form chase, the post-consultation nudge and
+ * recordings, transcripts, the package sweep) each read only the first 200 before.
+ * Raw items ({ id, name, created_at, column_values[{id,text,value}], updates? }).
+ *   columnIds — only these columns (empty ids dropped); null = every column
+ *   updates   — also the item's latest notes, updates(limit: 25) { body }
+ * A missing first page reads as no rows (as before); a page cap left with rows
+ * remaining is said LOUDLY — the result is then partial.
+ */
+const PAGED_SIZE = 100;
+const PAGED_MAX_PAGES = 100;   // 10,000 rows — far beyond plausible
+async function pageItemsByColumnValue(key, value, { columnIds = null, updates = false, pageSize = PAGED_SIZE, maxPages = PAGED_MAX_PAGES } = {}) {
+  const colId = COLS[key];
+  if (!colId) throw new Error(`pageItemsByColumnValue: no column mapping for key "${key}"`);
+  const ids = Array.isArray(columnIds) ? [...new Set(columnIds.map((c) => String(c == null ? '' : c).trim()).filter(Boolean))] : null;
+  const cols = ids ? `column_values(ids: [${ids.map((c) => JSON.stringify(c)).join(', ')}])` : 'column_values';
+  const fields = `cursor items { id name created_at${updates ? ' updates(limit: 25) { body }' : ''} ${cols} { id text value } }`;
+  const first = await mondayApi.query(
+    `query($boardId: ID!, $colId: String!, $val: String!) {
+       items_page_by_column_values(limit: ${pageSize}, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) { ${fields} }
+     }`,
+    { boardId: String(leadBoardId), colId, val: String(value) }
+  );
+  const out = [...(first?.items_page_by_column_values?.items || [])];
+  let cursor = first?.items_page_by_column_values?.cursor || null;
+  let pages = 1;
+  while (cursor && pages < maxPages) {
+    const next = await mondayApi.query(
+      `query($cursor: String!) { next_items_page(limit: ${pageSize}, cursor: $cursor) { ${fields} } }`, { cursor });
+    pages++;
+    const page = next?.next_items_page;
+    if (!page) throw new Error(`the Lead Board stopped answering after ${out.length} "${value}" rows (page ${pages})`);
+    out.push(...(page.items || []));
+    cursor = page.cursor || null;
+  }
+  if (cursor) console.warn(`[Lead] ${key}="${value}": the ${maxPages}-page cap was reached with rows remaining — the list is PARTIAL (${out.length} rows read)`);
+  return out;
+}
+
+/** Every Booked lead, raw (the reminder / nudge / transcript jobs pick their columns). */
+function readBookedLeadItems(opts = {}) { return pageItemsByColumnValue('bookingStatus', 'Booked', opts); }
 
 /** Parse a raw Monday item ({id,name,created_at?,column_values[{id,text,value}]})
  *  into a camelCase lead object, using the board's column map. Shared by getLead
@@ -540,4 +606,5 @@ async function generateInviteMessage(lead) {
 }
 
 module.exports = {
-  stripInvisibles, createLead, qualifyLead, generateInviteMessage, getLead, updateLead, renameLead, findByColumnValue, findAllByColumnValue, listAllLeads, parseItem };
+  stripInvisibles, createLead, qualifyLead, generateInviteMessage, getLead, updateLead, renameLead, findByColumnValue, findAllByColumnValue, listAllLeads, parseItem,
+  pageItemsByColumnValue, readBookedLeadItems, PAGED_SIZE };

@@ -48,6 +48,10 @@ const SNAPSHOT_KEYS = [
   'directClient', // "Yes" = a direct retainer client (the Leads / Retainers split, the KPIs; 2026-11-04)
   'caseDeleted',  // the case was deleted and this record kept (2026-11-05) — the Retainers rows say "Case deleted"
   'recordingLink', 'preConsultPdf',   // the Client Master consultation copy's hourly refresh compares against these (point 8)
+  'bookedBy',     // who booked it — the "direct" pill's tooltip (step 2, 2026-11-09)
+  // The Direct Consultation marker (step 2): the "direct" pill; the Leads list hides these rows. Only once its
+  // column is made — while the id is empty the consultOption marker (above) is what the lists read.
+  ...(COLS.directConsult ? ['directConsult'] : []),
 ];
 const SNAPSHOT_IDS = SNAPSHOT_KEYS.map((k) => COLS[k]).filter(Boolean);
 

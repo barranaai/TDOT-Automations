@@ -17,7 +17,9 @@
  * payment is the truth there; a refund is done in Square.
  */
 
-const KINDS = { cash: 'Cash', 'e-transfer': 'E-transfer', invoice: 'Invoice sent by the team', other: 'Other', waived: 'Waived' };
+// square (step 2, 2026-11-09): paid in Square OUTSIDE the app (Melanie's Square booking) — a record like
+// cash: the app has no order or payment id for it, so no Square payment, invoice or double-payment step ever matches it.
+const KINDS = { cash: 'Cash', 'e-transfer': 'E-transfer', square: 'Paid in Square', invoice: 'Invoice sent by the team', other: 'Other', waived: 'Waived' };
 // The consultation package on a record (Gauri 2026-10-08, Faran 2026-10-16): 'send' =
 // email the agreement + pre-consultation form; 'skip' = staff chose not to (a paid
 // client who already has them, or a waived fee). '' = never asked (a record made
@@ -29,7 +31,7 @@ const MAX_CENTS = 2000000;            // $20,000 — a typo guard (a consultatio
 const MAX_NOTE = 200, MAX_REF = 120;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Exactly one of the five kinds — an own key, so 'constructor' / 'toString' / '__proto__' are not kinds (review 2026-10-15). */
+/** Exactly one of the kinds — an own key, so 'constructor' / 'toString' / '__proto__' are not kinds (review 2026-10-15). */
 const isKind = (k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(KINDS, k);
 const oneLine = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
 const bad = (error) => ({ ok: false, error });

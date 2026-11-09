@@ -29,7 +29,6 @@
 
 const axios       = require('axios');
 const mondayApi   = require('./mondayApi');
-const { leadBoardId } = require('../../config/monday');
 const C = require('../data/newLeadsBoard.json').columns;
 const { torontoSlotToUTC } = require('./postConsultService');
 
@@ -77,17 +76,12 @@ function graphErr(err) {
 // ─── Monday: booked Teams leads still awaiting a transcript ───────────────────
 
 async function getTranscriptCandidates() {
-  const data = await mondayApi.query(
-    `query($boardId: ID!, $colId: String!, $val: String!) {
-       items_page_by_column_values(limit: 200, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) {
-         items { id name
-           column_values(ids: ["${C.bookedSlot}", "${C.meetingLink}", "${C.transcriptLink}", "${C.fullName}", "${C.oneDriveFolderId}"]) { id text value } }
-       }
-     }`,
-    { boardId: String(leadBoardId), colId: C.bookingStatus, val: 'Booked' }
-  );
-  return (data?.items_page_by_column_values?.items || []).map((it) => {
-    const cv = {}; for (const c of it.column_values) cv[c.id] = c;
+  // ALL Booked leads, page after page (the one paged reader; only the first 200 before).
+  const items = await require('./leadService').readBookedLeadItems({
+    columnIds: [C.bookedSlot, C.meetingLink, C.transcriptLink, C.fullName, C.oneDriveFolderId],
+  });
+  return items.map((it) => {
+    const cv = {}; for (const c of (it.column_values || [])) cv[c.id] = c;
     let transcriptUrl = '', meetingUrl = '';
     try { transcriptUrl = JSON.parse(cv[C.transcriptLink]?.value || '{}').url || ''; } catch (_) {}
     try { meetingUrl = JSON.parse(cv[C.meetingLink]?.value || '{}').url || ''; } catch (_) {}
@@ -225,4 +219,5 @@ module.exports = {
   findTeamsTranscripts, preflightTranscripts,
   // pure — exported for tests
   isTranscriptCandidate, meetingLookupUrl, transcriptsListUrl, transcriptContentUrl, pickLatestTranscript, graphErr,
+  getTranscriptCandidates,   // the Monday read (stubbed in tests)
 };

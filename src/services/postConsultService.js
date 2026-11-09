@@ -22,7 +22,6 @@
 
 const { statusText } = require('../utils/mondayStatus');
 const mondayApi   = require('./mondayApi');
-const { leadBoardId } = require('../../config/monday');
 const C = require('../data/newLeadsBoard.json').columns;
 
 const NUDGE_TAG = '📋 post-consult-nudge';
@@ -45,19 +44,20 @@ function torontoSlotToUTC(slotStr) {
   return utcGuess - (asUTC - utcGuess);
 }
 
-/** Booked leads with the columns both crons need, updates feed included. */
+/**
+ * Booked leads with the columns both crons need, updates feed included — ALL pages
+ * (the one paged reader; only the first 200 before). The direct-consultation
+ * markers ride along for the nudge's skip (utils/directConsult); the marker column
+ * id may be empty (not made yet) — the consultOption marker still reads.
+ */
 async function getBookedLeadsFull() {
-  const data = await mondayApi.query(
-    `query($boardId: ID!, $colId: String!, $val: String!) {
-       items_page_by_column_values(limit: 200, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) {
-         items { id name updates(limit: 25) { body }
-           column_values(ids: ["${C.bookedSlot}", "${C.outcome}", "${C.recordingLink}", "${C.meetingLink}", "${C.fullName}"]) { id text value } }
-       }
-     }`,
-    { boardId: String(leadBoardId), colId: C.bookingStatus, val: 'Booked' }
-  );
-  return (data?.items_page_by_column_values?.items || []).map((it) => {
-    const cv = {}; for (const c of it.column_values) cv[c.id] = c;
+  const dc = require('../utils/directConsult');
+  const items = await require('./leadService').readBookedLeadItems({
+    columnIds: [C.bookedSlot, C.outcome, C.recordingLink, C.meetingLink, C.fullName, C.consultOption, dc.columnId()],
+    updates: true,
+  });
+  return items.map((it) => {
+    const cv = {}; for (const c of (it.column_values || [])) cv[c.id] = c;
     let recordingUrl = '', meetingUrl = '';
     try { recordingUrl = JSON.parse(cv[C.recordingLink]?.value || '{}').url || ''; } catch (_) {}
     try { meetingUrl = JSON.parse(cv[C.meetingLink]?.value || '{}').url || ''; } catch (_) {}
@@ -67,7 +67,9 @@ async function getBookedLeadsFull() {
       bookedSlot: cv[C.bookedSlot]?.text || '',
       outcome: statusText(cv[C.outcome]),   // EMPTY reads '' — the reminder needs to know no outcome was set
       recordingUrl, meetingUrl,
-      updates: it.updates.map((u) => u.body || ''),
+      directConsult: dc.columnId() ? (cv[dc.columnId()]?.text || '') : '',
+      consultOption: cv[C.consultOption]?.text || '',
+      updates: (it.updates || []).map((u) => u.body || ''),
     };
   });
 }
@@ -82,6 +84,9 @@ function needsNudge(lead, now = Date.now()) {
   if (lead.outcome) return false;                                     // staff already actioned
   if (lead.updates.some((b) => b.includes(NUDGE_TAG))) return false;  // already nudged (this cron)
   if (lead.updates.some((b) => b.includes('Consultation held'))) return false; // Zoom webhook already did it
+  // A direct consultation about the client's current file has no outcome to set (step 2);
+  // a direct row whose kind cannot be read gets no nudge either (fail closed).
+  if (!require('../utils/directConsult').nudgeAllowed(lead)) return false;
   return true;
 }
 
@@ -207,5 +212,5 @@ async function findTeamsRecordings() {
 module.exports = {
   sendPostConsultNudges, findTeamsRecordings,
   // exported for tests
-  needsNudge, matchRecording, torontoSlotToUTC, NUDGE_TAG,
+  needsNudge, matchRecording, torontoSlotToUTC, NUDGE_TAG, getBookedLeadsFull,
 };

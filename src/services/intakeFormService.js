@@ -836,4 +836,5 @@ module.exports = {
   // exported for tests
   serviceToInterest, serviceToFBlock, validateIntake, buildDigest,
   SERVICE_GROUPS, ALL_SERVICES,
+  RELATIONSHIPS,   // the Relationship with TDOT labels, exactly as on the board (the direct consultation writes them — step 2)
 };

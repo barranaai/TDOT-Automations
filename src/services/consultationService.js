@@ -12,7 +12,6 @@
 const leadService        = require('./leadService');
 const microsoftMail      = require('./microsoftMailService');
 const mondayApi          = require('./mondayApi');
-const { leadBoardId }    = require('../../config/monday');
 const { BRAND, TDOT_LOGO_LIGHT_HTML } = require('../branding');
 const { CURRENT_STATUS } = require('../../config/optionLists');
 const { torontoDay }     = require('../utils/torontoTime');   // record dates are the Toronto day (an evening payment is not "tomorrow")
@@ -219,15 +218,14 @@ async function autoSendConsultationPackage(leadId, opts = {}) {
  */
 const PACKAGE_STALE_MS     = 10 * 60 * 1000;
 const PACKAGE_MAX_ATTEMPTS = 3;
-const BOOKED_PAGE          = 500;   // Monday's page maximum (Booked leads only grow: 70 on 2026-10-16)
 // Holds that only a person can clear ("Review & send"): never released by an address.
 const PERSON_HOLDS = ['slot-clash', 'late-payment'];
 
 async function sweepConsultPackages() {
   if (!consultPackageAutoSendEnabled()) return { swept: 0 };
   const consultAgreementSvc = require('./consultAgreementService');
-  const leads = (await leadService.findAllByColumnValue('bookingStatus', 'Booked', { limit: BOOKED_PAGE })) || [];
-  if (leads.length >= BOOKED_PAGE) console.warn(`[Consult] Package sweep: ${leads.length} Booked leads filled the ${BOOKED_PAGE}-row page — rows beyond it are not swept`);
+  // Every Booked lead, page after page (the one paged reader — Booked leads only grow: 123 on 2026-11-09).
+  const leads = (await leadService.findAllByColumnValue('bookingStatus', 'Booked', { allPages: true })) || [];
   let released = 0, stalled = 0;
   for (const lead of leads) {
     if (String(lead.consultAgreementSent || '').trim()) continue;
@@ -1450,23 +1448,29 @@ function torontoSlotToUTC(slotStr) {
   return utcGuess - (asUTC - utcGuess);
 }
 
+/**
+ * Every Booked lead, for the client reminders and the form chase — ALL pages
+ * (the one paged reader, leadService.readBookedLeadItems; it read only the first
+ * 200 before, 123 Booked on 2026-11-09). A direct consultation (staff added it by
+ * hand, booked in Square) carries its markers here, and the reminders skip it
+ * unless staff said it is NOT in Square — fail closed (utils/directConsult). The
+ * marker column id may be empty (not made yet): the consultOption marker still reads.
+ */
 async function getBookedLeads() {
   const C = require('../data/newLeadsBoard.json').columns;
-  const data = await mondayApi.query(
-    `query($boardId: ID!, $colId: String!, $val: String!) {
-       items_page_by_column_values(limit: 200, board_id: $boardId, columns: [{ column_id: $colId, column_values: [$val] }]) {
-         items { id name updates { body }
-           column_values(ids: ["${C.bookedSlot}","${C.preConsultSubmitted}","${C.consultPayment}"]) { id text } }
-       }
-     }`,
-    { boardId: String(leadBoardId), colId: C.bookingStatus, val: 'Booked' }
-  );
-  const C2 = C;
-  return (data?.items_page_by_column_values?.items || []).map((it) => {
-    const cv = {}; it.column_values.forEach((c) => { cv[c.id] = c.text || ''; });
-    return { id: it.id, name: it.name, bookedSlot: cv[C2.bookedSlot], preConsult: cv[C2.preConsultSubmitted],
+  const dc = require('../utils/directConsult');
+  const items = await leadService.readBookedLeadItems({
+    columnIds: [C.bookedSlot, C.preConsultSubmitted, C.consultPayment, C.consultOption, dc.columnId()],
+    updates: true,
+  });
+  return items.map((it) => {
+    const cv = {}; (it.column_values || []).forEach((c) => { cv[c.id] = c.text || ''; });
+    const marks = { directConsult: dc.columnId() ? (cv[dc.columnId()] || '') : '', consultOption: cv[C.consultOption] || '' };
+    return { id: it.id, name: it.name, bookedSlot: cv[C.bookedSlot], preConsult: cv[C.preConsultSubmitted],
              // staff chose NOT to send the package when recording the fee (2026-10-16) — no form chase either
-             packageSkipped: (require('./consultPaymentService').parseConsultPayment({ consultPayment: cv[C2.consultPayment] }) || {}).package === 'skip',
+             packageSkipped: (require('./consultPaymentService').parseConsultPayment({ consultPayment: cv[C.consultPayment] }) || {}).package === 'skip',
+             // a direct consultation booked in Square: Square reminds the client, not the app
+             clientReminders: dc.clientRemindersAllowed(marks),
              updates: (it.updates || []).map((u) => u.body || '') };
   });
 }
@@ -1476,6 +1480,7 @@ async function sendReminderWindow(label, minH, maxH, markerTag) {
   const now = Date.now();
   let sent = 0;
   for (const L of leads) {
+    if (!L.clientReminders) continue;   // a direct consultation booked in Square (fail closed)
     const ts = torontoSlotToUTC(L.bookedSlot);
     if (isNaN(ts)) continue;
     const hoursOut = (ts - now) / 3600000;
@@ -1513,7 +1518,7 @@ async function sendPreConsultReminders() {
   const now = Date.now();
   let sent = 0;
   for (const L of leads) {
-    if (L.preConsult === 'Yes' || L.packageSkipped) continue;
+    if (L.preConsult === 'Yes' || L.packageSkipped || !L.clientReminders) continue;
     const ts = torontoSlotToUTC(L.bookedSlot);
     const hoursOut = (ts - now) / 3600000;
     if (hoursOut < 1 || hoursOut >= 24) continue;
@@ -1546,6 +1551,7 @@ module.exports = {
   waitRecordSave, withRecordSave, RETIRE_WHY, PACKAGE_STALE_MS,
   _resetSentMemory: () => _packageSentAt.clear(),   // test seam
   send24hReminders, send1hReminders, sendPreConsultReminders,
+  getBookedLeads,   // the reminders' Monday read (tests)
   // exported for tests
   buildPreConsultQA, buildPreConsultPdf, buildDossierSections,
 };

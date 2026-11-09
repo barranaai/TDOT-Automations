@@ -536,7 +536,9 @@ async function getLeadsQueue() {
   const leads = await require('./leadSnapshot').leads();
   // One row, one tab: booked leads are on Consultations, direct-retainer clients
   // and leads with a retainer under way on Retainers, retained clients on Cases.
-  const rows = leads.filter((l) => classifyLead(l) === 'lead').map((l) => ({
+  // A direct consultation (step 2) is created already Booked, so classifyLead puts it on
+  // Consultations — hidden here too, by its own marker, as a second guard.
+  const rows = leads.filter((l) => classifyLead(l) === 'lead').filter((l) => !isDirectConsult(l)).map((l) => ({
     id:            l.id,
     name:          l.fullName || l.name,
     createdAt:     l.createdAt || '',                     // raw UTC instant — the sort below needs it
@@ -1878,6 +1880,7 @@ async function getSignedRetainerAgreementPdf(leadId) {
 // isDirectClient(), which knows both.
 const { isDirectClient, shownSource: directShownSource, MARK: DIRECT_MARK } = require('../utils/directClient');
 const DIRECT_SOURCE = require('../utils/directClient').LEGACY_SOURCE;
+const { isDirectConsult } = require('../utils/directConsult');   // a hand-added consultation (step 2) — never on the Leads list
 
 // ─── Staff-entered lead (phone-in — meeting 2026-08-13 "direct leads") ────────
 //
