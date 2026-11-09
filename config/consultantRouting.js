@@ -213,7 +213,7 @@ function consultantMergeFields(lead = {}) {
  * Retain is refused (and a retainer held) until an RCIC is the consultant.
  * Names, comma-separated; DIRECT_ONLY_CONSULTANTS on Render overrides without a deploy.
  */
-const DIRECT_ONLY_CONSULTANTS = Object.freeze((process.env.DIRECT_ONLY_CONSULTANTS || 'Gauri Berde')
+const DIRECT_ONLY_CONSULTANTS = Object.freeze((process.env.DIRECT_ONLY_CONSULTANTS || '')
   .split(',').map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean)
   .filter((n) => !Object.values(CONSULTANTS).some((c) => c.name === n)));
 

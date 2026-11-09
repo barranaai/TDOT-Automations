@@ -1,4 +1,7 @@
 'use strict';
+// The live app has NO direct-only consultant (Faran 2026-11-09: Gauri is not a consultant).
+// The not-an-RCIC rules stay; these tests name one so the rules are still proven.
+process.env.DIRECT_ONLY_CONSULTANTS = 'Gauri Berde';
 
 // Direct consultation, commit 2 — the server (step 2, 2026-11-09). "＋ Direct consultation":
 // a consultation booked OUTSIDE the app (Melanie books most in Square) added by hand —
@@ -682,4 +685,11 @@ test('options: consultants (Gauri last, no prices), 15–120 lengths, the five p
       assert.equal(o.backDays, 30);
     } finally { w.restore(); }
   });
+});
+
+test('Faran 2026-11-09: no direct-only consultant by default — Gauri is not offered in the live app', () => {
+  const { execFileSync } = require('node:child_process');
+  const out = execFileSync(process.execPath, ['-e', "delete process.env.DIRECT_ONLY_CONSULTANTS; console.log(JSON.stringify(require('./config/consultantRouting').DIRECT_ONLY_CONSULTANTS))"],
+    { cwd: require('path').join(__dirname, '..'), env: { ...process.env, DIRECT_ONLY_CONSULTANTS: '' } }).toString().trim().split('\n').pop();
+  assert.equal(out, '[]');
 });
