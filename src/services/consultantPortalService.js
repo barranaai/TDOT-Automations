@@ -601,7 +601,7 @@ function convertRefusal(lead, nowWall) {
   const slotPast = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$/.test(slot) && slot.slice(0, 16) <= now;
   const booking = t(lead.bookingStatus);
   if (!held && (booking === 'Slot Held' || (slot && !slotPast) || (booking === 'Booked' && !slot))) {
-    return { code: 'booked', message: 'That lead has a consultation booked that has not happened yet — manage it from the Consultations page. It can be converted once the consultation is held.' };
+    return { code: 'booked', message: (slot ? `That lead has a consultation booked for ${slot.slice(0, 16)} — you can convert once that time has passed.` : 'That lead has a consultation booked — you can convert once it has happened.') };
   }
   // An in-progress retainer plan: the old plan's template/annex/milestones would be stale under the new case type.
   if ([lead.retainerMilestones, lead.selectedTemplate, lead.retainerFee].some((v) => t(v))) {

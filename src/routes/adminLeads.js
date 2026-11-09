@@ -815,14 +815,14 @@ function render(d){
 
 /* "Convert to direct retainer" (step 3, Faran 2026-11-09): ALWAYS on the lead page — also after booking and after the
    consultation. When the server would refuse, it is greyed out with the reason (the server keeps its refusals). */
-var CONVERT_WHY={ 'case':'Has a case — open it', 'retainer':'A retainer is already in progress — continue on the Retainers page', 'booked':'Consultation booked, not held yet — convert after it', 'direct':'Already a direct retainer client' };
+var CONVERT_WHY={ 'case':'Has a case — open it', 'retainer':'A retainer is already in progress — continue on the Retainers page', 'booked':'Consultation booked — you can convert once it has happened', 'direct':'Already a direct retainer client' };
 function renderConvert(d){
   var b=document.getElementById('btn-convert'), why=document.getElementById('convert-why'); if(!b) return;
   var code=d.convertBlock ? d.convertBlock.code : (d.directRetainer ? 'direct' : '');
   if(code){
     b.removeAttribute('href'); b.setAttribute('aria-disabled','true'); b.classList.add('disabled');
     b.title=(d.convertBlock && d.convertBlock.message) || CONVERT_WHY[code] || '';
-    why.textContent=CONVERT_WHY[code] || '';
+    why.textContent=(code==='booked' && d.bookedSlot) ? ('Consultation booked for '+String(d.bookedSlot).slice(0,16)+' — you can convert once that time has passed') : (CONVERT_WHY[code] || '');
   } else {
     b.href='/admin/retainers?convertLead='+encodeURIComponent(d.leadId);
     b.removeAttribute('aria-disabled'); b.classList.remove('disabled');
