@@ -180,6 +180,14 @@ function subjectSkipWord(subject, words = skipWords()) {
       return w;
     }
   }
+  if (!words.length) return ''; // EMAIL_LEADS_SKIP_WORDS=off switches the patterns off too
+  // "start" patterns see the subject with Re:/Fwd: off but dashes kept ("Application – Sales")
+  const head = String(subject || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/^(?:\s*(?:re|fw|fwd|aw|tr)\s*(?:\[\d+\])?\s*:\s*)+/, '').trim();
+  for (const p of SKIP_WORDS_CFG.SKIP_SUBJECT_PATTERNS) {
+    const hit = p.start ? p.re.test(head) : p.all ? p.all.every((r) => r.test(s)) : p.re.test(s);
+    if (hit) return p.label;
+  }
   return '';
 }
 

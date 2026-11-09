@@ -765,7 +765,8 @@ test('wiring: the 5-minute job, the admin-only routes, the setup guide, notes po
 const SKIP_CFG = require('../src/config/emailLeadSkipWords');
 
 test('subject words: each approved word / phrase is found (whole words, any case, Re:/Fwd: off, accents folded); near-misses are not', () => {
-  assert.deepEqual(SKIP_CFG.SKIP_SUBJECT_WORDS, ['resume', 'cv', 'curriculum vitae', 'job application', 'application for the position', 'job opening', 'vacancy', 'internship', 'career opportunity', 'collaboration', 'seo', 'web design', 'guest post', 'marketing services', 'business proposal']);
+  assert.deepEqual(SKIP_CFG.SKIP_SUBJECT_WORDS, ['resume', 'cv', 'curriculum vitae', 'job application', 'application for the position', 'job opening', 'vacancy', 'internship', 'career opportunity', 'collaboration', 'seo', 'web design', 'guest post', 'marketing services', 'business proposal',
+    'job fair', 'career fair', 'apply for a job', 'magazine', 'business acquisition']);
   for (const w of SKIP_CFG.SKIP_SUBJECT_WORDS) {
     assert.equal(EL.subjectSkipWord(`Re: ${w.toUpperCase()} — please see`), w, w);
     if (w !== 'seo') assert.equal(EL.subjectSkipWord(`FWD: Fw: About the ${w}`), w, w);
@@ -793,6 +794,38 @@ test('subject words: EMAIL_LEADS_SKIP_WORDS adds words, "off" switches the check
   assert.equal(EL.subjectSkipWord('Humber Job Fair follow-up'), 'job fair');
   assert.equal(EL.subjectSkipWord('My resume'), 'resume');
   await withEnv({ EMAIL_LEADS_SKIP_WORDS: 'off' }, () => assert.equal(EL.subjectSkipWord('My resume'), ''));
+}));
+
+test('round 2 (Faran 2026-11-09): application-at-start, application for a position, position + role word, job/career fair, apply for a job, magazine, business acquisition', () => {
+  const hit = {
+    'Application: Sales Specialist and Client Intake Specialist': 'application: (at start)',
+    'Re: Application - Office Assistant': 'application: (at start)',
+    'Application \u2013 Receptionist': 'application: (at start)',
+    'Application - PR': 'application: (at start)', // Faran's rule is "at the start" — a client typing this is skipped too (known sender still gets a note)
+    'Application for the position of Immigration Assistant': 'application for the position',
+    'Application for Case Manager Position': 'application for ... position',
+    'Seeking a position as Immigration Officer': 'position + officer/specialist/support/rcic',
+    'Positions of RCIC': 'position + officer/specialist/support/rcic',
+    'Position: client support': 'position + officer/specialist/support/rcic',
+    'Humber career fair 2027': 'career fair',
+    'Job Fair invitation': 'job fair',
+    'I want to apply for a job': 'apply for a job',
+    '2027 magazine opportunities': 'magazine',
+    'Business acquisition opportunity': 'business acquisition',
+    'Vacancy - LMIA work permit': 'vacancy', // employer words: no exemption (Faran: "skip anyway")
+    'Internship for PR applicants': 'internship',
+  };
+  for (const [s, w] of Object.entries(hit)) assert.equal(EL.subjectSkipWord(s), w, s);
+  for (const s of ['My application - PR', 'PR application status', 'Application status update', 'My application for PR', 'Fair wage question for LMIA',
+    'Acquisition of citizenship', 'Support letter for my spouse', 'Officer asked for more documents', 'What is my position in the Express Entry pool',
+    'Applications in progress', 'Re: Re: my application: question', 'Business visitor visa']) {
+    assert.equal(EL.subjectSkipWord(s), '', s);
+  }
+});
+
+test('round 2 patterns are switched off with the words (EMAIL_LEADS_SKIP_WORDS=off)', () => withEnv({ EMAIL_LEADS_SKIP_WORDS: 'off' }, () => {
+  assert.equal(EL.subjectSkipWord('Application: Sales Specialist'), '');
+  assert.equal(EL.subjectSkipWord('Positions of RCIC'), '');
 }));
 
 test('a NEW sender with a job / pitch subject: no lead, no note, nothing on Monday; skipped for good with its reason; the status lists it by subject only (no sender)', async () => {
