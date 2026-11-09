@@ -59,7 +59,13 @@
  * Switches: EMAIL_LEADS=off (switched back on, it catches up on what came in
  * meanwhile); EMAIL_LEADS_MAILBOX (default info@tdotimm.com);
  * EMAIL_LEADS_SKIP_DOMAINS / EMAIL_LEADS_SKIP_ADDRESSES (more to skip);
- * EMAIL_LEADS_FORM_SENDERS (our website form's sending address — its Reply-To is the visitor).
+ * EMAIL_LEADS_FORM_SENDERS (our website form's sending address — its Reply-To is the visitor);
+ * EMAIL_LEADS_SKIP_WORDS (more subject words; "off" switches the subject check off).
+ *
+ * Job applications and business pitches (Faran 2026-11-09): an email from a NEW
+ * sender whose subject has a word from src/config/emailLeadSkipWords.js makes no
+ * lead — it is recorded as skipped (subject only, no sender) on the status page.
+ * A sender we already know still gets the email as a note.
  */
 
 const axios     = require('axios');
@@ -125,6 +131,43 @@ function skipDomains() {
 function skipAddresses() {
   const list = [process.env.ETRANSFER_EMAIL || 'admstdot@gmail.com', process.env.EMAIL_REPLY_TO, process.env.MS_FROM_EMAIL, ...envList('EMAIL_LEADS_SKIP_ADDRESSES')];
   return new Set(list.map((a) => String(a || '').trim().toLowerCase()).filter(Boolean));
+}
+
+// ─── Job / business-pitch subjects (new senders only) ─────────────────────────
+
+const SKIP_WORDS_CFG = require('../config/emailLeadSkipWords');
+
+/** Lower-case, accents folded, "Re:"/"Fwd:" prefixes off, runs of spaces / hyphens / dashes → one space. */
+function normalSubject(subject) {
+  let s = String(subject || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  s = s.replace(/^(?:\s*(?:re|fw|fwd|aw|tr)\s*(?:\[\d+\])?\s*:\s*)+/, '');
+  return s.replace(/[\s\-\u2010-\u2015_]+/g, ' ').trim();
+}
+
+const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** A word / phrase with no letter or digit right before or after (not \b: "_" and digits count there). */
+const wordRe = (w) => new RegExp(`(?<![\\p{L}\\p{N}])${reEsc(normalSubject(w)).replace(/ /g, ' +')}(?![\\p{L}\\p{N}])`, 'u');
+
+function skipWords() {
+  const extra = envList('EMAIL_LEADS_SKIP_WORDS');
+  if (extra.length === 1 && /^(0|off|false|no|none|disabled?)$/.test(extra[0])) return [];
+  return [...new Set([...SKIP_WORDS_CFG.SKIP_SUBJECT_WORDS, ...extra].map(normalSubject).filter(Boolean))];
+}
+
+/** The skip word in the subject, or '' — "resume my file" and "my CV for PR assessment" are not skips. */
+function subjectSkipWord(subject, words = skipWords()) {
+  const s = normalSubject(subject);
+  if (!s) return '';
+  const resumeVerb = new RegExp(`^ *(?:${SKIP_WORDS_CFG.RESUME_VERB_NEXT.map(reEsc).join('|')})(?![\\p{L}\\p{N}])`, 'u');
+  for (const w of words) {
+    const re = new RegExp(wordRe(w).source, 'gu');
+    for (let m; (m = re.exec(s));) {
+      if (w === 'resume' && resumeVerb.test(s.slice(m.index + m[0].length))) continue;
+      if (w === 'cv' && SKIP_WORDS_CFG.CV_IMMIGRATION_WORDS.some((i) => wordRe(i).test(s))) continue;
+      return w;
+    }
+  }
+  return '';
 }
 
 /** no-reply / do-not-reply with anything after; the mail-system names exactly (a digit or +tag allowed). */
@@ -517,6 +560,9 @@ async function take(msg, state, entry, { person, viaReplyTo, box, renew }) {
   await renew();
 
   if (target.kind === 'none') {
+    // A new sender with a job / business-pitch subject: no lead (nothing written to Monday).
+    const word = subjectSkipWord(msg.subject);
+    if (word) return { kind: 'skipped', ids: [], reason: `skipped: job/business subject ("${word}")` };
     const blacklist = await Promise.resolve().then(() => io.blacklistCheck(person.raw)).catch(() => ({ hit: false }));
     const lead = await io.createLead({ fullName: leadNameFor(person), email: person.raw, sourceChannel: 'Email', situationDescription: situationText(msg, box) });
     const leadId = String((lead && lead.id) || '');
@@ -673,6 +719,15 @@ async function run() {
       io.warn(`[EmailLeads] ${stopped}`);
       return false;   // in order: the watermark never passes an email still to do
     }
+    if (result.kind === 'skipped') {
+      // done for good (never retried); the status shows the subject only — no sender
+      state.seen[key] = { o: 'skipped', at: nowIso(), subject: true };
+      state.log.unshift({ at: nowIso(), received: msg.receivedDateTime, subject: String(msg.subject || '').slice(0, 140), outcome: 'skipped', reason: result.reason, subjectSkip: true });
+      counts.skipped++; advance(); dirty = true;
+      try { await save(); dirty = false; }
+      catch (err) { stopped = stopFor(err); return false; }
+      return true;
+    }
     state.seen[key] = { o: result.kind, at: nowIso(), ids: result.ids };
     logEntry(msg, result.kind, { ids: result.ids, ...(mode === 'rescue' || lane.rescue ? { rescued: true } : {}), ...(c.viaReplyTo ? { person: c.person.raw } : {}) });
     counts[result.kind]++; if (mode === 'rescue' || lane.rescue) counts.rescued++;
@@ -785,6 +840,8 @@ async function getStatus() {
     pending: seen.filter((e) => e && e.o === 'pending' && !e.parked).length,
     setAside: seen.filter((e) => e && e.o === 'pending' && e.parked).length,
     failed: seen.filter((e) => e && e.o === 'failed').length,
+    skippedBySubject: seen.filter((e) => e && e.o === 'skipped' && e.subject).length,
+    recentSkippedBySubject: d ? (d.log || []).filter((e) => e && e.subjectSkip).slice(0, 20).map((e) => ({ at: e.at, received: e.received, subject: e.subject, reason: e.reason })) : [],
     recent: d ? (d.log || []).slice(0, KEEP_LOG) : [],
     ...(recordError ? { recordError } : {}),
   };
@@ -824,7 +881,7 @@ async function checkAccess() {
 module.exports = {
   runOnce, getStatus, checkAccess,
   // pure helpers + seams (tests)
-  classify, skipReason, senderOf, headerMap, leadNameFor, bodyText, situationText, noteHtml, messageRef, pickTargets, listUrl, rescueUrl, byMessageIdUrl, accessHint,
+  classify, skipReason, subjectSkipWord, normalSubject, skipWords, senderOf, headerMap, leadNameFor, bodyText, situationText, noteHtml, messageRef, pickTargets, listUrl, rescueUrl, byMessageIdUrl, accessHint,
   DEFAULT_SKIP_DOMAINS, FINISHED_STAGES, STATE_PATH, MAX_TRIES, MAX_PER_RUN, LEASE_MS, GIVE_UP_AFTER_MS, INSTANCE, io,
   _reset: () => { _running = false; _status = { at: null, ok: null, outcome: 'not run yet', error: '', hint: '', counts: null }; for (const k of Object.keys(_quietUntil)) delete _quietUntil[k]; _folders = { at: 0, box: '', ids: new Set(), junk: '' }; },
 };

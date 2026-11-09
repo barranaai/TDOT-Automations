@@ -759,3 +759,72 @@ test('wiring: the 5-minute job, the admin-only routes, the setup guide, notes po
   const leads = fs.readFileSync(require.resolve('../src/routes/adminLeads.js'), 'utf8');
   assert.match(leads, /\(d\.originalChannel==='Email'&&!d\.leadOwner\)\?'None — came in by email':'None — added by staff'/);
 });
+
+// ─── job / business-pitch subjects (Faran 2026-11-09, step 4) ─────────────────
+
+const SKIP_CFG = require('../src/config/emailLeadSkipWords');
+
+test('subject words: each approved word / phrase is found (whole words, any case, Re:/Fwd: off, accents folded); near-misses are not', () => {
+  assert.deepEqual(SKIP_CFG.SKIP_SUBJECT_WORDS, ['resume', 'cv', 'curriculum vitae', 'job application', 'application for the position', 'job opening', 'vacancy', 'internship', 'career opportunity', 'collaboration', 'seo', 'web design', 'guest post', 'marketing services', 'business proposal']);
+  for (const w of SKIP_CFG.SKIP_SUBJECT_WORDS) {
+    assert.equal(EL.subjectSkipWord(`Re: ${w.toUpperCase()} — please see`), w, w);
+    assert.equal(EL.subjectSkipWord(`FWD: Fw: About the ${w}`), w, w);
+  }
+  assert.equal(EL.subjectSkipWord('Résumé attached'), 'resume');
+  assert.equal(EL.subjectSkipWord('Job-Application  for you'), 'job application');
+  assert.equal(EL.subjectSkipWord('Resume, application :)'), 'resume');
+  for (const s of ['spousal sponsorship', 'Applying for PR', 'LMIA hiring', 'Common-law partnership', 'CVOR licence', 'season pass', 'Seoul', 'cvs pharmacy',
+    'Please resume my application', 'Resume processing of my file', 'My CV for PR assessment', 'CV for eligibility check', 'Study permit question', 'Re:', '']) {
+    assert.equal(EL.subjectSkipWord(s), '', s);
+  }
+});
+
+test('subject words: EMAIL_LEADS_SKIP_WORDS adds words, "off" switches the check off', () => withEnv({ EMAIL_LEADS_SKIP_WORDS: 'magazine, job fair' }, async () => {
+  assert.equal(EL.subjectSkipWord('2027 Magazine opportunities'), 'magazine');
+  assert.equal(EL.subjectSkipWord('Humber Job Fair follow-up'), 'job fair');
+  assert.equal(EL.subjectSkipWord('My resume'), 'resume');
+  await withEnv({ EMAIL_LEADS_SKIP_WORDS: 'off' }, () => assert.equal(EL.subjectSkipWord('My resume'), ''));
+}));
+
+test('a NEW sender with a job / pitch subject: no lead, no note, nothing on Monday; skipped for good with its reason; the status lists it by subject only (no sender)', async () => {
+  const w = await startedWorld();
+  try {
+    w.queue([
+      msg({ id: 'cv1', from: 'job.seeker@gmail.com', name: 'Job Seeker', subject: 'RE: Fwd: My CV', receivedDateTime: '2026-10-27T14:01:00Z' }),
+      msg({ id: 'seo', from: 'agency@pitch.example', subject: 'SEO and web design for TDOT', receivedDateTime: '2026-10-27T14:02:00Z' }),
+      msg({ id: 'ok', from: 'step4.prospect@gmail.com', subject: 'Applying for PR — spousal sponsorship', receivedDateTime: '2026-10-27T14:03:00Z' }),
+    ]);
+    const r = await run();
+    assert.equal(r.counts.skipped, 2); assert.equal(r.counts.lead, 1);
+    assert.deepEqual(w.creates.map((c) => c.email), ['step4.prospect@gmail.com']);
+    assert.equal(w.notes.length, 1);
+    assert.deepEqual(w.record.seen[key('cv1')], { o: 'skipped', at: w.record.seen[key('cv1')].at, subject: true });
+    assert.equal(w.record.since, '2026-10-27T14:03:00.000Z');
+    const st = await EL.getStatus();
+    assert.equal(st.skippedBySubject, 2);
+    assert.deepEqual(st.recentSkippedBySubject.map((e) => [e.subject, e.reason]), [
+      ['SEO and web design for TDOT', 'skipped: job/business subject ("seo")'],
+      ['RE: Fwd: My CV', 'skipped: job/business subject ("cv")'],
+    ]);
+    assert.ok(!JSON.stringify(st).includes('job.seeker@gmail.com') && !JSON.stringify(st).includes('agency@pitch.example'), 'no sender address for these');
+    // listed again (the 2-minute overlap): not retried
+    w.queue([msg({ id: 'cv1', from: 'job.seeker@gmail.com', subject: 'RE: Fwd: My CV', receivedDateTime: '2026-10-27T14:01:00Z' })]);
+    const r2 = await run();
+    assert.equal(r2.counts.skipped, 0); assert.equal(w.createCalls, 1);
+  } finally { restore(); }
+});
+
+test('a KNOWN sender (open case or lead) with a job word in the subject still gets the email as a note — clients send CVs as documents', async () => {
+  const w = await startedWorld({ leads: [{ id: '700', email: 'known.lead@yahoo.com' }], cases: [{ id: '200', email: 'client@gmail.com', caseStage: 'Document Collection Started' }] });
+  try {
+    w.queue([
+      msg({ id: 'k1', from: 'client@gmail.com', subject: 'My resume and CV', receivedDateTime: '2026-10-27T14:01:00Z' }),
+      msg({ id: 'k2', from: 'known.lead@yahoo.com', subject: 'Fwd: job application letter', receivedDateTime: '2026-10-27T14:02:00Z' }),
+    ]);
+    const r = await run();
+    assert.deepEqual([r.counts['case-note'], r.counts['lead-note'], r.counts.skipped], [1, 1, 0]);
+    assert.deepEqual(w.notes.map((n) => n.id), ['200', '700']);
+    assert.equal(w.creates.length, 0);
+    assert.equal((await EL.getStatus()).skippedBySubject, 0);
+  } finally { restore(); }
+});
