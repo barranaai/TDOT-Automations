@@ -46,4 +46,19 @@ function namedAdminCheck(staff, isAdminEmail, { what = 'change a payment record'
   return { ok: true, actor: { name: oneLine(staff.name || staff.email).slice(0, 60), email: String(staff.email), verified: true } };
 }
 
-module.exports = { actorFromStaff, namedAdminCheck, SHARED_KEY_PLACEHOLDER };
+/**
+ * Who may delete (step 3, Faran 2026-11-09): a NAMED admin deletes as before (scope 'all'); a person on
+ * LEAD_DELETE_EMAILS, signed in with Monday, deletes leads only (scope 'lead-only'); anyone else gets the
+ * named-admin refusal unchanged. The shared key alone never counts.
+ * @returns {{ok:true, actor:object, scope:'all'|'lead-only'} | {ok:false, status:number, error:string, loginUrl?:string}}
+ */
+function deleterCheck(staff, isAdminEmail, canDeleteLeads, opts = { what: 'delete records', hint: '' }) {
+  const r = namedAdminCheck(staff, isAdminEmail, opts);
+  if (r.ok) return { ...r, scope: 'all' };
+  if (r.status === 403 && staff && staff.email && canDeleteLeads(staff)) {
+    return { ok: true, scope: 'lead-only', actor: { name: oneLine(staff.name || staff.email).slice(0, 60), email: String(staff.email), verified: true } };
+  }
+  return r;
+}
+
+module.exports = { actorFromStaff, namedAdminCheck, deleterCheck, SHARED_KEY_PLACEHOLDER };

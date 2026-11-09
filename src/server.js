@@ -871,14 +871,27 @@ app.post('/admin/booking-reminders/run', async (req, res) => {
   res.json(await require('./services/bookingRemindersService').runOnce());
 });
 
-// Deleting is for NAMED admins only (2026-10-31): the shared key no longer counts.
+// Deleting is for NAMED admins only (2026-10-31): the shared key no longer counts. Staff on LEAD_DELETE_EMAILS
+// (Monday sign-in) may delete LEADS with no case — never a case (step 3, Faran 2026-11-09).
+function resolveDeleterOrReject(req, res) {
+  const r = require('./utils/staffIdentity').deleterCheck(tryStaffAuth(req), caseAccess.isAdminEmail, require('../config/leadDelete').canDeleteLeads);
+  if (!r.ok) { res.status(r.status).json({ error: r.error, message: r.error, ...(r.loginUrl ? { loginUrl: r.loginUrl } : {}) }); return null; }
+  return r;
+}
+const ONLY_ADMINS_CASES = 'Only admins can delete cases. Nothing was deleted.';
+
 app.get('/admin/delete/preview', async (req, res) => {
-  if (!resolveNamedAdminViewerOrReject(req, res, 'delete records')) return;
+  const who = resolveDeleterOrReject(req, res);
+  if (!who) return;
+  const leadOnly = who.scope === 'lead-only';
+  const caseRef = (req.query.caseRef || '').trim() || undefined;
+  if (leadOnly && (caseRef || req.query.recordOnly === '1')) return res.status(403).json({ error: ONLY_ADMINS_CASES, message: ONLY_ADMINS_CASES });
   try {
     const preview = await require('./services/deletionService').previewDeletion({
       leadId: (req.query.leadId || '').trim() || undefined,
-      caseRef: (req.query.caseRef || '').trim() || undefined,
+      caseRef,
       recordOnly: req.query.recordOnly === '1',   // the Retained tab's bin: a record only, never a case
+      leadOnly,
     });
     res.json(preview);
   } catch (err) {
@@ -889,9 +902,11 @@ app.get('/admin/delete/preview', async (req, res) => {
 });
 
 app.post('/admin/delete/execute', express.json(), async (req, res) => {
-  const actor = resolveNamedAdminViewerOrReject(req, res, 'delete records');
-  if (!actor) return;
+  const who = resolveDeleterOrReject(req, res);
+  if (!who) return;
+  const actor = who.actor, leadOnly = who.scope === 'lead-only';
   const { leadId, caseRef, confirmText, kind, recordOnly } = req.body || {};
+  if (leadOnly && (String(caseRef || '').trim() || recordOnly === true)) return res.status(403).json({ error: ONLY_ADMINS_CASES, message: ONLY_ADMINS_CASES });
   try {
     const result = await require('./services/deletionService').executeDeletion({
       leadId: String(leadId || '').trim() || undefined,
@@ -900,6 +915,7 @@ app.post('/admin/delete/execute', express.json(), async (req, res) => {
       expectedKind: kind === 'case' || kind === 'lead' ? kind : undefined,
       actor: actor.email || actor.name,
       recordOnly: recordOnly === true,
+      leadOnly,
     });
     consultantPortalService.invalidateDirectRetainerQueue(); // deleted clients must drop off the Direct section immediately
     consultantPortalService.invalidateLeadsQueue();          // …and off the funnel-leads queue (was showing deleted leads as alive)
@@ -957,6 +973,8 @@ app.get('/admin/payments/viewer', (req, res) => {
     canUndo: !!(staff && staff.email && caseAccess.isAdminEmail(staff.email)),
     // Attachments on a new client (2026-11-04): only the listed staff, signed in with Monday.
     canAttach: require('../config/staffAttachments').canAttach(staff),
+    // Lead-only delete (step 3, 2026-11-09): UI only — the delete routes decide.
+    canDeleteLeads: require('../config/leadDelete').canDeleteLeads(staff),
     adminsConfigured,
     signInUrl: '/q/auth/monday',
   });

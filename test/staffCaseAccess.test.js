@@ -134,8 +134,9 @@ test('opening visibility grants NO admin powers: the destructive surfaces still 
   const src = fs.readFileSync(require.resolve('../src/server.js'), 'utf8');
   for (const [route, guard] of [
     // 2026-10-31: deleting is for NAMED admins (Monday sign-in + ADMIN_EMAILS) — stronger than the key gate
-    ["app.get('/admin/delete/preview'", 'resolveNamedAdminViewerOrReject'],
-    ["app.post('/admin/delete/execute'", 'resolveNamedAdminViewerOrReject'],
+    // step 3 (2026-11-09): the same named-admin rule, plus the lead-only list (leads with no case) — deleterCheck
+    ["app.get('/admin/delete/preview'", 'resolveDeleterOrReject'],
+    ["app.post('/admin/delete/execute'", 'resolveDeleterOrReject'],
     ["app.post('/admin/onedrive/refile-general'", 'resolveAdminOrReject'],
     ["app.get('/admin/status-audit'", 'viewer.isAdmin'],
   ]) {
@@ -143,6 +144,8 @@ test('opening visibility grants NO admin powers: the destructive surfaces still 
     assert.ok(i !== -1, `${route} exists`);
     assert.ok(src.slice(i, i + 700).includes(guard), `${route} still requires ${guard}`);
   }
+  const dh = src.slice(src.indexOf('function resolveDeleterOrReject'), src.indexOf('function resolveDeleterOrReject') + 400);
+  assert.ok(dh.includes('deleterCheck(tryStaffAuth(req), caseAccess.isAdminEmail,'), 'the deleter gate is the named-admin check first');
   // restore/repair rewrite a client's saved answers — admin only, regardless of visibility
   for (const needle of ['Admins only — repair rewrites', 'Admins only — restore overwrites']) {
     assert.ok(src.includes(needle), needle);

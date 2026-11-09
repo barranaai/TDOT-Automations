@@ -55,6 +55,7 @@ const oneDrive      = require('./oneDriveService');
 const clientMaster  = require('./clientMasterService');
 const squareBookings = require('./squareBookingsService');
 const { clientMasterBoardId, leadBoardId, cmColumns } = require('../../config/monday');
+const { isDirectClient } = require('../utils/directClient');
 
 const familyBoard = require('../data/familyMembersBoard.json');
 // The Leads board's "Case deleted" column (2026-11-05): written on a kept consultation record. Without it a
@@ -444,8 +445,8 @@ async function caseGraph(cm, { keepLeads = false } = {}) {
   };
 }
 
-/** The deletion graph for a case-less LEAD. */
-async function leadGraph(lead) {
+/** The deletion graph for a case-less LEAD. `leadOnly`: a folder carrying a case number refuses (never just kept). */
+async function leadGraph(lead, { leadOnly = false } = {}) {
   // A record a Cases-page delete set aside while that delete has NOT finished — its case row still exists (the row goes
   // last): the record's folder is still that case's folder, renamed to the lead's name (review round 4). The marker
   // carries the case row's item id, so an archived row or one moved to another board is found too (round 5).
@@ -477,6 +478,7 @@ async function leadGraph(lead) {
   for (const f of found) {
     const m = / - (\d{4}-[A-Z]+(?:-[A-Z]+)*-\d+)$/.exec(String(f.name || ''));
     if (!m) { folders.push(f); continue; }
+    if (leadOnly) bad(LEAD_ONLY_REFUSAL);
     const live = await clientMaster.findItemByCaseRef(m[1]).catch(() => null);
     warnings.push(live
       ? `The OneDrive folder “${f.name}” belongs to case ${m[1]}, which is on the Cases board — it is KEPT (a case’s folder is never deleted with a record).`
@@ -501,11 +503,29 @@ async function leadGraph(lead) {
 }
 
 /**
+ * Lead-only delete (Faran 2026-11-09, step 3 decision 6): staff on LEAD_DELETE_EMAILS may delete a LEAD with no
+ * case — never a case, never a client with a retainer. Read from a FRESH lead (never the list copy); checked again
+ * inside the delete itself (executeDeletion → buildGraph), as the lead can gain a case between preview and delete.
+ */
+const LEAD_ONLY_REFUSAL = 'This lead has a case (or a retainer) — only an admin can delete it. Nothing was deleted.';
+function leadOnlyRefusal(lead) {
+  const t = (v) => String(v == null ? '' : v).trim();
+  if (t(lead.clientMasterItemId)) return LEAD_ONLY_REFUSAL;           // even when that case row is gone: an admin handles it
+  if (t(lead.caseDeleted)) return LEAD_ONLY_REFUSAL;                  // a kept consultation record of a deleted case
+  if (isDirectClient(lead)) return LEAD_ONLY_REFUSAL;                 // a direct retainer client (walk-ins whose case opened early too)
+  if (t(lead.conversionStatus) === 'Retained') return LEAD_ONLY_REFUSAL;
+  if (t(lead.retainerSent) || t(lead.retainerSigned) || t(lead.retainerPaid)) return LEAD_ONLY_REFUSAL;
+  return '';
+}
+
+/**
  * Build the deletion graph for a lead or a case. A lead that already has a
  * Client Master case ESCALATES to the full case graph — deleting a lead can
  * never silently leave an orphaned case behind.
  */
-async function buildGraph({ leadId, caseRef, recordOnly = false }) {
+async function buildGraph({ leadId, caseRef, recordOnly = false, leadOnly = false }) {
+  if (leadOnly && (caseRef || !leadId)) bad('Only admins can delete cases. Nothing was deleted.');
+  if (leadOnly && recordOnly) bad(LEAD_ONLY_REFUSAL);
   if (caseRef) {
     const cmId = await clientMaster.findItemByCaseRef(String(caseRef).trim());
     if (!cmId) bad(`No case found with reference "${caseRef}".`);
@@ -523,6 +543,13 @@ async function buildGraph({ leadId, caseRef, recordOnly = false }) {
     }
     const lead = await leadService.getLead(String(leadId));
     if (!lead) bad(`Lead ${leadId} not found.`);
+    if (leadOnly) {
+      const why = leadOnlyRefusal(lead);
+      if (why) bad(why);
+      const g = await leadGraph(lead, { leadOnly: true });
+      if (g.kind !== 'lead') bad(LEAD_ONLY_REFUSAL);
+      return g;
+    }
     if (lead.clientMasterItemId) {
       const cm = await readCmItem(lead.clientMasterItemId);
       if (cm) {
@@ -548,8 +575,8 @@ async function buildGraph({ leadId, caseRef, recordOnly = false }) {
 }
 
 /** What a delete WOULD remove — shown in the confirm dialog. */
-async function previewDeletion({ leadId, caseRef, recordOnly = false }) {
-  const g = await buildGraph({ leadId, caseRef, recordOnly });
+async function previewDeletion({ leadId, caseRef, recordOnly = false, leadOnly = false }) {
+  const g = await buildGraph({ leadId, caseRef, recordOnly, leadOnly });
   return {
     kind: g.kind,
     caseRef: g.caseRef || '',
@@ -620,7 +647,9 @@ const _inFlight = new Set();
  * lead row(s) → OneDrive folder(s). If ANY child row failed, the parents and
  * folders are kept so the whole delete can simply be re-run by caseRef.
  */
-async function executeDeletion({ leadId, caseRef, confirmText, expectedKind, actor, recordOnly = false }) {
+async function executeDeletion({ leadId, caseRef, confirmText, expectedKind, actor, recordOnly = false, leadOnly = false }) {
+  if (leadOnly && (caseRef || !leadId)) bad('Only admins can delete cases. Nothing was deleted.');
+  if (leadOnly && expectedKind !== 'lead') bad('Close the dialog and open it again. Nothing was deleted.');
   const key = caseRef ? `case:${String(caseRef).trim()}` : `lead:${String(leadId).trim()}`;
   if (_inFlight.has(key)) bad('A delete for this record is already running — wait for it to finish, then refresh the list.');
   _inFlight.add(key);
@@ -634,7 +663,7 @@ async function executeDeletion({ leadId, caseRef, confirmText, expectedKind, act
       if (_inFlight.has(k)) bad('A delete of this case is already running — wait for it to finish, then refresh the list.');
       _inFlight.add(k); caseKey = k;
     }
-    const g = await buildGraph({ leadId, caseRef, recordOnly });
+    const g = await buildGraph({ leadId, caseRef, recordOnly, leadOnly });
     if (g.cmItemId && String(g.cmItemId) !== String(lockId)) bad('This record changed while the delete was starting — close the window, refresh the list and try again. Nothing was deleted.');
     if (expectedKind && expectedKind !== g.kind) {
       bad(g.kind === 'case'
@@ -823,7 +852,7 @@ async function executeDeletion({ leadId, caseRef, confirmText, expectedKind, act
       kept,
       failures,
     };
-    console.log(`[Deletion] ${actor || 'admin'} deleted ${g.kind} ${g.caseRef || (g.leads[0] && g.leads[0].id) || ''} (${g.client.name}): ${JSON.stringify(deleted)}${kept ? ` KEPT: ${JSON.stringify(kept)}` : ''}${failures.length ? ` FAILURES: ${JSON.stringify(failures)}` : ''}`);
+    console.log(`[Deletion] ${actor || 'admin'}${leadOnly ? ' (lead-only permission)' : ''} deleted ${g.kind} ${g.caseRef || (g.leads[0] && g.leads[0].id) || ''} (${g.client.name}): ${JSON.stringify(deleted)}${kept ? ` KEPT: ${JSON.stringify(kept)}` : ''}${failures.length ? ` FAILURES: ${JSON.stringify(failures)}` : ''}`);
     return summary;
   } finally {
     _inFlight.delete(key);
@@ -1069,4 +1098,4 @@ async function postNote(itemId, body) {
   return false;
 }
 
-module.exports = { previewDeletion, executeDeletion, _internal: { buildGraph, rowsByCaseRef, resolveFolders, deleteMondayRows, planFolderReturn, unlinkKeptLead, keptNote, readKeepPlan, planMarker, timing } };
+module.exports = { previewDeletion, executeDeletion, LEAD_ONLY_REFUSAL, _internal: { buildGraph, leadOnlyRefusal, rowsByCaseRef, resolveFolders, deleteMondayRows, planFolderReturn, unlinkKeptLead, keptNote, readKeepPlan, planMarker, timing } };

@@ -87,8 +87,7 @@ test('every email that links to the documents page carries the case\'s access co
 });
 
 test('deleting and the hand-run engines use the NAMED-admin gate — the shared key is not enough', () => {
-  const routes = ["app.get('/admin/delete/preview'", "app.post('/admin/delete/execute'",
-    ...['readiness', 'sla', 'health', 'expiry', 'escalation', 'chasing'].map((e) => `app.post('/api/${e}/run'`),
+  const routes = [...['readiness', 'sla', 'health', 'expiry', 'escalation', 'chasing'].map((e) => `app.post('/api/${e}/run'`),
     "app.post('/api/utils/doc-codes/generate'"];
   for (const route of routes) {
     const i = SERVER.indexOf(route);
@@ -97,6 +96,15 @@ test('deleting and the hand-run engines use the NAMED-admin gate — the shared 
     assert.match(body, /resolveNamedAdminViewerOrReject\(req, res, '/, `${route} requires a named admin`);
     assert.doesNotMatch(body, /resolveAdminOrReject\(|resolveViewer\(/, `${route} must not accept the shared key`);
   }
+  // deleting: the named-admin gate, plus the lead-only list (step 3, 2026-11-09) — never the shared key
+  for (const route of ["app.get('/admin/delete/preview'", "app.post('/admin/delete/execute'"]) {
+    const body = SERVER.slice(SERVER.indexOf(route), SERVER.indexOf(route) + 400);
+    assert.match(body, /const who = resolveDeleterOrReject\(req, res\);\s+if \(!who\) return;/, `${route} requires a named admin or a lead deleter`);
+    assert.doesNotMatch(body, /resolveAdminOrReject\(|resolveViewer\(/, `${route} must not accept the shared key`);
+  }
+  const dh = SERVER.slice(SERVER.indexOf('function resolveDeleterOrReject'), SERVER.indexOf('function resolveDeleterOrReject') + 600);
+  assert.match(dh, /deleterCheck\(tryStaffAuth\(req\), caseAccess\.isAdminEmail, require\('\.\.\/config\/leadDelete'\)\.canDeleteLeads\)/);
+  assert.match(dh, /error: r\.error, message: r\.error/);
   // the delete audit note names the admin, never "admin-key"
   const ex = SERVER.slice(SERVER.indexOf("app.post('/admin/delete/execute'"), SERVER.indexOf("app.post('/admin/delete/execute'") + 900);
   assert.match(ex, /actor: actor\.email \|\| actor\.name,/);
@@ -111,7 +119,7 @@ test('deleting and the hand-run engines use the NAMED-admin gate — the shared 
 
 test('the pages tell non-admins: bin icons hidden, engine buttons off with a sign-in note', () => {
   const shared = fs.readFileSync(require.resolve('../src/routes/adminShared.js'), 'utf8');
-  assert.match(shared, /fetch\('\/admin\/payments\/viewer', \{ headers: delHeaders\(\), credentials: 'same-origin' \}\)[\s\S]{0,300}if \(v && !v\.canUndo\)[\s\S]{0,120}\.del-btn\{display:none!important\}/);
+  assert.match(shared, /fetch\('\/admin\/payments\/viewer', \{ headers: delHeaders\(\), credentials: 'same-origin' \}\)[\s\S]{0,700}if \(v && !v\.canUndo\)[\s\S]{0,240}'\.del-btn\{display:none!important\}'/);
   const engines = fs.readFileSync(require.resolve('../src/routes/adminEngines.js'), 'utf8');
   assert.match(engines, /guardNamedAdmin\(\);/);
   assert.match(engines, /if \(!v \|\| v\.canUndo\) return;[\s\S]{0,1600}'\.run-btn, #run-all-btn, #btn-doccode-generate'/);

@@ -496,7 +496,9 @@ const DELETE_UI_JS = DIALOG_UI_JS + `
       fetch('/admin/payments/viewer', { headers: delHeaders(), credentials: 'same-origin' })
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(v){
-          if (v && !v.canUndo) { var s = document.createElement('style'); s.textContent = '.del-btn{display:none!important}'; document.head.appendChild(s); }
+          /* Lead-only delete (step 3, 2026-11-09): staff on LEAD_DELETE_EMAILS keep the bins that delete a lead by its id
+             (never a case's bin, never the Retained tab's record bin) — the server refuses a lead with a case. */
+          if (v && !v.canUndo) { var s = document.createElement('style'); s.textContent = v.canDeleteLeads ? '.del-btn:not([data-del-lead]),.del-btn[data-del-record-only]{display:none!important}' : '.del-btn{display:none!important}'; document.head.appendChild(s); }
         })
         .catch(function(){});
     } catch (_) {}
