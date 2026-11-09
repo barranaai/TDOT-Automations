@@ -28,11 +28,14 @@ const leadService = require('./leadService');
 const mondayApi   = require('./mondayApi');
 const { leadBoardId } = require('../../config/monday');
 const COLS = require('../data/newLeadsBoard.json').columns;
+const { AsyncLocalStorage } = require('async_hooks');
 
 const TTL_MS      = 3 * 60 * 1000;    // served as is below this age
 const HARD_MAX_MS = 20 * 60 * 1000;   // older than this: wait for a refresh (the copy is too old to show)
 const PAGE        = 500;              // Monday's items_page maximum
 const MAX_PAGES   = 40;               // 20,000 leads — far beyond plausible
+const JOIN_MS     = 30 * 1000;        // the Refresh button joins a read that began less than this ago (decision 7, 2026-11-09)
+const IDLE_MS     = 15 * 60 * 1000;   // warm() keeps re-reading only while the lists were looked at this recently
 
 /** The lead fields the list pages, the KPIs and the booking-page slot check read. */
 const SNAPSHOT_KEYS = [
@@ -65,6 +68,10 @@ let _copy = null;          // { leads, at, gen }  gen: the invalidation generati
 let _inFlight = null;      // { promise, gen }
 let _gen = 0;              // bumped by every invalidate()
 let _invalidatedAt = 0;    // the generation of the latest invalidation (0 = none outstanding)
+let _staleGen = 0;         // the generation of the latest BACKGROUND change (a soft mark: serve the copy, refresh behind it)
+let _lastViewAt = 0;       // when getLeadSnapshot was last called (warm() skips while nobody looks)
+/** Marks work started by the scheduler: its lead writes only mark the copy stale (decision 7). */
+const _background = new AsyncLocalStorage();
 
 /** The side effects behind one seam (tests replace fetchLeads). */
 const io = {
@@ -120,7 +127,7 @@ function _refresh() {
       return _copy;
     })
     .finally(() => { if (_inFlight && _inFlight.promise === promise) _inFlight = null; });
-  _inFlight = { promise, gen };
+  _inFlight = { promise, gen, startedAt: started };
   return promise;
 }
 
@@ -130,17 +137,38 @@ async function _freshRead() {
   return _refresh();
 }
 
+/** In the background: refresh once the copy is behind a soft (background) change. Single-flight. */
+function _refreshBehind() {
+  _freshRead().catch((err) => console.warn(`[LeadSnapshot] background refresh failed: ${err.message}`));
+}
+
 /**
- * The snapshot. `fresh: true` always waits for a read that began after the call.
+ * The Refresh button (fresh: true): a read that began after the latest OWN write and at most
+ * JOIN_MS ago. A read in flight that qualifies is joined (no second ~27 s read queued behind it).
+ */
+function _refreshRead() {
+  const now = io.now();
+  if (_inFlight && _inFlight.gen >= _invalidatedAt && now - _inFlight.startedAt <= JOIN_MS) return _inFlight.promise;
+  _gen++;
+  return _freshRead();
+}
+
+/**
+ * The snapshot. `fresh: true` (the Refresh button) waits for a read that began at most ~30 s
+ * before the call and after any own write. Stale-while-revalidate otherwise:
+ *  - an own write (invalidate() outside the scheduler): the next read WAITS for data read after it;
+ *  - a background change (invalidate() inside a scheduler job): the copy is served at once and
+ *    re-read behind it (decision 7: up to ~30 s behind after a background change is fine);
+ *  - an aged copy: served, re-read behind it; older than HARD_MAX_MS: wait.
  * @returns {Promise<{ leads: object[], at: number, ageMs: number, stale?: true }>}
  */
 async function getLeadSnapshot({ fresh = false } = {}) {
-  if (fresh) _gen++;
+  _lastViewAt = io.now();
   const age = _copy ? io.now() - _copy.at : Infinity;
   const outstanding = _invalidatedAt > 0 && !(_copy && _copy.gen >= _invalidatedAt);
   const mustWait = fresh || outstanding || !_copy || age > HARD_MAX_MS;
   if (mustWait) {
-    try { const c = await _freshRead(); return { leads: c.leads, at: c.at, ageMs: io.now() - c.at }; }
+    try { const c = await (fresh ? _refreshRead() : _freshRead()); return { leads: c.leads, at: c.at, ageMs: io.now() - c.at }; }
     catch (err) {
       // A read that fails: an old copy, flagged stale (the page says Monday could
       // not be read), is better than no page — even after a write, where the copy
@@ -150,19 +178,39 @@ async function getLeadSnapshot({ fresh = false } = {}) {
       throw err;
     }
   }
-  if (age > TTL_MS) _refresh().catch((err) => console.warn(`[LeadSnapshot] background refresh failed: ${err.message}`));
+  if (_copy.gen < _staleGen) _refreshBehind();
+  else if (age > TTL_MS) _refresh().catch((err) => console.warn(`[LeadSnapshot] background refresh failed: ${err.message}`));
   return { leads: _copy.leads, at: _copy.at, ageMs: age };
 }
 
 /** Just the leads (the common call). */
 async function leads(opts) { return (await getLeadSnapshot(opts)).leads; }
 
-/** After a lead write: the next read waits for data read after this moment. */
-function invalidate() { _gen++; _invalidatedAt = _gen; }
+/**
+ * After a lead write. A staff member's own write (a request): the next read waits for data read
+ * after this moment. A scheduler job's write (inside runInBackground): only marks the copy stale —
+ * the next view is served at once and starts the re-read (decision 7, 2026-11-09).
+ */
+function invalidate() {
+  _gen++;
+  if (_background.getStore()) { _staleGen = _gen; return; }
+  _invalidatedAt = _gen;
+}
 
-/** Scheduler: keep it warm — a refresh in the background, never a throw. */
-async function warm() {
-  try { await _refresh(); } catch (err) { console.warn(`[LeadSnapshot] warm-up failed: ${err.message}`); }
+/** Run a scheduler job: lead writes inside it are background changes (see invalidate). */
+function runInBackground(fn) { return _background.run(true, fn); }
+
+/**
+ * Scheduler: keep it warm — a refresh in the background, never a throw. Only while the lists are
+ * being looked at (IDLE_MS), or when the copy is about to become too old to show at once — so an
+ * idle board is not re-read every 3 minutes all night.
+ */
+async function warm({ force = false } = {}) {
+  const now = io.now();
+  const viewed = _lastViewAt > 0 && now - _lastViewAt <= IDLE_MS;
+  const ageingOut = !_copy || now - _copy.at >= HARD_MAX_MS - 5 * 60 * 1000;
+  if (!force && !viewed && !ageingOut) return;
+  try { await (_copy && _copy.gen < _staleGen ? _freshRead() : _refresh()); } catch (err) { console.warn(`[LeadSnapshot] warm-up failed: ${err.message}`); }
 }
 
 /**
@@ -184,7 +232,7 @@ async function contactIndex(opts) {
 }
 
 /** For tests only. */
-function _reset() { _copy = null; _inFlight = null; _gen = 0; _invalidatedAt = 0; }
-function _state() { return { gen: _gen, invalidatedAt: _invalidatedAt, copyGen: _copy ? _copy.gen : null, inFlight: !!_inFlight }; }
+function _reset() { _copy = null; _inFlight = null; _gen = 0; _invalidatedAt = 0; _staleGen = 0; _lastViewAt = 0; }
+function _state() { return { gen: _gen, invalidatedAt: _invalidatedAt, copyGen: _copy ? _copy.gen : null, inFlight: !!_inFlight, staleGen: _staleGen }; }
 
-module.exports = { getLeadSnapshot, leads, contactIndex, invalidate, warm, io, CONTACT, SNAPSHOT_KEYS, SNAPSHOT_IDS, TTL_MS, HARD_MAX_MS, _reset, _state };
+module.exports = { getLeadSnapshot, leads, contactIndex, invalidate, runInBackground, warm, io, CONTACT, SNAPSHOT_KEYS, SNAPSHOT_IDS, TTL_MS, HARD_MAX_MS, JOIN_MS, IDLE_MS, _reset, _state };

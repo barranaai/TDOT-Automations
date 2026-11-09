@@ -1,4 +1,9 @@
-const cron                      = require('node-cron');
+const nodeCron                  = require('node-cron');
+// Every scheduled job runs as a BACKGROUND job: its lead writes mark the Lead Board copy stale
+// instead of making the next page load wait for a ~27 s board read (decision 7, 2026-11-09).
+const { runInBackground }       = require('./leadSnapshot');
+const cron = { schedule: (expr, fn, opts) => nodeCron.schedule(expr, (...a) => runInBackground(() => fn(...a)), opts) };
+const bootDelay = (fn, ms) => setTimeout(() => runInBackground(fn), ms);
 const caseReadinessService      = require('./caseReadinessService');
 const slaRiskEngine             = require('./slaRiskEngine');
 const expiryRiskEngine          = require('./expiryRiskEngine');
@@ -163,13 +168,13 @@ function startScheduler() {
   // tabs, the KPIs and the booking page's taken-times check: warm at boot, then
   // refreshed every 3 minutes so a page view never pays for the board read.
   const leadSnapshot = require('./leadSnapshot');
-  setTimeout(() => leadSnapshot.warm(), 5000);
-  cron.schedule('*/3 * * * *', () => leadSnapshot.warm());
-  console.log('[Scheduler] Lead Board snapshot — warmed at boot, refreshed every 3 min');
+  bootDelay(() => leadSnapshot.warm(), 5000);
+  cron.schedule('*/3 * * * *', () => leadSnapshot.warm());   // re-reads only while the lists are looked at (or the copy nears HARD_MAX)
+  console.log('[Scheduler] Lead Board snapshot — warmed at boot, refreshed every 3 min while in use');
   // The "Which client?" search on Add lead (Source / Reference = Existing Client / Client Referral,
   // 2026-11-04): a read-only copy of the OLD Consultations board, warmed at boot, refreshed hourly.
   const oldClientDirectory = require('./oldClientDirectory');
-  setTimeout(() => oldClientDirectory.warm(), 20000);
+  bootDelay(() => oldClientDirectory.warm(), 20000);
   cron.schedule('13 * * * *', () => oldClientDirectory.warm());
   console.log('[Scheduler] Old Consultations client list — warmed at boot, refreshed hourly');
 
@@ -234,7 +239,7 @@ function startScheduler() {
   // Board's recent notes (invite, reminders, remarks). Read back 45 days at boot,
   // then the new notes every 10 minutes (a full re-read every 6 hours). Read-only.
   const leadStatus = require('./leadStatusService');
-  setTimeout(() => leadStatus.refresh(), 30 * 1000);
+  bootDelay(() => leadStatus.refresh(), 30 * 1000);
   cron.schedule('4-59/10 * * * *', () => leadStatus.refresh());
   console.log('[Scheduler] Lead status notes copy — at boot, then every 10 min');
 
