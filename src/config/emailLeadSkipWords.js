@@ -23,4 +23,11 @@ const RESUME_VERB_NEXT = ['my', 'our', 'the', 'processing', 'file', 'application
 /** "CV" with one of these is an assessment request ("my CV for PR assessment"), not a job seeker. */
 const CV_IMMIGRATION_WORDS = ['pr', 'assessment', 'eligibility', 'express entry', 'work permit', 'consultation', 'lmia', 'visa', 'oinp', 'immigration'];
 
-module.exports = { SKIP_SUBJECT_WORDS, RESUME_VERB_NEXT, CV_IMMIGRATION_WORDS };
+/**
+ * "Seo" is also a common Korean name ("Seo-yeon", "Ji-seo", "Seo Jun"), so "seo" counts only when
+ * typed in capitals on its own ("SEO", not joined by a hyphen, no lower-case "seo" name part in the
+ * subject) or with one of these pitch words in the subject.
+ */
+const SEO_PITCH_WORDS = ['services', 'service', 'ranking', 'rank', 'backlinks', 'backlink', 'website', 'agency', 'google', 'traffic', 'proposal', 'optimization', 'optimisation', 'audit', 'marketing'];
+
+module.exports = { SKIP_SUBJECT_WORDS, RESUME_VERB_NEXT, CV_IMMIGRATION_WORDS, SEO_PITCH_WORDS };

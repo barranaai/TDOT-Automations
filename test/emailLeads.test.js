@@ -768,7 +768,7 @@ test('subject words: each approved word / phrase is found (whole words, any case
   assert.deepEqual(SKIP_CFG.SKIP_SUBJECT_WORDS, ['resume', 'cv', 'curriculum vitae', 'job application', 'application for the position', 'job opening', 'vacancy', 'internship', 'career opportunity', 'collaboration', 'seo', 'web design', 'guest post', 'marketing services', 'business proposal']);
   for (const w of SKIP_CFG.SKIP_SUBJECT_WORDS) {
     assert.equal(EL.subjectSkipWord(`Re: ${w.toUpperCase()} — please see`), w, w);
-    assert.equal(EL.subjectSkipWord(`FWD: Fw: About the ${w}`), w, w);
+    if (w !== 'seo') assert.equal(EL.subjectSkipWord(`FWD: Fw: About the ${w}`), w, w);
   }
   assert.equal(EL.subjectSkipWord('Résumé attached'), 'resume');
   assert.equal(EL.subjectSkipWord('Job-Application  for you'), 'job application');
@@ -776,6 +776,15 @@ test('subject words: each approved word / phrase is found (whole words, any case
   for (const s of ['spousal sponsorship', 'Applying for PR', 'LMIA hiring', 'Common-law partnership', 'CVOR licence', 'season pass', 'Seoul', 'cvs pharmacy',
     'Please resume my application', 'Resume processing of my file', 'My CV for PR assessment', 'CV for eligibility check', 'Study permit question', 'Re:', '']) {
     assert.equal(EL.subjectSkipWord(s), '', s);
+  }
+});
+
+test('subject words: "seo" is the marketing word only — typed SEO on its own, or with a pitch word; Korean names Seo / -seo are never skipped', () => {
+  for (const s of ['Consultation for Seo-yeon Park', 'Study permit - Seo Jun', 'Ji-seo SEO', 'Visa for seo jun', 'Re: Mr. Seo application']) {
+    assert.equal(EL.subjectSkipWord(s), '', s);
+  }
+  for (const s of ['SEO for TDOT', 'Fwd: SEO proposal', 'seo services for your website', 'Boost your Google ranking with seo', 'Seo agency offer']) {
+    assert.equal(EL.subjectSkipWord(s), 'seo', s);
   }
 });
 

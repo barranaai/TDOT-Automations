@@ -154,6 +154,18 @@ function skipWords() {
   return [...new Set([...SKIP_WORDS_CFG.SKIP_SUBJECT_WORDS, ...extra].map(normalSubject).filter(Boolean))];
 }
 
+/**
+ * "seo" is a Korean name too: a skip only when a pitch word is in the subject, or every "seo" in the
+ * subject as typed is a capital "SEO" standing alone (no letter, digit or hyphen joined to it).
+ */
+function seoIsMarketing(original, normal) {
+  if (SKIP_WORDS_CFG.SEO_PITCH_WORDS.some((p) => wordRe(p).test(normal))) return true;
+  const raw = String(original || '').normalize('NFKC');
+  const all = raw.match(/(?<![\p{L}\p{N}])seo(?![\p{L}\p{N}])/giu) || [];
+  const caps = raw.match(/(?<![\p{L}\p{N}\-\u2010-\u2015])SEO(?![\p{L}\p{N}\-\u2010-\u2015])/gu) || [];
+  return all.length > 0 && caps.length === all.length;
+}
+
 /** The skip word in the subject, or '' — "resume my file" and "my CV for PR assessment" are not skips. */
 function subjectSkipWord(subject, words = skipWords()) {
   const s = normalSubject(subject);
@@ -164,6 +176,7 @@ function subjectSkipWord(subject, words = skipWords()) {
     for (let m; (m = re.exec(s));) {
       if (w === 'resume' && resumeVerb.test(s.slice(m.index + m[0].length))) continue;
       if (w === 'cv' && SKIP_WORDS_CFG.CV_IMMIGRATION_WORDS.some((i) => wordRe(i).test(s))) continue;
+      if (w === 'seo' && !seoIsMarketing(subject, s)) continue;
       return w;
     }
   }
