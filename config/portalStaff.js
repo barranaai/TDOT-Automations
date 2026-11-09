@@ -7,8 +7,15 @@
  * the default without a deploy. The consultants are always on it (Faran
  * 2026-10-15: Shafoli assigns leads to follow up — herself included).
  */
-const PORTAL_STAFF = (process.env.PORTAL_STAFF || 'Gauri,Kamal,Asmita,Prajwal,Melanie,Diksha')
+const PORTAL_STAFF = (process.env.PORTAL_STAFF || 'Gauri,Kamal,Asmita,Prajawal,Melanie,Deeksha,Arpit,Monica,Anna')
   .split(',').map((s) => s.trim()).filter(Boolean);
+
+/**
+ * Monday names whose first name differs from the roster name (Faran
+ * 2026-11-09: Monday "Kamalpreet K Grewal" saves as "Kamal"). Used only when
+ * that roster name is actually on the roster.
+ */
+const ALIASES = { kamalpreet: 'Kamal' };
 
 const first = (n) => String(n || '').trim().split(/\s+/)[0].toLowerCase();
 
@@ -29,7 +36,10 @@ function staffRoster() {
 function rosterNameFor(mondayName) {
   const n = String(mondayName || '').replace(/\s+/g, ' ').trim().slice(0, 60);
   if (!n) return '';
-  const hits = staffRoster().filter((s) => first(s) === first(n));
+  const roster = staffRoster();
+  const alias = ALIASES[first(n)];
+  if (alias && roster.includes(alias)) return alias;
+  const hits = roster.filter((s) => first(s) === first(n));
   return hits.length === 1 ? hits[0] : n;
 }
 

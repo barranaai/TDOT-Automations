@@ -88,8 +88,8 @@ test('who added it: the Monday sign-in wins (matched to the roster name); withou
     await portal.createStaffLead({ ...VALID, addedBy: 'Gauri' }, { actor: { name: 'Melanie Smith', email: 'm@tdotimm.com', verified: true } });
     assert.equal(w.calls.created[0].leadOwner, 'Melanie', 'the signed-in person, as the roster spells them — never the typed pick');
     assert.ok(w.calls.notes.some((b) => /Lead added by Melanie \(signed in with Monday\)/.test(b)));
-    await portal.createStaffLead({ ...VALID, email: 'b@x.com', addedBy: 'Prajwal', sourceChannel: 'Instagram' }, { actor: { name: 'Unidentified (shared admin key)', verified: false } });
-    assert.equal(w.calls.created[1].leadOwner, 'Prajwal');
+    await portal.createStaffLead({ ...VALID, email: 'b@x.com', addedBy: 'Prajawal', sourceChannel: 'Instagram' }, { actor: { name: 'Unidentified (shared admin key)', verified: false } });
+    assert.equal(w.calls.created[1].leadOwner, 'Prajawal');
     for (const addedBy of ['Somebody', 'melanie']) {
       await assert.rejects(portal.createStaffLead({ ...VALID, email: 'c@x.com', addedBy }, { actor: { name: 'x', verified: false } }), (e) => e.badRequest && /Added by/.test(e.message), addedBy);
     }
@@ -112,10 +112,10 @@ test('lead owner on the lead page: roster names only (or clear); a note says who
   const w = world();
   const r1 = stub(leadService, 'getLead', async (id) => ({ id, leadOwner: 'Melanie' }));
   try {
-    const r = await portal.applyAction({ leadId: '5', action: 'saveLeadOwner', value: 'Prajwal', staffName: 'X', actor: { name: 'Shafoli Kapur', verified: true } });
-    assert.equal(r.message, 'Lead owner: Prajwal.');
-    assert.deepEqual(w.calls.updates[0].f, { leadOwner: 'Prajwal' });
-    assert.match(w.calls.notes[0], /Lead owner set to Prajwal \(was Melanie\) by Shafoli Kapur\./);
+    const r = await portal.applyAction({ leadId: '5', action: 'saveLeadOwner', value: 'Prajawal', staffName: 'X', actor: { name: 'Shafoli Kapur', verified: true } });
+    assert.equal(r.message, 'Lead owner: Prajawal.');
+    assert.deepEqual(w.calls.updates[0].f, { leadOwner: 'Prajawal' });
+    assert.match(w.calls.notes[0], /Lead owner set to Prajawal \(was Melanie\) by Shafoli Kapur\./);
     const same = await portal.applyAction({ leadId: '5', action: 'saveLeadOwner', value: 'Melanie', staffName: 'X' });
     assert.equal(same.message, 'No change.');
     await portal.applyAction({ leadId: '5', action: 'saveLeadOwner', value: '', staffName: 'X' });

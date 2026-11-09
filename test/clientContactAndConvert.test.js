@@ -51,7 +51,7 @@ test('the booking invite email (the one Gauri read out) renders the new line, no
 
 test('the staff-name list says Melanie (was the "Melini" typo)', () => {
   const src = fs.readFileSync(require.resolve('../config/portalStaff'), 'utf8');   // moved there 2026-10-15 (Add-lead group)
-  assert.match(src, /process\.env\.PORTAL_STAFF \|\| 'Gauri,Kamal,Asmita,Prajwal,Melanie,Diksha'/);
+  assert.match(src, /process\.env\.PORTAL_STAFF \|\| 'Gauri,Kamal,Asmita,Prajawal,Melanie,Deeksha,Arpit,Monica,Anna'/);
   assert.ok(!/Melini/.test(src));
 });
 
