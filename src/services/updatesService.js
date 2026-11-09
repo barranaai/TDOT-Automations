@@ -63,16 +63,24 @@ async function getCaseThread(caseRef) {
   return { caseRef: String(caseRef).trim(), cmItemId: String(itemId), clientName, leadIds: leads.map((l) => String(l.id)), updates: merged };
 }
 
-async function postUpdate(itemId, { body, staffName } = {}) {
+// The normal cap, and the "Consultation summary (Otter)" one (step 2, 2026-11-09): an Otter
+// summary of a consultation runs to several thousand characters and must show in full.
+const MAX_UPDATE = 4000;
+const MAX_OTTER = 20000;
+const OTTER_HEADER = '🎙 <b>Consultation summary (Otter)</b>';
+
+async function postUpdate(itemId, { body, staffName, kind } = {}) {
   const text = String(body == null ? '' : body).trim();
   const name = String(staffName == null ? '' : staffName).trim().slice(0, 60);
+  const otter = kind === 'otter';
   const bad = (m) => { const e = new Error(m); e.badRequest = true; throw e; };
   if (!text) bad('Write something first.');
-  if (text.length > 4000) bad('Updates are limited to 4000 characters.');
+  if (otter && text.length > MAX_OTTER) bad(`A consultation summary is limited to ${MAX_OTTER.toLocaleString('en-CA')} characters.`);
+  if (!otter && text.length > MAX_UPDATE) bad(`Updates are limited to ${MAX_UPDATE} characters.`);
   if (!/^\d+$/.test(String(itemId))) bad('Invalid item id.');
 
   const esc = (s) => s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
-  const prefixed = (name ? `<b>[${esc(name)}]</b> ` : '') + esc(text).replace(/\r?\n/g, '<br>');
+  const prefixed = (name ? `<b>[${esc(name)}]</b> ` : '') + (otter ? `${OTTER_HEADER}<br>` : '') + esc(text).replace(/\r?\n/g, '<br>');
   await mondayApi.query(
     `mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`,
     { i: String(itemId), b: prefixed }
@@ -80,4 +88,4 @@ async function postUpdate(itemId, { body, staffName } = {}) {
   return { ok: true };
 }
 
-module.exports = { getUpdatesForItem, getCaseThread, postUpdate };
+module.exports = { getUpdatesForItem, getCaseThread, postUpdate, MAX_UPDATE, MAX_OTTER };

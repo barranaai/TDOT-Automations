@@ -1966,6 +1966,30 @@ app.post('/api/consultation/direct-client', express.json(), async (req, res) => 
   }
 });
 
+// "＋ Direct consultation" (step 2, 2026-11-09): a consultation booked OUTSIDE the app (Melanie
+// books most in Square) added by hand — one Lead Board row, already Booked. The switch
+// DIRECT_CONSULTATION (unset = off → 404) and the marker column (not made → 503) are checked
+// in the service, which also says who may use it (a comma list = those Monday sign-ins only).
+// Registered before /api/consultation/:leadId so "direct-consult" is never read as a lead id.
+function directConsultError(res, err, what) {
+  if (err.conflict) return res.status(409).json({ error: err.message, code: err.code || '', ...['matches', 'blacklist', 'liveBooking', 'clash', 'leadId', 'link'].reduce((o, k) => (err[k] !== undefined ? { ...o, [k]: err[k] } : o), {}) });
+  if (err.badRequest) return res.status(400).json({ error: err.message });
+  if (err.status === 404) return res.status(404).json({ error: 'Not found' });
+  if (err.status === 401 || err.status === 503) return res.status(err.status).json({ error: err.message, ...(err.loginUrl ? { loginUrl: err.loginUrl } : {}) });
+  console.error(`[DirectConsult] ${what} failed:`, err.stack || err.message);
+  return res.status(500).json({ error: 'Internal server error' });
+}
+app.get('/api/consultation/direct-consult/options', async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try { res.json(await require('./services/directConsultService').getOptions({ actor: staffActor(req, '') })); }
+  catch (err) { directConsultError(res, err, 'options'); }
+});
+app.post('/api/consultation/direct-consult', express.json(), async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try { res.json(await require('./services/directConsultService').createDirectConsult(req.body || {}, { actor: staffActor(req, '') })); }
+  catch (err) { directConsultError(res, err, 'create'); }
+});
+
 // Staff attachments on a client (Faran 2026-11-04): a picture / screenshot / PDF of the
 // client's details — Shafoli only, signed in with Monday (the shared key alone is never
 // enough). One file per request; the page sends them one by one after the client exists.
@@ -2073,20 +2097,24 @@ app.get('/api/consultation/:leadId', async (req, res) => {
 // the consultant never touches the Monday frontend.
 app.post('/api/consultation/:leadId/action', express.json(), async (req, res) => {
   try {
-    const { action, value, amend } = req.body || {};
+    const { action, value, amend, confirm } = req.body || {};
     // Who did it: every /api call carries the shared admin key (requireApiKey), so the
     // person is not identifiable server-side — the page sends the name they typed
     // (the same "Your name" the Updates box uses). Self-reported, shown on the note.
     const rawName = (req.body || {}).staffName;
     const staffName = typeof rawName === 'string' ? rawName.trim().slice(0, 60) : '';
     const result = await consultantPortalService.applyAction({
-      leadId: (req.params.leadId || '').trim(), action, value, amend: amend === true, staffName,
+      // confirm: Retain on a direct follow-up / existing-client consultation asks first (step 2)
+      leadId: (req.params.leadId || '').trim(), action, value, amend: amend === true, confirm: confirm === true, staffName,
       actor: staffActor(req, staffName),
     });
     res.json(result);
   } catch (err) {
+    if (err.needsConfirm) return res.status(409).json({ error: err.message, needsConfirm: true });
+    if (err.conflict) return res.status(409).json({ error: err.message, code: err.code || '', ...(err.clash ? { clash: err.clash } : {}) });
     if (err.badRequest) return res.status(400).json({ error: err.message });
     if (err.notFound)   return res.status(404).json({ error: err.message });
+    if (err.status === 404 || err.status === 401 || err.status === 503) return res.status(err.status).json({ error: err.status === 404 ? 'Not found' : err.message });
     console.error('[Consultant] Action failed:', err.stack || err.message);
     res.status(500).json({ error: 'Internal server error' });
   }

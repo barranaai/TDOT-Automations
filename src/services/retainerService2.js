@@ -443,6 +443,17 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false, 
   if (lead.outcome !== 'Retain') {
     return { status: 'not-retain' }; // fee set on a not-yet-retained lead — nothing to send
   }
+  // A consultant who is not an RCIC (a direct-only consultant, step 2 — Gauri): no agreement
+  // can name them, and routing would put ANOTHER RCIC's name on it. Retain typed straight on
+  // the Lead board reaches here without the portal's refusal — held, with a note.
+  if (require('../../config/consultantRouting').isNonRcicConsultant(lead.assignedConsultant)) {
+    console.log(`[Retainer2] Outcome is Retain but the consultant is not an RCIC for lead ${leadId} — agreement HELD`);
+    if (notifyIfMissing) {
+      await postLeadNote(leadId,
+        `⚠ Outcome is set to "Retain", but the consultant (${esc(String(lead.assignedConsultant || '').trim())}) is not an RCIC. The retainer agreement names the RCIC, so it has NOT been emailed — change the consultant to an RCIC on the client's record in the app, then set Retain again.`);
+    }
+    return { status: 'non-rcic' };
+  }
   if (!feeToCents(lead.retainerFee)) {
     console.log(`[Retainer2] Outcome is Retain but no Retainer Fee set for lead ${leadId} — agreement HELD`);
     if (notifyIfMissing) {

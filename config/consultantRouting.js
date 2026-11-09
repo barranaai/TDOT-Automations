@@ -204,7 +204,27 @@ function consultantMergeFields(lead = {}) {
   };
 }
 
+/**
+ * DIRECT-ONLY consultants (step 2, 2026-11-09): people who hold consultations booked
+ * OUTSIDE the app (Melanie books them in Square) but are NOT RCICs — Gauri. They are
+ * offered ONLY on "＋ Direct consultation", never in CONSULTANTS: the booking page,
+ * routing, the prices, the roster de-duplication and the Square mapping read
+ * CONSULTANTS alone and stay exactly as they are. No agreement ever names one:
+ * Retain is refused (and a retainer held) until an RCIC is the consultant.
+ * Names, comma-separated; DIRECT_ONLY_CONSULTANTS on Render overrides without a deploy.
+ */
+const DIRECT_ONLY_CONSULTANTS = Object.freeze((process.env.DIRECT_ONLY_CONSULTANTS || 'Gauri Berde')
+  .split(',').map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean)
+  .filter((n) => !Object.values(CONSULTANTS).some((c) => c.name === n)));
+
+/** A consultant named on a lead who is not an RCIC (a direct-only consultant). PURE. */
+function isNonRcicConsultant(name) {
+  const n = String(name == null ? '' : name).replace(/\s+/g, ' ').trim();
+  return !!n && DIRECT_ONLY_CONSULTANTS.includes(n);
+}
+
 module.exports = {
   routeConsultant, resolveConsultant, consultantMergeFields, consultOptionsFor,
   CONSULTANTS, EE_SERVICES, PNP_SERVICES, HC_SERVICES, CRS_THRESHOLD,
+  DIRECT_ONLY_CONSULTANTS, isNonRcicConsultant,
 };

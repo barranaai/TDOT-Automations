@@ -283,6 +283,8 @@ async function getConsultationDetail(leadId) {
     leadOwner:         lead.leadOwner || '',
     bookedBy:          lead.bookedBy || '',
     paymentReviewedBy: lead.paymentReviewedBy || '',
+    // A direct consultation (step 2): { kind, bookedBy, inSquare, followUpOf, caseRef, by } — null for any other row.
+    direct:            require('./directConsultService').directView(lead),
 
     // The Not Wanted list (point 5): { checked, hit, matchedOn, entries[] } — a staff warning, never a block.
     blacklist,
@@ -1010,6 +1012,12 @@ function validateAction(action, value) {
       let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { o = null; }
       return { ok: true, normalized: { again: !!(o && typeof o === 'object' && o.again === true) } };
     }
+    // Direct consultation (step 2): a wrongly typed time on a hand-added consultation — checked in full by directConsultService.
+    case 'changeDirectTime': {
+      let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Enter the new date and time.' }; }
+      if (!o || typeof o !== 'object' || Array.isArray(o)) return { ok: false, error: 'Enter the new date and time.' };
+      return { ok: true, normalized: { date: o.date, time: o.time, durationMin: o.durationMin, clashAck: o.clashAck === true } };
+    }
     case 'resendLinks':
     case 'sendConsultAgreement':
     case 'consultantSignAgreement':
@@ -1099,7 +1107,29 @@ async function postPortalNote(leadId, text) {
  * posts an audit note, and returns a human-facing result message.
  * @throws {Error} with .badRequest=true on validation failure, .notFound on missing lead
  */
-async function applyAction({ leadId, action, value, amend = false, staffName = '', actor = null }) {
+/**
+ * Retain on a direct consultation (step 2). Throws before anything changes:
+ *   - a consultant who is not an RCIC (Gauri, a direct-only consultant): refused — the
+ *     agreements name the RCIC, and routing would otherwise put another RCIC's name on them;
+ *   - a Follow-up or Existing-client row: staff must confirm (confirm: true) — signing would
+ *     open a SECOND case from this row with no link to the earlier one.
+ */
+function directRetainGuard(lead, confirm) {
+  const routing = require('../../config/consultantRouting');
+  const name = String(lead.assignedConsultant || '').trim();
+  if (routing.isNonRcicConsultant(name)) {
+    const rcics = Object.values(routing.CONSULTANTS).map((c) => c.name).join(' or ');
+    const e = new Error(`${name} is not an RCIC, so this client can't be retained with them as the consultant — the agreements name the RCIC. Change the consultant to ${rcics} first.`);
+    e.badRequest = true; throw e;
+  }
+  const kind = require('../utils/directConsult').kindOf(lead);
+  if ((kind === 'Follow-up' || kind === 'Existing client') && !confirm) {
+    const e = new Error(`This consultation was added as “${kind}”. Retain here opens a NEW case from this row, with no link to their earlier file. For a new application from an existing client, use Direct retainer → “new application” instead. Confirm only if you mean to open a new case from this row.`);
+    e.needsConfirm = true; throw e;
+  }
+}
+
+async function applyAction({ leadId, action, value, amend = false, staffName = '', actor = null, confirm = false }) {
   const who = String(staffName || '').trim().slice(0, 60);
   const v = validateAction(action, value);
   if (!v.ok) { const e = new Error(v.error); e.badRequest = true; throw e; }
@@ -1141,6 +1171,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
 
       // Retain needs the deadline (team meeting 2026-11-05) — the same gate as "Retain & send", BEFORE anything changes.
       if (v.normalized === OUTCOME_RETAIN) {
+        directRetainGuard(lead, confirm);   // a direct consultation: an RCIC, and a confirm on a follow-up / existing-client row (step 2)
         const DL = require('./deadlineService');
         if (DL.required() && !DL.isSet(lead)) {
           const e = new Error('Set the deadline first (the Deadline box): a real deadline with its date, or imaginary with the submission date promised to the client — then Save deadline.');
@@ -1477,6 +1508,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         const e = new Error('This client has already been retained (signed) — a new retainer agreement should not be sent. Use “Amend” to record a change instead.');
         e.badRequest = true; e.locked = true; throw e;
       }
+      directRetainGuard(lead, confirm);   // a direct consultation: an RCIC, and a confirm on a follow-up / existing-client row (step 2)
       if (!feeSet) { const e = new Error('Set the retainer fee before sending the agreement.'); e.badRequest = true; throw e; }
       {
         // No email (a phone-only walk-in) or, on the real templates, no address: refuse
@@ -1517,6 +1549,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         case 'held':     return { ok: true, message: `Not sent — the retainer plan isn’t complete: ${(r.warnings || []).join(' · ')}. Fix these, save, and click again.` };
         case 'no-email': return { ok: true, message: 'Not sent — no client email on file. Add the client’s email, then click again.' };
         case 'no-fee':   return { ok: true, message: 'Not sent — set the retainer fee first.' };
+        case 'non-rcic': return { ok: true, message: 'Not sent — the consultant is not an RCIC. Change the consultant to an RCIC, then click again.' };
         case 'held-cosigner':
           // This agreement is signed by the PA AND the inviter/sponsor/
           // dependent — the send is held until both signers are addressable.
@@ -1736,9 +1769,20 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       // The booking page reads the pin live (resolveConsultant) — but once a
       // slot is BOOKED the consultation sits on a real calendar; changing the
       // pin then would only make the record lie.
-      if ((lead.bookedSlot || '').trim() || (lead.bookingStatus || '').trim() === 'Booked') {
+      // One exception (step 2): a direct consultation held by a consultant who is not an RCIC may
+      // move to an RCIC — Retain needs one, and the app holds no calendar booking for it.
+      const directToRcic = isDirectConsult(lead) && !!v.normalized
+        && require('../../config/consultantRouting').isNonRcicConsultant(lead.assignedConsultant);
+      if (!directToRcic && ((lead.bookedSlot || '').trim() || (lead.bookingStatus || '').trim() === 'Booked')) {
         const e = new Error('Already booked — the consultation is on the assigned consultant\'s calendar. Cancel/rebook to change it.');
         e.badRequest = true; throw e;
+      }
+      if (directToRcic) {
+        await leadService.updateLead(leadId, { assignedConsultant: v.normalized });
+        const byName = (actor && actor.verified && String(actor.name || '').trim()) ? String(actor.name).trim().slice(0, 60) : who;
+        await postPortalNote(leadId, `Consultant changed from ${escHtmlNote(String(lead.assignedConsultant || '').trim())} to ${escHtmlNote(v.normalized)}${byName ? ` by ${escHtmlNote(byName)}` : ''} (direct consultation — Retain needs an RCIC).`);
+        invalidateLeadsQueue();
+        return { ok: true, message: `✓ Consultant changed to ${v.normalized}.` };
       }
       await leadService.updateLead(leadId, { assignedConsultant: v.normalized }, { clearKeys: ['assignedConsultant'] });
       await postPortalNote(leadId, v.normalized
@@ -1746,6 +1790,9 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         : 'Consultant selection cleared — automatic routing applies again.');
       return { ok: true, message: v.normalized ? `✓ Consultation will be with ${v.normalized}.` : '✓ Back to automatic routing.' };
     }
+
+    case 'changeDirectTime':
+      return require('./directConsultService').changeTime({ leadId, lead, value: v.normalized, actor, who });
 
     case 'reissueRetainer': {
       // Void the UN-SIGNED envelope and send a fresh agreement with the
@@ -2619,11 +2666,8 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
   // from where the client is (none outside Canada) — the consultation agreement prints
   // fee + this; a later location edit never changes it. An edit of the SAME amount
   // keeps the HST fixed when it was first recorded (round-2 review).
-  const hstCents = (before && before.amountCents === n.amountCents && Number.isInteger(before.hstCents) && n.kind !== 'waived') ? before.hstCents : rec0HstCents(n, lead);
-  const rec = {
-    kind: n.kind, amountCents: n.amountCents, hstCents, on: n.on, reference: n.reference, note: n.note, by: name, at: new Date().toISOString(), verified,
-    ...(pkgChoice ? { package: pkgChoice } : {}), ...(pkgChoice && pkgNote ? { packageNote: pkgNote } : {}),
-  };
+  const rec = buildConsultPaymentRecord({ n, lead, before, name, verified, pkgChoice, pkgNote });
+  const hstCents = rec.hstCents;
   await leadService.updateLead(leadId, { consultPayment: JSON.stringify(rec) });
   try { consultAgreementService.evictCache(leadId); } catch (_) { /* the agreement's "has paid" line changes — drop the cached copy */ }
   const money = (c) => (c / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
@@ -2675,6 +2719,22 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
 }
 
 /**
+ * The consultation-fee record as it is stored (the Consultation Payment column's JSON).
+ * Shared by "Record payment / Waived" and "＋ Direct consultation" (step 2, split out
+ * with no change in behaviour). The HST on top of the fee is fixed NOW from where the
+ * client is (none outside Canada); an edit of the SAME amount keeps the HST fixed when
+ * it was first recorded. PURE apart from the clock.
+ * @param {{ n: {kind, amountCents, on, reference, note}, lead: object, before: ?object, name: string, verified: boolean, pkgChoice?: string, pkgNote?: string }} a
+ */
+function buildConsultPaymentRecord({ n, lead, before = null, name, verified, pkgChoice = '', pkgNote = '' }) {
+  const hstCents = (before && before.amountCents === n.amountCents && Number.isInteger(before.hstCents) && n.kind !== 'waived') ? before.hstCents : rec0HstCents(n, lead);
+  return {
+    kind: n.kind, amountCents: n.amountCents, hstCents, on: n.on, reference: n.reference, note: n.note, by: name, at: new Date().toISOString(), verified,
+    ...(pkgChoice ? { package: pkgChoice } : {}), ...(pkgChoice && pkgNote ? { packageNote: pkgNote } : {}),
+  };
+}
+
+/**
  * Write the booking staff typed with the fee onto the lead (2026-10-16): Booked,
  * the time, the consultant, in person / video / phone, the length — what the
  * package email and the agreement state. The length's standard fee goes on the
@@ -2687,10 +2747,12 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
  * to delete it), so a stale or deleted link is never emailed (review 2026-10-16).
  * NO Square appointment: staff keep the Square calendar themselves (the app never
  * sees a booking made in Square), so writing one here would double it.
+ * Options: noMeeting — a Not Wanted person (no meeting, and the reply says why);
+ *   meeting: 'none' — a direct consultation booked outside the app: no meeting, no line.
  * @returns {Promise<{ overrides: object, meetingFailed?: true }>} the values just written,
  *   handed to the package (a Monday re-read may not show them yet)
  */
-async function writeRecordedBooking(leadId, lead, booking, staffName, lines, { noMeeting = false } = {}) {
+async function writeRecordedBooking(leadId, lead, booking, staffName, lines, { noMeeting = false, meeting: meetingMode = '' } = {}) {
   const s = (v) => String(v == null ? '' : v).trim();
   const { CONSULTANTS, consultOptionsFor } = require('../../config/consultantRouting');
   await require('./consultPriceService').ensureFresh({ reason: 'recorded booking' });   // the fee stored is Square's current price
@@ -2729,6 +2791,10 @@ async function writeRecordedBooking(leadId, lead, booking, staffName, lines, { n
   if (dropMeeting) lines.push(`An earlier video meeting (for ${s(lead.bookedSlot) || 'an earlier time'}${hadLink ? `: ${hadLink}` : ''}) is no longer used — delete it from the meeting organiser's calendar so the client is not confused.`);
   if (booking.meetingType !== 'Virtual') return { overrides };
   if (reuse) { overrides.meetingLink = s(lead.meetingLink); overrides.zoomMeetingId = hadMeeting; return { overrides }; }
+  // meeting: 'none' (a direct consultation, step 2): booked outside the app — the app makes
+  // no meeting and sends no invite, and says nothing about one. (noMeeting is the Not Wanted
+  // case only: it says why no meeting was made.)
+  if (meetingMode === 'none') return { overrides };
   if (noMeeting) {
     lines.push('No Teams meeting was created: this person is on the Not Wanted list.');
     return { overrides, meetingFailed: true };
@@ -2857,7 +2923,7 @@ function conflictBody(err) {
  * cases, and leads. Each lookup is independent and best-effort: one source
  * failing must not blind staff to the others.
  */
-async function findClientMatches({ email, phone } = {}) {
+async function findClientMatches({ email, phone, withLeads = false } = {}) {
   const e = String(email || '').trim();
   const p = String(phone || '').trim();
   const out = { clients: [], cases: [], leads: [], matchedOn: { email: !!e, phone: !!p } };
@@ -2912,6 +2978,13 @@ async function findClientMatches({ email, phone } = {}) {
   out.leads = [...leadMap.values()];
   out.cases = [...caseMap.values()];
   out.clients = (clients || []).map((c) => ({ id: c.id, name: c.name, email: c.email, confidence: c.confidence, reasons: c.reasons }));
+  // withLeads (Direct consultation, step 2): the matched lead rows as read, for the server's own
+  // decisions (follow-up, a live booking, "Use this lead") — never sent to a page.
+  if (withLeads) {
+    const raw = new Map();
+    for (const l of [...leadsByEmail, ...leadsByPhone]) if (!raw.has(String(l.id))) raw.set(String(l.id), l);
+    out.rawLeads = [...raw.values()];
+  }
   return out;
 }
 
@@ -3032,6 +3105,8 @@ async function getConsultationsBoard({ fresh = false, now = new Date(), withReta
         outcome: s(l.outcome), followUpDate: s(l.followUpDate),
         consultationHeld: s(l.consultationHeld), hasMeeting: !!s(l.meetingLink),
         tier: s(l.tier), createdAt: l.createdAt || '',
+        // A direct consultation (step 2): its kind for the "direct" pill and who booked it — only on such a row.
+        ...(isDirectConsult(l) ? { direct: require('../utils/directConsult').kindOf(l) || '?', bookedBy: s(l.bookedBy) } : {}),
       });
     } else if (kind === 'retainer') {
       retainers.push(retainerRow(l, consultPayment));
@@ -3157,5 +3232,7 @@ module.exports = {
   invalidateLeadsQueue,
   classifyLead, consultationDone, listFor, retainerTab, RETAINED_TAB, RETAINER_TABS, getConsultationsBoard, CASE_REFS_WAIT_MS, addCaseRefs,
   _recordPackageView: recordPackageView, _packageResultLine: packageResultLine,   // test seams
+  // Direct consultation (step 2): the shared pieces its service reuses.
+  buildConsultPaymentRecord, writeRecordedBooking, slotsOverlap, withRecordLock, postPortalNote, escHtmlNote,
   conflictBody, normalizeLeadLocation,
 };

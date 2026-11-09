@@ -144,7 +144,7 @@ function buildCols(fields, clearKeys = []) {
  * Create a new Lead Board item from the public form payload, then assign a
  * lead access token. Returns { id, ...formData }.
  */
-async function createLead(formData, { groupId, createRetries } = {}) {
+async function createLead(formData, { groupId, createRetries, skipFolder = false } = {}) {
   const name = (formData.fullName || '').trim() || 'Unnamed Lead';
   // A direct consultation (step 2, 2026-11-09) is created already BOOKED, with its
   // marker — so the row is never a "New" lead on the Leads list, even for a moment.
@@ -261,6 +261,12 @@ async function createLead(formData, { groupId, createRetries } = {}) {
   // intake uploads have a home; it gets renamed to "{Name} - {CaseRef}" when
   // the case reference is generated. Fire-and-forget: an OneDrive outage must
   // never block lead creation.
+  // skipFolder (direct consultation, step 2): a follow-up or an existing client's
+  // consultation is not a new client — no empty "{Name} - LEAD-{id}" folder for it.
+  if (skipFolder) {
+    console.log(`[Lead] Created lead ${id} (${name}) — no OneDrive folder (not a new client)`);
+    return { id, ...formData };
+  }
   try {
     const oneDrive = require('./oneDriveService');
     oneDrive.ensureLeadFolder({ fullName: name, leadId: id })
