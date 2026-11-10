@@ -50,14 +50,16 @@ window.tdotDeadlineBox = function(prefix){
     set: function(d){ d=d||{}; Array.prototype.forEach.call(radios(), function(r){ r.checked=(r.value===(d.type||'')); }); var a=el('dl-actual'), p=el('dl-promised'); if(a) a.value=d.actualDeadline||''; if(p) p.value=d.promisedSubmissionDate||''; sync(); },
     read: function(){ var t=type(); var a=el('dl-actual'), p=el('dl-promised'); return { deadlineType:t, actualDeadline:(t==='Deadline'&&a)?a.value:'', promisedSubmissionDate:(t&&p)?p.value:'' }; },
     blank: function(){ var v=box.read(); return !v.deadlineType && !v.actualDeadline && !v.promisedSubmissionDate; },
-    /* '' when fine, else the message (the server checks the same). required: a blank answer is refused. */
-    check: function(required){
+    /* '' when fine, else the message (the server checks the same). required: a blank answer is refused.
+       keep (the change-deadline pop-up only): the promised date already stored — riding along a real deadline unchanged, it may be in the past. */
+    check: function(required, keep){
       var v=box.read(), today=todayStr();
       if(box.blank()) return required ? 'Set the deadline: a real deadline with its date, or imaginary with the submission date promised to the client.' : '';
       if(v.deadlineType==='Deadline' && !v.actualDeadline) return 'A real deadline needs the actual deadline date.';
       if(v.deadlineType==='Imaginary' && !v.promisedSubmissionDate) return 'An imaginary deadline needs the date promised to the client.';
       if(v.actualDeadline && v.actualDeadline<today) return 'The actual deadline is in the past.';
-      if(v.promisedSubmissionDate && v.promisedSubmissionDate<today) return 'The promised submission date is in the past.';
+      var kept = !!keep && v.deadlineType==='Deadline' && v.promisedSubmissionDate===String(keep.promisedSubmissionDate||'');
+      if(v.promisedSubmissionDate && v.promisedSubmissionDate<today && !kept) return 'The promised submission date is in the past.';
       if(v.actualDeadline && v.promisedSubmissionDate && v.promisedSubmissionDate>v.actualDeadline) return 'The promised submission date is after the actual deadline.';
       return '';
     },

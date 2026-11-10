@@ -10,6 +10,7 @@
  */
 
 const express = require('express');
+const { DEADLINE_CHANGE_CSS, DEADLINE_CHANGE_HTML, DEADLINE_CHANGE_JS } = require('./deadlineChangeUi');   // Change beside the Client deadline pill (2026-11-10)
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS } = require('./adminShared');
@@ -30,6 +31,7 @@ function buildCockpitHTML(caseRef) {
     ${SHARED_CSS_VARS}
     ${NAV_CSS}
     ${PAYMENT_UI_CSS}
+    ${DEADLINE_CHANGE_CSS}
 
     body { background: #f1f5f9; }
     .wrap { max-width: 1200px; margin: 0 auto; padding: 26px 24px 80px; }
@@ -402,6 +404,7 @@ ${UPDATES_WIDGET_JS}
 
 ${SHARED_AUTH_JS}
 ${PAYMENT_UI_JS}
+${DEADLINE_CHANGE_JS}
 tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/case-updates/' + encodeURIComponent(CASE_REF) });
 
 function escHtml(s) {
@@ -437,6 +440,59 @@ function statusTag(s) {
 var DOC_DOT = { Reviewed:'#16a34a', Received:'#2563eb', 'Rework Required':'#dc2626', Missing:'#cbd5e1', 'Not Applicable':'#94a3b8' };
 var NA_ENABLED = false;   // "Not applicable" buttons — set per load from the server's switch
 
+/* The pills under the client's name. Their own function so a saved deadline redraws only them
+   (never the whole case: loadCase asks the server for about ten reads). */
+var DL_FLASH = null;   // { text, until }: "✓ Deadline saved" beside the pill for a few seconds
+function renderPills(d) {
+  var healthCls = d.health === 'Red' ? 'red' : (d.health === 'Orange' ? 'amber' : (d.health === 'Green' ? 'green' : 'grey'));
+  var pills = '';
+  if (d.cmUnavailable) {
+    // The Client Master read failed — show honest 'unavailable' pills instead
+    // of fabricated 'Not Started / Unpaid' defaults the staffer would act on.
+    pills += '<span class="pill grey"><span class="pk">Stage</span> unavailable — reload</span>';
+    pills += '<span class="pill grey"><span class="pk">Payment</span> unavailable — reload</span>';
+  } else {
+    var payCls = d.paymentStatus === 'Paid' ? 'green' : (/unpaid/i.test(d.paymentStatus) ? 'red' : 'amber');
+    pills += '<span class="pill blue"><span class="pk">Stage</span> ' + escHtml(d.caseStage) + '</span>';
+    pills += '<span class="pill ' + payCls + '"><span class="pk">Payment</span> ' + escHtml(d.paymentStatus) + '</span>';
+  }
+  pills += '<span class="pill ' + healthCls + '"><span class="pk">Health</span> ' + escHtml(d.health) + '</span>';
+  pills += '<span class="pill grey"><span class="pk">Manager</span> ' + escHtml(d.manager) + '</span>';
+  if (d.clientDeadline && d.clientDeadline !== 'Not set') pills += '<span class="pill ' + (/^Real/.test(d.clientDeadline) ? 'red' : 'amber') + '"><span class="pk">Client deadline</span> ' + escHtml(d.clientDeadline) + '</span>';
+  else pills += '<span class="pill grey"><span class="pk">Client deadline</span> Not set</span>';
+  // Change (2026-11-10): only where the server says the write is allowed (a Monday sign-in who may see the case)
+  if (d.canChangeDeadline && d.itemId) pills += '<button type="button" class="dlc-btn" id="dl-change-btn" title="Change this case’s deadline (a reason is needed; a note is added on the case)">Change…</button>';
+  if (DL_FLASH && DL_FLASH.until > Date.now()) pills += '<span class="dlc-ok" id="dl-change-ok" role="status">' + escHtml(DL_FLASH.text) + '</span>';
+  if (d.deadline) pills += '<span class="pill amber"><span class="pk">SLA deadline</span> ' + escHtml(d.deadline) + '</span>';
+  document.getElementById('c-pills').innerHTML = pills;
+  var dcb = document.getElementById('dl-change-btn');
+  if (dcb) dcb.onclick = function() { caseDeadlineDlg(); };
+}
+/* Change the client deadline (2026-11-10): the shared pop-up (deadlineChangeUi.js). After a save only the pills are redrawn. */
+function caseDeadlineApply(cur, text) {
+  if (!LAST_D || !cur) return;
+  LAST_D.clientDeadlineRaw = { type: String(cur.type || ''), actualDeadline: String(cur.actualDeadline || ''), promisedSubmissionDate: String(cur.promisedSubmissionDate || '') };
+  LAST_D.clientDeadline = cur.text || text || tdotDeadlineText(LAST_D.clientDeadlineRaw);
+  renderPills(LAST_D);
+}
+function caseDeadlineDlg() {
+  var d = LAST_D;
+  if (!d || !d.itemId || typeof tdotDeadlineChange !== 'function') return;
+  tdotDeadlineChange({
+    url: '/admin/case-deadline',
+    itemId: String(d.itemId),
+    caseLine: (d.caseRef || CASE_REF) + ' · ' + (d.clientName || ''),
+    current: d.clientDeadlineRaw || {},
+    onSaved: function(dl, j) {
+      DL_FLASH = { text: j && j.unchanged && !j.noted ? 'No change needed' : '✓ Deadline saved', until: Date.now() + 6000 };
+      setTimeout(function() { var e = document.getElementById('dl-change-ok'); if (e && e.parentNode) e.parentNode.removeChild(e); }, 6100);
+      caseDeadlineApply(dl);
+    },
+    onCurrent: function(cur) { caseDeadlineApply(cur); },
+    focusBack: function() { var b = document.getElementById('dl-change-btn'); if (b) b.focus(); }
+  });
+}
+
 function render(d) {
   document.getElementById('c-name').textContent = d.clientName || d.caseRef;
   document.getElementById('c-sub').textContent =
@@ -459,24 +515,7 @@ function render(d) {
   if (fbtn) fbtn.addEventListener('click', caseFolder);
 
   // Pills
-  var healthCls = d.health === 'Red' ? 'red' : (d.health === 'Orange' ? 'amber' : (d.health === 'Green' ? 'green' : 'grey'));
-  var pills = '';
-  if (d.cmUnavailable) {
-    // The Client Master read failed — show honest 'unavailable' pills instead
-    // of fabricated 'Not Started / Unpaid' defaults the staffer would act on.
-    pills += '<span class="pill grey"><span class="pk">Stage</span> unavailable — reload</span>';
-    pills += '<span class="pill grey"><span class="pk">Payment</span> unavailable — reload</span>';
-  } else {
-    var payCls = d.paymentStatus === 'Paid' ? 'green' : (/unpaid/i.test(d.paymentStatus) ? 'red' : 'amber');
-    pills += '<span class="pill blue"><span class="pk">Stage</span> ' + escHtml(d.caseStage) + '</span>';
-    pills += '<span class="pill ' + payCls + '"><span class="pk">Payment</span> ' + escHtml(d.paymentStatus) + '</span>';
-  }
-  pills += '<span class="pill ' + healthCls + '"><span class="pk">Health</span> ' + escHtml(d.health) + '</span>';
-  pills += '<span class="pill grey"><span class="pk">Manager</span> ' + escHtml(d.manager) + '</span>';
-  if (d.clientDeadline && d.clientDeadline !== 'Not set') pills += '<span class="pill ' + (/^Real/.test(d.clientDeadline) ? 'red' : 'amber') + '"><span class="pk">Client deadline</span> ' + escHtml(d.clientDeadline) + '</span>';
-  else pills += '<span class="pill grey"><span class="pk">Client deadline</span> Not set</span>';
-  if (d.deadline) pills += '<span class="pill amber"><span class="pk">SLA deadline</span> ' + escHtml(d.deadline) + '</span>';
-  document.getElementById('c-pills').innerHTML = pills;
+  renderPills(d);
 
   // Readiness meters
   var q = d.qReadinessPct || 0, dd = d.docReadinessPct || 0;
@@ -1470,6 +1509,7 @@ if (peekKey()) checkApiStatus();  // status pill uses the admin key; skip for co
 loadCase();
 famResume();   // an add started before a reload is still followed
 </script>
+${DEADLINE_CHANGE_HTML}
 </body>
 </html>`;
 }

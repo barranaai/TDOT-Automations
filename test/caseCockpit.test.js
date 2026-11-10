@@ -624,7 +624,7 @@ test('case page (sandbox): a click previews first (GET), the dialog carries To /
   two.els['rem-cancel'].onclick();
   // the same rule on the document-action handler earlier in the page (the pre-existing sibling)
   const { js: pageSrc } = pageJs();
-  assert.equal((pageSrc.match(/\.split\('\?'\)\[0\] \+ '\?returnTo=' \+ encodeURIComponent\(location\.pathname \+ location\.search\)/g) || []).length, 2, 'both 401 handlers replace the server\'s returnTo with this page');
+  assert.equal((pageSrc.match(/\.split\('\?'\)\[0\] \+ '\?returnTo=' \+ encodeURIComponent\(location\.pathname \+ location\.search\)/g) || []).length, 3, 'the 401 handlers (document action, reminders, and the change-deadline pop-up added 2026-11-10) replace the server\'s returnTo with this page');
 });
 
 test('case page (sandbox): Send posts the edited text (level, subject, body, extra, lastDay), goes busy, closes on success and reloads; a 502 stays open with the server\'s neutral words; a lost race closes and reloads; an empty box never posts', async () => {

@@ -47,8 +47,11 @@ function cleanDay(v) {
  * Rules: type Deadline needs the actual date (a promised date may ride along); type Imaginary
  * needs the promised date and no actual date; a date is never in the past; required (the switch)
  * means a blank answer is refused with `missingMessage`.
+ * `keepPromised` (the change-deadline pop-up only): the promised date ALREADY stored on the case.
+ * Riding along a real deadline unchanged it is not a date being set, so it is not refused for
+ * being in the past (otherwise the actual date of such a case could only be changed by wiping it).
  */
-function validate(input = {}, { required: req = required(), today = torontoToday(), missingMessage = 'Set the deadline: is there a real deadline, or a promised submission date?' } = {}) {
+function validate(input = {}, { required: req = required(), today = torontoToday(), missingMessage = 'Set the deadline: is there a real deadline, or a promised submission date?', keepPromised = '' } = {}) {
   const type = String((input && (input.deadlineType != null ? input.deadlineType : input.type)) || '').trim();
   const rawActual = input && (input.actualDeadline != null ? input.actualDeadline : input.actual);
   const rawPromised = input && (input.promisedSubmissionDate != null ? input.promisedSubmissionDate : input.promised);
@@ -66,7 +69,8 @@ function validate(input = {}, { required: req = required(), today = torontoToday
   if (type === TYPE_IMAGINARY && !promised) return bad('An imaginary deadline needs the date promised to the client.');
   if (type === TYPE_IMAGINARY && actual) return bad('An imaginary deadline has no actual date — choose "Deadline" if there is a real one.');
   if (actual && actual < today) return bad(`The actual deadline ${actual} is in the past.`);
-  if (promised && promised < today) return bad(`The promised submission date ${promised} is in the past.`);
+  const promisedKept = type === TYPE_REAL && !!promised && promised === cleanDay(keepPromised);
+  if (promised && promised < today && !promisedKept) return bad(`The promised submission date ${promised} is in the past.`);
   if (actual && promised && promised > actual) return bad('The promised submission date is after the actual deadline.');
   return { ok: true, blank: false, type, actualDeadline: actual, promisedSubmissionDate: promised };
 }
@@ -104,15 +108,28 @@ function caseCells(answer, cols = require('../data/clientMasterBoard.json').dead
 }
 
 /** "Real deadline 15 Jan 2027" / "Imaginary — promised 15 Dec 2026" / "Not set". */
+const day = (d) => (d ? new Date(`${d}T12:00:00Z`).toLocaleDateString('en-CA', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '');
 function describe(answerOrLead) {
   const o = answerOrLead || {};
   const a = (o.ok !== undefined || 'type' in o) ? o : fromLead(o);   // an answer / a stored answer, or a lead
   const type = a.type || '';
-  const day = (d) => (d ? new Date(`${d}T12:00:00Z`).toLocaleDateString('en-CA', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '');
   if (type === TYPE_REAL) return `Real deadline ${day(a.actualDeadline)}${a.promisedSubmissionDate ? ` — promised ${day(a.promisedSubmissionDate)}` : ''}`;
   if (type === TYPE_IMAGINARY) return `Imaginary — promised ${day(a.promisedSubmissionDate)}`;
   return 'Not set';
 }
+/**
+ * What a case row's three cells HOLD, with nothing left out — for the change note's "old" side and
+ * the "someone changed it" answer. describe() says "Not set" for a row with no type, and drops the
+ * actual date of an Imaginary row; a hand-kept row can have both, and a change overwrites them.
+ * The pop-up's "Now:" line (tdotDeadlineText in deadlineChangeUi.js) says the same words.
+ */
+function describeStored(a = {}) {
+  const type = a.type || '';
+  if (type === TYPE_REAL) return describe(a);
+  if (type === TYPE_IMAGINARY) return describe(a) + (a.actualDeadline ? ` (with an actual date ${day(a.actualDeadline)})` : '');
+  if (a.actualDeadline || a.promisedSubmissionDate) return 'Type not recorded' + (a.actualDeadline ? ` — actual ${day(a.actualDeadline)}` : '') + (a.promisedSubmissionDate ? ` — promised ${day(a.promisedSubmissionDate)}` : '');
+  return 'Not set';
+}
 const same = (a, b) => a.type === b.type && a.actualDeadline === b.actualDeadline && a.promisedSubmissionDate === b.promisedSubmissionDate;
 
-module.exports = { TYPE_REAL, TYPE_IMAGINARY, TYPES, LEAD_KEYS, required, validate, fromLead, isSet, leadFields, caseCells, describe, same, cleanDay, torontoToday };
+module.exports = { TYPE_REAL, TYPE_IMAGINARY, TYPES, LEAD_KEYS, required, validate, fromLead, isSet, leadFields, caseCells, describe, describeStored, same, cleanDay, torontoToday };

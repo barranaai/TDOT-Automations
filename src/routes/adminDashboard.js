@@ -14,6 +14,7 @@ const { casesListSpec, casesListOpts } = require('./listSpecs');
 const clientMasterViews = require('../services/clientMasterViews');
 const { clientMasterWindows } = require('./clientMasterWindows');
 const { clientMasterUi } = require('./clientMasterUi');
+const { DEADLINE_CHANGE_CSS, DEADLINE_CHANGE_HTML, DEADLINE_CHANGE_JS } = require('./deadlineChangeUi');   // Change… on the Deadlines tab (2026-11-10)
 
 // ─── View bodies ──────────────────────────────────────────────────────────
 // The dashboard renders ONE of these (user directive 2026-08-05): /admin/dashboard
@@ -388,7 +389,7 @@ const CM_CSS = `
     @page { size: landscape; margin: 10mm; }
     @media print {
       body { background:#fff; }
-      .admin-hdr, .refresh-bar, .view-switch, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .pagination, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop, .cm-assign, .cm-asg-ok { display:none !important; }
+      .admin-hdr, .refresh-bar, .view-switch, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .pagination, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop, .cm-assign, .cm-asg-ok, .dlc-btn, .dlc-ok { display:none !important; }
       #cs-headrow th:last-child, #all-cases-table td.cm-del { display:none; }
       .wrap { padding:0; }
       .dash-header { margin:0 0 6px; }
@@ -1021,6 +1022,7 @@ function buildDashboardHTML(view = 'cases') {
     ${DELETE_UI_CSS}
     /* The Cases list: the shared filter look (listFilters.js) — header funnels, chips, sort by the column name. */
     ${LIST_TABLE_CSS}
+    ${DEADLINE_CHANGE_CSS}
     /* Headers sort through their name buttons now (Cases) — and the Summary at-risk table never sorted: no pointer, no hover. */
     .data-table th { cursor:default; }
     .data-table th:hover { background:#f8fafc; color:#94a3b8; }
@@ -2093,6 +2095,11 @@ function caseRow(c, v, today) {
   var win = CMW.windowOf(CMW.bucketDate(c));
   var dl = typeTag + (c.actualDeadline ? ' <span class="cm-date">' + escHtml(cmDay(c.actualDeadline)) + '</span>' : '') +
     (win ? ' <span class="cm-win" title="Counted in this half-month window' + (t === 'imaginary' ? ' (by the promised date)' : '') + '">' + escHtml(win.label) + '</span>' : '');
+  // Change… (2026-11-10): on the Deadlines tab only, and only where the server says the write is allowed
+  // (a Monday sign-in who may see the case). An offer on the row — nothing asks for old cases to be filled.
+  var dlBtn = (v && v.key === 'deadlines' && c.canChangeDeadline)
+    ? ' <button type="button" class="dlc-btn" data-dl="' + escHtml(String(c.id)) + '" title="Change this case’s deadline (a reason is needed; a note is added on the case)">Change…</button>' : '';
+  var dlOk = cmDlFlashText(c.id) ? ' <span class="dlc-ok" data-dl-ok="' + escHtml(String(c.id)) + '" role="status">' + escHtml(cmDlFlashText(c.id)) + '</span>' : '';
   // Promised: the Internal Deadline, and on Deadlines / Mahesh the flag (display only — nothing is changed)
   var pr = c.promisedDate ? '<span class="cm-date">' + escHtml(cmDay(c.promisedDate)) + '</span>' : '';
   if (v && v.deadlineBox) {
@@ -2109,7 +2116,7 @@ function caseRow(c, v, today) {
     '<td style="color:var(--muted);font-size:11px">' + shortType(c.caseType) + '</td>' +
     '<td style="font-size:11px">' + stage + '</td>' +
     '<td style="font-size:11px;white-space:nowrap">' + (c.phase ? escHtml(c.phase) : cmNoneDash()) + '</td>' +
-    '<td class="cm-dl" style="font-size:11px">' + (dl || cmNoneDash()) + '</td>' +
+    '<td class="cm-dl" style="font-size:11px">' + (dl || cmNoneDash()) + dlBtn + dlOk + '</td>' +
     '<td class="cm-pr" style="font-size:11px">' + (pr || cmNoneDash()) + '</td>' +
     '<td>' + healthBadge(c.health) + '</td>' +
     '<td>' + healthBadge(c.slaRisk) + '</td>' +
@@ -2136,6 +2143,8 @@ function caseRow(c, v, today) {
   var ab = tr.querySelector('.cm-assign');
   // the button never opens the case (the row's own click does that)
   if (ab) ab.onclick = function(e) { e.stopPropagation(); cmAssignDlg(String(c.id)); };
+  var db = tr.querySelector('.dlc-btn');
+  if (db) db.onclick = function(e) { e.stopPropagation(); cmDeadlineDlg(String(c.id)); };
   return tr;
 }
 
@@ -2311,6 +2320,44 @@ function cmAsgSend(c, st) {
       if (!done()) return;
       err.textContent = 'No answer — the result is unknown. Check the case before trying again.';
     });
+}
+
+/* ── Change the client deadline (2026-11-10) ─────────────────────────
+   The shared pop-up (deadlineChangeUi.js). The server writes the case's three deadline cells and the linked
+   lead, and adds a note on the case. The row is updated in place and the list redraws from the rows, so the
+   window, the Real / Imaginary / Not recorded counts and the "May slide" flag follow at once — no board re-read. */
+var CM_DL_FLASH = {};    // item id → { text, until }: "✓ Deadline saved" in the Deadline cell for a few seconds
+function cmDlFlashText(id) { var f = CM_DL_FLASH[String(id)]; return f && f.until > Date.now() ? f.text : ''; }
+function cmDlFlash(id, text) {
+  id = String(id);
+  CM_DL_FLASH[id] = { text: text, until: Date.now() + 6000 };
+  setTimeout(function() {
+    if (CM_DL_FLASH[id] && CM_DL_FLASH[id].until <= Date.now()) delete CM_DL_FLASH[id];
+    var e = document.querySelector('.dlc-ok[data-dl-ok="' + id + '"]');
+    if (e && !cmDlFlashText(id) && e.parentNode) e.parentNode.removeChild(e);
+  }, 6100);
+}
+/* The row's deadline from the server's answer (the row's field for the promised date is promisedDate). */
+function cmDlApply(itemId, d) {
+  var row = cmRowById(itemId);
+  if (!row || !d) return;
+  row.deadlineType = String(d.type || '');
+  row.actualDeadline = String(d.actualDeadline || '');
+  row.promisedDate = String(d.promisedSubmissionDate || '');
+  CasesTable.setRows(_data.cases);
+}
+function cmDeadlineDlg(itemId) {
+  var row = cmRowById(itemId);
+  if (!row || typeof tdotDeadlineChange !== 'function') return;
+  tdotDeadlineChange({
+    url: '/admin/client-master/deadline',
+    itemId: String(itemId),
+    caseLine: (row.caseRef || 'No case number yet') + ' · ' + (row.clientName || ''),
+    current: { type: row.deadlineType || '', actualDeadline: row.actualDeadline || '', promisedSubmissionDate: row.promisedDate || '' },
+    onSaved: function(d, j) { cmDlFlash(itemId, j && j.unchanged && !j.noted ? 'No change needed' : '✓ Deadline saved'); cmDlApply(itemId, d); },
+    onCurrent: function(cur) { cmDlApply(itemId, cur); },
+    focusBack: function() { var nb = document.querySelector('.dlc-btn[data-dl="' + String(itemId) + '"]'); if (nb) nb.focus(); }
+  });
 }
 
 function renderPagination(total) {
@@ -2731,6 +2778,7 @@ function naMarkHandled(btn) {
 
 /* ── Boot ─────────────────────────────────────────────────────────── */
 ${DELETE_UI_JS}
+${DEADLINE_CHANGE_JS}
 tdotBindDelete(function(){ loadData(); });
 document.addEventListener('DOMContentLoaded', function() {
   // No admin key is fine — a Monday-logged-in staffer is authed by cookie and
@@ -2742,6 +2790,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 ${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange }') + '</script>'}
+${DEADLINE_CHANGE_HTML}
 </body>
 </html>`;
 }

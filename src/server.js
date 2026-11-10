@@ -670,6 +670,9 @@ app.get('/admin/dashboard-stats', async (req, res) => {
     // Assign… (block 3): only for a Monday sign-in, and per row only where the write would be allowed — the
     // write's access check uses the Monday identity and ignores the shared key (a page convenience; the route re-checks).
     const canAssign = require('./services/caseAssignService').markAssignable(stats.cases, tryStaffAuth(req));
+    // Change… on the Deadlines tab (2026-11-10): the same people and the same per-row rule as Assign
+    // (a Monday sign-in who may see the case); the route re-checks on a fresh read.
+    for (const c of stats.cases || []) c.canChangeDeadline = !!c.canAssign;
     res.json({ ...stats, viewer: { name: viewer.name, email: viewer.email, scope: viewer.scope, isAdmin: viewer.isAdmin, canAssign } });
   } catch (err) {
     console.error('[Dashboard] Identity stats failed:', err.stack || err.message);
@@ -783,6 +786,9 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
       const staff = tryStaffAuth(req);
       overview.documents.notApplicableEnabled = !!(overview.documents.notApplicableEnabled && staff && (staff.name || staff.email));
     }
+    // "Change" beside the Client deadline pill (2026-11-10): a Monday sign-in who may see the case
+    // (the shared key never counts — the note must name a person); the route re-checks on a fresh read.
+    overview.canChangeDeadline = !overview.cmUnavailable && require('./services/caseDeadlineService').canChange(tryStaffAuth(req), overview.assignees);
     res.json(overview);
   } catch (err) {
     const notFound = /not found/i.test(err.message || '');
@@ -1408,6 +1414,26 @@ app.post('/admin/client-master/assign', express.json(), async (req, res) => {
     res.status(500).json({ ok: false, error: 'The result is unknown — check the case in Monday before trying again.' });
   }
 });
+
+// ─── Change the client deadline from the case page / the Client Master page (2026-11-10) ───
+// Monday sign-in only (the note names the person; the shared key alone is refused). Writes the case's
+// three deadline cells and every linked lead, then one note on the case — see caseDeadlineService.
+// The source (which page) is set HERE, never read from the body.
+function deadlineChangeRoute(source) {
+  return async (req, res) => {
+    const { staff, hasKey } = assignWho(req);
+    try {
+      res.set('Cache-Control', 'no-store');
+      res.json(await require('./services/caseDeadlineService').change({ staff, hasKey, body: req.body, source }));
+    } catch (err) {
+      if (err.status && err.body) return res.status(err.status).json(err.body);
+      console.error('[DeadlineChange] failed:', err.stack || err.message);
+      res.status(500).json({ ok: false, error: 'The result is unknown — check the case in Monday before trying again.' });
+    }
+  };
+}
+app.post('/admin/client-master/deadline', express.json(), deadlineChangeRoute('client-master'));
+app.post('/admin/case-deadline', express.json(), deadlineChangeRoute('case'));
 
 // Cockpit Documents tab — inline mark-reviewed / request-rework. Same service
 // functions the /d/:caseRef/review page uses, but behind the cockpit's
