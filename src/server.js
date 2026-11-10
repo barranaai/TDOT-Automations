@@ -660,6 +660,17 @@ function resolveViewer(req) {
   return null;
 }
 
+/**
+ * "Waiting for" on the Pre-Onboarding rows of the Client Master page (2026-11-10). Read-only: the rows are
+ * joined in memory to the lead copy AS IT IS — peek() never waits, so the Lead Board cannot slow the page;
+ * no copy yet = every such row says "Not checked yet". Returns when the lead copy was read (ISO) or null.
+ * Only here (the page's route), never inside getDashboardStats: /api/dashboard/stats stays as it was.
+ */
+function markWaiting(cases) {
+  const at = require('./services/preOnboardingWaiting').mark(cases, require('./services/leadSnapshot').peek());
+  return at ? new Date(at).toISOString() : null;
+}
+
 // Identity-aware dashboard stats — filtered to the viewer's assigned cases.
 app.get('/admin/dashboard-stats', async (req, res) => {
   const viewer = resolveViewer(req);
@@ -675,7 +686,8 @@ app.get('/admin/dashboard-stats', async (req, res) => {
     // Change… on the Deadlines tab (2026-11-10): the same people and the same per-row rule as Assign
     // (a Monday sign-in who may see the case); the route re-checks on a fresh read.
     for (const c of stats.cases || []) c.canChangeDeadline = !!c.canAssign;
-    res.json({ ...stats, viewer: { name: viewer.name, email: viewer.email, scope: viewer.scope, isAdmin: viewer.isAdmin, canAssign } });
+    const waitingAt = markWaiting(stats.cases);
+    res.json({ ...stats, waitingAt, viewer: { name: viewer.name, email: viewer.email, scope: viewer.scope, isAdmin: viewer.isAdmin, canAssign } });
   } catch (err) {
     console.error('[Dashboard] Identity stats failed:', err.stack || err.message);
     res.status(500).json({ error: 'Internal server error' });

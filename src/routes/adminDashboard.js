@@ -351,6 +351,16 @@ const CM_CSS = `
     .cm-st { background:#fff; border:1px solid #e2e8f0; border-radius:999px; padding:3px 11px; font-size:12px; color:#334155; }
     .cm-st b { color:var(--navy); margin-left:2px; font-variant-numeric:tabular-nums; }
     .cm-line { font-size:12.5px; color:#334155; }
+    /* Pre-Onboarding "Waiting for" (2026-11-10): the count strip above Assigning and the second line in the Stage cell.
+       The words carry the meaning; the left bar on "Ready" and "Not clear" is only an extra cue. */
+    .cm-waitstrip { align-items:center; }
+    .cm-wait-lead { font-size:12.5px; color:#334155; font-weight:700; }
+    .cm-wait-at { font-size:11.5px; color:#64748b; }
+    .cm-wait { margin-top:3px; font-size:11px; line-height:1.35; color:#334155; min-width:128px; }
+    .cm-wait b { color:var(--navy); }
+    .cm-wait-n { display:block; color:#64748b; }
+    .cm-wait.flag { border-left:3px solid #c2410c; padding-left:5px; }
+    .cm-wait.dim, .cm-wait.dim b { color:#64748b; font-weight:500; }
     .cm-wins { display:flex; flex-wrap:wrap; gap:8px; }
     .cm-win-box { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:7px 11px; font-size:12px; color:#334155; }
     .cm-win-box.now { border-color:#93c5fd; background:#eff6ff; }
@@ -1166,6 +1176,7 @@ function loadData(fresh) {
       render(data);
       document.getElementById('loading').style.display = 'none';
       document.getElementById('content').style.display = 'block';
+      if (VIEW !== 'summary') cmWaitLater();   // "Not checked yet" labels are filled in once, quietly, a little later
       /* An old Reporting link lands on #reporting: the browser could not scroll to it while #content was hidden — once, on the first load. */
       if (VIEW === 'summary' && !window.__tdotHashDone && location.hash) {
         window.__tdotHashDone = true;
@@ -1958,6 +1969,29 @@ function cmDataTimeText(data) { var t = cmHm((data && data.dataAt) || ''); retur
 /* The rows of a view this person may see (after RBAC on the server, before their own search and filters). */
 function cmInView(key) { return ((_data && _data.cases) || []).filter(function(c) { return (c.views || []).indexOf(key) >= 0; }).length; }
 function cmNoneDash() { return '<span style="color:var(--light)">—</span>'; }
+/* "Not checked yet" (2026-11-10): the client records were not in memory when the page loaded (just after a restart).
+   ONCE, a little later, the labels are asked for again quietly and filled in on the rows already on screen —
+   no spinner, the search, filters and tab stay; a failure leaves the page as it is (Refresh still works). */
+var _cmWaitAsked = false;
+function cmWaitLater() {
+  if (_cmWaitAsked || !_data || _data.waitingAt) return;
+  if (!(_data.cases || []).some(function(c) { return c.waiting && c.waiting.code === 'unchecked'; })) return;
+  _cmWaitAsked = true;
+  setTimeout(function() {
+    var key = getKey();
+    fetch('/admin/dashboard-stats', { headers: key ? { 'X-Api-Key': key } : {}, credentials: 'same-origin' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(j) {
+        if (!j || !j.waitingAt || !Array.isArray(j.cases) || !_data || !Array.isArray(_data.cases)) return;
+        var byId = {};
+        j.cases.forEach(function(c) { if (c.waiting) byId[String(c.id)] = c.waiting; });
+        _data.cases.forEach(function(c) { if (c.waiting && byId[String(c.id)]) c.waiting = byId[String(c.id)]; });
+        _data.waitingAt = j.waitingAt;
+        CasesTable.setRows(_data.cases);
+      })
+      .catch(function() {});
+  }, 45000);
+}
 
 // The shared engine hands over the filtered, sorted cases. A new filter, sort or
 // tab goes back to page 1; new data keeps the page (pulled back if the list shrank).
@@ -2023,6 +2057,18 @@ function renderCmHead(v, rows, st, groups, inView) {
     }).join('') + '</div>';
     var no = CMU.noOfficerCount(rows, CM_PRE_ONBOARDING);
     h += '<div class="cm-line" id="cm-noofficer">No Support Officer: <b>' + no.n + '</b>' + (no.preOnboarding ? ' (' + no.preOnboarding + ' of them Pre-Onboarding)' : '') + '</div>';
+    // Pre-Onboarding — waiting for (2026-11-10): counted from the rows on screen, like the stage counts; read-only
+    var wc = CMU.waitingCounts(rows, CM_PRE_ONBOARDING);
+    if (wc.total) {
+      var wAt = cmHm((_data && _data.waitingAt) || '');
+      h += '<div class="cm-strip cm-waitstrip" id="cm-waiting" role="group" aria-label="Pre-Onboarding cases: what each is waiting for">' +
+        '<span class="cm-wait-lead">Pre-Onboarding — waiting for:</span>' + wc.list.map(function(x) {
+          return '<span class="cm-st" data-wait="' + escHtml(x.code) + '">' + escHtml(x.label) + ' <b>' + x.n + '</b></span>';
+        }).join('') +
+        (wc.partPaid ? '<span class="cm-wait-at">' + wc.partPaid + ' with a part-payment recorded</span>' : '') +
+        (wAt ? '<span class="cm-wait-at" id="cm-waiting-at" title="When the client records (signatures and payments) were last read. They can be a few minutes behind Monday.">Client records from ' + escHtml(wAt) + '</span>' : '') +
+        '</div>';
+    }
   }
   if (v.deadlineBox) {
     var box = CMW.windowsBox(rows, cmToday());
@@ -2087,6 +2133,15 @@ function caseRow(c, v, today) {
     refCell = '<span class="badge blue">Ref pending</span>';
   }
   var stage = v && (typeof c.stageIdx !== 'number' || c.stageIdx === CMU.EMPTY) ? cmNoneDash() : escHtml(c.caseStage);
+  // Waiting for (2026-11-10): on Assigning only, and only on a Pre-Onboarding row (the server sends it for no other stage).
+  // A second line under the stage, in words; what comes after is visible too (a phone has no hover).
+  if (v && v.stageStrip && c.waiting) {
+    var ww = CMU.waitingWords(c.waiting);
+    stage += '<div class="cm-wait' + (ww.code === 'ready' || ww.code === 'unclear' ? ' flag' : ww.code === 'unchecked' ? ' dim' : '') + '" data-wait="' + escHtml(ww.code) + '" title="' + escHtml(ww.tip) + '">' +
+      (ww.lead ? escHtml(ww.lead) + ' ' : '') + '<b>' + escHtml(ww.label) + '</b>' +
+      (ww.then ? '<span class="cm-wait-n">' + escHtml(ww.then) + '</span>' : '') +
+      (ww.extra ? '<span class="cm-wait-n">' + escHtml(ww.extra) + '</span>' : '') + '</div>';
+  }
   var mgr = v && (!c.manager || c.manager === 'Unassigned') ? cmNoneDash() : escHtml(c.manager);
   // Deadline: the type (Real / Imaginary), the Actual Deadline, and the half-month window the row is counted in
   var t = CMW.typeOf(c);

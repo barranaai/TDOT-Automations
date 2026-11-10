@@ -41,6 +41,8 @@ const COLS = {
   actualDeadline:     'date_mm33sj6t',
   promisedDate:       'date_mm3t66pa',    // Internal Deadline (the promise on an Imaginary case)
   caseSupportOfficer: 'multiple_person_mm0xm710',
+  // Read only for the Pre-Onboarding "Waiting for" label (2026-11-10): a board "Paid" counts as the payment.
+  paymentStatus:      'color_mm0x9fnn',
 };
 
 const caseAccess = require('./caseAccessService');
@@ -359,6 +361,7 @@ function parseItem(item, boardIdx) {
     officer:            col(COLS.caseSupportOfficer),
     officerIds,         // { personIds, teamIds } of Case Support Officer only
     docUploadedPct:     numOrNull(col(COLS.docUploaded)),   // blank = null (docReadiness above reads it as 0)
+    paymentStatus:      statusText(cvOf(COLS.paymentStatus)).trim(),   // empty cell = '' (never the id-5 label)
     views:              [],   // filled just below
   };
 }

@@ -126,6 +126,58 @@ function clientMasterUi(W) {
     (rows || []).forEach(function (r) { if (noOfficer(r)) { n++; if (idx(r.stageIdx) === preOnboardingIdx) pre++; } });
     return { n: n, preOnboarding: pre };
   }
+  /* The "Waiting for" codes on a Pre-Onboarding row (from the server: preOnboardingWaiting), in the order of the process. */
+  var WAIT_CODES = ['not-sent', 'client-sign', 'countersign', 'payment', 'ready', 'unclear', 'unchecked'];
+  var WAIT_PILL = { 'not-sent': 'No agreement on record', 'client-sign': 'Client signature', 'countersign': 'Our countersignature',
+    'payment': 'Payment', 'ready': 'Ready — should have started', 'unclear': 'Not clear', 'unchecked': 'Not checked yet' };
+  var WAIT_STEP = { 'client-sign': 'client signature', 'countersign': 'our countersignature', 'payment': 'payment' };
+  function waitCode(w) { var c = s(w && w.code); return WAIT_PILL[c] ? c : 'unclear'; }   // a code this page does not know is never guessed at
+  /**
+   * The words for one row's "Waiting for" value { code, also, partPaid, why }:
+   * { code, lead, label, then, extra, tip } — lead + label is the first line ("Waiting for: client signature"),
+   * then = what comes after it ("then payment"), extra = the part-payment words, tip = the full sentence.
+   */
+  function waitingWords(w) {
+    var code = waitCode(w), also = [];
+    if (code === 'not-sent') also.push(WAIT_STEP['client-sign']);
+    ((w && w.also) || []).forEach(function (c) { if (WAIT_STEP[c] && also.indexOf(WAIT_STEP[c]) < 0) also.push(WAIT_STEP[c]); });
+    var step = code === 'client-sign' || code === 'countersign' || code === 'payment';
+    var lead = step || code === 'unclear' ? 'Waiting for:' : '';
+    var label = step ? WAIT_STEP[code] : code === 'unclear' ? 'not clear' : WAIT_PILL[code];
+    var then = also.length && code !== 'ready' && code !== 'unclear' && code !== 'unchecked' ? 'then ' + also.join(', ') : '';
+    var extra = w && w.partPaid === true ? 'part-payment recorded' : '';
+    var tip;
+    if (code === 'not-sent') tip = 'The app has no record of a retainer agreement being sent, and no signature or payment on the client’s record. (An agreement sent by hand or signed on paper shows here until it is marked signed.)';
+    else if (code === 'client-sign') tip = 'There is no client signature on the client’s record yet. (An agreement sent by hand or signed on paper shows here until it is marked signed.)';
+    else if (code === 'countersign') tip = 'The client has signed. Our countersignature is still to come.';
+    else if (code === 'payment') tip = 'The agreement is signed. There is no retainer payment on the client’s record yet.';
+    else if (code === 'ready') tip = 'Signed and paid on the client’s record, but the case is still Pre-Onboarding. Please check why it has not started. Nothing is changed from here.';
+    else if (code === 'unchecked') tip = 'The client records are still being read. Press Refresh in a minute.';
+    else if (s(w && w.why) === 'no-lead') tip = 'No client record is linked to this case (it may have been run by hand), so the app cannot say what it is waiting for.';
+    else if (s(w && w.why) === 'leads-disagree') tip = 'More than one client record is linked to this case and they do not agree, so the app cannot say what it is waiting for.';
+    else if (s(w && w.why) === 'paid-conflict') tip = 'The client’s record shows signed and paid, but the case’s Payment Status was set to Not Paid or Working on it by hand. The app does not start a case like this. Please check the payment: set Payment Status back to Paid, or clear the Retainer Paid date on the client’s record.';
+    else if (s(w && w.why) === 'pro-bono') tip = 'Payment Status says Pro Bono, so the app cannot say what this case is still waiting for.';
+    else tip = 'The app cannot say what this case is waiting for.';
+    if (then) tip += ' After that: ' + also.join(', ') + '.';
+    if (extra) tip += ' A first part-payment is recorded; the balance is still owed.';
+    return { code: code, lead: lead, label: label, then: then, extra: extra, tip: tip };
+  }
+  /**
+   * The strip above Assigning: how many Pre-Onboarding rows ON SCREEN wait for what —
+   * { total, list: [{ code, label, n }] (process order, zero counts left out), partPaid }. Rows without a value are not counted.
+   */
+  function waitingCounts(rows, preOnboardingIdx) {
+    var n = {}, total = 0, part = 0;
+    (rows || []).forEach(function (r) {
+      if (!r || !r.waiting || idx(r.stageIdx) !== preOnboardingIdx) return;
+      var c = waitCode(r.waiting);
+      n[c] = (n[c] || 0) + 1; total++;
+      if (r.waiting.partPaid === true) part++;
+    });
+    var list = [];
+    WAIT_CODES.forEach(function (c) { if (n[c]) list.push({ code: c, label: WAIT_PILL[c], n: n[c] }); });
+    return { total: total, list: list, partPaid: part };
+  }
   /** Real / Imaginary / Not recorded counts (a Phase heading on Deadlines and Mahesh). */
   function typeCounts(rows) {
     var c = { real: 0, imaginary: 0, none: 0 };
@@ -150,7 +202,7 @@ function clientMasterUi(W) {
   }
 
   return { EMPTY: EMPTY, keyOf: keyOf, titleOf: titleOf, groupRows: groupRows, viewOrder: viewOrder, noOfficer: noOfficer,
-    noOfficerCount: noOfficerCount, typeCounts: typeCounts, filteredLine: filteredLine, hasUserFilter: hasUserFilter };
+    noOfficerCount: noOfficerCount, waitingWords: waitingWords, waitingCounts: waitingCounts, typeCounts: typeCounts, filteredLine: filteredLine, hasUserFilter: hasUserFilter };
 }
 
 module.exports = Object.assign({ clientMasterUi: clientMasterUi }, clientMasterUi(require('./clientMasterWindows')));

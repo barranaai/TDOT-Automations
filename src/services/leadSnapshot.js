@@ -58,9 +58,44 @@ const SNAPSHOT_KEYS = [
   ...(COLS.directConsult ? ['directConsult'] : []),
 ];
 const SNAPSHOT_IDS = SNAPSHOT_KEYS.map((k) => COLS[k]).filter(Boolean);
+/**
+ * Read with the snapshot but NEVER kept on a lead as they are (2026-11-10, the Client Master
+ * "Waiting for" label): the countersign record carries a live signing link and the payments record
+ * carries bank references and staff names. fetchLeads reduces them to the few facts the case gate
+ * needs (GATE, below) and deletes the raw values.
+ */
+const SERVER_ONLY_KEYS = ['retainerCountersign', 'milestonePayments'];
+const FETCH_IDS = [...new Set([...SNAPSHOT_IDS, ...SERVER_ONLY_KEYS.map((k) => COLS[k]).filter(Boolean)])];
 
 /** Where a snapshot lead keeps its phone + email (server only — see fetchLeads). */
 const CONTACT = Symbol('leadContact');
+/**
+ * Where a snapshot lead keeps the case-gate facts (server only, like CONTACT):
+ * { clientSignedVia, hasEnvelope, signedAt, m1Partial } — m1Partial: true / false, or null when the
+ * payments record could not be read (no claim is made from it).
+ */
+const GATE = Symbol('leadGate');
+
+/** PURE. The gate facts out of the two raw column values — nothing else of them is kept. */
+function gateFactsOf(lead) {
+  let rc = {};
+  try { const v = JSON.parse(String((lead && lead.retainerCountersign) || '')); if (v && typeof v === 'object' && !Array.isArray(v)) rc = v; } catch (_) { /* empty or unreadable: no countersign chain known */ }
+  let m1Partial = false;
+  const raw = String((lead && lead.milestonePayments) || '').trim();
+  if (raw) {
+    try {
+      const pay = JSON.parse(raw);
+      if (pay && typeof pay === 'object' && !Array.isArray(pay)) m1Partial = !!(pay['0'] && pay['0'].status === 'partial');
+      else m1Partial = null;
+    } catch (_) { m1Partial = null; }
+  }
+  return {
+    clientSignedVia: rc.clientSignedVia === 'documenso' ? 'documenso' : '',
+    hasEnvelope: !!String(rc.envelopeId || '').trim(),
+    signedAt: String(rc.signedAt || '').trim() ? '1' : '',   // whether, not when
+    m1Partial,
+  };
+}
 /** The search index per copy (rebuilt when the copy changes). */
 const _indexFor = new WeakMap();
 
@@ -79,7 +114,7 @@ const io = {
   async fetchLeads() {
     const out = [];
     let cursor = null, pages = 0;
-    const ids = SNAPSHOT_IDS.map((id) => `"${id}"`).join(', ');
+    const ids = FETCH_IDS.map((id) => `"${id}"`).join(', ');
     do {
       const data = await mondayApi.query(
         `query($boardId: ID!, $cursor: String) {
@@ -104,6 +139,10 @@ const io = {
         Object.defineProperty(lead, CONTACT, { value: { phone: String(lead.phone || ''), email: String(lead.email || '') }, enumerable: false });
         delete lead.email;
         delete lead.phone;
+        // The case-gate facts (the Client Master "Waiting for" label): reduced here, server only;
+        // the signing link, envelope ids, bank references and staff names never stay on the copy.
+        Object.defineProperty(lead, GATE, { value: Object.freeze(gateFactsOf(lead)), enumerable: false });
+        for (const k of SERVER_ONLY_KEYS) delete lead[k];
         out.push(lead);
       }
       cursor = page.cursor || null;
@@ -183,6 +222,24 @@ async function getLeadSnapshot({ fresh = false } = {}) {
   return { leads: _copy.leads, at: _copy.at, ageMs: age };
 }
 
+/**
+ * The copy AS IT IS, at once — never a wait (the Client Master page joins it to its rows and must
+ * not be slowed by the Lead Board). Returns { leads, at, ageMs } or null when there is no copy yet
+ * or it is too old to show (HARD_MAX_MS). Whenever the copy is missing, aged or behind a change, a
+ * read is started in the background, so a later call has it. Counts as a view (warm() keeps the
+ * copy fresh while the page is being looked at). After an own lead write the copy is still handed
+ * out (a few minutes behind, like any list) while the re-read runs.
+ */
+function peek() {
+  const now = io.now();
+  _lastViewAt = now;
+  const age = _copy ? now - _copy.at : Infinity;
+  const outstanding = _invalidatedAt > 0 && !(_copy && _copy.gen >= _invalidatedAt);
+  if (!_copy || outstanding || age > TTL_MS || _copy.gen < _staleGen) _refreshBehind();
+  if (!_copy || age > HARD_MAX_MS) return null;
+  return { leads: _copy.leads, at: _copy.at, ageMs: age };
+}
+
 /** Just the leads (the common call). */
 async function leads(opts) { return (await getLeadSnapshot(opts)).leads; }
 
@@ -235,4 +292,4 @@ async function contactIndex(opts) {
 function _reset() { _copy = null; _inFlight = null; _gen = 0; _invalidatedAt = 0; _staleGen = 0; _lastViewAt = 0; }
 function _state() { return { gen: _gen, invalidatedAt: _invalidatedAt, copyGen: _copy ? _copy.gen : null, inFlight: !!_inFlight, staleGen: _staleGen }; }
 
-module.exports = { getLeadSnapshot, leads, contactIndex, invalidate, runInBackground, warm, io, CONTACT, SNAPSHOT_KEYS, SNAPSHOT_IDS, TTL_MS, HARD_MAX_MS, JOIN_MS, IDLE_MS, _reset, _state };
+module.exports = { getLeadSnapshot, leads, peek, contactIndex, invalidate, runInBackground, warm, io, CONTACT, GATE, gateFactsOf, SERVER_ONLY_KEYS, FETCH_IDS, SNAPSHOT_KEYS, SNAPSHOT_IDS, TTL_MS, HARD_MAX_MS, JOIN_MS, IDLE_MS, _reset, _state };
