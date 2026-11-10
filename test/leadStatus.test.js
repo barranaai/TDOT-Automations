@@ -93,7 +93,7 @@ test('no notes copy yet (or nothing in it): the lead\'s own columns', () => {
   assert.equal(LS.leadStatus(lead({ inviteSentAt: '2026-10-01' }), null, T0).label, 'Expired');
   assert.equal(LS.leadStatus(lead({ bookingInvite: 'Failed', inviteSentAt: '' }), null, T0).label, 'Invite failed');
   assert.equal(LS.leadStatus(lead({ bookingInvite: 'Send', inviteSentAt: '' }), null, T0).label, 'Invite sending');
-  assert.deepEqual(LS.leadStatus(lead({ bookingInvite: '', inviteSentAt: '' }), null, T0), { key: 'new', label: 'New', at: null, tone: 'grey' });
+  assert.deepEqual(LS.leadStatus(lead({ bookingInvite: '', inviteSentAt: '' }), null, T0), { key: 'new', label: 'New', at: null, tone: 'blue' });   // new = blue on the shared status scale (2026-11-10 look change), was grey
   assert.equal(LS.leadStatus(lead({ bookingStatus: 'Abandoned', slotHeldUntil: '2026-10-21T15:00:00Z' }), null, T0 + 2 * DAY).label, 'Booking not finished');
   const r = act(); r.remark = { label: 'Fees quoted', by: 'Kamal', at: T0 };
   assert.equal(LS.leadStatus(lead({ bookingInvite: '', inviteSentAt: '' }), r, T0 + DAY).label, 'Fees quoted', 'a remark on a lead never invited');

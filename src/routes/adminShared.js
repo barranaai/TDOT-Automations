@@ -17,6 +17,45 @@ const TDOT_LOGO_SVG_LARGE = `<img src="${LOGO_URL}" alt="TDOT Immigration" style
 // ─── Shared CSS variables + reset ────────────────────────────────────────────
 const { DIALOG_UI_CSS, DIALOG_UI_JS } = require('./dialogUi');   // the one pop-up for every page (2026-11-05)
 
+// ─── The one status-colour scale (2026-11-10) ───────────────────────────────────
+// Six hues + neutrals, defined ONCE here and used by every staff page (and by the
+// staff document-review page, which has its own stylesheet and takes these lines).
+//   green  = done · paid · signed · submitted · reviewed
+//   amber  = being worked on · waiting on someone · due
+//   red    = stuck · overdue · failed · urgent · rework · unpaid · a Real deadline
+//   blue   = new · information · sent · booked slot · received, to look at
+//   grey   = not started · not applicable · closed · nothing to do
+//   purple = special: retained · an Imaginary deadline
+// Each hue has three steps: -bg (the pill's tint), -fg (text on the tint, at least 6:1)
+// and -solid (bars, dots, borders: at least 3:1 on white and on its own tint).
+const STATUS_COLOUR_VARS = `
+    --st-green-bg:  #dcfce7;  --st-green-fg:  #166534;  --st-green-solid:  #15803d;
+    --st-amber-bg:  #fef3c7;  --st-amber-fg:  #92400e;  --st-amber-solid:  #b45309;
+    --st-red-bg:    #fee2e2;  --st-red-fg:    #991b1b;  --st-red-solid:    #dc2626;
+    --st-blue-bg:   #dbeafe;  --st-blue-fg:   #1e40af;  --st-blue-solid:   #2563eb;
+    --st-grey-bg:   #e8edf3;  --st-grey-fg:   #334155;  --st-grey-solid:   #64748b;
+    --st-purple-bg: #ede9fe;  --st-purple-fg: #5b21b6;  --st-purple-solid: #7c3aed;
+    --st-focus:     #2563eb;`;
+
+// Which colour a Case Stage gets (Client Master's labels, by their words — a new label falls to grey).
+// Plain browser JS for the pages' scripts: no backslash and no template marks in it.
+const STATUS_TONE_JS = `
+function stageTone(stage) {
+  var s = String(stage == null ? '' : stage).toLowerCase();
+  if (/stuck|refus/.test(s)) return 'red';
+  if (/submitted|approved|task done|ads posted/.test(s)) return 'green';
+  if (/review|preparation|ready|reconsideration/.test(s) || s === 'adr') return 'amber';
+  if (/retainer confirmed|collection|profile/.test(s)) return 'blue';
+  return 'grey';
+}
+/* A status colour's value for a chart (a canvas cannot read a CSS variable by name): 'green-solid', 'red-bg', … */
+function statusColour(name) {
+  var v = '';
+  try { v = getComputedStyle(document.documentElement).getPropertyValue('--st-' + name); } catch (e) {}
+  return String(v || '').replace(/^ +| +$/g, '') || 'gray';
+}
+`;
+
 const SHARED_CSS_VARS = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -48,6 +87,16 @@ const SHARED_CSS_VARS = `
     --shadow-lg:    0 12px 28px rgba(0,0,0,.12), 0 4px 8px rgba(0,0,0,.06);
     --r:            12px;
     --r-sm:         8px;
+    /* Full-width pages (2026-11-10): every staff page runs edge to edge with the
+       same side padding as the header; --read-max caps a line of running text. */
+    --page-gutter:  14px;
+    --read-max:     75ch;
+${STATUS_COLOUR_VARS}
+    /* Table header rows and card headings: one slightly tinted treatment on every page. */
+    --th-bg:        #eef2f7;
+    --th-fg:        #475569;
+    --th-line:      #d8e0ea;
+    --head-bg:      #f8fafc;
   }
 
   body {
@@ -57,6 +106,24 @@ const SHARED_CSS_VARS = `
     font-size: 14px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+  }
+
+  /* Status pills: the same six colours wherever a page uses these names (a page keeps its own pill SIZE). */
+  .pill.green,  .chip.green,  .badge.green  { background: var(--st-green-bg);  color: var(--st-green-fg); }
+  .pill.amber,  .chip.amber,  .badge.amber,
+  .pill.orange, .chip.orange, .badge.orange { background: var(--st-amber-bg);  color: var(--st-amber-fg); }
+  .pill.red,    .chip.red,    .badge.red    { background: var(--st-red-bg);    color: var(--st-red-fg); }
+  .pill.blue,   .chip.blue,   .badge.blue   { background: var(--st-blue-bg);   color: var(--st-blue-fg); }
+  .pill.grey,   .chip.grey,   .badge.grey   { background: var(--st-grey-bg);   color: var(--st-grey-fg); }
+  .pill.purple, .chip.purple, .badge.purple { background: var(--st-purple-bg); color: var(--st-purple-fg); }
+
+  /* Keyboard focus is always visible (zero-weight selector: a page's own focus rule still wins). */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible { outline: 2px solid var(--st-focus); outline-offset: 2px; }
+  .admin-hdr :where(a, button):focus-visible { outline-color: white; }
+
+  /* A person who asked their device for less motion gets no spinning or sliding. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   }
 `;
 
@@ -1257,6 +1324,7 @@ module.exports = {
   TDOT_LOGO_SVG,
   TDOT_LOGO_SVG_LARGE,
   SHARED_CSS_VARS,
+  STATUS_COLOUR_VARS, STATUS_TONE_JS,
   NAV_CSS,
   SHARED_AUTH_JS,
   DELETE_UI_CSS,

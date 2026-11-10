@@ -22,7 +22,7 @@ const UPDATES_WIDGET_CSS = [
   '.updw-by { font-weight:700; color:#1e293b; }',
   '.updw-origin { font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:1px 7px; border-radius:99px; background:#eef2ff; color:#4338ca; }',
   '.updw-origin.updw-lead { background:#fef9c3; color:#854d0e; }',
-  '.updw-body { font-size:13px; color:#1f2937; white-space:pre-wrap; word-break:break-word; line-height:1.5; }',
+  '.updw-body { font-size:13px; color:#1f2937; white-space:pre-wrap; word-break:break-word; line-height:1.5; max-width:var(--read-max, 75ch); }',
   '.updw-reply { margin:8px 0 0 16px; border-left:2px solid #e2e8f0; padding-left:10px; }',
   '.updw-empty { color:#94a3b8; font-size:13px; padding:8px 2px; }',
   '.updw-compose { margin-top:12px; border-top:1px solid #f1f5f9; padding-top:12px; }',

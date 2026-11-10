@@ -33,7 +33,7 @@ const SIGNOUT_KEY = 'tdot_signout_at'; // stamped by Sign Out (adminShared.js); 
 const DRAFT_DAYS = 14;                 // an unsaved draft older than this is removed from the device
 
 const CONSULT_NOTES_CSS = [
-  '.cnw-hint { font-size:12.5px; color:#64748b; margin:0 0 8px; line-height:1.45; }',
+  '.cnw-hint { font-size:12.5px; color:#64748b; margin:0 0 8px; line-height:1.45; max-width:var(--read-max); }',
   '.cnw-text { display:block; width:100%; min-height:150px; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; font:inherit; font-size:14px; line-height:1.5; box-sizing:border-box; resize:vertical; color:#1f2937; background:#fff; }',
   '.cnw-text:focus-visible, .cnw-name:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }',
   '.cnw-under { display:flex; flex-wrap:wrap; gap:4px 14px; justify-content:space-between; font-size:12px; color:#64748b; margin-top:6px; min-height:17px; }',

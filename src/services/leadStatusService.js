@@ -228,7 +228,7 @@ function leadStatus(l, act, now) {
   if (events.length) return events.reduce((a, b) => (b.at >= a.at ? b : a));
   if (s(l.bookingInvite) === 'Failed') return { key: 'invite-failed', label: 'Invite failed', at: null, tone: 'red' };
   if (s(l.bookingInvite) === 'Send') return { key: 'invite-sending', label: 'Invite sending', at: null, tone: 'blue' };
-  return { key: 'new', label: 'New', at: null, tone: 'grey' };
+  return { key: 'new', label: 'New', at: null, tone: 'blue' };   // new = blue on every staff page (the pill's colour only)
 }
 
 /**

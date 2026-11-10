@@ -460,7 +460,7 @@ test('cockpit + review strip: open optional rows are out of "X of Y" and the Pen
   const cockpit = fs.readFileSync(require.resolve('../src/routes/adminCase.js'), 'utf8');
   assert.match(cockpit, /\(c\.total - na - opt\) \+ ' document\(s\) in'/);
   assert.match(cockpit, /document\.getElementById\('d-sub'\)\.textContent = docSubtitle\(d\.documents\.counts, d\.docReviewedPct\);/);
-  assert.match(cockpit, /\['Missing', c\.missing - \(c\.optionalOpen \|\| 0\), '#94a3b8'\]/);
+  assert.match(cockpit, /\['Missing', c\.missing - \(c\.optionalOpen \|\| 0\), 'var\(--st-grey-solid\)'\]/);   // the shared status colour (2026-11-10 look change), was a hex grey
   const svc = require('../src/services/documentReviewFormService');
   const page = svc.buildReviewPage({ caseRef: '2026-X-001', clientName: 'K', staffName: 'G', items: [
     { id: '1', name: 'LMIA', status: 'Missing', category: 'Employment', applicantType: 'Principal Applicant', reviewNotes: '', lastUpload: '', optional: true },

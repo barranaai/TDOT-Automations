@@ -22,9 +22,10 @@ function buildEnginesHTML() {
 
     /* ── Page layout ──────────────────────────────── */
     .wrap {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 32px 24px 72px;
+      /* Full width, like the listing pages (2026-11-10). */
+      max-width: none;
+      margin: 0;
+      padding: 32px var(--page-gutter) 72px;
     }
 
     /* ── Stat strip ───────────────────────────────── */
@@ -90,7 +91,7 @@ function buildEnginesHTML() {
       color: white; letter-spacing: -.2px; margin-bottom: 3px;
     }
 
-    .run-all-sub { font-size: 12px; color: rgba(255,255,255,.58); }
+    .run-all-sub { font-size: 12px; color: rgba(255,255,255,.58); max-width: var(--read-max); }
 
     .run-all-btn {
       padding: 11px 28px;
@@ -114,7 +115,8 @@ function buildEnginesHTML() {
     /* ── Engine grid ──────────────────────────────── */
     .engines-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      /* More cards per row as the screen gets wider (3 at 961px, 4 at 1440px). */
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
       gap: 16px;
       margin-bottom: 28px;
     }
@@ -153,7 +155,7 @@ function buildEnginesHTML() {
       border-radius: 20px;
       font-size: 9px; font-weight: 800;
       text-transform: uppercase; letter-spacing: .7px;
-      background: #eef2ff; color: #4338ca;
+      background: var(--st-blue-bg); color: var(--st-blue-fg);
       margin-bottom: 4px;
     }
 
@@ -219,9 +221,9 @@ function buildEnginesHTML() {
     .docrem-out { margin-top: 10px; max-height: 240px; overflow: auto; font-size: 11px; line-height: 1.5;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; color: var(--navy);
       background: #fafbfd; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
-    .run-btn.running   { background: #92400e; }
-    .run-btn.success   { background: var(--green); }
-    .run-btn.error     { background: var(--red); }
+    .run-btn.running   { background: var(--st-amber-solid); }
+    .run-btn.success   { background: var(--st-green-solid); }
+    .run-btn.error     { background: var(--st-red-solid); }
 
     /* ── Utilities ────────────────────────────────── */
     .utils-grid {
@@ -248,6 +250,7 @@ function buildEnginesHTML() {
     }
 
     .butil-hd {
+      background: var(--head-bg);
       padding: 16px 22px 14px;
       border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 14px;
@@ -275,6 +278,7 @@ function buildEnginesHTML() {
     .butil-desc {
       font-size: 12px; color: var(--muted);
       line-height: 1.65; margin-bottom: 16px;
+      max-width: var(--read-max);
     }
 
     .butil-actions {
@@ -394,6 +398,7 @@ function buildEnginesHTML() {
     .util-desc {
       font-size: 12px; color: var(--muted);
       margin-bottom: 16px; line-height: 1.6;
+      max-width: var(--read-max);
     }
 
     .util-row { display: flex; gap: 8px; align-items: center; }
@@ -666,7 +671,7 @@ ${buildNavHeader('engines')}
       <div class="engine-hd">
         <div class="engine-icon" style="background:#f1f5f9">📧</div>
         <div>
-          <div class="engine-badge" style="background:#f1f5f9;color:#64748b">Retired</div>
+          <div class="engine-badge" style="background:var(--st-grey-bg);color:var(--st-grey-fg)">Retired</div>
           <div class="engine-name">Client Chasing Loop</div>
         </div>
       </div>

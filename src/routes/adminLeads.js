@@ -75,18 +75,23 @@ function buildLeadsQueueHTML() {
   .btn:disabled { opacity:.55; cursor:default; }
   .card { background:white; border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; overflow:hidden; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
-  th { background:#f8fafc; text-align:left; padding:11px 14px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.7px; color:#94a3b8; border-bottom:2px solid #f1f5f9; }
+  th { background:var(--th-bg); text-align:left; padding:11px 14px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.7px; color:var(--th-fg); border-bottom:2px solid var(--th-line); }
   td { padding:12px 14px; border-bottom:1px solid #f8fafc; }
   tr.row { cursor:pointer; }
   tr.row:hover td { background:#f8faff; }
+  tr.row:hover td:first-child { box-shadow:inset 3px 0 0 var(--st-blue-solid); }   /* the row under the pointer: a blue bar at its start */
   .pill { display:inline-flex; align-items:center; padding:2px 9px; border-radius:20px; font-size:10px; font-weight:700; }
-  .pill.green { background:#f0fdf4; color:#16a34a; } .pill.grey { background:#f1f5f9; color:#64748b; }
-  .pill.amber { background:#fffbeb; color:#d97706; } .pill.blue { background:#eff6ff; color:#2563eb; }
-  .pill.red { background:#fef2f2; color:#dc2626; }
+  .pill.green { background:var(--st-green-bg); color:var(--st-green-fg); } .pill.grey { background:var(--st-grey-bg); color:var(--st-grey-fg); }
+  .pill.amber { background:var(--st-amber-bg); color:var(--st-amber-fg); } .pill.blue { background:var(--st-blue-bg); color:var(--st-blue-fg); }
+  .pill.red { background:var(--st-red-bg); color:var(--st-red-fg); }
   .tier { font-weight:700; color:var(--navy); }
   .empty { padding:40px; text-align:center; color:#94a3b8; }
   .sec-h { font-size:15px; font-weight:800; color:var(--navy); margin:0; }
   ${LEADS_TABLE_CSS}
+  /* The stage tabs' counts in the stage's colour (the same colours as the Current status pills). */
+  #q-phase .lt-tab[data-quick="new"], #q-phase .lt-tab[data-quick="invite"] { --tn-bg:var(--st-blue-bg); --tn-fg:var(--st-blue-fg); --tn-solid:var(--st-blue-solid); }
+  #q-phase .lt-tab[data-quick="reminder1"], #q-phase .lt-tab[data-quick="reminder2"] { --tn-bg:var(--st-amber-bg); --tn-fg:var(--st-amber-fg); --tn-solid:var(--st-amber-solid); }
+  #q-phase .lt-tab[data-quick="expired"] { --tn-bg:var(--st-red-bg); --tn-fg:var(--st-red-fg); --tn-solid:var(--st-red-solid); }
   ${DELETE_UI_CSS}
   ${BLACKLIST_UI_CSS}
   ${REFERRAL_CSS}
@@ -161,9 +166,12 @@ function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/
 var ALLROWS=[];
 function qpill(cls,txt){ return '<span class="pill '+cls+'">'+escHtml(txt)+'</span>'; }
 function statusPill(s){
+  /* The shared colours (2026-11-10): booked = done (green), a held slot = blue, nothing yet / given up = grey, anything else = amber. */
+  if(s==='Booked') return qpill('green','Booked');
   if(s==='Slot Held') return qpill('blue','Slot Held');
   if(s==='Abandoned') return qpill('grey','Abandoned');
-  return qpill('amber', s||'Not Yet');
+  if(!s||s==='Not Yet') return qpill('grey','Not Yet');
+  return qpill('amber', s);
 }
 function createdOf(r){ return String(r.createdDay||''); }   // the Toronto day the lead arrived (server-made)
 // Current status (Faran 2026-10-28): where the lead is with us — the label, then when (Toronto day).
@@ -177,7 +185,7 @@ function statusCell(st){
 }
 function invitePill(c){
   if(!c.inviteSent) return '<span class="pill grey">—</span>';
-  return qpill('green', c.inviteSentAt?('Sent '+String(c.inviteSentAt).slice(0,10)):'Sent');
+  return qpill('blue', c.inviteSentAt?('Sent '+String(c.inviteSentAt).slice(0,10)):'Sent');   /* sent = blue on every page */
 }
 function renderRows(rows,why,st,h){
   var tb=document.getElementById('qbody');
@@ -406,12 +414,12 @@ function buildLeadDetailHTML(leadId) {
   #btn-convert.disabled { opacity:.5; cursor:not-allowed; pointer-events:none; }
   .edit-email { font-size:12.5px; font-weight:600; color:#1d4ed8; text-decoration:underline; cursor:pointer; white-space:nowrap; }
   .ctx-meta { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:14px; }
-  .chip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; padding:5px 11px; border-radius:20px; background:#f1f5f9; color:#475569; }
+  .chip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; padding:5px 11px; border-radius:20px; background:var(--st-grey-bg); color:var(--st-grey-fg); }
   .chip svg { font-size:13px; }
-  .chip.blue { background:#eff6ff; color:#2563eb; } .chip.green { background:#f0fdf4; color:#16a34a; }
-  .chip.amber { background:#fffbeb; color:#d97706; } .chip.grey { background:#f1f5f9; color:#64748b; }
-  .chip.red { background:#fef2f2; color:#dc2626; }
-  .chip .pk { font-weight:600; opacity:.65; }
+  .chip.blue { background:var(--st-blue-bg); color:var(--st-blue-fg); } .chip.green { background:var(--st-green-bg); color:var(--st-green-fg); }
+  .chip.amber { background:var(--st-amber-bg); color:var(--st-amber-fg); } .chip.grey { background:var(--st-grey-bg); color:var(--st-grey-fg); }
+  .chip.red { background:var(--st-red-bg); color:var(--st-red-fg); }
+  .chip .pk { font-weight:500; opacity:1; }   /* the key word: lighter weight, full colour (a faded word fell under 4.5:1 on the tint) */
 
   /* urgency banner */
   ${BLACKLIST_UI_CSS}
@@ -426,12 +434,14 @@ function buildLeadDetailHTML(leadId) {
 
   /* two-column working area — info leads, actions support */
   .cols { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:16px; align-items:start; }
-  @media (max-width:900px){ .cols{ grid-template-columns:1fr; } .ctx{ position:static; } }
+  @media (max-width:900px){ .cols{ grid-template-columns:minmax(0,1fr); } .ctx{ position:static; } }
   .col { display:flex; flex-direction:column; gap:14px; }
   .card { background:var(--card); border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; padding:16px 18px; }
   .card-t { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:800; color:var(--navy); margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #f1f5f9; }
+  /* a card's heading: a slightly tinted band across the top of the card (only when the heading is the card's first thing) */
+  .card > .card-t:first-child { margin:-16px -18px 12px; padding:11px 18px 10px; background:var(--head-bg); border-bottom:1px solid var(--border); border-radius:var(--r) var(--r) 0 0; }
   .card-t svg { font-size:15px; color:var(--navy); }
-  .card-t .when { margin-left:auto; font-weight:500; font-size:11px; color:var(--light); }
+  .card-t .when { margin-left:auto; font-weight:500; font-size:11px; color:var(--muted); }
   .obtns { display:flex; flex-wrap:wrap; gap:6px; }
   .obtn { padding:8px 10px; border:1px solid var(--border, #e2e8f0); border-radius:8px; background:white; font-size:12.5px; font-weight:600; cursor:pointer; color:var(--navy, #1e3a5f); font-family:inherit; transition:all .12s; }
   .obtn:hover:not(:disabled) { border-color:var(--navy, #1e3a5f); background:#f0f4f8; }
@@ -454,14 +464,14 @@ ${REMARKS_CSS}
   .kvgrid > *:not(.kv) { grid-column:1 / -1; }
   .kvgrid .kv .k { min-width:130px; }
   .kvgrid .kv { border-top:none; border-bottom:1px solid #f5f8fc; padding:6px 0; }
-  .longtext { font-size:13px; color:var(--navy); line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .longtext { font-size:13px; color:var(--navy); line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; max-width:var(--read-max); }
   .notyet { color:#94a3b8; font-size:13px; font-style:italic; padding:8px 0; }
   .subhead { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#64748b; margin:0 0 6px; }
   .agroup { padding-top:13px; margin-top:13px; border-top:1px solid #f1f5f9; }
   .act-msg { display:none; padding:9px 12px; border-radius:8px; font-size:12.5px; margin:10px 0 0; font-weight:600; }
-  .act-msg.info { background:#eff6ff; color:#2563eb; display:block; }
-  .act-msg.ok { background:#f0fdf4; color:#16a34a; display:block; }
-  .act-msg.err { background:#fef2f2; color:#dc2626; display:block; }
+  .act-msg.info { background:var(--st-blue-bg); color:var(--st-blue-fg); display:block; }
+  .act-msg.ok { background:var(--st-green-bg); color:var(--st-green-fg); display:block; }
+  .act-msg.err { background:var(--st-red-bg); color:var(--st-red-fg); display:block; }
   .btn-col { display:flex; flex-direction:column; gap:8px; }
   #invite-msg { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:13px; font-family:inherit; line-height:1.55; color:var(--navy); resize:vertical; }
   #invite-msg:focus { outline:none; border-color:var(--navy); }
@@ -559,10 +569,10 @@ ${buildNavHeader('leads')}
         </div>
         <div class="card" id="invite-card">
           <div class="card-t">${I.send} Booking invite email <span class="when" id="inv-when"></span></div>
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-            <div>
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+            <div style="min-width:0;max-width:100%">
               <div class="subhead" style="margin:0 0 4px">Consultation with</div>
-              <select id="inv-consultant" style="border:1px solid #e2e8f0;border-radius:8px;padding:7px 10px;font:inherit;min-width:230px"></select>
+              <select id="inv-consultant" style="border:1px solid #e2e8f0;border-radius:8px;padding:7px 10px;font:inherit;min-width:min(230px,100%);max-width:100%"></select>
             </div>
             <span class="muted" id="inv-routed-hint" style="font-size:12px;margin-top:16px"></span>
           </div>
@@ -684,9 +694,9 @@ function render(d){
   var pills='';
   pills+='<span class="chip grey">'+ICONS.clock+'<span class="pk">Received</span> '+escHtml(d.createdWhen ? d.createdWhen+' (Toronto)' : '—')+'</span>';
   var bs=d.bookingStatus||'Not Yet';
-  pills+='<span class="chip '+(bs==='Booked'?'green':bs==='Slot Held'?'blue':bs==='Abandoned'?'grey':'amber')+'"><span class="pk">Booking</span> '+escHtml(bs)+'</span>';
+  pills+='<span class="chip '+(bs==='Booked'?'green':bs==='Slot Held'?'blue':(bs==='Abandoned'||bs==='Not Yet')?'grey':'amber')+'"><span class="pk">Booking</span> '+escHtml(bs)+'</span>';
   if(d.tier) pills+='<span class="chip blue"><span class="pk">Tier</span> '+escHtml(d.tier)+'</span>';
-  if(d.priority) pills+='<span class="chip amber"><span class="pk">Priority</span> '+escHtml(d.priority)+'</span>';
+  if(d.priority) pills+='<span class="chip '+(d.priority==='Critical'?'red':d.priority==='High'?'amber':'grey')+'"><span class="pk">Priority</span> '+escHtml(d.priority)+'</span>';
   if(d.wantsTo && d.wantsTo!=='Book consultation') pills+='<span class="chip amber"><span class="pk">Asked for</span> '+escHtml(d.wantsTo)+'</span>';
   if(d.consultant) pills+='<span class="chip green">'+ICONS.user+' '+escHtml(d.consultant)+'</span>';
   if((d.flags||[]).length) pills+='<span class="chip red">'+ICONS.flag+' URGENT</span>';

@@ -570,33 +570,39 @@ const LIST_TABLE_CSS = `
   .q-search { position:relative; }
   .q-search input { width:260px; max-width:70vw; padding:8px 12px 8px 32px; border:1px solid #e2e8f0; border-radius:9px; font:inherit; font-size:13px; color:var(--navy); background:#fff; }
   .q-search-note { font-size:12px; color:#64748b; }
-  .q-search input:focus { outline:2px solid #bfdbfe; border-color:#93c5fd; }
+  .q-search input:focus { outline:2px solid var(--st-focus); outline-offset:1px; border-color:var(--st-focus); }
   .q-search svg { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:#94a3b8; pointer-events:none; }
   .q-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 10px; }
-  .q-chip { display:inline-flex; align-items:center; gap:4px; background:#eef2ff; color:#3730a3; border:1px solid #e0e7ff; border-radius:999px; padding:3px 4px 3px 11px; font-size:12px; font-weight:600; max-width:100%; }
-  .q-chip button { border:none; background:transparent; color:#4f46e5; font-size:15px; line-height:1; width:22px; height:22px; border-radius:50%; cursor:pointer; }
-  .q-chip button:hover, .q-chip button:focus-visible { background:#e0e7ff; outline:none; }
+  .q-chip { display:inline-flex; align-items:center; gap:4px; background:var(--st-blue-bg); color:var(--st-blue-fg); border:1px solid var(--st-blue-bg); border-radius:999px; padding:3px 4px 3px 11px; font-size:12px; font-weight:600; max-width:100%; }
+  .q-chip button { border:none; background:transparent; color:var(--st-blue-fg); font-size:15px; line-height:1; width:22px; height:22px; border-radius:50%; cursor:pointer; }
+  .q-chip button:hover, .q-chip button:focus-visible { background:white; outline:2px solid var(--st-blue-solid); outline-offset:-2px; }
   .q-chip-sort { background:#f8fafc; color:#334155; border-color:#e2e8f0; }
   .q-chip-sort button { color:#64748b; }
   .lt-tabs { display:flex; align-items:flex-end; flex-wrap:wrap; gap:2px; border-bottom:2px solid #e2e8f0; margin:0 0 12px; }   /* wraps on a phone, like the Consultations tabs: no tab is ever hidden */
-  .lt-tab { appearance:none; background:none; border:0; border-bottom:3px solid transparent; margin-bottom:-2px; padding:9px 13px; font:inherit; font-size:13.5px; font-weight:700; color:#64748b; cursor:pointer; white-space:nowrap; }
-  .lt-tab:hover { color:var(--navy); }
+  .lt-tab { appearance:none; background:none; border:0; border-bottom:3px solid transparent; margin-bottom:-2px; padding:9px 13px; font:inherit; font-size:13.5px; font-weight:700; color:var(--th-fg); cursor:pointer; white-space:nowrap; }
+  .lt-tab:hover { color:var(--navy); background:var(--head-bg); border-radius:6px 6px 0 0; }
   .lt-tab.active { color:var(--navy); border-bottom-color:var(--navy); }
-  .lt-tab:focus-visible { outline:2px solid #93c5fd; outline-offset:-2px; border-radius:6px 6px 0 0; }
-  .lt-tab .lt-tab-n { display:inline-block; min-width:18px; padding:0 6px; border-radius:10px; background:#f1f5f9; color:#64748b; font-size:11px; margin-left:4px; text-align:center; font-variant-numeric:tabular-nums; }
-  .lt-tab.active .lt-tab-n { background:var(--navy); color:#fff; }
-  .lt-tab.zero:not(.active) { color:#94a3b8; }
+  @media (max-width: 760px) { .lt-tab { min-height:44px; } }   /* a finger-sized tab on a phone */
+  .lt-tab:focus-visible { outline:2px solid var(--st-focus); outline-offset:-2px; border-radius:6px 6px 0 0; }
+  /* a tab's count: a page may give a tab its status colour by setting --tn-bg / --tn-fg / --tn-solid on it (2026-11-10) */
+  .lt-tab .lt-tab-n { display:inline-block; min-width:18px; padding:0 6px; border-radius:10px; background:var(--tn-bg, var(--st-grey-bg)); color:var(--tn-fg, var(--st-grey-fg)); font-size:11px; margin-left:4px; text-align:center; font-variant-numeric:tabular-nums; }
+  .lt-tab.active .lt-tab-n { background:var(--tn-solid, var(--navy)); color:#fff; }
+  .lt-tab.zero:not(.active) { font-weight:500; }   /* an empty tab: lighter, never fainter than 4.5:1 */
   .q-clearall { border:none; background:none; color:#64748b; font:inherit; font-size:12px; font-weight:700; cursor:pointer; padding:4px 6px; text-decoration:underline; }
   .q-clearall:hover { color:var(--navy); }
   .tbl-wrap { overflow-x:auto; }
+  /* the header's hidden words (.sr-only) are position:absolute: without this they are placed against the page, at the wide table's far right,
+     and the whole page scrolls sideways on a narrow screen (the same fix as the Client Master table; found by the 2026-11-10 width check) */
+  .tbl-wrap { position:relative; }
   th .th-in { display:flex; align-items:center; gap:4px; white-space:nowrap; }
   th .th-sort { font-size:8px; color:var(--navy); }
   th .th-sortbtn { border:none; background:none; padding:2px 0; margin:0; font:inherit; color:inherit; letter-spacing:inherit; text-transform:inherit; cursor:pointer; border-radius:4px; }
   th .th-sortbtn:hover { color:var(--navy); text-decoration:underline; }
-  th .th-sortbtn:focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
-  th .th-f { display:inline-flex; align-items:center; gap:2px; border:1px solid transparent; background:transparent; color:#94a3b8; border-radius:6px; padding:3px 4px; min-width:24px; min-height:24px; cursor:pointer; margin-left:2px; }
-  th .th-f:hover, th .th-f:focus-visible, th .th-f.open { background:#eef2f7; color:var(--navy); outline:none; }
-  th .th-f.on { color:#4f46e5; background:#eef2ff; border-color:#e0e7ff; }
+  th .th-sortbtn:focus-visible { outline:2px solid var(--st-focus); outline-offset:2px; }
+  th .th-f { display:inline-flex; align-items:center; gap:2px; border:1px solid transparent; background:transparent; color:var(--st-grey-solid); border-radius:6px; padding:3px 4px; min-width:24px; min-height:24px; cursor:pointer; margin-left:2px; }
+  th .th-f:hover, th .th-f:focus-visible, th .th-f.open { background:white; color:var(--navy); outline:none; }
+  th .th-f:focus-visible { outline:2px solid var(--st-focus); outline-offset:1px; }
+  th .th-f.on { color:var(--st-blue-fg); background:var(--st-blue-bg); border-color:var(--st-blue-solid); }
   th .th-n { font-size:10px; font-weight:800; }
   .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
   .lt-pop { display:none; position:fixed; z-index:400; flex-direction:column; background:#fff; border:1px solid #e2e8f0; border-radius:12px; box-shadow:0 14px 40px rgba(15,23,42,.18); font-size:13px; color:var(--navy); text-transform:none; letter-spacing:0; }

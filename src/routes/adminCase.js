@@ -13,7 +13,7 @@ const express = require('express');
 const { DEADLINE_CHANGE_CSS, DEADLINE_CHANGE_HTML, DEADLINE_CHANGE_JS } = require('./deadlineChangeUi');   // Change beside the Client deadline pill (2026-11-10)
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const router  = express.Router();
-const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS } = require('./adminShared');
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS, STATUS_TONE_JS } = require('./adminShared');
 
 function escAttr(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -34,7 +34,8 @@ function buildCockpitHTML(caseRef) {
     ${DEADLINE_CHANGE_CSS}
 
     body { background: #f1f5f9; }
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 26px 24px 80px; }
+    /* Full width, like the listing pages (2026-11-10). */
+    .wrap { max-width:none; margin:0; padding:26px var(--page-gutter) 80px; }
 
     #loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:55vh; gap:18px; }
     .spinner { width:44px; height:44px; border:3px solid #e2e8f0; border-top-color:var(--navy); border-radius:50%; animation:spin .7s linear infinite; }
@@ -62,17 +63,17 @@ function buildCockpitHTML(caseRef) {
 
     .pill-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:16px; }
     .pill { display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border-radius:20px; font-size:11px; font-weight:700; letter-spacing:.2px; }
-    .pill.grey { background:#f1f5f9; color:#475569; }
-    .pill.green { background:#f0fdf4; color:#16a34a; }
-    .pill.red { background:#fef2f2; color:#dc2626; }
-    .pill.amber { background:#fffbeb; color:#d97706; }
-    .pill.blue { background:#eff6ff; color:#2563eb; }
-    .pill .pk { font-weight:600; opacity:.7; }
+    .pill.grey { background:var(--st-grey-bg); color:var(--st-grey-fg); }
+    .pill.green { background:var(--st-green-bg); color:var(--st-green-fg); }
+    .pill.red { background:var(--st-red-bg); color:var(--st-red-fg); }
+    .pill.amber { background:var(--st-amber-bg); color:var(--st-amber-fg); }
+    .pill.blue { background:var(--st-blue-bg); color:var(--st-blue-fg); }
+    .pill .pk { font-weight:500; opacity:1; }   /* the key word: lighter weight, full colour (a faded word fell under 4.5:1 on the tint) */
 
     /* Tabs */
     .tabbar { display:flex; gap:2px; border-bottom:1px solid var(--border); margin-bottom:22px; overflow-x:auto; }
     .tab { padding:11px 18px; font-size:13px; font-weight:700; color:var(--muted); background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; font-family:inherit; white-space:nowrap; display:flex; align-items:center; gap:7px; }
-    .tab:hover { color:var(--navy); }
+    .tab:hover { color:var(--navy); background:var(--head-bg); }
     .tab.active { color:var(--navy); border-bottom-color:var(--navy); }
     .tab .soon { font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; background:#f1f5f9; padding:2px 6px; border-radius:10px; }
     ${UPDATES_WIDGET_CSS}
@@ -85,6 +86,8 @@ function buildCockpitHTML(caseRef) {
     .grid-3 { grid-template-columns: repeat(3, 1fr); }
     .card { background:white; border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; padding:18px 20px; }
     .card-title { font-size:13px; font-weight:800; color:var(--navy); margin-bottom:14px; display:flex; align-items:center; gap:8px; padding-bottom:11px; border-bottom:1px solid #f1f5f9; }
+    /* a card's heading: a slightly tinted band across the top of the card (only when the heading is the card's first thing) */
+    .card > .card-title:first-child { margin:-18px -20px 14px; padding:12px 20px 11px; background:var(--head-bg); border-bottom:1px solid var(--border); border-radius:var(--r) var(--r) 0 0; }
     .card-title .cnt { margin-left:auto; font-size:11px; font-weight:700; color:var(--light); }
 
     /* Readiness meters */
@@ -98,17 +101,17 @@ function buildCockpitHTML(caseRef) {
     .mrow:first-child { border-top:none; }
     .mrow .mname { font-weight:600; color:var(--navy); }
     .mrow .mtype { font-size:11px; color:var(--light); margin-left:auto; }
-    .mrow .mflag { font-size:10px; font-weight:700; color:#d97706; background:#fffbeb; padding:2px 7px; border-radius:10px; }
+    .mrow .mflag { font-size:10px; font-weight:700; color:var(--st-amber-fg); background:var(--st-amber-bg); padding:2px 7px; border-radius:10px; }
     .status-tag { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; padding:3px 9px; border-radius:12px; }
-    .status-tag.done { background:#f0fdf4; color:#16a34a; }
-    .status-tag.prog { background:#eff6ff; color:#2563eb; }
-    .status-tag.none { background:#f1f5f9; color:#94a3b8; }
+    .status-tag.done { background:var(--st-green-bg); color:var(--st-green-fg); }
+    .status-tag.prog { background:var(--st-amber-bg); color:var(--st-amber-fg); }   /* in progress = amber on every page */
+    .status-tag.none { background:var(--st-grey-bg); color:var(--st-grey-fg); }
 
     /* Doc counts strip */
     .doc-strip { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:6px; }
     .doc-stat { text-align:center; background:#f8fafc; border-radius:8px; padding:12px 6px; }
     .doc-stat .n { font-size:22px; font-weight:800; letter-spacing:-1px; }
-    .doc-stat .l { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; margin-top:2px; }
+    .doc-stat .l { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--th-fg); margin-top:2px; }
     .cat-block { margin-top:14px; }
     .cat-head { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#64748b; margin-bottom:6px; }
     .member-block { margin-top:18px; padding:12px 14px; border:1px solid #e7ecf3; border-radius:10px; background:#fbfcfe; }
@@ -136,9 +139,9 @@ function buildCockpitHTML(caseRef) {
     .sbtn.danger:hover:not(:disabled) { border-color:#dc2626; color:#dc2626; background:#fef2f2; }
     .tab-actions { display:flex; gap:8px; flex-wrap:wrap; }
     .act-msg { display:none; padding:9px 12px; border-radius:8px; font-size:12.5px; margin-top:12px; font-weight:600; }
-    .act-msg.info { background:#eff6ff; color:#2563eb; display:block; }
-    .act-msg.ok { background:#f0fdf4; color:#16a34a; display:block; }
-    .act-msg.err { background:#fef2f2; color:#dc2626; display:block; }
+    .act-msg.info { background:var(--st-blue-bg); color:var(--st-blue-fg); display:block; }
+    .act-msg.ok { background:var(--st-green-bg); color:var(--st-green-fg); display:block; }
+    .act-msg.err { background:var(--st-red-bg); color:var(--st-red-fg); display:block; }
 
     .drow { display:flex; align-items:center; gap:9px; padding:9px 0; border-top:1px solid #f6f8fb; font-size:12.5px; flex-wrap:wrap; }
     .drow:first-child { border-top:none; }
@@ -176,7 +179,7 @@ function buildCockpitHTML(caseRef) {
     .rem-btns { display:flex; gap:8px; flex-wrap:wrap; }
     .rem-sent { font-size:12.5px; color:var(--navy); margin-top:12px; line-height:1.6; }
     .rem-blocked, .rem-fail { font-size:12px; color:#b45309; background:#fffbeb; border-radius:7px; padding:6px 10px; margin-top:10px; }
-    .rem-hint { font-size:11.5px; color:var(--light); margin-top:8px; line-height:1.5; }
+    .rem-hint { font-size:11.5px; color:var(--light); margin-top:8px; line-height:1.5; max-width:var(--read-max); }
     .rem-to { font-size:13px; color:var(--navy); margin:4px 0 10px; }
     .rem-to .k { color:var(--muted); margin-right:6px; }
     .rem-warn { font-size:12.5px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:7px 10px; margin:0 0 8px; }
@@ -381,7 +384,7 @@ ${buildNavHeader('dashboard')}
     <div class="tab-panel" id="panel-timeline">
       <div class="card">
         <div class="card-title">🕓 Case timeline <span class="cnt" id="tl-cnt"></span></div>
-        <div class="muted" style="margin-bottom:12px">Built from the dates the system records — inquiry, invite, consultation, retainer, payments, submissions and document uploads. Times are Toronto (Eastern) time.</div>
+        <div class="muted" style="margin-bottom:12px;max-width:var(--read-max)">Built from the dates the system records — inquiry, invite, consultation, retainer, payments, submissions and document uploads. Times are Toronto (Eastern) time.</div>
         <div id="tl-list"></div>
       </div>
     </div>
@@ -390,7 +393,7 @@ ${buildNavHeader('dashboard')}
     <div class="tab-panel" id="panel-updates">
       <div class="card">
         <div class="card-title">💬 Updates <span class="cnt" id="updw-cnt"></span></div>
-        <div class="muted" style="margin-bottom:12px">The same thread Monday shows on this case — system notes and team comments, newest first. Lead-tagged entries are the pre-retainer history. Posting writes to the case's Monday thread.</div>
+        <div class="muted" style="margin-bottom:12px;max-width:var(--read-max)">The same thread Monday shows on this case — system notes and team comments, newest first. Lead-tagged entries are the pre-retainer history. Posting writes to the case's Monday thread.</div>
         ${updatesWidgetHtml('updw')}
       </div>
     </div>
@@ -403,6 +406,7 @@ var CASE_REF = ${JSON.stringify(caseRef).replace(/</g, '\\u003c')};
 ${UPDATES_WIDGET_JS}
 
 ${SHARED_AUTH_JS}
+${STATUS_TONE_JS}
 ${PAYMENT_UI_JS}
 ${DEADLINE_CHANGE_JS}
 tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/case-updates/' + encodeURIComponent(CASE_REF) });
@@ -411,7 +415,7 @@ function escHtml(s) {
   return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function pctColor(p) { return p >= 80 ? '#16a34a' : (p >= 50 ? '#d97706' : '#dc2626'); }
+function pctColor(p) { return p >= 80 ? 'var(--st-green-solid)' : (p >= 50 ? 'var(--st-amber-solid)' : 'var(--st-red-solid)'); }
 
 var ROLE_LABEL = {
   PrincipalApplicant: 'Principal applicant', Spouse: 'Spouse', DependentChild: 'Dependent child',
@@ -437,7 +441,8 @@ function statusTag(s) {
   return '<span class="status-tag none">Not started</span>';
 }
 
-var DOC_DOT = { Reviewed:'#16a34a', Received:'#2563eb', 'Rework Required':'#dc2626', Missing:'#cbd5e1', 'Not Applicable':'#94a3b8' };
+/* The shared status colours: reviewed = green, received (to look at) = blue, rework = red, missing / not applicable = grey. */
+var DOC_DOT = { Reviewed:'var(--st-green-solid)', Received:'var(--st-blue-solid)', 'Rework Required':'var(--st-red-solid)', Missing:'var(--st-grey-solid)', 'Not Applicable':'var(--st-grey-solid)' };
 var NA_ENABLED = false;   // "Not applicable" buttons — set per load from the server's switch
 
 /* The pills under the client's name. Their own function so a saved deadline redraws only them
@@ -453,12 +458,12 @@ function renderPills(d) {
     pills += '<span class="pill grey"><span class="pk">Payment</span> unavailable — reload</span>';
   } else {
     var payCls = d.paymentStatus === 'Paid' ? 'green' : (/unpaid/i.test(d.paymentStatus) ? 'red' : 'amber');
-    pills += '<span class="pill blue"><span class="pk">Stage</span> ' + escHtml(d.caseStage) + '</span>';
+    pills += '<span class="pill ' + stageTone(d.caseStage) + '"><span class="pk">Stage</span> ' + escHtml(d.caseStage) + '</span>';   // the stage's own colour (adminShared stageTone)
     pills += '<span class="pill ' + payCls + '"><span class="pk">Payment</span> ' + escHtml(d.paymentStatus) + '</span>';
   }
   pills += '<span class="pill ' + healthCls + '"><span class="pk">Health</span> ' + escHtml(d.health) + '</span>';
   pills += '<span class="pill grey"><span class="pk">Manager</span> ' + escHtml(d.manager) + '</span>';
-  if (d.clientDeadline && d.clientDeadline !== 'Not set') pills += '<span class="pill ' + (/^Real/.test(d.clientDeadline) ? 'red' : 'amber') + '"><span class="pk">Client deadline</span> ' + escHtml(d.clientDeadline) + '</span>';
+  if (d.clientDeadline && d.clientDeadline !== 'Not set') pills += '<span class="pill ' + (/^Real/.test(d.clientDeadline) ? 'red' : 'purple') + '"><span class="pk">Client deadline</span> ' + escHtml(d.clientDeadline) + '</span>';
   else pills += '<span class="pill grey"><span class="pk">Client deadline</span> Not set</span>';
   // Change (2026-11-10): only where the server says the write is allowed (a Monday sign-in who may see the case)
   if (d.canChangeDeadline && d.itemId) pills += '<button type="button" class="dlc-btn" id="dl-change-btn" title="Change this case’s deadline (a reason is needed; a note is added on the case)">Change…</button>';
@@ -562,14 +567,14 @@ function render(d) {
   var c = d.documents.counts;
   document.getElementById('doc-total').textContent = c.total + ' total' + (c.optionalOpen ? ' · ' + c.optionalOpen + ' optional not sent' : '');
   document.getElementById('doc-strip').innerHTML =
-    [['Missing', c.missing - (c.optionalOpen || 0), '#94a3b8'], ['Received', c.received, '#2563eb'], ['Reviewed', c.reviewed, '#16a34a'],
-     ['Rework', c.rework, '#dc2626'], ['N/A', c.na || 0, '#94a3b8'], ['Total', c.total, '#1a3558']]
+    [['Missing', c.missing - (c.optionalOpen || 0), 'var(--st-grey-solid)'], ['Received', c.received, 'var(--st-blue-solid)'], ['Reviewed', c.reviewed, 'var(--st-green-solid)'],
+     ['Rework', c.rework, 'var(--st-red-solid)'], ['N/A', c.na || 0, 'var(--st-grey-solid)'], ['Total', c.total, 'var(--navy)']]
     .map(function(s) { return '<div class="doc-stat"><div class="n" style="color:' + s[2] + '">' + s[1] + '</div><div class="l">' + s[0] + '</div></div>'; }).join('');
 
   var cats = d.documents.byCategory || [];
   document.getElementById('doc-cats').innerHTML = cats.length ? cats.map(function(cat) {
     var lines = cat.items.map(function(it) {
-      return '<div class="doc-line"><span class="dotc" style="background:' + (DOC_DOT[it.status] || '#cbd5e1') + '"></span>' +
+      return '<div class="doc-line"><span class="dotc" style="background:' + (DOC_DOT[it.status] || 'var(--st-grey-solid)') + '"></span>' +
         '<span class="dn">' + escHtml(it.name) + '</span><span class="dt">' + escHtml(it.applicantLabel || it.applicantType) + ' · ' + escHtml(it.status) + '</span></div>';
     }).join('');
     return '<div class="cat-block"><div class="cat-head">' + escHtml(cat.category) + '</div>' + lines + '</div>';
@@ -622,7 +627,7 @@ function renderDocRow(it) {
   }
   var note = (it.status === 'Rework Required' && it.reviewNotes) ? '<div class="dnote">Rework note: ' + escHtml(it.reviewNotes) + '</div>' : '';
   if (it.status === 'Not Applicable') note += '<div class="dnote">Not applicable: ' + escHtml(it.naReason || '(no reason recorded)') + (it.naBy ? ' <span class="muted">— ' + escHtml(it.naBy) + '</span>' : '') + '</div>';
-  return '<div class="drow"><span class="dotc" style="background:' + (DOC_DOT[it.status] || '#cbd5e1') + '"></span>' +
+  return '<div class="drow"><span class="dotc" style="background:' + (DOC_DOT[it.status] || 'var(--st-grey-solid)') + '"></span>' +
     '<span class="dn">' + escHtml(it.name) + (it.optional ? ' <span class="muted">(optional)</span>' : '') + '</span>' +
     '<span class="dmeta">' + escHtml(it.status) + (it.lastUpload ? (' · uploaded ' + escHtml(it.lastUpload)) : '') + '</span>' +
     '<span class="dacts">' + acts + '</span>' + note + '</div>';
@@ -1173,13 +1178,13 @@ function renderMeetingsTab(d) {
 }
 
 // ── Timeline tab: chronological events derived from recorded dates ──────────
-var TL_DOT = { lead: '#2563eb', meeting: '#7c3aed', doc: '#64748b', retainer: '#1a3558', payment: '#16a34a', questionnaire: '#d97706' };
+var TL_DOT = { lead: 'var(--st-blue-solid)', meeting: 'var(--st-purple-solid)', doc: 'var(--st-grey-solid)', retainer: 'var(--navy)', payment: 'var(--st-green-solid)', questionnaire: 'var(--st-amber-solid)' };
 function renderTimelineTab(d) {
   var ev = d.timeline || [];
   document.getElementById('tl-cnt').textContent = ev.length + ' event' + (ev.length !== 1 ? 's' : '');
   document.getElementById('tl-list').innerHTML = ev.length ? ('<div class="tl">' + ev.map(function(e) {
     var dt = String(e.date || '').replace('T', ' ').slice(0, 16);
-    return '<div class="tl-ev"><span class="tl-dot" style="background:' + (TL_DOT[e.kind] || '#94a3b8') + '"></span>' +
+    return '<div class="tl-ev"><span class="tl-dot" style="background:' + (TL_DOT[e.kind] || 'var(--st-grey-solid)') + '"></span>' +
       '<div class="tl-date">' + escHtml(dt) + '</div>' +
       '<div class="tl-title">' + escHtml(e.title) + '</div>' +
       (e.detail ? '<div class="tl-detail">' + escHtml(e.detail) + '</div>' : '') + '</div>';

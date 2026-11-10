@@ -51,13 +51,18 @@ function escJs(s) {
 
 // ─── Status → colour map (matches Monday's labels) ───────────────────────────
 
+// The staff pages' one status-colour scale (adminShared STATUS_COLOUR_VARS, 2026-11-10): reviewed = green,
+// received (to look at) = blue, under review = amber, rework = red, missing / not applicable = grey —
+// the same colours the case page uses for the same documents. This page is staff-only.
+const { STATUS_COLOUR_VARS } = require('../routes/adminShared');
+const TONE = (t) => ({ bg: `var(--st-${t}-bg)`, fg: `var(--st-${t}-fg)`, border: `var(--st-${t}-solid)` });
 const STATUS_STYLE = {
-  'Missing':         { bg: '#fef2f2', fg: '#991b1b', border: '#fecaca' },
-  'Received':        { bg: '#fffbeb', fg: '#92400e', border: '#fde68a' },
-  'Under Review':    { bg: '#eff6ff', fg: '#1e40af', border: '#bfdbfe' },
-  'Reviewed':        { bg: '#f0fdf4', fg: '#166534', border: '#bbf7d0' },
-  'Rework Required': { bg: '#fef2f2', fg: '#991b1b', border: '#fca5a5' },
-  'Not Applicable':  { bg: '#f1f5f9', fg: '#475569', border: '#cbd5e1' },
+  'Missing':         TONE('grey'),
+  'Received':        TONE('blue'),
+  'Under Review':    TONE('amber'),
+  'Reviewed':        TONE('green'),
+  'Rework Required': TONE('red'),
+  'Not Applicable':  TONE('grey'),
 };
 
 function statusBadge(status) {
@@ -491,6 +496,8 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, f
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Segoe UI', Arial, sans-serif; background: #FAF8F4; color: #1F2937; }
 
+    :root {${STATUS_COLOUR_VARS}
+    }
     /* Top bar — TDOT brand */
     .top-bar {
       position: sticky; top: 0; z-index: 100;
@@ -510,7 +517,8 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, f
     }
 
     /* Content */
-    .content { max-width: 1100px; margin: 28px auto; padding: 0 20px 80px; }
+    /* Full width (2026-11-10): side padding lines up with this page's own top bar. */
+    .content { max-width: none; margin: 28px 0; padding: 0 28px 80px; }
 
     .summary-card {
       background: #FFFFFF; border-radius: 12px; padding: 18px 24px;
@@ -521,11 +529,11 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, f
     .summary-stat { text-align: center; min-width: 80px; }
     .summary-stat .num { font-size: 26px; font-weight: 800; color: #0B1D32; line-height: 1.1; }
     .summary-stat .lbl { font-size: 10px; color: #6B7280; text-transform: uppercase; letter-spacing: .06em; margin-top: 4px; }
-    .summary-stat.received .num { color: #92400e; }
-    .summary-stat.reviewed .num { color: #166534; }
-    .summary-stat.rework   .num { color: #8B0000; }
-    .summary-stat.missing  .num { color: #6B7280; }
-    .summary-stat.na       .num { color: #94a3b8; }
+    .summary-stat.received .num { color: var(--st-blue-solid); }
+    .summary-stat.reviewed .num { color: var(--st-green-solid); }
+    .summary-stat.rework   .num { color: var(--st-red-solid); }
+    .summary-stat.missing  .num { color: var(--st-grey-solid); }
+    .summary-stat.na       .num { color: var(--st-grey-solid); }
     .doc-row[data-status="Not Applicable"] { opacity: .72; }
     .doc-row[data-status="Not Applicable"] .name { color: #64748b; }
     .na-reason { margin-top: 6px; font-size: 12px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 10px; }
@@ -738,6 +746,7 @@ function buildReviewPage({ caseRef, clientName, staffName, items, folderLinks, f
     #toast.error { background: #8B0000; }
 
     @media (max-width: 800px) {
+      .content { padding: 0 20px 80px; }
       .doc-row { grid-template-columns: 1fr; gap: 10px; }
       .actions-cell { flex-direction: row; flex-wrap: wrap; }
     }
@@ -855,11 +864,11 @@ ${folderLinksUnavailable ? '<div style="background:#fef3cd;border:1px solid #d97
 
     /* ── Shared: update a row's status pill + button states in place ── */
     var STATUS_STYLE = {
-      'Reviewed':        { bg: '#f0fdf4', fg: '#166534', border: '#bbf7d0' },
-      'Rework Required': { bg: '#fef2f2', fg: '#991b1b', border: '#fca5a5' },
-      'Received':        { bg: '#fffbeb', fg: '#92400e', border: '#fde68a' },
-      'Missing':         { bg: '#f1f5f9', fg: '#475569', border: '#cbd5e1' },
-      'Not Applicable':  { bg: '#f1f5f9', fg: '#475569', border: '#cbd5e1' }
+      'Reviewed':        { bg: 'var(--st-green-bg)', fg: 'var(--st-green-fg)', border: 'var(--st-green-solid)' },
+      'Rework Required': { bg: 'var(--st-red-bg)',   fg: 'var(--st-red-fg)',   border: 'var(--st-red-solid)' },
+      'Received':        { bg: 'var(--st-blue-bg)',  fg: 'var(--st-blue-fg)',  border: 'var(--st-blue-solid)' },
+      'Missing':         { bg: 'var(--st-grey-bg)',  fg: 'var(--st-grey-fg)',  border: 'var(--st-grey-solid)' },
+      'Not Applicable':  { bg: 'var(--st-grey-bg)',  fg: 'var(--st-grey-fg)',  border: 'var(--st-grey-solid)' }
     };
     function setRowStatus(row, status) {
       if (!row) return;
