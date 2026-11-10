@@ -292,7 +292,7 @@ test('the handled note carries the key, is read back, and reads as none of the a
   }
 });
 
-function harness({ items, checklist = {}, folders = [], deep = new Map(), deepFail = [], newestRow = {}, balances = {} }) {
+function harness({ items, checklist = {}, folders = [], deep = new Map(), deepFail = [], newestRow = {}, balances = {}, leads = () => [] }) {
   const calls = { readCases: 0, notes: [], deep: [], hasChecklist: [] };
   NA.io.readCases = async () => { calls.readCases++; return items(); };
   NA.io.hasChecklist = async (ref) => { calls.hasChecklist.push(ref); if (checklist[ref] instanceof Error) throw checklist[ref]; return !!checklist[ref]; };
@@ -302,6 +302,7 @@ function harness({ items, checklist = {}, folders = [], deep = new Map(), deepFa
   NA.io.newestChecklistRowAt = async (ref) => newestRow[ref] || 0;
   NA.io.postNote = async (itemId, body) => { calls.notes.push({ itemId, body }); };
   NA.io.reminderTemplateProblems = async () => [];   // the Reminder Templates board: not set up (no read)
+  NA.io.leads = async () => leads();                  // the shared lead list (paid, no signed date) — never a board read
   NA.io.leadBalances = async (id) => { calls.balances = (calls.balances || []).concat(id); if (balances[id] instanceof Error) throw balances[id]; return balances[id] || []; };
   return calls;
 }
@@ -1031,4 +1032,182 @@ test('REMINDERS: a Reminder Templates board row the reminders could not use is l
     tpl._resetForTests();
     if (prevEnv === undefined) delete process.env.MONDAY_REMINDER_TEMPLATES_BOARD_ID; else process.env.MONDAY_REMINDER_TEMPLATES_BOARD_ID = prevEnv;
   }
+});
+
+// ── Paid, but no signed date on the client's record (2026-11-10) ─────────────
+// A Lead Board row with a Retainer Paid date and no Retainer Signed date: the
+// reports do not count the client as retained and the case start is held.
+
+const day = (agoMs) => new Date(NOW - agoMs).toISOString().slice(0, 10);
+const leadRow = (over = {}) => ({ id: 'L1', fullName: 'Client One', retainerPaid: day(5 * D), retainerSigned: '', retainerSent: '', clientMasterItemId: '', caseDeleted: '', ...over });
+const runLeads = (leads, items = []) => NA.detect({ cases: items.map(parse), leads, now: NOW });
+const pns = (entries) => entries.filter((e) => e.kind === 'paid-not-signed');
+
+test('PAID-NOT-SIGNED: a client record paid more than 2 days ago with no signed date is listed on its case, with what it means and what to do', () => {
+  const c = item({ id: 'case1', ref: '2026-RWP-001', stage: 'Application Submitted', payment: 'Paid', manager: 'Case Manager' });
+  const out = pns(runLeads([leadRow({ clientMasterItemId: 'case1', retainerSent: day(20 * D) })], [c]));
+  assert.equal(out.length, 1);
+  const e = out[0];
+  assert.deepEqual([e.caseRef, e.itemIds, e.leadId, e.link], ['2026-RWP-001', ['case1'], 'L1', '/admin/consultation/L1?from=retainers']);
+  assert.equal(e.rows.length, 1, 'on the case row: its assignees decide who sees it, the handled note goes there');
+  assert.match(e.why, /^The client's record has a Retainer Paid date \(26 Sep\) but no Retainer Signed date — the agreement was sent on 11 Sep\. /);
+  assert.match(e.why, /not counted as retained in the reports, and their case may not have started/);
+  assert.match(e.todo, /^Check the signed agreement\./);
+  assert.match(e.todo, /"Mark retainer signed"/); assert.match(e.todo, /Retainer Signed date on the client's row on the Lead Board/);
+  assert.match(e.todo, /"Void & re-issue"/);
+  assert.equal(e.since, new Date(`${day(5 * D)}T12:00:00Z`).toISOString());
+  assert.deepEqual([NA.KINDS['paid-not-signed'].order, NA.KINDS['paid-not-signed'].severity], [32, 'high']);
+  assert.equal(NA.PAID_UNSIGNED_WORKING_DAYS, 2);
+  // the agreement was never sent from the app: "Void & re-issue" is not on the page then, so it is not named
+  const [ns] = pns(runLeads([leadRow({ clientMasterItemId: 'case1' })], [c]));
+  assert.doesNotMatch(ns.todo, /Void & re-issue/);
+  assert.match(ns.todo, /The app has no record of the agreement being sent\. .*send it from the retainer panel on the same page \(set the fee, save the plan, then "Retain & send agreement"\)\. A signed date typed only on the Cases board does not count/);
+  assert.doesNotMatch(e.todo, /no record of the agreement being sent/);
+  // a closed / submitted case is still listed: the reports miss the client whatever the stage
+  assert.ok(NA.CLOSED_STAGES.includes('Application Submitted'));
+});
+
+test('PAID-NOT-SIGNED: the normal in-between and the settled states are never listed', () => {
+  const none = (lead, items) => assert.deepEqual(pns(runLeads([lead], items)), []);
+  none(leadRow({ retainerPaid: day(1 * D) }));                              // paid first, signs in a day or two (walk-in, part-payment)
+  none(leadRow({ retainerPaid: day(0) }));
+  none(leadRow({ retainerSigned: day(4 * D) }));                            // signed (a held "typed signed date" keeps its date too)
+  none(leadRow({ retainerPaid: '' }));                                      // not paid
+  none(leadRow({ retainerPaid: 'soon' }));                                  // not a date
+  none(leadRow({ caseDeleted: '2026-11-05' }));                             // the case was deleted, the record kept
+  none(leadRow({ fullName: 'TEST CLIENT - E2E 1' }));
+  none(leadRow({ clientMasterItemId: 't1' }), [item({ id: 't1', group: 'group_mm3842s', groupTitle: 'TEST' })]);   // its case is a test row
+  none(null);
+  // the line: two full WORKING days after the paid day, on the Toronto calendar
+  const at = (paid, when) => pns(NA.detect({ cases: [], leads: [leadRow({ retainerPaid: paid })], now: Date.parse(when) })).length;
+  assert.equal(NA.paidUnsignedGraceEnd('2026-11-13'), '2026-11-17');        // paid Friday: Monday and Tuesday are the two days
+  assert.equal(NA.paidUnsignedGraceEnd('2026-11-09'), '2026-11-11');        // paid Monday
+  assert.equal(NA.paidUnsignedGraceEnd('2026-11-14'), '2026-11-17');        // paid on a Saturday
+  assert.equal(at('2026-11-13', '2026-11-16T12:00:30Z'), 0, 'paid Friday, signing Monday: not on Monday morning\'s list');
+  assert.equal(at('2026-11-13', '2026-11-17T12:00:30Z'), 0);
+  assert.equal(at('2026-11-13', '2026-11-18T04:59:00Z'), 0, 'still Tuesday evening in Toronto');
+  assert.equal(at('2026-11-13', '2026-11-18T12:00:30Z'), 1, 'Wednesday 07:00 check');
+  assert.equal(at('2026-11-09', '2026-11-11T12:00:30Z'), 0, 'paid Monday: not on Wednesday morning\'s list');
+  assert.equal(at('2026-11-09', '2026-11-12T12:00:30Z'), 1);
+});
+
+test('PAID-NOT-SIGNED: with no case row it is an item about the client record alone, and a changed paid date is a new item', () => {
+  const [a] = pns(runLeads([leadRow()]));
+  assert.deepEqual([a.caseRef, a.itemIds, a.rows, a.client, a.leadId], ['', [], [], 'Client One', 'L1']);
+  assert.match(a.why, /No case is linked to this record\.$/);
+  const [gone] = pns(runLeads([leadRow({ clientMasterItemId: '999' })]));
+  assert.match(gone.why, /The case linked to this record was not found among the live cases\.$/);
+  const [b] = pns(runLeads([leadRow({ retainerPaid: day(9 * D) })]));
+  assert.notEqual(a.key, b.key);
+  assert.equal(pns(runLeads([leadRow()]))[0].key, a.key, 'the same record and date: the same item (a handled note keeps covering it)');
+  // two records on one case (the main applicant and the inviter): one item each
+  const two = pns(runLeads([leadRow({ id: 'L1', clientMasterItemId: 'c' }), leadRow({ id: 'L2', clientMasterItemId: 'c' })], [item({ id: 'c' })]));
+  assert.equal(new Set(two.map((e) => e.key)).size, 2);
+});
+
+test('PAID-NOT-SIGNED: the check reads the shared lead list, says so when it cannot, and a handled note (on the case, or on the record) keeps it off', async () => {
+  // the shared list, never a board read of its own
+  const src = fs.readFileSync(require.resolve('../src/services/needsAttentionService.js'), 'utf8');
+  assert.ok(src.includes("leads: () => require('./leadSnapshot').leads(),"));
+  assert.ok(!/square/i.test(src), 'Square is never read here');
+
+  // 1. on a case row
+  let caseUpdates = [];
+  const calls = harness({ items: () => [item({ id: 'case1', ref: 'R-1', stage: 'Internal Review', people: [{ id: 555, kind: 'person' }], updates: caseUpdates })], leads: () => [leadRow({ clientMasterItemId: 'case1' })] });
+  let snap = await NA.buildSnapshot();
+  assert.deepEqual(snap.entries.map((e) => [e.kind, e.caseRef]), [['paid-not-signed', 'R-1']]);
+  assert.deepEqual(snap.partial, []);
+  assert.deepEqual(calls.deep, [['L1']], 'the record\'s own notes are read too: a handled note left there before the case was linked still counts');
+  await NA.refresh();
+  // someone assigned to the case sees it; someone else does not
+  const prevVis = process.env.CASE_VISIBILITY;
+  process.env.CASE_VISIBILITY = 'assigned';
+  try {
+    assert.equal(NA.view({ userId: '1', teamIds: [], scope: 'assigned' }).entries.length, 0);
+    assert.equal(NA.view({ userId: '555', teamIds: [], scope: 'assigned' }).entries.length, 1);
+  } finally { if (prevVis === undefined) delete process.env.CASE_VISIBILITY; else process.env.CASE_VISIBILITY = prevVis; }
+  assert.deepEqual(await NA.markHandled({ key: snap.entries[0].key, viewer: { isAdmin: true, scope: 'all' }, actor: 'Admin' }), { ok: true });
+  assert.deepEqual(calls.notes.map((n) => n.itemId), ['case1', 'L1'], 'the handled note goes on the case, and a copy on the client record');
+  assert.equal(calls.notes[1].body, calls.notes[0].body);
+  caseUpdates = [{ id: 'h', created_at: new Date(NOW - H).toISOString(), text_body: calls.notes[0].body.replace(/<[^>]+>/g, '') }];
+  snap = await NA.buildSnapshot();
+  assert.deepEqual([snap.entries.length, snap.handledCount], [0, 1]);
+
+  // 2. no case row: admins / see-everything viewers only; the note goes on the client record and is read back from it
+  NA._resetForTests();
+  const deep = new Map();
+  const calls2 = harness({ items: () => [], leads: () => [leadRow({ id: 'L9' })], deep });
+  snap = await NA.refresh();
+  assert.equal(snap.entries.length, 1);
+  assert.deepEqual(calls2.deep, [['L9']], 'only the listed record\'s notes are read');
+  assert.equal(NA.view({ userId: '1', teamIds: [], scope: 'assigned' }).entries.length, 0);
+  assert.equal(NA.view({ isAdmin: true, scope: 'all' }).entries.length, 1);
+  await assert.rejects(NA.markHandled({ key: snap.entries[0].key, viewer: { userId: '1', teamIds: [], scope: 'assigned' }, actor: 'x' }), (e) => e.status === 404);
+  assert.deepEqual(await NA.markHandled({ key: snap.entries[0].key, viewer: { isAdmin: true, scope: 'all' }, actor: 'Admin' }), { ok: true });
+  assert.equal(calls2.notes[0].itemId, 'L9');
+  assert.equal(NA.view({ isAdmin: true, scope: 'all' }).entries.length, 0, 'off the list at once');
+  deep.set('L9', [{ id: 'h', created_at: new Date(NOW - H).toISOString(), text_body: calls2.notes[0].body.replace(/<[^>]+>/g, '') }]);
+  snap = await NA.buildSnapshot();
+  assert.deepEqual([snap.entries.length, snap.handledCount], [0, 1]);
+
+  // 3. the lead list cannot be read: the rest of the check still runs, and the page says what was not checked
+  harness({ items: () => [item({ id: 'a', ref: 'R-A' })], checklist: { 'R-A': false }, leads: () => { throw new Error('the Lead Board could not be read'); } });
+  snap = await NA.buildSnapshot();
+  assert.deepEqual(snap.entries.map((e) => e.kind), ['no-checklist']);
+  assert.match(snap.partial.join(' '), /^The client records could not be checked for a payment without a signed date \(the Lead Board could not be read\)\.$/);
+
+  // 4. the record's notes cannot be read: the item shows, with a word about it
+  harness({ items: () => [], leads: () => [leadRow({ id: 'L9' })], deepFail: ['L9'] });
+  snap = await NA.buildSnapshot();
+  assert.equal(snap.entries.length, 1);
+  assert.match(snap.partial.join(' '), /Notes on 1 client record could not be read/);
+});
+
+test('PAID-NOT-SIGNED: Mark handled survives the item moving between "client record only" and "on a case"', async () => {
+  const handledText = (body) => [{ id: 'h', created_at: new Date(NOW - H).toISOString(), text_body: body.replace(/<[^>]+>/g, '') }];
+  const admin = { isAdmin: true, scope: 'all' };
+
+  // 1. handled while it had no case (note on the record) → a case is linked later: still handled
+  NA._resetForTests();
+  const deep = new Map();
+  let calls = harness({ items: () => [], leads: () => [leadRow({ id: 'L7' })], deep });
+  let snap = await NA.refresh();
+  const key = snap.entries[0].key;
+  await NA.markHandled({ key, viewer: admin, actor: 'Admin' });
+  deep.set('L7', handledText(calls.notes[0].body));
+  NA._resetForTests();
+  calls = harness({ items: () => [item({ id: 'case7', ref: 'R-7', stage: 'Internal Review' })], leads: () => [leadRow({ id: 'L7', clientMasterItemId: 'case7' })], deep });
+  assert.equal(pns(NA.detect({ cases: [parse(item({ id: 'case7', ref: 'R-7' }))], leads: [leadRow({ id: 'L7', clientMasterItemId: 'case7' })], now: NOW }))[0].key, key, 'the same item');
+  snap = await NA.buildSnapshot();
+  assert.deepEqual([snap.entries.length, snap.handledCount], [0, 1]);
+
+  // 2. handled on the case → the case row leaves the Cases board: the copy on the record keeps it handled
+  NA._resetForTests();
+  const deep2 = new Map();
+  calls = harness({ items: () => [item({ id: 'case8', ref: 'R-8', stage: 'Internal Review' })], leads: () => [leadRow({ id: 'L8', clientMasterItemId: 'case8' })], deep: deep2 });
+  snap = await NA.refresh();
+  await NA.markHandled({ key: snap.entries[0].key, viewer: admin, actor: 'Admin' });
+  deep2.set('L8', handledText(calls.notes[1].body));
+  NA._resetForTests();
+  harness({ items: () => [], leads: () => [leadRow({ id: 'L8', clientMasterItemId: 'case8' })], deep: deep2 });
+  snap = await NA.buildSnapshot();
+  assert.deepEqual([snap.entries.length, snap.handledCount], [0, 1]);
+
+  // 3. the copy on the record failed: the note on the moved case row is still read
+  NA._resetForTests();
+  const deep3 = new Map([['case9', handledText(`Marked as handled. Ref ${pns(runLeads([leadRow({ id: 'L9', clientMasterItemId: 'case9' })]))[0].key}`)]]);
+  calls = harness({ items: () => [], leads: () => [leadRow({ id: 'L9', clientMasterItemId: 'case9' })], deep: deep3 });
+  snap = await NA.buildSnapshot();
+  assert.deepEqual(calls.deep, [['L9'], ['case9']]);
+  assert.deepEqual([snap.entries.length, snap.handledCount], [0, 1]);
+
+  // 4. the copy to the record cannot be written: the case note still counts, Mark handled does not fail
+  NA._resetForTests();
+  calls = harness({ items: () => [item({ id: 'caseA', ref: 'R-A', stage: 'Internal Review' })], leads: () => [leadRow({ id: 'LA', clientMasterItemId: 'caseA' })] });
+  NA.io.postNote = async (itemId, body) => { if (itemId === 'LA') throw new Error('Monday 500'); calls.notes.push({ itemId, body }); };
+  snap = await NA.refresh();
+  const warn = console.warn; console.warn = () => {};
+  try { assert.deepEqual(await NA.markHandled({ key: snap.entries[0].key, viewer: admin, actor: 'Admin' }), { ok: true }); } finally { console.warn = warn; }
+  assert.deepEqual(calls.notes.map((n) => n.itemId), ['caseA']);
+  NA._resetForTests();
 });

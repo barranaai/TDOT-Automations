@@ -101,6 +101,7 @@ function bookingKind(l, now = Date.now()) {
 }
 
 function inc(o, k) { o[k] = (o[k] || 0) + 1; }
+const SOURCE_BLANK = 'Not recorded';   // a lead with no Source / Reference
 
 /** Distinct 'YYYY-MM' present across the KPI dates, newest first — drives the month picker. */
 function distinctMonths(leads, now = Date.now()) {
@@ -136,7 +137,9 @@ function computeKpis(leads = [], month = '', opts = {}) {
     consultations: { booked: 0, held: 0, upcoming: 0, abandonedHolds: 0, holdsInProgress: 0, revenue: 0, paidByStaff: 0, waived: 0, virtual: 0, inPerson: 0, phone: 0, newClients: 0, existingClients: 0, byConsultant: {}, byLeadOwner: {} },
     retainers: { sent: 0, signed: 0, paid: 0, tr: 0, pr: 0, feeValue: 0, byConsultant: {} },
     funnel: { leads: 0, booked: 0, consulted: 0, retained: 0, retainedDirect: 0, signersPaid: 0, paid: 0,
-      retainedFrom: { booked: 0, converted: 0, walkIn: 0 } },
+      retainedFrom: { booked: 0, converted: 0, walkIn: 0 },
+      // The same leads as funnel.leads, by their Source / Reference (blank = "Not recorded") — always sums to funnel.leads.
+      leadsBySource: {} },
   };
   // Walk-in/referral clients enter at the retainer stage with no booking or
   // consultation — count their retentions separately so booked→retained
@@ -144,7 +147,7 @@ function computeKpis(leads = [], month = '', opts = {}) {
   // Classified by the EXPLICIT tag (createDirectClient's Source Channel), never
   // by missing booking data — inference would silently reclassify historical
   // leads whose booking fields simply weren't stamped.
-  const isDirect = (l) => require('../utils/directClient').isDirectClient(l);   // the marker column, or the old "Direct Retainer" source
+  const { isDirectClient: isDirect, shownSource } = require('../utils/directClient');   // the marker column, or the old "Direct Retainer" source
   for (const l of leads) {
     // A direct consultation (step 2): its kind — 'New' / 'Follow-up' / 'Existing client', or ''
     // (not one, or no kind readable). Only Follow-up and Existing client stay out of the funnel.
@@ -153,7 +156,12 @@ function computeKpis(leads = [], month = '', opts = {}) {
     // Direct clients never enter the booking funnel — they'd deflate the
     // booked-from-leads rate. totalLeads still counts them.
     // A lead CONVERTED to a direct retainer was a lead first (Faran 2026-10-15): it still counts.
-    if (inM(l.createdAt) && inFunnel && !(isDirect(l) && !String(l.originalChannel || '').trim())) K.funnel.leads++;
+    if (inM(l.createdAt) && inFunnel && !(isDirect(l) && !String(l.originalChannel || '').trim())) {
+      K.funnel.leads++;
+      // The old "Direct Retainer" marker in Source / Reference is not a source: a lead converted before
+      // 2026-11-04 keeps its real one in Original Channel (review 2026-11-10).
+      inc(K.funnel.leadsBySource, shownSource(l) || String(l.originalChannel || '').trim() || SOURCE_BLANK);
+    }
     const ps = consultPayment.paidState(l);
     const bk = bookingKind(l, nowMs);
     if (inM(l.bookedSlot) && bk === 'abandoned') K.consultations.abandonedHolds++;
@@ -223,6 +231,67 @@ function computeKpis(leads = [], month = '', opts = {}) {
   return K;
 }
 
+/** The `count` calendar months ending at the Toronto month of `now`, oldest first: ['YYYY-MM', …]. Never a future month. */
+function lastMonths(count = 12, now = Date.now()) {
+  const cur = nowWall(now).slice(0, 7);
+  let y = Number(cur.slice(0, 4)), m = Number(cur.slice(5, 7));
+  const n = Math.max(1, Math.min(60, Math.floor(Number(count)) || 12));
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.unshift(`${y}-${String(m).padStart(2, '0')}`);
+    m--; if (m === 0) { m = 12; y--; }
+  }
+  return out;
+}
+
+/** One month's chart numbers, READ from a computeKpis bundle — the only place the chart's numbers are picked. */
+function trendPoint(K) {
+  return {
+    month: K.month,
+    leads: K.funnel.leads,
+    booked: K.funnel.booked,                 // confirmed bookings only (the funnel's "Booked")
+    consulted: K.funnel.consulted,           // consultations that have happened
+    retained: K.funnel.retained,             // every signed retainer
+    retainedFrom: { ...K.funnel.retainedFrom },   // booked consultation / converted lead / walk-in
+    paidThisMonth: K.funnel.paid,
+    abandonedHolds: K.consultations.abandonedHolds,
+    consultationsBooked: K.consultations.booked,   // every confirmed consultation (follow-ups too) — the "Consultations booked" card
+    consultationsHeld: K.consultations.held,
+  };
+}
+
+/**
+ * The reporting charts' data. PURE — every number comes out of computeKpis for that month
+ * (one set of counting rules: a chart can never disagree with the cards).
+ *   trend:     one point per calendar month for the last `months` (default 12) Toronto months,
+ *              oldest first, ending at the month of `now` — never a future month.
+ *   breakdown: for `month` ('YYYY-MM'; default the current month; a future or unreadable one
+ *              falls back to the current month): leads by source, consultations by consultant,
+ *              retainers signed by consultant, TR vs PR.
+ */
+function computeTrend(leads = [], opts = {}) {
+  const now = opts.now == null ? Date.now() : opts.now;
+  const list = lastMonths(opts.months == null ? 12 : opts.months, now);
+  const cur = list[list.length - 1];
+  const byMonth = new Map(list.map((mk) => [mk, computeKpis(leads, mk, { now })]));
+  let sel = /^\d{4}-\d{2}$/.test(String(opts.month || '')) ? String(opts.month) : cur;
+  if (sel > cur) sel = cur;
+  const S = byMonth.get(sel) || computeKpis(leads, sel, { now });
+  const signed = S.retainers.signed;
+  return {
+    months: list,
+    trend: list.map((mk) => trendPoint(byMonth.get(mk))),
+    breakdown: {
+      month: sel,
+      leads: S.funnel.leads,
+      leadsBySource: { ...S.funnel.leadsBySource },
+      consultationsByConsultant: { ...S.consultations.byConsultant },
+      retainersSignedByConsultant: { ...S.retainers.byConsultant },
+      trPr: { tr: S.retainers.tr, pr: S.retainers.pr, unclassified: Math.max(0, signed - S.retainers.tr - S.retainers.pr) },
+    },
+  };
+}
+
 // The shared Lead Board snapshot (leadSnapshot): one cached copy for every list
 // page and the KPIs, refreshed in the background — the KPIs no longer page the
 // whole board on their own.
@@ -235,4 +304,10 @@ async function getKpis(month = '') {
   return { ...computeKpis(leads, month, { now }), months: distinctMonths(leads, now) };
 }
 
-module.exports = { getKpis, computeKpis, distinctMonths, monthKey, trPrOf, bookingKind };
+/** The charts' data from the SAME shared snapshot as getKpis — no board read of its own, and never Square. */
+async function getTrend(month = '', months = 12) {
+  const leads = await loadLeads();
+  return computeTrend(leads, { month, months, now: Date.now() });
+}
+
+module.exports = { getKpis, getTrend, computeKpis, computeTrend, trendPoint, lastMonths, distinctMonths, monthKey, trPrOf, bookingKind, SOURCE_BLANK };

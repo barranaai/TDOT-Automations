@@ -1212,7 +1212,13 @@ const _optEsc = (v) => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').
 const STAFF_OPTS = '<option value="">—</option>' + require('../../config/portalStaff').staffRoster().map((n) => `<option value="${_optEsc(n)}">${_optEsc(n)}</option>`).join('');
 const COUNTRY_OPTS = '<option value="">— choose —</option>' + require('../../config/countries').COUNTRIES.map((n) => `<option value="${_optEsc(n)}">${_optEsc(n)}</option>`).join('');
 
+/* The small "Reporting" link beside the page title on the Leads, Consultations and Retainers pages (Faran 2026-11-10):
+   the charts and monthly figures live on the Summary page only — this opens it at the Reporting section.
+   One constant, inline styles: the same link, in the same place, on every page. */
+const REPORTING_LINK_HTML = '<a class="rp-link" id="rp-link" href="/admin/dashboard/summary#reporting" title="Monthly figures and charts — opens the Summary page at Reporting" style="display:inline-flex;align-items:center;gap:5px;padding:7px 11px;border:1px solid #e2e8f0;border-radius:9px;background:#fff;color:#1e3a5f;font-size:12.5px;font-weight:600;text-decoration:none;white-space:nowrap">📊 Reporting</a>';
+
 module.exports = {
+  REPORTING_LINK_HTML,
   STAFF_OPTS, COUNTRY_OPTS,
   DIALOG_UI_CSS, DIALOG_UI_JS,
   BLACKLIST_UI_CSS, BLACKLIST_UI_JS,

@@ -11,7 +11,7 @@
 
 const express = require('express');
 const router  = express.Router();
-const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS, DIALOG_UI_JS } = require('./adminShared');
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS, DIALOG_UI_JS, REPORTING_LINK_HTML } = require('./adminShared');
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { OUTCOME_LABELS, REMARK_PRESETS, RETAINER_TABS, RETAINED_TAB } = require('../services/consultantPortalService');
@@ -745,7 +745,7 @@ ${buildNavHeader('consultations')}
   <div id="content">
     <div class="page-top">
       <h1 class="page-h" style="margin:0">Consultations</h1>
-      <span class="top-r"><span class="age" id="snap-age"></span>${DQ_BUTTON_HTML}</span>
+      <span class="top-r"><span class="age" id="snap-age"></span>${REPORTING_LINK_HTML}${DQ_BUTTON_HTML}</span>
     </div>
     ${DQ_DONE_HTML}
     <p class="page-sub">Booked consultations, by day. Once an outcome is set, the client moves to <a href="/admin/retainers">Retainers &amp; follow-ups</a>.</p>
@@ -829,7 +829,7 @@ ${buildNavHeader('retainers')}
   <div id="content">
     <div class="page-top">
       <h1 class="page-h" style="margin:0">Retainers &amp; follow-ups <span id="r-count" class="cnt" aria-live="polite"></span></h1>
-      <button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button>
+      <span style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">${REPORTING_LINK_HTML}<button class="btn-direct" id="btn-direct-client" type="button" title="Walk-in / referral entering at the retainer stage — no booking or consultation">＋ Direct retainer client</button></span>
     </div>
     <p class="page-sub">What the team does after a consultation — <b>Retain</b>: send the retainer · <b>Follow-Up</b>: call the client back (not retained) · <b>Newsletter</b> · <b>Not Wanted</b> — and direct retainer clients. A client shows here as soon as an outcome is set for their consultation; once retained (signed and paid) they move to the <b>Retained</b> tab, and the case is on the Client Master page. <b>All</b> = everyone still being worked (not Retained). <span class="age" id="snap-age"></span></p>
     <div class="lt-tabs" id="r-quick" role="tablist" aria-label="Retainers &amp; follow-ups by outcome"></div>

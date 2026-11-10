@@ -9,6 +9,8 @@
  *   - a case number on two cases, or no case number;
  *   - a leftover test folder carrying the case's number, or two folders for one case;
  *   - a staff note saying the payment came in while Payment Status is not "Paid";
+ *   - a client record (Lead Board) with a Retainer Paid date but no Retainer Signed
+ *     date (2026-11-10) — read from the shared lead list, never its own board read;
  *   - paid, but no document checklist (Sub Type needed, set-up failed, onboarding
  *     on hold, or simply never started);
  *   - the app's own warning notes that nothing has answered yet (intake email
@@ -101,6 +103,18 @@ const GRACE_NEW_CASE_MS = 30 * 60 * 1000;        // a brand-new case is still be
 const GRACE_NO_TYPE_MS = 2 * 24 * 3600 * 1000;   // a case without a type yet, before it counts
 const GRACE_SETUP_MS = 2 * 3600 * 1000;          // paid just now: the checklist is being built
 const GRACE_PAID_DAY_MS = 24 * 3600 * 1000;      // the payment date column holds a DAY (read as its midday), not a time
+// A walk-in often pays at the desk before signing, and a part-payment can land first (the app
+// then holds the case start until the signature is in): that in-between is normal for a couple
+// of days. Counted in WORKING days (Mon–Fri) on the Toronto calendar, so a Friday payment with a
+// Monday signing is never listed over the weekend or before the office opens (review 2026-11-10):
+// the item appears on the morning after two full working days have passed since the paid day.
+const PAID_UNSIGNED_WORKING_DAYS = 2;
+/** The last day ('YYYY-MM-DD') a paid-but-unsigned record is still left alone, from its paid day. PURE. */
+function paidUnsignedGraceEnd(paidDay) {
+  let d = Date.parse(`${paidDay}T12:00:00Z`), left = PAID_UNSIGNED_WORKING_DAYS;
+  while (left > 0) { d += 24 * 3600 * 1000; const wd = new Date(d).getUTCDay(); if (wd !== 0 && wd !== 6) left--; }
+  return new Date(d).toISOString().slice(0, 10);
+}
 const GRACE_RETRY_MS = 10 * 60 * 1000;           // the sponsor send retries by itself in ~90 s
 const SAME_RUN_MS = 5 * 60 * 1000;               // notes this close after a warning are from the same checklist run
 
@@ -113,6 +127,7 @@ const KINDS = {
   'folder-test':   { order: 20, severity: 'high',   label: 'A leftover test folder has this case number' },
   'payment-noted': { order: 30, severity: 'high',   label: 'Payment noted, but not marked Paid' },
   'balance-owed':  { order: 31, severity: 'high',   label: 'Balance owed before submission' },
+  'paid-not-signed': { order: 32, severity: 'high', label: 'Paid, but no signed date on the client\'s record' },   // a Lead Board row (2026-11-10)
   'subtype':       { order: 40, severity: 'high',   label: 'Case Sub Type needed for the checklist' },
   'no-checklist':  { order: 41, severity: 'high',   label: 'Paid, but no document checklist' },
   'not-started':   { order: 42, severity: 'high',   label: 'Signed and paid, but onboarding did not start' },
@@ -301,7 +316,7 @@ function needsSecondParentCheck(c) {
   return !!c.ref && !isTestCase(c) && !isClosed(c) && isPaid(c) && !BEFORE_CHECKLIST.includes(c.stage) && isSuperVisa(c.caseType) && TWO_PEOPLE_RE.test(String(c.name || ''));
 }
 
-function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), checklistFamily = new Map(), manifestFamily = new Map(), balances = new Map(), templateProblems = [], now }) {
+function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), checklistFamily = new Map(), manifestFamily = new Map(), balances = new Map(), templateProblems = [], leads = [], now }) {
   const out = [];
   const live = cases.filter((c) => !isTestCase(c));
   const add = (kind, rowsIn, fingerprint, { since = 0, why, todo }) => {
@@ -606,6 +621,52 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
         why: `${blank ? blank.why : 'Deadline not recorded —'} ${blank ? 'The' : 'the'} automatic document reminder cannot run for this client (${pctOf(c.docUploaded)} % of the documents uploaded).`,
         todo: blank ? `${blank.todo} If the client is being chased by hand, mark this handled.`
           : 'Open the client\'s record (Retainers → the client) and set the Deadline box (a real deadline, or an imaginary one with a promised submission date); it lands on the case row too. If the client is being chased by hand, mark this handled.',
+      });
+    }
+  }
+
+  // ── 9b. Paid, but no signed date on the client's record (2026-11-10) ──────
+  // The Lead Board row says the retainer was paid, and has no Retainer Signed date.
+  // Everything keyed on "signed" then misses this client: the reports do not count
+  // them as retained, "Retained" is never set, and the app holds the case's automatic
+  // start (paymentService defers it; caseGateService: "missing: client signature").
+  // The two rows that started this were signed on paper and marked Paid on the case
+  // by hand — the signed date was typed on the Cases board, never on the client's record.
+  // Listed on the client's case row when it has one (the case link, its assignees, the
+  // "handled" note there); otherwise an item about the client record alone (leadId).
+  const caseById = new Map(cases.map((c) => [c.id, c]));
+  for (const lead of leads || []) {
+    if (!lead) continue;
+    const paidDay = s(lead.retainerPaid).slice(0, 10);
+    if (!isDayText(paidDay) || s(lead.retainerSigned)) continue;
+    if (s(lead.caseDeleted)) continue;                                   // the case was deleted and the record kept: nothing to start or count
+    const name = s(lead.fullName || lead.name);
+    if (/\btest client\b|\be2e\b/i.test(name)) continue;
+    const paidAt = tms(`${paidDay}T12:00:00Z`);
+    if (!paidAt || torontoDayOf(now) <= paidUnsignedGraceEnd(paidDay)) continue;   // paid first, signing in the next two working days: normal
+    const c = caseById.get(s(lead.clientMasterItemId)) || null;
+    if (c && isTestCase(c)) continue;
+    const sent = isDayText(s(lead.retainerSent).slice(0, 10)) ? tms(`${s(lead.retainerSent).slice(0, 10)}T12:00:00Z`) : 0;
+    const why = `The client's record has a Retainer Paid date (${dateWord(paidAt)}) but no Retainer Signed date${sent ? ` — the agreement was sent on ${dateWord(sent)}` : ''}. `
+      + 'Until the signed date is there, the client is not counted as retained in the reports, and their case may not have started (the welcome email and the document checklist wait for the signature).'
+      + (c ? '' : (s(lead.clientMasterItemId) ? ' The case linked to this record was not found among the live cases.' : ' No case is linked to this record.'));
+    const todo = `Check the signed agreement. If the client has signed (on paper, or a scanned copy by email): open the client's record (Retainers → ${name || 'the client'}) and press "Mark retainer signed" — or set the Retainer Signed date on the client's row on the Lead Board in Monday. `
+      + 'A case still waiting at Document Collection Started then starts by itself; a case already moved on by hand is not restarted. '
+      + (sent
+        ? 'If the agreement was never signed, use "Void & re-issue" on the same page to send a fresh one. '
+        : 'The app has no record of the agreement being sent. If the client has not signed one at all, send it from the retainer panel on the same page (set the fee, save the plan, then "Retain & send agreement"). ')
+      + 'A signed date typed only on the Cases board does not count — it has to be on the client\'s record.';
+    const fingerprint = `${s(lead.id)}|${paidDay}`;
+    const link = `/admin/consultation/${encodeURIComponent(s(lead.id))}?from=retainers`;
+    if (c) {
+      add('paid-not-signed', c, fingerprint, { since: paidAt, why, todo });
+      Object.assign(out[out.length - 1], { leadId: s(lead.id), link });
+    } else {
+      out.push({
+        key: keyOf(`paid-not-signed|${fingerprint}`), kind: 'paid-not-signed',
+        itemIds: [], caseRef: '', client: name, stage: '', payment: '', manager: '', rows: [],
+        since: iso(paidAt), why, todo, leadId: s(lead.id), link,
+        linkedCaseId: s(lead.clientMasterItemId),   // a case that is not among the live cases (moved off the board): a handled note may still be on it
       });
     }
   }
@@ -981,6 +1042,8 @@ const io = {
     return ((d && d.items_page_by_column_values && d.items_page_by_column_values.items) || []).length > 0;
   },
   listRootFolders: () => require('./oneDriveService').listCaseFoldersInRoot(),
+  /** The client records (Lead Board) — the shared, cached list the pages use (leadSnapshot); never a board read of its own. */
+  leads: () => require('./leadSnapshot').leads(),
   /** The Reminder Templates board's problems: [{ row, reason, board }] — board: true = the board itself (not found / unreadable / no Subject or Body column), row = '' then. No read at all when the board env is unset; otherwise the templates' own cached load (half an hour; a few minutes after a read failure). */
   async reminderTemplateProblems() {
     if (!s(process.env.MONDAY_REMINDER_TEMPLATES_BOARD_ID)) return [];
@@ -1089,7 +1152,12 @@ async function buildSnapshot() {
   try { templateProblems = await io.reminderTemplateProblems(); }
   catch (err) { partial.push(`The Reminder Templates board could not be checked (${oneLine(err.message, 120)}).`); }
 
-  const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, family, checklistFamily, manifestFamily, balances, templateProblems, now: io.now() });
+  // The client records (the shared lead list): paid, but no signed date.
+  let leads = [];
+  try { leads = (await io.leads()) || []; }
+  catch (err) { partial.push(`The client records could not be checked for a payment without a signed date (${oneLine(err.message, 120)}).`); }
+
+  const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, family, checklistFamily, manifestFamily, balances, templateProblems, leads, now: io.now() });
 
   // "Handled" notes: from the notes read, plus a deeper read for an item on a
   // case whose notes were not read far back yet (an older handled note must count).
@@ -1102,6 +1170,22 @@ async function buildSnapshot() {
     const { notes: more, failed } = await io.readDeepNotes(deep);
     for (const [id, ups] of more) { deepFailed.delete(id); for (const k of handledKeys(caseNotes(ups))) handled.add(k); }
     for (const id of failed) deepFailed.add(id);
+  }
+  // An item about a client record: its "handled" note is on the record itself — whether or not the
+  // record has a case row today (the key is the same either way, so a note left while it had no case
+  // must still count once a case is linked, and the other way round — review 2026-11-10). A record
+  // whose linked case is not among the live cases is read there too (handled on the case, case moved off the board).
+  const stillOpen = entries.filter((e) => e.leadId && !handled.has(e.key));
+  const leadOnly = [...new Set(stillOpen.map((e) => e.leadId))];
+  const movedCases = [...new Set(stillOpen.map((e) => (!e.rows.length && e.linkedCaseId) || '').filter(Boolean))];
+  if (leadOnly.length) {
+    const { notes: more, failed } = await io.readDeepNotes(leadOnly);
+    for (const [, ups] of more) for (const k of handledKeys(caseNotes(ups))) handled.add(k);
+    if (movedCases.length) {
+      // best-effort: the case may be deleted (nothing comes back) — never a warning of its own
+      try { const r = await io.readDeepNotes(movedCases); for (const [, ups] of r.notes) for (const k of handledKeys(caseNotes(ups))) handled.add(k); } catch (_) { /* the record's own notes were read */ }
+    }
+    if (failed.length) partial.push(`Notes on ${failed.length} client record${failed.length === 1 ? '' : 's'} could not be read, so an item marked handled may show again.`);
   }
   const nf = deepFailed.size;
   if (nf) partial.push(`Older notes on ${nf} case${nf === 1 ? '' : 's'} could not be read, so an older warning may be missing, or an item marked handled long ago may show again.`);
@@ -1251,15 +1335,23 @@ async function markHandled({ key, viewer, actor }) {
   }
   const k = s(key);
   const entry = _snap.entries.find((e) => e.key === k);
-  if (entry && !entry.rows.length) throw fail(409, 'This item is about no case, so there is nowhere to note it. It leaves the list by itself once the row on the Reminder Templates board is fixed.');
+  // An item about a client record with no case row: the note goes on the client's record (those who see every case).
+  const onLead = !!(entry && !entry.rows.length && entry.leadId);
+  if (entry && !entry.rows.length && !onLead) throw fail(409, 'This item is about no case, so there is nowhere to note it. It leaves the list by itself once the row on the Reminder Templates board is fixed.');
   const rows = entry ? visibleRows(entry, viewer) : [];
-  if (!rows.length) throw fail(404, 'This item is no longer on the list. Press Check now to see the current list.');
+  if (onLead ? !(viewer && (viewer.isAdmin || viewer.scope === 'all')) : !rows.length) throw fail(404, 'This item is no longer on the list. Press Check now to see the current list.');
   if (_handledHere.has(k)) return { ok: true, already: true };
   if (_marking.has(k)) throw fail(409, 'Someone is marking this item right now.');
   _marking.add(k);
   try {
     // On a case this viewer may see (the note names only that case's item).
-    await io.postNote(rows[0].id, handledNoteBody(entry, s(actor) || 'staff'));
+    await io.postNote(onLead ? entry.leadId : rows[0].id, handledNoteBody(entry, s(actor) || 'staff'));
+    // An item about a client record that is on a case: the same note on the record too, so it stays
+    // handled if the case is later unlinked, moved off the board or deleted. Best-effort — the case note is the record.
+    if (!onLead && entry.leadId) {
+      try { await io.postNote(entry.leadId, handledNoteBody(entry, s(actor) || 'staff')); }
+      catch (err) { console.warn(`[NeedsAttention] handled note not copied to the client record ${entry.leadId}: ${err.message}`); }
+    }
     _handledHere.set(k, io.now());
     return { ok: true };
   } finally {
@@ -1281,5 +1373,5 @@ module.exports = {
   refresh, view, requestRefresh, markHandled, isTorontoHour,
   detect, parseCase, caseNotes, newestPaymentNote, heldFor, handledKeys, handledNoteBody,   // pure
   refsNeedingChecklist, refsNeedingWorkFolders, buildSnapshot,
-  io, KINDS, NOTE, COL, CLOSED_STAGES, BEFORE_DOCS, NOT_CASE_GROUPS, DEADLINE_SINCE, _resetForTests,
+  io, KINDS, NOTE, COL, CLOSED_STAGES, BEFORE_DOCS, NOT_CASE_GROUPS, DEADLINE_SINCE, PAID_UNSIGNED_WORKING_DAYS, paidUnsignedGraceEnd, _resetForTests,
 };

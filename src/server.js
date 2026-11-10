@@ -329,6 +329,17 @@ app.get('/api/kpis', async (req, res) => {
   }
 });
 
+// The reporting charts (Summary → Reporting): the last 12 months + one month's breakdowns. Same gate as
+// /api/kpis (the /api admin key), same shared lead snapshot — no board read per request, never Square.
+app.get('/api/kpis/trend', async (req, res) => {
+  try {
+    const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : '';
+    res.json(await require('./services/kpiService').getTrend(month));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Every admin page pings this on load (the status pill): one Monday call per
 // minute is plenty — a page view must not add a round trip to Monday.
 let _mondayTestCache = { at: 0, body: null };

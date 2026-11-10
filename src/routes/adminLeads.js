@@ -19,7 +19,7 @@ const { deadlineBoxHtml, DEADLINE_BOX_JS, DEADLINE_BOX_CSS } = require('./deadli
 const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const router  = express.Router();
-const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS, STAFF_OPTS, COUNTRY_OPTS, DIALOG_UI_JS } = require('./adminShared');
+const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS, STAFF_OPTS, COUNTRY_OPTS, DIALOG_UI_JS, REPORTING_LINK_HTML } = require('./adminShared');
 
 // ─── Inline icon set (same conventions as adminConsultation.js) ───────────────
 const _svg = (p) => `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex:none;vertical-align:-.15em">${p}</svg>`;
@@ -100,7 +100,7 @@ ${buildNavHeader('leads')}
   <div id="content">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <h1 class="page-h" style="margin-bottom:0">Leads</h1>
-      <button class="btn primary" id="btn-add-lead" type="button" title="Phone-in / walk-in caller — add them as a lead with the basics; send the booking invite from their page">＋ Add lead</button>
+      <span style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">${REPORTING_LINK_HTML}<button class="btn primary" id="btn-add-lead" type="button" title="Phone-in / walk-in caller — add them as a lead with the basics; send the booking invite from their page">＋ Add lead</button></span>
     </div>
     <p class="page-sub">Intake submissions awaiting a consultation booking — newest first, in tabs by how far the booking invite has gone. Once a consultation is booked, the lead moves to Consultations.</p>
 

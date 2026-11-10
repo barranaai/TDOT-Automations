@@ -88,6 +88,37 @@ const SUMMARY_BODY_HTML = `
     </div>
     <div id="kpi-body" aria-live="polite"><div class="rp-muted">Loading the figures…</div></div>
 
+    <!-- ── Reporting charts (2026-11-10). Top row: always the last 12 months. Bottom row: follows the Period box. ── -->
+    <div class="rp-charts" id="rp-charts">
+      <div class="chart-row chart-row-2" style="margin-bottom:18px">
+        <div class="chart-card">
+          <div class="chart-title">Month by month — last 12 months</div>
+          <div class="rp-chart-wrap" style="height:290px"><canvas id="chart-rp-trend" role="img" aria-label="Leads, booked, consulted, retained and paid this month, month by month"></canvas><div class="rp-empty" id="chart-rp-trend-empty">Loading the chart…</div></div>
+          <div class="rp-chart-note">Leads, Booked, Consulted and Retained are the same numbers as the row above for each month. Paid this month = retainer payments received in that month: the same number as the "Paid this month" card. It is not the "Paid" step in the row above, which counts how many of the month's signers have paid.</div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Retained — where they came from</div>
+          <div class="rp-chart-wrap" style="height:290px"><canvas id="chart-rp-retained" role="img" aria-label="Retained clients each month, by where they came from"></canvas><div class="rp-empty" id="chart-rp-retained-empty">Loading the chart…</div></div>
+          <div class="rp-chart-note">Each bar is one month's signed retainers: from a booked consultation, from a lead turned into a direct retainer, or a walk-in.</div>
+        </div>
+      </div>
+      <div class="rp-chart-note" style="margin:0 0 10px">The three charts below follow the Period box above. The two charts above always show the last 12 months.</div>
+      <div class="chart-row chart-row-3" style="margin-bottom:28px">
+        <div class="chart-card">
+          <div class="chart-title"><span>Leads by source</span><span class="rp-cm" data-rp-period></span></div>
+          <div class="rp-chart-wrap" style="height:320px"><canvas id="chart-rp-source" role="img" aria-label="Leads by source"></canvas><div class="rp-empty" id="chart-rp-source-empty">Loading the chart…</div></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title"><span>Consultations by consultant</span><span class="rp-cm" data-rp-period></span></div>
+          <div class="rp-chart-wrap" style="height:320px"><canvas id="chart-rp-consultant" role="img" aria-label="Consultations booked, by consultant"></canvas><div class="rp-empty" id="chart-rp-consultant-empty">Loading the chart…</div></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title"><span>Retainers signed by consultant</span><span class="rp-cm" data-rp-period></span></div>
+          <div class="rp-chart-wrap" style="height:320px"><canvas id="chart-rp-signed" role="img" aria-label="Retainers signed, by consultant"></canvas><div class="rp-empty" id="chart-rp-signed-empty">Loading the chart…</div></div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Action Required ── -->
     <div class="sec-hd">⚡ Action Required</div>
     <div class="chart-row chart-row-3" style="margin-bottom:28px">
@@ -658,6 +689,7 @@ function buildDashboardHTML(view = 'cases') {
     .chart-row-dl { grid-template-columns: 1fr 2fr; }
 
     .chart-card {
+      min-width: 0;   /* a chart inside may shrink with its column (a drawn canvas otherwise holds the column at its old width) */
       background: white;
       border-radius: 14px;
       box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
@@ -846,6 +878,11 @@ function buildDashboardHTML(view = 'cases') {
     .rp-mini .rp-row b { color:var(--navy); font-variant-numeric:tabular-nums; }
     .rp-muted { font-size:12.5px; color:#64748b; margin-bottom:28px; }
     .rp-muted a { color:#2563eb; }
+    /* Reporting charts: the height is reserved, so the page does not move while a chart loads or redraws */
+    .rp-chart-wrap { position:relative; width:100%; min-width:0; }
+    .rp-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:0 16px; font-size:12.5px; color:#64748b; background:#fff; }
+    .rp-chart-note { font-size:11.5px; color:#64748b; line-height:1.45; margin-top:10px; }
+    .rp-cm { margin-left:auto; font-size:11.5px; font-weight:600; color:#64748b; }
     .filter-sel {
       padding: 9px 12px; border: 1.5px solid #e2e8f0; border-radius: 9px;
       font-size: 13px; font-family: inherit; outline: none;
@@ -1211,7 +1248,7 @@ function loadKpis(month){
   var key = peekKey();
   var body = document.getElementById('kpi-body');
   var sel = document.getElementById('kpi-month');
-  if (!key) { body.innerHTML = '<div class="rp-muted">The monthly figures need the team key — sign in on the <a href="/admin">sign-in page</a> to see them.</div>'; if (sel) sel.disabled = true; return; }
+  if (!key) { body.innerHTML = '<div class="rp-muted">The monthly figures need the team key — sign in on the <a href="/admin">sign-in page</a> to see them.</div>'; if (sel) sel.disabled = true; rpMonthChartsFailed(); return; }
   var m = (month===undefined) ? new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto',year:'numeric',month:'2-digit'}).format(new Date()) : month;   // the Toronto month
   body.innerHTML='<div class="rp-muted">Loading the figures…</div>';
   fetch('/api/kpis'+(m?('?month='+encodeURIComponent(m)):''),{headers:{'X-Api-Key':key}})
@@ -1220,13 +1257,123 @@ function loadKpis(month){
      /* A failed read is said — never drawn as all-zero figures (review 2026-11-05). */
      return r.json().catch(function(){ return {}; }).then(function(j){ if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; });
    })
-   .then(function(d){ fillMonths(d.months, m); renderKpis(d); })
+   .then(function(d){
+     fillMonths(d.months, m); renderKpis(d);
+     /* the charts that follow the Period box: same answer, same numbers. A chart that fails never takes the figures down with it. */
+     try { renderMonthCharts(d); } catch (e) { rpMonthChartsFailed(); }
+   })
    .catch(function(e){
      body.innerHTML='<div class="rp-muted">The figures could not be read: '+escHtml(e.message)+' — choose a period again, or reload the page.</div>';
+     rpMonthChartsFailed();
      /* the Period box stays usable: choosing again is the retry */
      if (sel && !sel.getAttribute('data-filled')) { sel.innerHTML='<option value="">All time</option>'+(m?'<option value="'+m+'" selected>'+m+'</option>':''); sel.onchange=function(){ loadKpis(sel.value); }; }
    });
 }
+
+/* ── Reporting charts (2026-11-10) ──
+   Top row (last 12 months) reads /api/kpis/trend once per page load. Bottom row is drawn from the SAME /api/kpis
+   answer as the cards, so a chart can never show a different number from the card beside it.
+   Chart is used only inside rpDraw, and only after a typeof check: figures still show if the chart library did not load. */
+var RP_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function rpMonthName(mk){ var m=/^([0-9]{4})-([0-9]{2})$/.exec(String(mk||'')); return m ? (RP_MON[Number(m[2])-1]||m[2])+' '+m[1] : 'All time'; }
+/* Show (text) or clear (no text) the message that sits over a chart's reserved space. */
+function rpNote(id, text){
+  var e=document.getElementById(id+'-empty'), c=document.getElementById(id);
+  if (e) { e.textContent=text||''; e.style.display=text?'flex':'none'; }
+  if (c) c.style.visibility=text?'hidden':'visible';
+}
+function rpDraw(id, config, summary){
+  if (_charts[id]) { _charts[id].destroy(); delete _charts[id]; }
+  var canvas=document.getElementById(id); if (!canvas) return;
+  if (typeof Chart === 'undefined') { rpNote(id, 'The chart could not be drawn — reload the page. The figures above are complete.'); return; }
+  rpNote(id, '');
+  if (summary) canvas.setAttribute('aria-label', summary);
+  _charts[id] = new Chart(canvas.getContext('2d'), config);
+}
+function rpClear(id, text){ if (_charts[id]) { _charts[id].destroy(); delete _charts[id]; } rpNote(id, text); }
+var RP_FONT = { size: 11, family: 'Inter' };
+function rpWhole(v){ return Number(v)===Math.round(v) ? v : ''; }
+function renderTrendCharts(t){
+  var pts=(t&&t.trend)||[];
+  var labels=pts.map(function(p){ return rpMonthName(p.month); });
+  var pick=function(k){ return pts.map(function(p){ return Number(p[k])||0; }); };
+  var from=function(k){ return pts.map(function(p){ return Number((p.retainedFrom||{})[k])||0; }); };
+  var sum=function(a){ return a.reduce(function(x,y){ return x+y; },0); };
+  /* colour is never the only cue: each line has its own point shape and dash, named in the legend */
+  var series=[
+    { label:'Leads',     data:pick('leads'),         color:'#3b82f6', shape:'circle',   dash:[] },
+    { label:'Booked',    data:pick('booked'),        color:'#8b5cf6', shape:'rect',     dash:[6,3] },
+    { label:'Consulted', data:pick('consulted'),     color:'#06b6d4', shape:'triangle', dash:[2,3] },
+    { label:'Retained',  data:pick('retained'),      color:'#16a34a', shape:'rectRot',  dash:[] },
+    { label:'Paid this month', data:pick('paidThisMonth'), color:'#f97316', shape:'star',     dash:[8,3,2,3] }
+  ];
+  var any=series.some(function(s){ return sum(s.data)>0; });
+  if (!pts.length || !any) rpClear('chart-rp-trend', 'Nothing to show for the last 12 months');
+  else rpDraw('chart-rp-trend', {
+    type:'line',
+    data:{ labels:labels, datasets:series.map(function(s){ return { label:s.label, data:s.data, borderColor:s.color, backgroundColor:s.color, pointStyle:s.shape, pointRadius:4, pointHoverRadius:6, borderDash:s.dash, borderWidth:2, tension:0.25, fill:false }; }) },
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:'index', intersect:false },
+      plugins:{ legend:{ position:'bottom', labels:{ font:RP_FONT, padding:12, usePointStyle:true } } },
+      scales:{ x:{ grid:{ display:false }, ticks:{ font:{ size:10, family:'Inter' }, maxRotation:35 } }, y:{ beginAtZero:true, grid:{ color:'#f0f4f8' }, ticks:{ font:{ size:10 }, callback:rpWhole } } } }
+  }, 'Month by month, last 12 months. Latest month '+(labels[labels.length-1]||'')+': '+series.map(function(s){ return s.label+' '+s.data[s.data.length-1]; }).join(', ')+'.');
+  var parts=[
+    { label:'From a booked consultation', data:from('booked'),    color:'#3b82f6' },
+    { label:'From a converted lead',      data:from('converted'), color:'#8b5cf6' },
+    { label:'Walk-in',                    data:from('walkIn'),    color:'#f97316' }
+  ];
+  if (!pts.length || !parts.some(function(s){ return sum(s.data)>0; })) rpClear('chart-rp-retained', 'Nothing to show for the last 12 months');
+  else rpDraw('chart-rp-retained', {
+    type:'bar',
+    data:{ labels:labels, datasets:parts.map(function(s){ return { label:s.label, data:s.data, backgroundColor:s.color, borderColor:'#fff', borderWidth:1, borderRadius:3 }; }) },
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:'index', intersect:false },
+      plugins:{ legend:{ position:'bottom', labels:{ font:RP_FONT, padding:12, usePointStyle:true, pointStyle:'rect' } },
+        tooltip:{ callbacks:{ footer:function(items){ var n=0; items.forEach(function(i){ n+=Number(i.raw)||0; }); return 'Retained in the month: '+n; } } } },
+      scales:{ x:{ stacked:true, grid:{ display:false }, ticks:{ font:{ size:10, family:'Inter' }, maxRotation:35 } }, y:{ stacked:true, beginAtZero:true, grid:{ color:'#f0f4f8' }, ticks:{ font:{ size:10 }, callback:rpWhole } } } }
+  }, 'Retained by where they came from, last 12 months. Latest month '+(labels[labels.length-1]||'')+': '+parts.map(function(s){ return s.label+' '+s.data[s.data.length-1]; }).join(', ')+'.');
+}
+var _rpTrendAsked=false;
+function loadTrend(){
+  if (_rpTrendAsked) return; _rpTrendAsked=true;
+  var key=peekKey();
+  var fail=function(text){ rpClear('chart-rp-trend', text); rpClear('chart-rp-retained', text); };
+  if (!key) { fail('Sign in on the sign-in page to see this chart.'); return; }
+  fetch('/api/kpis/trend',{headers:{'X-Api-Key':key}})
+   .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; }); })
+   .then(renderTrendCharts)
+   .catch(function(){ _rpTrendAsked=false; fail('This chart could not be read — reload the page to try again.'); });
+}
+/* A name → count list as rows for a bar chart: biggest first; past max rows the rest are added up as "Other". */
+function rpRows(obj, max){
+  var ks=Object.keys(obj||{}).filter(function(k){ return Number(obj[k])>0; });
+  ks.sort(function(a,b){ return (obj[b]-obj[a]) || (a<b?-1:a>b?1:0); });
+  var rows=ks.map(function(k){ return { name:k, n:Number(obj[k]) }; });
+  if (max && rows.length>max) {
+    var rest=rows.slice(max), other=0; rest.forEach(function(r){ other+=r.n; });
+    rows=rows.slice(0,max); rows.push({ name:'Other ('+rest.length+' more)', n:other });
+  }
+  return rows;
+}
+function rpBars(id, title, period, obj, color, unit, max){
+  var rows=rpRows(obj, max);
+  if (!rows.length) { rpClear(id, period==='All time' ? 'Nothing to show yet' : 'Nothing to show for this month'); return; }
+  rpDraw(id, {
+    type:'bar',
+    data:{ labels:rows.map(function(r){ return r.name; }), datasets:[{ label:unit, data:rows.map(function(r){ return r.n; }), backgroundColor:color, borderRadius:4, maxBarThickness:26 }] },
+    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label:function(c){ return ' '+c.raw+' '+unit; } } } },
+      scales:{ x:{ beginAtZero:true, grid:{ color:'#f0f4f8' }, ticks:{ font:{ size:10 }, callback:rpWhole } }, y:{ grid:{ display:false }, ticks:{ font:RP_FONT } } } }
+  }, title+', '+period+': '+rows.map(function(r){ return r.name+' '+r.n; }).join(', ')+'.');
+}
+/* The three charts that follow the Period box — from the same answer as the cards (d = /api/kpis). */
+function renderMonthCharts(d){
+  var period=rpMonthName(d && d.month);
+  var tags=document.querySelectorAll('[data-rp-period]');
+  for (var i=0;i<tags.length;i++) tags[i].textContent=period;
+  rpBars('chart-rp-source',     'Leads by source',                period, ((d&&d.funnel)||{}).leadsBySource,       '#3b82f6', 'leads', 10);
+  rpBars('chart-rp-consultant', 'Consultations by consultant',    period, ((d&&d.consultations)||{}).byConsultant, '#06b6d4', 'consultations booked', 10);
+  rpBars('chart-rp-signed',     'Retainers signed by consultant', period, ((d&&d.retainers)||{}).byConsultant,     '#16a34a', 'retainers signed', 10);
+}
+function rpMonthChartsFailed(){ ['chart-rp-source','chart-rp-consultant','chart-rp-signed'].forEach(function(id){ rpClear(id, 'This chart could not be read — choose a period again, or reload the page.'); }); }
 
 /* ── Render all ──────────────────────────────────────────────────── */
 // Each view renders ONLY its own section. This branch is load-bearing: several
@@ -2591,7 +2738,7 @@ document.addEventListener('DOMContentLoaded', function() {
   startClock();
   if (getKey()) checkApiStatus();
   loadData();
-  if (VIEW === 'summary') loadKpis();   // the monthly figures load on their own, beside the case data
+  if (VIEW === 'summary') { loadKpis(); loadTrend(); }   // the monthly figures and the 12-month charts load on their own, beside the case data
 });
 </script>
 ${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange }') + '</script>'}
