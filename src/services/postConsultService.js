@@ -22,6 +22,7 @@
 
 const { statusText } = require('../utils/mondayStatus');
 const mondayApi   = require('./mondayApi');
+const { isStaffTypedEntry } = require('./updatesService');
 const C = require('../data/newLeadsBoard.json').columns;
 
 const NUDGE_TAG = '📋 post-consult-nudge';
@@ -69,7 +70,9 @@ async function getBookedLeadsFull() {
       recordingUrl, meetingUrl,
       directConsult: dc.columnId() ? (cv[dc.columnId()]?.text || '') : '',
       consultOption: cv[C.consultOption]?.text || '',
-      updates: (it.updates || []).map((u) => u.body || ''),
+      // Staff-typed entries (Consultation notes, the Otter summary) are left out: their free text must never
+      // read as one of the system's markers below ("Consultation held", the reminder tag) — 2026-11-10.
+      updates: (it.updates || []).map((u) => u.body || '').filter((b) => !isStaffTypedEntry(b)),
     };
   });
 }
@@ -82,8 +85,9 @@ function needsNudge(lead, now = Date.now()) {
   if (now < endMs) return false;                                      // not done yet
   if (now - endMs > NUDGE_MAX_AGE_H * 3600000) return false;          // too old — don't spam history
   if (lead.outcome) return false;                                     // staff already actioned
-  if (lead.updates.some((b) => b.includes(NUDGE_TAG))) return false;  // already nudged (this cron)
-  if (lead.updates.some((b) => b.includes('Consultation held'))) return false; // Zoom webhook already did it
+  const system = (lead.updates || []).filter((b) => !isStaffTypedEntry(b));   // never the consultant's own typed notes
+  if (system.some((b) => b.includes(NUDGE_TAG))) return false;  // already nudged (this cron)
+  if (system.some((b) => b.includes('Consultation held'))) return false; // Zoom webhook already did it
   // A direct consultation about the client's current file has no outcome to set (step 2);
   // a direct row whose kind cannot be read gets no nudge either (fail closed).
   if (!require('../utils/directConsult').nudgeAllowed(lead)) return false;

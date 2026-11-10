@@ -158,6 +158,8 @@ app.get('/admin/guide/data', (req, res) => {
 app.get('/api/updates/:itemId', async (req, res) => {
   try {
     if (!/^\d+$/.test(req.params.itemId)) return res.status(400).json({ error: 'numeric item id required' });
+    // ?kind=consultNotes: only the saved "Consultation notes" entries (the box on the consultation record)
+    if (req.query.kind === 'consultNotes') return res.json({ notes: await require('./services/updatesService').getConsultNotes(req.params.itemId) });
     res.json({ updates: await require('./services/updatesService').getUpdatesForItem(req.params.itemId) });
   } catch (err) {
     console.error('[Updates] read failed:', err.message);

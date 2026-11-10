@@ -97,7 +97,10 @@ const io = {
       { ids: [String(leadId)] });
     const item = d && d.items && d.items[0];
     if (!item || (item.state && item.state !== 'active')) return null;
-    return (item.updates || []).map((u) => ({ id: s(u.id), at: Date.parse(s(u.created_at)), text: s(u.text_body) || s(u.body).replace(/<[^>]*>/g, '') }));
+    // Staff-typed consultation notes / Otter summaries are left out: free text is never one of the markers (2026-11-10).
+    const { isStaffTypedEntry } = require('./updatesService');
+    return (item.updates || []).map((u) => ({ id: s(u.id), at: Date.parse(s(u.created_at)), text: s(u.text_body) || s(u.body).replace(/<[^>]*>/g, '') }))
+      .filter((x) => !isStaffTypedEntry(x.text));
   },
   async postNote(leadId, body) {
     const d = await require('./mondayApi').query(

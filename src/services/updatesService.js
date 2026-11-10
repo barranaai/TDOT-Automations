@@ -70,6 +70,7 @@ const MAX_OTTER = 20000;
 const OTTER_HEADER = '🎙 <b>Consultation summary (Otter)</b>';
 
 async function postUpdate(itemId, { body, staffName, kind } = {}) {
+  if (kind === 'consultNotes') return postConsultNotes(itemId, { body, staffName });
   const text = String(body == null ? '' : body).trim();
   const name = String(staffName == null ? '' : staffName).trim().slice(0, 60);
   const otter = kind === 'otter';
@@ -88,4 +89,160 @@ async function postUpdate(itemId, { body, staffName, kind } = {}) {
   return { ok: true };
 }
 
-module.exports = { getUpdatesForItem, getCaseThread, postUpdate, MAX_UPDATE, MAX_OTTER };
+// ── Consultation notes (2026-11-10) ─────────────────────────────────────────
+// The consultant types notes on the consultation record; "Save notes" posts them as ONE
+// labelled update on the lead, the same way as the Otter summary (same cap, same escaping,
+// same [Name]). A later correction is a NEW entry headed "Consultation notes (updated)" —
+// decided HERE from what is already on the item, never trusted from the page.
+// Monday gives no id-based idempotency, so a repeat is caught three ways:
+//   1. a save of the same text for the same item still in flight → the second waits for the first;
+//   2. the same text saved a moment ago in this process (a Monday read can lag a new update);
+//   3. the item's updates already hold a notes entry with the same text ("cannot check → post").
+// Do NOT bracket the header ("[Notes…]" / "[Remark…]"): leadStatusService's remark reader and the
+// direct-client Notes guard both key on those.
+const MAX_CONSULT_NOTES = MAX_OTTER;
+const NOTES_LABEL = 'Consultation notes';
+const NOTES_UPDATED_LABEL = 'Consultation notes (updated)';
+// A notes entry as text: "[Name] 📝 Consultation notes\n…". Read tolerantly: Monday can hand the text back
+// with the line breaks collapsed (to a space, or to nothing), so the heading may run straight into the notes.
+const NOTES_RE = /^\s*(?:\[([^\]\n]{0,80})\]\s*)?📝[\s️]*Consultation notes( ?\(updated\))?[ \t ]*\r?\n?/;
+// Staff-typed entries (these notes, and the Otter summary): free text, so the automations that look for
+// marker phrases in a lead's updates ("Consultation held", "Booking invite emailed", …) must skip them.
+const STAFF_TYPED_RE = /^\s*(?:\[[^\]\n]{0,80}\]\s*)?(?:📝[\s️]*Consultation notes|🎙[\s️]*Consultation summary \(Otter\))/;
+const NOTES_READ_LIMIT = 100;          // Monday's ceiling for an item's updates
+const NOTES_RECENT_MS = 2 * 60 * 1000; // the same text again within this = the same save
+const NOTES_ITEM_MS = 10 * 60 * 1000;  // "this item got notes a moment ago" (covers a lagging read)
+const notesInFlight = new Map();       // item|text → promise
+const notesRecent = new Map();         // item|text → ms
+const notesItemSaved = new Map();      // item → ms
+let notesRetryMs = 1500;               // the wait before looking whether an unanswered save landed (tests set 0)
+
+const escUpdate = (s) => s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+const decodeEntities = (s) => String(s == null ? '' : s)
+  .replace(/&nbsp;/gi, ' ').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"')
+  .replace(/&#(?:39|x27);|&apos;/gi, "'").replace(/&amp;/gi, '&');
+/** An update's HTML body as plain text: <br> and block ends are line breaks, tags go, entities are decoded. */
+function htmlToText(html) {
+  return decodeEntities(String(html == null ? '' : html)
+    .replace(/<br\s*\/?>/gi, '\n').replace(/<\/(?:p|div|li|h[1-6])>/gi, '\n').replace(/<[^>]*>/g, ''));
+}
+// What two texts are compared by: entities decoded and ALL white space dropped — a line break that came back
+// as a space, or as nothing, still compares equal. (Two notes that differ only in spacing count as the same.)
+const notesKey = (s) => decodeEntities(s).replace(/[\s ﻿]+/g, '');
+
+/** PURE: is this update (text or HTML) a staff-typed consultation entry — notes or the Otter summary? */
+function isStaffTypedEntry(textOrHtml) {
+  const raw = String(textOrHtml == null ? '' : textOrHtml);
+  return STAFF_TYPED_RE.test(raw) || (raw.includes('<') && STAFF_TYPED_RE.test(htmlToText(raw)));
+}
+
+function parseNotesEntry(u) {
+  // Two readings of the same entry: the HTML body (we wrote it, so its line breaks are certain) and Monday's
+  // text_body. The body is preferred; the other is kept for the duplicate check.
+  const fromBody = u && u.body ? htmlToText(u.body) : '';
+  const fromText = String((u && u.text_body) || '');
+  const readings = [fromBody, fromText].map((raw) => { const m = raw && NOTES_RE.exec(raw); return m ? { m, body: raw.slice(m[0].length).trim() } : null; }).filter(Boolean);
+  if (!readings.length) return null;
+  const { m, body } = readings[0];
+  return {
+    id: String(u.id || ''),
+    by: (m[1] || '').trim(),
+    updated: !!m[2],
+    body,
+    at: String(u.created_at || ''),
+    _keys: readings.map((r) => notesKey(r.body)),
+  };
+}
+
+async function readNotesEntries(itemId) {
+  const d = await mondayApi.query(
+    `query($id:[ID!], $n:Int!){ items(ids:$id, limit:1){ updates(limit:$n){ id text_body body created_at } } }`,
+    { id: [String(itemId)], n: NOTES_READ_LIMIT }
+  );
+  const item = d && d.items && d.items[0];
+  return ((item && item.updates) || []).map(parseNotesEntry).filter(Boolean)
+    .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+}
+
+/** The saved consultation-notes entries on one item, newest first. */
+async function getConsultNotes(itemId) {
+  return (await readNotesEntries(itemId)).map(({ _keys, ...n }) => n);
+}
+
+// The name goes inside "[…]" on the entry, and the reader finds the entry by that shape: a square bracket
+// or a line break typed in the name would hide the saved notes from the page and from the duplicate check.
+const notesName = (v) => String(v == null ? '' : v).replace(/\[/g, '(').replace(/\]/g, ')').replace(/\s+/g, ' ').trim().slice(0, 60);
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Posts the entry ONCE per attempt (mondayApi's own retry is switched off: it re-sends a mutation Monday
+ * may already have stored). When the answer never came (timeout, dropped connection, 5xx) the record is
+ * read before anything is sent again; if it cannot be read, the save fails rather than risk a second copy.
+ */
+async function sendNotesEntry(id, html, wantKey) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`, { i: id, b: html }, 0);
+      return;
+    } catch (err) {
+      const status = err && err.response && err.response.status;
+      const refused = status === 429 || (!status && !(err && (err.code || err.request || err.isAxiosError)) && /rate|complexity/i.test(String(err && err.message)));
+      const unanswered = !refused && (status >= 500 || (!status && !!(err && (err.code || err.request || err.isAxiosError))));
+      if (attempt >= 2 || (!refused && !unanswered)) throw err;
+      await sleep(notesRetryMs * (attempt + 1));
+      if (refused) continue;   // Monday said no: nothing was stored
+      let now;
+      try { now = await readNotesEntries(id); }
+      catch (_) { throw err; }
+      if (now.some((n) => n._keys.includes(wantKey))) { console.warn('[Updates] consultation notes: the save was not answered but the entry is on the record — not sent again'); return; }
+      console.warn(`[Updates] consultation notes: save not answered and not on the record — sending again (${attempt + 1}/2)`);
+    }
+  }
+}
+
+async function postConsultNotes(itemId, { body, staffName } = {}) {
+  // Counted the way the page counts: line ends as one character, outer blanks dropped.
+  const text = String(body == null ? '' : body).replace(/\r\n?/g, '\n').trim();
+  const name = notesName(staffName);
+  const bad = (m) => { const e = new Error(m); e.badRequest = true; throw e; };
+  if (!text) bad('Type the consultation notes first.');
+  if (text.length > MAX_CONSULT_NOTES) {
+    bad(`Consultation notes are limited to ${MAX_CONSULT_NOTES.toLocaleString('en-CA')} characters — this is ${(text.length - MAX_CONSULT_NOTES).toLocaleString('en-CA')} over. Nothing was saved.`);
+  }
+  if (!/^\d+$/.test(String(itemId))) bad('Invalid item id.');
+
+  const id = String(itemId);
+  const want = notesKey(text);
+  const key = id + '|' + want;
+  const running = notesInFlight.get(key);
+  if (running) { await running; return { ok: true, already: true }; }   // the first save's failure is this one's too
+
+  const work = (async () => {
+    const now = Date.now();
+    for (const [k, t] of notesRecent) if (now - t > NOTES_RECENT_MS) notesRecent.delete(k);
+    for (const [k, t] of notesItemSaved) if (now - t > NOTES_ITEM_MS) notesItemSaved.delete(k);
+    if (notesRecent.has(key)) return { ok: true, already: true };
+
+    let earlier = null;   // null = could not check → post (a missing entry is worse than a repeated one)
+    try { earlier = await readNotesEntries(id); }
+    catch (err) { console.warn('[Updates] consultation notes: could not read earlier entries:', err.message); }
+    if (earlier && earlier.some((n) => n._keys.includes(want))) {
+      notesRecent.set(key, now);
+      return { ok: true, already: true };
+    }
+    const updated = !!(earlier && earlier.length) || notesItemSaved.has(id);
+    const header = `📝 <b>${updated ? NOTES_UPDATED_LABEL : NOTES_LABEL}</b>`;
+    const prefixed = (name ? `<b>[${escUpdate(name)}]</b> ` : '') + `${header}<br>` + escUpdate(text).replace(/\n/g, '<br>');
+    await sendNotesEntry(id, prefixed, want);
+    notesRecent.set(key, Date.now());
+    notesItemSaved.set(id, Date.now());
+    return { ok: true, updated };
+  })();
+  notesInFlight.set(key, work);
+  try { return await work; } finally { notesInFlight.delete(key); }
+}
+
+function _resetConsultNotesGuard({ retryMs } = {}) { notesInFlight.clear(); notesRecent.clear(); notesItemSaved.clear(); if (retryMs != null) notesRetryMs = retryMs; }
+
+module.exports = { getUpdatesForItem, getCaseThread, postUpdate, getConsultNotes, isStaffTypedEntry, MAX_UPDATE, MAX_OTTER, MAX_CONSULT_NOTES, _resetConsultNotesGuard };

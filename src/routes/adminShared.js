@@ -353,6 +353,30 @@ const SHARED_AUTH_JS = `
   // this computer is not taken for you. Off to the sign-in page either way: a
   // slow answer never keeps you here.
   function signOut() {
+    /* Consultation notes that were typed but not saved are kept on this device as drafts (2026-11-10). Sign Out
+       removes them (shared computers), so it ASKS first and names the clients: Cancel changes nothing at all.
+       Also asked when a notes box on this page holds text the device could not keep. */
+    var draftNames = [], draftCount = 0, boxOpen = false;
+    try {
+      for (var q = 0; q < localStorage.length; q++) {
+        var dk = localStorage.key(q);
+        if (!dk || dk.indexOf('tdot_cnotes_') !== 0) continue;
+        draftCount++;
+        try { var dv = JSON.parse(localStorage.getItem(dk) || 'null'); if (dv && typeof dv.who === 'string' && dv.who && draftNames.indexOf(dv.who) < 0) draftNames.push(dv.who); } catch (e) {}
+      }
+    } catch (e) {}
+    try { boxOpen = typeof window.tdotNotesUnsaved === 'function' && !!window.tdotNotesUnsaved(); } catch (e) {}
+    if ((draftCount || boxOpen) && typeof window.confirm === 'function') {
+      var forWho = draftNames.length ? ' for ' + draftNames.slice(0, 3).join(', ') + (draftCount > Math.min(draftNames.length, 3) ? ' and ' + (draftCount - Math.min(draftNames.length, 3)) + ' more' : '')
+        : (draftCount > 1 ? ' for ' + draftCount + ' clients' : '');
+      var ask = 'Consultation notes' + forWho + ' were typed on this device but not saved. '
+        + 'Sign Out removes them for good, so the next person at this computer cannot read them. '
+        + 'Press Cancel to stay signed in and save them first: open the client record and press Save notes. '
+        + 'Press OK to sign out and remove them.';
+      if (!window.confirm(ask)) return;
+    }
+    /* Other open tabs stop keeping notes drafts from now on (they compare this stamp). */
+    try { localStorage.setItem('tdot_signout_at', String(Date.now())); } catch (e) {}
     sessionStorage.removeItem('tdot_admin_key');
     try { localStorage.removeItem('tdot_admin_key_keep'); } catch (e) {}
     /* The lists' saved filters go too (2026-11-05): a search holds a client's name, and front-desk computers are shared.
@@ -363,6 +387,13 @@ const SHARED_AUTH_JS = `
         for (var i = sessionStorage.length - 1; i >= 0; i--) {
           var sk = sessionStorage.key(i);
           if (sk && (sk.indexOf('tdot_list_') === 0 || sk === 'tdot_leads_table_v1')) sessionStorage.removeItem(sk);
+        }
+      } catch (e) {}
+      /* Unsaved consultation-notes drafts hold client information too (2026-11-10) — the user agreed above. */
+      try {
+        for (var j = localStorage.length - 1; j >= 0; j--) {
+          var lk = localStorage.key(j);
+          if (lk && lk.indexOf('tdot_cnotes_') === 0) localStorage.removeItem(lk);
         }
       } catch (e) {}
     }

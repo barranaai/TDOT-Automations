@@ -66,6 +66,8 @@ function entry(map, itemId) {
 /** What one note says, for the status ('' kinds are ignored). */
 function classify(text) {
   const t = s(text);
+  // Staff-typed consultation notes / Otter summaries are free text: never a system marker (2026-11-10).
+  if (require('./updatesService').isStaffTypedEntry(t)) return { kind: '' };
   if (INVITE_RE.test(t)) return { kind: 'invite' };
   const BR = require('./bookingRemindersService');
   for (const n of [1, 2]) {

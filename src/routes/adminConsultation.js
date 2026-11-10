@@ -14,6 +14,7 @@ const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS, DIALOG_UI_JS, REPORTING_LINK_HTML } = require('./adminShared');
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
+const { CONSULT_NOTES_CSS, consultNotesHtml, CONSULT_NOTES_JS } = require('./consultNotesWidget');   // the Consultation notes box (2026-11-10)
 const { OUTCOME_LABELS, REMARK_PRESETS, RETAINER_TABS, RETAINED_TAB } = require('../services/consultantPortalService');
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // the walk-in form's Source / Reference (2026-11-04)
@@ -967,6 +968,7 @@ function buildDetailHTML(leadId, opts) {
   .card { background:var(--card); border-radius:var(--r); box-shadow:var(--shadow-sm); border:1px solid #eef2f7; padding:16px 18px; }
   .card-t { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:800; color:var(--navy); margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #f1f5f9; }
   ${UPDATES_WIDGET_CSS}
+  ${CONSULT_NOTES_CSS}
   .card-t svg { font-size:15px; color:var(--navy); }
   .card-t .when { margin-left:auto; font-weight:500; font-size:11px; color:var(--light); }
   .kv { display:flex; padding:6px 0; font-size:13px; border-top:1px solid #f8fafc; gap:10px; }
@@ -1075,7 +1077,7 @@ ${REMARKS_CSS}
   .dlx .al-yn { display:flex; gap:18px; font-size:13.5px; margin:2px 0; }
   .dlx .al-yn label { display:flex; gap:6px; align-items:center; cursor:pointer; }
   .dlx .al-hint { font-size:12px; color:#64748b; margin-top:4px; }
-  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }
   /* A direct consultation (step 2): the chip's tooltip, and the Change time / Retain-confirm pop-ups (dialogUi.js) */
   .chip.direct { background:#f1f5f9; color:#334155; cursor:help; }
   .dqt label.dqt-l { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:12px 0 4px; }
@@ -1108,6 +1110,10 @@ ${buildNavHeader(fromRetainers ? 'retainers' : 'consultations')}
     <div id="email-warn"></div>
 
     <div class="stepper" id="c-stepper"></div>
+
+    <!-- Consultation notes (2026-11-10): static markup above the columns, so it is first on a phone too and
+         the page's render() never rewrites the box. NOT an .actions card: disableActions() must not touch Save notes. -->
+    <div class="card cnw-card" style="margin-bottom:16px"><div class="card-t">📝 Consultation notes</div>${consultNotesHtml('cnw')}</div>
 
     <div class="cols">
       <div class="col">
@@ -1318,6 +1324,7 @@ ${buildNavHeader(fromRetainers ? 'retainers' : 'consultations')}
 var LEAD_ID=${jsLit(leadId)};
 ${DEADLINE_BOX_JS}
 ${UPDATES_WIDGET_JS}
+${CONSULT_NOTES_JS}
 var OUTCOMES=${jsLit(OUTCOME_LABELS)};
 var OUTCOME_NOT_WANTED=${jsLit(OUTCOME_NOT_WANTED)};
 var REMARKS=${jsLit(REMARK_PRESETS)};
@@ -1327,6 +1334,7 @@ ${SHARED_AUTH_JS}
 ${PAYMENT_UI_JS}
 ${BLACKLIST_UI_JS}
 tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/updates/' + encodeURIComponent(LEAD_ID), itemId: LEAD_ID });
+tdotConsultNotesMount({ prefix: 'cnw', itemId: LEAD_ID, updatesPrefix: 'updw' });
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function safeUrl(u){ u=String(u==null?'':u).trim(); return /^(https?:|mailto:)/i.test(u)?u:'#'; } // block javascript:/data: in href
 var RP_HYDRATED=false; // hydrate the retainer panel from the detail payload only once (don't clobber edits)
