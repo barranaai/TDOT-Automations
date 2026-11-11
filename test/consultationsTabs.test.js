@@ -673,7 +673,7 @@ test('getConsultationsBoard withCompleted: each consultation is in exactly one o
 test('page: four tabs over one table — each consultation under exactly one tab; the Date filter narrows Booked only; Now has its own column and filter', () => {
   const { listCore } = require('../src/routes/listFilters'), S = require('../src/routes/listSpecs');
   const q = require('../src/routes/adminConsultation').buildQueueHTML();
-  for (const s of ["bindRowClicks(tb, (tab==='done'||tab==='all')?'?from=consultations':'')", "!(st&&st.sort&&st.sort.key)", 'id="cq-tabs"', 'id="cq-month"', 'function renderMonthBar(', "ssSet('tdot_list_consult_month'", "ALLROWS=(d.consultations||[]).concat(d.completed||[]);", '<th>Now</th>',
+  for (const s of ["bindRowClicks(tb, (tab==='done'||tab==='all')?'?from=consultations':'')", "!(st&&st.sort&&st.sort.key)", 'id="cq-tabs"', 'id="cq-month"', 'function renderMonthBar(', "MONTH_KEY={ done:'tdot_list_consult_month', all:'tdot_list_consult_month_all' }", "ALLROWS=(d.consultations||[]).concat(d.completed||[]);", '<th>Now</th>',
     '#cq-table:not(.tab-done):not(.tab-all) th:nth-child(11), #cq-table:not(.tab-done):not(.tab-all) td.c-now { display:none; }', '#cq-table.tab-done th:nth-child(12), #cq-table.tab-done td.c-del { display:none; }']) assert.ok(q.includes(s), s);
   for (const gone of ['function renderDone(', 'id="done-groups"', 'show / hide', 'function consultBucket(']) assert.ok(!q.includes(gone), 'gone: ' + gone);
   const spec = S.consultListSpec({ today: () => '2026-11-11' }), LT = listCore(spec), o = S.consultListOpts({});
@@ -766,4 +766,30 @@ test('page: leaving Completed takes a Now choice off; "Clear filters" on a tab w
   delete st.sel.tab; st.sel.now = ['Closed']; st.from = ''; st.to = ''; ctx.consultOnChange(st);   // All: both are on view
   assert.deepEqual([st.sel.now, st.from], [['Closed'], ''], 'on All the Date can be taken off and Now chosen');
   assert.ok(html.includes("listCore((") && html.includes("{ onChange: consultOnChange }"));
+});
+
+// Faran 2026-11-12: the month chooser on Completed (one month, opening on the current one) and on All ("All months" first).
+test('page month chooser: Completed opens on the current month (else the newest); All opens on every month; each tab keeps its own choice; a month that has gone falls back', () => {
+  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
+  const pick = (name) => { const i = js.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1); };
+  const store = {}, applied = [];
+  const ctx = { todayStr: () => '2026-11-12', ssGet: (k) => store[k] || '', ssSet: (k, v) => { store[k] = v; }, window: {}, ConsultTable: { apply: (w) => applied.push(w) },
+    ALLROWS: [{ id: 'a', bookedSlot: '2026-11-12 10:00' }, { id: 'b', bookedSlot: '2026-12-02 10:00' }, { id: 'c', bookedSlot: '2026-09-02 10:00', done: true }, { id: 'd', bookedSlot: '2026-07-01 10:00', done: true }, { id: 'e', bookedSlot: '', done: true }, { id: 'f', bookedSlot: '' }] };
+  ctx.window.ConsultTable = ctx.ConsultTable;
+  vm.createContext(ctx);
+  vm.runInContext("var MONTH_PICK={ done:'', all:'' }, MONTH_KEY={ done:'tdot_list_consult_month', all:'tdot_list_consult_month_all' };\n" + ['dParts', 'monthOf', 'tabMonths', 'pickMonth', 'setMonth'].map(pick).join('\n'), ctx);
+  const run = (code) => vm.runInContext(code, ctx);
+  assert.equal(run("tabMonths('done').join()"), '2026-09,2026-07,none');
+  assert.equal(run("tabMonths('all').join()"), '2026-12,2026-11,2026-09,2026-07,none');
+  assert.equal(run("pickMonth('done', tabMonths('done'))"), '2026-09', 'no completed consultation this month: the newest month that has one');
+  assert.equal(run("pickMonth('all', tabMonths('all'))"), 'all');
+  run("setMonth('all','2026-09')");
+  assert.deepEqual([run("pickMonth('all', tabMonths('all'))"), run("pickMonth('done', tabMonths('done'))"), store.tdot_list_consult_month_all, applied.length], ['2026-09', '2026-09', '2026-09', 1]);
+  run("setMonth('done','2026-07'); setMonth('all','all')");
+  assert.deepEqual([run("pickMonth('done', tabMonths('done'))"), run("pickMonth('all', tabMonths('all'))")], ['2026-07', 'all'], 'each tab keeps its own');
+  run("MONTH_PICK.done='2025-01'; MONTH_PICK.all='2025-01'");
+  assert.deepEqual([run("pickMonth('done', tabMonths('done'))"), run("pickMonth('all', tabMonths('all'))")], ['2026-09', 'all'], 'a month with nothing in it any more');
+  run("setMonth('booked','2026-07')"); assert.equal(applied.length, 3, 'only the two tabs have a month');
+  assert.ok(html.includes("<option value=\"all\"'+(month==='all'?' selected':'')+'>All months ('+total+')</option>"));
 });

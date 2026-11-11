@@ -299,7 +299,7 @@ var TAB_TEXT={
   needs:{ h:'Needs outcome', sub:'The consultation day has passed and no outcome is recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted.', none:'Nothing is waiting for an outcome.' },
   done:{ h:'Completed consultations', sub:'Every consultation stays here once it has an outcome — also after the client is retained and has a case. One month at a time, by the consultation day.', none:'No completed consultations yet.' },
   nodate:{ h:'No date', sub:'Marked Booked by hand with no consultation time. Open one to set its time, or delete it.', none:'No consultation is without a time.' },
-  all:{ h:'All consultations', sub:'The four lists together, the latest first. The Date filter narrows the booked ones only — the × on the Date chip shows every booked consultation too.', none:'No consultations yet.' }
+  all:{ h:'All consultations', sub:'The four lists together, the latest first — every month, or one month from the Month list. The Date filter narrows the booked ones only; the × on the Date chip shows every booked consultation too.', none:'No consultations yet.' }
 };
 function consultTab(st){ var l=(st&&st.sel&&st.sel.tab)||[]; return !l.length?'all':(TAB_TEXT[l[0]]&&l[0]!=='all'?l[0]:'booked'); }
 function monthOf(r){ var d=String(r.bookedSlot||'').slice(0,10); return dParts(d)?d.slice(0,7):'none'; }
@@ -310,30 +310,35 @@ function nowCell(c){
   return h;
 }
 /* The Completed tab's month: the one chosen (kept for the browser tab), else the current month, else the latest with rows. */
-var DONE_MONTH='';
-function doneMonths(){   /* every month that has a completed consultation, newest first; the ones with no time last */
+/* The month chooser is on two tabs, each with its own kept choice (Faran 2026-11-12):
+   Completed — one month at a time, opening on the current month; All — "All months" first, a month when chosen. */
+var MONTH_PICK={ done:'', all:'' }, MONTH_KEY={ done:'tdot_list_consult_month', all:'tdot_list_consult_month_all' };
+function tabMonths(tab){   /* every month with a consultation on that tab, newest first; the ones with no time last */
   var seen={}, out=[];
-  ALLROWS.forEach(function(r){ if(!r.done) return; var m=monthOf(r); if(!seen[m]){ seen[m]=true; out.push(m); } });
+  ALLROWS.forEach(function(r){ if(tab==='done'&&!r.done) return; var m=monthOf(r); if(!seen[m]){ seen[m]=true; out.push(m); } });
   return out.sort(function(a,b){ return a==='none'?1:b==='none'?-1:b.localeCompare(a); });
 }
-function pickMonth(months){
-  if(!DONE_MONTH) DONE_MONTH=ssGet('tdot_list_consult_month');
-  if(months.indexOf(DONE_MONTH)>=0) return DONE_MONTH;
+function pickMonth(tab,months){
+  if(!MONTH_PICK[tab]) MONTH_PICK[tab]=ssGet(MONTH_KEY[tab]);
+  if(months.indexOf(MONTH_PICK[tab])>=0) return MONTH_PICK[tab];
+  if(tab==='all') return 'all';   /* nothing chosen (or a month that has gone): every month */
   var cur=todayStr().slice(0,7);
   return months.indexOf(cur)>=0?cur:(months[0]||cur);
 }
-function setMonth(m){ DONE_MONTH=m; ssSet('tdot_list_consult_month',m); if(window.ConsultTable) ConsultTable.apply('filter'); }
-function renderMonthBar(show,months,month,counts){
+function setMonth(tab,m){ if(!MONTH_KEY[tab]) return; MONTH_PICK[tab]=m; ssSet(MONTH_KEY[tab],m); if(window.ConsultTable) ConsultTable.apply('data'); }
+function renderMonthBar(tab,months,month,counts,total){
   var bar=document.getElementById('cq-month'); if(!bar) return;
-  if(!show||!months.length){ bar.style.display='none'; bar.innerHTML=''; return; }
-  var i=months.indexOf(month);
+  if(!MONTH_KEY[tab]||!months.length){ bar.style.display='none'; bar.innerHTML=''; return; }
+  var i=months.indexOf(month);   /* -1 on "All months" */
+  var earlier=i<0?months[0]:(i<months.length-1?months[i+1]:''), later=i>0?months[i-1]:'';
   bar.style.display='flex';
   bar.innerHTML='<span class="cm-l" id="cq-month-l">Month</span>'+
-    '<button type="button" class="cm-b" data-m="'+(i<months.length-1?escHtml(months[i+1]):'')+'"'+(i<months.length-1?'':' disabled')+' aria-label="Earlier month" title="Earlier month">&#9664;</button>'+
-    '<select id="cq-month-sel" aria-labelledby="cq-month-l">'+months.map(function(m){ return '<option value="'+escHtml(m)+'"'+(m===month?' selected':'')+'>'+escHtml(monthLabel(m))+' ('+(counts[m]||0)+')</option>'; }).join('')+'</select>'+
-    '<button type="button" class="cm-b" data-m="'+(i>0?escHtml(months[i-1]):'')+'"'+(i>0?'':' disabled')+' aria-label="Later month" title="Later month">&#9654;</button>';
-  Array.prototype.forEach.call(bar.querySelectorAll('.cm-b'),function(b){ b.onclick=function(){ var m=b.getAttribute('data-m'); if(m) setMonth(m); var again=document.querySelector('#cq-month .cm-b[aria-label="'+b.getAttribute('aria-label')+'"]'); if(again&&!again.disabled) again.focus(); else { var sel=document.getElementById('cq-month-sel'); if(sel) sel.focus(); } }; });
-  var s=document.getElementById('cq-month-sel'); s.onchange=function(){ setMonth(s.value); var again=document.getElementById('cq-month-sel'); if(again) again.focus(); };
+    '<button type="button" class="cm-b" data-m="'+escHtml(earlier)+'"'+(earlier?'':' disabled')+' aria-label="Earlier month" title="Earlier month">&#9664;</button>'+
+    '<select id="cq-month-sel" aria-labelledby="cq-month-l">'+(tab==='all'?'<option value="all"'+(month==='all'?' selected':'')+'>All months ('+total+')</option>':'')+
+      months.map(function(m){ return '<option value="'+escHtml(m)+'"'+(m===month?' selected':'')+'>'+escHtml(monthLabel(m))+' ('+(counts[m]||0)+')</option>'; }).join('')+'</select>'+
+    '<button type="button" class="cm-b" data-m="'+escHtml(later)+'"'+(later?'':' disabled')+' aria-label="Later month" title="Later month">&#9654;</button>';
+  Array.prototype.forEach.call(bar.querySelectorAll('.cm-b'),function(b){ b.onclick=function(){ var m=b.getAttribute('data-m'); if(m) setMonth(tab,m); var again=document.querySelector('#cq-month .cm-b[aria-label="'+b.getAttribute('aria-label')+'"]'); if(again&&!again.disabled) again.focus(); else { var sel=document.getElementById('cq-month-sel'); if(sel) sel.focus(); } }; });
+  var s=document.getElementById('cq-month-sel'); s.onchange=function(){ setMonth(tab,s.value); var again=document.getElementById('cq-month-sel'); if(again) again.focus(); };
 }
 /* Two filters belong to some tabs only, and are not on view on the others (review 2026-11-12) — so they must not act there:
    - "Now" is the Completed / All column: leaving for another tab takes its choice off (it would silently empty that tab).
@@ -352,30 +357,33 @@ function renderConsultList(keep,why,st,h){
   if(!KEPT_DATE&&(tab==='booked'||tab==='all')) KEPT_DATE={ from:st.from||'', to:st.to||'' };
   var rows=keep, inTab=tab==='all'?ALLROWS.slice():ALLROWS.filter(function(r){ return window.ConsultTable?ConsultTable.core.valuesOf('tab',r)[0]===tab:true; });
   var months=[], month='', counts={};
-  if(tab==='done'){
-    months=doneMonths(); month=pickMonth(months);
+  var total=keep.length;
+  if(tab==='done'||tab==='all'){
+    months=tabMonths(tab); month=pickMonth(tab,months);
     keep.forEach(function(r){ var m=monthOf(r); counts[m]=(counts[m]||0)+1; });
     /* The search or a filter finds nothing in the month on view but something in another: show the newest month that
        has a match (for now — the chosen month is kept), so a past client searched by name is never "not found". */
-    if(!counts[month] && keep.length){ var hit=months.filter(function(m){ return counts[m]; })[0]; if(hit) month=hit; }
-    rows=keep.filter(function(r){ return monthOf(r)===month; });
-    inTab=inTab.filter(function(r){ return monthOf(r)===month; });
+    if(month!=='all' && !counts[month] && keep.length){ var hit=months.filter(function(m){ return counts[m]; })[0]; if(hit) month=hit; }
+    if(month!=='all'){
+      rows=keep.filter(function(r){ return monthOf(r)===month; });
+      inTab=inTab.filter(function(r){ return monthOf(r)===month; });
+    }
   }
   /* the two tabs that look back: the latest consultation first — unless a column sort is chosen in the header */
   if((tab==='done'||tab==='needs'||tab==='all') && !(st&&st.sort&&st.sort.key)) rows=rows.slice().sort(function(a,b){ var x=String(a.bookedSlot||''), y=String(b.bookedSlot||''); return (x&&y)?y.localeCompare(x):x?-1:y?1:0; });   /* no time: last */
   var tbl=document.getElementById('cq-table'); if(tbl) tbl.className='tab-'+tab;
   var wrap=document.getElementById('content'); if(wrap) wrap.setAttribute('data-ctab',tab);
-  var hd=document.getElementById('cq-title'); if(hd) hd.textContent=T.h+(tab==='done'&&month?' — '+monthLabel(month):'');
+  var hd=document.getElementById('cq-title'); if(hd) hd.textContent=T.h+(month&&month!=='all'?' — '+monthLabel(month):'');
   var sb=document.getElementById('cq-sub'); if(sb) sb.textContent=T.sub;
-  renderMonthBar(tab==='done',months,month,counts);
+  renderMonthBar(tab,months,month,counts,total);
   var tb=document.getElementById('qbody');
   if(!rows.length){
     /* Say why it is empty: nothing in this tab at all / nothing on the chosen day(s) or month / nothing passing the filters. */
     var dated=(tab==='booked')&&!!(st&&(st.from||st.to)), onlyToday=dated&&st.from===t&&st.to===t;
-    var msg=!inTab.length?(tab==='done'&&months.length?'No completed consultations in '+monthLabel(month)+'.':tab==='booked'&&ALLROWS.some(function(r){ return ConsultTable.core.valuesOf('tab',r)[0]==='booked'; })&&dated?(onlyToday?'No consultations today. Remove the Date filter (the × on the Date chip above) to see every date.':'No consultations on these dates.'):T.none)
+    var msg=!inTab.length?((tab==='done'||(tab==='all'&&month!=='all'))&&months.length?'No '+(tab==='done'?'completed ':'')+'consultations in '+monthLabel(month)+'.':tab==='booked'&&ALLROWS.some(function(r){ return ConsultTable.core.valuesOf('tab',r)[0]==='booked'; })&&dated?(onlyToday?'No consultations today. Remove the Date filter (the × on the Date chip above) to see every date.':'No consultations on these dates.'):T.none)
       :onlyToday?'No consultations today match — the Date filter is on Today. Remove it (the × on the Date chip above) to see every date.'
       :dated?'No consultations on these dates match your filters.'
-      :tab==='done'?'No completed consultations in '+monthLabel(month)+' match your filters.'
+      :(tab==='done'||(tab==='all'&&month!=='all'))?'No '+(tab==='done'?'completed ':'')+'consultations in '+monthLabel(month)+' match your filters.'
       :'Nothing here matches your filters.';
     tb.innerHTML='<tr><td colspan="12" class="empty">'+escHtml(msg)+'</td></tr>';
   }
