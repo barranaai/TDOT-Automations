@@ -28,7 +28,7 @@ test('presets are well-formed and include the Aug-13 conventions', () => {
   assert.ok(REMARK_PRESETS.length >= 5);
   for (const r of REMARK_PRESETS) { assert.match(r.key, /^[a-z0-9-]+$/); assert.ok(r.label.length > 3); }
   assert.deepEqual(new Set(REMARK_PRESETS.map((r) => r.key)).size, REMARK_PRESETS.length, 'keys unique');
-  for (const must of ['Notes sent to client', 'Notes not sent', 'Retain — no fees quoted']) assert.ok(REMARK_PRESETS.some((r) => r.label === must), must);
+  for (const must of ['Notes sent to client', 'Notes not sent', 'Retain — no fees quoted', 'Email Sent']) assert.ok(REMARK_PRESETS.some((r) => r.label === must), must);
 });
 
 test('validateAction("remark"): preset alone ok, text alone ok, unknown preset / empty / too long rejected; JSON string accepted', () => {

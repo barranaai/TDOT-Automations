@@ -14,6 +14,7 @@ const REMARK_PRESETS = [
   { key: 'no-answer',        label: 'No answer / voicemail',     hint: 'Tried to reach the client, no answer' },
   { key: 'client-to-revert', label: 'Client to revert',          hint: 'Waiting on the client to come back to us' },
   { key: 'docs-requested',   label: 'Documents requested',       hint: 'Asked the client for documents / information' },
+  { key: 'email-sent',       label: 'Email Sent',                hint: 'An email was sent to the client — say what about in the details' },   // Faran 2026-11-12
 ];
 
 module.exports = { REMARK_PRESETS };
