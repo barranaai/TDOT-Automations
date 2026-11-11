@@ -1984,6 +1984,12 @@ app.post('/api/old-clients/search', express.json(), async (req, res) => {
 // never logged; never cached; rate-limited per IP. Answers ONLY lead ids — never a phone or email.
 app.post('/api/leads/search', express.json({ limit: '2kb' }), require('./services/leadSearch').httpHandler());
 
+// Leads "Export" (Faran 2026-11-11): the leads the page is SHOWING, as an Excel file with their email and
+// phone. Same team key as /api/leads; POST (ids in the body), never cached, per-IP limit, 5000 leads at most
+// (checked in the handler); the log line says how many rows and who — never a name, phone or email. Only rows
+// of the Leads list can be exported.
+app.post('/api/leads/export', require('./services/leadExport').httpHandler({ actorOf: (req) => staffActor(req).name }));
+
 app.get('/api/leads', async (_req, res) => {
   try {
     const leads = await consultantPortalService.getLeadsQueue();

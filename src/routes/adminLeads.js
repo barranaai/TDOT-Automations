@@ -87,6 +87,12 @@ function buildLeadsQueueHTML() {
   .tier { font-weight:700; color:var(--navy); }
   .empty { padding:40px; text-align:center; color:#94a3b8; }
   .sec-h { font-size:15px; font-weight:800; color:var(--navy); margin:0; }
+  /* Export (2026-11-11): beside the search box; its message sits on its own line under the toolbar. */
+  .q-tools { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .q-export-msg { flex-basis:100%; font-size:12.5px; color:#64748b; text-align:right; min-height:0; }
+  .q-export-msg.err { color:var(--st-red-fg); }
+  .q-tools .q-search-note { flex-basis:100%; order:3; }   /* the search's own note keeps its own line, after the button */
+  @media (max-width: 760px) { .q-tools { width:100%; flex-wrap:nowrap; } .q-toolbar .q-tools .q-search { flex:1 1 0; width:auto; min-width:0; } .q-tools:has(.q-search-note) { flex-wrap:wrap; } }
   ${LEADS_TABLE_CSS}
   /* The stage tabs' counts in the stage's colour (the same colours as the Current status pills). */
   #q-phase .lt-tab[data-quick="new"], #q-phase .lt-tab[data-quick="invite"] { --tn-bg:var(--st-blue-bg); --tn-fg:var(--st-blue-fg); --tn-solid:var(--st-blue-solid); }
@@ -146,7 +152,9 @@ ${buildNavHeader('leads')}
     <div class="lt-tabs" id="q-phase" role="tablist" aria-label="Leads by stage"></div>
     <div class="q-toolbar">
       <h2 class="sec-h">Awaiting booking <span id="q-count" class="muted" style="font-weight:500" aria-live="polite"></span></h2>
-      <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="q-search" type="search" placeholder="Search by name, phone or email…" aria-label="Search leads by name, phone or email" autocomplete="off"></div>
+      <div class="q-tools"><div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="q-search" type="search" placeholder="Search by name, phone or email…" aria-label="Search leads by name, phone or email" autocomplete="off"></div>
+        <button class="btn" id="btn-export" type="button" title="Download the leads shown below (this tab, with your search and filters) as an Excel file: name, email, contact number, service, source / reference, referred by, current status"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8.65 1.5v7.03l2.4-2.4.92.92L8 11.02 4.03 7.05l.92-.92 2.4 2.4V1.5h1.3zM2.5 12.2h11v1.3h-11z"/></svg>Export</button></div>
+      <div id="q-export-msg" class="q-export-msg" role="status" aria-live="polite"></div>
     </div>
     <div id="q-chips" class="q-chips" style="display:none" aria-live="polite"></div>
     <div class="card"><div class="tbl-wrap">
@@ -187,8 +195,12 @@ function invitePill(c){
   if(!c.inviteSent) return '<span class="pill grey">—</span>';
   return qpill('blue', c.inviteSentAt?('Sent '+String(c.inviteSentAt).slice(0,10)):'Sent');   /* sent = blue on every page */
 }
+var SHOWN=[], SHOWN_TAB='';   /* what the table is showing right now — what Export sends */
 function renderRows(rows,why,st,h){
   var tb=document.getElementById('qbody');
+  SHOWN=rows||[];
+  var ph=(st && st.sel && st.sel.phase && st.sel.phase.length)?st.sel.phase[0]:'';
+  SHOWN_TAB=(ph && window.LeadsTable)?LeadsTable.label('phase',ph):'All';
   if(!rows.length){
     var msg=ALLROWS.length?'No leads match your filters.':'No leads awaiting booking — new intake submissions land here.';
     /* A stage tab with nobody in it (2026-11-05): say which tab, and whether the filters hide them. */
@@ -238,6 +250,38 @@ function load(){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
+/* ── Export (Faran 2026-11-11): the leads shown — this tab with the search and filters — as an Excel file.
+   The page sends only their ids; the server adds the email and phone and answers with the file. ── */
+function exportMsg(cls,txt){ var m=document.getElementById('q-export-msg'); m.className='q-export-msg'+(cls?' '+cls:''); m.textContent=txt||''; }
+function exportLeads(){
+  var key=getKey(); if(!key) return;
+  var btn=document.getElementById('btn-export');
+  if(btn.getAttribute('data-busy')) return;
+  var ids=SHOWN.map(function(r){ return String(r.id); });
+  if(!ids.length){ exportMsg('err','No leads to export — the list is empty.'); return; }
+  if(ids.length>5000){ exportMsg('err','Too many leads for one file ('+ids.length+') — narrow the list with a tab or a filter, 5000 at most.'); return; }
+  btn.setAttribute('data-busy','1'); btn.disabled=true; exportMsg('','Preparing the file…');
+  var done=function(){ btn.removeAttribute('data-busy'); btn.disabled=false; };
+  fetch('/api/leads/export',{method:'POST',headers:{'X-Api-Key':key,'Content-Type':'application/json'},body:JSON.stringify({ids:ids,tab:SHOWN_TAB})})
+   .then(function(r){
+     if(r.status===401||r.status===403){ exportMsg('',''); done(); window.location.href='/admin'; throw new Error('x'); }
+     if(!r.ok){ return r.json().then(function(j){ throw new Error((j&&j.error)||('HTTP '+r.status)); },function(){ throw new Error('The export could not be made right now — try again in a moment.'); }); }
+     var n=Number(r.headers.get('X-Export-Rows'))||0;
+     var cd=r.headers.get('Content-Disposition')||''; var m=/filename="([^"]+)"/.exec(cd);
+     return r.blob().then(function(b){ return { blob:b, name:m?m[1]:'Leads.xlsx', n:n }; });
+   })
+   .then(function(f){
+     var url=URL.createObjectURL(f.blob); var a=document.createElement('a');
+     a.href=url; a.download=f.name; document.body.appendChild(a); a.click(); a.remove();
+     setTimeout(function(){ URL.revokeObjectURL(url); },4000);
+     var miss=ids.length-f.n;
+     exportMsg('','Downloaded '+f.n+' lead'+(f.n===1?'':'s')+' — '+f.name+(miss>0?' ('+miss+' no longer on the Leads list — refresh the page)':''));
+     done();
+     load();   /* the file is made from the live list — refresh the table so the screen and the file agree */
+   })
+   .catch(function(e){ if(e.message==='x') return; exportMsg('err',e.message||'The export failed.'); done(); });
+}
+document.getElementById('btn-export').onclick=exportLeads;
 /* ── Add lead (staff phone-in — meeting 2026-08-13 "direct leads") ── */
 ${REFERRAL_UI_JS}
 var AL_ALLOW=false, AL_SIGNED=false;
