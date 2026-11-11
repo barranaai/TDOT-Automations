@@ -69,7 +69,7 @@ test('Consultations page: the button is hidden until the server says yes; the po
   assert.ok(q.includes("square:'Paid in Square'"), 'the Paid pill reads the new kind');
   assert.ok(q.includes("escHtml(c.name)+directPill(c)"), 'the pill sits by the client name');
   // the existing tests' anchors are unchanged
-  for (const s of ['id="snap-age"', 'id="needs-outcome"', 'id="nodate"', "<a href=\"/admin/retainers\">Retainers &amp; follow-ups</a>"]) assert.ok(q.includes(s), s);
+  for (const s of ['id="snap-age"', 'id="cq-tabs"', "<a href=\"/admin/retainers\">Retainers &amp; follow-ups</a>"]) assert.ok(q.includes(s), s);
 });
 
 test('the list: the "direct" pill with who booked it and the kind; an Existing-client row is never under "Needs outcome"', () => {
@@ -77,19 +77,21 @@ test('the list: the "direct" pill with who booked it and the kind; an Existing-c
   const pick = (name) => { const i = page.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = page.indexOf('{', i); for (; j < page.length; j++) { if (page[j] === '{') depth++; else if (page[j] === '}' && --depth === 0) break; } return page.slice(i, j + 1); };
   const ctx = { escHtml: (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') };
   vm.createContext(ctx);
-  vm.runInContext([pick('dParts'), pick('directPill'), pick('consultBucket')].join('\n'), ctx);
+  vm.runInContext([pick('dParts'), pick('directPill')].join('\n'), ctx);
   assert.equal(ctx.directPill({ name: 'A' }), '', 'a normal row has no pill');
   const p = ctx.directPill({ direct: 'Follow-up', bookedBy: 'Melanie' });
   assert.match(p, />direct<\/span>$/);
   assert.match(p, /title="Booked by Melanie · Follow-up"/);
   assert.match(ctx.directPill({ direct: '?', bookedBy: '' }), /title="Direct consultation"/);
   assert.match(ctx.directPill({ direct: 'New', bookedBy: '<b>x' }), /Booked by &lt;b&gt;x/, 'escaped');
-  const t = '2026-11-09';
-  assert.equal(ctx.consultBucket({ bookedSlot: '2026-11-02 10:00' }, t), 'needs', 'a past consultation with no outcome');
-  assert.equal(ctx.consultBucket({ bookedSlot: '2026-11-02 10:00', direct: 'New' }, t), 'needs', 'a direct New one too');
-  assert.equal(ctx.consultBucket({ bookedSlot: '2026-11-02 10:00', direct: 'Follow-up' }, t), 'needs', 'a follow-up too');
-  assert.equal(ctx.consultBucket({ bookedSlot: '2026-11-02 10:00', direct: 'Existing client' }, t), 'main', 'about their current file: nothing to decide');
-  assert.equal(ctx.consultBucket({ bookedSlot: '' }, t), 'nodate');
+  // which tab a row is under: the list definition's rule (the tabs are the shared engine's, 2026-11-12)
+  const LT = require('../src/routes/listFilters').listCore(require('../src/routes/listSpecs').consultListSpec({ today: () => '2026-11-09' }));
+  const tab = (r) => LT.valuesOf('tab', r)[0];
+  assert.equal(tab({ bookedSlot: '2026-11-02 10:00' }), 'needs', 'a past consultation with no outcome');
+  assert.equal(tab({ bookedSlot: '2026-11-02 10:00', direct: 'New' }), 'needs', 'a direct New one too');
+  assert.equal(tab({ bookedSlot: '2026-11-02 10:00', direct: 'Follow-up' }), 'needs', 'a follow-up too');
+  assert.equal(tab({ bookedSlot: '2026-11-02 10:00', direct: 'Existing client' }), 'booked', 'about their current file: nothing to decide');
+  assert.equal(tab({ bookedSlot: '' }), 'nodate');
 });
 
 test('record page: the "direct" chip, the Added-as lines, Change time (direct rows, no outcome), Retain that asks first, Paid in Square, the Otter tick', () => {

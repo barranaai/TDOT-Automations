@@ -584,6 +584,7 @@ function listTableUi(LT, o, win) {
     /** New rows from the server: the filters, the sort and the page stay as they are. */
     setRows: function (rows) { ROWS = rows || []; apply('data'); started = true; },
     state: function () { return state; },
+    core: LT,   // the pure part (a page asks it which tab a row is under)
     apply: function (why) { apply(why || 'filter'); },
     close: function () { close(false); },
     label: function (facet, v) { return LT.labelOf(facet, v); },

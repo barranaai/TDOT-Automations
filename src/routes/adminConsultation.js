@@ -117,16 +117,22 @@ const LIST_PAGE_CSS = `
 `;
 
 const CONSULT_PAGE_CSS = `
-  .attn { border-color:#fde68a; }
-  .fold .attn-h { background:#f8fafc; color:#64748b; font-size:12.5px; font-weight:700; padding:9px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
-  .fold.attn .attn-h { background:#fffbeb; color:#92400e; }
-  .fold.attn .attn-h .muted { color:var(--st-amber-fg); font-weight:500; }
-  /* a coloured bar at the start of a fold's heading: amber = needs an outcome, grey = no date */
-  .fold .attn-h { box-shadow:inset 4px 0 0 var(--st-grey-solid); }
-  .fold.attn .attn-h { box-shadow:inset 4px 0 0 var(--st-amber-solid); }
-  .attn-h > span:last-child { flex:none; white-space:nowrap; margin-left:12px; }
-  .fold table { display:none; } .fold.open table { display:table; }
-  .done-m { margin-bottom:8px; } .done-m .attn-h { font-size:13px; color:var(--navy); }
+  /* One table, five tabs: the Now column only on Completed and All; Completed has no delete button (deleting stays on the other tabs). */
+  #cq-table:not(.tab-done):not(.tab-all) th:nth-child(11), #cq-table:not(.tab-done):not(.tab-all) td.c-now { display:none; }
+  #cq-table.tab-done th:nth-child(12), #cq-table.tab-done td.c-del { display:none; }
+  /* The Date filter narrows the booked consultations only (the Booked tab, and the booked rows of All): its chip is not shown on the other three tabs. */
+  #content:not([data-ctab="booked"]):not([data-ctab="all"]) #cq-chips .q-chip:has([data-chip="date"]) { display:none; }
+  /* …so there the Date column has no filter button, and a chip row holding nothing but the Date chip is not shown at all */
+  #content:not([data-ctab="booked"]):not([data-ctab="all"]) #cq-headrow th:first-child .th-f { display:none; }
+  #content:not([data-ctab="booked"]):not([data-ctab="all"]) #cq-chips:not(:has(.q-chip:not(:has([data-chip="date"])))) { display:none !important; }
+  /* The Completed tab's month chooser */
+  .cq-month { align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
+  .cq-month .cm-l { font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#64748b; margin-right:2px; }
+  .cq-month select { border:1px solid #e2e8f0; border-radius:8px; padding:7px 10px; font:inherit; font-size:13px; font-weight:700; color:var(--navy); background:#fff; min-width:190px; }
+  .cq-month .cm-b { border:1px solid #e2e8f0; border-radius:8px; background:#fff; color:var(--navy); padding:7px 10px; font:inherit; font-size:12px; cursor:pointer; line-height:1; }
+  .cq-month .cm-b:hover:not(:disabled) { background:#f8fafc; }
+  .cq-month .cm-b:disabled { opacity:.4; cursor:default; }
+  .cq-month select:focus-visible, .cq-month .cm-b:focus-visible { outline:2px solid var(--st-focus); outline-offset:1px; }
   .time { font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:600; color:var(--navy); }
   .time .d { font-weight:500; color:#64748b; }
 `;
@@ -279,108 +285,104 @@ function rowHtml(c){
     '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
     '<td>'+escHtml(c.consultant||'—')+'</td>'+
     '<td>'+(c.meetingType?escHtml(c.meetingType):'—')+'</td>'+
-    '<td>'+ag+'</td><td>'+pc+'</td><td>'+pd+'</td><td>'+oc+'</td>'+
-    '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'"'+(c.adminDelete?' data-del-admin-only="1"':'')+' title="Delete this record (careful — removes Monday rows and the OneDrive folder; if there is a case, the case and its folder go too)">'+TDOT_DEL_SVG+'</button></td></tr>';
+    '<td>'+ag+'</td><td>'+pc+'</td><td>'+pd+'</td><td>'+oc+'</td><td class="c-now">'+(c.done?nowCell(c):'')+'</td>'+
+    /* a completed consultation has no delete button here (the All tab too): a client with a case is deleted from the Retainers page */
+    '<td class="c-del">'+(c.done?'':'<button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'"'+(c.adminDelete?' data-del-admin-only="1"':'')+' title="Delete this record (careful — removes Monday rows and the OneDrive folder; if there is a case, the case and its folder go too)">'+TDOT_DEL_SVG+'</button>')+'</td></tr>';
 }
-function renderRows(rows,st,doneCount){
-  var tb=document.getElementById('qbody');
-  if(!rows.length){
-    /* Say why it is empty: nothing booked at all / nothing on the chosen day(s) / nothing passing the filters. */
-    var t=todayStr(), dated=!!(st&&(st.from||st.to)), onlyToday=!!(st&&st.from===t&&st.to===t);
-    /* a Now / Outcome choice that only completed consultations can have: point at them, not at the Date filter */
-    var sel=(st&&st.sel)||{}, onlyDone=!!((sel.now&&sel.now.length)||(sel.outcome&&sel.outcome.length));
-    var msg=(onlyDone&&doneCount)?('No booked consultations match — '+doneCount+' completed consultation'+(doneCount===1?' matches':'s match')+': see Completed consultations below.'):!ALLROWS.length?'No booked consultations right now.':onlyToday?'No consultations today match — the Date filter is on Today. Remove it (the × on the Date chip above) to see every date.':dated?'No consultations on these dates match your filters.':'No consultations match your filters.';
-    tb.innerHTML='<tr><td colspan="11" class="empty">'+escHtml(msg)+'</td></tr>';
-  }
-  else tb.innerHTML=rows.map(rowHtml).join('');
-  bindRowClicks(tb);
-}
-/* The Consultations list: the shared engine (listSpecs.js consultListSpec — the header filters and the search) hands
-   over the rows that pass; they split into three lists, each row in one: no date / needs an outcome (the
-   consultation day has passed, nothing recorded) / the main list. The Date column's filter (listSpecs.js) applies to
-   the main list only — the engine never hides the other two by date. The count is the main list's. */
-/* A direct consultation about the client's current file ("Existing client", step 2) has no outcome to set: never under "Needs outcome". */
-function consultBucket(r,t){ if(r.done) return 'done'; var d=String(r.bookedSlot||'').slice(0,10); if(!dParts(d)) return 'nodate'; if(d<t && !r.outcome && r.direct!=='Existing client') return 'needs'; return 'main'; }
-function renderConsultList(keep,why,st,h){
-  var t=todayStr();
-  var noDate=keep.filter(function(r){ return consultBucket(r,t)==='nodate'; });
-  var needs=keep.filter(function(r){ return consultBucket(r,t)==='needs'; });
-  var main=keep.filter(function(r){ return consultBucket(r,t)==='main'; });
-  renderRows(main,st,keep.filter(function(r){ return r.done; }).length);
-  var nb=document.getElementById('needs-outcome'); nb.style.display=needs.length?'block':'none';
-  document.getElementById('needs-outcome-n').textContent='('+needs.length+')';
-  var nbody=document.getElementById('needs-outcome-body'); nbody.innerHTML=needs.slice().sort(function(a,b){ return String(b.bookedSlot).localeCompare(String(a.bookedSlot)); }).map(rowHtml).join(''); bindRowClicks(nbody);
-  var nd=document.getElementById('nodate'); nd.style.display=noDate.length?'block':'none';
-  document.getElementById('nodate-n').textContent='('+noDate.length+')';
-  var ndbody=document.getElementById('nodate-body'); ndbody.innerHTML=noDate.map(rowHtml).join(''); bindRowClicks(ndbody);
-  renderDone(keep.filter(function(r){ return r.done; }), !(st && st.sort && st.sort.key));   /* no column sort chosen = the normal order */
-  return { shown: main.length, total: ALLROWS.filter(function(r){ return consultBucket(r,t)==='main'; }).length };
-}
-/* Completed consultations (Faran 2026-11-11): every consultation stays on this page — the completed ones (an outcome is
-   set, a retainer is under way, or the client is retained) in one fold per month of the consultation day, the newest
-   month first. A new browser tab opens with the current month open; what is opened or closed is kept for the tab.
-   A month's rows are written only when it is open. The search and the header filters apply; the Date filter does not. */
-var DONE_OPEN=null;   /* { 'YYYY-MM': true|false } — null until read */
-function doneOpenMap(){
-  if(DONE_OPEN) return DONE_OPEN;
-  DONE_OPEN={};
-  try { var j=JSON.parse(ssGet('tdot_list_consult_months')||'null'); if(j && typeof j==='object') DONE_OPEN=j; } catch(e){}
-  return DONE_OPEN;
-}
-function doneIsOpen(m){ var o=doneOpenMap(); return (m in o)?o[m]===true:(m===todayStr().slice(0,7)); }
+/* The Consultations list (Faran 2026-11-12): four tabs — Booked · Needs outcome · Completed · No date — over ONE table,
+   like the Leads page. The shared engine (listSpecs.js consultListSpec) owns the tabs, the header filters, the search
+   and the sorting, and hands over the rows of the tab shown. This page adds: the Completed tab's month chooser (one
+   month at a time, opening on the current month), the words above the table, and the latest-first order of the two
+   tabs that look back. The Date filter narrows the Booked tab only (its chip is hidden on the other tabs). */
+var TAB_TEXT={
+  booked:{ h:'Booked consultations', sub:'Still to happen. The page opens on today — the Date column chooses other days; the × on the Date chip shows every date.', none:'No booked consultations right now.' },
+  needs:{ h:'Needs outcome', sub:'The consultation day has passed and no outcome is recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted.', none:'Nothing is waiting for an outcome.' },
+  done:{ h:'Completed consultations', sub:'Every consultation stays here once it has an outcome — also after the client is retained and has a case. One month at a time, by the consultation day.', none:'No completed consultations yet.' },
+  nodate:{ h:'No date', sub:'Marked Booked by hand with no consultation time. Open one to set its time, or delete it.', none:'No consultation is without a time.' },
+  all:{ h:'All consultations', sub:'The four lists together, the latest first. The Date filter narrows the booked ones only — the × on the Date chip shows every booked consultation too.', none:'No consultations yet.' }
+};
+function consultTab(st){ var l=(st&&st.sel&&st.sel.tab)||[]; return !l.length?'all':(TAB_TEXT[l[0]]&&l[0]!=='all'?l[0]:'booked'); }
+function monthOf(r){ var d=String(r.bookedSlot||'').slice(0,10); return dParts(d)?d.slice(0,7):'none'; }
 function monthLabel(m){ var p=String(m).split('-'); if(p.length!==2) return 'No date'; return new Intl.DateTimeFormat('en-CA',{timeZone:'UTC',month:'long',year:'numeric'}).format(new Date(Date.UTC(Number(p[0]),Number(p[1])-1,1))); }
 function nowCell(c){
   var h='<span class="pill '+escHtml(c.nowTone||'grey')+'">'+escHtml(c.now||'—')+'</span>';
   if(c.caseRef) h+=' <a class="case-lnk" href="/admin/case/'+encodeURIComponent(c.caseRef)+'" title="Open the case">'+escHtml(c.caseRef)+'</a>';
   return h;
 }
-function doneRowHtml(c){
-  var pc=c.preConsultSubmitted?qpill('green','Submitted'):qpill('amber','Pending');
-  var ag=c.agreementSigned?qpill('green','Signed '+c.agreementSigned):c.agreementSent?qpill('blue','Sent '+c.agreementSent):'<span class="pill grey">—</span>';
-  var oc=c.outcome?qpill(c.outcome==='Retain'?'green':c.outcome==='Follow-Up'?'amber':c.outcome==='Not Wanted'?'red':'grey',c.outcome):'<span class="pill grey">—</span>';
-  return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
-    '<td>'+dateCell(c)+'</td><td>'+timeCell(c)+'</td>'+
-    '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+directPill(c)+'</td>'+
-    '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
-    '<td>'+escHtml(c.consultant||'—')+'</td>'+
-    '<td>'+(c.meetingType?escHtml(c.meetingType):'—')+'</td>'+
-    '<td>'+ag+'</td><td>'+pc+'</td><td>'+paidPill(c)+'</td><td>'+oc+'</td><td>'+nowCell(c)+'</td></tr>';
+/* The Completed tab's month: the one chosen (kept for the browser tab), else the current month, else the latest with rows. */
+var DONE_MONTH='';
+function doneMonths(){   /* every month that has a completed consultation, newest first; the ones with no time last */
+  var seen={}, out=[];
+  ALLROWS.forEach(function(r){ if(!r.done) return; var m=monthOf(r); if(!seen[m]){ seen[m]=true; out.push(m); } });
+  return out.sort(function(a,b){ return a==='none'?1:b==='none'?-1:b.localeCompare(a); });
 }
-var DONE_HEAD='<thead><tr><th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th title="Where the client is now">Now</th></tr></thead>';
-var DONE_ROWS={};   /* month → its rows, as last drawn */
-function doneFill(m){ var b=document.getElementById('done-body-'+m); if(!b) return; b.innerHTML=(DONE_ROWS[m]||[]).map(doneRowHtml).join(''); bindRowClicks(b,'?from=consultations'); }   /* the record's back link returns here */
-function renderDone(rows,normalOrder){
-  var box=document.getElementById('done-groups'), wrap=document.getElementById('done'); if(!box||!wrap) return;
-  var total=ALLROWS.filter(function(r){ return r.done; }).length;
-  wrap.style.display=total?'block':'none';
-  document.getElementById('done-n').textContent='('+rows.length+(rows.length!==total?' of '+total:'')+')';
-  var by={}, order=[];
-  /* the normal order: the latest consultation first; a column sort chosen in the header: that order, within each month */
-  (normalOrder?rows.slice().sort(function(a,b){ return String(b.bookedSlot).localeCompare(String(a.bookedSlot)); }):rows).forEach(function(r){
-    var d=String(r.bookedSlot||'').slice(0,10), m=dParts(d)?d.slice(0,7):'none';
-    if(!by[m]){ by[m]=[]; order.push(m); } by[m].push(r);
-  });
-  order.sort(function(a,b){ return a==='none'?1:b==='none'?-1:b.localeCompare(a); });
-  DONE_ROWS=by;
-  if(!order.length){ box.innerHTML='<div class="empty" style="padding:18px">No completed consultations match your filters.</div>'; return; }
-  box.innerHTML=order.map(function(m){
-    var open=doneIsOpen(m);
-    return '<div class="card fold done-m'+(open?' open':'')+'" data-month="'+m+'">'+
-      '<div class="attn-h" role="button" tabindex="0" aria-expanded="'+(open?'true':'false')+'" aria-controls="done-body-'+m+'"><span>'+escHtml(monthLabel(m))+' <span class="muted">('+by[m].length+')</span></span><span class="muted">show / hide</span></div>'+
-      '<div class="tbl-wrap"><table>'+DONE_HEAD+'<tbody id="done-body-'+m+'"></tbody></table></div></div>';
-  }).join('');
-  order.forEach(function(m){ if(doneIsOpen(m)) doneFill(m); });
-  Array.prototype.forEach.call(box.querySelectorAll('.done-m'),function(card){
-    var hd=card.querySelector('.attn-h'), m=card.getAttribute('data-month');
-    var tog=function(){
-      var open=!card.classList.contains('open'); card.classList.toggle('open',open); hd.setAttribute('aria-expanded',open?'true':'false');
-      doneOpenMap()[m]=open; ssSet('tdot_list_consult_months',JSON.stringify(DONE_OPEN));
-      if(open) doneFill(m); else { var b=document.getElementById('done-body-'+m); if(b) b.innerHTML=''; }
-    };
-    hd.onclick=tog; hd.onkeydown=function(ev){ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); tog(); } };
-  });
+function pickMonth(months){
+  if(!DONE_MONTH) DONE_MONTH=ssGet('tdot_list_consult_month');
+  if(months.indexOf(DONE_MONTH)>=0) return DONE_MONTH;
+  var cur=todayStr().slice(0,7);
+  return months.indexOf(cur)>=0?cur:(months[0]||cur);
 }
-['needs-outcome','nodate'].forEach(function(id){ var h=document.getElementById(id+'-h'); var box=document.getElementById(id); if(h&&box){ var tog=function(){ box.classList.toggle('open'); h.setAttribute('aria-expanded',box.classList.contains('open')?'true':'false'); }; h.onclick=tog; h.onkeydown=function(ev){ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); tog(); } }; } });
+function setMonth(m){ DONE_MONTH=m; ssSet('tdot_list_consult_month',m); if(window.ConsultTable) ConsultTable.apply('filter'); }
+function renderMonthBar(show,months,month,counts){
+  var bar=document.getElementById('cq-month'); if(!bar) return;
+  if(!show||!months.length){ bar.style.display='none'; bar.innerHTML=''; return; }
+  var i=months.indexOf(month);
+  bar.style.display='flex';
+  bar.innerHTML='<span class="cm-l" id="cq-month-l">Month</span>'+
+    '<button type="button" class="cm-b" data-m="'+(i<months.length-1?escHtml(months[i+1]):'')+'"'+(i<months.length-1?'':' disabled')+' aria-label="Earlier month" title="Earlier month">&#9664;</button>'+
+    '<select id="cq-month-sel" aria-labelledby="cq-month-l">'+months.map(function(m){ return '<option value="'+escHtml(m)+'"'+(m===month?' selected':'')+'>'+escHtml(monthLabel(m))+' ('+(counts[m]||0)+')</option>'; }).join('')+'</select>'+
+    '<button type="button" class="cm-b" data-m="'+(i>0?escHtml(months[i-1]):'')+'"'+(i>0?'':' disabled')+' aria-label="Later month" title="Later month">&#9654;</button>';
+  Array.prototype.forEach.call(bar.querySelectorAll('.cm-b'),function(b){ b.onclick=function(){ var m=b.getAttribute('data-m'); if(m) setMonth(m); var again=document.querySelector('#cq-month .cm-b[aria-label="'+b.getAttribute('aria-label')+'"]'); if(again&&!again.disabled) again.focus(); else { var sel=document.getElementById('cq-month-sel'); if(sel) sel.focus(); } }; });
+  var s=document.getElementById('cq-month-sel'); s.onchange=function(){ setMonth(s.value); var again=document.getElementById('cq-month-sel'); if(again) again.focus(); };
+}
+/* Two filters belong to some tabs only, and are not on view on the others (review 2026-11-12) — so they must not act there:
+   - "Now" is the Completed / All column: leaving for another tab takes its choice off (it would silently empty that tab).
+   - the Date filter is the Booked / All one: on the other tabs its chip is hidden, so "Clear filters" there must not
+     take it off unseen — it is put back as it was. */
+var KEPT_DATE=null;
+function consultOnChange(st){
+  var tab=consultTab(st), again=false;
+  if(tab==='booked'||tab==='all'||!KEPT_DATE) KEPT_DATE={ from:st.from||'', to:st.to||'' };
+  else if((st.from||'')!==KEPT_DATE.from||(st.to||'')!==KEPT_DATE.to){ st.from=KEPT_DATE.from; st.to=KEPT_DATE.to; again=true; }
+  if(tab!=='done'&&tab!=='all'&&st.sel&&st.sel.now){ delete st.sel.now; again=true; }
+  if(again&&window.ConsultTable) ConsultTable.apply('data');   /* 'data': redraw and keep, without coming back here */
+}
+function renderConsultList(keep,why,st,h){
+  var tab=consultTab(st), T=TAB_TEXT[tab], t=todayStr();
+  if(!KEPT_DATE&&(tab==='booked'||tab==='all')) KEPT_DATE={ from:st.from||'', to:st.to||'' };
+  var rows=keep, inTab=tab==='all'?ALLROWS.slice():ALLROWS.filter(function(r){ return window.ConsultTable?ConsultTable.core.valuesOf('tab',r)[0]===tab:true; });
+  var months=[], month='', counts={};
+  if(tab==='done'){
+    months=doneMonths(); month=pickMonth(months);
+    keep.forEach(function(r){ var m=monthOf(r); counts[m]=(counts[m]||0)+1; });
+    /* The search or a filter finds nothing in the month on view but something in another: show the newest month that
+       has a match (for now — the chosen month is kept), so a past client searched by name is never "not found". */
+    if(!counts[month] && keep.length){ var hit=months.filter(function(m){ return counts[m]; })[0]; if(hit) month=hit; }
+    rows=keep.filter(function(r){ return monthOf(r)===month; });
+    inTab=inTab.filter(function(r){ return monthOf(r)===month; });
+  }
+  /* the two tabs that look back: the latest consultation first — unless a column sort is chosen in the header */
+  if((tab==='done'||tab==='needs'||tab==='all') && !(st&&st.sort&&st.sort.key)) rows=rows.slice().sort(function(a,b){ var x=String(a.bookedSlot||''), y=String(b.bookedSlot||''); return (x&&y)?y.localeCompare(x):x?-1:y?1:0; });   /* no time: last */
+  var tbl=document.getElementById('cq-table'); if(tbl) tbl.className='tab-'+tab;
+  var wrap=document.getElementById('content'); if(wrap) wrap.setAttribute('data-ctab',tab);
+  var hd=document.getElementById('cq-title'); if(hd) hd.textContent=T.h+(tab==='done'&&month?' — '+monthLabel(month):'');
+  var sb=document.getElementById('cq-sub'); if(sb) sb.textContent=T.sub;
+  renderMonthBar(tab==='done',months,month,counts);
+  var tb=document.getElementById('qbody');
+  if(!rows.length){
+    /* Say why it is empty: nothing in this tab at all / nothing on the chosen day(s) or month / nothing passing the filters. */
+    var dated=(tab==='booked')&&!!(st&&(st.from||st.to)), onlyToday=dated&&st.from===t&&st.to===t;
+    var msg=!inTab.length?(tab==='done'&&months.length?'No completed consultations in '+monthLabel(month)+'.':tab==='booked'&&ALLROWS.some(function(r){ return ConsultTable.core.valuesOf('tab',r)[0]==='booked'; })&&dated?(onlyToday?'No consultations today. Remove the Date filter (the × on the Date chip above) to see every date.':'No consultations on these dates.'):T.none)
+      :onlyToday?'No consultations today match — the Date filter is on Today. Remove it (the × on the Date chip above) to see every date.'
+      :dated?'No consultations on these dates match your filters.'
+      :tab==='done'?'No completed consultations in '+monthLabel(month)+' match your filters.'
+      :'Nothing here matches your filters.';
+    tb.innerHTML='<tr><td colspan="12" class="empty">'+escHtml(msg)+'</td></tr>';
+  }
+  else tb.innerHTML=rows.map(rowHtml).join('');
+  bindRowClicks(tb, (tab==='done'||tab==='all')?'?from=consultations':'');   /* a completed record's back link returns here */
+  return { shown: rows.length, total: inTab.length };
+}
 `;
 
 // The Retainers page's own browser code: the outcome buttons' link + address, the list, the pop-up.
@@ -799,31 +801,21 @@ ${buildNavHeader('consultations')}
       <span class="top-r"><span class="age" id="snap-age"></span>${REPORTING_LINK_HTML}${DQ_BUTTON_HTML}</span>
     </div>
     ${DQ_DONE_HTML}
-    <p class="page-sub">Booked consultations — today's first; change the dates from the Date column. Once an outcome is set, the consultation moves to its month under Completed consultations below, and the client is worked from <a href="/admin/retainers">Retainers &amp; follow-ups</a>.</p>
+    <p class="page-sub">Every consultation, in four tabs (and All). Once an outcome is set, the consultation moves to the Completed tab and stays there; the client is worked from <a href="/admin/retainers">Retainers &amp; follow-ups</a>.</p>
+    <div class="lt-tabs" id="cq-tabs" role="tablist" aria-label="Consultations by list"></div>
     <div class="q-head">
-      <h2 class="sec-h">Booked consultations <span id="cq-count" class="muted" style="font-weight:500" aria-live="polite"></span></h2>
+      <div><h2 class="sec-h"><span id="cq-title">Booked consultations</span> <span id="cq-count" class="muted" style="font-weight:500" aria-live="polite"></span></h2>
+        <p class="page-sub" id="cq-sub" style="margin:4px 0 0"></p></div>
       <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="cq-search" type="search" placeholder="Search by name, phone or email…" aria-label="Search consultations by name, phone or email" autocomplete="off"></div>
     </div>
+    <div id="cq-month" class="cq-month" style="display:none"></div>
     <div id="cq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
-    <div class="card attn fold" id="needs-outcome" style="display:none;margin-bottom:12px">
-      <div class="attn-h" id="needs-outcome-h" role="button" tabindex="0" aria-expanded="false" aria-controls="needs-outcome-body"><span>&#9888; Needs outcome <span id="needs-outcome-n"></span> <span class="muted">— consultations that have happened with no outcome recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted.</span></span><span class="muted">show / hide</span></div>
-      <div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="needs-outcome-body"></tbody></table></div>
-    </div>
     <div class="card"><div class="tbl-wrap">
-      <table>
-        <thead><tr id="cq-headrow"><th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead>
+      <table id="cq-table" class="tab-booked">
+        <thead><tr id="cq-headrow"><th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th>Now</th><th></th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div></div>
-    <section id="done" style="display:none;margin-top:22px" aria-labelledby="done-h">
-      <h2 class="sec-h" id="done-h" style="margin-bottom:4px">Completed consultations <span id="done-n" class="muted" style="font-weight:500" aria-live="polite"></span></h2>
-      <p class="page-sub" style="margin:0 0 10px">Every consultation stays here once it has an outcome — also after the client is retained and has a case. By month of the consultation; the search and the column filters above apply, the Date filter does not.</p>
-      <div id="done-groups"></div>
-    </section>
-    <div class="card fold" id="nodate" style="display:none;margin-top:12px">
-      <div class="attn-h" id="nodate-h" role="button" tabindex="0" aria-expanded="false" aria-controls="nodate-body"><span>No date <span id="nodate-n"></span> <span class="muted">— marked Booked by hand with no consultation time. Open one to set its time, or delete it.</span></span><span class="muted">show / hide</span></div>
-      <div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="nodate-body"></tbody></table></div>
-    </div>
   </div>
 </main>
 <script>
@@ -856,7 +848,7 @@ var DQ_FORM=${jsLit(dqFormHtml())};
 ${DQ_JS}
 dqInitButton();
 </script>
-<script>${listTableScript(consultListSpec, consultListOpts)}</script>
+<script>${listTableScript(consultListSpec, consultListOpts, '{ onChange: consultOnChange }')}</script>
 <script>load(); window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });   /* Back to this page from memory: read the list again */</script></body></html>`;
 }
 

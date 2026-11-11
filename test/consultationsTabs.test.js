@@ -247,10 +247,10 @@ test('pages (2026-11-05): Consultations shows consultations only; Retainers & fo
   const q = ac.buildQueueHTML(), r = ac.buildRetainersHTML();
   for (const html of [q, r]) for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   for (const s of [
-    'id="needs-outcome"', 'id="nodate"', '<th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th>',
+    'id="cq-tabs"', 'id="cq-month"', 'id="cq-table"', '<th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th>Now</th>',
     'id="cq-headrow"', 'id="cq-search"', 'id="cq-chips"', 'id="cq-count"', "api: 'ConsultTable'",
     "consultant: { label: 'Consultant', get: function (r) { return s(r.consultant); }, none: 'Unassigned' },",
-    "fetch('/api/consultations-board?completed=1'+(force?'&fresh=1':'')", 'id="done-groups"', '<a href="/admin/retainers">Retainers &amp; follow-ups</a>', 'id="snap-age"']) assert.ok(q.includes(s), 'consultations: ' + s);
+    "fetch('/api/consultations-board?completed=1'+(force?'&fresh=1':'')", 'id="cq-tabs"', '<a href="/admin/retainers">Retainers &amp; follow-ups</a>', 'id="snap-age"']) assert.ok(q.includes(s), 'consultations: ' + s);
   for (const gone of ['data-tab=', 'role="tablist" aria-label="Views"', 'id="tn-consult"', 'id="tn-ret"', 'id="rq-headrow"', "api: 'RetainerTable'", 'id="btn-direct-client"', 'id="dc-overlay"', 'function setTab(', 'loadKpis', 'KPIS_LOADED', "lsGet('tdot_consult_tab')", 'function lsGet(', 'loadDirectRetainers'])
     assert.ok(!q.includes(gone), 'consultations, gone: ' + gone);
   for (const page of [q, r]) assert.ok(page.includes("['tdot_consult_tab','tdot_consult_range','tdot_ret_outcomes'].forEach(function(k){ localStorage.removeItem(k); })"), 'the old one-page keys are tidied away');
@@ -468,8 +468,8 @@ test('REVIEW: the page — the warning header keeps its colour; a due follow-up 
   const html = require('../src/routes/adminConsultation').buildQueueHTML();
   const ret = require('../src/routes/adminConsultation').buildRetainersHTML();   // the follow-up filter and the outcome tabs are on the Retainers page (2026-11-05)
   const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
-  assert.ok(css.indexOf('.fold .attn-h {') < css.indexOf('.fold.attn .attn-h {'), 'the amber rule comes later AND is more specific');
-  assert.ok(css.includes('.fold.attn .attn-h { background:#fffbeb; color:#92400e; }'));
+  // 2026-11-12: the folds are tabs now — no fold look left on the page
+  assert.ok(!css.includes('.fold') && !html.includes('id="needs-outcome"') && !html.includes('id="nodate"') && !html.includes('id="done-groups"'));
   assert.ok(ret.includes("followUp: { label: 'Follow-up'") && ret.includes("due: 'Due (today or earlier)'") && ret.includes("{ id: 'outcome', label: 'Outcome', title: 'The outcome tabs are above the table; here: the follow-up date', menu: 'facet', facets: ['followUp'] }"),
     'the follow-up filter is on Retainers (its Outcome column), where a follow-up sits once its consultation day has passed');
   assert.ok(!html.includes('id="f-followup"') && !html.includes("facets: ['followUp']"), 'and not on Consultations (it would find almost nothing there)');
@@ -669,16 +669,101 @@ test('getConsultationsBoard withCompleted: each consultation is in exactly one o
   } finally { restore.forEach((r) => r()); snap._reset(); }
 });
 
-test('page: the completed month groups — a done row is never in the three lists; the Date filter never hides it; the Now filter is there', () => {
+// Faran 2026-11-12: four fixed tabs (Booked · Needs outcome · Completed · No date) over one table, with a month chooser on Completed.
+test('page: four tabs over one table — each consultation under exactly one tab; the Date filter narrows Booked only; Now has its own column and filter', () => {
   const { listCore } = require('../src/routes/listFilters'), S = require('../src/routes/listSpecs');
   const q = require('../src/routes/adminConsultation').buildQueueHTML();
-  for (const s of ["bindRowClicks(b,'?from=consultations')", "!(st && st.sort && st.sort.key)", 'id="done"', 'id="done-groups"', 'function renderDone(', "if(r.done) return 'done';", "ssSet('tdot_list_consult_months'", "ALLROWS=(d.consultations||[]).concat(d.completed||[]);", '>Now</th>']) assert.ok(q.includes(s), s);
-  const spec = S.consultListSpec({ today: () => '2026-11-11' }), LT = listCore(spec);
-  const st = LT.emptyState(); st.from = st.to = '2026-11-11';
-  const rows = [{ id: 'a', bookedSlot: '2026-11-11 10:00' }, { id: 'b', bookedSlot: '2026-09-02 10:00', outcome: 'Retain', done: true, now: 'Retained' }, { id: 'c', bookedSlot: '2026-11-13 10:00' }];
-  assert.deepEqual(LT.filterRows(rows, st).map((r) => r.id), ['a', 'b']);
-  st.sel.now = ['Retained'];
+  for (const s of ["bindRowClicks(tb, (tab==='done'||tab==='all')?'?from=consultations':'')", "!(st&&st.sort&&st.sort.key)", 'id="cq-tabs"', 'id="cq-month"', 'function renderMonthBar(', "ssSet('tdot_list_consult_month'", "ALLROWS=(d.consultations||[]).concat(d.completed||[]);", '<th>Now</th>',
+    '#cq-table:not(.tab-done):not(.tab-all) th:nth-child(11), #cq-table:not(.tab-done):not(.tab-all) td.c-now { display:none; }', '#cq-table.tab-done th:nth-child(12), #cq-table.tab-done td.c-del { display:none; }']) assert.ok(q.includes(s), s);
+  for (const gone of ['function renderDone(', 'id="done-groups"', 'show / hide', 'function consultBucket(']) assert.ok(!q.includes(gone), 'gone: ' + gone);
+  const spec = S.consultListSpec({ today: () => '2026-11-11' }), LT = listCore(spec), o = S.consultListOpts({});
+  const rows = [
+    { id: 'a', bookedSlot: '2026-11-11 10:00' }, { id: 'c', bookedSlot: '2026-11-13 10:00' },
+    { id: 'n', bookedSlot: '2026-11-03 10:00' }, { id: 'x', bookedSlot: '2026-11-03 10:00', direct: 'Existing client' },
+    { id: 'b', bookedSlot: '2026-09-02 10:00', outcome: 'Retain', done: true, now: 'Retained' }, { id: 'd', bookedSlot: '', done: true, now: 'Closed' },
+    { id: 'z', bookedSlot: '' },
+  ];
+  assert.deepEqual(rows.map((r) => LT.valuesOf('tab', r)[0]), ['booked', 'booked', 'needs', 'booked', 'done', 'done', 'nodate']);
+  const on = (tab, from) => { const st = LT.emptyState(); st.sel.tab = [tab]; if (from) st.from = st.to = from; return st; };
+  assert.deepEqual(LT.filterRows(rows, on('booked', '2026-11-11')).map((r) => r.id), ['a']);
+  assert.deepEqual(LT.filterRows(rows, on('booked')).map((r) => r.id), ['a', 'c', 'x']);
+  for (const tab of ['needs', 'done', 'nodate']) assert.deepEqual(LT.filterRows(rows, on(tab, '2026-11-11')).map((r) => r.id), LT.filterRows(rows, on(tab)).map((r) => r.id), tab + ': the Date filter changes nothing');
+  assert.deepEqual(LT.filterRows(rows, on('done', '2026-11-11')).map((r) => r.id), ['b', 'd']);
+  assert.deepEqual(LT.facetCounts(rows, on('booked', '2026-11-11'), 'tab').map((x) => [x.label, x.count]), [['Booked', 1], ['Needs outcome', 1], ['Completed', 2], ['No date', 1]]);
+  assert.deepEqual(LT.chips(on('done')), [], 'the tab is not a chip');
+  assert.deepEqual(LT.clearAll(on('done')).sel, { tab: ['done'] }, 'Clear filters keeps the tab');
+  const st = on('done'); st.sel.now = ['Retained'];
   assert.deepEqual(LT.filterRows(rows, st).map((r) => r.id), ['b']);
-  assert.deepEqual(LT.facetCounts(rows, LT.emptyState(), 'now').map((x) => x.label), ['Retained', 'Not completed yet']);
-  assert.deepEqual(S.consultListOpts({}).cols.find((c) => c.id === 'outcome').facets, ['outcome', 'now']);
+  assert.deepEqual([o.quick.facet, o.quick.box, o.quick.tabs, o.quick.allLast, o.quick.all, o.quick.default, o.quick.values.join()], ['tab', 'cq-tabs', true, true, 'All', 'booked', 'booked,needs,done,nodate']);
+  // All (no tab chosen) = the four tabs together: its count is always the four counts added up — the Date filter still narrows the booked ones
+  const all = LT.emptyState(); all.from = all.to = '2026-11-11';
+  assert.deepEqual(LT.filterRows(rows, all).map((r) => r.id), ['a', 'n', 'b', 'd', 'z']);
+  assert.equal(LT.filterRows(rows, all).length, LT.facetCounts(rows, all, 'tab').reduce((n, x) => n + x.count, 0));
+  assert.equal(LT.filterRows(rows, LT.emptyState()).length, rows.length, 'no date chosen: every consultation');
+  assert.ok(o.quick.storeKey.indexOf('tdot_list_') === 0, 'Sign Out forgets the kept tab');
+  assert.deepEqual(o.cols.slice(-3).map((c) => [c.id, (c.facets || []).join()]), [['outcome', 'outcome'], ['now', 'now'], ['del', '']]);
+});
+
+test('listTableUi, Consultations tabs: a new browser tab opens on Booked; All is the last tab and is kept when chosen; an unknown kept tab falls back to Booked', () => {
+  const { listTableUi, listCore } = require('../src/routes/listFilters'), S = require('../src/routes/listSpecs');
+  const el = () => ({ innerHTML: '', setAttribute() {}, removeAttribute() {}, getAttribute() { return null; }, classList: { add() {}, remove() {}, contains() { return false; } }, appendChild() {}, addEventListener() {}, querySelectorAll() { return []; }, querySelector() { return null; }, contains() { return false; }, style: {} });
+  const open = (store) => {
+    const seen = [], box = el();
+    const win = { document: { getElementById: (id) => (id === 'cq-tabs' ? box : null), createElement: el, body: el(), addEventListener() {}, activeElement: null, documentElement: el() },
+      sessionStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } }, addEventListener() {}, location: { search: '' },
+      renderConsultList: (rows, why, st) => { seen.push(((st.sel.tab || ['(all)'])).join()); return null; } };
+    const o = Object.assign({}, S.consultListOpts({}), { serverSearch: null });
+    const api = listTableUi(listCore(S.consultListSpec({})), o, win) || win[o.api];
+    api.setRows([]);
+    return { seen, api, box, store };
+  };
+  const r = open({});
+  assert.deepEqual(r.seen, ['booked']);
+  const labels = (r.box.innerHTML.match(/data-quick="[^"]*"/g) || []);
+  assert.deepEqual(labels, ['data-quick="booked"', 'data-quick="needs"', 'data-quick="done"', 'data-quick="nodate"', 'data-quick=""'], 'four tabs, then All');
+  assert.ok(r.api.core && typeof r.api.core.valuesOf === 'function', 'the page can ask which tab a row is under');
+  assert.deepEqual(open({ tdot_list_consult_tab4: 'done' }).seen, ['done']);
+  assert.deepEqual(open({ tdot_list_consult_tab4: '' }).seen, ['(all)'], 'All was chosen: kept');
+  assert.deepEqual(open({ tdot_list_consult_tab4: 'gone' }).seen, ['booked']);
+});
+
+// 2026-11-12: the row markup, run for real — a doubled quote once broke the delete button's lead id without any test noticing.
+test('page row: 12 cells; the delete button carries the lead id; a completed row has the Now cell and no delete button', () => {
+  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
+  const pick = (name) => { const i = js.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1); };
+  const ctx = { escHtml: (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'), todayStr: () => '2026-11-12', TDOT_DEL_SVG: '<svg/>', Intl };
+  vm.createContext(ctx);
+  vm.runInContext(['qpill', 'paidPill', 'outcomeCell', 'dParts', 'dAdd', 'dLabel', 'dateCell', 'timeCell', 'directPill', 'nowCell', 'rowHtml'].map(pick).join('\n'), ctx);
+  const up = ctx.rowHtml({ id: '77', name: 'A "B"', bookedSlot: '2026-11-12 10:00', adminDelete: true });
+  assert.equal((up.match(/<td/g) || []).length, 12);
+  assert.match(up, /<td class="c-now"><\/td><td class="c-del"><button class="del-btn" type="button" data-del-lead="77" data-del-admin-only="1" title="/);
+  const done = ctx.rowHtml({ id: '78', name: 'C', bookedSlot: '2026-10-02 10:00', outcome: 'Retain', done: true, now: 'Retained', nowTone: 'green', caseRef: '2026-EE-004' });
+  assert.equal((done.match(/<td/g) || []).length, 12);
+  assert.match(done, /<td class="c-now"><span class="pill green">Retained<\/span> <a class="case-lnk" href="\/admin\/case\/2026-EE-004"/);
+  assert.match(done, /<td class="c-del"><\/td><\/tr>$/);
+  assert.ok(!done.includes('data-del-lead'));
+});
+
+// review 2026-11-12: Date belongs to Booked / All and Now to Completed / All — off those tabs they are not on view, so they must not act unseen.
+test('page: leaving Completed takes a Now choice off; "Clear filters" on a tab where the Date chip is hidden does not take the Date off', () => {
+  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
+  const pick = (name) => { const i = js.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1); };
+  const applied = [];
+  const ctx = { window: { ConsultTable: { apply: (w) => applied.push(w) } }, TAB_TEXT: { booked: 1, needs: 1, done: 1, nodate: 1, all: 1 } };
+  ctx.ConsultTable = ctx.window.ConsultTable;   // in a page, window's properties are globals
+  vm.createContext(ctx);
+  vm.runInContext('var KEPT_DATE=null;\n' + pick('consultTab') + '\n' + pick('consultOnChange'), ctx);
+  const st = { from: '2026-11-12', to: '2026-11-12', sel: { tab: ['booked'] } };
+  ctx.consultOnChange(st); assert.deepEqual(applied, []);
+  st.sel.tab = ['done']; st.sel.now = ['Retained']; ctx.consultOnChange(st);
+  assert.deepEqual([st.sel.now, applied.length], [['Retained'], 0], 'Now stays on Completed');
+  st.from = ''; st.to = ''; ctx.consultOnChange(st);            // "Clear filters" pressed on Completed
+  assert.deepEqual([st.from, st.to, applied], ['2026-11-12', '2026-11-12', ['data']], 'the hidden Date filter is put back');
+  st.sel.tab = ['needs']; ctx.consultOnChange(st);
+  assert.equal(st.sel.now, undefined, 'Now is taken off when leaving for a tab without the column');
+  delete st.sel.tab; st.sel.now = ['Closed']; st.from = ''; st.to = ''; ctx.consultOnChange(st);   // All: both are on view
+  assert.deepEqual([st.sel.now, st.from], [['Closed'], ''], 'on All the Date can be taken off and Now chosen');
+  assert.ok(html.includes("listCore((") && html.includes("{ onChange: consultOnChange }"));
 });

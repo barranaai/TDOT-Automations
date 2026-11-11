@@ -23,6 +23,17 @@ function consultListSpec(ctx) {
   function s(v) { return String(v == null ? '' : v).trim(); }
   function day(r) { var d = s(r.bookedSlot).slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : ''; }
   function today() { return (ctx && ctx.today) ? ctx.today() : new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' }); }
+  /* The page's four tabs (Faran 2026-11-12), each consultation under exactly one:
+     done   — completed (the server marks it: an outcome, a retainer under way, or retained)
+     nodate — marked Booked by hand with no consultation time
+     needs  — its day has passed and no outcome is recorded (a direct consultation about an existing client's file has none to set)
+     booked — everything else: still to happen */
+  function bucket(r) {
+    if (r.done) return 'done';
+    var d = day(r); if (!d) return 'nodate';
+    if (d < today() && !s(r.outcome) && r.direct !== 'Existing client') return 'needs';
+    return 'booked';
+  }
   return {
     facets: {
       consultant: { label: 'Consultant', get: function (r) { return s(r.consultant); }, none: 'Unassigned' },
@@ -36,9 +47,12 @@ function consultListSpec(ctx) {
       preconsult: { label: 'Pre-consult', get: function (r) { return r.preConsultSubmitted ? 'submitted' : 'pending'; },
         text: function (v) { return ({ submitted: 'Submitted', pending: 'Pending' })[v] || v; }, order: ['submitted', 'pending'], fixed: true },
       outcome: { label: 'Outcome', get: function (r) { return s(r.outcome); }, none: 'No outcome yet', order: ['Retain', 'Follow-Up', 'Newsletter', 'Not Wanted'] },
-      // Completed consultations (2026-11-11): where the client is now — the "Now" column of the month groups.
-      now: { label: 'Now (completed consultations)', get: function (r) { return r.done ? s(r.now) : 'upcoming'; },
+      // Completed consultations (2026-11-11): where the client is now — the "Now" column of the Completed tab.
+      now: { label: 'Now', get: function (r) { return r.done ? s(r.now) : 'upcoming'; },
         text: function (v) { return v === 'upcoming' ? 'Not completed yet' : v; }, order: ['Retained', 'Retainer paid', 'Retainer signed', 'Retainer sent', 'Retainer to send', 'Following up', 'Newsletter list', 'Closed', 'Existing client', 'upcoming'] },
+      // The tabs above the table (Faran 2026-11-12): four lists, one at a time, and All last (the four together).
+      tab: { label: 'List', quick: true, get: bucket, order: ['booked', 'needs', 'done', 'nodate'],
+        text: function (v) { return ({ booked: 'Booked', needs: 'Needs outcome', done: 'Completed', nodate: 'No date' })[v] || v; } },
     },
     // The column names sort, like the Leads list (Faran 2026-11-11). No column chosen = the server order.
     sorts: {
@@ -51,12 +65,12 @@ function consultListSpec(ctx) {
     sortBlanksLast: ['service', 'consultant'],
     defaultSort: null,   // the server order: earliest consultation first
     // The Date column's filter (Faran 2026-11-11 — it replaced the Today / This week / This month / All buttons): the
-    // consultation's Toronto day, with choices that look ahead. The two lists beside the table are never hidden by it:
-    // "No date" (no day to compare) and "Needs outcome" (the day has passed, nothing recorded — the page's consultBucket rule).
+    // consultation's Toronto day, with choices that look ahead. It narrows the BOOKED consultations only (on the Booked
+    // tab and among the rows of All) — the other three lists are never hidden by it (Needs outcome and No date have
+    // nothing to choose; Completed has its own month chooser). So the All count is always the four tab counts added up.
     date: { key: 'date', chip: 'Date', get: day,
       presets: [['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['nextweek', 'Next week'], ['fullmonth', 'This month']],
-      // …and the completed ones (2026-11-11) sit in their own month groups, which are the way through the past.
-      exempt: function (r) { var d = day(r); return !!r.done || !d || (d < today() && !s(r.outcome) && r.direct !== 'Existing client'); } },
+      exempt: function (r) { return bucket(r) !== 'booked'; } },
     search: { chip: 'Search', text: function (r) { return r.name; }, id: function (r) { return r.id; } },
   };
 }
@@ -67,7 +81,13 @@ function consultListOpts(ctx) {
     serverSearch: '/api/leads/search',   // name, phone or email (step 3, 2026-11-09)
     render: 'renderConsultList', api: 'ConsultTable',
     sortReset: 'earliest consultation first',   // a column sort shows as a chip; its × goes back to the normal order
+    onChange: ctx && ctx.onChange,   // the page keeps the tab-only filters (Date, Now) to their tabs
     defaultDate: 'today',   // a new browser tab opens on today's consultations (Faran 2026-11-11); the chip's × shows every date
+    // Four tabs and All, like the Leads page (Faran 2026-11-12): a new browser tab opens on Booked; the tab shown is kept until it is closed.
+    quick: { facet: 'tab', box: 'cq-tabs', tabs: true, allLast: true, all: 'All', default: 'booked', storeKey: 'tdot_list_consult_tab4', values: ['booked', 'needs', 'done', 'nodate'],
+      hints: { booked: 'Consultations still to happen — the Date filter chooses the days', needs: 'The consultation day has passed and no outcome is recorded',
+        done: 'Completed consultations, one month at a time — also after the client is retained and has a case', nodate: 'Marked Booked by hand with no consultation time',
+        '': 'The four lists together — the Date filter still narrows the booked ones' } },
     cols: [
       { id: 'date', label: 'Date', title: 'The consultation day, Toronto time', menu: 'date', date: true, sort: 'date', sortText: ['Earliest first', 'Latest first'], sortDirs: ['asc', 'desc'] },
       { id: 'time', label: 'Time', title: 'The consultation time, Toronto', sort: 'time', sortText: ['Earliest in the day first', 'Latest in the day first'], sortDirs: ['asc', 'desc'] },
@@ -78,7 +98,8 @@ function consultListOpts(ctx) {
       { id: 'agreement', label: 'Agreement', menu: 'facet', facets: ['agreement'] },
       { id: 'preconsult', label: 'Pre-consult', menu: 'facet', facets: ['preconsult'] },
       { id: 'paid', label: 'Paid', title: 'The consultation fee', menu: 'facet', facets: ['paid'] },
-      { id: 'outcome', label: 'Outcome', menu: 'facet', facets: ['outcome', 'now'] },
+      { id: 'outcome', label: 'Outcome', menu: 'facet', facets: ['outcome'] },
+      { id: 'now', label: 'Now', title: 'Where the client is now (the Completed tab)', menu: 'facet', facets: ['now'] },
       { id: 'del', label: '' },
     ],
   };
