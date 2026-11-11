@@ -293,7 +293,7 @@ function listTableUi(LT, o, win) {
   function resetText() { return typeof o.sortReset === 'function' ? o.sortReset(state) : o.sortReset; }
   function sortChip() {
     var d = LT.DEFAULT_SORT, st = state.sort, reset = resetText();
-    if (!reset || !d || !st || (st.key === d.key && st.dir === d.dir)) return '';
+    if (!reset || !st || !st.key || (d && st.key === d.key && st.dir === d.dir)) return '';   /* a list with no default column (Consultations): any column sort shows the chip */
     var c = null; for (var i = 0; i < COLS.length; i++) if (COLS[i].sort === st.key) c = COLS[i];
     if (!c) return '';
     var t = 'Sorted: ' + c.label + ' (' + c.sortText[Math.max(0, (c.sortDirs || []).indexOf(st.dir))] + ')';
@@ -309,7 +309,7 @@ function listTableUi(LT, o, win) {
       return '<span class="q-chip">' + esc(c.text) + '<button type="button" data-chip="' + esc(c.key) + '" aria-label="Remove filter: ' + esc(c.text) + '">×</button></span>';
     }).join('') + (list.length ? '<button type="button" class="q-clearall" data-clearall="1">Clear filters</button>' : '');
     var rs = box.querySelector('[data-sortreset]');
-    if (rs) rs.onclick = function () { state.sort = { key: LT.DEFAULT_SORT.key, dir: LT.DEFAULT_SORT.dir }; apply('sort'); };
+    if (rs) rs.onclick = function () { state.sort = LT.DEFAULT_SORT ? { key: LT.DEFAULT_SORT.key, dir: LT.DEFAULT_SORT.dir } : null; apply('sort'); };
     Array.prototype.forEach.call(box.querySelectorAll('[data-chip]'), function (b) {
       b.onclick = function () { LT.clearKey(state, b.getAttribute('data-chip')); if (b.getAttribute('data-chip') === 'q') setSearch(''); apply('filter'); };
     });

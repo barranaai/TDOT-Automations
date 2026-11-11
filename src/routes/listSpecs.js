@@ -29,8 +29,20 @@ function consultListSpec(ctx) {
         text: function (v) { return ({ signed: 'Signed', sent: 'Sent, not signed', none: 'Not sent' })[v] || v; }, order: ['signed', 'sent', 'none'], fixed: true },
       paid: { label: 'Paid', get: function (r) { return !s(r.paid) ? 'none' : r.paid === 'waived' ? 'waived' : r.paid === 'app' ? 'app' : 'staff'; },
         text: function (v) { return ({ app: 'Paid (app)', staff: 'Paid — recorded by staff', waived: 'Waived', none: 'Not paid' })[v] || v; }, order: ['app', 'staff', 'waived', 'none'], fixed: true },
+      // Every column filters, like the Leads list (Faran 2026-11-11).
+      service: { label: 'Service', get: function (r) { return s(r.service); }, none: 'Not set' },
+      preconsult: { label: 'Pre-consult', get: function (r) { return r.preConsultSubmitted ? 'submitted' : 'pending'; },
+        text: function (v) { return ({ submitted: 'Submitted', pending: 'Pending' })[v] || v; }, order: ['submitted', 'pending'], fixed: true },
+      outcome: { label: 'Outcome', get: function (r) { return s(r.outcome); }, none: 'No outcome yet', order: ['Retain', 'Follow-Up', 'Newsletter', 'Not Wanted'] },
     },
-    sorts: {},
+    // The column names sort, like the Leads list (Faran 2026-11-11). No column chosen = the server order.
+    sorts: {
+      time: function (r) { return s(r.bookedSlot); },
+      client: function (r) { return s(r.name).toLowerCase(); },
+      service: function (r) { return s(r.service).toLowerCase(); },
+      consultant: function (r) { return s(r.consultant).toLowerCase(); },
+    },
+    sortBlanksLast: ['service', 'consultant'],
     defaultSort: null,   // the server order: earliest consultation first
     search: { chip: 'Search', text: function (r) { return r.name; }, id: function (r) { return r.id; } },
   };
@@ -41,17 +53,18 @@ function consultListOpts(ctx) {
     ids: { head: 'cq-headrow', chips: 'cq-chips', count: 'cq-count', search: 'cq-search', pop: 'cq-pop' },
     serverSearch: '/api/leads/search',   // name, phone or email (step 3, 2026-11-09)
     render: 'renderConsultList', api: 'ConsultTable',
+    sortReset: 'earliest consultation first',   // a column sort shows as a chip; its × goes back to the normal order
     countable: 'consultCountable',   // the counts beside the choices: only the date range on view (and its two folds)
     cols: [
-      { id: 'time', label: 'Time' },
-      { id: 'client', label: 'Client' },
-      { id: 'service', label: 'Service' },
-      { id: 'consultant', label: 'Consultant', menu: 'facet', facets: ['consultant'] },
+      { id: 'time', label: 'Time', title: 'The consultation time, Toronto — the dates on view are chosen with Today / This week / This month / All above', sort: 'time', sortText: ['Earliest first', 'Latest first'], sortDirs: ['asc', 'desc'] },
+      { id: 'client', label: 'Client', sort: 'client', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
+      { id: 'service', label: 'Service', menu: 'facet', facets: ['service'], sort: 'service', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
+      { id: 'consultant', label: 'Consultant', menu: 'facet', facets: ['consultant'], sort: 'consultant', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
       { id: 'mode', label: 'Mode', menu: 'facet', facets: ['mode'] },
       { id: 'agreement', label: 'Agreement', menu: 'facet', facets: ['agreement'] },
-      { id: 'preconsult', label: 'Pre-consult' },
+      { id: 'preconsult', label: 'Pre-consult', menu: 'facet', facets: ['preconsult'] },
       { id: 'paid', label: 'Paid', title: 'The consultation fee', menu: 'facet', facets: ['paid'] },
-      { id: 'outcome', label: 'Outcome' },
+      { id: 'outcome', label: 'Outcome', menu: 'facet', facets: ['outcome'] },
       { id: 'del', label: '' },
     ],
   };

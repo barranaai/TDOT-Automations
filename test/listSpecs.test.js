@@ -388,3 +388,35 @@ test('point 8 (2026-11-05): a tab kept apart (Retained) is never under All — n
   assert.ok(ui.includes("box.innerHTML = (q.allLast ? tabs.join('') + allTab : allTab + tabs.join('')) + side.join('');"));
   assert.ok(ui.includes('return LT.passes(r, state, q.facet) && !LT.apartOf(q.facet, r); }).length'));
 });
+
+// Consultations: filters and sorting on every column, like the Leads list (Faran 2026-11-11).
+test('Consultations: Service, Pre-consult and Outcome filter; Time, Client, Service and Consultant sort; no sort = the server order', () => {
+  const spec = S.consultListSpec({}), LT = listCore(spec), o = S.consultListOpts({});
+  const rows = [
+    { id: '1', name: 'bo Li', service: 'Study Permit', consultant: '', bookedSlot: '2026-11-12T10:00', preConsultSubmitted: true, outcome: 'Retain' },
+    { id: '2', name: 'Asha Rao', service: '', consultant: 'Shermin T', bookedSlot: '2026-11-11T09:00', preConsultSubmitted: false, outcome: '' },
+    { id: '3', name: 'Chen Wu', service: 'express Entry', consultant: 'Shafoli Kapur', bookedSlot: '2026-11-13T15:30', preConsultSubmitted: false, outcome: 'Follow-Up' },
+  ];
+  const st = (sel) => { const x = LT.emptyState(); x.sel = sel; return x; };
+  assert.equal(ids(LT.filterRows(rows, st({ service: ['Study Permit'] }))), '1');
+  assert.equal(ids(LT.filterRows(rows, st({ service: [LT.NONE] }))), '2');
+  assert.equal(ids(LT.filterRows(rows, st({ preconsult: ['pending'] }))), '2,3');
+  assert.equal(ids(LT.filterRows(rows, st({ outcome: [LT.NONE, 'Retain'] }))), '1,2');
+  assert.deepEqual(LT.facetCounts(rows, LT.emptyState(), 'preconsult').map((x) => [x.label, x.count]), [['Submitted', 1], ['Pending', 2]]);
+  assert.deepEqual(LT.facetCounts(rows, LT.emptyState(), 'outcome').map((x) => x.label), ['Retain', 'Follow-Up', 'No outcome yet']);
+  assert.deepEqual(LT.chips(st({ outcome: ['Follow-Up'], service: [LT.NONE] })).map((c) => c.text).sort(), ['Outcome: Follow-Up', 'Service: Not set']);
+
+  assert.equal(LT.emptyState().sort, null);
+  assert.equal(ids(LT.sortRows(rows, null)), '1,2,3', 'no column chosen: as the server sent them');
+  assert.equal(ids(LT.sortRows(rows, { key: 'time', dir: 'asc' })), '2,1,3');
+  assert.equal(ids(LT.sortRows(rows, { key: 'time', dir: 'desc' })), '3,1,2');
+  assert.equal(ids(LT.sortRows(rows, { key: 'client', dir: 'asc' })), '2,1,3', 'names sort without regard to capitals');
+  assert.equal(ids(LT.sortRows(rows, { key: 'service', dir: 'asc' })), '3,1,2', 'no service goes last');
+  assert.equal(ids(LT.sortRows(rows, { key: 'service', dir: 'desc' })), '1,3,2', 'no service goes last both ways');
+  assert.equal(ids(LT.sortRows(rows, { key: 'consultant', dir: 'asc' })), '3,2,1', 'unassigned goes last');
+
+  // Every column but the delete button has a filter or a sort; the sort can be undone.
+  for (const c of o.cols) if (c.id !== 'del') assert.ok(c.sort || (c.facets && c.facets.length), c.id);
+  for (const c of o.cols) { if (c.sort) { assert.ok(spec.sorts[c.sort], c.id); assert.equal(c.sortText.length, 2); } (c.facets || []).forEach((f) => assert.ok(spec.facets[f], f)); }
+  assert.equal(o.sortReset, 'earliest consultation first');
+});
