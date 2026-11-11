@@ -200,11 +200,12 @@ function inviteFacts(l, act, now) {
  * @returns {{ key: string, label: string, at: number|null, tone: 'green'|'blue'|'amber'|'red'|'grey', by?: string }}
  */
 function leadStatus(l, act, now) {
-  const oc = canonicalOutcome(l.outcome) || s(l.outcome);
+  // The Webinar mark (2026-11-11) is read off `outcome` by leadService: here — the Leads list — it shows as the lead's outcome.
+  const oc = canonicalOutcome(l.outcome) || s(l.outcome) || (l.webinar === 'Yes' ? 'Webinar' : '');
   if (oc) {
-    const at = Date.parse(s(l.outcomeChangedAt));
+    const at = Date.parse(s(l.outcomeChangedAt) || s(l.webinarAt));
     return { key: 'outcome', label: `Outcome: ${oc}`, at: Number.isFinite(at) ? at : null,
-      tone: { Retain: 'green', 'Follow-Up': 'amber', Newsletter: 'grey', 'Not Wanted': 'red' }[oc] || 'grey' };
+      tone: { Retain: 'green', 'Follow-Up': 'amber', Newsletter: 'grey', 'Not Wanted': 'red', Webinar: 'blue' }[oc] || 'grey' };
   }
   const st = s(l.bookingStatus);
   if (st === 'Booked' || bookedByHand(l)) return { key: 'booked', label: 'Booked', at: null, tone: 'green', slot: s(l.bookedSlot) };

@@ -379,7 +379,9 @@ test('pages: four outcome buttons (Retain stays in the retainer panel); "Not Wan
     assert.ok(!/Ineligible|Don’t Retain/.test(html), `${k}: no retired label`);
   }
   for (const html of [pages.cd, pages.ld]) {
-    for (const s of ['var OUTCOMES=["Retain","Follow-Up","Newsletter","Not Wanted"];', 'var OUTCOME_NOT_WANTED="Not Wanted";', 'id="bl-banner"', 'function tdotOpenNotWantedModal(o){', 'function tdotOpenBlacklistRemoveModal(entryId, name, onDone){', 'function tdotBlacklistHtml(r, opts){',
+    // the consultation record: the four; the lead page: the four and the lead-only Webinar (2026-11-11)
+    assert.ok(html.includes(html === pages.ld ? 'var OUTCOMES=["Retain","Follow-Up","Newsletter","Not Wanted","Webinar"];' : 'var OUTCOMES=["Retain","Follow-Up","Newsletter","Not Wanted"];'));
+    for (const s of ['var OUTCOME_NOT_WANTED="Not Wanted";', 'id="bl-banner"', 'function tdotOpenNotWantedModal(o){', 'function tdotOpenBlacklistRemoveModal(entryId, name, onDone){', 'function tdotBlacklistHtml(r, opts){',
       "if(label===OUTCOME_NOT_WANTED){ tdotOpenNotWantedModal({", "JSON.stringify({label:label, reason:reason})", "fetch('/admin/blacklist/' + encodeURIComponent(entryId) + '/remove'", 'canRemove:true', '.blw {']) assert.ok(html.includes(s), s);
   }
   for (const s of ['id="dc-blacklist"', 'function dcRenderBlacklist(r){', 'id="dc-bl-ack"', 'dcRenderBlacklist(res.j.blacklist);', "tick the box above if you mean to set them up anyway", 'DC_BL_HIT=false; var blb=dcEl']) assert.ok(pages.rq.includes(s), s);

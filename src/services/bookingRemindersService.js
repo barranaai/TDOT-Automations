@@ -158,6 +158,7 @@ function progressReason(lead, now) {
   if (s(lead.squareConsultTxnId)) return 'paid online';
   if (s(lead.consultPayment)) return 'the consultation fee is recorded or waived';
   if (s(lead.outcome)) return `the Outcome is set (${s(lead.outcome)})`;
+  if (lead.webinar === 'Yes') return 'the Outcome is set (Webinar)';   // a lead outcome like the others: it stops the booking reminders (2026-11-11)
   if (s(lead.conversionStatus) === 'Retained') return 'retained';
   if (require('../utils/directClient').isDirectClient(lead) || s(lead.retainerSent) || s(lead.retainerSigned) || s(lead.retainerPaid)) return 'a retainer is under way';
   if (s(lead.clientMasterItemId)) return 'a case is open';

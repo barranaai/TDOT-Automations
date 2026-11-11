@@ -439,6 +439,14 @@ function parseItem(item) {
   let outcomeAt = '';
   try { outcomeAt = String((oc && oc.value && JSON.parse(oc.value).changed_at) || ''); } catch (_) { /* unreadable value — unknown */ }
   lead.outcomeChangedAt = outcomeAt;
+  // "Webinar" (Faran 2026-11-11) sits on the Outcome column but is a mark on a LEAD, not a consultation outcome.
+  // It is taken off `outcome` HERE — the one place every lead is read — so no reader anywhere (the consultation
+  // package, the "set the outcome" nudge, the direct-consultation checks, the retainer hold, the lists) can take it
+  // for "the consultation has been decided" (review 2026-11-11). The lead page and the Leads list read `webinar`.
+  if (require('../../config/outcomes').isWebinar(lead.outcome)) {
+    lead.webinar = 'Yes'; lead.webinarAt = outcomeAt;
+    lead.outcome = ''; lead.outcomeChangedAt = '';
+  }
   return lead;
 }
 

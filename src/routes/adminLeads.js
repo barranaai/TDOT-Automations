@@ -16,7 +16,7 @@ const { leadsTableScript, LEADS_TABLE_CSS } = require('./leadsTableFilters');
 const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // Source / Reference second question (2026-11-04)   // header filters + sorting on the Leads list
 const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   // Shafoli's screenshot attachments (2026-11-04)
 const { deadlineBoxHtml, DEADLINE_BOX_JS, DEADLINE_BOX_CSS } = require('./deadlineBox');   // the deadline box (2026-11-05)
-const { OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
+const { LEAD_OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS, STAFF_OPTS, COUNTRY_OPTS, DIALOG_UI_JS, REPORTING_LINK_HTML } = require('./adminShared');
@@ -206,7 +206,7 @@ function renderRows(rows,why,st,h){
     /* A stage tab with nobody in it (2026-11-05): say which tab, and whether the filters hide them. */
     var tab=(ALLROWS.length && st && st.sel && st.sel.phase && st.sel.phase.length)?st.sel.phase[0]:'';
     if(tab && h && window.LeadsTable){ var tl=LeadsTable.label('phase',tab); msg=(h.without('phase')===ALLROWS.length)?('No leads in “'+tl+'” right now.'):('No leads in “'+tl+'” match your filters.'); }
-    tb.innerHTML='<tr><td colspan="11" class="empty">'+escHtml(msg)+'</td></tr>'; return;
+    tb.innerHTML='<tr><td colspan="12" class="empty">'+escHtml(msg)+'</td></tr>'; return;
   }
   tb.innerHTML=rows.map(function(c){
     var urgent=c.urgent?(' '+qpill('red','URGENT')):'';
@@ -226,6 +226,7 @@ function renderRows(rows,why,st,h){
       '<td>'+statusPill(c.bookingStatus)+'</td>'+
       '<td>'+invitePill(c)+'</td>'+
       '<td>'+statusCell(c.status)+'</td>'+
+      '<td>'+(c.webinar?qpill('blue','Webinar')+(c.webinarDay?'<div class="muted" style="font-size:11.5px;margin-top:2px">'+escHtml(stDay(Date.parse(c.webinarDay+'T12:00:00Z')))+'</div>':''):'<span class="muted">—</span>')+'</td>'+
       '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this lead (careful — removes its Monday row and OneDrive folder)">'+TDOT_DEL_SVG+'</button></td></tr>';
   }).join('');
   Array.prototype.forEach.call(document.querySelectorAll('tr.row'),function(tr){
@@ -660,7 +661,7 @@ ${buildNavHeader('leads')}
 ${SHARED_AUTH_JS}
 ${DEADLINE_BOX_JS}
 var LEAD_ID=${jsLit(String(leadId))};
-var OUTCOMES=${jsLit(OUTCOME_LABELS)};
+var OUTCOMES=${jsLit(LEAD_OUTCOME_LABELS)};   /* the four, and Webinar — a lead-only outcome (2026-11-11) */
 var OUTCOME_NOT_WANTED=${jsLit(OUTCOME_NOT_WANTED)};
 var REMARKS=${jsLit(REMARK_PRESETS)};
 ${BLACKLIST_UI_JS}

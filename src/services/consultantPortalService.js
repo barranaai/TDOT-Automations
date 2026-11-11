@@ -557,6 +557,9 @@ async function getLeadsQueue() {
     bookedSlot:    l.bookedSlot || '',
     consultant:    (l.assignedConsultant || '').trim(),
     outcome:       l.outcome || '',
+    // The Leads list's Webinar column (Faran 2026-11-11): the lead-only outcome, and the Toronto day it was set.
+    webinar:       l.webinar === 'Yes',
+    webinarDay:    l.webinar === 'Yes' ? torontoDay(l.webinarAt) : '',
     wantsTo:       l.whatDoYouWant || '', // non-booking intents get a queue pill + invite warning
     urgent:        l.removalOrder === 'Yes' || l.enforcementLetter === 'Yes' || Boolean((l.deadlineDate || '').trim()),
     inviteSent:    (l.bookingInvite || '') === 'Sent',
@@ -710,7 +713,7 @@ async function getLeadDetail(leadId) {
 
     bookingStatus: lead.bookingStatus || 'Not Yet',
     bookedSlot:    lead.bookedSlot || '',
-    outcome:       lead.outcome || '',
+    outcome:       lead.outcome || (lead.webinar === 'Yes' ? OUTCOME_WEBINAR : ''),   // the lead page shows the Webinar mark as its outcome
     // The client's stated intent ("Book consultation" / "Request quote" / …) —
     // the portal warns before sending a booking invite when it isn't a booking.
     wantsTo:       lead.whatDoYouWant || '',
@@ -769,7 +772,7 @@ function normaliseRows(x) {
 // Outcome labels are the EXACT strings on the board — writing a near-match
 // would mint a junk label via create_labels_if_missing, so they must match
 // byte-for-byte. Four since 2026-10-15 (Gauri point 5): config/outcomes.js.
-const { OUTCOME_LABELS, OUTCOME_NOT_WANTED, OUTCOME_RETAIN, canonicalOutcome } = require('../../config/outcomes');
+const { OUTCOME_LABELS, LEAD_OUTCOME_LABELS, OUTCOME_NOT_WANTED, OUTCOME_RETAIN, OUTCOME_WEBINAR, canonicalOutcome, consultOutcomeText } = require('../../config/outcomes');
 const NOT_WANTED_REASON_MIN = 3;
 // One-click remark presets (consultant note #8) — config/leadRemarks.js
 const { REMARK_PRESETS } = require('../../config/leadRemarks');
@@ -883,7 +886,7 @@ function validateAction(action, value) {
       else if (typeof value === 'string' && value.trim().startsWith('{')) {
         try { const o = JSON.parse(value); label = o && o.label; reason = o && o.reason; } catch (_) { return { ok: false, error: 'Invalid outcome value.' }; }
       }
-      if (!OUTCOME_LABELS.includes(label)) return { ok: false, error: 'Invalid outcome value.' };
+      if (!LEAD_OUTCOME_LABELS.includes(label)) return { ok: false, error: 'Invalid outcome value.' };   // the four, and the lead-only Webinar (2026-11-11)
       reason = String(reason == null ? '' : reason).replace(/\s+/g, ' ').trim();
       if (label === OUTCOME_NOT_WANTED) {
         if (reason.length < NOT_WANTED_REASON_MIN) return { ok: false, error: 'Give the reason this person is not wanted — it is recorded on the lead and on the Not Wanted list.' };
@@ -3236,7 +3239,7 @@ function consultRow(l, consultPayment) {
     preConsultSubmitted: s(l.preConsultSubmitted) === 'Yes',
     agreementSent: s(l.consultAgreementSent), agreementSigned: s(l.consultAgreementSigned),
     paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
-    outcome: s(l.outcome), followUpDate: s(l.followUpDate),
+    outcome: consultOutcomeText(l.outcome), followUpDate: s(l.followUpDate),   // never the lead-only Webinar: the consultation still needs its outcome
     consultationHeld: s(l.consultationHeld), hasMeeting: !!s(l.meetingLink),
     tier: s(l.tier), createdAt: l.createdAt || '',
     ...adminOnlyDelete(l),
@@ -3336,7 +3339,7 @@ async function getDirectClientOptions() {
 }
 
 module.exports = {
-  REMARK_PRESETS, postRemarkNote, notifyOutcomeChange,
+  REMARK_PRESETS, postRemarkNote, notifyOutcomeChange, LEAD_OUTCOME_LABELS,
   getConsultationQueue, getConsultationDetail, validateAction, applyAction, OUTCOME_LABELS,
   getLeadsQueue, getLeadDetail, buildIntakeSections,
   parseSelections, getRetainerPlan, previewRetainerPdf, previewConsultAgreement, getSignedConsultAgreementPdf, getSignedRetainerAgreementPdf,

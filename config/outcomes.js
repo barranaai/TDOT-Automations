@@ -37,4 +37,18 @@ function canonicalOutcome(value) {
 
 const isNotWanted = (value) => canonicalOutcome(value) === OUTCOME_NOT_WANTED;
 
-module.exports = { OUTCOME_LABELS, OUTCOME_RETAIN, OUTCOME_FOLLOW_UP, OUTCOME_NEWSLETTER, OUTCOME_NOT_WANTED, LEGACY_OUTCOMES, canonicalOutcome, isNotWanted };
+/**
+ * "Webinar" (Faran 2026-11-11): an outcome for a LEAD only — set from the lead page, shown in the Leads list's
+ * Webinar column. It is on the same board column, but it is NOT a consultation outcome: leadService.parseItem takes
+ * it off `outcome` as the lead is read (lead.webinar = 'Yes', lead.webinarAt) and canonicalOutcome() reads it as
+ * blank, so a booked consultation is never "decided" by it (it stays on the Consultations page and still asks for
+ * its outcome), and the Retainers & follow-ups page has no tab for it. The consultation record does not offer it.
+ */
+const OUTCOME_WEBINAR = 'Webinar';
+/** The outcomes the lead page offers / the outcome action accepts: the four, then Webinar. */
+const LEAD_OUTCOME_LABELS = [...OUTCOME_LABELS, OUTCOME_WEBINAR];
+const isWebinar = (value) => String(value == null ? '' : value).trim() === OUTCOME_WEBINAR;
+/** The outcome text a CONSULTATION list shows: the cell as stored, but never the lead-only Webinar. */
+const consultOutcomeText = (value) => (isWebinar(value) ? '' : String(value == null ? '' : value).trim());
+
+module.exports = { OUTCOME_WEBINAR, LEAD_OUTCOME_LABELS, isWebinar, consultOutcomeText, OUTCOME_LABELS, OUTCOME_RETAIN, OUTCOME_FOLLOW_UP, OUTCOME_NEWSLETTER, OUTCOME_NOT_WANTED, LEGACY_OUTCOMES, canonicalOutcome, isNotWanted };

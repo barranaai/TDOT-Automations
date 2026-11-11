@@ -74,7 +74,7 @@ test('the header: "Source / Reference" then "Referred By", side by side; the tab
   assert.deepEqual(cols.slice(at, at + 3), [['source', 'Source / Reference'], ['referred', 'Referred By'], ['received', 'Received']]);
   assert.match(src, /id: 'referred', label: 'Referred By', title: '[^']+', menu: 'facet', facets: \['referredBy'\]/);
   assert.match(LEADS_TABLE_CSS, /\.tbl-wrap \{ overflow-x:auto; \}/);
-  assert.match(LEADS_TABLE_CSS, /\.tbl-wrap table \{ min-width:1100px; \}/);
+  assert.match(LEADS_TABLE_CSS, /\.tbl-wrap table \{ min-width:1190px; \}/);
   assert.match(LEADS_TABLE_CSS, /td\.ref-by \{ max-width:200px; overflow-wrap:anywhere; \}/, 'a long typed name wraps instead of stretching the table');
 });
 
@@ -104,13 +104,13 @@ test('each row: the Referred By cell sits right after Source / Reference; names 
   const tds = (row) => row.split('<td').slice(1).map((t) => t.replace(/^[^>]*>/, '').replace(/<\/td>[\s\S]*$/, ''));
   const [r1, r2] = out.split('</tr>').filter((r) => r.includes('<tr'));
   const c1 = tds(r1), c2 = tds(r2);
-  assert.equal(c1.length, 11);
+  assert.equal(c1.length, 12);
   assert.match(c1[2], /^Existing Client<div class="muted" style="font-size:11.5px">Owner: Gauri<\/div>$/);
   assert.equal(c1[3], 'Raj &lt;b&gt;Patel&lt;/b&gt;', 'typed text never becomes HTML');
   assert.ok(r1.includes('<td class="ref-by">'));
   assert.equal(c2[2], 'Website', 'no owner: no Owner line');
   assert.equal(c2[3], '<span class="muted">—</span>', 'nothing referred: a dash');
-  assert.match(renderWith([]), /<td colspan="11" class="empty">/, 'the empty message spans every column');
+  assert.match(renderWith([]), /<td colspan="12" class="empty">/, 'the empty message spans every column');
 });
 
 test('review: list pills may wrap (a one-line rule made the table scroll sideways on 1280–1440px laptops); the guide names both columns and both filters', () => {

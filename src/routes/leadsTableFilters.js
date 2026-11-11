@@ -44,6 +44,8 @@ function leadsTableSpec() {
       booking:  { label: 'Booking', get: function (r) { return s(r.bookingStatus) || 'Not Yet'; }, order: ['Not Yet', 'Slot Held', 'Abandoned'] },
       invite:   { label: 'Invite', get: function (r) { return r.inviteSent ? 'Sent' : 'Not sent'; }, order: ['Sent', 'Not sent'] },
       status:   { label: 'Current status', get: cstKey, text: cstText, order: CST_ORDER, none: 'No status' },
+      // The Webinar column (Faran 2026-11-11): the lead-only outcome "Webinar".
+      webinar:  { label: 'Webinar', get: function (r) { return r.webinar ? 'yes' : 'no'; }, text: function (v) { return v === 'yes' ? 'Webinar' : 'Not webinar'; }, order: ['yes', 'no'], fixed: true },
       // The tabs above the table (Faran 2026-11-05): how far the booking invite has gone — worked out on the server (leadStatusService.leadPhase).
       phase:    { label: 'Stage', quick: true, get: function (r) { return s(r.phase); }, order: ['new', 'invite', 'reminder1', 'reminder2', 'expired'],
         text: function (v) { return ({ new: 'New', invite: 'Invite sent', reminder1: '1st reminder', reminder2: '2nd reminder', expired: 'Expired' })[v] || v; } },
@@ -97,13 +99,14 @@ function leadsTableOpts() {
       { id: 'booking', label: 'Booking', menu: 'facet', facets: ['booking'] },
       { id: 'invite', label: 'Invite', menu: 'facet', facets: ['invite'] },
       { id: 'status', label: 'Current status', title: 'Where the lead is with us: invite, reminders, the latest remark, booked, expired, or the Outcome', menu: 'facet', facets: ['status'], sort: 'status', sortText: ['Latest first', 'Oldest first'], sortDirs: ['desc', 'asc'] },
+      { id: 'webinar', label: 'Webinar', title: 'Leads given the outcome “Webinar” on their lead page, and the day it was set', menu: 'facet', facets: ['webinar'] },
       { id: 'del', label: '' },
     ],
   };
 }
 
 const LEADS_TABLE_CSS = LIST_TABLE_CSS + `
-  .tbl-wrap table { min-width:1100px; }
+  .tbl-wrap table { min-width:1190px; }
   td.ref-by { max-width:200px; overflow-wrap:anywhere; }
 `;
 
