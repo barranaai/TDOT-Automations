@@ -117,12 +117,6 @@ const LIST_PAGE_CSS = `
 `;
 
 const CONSULT_PAGE_CSS = `
-  .range .cnt { font-size:12.5px; font-weight:500; color:#94a3b8; margin-left:4px; }
-  .range { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
-  .range button { padding:6px 10px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; color:var(--navy); font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
-  .range button.on { background:var(--navy); border-color:var(--navy); color:#fff; }
-  .range .nav { padding:6px 9px; }
-  .range .lbl { font-size:13px; font-weight:700; color:var(--navy); margin-left:6px; }
   .attn { border-color:#fde68a; }
   .fold .attn-h { background:#f8fafc; color:#64748b; font-size:12.5px; font-weight:700; padding:9px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
   .fold.attn .attn-h { background:#fffbeb; color:#92400e; }
@@ -257,26 +251,15 @@ function dAdd(d,n){ var p=dParts(d); if(!p) return d; var t=new Date(Date.UTC(p[
 function dDow(d){ var p=dParts(d); return p?new Date(Date.UTC(p[0],p[1]-1,p[2])).getUTCDay():0; }   // 0=Sun
 function dMonthAdd(d,n){ var p=dParts(d); var t=new Date(Date.UTC(p[0],p[1]-1+n,1)); return t.toISOString().slice(0,10); }
 function dLabel(d,withYear){ var p=dParts(d); if(!p) return ''; var t=new Date(Date.UTC(p[0],p[1]-1,p[2])); var o={timeZone:'UTC',weekday:'short',day:'numeric',month:'short'}; if(withYear) o.year='numeric'; return new Intl.DateTimeFormat('en-CA',o).format(t); }
-/* The range: Today / week (Mon–Sun) / month / all, around ANCHOR (a Toronto day). */
-function rangeBounds(){
-  var a=ANCHOR||todayStr();
-  if(RANGE==='today') return [a,a];
-  if(RANGE==='week'){ var back=(dDow(a)+6)%7; var mon=dAdd(a,-back); return [mon,dAdd(mon,6)]; }
-  if(RANGE==='month'){ var first=a.slice(0,8)+'01'; return [first,dAdd(dMonthAdd(first,1),-1)]; }
-  return ['',''];
+/* The Date and Time cells (2026-11-11: the day has its own column, with the date filter in its header). */
+function dateCell(c){
+  var d=String(c.bookedSlot||'').slice(0,10); if(!dParts(d)) return '<span class="pill grey">no date</span>';
+  var t=todayStr(), tag=d===t?'Today':d===dAdd(t,1)?'Tomorrow':'';
+  return '<span class="time">'+escHtml(dLabel(d,d.slice(0,4)!==t.slice(0,4)))+'</span>'+(tag?' <span class="pill blue">'+tag+'</span>':'');
 }
-function rangeLabel(){
-  var b=rangeBounds(), t=todayStr();
-  if(RANGE==='all') return 'All dates';
-  if(RANGE==='today') return (b[0]===t?'Today — ':b[0]===dAdd(t,1)?'Tomorrow — ':b[0]===dAdd(t,-1)?'Yesterday — ':'')+dLabel(b[0],true);
-  if(RANGE==='week') return dLabel(b[0],false)+' – '+dLabel(b[1],true);
-  var p=dParts(b[0]); return new Intl.DateTimeFormat('en-CA',{timeZone:'UTC',month:'long',year:'numeric'}).format(new Date(Date.UTC(p[0],p[1]-1,1)));
-}
-function inRange(slot){ var d=String(slot||'').slice(0,10); if(!dParts(d)) return false; var b=rangeBounds(); return RANGE==='all' || (d>=b[0] && d<=b[1]); }
 function timeCell(c){
-  var slot=String(c.bookedSlot||''); if(!slot) return '<span class="pill grey">no date</span>';
-  var d=slot.slice(0,10), t=slot.slice(11,16);
-  return '<span class="time">'+(RANGE==='today'?'':'<span class="d">'+escHtml(dLabel(d,d.slice(0,4)!==todayStr().slice(0,4)))+' · </span>')+escHtml(t||'')+'</span>';
+  var slot=String(c.bookedSlot||''); var t=dParts(slot)?slot.slice(11,16):'';
+  return t?'<span class="time">'+escHtml(t)+'</span>':'<span class="muted">—</span>';
 }
 /* A consultation added by hand with "＋ Direct consultation" (step 2): the "direct" pill, who booked it and its kind on hover. */
 function directPill(c){
@@ -290,7 +273,7 @@ function rowHtml(c){
   var ag=c.agreementSigned?qpill('green','Signed '+c.agreementSigned):c.agreementSent?qpill('blue','Sent '+c.agreementSent):'<span class="pill grey">—</span>';
   var pd=paidPill(c);
   return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
-    '<td>'+timeCell(c)+'</td>'+
+    '<td>'+dateCell(c)+'</td><td>'+timeCell(c)+'</td>'+
     '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+directPill(c)+'</td>'+
     '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
     '<td>'+escHtml(c.consultant||'—')+'</td>'+
@@ -298,39 +281,29 @@ function rowHtml(c){
     '<td>'+ag+'</td><td>'+pc+'</td><td>'+pd+'</td><td>'+oc+'</td>'+
     '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'"'+(c.adminDelete?' data-del-admin-only="1"':'')+' title="Delete this record (careful — removes Monday rows and the OneDrive folder; if there is a case, the case and its folder go too)">'+TDOT_DEL_SVG+'</button></td></tr>';
 }
-function renderRows(rows){
+function renderRows(rows,st){
   var tb=document.getElementById('qbody');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="10" class="empty">'+(ALLROWS.length?'No consultations '+(RANGE==='all'?'match your filters.':'in this range match your filters.'):'No booked consultations right now.')+'</td></tr>'; }
+  if(!rows.length){
+    /* Say why it is empty: nothing booked at all / nothing on the chosen day(s) / nothing passing the filters. */
+    var t=todayStr(), dated=!!(st&&(st.from||st.to)), onlyToday=!!(st&&st.from===t&&st.to===t);
+    var msg=!ALLROWS.length?'No booked consultations right now.':onlyToday?'No consultations today match — the Date filter is on Today. Remove it (the × on the Date chip above) to see every date.':dated?'No consultations on these dates match your filters.':'No consultations match your filters.';
+    tb.innerHTML='<tr><td colspan="11" class="empty">'+escHtml(msg)+'</td></tr>';
+  }
   else tb.innerHTML=rows.map(rowHtml).join('');
   bindRowClicks(tb);
 }
-function setRange(r,anchor){
-  RANGE=['today','week','month','all'].indexOf(r)>=0?r:'today'; ANCHOR=anchor||todayStr();
-  ssSet('tdot_list_consult_range',RANGE);
-  Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.classList.toggle('on',b.getAttribute('data-range')===RANGE); });
-  Array.prototype.forEach.call(document.querySelectorAll('#range .nav'),function(b){ b.disabled=(RANGE==='all'); });
-  document.getElementById('range-label').textContent=rangeLabel();
-  Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.setAttribute('aria-pressed',b.getAttribute('data-range')===RANGE?'true':'false'); });
-  if(window.ConsultTable) ConsultTable.apply('filter');
-}
-function shiftRange(n){
-  if(RANGE==='all') return;
-  var a=ANCHOR||todayStr();
-  setRange(RANGE, RANGE==='today'?dAdd(a,n):RANGE==='week'?dAdd(a,7*n):dMonthAdd(a,n));
-}
 /* The Consultations list: the shared engine (listSpecs.js consultListSpec — the header filters and the search) hands
    over the rows that pass; they split into three lists, each row in one: no date / needs an outcome (the
-   consultation day has passed, nothing recorded) / the date range. The count is the range list's. */
+   consultation day has passed, nothing recorded) / the main list. The Date column's filter (listSpecs.js) applies to
+   the main list only — the engine never hides the other two by date. The count is the main list's. */
 /* A direct consultation about the client's current file ("Existing client", step 2) has no outcome to set: never under "Needs outcome". */
-function consultBucket(r,t){ var d=String(r.bookedSlot||'').slice(0,10); if(!dParts(d)) return 'nodate'; if(d<t && !r.outcome && r.direct!=='Existing client') return 'needs'; return inRange(r.bookedSlot)?'main':''; }
-/* The counts beside the header choices: the rows a tick can show — the date range plus the two folds (never other dates). */
-function consultCountable(r){ return consultBucket(r,todayStr())!==''; }
-function renderConsultList(keep){
+function consultBucket(r,t){ var d=String(r.bookedSlot||'').slice(0,10); if(!dParts(d)) return 'nodate'; if(d<t && !r.outcome && r.direct!=='Existing client') return 'needs'; return 'main'; }
+function renderConsultList(keep,why,st){
   var t=todayStr();
   var noDate=keep.filter(function(r){ return consultBucket(r,t)==='nodate'; });
   var needs=keep.filter(function(r){ return consultBucket(r,t)==='needs'; });
   var main=keep.filter(function(r){ return consultBucket(r,t)==='main'; });
-  renderRows(main);
+  renderRows(main,st);
   var nb=document.getElementById('needs-outcome'); nb.style.display=needs.length?'block':'none';
   document.getElementById('needs-outcome-n').textContent='('+needs.length+')';
   var nbody=document.getElementById('needs-outcome-body'); nbody.innerHTML=needs.slice().sort(function(a,b){ return String(b.bookedSlot).localeCompare(String(a.bookedSlot)); }).map(rowHtml).join(''); bindRowClicks(nbody);
@@ -758,39 +731,31 @@ ${buildNavHeader('consultations')}
       <span class="top-r"><span class="age" id="snap-age"></span>${REPORTING_LINK_HTML}${DQ_BUTTON_HTML}</span>
     </div>
     ${DQ_DONE_HTML}
-    <p class="page-sub">Booked consultations, by day. Once an outcome is set, the client moves to <a href="/admin/retainers">Retainers &amp; follow-ups</a>.</p>
+    <p class="page-sub">Booked consultations — today's first; change the dates from the Date column. Once an outcome is set, the client moves to <a href="/admin/retainers">Retainers &amp; follow-ups</a>.</p>
     <div class="q-head">
-      <div class="range" id="range" aria-label="Date range">
-        <button type="button" class="nav" data-nav="-1" title="Earlier">&#9664;</button>
-        <button type="button" data-range="today">Today</button>
-        <button type="button" data-range="week">This week</button>
-        <button type="button" data-range="month">This month</button>
-        <button type="button" data-range="all">All</button>
-        <button type="button" class="nav" data-nav="1" title="Later">&#9654;</button>
-        <span class="lbl" id="range-label"></span><span class="cnt" id="cq-count" aria-live="polite"></span>
-      </div>
+      <h2 class="sec-h">Booked consultations <span id="cq-count" class="muted" style="font-weight:500" aria-live="polite"></span></h2>
       <div class="q-search"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 2a5 5 0 0 1 3.96 8.05l3 3-.92.92-3-3A5 5 0 1 1 7 2zm0 1.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4z"/></svg><input id="cq-search" type="search" placeholder="Search by name, phone or email…" aria-label="Search consultations by name, phone or email" autocomplete="off"></div>
     </div>
     <div id="cq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
     <div class="card attn fold" id="needs-outcome" style="display:none;margin-bottom:12px">
       <div class="attn-h" id="needs-outcome-h" role="button" tabindex="0" aria-expanded="false" aria-controls="needs-outcome-body"><span>&#9888; Needs outcome <span id="needs-outcome-n"></span> <span class="muted">— consultations that have happened with no outcome recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted.</span></span><span class="muted">show / hide</span></div>
-      <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="needs-outcome-body"></tbody></table></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="needs-outcome-body"></tbody></table></div>
     </div>
     <div class="card"><div class="tbl-wrap">
       <table>
-        <thead><tr id="cq-headrow"><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead>
+        <thead><tr id="cq-headrow"><th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div></div>
     <div class="card fold" id="nodate" style="display:none;margin-top:12px">
       <div class="attn-h" id="nodate-h" role="button" tabindex="0" aria-expanded="false" aria-controls="nodate-body"><span>No date <span id="nodate-n"></span> <span class="muted">— marked Booked by hand with no consultation time. Open one to set its time, or delete it.</span></span><span class="muted">show / hide</span></div>
-      <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="nodate-body"></tbody></table></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th></th></tr></thead><tbody id="nodate-body"></tbody></table></div>
     </div>
   </div>
 </main>
 <script>
 ${SHARED_AUTH_JS}
-var ALLROWS=[], RANGE='today', ANCHOR='';
+var ALLROWS=[];
 ${LIST_PAGE_JS}
 ${CONSULT_PAGE_JS}
 function load(force){
@@ -807,12 +772,9 @@ function load(force){
      document.getElementById('loading').style.display='none';
      var el=document.getElementById('error-msg'); el.textContent='Failed to load: '+e.message; el.style.display='block'; });
 }
-Array.prototype.forEach.call(document.querySelectorAll('#range [data-range]'),function(b){ b.onclick=function(){ setRange(b.getAttribute('data-range')); }; });
-Array.prototype.forEach.call(document.querySelectorAll('#range .nav'),function(b){ b.onclick=function(){ shiftRange(Number(b.getAttribute('data-nav'))); }; });
 ${DELETE_UI_JS}
 tdotBindDelete(function(){ load(true); });
 startClock(); checkApiStatus();
-setRange(ssGet('tdot_list_consult_range')||'today');
 </script>
 <script>
 ${BLACKLIST_UI_JS}

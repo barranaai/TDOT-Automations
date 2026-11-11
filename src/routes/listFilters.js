@@ -100,7 +100,8 @@ function listCore(spec) {
       }
     }
     for (var k in FLAGS) { if (k !== skip && st[k] && !FLAGS[k].test(r)) return false; }
-    if (DATE && skip !== 'date') {
+    /* DATE.exempt(r): a row the date filter never hides (Consultations: the "Needs outcome" and "No date" lists). */
+    if (DATE && skip !== 'date' && !(DATE.exempt && DATE.exempt(r))) {
       var ab = range(st), d = s(DATE.get(r));
       if (ab[0] && !(d && d >= ab[0])) return false;
       if (ab[1] && !(d && d <= ab[1])) return false;
@@ -158,6 +159,17 @@ function listCore(spec) {
     if (name === '30d') return { from: addDays(t, -29), to: t };
     if (name === 'month') return { from: t.slice(0, 8) + '01', to: t };
     if (name === 'lastmonth') { var end = addDays(t.slice(0, 8) + '01', -1); return { from: end.slice(0, 8) + '01', to: end }; }
+    /* Looking ahead (Consultations, 2026-11-11): tomorrow, the week Monday–Sunday, next week, the whole month. */
+    if (name === 'tomorrow') return { from: addDays(t, 1), to: addDays(t, 1) };
+    if (name === 'week' || name === 'nextweek') {
+      var p = t.split('-'), dow = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).getUTCDay();   // 0 = Sunday
+      var mon = addDays(t, -((dow + 6) % 7) + (name === 'nextweek' ? 7 : 0));
+      return { from: mon, to: addDays(mon, 6) };
+    }
+    if (name === 'fullmonth') {
+      var q = t.split('-'), last = new Date(Date.UTC(+q[0], +q[1], 0)).toISOString().slice(0, 10);
+      return { from: t.slice(0, 8) + '01', to: last };
+    }
     return { from: '', to: '' };
   }
   function shortDay(day) { var p = day.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).toLocaleDateString('en-CA', { timeZone: 'UTC', month: 'short', day: 'numeric' }); }
@@ -211,7 +223,23 @@ function listCore(spec) {
 function listTableUi(LT, o, win) {
   var doc = win.document, KEY = o.key, ids = o.ids, COLS = o.cols;
   var state = LT.emptyState();
-  try { state = LT.normalizeState(JSON.parse(win.sessionStorage.getItem(KEY) || 'null')); } catch (e) { /* private window: defaults */ }
+  /* o.defaultDate (Consultations: 'today'): a new browser tab opens with that date choice on. It is a filter like any
+     other — the chip's × or "Clear filters" takes it off, and that is kept for the tab. Beside the kept filters sits a
+     mark (KEY + '_day'): the day, while the date filter is exactly "that day = today"; empty otherwise. No mark at all =
+     this tab has not opened the list with this rule yet (a new tab, or one from before the rule) → the default goes on.
+     A mark from an earlier day = the tab was left on "today" overnight → it moves on to the new day (checked at every
+     redraw, so the page's own refresh and Back do it too). */
+  var dayMark = null;
+  try { dayMark = win.sessionStorage.getItem(KEY + '_day'); state = LT.normalizeState(JSON.parse(win.sessionStorage.getItem(KEY) || 'null')); } catch (e) { /* private window: defaults */ }
+  function today() { return LT.presetRange('today', Date.now()).from; }
+  function rollDay() {
+    if (!o.defaultDate || !LT.DATE) return;
+    var t = today();
+    if (dayMark === null) { var dd = LT.presetRange(o.defaultDate, Date.now()); state.from = dd.from; state.to = dd.to; }
+    else if (dayMark && dayMark !== t && state.from === dayMark && state.to === dayMark) { state.from = t; state.to = t; }
+    dayMark = (state.from === t && state.to === t) ? t : '';
+  }
+  rollDay();
   /* initial() returns true when a link chose the tab (Retainers ?outcome=): it wins over the kept tab, and is kept itself
      (below) — it is the tab this browser tab is on, so the way back from a record returns to it. */
   var linked = false;
@@ -236,7 +264,7 @@ function listTableUi(LT, o, win) {
   function col(id) { for (var i = 0; i < COLS.length; i++) if (COLS[i].id === id) return COLS[i]; return null; }
   function save() {
     if (win.TDOT_SIGNED_OUT) return;
-    try { win.sessionStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* not kept — fine */ }
+    try { win.sessionStorage.setItem(KEY, JSON.stringify(state)); if (o.defaultDate && dayMark !== null) win.sessionStorage.setItem(KEY + '_day', dayMark); } catch (e) { /* not kept — fine */ }
     /* Tabs: the kept tab is always the tab shown — also after Back brings an older copy of the page out of the browser's
        memory, so the way back from a record (and the top bar) returns to the tab on screen (review 2026-11-05). */
     if (o.quick && o.quick.storeKey) { try { win.sessionStorage.setItem(o.quick.storeKey, (state.sel[o.quick.facet] || [''])[0]); } catch (e) { /* not kept — fine */ } }
@@ -372,6 +400,7 @@ function listTableUi(LT, o, win) {
 
   var started = false;
   function apply(why) {
+    rollDay();   // a list left open on "today" overnight moves on to the new day
     var rows = LT.sortRows(LT.filterRows(ROWS, state), state.sort);
     /* h.without(f): how many rows pass every filter except f (an empty list can say why it is empty);
        h.defaultSort: true when the list is in its normal order (no column sort chosen) */
@@ -408,7 +437,7 @@ function listTableUi(LT, o, win) {
     if (c.date) {
       var ab = LT.range(state);
       h += '<div class="qp-sec"><div class="qp-t">' + esc(LT.DATE.chip) + '</div><div class="qp-presets">'
-        + [['today', 'Today'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month']].map(function (p) {
+        + (LT.DATE.presets || [['today', 'Today'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month']]).map(function (p) {
           var r = LT.presetRange(p[0], Date.now()), on = r.from === ab[0] && r.to === ab[1];
           return '<button type="button" class="qp-btn' + (on ? ' on' : '') + '" aria-pressed="' + on + '" data-preset="' + p[0] + '">' + p[1] + '</button>';
         }).join('') + '</div>'

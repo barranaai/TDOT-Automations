@@ -121,7 +121,7 @@ test('classifyLead: every Lead Board row lands on exactly one of Leads / Consult
 test('getConsultationsBoard: the two tabs from one snapshot — consultation rows earliest first with the wanted columns, retainer rows by stage; no email or phone', async () => {
   snap._reset();
   const rows = [
-    L(1, { bookingStatus: 'Booked', bookedSlot: '2026-10-20 11:00', assignedConsultant: 'Shafoli Kapur', meetingType: 'In-person', consultAgreementSent: '2026-10-14', consultAgreementSigned: '2026-10-15', preConsultSubmitted: 'Yes', squareConsultTxnId: 'SQ1', consultOption: JSON.stringify({ durationMin: 30, feeCents: 20000, paidCents: 22600 }), confirmedCaseType: 'Study permit', email: 'x@y.co', phone: '416' }),
+    L(1, { bookingStatus: 'Booked', bookedSlot: '2026-10-20 11:00', assignedConsultant: 'Shafoli Kapur', meetingType: 'In-person', consultAgreementSent: '2026-10-14', consultAgreementSigned: '2026-10-15', preConsultSubmitted: 'Yes', squareConsultTxnId: 'SQ1', consultOption: JSON.stringify({ durationMin: 30, feeCents: 20000, paidCents: 22600 }), confirmedCaseType: 'Study permit', email: 'x@y.co', phone: '416-555-0142' }),
     L(2, { bookingStatus: 'Booked', bookedSlot: '2026-10-16 15:00', serviceRequired: 'Visitor visa', outcome: 'Follow-Up' }),
     L(3, { bookingStatus: 'Booked' }),
     L(4, { sourceChannel: 'Direct Retainer', retainerFee: '2000', retainerSent: '2026-10-01', clientMasterItemId: '9', confirmedCaseType: 'OINP', createdAt: '2026-10-01T00:00:00Z' }),
@@ -136,7 +136,7 @@ test('getConsultationsBoard: the two tabs from one snapshot — consultation row
     assert.deepEqual(b.consultations.map((r) => r.id), ['2', '1', '3'], 'earliest first, no date last');
     const r1 = b.consultations[1];
     assert.deepEqual(r1, { id: '1', name: 'Lead 1', service: 'Study permit', consultant: 'Shafoli Kapur', bookedSlot: '2026-10-20 11:00', meetingType: 'In-person', preConsultSubmitted: true, agreementSent: '2026-10-14', agreementSigned: '2026-10-15', paid: 'app', paidCents: 22600, paidBy: '', paidOn: '', paidVerified: true, outcome: '', followUpDate: '', consultationHeld: '', hasMeeting: false, tier: '', createdAt: '2026-10-01T12:00:00Z' });
-    assert.ok(!JSON.stringify(b).includes('x@y.co') && !JSON.stringify(b).includes('416'), 'a list, not a record');
+    assert.ok(!JSON.stringify(b).includes('x@y.co') && !JSON.stringify(b).includes('555-0142'), 'a list, not a record');   // (not just '416': the clock's own digits made that fail for 17 minutes on 2026-11-11)
     assert.deepEqual(b.retainers.map((r) => [r.id, r.stage, r.kind]), [['6', 'Paid', 'direct'], ['4', 'Sent', 'direct'], ['5', 'Retain', 'booked']], 'by stage, then oldest first; the retained client is gone');
     assert.equal(b.retainers[1].caseOpen, true);
     assert.ok(Number.isFinite(b.at) && Number.isFinite(b.ageMs));
@@ -221,39 +221,33 @@ test('booking page: taken times come from the snapshot plus this process\'s rece
 function pageFns() {
   const html = require('../src/routes/adminConsultation').buildQueueHTML();
   const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
-  const a = js.indexOf('function dParts('), b = js.indexOf('function timeCell(');
+  const a = js.indexOf('function dParts('), b = js.indexOf('/* A consultation added by hand with');
   const head = js.slice(a, b);
-  return new Function('todayStr', 'RANGE', 'ANCHOR', `${head}; return { dParts, dAdd, dDow, dMonthAdd, dLabel, rangeBounds, rangeLabel, inRange };`);
+  return new Function('todayStr', 'escHtml', `${head}; return { dParts, dAdd, dDow, dMonthAdd, dLabel, dateCell, timeCell };`);
 }
 
-test('page: Today / week (Mon–Sun) / month ranges are calendar maths on Toronto days — no local Date; the labels read right', () => {
-  const mk = pageFns();
-  const today = () => '2026-10-15';   // a Thursday
-  let f = mk(today, 'today', '2026-10-15');
-  assert.deepEqual(f.rangeBounds(), ['2026-10-15', '2026-10-15']);
-  assert.equal(f.rangeLabel(), 'Today — Thu, Oct 15, 2026');
-  assert.ok(f.inRange('2026-10-15 09:00') && !f.inRange('2026-10-16 09:00') && !f.inRange(''));
-  f = mk(today, 'today', '2026-10-16'); assert.equal(f.rangeLabel(), 'Tomorrow — Fri, Oct 16, 2026');
-  f = mk(today, 'week', '2026-10-15');
-  assert.deepEqual(f.rangeBounds(), ['2026-10-12', '2026-10-18'], 'Monday to Sunday');
-  assert.ok(f.inRange('2026-10-18 23:00') && !f.inRange('2026-10-19 00:00'));
-  f = mk(today, 'week', '2026-10-18'); assert.deepEqual(f.rangeBounds(), ['2026-10-12', '2026-10-18'], 'a Sunday belongs to the week before');
-  f = mk(today, 'month', '2026-10-15');
-  assert.deepEqual(f.rangeBounds(), ['2026-10-01', '2026-10-31']);
-  assert.equal(f.rangeLabel(), 'October 2026');
-  f = mk(today, 'month', '2026-02-10'); assert.deepEqual(f.rangeBounds(), ['2026-02-01', '2026-02-28']);
-  f = mk(today, 'all', '2026-10-15'); assert.ok(f.inRange('1999-01-01 00:00') && !f.inRange('no date'));
+test('page (2026-11-11): the Date and Time cells — calendar maths on Toronto days, no local Date; Today / Tomorrow are marked; the range buttons are gone', () => {
+  const f = pageFns()(() => '2026-10-15', (s) => String(s));
   assert.equal(f.dAdd('2026-12-31', 1), '2027-01-01');
   assert.equal(f.dMonthAdd('2026-01-31', 1), '2026-02-01');
   assert.equal(f.dDow('2026-10-12'), 1);
+  assert.equal(f.dateCell({ bookedSlot: '2026-10-15 09:00' }), '<span class="time">Thu, Oct 15</span> <span class="pill blue">Today</span>');
+  assert.equal(f.dateCell({ bookedSlot: '2026-10-16 09:00' }), '<span class="time">Fri, Oct 16</span> <span class="pill blue">Tomorrow</span>');
+  assert.equal(f.dateCell({ bookedSlot: '2027-01-04 09:00' }), '<span class="time">Mon, Jan 4, 2027</span>');
+  assert.equal(f.dateCell({ bookedSlot: '' }), '<span class="pill grey">no date</span>');
+  assert.equal(f.timeCell({ bookedSlot: '2026-10-15 09:00' }), '<span class="time">09:00</span>');
+  assert.equal(f.timeCell({ bookedSlot: '' }), '<span class="muted">—</span>');
+  const q = require('../src/routes/adminConsultation').buildQueueHTML();
+  for (const gone of ['data-range=', 'data-nav=', 'id="range"', 'id="range-label"', 'function setRange(', 'function shiftRange(', 'function inRange(', 'RANGE', 'ANCHOR', 'consultCountable', "ssSet('tdot_list_consult_range'"])
+    assert.ok(!q.includes(gone), 'gone: ' + gone);
 });
 
 test('pages (2026-11-05): Consultations shows consultations only; Retainers & follow-ups is its own page with the direct-retainer pop-up; every script parses; the old tabs and the old mixed section are gone', () => {
   const ac = require('../src/routes/adminConsultation');
   const q = ac.buildQueueHTML(), r = ac.buildRetainersHTML();
   for (const html of [q, r]) for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
-  for (const s of ['data-range="today"', 'data-range="week"', 'data-range="month"', 'data-range="all"', 'data-nav="-1"', 'data-nav="1"',
-    'id="needs-outcome"', 'id="nodate"', '<th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th>',
+  for (const s of [
+    'id="needs-outcome"', 'id="nodate"', '<th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th>',
     'id="cq-headrow"', 'id="cq-search"', 'id="cq-chips"', 'id="cq-count"', "api: 'ConsultTable'",
     "consultant: { label: 'Consultant', get: function (r) { return s(r.consultant); }, none: 'Unassigned' },",
     "fetch('/api/consultations-board'+(force?'?fresh=1':'')", '<a href="/admin/retainers">Retainers &amp; follow-ups</a>', 'id="snap-age"']) assert.ok(q.includes(s), 'consultations: ' + s);

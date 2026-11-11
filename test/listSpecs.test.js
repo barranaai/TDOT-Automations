@@ -307,7 +307,7 @@ test('review 2026-11-05: Sign Out stops a list read still running from saving th
   // block 3: the words depend on the tab — newest case first on All, Monday's order on a view tab
   assert.equal(S.casesListOpts({}).sortReset({ sel: {} }), 'newest case first');
   assert.equal(S.casesListOpts({}).sortReset({ sel: { view: ['mahesh'] } }), "Monday's order for this view");
-  assert.equal(S.consultListOpts({}).countable, 'consultCountable');
+  assert.equal(S.consultListOpts({}).countable, undefined, 'the Date filter is the engine’s own now: every row counts');
 });
 
 test('2026-11-05 point 7: the Retainers outcome tabs work like the Leads tabs — a new browser tab opens on Retain, the tab shown is kept until it closes (All too, and a tab a link opened), one tab at a time', () => {
@@ -408,8 +408,9 @@ test('Consultations: Service, Pre-consult and Outcome filter; Time, Client, Serv
 
   assert.equal(LT.emptyState().sort, null);
   assert.equal(ids(LT.sortRows(rows, null)), '1,2,3', 'no column chosen: as the server sent them');
-  assert.equal(ids(LT.sortRows(rows, { key: 'time', dir: 'asc' })), '2,1,3');
-  assert.equal(ids(LT.sortRows(rows, { key: 'time', dir: 'desc' })), '3,1,2');
+  assert.equal(ids(LT.sortRows(rows, { key: 'date', dir: 'asc' })), '2,1,3');
+  assert.equal(ids(LT.sortRows(rows, { key: 'date', dir: 'desc' })), '3,1,2');
+  assert.equal(ids(LT.sortRows(rows, { key: 'time', dir: 'asc' })), '2,1,3', 'the time of day: 09:00, 10:00, 15:30');
   assert.equal(ids(LT.sortRows(rows, { key: 'client', dir: 'asc' })), '2,1,3', 'names sort without regard to capitals');
   assert.equal(ids(LT.sortRows(rows, { key: 'service', dir: 'asc' })), '3,1,2', 'no service goes last');
   assert.equal(ids(LT.sortRows(rows, { key: 'service', dir: 'desc' })), '1,3,2', 'no service goes last both ways');
@@ -419,4 +420,105 @@ test('Consultations: Service, Pre-consult and Outcome filter; Time, Client, Serv
   for (const c of o.cols) if (c.id !== 'del') assert.ok(c.sort || (c.facets && c.facets.length), c.id);
   for (const c of o.cols) { if (c.sort) { assert.ok(spec.sorts[c.sort], c.id); assert.equal(c.sortText.length, 2); } (c.facets || []).forEach((f) => assert.ok(spec.facets[f], f)); }
   assert.equal(o.sortReset, 'earliest consultation first');
+});
+
+// Consultations: the Date column's filter replaced the Today / This week / This month / All buttons (Faran 2026-11-11).
+test('Consultations: the Date filter — choices that look ahead; the "Needs outcome" and "No date" rows are never hidden by it; the page opens on today', () => {
+  const today = '2026-11-11';   // a Wednesday
+  const spec = S.consultListSpec({ today: () => today }), LT = listCore(spec), o = S.consultListOpts({});
+  const now = Date.parse('2026-11-11T17:00:00Z');
+  assert.deepEqual(LT.presetRange('today', now), { from: today, to: today });
+  assert.deepEqual(LT.presetRange('tomorrow', now), { from: '2026-11-12', to: '2026-11-12' });
+  assert.deepEqual(LT.presetRange('week', now), { from: '2026-11-09', to: '2026-11-15' }, 'Monday to Sunday');
+  assert.deepEqual(LT.presetRange('nextweek', now), { from: '2026-11-16', to: '2026-11-22' });
+  assert.deepEqual(LT.presetRange('fullmonth', now), { from: '2026-11-01', to: '2026-11-30' });
+  assert.deepEqual(LT.presetRange('week', Date.parse('2026-11-15T17:00:00Z')), { from: '2026-11-09', to: '2026-11-15' }, 'a Sunday belongs to the week before');
+  assert.deepEqual(LT.presetRange('week', Date.parse('2026-11-16T03:30:00Z')), { from: '2026-11-09', to: '2026-11-15' }, 'late Sunday evening in Toronto is still Sunday');
+  assert.deepEqual(LT.presetRange('fullmonth', Date.parse('2028-02-10T17:00:00Z')), { from: '2028-02-01', to: '2028-02-29' });
+  assert.deepEqual(spec.date.presets.map((p) => p[1]), ['Today', 'Tomorrow', 'This week', 'Next week', 'This month']);
+
+  const rows = [
+    { id: 'today', bookedSlot: '2026-11-11 10:00' },
+    { id: 'tomorrow', bookedSlot: '2026-11-12 10:00' },
+    { id: 'needs', bookedSlot: '2026-11-03 10:00', outcome: '' },                       // passed, nothing recorded
+    { id: 'pastdone', bookedSlot: '2026-11-03 11:00', outcome: 'Retain' },
+    { id: 'pastfile', bookedSlot: '2026-11-03 12:00', direct: 'Existing client' },     // nothing to decide: an ordinary row
+    { id: 'nodate', bookedSlot: '' },
+  ];
+  const on = (from, to) => { const x = LT.emptyState(); x.from = from; x.to = to; return x; };
+  assert.equal(ids(LT.filterRows(rows, on(today, today))), 'today,needs,nodate');
+  assert.equal(ids(LT.filterRows(rows, on('2026-11-12', '2026-11-12'))), 'tomorrow,needs,nodate');
+  assert.equal(ids(LT.filterRows(rows, on('2026-11-01', '2026-11-05'))), 'needs,pastdone,pastfile,nodate');
+  assert.equal(ids(LT.filterRows(rows, LT.emptyState())), 'today,tomorrow,needs,pastdone,pastfile,nodate', 'no date chosen: everything');
+  assert.deepEqual(LT.chips(on(today, today)).map((c) => c.text), ['Date Nov 11']);
+  const cleared = on(today, today); LT.clearKey(cleared, 'date'); assert.equal(cleared.from + cleared.to, '');
+
+  assert.equal(o.defaultDate, 'today');
+  assert.deepEqual(o.cols.slice(0, 2).map((c) => [c.id, c.menu || '', c.sort]), [['date', 'date', 'date'], ['time', '', 'time']]);
+  // The Leads list is untouched: no opening date, its own choices, nothing exempt.
+  const leads = require('../src/routes/leadsTableFilters');
+  assert.equal(leads.leadsTableOpts().defaultDate, undefined);
+  assert.equal(leads.leadsTableSpec().date.presets, undefined);
+  assert.equal(leads.leadsTableSpec().date.exempt, undefined);
+});
+
+// The opening date in the browser part (review 2026-11-11): a new tab — or a tab from before this rule — opens on today;
+// a date taken off stays off; a tab left on "today" overnight moves on, at start AND at a redraw (refresh / Back);
+// a chosen other day or range is kept. The mark beside the kept filters is the day only while the filter is "today".
+test('listTableUi opening date: default today, kept choices, overnight roll-over (also on a redraw); Leads has none of it', () => {
+  const { listTableUi } = require('../src/routes/listFilters');
+  const K = 'tdot_list_consultations', realNow = Date.now;
+  const el = () => ({ setAttribute() {}, removeAttribute() {}, getAttribute() { return null; }, classList: { add() {}, remove() {}, contains() { return false; } }, appendChild() {}, addEventListener() {}, querySelectorAll() { return []; }, querySelector() { return null; }, contains() { return false; }, style: {} });
+  const open = (store, opts) => {
+    const seen = [];
+    const win = { document: { getElementById: () => null, createElement: el, body: el(), addEventListener() {}, activeElement: null, documentElement: el() },
+      sessionStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } }, addEventListener() {}, location: { search: '' },
+      renderConsultList: (rows, why, st) => { seen.push(st.from + '..' + st.to); return null; }, renderRows: (rows, why, st) => { seen.push(st.from + '..' + st.to); } };
+    const o = opts || Object.assign({}, S.consultListOpts({}), { serverSearch: null });
+    const LT = opts ? require('../src/routes/leadsTableFilters').leadsTableCore() : listCore(S.consultListSpec({}));
+    const api = listTableUi(LT, o, win) || win[o.api];
+    api.setRows([]);
+    return { seen, api, store };
+  };
+  const saved = (from, to) => JSON.stringify({ q: '', from, to, sel: {} });
+  try {
+    Date.now = () => Date.parse('2026-11-11T17:00:00Z');
+    let r = open({});
+    assert.deepEqual(r.seen, ['2026-11-11..2026-11-11'], 'a new browser tab');
+    assert.equal(r.store[K + '_day'], '2026-11-11');
+    r = open({ [K]: saved('', '') });
+    assert.deepEqual(r.seen, ['2026-11-11..2026-11-11'], 'a tab from before this rule (filters kept, no mark)');
+    r = open({ [K]: saved('', ''), [K + '_day']: '' });
+    assert.deepEqual(r.seen, ['..'], 'the date was taken off: kept off');
+    r = open({ [K]: saved('2026-11-10', '2026-11-10'), [K + '_day']: '2026-11-10' });
+    assert.deepEqual(r.seen, ['2026-11-11..2026-11-11'], 'left on today overnight, then reloaded');
+    r = open({ [K]: saved('2026-11-20', '2026-11-20'), [K + '_day']: '' });
+    assert.deepEqual(r.seen, ['2026-11-20..2026-11-20'], 'a chosen other day');
+    r = open({ [K]: saved('2026-11-09', '2026-11-15'), [K + '_day']: '' });
+    assert.deepEqual(r.seen, ['2026-11-09..2026-11-15'], 'a chosen range');
+
+    // the page stays open over midnight: the next redraw (refresh, Back, a click) moves on, and the mark with it
+    r = open({});
+    Date.now = () => Date.parse('2026-11-12T14:00:00Z');
+    r.api.setRows([]);
+    assert.deepEqual(r.seen, ['2026-11-11..2026-11-11', '2026-11-12..2026-11-12']);
+    assert.equal(r.store[K + '_day'], '2026-11-12');
+    assert.equal(JSON.parse(r.store[K]).from, '2026-11-12');
+    // …but a day chosen by hand yesterday is not "today": it stays
+    Date.now = () => Date.parse('2026-11-11T17:00:00Z');
+    r = open({ [K]: saved('2026-11-12', '2026-11-12'), [K + '_day']: '' });
+    Date.now = () => Date.parse('2026-11-12T14:00:00Z');
+    r.api.setRows([]);
+    assert.deepEqual(r.seen, ['2026-11-12..2026-11-12', '2026-11-12..2026-11-12']);
+    // choosing today by hand becomes "today" (it rolls); taking the date off writes the empty mark
+    r.api.state().from = ''; r.api.state().to = ''; r.api.apply('filter');
+    assert.equal(r.store[K + '_day'], '');
+
+    // Leads: no opening date, no mark
+    Date.now = () => Date.parse('2026-11-11T17:00:00Z');
+    const lo = Object.assign({}, require('../src/routes/leadsTableFilters').leadsTableOpts(), { serverSearch: null, quick: null });
+    r = open({}, lo);
+    assert.deepEqual(r.seen, ['..']);
+    assert.ok(!((lo.key + '_day') in r.store));
+  } finally { Date.now = realNow; }
 });

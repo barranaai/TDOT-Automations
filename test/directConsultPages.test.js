@@ -75,7 +75,7 @@ test('Consultations page: the button is hidden until the server says yes; the po
 test('the list: the "direct" pill with who booked it and the kind; an Existing-client row is never under "Needs outcome"', () => {
   const page = scriptsOf(C.buildQueueHTML())[0];
   const pick = (name) => { const i = page.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = page.indexOf('{', i); for (; j < page.length; j++) { if (page[j] === '{') depth++; else if (page[j] === '}' && --depth === 0) break; } return page.slice(i, j + 1); };
-  const ctx = { escHtml: (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'), inRange: () => true };
+  const ctx = { escHtml: (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') };
   vm.createContext(ctx);
   vm.runInContext([pick('dParts'), pick('directPill'), pick('consultBucket')].join('\n'), ctx);
   assert.equal(ctx.directPill({ name: 'A' }), '', 'a normal row has no pill');

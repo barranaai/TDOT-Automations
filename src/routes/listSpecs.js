@@ -21,6 +21,8 @@
    ctx.directNa: a direct retainer client with no consultation payment reads "na" (no consultation). */
 function consultListSpec(ctx) {
   function s(v) { return String(v == null ? '' : v).trim(); }
+  function day(r) { var d = s(r.bookedSlot).slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : ''; }
+  function today() { return (ctx && ctx.today) ? ctx.today() : new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' }); }
   return {
     facets: {
       consultant: { label: 'Consultant', get: function (r) { return s(r.consultant); }, none: 'Unassigned' },
@@ -37,13 +39,20 @@ function consultListSpec(ctx) {
     },
     // The column names sort, like the Leads list (Faran 2026-11-11). No column chosen = the server order.
     sorts: {
-      time: function (r) { return s(r.bookedSlot); },
+      date: function (r) { return s(r.bookedSlot); },                 // the day, then the time within it
+      time: function (r) { return s(r.bookedSlot).slice(11, 16); },   // the time of day
       client: function (r) { return s(r.name).toLowerCase(); },
       service: function (r) { return s(r.service).toLowerCase(); },
       consultant: function (r) { return s(r.consultant).toLowerCase(); },
     },
     sortBlanksLast: ['service', 'consultant'],
     defaultSort: null,   // the server order: earliest consultation first
+    // The Date column's filter (Faran 2026-11-11 — it replaced the Today / This week / This month / All buttons): the
+    // consultation's Toronto day, with choices that look ahead. The two lists beside the table are never hidden by it:
+    // "No date" (no day to compare) and "Needs outcome" (the day has passed, nothing recorded — the page's consultBucket rule).
+    date: { key: 'date', chip: 'Date', get: day,
+      presets: [['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['nextweek', 'Next week'], ['fullmonth', 'This month']],
+      exempt: function (r) { var d = day(r); return !d || (d < today() && !s(r.outcome) && r.direct !== 'Existing client'); } },
     search: { chip: 'Search', text: function (r) { return r.name; }, id: function (r) { return r.id; } },
   };
 }
@@ -54,9 +63,10 @@ function consultListOpts(ctx) {
     serverSearch: '/api/leads/search',   // name, phone or email (step 3, 2026-11-09)
     render: 'renderConsultList', api: 'ConsultTable',
     sortReset: 'earliest consultation first',   // a column sort shows as a chip; its × goes back to the normal order
-    countable: 'consultCountable',   // the counts beside the choices: only the date range on view (and its two folds)
+    defaultDate: 'today',   // a new browser tab opens on today's consultations (Faran 2026-11-11); the chip's × shows every date
     cols: [
-      { id: 'time', label: 'Time', title: 'The consultation time, Toronto — the dates on view are chosen with Today / This week / This month / All above', sort: 'time', sortText: ['Earliest first', 'Latest first'], sortDirs: ['asc', 'desc'] },
+      { id: 'date', label: 'Date', title: 'The consultation day, Toronto time', menu: 'date', date: true, sort: 'date', sortText: ['Earliest first', 'Latest first'], sortDirs: ['asc', 'desc'] },
+      { id: 'time', label: 'Time', title: 'The consultation time, Toronto', sort: 'time', sortText: ['Earliest in the day first', 'Latest in the day first'], sortDirs: ['asc', 'desc'] },
       { id: 'client', label: 'Client', sort: 'client', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
       { id: 'service', label: 'Service', menu: 'facet', facets: ['service'], sort: 'service', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
       { id: 'consultant', label: 'Consultant', menu: 'facet', facets: ['consultant'], sort: 'consultant', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
