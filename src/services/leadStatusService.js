@@ -35,6 +35,8 @@ const EXPIRE_AFTER_MS = 7 * DAY;     // no booking 7 days after the first invite
 
 const s = (v) => String(v == null ? '' : v).trim();
 const INVITE_RE = /Booking invite emailed|Booking invite email WAS DELIVERED/i;
+// The app's own note only — "📧 Webinar email sent to <address> on <day>" — never a remark or a typed update that mentions those words.
+const WEBINAR_RE = /^\s*(?:📧\s*)?Webinar email sent to \S+ on \d{4}-\d{2}-\d{2}\b/;
 const REMARK_RE = /^\s*📝\s*\[Remark(?:\s*·\s*([^\]]*))?\]\s*([\s\S]*)$/;
 
 /** The side effects behind one seam (tests replace them). */
@@ -59,7 +61,7 @@ let _at = 0, _fullAt = 0, _inFlight = null;
 
 function entry(map, itemId) {
   const k = String(itemId);
-  if (!map.has(k)) map.set(k, { invites: [], rem: { 1: { claims: [], fails: [], copies: [] }, 2: { claims: [], fails: [], copies: [] } }, remark: null });
+  if (!map.has(k)) map.set(k, { invites: [], webinars: [], rem: { 1: { claims: [], fails: [], copies: [] }, 2: { claims: [], fails: [], copies: [] } }, remark: null });
   return map.get(k);
 }
 
@@ -69,6 +71,7 @@ function classify(text) {
   // Staff-typed consultation notes / Otter summaries are free text: never a system marker (2026-11-10).
   if (require('./updatesService').isStaffTypedEntry(t)) return { kind: '' };
   if (INVITE_RE.test(t)) return { kind: 'invite' };
+  if (WEBINAR_RE.test(t)) return { kind: 'webinar' };
   const BR = require('./bookingRemindersService');
   for (const n of [1, 2]) {
     if (t.includes(BR.failText(n))) return { kind: 'fail', n };
@@ -90,6 +93,7 @@ function apply(map, itemId, at, c) {
   if (!c.kind || !Number.isFinite(at)) return;
   const e = entry(map, itemId);
   if (c.kind === 'invite') e.invites.push(at);
+  else if (c.kind === 'webinar') e.webinars.push(at);
   else if (c.kind === 'remark') { if (!e.remark || at >= e.remark.at) e.remark = { label: c.label, by: c.by, at, text: c.text || '' }; }
   else e.rem[c.n][{ claim: 'claims', fail: 'fails', copy: 'copies' }[c.kind]].push(at);
 }

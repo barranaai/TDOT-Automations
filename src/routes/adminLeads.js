@@ -226,7 +226,7 @@ function renderRows(rows,why,st,h){
       '<td>'+statusPill(c.bookingStatus)+'</td>'+
       '<td>'+invitePill(c)+'</td>'+
       '<td>'+statusCell(c.status)+'</td>'+
-      '<td>'+(c.webinar?qpill('blue','Webinar')+(c.webinarDay?'<div class="muted" style="font-size:11.5px;margin-top:2px">'+escHtml(stDay(Date.parse(c.webinarDay+'T12:00:00Z')))+'</div>':''):'<span class="muted">—</span>')+'</td>'+
+      '<td>'+(c.webinar?qpill('blue','Webinar')+(c.webinarDay?'<div class="muted" style="font-size:11.5px;margin-top:2px">'+escHtml(stDay(Date.parse(c.webinarDay+'T12:00:00Z')))+'</div>':'')+(c.webinarEmailDay?'<div class="muted" style="font-size:11.5px;margin-top:2px">Email sent '+escHtml(stDay(Date.parse(c.webinarEmailDay+'T12:00:00Z')))+'</div>':''):'<span class="muted">—</span>')+'</td>'+
       '<td><button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'" title="Delete this lead (careful — removes its Monday row and OneDrive folder)">'+TDOT_DEL_SVG+'</button></td></tr>';
   }).join('');
   Array.prototype.forEach.call(document.querySelectorAll('tr.row'),function(tr){
@@ -518,8 +518,8 @@ ${REMARKS_CSS}
   .act-msg.ok { background:var(--st-green-bg); color:var(--st-green-fg); display:block; }
   .act-msg.err { background:var(--st-red-bg); color:var(--st-red-fg); display:block; }
   .btn-col { display:flex; flex-direction:column; gap:8px; }
-  #invite-msg { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:13px; font-family:inherit; line-height:1.55; color:var(--navy); resize:vertical; }
-  #invite-msg:focus { outline:none; border-color:var(--navy); }
+  #invite-msg, #webinar-msg { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:13px; font-family:inherit; line-height:1.55; color:var(--navy); resize:vertical; }
+  #invite-msg:focus, #webinar-msg:focus { outline:none; border-color:var(--navy); }
   .btn-row { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
   .btn-row .btn { flex:1 1 auto; }
   .file-row { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--navy); font-weight:600; padding:6px 0; border-top:1px solid #f8fafc; }
@@ -613,7 +613,18 @@ ${buildNavHeader('leads')}
           <div id="c-status"></div>
         </div>
         <div class="card" id="invite-card">
-          <div class="card-t">${I.send} Booking invite email <span class="when" id="inv-when"></span></div>
+          <div class="card-t">${I.send} <span id="inv-title">Booking invite email</span> <span class="when" id="inv-when"></span></div>
+          <!-- The Outcome is "Webinar" (Faran 2026-11-12): the Webinar email takes the booking invite's place — no consultant, no booking link, no fee. -->
+          <div id="inv-webinar" style="display:none">
+            <div class="muted" style="margin-bottom:8px;line-height:1.5">This lead's outcome is <b>Webinar</b>, so the webinar invitation is sent from here instead of the consultation booking invite. This is the email's body — the standard webinar text. Edit only if needed, then send. The email adds the greeting and how to reach us around it. It has no joining link or date yet: those are sent once the client has paid.</div>
+            <textarea id="webinar-msg" rows="9" aria-label="Webinar email text"></textarea>
+            <div class="btn-row">
+              <button class="btn" id="btn-webinar-reset" type="button" title="Put the standard webinar text back in the box">Use the standard text</button>
+              <button class="btn primary" id="btn-webinar-send" type="button" title="Email the client this webinar invitation">${I.send} Send webinar email</button>
+            </div>
+            <div id="web-msg" class="act-msg"></div>
+          </div>
+          <div id="inv-booking">
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
             <div style="min-width:0;max-width:100%">
               <div class="subhead" style="margin:0 0 4px">Consultation with</div>
@@ -634,6 +645,7 @@ ${buildNavHeader('leads')}
           </div>
           <div id="inv-msg" class="act-msg"></div>
           <div class="muted" style="margin-top:8px;line-height:1.5">If the client does not book, the app emails them a reminder 48 hours and 5 days after the first invite. Setting an Outcome stops the reminders.</div>
+          </div>
         </div>
         <div class="card">
           <div class="card-t">${I.flag} Outcome &amp; remarks</div>
@@ -787,7 +799,9 @@ function render(d){
   var st='';
   st+=kv('Booking status', d.bookingStatus||'Not Yet');
   if(d.bookedSlot) st+=kv('Booked slot', d.bookedSlot);
-  st+=kv('Booking invite', d.inviteSent?('Sent'+(d.inviteSentAt?(' · '+String(d.inviteSentAt).slice(0,10)):'')):'Not sent yet');
+  /* a Webinar lead: the Webinar email takes the booking invite's line */
+  if(d.webinarEmail) st+=kv('Webinar email', d.webinarEmail.sentDay?('Sent · '+d.webinarEmail.sentDay):d.webinarEmail.sentDay===null?'Could not check — see Updates':'Not sent yet');
+  else st+=kv('Booking invite', d.inviteSent?('Sent'+(d.inviteSentAt?(' · '+String(d.inviteSentAt).slice(0,10)):'')):'Not sent yet');
   if(d.bookingReminders) st+=kv('Booking reminders', d.bookingReminders);
   st+=kv('Pre-consult', d.preConsultSubmitted?'Submitted':'Pending');
   if(d.outcome) st+=kv('Outcome', d.outcome);
@@ -817,8 +831,16 @@ function render(d){
   // NEVER clobber an unsaved draft: render() now runs again after an outcome
   // click, and the invite card sits right under the outcome buttons.
   if(!INV_DIRTY) document.getElementById('invite-msg').value=d.inviteMessage||'';
-  document.getElementById('inv-when').textContent=d.inviteSent
-    ? ('sent'+(d.inviteSentAt?(' '+String(d.inviteSentAt).slice(0,10)):'')+' — sending again re-emails the client') : '';
+  /* Outcome = Webinar: the card is the Webinar email; the booking invite part is hidden (and comes back when the outcome changes). */
+  WEBINAR=d.webinarEmail||null;
+  document.getElementById('inv-webinar').style.display=WEBINAR?'block':'none';
+  document.getElementById('inv-booking').style.display=WEBINAR?'none':'block';
+  document.getElementById('inv-title').textContent=WEBINAR?'Webinar Email':'Booking invite email';
+  if(WEBINAR){ var wm=document.getElementById('webinar-msg'); wm.maxLength=WEBINAR.max||2000; if(!WEB_DIRTY) wm.value=WEBINAR.standardText||''; }
+  else WEB_DIRTY=false;
+  document.getElementById('inv-when').textContent=WEBINAR
+    ? (WEBINAR.sentDay?('sent '+WEBINAR.sentDay+' — sending again re-emails the client'):WEBINAR.sentDay===null?'could not check whether it was sent — see Updates below':'')
+    : d.inviteSent ? ('sent'+(d.inviteSentAt?(' '+String(d.inviteSentAt).slice(0,10)):'')+' — sending again re-emails the client') : '';
   // Consultant override (Melanie, 2026-08-17): show the auto-routing suggestion,
   // let staff pick, persist immediately so a "send later" keeps the choice too.
   var cs=document.getElementById('inv-consultant');
@@ -911,6 +933,26 @@ function doAction(btn, action, confirmText, value, msgElId){
 // cleared once that text is persisted (saved or sent). render() honours it.
 var INV_DIRTY=false;
 document.getElementById('invite-msg').addEventListener('input',function(){ INV_DIRTY=true; });
+/* The Webinar email (Outcome = Webinar, 2026-11-12): the standard text, editable; sent straight away, recorded on the lead. */
+var WEBINAR=null, WEB_DIRTY=false;
+document.getElementById('webinar-msg').addEventListener('input',function(){ WEB_DIRTY=true; });
+document.getElementById('btn-webinar-reset').onclick=function(){ if(!WEBINAR) return; document.getElementById('webinar-msg').value=WEBINAR.standardText||''; WEB_DIRTY=false; actMsg('web-msg','info','The standard text is back in the box.'); };
+document.getElementById('btn-webinar-send').onclick=function(){
+  if(!WEBINAR) return;
+  var sent=WEBINAR.sentDay, unknown=(sent===null);
+  var ask=sent?('The Webinar email was already sent to this client on '+sent+'. Send it AGAIN?')
+    :unknown?'It could not be checked whether the Webinar email already went to this client (see the Updates below). Send it anyway?'
+    :'Email this client the webinar invitation with this message?';
+  /* again: the person was asked about a second send (or could not be told) — otherwise the server refuses one */
+  var p=doAction(this,'webinarEmail',ask,JSON.stringify({ text:document.getElementById('webinar-msg').value, again:!!(sent||unknown) }),'web-msg');
+  if(!p) return;
+  p.then(function(res){
+    if(!res||!res.ok) return;
+    WEB_DIRTY=false;
+    setTimeout(load,400);   /* the "sent" date and the Updates below, from the server */
+    var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r();
+  });
+};
 document.getElementById('btn-save-msg').onclick=function(){
   doAction(this,'saveInviteMessage',null,document.getElementById('invite-msg').value,'inv-msg')
     .then(function(res){ if(res&&res.ok) INV_DIRTY=false; });

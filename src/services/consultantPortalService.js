@@ -532,6 +532,15 @@ function classifyLead(l) {
   return 'lead';
 }
 
+/** The Toronto day the Webinar email last went to this lead ('' = not known / never), from the notes copy. */
+function lastWebinarEmailDay(leadId) {
+  try {
+    const a = require('./leadStatusService').activityFor(leadId);
+    const list = (a && a.webinars) || [];
+    return list.length ? torontoDay(new Date(Math.max(...list)).toISOString()) : '';
+  } catch (_) { return ''; }
+}
+
 async function getLeadsQueue() {
   if (_leadsQueueCache.rows && (Date.now() - _leadsQueueCache.at) < LEADS_QUEUE_CACHE_MS) {
     return _leadsQueueCache.rows;
@@ -560,6 +569,9 @@ async function getLeadsQueue() {
     // The Leads list's Webinar column (Faran 2026-11-11): the lead-only outcome, and the Toronto day it was set.
     webinar:       l.webinar === 'Yes',
     webinarDay:    l.webinar === 'Yes' ? torontoDay(l.webinarAt) : '',
+    // …and the day the Webinar email last went out, WHEN the notes copy knows it ('' = not known here — never "not sent":
+    // the copy starts empty after a restart and looks back 45 days only; the lead page reads the lead's own notes).
+    webinarEmailDay: l.webinar === 'Yes' ? lastWebinarEmailDay(l.id) : '',
     wantsTo:       l.whatDoYouWant || '', // non-booking intents get a queue pill + invite warning
     urgent:        l.removalOrder === 'Yes' || l.enforcementLetter === 'Yes' || Boolean((l.deadlineDate || '').trim()),
     inviteSent:    (l.bookingInvite || '') === 'Sent',
@@ -734,6 +746,9 @@ async function getLeadDetail(leadId) {
     // a fee staff already recorded (the booking link would charge again)
     feeRecorded:  (() => { const cp = require('./consultPaymentService'); const ps = cp.paidState(lead); return ps.record && ps.paid !== 'app' ? cp.describe(ps.record) : ''; })(),
     inviteMessage,
+    // The Webinar email card (2026-11-12): shown instead of the booking invite while the Outcome is Webinar.
+    // sentDay comes from THIS lead's own notes (no time limit): 'YYYY-MM-DD', '' = never, null = could not be checked just now.
+    webinarEmail: lead.webinar === 'Yes' ? { standardText: require('./webinarEmailService').STANDARD_TEXT, subject: require('./webinarEmailService').SUBJECT, sentDay: await require('./webinarEmailService').lastSent(lead.id), max: require('./webinarEmailService').MAX_LEN } : null,
     inviteSent: (lead.bookingInvite || '') === 'Sent',
     inviteSentAt: lead.inviteSentAt || '',
     bookingReminders: await remindersP,
@@ -1030,6 +1045,17 @@ function validateAction(action, value) {
     // Gauri point 4 part 2: a consultation fee settled outside the booking link (or waived).
     case 'recordConsultPayment':
       return require('./consultPaymentService').validateRecord(value);
+    case 'webinarEmail': {
+      // The Webinar email's body (2026-11-12): text, or empty = the standard text.
+      // …or { text, again: true } when the page showed "already sent" and the person chose to send it again.
+      let text = value, again = false;
+      if (typeof value === 'string' && value.trim().startsWith('{')) { try { const o = JSON.parse(value); if (o && typeof o === 'object' && !Array.isArray(o) && ('text' in o || 'again' in o)) { text = o.text; again = o.again === true; } } catch (_) { /* plain text that starts with a brace */ } }
+      else if (value && typeof value === 'object' && !Array.isArray(value)) { text = value.text; again = value.again === true; }
+      if (text != null && typeof text !== 'string') return { ok: false, error: 'The Webinar email must be text.' };
+      const msg = String(text == null ? '' : text).replace(/\r\n/g, '\n').trim();
+      if (msg.length > require('./webinarEmailService').MAX_LEN) return { ok: false, error: `The Webinar email is too long (max ${require('./webinarEmailService').MAX_LEN} characters).` };
+      return { ok: true, normalized: { text: msg, again } };
+    }
     case 'saveInviteMessage': {
       if (value != null && typeof value !== 'string') return { ok: false, error: 'Invite message must be text.' };
       const msg = String(value == null ? '' : value).trim();
@@ -1665,6 +1691,19 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
         ? 'Booking invite triggered from the portal with a personalized message — send in progress.'
         : 'Booking invite triggered from the portal — send in progress.');
       return { ok: true, message: 'The booking invite is being emailed to the client.' };
+
+    case 'webinarEmail': {
+      // A lead whose Outcome is "Webinar" (Faran 2026-11-12): the webinar invitation instead of the booking invite.
+      // One at a time per lead — a second press while the first is still sending waits, and is then refused unless the
+      // person was asked "send it AGAIN?" (the send itself checks this lead's notes inside the lock).
+      const byName = (actor && actor.verified && String(actor.name || '').trim()) ? String(actor.name).trim().slice(0, 60) : who;
+      const r = await withRecordLock(leadId, async () => {
+        const fresh = (await leadService.getLead(leadId)) || lead;   // the outcome and the address as they are now
+        return require('./webinarEmailService').send({ leadId, lead: fresh, message: v.normalized.text, again: v.normalized.again, by: byName });
+      });
+      _leadsQueueCache.at = 0;   // the Leads list's Webinar column shows the send promptly
+      return { ok: true, message: r.noted ? `✓ The Webinar email was sent to ${r.to}.` : `✓ The Webinar email was sent to ${r.to} — but the note on the lead could not be saved. Please add an update saying it was sent on ${r.day}.` };
+    }
 
     case 'saveInviteMessage':
       // An explicitly cleared draft persists as the '[cleared]' sentinel — an
