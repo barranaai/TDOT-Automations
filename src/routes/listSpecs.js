@@ -36,6 +36,9 @@ function consultListSpec(ctx) {
       preconsult: { label: 'Pre-consult', get: function (r) { return r.preConsultSubmitted ? 'submitted' : 'pending'; },
         text: function (v) { return ({ submitted: 'Submitted', pending: 'Pending' })[v] || v; }, order: ['submitted', 'pending'], fixed: true },
       outcome: { label: 'Outcome', get: function (r) { return s(r.outcome); }, none: 'No outcome yet', order: ['Retain', 'Follow-Up', 'Newsletter', 'Not Wanted'] },
+      // Completed consultations (2026-11-11): where the client is now — the "Now" column of the month groups.
+      now: { label: 'Now (completed consultations)', get: function (r) { return r.done ? s(r.now) : 'upcoming'; },
+        text: function (v) { return v === 'upcoming' ? 'Not completed yet' : v; }, order: ['Retained', 'Retainer paid', 'Retainer signed', 'Retainer sent', 'Retainer to send', 'Following up', 'Newsletter list', 'Closed', 'Existing client', 'upcoming'] },
     },
     // The column names sort, like the Leads list (Faran 2026-11-11). No column chosen = the server order.
     sorts: {
@@ -52,7 +55,8 @@ function consultListSpec(ctx) {
     // "No date" (no day to compare) and "Needs outcome" (the day has passed, nothing recorded — the page's consultBucket rule).
     date: { key: 'date', chip: 'Date', get: day,
       presets: [['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['nextweek', 'Next week'], ['fullmonth', 'This month']],
-      exempt: function (r) { var d = day(r); return !d || (d < today() && !s(r.outcome) && r.direct !== 'Existing client'); } },
+      // …and the completed ones (2026-11-11) sit in their own month groups, which are the way through the past.
+      exempt: function (r) { var d = day(r); return !!r.done || !d || (d < today() && !s(r.outcome) && r.direct !== 'Existing client'); } },
     search: { chip: 'Search', text: function (r) { return r.name; }, id: function (r) { return r.id; } },
   };
 }
@@ -74,7 +78,7 @@ function consultListOpts(ctx) {
       { id: 'agreement', label: 'Agreement', menu: 'facet', facets: ['agreement'] },
       { id: 'preconsult', label: 'Pre-consult', menu: 'facet', facets: ['preconsult'] },
       { id: 'paid', label: 'Paid', title: 'The consultation fee', menu: 'facet', facets: ['paid'] },
-      { id: 'outcome', label: 'Outcome', menu: 'facet', facets: ['outcome'] },
+      { id: 'outcome', label: 'Outcome', menu: 'facet', facets: ['outcome', 'now'] },
       { id: 'del', label: '' },
     ],
   };

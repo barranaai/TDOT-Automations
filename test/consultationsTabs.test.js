@@ -250,7 +250,7 @@ test('pages (2026-11-05): Consultations shows consultations only; Retainers & fo
     'id="needs-outcome"', 'id="nodate"', '<th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th>',
     'id="cq-headrow"', 'id="cq-search"', 'id="cq-chips"', 'id="cq-count"', "api: 'ConsultTable'",
     "consultant: { label: 'Consultant', get: function (r) { return s(r.consultant); }, none: 'Unassigned' },",
-    "fetch('/api/consultations-board'+(force?'?fresh=1':'')", '<a href="/admin/retainers">Retainers &amp; follow-ups</a>', 'id="snap-age"']) assert.ok(q.includes(s), 'consultations: ' + s);
+    "fetch('/api/consultations-board?completed=1'+(force?'&fresh=1':'')", 'id="done-groups"', '<a href="/admin/retainers">Retainers &amp; follow-ups</a>', 'id="snap-age"']) assert.ok(q.includes(s), 'consultations: ' + s);
   for (const gone of ['data-tab=', 'role="tablist" aria-label="Views"', 'id="tn-consult"', 'id="tn-ret"', 'id="rq-headrow"', "api: 'RetainerTable'", 'id="btn-direct-client"', 'id="dc-overlay"', 'function setTab(', 'loadKpis', 'KPIS_LOADED', "lsGet('tdot_consult_tab')", 'function lsGet(', 'loadDirectRetainers'])
     assert.ok(!q.includes(gone), 'consultations, gone: ' + gone);
   for (const page of [q, r]) assert.ok(page.includes("['tdot_consult_tab','tdot_consult_range','tdot_ret_outcomes'].forEach(function(k){ localStorage.removeItem(k); })"), 'the old one-page keys are tidied away');
@@ -260,7 +260,7 @@ test('pages (2026-11-05): Consultations shows consultations only; Retainers & fo
     assert.ok(!r.includes(gone), 'retainers, gone: ' + gone);
   assert.ok(q.includes("function dParts(d){") && r.includes("function dParts(d){"), 'both pages read calendar days the TZ-safe way');
   const src = fs.readFileSync(require.resolve('../src/server'), 'utf8');
-  assert.match(src, /app\.get\('\/api\/consultations-board', async \(req, res\) => \{\s*try \{\s*(\/\/[^\n]*\n\s*)?res\.json\(await consultantPortalService\.getConsultationsBoard\(\{ fresh: String\(req\.query\.fresh \|\| ''\) === '1', withRetained: String\(req\.query\.retained \|\| ''\) === '1' \}\)\);/);
+  assert.match(src, /app\.get\('\/api\/consultations-board', async \(req, res\) => \{\s*try \{\s*(\/\/[^\n]*\n\s*)?res\.json\(await consultantPortalService\.getConsultationsBoard\(\{ fresh: String\(req\.query\.fresh \|\| ''\) === '1', withRetained: String\(req\.query\.retained \|\| ''\) === '1',\s*(\/\/[^\n]*\n\s*)?withCompleted: String\(req\.query\.completed \|\| ''\) === '1' \}\)\);/);
 });
 
 test('routes (2026-11-05): /admin/retainers serves the Retainers page; the old one-page links are redirected — ?tab=retainers / ?outcome= / ?convertLead= / ?newAppFrom= to the Retainers page, ?tab=reporting to the Summary page', () => {
@@ -299,7 +299,7 @@ test('routes (2026-11-05): /admin/retainers serves the Retainers page; the old o
   // point 7 (tabs): opened from elsewhere, the way back opens the client's own outcome tab — the rows' rule (retainerTab)
   assert.ok(svc.includes("    onListTab:      retainerTab(lead),") && svc.includes('    outcomeGroup: retainerTab(l),'), 'one rule for the row and the way back');
   assert.ok(plain.includes("if(list==='retainers'){ href='/admin/retainers?outcome='+encodeURIComponent(d.onListTab||'All');"), 'the client\'s tab');
-  assert.ok(plain.indexOf("if(!bl||/[?&]from=retainers/.test(window.location.search)) return;") < plain.indexOf("href='/admin/retainers?outcome='"), 'from the Retainers page: the plain link — the tab the person was on');
+  assert.ok(plain.indexOf("if(!bl||/[?&]from=(retainers|consultations)(&|$)/.test(window.location.search)) return;") < plain.indexOf("href='/admin/retainers?outcome='"), 'from the Retainers page: the plain link — the tab the person was on');
   const { retainerTab } = require('../src/services/consultantPortalService');
   const { canonicalOutcome } = require('../config/outcomes');
   assert.deepEqual([{ outcome: ' Follow-Up ' }, { outcome: 'Newsletter' }, { outcome: 'Not Wanted' }, { outcome: 'Retain' }, { outcome: '' }, {}, { outcome: 'Junk' }].map(retainerTab),
@@ -605,4 +605,80 @@ test('page: it is "Retainers & follow-ups" — a Follow-Up client is someone the
   assert.ok(html.includes('<b>Follow-Up</b>: call the client back (not retained)'));
   assert.ok(html.includes("'Follow-Up':'The team calls the client back — not retained'"));
   assert.ok(!html.includes('No clients at the retainer stage') && !html.includes('No retainer clients match'));
+});
+
+// Every consultation stays on the Consultations page (Faran 2026-11-11): the completed ones in month groups.
+test('completedConsultation: an outcome (at once), a retainer under way or a retained client = completed, with where the client is now; never a direct retainer client or an unbooked lead', () => {
+  const cc = (l) => portal.completedConsultation(l, '2026-11-11');
+  const B = { bookingStatus: 'Booked', bookedSlot: '2026-11-05 10:00' };
+  assert.equal(cc({ ...B }), null, 'no outcome yet: still to be decided');
+  assert.equal(cc({ bookingStatus: 'Not Yet', outcome: 'Follow-Up' }), null, 'never booked: not a consultation');
+  assert.equal(cc({ sourceChannel: 'Direct Retainer', conversionStatus: 'Retained', retainerPaid: '2026-11-01' }), null, 'a direct retainer client had no consultation');
+  assert.deepEqual(cc({ ...B, outcome: 'Follow-Up' }), { now: 'Following up', tone: 'amber' });
+  assert.deepEqual(cc({ ...B, outcome: 'Newsletter' }), { now: 'Newsletter list', tone: 'grey' });
+  assert.deepEqual(cc({ ...B, outcome: 'Not Wanted' }), { now: 'Closed', tone: 'grey' });
+  assert.deepEqual(cc({ ...B, outcome: 'Retain' }), { now: 'Retainer to send', tone: 'amber' });
+  assert.deepEqual(cc({ ...B, bookedSlot: '2026-11-20 10:00', outcome: 'Retain' }), { now: 'Retainer to send', tone: 'amber' }, 'Retain before the day: completed at once');
+  assert.deepEqual(cc({ ...B, bookedSlot: '2026-11-11 10:00', outcome: 'Follow-Up', outcomeChangedAt: '2026-11-11T16:00:00Z' }), { now: 'Following up', tone: 'amber' }, 'today, the outcome set today: at once');
+  // review 2026-11-11: a client who books AGAIN keeps the new meeting on the upcoming list — the old outcome is still on the row
+  assert.equal(cc({ ...B, bookedSlot: '2026-11-11 14:00', outcome: 'Follow-Up', outcomeChangedAt: '2026-10-02T16:00:00Z' }), null, 'today, the outcome from an earlier consultation');
+  assert.equal(cc({ ...B, bookedSlot: '2026-11-20 10:00', outcome: 'Not Wanted', outcomeChangedAt: '2026-10-02T16:00:00Z' }), null, 'a later day: upcoming until then (as on the Retainers page)');
+  // review 2026-11-11: a held or abandoned booking attempt is not a consultation (its slot text stays behind)
+  assert.equal(cc({ bookingStatus: 'Abandoned', bookedSlot: '2026-11-05 10:00', outcome: 'Not Wanted' }), null);
+  assert.equal(cc({ bookingStatus: 'Slot Held', bookedSlot: '2026-11-05 10:00', conversionStatus: 'Retained' }), null);
+  assert.deepEqual(cc({ bookingStatus: 'Abandoned', bookedSlot: '2026-11-05 10:00', consultationHeld: '2026-11-05', outcome: 'Not Wanted' }), { now: 'Closed', tone: 'grey' }, '…unless it was held');
+  // review 2026-11-11: a lead converted to a direct retainer client AFTER its consultation keeps the consultation
+  assert.deepEqual(cc({ ...B, consultationHeld: '2026-11-05', directClient: 'Yes' }), { now: 'Retainer to send', tone: 'amber' });
+  assert.deepEqual(cc({ ...B, directClient: 'Yes', conversionStatus: 'Retained' }), { now: 'Retained', tone: 'green' });
+  assert.deepEqual(cc({ ...B, outcome: 'Retain', retainerSent: '2026-11-06' }), { now: 'Retainer sent', tone: 'blue' });
+  assert.deepEqual(cc({ ...B, retainerSent: '2026-11-06', retainerSigned: '2026-11-07' }), { now: 'Retainer signed', tone: 'blue' }, 'a retainer under way with the outcome left blank');
+  assert.deepEqual(cc({ ...B, outcome: 'Retain', retainerSigned: '2026-11-07', retainerPaid: '2026-11-08' }), { now: 'Retainer paid', tone: 'blue' });
+  assert.deepEqual(cc({ ...B, outcome: 'Retain', conversionStatus: 'Retained', clientMasterItemId: '9' }), { now: 'Retained', tone: 'green' });
+  assert.deepEqual(cc({ bookingStatus: 'Booked', outcome: 'Follow-Up' }), { now: 'Following up', tone: 'amber' }, 'booked by hand with no time');
+  assert.deepEqual(cc({ bookingStatus: '', bookedSlot: '2026-10-01 09:00', conversionStatus: 'Retained' }), { now: 'Retained', tone: 'green' }, 'a consultation time is enough');
+});
+
+test('getConsultationsBoard withCompleted: each consultation is in exactly one of upcoming / completed; latest first; the case number where there is a case; no email or phone; the other pages are as before', async () => {
+  snap._reset();
+  const rows = [
+    L(1, { bookingStatus: 'Booked', bookedSlot: '2026-10-20 11:00' }),                                          // upcoming
+    L(2, { bookingStatus: 'Booked', bookedSlot: '2026-10-14 15:00', outcome: 'Follow-Up' }),                    // yesterday, an outcome
+    L(3, { bookingStatus: 'Booked', bookedSlot: '2026-10-09 10:00', outcome: 'Retain', retainerSent: '2026-10-10' }),
+    L(4, { bookingStatus: 'Booked', bookedSlot: '2026-09-02 10:00', outcome: 'Retain', conversionStatus: 'Retained', clientMasterItemId: '77' }),
+    L(5, { sourceChannel: 'Direct Retainer', conversionStatus: 'Retained', clientMasterItemId: '78' }),          // no consultation
+    L(6, { bookingStatus: 'Booked', outcome: 'Not Wanted' }),                                                    // no time
+    L(7),                                                                                                        // a lead
+  ];
+  const dash = require('../src/services/dashboardService');
+  const restore = [stub(snap.io, 'fetchLeads', async () => rows), stub(dash, 'fetchAllItems', async () => [{ id: '77', column_values: [{ id: 'text_mm142s49', text: '2026-EE-004' }] }])];
+  try {
+    const now = new Date('2026-10-15T16:00:00Z');
+    const b = await portal.getConsultationsBoard({ now, withCompleted: true });
+    assert.deepEqual(b.consultations.map((r) => r.id), ['1']);
+    for (const l of rows) assert.ok(b.consultations.filter((r) => r.id === l.id).length + b.completed.filter((r) => r.id === l.id).length <= 1, 'never in both');
+    assert.deepEqual(b.completed.map((r) => [r.id, r.now]), [['2', 'Following up'], ['3', 'Retainer sent'], ['4', 'Retained'], ['6', 'Closed']], 'the latest consultation first, no time last');
+    assert.ok(b.completed.every((r) => r.done === true && !('clientMasterItemId' in r)));
+    assert.equal(b.completed[2].caseRef, '2026-EE-004');
+    assert.ok(!('caseRef' in b.completed[0]), 'a case number only where there is a case');
+    assert.ok(!JSON.stringify(b).includes('x@y.co') && !JSON.stringify(b).includes('555-0142'), 'a list, not a record');
+    // without the flag: exactly as before — the early Follow-Up is still upcoming, nothing completed is sent
+    const plain = await portal.getConsultationsBoard({ now });
+    assert.equal(plain.completed, undefined);
+    assert.deepEqual(plain.consultations.map((r) => r.id), ['1']);
+    assert.deepEqual(plain.retainers.map((r) => r.id).sort(), ['2', '3', '6']);
+  } finally { restore.forEach((r) => r()); snap._reset(); }
+});
+
+test('page: the completed month groups — a done row is never in the three lists; the Date filter never hides it; the Now filter is there', () => {
+  const { listCore } = require('../src/routes/listFilters'), S = require('../src/routes/listSpecs');
+  const q = require('../src/routes/adminConsultation').buildQueueHTML();
+  for (const s of ["bindRowClicks(b,'?from=consultations')", "!(st && st.sort && st.sort.key)", 'id="done"', 'id="done-groups"', 'function renderDone(', "if(r.done) return 'done';", "ssSet('tdot_list_consult_months'", "ALLROWS=(d.consultations||[]).concat(d.completed||[]);", '>Now</th>']) assert.ok(q.includes(s), s);
+  const spec = S.consultListSpec({ today: () => '2026-11-11' }), LT = listCore(spec);
+  const st = LT.emptyState(); st.from = st.to = '2026-11-11';
+  const rows = [{ id: 'a', bookedSlot: '2026-11-11 10:00' }, { id: 'b', bookedSlot: '2026-09-02 10:00', outcome: 'Retain', done: true, now: 'Retained' }, { id: 'c', bookedSlot: '2026-11-13 10:00' }];
+  assert.deepEqual(LT.filterRows(rows, st).map((r) => r.id), ['a', 'b']);
+  st.sel.now = ['Retained'];
+  assert.deepEqual(LT.filterRows(rows, st).map((r) => r.id), ['b']);
+  assert.deepEqual(LT.facetCounts(rows, LT.emptyState(), 'now').map((x) => x.label), ['Retained', 'Not completed yet']);
+  assert.deepEqual(S.consultListOpts({}).cols.find((c) => c.id === 'outcome').facets, ['outcome', 'now']);
 });

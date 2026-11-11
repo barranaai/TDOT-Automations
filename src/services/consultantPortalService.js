@@ -3128,36 +3128,22 @@ function retainerTab(l) {
  * 'YYYY-MM-DD[ HH:MM]'); the page does Today/Week/Month in Toronto. Never a
  * client's email or phone — a list, not a record.
  */
-async function getConsultationsBoard({ fresh = false, now = new Date(), withRetained = false } = {}) {
+async function getConsultationsBoard({ fresh = false, now = new Date(), withRetained = false, withCompleted = false } = {}) {
   const snap = await require('./leadSnapshot').getLeadSnapshot({ fresh });
   const s = (v) => String(v == null ? '' : v).trim();
-  const consultations = [], retainers = [], retained = [];
+  const consultations = [], retainers = [], retained = [], completed = [];
   const consultPayment = require('./consultPaymentService');
   const today = torontoDay(now.toISOString());
   for (const l of snap.leads) {
     let kind = classifyLead(l);
+    // The Consultations page keeps every consultation (Faran 2026-11-11): the completed ones in month groups.
+    // Only when asked for (withCompleted) — then a completed one is NOT also in the upcoming list.
+    const doneNow = withCompleted ? completedConsultation(l, today) : null;
+    if (doneNow) completed.push({ ...consultRow(l, consultPayment), done: true, now: doneNow.now, nowTone: doneNow.tone, clientMasterItemId: s(l.clientMasterItemId) });
     if (kind === 'consultation' && consultationDone(l, today)) kind = 'retainer';
+    if (kind === 'consultation' && doneNow) continue;   // on this page it is in its month group
     if (kind === 'consultation') {
-      // paid: 'app' (the booking link's Square payment, paidCents incl. HST) | a kind
-      // staff recorded (cash / e-transfer / invoice / other, paidCents before HST;
-      // waived = 0) | '' (nothing yet). paidBy/paidOn only for a staff record.
-      const ps = consultPayment.paidState(l);
-      consultations.push({
-        id: l.id, name: l.fullName || l.name,
-        service: s(l.confirmedCaseType) || s(l.serviceRequired),
-        consultant: s(l.assignedConsultant),
-        bookedSlot: s(l.bookedSlot),
-        meetingType: s(l.meetingType),
-        preConsultSubmitted: s(l.preConsultSubmitted) === 'Yes',
-        agreementSent: s(l.consultAgreementSent), agreementSigned: s(l.consultAgreementSigned),
-        paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
-        outcome: s(l.outcome), followUpDate: s(l.followUpDate),
-        consultationHeld: s(l.consultationHeld), hasMeeting: !!s(l.meetingLink),
-        tier: s(l.tier), createdAt: l.createdAt || '',
-        ...adminOnlyDelete(l),
-        // A direct consultation (step 2): its kind for the "direct" pill and who booked it — only on such a row.
-        ...(isDirectConsult(l) ? { direct: require('../utils/directConsult').kindOf(l) || '?', bookedBy: s(l.bookedBy) } : {}),
-      });
+      consultations.push(consultRow(l, consultPayment));
     } else if (kind === 'retainer') {
       retainers.push(retainerRow(l, consultPayment));
     } else if (kind === 'gone' && withRetained) {
@@ -3180,6 +3166,15 @@ async function getConsultationsBoard({ fresh = false, now = new Date(), withReta
   const stageDate = (r) => (r.stage === '' ? (r.bookedSlot || '\uffff') : (r.retainerPaid || r.retainerSigned || r.retainerSent || r.createdAt || ''));
   retainers.sort((a, b) => (STAGE_ORDER[a.stage] - STAGE_ORDER[b.stage]) || stageDate(a).localeCompare(stageDate(b)) || Number(a.id) - Number(b.id));
   const out = { consultations, retainers, at: snap.at, ageMs: snap.ageMs, stale: !!snap.stale };
+  if (withCompleted) {
+    // Completed: the latest consultation first; the ones with no date last.
+    completed.sort((a, b) => (a.bookedSlot && b.bookedSlot) ? b.bookedSlot.localeCompare(a.bookedSlot) : a.bookedSlot ? -1 : b.bookedSlot ? 1 : Number(b.id) - Number(a.id));
+    // Case numbers only if the Cases copy is to hand almost at once — this list never waits on the Client Master read
+    // (it carries on in the background and is there for the next load).
+    await addCaseRefs(completed, COMPLETED_CASE_REFS_WAIT_MS);
+    completed.forEach((r) => { if (!r.clientMasterItemId) { delete r.caseRef; delete r.caseFound; } delete r.clientMasterItemId; });
+    out.completed = completed;
+  }
   if (withRetained) {
     // Retained: the newest first (the later of signed / paid), then the newest lead.
     retained.sort((a, b) => b.retainedOn.localeCompare(a.retainedOn) || String(b.createdAt).localeCompare(String(a.createdAt)) || Number(b.id) - Number(a.id));
@@ -3187,6 +3182,67 @@ async function getConsultationsBoard({ fresh = false, now = new Date(), withReta
     out.retained = retained;
   }
   return out;
+}
+
+/**
+ * Did this lead have a consultation that is now COMPLETED — and where is the client now? (Faran 2026-11-11: every
+ * consultation stays on the Consultations page; the completed ones in month groups.) PURE. null = not completed
+ * (still upcoming / waiting for an outcome) or never a consultation.
+ *   a consultation = Booking Status "Booked", or Consultation Held, or a consultation time on a row that is not a
+ *                    held / abandoned booking attempt (their slot text stays behind — review 2026-11-11). A direct
+ *                    retainer client had none — unless the lead was converted AFTER a real consultation.
+ *   completed      = a retainer is under way or the client is retained or the outcome is Retain — at once, whatever
+ *                    the date; any other outcome by the lists' own rule (consultationDone: the day has passed, or it
+ *                    is today and the outcome was set today) — so a client who books AGAIN keeps the new meeting on
+ *                    the upcoming list although the outcome of the earlier consultation is still on the row, and the
+ *                    client is on the Retainers page from the same moment. A direct consultation about an existing
+ *                    client's file has no outcome to set: completed once its day has passed.
+ * `now` is what the "Now" column says; `tone` its colour.
+ */
+function completedConsultation(l, today) {
+  const s = (v) => String(v == null ? '' : v).trim();
+  if (!l) return null;
+  const st = s(l.bookingStatus);
+  const day = (s(l.bookedSlot).match(/^(\d{4}-\d{2}-\d{2})/) || [])[1] || '';
+  const real = st === 'Booked' || !!s(l.consultationHeld);
+  if (isDirectClient(l) ? !real : !(real || (day && st !== 'Slot Held' && st !== 'Abandoned'))) return null;
+  const kind = classifyLead(l);
+  if (kind === 'gone') return { now: 'Retained', tone: 'green' };
+  if (s(l.retainerPaid)) return { now: 'Retainer paid', tone: 'blue' };
+  if (s(l.retainerSigned)) return { now: 'Retainer signed', tone: 'blue' };
+  if (s(l.retainerSent)) return { now: 'Retainer sent', tone: 'blue' };
+  if (kind === 'retainer') return { now: 'Retainer to send', tone: 'amber' };   // outcome Retain, or converted to a direct retainer client
+  if (kind !== 'consultation' && !(kind === 'lead' && real)) return null;   // 'lead' + held: the status was never moved on to Booked
+  // An outcome and nothing further: what happens next, in words that do not just repeat the Outcome column.
+  const oc = canonicalOutcome(l.outcome);
+  if (oc && consultationDone(l, today)) return { 'Follow-Up': { now: 'Following up', tone: 'amber' }, Newsletter: { now: 'Newsletter list', tone: 'grey' }, 'Not Wanted': { now: 'Closed', tone: 'grey' } }[oc] || { now: oc, tone: 'grey' };
+  if (!oc && kind === 'consultation' && isDirectConsult(l) && require('../utils/directConsult').kindOf(l) === 'Existing client' && day && day < today) return { now: 'Existing client', tone: 'grey' };
+  return null;
+}
+
+/** One Consultations row. No email or phone — a list, not a record. */
+function consultRow(l, consultPayment) {
+  const s = (v) => String(v == null ? '' : v).trim();
+  // paid: 'app' (the booking link's Square payment, paidCents incl. HST) | a kind
+  // staff recorded (cash / e-transfer / invoice / other, paidCents before HST;
+  // waived = 0) | '' (nothing yet). paidBy/paidOn only for a staff record.
+  const ps = consultPayment.paidState(l);
+  return {
+    id: l.id, name: l.fullName || l.name,
+    service: s(l.confirmedCaseType) || s(l.serviceRequired),
+    consultant: s(l.assignedConsultant),
+    bookedSlot: s(l.bookedSlot),
+    meetingType: s(l.meetingType),
+    preConsultSubmitted: s(l.preConsultSubmitted) === 'Yes',
+    agreementSent: s(l.consultAgreementSent), agreementSigned: s(l.consultAgreementSigned),
+    paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
+    outcome: s(l.outcome), followUpDate: s(l.followUpDate),
+    consultationHeld: s(l.consultationHeld), hasMeeting: !!s(l.meetingLink),
+    tier: s(l.tier), createdAt: l.createdAt || '',
+    ...adminOnlyDelete(l),
+    // A direct consultation (step 2): its kind for the "direct" pill and who booked it — only on such a row.
+    ...(isDirectConsult(l) ? { direct: require('../utils/directConsult').kindOf(l) || '?', bookedBy: s(l.bookedBy) } : {}),
+  };
 }
 
 /** One Retainers row (the Retained tab adds its own fields on top). No email or phone — a list, not a record. */
@@ -3237,6 +3293,7 @@ function adminOnlyDelete(l) {
  * Returns true when the Client Master rows were read.
  */
 const CASE_REFS_WAIT_MS = 4000;
+const COMPLETED_CASE_REFS_WAIT_MS = 600;
 async function addCaseRefs(rows, waitMs = CASE_REFS_WAIT_MS) {
   rows.forEach((r) => { r.caseRef = ''; r.caseFound = null; });
   if (!rows.some((r) => r.clientMasterItemId)) return false;
@@ -3287,7 +3344,7 @@ module.exports = {
   createDirectClient, getDirectClientOptions, getDirectRetainerQueue, invalidateDirectRetainerQueue, findClientMatches, DIRECT_SOURCE,
   createStaffLead, STAFF_LEAD_SOURCES,
   invalidateLeadsQueue,
-  classifyLead, consultationDone, listFor, convertRefusal, retainerTab, RETAINED_TAB, RETAINER_TABS, getConsultationsBoard, CASE_REFS_WAIT_MS, addCaseRefs,
+  classifyLead, consultationDone, completedConsultation, listFor, convertRefusal, retainerTab, RETAINED_TAB, RETAINER_TABS, getConsultationsBoard, CASE_REFS_WAIT_MS, addCaseRefs,
   _recordPackageView: recordPackageView, _packageResultLine: packageResultLine,   // test seams
   // Direct consultation (step 2): the shared pieces its service reuses.
   buildConsultPaymentRecord, writeRecordedBooking, slotsOverlap, withRecordLock, postPortalNote, escHtmlNote,
