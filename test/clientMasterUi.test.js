@@ -239,7 +239,11 @@ test('the page: renamed Client Master; tabs + header box above the toolbar; ever
   assert.match(html, /<title>TDOT — Client Master<\/title>/);
   assert.match(html, /<h1 class="dash-title">Client Master<\/h1>/);
   assert.ok(html.includes('The Client Master board, with its Monday views as tabs'));
-  assert.ok(html.includes('<div class="sec-hd">📋 Client Master</div>'));
+  // Faran 2026-11-12: one page title, in the same look as the other list pages — no second "Client Master" heading above the tabs
+  assert.ok(!html.includes('<div class="sec-hd">📋 Client Master</div>'));
+  assert.equal(html.split('<h1 class="dash-title">Client Master</h1>').length - 1, 1);
+  assert.match(html, /\.dash-title \{\s+font-size: 22px; font-weight: 800; color: var\(--navy\);\s+letter-spacing: -\.5px; margin: 0 0 4px;/);
+  assert.match(require('../src/routes/adminLeads').buildLeadsQueueHTML(), /\.page-h \{ font-size:22px; font-weight:800; color:var\(--navy\); letter-spacing:-\.5px; margin:0 0 4px; \}/, 'the same numbers as the Leads page title');
   assert.ok(html.indexOf('id="cs-quick"') < html.indexOf('id="cm-head"') && html.indexOf('id="cm-head"') < html.indexOf('id="search-box"'), 'tabs, then the header box, then the toolbar');
   assert.ok(html.includes('<div class="lt-tabs" id="cs-quick" role="tablist" aria-label="Client Master views"></div>'));
   // review round 1: the box above the table is redrawn on every search letter, so it is not a live region (#table-count says the count)

@@ -306,7 +306,6 @@ const NEEDS_ATTENTION_HTML = `
 
 const ALL_CASES_BODY_HTML = `
     <!-- ── Client Master table (was "All Cases"), with the Monday views as tabs (block 3) ── -->
-    <div class="sec-hd">📋 Client Master</div>
     <div class="lt-tabs" id="cs-quick" role="tablist" aria-label="Client Master views"></div>
     <!-- On a view tab: the data time, Print, the counts (Assigning) or the half-month windows (Deadlines). -->
     <div id="cm-head" class="cm-head"></div>
@@ -586,15 +585,15 @@ function buildDashboardHTML(view = 'cases') {
     #content { display: none; animation: fadeUp .45s ease both; }
 
     /* ── Page header ─────────────────────────────────────────────── */
+    /* One page-title look on every list page (Faran 2026-11-12): the same size and spacing as Leads / Consultations /
+       Retainers (.page-h, .page-sub) — no rule under it, and no second "Client Master" heading above the tabs. */
     .dash-header {
-      margin-bottom: 28px;
-      padding-bottom: 20px;
-      border-bottom: 1px solid #e2e8f0;
-      display: flex; align-items: flex-end; justify-content: space-between;
+      margin-bottom: 14px;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
     }
     .dash-title {
-      font-size: 26px; font-weight: 800; color: var(--navy);
-      letter-spacing: -.6px; margin: 0 0 4px;
+      font-size: 22px; font-weight: 800; color: var(--navy);
+      letter-spacing: -.5px; margin: 0 0 4px;
     }
     .dash-subtitle { font-size: 12px; color: #94a3b8; margin: 0; font-weight: 500; }
     /* Switch between the two dashboard views (Client Master ⇄ Summary). */
