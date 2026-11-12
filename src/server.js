@@ -886,6 +886,17 @@ app.get('/admin/otter/files', async (req, res) => {
   res.json(req.query.deep ? await svc.recent({ days: Math.min(14, Math.max(1, parseInt(req.query.days, 10) || 2)) }) : await svc.look());
 });
 
+// ─── Otter API key: READ-ONLY check (Faran 2026-11-12) ─────────────────────────
+// Asks Otter a few GET questions with the key in the environment and answers only the
+// status and the SHAPE of each reply (field names, types, counts) — never meeting content,
+// never the key. Nothing is stored, logged or written to Otter.
+app.get('/admin/otter/api-check', async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  if (!resolveAdminOrReject(req, res, 'Only an admin can check the Otter key.')) return;
+  try { res.json(await require('./services/otterApiService').check()); }
+  catch (err) { res.status(500).json({ error: 'The Otter check could not run.' }); }
+});
+
 // ─── Document numbers on later-stage cases (Faran 2026-10-28, 2026-CEC-EE-110) ──
 // Recount the four document numbers of every open case outside the four
 // collection/review stages. dryRun (default) reports; { dryRun: false } writes —
