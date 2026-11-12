@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * The Client Master page's view tabs: an exact copy of four Monday views on the
- * Client Master board, kept as DATA (operator, column_id, compare_value exactly
+ * The Client Master page's view tabs: an exact copy of three Monday views on the
+ * Client Master board (Assigning, Deadlines, EE after ITA), kept as DATA (operator, column_id, compare_value exactly
  * as Monday stores them — read 2026-11-08, API-Version 2026-01, and pinned by
  * test/fixtures/client-master-views-2026-11-08.json).
  *
@@ -25,6 +25,11 @@
  * group rule (Assigning, EE after ITA): otherwise NOT_ANY_OF would let TEST or
  * Cancel rows through. The views without a group rule can still show it.
  *
+ * The "Mahesh" tab was taken off on 2026-11-12 (team meeting 2026-11-10: not
+ * used, and its Monday view was deleted). It was the only view with a sort; the
+ * sort machinery (SORT_COLUMNS, compileSort, the page's viewOrder) stays, as it
+ * is driven by the data, but no view uses it now.
+ *
  * Nothing here reads or writes Monday.
  */
 
@@ -42,10 +47,10 @@ const RULE_COLUMNS = {
 };
 // The columns a view may group by, and the parsed row field that gives the heading key.
 const GROUP_BY_COLUMNS = { [STAGE_COL]: 'stageIdx', [PHASE_COL]: 'phaseIdx' };
-// The columns a view may sort by (plain YYYY-MM-DD dates on the row).
+// The columns a view may sort by (plain YYYY-MM-DD dates on the row). No view has a sort today (see the top note).
 const SORT_COLUMNS = { date_mm33sj6t: 'actualDeadline', date_mm3t66pa: 'promisedDate' };
 
-// ─── The four views, as Monday stores them (do not tidy them up) ─────────────
+// ─── The three views, as Monday stores them (do not tidy them up) ─────────────
 // groupOrder: how the group HEADINGS are ordered ('position' = the label order /
 // board group order Monday shows; 'index'; 'alpha'). A one-line change if the
 // by-eye check says Monday orders them differently.
@@ -73,19 +78,6 @@ const DEFINITIONS = [
         { operator: 'AND', rules: [{ column_id: PHASE_COL, compare_value: [5], compare_attribute: '', operator: 'NOT_ANY_OF' }] },
       ] },
       sort: [],
-      settings: { group_by: { conditions: [{ columnId: PHASE_COL, config: { sortSettings: { direction: 'ASC' } } }] } },
-      filter_user_id: null, filter_team_id: null,
-    },
-  },
-  {
-    key: 'mahesh', label: 'Mahesh', groupOrder: 'position',
-    monday: {
-      id: '283824419', name: 'Mahesh',
-      filter: { operator: 'AND', groups: [
-        { operator: 'AND', rules: [{ column_id: STAGE_COL, compare_value: [6, 8, 9, 10, 13, 15, 17, 18], compare_attribute: '', operator: 'NOT_ANY_OF' }] },
-        { operator: 'AND', rules: [{ column_id: PHASE_COL, compare_value: [5], compare_attribute: '', operator: 'NOT_ANY_OF' }] },
-      ] },
-      sort: [{ column_id: 'date_mm33sj6t', direction: 'ASC' }],
       settings: { group_by: { conditions: [{ columnId: PHASE_COL, config: { sortSettings: { direction: 'ASC' } } }] } },
       filter_user_id: null, filter_team_id: null,
     },
@@ -240,18 +232,17 @@ function dropdownIds(rawValue) {
 const HINTS = {
   assigning: "Like Monday's Assigning view: open stages (not Application Submitted, Cancelled, Profile Created/Linked/Reviewed/Updated, Task Done, Ads posted, LMIA Submitted or empty), not in Leads, Cancel or TEST. Grouped by Case Stage.",
   deadlines: "Like Monday's Deadlines view: Phase filled in, and the stage is not Application Submitted, ADR, Profile Created/Linked/Reviewed/Updated, Task Done or LMIA Submitted. So Cancelled, Ads posted and no-stage cases with a Phase show too, and so do rows in the Leads, Cancel or TEST groups, as on Monday. Grouped by Phase.",
-  mahesh: "Like Monday's Mahesh view: Phase filled in, and the stage is not Application Submitted, Cancelled, Profile Created/Linked/Reviewed/Updated, Task Done or LMIA Submitted. So ADR, Ads posted and no-stage cases with a Phase show too, and so do rows in the Leads, Cancel or TEST groups, as on Monday. Grouped by Phase, soonest Actual Deadline first (no date last).",
   eeita: "Like Monday's EE after ITA view: case type Canadian Experience Class (EE after ITA), open stages (not Application Submitted, Cancelled, Profile Created/Linked/Reviewed/Updated, Task Done, Ads posted or LMIA Submitted), not in Leads, Cancel or TEST. Grouped by board group.",
 };
 const PRE_ONBOARDING_INDEX = 12;   // Case Stage "Pre-Onboarding" (label ids read 2026-11-08)
 // What the page adds above / inside each tab (display only): Assigning the stage counts and the no-officer line;
-// Deadlines and Mahesh the half-month windows, the Real / Imaginary counts on each Phase heading and the two flags.
-const PAGE_EXTRAS = { assigning: { stageStrip: true }, deadlines: { deadlineBox: true }, mahesh: { deadlineBox: true } };
+// Deadlines the half-month windows, the Real / Imaginary counts on each Phase heading and the two flags.
+const PAGE_EXTRAS = { assigning: { stageStrip: true }, deadlines: { deadlineBox: true } };
 
 /**
  * What the page needs to draw the tabs (plain data, JSON for the page script):
  * per view its key, label, tooltip, what it groups by ('stage' | 'phase' | 'board'),
- * the heading order mode + direction, and its sort (Mahesh: Actual Deadline).
+ * the heading order mode + direction, and its sort (null on every view today).
  */
 function pageViews() {
   const BY = { stageIdx: 'stage', phaseIdx: 'phase', groupId: 'board' };

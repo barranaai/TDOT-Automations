@@ -4,8 +4,9 @@
  *  1. the definitions equal the Monday views (fixture copied from views-raw.json, read 2026-11-08);
  *     every compare value names a real label / group; anything not modelled throws;
  *  2. one synthetic row per rule edge, through the real parseItem;
- *  3. a real, anonymised capture: the app's views give the SAME row sets as Monday's own engine,
- *     and the Mahesh order equals Monday's (ties on equal dates allowed).
+ *  3. a real, anonymised capture: the app's views give the SAME row sets as Monday's own engine.
+ * The "Mahesh" tab was taken off on 2026-11-12 (its Monday view was deleted): the fixtures still hold
+ * that view as it was read on 2026-11-08, and the tests say it is no longer a tab.
  * No network: nothing here calls Monday.
  */
 const test   = require('node:test');
@@ -22,19 +23,25 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 
 /* ── 1. definitions ── */
 
-test('the four tab definitions equal the Monday views exactly (filter, sort, group_by, user/team filter)', () => {
-  assert.deepEqual(cmv.VIEW_KEYS, ['assigning', 'deadlines', 'mahesh', 'eeita']);
-  assert.deepEqual(cmv.VIEW_LABELS, { assigning: 'Assigning', deadlines: 'Deadlines', mahesh: 'Mahesh', eeita: 'EE after ITA' });
+test('the three tab definitions equal the Monday views exactly (filter, sort, group_by, user/team filter); the Mahesh view is no longer a tab', () => {
+  assert.deepEqual(cmv.VIEW_KEYS, ['assigning', 'deadlines', 'eeita']);
+  assert.deepEqual(cmv.VIEW_LABELS, { assigning: 'Assigning', deadlines: 'Deadlines', eeita: 'EE after ITA' });
   assert.deepEqual(Object.keys(VIEWS_FIXTURE).sort(), ['260858028', '260886949', '283824419', '287709906']);
   const byId = Object.fromEntries(cmv.VIEWS.map((v) => [v.mondayViewId, v]));
+  const GONE = '283824419';   // "Mahesh": in the 2026-11-08 read, taken off the page on 2026-11-12
+  assert.equal(VIEWS_FIXTURE[GONE].name, 'Mahesh');
+  assert.equal(byId[GONE], undefined, 'the Mahesh view is not a tab');
+  assert.equal(cmv.view('mahesh'), null);
+  assert.ok(!JSON.stringify(cmv.pageViews()).toLowerCase().includes('mahesh'), 'nothing the page gets names it (keys, labels, tooltips)');
+  assert.equal(cmv.VIEWS.length, 3);
   for (const [id, want] of Object.entries(VIEWS_FIXTURE)) {
+    if (id === GONE) continue;
     assert.ok(byId[id], `view ${id} (${want.name}) is a tab`);
     const { id: _id, ...got } = byId[id].monday;
     assert.deepEqual(got, want, `${want.name}: the copy is Monday's definition verbatim`);
   }
   assert.equal(cmv.view('assigning').mondayViewId, '260858028');
   assert.equal(cmv.view('deadlines').mondayViewId, '260886949');
-  assert.equal(cmv.view('mahesh').mondayViewId, '283824419');
   assert.equal(cmv.view('eeita').mondayViewId, '287709906', 'the TABLE view, not the broadcast copy 287710509');
   assert.equal(cmv.view('nope'), null);
 });
@@ -42,10 +49,13 @@ test('the four tab definitions equal the Monday views exactly (filter, sort, gro
 test('the compiled shape: grouping and sort per view', () => {
   assert.deepEqual(cmv.view('assigning').groupBy, { kind: 'status', columnId: STAGE, field: 'stageIdx', direction: 'ASC' }, 'no config = ascending');
   assert.deepEqual(cmv.view('deadlines').groupBy, { kind: 'status', columnId: PHASE, field: 'phaseIdx', direction: 'ASC' });
-  assert.deepEqual(cmv.view('mahesh').groupBy, { kind: 'status', columnId: PHASE, field: 'phaseIdx', direction: 'ASC' });
   assert.deepEqual(cmv.view('eeita').groupBy, { kind: 'board', field: 'groupId', direction: 'ASC' }, 'no group_by: board groups');
-  assert.deepEqual(cmv.view('mahesh').sort, [{ columnId: 'date_mm33sj6t', field: 'actualDeadline', direction: 'ASC' }]);
   for (const k of ['assigning', 'deadlines', 'eeita']) assert.deepEqual(cmv.view(k).sort, [], `${k}: board order`);
+  assert.ok(cmv.pageViews().every((v) => v.sort === null), 'no tab has a sort today');
+  // the sort machinery stays (data-driven): the old Mahesh view, exactly as Monday stored it, still compiles to its sort
+  const old = cmv.compileView({ key: 'old', label: 'Old', groupOrder: 'position', monday: { id: '283824419', ...clone(VIEWS_FIXTURE['283824419']) } });
+  assert.deepEqual(old.sort, [{ columnId: 'date_mm33sj6t', field: 'actualDeadline', direction: 'ASC' }]);
+  assert.deepEqual(old.groupBy, { kind: 'status', columnId: PHASE, field: 'phaseIdx', direction: 'ASC' });
   for (const v of cmv.VIEWS) assert.equal(v.groupOrder, 'position', 'the default heading order (one-line change after the eye check)');
 });
 
@@ -114,16 +124,16 @@ function rawItem({ stage, phase, types, group = G.oct, stageValue, phaseValue } 
 const viewsOfRaw = (o) => dash.parseItem(rawItem(o), 0).views;
 
 test('the rule edges, tab by tab', () => {
-  // empty stage: kept by Deadlines / Mahesh / EE (5 not listed), dropped by Assigning (5 listed)
-  assert.deepEqual(viewsOfRaw({ stage: null, phase: 6, types: [6] }), ['deadlines', 'mahesh', 'eeita']);
-  // Cancelled: Deadlines yes, Mahesh no
+  // empty stage: kept by Deadlines / EE (5 not listed), dropped by Assigning (5 listed)
+  assert.deepEqual(viewsOfRaw({ stage: null, phase: 6, types: [6] }), ['deadlines', 'eeita']);
+  // Cancelled: Deadlines only
   assert.deepEqual(viewsOfRaw({ stage: 8, phase: 6 }), ['deadlines']);
-  // ADR: Mahesh yes, Deadlines no (and Assigning yes)
-  assert.deepEqual(viewsOfRaw({ stage: 16, phase: 2 }), ['assigning', 'mahesh']);
-  // Ads posted: Deadlines / Mahesh yes, Assigning / EE no
-  assert.deepEqual(viewsOfRaw({ stage: 11, phase: 6, types: [6] }), ['deadlines', 'mahesh']);
-  // a Cancel-group row with a Phase: Deadlines / Mahesh (no group rule), not Assigning / EE
-  assert.deepEqual(viewsOfRaw({ stage: 1, phase: 6, types: [6], group: G.cancel }), ['deadlines', 'mahesh']);
+  // ADR: Deadlines no, Assigning yes
+  assert.deepEqual(viewsOfRaw({ stage: 16, phase: 2 }), ['assigning']);
+  // Ads posted: Deadlines yes, Assigning / EE no
+  assert.deepEqual(viewsOfRaw({ stage: 11, phase: 6, types: [6] }), ['deadlines']);
+  // a Cancel-group row with a Phase: Deadlines (no group rule), not Assigning / EE
+  assert.deepEqual(viewsOfRaw({ stage: 1, phase: 6, types: [6], group: G.cancel }), ['deadlines']);
   // Leads group, no phase: nowhere
   assert.deepEqual(viewsOfRaw({ stage: 1, group: G.leads, types: [6] }), []);
   // a TEST row without a Phase: none
@@ -139,11 +149,11 @@ test('the rule edges, tab by tab', () => {
   // Application Submitted with a phase: nowhere
   assert.deepEqual(viewsOfRaw({ stage: 6, phase: 6, types: [6] }), []);
   // Phase N/A (7) counts as filled
-  assert.deepEqual(viewsOfRaw({ stage: 1, phase: 7 }), ['assigning', 'deadlines', 'mahesh']);
+  assert.deepEqual(viewsOfRaw({ stage: 1, phase: 7 }), ['assigning', 'deadlines']);
 });
 
-test('a row with no group id (a partial read) is out of Assigning and EE, and still on Deadlines / Mahesh when it has a Phase', () => {
-  assert.deepEqual(viewsOfRaw({ stage: 1, phase: 6, types: [6], group: null }), ['deadlines', 'mahesh']);
+test('a row with no group id (a partial read) is out of Assigning and EE, and still on Deadlines when it has a Phase', () => {
+  assert.deepEqual(viewsOfRaw({ stage: 1, phase: 6, types: [6], group: null }), ['deadlines']);
   assert.deepEqual(viewsOfRaw({ stage: 1, types: [6], group: null }), []);
   const row = dash.parseItem(rawItem({ stage: 1, group: null }), 0);
   assert.equal(row.groupId, '');
@@ -158,20 +168,20 @@ test('raw cell edges through parseItem: null, {"index":5}, unreadable JSON, a de
   assert.equal(p({ stageValue: '{"post_id":null}' }).stageIdx, 5, 'no index = empty');
   assert.equal(p({ stageValue: '{"index":19}' }).stageIdx, 19, 'an index whose label was deleted keeps its number');
   assert.deepEqual(p({ stageValue: '{"index":19}' }).views, ['assigning'], 'and NOT_ANY_OF keeps it, as Monday does');
-  assert.deepEqual(p({ stageValue: '{"index":5}', phase: 6 }).views, ['deadlines', 'mahesh']);
+  assert.deepEqual(p({ stageValue: '{"index":5}', phase: 6 }).views, ['deadlines']);
   assert.equal(p({ phaseValue: null }).phaseIdx, 5);
   assert.deepEqual(dash.parseItem({ id: '1', name: '', column_values: [{ id: TYPE, value: '{"ids":["6","64"]}', text: '' }] }).caseTypeIds, [6, 64], 'dropdown ids as numbers');
   assert.deepEqual(dash.parseItem({ id: '1', name: '', column_values: [{ id: TYPE, value: '{bad', text: '' }] }).caseTypeIds, []);
   assert.equal(p({}).boardIdx, 3);
   // a row object with no index field at all counts as empty (5), as Monday does
-  assert.deepEqual(cmv.viewsOf({ groupId: G.oct, phaseIdx: 6 }), ['deadlines', 'mahesh'], 'no stageIdx = empty stage: off Assigning, on Deadlines / Mahesh');
+  assert.deepEqual(cmv.viewsOf({ groupId: G.oct, phaseIdx: 6 }), ['deadlines'], 'no stageIdx = empty stage: off Assigning, on Deadlines');
   assert.deepEqual(cmv.viewsOf({ groupId: G.oct, stageIdx: 1 }), ['assigning'], 'no phaseIdx = empty Phase');
   assert.equal(dash.parseItem({ id: '1', name: '', column_values: [] }).boardIdx, null);
 });
 
-test('viewsOf: one row in three views at once, and in all four', () => {
-  assert.deepEqual(cmv.viewsOf(dash.parseItem(rawItem({ stage: 1, phase: 6, types: [8] }), 0)), ['assigning', 'deadlines', 'mahesh']);
-  assert.deepEqual(cmv.viewsOf(dash.parseItem(rawItem({ stage: 1, phase: 6, types: [6] }), 0)), ['assigning', 'deadlines', 'mahesh', 'eeita']);
+test('viewsOf: one row in two views at once, and in all three', () => {
+  assert.deepEqual(cmv.viewsOf(dash.parseItem(rawItem({ stage: 1, phase: 6, types: [8] }), 0)), ['assigning', 'deadlines']);
+  assert.deepEqual(cmv.viewsOf(dash.parseItem(rawItem({ stage: 1, phase: 6, types: [6] }), 0)), ['assigning', 'deadlines', 'eeita']);
   assert.deepEqual(cmv.viewsOf(null), []);
 });
 
@@ -203,7 +213,7 @@ test('parseItem: the new row fields, and the old ones unchanged', () => {
   assert.deepEqual(r.officerIds, { personIds: ['11', '12'], teamIds: ['7'] }, 'Case Support Officer only');
   assert.deepEqual(r.assignees.personIds.sort(), ['11', '12', '13'], 'RBAC still reads every people column');
   assert.equal(r.docUploadedPct, 30); assert.equal(r.docReadiness, 30, 'the old field is unchanged');
-  assert.deepEqual(r.views, ['assigning', 'deadlines', 'mahesh', 'eeita']);
+  assert.deepEqual(r.views, ['assigning', 'deadlines', 'eeita']);
   // blanks: % blank is null (never 0), stage blank keeps the old 'Unknown' text
   const b = dash.parseItem({ id: '1', name: '', column_values: [{ id: 'numeric_mm2njqk1', text: '', value: null }] }, 0);
   assert.equal(b.docUploadedPct, null, 'a blank % is not 0');
@@ -262,12 +272,13 @@ test('every tab holds EXACTLY the rows Monday\'s own engine returns for that vie
   }
 });
 
-test('the Mahesh order equals Monday\'s engine order (Actual Deadline ascending, blanks last; ties on equal dates allowed)', () => {
+test('the sort machinery, kept with no tab using it: the old Mahesh view (compiled from the 2026-11-08 read) gives Monday\'s rows in Monday\'s engine order (Actual Deadline ascending, blanks last; ties on equal dates allowed)', () => {
   const rows = captureRows();
-  const v = cmv.view('mahesh');
+  const v = cmv.compileView({ key: 'old', label: 'Old', groupOrder: 'position', monday: { id: '283824419', ...clone(VIEWS_FIXTURE['283824419']) } });
   const s = v.sort[0];
   assert.equal(s.field, 'actualDeadline');
-  const mine = rows.filter((r) => r.views.includes('mahesh'))
+  assert.ok(rows.every((r) => !r.views.includes('mahesh') && !r.views.includes('old')), 'no row carries the old view');
+  const mine = rows.filter((r) => v.test(r))
     .sort((a, b) => {
       const x = a[s.field], y = b[s.field];
       if (!x !== !y) return x ? -1 : 1;                 // blanks last

@@ -18,6 +18,9 @@ const META_FIX = require('./fixtures/client-master-board-meta.json');
 const CAPTURE  = require('./fixtures/client-master-capture.json');
 
 const V = Object.fromEntries(cmv.pageViews().map((v) => [v.key, v]));
+// No tab has a sort since the Mahesh tab was taken off (2026-11-12). The sort is still data: a page view shaped as that
+// tab was (grouped by Phase, Actual Deadline ascending) proves the machinery that stays.
+const SORTED = { key: 'sorted', label: 'Sorted', by: 'phase', dir: 'ASC', groupOrder: 'position', sort: { field: 'actualDeadline', dir: 'ASC' } };
 const STAGE = 'color_mm0x8faa', PHASE = 'color_mm3tf1ys';
 // the real board meta (no client data), through the service's own parser
 const META = dash._casesIo.parseMeta({ groups: META_FIX.groups, columns: [STAGE, PHASE].map((id) => ({ id, settings_str: JSON.stringify(META_FIX.columns[id].settings) })) });
@@ -31,11 +34,10 @@ const counts = (groups) => groups.map((g) => g.title + ' ' + g.rows.length);
 
 /* ── the page data ── */
 
-test('pageViews: the four tabs in order, with what each groups by, its order and sort — from the view definitions', () => {
+test('pageViews: the three tabs in order, with what each groups by, its order and sort — from the view definitions', () => {
   assert.deepEqual(cmv.pageViews().map((v) => [v.key, v.label, v.by, v.dir, v.groupOrder, v.sort && v.sort.field]), [
     ['assigning', 'Assigning', 'stage', 'ASC', 'position', null],
     ['deadlines', 'Deadlines', 'phase', 'ASC', 'position', null],
-    ['mahesh', 'Mahesh', 'phase', 'ASC', 'position', 'actualDeadline'],
     ['eeita', 'EE after ITA', 'board', 'ASC', 'position', null],
   ]);
   for (const v of cmv.pageViews()) assert.ok(/^Like Monday's /.test(v.hint) && !/["\\`]/.test(v.hint), v.key + ': a plain tooltip, safe to put in the page');
@@ -45,13 +47,15 @@ test('pageViews: the four tabs in order, with what each groups by, its order and
 
 /* ── test 4: the headings, the order, the counts ── */
 
-test('groupRows on the real capture: the headings and counts per tab (Assigning by Case Stage label position; Deadlines / Mahesh by Phase; EE by board group)', () => {
+test('groupRows on the real capture: the headings and counts per tab (Assigning by Case Stage label position; Deadlines by Phase; EE by board group)', () => {
   const rows = captureRows();
   const g = (key) => U.groupRows(V[key], U.viewOrder(V[key], rows.filter((r) => r.views.includes(key))), META);
   assert.deepEqual(counts(g('assigning')), ['Document Collection Started 22', 'Internal Review 84', 'Submission Ready 2', 'Stuck 9', 'Pre-Onboarding 34', 'ADR 5'],
     'by position: Submission Ready above Stuck, ADR last');
   assert.deepEqual(counts(g('deadlines')), ['Phase 8 11', 'Profile 31', 'Phase 11 66', 'N/A 3'], 'Profile before Phase 11');
-  assert.deepEqual(counts(g('mahesh')), ['Phase 8 9', 'Phase 9 4', 'Profile 30', 'Phase 11 66', 'N/A 3']);
+  // a Phase the Deadlines tab has no row for (Phase 9) still takes its place by label position: the old Mahesh view's rows, drawn as a Phase tab
+  const old = cmv.compileView({ key: 'old', label: 'Old', groupOrder: 'position', monday: { id: '283824419', ...JSON.parse(JSON.stringify(require('./fixtures/client-master-views-2026-11-08.json')['283824419'])) } });
+  assert.deepEqual(counts(U.groupRows(SORTED, U.viewOrder(SORTED, rows.filter((r) => old.test(r))), META)), ['Phase 8 9', 'Phase 9 4', 'Profile 30', 'Phase 11 66', 'N/A 3']);
   assert.deepEqual(counts(g('eeita')), ['⏳ Pending — signatures & payment 1', 'October 2026 20', 'September  2026 7'], 'Pending first: positions are numbers, not text');
   // the Phase 11 heading: Real 44 · Imaginary 15 · Not recorded 7
   const p11 = g('deadlines').find((x) => x.title === 'Phase 11');
@@ -113,7 +117,7 @@ test('review round 1: a failed meta read (null meta) with a column sort chosen k
   assert.deepEqual(titles(U.groupRows(V.eeita, [{ groupId: 'x', groupTitle: 'X' }, ...rows], null)), ['Pending', 'October 2026', 'September 2026', 'X']);
 });
 
-test('viewOrder: board order on Assigning / Deadlines / EE; Mahesh by Actual Deadline ascending, blanks LAST, ties in board order; a chosen column sort is kept inside each group', () => {
+test('viewOrder: board order on Assigning / Deadlines / EE (no tab has a sort today); a view WITH a sort goes by Actual Deadline ascending, blanks LAST, ties in board order; a chosen column sort is kept inside each group', () => {
   const rows = [
     { id: 'p', boardIdx: 4, actualDeadline: '' }, { id: 'q', boardIdx: 1, actualDeadline: '2026-12-01' }, { id: 'r', boardIdx: 3, actualDeadline: '2026-11-20' },
     { id: 's', boardIdx: 0, actualDeadline: '' }, { id: 't', boardIdx: 2, actualDeadline: '2026-11-20' },
@@ -121,8 +125,9 @@ test('viewOrder: board order on Assigning / Deadlines / EE; Mahesh by Actual Dea
   const ids = (list) => list.map((r) => r.id).join('');
   assert.equal(ids(U.viewOrder(V.assigning, rows)), 'sqtrp', 'board order');
   assert.equal(ids(U.viewOrder(V.deadlines, rows)), 'sqtrp');
-  assert.equal(ids(U.viewOrder(V.mahesh, rows)), 'trqsp', 'dated ascending (ties by board order), then the blanks in board order');
-  assert.equal(ids(U.viewOrder({ ...V.mahesh, sort: { field: 'actualDeadline', dir: 'DESC' } }, rows)), 'qtrsp', 'DESC: blanks still last');
+  assert.equal(ids(U.viewOrder(V.eeita, rows)), 'sqtrp');
+  assert.equal(ids(U.viewOrder(SORTED, rows)), 'trqsp', 'dated ascending (ties by board order), then the blanks in board order');
+  assert.equal(ids(U.viewOrder({ ...SORTED, sort: { field: 'actualDeadline', dir: 'DESC' } }, rows)), 'qtrsp', 'DESC: blanks still last');
   // a column sort chosen: groupRows keeps the incoming order inside each heading
   const sorted = [{ id: 'z', stageIdx: 1, caseStage: 'Internal Review' }, { id: 'y', stageIdx: 0, caseStage: 'DCS' }, { id: 'x', stageIdx: 1, caseStage: 'Internal Review' }];
   assert.deepEqual(U.groupRows(V.assigning, sorted, META).map((g) => ids(g.rows)), ['y', 'zx']);
@@ -152,17 +157,18 @@ test('the Filtered line: "Filtered: n of N in Monday\'s view" only when the pers
 test('the view facet: a row is under every tab it is in; tabs are one at a time; Clear filters keeps the tab; a saved tab that no longer exists is dropped', () => {
   const ctx = { healthOrder: {}, views: cmv.pageViews() };
   const LT = listCore(S.casesListSpec(ctx));
-  const rows = [{ id: '1', views: ['assigning', 'deadlines', 'mahesh'] }, { id: '2', views: ['deadlines'] }, { id: '3', views: [] }];
+  const rows = [{ id: '1', views: ['assigning', 'deadlines'] }, { id: '2', views: ['deadlines'] }, { id: '3', views: [] }];
   const st = LT.emptyState();
-  assert.deepEqual(LT.facetCounts(rows, st, 'view').map((x) => [x.value, x.count]), [['assigning', 1], ['deadlines', 2], ['mahesh', 1], ['eeita', 0], [LT.NONE, 1]]);
+  assert.deepEqual(LT.facetCounts(rows, st, 'view').map((x) => [x.value, x.count]), [['assigning', 1], ['deadlines', 2], ['eeita', 0], [LT.NONE, 1]]);
   st.sel.view = ['deadlines']; st.sel.stage = ['X'];
   assert.deepEqual(LT.clearAll(st).sel, { view: ['deadlines'] }, 'Clear filters: every filter off, the tab stays');
-  assert.deepEqual(LT.chips({ q: '', sel: { view: ['mahesh'] } }), [], 'the tab is not a chip');
+  assert.deepEqual(LT.chips({ q: '', sel: { view: ['deadlines'] } }), [], 'the tab is not a chip');
   assert.equal(LT.normalizeState({ sel: { view: ['gone'] } }).sel.view, undefined);
+  assert.equal(LT.normalizeState({ sel: { view: ['mahesh'] } }).sel.view, undefined, 'the tab taken off on 2026-11-12');
   assert.deepEqual(LT.normalizeState({ sel: { view: ['eeita'] } }).sel.view, ['eeita']);
   const q = S.casesListOpts(ctx).quick;
   assert.deepEqual([q.facet, q.box, q.tabs, q.allLast, q.all, q.default, q.storeKey], ['view', 'cs-quick', true, false, 'All', undefined, 'tdot_list_cases_tab'], 'All first; no default: a new browser tab opens on All');
-  assert.deepEqual(q.values, ['assigning', 'deadlines', 'mahesh', 'eeita']);
+  assert.deepEqual(q.values, ['assigning', 'deadlines', 'eeita']);
   assert.ok(q.storeKey.indexOf('tdot_list_') === 0, 'Sign Out forgets the kept tab');
   assert.match(q.hints.assigning, /Grouped by Case Stage/);
 });
@@ -276,10 +282,10 @@ test('test 9: the new page code follows the page-script rule — the characters 
   new vm.Script(listTableScript(S.casesListSpec, S.casesListOpts, '{ healthOrder: {}, views: [], initial: function(){ return false; }, onChange: function(){} }'));
 });
 
-test('a view tab draws headings and no pages; the stage / manager blanks show "—" there only; the flags only on Deadlines and Mahesh (the page code)', async () => {
+test('a view tab draws headings and no pages; the stage / manager blanks show "—" there only; the flags only on Deadlines (the page code)', async () => {
   const html = await renderRoute('/');
-  assert.deepEqual(cmv.pageViews().map((v) => [v.key, v.stageStrip, v.deadlineBox]), [['assigning', true, false], ['deadlines', false, true], ['mahesh', false, true], ['eeita', false, false]],
-    'what each tab adds is data from the server (Assigning: the stage counts; Deadlines, Mahesh: the windows, Real/Imaginary counts and flags)');
+  assert.deepEqual(cmv.pageViews().map((v) => [v.key, v.stageStrip, v.deadlineBox]), [['assigning', true, false], ['deadlines', false, true], ['eeita', false, false]],
+    'what each tab adds is data from the server (Assigning: the stage counts; Deadlines: the windows, Real/Imaginary counts and flags)');
   assert.ok(html.includes("if (v) return renderViewTable(v, rows, st, !(h && h.defaultSort === false));"), 'a view tab is drawn by its own function, in Monday\'s order unless a column sort is chosen');
   assert.ok(html.includes("document.getElementById('pagination').innerHTML = '';"), 'no pages on a view tab');
   assert.ok(html.includes("var stage = v && (typeof c.stageIdx !== 'number' || c.stageIdx === CMU.EMPTY) ? cmNoneDash() : escHtml(c.caseStage);"));
@@ -315,4 +321,97 @@ test('the rename elsewhere: the top bar says Client Master (same link, same acti
   const ret = require('../src/routes/adminConsultation').buildRetainersHTML();
   assert.ok(ret.includes('check the Client Master page') && ret.includes('the case is on the Client Master page. Not counted under All.'));
   assert.ok(!ret.includes('the Cases page'));
+});
+
+/* ── the Mahesh tab taken off (2026-11-12): nobody is left on a tab that is not there ── */
+
+// The page's own tab code (cmInitial and what it needs), run with the list engine in a made-up browser tab.
+async function openClientMaster({ search = '', store = {} } = {}) {
+  const html = await renderRoute('/');
+  const from = html.indexOf('var CM_GONE = '), to = html.indexOf('function cmToday()');
+  assert.ok(from > 0 && to > from, 'the tab code is in the page');
+  const { listTableUi } = require('../src/routes/listFilters');
+  const kept = new Map(Object.entries(store));
+  const address = { href: 'https://staff.example/admin/dashboard' + search };
+  const el = () => ({ setAttribute() {}, removeAttribute() {}, getAttribute() { return null; }, classList: { add() {}, remove() {}, contains() { return false; } }, appendChild() {}, addEventListener() {}, querySelectorAll() { return []; }, querySelector() { return null; }, contains() { return false; }, style: {} });
+  const opts0 = S.casesListOpts({ views: cmv.pageViews() });
+  const box = { ...el(), innerHTML: '' };
+  const shown = [];
+  const win = {
+    document: { getElementById: (id) => (id === opts0.quick.box ? box : null), createElement: el, body: el(), addEventListener() {}, activeElement: null, documentElement: el() },
+    sessionStorage: { getItem: (k) => (kept.has(k) ? kept.get(k) : null), setItem: (k, v) => { kept.set(k, String(v)); } },
+    addEventListener() {},
+    get location() { const u = new URL(address.href); return { href: u.href, search: u.search }; },
+    renderCasesList: (rows) => { shown.push(rows.map((r) => r.id).join('')); },
+  };
+  const ctx = vm.createContext({ window: win, URL, URLSearchParams, history: { replaceState: (_s, _t, url) => { address.href = String(url); } }, CM_VIEWS: cmv.pageViews() });
+  vm.runInContext(html.slice(from, to), ctx);
+  const views = cmv.pageViews();
+  const api = listTableUi(listCore(S.casesListSpec({ healthOrder: {}, views })), S.casesListOpts({ views, initial: ctx.cmInitial, onChange: ctx.cmOnChange }), win);
+  api.setRows([{ id: 'a', views: ['assigning', 'deadlines'] }, { id: 'd', views: ['deadlines'] }, { id: 'e', views: ['assigning', 'eeita'] }, { id: 'n', views: [] }]);
+  const active = [...box.innerHTML.matchAll(/class="lt-tab active[^"]*" data-quick="([^"]*)" aria-selected="true"/g)].map((m) => m[1]);
+  const sv = api.state().sel.view;   // the page code runs in its own context: copy the list into this one
+  return { view: sv ? Array.from(sv) : sv, active, rows: shown[shown.length - 1], kept, search: new URL(address.href).search, ctx, tabs: [...box.innerHTML.matchAll(/data-quick="([^"]*)"/g)].map((m) => m[1]) };
+}
+const TAB_KEY = 'tdot_list_cases_tab', STATE_KEY = 'tdot_list_cases';
+
+test('the Mahesh tab is gone from the page: the tabs are All · Assigning · Deadlines · EE after ITA, and no row is listed under it', async () => {
+  const p = await openClientMaster();
+  assert.deepEqual(p.tabs, ['', 'assigning', 'deadlines', 'eeita']);
+  assert.deepEqual([p.view, p.active, p.rows], [undefined, [''], 'aden'], 'a new browser tab opens on All, as before');
+  const html = await renderRoute('/');
+  assert.ok(!/"key":"mahesh"|>Mahesh</.test(html) && !html.includes("Monday's Mahesh view"), 'no tab, label or tooltip names it');
+  assert.equal(p.ctx.CM_TAB_KEY, S.casesListOpts({}).quick.storeKey, 'the page reads the kept tab under the list\'s own key');
+  assert.equal(S.casesListOpts({}).key, STATE_KEY);
+  assert.deepEqual(Object.keys(p.ctx.CM_GONE), ['mahesh']);
+  for (const to of Object.values(p.ctx.CM_GONE)) assert.ok(cmv.view(to), 'a retired tab points at a tab that exists');
+});
+
+test('an old link ?view=mahesh opens the Deadlines tab, the address then says view=deadlines, and that tab is the one kept', async () => {
+  for (const search of ['?view=mahesh', '?view=Mahesh', '?x=1&view=%20MAHESH%20']) {
+    const p = await openClientMaster({ search });
+    assert.deepEqual([p.view, p.active, p.rows], [['deadlines'], ['deadlines'], 'ad'], search);
+    assert.equal(new URLSearchParams(p.search).get('view'), 'deadlines', search + ': the address is corrected');
+    assert.equal(p.kept.get(TAB_KEY), 'deadlines', 'kept for this browser tab (the way back from a case returns to it)');
+    assert.ok(!JSON.stringify([...p.kept]).includes('mahesh'));
+  }
+  assert.equal(new URLSearchParams((await openClientMaster({ search: '?x=1&view=mahesh' })).search).get('x'), '1', 'the rest of the address is kept');
+  // the old link wins over whatever tab this browser tab was on
+  const over = await openClientMaster({ search: '?view=mahesh', store: { [TAB_KEY]: 'eeita', [STATE_KEY]: JSON.stringify({ sel: { view: ['eeita'] } }) } });
+  assert.deepEqual([over.view, over.active], [['deadlines'], ['deadlines']]);
+  // links to the tabs that stay, and unknown names, behave as before
+  const ee = await openClientMaster({ search: '?view=eeita' });
+  assert.deepEqual([ee.view, ee.active, ee.rows, ee.search], [['eeita'], ['eeita'], 'e', '?view=eeita']);
+  const all = await openClientMaster({ search: '?view=all', store: { [TAB_KEY]: 'assigning' } });
+  assert.deepEqual([all.view, all.active], [undefined, ['']]);
+  const junk = await openClientMaster({ search: '?view=nope', store: { [TAB_KEY]: 'assigning' } });
+  assert.deepEqual([junk.view, junk.active, junk.search], [['assigning'], ['assigning'], ''], 'an unknown name is no link: the kept tab stays and the address stops naming it');
+});
+
+test('a browser tab that was left on the Mahesh tab lands on Deadlines — never an empty table under a filter nobody can see', async () => {
+  // what the old page kept: the tab under the list's storeKey, and the same choice inside the kept filter state
+  const both = await openClientMaster({ store: { [TAB_KEY]: 'mahesh', [STATE_KEY]: JSON.stringify({ q: '', sel: { view: ['mahesh'] }, sort: { key: 'createdAt', dir: 'desc' } }) } });
+  assert.deepEqual([both.view, both.active, both.rows], [['deadlines'], ['deadlines'], 'ad']);
+  assert.equal(both.kept.get(TAB_KEY), 'deadlines', 'the kept tab is put right at once');
+  assert.deepEqual(JSON.parse(both.kept.get(STATE_KEY)).sel, { view: ['deadlines'] });
+  // the person's own filters on that tab are kept
+  const filt = await openClientMaster({ store: { [TAB_KEY]: 'mahesh', [STATE_KEY]: JSON.stringify({ q: '', sel: { view: ['mahesh'], manager: ['Ann'] } }) } });
+  assert.deepEqual(filt.view, ['deadlines']);
+  assert.deepEqual(JSON.parse(filt.kept.get(STATE_KEY)).sel.manager, ['Ann']);
+  // only the kept tab says it
+  const tabOnly = await openClientMaster({ store: { [TAB_KEY]: 'mahesh' } });
+  assert.deepEqual([tabOnly.view, tabOnly.active, tabOnly.rows], [['deadlines'], ['deadlines'], 'ad']);
+  // only the kept filter state says it (the kept tab is authoritative; this pair is never written together, proved anyway):
+  // the engine drops a tab that is not on the list, so the page shows the tab the kept key names — a real, highlighted tab
+  const stAll = await openClientMaster({ store: { [TAB_KEY]: '', [STATE_KEY]: JSON.stringify({ sel: { view: ['mahesh'] } }) } });
+  assert.deepEqual([stAll.view, stAll.active, stAll.rows], [undefined, [''], 'aden'], 'All');
+  const stNone = await openClientMaster({ store: { [STATE_KEY]: JSON.stringify({ sel: { view: ['mahesh'] } }) } });
+  assert.deepEqual([stNone.view, stNone.active, stNone.rows], [undefined, [''], 'aden'], 'All');
+  const stEe = await openClientMaster({ store: { [TAB_KEY]: 'eeita', [STATE_KEY]: JSON.stringify({ sel: { view: ['mahesh'] } }) } });
+  assert.deepEqual([stEe.view, stEe.active, stEe.rows], [['eeita'], ['eeita'], 'e']);
+  // in every case exactly one tab is highlighted and nothing kept names the old tab any more
+  for (const p of [both, filt, tabOnly, stAll, stNone, stEe]) { assert.equal(p.active.length, 1); assert.ok(!JSON.stringify([...p.kept]).includes('mahesh')); }
+  // a kept tab that stays is untouched; a private window (no storage) opens on All
+  const keep = await openClientMaster({ store: { [TAB_KEY]: 'assigning', [STATE_KEY]: JSON.stringify({ sel: { view: ['assigning'] } }) } });
+  assert.deepEqual([keep.view, keep.active, keep.rows], [['assigning'], ['assigning'], 'ae']);
 });

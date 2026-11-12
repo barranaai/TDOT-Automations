@@ -94,12 +94,12 @@ test('RBAC: an assigned-policy viewer gets only the rows they may see, each with
     const viewer = { userId: '111', teamIds: [], isAdmin: false };
     const mine = await dash.getDashboardStats(viewer);
     assert.deepEqual(mine.cases.map((c) => c.id), ['1', '3']);
-    assert.deepEqual(mine.cases.map((c) => c.views), [['assigning', 'deadlines', 'mahesh'], ['assigning', 'mahesh']]);
+    assert.deepEqual(mine.cases.map((c) => c.views), [['assigning', 'deadlines'], ['assigning']]);
     assert.equal(mine.summary.total, 2, 'every count is after visibility');
     assert.ok(!JSON.stringify(mine).includes('Client 4') && !JSON.stringify(mine).includes('Client 2'), 'hidden rows are not in the answer at all');
     const all = await dash.getDashboardStats(undefined);          // the admin key / scope 'all'
     assert.deepEqual(all.cases.map((c) => c.id), ['1', '2', '3', '4']);
-    assert.deepEqual(all.cases.find((c) => c.id === '4').views, ['assigning', 'deadlines', 'mahesh', 'eeita']);
+    assert.deepEqual(all.cases.find((c) => c.id === '4').views, ['assigning', 'deadlines', 'eeita']);
     assert.deepEqual(all.cases.map((c) => c.boardIdx), [0, 1, 2, 3], 'board order kept');
     process.env.CASE_VISIBILITY = 'all';
     assert.equal((await dash.getDashboardStats(viewer)).cases.length, 4, 'policy all: every signed-in staffer sees every row');
@@ -144,7 +144,7 @@ test('a failed meta read still loads the rows (and the view filters still work);
     board.metaFails = true;
     const s = await dash.getDashboardStats();
     assert.equal(s.cases.length, 2, 'rows loaded');
-    assert.deepEqual(s.cases[0].views, ['assigning', 'deadlines', 'mahesh'], 'filters work without the meta');
+    assert.deepEqual(s.cases[0].views, ['assigning', 'deadlines'], 'filters work without the meta');
     assert.ok(warned.some((m) => /board meta read failed/.test(m)), 'a warning is logged');
     // a good read, then a failing one: the good meta stays
     board.metaFails = false; clock += 61 * 1000; reset();

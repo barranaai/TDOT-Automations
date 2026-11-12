@@ -306,7 +306,7 @@ test('review 2026-11-05: Sign Out stops a list read still running from saving th
   assert.ok(require('../src/routes/adminConsultation').buildQueueHTML().includes("function ssSet(k,v){ if(window.TDOT_SIGNED_OUT) return;"));
   // block 3: the words depend on the tab — newest case first on All, Monday's order on a view tab
   assert.equal(S.casesListOpts({}).sortReset({ sel: {} }), 'newest case first');
-  assert.equal(S.casesListOpts({}).sortReset({ sel: { view: ['mahesh'] } }), "Monday's order for this view");
+  assert.equal(S.casesListOpts({}).sortReset({ sel: { view: ['deadlines'] } }), "Monday's order for this view");
   assert.equal(S.consultListOpts({}).countable, undefined, 'the Date filter is the engine’s own now: every row counts');
 });
 

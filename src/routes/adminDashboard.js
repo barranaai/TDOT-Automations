@@ -308,7 +308,7 @@ const ALL_CASES_BODY_HTML = `
     <!-- ── Client Master table (was "All Cases"), with the Monday views as tabs (block 3) ── -->
     <div class="sec-hd">📋 Client Master</div>
     <div class="lt-tabs" id="cs-quick" role="tablist" aria-label="Client Master views"></div>
-    <!-- On a view tab: the data time, Print, the counts (Assigning) or the half-month windows (Deadlines, Mahesh). -->
+    <!-- On a view tab: the data time, Print, the counts (Assigning) or the half-month windows (Deadlines). -->
     <div id="cm-head" class="cm-head"></div>
     <div class="table-card">
       <!-- The filters are in the column headers, like every list (2026-11-05): listSpecs.js casesListSpec/Opts. -->
@@ -400,7 +400,7 @@ const CM_CSS = `
     .cm-asg-rm:empty { display:none; }
     .cm-asg-tell { font-size:12.5px; color:#475569; margin-top:6px; }
     @media (max-width: 760px) { .cm-print { font-size:16px; } .cm-asg-sel, .cm-asg-dlg .tdlg-btn { font-size:16px; } }
-    /* Print (all four view tabs): landscape; the tab name, the data time, the counts or windows, and the groups with their counts —
+    /* Print (every view tab): landscape; the tab name, the data time, the counts or windows, and the groups with their counts —
        without the top bar, the tabs, the filters, the pages, the delete column or any button. */
     @page { size: landscape; margin: 10mm; }
     @media print {
@@ -1935,18 +1935,33 @@ function initAllCasesTable(data) {
 
 /* ── The view tabs (block 3) ──────────────────────────────────────
    All = every case you may see, newest first, 25 a page (as before). The other tabs are
-   exact copies of four Monday views on the Client Master board (the same rows, grouping
+   exact copies of three Monday views on the Client Master board (the same rows, grouping
    and order — worked out on the server, clientMasterViews.js): grouped, all rows on one
    page. The counts above the table come from the rows on screen and never change them.
-   A link opens a tab: /admin/dashboard?view=assigning (deadlines, mahesh, eeita; all). */
+   A link opens a tab: /admin/dashboard?view=assigning (deadlines, eeita; all).
+   A tab taken off the page (CM_GONE: Mahesh, 2026-11-12) opens its nearest tab instead: an old
+   link, and a browser tab that was left on it (the kept tab in sessionStorage). */
+var CM_GONE = { mahesh: 'deadlines' };
+var CM_TAB_KEY = 'tdot_list_cases_tab';   // the list's quick.storeKey (listSpecs.js casesListOpts)
 function cmViewDef(key) { for (var i = 0; i < CM_VIEWS.length; i++) if (CM_VIEWS[i].key === key) return CM_VIEWS[i]; return null; }
 function cmView(st) { var v = st && st.sel && st.sel.view; return v && v.length ? cmViewDef(v[0]) : null; }
 function cmInitial(st) {
   var p = null;
   try { p = new URLSearchParams(window.location.search).get('view'); } catch (e) { return false; }
-  if (p === null) return false;
+  if (p === null) {   // no link: a browser tab left on a tab that is gone opens the nearest one (and that is kept)
+    var kept = null;
+    try { kept = window.sessionStorage.getItem(CM_TAB_KEY); } catch (e) { return false; }
+    var near = kept !== null && Object.prototype.hasOwnProperty.call(CM_GONE, kept) ? CM_GONE[kept] : null;
+    if (!near || !cmViewDef(near)) return false;
+    st.sel.view = [near];
+    return true;
+  }
   var t = String(p).trim().toLowerCase();
   if (!t || t === 'all') { delete st.sel.view; return true; }
+  if (Object.prototype.hasOwnProperty.call(CM_GONE, t) && cmViewDef(CM_GONE[t])) {   // an old link: the nearest tab, and the address says so
+    t = CM_GONE[t];
+    try { var g = new URL(window.location.href); g.searchParams.set('view', t); history.replaceState(null, '', g.toString()); } catch (e) {}
+  }
   if (!cmViewDef(t)) {   // a tab we do not have: not a link — and the address stops naming it
     try { var u = new URL(window.location.href); u.searchParams.delete('view'); history.replaceState(null, '', u.toString()); } catch (e) {}
     return false;
@@ -2046,7 +2061,7 @@ function renderViewTable(v, rows, st, mondayOrder) {
 }
 
 /* Above the table, on a view tab only: the tab name + the data time + Print, the Filtered line,
-   then Assigning's stage counts and no-officer line, or the half-month windows (Deadlines, Mahesh). */
+   then Assigning's stage counts and no-officer line, or the half-month windows (Deadlines). */
 function renderCmHead(v, rows, st, groups, inView) {
   var el = document.getElementById('cm-head');
   if (!el) return;
@@ -2114,7 +2129,7 @@ function renderTablePage() {
 }
 
 /* One case row. v = the view tab (null on All): there an empty Case Stage and an empty Manager show "—",
-   as Monday shows a blank, and the Deadlines / Mahesh tabs show the two flags in the Promised cell. */
+   as Monday shows a blank, and the Deadlines tab shows the two flags in the Promised cell. */
 function caseRow(c, v, today) {
   var r = c.overallReadiness || 0;
   var barCls = r >= 70 ? '' : (r >= 40 ? ' mid' : ' low');
@@ -2162,7 +2177,7 @@ function caseRow(c, v, today) {
   var dlBtn = (v && v.key === 'deadlines' && c.canChangeDeadline)
     ? ' <button type="button" class="dlc-btn" data-dl="' + escHtml(String(c.id)) + '" title="Change this case’s deadline (a reason is needed; a note is added on the case)">Change…</button>' : '';
   var dlOk = cmDlFlashText(c.id) ? ' <span class="dlc-ok" data-dl-ok="' + escHtml(String(c.id)) + '" role="status">' + escHtml(cmDlFlashText(c.id)) + '</span>' : '';
-  // Promised: the Internal Deadline, and on Deadlines / Mahesh the flag (display only — nothing is changed)
+  // Promised: the Internal Deadline, and on Deadlines the flag (display only — nothing is changed)
   var pr = c.promisedDate ? '<span class="cm-date">' + escHtml(cmDay(c.promisedDate)) + '</span>' : '';
   if (v && v.deadlineBox) {
     var f = CMW.flagOf(c, today);

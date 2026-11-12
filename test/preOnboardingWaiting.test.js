@@ -334,7 +334,7 @@ test('mark: `waiting` on Pre-Onboarding rows only; the views, groups and counts 
   const V = Object.fromEntries(cmv.pageViews().map((v) => [v.key, v]));
   const g = U.groupRows(V.assigning, U.viewOrder(V.assigning, after.filter((r) => r.views.includes('assigning'))), META);
   assert.deepEqual(g.map((x) => x.title + ' ' + x.rows.length), ['Document Collection Started 22', 'Internal Review 84', 'Submission Ready 2', 'Stuck 9', 'Pre-Onboarding 34', 'ADR 5']);
-  assert.deepEqual(cmv.VIEW_KEYS.map((k) => after.filter((r) => r.views.includes(k)).length), [156, 111, 112, 28]);
+  assert.deepEqual(cmv.VIEW_KEYS.map((k) => after.filter((r) => r.views.includes(k)).length), [156, 111, 28]);   // Assigning, Deadlines, EE after ITA (the Mahesh tab, 112, was taken off 2026-11-12)
 });
 
 test('the payload: only code / also / partPaid / why reach the browser — no signing link, envelope id, bank reference, email or phone', async () => {
@@ -478,7 +478,7 @@ test('the page: every script parses; the Stage cell of a Pre-Onboarding row on A
   assert.ok(row({ waiting: { code: 'unchecked', also: [], partPaid: false } }).includes('<b>Not checked yet</b>'));
   // nothing on a row without a value (every other stage), and nothing on the other tabs or the All list
   assert.ok(!row({ caseStage: 'Internal Review', stageIdx: 1 }).includes('cm-wait'));
-  for (const v of [V2.deadlines, V2.mahesh, V2.eeita, null]) assert.ok(!row({ waiting: { code: 'payment', also: [], partPaid: false } }, v).includes('cm-wait'), v ? v.key : 'All');
+  for (const v of [V2.deadlines, V2.eeita, null]) assert.ok(!row({ waiting: { code: 'payment', also: [], partPaid: false } }, v).includes('cm-wait'), v ? v.key : 'All');
   // what the server sends is escaped, never trusted as HTML
   assert.ok(!row({ waiting: { code: '<img>', also: ['<b>'], partPaid: false } }).includes('<img>'));
 });

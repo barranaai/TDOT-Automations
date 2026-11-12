@@ -99,7 +99,7 @@ function clientMasterUi(W) {
   }
   /**
    * Monday's order for a view, used when no column sort is chosen: board order (boardIdx) — or, for a view with a
-   * sort (Mahesh: Actual Deadline ascending), that date with blanks LAST in either direction, ties in board order.
+   * sort (none today; the old Mahesh tab: Actual Deadline ascending), that date with blanks LAST in either direction, ties in board order.
    */
   function viewOrder(view, rows) {
     var list = (rows || []).map(function (r, i) { return { r: r, i: i }; });
@@ -178,7 +178,7 @@ function clientMasterUi(W) {
     WAIT_CODES.forEach(function (c) { if (n[c]) list.push({ code: c, label: WAIT_PILL[c], n: n[c] }); });
     return { total: total, list: list, partPaid: part };
   }
-  /** Real / Imaginary / Not recorded counts (a Phase heading on Deadlines and Mahesh). */
+  /** Real / Imaginary / Not recorded counts (a Phase heading on Deadlines). */
   function typeCounts(rows) {
     var c = { real: 0, imaginary: 0, none: 0 };
     (rows || []).forEach(function (r) { c[W.typeOf(r)]++; });
