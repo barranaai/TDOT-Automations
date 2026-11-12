@@ -216,6 +216,8 @@ function listCore(spec) {
  *        (a link chosen by initial() returning true wins, and is kept),
  *      serverSearch: a POST url ('/api/leads/search') — the search box also finds phone and email on the server (answers lead ids),
  *      countable: window function name (r) -> boolean — only these rows are counted beside the choices (Consultations: the date range),
+ *      panelCountable: window function name (r) -> boolean — a narrower set for the counts INSIDE a column's filter panel only, never the
+ *        tabs above the table (Consultations: the month on view on the Completed and All tabs),
  *      sortReset: 'newest case first' (or a function(state) giving the words) — the list's normal order has no column, so a column
         sort shows as a chip whose × goes back to it }
  * A column: { id, label, title, menu, facets: [...], flags: [...], date: true, note, sort, sortText: [..], sortDirs: [first, second] }
@@ -271,6 +273,8 @@ function listTableUi(LT, o, win) {
   }
   /* The rows the counts beside the choices are taken from (Consultations: only the date range on view, with its two folds). */
   function countRows() { return o.countable && typeof win[o.countable] === 'function' ? ROWS.filter(function (r) { return win[o.countable](r); }) : ROWS; }
+  /* The rows the counts inside a filter panel are taken from: the page may narrow them to what its table can show. */
+  function panelRows() { var rows = countRows(); return o.panelCountable && typeof win[o.panelCountable] === 'function' ? rows.filter(function (r) { return win[o.panelCountable](r); }) : rows; }
   function hasPanel(c) { return !!((c.facets && c.facets.length) || (c.flags && c.flags.length) || c.date); }
   function activeCount(c) {
     var n = 0;
@@ -431,7 +435,7 @@ function listTableUi(LT, o, win) {
     if (c.flags && c.flags.length) {
       h += '<div class="qp-sec">' + c.flags.map(function (k) {
         return '<label class="qp-row"><input type="checkbox" data-flag="' + k + '"' + (state[k] ? ' checked' : '') + '> <span>' + esc(LT.FLAGS[k].chip) + '</span>'
-          + '<span class="qp-c">' + countRows().filter(function (r) { return LT.FLAGS[k].test(r) && LT.passes(r, state, k); }).length + '</span></label>';
+          + '<span class="qp-c">' + panelRows().filter(function (r) { return LT.FLAGS[k].test(r) && LT.passes(r, state, k); }).length + '</span></label>';
       }).join('') + (c.note ? '<div class="qp-note">' + esc(c.note) + '</div>' : '') + '</div>';
     }
     if (c.date) {
@@ -445,7 +449,7 @@ function listTableUi(LT, o, win) {
         + '<div class="qp-note">Both days included, Toronto time.</div></div>';
     }
     (c.facets || []).forEach(function (f) {
-      var opts = LT.facetCounts(countRows(), state, f), sel = state.sel[f] || [];
+      var opts = LT.facetCounts(panelRows(), state, f), sel = state.sel[f] || [];
       h += '<div class="qp-sec" data-facet="' + f + '">' + ((c.facets.length > 1 || c.sort || (c.flags && c.flags.length)) ? '<div class="qp-t">' + esc(LT.FACETS[f].label) + '</div>' : '')
         + (opts.length > 8 ? '<input type="search" class="qp-find" data-find="' + f + '" placeholder="Find…" aria-label="Find a ' + esc(LT.FACETS[f].label) + '">' : '')
         + '<div class="qp-list">' + (opts.length ? opts.map(function (x) {

@@ -82,6 +82,7 @@ function consultListOpts(ctx) {
     render: 'renderConsultList', api: 'ConsultTable',
     sortReset: 'earliest consultation first',   // a column sort shows as a chip; its × goes back to the normal order
     onChange: ctx && ctx.onChange,   // the page keeps the tab-only filters (Date, Now) to their tabs
+    panelCountable: 'consultPanelRow',   // the numbers inside a filter panel count the month on view (Completed / All), like the table
     defaultDate: 'today',   // a new browser tab opens on today's consultations (Faran 2026-11-11); the chip's × shows every date
     // Four tabs and All, like the Leads page (Faran 2026-11-12): a new browser tab opens on Booked; the tab shown is kept until it is closed.
     quick: { facet: 'tab', box: 'cq-tabs', tabs: true, allLast: true, all: 'All', default: 'booked', storeKey: 'tdot_list_consult_tab4', values: ['booked', 'needs', 'done', 'nodate'],

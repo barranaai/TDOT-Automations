@@ -793,3 +793,28 @@ test('page month chooser: Completed opens on the current month (else the newest)
   run("setMonth('booked','2026-07')"); assert.equal(applied.length, 3, 'only the two tabs have a month');
   assert.ok(html.includes("<option value=\"all\"'+(month==='all'?' selected':'')+'>All months ('+total+')</option>"));
 });
+
+// Faran 2026-11-12: the numbers inside a column's filter panel count the month on view (Completed, and All with a month chosen).
+test('filter panel counts: only the month the table is showing — the tabs above still count every month', () => {
+  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
+  const pick = (name) => { const i = js.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1); };
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext("var SHOWN_MONTH='';\n" + ['dParts', 'monthOf', 'consultPanelRow'].map(pick).join('\n'), ctx);
+  const run = (code) => vm.runInContext(code, ctx);
+  const rows = "[{bookedSlot:'2026-11-03 10:00'},{bookedSlot:'2026-10-20 09:00'},{bookedSlot:''}]";
+  assert.equal(run(`${rows}.filter(consultPanelRow).length`), 3, 'no month on view (Booked, Needs outcome, No date, All months): every row counts');
+  run("SHOWN_MONTH='2026-10'"); assert.equal(run(`${rows}.filter(consultPanelRow).length`), 1);
+  run("SHOWN_MONTH='none'"); assert.equal(run(`${rows}.filter(consultPanelRow).length`), 1, 'the "No date" month');
+  // the table sets it at every redraw, before the month bar — '' off the two month tabs and on "All months"
+  assert.ok(js.includes("SHOWN_MONTH=(month&&month!=='all')?month:'';"));
+  assert.equal(require('../src/routes/listSpecs').consultListOpts({}).panelCountable, 'consultPanelRow');
+
+  // the engine: the panel hook narrows the panel's counts only — the tabs (renderQuick) and h.without keep countRows()
+  const { listTableUi } = require('../src/routes/listFilters');
+  const src = (listTableUi || require('../src/routes/listFilters').listTableScript(() => ({}), () => ({}))).toString();
+  assert.ok(src.includes('LT.facetCounts(panelRows(), state, f)') && src.includes("panelRows().filter(function (r) { return LT.FLAGS[k].test(r)"), 'the panel counts');
+  assert.ok(src.includes('var CR = countRows();') && src.includes('without: function (f) { return countRows().filter('), 'the tabs and the empty-list reason are unchanged');
+  assert.ok(src.includes("o.panelCountable && typeof win[o.panelCountable] === 'function' ? rows.filter("), 'a page without the hook counts as before');
+});

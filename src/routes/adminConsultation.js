@@ -326,6 +326,10 @@ function pickMonth(tab,months){
   return months.indexOf(cur)>=0?cur:(months[0]||cur);
 }
 function setMonth(tab,m){ if(!MONTH_KEY[tab]) return; MONTH_PICK[tab]=m; ssSet(MONTH_KEY[tab],m); if(window.ConsultTable) ConsultTable.apply('data'); }
+/* The month the table is showing now ('' = every month): the numbers inside a filter panel count that month only,
+   so a choice's number is the number of rows ticking it leaves on screen (Faran 2026-11-12). */
+var SHOWN_MONTH='';
+function consultPanelRow(r){ return !SHOWN_MONTH||monthOf(r)===SHOWN_MONTH; }
 function renderMonthBar(tab,months,month,counts,total){
   var bar=document.getElementById('cq-month'); if(!bar) return;
   if(!MONTH_KEY[tab]||!months.length){ bar.style.display='none'; bar.innerHTML=''; return; }
@@ -375,6 +379,7 @@ function renderConsultList(keep,why,st,h){
   var wrap=document.getElementById('content'); if(wrap) wrap.setAttribute('data-ctab',tab);
   var hd=document.getElementById('cq-title'); if(hd) hd.textContent=T.h+(month&&month!=='all'?' — '+monthLabel(month):'');
   var sb=document.getElementById('cq-sub'); if(sb) sb.textContent=T.sub;
+  SHOWN_MONTH=(month&&month!=='all')?month:'';
   renderMonthBar(tab,months,month,counts,total);
   var tb=document.getElementById('qbody');
   if(!rows.length){
