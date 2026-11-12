@@ -98,7 +98,7 @@ test('pages: the Leads list, its month filter and the detail chip use the Toront
   const table = fs.readFileSync(require.resolve('../src/routes/leadsTableFilters'), 'utf8');
   const engine = fs.readFileSync(require.resolve('../src/routes/listFilters'), 'utf8');
   assert.match(table, /date: \{ key: 'received', chip: 'Received', get: function \(r\) \{ return s\(r\.createdDay\); \} \}/);
-  assert.match(engine, /var ab = range\(st\), d = s\(DATE\.get\(r\)\);/);
+  assert.match(engine, /var ab = range\(st, [^;]*\), d = s\(DATE\.get\(r\)\);/);   // 2026-11-12: the range may be a tab's own (Consultations)
   assert.match(engine, /function torontoToday\(now\) \{ return new Date\(now\)\.toLocaleDateString\('en-CA', \{ timeZone: 'America\/Toronto' \}\); \}/);
   assert.match(table, /label: 'Received', title: 'The day the lead arrived, Toronto time'/);
   assert.match(leads, /'<span class="pk">Received<\/span> '\+escHtml\(d\.createdWhen \? d\.createdWhen\+' \(Toronto\)' : '—'\)/);

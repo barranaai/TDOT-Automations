@@ -123,7 +123,8 @@ test('emitted page scripts carry no backslash-mangled regex literals', async () 
     assertNoMangledRegexes(html, 'dashboard ' + path);
   }
   // the shared list engine's date check keeps its real \d once it is on a page
-  assert.ok(queue0().includes('/^\\d{4}-\\d{2}-\\d{2}$/.test(s(x.from))'), 'the list engine emits with real \\d');
+  assert.ok(queue0().includes("function okDay(v) { v = s(v); return /^\\d{4}-\\d{2}-\\d{2}$/.test(v) ? v : ''; }"), 'the list engine emits with real \\d');
+  assert.ok(queue0().includes("if (!/^\\d{2}:\\d{2}$/.test(t)) return 'none';"), 'the Consultations time-of-day check emits with real \\d');
   // the two repaired regexes, pinned exactly as EMITTED
   const detail = consult.buildDetailHTML('1');
   assert.ok(detail.includes('[^\\s@]+@[^\\s@]+\\.[^\\s@]+'), 'co-signer email regex emits with real \\s');

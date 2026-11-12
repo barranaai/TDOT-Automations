@@ -212,8 +212,8 @@ test('sortBlanksLast: a blank Actual Deadline / Promised date / Phase / Support 
   // a sort key NOT listed keeps the old rule (blank = smallest)
   assert.equal(ids(LT.sortRows(rows.map((r) => ({ id: r.id, caseRef: r.actualDeadline })), { key: 'caseRef', dir: 'asc' })), 'adcb');
   assert.equal(S.retainerListSpec({ outcomes: [], today: () => '' }).sortBlanksLast, undefined);
-  // Consultations got column sorts on 2026-11-11: a row with no service / no consultant goes last both ways.
-  assert.deepEqual(S.consultListSpec({}).sortBlanksLast, ['service', 'consultant']);
+  // Consultations got column sorts on 2026-11-11 (every column on 2026-11-12): a row with no service / consultant / mode / outcome / "Now" goes last both ways.
+  assert.deepEqual(S.consultListSpec({}).sortBlanksLast, ['service', 'consultant', 'mode', 'outcome', 'now']);
   // Phase sorts "Phase 8" before "Phase 11"; no phase / no officer last (A → Z opens on the cases that have one)
   const ph = [{ id: '-', phase: '' }, { id: '11', phase: 'Phase 11' }, { id: '8', phase: 'Phase 8' }, { id: 'P', phase: 'Profile' }];
   assert.equal(LT.sortRows(ph, { key: 'phase', dir: 'asc' }).map((r) => r.id).join(','), '8,11,P,-');

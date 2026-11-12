@@ -29,7 +29,13 @@
  *         sortBlanksLast: [sort keys] (their blank values go last in both directions),
  *         search: { text(r) -> string | string[], chip, id(r) (the row's lead id — the server search answers ids) },
  *         flags: { key: { chip, test(r) } },
- *         date: { key, chip, get(r) -> 'YYYY-MM-DD' } | null }
+ *         date: { key, chip, get(r) -> 'YYYY-MM-DD',
+ *                 per: { facet, all, none: [values], legacy } (a date range PER TAB — Consultations 2026-11-12: the facet is the
+ *                   list's one-at-a-time tabs; each tab value, and `all` for no tab chosen, keeps its own from/to in
+ *                   state.dates[value]; a value in `none` has no date filter at all; `legacy` is the tab an older kept
+ *                   state's single from/to belongs to. A row is tested against the range of the tab on view — and, when
+ *                   the tabs themselves are counted, against the range of the row's OWN tab, so each tab's number is the
+ *                   number of rows it shows when opened. Without `per`: one from/to for the list, as always.) } | null }
  */
 
 /* eslint-disable no-var */
@@ -38,6 +44,7 @@ function listCore(spec) {
   var FACETS = spec.facets || {}, SORTS = spec.sorts || {}, FLAGS = spec.flags || {}, DATE = spec.date || null, SEARCH = spec.search || null;
   var DEFAULT_SORT = spec.defaultSort || null;
   var BLANKS_LAST = spec.sortBlanksLast || [];   // sort keys whose blank values go last in BOTH directions (Cases: the dates)
+  var PER = (DATE && DATE.per && FACETS[DATE.per.facet]) ? DATE.per : null;   // a date range per tab (see the header); null = one range for the list
   function s(v) { return String(v == null ? '' : v).trim(); }
   /** A row's value(s) for a facet; '' = the "none" choice. A facet may give several (a case's managers). */
   function valuesOf(f, r) {
@@ -52,6 +59,30 @@ function listCore(spec) {
   function emptyState() {
     var st = { q: '', from: '', to: '', sel: {}, sort: DEFAULT_SORT ? { key: DEFAULT_SORT.key, dir: DEFAULT_SORT.dir } : null };
     Object.keys(FLAGS).forEach(function (k) { st[k] = false; });
+    if (PER) st.dates = {};
+    return st;
+  }
+  /* ── the date range: one for the list, or one per tab (spec.date.per) ── */
+  function okDay(v) { v = s(v); return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : ''; }
+  /** The tab on view, as a date scope ('' when the list has one range). */
+  function scopeOf(st) { if (!PER) return ''; var l = st && st.sel && st.sel[PER.facet]; return (l && l.length) ? l[0] : PER.all; }
+  /** Does that tab have a date filter? (Consultations: "No date" has none.) */
+  function hasDates(scope) { return !PER || (PER.none || []).indexOf(scope == null ? '' : scope) < 0; }
+  function dateScopes() { return PER ? (FACETS[PER.facet].order || []).concat([PER.all]).filter(hasDates) : []; }
+  /** The from/to as chosen — of the tab on view, or of the tab named. */
+  function getDates(st, scope) {
+    if (!PER) return { from: s(st.from), to: s(st.to) };
+    if (scope == null) scope = scopeOf(st);
+    var d = hasDates(scope) && st.dates && Object.prototype.hasOwnProperty.call(st.dates, scope) ? st.dates[scope] : null;
+    return { from: d ? s(d.from) : '', to: d ? s(d.to) : '' };
+  }
+  function setDates(st, from, to, scope) {
+    from = s(from); to = s(to);
+    if (!PER) { st.from = from; st.to = to; return st; }
+    if (scope == null) scope = scopeOf(st);
+    if (!hasDates(scope)) return st;
+    if (!st.dates) st.dates = {};
+    if (from || to) st.dates[scope] = { from: from, to: to }; else delete st.dates[scope];
     return st;
   }
   /** A saved state, cleaned (anything unknown dropped). */
@@ -60,9 +91,19 @@ function listCore(spec) {
     if (!x || typeof x !== 'object') return st;
     st.q = s(x.q).slice(0, 100);
     Object.keys(FLAGS).forEach(function (k) { st[k] = x[k] === true; });
-    if (DATE) {
-      if (/^\d{4}-\d{2}-\d{2}$/.test(s(x.from))) st.from = s(x.from);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(s(x.to))) st.to = s(x.to);
+    if (PER) {
+      /* One range per tab. A state kept before that (one from/to, no `dates`) was the `legacy` tab's range. */
+      var src = (x.dates && typeof x.dates === 'object') ? x.dates : null;
+      if (!src && PER.legacy != null) { src = {}; src[PER.legacy] = { from: x.from, to: x.to }; }
+      dateScopes().forEach(function (k) {
+        var d = src && Object.prototype.hasOwnProperty.call(src, k) ? src[k] : null;
+        if (!d || typeof d !== 'object') return;
+        var a = okDay(d.from), b = okDay(d.to);
+        if (a || b) st.dates[k] = { from: a, to: b };
+      });
+    } else if (DATE) {
+      st.from = okDay(x.from);
+      st.to = okDay(x.to);
     }
     var sel = x.sel || {};
     Object.keys(FACETS).forEach(function (f) {
@@ -75,7 +116,8 @@ function listCore(spec) {
     if (x.sort && SORTS[x.sort.key]) st.sort = { key: x.sort.key, dir: x.sort.dir === 'asc' ? 'asc' : 'desc' };
     return st;
   }
-  function range(st) { var a = s(st.from), b = s(st.to); return a && b && a > b ? [b, a] : [a, b]; }
+  /** The range in order [from, to] — of the tab on view, or of the tab named. */
+  function range(st, scope) { var d = getDates(st, scope), a = d.from, b = d.to; return a && b && a > b ? [b, a] : [a, b]; }
 
   /* The server search's answer (name, phone or email → lead ids; step 3, 2026-11-09) for ONE search text. Kept out of
      the saved state. While there is no answer for the text in the box, the search is the name-contains one. */
@@ -88,8 +130,10 @@ function listCore(spec) {
   }
   function hasServerHits(q) { return !!(serverHit && serverHit.q === s(q).toLowerCase()); }
 
-  /** Does the row pass every filter except `skip` (a facet key, a flag key, or 'date')? */
-  function passes(r, st, skip) {
+  /** Does the row pass every filter except `skip` (a facet key, a flag key, or 'date')?
+      A list with a date range per tab: the row is tested against the range of the tab on view; with the tabs themselves
+      skipped (their counts) against the range of the row's own tab; `scope` names a tab outright (the All count). */
+  function passes(r, st, skip, scope) {
     if (SEARCH) {
       var q = s(st.q).toLowerCase();
       if (q && SEARCH.id && serverHit && serverHit.q === q) {
@@ -102,12 +146,16 @@ function listCore(spec) {
     for (var k in FLAGS) { if (k !== skip && st[k] && !FLAGS[k].test(r)) return false; }
     /* DATE.exempt(r): a row the date filter never hides (Consultations: the "Needs outcome" and "No date" lists). */
     if (DATE && skip !== 'date' && !(DATE.exempt && DATE.exempt(r))) {
-      var ab = range(st), d = s(DATE.get(r));
+      var ab = range(st, !PER ? undefined : scope != null ? scope : skip === PER.facet ? valuesOf(PER.facet, r)[0] : undefined), d = s(DATE.get(r));
       if (ab[0] && !(d && d >= ab[0])) return false;
       if (ab[1] && !(d && d <= ab[1])) return false;
     }
+    /* A facet with onlyOn: [tabs] belongs to those tabs' column only (Consultations: "Now" is the Completed / All column and the
+       page takes its choice off when another tab is opened) — so the number on another tab is counted without it. */
+    var ownTab = (PER && skip === PER.facet && scope == null) ? valuesOf(PER.facet, r)[0] : null;
     for (var f in st.sel) {
       if (f === skip || !FACETS[f]) continue;
+      if (ownTab !== null && FACETS[f].onlyOn && FACETS[f].onlyOn.indexOf(ownTab) < 0) continue;
       var set = st.sel[f];
       if (set && set.length && !valuesOf(f, r).some(function (v) { return set.indexOf(v) >= 0; })) return false;
     }
@@ -120,6 +168,8 @@ function listCore(spec) {
     return true;
   }
   function filterRows(rows, st) { return (rows || []).filter(function (r) { return passes(r, st, ''); }); }
+  /** Would the row show under "All" of facet f (no choice on)? With a date range per tab on f: tested against All's own range. */
+  function passesAll(r, st, f) { return passes(r, st, f, PER && PER.facet === f ? PER.all : undefined); }
 
   /** A facet's choices with how many rows each would show — counted with the OTHER filters applied. */
   function facetCounts(rows, st, f) {
@@ -191,19 +241,22 @@ function listCore(spec) {
   }
   function clearKey(st, key) {
     if (key === 'q') st.q = ''; else if (FLAGS[key]) st[key] = false;
-    else if (DATE && key === DATE.key) { st.from = ''; st.to = ''; } else delete st.sel[key];
+    else if (DATE && key === DATE.key) setDates(st, '', ''); else delete st.sel[key];
     return st;
   }
-  /** "Clear filters": every chip filter off; the sort and the quick buttons stay. */
+  /** "Clear filters": every chip filter off; the sort and the quick buttons stay.
+      A date range per tab: only the range of the tab on view goes — the other tabs keep theirs. */
   function clearAll(st) {
     var next = emptyState();
     next.sort = st.sort;
     Object.keys(FACETS).forEach(function (f) { if (FACETS[f].quick && st.sel[f]) next.sel[f] = st.sel[f].slice(); });
+    if (PER) { var on = scopeOf(st); dateScopes().forEach(function (k) { if (k === on) return; var d = getDates(st, k); if (d.from || d.to) next.dates[k] = d; }); }
     return next;
   }
 
   return { NONE: NONE, FACETS: FACETS, FLAGS: FLAGS, DATE: DATE, DEFAULT_SORT: DEFAULT_SORT, emptyState: emptyState, normalizeState: normalizeState, passes: passes, setServerHits: setServerHits, hasServerHits: hasServerHits,
     filterRows: filterRows, facetCounts: facetCounts, sortRows: sortRows, presetRange: presetRange, chips: chips, clearKey: clearKey, clearAll: clearAll, range: range,
+    passesAll: passesAll, scopeOf: scopeOf, hasDates: hasDates, getDates: getDates, setDates: setDates,
     valuesOf: valuesOf, labelOf: labelOf, apartOf: apartOf };
 }
 
@@ -218,9 +271,11 @@ function listCore(spec) {
  *      countable: window function name (r) -> boolean — only these rows are counted beside the choices (Consultations: the date range),
  *      panelCountable: window function name (r) -> boolean — a narrower set for the counts INSIDE a column's filter panel only, never the
  *        tabs above the table (Consultations: the month on view on the Completed and All tabs),
+ *      defaultDateScope: with a date range per tab (spec.date.per), the tab the opening date belongs to (Consultations: 'booked'),
  *      sortReset: 'newest case first' (or a function(state) giving the words) — the list's normal order has no column, so a column
         sort shows as a chip whose × goes back to it }
  * A column: { id, label, title, menu, facets: [...], flags: [...], date: true, note, sort, sortText: [..], sortDirs: [first, second] }
+ *   (a column with only a sort and a note still has a panel: the sort both ways and the note — Consultations "Client")
  */
 function listTableUi(LT, o, win) {
   var doc = win.document, KEY = o.key, ids = o.ids, COLS = o.cols;
@@ -236,10 +291,12 @@ function listTableUi(LT, o, win) {
   function today() { return LT.presetRange('today', Date.now()).from; }
   function rollDay() {
     if (!o.defaultDate || !LT.DATE) return;
-    var t = today();
-    if (dayMark === null) { var dd = LT.presetRange(o.defaultDate, Date.now()); state.from = dd.from; state.to = dd.to; }
-    else if (dayMark && dayMark !== t && state.from === dayMark && state.to === dayMark) { state.from = t; state.to = t; }
-    dayMark = (state.from === t && state.to === t) ? t : '';
+    /* a date range per tab: the opening date is one tab's (o.defaultDateScope) — never another tab's, whichever is on view */
+    var t = today(), sc = o.defaultDateScope, cur = LT.getDates(state, sc);
+    if (dayMark === null) { var dd = LT.presetRange(o.defaultDate, Date.now()); LT.setDates(state, dd.from, dd.to, sc); }
+    else if (dayMark && dayMark !== t && cur.from === dayMark && cur.to === dayMark) LT.setDates(state, t, t, sc);
+    cur = LT.getDates(state, sc);
+    dayMark = (cur.from === t && cur.to === t) ? t : '';
   }
   rollDay();
   /* initial() returns true when a link chose the tab (Retainers ?outcome=): it wins over the kept tab, and is kept itself
@@ -275,11 +332,14 @@ function listTableUi(LT, o, win) {
   function countRows() { return o.countable && typeof win[o.countable] === 'function' ? ROWS.filter(function (r) { return win[o.countable](r); }) : ROWS; }
   /* The rows the counts inside a filter panel are taken from: the page may narrow them to what its table can show. */
   function panelRows() { var rows = countRows(); return o.panelCountable && typeof win[o.panelCountable] === 'function' ? rows.filter(function (r) { return win[o.panelCountable](r); }) : rows; }
-  function hasPanel(c) { return !!((c.facets && c.facets.length) || (c.flags && c.flags.length) || c.date); }
+  /* The column's date filter is on offer — not on a tab that has no dates (a date range per tab: Consultations "No date"). */
+  function dateOn(c) { return !!(c.date && LT.DATE && LT.hasDates(LT.scopeOf(state))); }
+  function hasFilter(c) { return !!((c.facets && c.facets.length) || (c.flags && c.flags.length) || dateOn(c)); }
+  function hasPanel(c) { return hasFilter(c) || !!(c.sort && c.note); }
   function activeCount(c) {
-    var n = 0;
+    var n = 0, dd = dateOn(c) ? LT.getDates(state) : null;
     (c.flags || []).forEach(function (k) { if (state[k]) n++; });
-    if (c.date && (state.from || state.to)) n++;
+    if (dd && (dd.from || dd.to)) n++;
     (c.facets || []).forEach(function (f) { if (state.sel[f] && state.sel[f].length) n++; });
     return n;
   }
@@ -301,7 +361,7 @@ function listTableUi(LT, o, win) {
       return '<th scope="col"' + (c.sort ? ' aria-sort="' + ariaSort + '"' : '') + (c.title ? ' title="' + esc(c.title) + '"' : '') + '><div class="th-in">'
         + name + arrow
         + (hasPanel(c) ? '<button type="button" class="th-f' + (n ? ' on' : '') + (openCol === c.id ? ' open' : '') + '" data-col="' + c.id + '" aria-haspopup="dialog" aria-expanded="' + (openCol === c.id) + '"'
-          + ' aria-label="Filter' + (c.sort ? ' and sort' : '') + ': ' + esc(c.label) + (n ? ' (' + n + ' active)' : '') + '">' + FUNNEL + (n ? '<span class="th-n">' + n + '</span>' : '') + '</button>' : '')
+          + ' aria-label="' + (hasFilter(c) ? 'Filter' + (c.sort ? ' and sort' : '') : 'Sort') + ': ' + esc(c.label) + (n ? ' (' + n + ' active)' : '') + '">' + FUNNEL + (n ? '<span class="th-n">' + n + '</span>' : '') + '</button>' : '')
         + '</div></th>';
     }).join('');
     Array.prototype.forEach.call(tr.querySelectorAll('.th-f'), function (b) {
@@ -356,7 +416,7 @@ function listTableUi(LT, o, win) {
     var CR = countRows();
     var counts = {}; LT.facetCounts(CR, state, q.facet).forEach(function (x) { counts[x.value] = x.count; });
     /* All counts the rows with no choice on — never the ones kept apart (the Retained tab) */
-    var base = CR.filter(function (r) { return LT.passes(r, state, q.facet) && !LT.apartOf(q.facet, r); }).length, sel = state.sel[q.facet] || [];
+    var base = CR.filter(function (r) { return LT.passesAll(r, state, q.facet) && !LT.apartOf(q.facet, r); }).length, sel = state.sel[q.facet] || [];
     var apart = (LT.FACETS[q.facet] && LT.FACETS[q.facet].apart) || [];
     var focusV = doc.activeElement && box.contains(doc.activeElement) ? doc.activeElement.getAttribute('data-quick') : null;
     var tip = function (v) { return q.hints && q.hints[v] ? ' title="' + esc(q.hints[v]) + '"' : ''; };
@@ -438,14 +498,14 @@ function listTableUi(LT, o, win) {
           + '<span class="qp-c">' + panelRows().filter(function (r) { return LT.FLAGS[k].test(r) && LT.passes(r, state, k); }).length + '</span></label>';
       }).join('') + (c.note ? '<div class="qp-note">' + esc(c.note) + '</div>' : '') + '</div>';
     }
-    if (c.date) {
-      var ab = LT.range(state);
+    if (dateOn(c)) {
+      var ab = LT.range(state), dd = LT.getDates(state);
       h += '<div class="qp-sec"><div class="qp-t">' + esc(LT.DATE.chip) + '</div><div class="qp-presets">'
-        + (LT.DATE.presets || [['today', 'Today'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month']]).map(function (p) {
+        + ((LT.DATE.presetsBy && LT.scopeOf && LT.DATE.presetsBy[LT.scopeOf(state)]) || LT.DATE.presets || [['today', 'Today'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month']]).map(function (p) {
           var r = LT.presetRange(p[0], Date.now()), on = r.from === ab[0] && r.to === ab[1];
           return '<button type="button" class="qp-btn' + (on ? ' on' : '') + '" aria-pressed="' + on + '" data-preset="' + p[0] + '">' + p[1] + '</button>';
         }).join('') + '</div>'
-        + '<div class="qp-dates"><label>From<input type="date" data-date="from" value="' + esc(state.from) + '"></label><label>To<input type="date" data-date="to" value="' + esc(state.to) + '"></label></div>'
+        + '<div class="qp-dates"><label>From<input type="date" data-date="from" value="' + esc(dd.from) + '"></label><label>To<input type="date" data-date="to" value="' + esc(dd.to) + '"></label></div>'
         + '<div class="qp-note">Both days included, Toronto time.</div></div>';
     }
     (c.facets || []).forEach(function (f) {
@@ -458,7 +518,7 @@ function listTableUi(LT, o, win) {
         }).join('') : '<div class="qp-note">Nothing to choose from.</div>') + '</div></div>';
     });
     if (c.note && !(c.flags && c.flags.length)) h += '<div class="qp-sec"><div class="qp-note">' + esc(c.note) + '</div></div>';
-    h += '</div><div class="qp-f"><button type="button" class="qp-link" data-act="clear">Clear</button><button type="button" class="qp-done" data-act="close">Done</button></div>';
+    h += '</div><div class="qp-f">' + (hasFilter(c) ? '<button type="button" class="qp-link" data-act="clear">Clear</button>' : '<span></span>') + '<button type="button" class="qp-done" data-act="close">Done</button></div>';
     return h;
   }
   function renderPanel() {
@@ -487,13 +547,13 @@ function listTableUi(LT, o, win) {
     var clr = pop.querySelector('[data-act="clear"]');
     if (clr) clr.onclick = function () {
       (c.flags || []).forEach(function (k) { state[k] = false; });
-      if (c.date) { state.from = ''; state.to = ''; }
+      if (dateOn(c)) LT.setDates(state, '', '');
       (c.facets || []).forEach(function (f) { delete state.sel[f]; });
       apply('filter');
     };
     Array.prototype.forEach.call(pop.querySelectorAll('[data-sort]'), function (b) { b.onclick = function () { state.sort = { key: c.sort, dir: b.getAttribute('data-sort') }; apply('sort'); }; });
-    Array.prototype.forEach.call(pop.querySelectorAll('[data-preset]'), function (b) { b.onclick = function () { var r = LT.presetRange(b.getAttribute('data-preset'), Date.now()); state.from = r.from; state.to = r.to; apply('filter'); }; });
-    Array.prototype.forEach.call(pop.querySelectorAll('[data-date]'), function (i) { i.onchange = function () { state[i.getAttribute('data-date')] = i.value || ''; apply('filter'); }; });
+    Array.prototype.forEach.call(pop.querySelectorAll('[data-preset]'), function (b) { b.onclick = function () { var r = LT.presetRange(b.getAttribute('data-preset'), Date.now()); LT.setDates(state, r.from, r.to); apply('filter'); }; });
+    Array.prototype.forEach.call(pop.querySelectorAll('[data-date]'), function (i) { i.onchange = function () { var d = LT.getDates(state); d[i.getAttribute('data-date')] = i.value || ''; LT.setDates(state, d.from, d.to); apply('filter'); }; });
     Array.prototype.forEach.call(pop.querySelectorAll('[data-flag]'), function (u) { u.onchange = function () { state[u.getAttribute('data-flag')] = u.checked; apply('filter'); }; });
     Array.prototype.forEach.call(pop.querySelectorAll('[data-f]'), function (i) {
       i.onchange = function () {

@@ -670,10 +670,10 @@ test('getConsultationsBoard withCompleted: each consultation is in exactly one o
 });
 
 // Faran 2026-11-12: four fixed tabs (Booked · Needs outcome · Completed · No date) over one table, with a month chooser on Completed.
-test('page: four tabs over one table — each consultation under exactly one tab; the Date filter narrows Booked only; Now has its own column and filter', () => {
+test('page: four tabs over one table — each consultation under exactly one tab; the Date filter is kept per tab; Now has its own column and filter', () => {
   const { listCore } = require('../src/routes/listFilters'), S = require('../src/routes/listSpecs');
   const q = require('../src/routes/adminConsultation').buildQueueHTML();
-  for (const s of ["bindRowClicks(tb, (tab==='done'||tab==='all')?'?from=consultations':'')", "!(st&&st.sort&&st.sort.key)", 'id="cq-tabs"', 'id="cq-month"', 'function renderMonthBar(', "MONTH_KEY={ done:'tdot_list_consult_month', all:'tdot_list_consult_month_all' }", "ALLROWS=(d.consultations||[]).concat(d.completed||[]);", '<th>Now</th>',
+  for (const s of ["bindRowClicks(tb, (tab==='done'||tab==='all')?'?from=consultations':'')", "rows=latestFirst(rows);", "if(st&&st.sort&&st.sort.key&&window.ConsultTable) rows=ConsultTable.core.sortRows(rows,st.sort);", 'id="cq-tabs"', 'id="cq-month"', 'function renderMonthBar(', "MONTH_KEY={ done:'tdot_list_consult_month', all:'tdot_list_consult_month_all' }", "ALLROWS=(d.consultations||[]).concat(d.completed||[]);", '<th>Now</th>',
     '#cq-table:not(.tab-done):not(.tab-all) th:nth-child(11), #cq-table:not(.tab-done):not(.tab-all) td.c-now { display:none; }', '#cq-table.tab-done th:nth-child(12), #cq-table.tab-done td.c-del { display:none; }']) assert.ok(q.includes(s), s);
   for (const gone of ['function renderDone(', 'id="done-groups"', 'show / hide', 'function consultBucket(']) assert.ok(!q.includes(gone), 'gone: ' + gone);
   const spec = S.consultListSpec({ today: () => '2026-11-11' }), LT = listCore(spec), o = S.consultListOpts({});
@@ -684,21 +684,28 @@ test('page: four tabs over one table — each consultation under exactly one tab
     { id: 'z', bookedSlot: '' },
   ];
   assert.deepEqual(rows.map((r) => LT.valuesOf('tab', r)[0]), ['booked', 'booked', 'needs', 'booked', 'done', 'done', 'nodate']);
-  const on = (tab, from) => { const st = LT.emptyState(); st.sel.tab = [tab]; if (from) st.from = st.to = from; return st; };
+  const on = (tab, from) => { const st = LT.emptyState(); st.sel.tab = [tab]; if (from) LT.setDates(st, from, from); return st; };
   assert.deepEqual(LT.filterRows(rows, on('booked', '2026-11-11')).map((r) => r.id), ['a']);
   assert.deepEqual(LT.filterRows(rows, on('booked')).map((r) => r.id), ['a', 'c', 'x']);
-  for (const tab of ['needs', 'done', 'nodate']) assert.deepEqual(LT.filterRows(rows, on(tab, '2026-11-11')).map((r) => r.id), LT.filterRows(rows, on(tab)).map((r) => r.id), tab + ': the Date filter changes nothing');
-  assert.deepEqual(LT.filterRows(rows, on('done', '2026-11-11')).map((r) => r.id), ['b', 'd']);
+  // every tab but No date has a date filter of its own (2026-11-12)
+  assert.deepEqual(LT.filterRows(rows, on('needs', '2026-11-03')).map((r) => r.id), ['n']);
+  assert.deepEqual(LT.filterRows(rows, on('needs', '2026-11-11')).map((r) => r.id), []);
+  assert.deepEqual(LT.filterRows(rows, on('done', '2026-09-02')).map((r) => r.id), ['b'], 'a completed consultation with no date is hidden while a range is on');
+  assert.deepEqual(LT.filterRows(rows, on('done')).map((r) => r.id), ['b', 'd']);
+  assert.deepEqual(LT.filterRows(rows, on('nodate', '2026-11-11')).map((r) => r.id), ['z'], 'No date: no date filter');
+  assert.deepEqual(LT.chips(on('nodate', '2026-11-11')), []);
+  // a range on one tab never changes another tab's number
   assert.deepEqual(LT.facetCounts(rows, on('booked', '2026-11-11'), 'tab').map((x) => [x.label, x.count]), [['Booked', 1], ['Needs outcome', 1], ['Completed', 2], ['No date', 1]]);
   assert.deepEqual(LT.chips(on('done')), [], 'the tab is not a chip');
   assert.deepEqual(LT.clearAll(on('done')).sel, { tab: ['done'] }, 'Clear filters keeps the tab');
   const st = on('done'); st.sel.now = ['Retained'];
   assert.deepEqual(LT.filterRows(rows, st).map((r) => r.id), ['b']);
   assert.deepEqual([o.quick.facet, o.quick.box, o.quick.tabs, o.quick.allLast, o.quick.all, o.quick.default, o.quick.values.join()], ['tab', 'cq-tabs', true, true, 'All', 'booked', 'booked,needs,done,nodate']);
-  // All (no tab chosen) = the four tabs together: its count is always the four counts added up — the Date filter still narrows the booked ones
-  const all = LT.emptyState(); all.from = all.to = '2026-11-11';
-  assert.deepEqual(LT.filterRows(rows, all).map((r) => r.id), ['a', 'n', 'b', 'd', 'z']);
-  assert.equal(LT.filterRows(rows, all).length, LT.facetCounts(rows, all, 'tab').reduce((n, x) => n + x.count, 0));
+  // All (no tab chosen) = the four lists together, with its OWN date range: it narrows every row (no date = hidden while it is on)
+  const all = LT.emptyState(); LT.setDates(all, '2026-11-03', '2026-11-11');
+  assert.deepEqual(LT.filterRows(rows, all).map((r) => r.id), ['a', 'n', 'x']);
+  assert.equal(rows.filter((r) => LT.passesAll(r, all, 'tab')).length, 3, 'the All tab\'s number = the rows it shows');
+  assert.deepEqual(LT.facetCounts(rows, all, 'tab').map((x) => x.count), [3, 1, 2, 1], 'All\'s range leaves the four tabs\' numbers alone');
   assert.equal(LT.filterRows(rows, LT.emptyState()).length, rows.length, 'no date chosen: every consultation');
   assert.ok(o.quick.storeKey.indexOf('tdot_list_') === 0, 'Sign Out forgets the kept tab');
   assert.deepEqual(o.cols.slice(-3).map((c) => [c.id, (c.facets || []).join()]), [['outcome', 'outcome'], ['now', 'now'], ['del', '']]);
@@ -745,8 +752,9 @@ test('page row: 12 cells; the delete button carries the lead id; a completed row
   assert.ok(!done.includes('data-del-lead'));
 });
 
-// review 2026-11-12: Date belongs to Booked / All and Now to Completed / All — off those tabs they are not on view, so they must not act unseen.
-test('page: leaving Completed takes a Now choice off; "Clear filters" on a tab where the Date chip is hidden does not take the Date off', () => {
+// review 2026-11-12: Now belongs to Completed / All — off those tabs the column is not on view, so it must not act unseen.
+// (The Date filter needs no such care since each tab has its own range: the old put-back, KEPT_DATE, is gone.)
+test('page: leaving Completed takes a Now choice (and a Now sort) off; the Date put-back and its CSS are gone', () => {
   const html = require('../src/routes/adminConsultation').buildQueueHTML();
   const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
   const pick = (name) => { const i = js.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1); };
@@ -754,18 +762,20 @@ test('page: leaving Completed takes a Now choice off; "Clear filters" on a tab w
   const ctx = { window: { ConsultTable: { apply: (w) => applied.push(w) } }, TAB_TEXT: { booked: 1, needs: 1, done: 1, nodate: 1, all: 1 } };
   ctx.ConsultTable = ctx.window.ConsultTable;   // in a page, window's properties are globals
   vm.createContext(ctx);
-  vm.runInContext('var KEPT_DATE=null;\n' + pick('consultTab') + '\n' + pick('consultOnChange'), ctx);
-  const st = { from: '2026-11-12', to: '2026-11-12', sel: { tab: ['booked'] } };
+  vm.runInContext(pick('consultTab') + '\n' + pick('consultOnChange'), ctx);
+  const st = { dates: { booked: { from: '2026-11-12', to: '2026-11-12' } }, sel: { tab: ['booked'] }, sort: null };
   ctx.consultOnChange(st); assert.deepEqual(applied, []);
-  st.sel.tab = ['done']; st.sel.now = ['Retained']; ctx.consultOnChange(st);
-  assert.deepEqual([st.sel.now, applied.length], [['Retained'], 0], 'Now stays on Completed');
-  st.from = ''; st.to = ''; ctx.consultOnChange(st);            // "Clear filters" pressed on Completed
-  assert.deepEqual([st.from, st.to, applied], ['2026-11-12', '2026-11-12', ['data']], 'the hidden Date filter is put back');
+  st.sel.tab = ['done']; st.sel.now = ['Retained']; st.sort = { key: 'now', dir: 'asc' }; ctx.consultOnChange(st);
+  assert.deepEqual([st.sel.now.join(), st.sort.key, applied.length], ['Retained', 'now', 0], 'Now stays on Completed');
   st.sel.tab = ['needs']; ctx.consultOnChange(st);
-  assert.equal(st.sel.now, undefined, 'Now is taken off when leaving for a tab without the column');
-  delete st.sel.tab; st.sel.now = ['Closed']; st.from = ''; st.to = ''; ctx.consultOnChange(st);   // All: both are on view
-  assert.deepEqual([st.sel.now, st.from], [['Closed'], ''], 'on All the Date can be taken off and Now chosen');
+  assert.deepEqual([st.sel.now, st.sort, applied.join()], [undefined, null, 'data'], 'Now is taken off when leaving for a tab without the column — the filter and the sort');
+  assert.deepEqual(st.dates, { booked: { from: '2026-11-12', to: '2026-11-12' } }, 'the dates are never touched here');
+  delete st.sel.tab; st.sel.now = ['Closed']; st.sort = { key: 'now', dir: 'desc' }; ctx.consultOnChange(st);   // All: the column is on view
+  assert.deepEqual([st.sel.now.join(), st.sort.key, applied.length], ['Closed', 'now', 1]);
+  st.sel.tab = ['booked']; delete st.sel.now; st.sort = { key: 'paid', dir: 'asc' }; ctx.consultOnChange(st);
+  assert.deepEqual([st.sort.key, applied.length], ['paid', 1], 'any other sort is shared by every tab');
   assert.ok(html.includes("listCore((") && html.includes("{ onChange: consultOnChange }"));
+  for (const gone of ['KEPT_DATE', ':has([data-chip="date"])', '#cq-headrow th:first-child .th-f { display:none; }']) assert.ok(!html.includes(gone), 'gone: ' + gone);
 });
 
 // Faran 2026-11-12: the month chooser on Completed (one month, opening on the current one) and on All ("All months" first).
@@ -817,4 +827,185 @@ test('filter panel counts: only the month the table is showing — the tabs abov
   assert.ok(src.includes('LT.facetCounts(panelRows(), state, f)') && src.includes("panelRows().filter(function (r) { return LT.FLAGS[k].test(r)"), 'the panel counts');
   assert.ok(src.includes('var CR = countRows();') && src.includes('without: function (f) { return countRows().filter('), 'the tabs and the empty-list reason are unchanged');
   assert.ok(src.includes("o.panelCountable && typeof win[o.panelCountable] === 'function' ? rows.filter("), 'a page without the hook counts as before');
+});
+
+// Faran 2026-11-12: filters and sorting on every column, on every tab — and the Date filter kept per tab.
+// The REAL page code: the emitted list functions and the emitted engine script, run together in one sandbox with a
+// stand-in document. What is read back is what a person would see: the rows, the numbers on the tabs, the words.
+function consultPage(rows, store, nowIso) {
+  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
+  const pick = (name) => { const i = js.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1); };
+  const pickVar = (name) => { const i = js.indexOf(`var ${name}={`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1) + ';'; };
+  const engine = html.match(/<script>(\(function\(\)\{ var listCore = [\s\S]*?)<\/script>/)[1];
+  const els = {};
+  const el = (id) => ({ id, innerHTML: '', textContent: '', className: '', value: '', style: {}, attrs: {}, setAttribute(k, v) { this.attrs[k] = String(v); }, removeAttribute(k) { delete this.attrs[k]; }, getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+    classList: { add() {}, remove() {}, contains() { return false; } }, appendChild() {}, addEventListener() {}, querySelectorAll() { return []; }, querySelector() { return null; }, contains() { return false; }, focus() {} });
+  const ctx = { console, Intl, sessionStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+    document: { getElementById: (id) => (els[id] = els[id] || el(id)), createElement: () => el(''), body: el('body'), addEventListener() {}, activeElement: null },
+    addEventListener() {}, location: { search: '' }, setTimeout, clearTimeout };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  // the clock: one fixed moment for "new Date()" and Date.now() alike (the page and the engine both ask for the Toronto day)
+  vm.runInContext(`var __NOW=${Date.parse(nowIso)}; var __D=Date; Date=class extends __D { constructor(...a){ if(a.length) super(...a); else super(__NOW); } static now(){ return __NOW; } };`, ctx);
+  vm.runInContext(`var ALLROWS=[]; var SHOWN_MONTH='';
+    function escHtml(s){ return String(s==null?'':s); }
+    function todayStr(){ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto'}).format(new Date()); }
+    function ssGet(k){ return sessionStorage.getItem(k)||''; } function ssSet(k,v){ sessionStorage.setItem(k,v); }
+    function rowHtml(c){ return '['+c.id+']'; } function bindRowClicks(){}
+    var MONTH_PICK={ done:'', all:'' }, MONTH_KEY={ done:'tdot_list_consult_month', all:'tdot_list_consult_month_all' };
+    ${pickVar('TAB_TEXT')}
+    ${['dParts', 'consultTab', 'monthOf', 'monthLabel', 'tabMonths', 'pickMonth', 'setMonth', 'consultPanelRow', 'renderMonthBar', 'consultOnChange', 'latestFirst', 'consultEmptyMsg', 'renderConsultList'].map(pick).join('\n')}`, ctx);
+  vm.runInContext(engine, ctx);
+  const run = (code) => vm.runInContext(code, ctx);
+  ctx.__rows = rows;
+  run('ALLROWS=JSON.parse(JSON.stringify(__rows)); ConsultTable.setRows(ALLROWS);');
+  const api = {
+    run, els, store,
+    go: (tab) => { run(`(function(){ var st=ConsultTable.state(); ${tab === 'all' ? 'delete st.sel.tab;' : `st.sel.tab=['${tab}'];`} ConsultTable.apply('filter'); })()`); return api; },
+    dates: (from, to) => { run(`ConsultTable.core.setDates(ConsultTable.state(),'${from}','${to}'); ConsultTable.apply('filter');`); return api; },
+    set: (code) => { run(`(function(st){ ${code} })(ConsultTable.state()); ConsultTable.apply('filter');`); return api; },
+    body: () => els.qbody.innerHTML.replace(/<[^>]+>/g, ''),
+    ids: () => (els.qbody.innerHTML.match(/\[([^\]]+)\]/g) || []).map((x) => x.slice(1, -1)).join(),
+    nums: () => { const out = {}; els['cq-tabs'].innerHTML.replace(/data-quick="([^"]*)"[^>]*>[^<]*<span class="lt-tab-n">(\d+)<\/span>/g, (m, k, n) => { out[k || 'all'] = Number(n); }); return out; },
+    count: () => els['cq-count'].textContent, title: () => els['cq-title'].textContent, chips: () => (els['cq-chips'].innerHTML.match(/<span class="q-chip[^"]*">([^<]*)</g) || []).map((x) => x.replace(/^.*>/, '').replace(/<$/, '')).join(' | '),
+    months: () => (els['cq-month'].innerHTML.match(/<option [^>]*>[^<]*</g) || []).map((x) => (/ selected/.test(x) ? '*' : '') + x.replace(/^.*>/, '').replace(/<$/, '')).join(' | '),
+    panel: (facet) => run(`JSON.stringify(ConsultTable.core.facetCounts(ALLROWS.filter(consultPanelRow), ConsultTable.state(), '${facet}').filter(function(x){ return x.count; }).map(function(x){ return x.label+' '+x.count; }))`),
+  };
+  return api;
+}
+const CONSULT_SAMPLE = [
+  { id: 'b1', name: 'Asha', bookedSlot: '2026-11-12 09:00', consultant: 'S', paid: 'app' }, { id: 'b2', name: 'Bo', bookedSlot: '2026-11-13 14:00', consultant: 'T' }, { id: 'b3', name: 'Chen', bookedSlot: '2026-11-20 18:00', consultant: 'S', paid: 'cash' },
+  { id: 'n1', name: 'Dev', bookedSlot: '2026-11-03 10:00', consultant: 'S' }, { id: 'n2', name: 'Eli', bookedSlot: '2026-11-10 11:00', consultant: 'T', paid: 'app' }, { id: 'n3', name: 'Fay', bookedSlot: '2026-10-28 16:59', consultant: 'S' },
+  { id: 'd1', name: 'Gia', bookedSlot: '2026-11-05 10:00', done: true, outcome: 'Retain', now: 'Retained', consultant: 'S', paid: 'app' }, { id: 'd2', name: 'Hal', bookedSlot: '2026-10-15 13:00', done: true, outcome: 'Follow-Up', now: 'Following up', consultant: 'T' },
+  { id: 'd5', name: 'Lou', bookedSlot: '2026-10-20 09:00', done: true, outcome: 'Retain', now: 'Retainer sent', consultant: 'S', paid: 'waived' },
+  { id: 'd3', name: 'Ida', bookedSlot: '2026-09-02 09:00', done: true, outcome: 'Not Wanted', now: 'Closed', consultant: 'S' }, { id: 'd4', name: 'Jo', bookedSlot: '', done: true, outcome: 'Retain', now: 'Retained', consultant: 'S' },
+  { id: 'z1', name: 'Kai', bookedSlot: '', consultant: 'T' },
+];
+
+test('page, run for real: every tab has its own Date range; the number on each tab = the rows it shows; Booked opens on today; No date has no Date filter', () => {
+  const p = consultPage(CONSULT_SAMPLE, {}, '2026-11-12T17:00:00Z');
+  // a new browser tab: Booked, on today
+  assert.deepEqual([p.ids(), p.title(), p.count(), p.chips()], ['b1', 'Booked consultations', '(1 of 3)', 'Date Nov 12']);
+  assert.deepEqual(p.nums(), { booked: 1, needs: 3, done: 5, nodate: 1, all: 12 });
+  // the other tabs open on every date — latest first on the tabs that look back
+  assert.deepEqual([p.go('needs').ids(), p.chips(), p.count()], ['n2,n1,n3', '', '(3)']);
+  assert.deepEqual([p.go('all').ids(), p.chips()], ['b3,b2,b1,n2,d1,n1,n3,d5,d2,d3,d4,z1', '']);
+  assert.deepEqual([p.go('nodate').ids(), p.chips()], ['z1', '']);
+  // a different range on every tab
+  p.go('needs').dates('2026-11-01', '2026-11-05');
+  p.go('done').dates('2026-10-01', '2026-10-31');
+  p.go('all').dates('2026-11-01', '2026-11-30');
+  const want = { booked: 'b1', needs: 'n1', done: 'd5,d2', nodate: 'z1', all: 'b3,b2,b1,n2,d1,n1' };
+  const numbers = { booked: 1, needs: 1, done: 2, nodate: 1, all: 6 };
+  for (const tab of Object.keys(want)) {
+    assert.equal(p.go(tab).ids(), want[tab], tab + ' shows');
+    assert.deepEqual(p.nums(), numbers, 'the tab numbers, seen from ' + tab);
+    assert.equal(p.nums()[tab], want[tab].split(',').length, tab + ': its number is the rows on screen (every month)');
+  }
+  assert.deepEqual([p.go('needs').chips(), p.go('done').chips(), p.go('all').chips(), p.go('booked').chips(), p.go('nodate').chips()],
+    ['Date Nov 1 – Nov 5', 'Date Oct 1 – Oct 31', 'Date Nov 1 – Nov 30', 'Date Nov 12', ''], 'each tab shows its own range');
+  // the shared filters and the search go on top, on every tab; the numbers still equal the rows shown
+  p.go('booked').set("st.sel.consultant=['S'];");
+  const withS = { booked: 'b1', needs: 'n1', done: 'd5', nodate: '', all: 'b3,b1,d1,n1' };
+  for (const tab of Object.keys(withS)) {
+    assert.equal(p.go(tab).ids(), withS[tab], tab + ' with a consultant ticked');
+    assert.equal(p.nums()[tab], withS[tab] ? withS[tab].split(',').length : 0, tab + ' number');
+    assert.match(p.chips(), /Consultant: S/, 'the consultant filter is shared by every tab');
+  }
+  // "Clear filters" on Needs outcome: the consultant and THIS tab's dates go — the other tabs keep their dates
+  p.go('needs'); p.run('ConsultTable.clearFilters()');
+  assert.deepEqual([p.ids(), p.chips()], ['n2,n1,n3', '']);
+  assert.deepEqual([p.go('done').chips(), p.go('all').chips(), p.go('booked').chips()], ['Date Oct 1 – Oct 31', 'Date Nov 1 – Nov 30', 'Date Nov 12']);
+  assert.deepEqual(p.nums(), { booked: 1, needs: 3, done: 2, nodate: 1, all: 6 });
+  // kept for the browser tab
+  assert.deepEqual(JSON.parse(p.store.tdot_list_consultations).dates, { booked: { from: '2026-11-12', to: '2026-11-12' }, done: { from: '2026-10-01', to: '2026-10-31' }, all: { from: '2026-11-01', to: '2026-11-30' } });
+  const again = consultPage(CONSULT_SAMPLE, p.store, '2026-11-12T18:00:00Z');
+  assert.deepEqual([again.ids(), again.nums()], ['b1', { booked: 1, needs: 3, done: 2, nodate: 1, all: 6 }]);
+  // No date: a range can not be put on it
+  p.go('nodate').dates('2026-11-12', '2026-11-12');
+  assert.deepEqual([p.ids(), p.chips(), p.nums().nodate], ['z1', '', 1]);
+});
+
+test('page, run for real: the Date range works with the Month chooser — it narrows inside the month on view; nothing in that month but a match in another → the newest month that has one', () => {
+  const p = consultPage(CONSULT_SAMPLE, {}, '2026-11-12T17:00:00Z');
+  p.go('done');
+  assert.deepEqual([p.title(), p.ids(), p.count()], ['Completed consultations — November 2026', 'd1', '(1)']);
+  assert.match(p.months(), /^\*November 2026 \(1\) \| October 2026 \(2\) \| September 2026 \(1\) \| No date \(1\)$/);
+  // a range inside the month on view
+  p.run("setMonth('done','2026-10')");
+  p.dates('2026-10-16', '2026-10-31');
+  assert.deepEqual([p.title(), p.ids(), p.count(), p.nums().done], ['Completed consultations — October 2026', 'd5', '(1 of 2)', 1]);
+  assert.equal(p.panel('consultant'), '["S 1"]', 'a filter panel counts the month on view AND the tab\'s dates');
+  // the range matches nothing in the month on view, but something in another month: that month is shown (the choice is kept)
+  p.dates('2026-09-01', '2026-09-30');
+  assert.deepEqual([p.title(), p.ids(), p.nums().done, p.store.tdot_list_consult_month], ['Completed consultations — September 2026', 'd3', 1, '2026-10']);
+  // …and with a filter on top; the newest month that has a match
+  p.dates('2026-09-01', '2026-11-30').set("st.sel.outcome=['Retain'];");
+  assert.deepEqual([p.title(), p.ids(), p.nums().done], ['Completed consultations — October 2026', 'd5', 2]);
+  p.run("setMonth('done','2026-09')");
+  assert.deepEqual([p.title(), p.ids()], ['Completed consultations — November 2026', 'd1'], 'September has no Retain: the newest month with one');
+  // nothing anywhere on these dates: said truthfully
+  p.set('delete st.sel.outcome;').dates('2027-01-01', '2027-01-31');
+  assert.deepEqual([p.ids(), p.body(), p.nums().done], ['', 'No consultations on these dates.', 0]);
+  // All: "All months" first; the range narrows every row (a row with no date is hidden); a month chosen narrows inside it
+  p.go('all');
+  assert.deepEqual([p.title(), p.ids().split(',').length, p.chips()], ['All consultations', 12, '']);
+  p.dates('2026-10-01', '2026-11-05');
+  assert.deepEqual([p.ids(), p.nums().all, p.count()], ['d1,n1,n3,d5,d2', 5, '(5 of 12)']);
+  p.run("setMonth('all','2026-11')");
+  assert.deepEqual([p.title(), p.ids(), p.nums().all, p.count()], ['All consultations — November 2026', 'd1,n1', 5, '(2 of 6)'], 'the tab number counts every month');
+  p.dates('2026-10-01', '2026-10-31');
+  assert.deepEqual([p.title(), p.ids()], ['All consultations — October 2026', 'n3,d5,d2'], 'the fall-back on All too');
+  // Completed kept its own range all along
+  assert.equal(p.go('done').chips(), 'Date Jan 1 – Jan 31');
+});
+
+test('page, run for real: an empty list says why, truthfully for the tab on view', () => {
+  const p = consultPage(CONSULT_SAMPLE, {}, '2026-11-12T17:00:00Z');
+  p.go('needs').dates('2026-11-06', '2026-11-08');
+  assert.equal(p.body(), 'No consultations on these dates.', 'not "Nothing is waiting for an outcome."');
+  p.set("st.sel.consultant=['T'];");
+  assert.equal(p.body(), 'No consultations on these dates match your filters.');
+  p.dates('', '').set("st.sel.paid=['waived'];");
+  assert.equal(p.body(), 'Nothing here matches your filters.');
+  p.run('ConsultTable.clearFilters()');
+  p.go('booked');
+  assert.equal(p.ids(), 'b1');
+  p.set("st.sel.consultant=['T'];");
+  assert.equal(p.body(), 'No consultations today match — the Date filter is on Today. Remove it (the × on the Date chip above) to see every date.');
+  p.set('delete st.sel.consultant;').dates('2026-11-14', '2026-11-15');
+  assert.equal(p.body(), 'No consultations on these dates.');
+  p.go('all').dates('2027-02-01', '2027-02-01');
+  assert.equal(p.body(), 'No consultations on these dates.');
+  p.go('done').set("st.q='zzz';");
+  assert.equal(p.body(), 'No completed consultations in November 2026 match your filters.');
+  // a tab with nothing in it at all keeps its own words — also with a range on
+  const few = consultPage(CONSULT_SAMPLE.filter((r) => /^b/.test(r.id)), {}, '2026-11-12T17:00:00Z');
+  assert.equal(few.go('needs').dates('2026-11-01', '2026-11-05').body(), 'Nothing is waiting for an outcome.');
+  assert.equal(few.go('nodate').body(), 'No consultation is without a time.');
+  assert.equal(few.go('done').body(), 'No completed consultations yet.');
+  const none = consultPage([], {}, '2026-11-12T17:00:00Z');
+  assert.equal(none.body(), 'No booked consultations right now.');
+  // a quiet day on Booked: today has none
+  const quiet = consultPage(CONSULT_SAMPLE.filter((r) => r.id !== 'b1'), {}, '2026-11-12T17:00:00Z');
+  assert.equal(quiet.body(), 'No consultations today. Remove the Date filter (the × on the Date chip above) to see every date.');
+});
+
+test('page, run for real: a column sort on a tab that looks back keeps equal rows latest first; Now (filter and sort) leaves with its column; the rest is shared', () => {
+  const p = consultPage(CONSULT_SAMPLE, {}, '2026-11-12T17:00:00Z');
+  p.go('all').set("st.sort={ key:'paid', dir:'asc' };");
+  assert.equal(p.ids(), 'b1,n2,d1,b3,d5,b2,n1,n3,d2,d3,d4,z1', 'Paid (app) · recorded by staff · Waived · Not paid — each group latest first, no time last');
+  p.set("st.sort={ key:'now', dir:'asc' }; st.sel.now=['Retained','Closed'];");
+  assert.equal(p.ids(), 'd1,d4,d3');
+  assert.match(p.chips(), /^Sorted: Now \(Retained first\) \| Now: Retained, Closed$/);
+  p.go('booked');
+  assert.deepEqual([p.ids(), p.chips()], ['b1', 'Date Nov 12'], 'on Booked the Now column is not on view: its filter and its sort are off');
+  p.set("st.sort={ key:'time', dir:'desc' }; st.sel.time=['morning','evening'];").dates('', '');
+  assert.equal(p.ids(), 'b3,b1');
+  assert.equal(p.go('needs').ids(), 'n2,n1', 'the Time filter and the sort are shared: mornings, latest in the day first');
+  assert.match(p.chips(), /^Sorted: Time \(Latest in the day first\) \| Time: Morning \(before 12:00\), Evening \(17:00 and later\)$/);
+  assert.equal(p.go('nodate').ids(), '', 'No date: the other columns filter there too');
+  p.set("st.sel.time=['none'];");
+  assert.equal(p.ids(), 'z1');
 });

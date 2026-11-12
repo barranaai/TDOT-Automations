@@ -238,9 +238,9 @@ test('pages: the Paid filter has the new choices, the row pill reads the kind, t
   // The Paid filter sits in the column header since 2026-11-05 (listSpecs.js): one value per row — app | staff | waived | none —
   // and "Paid (any way)" is app + staff ticked together (test/listSpecs.test.js proves it against the old drop-down).
   for (const s of ['function paidPill(c){', "(c.paidVerified?'':' (name as typed)')",
-    "paid: { label: 'Paid', get: function (r) { return !s(r.paid) ? 'none' : r.paid === 'waived' ? 'waived' : r.paid === 'app' ? 'app' : 'staff'; },",
+    "function paidOf(r) { return !s(r.paid) ? 'none' : r.paid === 'waived' ? 'waived' : r.paid === 'app' ? 'app' : 'staff'; }", "paid: { label: 'Paid', get: paidOf,",
     "text: function (v) { return ({ app: 'Paid (app)', staff: 'Paid — recorded by staff', waived: 'Waived', none: 'Not paid' })[v] || v; }",
-    "{ id: 'paid', label: 'Paid', title: 'The consultation fee', menu: 'facet', facets: ['paid'] }"]) assert.ok(q.includes(s), s);
+    "{ id: 'paid', label: 'Paid', title: 'The consultation fee', menu: 'facet', facets: ['paid'], sort: 'paid', sortText: ['Paid first', 'Not paid first'], sortDirs: ASC }"]) assert.ok(q.includes(s), s);
   // the Reporting card says how many were recorded by staff / waived — on the Summary page since 2026-11-05
   const dash = require('../src/routes/adminDashboard');
   const layer = dash.stack.find((l) => l.route && l.route.path === '/summary');

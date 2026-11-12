@@ -120,11 +120,6 @@ const CONSULT_PAGE_CSS = `
   /* One table, five tabs: the Now column only on Completed and All; Completed has no delete button (deleting stays on the other tabs). */
   #cq-table:not(.tab-done):not(.tab-all) th:nth-child(11), #cq-table:not(.tab-done):not(.tab-all) td.c-now { display:none; }
   #cq-table.tab-done th:nth-child(12), #cq-table.tab-done td.c-del { display:none; }
-  /* The Date filter narrows the booked consultations only (the Booked tab, and the booked rows of All): its chip is not shown on the other three tabs. */
-  #content:not([data-ctab="booked"]):not([data-ctab="all"]) #cq-chips .q-chip:has([data-chip="date"]) { display:none; }
-  /* …so there the Date column has no filter button, and a chip row holding nothing but the Date chip is not shown at all */
-  #content:not([data-ctab="booked"]):not([data-ctab="all"]) #cq-headrow th:first-child .th-f { display:none; }
-  #content:not([data-ctab="booked"]):not([data-ctab="all"]) #cq-chips:not(:has(.q-chip:not(:has([data-chip="date"])))) { display:none !important; }
   /* The Completed tab's month chooser */
   .cq-month { align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
   .cq-month .cm-l { font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#64748b; margin-right:2px; }
@@ -293,13 +288,15 @@ function rowHtml(c){
    like the Leads page. The shared engine (listSpecs.js consultListSpec) owns the tabs, the header filters, the search
    and the sorting, and hands over the rows of the tab shown. This page adds: the Completed tab's month chooser (one
    month at a time, opening on the current month), the words above the table, and the latest-first order of the two
-   tabs that look back. The Date filter narrows the Booked tab only (its chip is hidden on the other tabs). */
+   tabs that look back. Every column filters and sorts on every tab. The Date filter is kept per tab: Booked, Needs
+   outcome, Completed and All each have their own date range (Booked opens on today, the others on every date); the
+   No date tab has none. Each tab's number is counted with its own range (the engine: spec.date.per). */
 var TAB_TEXT={
   booked:{ h:'Booked consultations', sub:'Still to happen. The page opens on today — the Date column chooses other days; the × on the Date chip shows every date.', none:'No booked consultations right now.' },
-  needs:{ h:'Needs outcome', sub:'The consultation day has passed and no outcome is recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted.', none:'Nothing is waiting for an outcome.' },
-  done:{ h:'Completed consultations', sub:'Every consultation stays here once it has an outcome — also after the client is retained and has a case. One month at a time, by the consultation day.', none:'No completed consultations yet.' },
+  needs:{ h:'Needs outcome', sub:'The consultation day has passed and no outcome is recorded. Open each and set Retain / Follow-Up / Newsletter / Not Wanted. The Date column can narrow the days.', none:'Nothing is waiting for an outcome.' },
+  done:{ h:'Completed consultations', sub:'Every consultation stays here once it has an outcome — also after the client is retained and has a case. One month at a time, by the consultation day; the Date column can narrow the days inside it.', none:'No completed consultations yet.' },
   nodate:{ h:'No date', sub:'Marked Booked by hand with no consultation time. Open one to set its time, or delete it.', none:'No consultation is without a time.' },
-  all:{ h:'All consultations', sub:'The four lists together, the latest first — every month, or one month from the Month list. The Date filter narrows the booked ones only; the × on the Date chip shows every booked consultation too.', none:'No consultations yet.' }
+  all:{ h:'All consultations', sub:'The four lists together, the latest first — every month, or one month from the Month list. The Date column can narrow the days; this tab keeps its own dates.', none:'No consultations yet.' }
 };
 function consultTab(st){ var l=(st&&st.sel&&st.sel.tab)||[]; return !l.length?'all':(TAB_TEXT[l[0]]&&l[0]!=='all'?l[0]:'booked'); }
 function monthOf(r){ var d=String(r.bookedSlot||'').slice(0,10); return dParts(d)?d.slice(0,7):'none'; }
@@ -344,21 +341,33 @@ function renderMonthBar(tab,months,month,counts,total){
   Array.prototype.forEach.call(bar.querySelectorAll('.cm-b'),function(b){ b.onclick=function(){ var m=b.getAttribute('data-m'); if(m) setMonth(tab,m); var again=document.querySelector('#cq-month .cm-b[aria-label="'+b.getAttribute('aria-label')+'"]'); if(again&&!again.disabled) again.focus(); else { var sel=document.getElementById('cq-month-sel'); if(sel) sel.focus(); } }; });
   var s=document.getElementById('cq-month-sel'); s.onchange=function(){ setMonth(tab,s.value); var again=document.getElementById('cq-month-sel'); if(again) again.focus(); };
 }
-/* Two filters belong to some tabs only, and are not on view on the others (review 2026-11-12) — so they must not act there:
-   - "Now" is the Completed / All column: leaving for another tab takes its choice off (it would silently empty that tab).
-   - the Date filter is the Booked / All one: on the other tabs its chip is hidden, so "Clear filters" there must not
-     take it off unseen — it is put back as it was. */
-var KEPT_DATE=null;
+/* "Now" is the Completed / All column, not on view on the other tabs — so it must not act there (review 2026-11-12):
+   leaving for another tab takes its filter choice off (it would silently empty that tab), and its sort too.
+   (The Date filter needs nothing here since each tab has its own date range.) */
 function consultOnChange(st){
   var tab=consultTab(st), again=false;
-  if(tab==='booked'||tab==='all'||!KEPT_DATE) KEPT_DATE={ from:st.from||'', to:st.to||'' };
-  else if((st.from||'')!==KEPT_DATE.from||(st.to||'')!==KEPT_DATE.to){ st.from=KEPT_DATE.from; st.to=KEPT_DATE.to; again=true; }
-  if(tab!=='done'&&tab!=='all'&&st.sel&&st.sel.now){ delete st.sel.now; again=true; }
+  if(tab!=='done'&&tab!=='all'){
+    if(st.sel&&st.sel.now){ delete st.sel.now; again=true; }
+    if(st.sort&&st.sort.key==='now'){ st.sort=null; again=true; }
+  }
   if(again&&window.ConsultTable) ConsultTable.apply('data');   /* 'data': redraw and keep, without coming back here */
+}
+/* The latest consultation first; the ones with no time last. */
+function latestFirst(list){ return list.slice().sort(function(a,b){ var x=String(a.bookedSlot||''), y=String(b.bookedSlot||''); return (x&&y)?y.localeCompare(x):x?-1:y?1:0; }); }
+/* Why the table is empty, truthfully for the tab on view: nothing in this tab (or month) at all / nothing on the chosen
+   day(s) / nothing passing the other filters. x: { tab, T (the tab's words), inTab (rows of the tab, of the month on view),
+   byMonth (a month is on view), month, dated (this tab's date range is on), onlyToday, others (another filter or the search is on) }. */
+function consultEmptyMsg(x){
+  var inMonth='No '+(x.tab==='done'?'completed ':'')+'consultations in '+monthLabel(x.month);
+  if(!x.inTab) return x.byMonth?inMonth+'.':x.T.none;
+  if(x.dated&&!x.others) return x.onlyToday?'No consultations today. Remove the Date filter (the × on the Date chip above) to see every date.':'No consultations on these dates.';
+  if(x.onlyToday) return 'No consultations today match — the Date filter is on Today. Remove it (the × on the Date chip above) to see every date.';
+  if(x.dated) return 'No consultations on these dates match your filters.';
+  if(x.byMonth) return inMonth+' match your filters.';
+  return 'Nothing here matches your filters.';
 }
 function renderConsultList(keep,why,st,h){
   var tab=consultTab(st), T=TAB_TEXT[tab], t=todayStr();
-  if(!KEPT_DATE&&(tab==='booked'||tab==='all')) KEPT_DATE={ from:st.from||'', to:st.to||'' };
   var rows=keep, inTab=tab==='all'?ALLROWS.slice():ALLROWS.filter(function(r){ return window.ConsultTable?ConsultTable.core.valuesOf('tab',r)[0]===tab:true; });
   var months=[], month='', counts={};
   var total=keep.length;
@@ -373,8 +382,12 @@ function renderConsultList(keep,why,st,h){
       inTab=inTab.filter(function(r){ return monthOf(r)===month; });
     }
   }
-  /* the two tabs that look back: the latest consultation first — unless a column sort is chosen in the header */
-  if((tab==='done'||tab==='needs'||tab==='all') && !(st&&st.sort&&st.sort.key)) rows=rows.slice().sort(function(a,b){ var x=String(a.bookedSlot||''), y=String(b.bookedSlot||''); return (x&&y)?y.localeCompare(x):x?-1:y?1:0; });   /* no time: last */
+  /* the tabs that look back: the latest consultation first — a column sort chosen in the header goes on top of that
+     (the rows that are equal in that column stay latest first: this tab's normal order) */
+  if(tab==='done'||tab==='needs'||tab==='all'){
+    rows=latestFirst(rows);
+    if(st&&st.sort&&st.sort.key&&window.ConsultTable) rows=ConsultTable.core.sortRows(rows,st.sort);
+  }
   var tbl=document.getElementById('cq-table'); if(tbl) tbl.className='tab-'+tab;
   var wrap=document.getElementById('content'); if(wrap) wrap.setAttribute('data-ctab',tab);
   var hd=document.getElementById('cq-title'); if(hd) hd.textContent=T.h+(month&&month!=='all'?' — '+monthLabel(month):'');
@@ -383,13 +396,9 @@ function renderConsultList(keep,why,st,h){
   renderMonthBar(tab,months,month,counts,total);
   var tb=document.getElementById('qbody');
   if(!rows.length){
-    /* Say why it is empty: nothing in this tab at all / nothing on the chosen day(s) or month / nothing passing the filters. */
-    var dated=(tab==='booked')&&!!(st&&(st.from||st.to)), onlyToday=dated&&st.from===t&&st.to===t;
-    var msg=!inTab.length?((tab==='done'||(tab==='all'&&month!=='all'))&&months.length?'No '+(tab==='done'?'completed ':'')+'consultations in '+monthLabel(month)+'.':tab==='booked'&&ALLROWS.some(function(r){ return ConsultTable.core.valuesOf('tab',r)[0]==='booked'; })&&dated?(onlyToday?'No consultations today. Remove the Date filter (the × on the Date chip above) to see every date.':'No consultations on these dates.'):T.none)
-      :onlyToday?'No consultations today match — the Date filter is on Today. Remove it (the × on the Date chip above) to see every date.'
-      :dated?'No consultations on these dates match your filters.'
-      :(tab==='done'||(tab==='all'&&month!=='all'))?'No '+(tab==='done'?'completed ':'')+'consultations in '+monthLabel(month)+' match your filters.'
-      :'Nothing here matches your filters.';
+    var core=window.ConsultTable?ConsultTable.core:null, rg=core?core.range(st):['',''], dated=!!(rg[0]||rg[1]);
+    var msg=consultEmptyMsg({ tab:tab, T:T, inTab:inTab.length, byMonth:(tab==='done'||(tab==='all'&&month!=='all'))&&months.length>0, month:month,
+      dated:dated, onlyToday:dated&&rg[0]===t&&rg[1]===t, others:core?core.chips(st).some(function(c){ return c.key!=='date'; }):false });
     tb.innerHTML='<tr><td colspan="12" class="empty">'+escHtml(msg)+'</td></tr>';
   }
   else tb.innerHTML=rows.map(rowHtml).join('');

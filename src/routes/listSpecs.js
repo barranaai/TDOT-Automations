@@ -34,73 +34,113 @@ function consultListSpec(ctx) {
     if (d < today() && !s(r.outcome) && r.direct !== 'Existing client') return 'needs';
     return 'booked';
   }
+  /* One meaning order per column, used by its filter list AND its sort (Faran 2026-11-12: filters and sorting on every column). */
+  var MODES = ['In-person', 'Virtual', 'Phone Call'], AGREEMENTS = ['signed', 'sent', 'none'], PRECONSULTS = ['submitted', 'pending'],
+    PAIDS = ['app', 'staff', 'waived', 'none'], OUTCOMES = ['Retain', 'Follow-Up', 'Newsletter', 'Not Wanted'],
+    NOWS = ['Retained', 'Retainer paid', 'Retainer signed', 'Retainer sent', 'Retainer to send', 'Following up', 'Newsletter list', 'Closed', 'Existing client', 'upcoming'],
+    TIMES = ['morning', 'afternoon', 'evening', 'none'];
+  function agreementOf(r) { return r.agreementSigned ? 'signed' : r.agreementSent ? 'sent' : 'none'; }
+  function preconsultOf(r) { return r.preConsultSubmitted ? 'submitted' : 'pending'; }
+  function paidOf(r) { return !s(r.paid) ? 'none' : r.paid === 'waived' ? 'waived' : r.paid === 'app' ? 'app' : 'staff'; }
+  /* The part of the day, from the Toronto wall-clock time kept in bookedSlot ('YYYY-MM-DD HH:MM'):
+     morning before 12:00, afternoon 12:00 to before 17:00, evening 17:00 and later; no slot or no time part = none. */
+  function timeOf(r) {
+    var t = day(r) ? s(r.bookedSlot).slice(11, 16) : '';
+    if (!/^\d{2}:\d{2}$/.test(t)) return 'none';
+    return t < '12:00' ? 'morning' : t < '17:00' ? 'afternoon' : 'evening';
+  }
+  /* A sort value in a column's meaning order: its place in the list, then the text (a value the list does not know comes
+     after the known ones, A → Z); '' for a blank — the blank ones go last both ways (sortBlanksLast). */
+  function ranked(list, v) { v = s(v); if (!v) return ''; var i = list.indexOf(v); return ('0' + (i < 0 ? 99 : i)).slice(-2) + ' ' + v.toLowerCase(); }
   return {
     facets: {
       consultant: { label: 'Consultant', get: function (r) { return s(r.consultant); }, none: 'Unassigned' },
-      mode: { label: 'Mode', get: function (r) { return s(r.meetingType); }, none: 'Not set', order: ['In-person', 'Virtual', 'Phone Call'] },
-      agreement: { label: 'Agreement', get: function (r) { return r.agreementSigned ? 'signed' : r.agreementSent ? 'sent' : 'none'; },
-        text: function (v) { return ({ signed: 'Signed', sent: 'Sent, not signed', none: 'Not sent' })[v] || v; }, order: ['signed', 'sent', 'none'], fixed: true },
-      paid: { label: 'Paid', get: function (r) { return !s(r.paid) ? 'none' : r.paid === 'waived' ? 'waived' : r.paid === 'app' ? 'app' : 'staff'; },
-        text: function (v) { return ({ app: 'Paid (app)', staff: 'Paid — recorded by staff', waived: 'Waived', none: 'Not paid' })[v] || v; }, order: ['app', 'staff', 'waived', 'none'], fixed: true },
+      mode: { label: 'Mode', get: function (r) { return s(r.meetingType); }, none: 'Not set', order: MODES },
+      agreement: { label: 'Agreement', get: agreementOf,
+        text: function (v) { return ({ signed: 'Signed', sent: 'Sent, not signed', none: 'Not sent' })[v] || v; }, order: AGREEMENTS, fixed: true },
+      paid: { label: 'Paid', get: paidOf,
+        text: function (v) { return ({ app: 'Paid (app)', staff: 'Paid — recorded by staff', waived: 'Waived', none: 'Not paid' })[v] || v; }, order: PAIDS, fixed: true },
       // Every column filters, like the Leads list (Faran 2026-11-11).
       service: { label: 'Service', get: function (r) { return s(r.service); }, none: 'Not set' },
-      preconsult: { label: 'Pre-consult', get: function (r) { return r.preConsultSubmitted ? 'submitted' : 'pending'; },
-        text: function (v) { return ({ submitted: 'Submitted', pending: 'Pending' })[v] || v; }, order: ['submitted', 'pending'], fixed: true },
-      outcome: { label: 'Outcome', get: function (r) { return s(r.outcome); }, none: 'No outcome yet', order: ['Retain', 'Follow-Up', 'Newsletter', 'Not Wanted'] },
+      preconsult: { label: 'Pre-consult', get: preconsultOf,
+        text: function (v) { return ({ submitted: 'Submitted', pending: 'Pending' })[v] || v; }, order: PRECONSULTS, fixed: true },
+      outcome: { label: 'Outcome', get: function (r) { return s(r.outcome); }, none: 'No outcome yet', order: OUTCOMES },
       // Completed consultations (2026-11-11): where the client is now — the "Now" column of the Completed tab.
       now: { label: 'Now', get: function (r) { return r.done ? s(r.now) : 'upcoming'; },
-        text: function (v) { return v === 'upcoming' ? 'Not completed yet' : v; }, order: ['Retained', 'Retainer paid', 'Retainer signed', 'Retainer sent', 'Retainer to send', 'Following up', 'Newsletter list', 'Closed', 'Existing client', 'upcoming'] },
+        text: function (v) { return v === 'upcoming' ? 'Not completed yet' : v; }, order: NOWS,
+        onlyOn: ['done'] },   // the Completed (and All) column: the numbers on the other tabs are counted without it — the page drops it when one is opened
+      // The Time column's filter (Faran 2026-11-12): the part of the day — always these four, in this order.
+      time: { label: 'Time', get: timeOf,
+        text: function (v) { return ({ morning: 'Morning (before 12:00)', afternoon: 'Afternoon (12:00 to 16:59)', evening: 'Evening (17:00 and later)', none: 'No time' })[v] || v; }, order: TIMES, fixed: true },
       // The tabs above the table (Faran 2026-11-12): four lists, one at a time, and All last (the four together).
       tab: { label: 'List', quick: true, get: bucket, order: ['booked', 'needs', 'done', 'nodate'],
         text: function (v) { return ({ booked: 'Booked', needs: 'Needs outcome', done: 'Completed', nodate: 'No date' })[v] || v; } },
     },
-    // The column names sort, like the Leads list (Faran 2026-11-11). No column chosen = the server order.
+    // Every column name sorts (Faran 2026-11-11; all of them since 2026-11-12). No column chosen = the server order.
     sorts: {
       date: function (r) { return s(r.bookedSlot); },                 // the day, then the time within it
       time: function (r) { return s(r.bookedSlot).slice(11, 16); },   // the time of day
       client: function (r) { return s(r.name).toLowerCase(); },
       service: function (r) { return s(r.service).toLowerCase(); },
       consultant: function (r) { return s(r.consultant).toLowerCase(); },
+      // The status columns sort in the order their filter lists them (Signed, Sent, Not sent …), never A → Z.
+      mode: function (r) { return ranked(MODES, r.meetingType); },
+      agreement: function (r) { return ranked(AGREEMENTS, agreementOf(r)); },
+      preconsult: function (r) { return ranked(PRECONSULTS, preconsultOf(r)); },
+      paid: function (r) { return ranked(PAIDS, paidOf(r)); },
+      outcome: function (r) { return ranked(OUTCOMES, r.outcome); },
+      now: function (r) { return r.done ? ranked(NOWS, r.now) : ''; },   // not completed yet: an empty cell — last both ways
     },
-    sortBlanksLast: ['service', 'consultant'],
+    sortBlanksLast: ['service', 'consultant', 'mode', 'outcome', 'now'],
     defaultSort: null,   // the server order: earliest consultation first
     // The Date column's filter (Faran 2026-11-11 — it replaced the Today / This week / This month / All buttons): the
-    // consultation's Toronto day, with choices that look ahead. It narrows the BOOKED consultations only (on the Booked
-    // tab and among the rows of All) — the other three lists are never hidden by it (Needs outcome and No date have
-    // nothing to choose; Completed has its own month chooser). So the All count is always the four tab counts added up.
+    // consultation's Toronto day, with choices that look ahead. Since 2026-11-12 every tab has its OWN date range
+    // (Booked, Needs outcome, Completed and All — "No date" has no dates, so no date filter): the range of the tab on
+    // view narrows that tab's rows, and each tab's number is counted with that tab's own range. On All the range
+    // narrows every row (one with no date is hidden while a range is on). A range kept before this was Booked's.
     date: { key: 'date', chip: 'Date', get: day,
       presets: [['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['nextweek', 'Next week'], ['fullmonth', 'This month']],
-      exempt: function (r) { return bucket(r) !== 'booked'; } },
+      // The quick choices fit the tab (review 2026-11-12): Booked looks ahead; Needs outcome and Completed hold past days, so they look back.
+      presetsBy: {
+        needs: [['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month']],
+        done: [['today', 'Today'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month']],
+        all: [['today', 'Today'], ['week', 'This week'], ['fullmonth', 'This month'], ['30d', 'Last 30 days'], ['lastmonth', 'Last month']],
+      },
+      per: { facet: 'tab', all: 'all', none: ['nodate'], legacy: 'booked' } },
     search: { chip: 'Search', text: function (r) { return r.name; }, id: function (r) { return r.id; } },
   };
 }
 function consultListOpts(ctx) {
+  var AZ = ['A → Z', 'Z → A'], ASC = ['asc', 'desc'];
   return {
     key: 'tdot_list_consultations',
     ids: { head: 'cq-headrow', chips: 'cq-chips', count: 'cq-count', search: 'cq-search', pop: 'cq-pop' },
     serverSearch: '/api/leads/search',   // name, phone or email (step 3, 2026-11-09)
     render: 'renderConsultList', api: 'ConsultTable',
     sortReset: 'earliest consultation first',   // a column sort shows as a chip; its × goes back to the normal order
-    onChange: ctx && ctx.onChange,   // the page keeps the tab-only filters (Date, Now) to their tabs
+    onChange: ctx && ctx.onChange,   // the page keeps "Now" (filter and sort) to the tabs that show the column
     panelCountable: 'consultPanelRow',   // the numbers inside a filter panel count the month on view (Completed / All), like the table
-    defaultDate: 'today',   // a new browser tab opens on today's consultations (Faran 2026-11-11); the chip's × shows every date
+    // A new browser tab opens the Booked tab on today's consultations (Faran 2026-11-11); the chip's × shows every date.
+    // The other tabs open on every date; each keeps its own range (2026-11-12).
+    defaultDate: 'today', defaultDateScope: 'booked',
     // Four tabs and All, like the Leads page (Faran 2026-11-12): a new browser tab opens on Booked; the tab shown is kept until it is closed.
     quick: { facet: 'tab', box: 'cq-tabs', tabs: true, allLast: true, all: 'All', default: 'booked', storeKey: 'tdot_list_consult_tab4', values: ['booked', 'needs', 'done', 'nodate'],
       hints: { booked: 'Consultations still to happen — the Date filter chooses the days', needs: 'The consultation day has passed and no outcome is recorded',
         done: 'Completed consultations, one month at a time — also after the client is retained and has a case', nodate: 'Marked Booked by hand with no consultation time',
-        '': 'The four lists together — the Date filter still narrows the booked ones' } },
+        '': 'The four lists together' } },
     cols: [
-      { id: 'date', label: 'Date', title: 'The consultation day, Toronto time', menu: 'date', date: true, sort: 'date', sortText: ['Earliest first', 'Latest first'], sortDirs: ['asc', 'desc'] },
-      { id: 'time', label: 'Time', title: 'The consultation time, Toronto', sort: 'time', sortText: ['Earliest in the day first', 'Latest in the day first'], sortDirs: ['asc', 'desc'] },
-      { id: 'client', label: 'Client', sort: 'client', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
-      { id: 'service', label: 'Service', menu: 'facet', facets: ['service'], sort: 'service', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
-      { id: 'consultant', label: 'Consultant', menu: 'facet', facets: ['consultant'], sort: 'consultant', sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'] },
-      { id: 'mode', label: 'Mode', menu: 'facet', facets: ['mode'] },
-      { id: 'agreement', label: 'Agreement', menu: 'facet', facets: ['agreement'] },
-      { id: 'preconsult', label: 'Pre-consult', menu: 'facet', facets: ['preconsult'] },
-      { id: 'paid', label: 'Paid', title: 'The consultation fee', menu: 'facet', facets: ['paid'] },
-      { id: 'outcome', label: 'Outcome', menu: 'facet', facets: ['outcome'] },
-      { id: 'now', label: 'Now', title: 'Where the client is now (the Completed tab)', menu: 'facet', facets: ['now'] },
+      { id: 'date', label: 'Date', title: 'The consultation day, Toronto time', menu: 'date', date: true, sort: 'date', sortText: ['Earliest first', 'Latest first'], sortDirs: ASC },
+      { id: 'time', label: 'Time', title: 'The consultation time, Toronto', menu: 'facet', facets: ['time'], sort: 'time', sortText: ['Earliest in the day first', 'Latest in the day first'], sortDirs: ASC },
+      // like the Leads list's "Lead" column: the sort, and a pointer to the search box (no list of names to tick)
+      { id: 'client', label: 'Client', menu: 'lead', note: 'To filter by client, use the search box above the table (name, phone or email).', sort: 'client', sortText: AZ, sortDirs: ASC },
+      { id: 'service', label: 'Service', menu: 'facet', facets: ['service'], sort: 'service', sortText: AZ, sortDirs: ASC },
+      { id: 'consultant', label: 'Consultant', menu: 'facet', facets: ['consultant'], sort: 'consultant', sortText: AZ, sortDirs: ASC },
+      { id: 'mode', label: 'Mode', menu: 'facet', facets: ['mode'], sort: 'mode', sortText: ['In-person first', 'Phone call first'], sortDirs: ASC },
+      { id: 'agreement', label: 'Agreement', menu: 'facet', facets: ['agreement'], sort: 'agreement', sortText: ['Signed first', 'Not sent first'], sortDirs: ASC },
+      { id: 'preconsult', label: 'Pre-consult', menu: 'facet', facets: ['preconsult'], sort: 'preconsult', sortText: ['Submitted first', 'Pending first'], sortDirs: ASC },
+      { id: 'paid', label: 'Paid', title: 'The consultation fee', menu: 'facet', facets: ['paid'], sort: 'paid', sortText: ['Paid first', 'Not paid first'], sortDirs: ASC },
+      { id: 'outcome', label: 'Outcome', menu: 'facet', facets: ['outcome'], sort: 'outcome', sortText: ['Retain first', 'Not Wanted first'], sortDirs: ASC },
+      { id: 'now', label: 'Now', title: 'Where the client is now (the Completed tab)', menu: 'facet', facets: ['now'], sort: 'now', sortText: ['Retained first', 'Retained last'], sortDirs: ASC },
       { id: 'del', label: '' },
     ],
   };
