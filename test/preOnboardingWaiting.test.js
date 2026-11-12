@@ -524,7 +524,7 @@ test('the page: "Not checked yet" is asked for again once, quietly — the rows 
   assert.ok(!/loading|innerHTML|location/.test(fn), 'no spinner, no redraw of the page');
   assert.ok(main.includes("if (VIEW !== 'summary') cmWaitLater();"));
   const src = fs.readFileSync(require.resolve('../src/routes/adminDashboard'), 'utf8');
-  const block = src.slice(src.indexOf('/* ── The view tabs (block 3)'), src.indexOf('function renderPagination(total) {'));
+  const block = src.slice(src.indexOf('/* ── The view tabs (block 3)'), src.indexOf('/* ── Helpers ─'));
   assert.ok(block.includes('function cmWaitLater()') && block.includes('CMU.waitingWords(c.waiting)') && block.includes('CMU.waitingCounts(rows, CM_PRE_ONBOARDING)'));
   assert.ok(!/[`\\]|\$\{/.test(block));
   assert.ok(!/[`\\]|\$\{/.test(U.clientMasterUi.toString()), 'the helpers are safe to inject');

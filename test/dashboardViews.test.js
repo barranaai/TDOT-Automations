@@ -24,7 +24,7 @@ function renderRoute(path) {
 
 // 2026-11-05: Stage / Health / Manager are filters in the column headers (cs-headrow), with chips (cs-chips).
 // Block 3: the view tabs (cs-quick) and the box above the table (cm-head).
-const CASES_ONLY   = ['all-cases-body', 'search-box', 'cs-headrow', 'cs-chips', 'table-count', 'pagination', 'cs-quick', 'cm-head'];
+const CASES_ONLY   = ['all-cases-body', 'search-box', 'cs-headrow', 'cs-chips', 'table-count', 'cm-oc', 'cs-quick', 'cm-head'];
 const SUMMARY_ONLY = ['kpi-total', 'kpi-red', 'act-count-deadline', 'act-list-behind', 'chart-health', 'chart-stage',
                       // the monthly Reporting figures (from the Consultations page until 2026-11-05)
                       'reporting', 'kpi-month', 'kpi-body',

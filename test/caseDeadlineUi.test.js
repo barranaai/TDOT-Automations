@@ -99,7 +99,7 @@ test('Client Master page: carries the pop-up once, every script parses, the butt
   assert.ok(html.includes("row.promisedDate = String(d.promisedSubmissionDate || '');"));
   const apply = html.slice(html.indexOf('function cmDlApply'), html.indexOf('function cmDeadlineDlg'));
   assert.ok(apply.includes('CasesTable.setRows(_data.cases);'));
-  const dlg = html.slice(html.indexOf('function cmDeadlineDlg'), html.indexOf('function renderPagination'));
+  const dlg = html.slice(html.indexOf('function cmDeadlineDlg'), html.indexOf('/* ── Helpers ─'));
   assert.ok(!/fetchData|dashboard-stats|location\.reload/.test(apply + dlg));
   assert.match(html, /@media print \{[\s\S]*?\.cm-assign, \.cm-asg-ok, \.dlc-btn, \.dlc-ok \{ display:none !important; \}/);
   assert.match(html, /@media \(max-width: 760px\) \{ \.dlc-dlg input\[type=date\], \.dlc-dlg \.dlc-reason, \.dlc-dlg \.tdlg-btn \{ font-size:16px; \} \}/);

@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * The Client Master page's view tabs (block 3): the group headings, Monday's order
- * inside a view, and the counts above the table. Pure helpers, no DOM.
+ * The Client Master page's tabs (block 3): the group headings, Monday's order
+ * inside a view, the counts above the table, and which groups are open. Pure helpers, no DOM.
  *
  * Plain browser JavaScript injected with Function#toString (like listCore): the
  * function below refers to nothing outside itself. Node requires this file for the
@@ -201,8 +201,96 @@ function clientMasterUi(W) {
     return false;
   }
 
+
+  /* ── Groups that open and close (team meeting 2026-11-10, items 10 and 11) ──────────────────────
+     Every tab draws its rows under group headings a person can close and open. The All tab is grouped
+     like Monday's main table (by board group) and opens on the newest month only; the view tabs open
+     with every group open. What a person opens or closes is kept per tab, by the group's KEY (stage
+     index / phase index / board group id), never by its title. With a search or a filter on, a closed
+     group must never hide a match: every group with a match is open, and what a person closes then is
+     only for that search (forgotten when it changes); the kept choices are left as they were. */
+  var MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+  /** The All tab as a view: grouped by board group in the board's order, opening on the newest month. */
+  var ALL_VIEW = { key: 'all', label: 'All', by: 'board', dir: 'ASC', groupOrder: 'position', sort: null, open: 'newest-month' };
+  /** A heading's key as kept text (what the page stores and puts on the heading). */
+  function groupId(key) { return String(key == null ? '' : key); }
+  /** "November 2026", "september  2026", "Sept 2026" → { y, m }; anything else (also "Retainers before May 2026") → null. */
+  function monthOf(title) {
+    var p = s(title).toLowerCase().split(/[^a-z0-9]+/).filter(function (x) { return x !== ''; });
+    if (p.length !== 2 || p[0].length < 3 || !/^[0-9]{4}$/.test(p[1])) return null;
+    for (var i = 0; i < 12; i++) if (MONTHS[i].indexOf(p[0]) === 0) return { y: Number(p[1]), m: i + 1 };
+    return null;
+  }
+  /**
+   * The id of the month group to open on the All tab: the group named for today's month (today = Toronto YYYY-MM-DD);
+   * if there is none, the newest group whose title reads "<Month> <Year>"; if none reads so, the first group. null = no groups.
+   */
+  function newestMonthId(groups, today) {
+    var list = groups || [], t = s(today), ty = Number(t.slice(0, 4)), tm = Number(t.slice(5, 7)), best = null, bestN = -1;
+    for (var i = 0; i < list.length; i++) {
+      var mo = monthOf(list[i].title);
+      if (!mo) continue;
+      if (mo.y === ty && mo.m === tm) return groupId(list[i].key);
+      if (mo.y * 12 + mo.m > bestN) { bestN = mo.y * 12 + mo.m; best = groupId(list[i].key); }
+    }
+    if (best !== null) return best;
+    return list.length ? groupId(list[0].key) : null;
+  }
+  /** The ids of the groups that start open on a tab nobody has touched: the newest month (All) or every group (a view tab). */
+  function defaultOpenIds(view, groups, today) {
+    if (view && view.open === 'newest-month') { var id = newestMonthId(groups, today); return id === null ? [] : [id]; }
+    return (groups || []).map(function (g) { return groupId(g.key); });
+  }
+  function has(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
+  /**
+   * Which groups are open: { id: true | false } for every group on screen.
+   * o: { kept: this tab's kept choices { id: true | false }, filtered: is a search or filter on,
+   *      temp: the choices made under this search / filter { id: true | false }, today }.
+   * Not filtered: a kept choice, else the tab's default. Filtered: OPEN, unless the person closed it under this very search.
+   */
+  function openMap(view, groups, o) {
+    o = o || {};
+    var out = {}, def = {}, pick = (o.filtered ? o.temp : o.kept) || {};
+    if (!o.filtered) defaultOpenIds(view, groups, o.today).forEach(function (id) { def[id] = true; });
+    (groups || []).forEach(function (g) {
+      var id = groupId(g.key);
+      out[id] = has(pick, id) && typeof pick[id] === 'boolean' ? pick[id] : (o.filtered ? true : def[id] === true);
+    });
+    return out;
+  }
+  /** A copy of a choices map with these ids set open or closed. */
+  function setOpen(map, ids, open) {
+    var out = {}, k;
+    for (k in (map || {})) if (has(map, k) && typeof map[k] === 'boolean') out[k] = map[k];
+    (ids || []).forEach(function (id) { out[groupId(id)] = open === true; });
+    return out;
+  }
+  /** What was kept, made safe: { tabKey: { groupId: true | false } } — anything else in it is dropped. */
+  function normalizeKept(v) {
+    var out = {}, t, k;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return out;
+    for (t in v) {
+      if (!has(v, t) || !v[t] || typeof v[t] !== 'object' || Array.isArray(v[t])) continue;
+      out[t] = {};
+      for (k in v[t]) if (has(v[t], k) && typeof v[t][k] === 'boolean') out[t][k] = v[t][k];
+    }
+    return out;
+  }
+  /** The search and filters in words a change can be seen in (the tab too): the choices made under one are forgotten at the next. */
+  function filterSig(st, tabFacet, tabKey) {
+    var sel = (st && st.sel) || {}, parts = [];
+    Object.keys(sel).sort().forEach(function (f) { if (f !== tabFacet && sel[f] && sel[f].length) parts.push([f, sel[f].slice().sort()]); });
+    return JSON.stringify([s(tabKey), s(st && st.q).toLowerCase(), parts]);
+  }
+  /** The heading button's spoken name: "November 2026, 28 cases, open — press to close". */
+  function groupLabel(title, n, open) {
+    return s(title) + ', ' + n + ' case' + (n === 1 ? '' : 's') + ', ' + (open ? 'open — press to close' : 'closed — press to open');
+  }
+
   return { EMPTY: EMPTY, keyOf: keyOf, titleOf: titleOf, groupRows: groupRows, viewOrder: viewOrder, noOfficer: noOfficer,
-    noOfficerCount: noOfficerCount, waitingWords: waitingWords, waitingCounts: waitingCounts, typeCounts: typeCounts, filteredLine: filteredLine, hasUserFilter: hasUserFilter };
+    noOfficerCount: noOfficerCount, waitingWords: waitingWords, waitingCounts: waitingCounts, typeCounts: typeCounts, filteredLine: filteredLine, hasUserFilter: hasUserFilter,
+    ALL_VIEW: ALL_VIEW, groupId: groupId, monthOf: monthOf, newestMonthId: newestMonthId, defaultOpenIds: defaultOpenIds, openMap: openMap, setOpen: setOpen,
+    normalizeKept: normalizeKept, filterSig: filterSig, groupLabel: groupLabel };
 }
 
 module.exports = Object.assign({ clientMasterUi: clientMasterUi }, clientMasterUi(require('./clientMasterWindows')));

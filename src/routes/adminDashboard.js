@@ -314,6 +314,11 @@ const ALL_CASES_BODY_HTML = `
       <!-- The filters are in the column headers, like every list (2026-11-05): listSpecs.js casesListSpec/Opts. -->
       <div class="table-toolbar">
         <input type="search" class="search-box" id="search-box" placeholder="Search by client, case ref, type, officer…" aria-label="Search cases by client, case reference, type or Support Officer" autocomplete="off" />
+        <!-- Every tab's rows sit under group headings that open and close (2026-11-12): these two act on all of them. -->
+        <span class="cm-oc" id="cm-oc" role="group" aria-label="Groups in the table">
+          <button type="button" class="cm-oc-b" id="cm-open-all" onclick="cmGrpAll(true)" title="Open every group in the table">Open all</button>
+          <button type="button" class="cm-oc-b" id="cm-close-all" onclick="cmGrpAll(false)" title="Close every group: only the headings and their counts stay">Close all</button>
+        </span>
         <span class="table-count" id="table-count" aria-live="polite"></span>
       </div>
       <div id="cs-chips" class="q-chips cs-chips" style="display:none" aria-live="polite"></div>
@@ -325,7 +330,6 @@ const ALL_CASES_BODY_HTML = `
         <tbody id="all-cases-body"></tbody>
       </table>
       </div>
-      <div class="pagination" id="pagination"></div>
     </div>
 `;
 
@@ -349,6 +353,14 @@ const CM_CSS = `
     .cm-note { font-size:12px; color:#64748b; }
     .cm-strip { display:flex; flex-wrap:wrap; gap:6px; }
     .cm-st { background:#fff; border:1px solid #e2e8f0; border-radius:999px; padding:3px 11px; font-size:12px; color:#334155; }
+    /* a stage count on Assigning is a button: it opens that stage's group and goes to it */
+    button.cm-st { font-family:inherit; line-height:inherit; cursor:pointer; border-color:#94a3b8; font-weight:600; }
+    button.cm-st::after { content:'›'; margin-left:6px; color:var(--navy); font-weight:700; }   /* reads as a button without hover (phones): the 'waiting for' pills beside it are not */
+    button.cm-st:hover { border-color:var(--navy); background:#f8fafc; }
+    button.cm-st:focus-visible, .cm-oc-b:focus-visible, .cm-grp-b:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }
+    .cm-oc { display:inline-flex; gap:6px; }
+    .cm-oc-b { border:1px solid #e2e8f0; background:#fff; color:var(--navy); border-radius:8px; padding:6px 11px; font:inherit; font-size:12.5px; font-weight:700; cursor:pointer; white-space:nowrap; }
+    .cm-oc-b:hover { border-color:var(--navy); background:#f8fafc; }
     .cm-st b { color:var(--navy); margin-left:2px; font-variant-numeric:tabular-nums; }
     .cm-line { font-size:12.5px; color:#334155; }
     /* Pre-Onboarding "Waiting for" (2026-11-10): the count strip above Assigning and the second line in the Stage cell.
@@ -369,17 +381,31 @@ const CM_CSS = `
     .cm-win-l b, .cm-win-n b { font-variant-numeric:tabular-nums; }
     .cm-win-n { font-size:11.5px; color:#64748b; }
     /* A group heading carries a coloured bar at its start, the way Monday colours its groups: the stage's status colour on a view grouped by stage, navy where the group is not a status. */
-    .data-table tr.cm-grp td { background:#f1f5f9; padding:8px 14px; font-size:12px; color:#334155; border-bottom:1px solid #e2e8f0; box-shadow:inset 4px 0 0 var(--grp, var(--navy)); }
-    .cm-grp.tone-green td, .cm-st.tone-green { --grp:var(--st-green-solid); } .cm-grp.tone-amber td, .cm-st.tone-amber { --grp:var(--st-amber-solid); }
-    .cm-grp.tone-red td, .cm-st.tone-red { --grp:var(--st-red-solid); } .cm-grp.tone-blue td, .cm-st.tone-blue { --grp:var(--st-blue-solid); }
-    .cm-grp.tone-grey td, .cm-st.tone-grey { --grp:var(--st-grey-solid); } .cm-grp.tone-purple td, .cm-st.tone-purple { --grp:var(--st-purple-solid); }
+    .data-table tr.cm-grp td { background:#f8fafc; padding:7px 14px; font-size:12px; color:#334155; border-top:1px solid #e2e8f0; border-bottom:1px solid #e2e8f0; box-shadow:inset 4px 0 0 var(--grp, var(--navy)); cursor:pointer; }
+    .cm-grp.tone-green, .cm-in.tone-green, .cm-st.tone-green { --grp:var(--st-green-solid); } .cm-grp.tone-amber, .cm-in.tone-amber, .cm-st.tone-amber { --grp:var(--st-amber-solid); }
+    .cm-grp.tone-red, .cm-in.tone-red, .cm-st.tone-red { --grp:var(--st-red-solid); } .cm-grp.tone-blue, .cm-in.tone-blue, .cm-st.tone-blue { --grp:var(--st-blue-solid); }
+    .cm-grp.tone-grey, .cm-in.tone-grey, .cm-st.tone-grey { --grp:var(--st-grey-solid); } .cm-grp.tone-purple, .cm-in.tone-purple, .cm-st.tone-purple { --grp:var(--st-purple-solid); }
+    /* Groups open and close (2026-11-12). A CLOSED heading is quiet: a thin grey line, a light background, the chevron pointing right.
+       An OPEN group is marked as one block: its heading has a navy line above and below and a stronger background, the chevron points
+       down, the group's colour runs down the start of every one of its rows, and a navy line closes it under its last row.
+       The chevron and aria-expanded say it too, so it never rests on colour alone. */
+    .data-table tr.cm-grp.open td { background:#e2e8f0; border-top:2px solid var(--navy); border-bottom:1px solid var(--navy); color:var(--navy); }
+    .data-table tr.cm-in td:first-child { box-shadow:inset 4px 0 0 var(--grp, var(--navy)); }
+    .data-table tr.cm-in:hover td:first-child { box-shadow:inset 4px 0 0 var(--grp, var(--navy)), inset 7px 0 0 var(--st-blue-solid); }
+    #all-cases-table tr.cm-in.cm-last td { border-bottom:2px solid var(--navy); }
+    .cm-grp-b { display:inline-flex; align-items:center; gap:8px; border:0; background:none; color:inherit; font:inherit; padding:3px 8px 3px 2px; margin:-3px 0; border-radius:6px; cursor:pointer; white-space:nowrap; }
+    .cm-grp:hover .cm-grp-b b, .cm-grp-b:hover b { text-decoration:underline; }
+    .cm-chev { display:inline-block; width:0; height:0; border-top:5px solid transparent; border-bottom:5px solid transparent; border-left:7px solid #64748b; transition:transform .15s; }
+    .cm-grp.open .cm-chev { transform:rotate(90deg); border-left-color:var(--navy); }
+    @media (prefers-reduced-motion: reduce) { .cm-chev { transition:none; } }
     /* the same colour as a dot in front of the group's count pill above the table */
     .cm-st[class*=tone-]::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--grp); margin-right:6px; }
     .data-table tr.cm-grp:hover td { background:#f1f5f9; }
+    .data-table tr.cm-grp.open:hover td { background:#e2e8f0; }
     /* the heading's words stay in view when the table is scrolled sideways (sticky on the td itself does nothing: it is as wide as the table) */
     .cm-grp-t { position:sticky; left:14px; display:inline-block; white-space:nowrap; }
     .cm-grp-t b { color:var(--navy); }
-    .cm-grp-c { color:#64748b; font-weight:500; }
+    .cm-grp-c { color:#475569; font-weight:500; }
     .cm-type { display:inline-block; border-radius:6px; padding:1px 6px; font-size:10px; font-weight:700; }
     .cm-type.real { background:var(--st-red-bg); color:var(--st-red-fg); }
     .cm-type.imag { background:var(--st-purple-bg); color:var(--st-purple-fg); }
@@ -399,13 +425,14 @@ const CM_CSS = `
     .cm-asg-rm { font-size:12.5px; color:#92400e; margin-top:6px; }
     .cm-asg-rm:empty { display:none; }
     .cm-asg-tell { font-size:12.5px; color:#475569; margin-top:6px; }
-    @media (max-width: 760px) { .cm-print { font-size:16px; } .cm-asg-sel, .cm-asg-dlg .tdlg-btn { font-size:16px; } }
-    /* Print (every view tab): landscape; the tab name, the data time, the counts or windows, and the groups with their counts —
-       without the top bar, the tabs, the filters, the pages, the delete column or any button. */
+    @media (max-width: 760px) { .cm-print { font-size:16px; } .cm-asg-sel, .cm-asg-dlg .tdlg-btn { font-size:16px; } .cm-oc-b { font-size:14px; padding:8px 12px; } .cm-grp-b { padding-top:6px; padding-bottom:6px; margin:-6px 0; } }
+    /* Print (every tab): landscape; the tab name, the data time, the counts or windows, and the groups as they are on screen —
+       an open group with its rows, a closed group as its heading line with its count —
+       without the top bar, the tabs, the filters, the delete column or any button. */
     @page { size: landscape; margin: 10mm; }
     @media print {
       body { background:#fff; }
-      .admin-hdr, .refresh-bar, .view-switch, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .pagination, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop, .cm-assign, .cm-asg-ok, .dlc-btn, .dlc-ok { display:none !important; }
+      .admin-hdr, .refresh-bar, .view-switch, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop, .cm-assign, .cm-asg-ok, .dlc-btn, .dlc-ok { display:none !important; }
       #cs-headrow th:last-child, #all-cases-table td.cm-del { display:none; }
       .wrap { padding:0; }
       .dash-header { margin:0 0 6px; }
@@ -418,6 +445,11 @@ const CM_CSS = `
       .data-table tr.row-red, .data-table tr.row-orange { background:none; }
       tr.cm-grp { break-after:avoid; page-break-after:avoid; }
       .cm-grp-t { position:static; }
+      .cm-chev { display:none; }
+      .cm-grp-b { padding:0; margin:0; }
+      .data-table tr.cm-grp td { cursor:auto; }
+      button.cm-st { border-color:#e2e8f0; font-weight:inherit; }
+      button.cm-st::after { content:none; }
       .cm-head { gap:4px; }
     }
 `;
@@ -955,22 +987,6 @@ function buildDashboardHTML(view = 'cases') {
     .r-bar-fill.low { background: var(--st-red-solid); }
     .r-bar-pct { font-size: 11px; font-weight: 700; color: var(--navy); min-width: 30px; }
 
-    /* ── Pagination ───────────────────────────────────────────────── */
-    .pagination {
-      display: flex; align-items: center; justify-content: center;
-      gap: 6px; padding: 16px; border-top: 1px solid #f1f5f9; background: #fafbfc;
-    }
-    .pg-btn {
-      padding: 6px 13px; border: 1.5px solid #e2e8f0; border-radius: 8px;
-      font-size: 12px; font-weight: 600; background: white;
-      cursor: pointer; font-family: inherit;
-      transition: all .15s; color: #475569;
-    }
-    .pg-btn:hover:not(:disabled) { border-color: var(--navy); color: var(--navy); background: #f0f4f8; }
-    .pg-btn:disabled { opacity: .35; cursor: not-allowed; }
-    .pg-btn.active { background: var(--navy); color: white; border-color: var(--navy); }
-    .pg-info { font-size: 12px; color: #94a3b8; font-weight: 600; }
-
     /* ── Refresh bar ─────────────────────────────────────────────── */
     .refresh-bar {
       background: linear-gradient(135deg, #1a3358 0%, #2d5282 100%);
@@ -1094,12 +1110,10 @@ ${buildNavHeader(isSummary ? 'summary' : 'dashboard')}
 var _data     = null;
 // Which view this page is — emitted by the server, never sniffed from the DOM.
 var VIEW = ${JSON.stringify(view)};
-var _filtered = [];
 // Newest case first (user directive 2026-08-05) — the list's default sort, in
-// listSpecs.js casesListSpec (createdAt, descending). Clicking a column name
-// still re-sorts; the filters are in the column headers (2026-11-05).
-var _page     = 1;
-var PAGE_SIZE = 25;
+// listSpecs.js casesListSpec (createdAt, descending): on the All tab that is the order
+// inside each board group. Clicking a column name still re-sorts; the filters are in
+// the column headers (2026-11-05). No pages: every tab is grouped (2026-11-12).
 
 var HEALTH_ORDER = { Red: 0, Orange: 1, Green: 2 };
 // The Client Master view tabs (block 3) — from clientMasterViews.pageViews(): key, label, hint, grouping, order.
@@ -1934,10 +1948,12 @@ function initAllCasesTable(data) {
 }
 
 /* ── The view tabs (block 3) ──────────────────────────────────────
-   All = every case you may see, newest first, 25 a page (as before). The other tabs are
-   exact copies of three Monday views on the Client Master board (the same rows, grouping
-   and order — worked out on the server, clientMasterViews.js): grouped, all rows on one
-   page. The counts above the table come from the rows on screen and never change them.
+   All = every case you may see, grouped like Monday's main table (by board group, in the
+   board's order; newest first inside a group). The other tabs are exact copies of three
+   Monday views on the Client Master board (the same rows, grouping and order — worked out
+   on the server, clientMasterViews.js). No tab has pages. Every group opens and closes
+   (the groups code is further down). The counts above the table come from the rows that
+   match — in an open group or a closed one — and never change them.
    A link opens a tab: /admin/dashboard?view=assigning (deadlines, eeita; all).
    A tab taken off the page (CM_GONE: Mahesh, 2026-11-12) opens its nearest tab instead: an old
    link, and a browser tab that was left on it (the kept tab in sessionStorage). */
@@ -2005,17 +2021,65 @@ function cmWaitLater() {
   }, 45000);
 }
 
-// The shared engine hands over the filtered, sorted cases. A new filter, sort or
-// tab goes back to page 1; new data keeps the page (pulled back if the list shrank).
+// The shared engine hands over the filtered, sorted cases. Every tab is drawn in groups, with no pages.
 function renderCasesList(rows, why, st, h) {
-  _filtered = rows;
-  if (why !== 'data') _page = 1;
   var v = cmView(st);
   if (v) return renderViewTable(v, rows, st, !(h && h.defaultSort === false));
-  var pages = Math.max(1, Math.ceil(_filtered.length / PAGE_SIZE));
-  if (_page > pages) _page = pages;
-  renderCmHead(null, rows, st);
-  renderTablePage();
+  // All: the board's own groups; inside a group the engine's order (newest first, or the column sort chosen)
+  return renderViewTable(CMU.ALL_VIEW, rows, st, false, h && typeof h.total === 'number' ? h.total : rows.length);
+}
+
+/* ── Groups that open and close (team meeting 2026-11-10, items 10 and 11) ──
+   What a person opens or closes is kept per tab for this browser tab (Sign Out forgets it, with the lists' filters),
+   by the group's key — never its title. With a search or a filter on, every group with a match is open; what is
+   closed or opened then is only for that search (CM_TEMP) and the kept choices are left alone. The rules are
+   in clientMasterUi.js (openMap); this is only the keeping and the redraw. */
+var CM_GRP_KEY = 'tdot_list_cases_groups';
+var CM_OPEN = null;                       // { tab key: { group id: true | false } } — the kept choices
+var CM_TEMP = { sig: null, map: {} };     // the choices under the search / filter now on
+var CM_LAST = null;                       // the last draw: what a redraw after open / close needs
+function cmKept() {
+  if (CM_OPEN) return CM_OPEN;
+  var raw = null;
+  try { raw = JSON.parse(window.sessionStorage.getItem(CM_GRP_KEY) || 'null'); } catch (e) { raw = null; }
+  CM_OPEN = CMU.normalizeKept(raw);
+  return CM_OPEN;
+}
+function cmKeptSave() {
+  if (window.TDOT_SIGNED_OUT) return;
+  try { window.sessionStorage.setItem(CM_GRP_KEY, JSON.stringify(CM_OPEN || {})); } catch (e) {}
+}
+function cmGroupState(v, groups, st) {
+  var filtered = CMU.hasUserFilter(st, 'view');
+  var sig = filtered ? CMU.filterSig(st, 'view', v.key) : null;
+  if (CM_TEMP.sig !== sig) CM_TEMP = { sig: sig, map: {} };   // another search or filter (or none): the temporary choices go
+  return { filtered: filtered, open: CMU.openMap(v, groups, { kept: cmKept()[v.key], filtered: filtered, temp: CM_TEMP.map, today: cmToday() }) };
+}
+function cmSetOpen(ids, open) {
+  var L = CM_LAST;
+  if (!L) return;
+  if (L.filtered) CM_TEMP.map = CMU.setOpen(CM_TEMP.map, ids, open);
+  else { var k = cmKept(); k[L.v.key] = CMU.setOpen(k[L.v.key], ids, open); cmKeptSave(); }
+  renderViewTable(L.v, L.rows, L.st, L.mondayOrder, L.total);
+}
+function cmGrpToggle(id) { var L = CM_LAST; if (L) cmSetOpen([String(id)], L.open[String(id)] !== true); }
+function cmGrpAll(open) { var L = CM_LAST; if (L) cmSetOpen(L.ids, open === true); }
+function cmGrpButton(id) {
+  var list = document.querySelectorAll('#all-cases-body .cm-grp-b');
+  for (var i = 0; i < list.length; i++) if (list[i].getAttribute('data-gk') === String(id)) return list[i];
+  return null;
+}
+/* A stage count above Assigning: open that stage's group if it is closed, bring its heading into view, put the focus on it. */
+function cmGrpGo(id) {
+  var L = CM_LAST;
+  if (!L) return;
+  if (L.open[String(id)] !== true) cmSetOpen([String(id)], true);
+  var b = cmGrpButton(id);
+  if (!b) return;
+  var calm = false;
+  try { calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { calm = true; }
+  try { b.focus({ preventScroll: true }); } catch (e) { b.focus(); }
+  try { b.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'center' }); } catch (e) { b.scrollIntoView(); }
 }
 
 /* The coloured bar on a group heading (the look only): the stage's status colour where the view groups by Case Stage;
@@ -2028,40 +2092,60 @@ function cmGroupTone(v, g) {
   return '';
 }
 
-/* A view tab: Monday's grouping, Monday's order inside (unless a column sort is chosen — mondayOrder false), no pages. */
-function renderViewTable(v, rows, st, mondayOrder) {
+/* A tab's table: the groups (Monday's grouping; on All the board's own groups), each under a heading that opens and closes it.
+   Inside a group: Monday's order on a view tab (unless a column sort is chosen — mondayOrder false), the engine's order on All.
+   No pages. Only the rows of OPEN groups are drawn; the counts are of every matching row, open or closed.
+   total (All only) = every case this person may see. */
+function renderViewTable(v, rows, st, mondayOrder, total) {
+  var isAll = v === CMU.ALL_VIEW;
   var ordered = mondayOrder ? CMU.viewOrder(v, rows) : rows;
   var groups = CMU.groupRows(v, ordered, (_data && _data.meta) || null);
   var tbody = document.getElementById('all-cases-body');
+  // a redraw must not take the focus off a heading someone is on (open / close with the keyboard, new data)
+  var act = document.activeElement, back = act && act.getAttribute && act.className === 'cm-grp-b' ? act.getAttribute('data-gk') : null;
   tbody.innerHTML = '';
-  var inView = cmInView(v.key);
-  renderCmHead(v, rows, st, groups, inView);
-  document.getElementById('pagination').innerHTML = '';
+  var inView = isAll ? total : cmInView(v.key);
+  var gs = cmGroupState(v, groups, st);
+  CM_LAST = { v: v, rows: rows, st: st, mondayOrder: mondayOrder, total: total, filtered: gs.filtered, open: gs.open,
+    ids: groups.map(function(g) { return CMU.groupId(g.key); }) };
+  renderCmHead(isAll ? null : v, rows, st, groups, inView);
+  var oc = document.getElementById('cm-oc');
+  if (oc) oc.style.display = rows.length ? '' : 'none';
   if (!rows.length) {
     var tr = document.createElement('tr');
     tr.innerHTML = '<td colspan="' + CS_COLSPAN + '" style="text-align:center;color:var(--muted);padding:32px">' +
-      (inView ? 'No cases match the current filters.' : 'No cases in the ' + escHtml(v.label) + ' view right now.') + '</td>';
+      (inView || isAll ? 'No cases match the current filters.' : 'No cases in the ' + escHtml(v.label) + ' view right now.') + '</td>';
     tbody.appendChild(tr);
     return { shown: 0, total: inView };
   }
-  var today = cmToday(), deadlineTab = !!v.deadlineBox;
+  var today = cmToday(), deadlineTab = !!v.deadlineBox, rowView = isAll ? null : v;
   groups.forEach(function(g) {
+    var gid = CMU.groupId(g.key), open = gs.open[gid] === true, tone = cmGroupTone(v, g), n = g.rows.length;
     var h = document.createElement('tr');
-    h.className = 'cm-grp' + cmGroupTone(v, g);
+    h.className = 'cm-grp ' + (open ? 'open' : 'shut') + tone;
     var extra = '';
     if (deadlineTab) {
       var tc = CMU.typeCounts(g.rows);
       extra = ' <span class="cm-grp-c">— Real ' + tc.real + ' · Imaginary ' + tc.imaginary + ' · Not recorded ' + tc.none + '</span>';
     }
-    h.innerHTML = '<td colspan="' + CS_COLSPAN + '"><span class="cm-grp-t"><b>' + escHtml(g.title) + '</b> · ' + g.rows.length + extra + '</span></td>';
+    h.innerHTML = '<td colspan="' + CS_COLSPAN + '"><span class="cm-grp-t">' +
+      '<button type="button" class="cm-grp-b" data-gk="' + escHtml(gid) + '" aria-expanded="' + (open ? 'true' : 'false') + '" aria-label="' + escHtml(CMU.groupLabel(g.title, n, open)) + '">' +
+      '<span class="cm-chev" aria-hidden="true"></span><span><b>' + escHtml(g.title) + '</b> · <span class="cm-grp-n">' + n + '</span></span></button>' + extra + '</span></td>';
+    h.onclick = function() { cmGrpToggle(gid); };   // the whole heading line; Enter / Space on its button arrive here as a click too
     tbody.appendChild(h);
-    g.rows.forEach(function(c) { tbody.appendChild(caseRow(c, v, today)); });
+    if (!open) return;
+    g.rows.forEach(function(c, i) {
+      var r = caseRow(c, rowView, today);
+      r.className = (r.className ? r.className + ' ' : '') + 'cm-in' + tone + (i === n - 1 ? ' cm-last' : '');
+      tbody.appendChild(r);
+    });
   });
+  if (back !== null) { var nb = cmGrpButton(back); if (nb) { try { nb.focus({ preventScroll: true }); } catch (e) { nb.focus(); } } }
   return { shown: rows.length, total: inView };
 }
 
 /* Above the table, on a view tab only: the tab name + the data time + Print, the Filtered line,
-   then Assigning's stage counts and no-officer line, or the half-month windows (Deadlines). */
+   then Assigning's stage counts (buttons that go to the stage's group) and no-officer line, or the half-month windows (Deadlines). */
 function renderCmHead(v, rows, st, groups, inView) {
   var el = document.getElementById('cm-head');
   if (!el) return;
@@ -2074,8 +2158,9 @@ function renderCmHead(v, rows, st, groups, inView) {
   if (fl) h += '<div class="cm-filtered" id="cm-filtered">' + escHtml(fl.text) + '<span class="cm-clear-w"> · <button type="button" class="cm-clear" id="cm-clear" onclick="CasesTable.clearFilters()">Clear filters</button></span></div>';
   if (_data && _data.viewer && _data.viewer.scope === 'assigned') h += '<div class="cm-note">Showing only your cases; ask an admin to see everyone’s.</div>';
   if (v.stageStrip) {
-    h += '<div class="cm-strip" id="cm-strip">' + (groups || []).map(function(g) {
-      return '<span class="cm-st' + (typeof cmGroupTone === 'function' ? cmGroupTone(v, g) : '') + '">' + escHtml(g.title) + ' <b>' + g.rows.length + '</b></span>';
+    // each stage count is a button (2026-11-12): it opens that stage's group and goes to its heading
+    h += '<div class="cm-strip" id="cm-strip" role="group" aria-label="Cases by stage: press a stage to go to its group">' + (groups || []).map(function(g) {
+      return '<button type="button" class="cm-st' + (typeof cmGroupTone === 'function' ? cmGroupTone(v, g) : '') + '" data-go="' + escHtml(CMU.groupId(g.key)) + '" onclick="cmGrpGo(this.dataset.go)" title="Go to this group in the table (opens it if it is closed)">' + escHtml(g.title) + ' <b>' + g.rows.length + '</b></button>';
     }).join('') + '</div>';
     var no = CMU.noOfficerCount(rows, CM_PRE_ONBOARDING);
     h += '<div class="cm-line" id="cm-noofficer">No Support Officer: <b>' + no.n + '</b>' + (no.preOnboarding ? ' (' + no.preOnboarding + ' of them Pre-Onboarding)' : '') + '</div>';
@@ -2104,28 +2189,6 @@ function renderCmHead(v, rows, st, groups, inView) {
     }
   }
   el.innerHTML = h;
-}
-
-function renderTablePage() {
-  var start = (_page - 1) * PAGE_SIZE;
-  var end   = start + PAGE_SIZE;
-  var page  = _filtered.slice(start, end);
-
-  var tbody = document.getElementById('all-cases-body');
-  tbody.innerHTML = '';
-
-  if (page.length === 0) {
-    var tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="' + CS_COLSPAN + '" style="text-align:center;color:var(--muted);padding:32px">No cases match the current filters.</td>';
-    tbody.appendChild(tr);
-    renderPagination(0);
-    return;
-  }
-
-  var today = cmToday();
-  page.forEach(function(c) { tbody.appendChild(caseRow(c, null, today)); });
-
-  renderPagination(_filtered.length);
 }
 
 /* One case row. v = the view tab (null on All): there an empty Case Stage and an empty Manager show "—",
@@ -2435,44 +2498,6 @@ function cmDeadlineDlg(itemId) {
     onCurrent: function(cur) { cmDlApply(itemId, cur); },
     focusBack: function() { var nb = document.querySelector('.dlc-btn[data-dl="' + String(itemId) + '"]'); if (nb) nb.focus(); }
   });
-}
-
-function renderPagination(total) {
-  var pages = Math.ceil(total / PAGE_SIZE);
-  var el    = document.getElementById('pagination');
-  el.innerHTML = '';
-  if (pages <= 1) return;
-
-  var prev = document.createElement('button');
-  prev.className = 'pg-btn';
-  prev.textContent = '← Prev';
-  prev.disabled = _page <= 1;
-  prev.onclick = function() { _page--; renderTablePage(); };
-  el.appendChild(prev);
-
-  var start = Math.max(1, _page - 2);
-  var end   = Math.min(pages, _page + 2);
-  for (var i = start; i <= end; i++) {
-    (function(pi) {
-      var btn = document.createElement('button');
-      btn.className = 'pg-btn' + (pi === _page ? ' active' : '');
-      btn.textContent = pi;
-      btn.onclick = function() { _page = pi; renderTablePage(); };
-      el.appendChild(btn);
-    })(i);
-  }
-
-  var info = document.createElement('span');
-  info.className = 'pg-info';
-  info.textContent = 'Page ' + _page + ' of ' + pages;
-  el.appendChild(info);
-
-  var next = document.createElement('button');
-  next.className = 'pg-btn';
-  next.textContent = 'Next →';
-  next.disabled = _page >= pages;
-  next.onclick = function() { _page++; renderTablePage(); };
-  el.appendChild(next);
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────── */

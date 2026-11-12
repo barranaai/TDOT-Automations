@@ -267,7 +267,7 @@ test('the page: renamed Client Master; tabs + header box above the toolbar; ever
 
 test('test 9: the new page code follows the page-script rule — the characters "→ – —" are written as themselves, never as escapes; no backtick, dollar-brace or backslash in what the template adds', async () => {
   const src = fs.readFileSync(require.resolve('../src/routes/adminDashboard'), 'utf8');
-  const block = src.slice(src.indexOf('/* ── The view tabs (block 3)'), src.indexOf('function renderPagination(total) {'));
+  const block = src.slice(src.indexOf('/* ── The view tabs (block 3)'), src.indexOf('/* ── Helpers ─'));
   assert.ok(block.length > 3000, 'the view-tab code is in the page');
   assert.ok(!/[`\\]|\$\{/.test(block), 'no backtick, dollar-brace or backslash inside the template literal');
   assert.ok(block.includes('—') && !/\\u20(13|14)|\\u2192/.test(block));
@@ -287,7 +287,7 @@ test('a view tab draws headings and no pages; the stage / manager blanks show "�
   assert.deepEqual(cmv.pageViews().map((v) => [v.key, v.stageStrip, v.deadlineBox]), [['assigning', true, false], ['deadlines', false, true], ['eeita', false, false]],
     'what each tab adds is data from the server (Assigning: the stage counts; Deadlines: the windows, Real/Imaginary counts and flags)');
   assert.ok(html.includes("if (v) return renderViewTable(v, rows, st, !(h && h.defaultSort === false));"), 'a view tab is drawn by its own function, in Monday\'s order unless a column sort is chosen');
-  assert.ok(html.includes("document.getElementById('pagination').innerHTML = '';"), 'no pages on a view tab');
+  assert.ok(!/pagination|PAGE_SIZE|renderTablePage|pg-btn/.test(html), 'no pages on any tab: the page has no paging code left');
   assert.ok(html.includes("var stage = v && (typeof c.stageIdx !== 'number' || c.stageIdx === CMU.EMPTY) ? cmNoneDash() : escHtml(c.caseStage);"));
   assert.ok(html.includes("var mgr = v && (!c.manager || c.manager === 'Unassigned') ? cmNoneDash() : escHtml(c.manager);"));
   assert.ok(html.includes("if (v && v.deadlineBox) {\n    var f = CMW.flagOf(c, today);"));
@@ -414,4 +414,304 @@ test('a browser tab that was left on the Mahesh tab lands on Deadlines — never
   // a kept tab that stays is untouched; a private window (no storage) opens on All
   const keep = await openClientMaster({ store: { [TAB_KEY]: 'assigning', [STATE_KEY]: JSON.stringify({ sel: { view: ['assigning'] } }) } });
   assert.deepEqual([keep.view, keep.active, keep.rows], [['assigning'], ['assigning'], 'ae']);
+});
+
+/* ── groups that open and close; the All tab grouped by board group (team meeting 2026-11-10, items 10 and 11) ── */
+
+const G = (key, title, n = 1) => ({ key, title, rows: Array.from({ length: n }, (_, i) => ({ id: key + i })) });
+const BOARD = [G('gp', '⏳ Pending — signatures & payment'), G('gl', 'Leads'), G('g11', 'November 2026'), G('g10', 'October 2026'), G('g9', 'September  2026'),
+  G('gc', 'Cancel /Did not retained'), G('g5', 'May 2026'), G('gt', 'TEST'), G('gr', 'Retainers before May 2026')];
+
+test('monthOf: a board group named "<Month> <Year>" is a month (extra spaces, any case, a short name); "Retainers before May 2026", Leads, TEST and the pending group are not', () => {
+  assert.deepEqual(U.monthOf('November 2026'), { y: 2026, m: 11 });
+  assert.deepEqual(U.monthOf('September  2026'), { y: 2026, m: 9 }, 'two spaces, as on the board');
+  assert.deepEqual(U.monthOf('  oCTOBER 2026 '), { y: 2026, m: 10 });
+  assert.deepEqual(U.monthOf('Sept 2026'), { y: 2026, m: 9 });
+  assert.deepEqual(U.monthOf('May 2026'), { y: 2026, m: 5 });
+  for (const t of ['Retainers before May 2026', 'Leads', 'TEST', '⏳ Pending — signatures & payment', 'Cancel /Did not retained', 'New Group', 'Ma 2026', 'November', '2026', 'November 26', 'Novembers 2026', '', null, undefined]) {
+    assert.equal(U.monthOf(t), null, String(t));
+  }
+});
+
+test('the All tab opens on the newest month only: this Toronto month; else the newest month group; else the first group — the view tabs open every group', () => {
+  assert.equal(U.newestMonthId(BOARD, '2026-11-12'), 'g11');
+  assert.equal(U.newestMonthId(BOARD, '2026-09-30'), 'g9', 'the group for the month it is, even when a newer one exists');
+  assert.equal(U.newestMonthId(BOARD, '2026-12-01'), 'g11', 'no December group yet: the newest month there is');
+  assert.equal(U.newestMonthId(BOARD.slice().reverse(), '2027-01-05'), 'g11', 'newest by date, not by place on the board');
+  assert.equal(U.newestMonthId([G('a', 'December 2025'), G('b', 'January 2026')], '2026-06-01'), 'b', 'the year counts before the month');
+  assert.equal(U.newestMonthId([G('gl', 'Leads'), G('gt', 'TEST')], '2026-11-12'), 'gl', 'no month group at all: the first group');
+  assert.equal(U.newestMonthId([], '2026-11-12'), null);
+  assert.deepEqual(U.defaultOpenIds(U.ALL_VIEW, BOARD, '2026-11-12'), ['g11']);
+  assert.deepEqual(U.defaultOpenIds(U.ALL_VIEW, [], '2026-11-12'), []);
+  for (const k of ['assigning', 'deadlines', 'eeita']) assert.deepEqual(U.defaultOpenIds(V[k], [G(1, 'A'), G(12, 'B')], '2026-11-12'), ['1', '12'], k + ': all open, as before');
+  assert.deepEqual([U.ALL_VIEW.key, U.ALL_VIEW.by, U.ALL_VIEW.groupOrder, U.ALL_VIEW.dir], ['all', 'board', 'position', 'ASC'], 'All is grouped like the EE after ITA tab: board groups in board order');
+  assert.ok(!cmv.VIEW_KEYS.includes('all'), 'no Monday view takes the All tab\'s key');
+});
+
+test('openMap: kept choices win over the default, by group key; with a search or filter on every group is open and only that search\'s own choices apply', () => {
+  const open = (o) => Object.entries(U.openMap(U.ALL_VIEW, BOARD, { today: '2026-11-12', ...o })).filter(([, v]) => v).map(([k]) => k);
+  assert.deepEqual(open({}), ['g11']);
+  assert.deepEqual(open({ kept: { g10: true } }), ['g11', 'g10'], 'one more opened: the default month stays open');
+  assert.deepEqual(open({ kept: { g11: false, gl: true } }), ['gl']);
+  assert.deepEqual(open({ kept: { gone: true, g11: 'yes' } }), ['g11'], 'a group no longer there, or a value that is not true / false, changes nothing');
+  // filtered: all open whatever was kept; a group closed under this search stays closed
+  assert.equal(open({ filtered: true, kept: { g11: false, g10: false } }).length, BOARD.length, 'a closed group never hides a match');
+  assert.deepEqual(open({ filtered: true, kept: { g11: false }, temp: { gl: false, gp: false } }), BOARD.map((g) => g.key).filter((k) => k !== 'gl' && k !== 'gp'));
+  assert.deepEqual(open({ filtered: false, temp: { g11: false } }), ['g11'], 'a choice made under a search is not used once the search is off');
+  // a view tab: numbers as keys (stage / phase index) are kept as text
+  const st = U.openMap(V.assigning, [G(12, 'Pre-Onboarding'), G(0, 'Document Collection Started')], { kept: { 12: false } });
+  assert.deepEqual(st, { 12: false, 0: true });
+  assert.equal(Object.keys(U.openMap(V.eeita, [G('', '—')], {}))[0], '', 'a row with no group id still has a group (never dropped)');
+});
+
+test('setOpen / normalizeKept / filterSig / groupLabel: the small rules the page keeps to', () => {
+  const a = { x: true };
+  assert.deepEqual(U.setOpen(a, ['y', 3], false), { x: true, y: false, 3: false });
+  assert.deepEqual(a, { x: true }, 'a copy: the map handed in is not changed');
+  assert.deepEqual(U.setOpen(null, ['y'], true), { y: true });
+  assert.deepEqual(U.normalizeKept({ all: { g: true, h: false, bad: 1 }, deadlines: 'x', eeita: ['a'], assigning: {} }), { all: { g: true, h: false }, assigning: {} });
+  for (const junk of [null, undefined, 'x', 3, [1]]) assert.deepEqual(U.normalizeKept(junk), {});
+  const sig = (st, tab = 'all') => U.filterSig(st, 'view', tab);
+  assert.equal(sig({ q: ' Ann ', sel: { view: ['eeita'] } }), sig({ q: 'ann', sel: {} }), 'the tab choice and the letters\' case are not a new search');
+  assert.notEqual(sig({ q: 'ann' }), sig({ q: 'anna' }));
+  assert.notEqual(sig({ q: 'ann' }), sig({ q: 'ann' }, 'eeita'), 'another tab is another list');
+  assert.notEqual(sig({ sel: { health: ['Red'] } }), sig({ sel: { health: ['Red', 'Green'] } }));
+  assert.equal(sig({ sel: { health: ['Red', 'Green'], manager: ['A'] } }), sig({ sel: { manager: ['A'], health: ['Green', 'Red'], stage: [] } }), 'the order of the choices does not matter');
+  assert.equal(U.groupLabel('November 2026', 28, true), 'November 2026, 28 cases, open — press to close');
+  assert.equal(U.groupLabel('TEST', 1, false), 'TEST, 1 case, closed — press to open');
+});
+
+test('the All tab on the real capture: every row is under its board group, in the board\'s order (like EE after ITA), none dropped', () => {
+  const rows = captureRows();
+  const groups = U.groupRows(U.ALL_VIEW, rows, META);
+  assert.equal(groups.reduce((n, g) => n + g.rows.length, 0), rows.length);
+  const order = META.groups.map((g) => String(g.id));
+  const at = groups.map((g) => order.indexOf(g.key));
+  assert.ok(at.every((i) => i >= 0) && at.every((i, k) => k === 0 || at[k - 1] < i), 'board order');
+  assert.ok(groups.some((g) => U.monthOf(g.title)), 'the month groups are there');
+  // a group the board read does not know goes last, and a failed board read keeps board order
+  const extra = U.groupRows(U.ALL_VIEW, rows.concat([{ id: 'x', groupId: 'group_new', groupTitle: 'December 2026', boardIdx: 99999 }]), META);
+  assert.equal(extra[extra.length - 1].title, 'December 2026');
+  assert.equal(U.groupRows(U.ALL_VIEW, rows, null).reduce((n, g) => n + g.rows.length, 0), rows.length);
+});
+
+/* The page's own drawing code (renderCasesList → renderViewTable, the open / close functions), run on a small made-up page. */
+function fnOf(script, name) {
+  const i = script.indexOf('\nfunction ' + name + '(');
+  assert.ok(i >= 0, name + ' is in the page');
+  const line = script.slice(i + 1, script.indexOf('\n', i + 1));
+  return /\}\s*$/.test(line) ? line : script.slice(i + 1, script.indexOf('\n}\n', i) + 2);
+}
+async function groupsPage({ store = {}, signedOut = false, noStorage = false, today = '2026-11-12' } = {}) {
+  const html = await renderRoute('/');
+  const main = inlineScripts(html).find((s) => s.includes('function renderViewTable('));
+  const kept = new Map(Object.entries(store));
+  const mk = (tag) => {
+    const e = { tag, className: '', style: {}, kids: [], attrs: {}, _html: '', onclick: null,
+      appendChild(c) { this.kids.push(c); }, getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }, setAttribute(k, v) { this.attrs[k] = String(v); },
+      focus() { page.focused = this; }, scrollIntoView(o) { page.scrolled = { el: this, o }; } };
+    Object.defineProperty(e, 'innerHTML', { get() { return this._html; }, set(v) { this._html = v; this.kids = []; } });
+    return e;
+  };
+  const els = { 'all-cases-body': mk('tbody'), 'cm-head': mk('div'), 'cm-oc': mk('span') };
+  const page = { focused: null, scrolled: null, reduced: false };
+  const buttons = () => els['all-cases-body'].kids.filter((k) => /^cm-grp /.test(k.className)).map((k) => {
+    const b = mk('button'); b.className = 'cm-grp-b'; b.attrs['data-gk'] = k.innerHTML.match(/data-gk="([^"]*)"/)[1]; b.row = k; return b;
+  });
+  const win = { TDOT_SIGNED_OUT: signedOut, matchMedia: () => ({ matches: page.reduced }),
+    sessionStorage: noStorage ? { getItem() { throw new Error('no storage'); }, setItem() { throw new Error('no storage'); } }
+      : { getItem: (k) => (kept.has(k) ? kept.get(k) : null), setItem: (k, v) => { kept.set(k, String(v)); } } };
+  const ctx = vm.createContext({ window: win, JSON, String, Object, Array,
+    document: { getElementById: (id) => els[id] || null, createElement: mk, activeElement: null, querySelectorAll: (sel) => { assert.equal(sel, '#all-cases-body .cm-grp-b'); return buttons(); } },
+    CM_VIEWS: cmv.pageViews(), CM_PRE_ONBOARDING: cmv.PRE_ONBOARDING_INDEX, CS_COLSPAN: 15, _data: { meta: META, cases: [] } });
+  const names = ['renderCasesList', 'renderViewTable', 'renderCmHead', 'cmKept', 'cmKeptSave', 'cmGroupState', 'cmSetOpen', 'cmGrpToggle', 'cmGrpAll', 'cmGrpButton', 'cmGrpGo',
+    'cmGroupTone', 'cmViewDef', 'cmView', 'cmInView', 'cmHm', 'cmDataTimeText', 'escHtml'];
+  vm.runInContext(main.match(/var CMW = \(function clientMasterWindows[\s\S]*?\)\(CMW\);/)[0] + '\n' +
+    main.match(/var CM_GRP_KEY = [\s\S]*?var CM_LAST = null;[^\n]*/)[0] + '\n' + names.map((n) => fnOf(main, n)).join('\n') + '\n' +
+    'function cmToday() { return ' + JSON.stringify(today) + '; }\nfunction stageTone() { return "grey"; }\n' +
+    'function caseRow(c, v) { return { className: c.health === "Red" ? "row-red" : "", id: c.id, view: v }; }', ctx);
+  const tb = els['all-cases-body'];
+  const api = {
+    ctx, els, kept, page, html, main,
+    draw(rows, st = { q: '', sel: {} }, h = { total: 100, defaultSort: true }) { ctx._data.cases = rows; return ctx.renderCasesList(rows, 'filter', st, h); },
+    heads: () => tb.kids.filter((k) => /^cm-grp /.test(k.className)),
+    // "title n ▾ / ▸" per heading, with the ids of the rows drawn under it
+    look: () => { const out = []; tb.kids.forEach((k) => { if (/^cm-grp /.test(k.className)) out.push(k.innerHTML.match(/<b>([^<]*)<\/b> · <span class="cm-grp-n">(\d+)/).slice(1).join(' ') + (/ open/.test(k.className) ? ' ▾' : ' ▸')); else out[out.length - 1] += ' ' + k.id; }); return out; },
+    click(title) { const h = api.heads().find((k) => k.innerHTML.includes('<b>' + title + '</b>')); assert.ok(h, title); h.onclick(); },
+    saved: () => JSON.parse(kept.get('tdot_list_cases_groups') || 'null'),
+  };
+  return api;
+}
+const row = (id, groupId, groupTitle, o = {}) => ({ id, groupId, groupTitle, boardIdx: Number(id.replace(/\D/g, '')) || 0, views: [], ...o });
+const ALL_ROWS = [row('n1', 'group_mm8qqjyz', 'November 2026'), row('o2', 'group_mm7qvmt1', 'October 2026'), row('n3', 'group_mm8qqjyz', 'November 2026', { health: 'Red' }),
+  row('l4', 'group_mm2tz8e1', 'Leads'), row('s5', 'group_mm6sykds', 'September  2026'), row('p6', 'group_mm6a68f5', '⏳ Pending — signatures & payment'), row('u7', 'group_unknown', 'Brand new group')];
+
+test('the All tab (the page code): grouped by board group in board order, no pages, only the newest month open — the count is of every matching row, open or closed', async () => {
+  const p = await groupsPage();
+  const out = p.draw(ALL_ROWS, undefined, { total: 718, defaultSort: true });
+  assert.deepEqual(p.look(), ['⏳ Pending — signatures &amp; payment 1 ▸', 'Leads 1 ▸', 'November 2026 2 ▾ n1 n3', 'October 2026 1 ▸', 'September  2026 1 ▸', 'Brand new group 1 ▸']);
+  assert.deepEqual({ ...out }, { shown: 7, total: 718 }, 'six of the seven rows are in closed groups and are still counted');
+  assert.equal(p.els['cm-head'].style.display, 'none', 'the box above the table stays a view-tab thing');
+  // the rows of the All tab are drawn as before (no view), bound to their group, the last one closing it
+  const rows = p.els['all-cases-body'].kids.filter((k) => k.id);
+  assert.deepEqual(rows.map((r) => [r.id, r.view, r.className]), [['n1', null, 'cm-in'], ['n3', null, 'row-red cm-in cm-last']]);
+  // a heading: a real button with the state said three ways (class, aria-expanded, the spoken name), the count, the tone kept
+  const [pend, , nov] = p.heads();
+  assert.equal(nov.className, 'cm-grp open');
+  assert.equal(pend.className, 'cm-grp shut tone-amber');
+  assert.ok(nov.innerHTML.includes('<button type="button" class="cm-grp-b" data-gk="group_mm8qqjyz" aria-expanded="true" aria-label="November 2026, 2 cases, open — press to close"><span class="cm-chev" aria-hidden="true"></span>'), nov.innerHTML);
+  assert.ok(pend.innerHTML.includes('aria-expanded="false" aria-label="⏳ Pending — signatures &amp; payment, 1 case, closed — press to open"'));
+  assert.ok(nov.innerHTML.startsWith('<td colspan="15"><span class="cm-grp-t">'), 'the heading words stay at the start when the table scrolls sideways');
+  // a column sort is kept inside each group (the engine's order is not touched)
+  p.draw([ALL_ROWS[2], ALL_ROWS[1], ALL_ROWS[0]], undefined, { total: 3, defaultSort: false });
+  assert.deepEqual(p.look(), ['November 2026 2 ▾ n3 n1', 'October 2026 1 ▸']);
+  // in a month with no group of its own, the newest month there is; with no month group, the first group
+  const dec = await groupsPage({ today: '2026-12-02' });
+  dec.draw(ALL_ROWS);
+  assert.deepEqual(dec.look().filter((t) => t.includes('▾')), ['November 2026 2 ▾ n1 n3']);
+  const none = await groupsPage();
+  none.draw([ALL_ROWS[3], ALL_ROWS[6]]);
+  assert.deepEqual(none.look(), ['Leads 1 ▾ l4', 'Brand new group 1 ▸']);
+  // nothing matches: the usual line, and no Open all / Close all to press
+  const empty = p.draw([], { q: 'zzz', sel: {} }, { total: 718 });
+  assert.deepEqual({ ...empty }, { shown: 0, total: 718 });
+  assert.ok(p.els['all-cases-body'].kids[0].innerHTML.includes('No cases match the current filters.'));
+  assert.equal(p.els['cm-oc'].style.display, 'none');
+});
+
+test('opening and closing: a click on the heading, Open all, Close all — kept per tab by group id for this browser tab, and back after a redraw or new data', async () => {
+  const p = await groupsPage();
+  p.draw(ALL_ROWS);
+  p.click('October 2026');
+  assert.deepEqual(p.look().filter((t) => t.includes('▾')), ['November 2026 2 ▾ n1 n3', 'October 2026 1 ▾ o2']);
+  assert.deepEqual(p.saved(), { all: { group_mm7qvmt1: true } }, 'kept by the board group id, not its title');
+  p.click('November 2026');
+  assert.deepEqual(p.look().filter((t) => t.includes('▾')), ['October 2026 1 ▾ o2']);
+  assert.deepEqual(p.saved(), { all: { group_mm7qvmt1: true, group_mm8qqjyz: false } });
+  // new data (a refresh, after Assign… or a deadline change the list is set again): the same groups are open; a renamed group keeps its state
+  p.draw(ALL_ROWS.map((r) => (r.id === 'o2' ? { ...r, groupTitle: 'Oct 2026 (renamed)' } : r)));
+  assert.deepEqual(p.look().filter((t) => t.includes('▾')), ['Oct 2026 (renamed) 1 ▾ o2']);
+  // Close all / Open all
+  p.ctx.cmGrpAll(false);
+  assert.ok(p.look().every((t) => t.endsWith('▸')) && p.look().length === 6, 'closed: every heading still there with its count');
+  p.ctx.cmGrpAll(true);
+  assert.deepEqual(p.look().map((t) => t.split(' ▾')[1].trim()), ['p6', 'l4', 'n1 n3', 'o2', 's5', 'u7']);
+  // a new browser page in the same tab reads the kept choices; another tab of the page has its own
+  const again = await groupsPage({ store: { tdot_list_cases_groups: JSON.stringify({ all: { group_mm8qqjyz: false, group_mm2tz8e1: true }, eeita: { group_mm8qqjyz: false } }) } });
+  again.draw(ALL_ROWS);
+  assert.deepEqual(again.look().filter((t) => t.includes('▾')), ['Leads 1 ▾ l4']);
+  const ee = ALL_ROWS.slice(0, 3).map((r) => ({ ...r, views: ['eeita'] }));
+  again.draw(ee, { q: '', sel: { view: ['eeita'] } });
+  assert.deepEqual(again.look(), ['November 2026 2 ▸', 'October 2026 1 ▾ o2'], 'EE after ITA: all open but the one this person closed there');
+  assert.equal(again.els['cm-head'].style.display, '', 'a view tab keeps its box above the table');
+  // the view tabs open with every group open, as before, and draw their rows as view rows
+  const fresh = await groupsPage();
+  fresh.draw(ee, { q: '', sel: { view: ['eeita'] } });
+  assert.deepEqual(fresh.look(), ['November 2026 2 ▾ n1 n3', 'October 2026 1 ▾ o2']);
+  assert.equal(fresh.els['all-cases-body'].kids.find((k) => k.id === 'n1').view.key, 'eeita');
+  // kept junk, no storage (a private window) and Sign Out: the page still works; after Sign Out nothing is written
+  const junk = await groupsPage({ store: { tdot_list_cases_groups: '{not json' } });
+  junk.draw(ALL_ROWS);
+  assert.deepEqual(junk.look().filter((t) => t.includes('▾')), ['November 2026 2 ▾ n1 n3']);
+  const priv = await groupsPage({ noStorage: true });
+  priv.draw(ALL_ROWS); priv.click('Leads');
+  assert.deepEqual(priv.look().filter((t) => t.includes('▾')), ['Leads 1 ▾ l4', 'November 2026 2 ▾ n1 n3'], 'kept in memory for this page');
+  const out = await groupsPage({ signedOut: true });
+  out.draw(ALL_ROWS); out.click('Leads');
+  assert.equal(out.saved(), null);
+  assert.ok(S.casesListOpts({}).key === 'tdot_list_cases' && p.ctx.CM_GRP_KEY.indexOf('tdot_list_') === 0, 'under the lists\' prefix: Sign Out forgets it with the filters');
+});
+
+test('a search or a filter: a closed group never hides a match — every group with a match is open; closing then is only for that search; the kept choices come back unchanged', async () => {
+  const p = await groupsPage();
+  p.draw(ALL_ROWS);
+  p.click('November 2026');                       // kept: November closed → nothing open
+  assert.ok(p.look().every((t) => t.endsWith('▸')));
+  const keptBefore = JSON.stringify(p.saved());
+  const hits = [ALL_ROWS[1], ALL_ROWS[2], ALL_ROWS[4]];
+  const out = p.draw(hits, { q: 'ann', sel: {} }, { total: 718 });
+  assert.deepEqual(p.look(), ['November 2026 1 ▾ n3', 'October 2026 1 ▾ o2', 'September  2026 1 ▾ s5'], 'all three open, also the one closed by hand before');
+  assert.deepEqual({ ...out }, { shown: 3, total: 718 });
+  p.click('October 2026');                        // a temporary choice
+  assert.deepEqual(p.look(), ['November 2026 1 ▾ n3', 'October 2026 1 ▸', 'September  2026 1 ▾ s5']);
+  p.draw(hits, { q: 'ann', sel: {} });           // the same search drawn again (new data): the choice holds
+  assert.equal(p.look()[1], 'October 2026 1 ▸');
+  p.ctx.cmGrpAll(false);
+  assert.ok(p.look().every((t) => t.endsWith('▸')));
+  assert.equal(JSON.stringify(p.saved()), keptBefore, 'nothing done under a search is kept');
+  p.draw(hits, { q: 'anna', sel: {} });          // the search changes: every match is on show again
+  assert.ok(p.look().every((t) => t.includes('▾')));
+  p.click('September  2026');
+  p.draw(hits, { q: '', sel: { health: ['Red'] } });   // a filter instead of a search: the same rule
+  assert.ok(p.look().every((t) => t.includes('▾')));
+  p.draw(ALL_ROWS, { q: '', sel: {} });          // cleared: as it was left before the search
+  assert.ok(p.look().every((t) => t.endsWith('▸')) && p.look().length === 6);
+  assert.equal(JSON.stringify(p.saved()), keptBefore);
+  p.draw(hits, { q: 'ann', sel: {} });           // the first search again: its old temporary choices are gone
+  assert.ok(p.look().every((t) => t.includes('▾')));
+  // the tab alone is not a filter
+  const q = await groupsPage();
+  q.draw(ALL_ROWS.map((r) => ({ ...r, views: ['eeita'] })), { q: '', sel: { view: ['eeita'] } });
+  q.click('Leads');
+  assert.deepEqual(q.saved(), { eeita: { group_mm2tz8e1: false } });
+});
+
+test('Assigning: each stage count is a button that opens its group, brings the heading into view and puts the focus on it; Deadlines keeps its Real / Imaginary counts on a closed heading', async () => {
+  const p = await groupsPage();
+  const a = [{ id: 'a1', stageIdx: 12, caseStage: 'Pre-Onboarding', views: ['assigning'], boardIdx: 1 }, { id: 'a2', stageIdx: 0, caseStage: 'Document Collection Started', views: ['assigning'], boardIdx: 2 },
+    { id: 'a3', stageIdx: 12, caseStage: 'Pre-Onboarding', views: ['assigning'], boardIdx: 3 }];
+  const st = { q: '', sel: { view: ['assigning'] } };
+  p.draw(a, st);
+  const strip = p.els['cm-head'].innerHTML.match(/<div class="cm-strip" id="cm-strip"[^>]*>(.*?)<\/div>/)[1];
+  const btns = [...strip.matchAll(/<button type="button" class="cm-st tone-grey" data-go="(\d+)" onclick="cmGrpGo\(this\.dataset\.go\)" title="[^"]*">([^<]*) <b>(\d+)<\/b><\/button>/g)].map((m) => m.slice(1).join('|'));
+  assert.equal(btns.length, 2, strip);
+  assert.ok(btns.includes('12|Pre-Onboarding|2') && btns.some((b) => b.startsWith('0|')), 'a button per stage, keyed by the stage index, with its count');
+  assert.ok(!/<span class="cm-st/.test(strip), 'no plain-text count left in the stage strip');
+  p.click('Pre-Onboarding');
+  assert.ok(p.look().some((t) => t === 'Pre-Onboarding 2 ▸'));
+  p.ctx.cmGrpGo('12');
+  assert.ok(p.look().some((t) => t === 'Pre-Onboarding 2 ▾ a1 a3'), 'opened');
+  assert.deepEqual(p.saved(), { assigning: { 12: true } }, 'by the stage index');
+  assert.equal(p.page.focused.attrs['data-gk'], '12');
+  assert.deepEqual([p.page.scrolled.el.attrs['data-gk'], p.page.scrolled.o.behavior, p.page.scrolled.o.block], ['12', 'smooth', 'center']);
+  p.page.reduced = true;
+  p.ctx.cmGrpGo('0');
+  assert.deepEqual([p.page.scrolled.el.attrs['data-gk'], p.page.scrolled.o.behavior], ['0', 'auto'], 'no gliding for someone who asked for less motion');
+  assert.ok(p.look().some((t) => t.startsWith('Document Collection Started 1 ▾')), 'an open group stays open');
+  p.ctx.cmGrpGo('999');   // a count whose group is not on screen any more: nothing happens, nothing breaks
+  // the "waiting for" strip stays plain text
+  assert.ok(p.main.includes("return '<span class=\"cm-st\" data-wait=\"'"));
+  // a heading someone is on keeps the focus through a redraw (the keyboard: Enter closes, Enter opens again)
+  p.ctx.document.activeElement = { className: 'cm-grp-b', getAttribute: () => '12' };
+  p.page.focused = null;
+  p.ctx.cmGrpToggle('12');
+  assert.equal(p.page.focused.attrs['data-gk'], '12');
+  p.ctx.document.activeElement = null;
+  // Deadlines: the extra counts sit beside the button, whether the group is open or closed
+  const d = await groupsPage();
+  const dl = [{ id: 'd1', phaseIdx: 1, phase: 'Phase 1', views: ['deadlines'], deadlineType: 'Deadline', actualDeadline: '2026-12-01' }, { id: 'd2', phaseIdx: 1, phase: 'Phase 1', views: ['deadlines'] }];
+  d.draw(dl, { q: '', sel: { view: ['deadlines'] } });
+  d.click('Phase 1');
+  const head = d.heads()[0].innerHTML;
+  assert.deepEqual(d.look(), ['Phase 1 2 ▸']);
+  assert.match(head, /<\/button> <span class="cm-grp-c">— Real \d · Imaginary \d · Not recorded \d<\/span><\/span><\/td>$/);
+});
+
+test('the look and the print: an open group is marked in navy and bound to its rows, a closed one is quiet; print shows what is on screen; Open all / Close all sit above the table', async () => {
+  const html = await renderRoute('/');
+  assert.ok(html.includes('.data-table tr.cm-grp.open td { background:#e2e8f0; border-top:2px solid var(--navy); border-bottom:1px solid var(--navy); color:var(--navy); }'));
+  assert.ok(html.includes('.data-table tr.cm-grp td { background:#f8fafc; padding:7px 14px; font-size:12px; color:#334155; border-top:1px solid #e2e8f0; border-bottom:1px solid #e2e8f0; box-shadow:inset 4px 0 0 var(--grp, var(--navy)); cursor:pointer; }'));
+  assert.ok(html.includes('.data-table tr.cm-in td:first-child { box-shadow:inset 4px 0 0 var(--grp, var(--navy)); }'), 'the group\'s colour runs down its rows');
+  assert.ok(html.includes('#all-cases-table tr.cm-in.cm-last td { border-bottom:2px solid var(--navy); }'), 'and a navy line closes it');
+  assert.ok(html.includes('.cm-grp.open .cm-chev { transform:rotate(90deg);'), 'not by colour alone: the chevron turns');
+  assert.ok(html.includes('@media (prefers-reduced-motion: reduce) { .cm-chev { transition:none; } }'));
+  assert.ok(html.includes('button.cm-st:focus-visible, .cm-oc-b:focus-visible, .cm-grp-b:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }'));
+  assert.ok(html.includes('.cm-grp.tone-amber, .cm-in.tone-amber, .cm-st.tone-amber { --grp:var(--st-amber-solid); }'), 'the group colours are kept, and reach the rows');
+  const print = html.slice(html.indexOf('@media print {', html.indexOf('@page { size: landscape')));
+  assert.ok(print.slice(0, 1800).includes('.cm-chev { display:none; }') && print.slice(0, 400).includes('.table-toolbar,'), 'print: no chevron, no Open all / Close all');
+  const bar = html.slice(html.indexOf('<div class="table-toolbar">'), html.indexOf('id="cs-chips"'));
+  assert.ok(bar.includes('<button type="button" class="cm-oc-b" id="cm-open-all" onclick="cmGrpAll(true)"') && bar.includes('>Open all</button>'));
+  assert.ok(bar.includes('<button type="button" class="cm-oc-b" id="cm-close-all" onclick="cmGrpAll(false)"') && bar.includes('>Close all</button>'));
+  assert.ok(bar.indexOf('id="search-box"') < bar.indexOf('id="cm-oc"') && bar.indexOf('id="cm-oc"') < bar.indexOf('id="table-count"'));
+  assert.ok(!/id="cm-oc"|\.cm-grp-b \{/.test(await renderRoute('/summary')), 'the Summary page has neither the buttons nor the look');
 });
