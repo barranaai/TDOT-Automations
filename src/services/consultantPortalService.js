@@ -2020,14 +2020,16 @@ const { isDirectConsult } = require('../utils/directConsult');   // a hand-added
 // Source options are the EXISTING board labels only (no label minting): the
 // "Source / Reference" list in config/leadSources.js (team meeting 2026-11-04 —
 // it added Website, the social sites, the referral kinds and three named
-// referrers; each one was added as a Monday label first).
+// referrers; each one was added as a Monday label first). The three named
+// referrers were taken off the list on 2026-11-12 (their labels stay on Monday).
 const LEAD_SRC = require('../../config/leadSources');
 const STAFF_LEAD_SOURCES = LEAD_SRC.LEAD_SOURCES;
 // The same list on the lead page's Edit basics box (Website is in it).
 const BASIC_SOURCES = LEAD_SRC.LEAD_SOURCES;
 // "Added by staff" for the lead page's Intake archive line: every staff choice
 // except Website (a website lead with no archive found reads "Not found").
-const isStaffSource = (src) => { const s = String(src || '').trim(); return s !== 'Website' && STAFF_LEAD_SOURCES.includes(s); };
+// A source no longer offered (config RETIRED_LEAD_SOURCES) was still a staff choice when it was picked.
+const isStaffSource = (src) => { const s = String(src || '').trim(); return s !== 'Website' && (STAFF_LEAD_SOURCES.includes(s) || LEAD_SRC.RETIRED_LEAD_SOURCES.includes(s)); };
 
 /**
  * Where the client is now (Add-lead group, 2026-10-15): it decides the HST on

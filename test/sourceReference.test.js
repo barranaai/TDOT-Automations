@@ -32,7 +32,10 @@ test('the list: every choice is an existing board label (exact spelling), no dup
   for (const s of SRC.LEAD_SOURCES) assert.ok(BOARD_LABELS_2026_11_04.includes(s), `"${s}" is not a label on the board — add it on Monday first`);
   assert.equal(new Set(SRC.LEAD_SOURCES).size, SRC.LEAD_SOURCES.length);
   assert.ok(!SRC.LEAD_SOURCES.includes('Direct Retainer'));
-  assert.deepEqual(BOARD_LABELS_2026_11_04.filter((l) => l !== 'Direct Retainer').sort(), [...SRC.LEAD_SOURCES].sort(), 'every board label except Direct Retainer is offered');
+  // Faran 2026-11-12 (team meeting 2026-11-10): the three named referrers are no longer offered. Their labels stay on the board.
+  assert.deepEqual([...SRC.RETIRED_LEAD_SOURCES], ['Nasir Khan', 'Aman Galhotra', 'Shafoli Friend']);
+  for (const r of SRC.RETIRED_LEAD_SOURCES) { assert.ok(!SRC.LEAD_SOURCES.includes(r), r + ' is not offered'); assert.ok(BOARD_LABELS_2026_11_04.includes(r), r + ' is still a board label'); }
+  assert.deepEqual(BOARD_LABELS_2026_11_04.filter((l) => l !== 'Direct Retainer' && !SRC.RETIRED_LEAD_SOURCES.includes(l)).sort(), [...SRC.LEAD_SOURCES].sort(), 'every other board label is offered');
   assert.equal(SRC.REFERRAL_EMPLOYEES.length, 14);
   assert.equal(new Set(SRC.REFERRAL_EMPLOYEES).size, 14);
   assert.ok(SRC.LEAD_SOURCES.includes(SRC.EMPLOYEE_REFERRAL));
@@ -50,12 +53,12 @@ test('checkReferral: employee from the list only; a client name required (≤120
   assert.deepEqual(SRC.checkReferral('Client Referral', 'Jane Doe'), { ok: true, referredBy: 'Jane Doe' });
   assert.equal(SRC.checkReferral('Existing Client', '   ').ok, false);
   assert.equal(SRC.checkReferral('Client Referral', 'x'.repeat(121)).ok, false);
-  assert.deepEqual(SRC.checkReferral('Nasir Khan', 'ignored'), { ok: true, referredBy: '' });
+  assert.deepEqual(SRC.checkReferral('Other', 'ignored'), { ok: true, referredBy: '' });
   assert.deepEqual(SRC.checkReferral('Phone', 'ignored'), { ok: true, referredBy: '' });
   assert.equal(SRC.referralKind('Employee Referral'), 'employee');
   assert.equal(SRC.referralKind('Existing Client'), 'client');
   assert.equal(SRC.referralKind('Client Referral'), 'client');
-  assert.equal(SRC.referralKind('Shafoli Friend'), '');
+  assert.equal(SRC.referralKind('Walk-in'), '');
 });
 
 // ── Add lead ────────────────────────────────────────────────────────────────
@@ -75,7 +78,7 @@ function addWorld() {
 test('Add lead: every new choice is accepted; the referrer is written AT creation (never in the best-effort follow-up)', async () => {
   const w = addWorld();
   try {
-    for (const s of ['Facebook', 'TikTok', 'LinkedIn', 'Website', 'Nasir Khan', 'Aman Galhotra', 'Shafoli Friend', 'Other']) {
+    for (const s of ['Facebook', 'TikTok', 'LinkedIn', 'Website', 'Other']) {
       await portal.createStaffLead({ ...VALID, email: `${s.replace(/\W/g, '')}@x.com`, sourceChannel: s, referredBy: 'should be ignored' });
       const c = w.calls.created[w.calls.created.length - 1];
       assert.equal(c.sourceChannel, s);
@@ -202,7 +205,8 @@ test('the lead detail carries referredBy; staffAdded stays false for Website (ar
   const src = fs.readFileSync(require.resolve('../src/services/consultantPortalService'), 'utf8');
   assert.match(src, /referredBy:\s+\(lead\.referredBy \|\| ''\)\.trim\(\)/);
   assert.match(src, /staffAdded:\s+isStaffSource\(lead\.sourceChannel\)/);
-  assert.match(src, /const isStaffSource = \(src\) => \{ const s = String\(src \|\| ''\)\.trim\(\); return s !== 'Website' && STAFF_LEAD_SOURCES\.includes\(s\); \};/);
+  // a source taken off the list (2026-11-12) was still picked by staff: the archive line keeps reading "added by staff"
+  assert.match(src, /const isStaffSource = \(src\) => \{ const s = String\(src \|\| ''\)\.trim\(\); return s !== 'Website' && \(STAFF_LEAD_SOURCES\.includes\(s\) \|\| LEAD_SRC\.RETIRED_LEAD_SOURCES\.includes\(s\)\); \};/);
 });
 
 // ── Walk-in (direct retainer) link keeps a saved referrer ────────────────────
@@ -357,6 +361,7 @@ test('pages: Source / Reference with all choices; the two second questions; scri
     for (const s of SRC.LEAD_SOURCES) assert.ok(html.includes(`<option>${s}</option>`), s);
     for (const e of SRC.REFERRAL_EMPLOYEES) assert.ok(html.includes(`<option>${e}</option>`), e);
     assert.ok(!html.includes('<option>Direct Retainer</option>'));
+    for (const r of SRC.RETIRED_LEAD_SOURCES) assert.ok(!html.includes(r), 'no longer offered anywhere on the page: ' + r);
     assert.match(html, /if \(e\.key === 'Escape' && mode === 'search' && \(!list\.hidden \|\| state\.textContent === SEARCHING\)\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); stopSearch\(\); return; \}/);
     assert.match(html, /fetch\('\/api\/old-clients\/search', \{ method: 'POST'/);
   }
@@ -496,4 +501,26 @@ test('review 3: "1416555" (no space after the 1) finds a number stored without t
   assert.deepEqual([g.length, g[0].consults, g[0].retained], [1, 3, true], 'one person, 3 consultations, retained');
   const d = require('../src/routes/adminLeads').buildLeadDetailHTML('7');
   assert.match(d, /var hadContact=\(\/\^\[\^ @\]\+@\[\^ @\]\+\[\.\]\[\^ @\]\+\$\/\.test\(String\(BD_LOADED\.email\)\.trim\(\)\) \|\| \(pd>=7 && pd<=15\)\);/);
+});
+
+// Faran 2026-11-12 (team meeting 2026-11-10): Nasir Khan, Aman Galhotra and Shafoli Friend are no longer choices.
+test('retired sources: not accepted for a new lead, a direct consultation or a direct retainer client; nothing is created; the other pages do not offer them', async () => {
+  const w = addWorld();
+  try {
+    for (const r of SRC.RETIRED_LEAD_SOURCES) await assert.rejects(portal.createStaffLead({ ...VALID, sourceChannel: r }), (e) => e.badRequest === true && /from the list/.test(e.message), r);
+    assert.equal(w.calls.created.length, 0);
+  } finally { w.done(); }
+  const dq = require('../src/services/directConsultService');
+  const dqSrc = require('fs').readFileSync(require('path').join(__dirname, '../src/services/directConsultService.js'), 'utf8');
+  assert.match(dqSrc, /if \(!LS\.LEAD_SOURCES\.includes\(sourceChannel\)\) return bad\('Choose the source \/ reference from the list\.'\);/);
+  assert.match(dqSrc, /sources: require\('\.\.\/\.\.\/config\/leadSources'\)\.LEAD_SOURCES,/);
+  assert.ok(dq);
+  const portalSrc = require('fs').readFileSync(require('path').join(__dirname, '../src/services/consultantPortalService.js'), 'utf8');
+  assert.match(portalSrc, /if \(!LEAD_SRC\.LEAD_SOURCES\.includes\(clientSource\)\) bad\('Choose the source \/ reference from the list\.'\);/, 'direct retainer client');
+  // Edit basics: an UNCHANGED old source still passes; a change must be one of the list
+  assert.match(portalSrc, /if \(changed\.includes\('sourceChannel'\)\) \{\s+if \(!BASIC_SOURCES\.includes\(n\.sourceChannel\)\) refuse/);
+  const ac = require('../src/routes/adminConsultation');
+  for (const html of [ac.buildQueueHTML(), ac.buildRetainersHTML()]) for (const r of SRC.RETIRED_LEAD_SOURCES) assert.ok(!html.includes(r), r);
+  // the lead page's Edit basics box still SHOWS an old value it is given (bdOption adds the missing choice)
+  assert.match(require('../src/routes/adminLeads').buildLeadDetailHTML('7'), /var src=bdEl\('source'\); bdOption\(src,d\.sourceChannel\|\|''\);/);
 });

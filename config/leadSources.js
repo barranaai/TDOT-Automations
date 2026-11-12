@@ -19,9 +19,16 @@
 const LEAD_SOURCES = Object.freeze([
   'Phone', 'Walk-in', 'WhatsApp', 'Email', 'Instagram', 'Facebook', 'TikTok', 'LinkedIn', 'Website',
   'Client Referral', 'Employee Referral', 'Existing Client',
-  'Nasir Khan', 'Aman Galhotra', 'Shafoli Friend',
   'Other',
 ]);
+
+/**
+ * No longer offered (team meeting 2026-11-10, Faran 2026-11-12): three named referrers that were
+ * choices from 2026-11-04. They stay LABELS on the Monday board, so a record that already carries
+ * one keeps showing it (and keeps it through an edit that does not change the source) — but nobody
+ * can pick one for a new lead, a direct consultation or a direct retainer client any more.
+ */
+const RETIRED_LEAD_SOURCES = Object.freeze(['Nasir Khan', 'Aman Galhotra', 'Shafoli Friend']);
 
 /** Picking this asks "Which employee?" (a name from REFERRAL_EMPLOYEES). */
 const EMPLOYEE_REFERRAL = 'Employee Referral';
@@ -73,6 +80,6 @@ function checkReferral(source, referredBy) {
 }
 
 module.exports = {
-  LEAD_SOURCES, EMPLOYEE_REFERRAL, CLIENT_REFERRAL_SOURCES, REFERRAL_EMPLOYEES, REFERRED_BY_MAX,
+  LEAD_SOURCES, RETIRED_LEAD_SOURCES, EMPLOYEE_REFERRAL, CLIENT_REFERRAL_SOURCES, REFERRAL_EMPLOYEES, REFERRED_BY_MAX,
   referralKind, checkReferral,
 };
