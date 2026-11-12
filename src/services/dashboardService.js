@@ -43,7 +43,19 @@ const COLS = {
   caseSupportOfficer: 'multiple_person_mm0xm710',
   // Read only for the Pre-Onboarding "Waiting for" label (2026-11-10): a board "Paid" counts as the payment.
   paymentStatus:      'color_mm0x9fnn',
+  // ── The view tabs' own columns (team meeting 2026-11-10, item 12): read only, shown one column each ──
+  dependents:         'text_mm0x1zdk',              // "Dependents/Inviter/Sponsor"
+  clientEmail:        'text_mm0xw6bp',              // a client contact detail: never logged
+  clientPhone:        'phone_mm33zr0c',             // a client contact detail: never logged
+  caseSubType:        'dropdown_mm0x4t91',          // Case Sub Type (NOT "Sub Type Options")
+  retainedBy:         'multiple_person_mm334yp5',
+  retainerStatus:     'color_mm2yh6jd',             // the board column titled "Retainer Staus"
+  portalLink:         'link_mm2vta5',               // the client's own portal link — it carries the client's access token: never logged
 };
+
+// The row fields that are client contact details or carry the client's portal token. They leave this
+// service only when the caller asks for them (the Client Master page's own route, after the access filter).
+const CONTACT_FIELDS = ['clientEmail', 'clientPhone', 'portalLink'];
 
 const caseAccess = require('./caseAccessService');
 const clientMasterViews = require('./clientMasterViews');
@@ -272,6 +284,15 @@ function numOrNull(text) {
   return Number.isFinite(n) ? n : null;
 }
 
+// A link cell → its address: the url in the cell's value, else the cell text — the same reading as the case
+// cockpit's "Client portal" button (caseCockpitService) — and only a plain web address, anything else is ''.
+function linkUrl(cv) {
+  let url = '';
+  try { const v = cv && cv.value ? JSON.parse(cv.value) : null; url = v && typeof v.url === 'string' ? v.url : ''; } catch (_) { url = ''; }
+  url = String(url || (cv && cv.text) || '').trim();
+  return /^https?:\/\/[^\s"'<>]+$/i.test(url) ? url : '';
+}
+
 // One people cell → { personIds, teamIds } (strings). Parsed here, not through the RBAC
 // column list, so the officer never depends on which columns RBAC reads.
 function peopleIds(raw) {
@@ -362,6 +383,15 @@ function parseItem(item, boardIdx) {
     officerIds,         // { personIds, teamIds } of Case Support Officer only
     docUploadedPct:     numOrNull(col(COLS.docUploaded)),   // blank = null (docReadiness above reads it as 0)
     paymentStatus:      statusText(cvOf(COLS.paymentStatus)).trim(),   // empty cell = '' (never the id-5 label)
+    // ── the view tabs' own columns (item 12): '' / null = an empty cell (the page shows "—") ──
+    dependents:         col(COLS.dependents),
+    clientEmail:        col(COLS.clientEmail),
+    clientPhone:        col(COLS.clientPhone),                         // the board's display text
+    caseSubType:        col(COLS.caseSubType),
+    retainedBy:         col(COLS.retainedBy),                          // names, as the other people columns
+    retainerStatus:     statusText(cvOf(COLS.retainerStatus)).trim(),  // the label as it is on the board
+    portalLink:         linkUrl(cvOf(COLS.portalLink)),
+    qReadinessPct:      numOrNull(col(COLS.qReadiness)),               // blank = null (qReadiness above reads it as 0)
     views:              [],   // filled just below
   };
 }
@@ -374,8 +404,10 @@ function parseRow(item, boardIdx) {
 // ─── Aggregate all cases into dashboard stats ─────────────────────────────────
 // @param {Object} [viewer]  when supplied AND not an admin, only cases this
 //   viewer is assigned to (any people column) are counted/returned.
-// @param {{ fresh?: boolean }} [opts]  fresh = the page's Refresh (re-read only when the copy is > 30 s old)
-async function getDashboardStats(viewer, { fresh = false } = {}) {
+// @param {{ fresh?: boolean, contact?: boolean }} [opts]  fresh = the page's Refresh (re-read only when the copy is > 30 s old);
+//   contact = keep the client contact details and the portal link on the rows (CONTACT_FIELDS) — only the Client
+//   Master page's own route asks for them; every other caller gets the rows without them.
+async function getDashboardStats(viewer, { fresh = false, contact = false } = {}) {
   const read     = await _casesForPage({ refresh: !!fresh });
   const rawItems = read.items;
   let   cases    = rawItems.map((it, i) => parseRow(it, i));
@@ -383,6 +415,7 @@ async function getDashboardStats(viewer, { fresh = false } = {}) {
   if (viewer && !viewer.isAdmin) {
     cases = cases.filter((c) => caseAccess.viewerCanSee(c.assignees, viewer));
   }
+  if (!contact) for (const c of cases) for (const f of CONTACT_FIELDS) delete c[f];
 
   // Summary counters
   const summary = {
@@ -547,4 +580,4 @@ async function getDashboardStats(viewer, { fresh = false } = {}) {
 module.exports = {
   fetchAllItems, invalidateCases, patchCachedColumn, getCasesMeta,
   _casesIo: { refresh: _refreshCases, io: _io, overrides: _overrides, parseMeta: _parseMeta, FRESH_MIN_AGE_MS, OVERRIDE_MAX_MS, CASES_HARD_MS },
-  getDashboardStats, parseItem: parseRow, peopleIds, COLS };
+  getDashboardStats, parseItem: parseRow, peopleIds, COLS, CONTACT_FIELDS };

@@ -8,7 +8,7 @@
 const express = require('express');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, STATUS_TONE_JS } = require('./adminShared');
-const { listTableScript, LIST_TABLE_CSS } = require('./listFilters');   // one filter look for every list (2026-11-05)
+const { listCore, listTableScript, LIST_TABLE_CSS } = require('./listFilters');   // one filter look for every list (2026-11-05)
 const { casesListSpec, casesListOpts } = require('./listSpecs');
 // The Client Master view tabs (block 3): the Monday views as data, and the page's pure helpers (injected with toString).
 const clientMasterViews = require('../services/clientMasterViews');
@@ -313,7 +313,7 @@ const ALL_CASES_BODY_HTML = `
     <div class="table-card">
       <!-- The filters are in the column headers, like every list (2026-11-05): listSpecs.js casesListSpec/Opts. -->
       <div class="table-toolbar">
-        <input type="search" class="search-box" id="search-box" placeholder="Search by client, case ref, type, officer…" aria-label="Search cases by client, case reference, type or Support Officer" autocomplete="off" />
+        <input type="search" class="search-box" id="search-box" placeholder="Search by client, case ref, type, officer, email, phone…" aria-label="Search cases by client, case reference, type, Support Officer, client email, contact number or dependents" autocomplete="off" />
         <!-- Every tab's rows sit under group headings that open and close (2026-11-12): these two act on all of them. -->
         <span class="cm-oc" id="cm-oc" role="group" aria-label="Groups in the table">
           <button type="button" class="cm-oc-b" id="cm-open-all" onclick="cmGrpAll(true)" title="Open every group in the table">Open all</button>
@@ -332,6 +332,14 @@ const ALL_CASES_BODY_HTML = `
       </div>
     </div>
 `;
+
+/** The column ids of each Client Master tab: { '': the All tab, assigning: […], deadlines: […], eeita: […] }. */
+function cmTabCols() {
+  const views = clientMasterViews.pageViews(), cols = casesListOpts({ views }).cols, on = listCore({}).colsOnTab;
+  const out = { '': on(cols, '').map((c) => c.id) };
+  for (const v of views) out[v.key] = on(cols, v.key).map((c) => c.id);
+  return out;
+}
 
 // The Client Master page's own look (block 3): the view tabs' header box, the group headings,
 // the deadline cells and flags, and print (landscape, the groups with their counts, no controls).
@@ -425,6 +433,55 @@ const CM_CSS = `
     .cm-asg-rm { font-size:12.5px; color:#92400e; margin-top:6px; }
     .cm-asg-rm:empty { display:none; }
     .cm-asg-tell { font-size:12.5px; color:#475569; margin-top:6px; }
+    /* ── The view tabs' own columns (team meeting 2026-11-10, item 12; layout chosen 2026-11-12: one column each, like Monday).
+       One wide table that scrolls sideways INSIDE its box (.tbl-wrap) — the page itself never does — with Case Ref and Client
+       staying in view at the start (in the header and in every row) and a soft shadow on their edge. The All tab is not wide. */
+    .cm-none td { text-align:center; color:var(--muted); padding:32px; }
+    #search-box { max-width:430px; }   /* room for the longer hint: client, case ref, type, officer, email, phone */
+    #all-cases-table.cm-wide { width:max-content; min-width:100%; }
+    #all-cases-table.cm-wide .cm-none td { text-align:left; }
+    #all-cases-table.cm-wide .cm-none-t { position:sticky; left:14px; display:inline-block; }
+    #all-cases-table.cm-wide td { font-size:11.5px; white-space:nowrap; }
+    #all-cases-table.cm-wide tr.cm-grp td { font-size:12px; }
+    #all-cases-table.cm-wide #cs-headrow th:nth-child(1), #all-cases-table.cm-wide td.cm-pin1 { position:sticky; left:0; z-index:2; box-sizing:border-box; width:126px; min-width:126px; max-width:126px; }
+    #all-cases-table.cm-wide #cs-headrow th:nth-child(2), #all-cases-table.cm-wide td.cm-pin2 { position:sticky; left:126px; z-index:2; box-sizing:border-box; width:172px; min-width:172px; max-width:172px; }
+    /* the soft shadow on the pinned edge: drawn as its own strip just past the Client column (a cell's box-shadow is not painted over its neighbours in this table) */
+    #all-cases-table.cm-wide #cs-headrow th:nth-child(2)::after, #all-cases-table.cm-wide td.cm-pin2::after { content:''; position:absolute; top:0; bottom:0; left:100%; width:9px; pointer-events:none;
+      background:linear-gradient(to right, rgba(15,23,42,.22), rgba(15,23,42,.07) 2px, rgba(15,23,42,0)); }
+    #all-cases-table.cm-wide #cs-headrow th:nth-child(-n+2) { z-index:3; }
+    #all-cases-table.cm-wide td.cm-pin { background:#fff; }
+    #all-cases-table.cm-wide td.cm-pin1 { font-weight:600; color:var(--navy); overflow:hidden; text-overflow:ellipsis; }
+    #all-cases-table.cm-wide td.cm-pin1 .badge { white-space:normal; }
+    /* the pinned cells carry the row's tint and its hover themselves (a sticky cell must not be see-through) */
+    #all-cases-table.cm-wide tr.row-red td.cm-pin { background:#fff8f8; }
+    #all-cases-table.cm-wide tr.row-orange td.cm-pin { background:#fffdf5; }
+    #all-cases-table.cm-wide tr:hover td.cm-pin { background:#f8faff; }
+    #all-cases-table.cm-wide tr.row-red:hover td.cm-pin { background:#ffeef0; }
+    #all-cases-table.cm-wide tr.row-orange:hover td.cm-pin { background:#fff8e6; }
+    /* the sideways scroll box is a named region the keyboard can stop on (arrow keys scroll it); a control that is focused never lands
+       under the two pinned columns: the padding is their width (126 + 172; 100 + 112 on a phone) */
+    .table-card .tbl-wrap:focus-visible { outline:2px solid var(--navy); outline-offset:-2px; }
+    .table-card .tbl-wrap.cm-scroll { scroll-padding-left:298px; }
+    .cm-ell { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    /* long text (dependents, email, case type): two lines at most, the whole text in the cell's title */
+    .cm-clip { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; overflow-wrap:anywhere; }
+    #all-cases-table.cm-wide td.cm-c-dep, #all-cases-table.cm-wide td.cm-c-email { min-width:150px; max-width:220px; white-space:normal; }
+    #all-cases-table.cm-wide td.cm-c-type, #all-cases-table.cm-wide td.cm-c-sub { min-width:120px; max-width:200px; white-space:normal; }
+    #all-cases-table.cm-wide td.cm-c-stage { min-width:150px; white-space:normal; }
+    #all-cases-table.cm-wide td.cm-off, #all-cases-table.cm-wide td.cm-c-mgr, #all-cases-table.cm-wide td.cm-c-ret { min-width:120px; max-width:220px; white-space:normal; }
+    #all-cases-table.cm-wide td.cm-c-rs, #all-cases-table.cm-wide td.cm-c-pay, #all-cases-table.cm-wide td.cm-c-phase, #all-cases-table.cm-wide td.cm-c-phone { min-width:96px; }
+    #all-cases-table.cm-wide td.cm-dl, #all-cases-table.cm-wide td.cm-pr { min-width:120px; }
+    .cm-pct { font-variant-numeric:tabular-nums; font-weight:600; color:var(--navy); }
+    .cm-portal { display:inline-block; color:var(--st-blue-fg); font-weight:700; text-decoration:underline; padding:3px 4px; margin:-3px -4px; border-radius:5px; }
+    .cm-portal:hover { background:var(--st-blue-bg); }
+    .cm-portal:focus-visible { outline:2px solid var(--navy); outline-offset:1px; }
+    @media (max-width: 640px) {   /* a phone: the two pinned columns are narrower, so more of the rest shows beside them */
+      #all-cases-table.cm-wide #cs-headrow th:nth-child(1), #all-cases-table.cm-wide td.cm-pin1 { width:100px; min-width:100px; max-width:100px; padding-left:10px; padding-right:6px; }
+      #all-cases-table.cm-wide #cs-headrow th:nth-child(2), #all-cases-table.cm-wide td.cm-pin2 { left:100px; width:112px; min-width:112px; max-width:112px; padding-left:8px; padding-right:8px; }
+      /* the whole reference always shows: a long one goes onto a second line at its hyphen instead of being cut (its title has it too) */
+      #all-cases-table.cm-wide td.cm-pin1 { white-space:normal; overflow-wrap:anywhere; text-overflow:clip; line-height:1.25; }
+      .table-card .tbl-wrap.cm-scroll { scroll-padding-left:212px; }
+    }
     @media (max-width: 760px) { .cm-print { font-size:16px; } .cm-asg-sel, .cm-asg-dlg .tdlg-btn { font-size:16px; } .cm-oc-b { font-size:14px; padding:8px 12px; } .cm-grp-b { padding-top:6px; padding-bottom:6px; margin:-6px 0; } }
     /* Print (every tab): landscape; the tab name, the data time, the counts or windows, and the groups as they are on screen —
        an open group with its rows, a closed group as its heading line with its count —
@@ -433,7 +490,7 @@ const CM_CSS = `
     @media print {
       body { background:#fff; }
       .admin-hdr, .refresh-bar, .view-switch, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop, .cm-assign, .cm-asg-ok, .dlc-btn, .dlc-ok { display:none !important; }
-      #cs-headrow th:last-child, #all-cases-table td.cm-del { display:none; }
+      #all-cases-table:not(.cm-wide) #cs-headrow th:last-child, #all-cases-table td.cm-del { display:none; }
       .wrap { padding:0; }
       .dash-header { margin:0 0 6px; }
       .sec-hd { display:none; }
@@ -451,6 +508,23 @@ const CM_CSS = `
       button.cm-st { border-color:#e2e8f0; font-weight:inherit; }
       button.cm-st::after { content:none; }
       .cm-head { gap:4px; }
+      /* a view tab on paper: the same columns as on screen, nothing pinned, the text wraps so all twenty fit the landscape page */
+      #all-cases-table.cm-wide { width:100%; min-width:0; font-size:7pt; }
+      #all-cases-table.cm-wide th { font-size:6pt; letter-spacing:0; white-space:normal; }
+      #all-cases-table.cm-wide th .th-in { white-space:normal; }
+      #all-cases-table.cm-wide td, #all-cases-table.cm-wide tr.cm-grp td { font-size:7pt; white-space:normal; overflow-wrap:break-word; }
+      #all-cases-table.cm-wide #cs-headrow th, #all-cases-table.cm-wide td { position:static !important; box-shadow:none !important; width:auto !important; min-width:0 !important; max-width:none !important; }
+      #all-cases-table.cm-wide td.cm-pin { background:none !important; }
+      #all-cases-table.cm-wide #cs-headrow th:nth-child(2)::after, #all-cases-table.cm-wide td.cm-pin2::after { display:none; }
+      .cm-clip, .cm-ell { display:block; overflow:visible; white-space:normal; }
+      /* whole words on paper: a word is broken only when it cannot fit its column at all (the email keeps a floor and may break anywhere) */
+      #all-cases-table.cm-wide .cm-clip { overflow-wrap:break-word; }
+      #all-cases-table.cm-wide td.cm-c-email .cm-clip { overflow-wrap:anywhere; }
+      #all-cases-table.cm-wide td.cm-c-email { min-width:26mm !important; }
+      /* the header row repeated on pages 2+ prints its column names (Chrome leaves a button out of a repeated header; as plain text it prints) */
+      #all-cases-table th .th-sortbtn { display:contents; }
+      .cm-none-t { position:static !important; }
+      .cm-portal { color:inherit; text-decoration:none; }
     }
 `;
 
@@ -1119,7 +1193,9 @@ var HEALTH_ORDER = { Red: 0, Orange: 1, Green: 2 };
 // The Client Master view tabs (block 3) — from clientMasterViews.pageViews(): key, label, hint, grouping, order.
 var CM_VIEWS = ${JSON.stringify(clientMasterViews.pageViews())};
 var CM_PRE_ONBOARDING = ${clientMasterViews.PRE_ONBOARDING_INDEX};   // Case Stage "Pre-Onboarding" (label index)
-var CS_COLSPAN = ${casesListOpts({}).cols.length};   // the table's columns (listSpecs casesListOpts), for full-width rows
+// The table's columns per tab — '' = All, then one list per view tab (listSpecs casesListOpts: a column's tabs; the same
+// rule the header is drawn by, listCore colsOnTab). The rows and the full-width rows follow it.
+var CM_TABCOLS = ${JSON.stringify(cmTabCols())};
 ${isSummary ? '' : 'var CMW = (' + clientMasterWindows.toString() + ')(); var CMU = (' + clientMasterUi.toString() + ')(CMW);'}
 
 /* ── Count-up animation ──────────────────────────────────────────── */
@@ -1160,7 +1236,11 @@ function loadData(fresh) {
   // Identity-aware endpoint: send the admin key if we have one (→ see all),
   // otherwise the Monday staff cookie is sent automatically (→ your cases).
   var headers = key ? { 'X-Api-Key': key } : {};
-  fetch('/admin/dashboard-stats' + (fresh === true ? '?fresh=1' : ''), { headers: headers, credentials: 'same-origin' })
+  // contact=1 (the client's email, phone and portal link for the view tabs' columns) is asked for by the Client Master list only — never by the Summary
+  var qs = [];
+  if (fresh === true) qs.push('fresh=1');
+  if (VIEW !== 'summary') qs.push('contact=1');
+  fetch('/admin/dashboard-stats' + (qs.length ? '?' + qs.join('&') : ''), { headers: headers, credentials: 'same-origin' })
     .then(function(r) {
       if (r.status === 401) {
         return r.json().then(function(j) {
@@ -1999,7 +2079,8 @@ function cmInView(key) { return ((_data && _data.cases) || []).filter(function(c
 function cmNoneDash() { return '<span style="color:var(--light)">—</span>'; }
 /* "Not checked yet" (2026-11-10): the client records were not in memory when the page loaded (just after a restart).
    ONCE, a little later, the labels are asked for again quietly and filled in on the rows already on screen —
-   no spinner, the search, filters and tab stay; a failure leaves the page as it is (Refresh still works). */
+   no spinner, the search, filters and tab stay; a failure leaves the page as it is (Refresh still works).
+   It asks WITHOUT contact=1 and copies only c.waiting onto the rows on screen, so their email, phone and portal link stay as loaded. */
 var _cmWaitAsked = false;
 function cmWaitLater() {
   if (_cmWaitAsked || !_data || _data.waitingAt) return;
@@ -2101,6 +2182,9 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
   var ordered = mondayOrder ? CMU.viewOrder(v, rows) : rows;
   var groups = CMU.groupRows(v, ordered, (_data && _data.meta) || null);
   var tbody = document.getElementById('all-cases-body');
+  // a view tab has its own, wider column set (2026-11-12): the table says so (Case Ref and Client stay in view while it scrolls sideways)
+  var span = cmColIds(isAll ? null : v).length, tbl = document.getElementById('all-cases-table');
+  if (tbl) tbl.className = 'data-table' + (isAll ? '' : ' cm-wide');
   // a redraw must not take the focus off a heading someone is on (open / close with the keyboard, new data)
   var act = document.activeElement, back = act && act.getAttribute && act.className === 'cm-grp-b' ? act.getAttribute('data-gk') : null;
   tbody.innerHTML = '';
@@ -2113,9 +2197,11 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
   if (oc) oc.style.display = rows.length ? '' : 'none';
   if (!rows.length) {
     var tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="' + CS_COLSPAN + '" style="text-align:center;color:var(--muted);padding:32px">' +
-      (inView || isAll ? 'No cases match the current filters.' : 'No cases in the ' + escHtml(v.label) + ' view right now.') + '</td>';
+    tr.className = 'cm-none';
+    tr.innerHTML = '<td colspan="' + span + '"><span class="cm-none-t">' +
+      (inView || isAll ? 'No cases match the current filters.' : 'No cases in the ' + escHtml(v.label) + ' view right now.') + '</span></td>';
     tbody.appendChild(tr);
+    cmScrollBox(isAll);
     return { shown: 0, total: inView };
   }
   var today = cmToday(), deadlineTab = !!v.deadlineBox, rowView = isAll ? null : v;
@@ -2128,7 +2214,7 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
       var tc = CMU.typeCounts(g.rows);
       extra = ' <span class="cm-grp-c">— Real ' + tc.real + ' · Imaginary ' + tc.imaginary + ' · Not recorded ' + tc.none + '</span>';
     }
-    h.innerHTML = '<td colspan="' + CS_COLSPAN + '"><span class="cm-grp-t">' +
+    h.innerHTML = '<td colspan="' + span + '"><span class="cm-grp-t">' +
       '<button type="button" class="cm-grp-b" data-gk="' + escHtml(gid) + '" aria-expanded="' + (open ? 'true' : 'false') + '" aria-label="' + escHtml(CMU.groupLabel(g.title, n, open)) + '">' +
       '<span class="cm-chev" aria-hidden="true"></span><span><b>' + escHtml(g.title) + '</b> · <span class="cm-grp-n">' + n + '</span></span></button>' + extra + '</span></td>';
     h.onclick = function() { cmGrpToggle(gid); };   // the whole heading line; Enter / Space on its button arrive here as a click too
@@ -2141,7 +2227,25 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
     });
   });
   if (back !== null) { var nb = cmGrpButton(back); if (nb) { try { nb.focus({ preventScroll: true }); } catch (e) { nb.focus(); } } }
+  cmScrollBox(isAll);
   return { shown: rows.length, total: inView };
+}
+
+/* The table's sideways scroll box as a keyboard stop (2026-11-12): on a view tab (the wide table) it is a named region that
+   Tab reaches and the arrow keys scroll; on All only while the table is wider than its box. Otherwise it is a plain box again. */
+function cmScrollBox(isAll) {
+  var tbl = document.getElementById('all-cases-table'), w = tbl && tbl.parentNode;
+  if (!w || !w.classList || !w.classList.contains('tbl-wrap')) return;
+  w.classList.toggle('cm-scroll', !isAll);   // the room kept clear for the two pinned columns (view tabs only)
+  if (!isAll || w.scrollWidth > w.clientWidth + 1) {
+    w.setAttribute('tabindex', '0');
+    w.setAttribute('role', 'region');
+    w.setAttribute('aria-label', 'Cases table, scrolls sideways');
+  } else {
+    w.removeAttribute('tabindex');
+    w.removeAttribute('role');
+    w.removeAttribute('aria-label');
+  }
 }
 
 /* Above the table, on a view tab only: the tab name + the data time + Print, the Filtered line,
@@ -2191,8 +2295,30 @@ function renderCmHead(v, rows, st, groups, inView) {
   el.innerHTML = h;
 }
 
+/* The columns of a tab, in order: v = the view tab, null on All. */
+function cmColIds(v) { return CM_TABCOLS[v ? v.key : ''] || CM_TABCOLS['']; }
+/* A view-tab cell of plain text: "—" when blank; clip = long text is cut to two lines (the whole text is in the title). */
+function cmTextCell(cls, text, clip) {
+  var t = String(text == null ? '' : text).trim();
+  if (!t) return '<td class="' + cls + '">' + cmNoneDash() + '</td>';
+  return '<td class="' + cls + '"' + (clip ? ' title="' + escHtml(t) + '"' : '') + '>' + (clip ? '<span class="cm-clip">' + escHtml(t) + '</span>' : escHtml(t)) + '</td>';
+}
+/* A view-tab percentage: "—" when the board cell is empty (never a made-up 0%). */
+function cmPctCell(cls, n) {
+  return '<td class="' + cls + ' cm-pct">' + (typeof n === 'number' && isFinite(n) ? Math.round(n) + '%' : cmNoneDash()) + '</td>';
+}
+/* Client portal: a short link that opens the client's own portal page in a new tab. The address carries the client's
+   access token, so it is never shown as text, never logged and never asked for by this page — it is only the link's target,
+   and the new tab is told nothing about this page (noopener noreferrer). Anything that is not a web address shows "—". */
+function cmPortalCell(c) {
+  var u = String(c.portalLink == null ? '' : c.portalLink).trim();
+  if (!/^https?:[/][/]/i.test(u)) return '<td class="cm-c-portal">' + cmNoneDash() + '</td>';
+  return '<td class="cm-c-portal"><a class="cm-portal" href="' + escHtml(u) + '" target="_blank" rel="noopener noreferrer" title="Open this client’s portal in a new tab" aria-label="Open the client portal of ' + escHtml(c.clientName || c.caseRef || 'this case') + ' in a new tab">Open</a></td>';
+}
+
 /* One case row. v = the view tab (null on All): there an empty Case Stage and an empty Manager show "—",
-   as Monday shows a blank, and the Deadlines tab shows the two flags in the Promised cell. */
+   as Monday shows a blank, and the Deadlines tab shows the two flags with the Internal deadline.
+   All keeps the columns it has always had; a view tab draws the agreed list, one column each (cmColIds). */
 function caseRow(c, v, today) {
   var r = c.overallReadiness || 0;
   var barCls = r >= 70 ? '' : (r >= 40 ? ' mid' : ' low');
@@ -2250,36 +2376,67 @@ function caseRow(c, v, today) {
     // Assign… (block 3): only where the server says the write is allowed (a Monday sign-in; the access check on that person)
     (c.canAssign ? ' <button type="button" class="cm-assign" data-assign="' + escHtml(String(c.id)) + '" title="Set the Case Support Officer in Monday (replaces who is there now; a note is added on the case)">Assign…</button>' : '') +
     (cmFlashText(c.id) ? ' <span class="cm-asg-ok" data-asg-ok="' + escHtml(String(c.id)) + '" role="status">' + escHtml(cmFlashText(c.id)) + '</span>' : '');
-  tr.innerHTML =
-    '<td style="font-weight:600;color:var(--navy);white-space:nowrap">' + refCell + '</td>' +
-    '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(c.clientName) + '</td>' +
-    '<td style="color:var(--muted);font-size:11px">' + shortType(c.caseType) + '</td>' +
-    '<td style="font-size:11px">' + stage + '</td>' +
-    '<td style="font-size:11px;white-space:nowrap">' + (c.phase ? escHtml(c.phase) : cmNoneDash()) + '</td>' +
-    '<td class="cm-dl" style="font-size:11px">' + (dl || cmNoneDash()) + dlBtn + dlOk + '</td>' +
-    '<td class="cm-pr" style="font-size:11px">' + (pr || cmNoneDash()) + '</td>' +
-    '<td>' + healthBadge(c.health) + '</td>' +
-    '<td>' + healthBadge(c.slaRisk) + '</td>' +
-    '<td class="cm-off" style="font-size:11px">' + off + '</td>' +
-    '<td style="color:var(--muted);font-size:11px">' + mgr + '</td>' +
-    '<td>' +
+  var del = '<td class="cm-del">' + (window.TDOT_IS_ADMIN && c.caseRef
+      ? '<button class="del-btn" type="button" data-del-case="' + escHtml(c.caseRef) + '" title="Delete this case (careful — removes its Monday rows; the consultation record and the OneDrive folder are kept)">' + TDOT_DEL_SVG + '</button>'
+      : '') + '</td>';
+  var cells = v ? {
+    // ── a view tab: Case Ref and Client stay in view while the table scrolls sideways (cm-pin) ──
+    caseRef: '<td class="cm-pin cm-pin1"' + (c.caseRef ? ' title="' + escHtml(c.caseRef) + '"' : '') + '>' + refCell + '</td>',
+    clientName: '<td class="cm-pin cm-pin2" title="' + escHtml(c.clientName) + '"><span class="cm-ell">' + escHtml(c.clientName) + '</span></td>',
+    dependents: cmTextCell('cm-c-dep', c.dependents, true),
+    clientEmail: cmTextCell('cm-c-email', c.clientEmail, true),
+    clientPhone: cmTextCell('cm-c-phone', c.clientPhone, false),
+    caseTypeV: cmTextCell('cm-c-type', c.caseType === 'Unknown' ? '' : c.caseType, true),
+    subType: cmTextCell('cm-c-sub', c.caseSubType, true),
+    // the Actual Deadline with its half-month window; Change… on Deadlines
+    actualDeadline: '<td class="cm-dl">' + ((c.actualDeadline ? '<span class="cm-date">' + escHtml(cmDay(c.actualDeadline)) + '</span>' : '') +
+      (win ? ' <span class="cm-win" title="Counted in this half-month window' + (t === 'imaginary' ? ' (by the promised date)' : '') + '">' + escHtml(win.label) + '</span>' : '') || cmNoneDash()) + dlBtn + dlOk + '</td>',
+    deadlineType: '<td class="cm-c-dt">' + (typeTag || cmNoneDash()) + '</td>',
+    internalDeadline: '<td class="cm-pr">' + (pr || cmNoneDash()) + '</td>',
+    phaseV: cmTextCell('cm-c-phase', c.phase, false),
+    retainedBy: cmTextCell('cm-c-ret', c.retainedBy, false),
+    retainerStatus: cmTextCell('cm-c-rs', c.retainerStatus, false),
+    paymentStatus: cmTextCell('cm-c-pay', c.paymentStatus, false),
+    stageV: '<td class="cm-c-stage">' + stage + '</td>',
+    portal: cmPortalCell(c),
+    officerV: '<td class="cm-off">' + off + '</td>',
+    managerV: '<td class="cm-c-mgr">' + mgr + '</td>',
+    qPct: cmPctCell('cm-c-q', c.qReadinessPct),
+    docPct: cmPctCell('cm-c-doc', c.docUploadedPct)
+  } : {
+    // ── the All tab: as it has always been ──
+    caseRef: '<td style="font-weight:600;color:var(--navy);white-space:nowrap">' + refCell + '</td>',
+    clientName: '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(c.clientName) + '</td>',
+    caseType: '<td style="color:var(--muted);font-size:11px">' + shortType(c.caseType) + '</td>',
+    caseStage: '<td style="font-size:11px">' + stage + '</td>',
+    phase: '<td style="font-size:11px;white-space:nowrap">' + (c.phase ? escHtml(c.phase) : cmNoneDash()) + '</td>',
+    deadline: '<td class="cm-dl" style="font-size:11px">' + (dl || cmNoneDash()) + dlBtn + dlOk + '</td>',
+    promised: '<td class="cm-pr" style="font-size:11px">' + (pr || cmNoneDash()) + '</td>',
+    health: '<td>' + healthBadge(c.health) + '</td>',
+    slaRisk: '<td>' + healthBadge(c.slaRisk) + '</td>',
+    officer: '<td class="cm-off" style="font-size:11px">' + off + '</td>',
+    manager: '<td style="color:var(--muted);font-size:11px">' + mgr + '</td>',
+    overallReadiness: '<td>' +
       '<div class="readiness-bar">' +
         '<div class="r-bar-bg"><div class="r-bar-fill' + barCls + '" style="width:' + r + '%"></div></div>' +
         '<span class="r-bar-pct">' + r + '%</span>' +
       '</div>' +
-    '</td>' +
-    '<td style="text-align:center;font-weight:600;color:var(--muted)">' + (c.daysElapsed || 0) + '</td>' +
-    '<td>' +
+    '</td>',
+    daysElapsed: '<td style="text-align:center;font-weight:600;color:var(--muted)">' + (c.daysElapsed || 0) + '</td>',
+    status: '<td>' +
       (c.clientBlocked      ? '<span class="badge orange" style="margin-right:3px">Blocked</span>' : '') +
       (c.escalationRequired ? '<span class="badge red" style="margin-right:3px">Esc</span>'       : '') +
       (c.expiryFlagged      ? '<span class="badge blue">Expiry</span>'                            : '') +
       (!c.clientBlocked && !c.escalationRequired && !c.expiryFlagged ? '<span style="color:var(--light);font-size:11px">—</span>' : '') +
-    '</td>' +
+    '</td>',
     // Delete is ADMIN-ONLY (the server enforces it; hiding it here keeps the
     // control honest for assigned-scope staff) and needs a case reference.
-    '<td class="cm-del">' + (window.TDOT_IS_ADMIN && c.caseRef
-      ? '<button class="del-btn" type="button" data-del-case="' + escHtml(c.caseRef) + '" title="Delete this case (careful — removes its Monday rows; the consultation record and the OneDrive folder are kept)">' + TDOT_DEL_SVG + '</button>'
-      : '') + '</td>';
+    del: del
+  };
+  tr.innerHTML = cmColIds(v).map(function(id) { return cells[id] || '<td></td>'; }).join('');
+  // the portal link never opens the case (the row's own click does that)
+  var pl = tr.querySelector('.cm-portal');
+  if (pl) pl.onclick = function(e) { e.stopPropagation(); };
   var ab = tr.querySelector('.cm-assign');
   // the button never opens the case (the row's own click does that)
   if (ab) ab.onclick = function(e) { e.stopPropagation(); cmAssignDlg(String(c.id)); };
@@ -2891,7 +3048,7 @@ document.addEventListener('DOMContentLoaded', function() {
   if (VIEW === 'summary') { loadKpis(); loadTrend(); }   // the monthly figures and the 12-month charts load on their own, beside the case data
 });
 </script>
-${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange }') + '</script>'}
+${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange, meta: function() { return (_data && _data.meta) || null; }, typeOf: CMW.typeOf }') + '</script>'}
 ${DEADLINE_CHANGE_HTML}
 </body>
 </html>`;

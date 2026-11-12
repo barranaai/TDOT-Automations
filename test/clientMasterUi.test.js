@@ -219,7 +219,7 @@ test('sortBlanksLast: a blank Actual Deadline / Promised date / Phase / Support 
   assert.equal(LT.sortRows(ph, { key: 'phase', dir: 'asc' }).map((r) => r.id).join(','), '8,11,P,-');
   assert.equal(LT.sortRows(ph, { key: 'phase', dir: 'desc' }).map((r) => r.id).join(','), 'P,11,8,-');
   assert.equal(LT.sortRows([{ id: 'n', officer: '' }, { id: 'b', officer: 'Bo' }, { id: 'a', officer: 'Ann' }], { key: 'officer', dir: 'asc' }).map((r) => r.id).join(''), 'abn');
-  assert.deepEqual(S.casesListSpec({}).sortBlanksLast, ['actualDeadline', 'promisedDate', 'phase', 'officer']);
+  assert.deepEqual(S.casesListSpec({}).sortBlanksLast.slice(0, 4), ['actualDeadline', 'promisedDate', 'phase', 'officer']);   // the view tabs' columns follow (2026-11-12)
   // the search reads the Support Officer too
   const st = LT.emptyState(); st.q = 'officer b';
   assert.deepEqual(LT.filterRows([{ id: '1', officer: 'Officer A, Officer B' }, { id: '2', officer: 'Officer A' }], st).map((r) => r.id), ['1']);
@@ -246,15 +246,15 @@ test('the page: renamed Client Master; tabs + header box above the toolbar; ever
   assert.ok(html.includes('<div id="cm-head" class="cm-head"></div>'), 'no aria-live on #cm-head');
   assert.ok(html.includes('<span class="table-count" id="table-count" aria-live="polite"></span>'));
   // review round 1: the search also matches the Support Officer, and the box says so
-  assert.ok(html.includes('placeholder="Search by client, case ref, type, officer…" aria-label="Search cases by client, case reference, type or Support Officer"'));
+  assert.ok(html.includes('placeholder="Search by client, case ref, type, officer, email, phone…" aria-label="Search cases by client, case reference, type, Support Officer, client email, contact number or dependents"'));
   for (const s of inlineScripts(html)) new vm.Script(s);
   assert.ok(html.includes('var CMW = (function clientMasterWindows() {') && html.includes('var CMU = (function clientMasterUi(W) {'));
   assert.ok(html.includes('var CM_VIEWS = [{"key":"assigning"'));
-  assert.ok(html.includes('var CS_COLSPAN = 15;'), 'the full-width rows span every column (no hard-coded colspan)');
+  assert.ok(html.includes('var CM_TABCOLS = {"":["caseRef","clientName","caseType",') && !html.includes('CS_COLSPAN'), 'the full-width rows span the columns of the tab on view (no hard-coded colspan)');
   assert.ok(!html.includes('colspan="11"'));
   assert.ok(html.includes("views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange"));
   assert.ok(html.includes('onclick="loadData(true)"'), 'Refresh asks for a fresh read');
-  assert.ok(html.includes("fetch('/admin/dashboard-stats' + (fresh === true ? '?fresh=1' : '')"));
+  assert.ok(html.includes("if (fresh === true) qs.push('fresh=1');") && html.includes("fetch('/admin/dashboard-stats' + (qs.length ? '?' + qs.join('&') : '')"));
   assert.ok(html.includes("'Monday data from ' + t"));
   assert.ok(html.includes('@page { size: landscape; margin: 10mm; }') && html.includes('#all-cases-table td.cm-del { display:none; }'));
   assert.ok(html.includes('.cm-grp-t { position:sticky; left:14px;'), 'a heading title stays in view when the table scrolls sideways');
@@ -293,8 +293,9 @@ test('a view tab draws headings and no pages; the stage / manager blanks show "�
   assert.ok(html.includes("if (v && v.deadlineBox) {\n    var f = CMW.flagOf(c, today);"));
   assert.ok(html.includes("if (VIEW !== 'summary' && (!data || !Array.isArray(data.cases))) throw new Error('the case list did not come back');\n      _data = data;"), 'a bad answer never replaces the data the rows on screen came from');
   assert.ok(html.includes("function cmDataTimeText(data) { var t = cmHm((data && data.dataAt) || ''); return t ? 'Monday data from ' + t : ''; }"), 'never the time the answer was made');
-  assert.equal(S.casesListOpts({}).cols.length, 15);
-  assert.deepEqual(S.casesListOpts({}).cols.map((c) => c.id), ['caseRef', 'clientName', 'caseType', 'caseStage', 'phase', 'deadline', 'promised', 'health', 'slaRisk', 'officer', 'manager', 'overallReadiness', 'daysElapsed', 'status', 'del'],
+  const allCols = listCore({}).colsOnTab(S.casesListOpts({ views: cmv.pageViews() }).cols, '');   // the All tab (the view tabs have their own since 2026-11-12)
+  assert.equal(allCols.length, 15);
+  assert.deepEqual(allCols.map((c) => c.id), ['caseRef', 'clientName', 'caseType', 'caseStage', 'phase', 'deadline', 'promised', 'health', 'slaRisk', 'officer', 'manager', 'overallReadiness', 'daysElapsed', 'status', 'del'],
     'Support Officer sits before Manager');
 });
 
@@ -523,9 +524,9 @@ async function groupsPage({ store = {}, signedOut = false, noStorage = false, to
       : { getItem: (k) => (kept.has(k) ? kept.get(k) : null), setItem: (k, v) => { kept.set(k, String(v)); } } };
   const ctx = vm.createContext({ window: win, JSON, String, Object, Array,
     document: { getElementById: (id) => els[id] || null, createElement: mk, activeElement: null, querySelectorAll: (sel) => { assert.equal(sel, '#all-cases-body .cm-grp-b'); return buttons(); } },
-    CM_VIEWS: cmv.pageViews(), CM_PRE_ONBOARDING: cmv.PRE_ONBOARDING_INDEX, CS_COLSPAN: 15, _data: { meta: META, cases: [] } });
+    CM_VIEWS: cmv.pageViews(), CM_PRE_ONBOARDING: cmv.PRE_ONBOARDING_INDEX, CM_TABCOLS: JSON.parse(main.match(/var CM_TABCOLS = (.*);/)[1]), _data: { meta: META, cases: [] } });
   const names = ['renderCasesList', 'renderViewTable', 'renderCmHead', 'cmKept', 'cmKeptSave', 'cmGroupState', 'cmSetOpen', 'cmGrpToggle', 'cmGrpAll', 'cmGrpButton', 'cmGrpGo',
-    'cmGroupTone', 'cmViewDef', 'cmView', 'cmInView', 'cmHm', 'cmDataTimeText', 'escHtml'];
+    'cmGroupTone', 'cmViewDef', 'cmView', 'cmInView', 'cmHm', 'cmDataTimeText', 'escHtml', 'cmColIds', 'cmScrollBox'];
   vm.runInContext(main.match(/var CMW = \(function clientMasterWindows[\s\S]*?\)\(CMW\);/)[0] + '\n' +
     main.match(/var CM_GRP_KEY = [\s\S]*?var CM_LAST = null;[^\n]*/)[0] + '\n' + names.map((n) => fnOf(main, n)).join('\n') + '\n' +
     'function cmToday() { return ' + JSON.stringify(today) + '; }\nfunction stageTone() { return "grey"; }\n' +

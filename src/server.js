@@ -672,14 +672,19 @@ function markWaiting(cases) {
 }
 
 // Identity-aware dashboard stats — filtered to the viewer's assigned cases.
+// ?contact=1 — the client's email, phone and portal link ride on the rows this viewer may see (the Client
+// Master view tabs' columns, 2026-11-12). Only the Client Master list's own load asks for them (the Summary page
+// and the quiet "waiting" re-fetch do not, so they never receive them); they are never logged.
+// Never kept by the browser: the answer can carry the clients' portal links (private, no-store on every answer).
 app.get('/admin/dashboard-stats', async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
   const viewer = resolveViewer(req);
   if (!viewer) {
     return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
   }
   try {
     // ?fresh=1 = the page's Refresh: Monday is asked again only when the copy is older than 30 s
-    const stats = await dashboardService.getDashboardStats(viewer.scope === 'all' ? undefined : viewer, { fresh: req.query.fresh === '1' });
+    const stats = await dashboardService.getDashboardStats(viewer.scope === 'all' ? undefined : viewer, { fresh: req.query.fresh === '1', contact: req.query.contact === '1' });
     // Assign… (block 3): only for a Monday sign-in, and per row only where the write would be allowed — the
     // write's access check uses the Monday identity and ignores the shared key (a page convenience; the route re-checks).
     const canAssign = require('./services/caseAssignService').markAssignable(stats.cases, tryStaffAuth(req));
@@ -781,6 +786,7 @@ app.get('/api/case/:caseRef', async (req, res) => {
 // they're assigned to (any people column); the admin key / allowlisted email
 // sees any case. Not under /api so the staff cookie works without the key.
 app.get('/admin/case-data/:caseRef', async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');   // one case's details: never kept by the browser
   const viewer = resolveViewer(req);
   if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
   try {

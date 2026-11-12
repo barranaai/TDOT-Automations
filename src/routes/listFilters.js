@@ -23,11 +23,14 @@
  * filtered, sorted rows (and may return { shown, total } for the count).
  *
  * spec: { facets: { key: { label, get(r) -> string | string[], none, order, text(v), fixed (always list every order value), quick,
+ *                          natural: true (its choices list with the numbers inside the text compared as numbers — "Phase 8" before "Phase 11"),
  *                          apart: [values] (rows with one of these values show only when that choice is on — never under
  *                          "no choice" / All; the Retainers page's Retained tab) } },
  *         sorts: { key: get(r) }, defaultSort: { key, dir } | null (null = keep the server order),
  *         sortBlanksLast: [sort keys] (their blank values go last in both directions),
- *         search: { text(r) -> string | string[], chip, id(r) (the row's lead id — the server search answers ids) },
+ *         search: { text(r) -> string | string[], chip, id(r) (the row's lead id — the server search answers ids),
+ *                   digits(r) -> the row's phone digits (a search text that is a phone number — digits, spaces, + ( ) - . only, three
+ *                   digits or more — also finds the rows whose digits contain its digits, however either is written) },
  *         flags: { key: { chip, test(r) } },
  *         date: { key, chip, get(r) -> 'YYYY-MM-DD',
  *                 per: { facet, all, none: [values], legacy } (a date range PER TAB — Consultations 2026-11-12: the facet is the
@@ -130,6 +133,13 @@ function listCore(spec) {
   }
   function hasServerHits(q) { return !!(serverHit && serverHit.q === s(q).toLowerCase()); }
 
+  /** A search text that is a phone number, against the row's phone digits (spec.search.digits) — "(416) 555-0134" finds 14165550134. */
+  function digitsHit(r, q) {
+    if (!SEARCH.digits || !/^[0-9+()\-.\s]+$/.test(q)) return false;
+    var qd = q.replace(/[^0-9]/g, '');
+    return qd.length >= 3 && s(SEARCH.digits(r)).replace(/[^0-9]/g, '').indexOf(qd) >= 0;
+  }
+
   /** Does the row pass every filter except `skip` (a facet key, a flag key, or 'date')?
       A list with a date range per tab: the row is tested against the range of the tab on view; with the tabs themselves
       skipped (their counts) against the range of the row's own tab; `scope` names a tab outright (the All count). */
@@ -140,7 +150,7 @@ function listCore(spec) {
         if (!serverHit.set[s(SEARCH.id(r))]) return false;
       } else if (q) {
         var t = SEARCH.text(r), list = Array.isArray(t) ? t : [t];
-        if (!list.some(function (x) { return s(x).toLowerCase().indexOf(q) >= 0; })) return false;
+        if (!list.some(function (x) { return s(x).toLowerCase().indexOf(q) >= 0; }) && !digitsHit(r, q)) return false;
       }
     }
     for (var k in FLAGS) { if (k !== skip && st[k] && !FLAGS[k].test(r)) return false; }
@@ -179,7 +189,8 @@ function listCore(spec) {
     var order = FACETS[f].order;
     if (FACETS[f].fixed && order) order.forEach(function (v) { if (!(v in counts)) counts[v] = 0; });   // a short fixed list shows every choice, like the old drop-down
     var rank = function (v) { if (v === NONE) return 1000; if (!order) return 0; var i = order.indexOf(v.split(':')[0]); return i < 0 ? 99 : i; };
-    return Object.keys(counts).sort(function (a, b) { return (rank(a) - rank(b)) || labelOf(f, a).localeCompare(labelOf(f, b)); })
+    var nat = FACETS[f].natural ? { numeric: true } : undefined;
+    return Object.keys(counts).sort(function (a, b) { return (rank(a) - rank(b)) || (nat ? labelOf(f, a).localeCompare(labelOf(f, b), undefined, nat) : labelOf(f, a).localeCompare(labelOf(f, b))); })
       .map(function (v) { return { value: v, label: labelOf(f, v), count: counts[v] }; });
   }
 
@@ -254,7 +265,14 @@ function listCore(spec) {
     return next;
   }
 
-  return { NONE: NONE, FACETS: FACETS, FLAGS: FLAGS, DATE: DATE, DEFAULT_SORT: DEFAULT_SORT, emptyState: emptyState, normalizeState: normalizeState, passes: passes, setServerHits: setServerHits, hasServerHits: hasServerHits,
+  /** The columns of the tab on view (tab = the quick facet's choice; '' = no choice, the "All" tab): a column with
+      `tabs: [...]` shows only on those tabs, a column without it on every tab. The order is the list's own. */
+  function colsOnTab(cols, tab) {
+    tab = tab == null ? '' : String(tab);
+    return (cols || []).filter(function (c) { return !c.tabs || c.tabs.indexOf(tab) >= 0; });
+  }
+
+  return { NONE: NONE, FACETS: FACETS, colsOnTab: colsOnTab, FLAGS: FLAGS, DATE: DATE, DEFAULT_SORT: DEFAULT_SORT, emptyState: emptyState, normalizeState: normalizeState, passes: passes, setServerHits: setServerHits, hasServerHits: hasServerHits,
     filterRows: filterRows, facetCounts: facetCounts, sortRows: sortRows, presetRange: presetRange, chips: chips, clearKey: clearKey, clearAll: clearAll, range: range,
     passesAll: passesAll, scopeOf: scopeOf, hasDates: hasDates, getDates: getDates, setDates: setDates,
     valuesOf: valuesOf, labelOf: labelOf, apartOf: apartOf };
@@ -274,8 +292,13 @@ function listCore(spec) {
  *      defaultDateScope: with a date range per tab (spec.date.per), the tab the opening date belongs to (Consultations: 'booked'),
  *      sortReset: 'newest case first' (or a function(state) giving the words) — the list's normal order has no column, so a column
         sort shows as a chip whose × goes back to it }
- * A column: { id, label, title, menu, facets: [...], flags: [...], date: true, note, sort, sortText: [..], sortDirs: [first, second] }
+ * A column: { id, label, title, menu, facets: [...], flags: [...], date: true, note, sort, sortText: [..], sortDirs: [first, second],
+ *             tabs: [quick values] }
  *   (a column with only a sort and a note still has a panel: the sort both ways and the note — Consultations "Client")
+ *   tabs (Client Master, 2026-11-12): the column belongs to those tabs only ('' = the "All" tab, no choice on) — the header is drawn,
+ *   and panels are offered, for the columns of the tab on view (LT.colsOnTab); the page draws its rows from the same set. No column
+ *   with `tabs` = every column on every tab, as always. What a person chose on a column that is not on the tab on view STAYS ON and
+ *   is never hidden: a filter shows as its chip above the table (× takes it off, "Clear filters" too), a sort as the "Sorted" chip.
  */
 function listTableUi(LT, o, win) {
   var doc = win.document, KEY = o.key, ids = o.ids, COLS = o.cols;
@@ -321,6 +344,9 @@ function listTableUi(LT, o, win) {
   pop.classList.add('lt-pop');
   function esc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function col(id) { for (var i = 0; i < COLS.length; i++) if (COLS[i].id === id) return COLS[i]; return null; }
+  /* Columns per tab (a column's `tabs`): the columns of the tab on view. A list with no such column: all of them, always. */
+  var TABBED = COLS.some(function (c) { return !!c.tabs; });
+  function shownCols() { if (!TABBED) return COLS; var l = o.quick && state.sel[o.quick.facet]; return LT.colsOnTab(COLS, (l && l.length) ? l[0] : ''); }
   function save() {
     if (win.TDOT_SIGNED_OUT) return;
     try { win.sessionStorage.setItem(KEY, JSON.stringify(state)); if (o.defaultDate && dayMark !== null) win.sessionStorage.setItem(KEY + '_day', dayMark); } catch (e) { /* not kept — fine */ }
@@ -349,7 +375,7 @@ function listTableUi(LT, o, win) {
     var tr = doc.getElementById(ids.head);
     if (!tr) return;
     var focusSort = doc.activeElement && tr.contains(doc.activeElement) && doc.activeElement.getAttribute('data-sortcol');
-    tr.innerHTML = COLS.map(function (c) {
+    tr.innerHTML = shownCols().map(function (c) {
       if (!hasPanel(c) && !c.sort) return '<th scope="col"' + (c.title ? ' title="' + esc(c.title) + '"' : '') + '>' + (c.label ? esc(c.label) : '<span class="sr-only">Actions</span>') + '</th>';
       var n = activeCount(c), sorted = sortedBy(c);
       var arrow = sorted ? '<span class="th-sort" aria-hidden="true">' + (state.sort.dir === 'asc' ? '▲' : '▼') + '</span>' : '';
@@ -386,7 +412,9 @@ function listTableUi(LT, o, win) {
   function sortChip() {
     var d = LT.DEFAULT_SORT, st = state.sort, reset = resetText();
     if (!reset || !st || !st.key || (d && st.key === d.key && st.dir === d.dir)) return '';   /* a list with no default column (Consultations): any column sort shows the chip */
-    var c = null; for (var i = 0; i < COLS.length; i++) if (COLS[i].sort === st.key) c = COLS[i];
+    /* the column of the tab on view that sorts so; else (the sort was chosen on another tab's column) that column — the chip is never lost */
+    var c = null, shown = shownCols(); for (var i = 0; i < shown.length; i++) if (shown[i].sort === st.key) c = shown[i];
+    if (!c) for (var j = 0; j < COLS.length; j++) if (COLS[j].sort === st.key) c = COLS[j];
     if (!c) return '';
     var t = 'Sorted: ' + c.label + ' (' + c.sortText[Math.max(0, (c.sortDirs || []).indexOf(st.dir))] + ')';
     return '<span class="q-chip q-chip-sort">' + esc(t) + '<button type="button" data-sortreset="1" aria-label="Back to the normal order: ' + esc(reset) + '" title="Back to ' + esc(reset) + '">×</button></span>';
@@ -465,6 +493,7 @@ function listTableUi(LT, o, win) {
   var started = false;
   function apply(why) {
     rollDay();   // a list left open on "today" overnight moves on to the new day
+    if (openCol && TABBED && shownCols().indexOf(col(openCol)) < 0) close(false);   // the open panel's column is not on the tab now on view
     var rows = LT.sortRows(LT.filterRows(ROWS, state), state.sort);
     /* h.without(f): how many rows pass every filter except f (an empty list can say why it is empty);
        h.defaultSort: true when the list is in its normal order (no column sort chosen) */

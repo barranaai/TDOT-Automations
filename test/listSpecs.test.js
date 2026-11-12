@@ -236,7 +236,8 @@ test('Cases: the sort — newest case first by default; each column sorts the sa
   assert.deepEqual(LT.emptyState().sort, { key: 'createdAt', dir: 'desc' });
   const newest = LT.sortRows(rows, LT.emptyState().sort);
   assert.equal(keys(newest, 'createdAt'), keys(rows.slice().sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)), 'createdAt'));
-  const opts = S.casesListOpts({});
+  // the All tab's columns (the view tabs' own columns, 2026-11-12, are proven in test/clientMasterColumns.test.js)
+  const opts = { cols: LT.colsOnTab(S.casesListOpts({}).cols, '') };
   for (const col of opts.cols.filter((c) => c.sort)) {
     for (const dir of col.sortDirs) {
       const want = rows.slice().sort((a, b) => { const k = oldSortKey(col.sort), av = k(a), bv = k(b); const d = dir === 'asc' ? 1 : -1; return av < bv ? -d : av > bv ? d : 0; });

@@ -453,15 +453,17 @@ async function pageSandbox() {
   const els = {};
   const el = () => ({ innerHTML: '', style: {}, className: '', title: '', querySelector: () => null });
   const ctx = { window: {}, document: { createElement: el, getElementById: (id) => (els[id] = els[id] || el()) }, Date, isNaN, String, Math, isFinite,
-    CM_FLASH: {}, CM_DL_FLASH: {}, TDOT_DEL_SVG: '', CM_PRE_ONBOARDING: PRE, _data: null, els };
+    CM_FLASH: {}, CM_DL_FLASH: {}, TDOT_DEL_SVG: '', CM_PRE_ONBOARDING: PRE, _data: null, els,
+    CM_TABCOLS: JSON.parse(main.match(/var CM_TABCOLS = (.*);/)[1]) };
   vm.createContext(ctx);
-  const names = ['caseRow', 'renderCmHead', 'escHtml', 'healthBadge', 'shortType', 'cmNoneDash', 'cmHm', 'cmDataTimeText', 'cmToday', 'cmDay', 'cmFlashText', 'cmDlFlashText'];
+  const names = ['caseRow', 'renderCmHead', 'escHtml', 'healthBadge', 'shortType', 'cmNoneDash', 'cmHm', 'cmDataTimeText', 'cmToday', 'cmDay', 'cmFlashText', 'cmDlFlashText', 'cmColIds', 'cmTextCell', 'cmPctCell', 'cmPortalCell'];
   vm.runInContext(main.match(/var CMW = \(function clientMasterWindows[\s\S]*?\)\(CMW\);/)[0] + '\n' + names.map((n) => fnSrc(main, n)).join('\n'), ctx);
   return { html, main, ctx, els };
 }
 const V2 = Object.fromEntries(cmv.pageViews().map((v) => [v.key, v]));
 const baseRow = (o) => ({ id: '9', caseRef: '2026-XX-001', clientName: 'Test Person', caseType: 'Visitor Visa', caseStage: 'Pre-Onboarding', stageIdx: PRE, health: 'Green', slaRisk: 'Green', ...o });
-const stageCell = (tr) => tr.innerHTML.split('</td>')[3];
+// the Stage cell: the 15th column on a view tab (the agreed list, 2026-11-12), the 4th on All
+const stageCell = (tr) => { const cells = tr.innerHTML.split('</td>'); return cells.find((c) => c.startsWith('<td class="cm-c-stage">')) || cells[3]; };
 
 test('the page: every script parses; the Stage cell of a Pre-Onboarding row on Assigning says what it waits for, in words, with what comes after visible', async () => {
   const { ctx } = await pageSandbox();
@@ -510,7 +512,7 @@ test('the page: the strip sits under the "No Support Officer" line on Assigning,
   assert.match(html, /\.cm-waitstrip \{ align-items:center; \}/);
   assert.ok(!/\.cm-wait(strip|-lead|-at)[^{]*\{[^}]*(nowrap|min-width|[^-]width:)/.test(html));
   assert.match(html, /\.cm-wait-n \{ display:block;/, 'what comes after is its own visible line (a phone has no hover)');
-  assert.ok(html.includes('var CS_COLSPAN = 15;'), 'no new column');
+  assert.ok(!/wait/i.test(html.match(/var CM_TABCOLS = (.*);/)[1]), 'no column of its own on any tab: the words sit in the Stage cell');
 });
 
 test('the page: "Not checked yet" is asked for again once, quietly — the rows on screen keep their filters; the new code follows the page-script rule', async () => {

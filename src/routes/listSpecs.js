@@ -200,7 +200,11 @@ function retainerListOpts(ctx) {
 }
 
 /* ctx: { healthOrder: { Red: 0, Orange: 1, Green: 2 },
-          views: the Client Master view tabs (clientMasterViews.pageViews(): [{ key, label, hint }…]), initial(state), onChange(state) } */
+          views: the Client Master view tabs (clientMasterViews.pageViews(): [{ key, label, hint }…]), initial(state), onChange(state),
+          meta(): the board meta of the data on the page ({ stageOrder, phaseOrder } — label indexes in board order) or null,
+          typeOf(r): 'real' | 'imaginary' | 'none' (clientMasterWindows.typeOf) }
+   The view tabs (Assigning, Deadlines, EE after ITA) have their own columns since 2026-11-12 (team meeting 2026-11-10, item 12):
+   the agreed twenty, one column each. The All tab keeps the columns it had. A column's `tabs` says where it shows. */
 function casesListSpec(ctx) {
   function s(v) { return String(v == null ? '' : v).trim(); }
   var HO = ctx.healthOrder || { Red: 0, Orange: 1, Green: 2 };
@@ -211,12 +215,36 @@ function casesListSpec(ctx) {
   function natural(v) { return txt(v).replace(/[0-9]+/g, function (d) { return ('00000' + d).slice(-6); }); }
   var VIEWS = ctx.views || [], VK = VIEWS.map(function (v) { return v.key; }), VL = {};
   VIEWS.forEach(function (v) { VL[v.key] = v.label; });
+  /* A cell of names ("A, B"): each name is its own choice; whole names only. */
+  function names(v) { return s(v).split(',').map(s).filter(function (m) { return m && m !== 'Unassigned'; }); }
+  function dtype(r) { if (ctx.typeOf) return ctx.typeOf(r); var t = s(r.deadlineType); return t === 'Deadline' ? 'real' : t === 'Imaginary' ? 'imaginary' : 'none'; }
+  /* A status column sorted in the board's own label order (the order Monday lists the labels in), where the board meta is
+     on the page; without it A → Z (the phases with their numbers as numbers). An empty cell is blank — last both ways. */
+  function boardRank(orderKey, idxKey, r, text) {
+    var i = r[idxKey];
+    if (typeof i !== 'number' || i === 5 || !text) return '';   // Monday: an empty status cell = label index 5
+    var m = ctx.meta ? ctx.meta() : null, order = m && m[orderKey];
+    if (!order || !order.length) return text;
+    var at = order.indexOf(i);
+    return ('000' + (at < 0 ? 999 : at)).slice(-3) + ' ' + text;
+  }
+  function pct(v) { var n = Number(v); return (v === '' || v == null || isNaN(n)) ? null : n; }
   return {
     facets: {
       stage: { label: 'Stage', get: function (r) { return s(r.caseStage); }, none: 'No stage' },
       health: { label: 'Health', get: function (r) { return s(r.health); }, none: 'Not set', order: ['Red', 'Orange', 'Green'], fixed: true },
       // A case can have several managers ("A, B"): each is its own choice; whole names only.
       manager: { label: 'Manager', get: function (r) { return s(r.manager).split(',').map(s).filter(function (m) { return m && m !== 'Unassigned'; }); }, none: 'Unassigned' },
+      // The view tabs' columns (2026-11-12): the label-like ones filter, like every list.
+      caseType: { label: 'Case type', get: function (r) { var t = s(r.caseType); return t === 'Unknown' ? '' : t; }, none: 'No case type' },
+      subType: { label: 'Sub-type', get: function (r) { return s(r.caseSubType); }, none: 'No sub-type' },
+      deadlineType: { label: 'Deadline type', get: dtype, order: ['real', 'imaginary', 'none'], fixed: true,
+        text: function (v) { return ({ real: 'Real', imaginary: 'Imaginary', none: 'Not recorded' })[v] || v; } },
+      phase: { label: 'Phase', get: function (r) { return s(r.phase); }, none: 'No phase', natural: true },
+      retainedBy: { label: 'Retained by', get: function (r) { return names(r.retainedBy); }, none: 'Nobody' },
+      retainerStatus: { label: 'Retainer status', get: function (r) { return s(r.retainerStatus); }, none: 'Not set' },
+      paymentStatus: { label: 'Payment status', get: function (r) { return s(r.paymentStatus); }, none: 'Not set' },
+      officer: { label: 'Support officer', get: function (r) { return names(r.officer); }, none: 'Nobody' },
       // The view tabs above the table (block 3): a row is in every Monday view it passes (worked out on the server).
       view: { label: 'View', quick: true, fixed: true, order: VK, text: function (v) { return VL[v] || v; }, get: function (r) { return r.views || []; }, none: 'No view' },
     },
@@ -235,17 +263,40 @@ function casesListSpec(ctx) {
       manager: function (r) { return txt(r.manager); },
       overallReadiness: function (r) { return num(r.overallReadiness); },
       daysElapsed: function (r) { return num(r.daysElapsed); },
+      // The view tabs' columns (2026-11-12). Text A → Z; a percentage as a number; a status in the board's label order where
+      // the page knows it (Stage, Phase), Real before Imaginary, else A → Z. Blanks last both ways (sortBlanksLast).
+      dependents: function (r) { return txt(r.dependents); },
+      clientEmail: function (r) { return txt(r.clientEmail); },
+      clientPhone: function (r) { return s(r.clientPhone).replace(/[^0-9]/g, ''); },
+      caseTypeV: function (r) { var t = txt(r.caseType); return t === 'unknown' ? '' : t; },
+      subType: function (r) { return txt(r.caseSubType); },
+      deadlineType: function (r) { var t = dtype(r); return t === 'real' ? '0' : t === 'imaginary' ? '1' : ''; },
+      phaseBoard: function (r) { return boardRank('phaseOrder', 'phaseIdx', r, natural(r.phase)); },
+      stageBoard: function (r) { return boardRank('stageOrder', 'stageIdx', r, txt(r.caseStage)); },
+      retainedBy: function (r) { return txt(r.retainedBy); },
+      retainerStatus: function (r) { return txt(r.retainerStatus); },
+      paymentStatus: function (r) { return txt(r.paymentStatus); },
+      managerV: function (r) { var t = txt(r.manager); return t === 'unassigned' ? '' : t; },
+      qPct: function (r) { return pct(r.qReadinessPct); },
+      docPct: function (r) { return pct(r.docUploadedPct); },
     },
     // a case with no date / phase / officer goes last, whichever way the column sorts (A → Z must not open on every blank)
-    sortBlanksLast: ['actualDeadline', 'promisedDate', 'phase', 'officer'],
+    sortBlanksLast: ['actualDeadline', 'promisedDate', 'phase', 'officer',
+      'dependents', 'clientEmail', 'clientPhone', 'caseTypeV', 'subType', 'deadlineType', 'phaseBoard', 'stageBoard', 'retainedBy', 'retainerStatus', 'paymentStatus', 'managerV', 'qPct', 'docPct'],
     defaultSort: { key: 'createdAt', dir: 'desc' },   // newest case first
-    search: { chip: 'Search', text: function (r) { return [r.clientName, r.caseRef, r.caseType, r.officer]; } },
+    // The search box also finds a case by the client's email, phone (however the number is written) and dependents (2026-11-12).
+    search: { chip: 'Search', text: function (r) { return [r.clientName, r.caseRef, r.caseType, r.officer, r.clientEmail, r.clientPhone, r.dependents]; },
+      digits: function (r) { return s(r.clientPhone); } },
   };
 }
 function casesListOpts(ctx) {
   var AZ = ['A → Z', 'Z → A'], ASC = ['asc', 'desc'], SOON = ['Soonest first', 'Latest first'];
   var VIEWS = ctx.views || [], hints = {};
   VIEWS.forEach(function (v) { if (v.hint) hints[v.key] = v.hint; });
+  /* Where a column shows: ALL = the All tab only (the columns it has always had); VT = the view tabs only (the agreed
+     twenty, team meeting 2026-11-10 item 12); no tabs = both (Case Ref, Client). */
+  var ALL = [''], VT = VIEWS.map(function (v) { return v.key; });
+  var PCT = ['Highest first', 'Lowest first'], DESC = ['desc', 'asc'], BOARD = ['In the board’s order', 'The other way'];
   return {
     key: 'tdot_list_cases',
     ids: { head: 'cs-headrow', chips: 'cs-chips', count: 'table-count', search: 'search-box', pop: 'cs-pop' },
@@ -261,19 +312,39 @@ function casesListOpts(ctx) {
     cols: [
       { id: 'caseRef', label: 'Case Ref', sort: 'caseRef', sortText: AZ, sortDirs: ASC },
       { id: 'clientName', label: 'Client', sort: 'clientName', sortText: AZ, sortDirs: ASC },
-      { id: 'caseType', label: 'Type', sort: 'caseType', sortText: AZ, sortDirs: ASC },
-      { id: 'caseStage', label: 'Stage', menu: 'facet', facets: ['stage'], sort: 'caseStage', sortText: AZ, sortDirs: ASC },
-      { id: 'phase', label: 'Phase', sort: 'phase', sortText: AZ, sortDirs: ASC },
-      { id: 'deadline', label: 'Deadline', title: 'Deadline Type (Real or Imaginary), the Actual Deadline, and its half-month window', sort: 'actualDeadline', sortText: SOON, sortDirs: ASC },
-      { id: 'promised', label: 'Promised', title: 'The Internal Deadline (the date promised on an Imaginary deadline)', sort: 'promisedDate', sortText: SOON, sortDirs: ASC },
-      { id: 'health', label: 'Health', menu: 'facet', facets: ['health'], sort: 'health', sortText: ['Red first', 'Green first'], sortDirs: ASC },
-      { id: 'slaRisk', label: 'SLA Risk', sort: 'slaRisk', sortText: ['Red first', 'Green first'], sortDirs: ASC },
-      { id: 'officer', label: 'Support Officer', title: 'Case Support Officer', sort: 'officer', sortText: AZ, sortDirs: ASC },
-      { id: 'manager', label: 'Manager', menu: 'facet', facets: ['manager'], sort: 'manager', sortText: AZ, sortDirs: ASC },
-      { id: 'overallReadiness', label: 'Readiness', sort: 'overallReadiness', sortText: ['Highest first', 'Lowest first'], sortDirs: ['desc', 'asc'] },
-      { id: 'daysElapsed', label: 'Days', sort: 'daysElapsed', sortText: ['Most first', 'Fewest first'], sortDirs: ['desc', 'asc'] },
-      { id: 'status', label: 'Status' },
-      { id: 'del', label: '' },
+      // ── the All tab: the columns it has always had ──
+      { id: 'caseType', label: 'Type', sort: 'caseType', sortText: AZ, sortDirs: ASC, tabs: ALL },
+      { id: 'caseStage', label: 'Stage', menu: 'facet', facets: ['stage'], sort: 'caseStage', sortText: AZ, sortDirs: ASC, tabs: ALL },
+      { id: 'phase', label: 'Phase', sort: 'phase', sortText: AZ, sortDirs: ASC, tabs: ALL },
+      { id: 'deadline', label: 'Deadline', title: 'Deadline Type (Real or Imaginary), the Actual Deadline, and its half-month window', sort: 'actualDeadline', sortText: SOON, sortDirs: ASC, tabs: ALL },
+      { id: 'promised', label: 'Promised', title: 'The Internal Deadline (the date promised on an Imaginary deadline)', sort: 'promisedDate', sortText: SOON, sortDirs: ASC, tabs: ALL },
+      { id: 'health', label: 'Health', menu: 'facet', facets: ['health'], sort: 'health', sortText: ['Red first', 'Green first'], sortDirs: ASC, tabs: ALL },
+      { id: 'slaRisk', label: 'SLA Risk', sort: 'slaRisk', sortText: ['Red first', 'Green first'], sortDirs: ASC, tabs: ALL },
+      { id: 'officer', label: 'Support Officer', title: 'Case Support Officer', sort: 'officer', sortText: AZ, sortDirs: ASC, tabs: ALL },
+      { id: 'manager', label: 'Manager', menu: 'facet', facets: ['manager'], sort: 'manager', sortText: AZ, sortDirs: ASC, tabs: ALL },
+      { id: 'overallReadiness', label: 'Readiness', sort: 'overallReadiness', sortText: PCT, sortDirs: DESC, tabs: ALL },
+      { id: 'daysElapsed', label: 'Days', sort: 'daysElapsed', sortText: ['Most first', 'Fewest first'], sortDirs: DESC, tabs: ALL },
+      { id: 'status', label: 'Status', tabs: ALL },
+      { id: 'del', label: '', tabs: ALL },
+      // ── the view tabs: after Case Ref and Client, the agreed list in its order, one column each (nothing beyond it) ──
+      { id: 'dependents', label: 'Dependents', title: 'Dependents / Inviter / Sponsor — the search box above the table finds a case by them', sort: 'dependents', sortText: AZ, sortDirs: ASC, tabs: VT },
+      { id: 'clientEmail', label: 'Client email', title: 'Client Email — the search box above the table finds a case by it', sort: 'clientEmail', sortText: AZ, sortDirs: ASC, tabs: VT },
+      { id: 'clientPhone', label: 'Contact number', title: 'Client Contact Number — the search box above the table finds a case by it', sort: 'clientPhone', sortText: ['0 → 9', '9 → 0'], sortDirs: ASC, tabs: VT },
+      { id: 'caseTypeV', label: 'Case type', title: 'Primary Case Type', menu: 'facet', facets: ['caseType'], sort: 'caseTypeV', sortText: AZ, sortDirs: ASC, tabs: VT },
+      { id: 'subType', label: 'Sub-type', title: 'Case Sub Type', menu: 'facet', facets: ['subType'], sort: 'subType', sortText: AZ, sortDirs: ASC, tabs: VT },
+      { id: 'actualDeadline', label: 'Actual deadline', title: 'The Actual Deadline and the half-month window the case is counted in', sort: 'actualDeadline', sortText: SOON, sortDirs: ASC, tabs: VT },
+      { id: 'deadlineType', label: 'Deadline type', title: 'Real (a real deadline) or Imaginary (a date we promised)', menu: 'facet', facets: ['deadlineType'], sort: 'deadlineType', sortText: ['Real first', 'Imaginary first'], sortDirs: ASC, tabs: VT },
+      { id: 'internalDeadline', label: 'Internal deadline', title: 'The Internal Deadline (the date promised on an Imaginary deadline)', sort: 'promisedDate', sortText: SOON, sortDirs: ASC, tabs: VT },
+      { id: 'phaseV', label: 'Phase', menu: 'facet', facets: ['phase'], sort: 'phaseBoard', sortText: BOARD, sortDirs: ASC, tabs: VT },
+      { id: 'retainedBy', label: 'Retained by', menu: 'facet', facets: ['retainedBy'], sort: 'retainedBy', sortText: AZ, sortDirs: ASC, tabs: VT },
+      { id: 'retainerStatus', label: 'Retainer status', menu: 'facet', facets: ['retainerStatus'], sort: 'retainerStatus', sortText: AZ, sortDirs: ASC, tabs: VT },
+      { id: 'paymentStatus', label: 'Payment status', menu: 'facet', facets: ['paymentStatus'], sort: 'paymentStatus', sortText: AZ, sortDirs: ASC, tabs: VT },
+      { id: 'stageV', label: 'Stage', title: 'Case Stage', menu: 'facet', facets: ['stage'], sort: 'stageBoard', sortText: BOARD, sortDirs: ASC, tabs: VT },
+      { id: 'portal', label: 'Client portal', title: 'Opens the client’s own portal page in a new tab', tabs: VT },
+      { id: 'officerV', label: 'Support officer', title: 'Case Support Officer', menu: 'facet', facets: ['officer'], sort: 'officer', sortText: AZ, sortDirs: ASC, tabs: VT },
+      { id: 'managerV', label: 'Case manager', menu: 'facet', facets: ['manager'], sort: 'managerV', sortText: AZ, sortDirs: ASC, tabs: VT },
+      { id: 'qPct', label: 'Questionnaire %', title: 'Questionnaire Readiness %', sort: 'qPct', sortText: PCT, sortDirs: DESC, tabs: VT },
+      { id: 'docPct', label: 'Documents uploaded %', title: 'Documents Uploaded %', sort: 'docPct', sortText: PCT, sortDirs: DESC, tabs: VT },
     ],
   };
 }

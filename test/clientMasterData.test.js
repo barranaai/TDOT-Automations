@@ -395,5 +395,5 @@ test('the read asks for the group and the new columns, every items(ids:) with an
 
 test('the dashboard-stats route passes Refresh through (fresh=1 only)', () => {
   const src = require('fs').readFileSync(require.resolve('../src/server'), 'utf8');
-  assert.match(src, /getDashboardStats\(viewer\.scope === 'all' \? undefined : viewer, \{ fresh: req\.query\.fresh === '1' \}\)/);
+  assert.match(src, /getDashboardStats\(viewer\.scope === 'all' \? undefined : viewer, \{ fresh: req\.query\.fresh === '1', contact: req\.query\.contact === '1' \}\)/);
 });
