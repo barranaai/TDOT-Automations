@@ -292,6 +292,7 @@ test('a list WITHOUT the marker is unchanged: Leads, Consultations and Retainers
   for (const [name, specFn, optsFn, ctx] of lists) {
     const opts = optsFn(ctx);
     assert.ok(opts.cols.every((c) => !('tabs' in c)), name + ': no column says which tabs it is on');
+    assert.ok(!('pickCols' in opts), name + ': no chosen columns either (the Client Master page only)');
     if (typeof specFn !== 'function') continue;
     const p = enginePage(specFn(ctx), opts);
     p.api.setRows([]);
@@ -301,7 +302,7 @@ test('a list WITHOUT the marker is unchanged: Leads, Consultations and Retainers
   }
   // the engine's own text: the per-tab code is behind the marker
   const ui = listTableUi.toString();
-  assert.ok(ui.includes('var TABBED = COLS.some(function (c) { return !!c.tabs; });') && ui.includes('function shownCols() { if (!TABBED) return COLS;'));
+  assert.ok(ui.includes('var TABBED = COLS.some(function (c) { return !!c.tabs; });') && ui.includes('var PICKS = !!o.pickCols;') && ui.includes('if (!TABBED && !PICKS) return COLS;'));
 });
 
 /* ── sorts, filters and the search of the new columns ── */
@@ -602,7 +603,7 @@ test('the page: the All tab draws the fifteen cells it always drew — the type 
 async function tablePage() {
   const html = await renderRoute('/');
   const main = inlineScripts(html).find((s) => s.includes('function renderViewTable('));
-  const mk = (tag) => { const e = { tag, className: tag === 'table' ? 'data-table' : '', style: {}, kids: [], _html: '', onclick: null, appendChild(c) { this.kids.push(c); }, getAttribute() { return null; }, focus() {} };
+  const mk = (tag) => { const e = { tag, className: tag === 'table' ? 'data-table' : '', style: {}, kids: [], _html: '', onclick: null, appendChild(c) { this.kids.push(c); }, getAttribute() { return null; }, setAttribute() {}, removeAttribute() {}, focus() {} };
     Object.defineProperty(e, 'innerHTML', { get() { return this._html; }, set(v) { this._html = v; this.kids = []; } }); return e; };
   const els = { 'all-cases-body': mk('tbody'), 'cm-head': mk('div'), 'cm-oc': mk('span'), 'all-cases-table': mk('table') };
   // the table's scroll box (.tbl-wrap): its class list, its attributes and its two widths
@@ -694,7 +695,9 @@ test('the page: the wide table scrolls inside its own box with Case Ref and Clie
   const print = html.slice(html.indexOf('@media print {', html.indexOf('@page { size: landscape')));
   assert.ok(print.includes('#all-cases-table.cm-wide #cs-headrow th, #all-cases-table.cm-wide td { position:static !important; box-shadow:none !important; width:auto !important; min-width:0 !important; max-width:none !important; }'));
   assert.ok(print.includes('#all-cases-table:not(.cm-wide) #cs-headrow th:last-child, #all-cases-table td.cm-del { display:none; }'), 'a view tab\'s last column (Documents uploaded %) prints');
-  assert.ok(!/[^)] #cs-headrow th:last-child/.test(print.replace('#all-cases-table:not(.cm-wide) #cs-headrow th:last-child', '')));
+  // … and on All made wide by added columns (2026-11-12, the Columns button): its last column is still the delete column
+  assert.ok(print.includes('#all-cases-table.cm-wide-all #cs-headrow th:last-child { display:none; }'));
+  assert.ok(!/[^)] #cs-headrow th:last-child/.test(print.replace('#all-cases-table:not(.cm-wide) #cs-headrow th:last-child', '').replace('#all-cases-table.cm-wide-all #cs-headrow th:last-child', '')));
   assert.ok(print.includes('td.cm-pin2::after { display:none; }'), 'no shadow strip on paper');
   assert.ok(print.includes('#all-cases-table.cm-wide { width:100%; min-width:0; font-size:7pt; }') && print.includes('.cm-clip, .cm-ell { display:block; overflow:visible; white-space:normal; }'));
   // the search box says what it finds; the engine gets the board order and the Real / Imaginary reading from the page
@@ -708,7 +711,7 @@ test('the page: the wide table scrolls inside its own box with Case Ref and Clie
 test('the page-script rule holds for the new code: no backtick, dollar-brace or backslash in the row code or the specs; every emitted script parses', async () => {
   const src = fs.readFileSync(require.resolve('../src/routes/adminDashboard'), 'utf8');
   const block = src.slice(src.indexOf('/* The columns of a tab, in order'), src.indexOf('/* ── Assign the Case Support Officer'));
-  assert.ok(block.length > 4000 && block.includes('function cmPortalCell(c)') && block.includes('function caseRow(c, v, today)'));
+  assert.ok(block.length > 4000 && block.includes('function cmPortalCell(c)') && block.includes('function caseRow(c, v, today, wide)') && block.includes('function cmPickCols(cols, tab, all)'));
   assert.ok(!/[`\\]|\$\{/.test(block));
   for (const fn of [S.casesListSpec, S.casesListOpts]) assert.ok(!/[`\\]|\$\{/.test(fn.toString()), fn.name);
   for (const path of ['/', '/summary']) for (const s of inlineScripts(await renderRoute(path))) new vm.Script(s);
@@ -759,12 +762,12 @@ test('a phone: the pinned Case Ref shows whole (wraps, same 100px so Client stil
   assert.ok(html.indexOf('scroll-padding-left:298px') < html.indexOf('scroll-padding-left:212px'), 'the phone value comes later, so it wins');
   assert.ok(html.includes('.table-card .tbl-wrap:focus-visible { outline:2px solid var(--navy); outline-offset:-2px; }'));
   const src = fs.readFileSync(require.resolve('../src/routes/adminDashboard'), 'utf8');
-  assert.ok(src.includes(`caseRef: '<td class="cm-pin cm-pin1"' + (c.caseRef ? ' title="' + escHtml(c.caseRef) + '"' : '') + '>' + refCell + '</td>',`));
-  const box = src.slice(src.indexOf('function cmScrollBox(isAll)'), src.indexOf('/* Above the table, on a view tab only'));
-  assert.ok(box.includes("w.classList.toggle('cm-scroll', !isAll);") && box.includes('if (!isAll || w.scrollWidth > w.clientWidth + 1) {'));
+  assert.ok(src.includes(`caseRef: pin ? '<td class="cm-pin cm-pin1"' + (c.caseRef ? ' title="' + escHtml(c.caseRef) + '"' : '') + '>' + refCell + '</td>'`));
+  const box = src.slice(src.indexOf('function cmScrollBox(plain)'), src.indexOf('/* Above the table, on a view tab only'));
+  assert.ok(box.includes("w.classList.toggle('cm-scroll', !plain);") && box.includes('if (!plain || w.scrollWidth > w.clientWidth + 1) {'));
   assert.ok(box.includes("w.setAttribute('tabindex', '0');") && box.includes("w.setAttribute('role', 'region');") && box.includes("w.setAttribute('aria-label', 'Cases table, scrolls sideways');"));
   assert.ok(box.includes("w.removeAttribute('tabindex');") && box.includes("w.removeAttribute('role');") && box.includes("w.removeAttribute('aria-label');"));
-  assert.equal((src.match(/cmScrollBox\(isAll\);/g) || []).length, 2, 'after both ways out of the table drawing');
+  assert.equal((src.match(/cmScrollBox\(!wide\);/g) || []).length, 2, 'after both ways out of the table drawing');
   // paper
   const print = html.slice(html.indexOf('@media print'));
   assert.ok(print.includes('#all-cases-table.cm-wide td, #all-cases-table.cm-wide tr.cm-grp td { font-size:7pt; white-space:normal; overflow-wrap:break-word; }'));

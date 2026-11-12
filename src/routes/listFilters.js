@@ -291,7 +291,8 @@ function listCore(spec) {
  *        tabs above the table (Consultations: the month on view on the Completed and All tabs),
  *      defaultDateScope: with a date range per tab (spec.date.per), the tab the opening date belongs to (Consultations: 'booked'),
  *      sortReset: 'newest case first' (or a function(state) giving the words) — the list's normal order has no column, so a column
-        sort shows as a chip whose × goes back to it }
+        sort shows as a chip whose × goes back to it,
+ *      pickCols: window function name (tabCols, tab, allCols) -> the columns to draw (Client Master: the columns a person chose) }
  * A column: { id, label, title, menu, facets: [...], flags: [...], date: true, note, sort, sortText: [..], sortDirs: [first, second],
  *             tabs: [quick values] }
  *   (a column with only a sort and a note still has a panel: the sort both ways and the note — Consultations "Client")
@@ -299,6 +300,7 @@ function listCore(spec) {
  *   and panels are offered, for the columns of the tab on view (LT.colsOnTab); the page draws its rows from the same set. No column
  *   with `tabs` = every column on every tab, as always. What a person chose on a column that is not on the tab on view STAYS ON and
  *   is never hidden: a filter shows as its chip above the table (× takes it off, "Clear filters" too), a sort as the "Sorted" chip.
+ *   The same holds for a column a person hid (o.pickCols): its filter or sort stays on and stays visible as its chip.
  */
 function listTableUi(LT, o, win) {
   var doc = win.document, KEY = o.key, ids = o.ids, COLS = o.cols;
@@ -346,7 +348,21 @@ function listTableUi(LT, o, win) {
   function col(id) { for (var i = 0; i < COLS.length; i++) if (COLS[i].id === id) return COLS[i]; return null; }
   /* Columns per tab (a column's `tabs`): the columns of the tab on view. A list with no such column: all of them, always. */
   var TABBED = COLS.some(function (c) { return !!c.tabs; });
-  function shownCols() { if (!TABBED) return COLS; var l = o.quick && state.sel[o.quick.facet]; return LT.colsOnTab(COLS, (l && l.length) ? l[0] : ''); }
+  /* o.pickCols (Client Master, 2026-11-12: the columns a person chose): a window function name — it gets the tab's columns, the tab
+     and every column, and answers the columns to draw (in its order). Only columns of this list count; no answer, an empty one or
+     an error = the tab's own columns. A list without it is not touched. */
+  var PICKS = !!o.pickCols;
+  function shownCols() {
+    if (!TABBED && !PICKS) return COLS;
+    var l = o.quick && state.sel[o.quick.facet], tab = (l && l.length) ? l[0] : '';
+    var list = TABBED ? LT.colsOnTab(COLS, tab) : COLS;
+    if (PICKS && typeof win[o.pickCols] === 'function') {
+      var p = null;
+      try { p = win[o.pickCols](list, tab, COLS); } catch (e) { p = null; }
+      if (Array.isArray(p)) { p = p.filter(function (c, i) { return COLS.indexOf(c) >= 0 && p.indexOf(c) === i; }); if (p.length) list = p; }
+    }
+    return list;
+  }
   function save() {
     if (win.TDOT_SIGNED_OUT) return;
     try { win.sessionStorage.setItem(KEY, JSON.stringify(state)); if (o.defaultDate && dayMark !== null) win.sessionStorage.setItem(KEY + '_day', dayMark); } catch (e) { /* not kept — fine */ }
@@ -493,7 +509,7 @@ function listTableUi(LT, o, win) {
   var started = false;
   function apply(why) {
     rollDay();   // a list left open on "today" overnight moves on to the new day
-    if (openCol && TABBED && shownCols().indexOf(col(openCol)) < 0) close(false);   // the open panel's column is not on the tab now on view
+    if (openCol && (TABBED || PICKS) && shownCols().indexOf(col(openCol)) < 0) close(false);   // the open panel's column is not on the tab now on view (or was hidden)
     var rows = LT.sortRows(LT.filterRows(ROWS, state), state.sort);
     /* h.without(f): how many rows pass every filter except f (an empty list can say why it is empty);
        h.defaultSort: true when the list is in its normal order (no column sort chosen) */

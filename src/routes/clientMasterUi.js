@@ -287,10 +287,119 @@ function clientMasterUi(W) {
     return s(title) + ', ' + n + ' case' + (n === 1 ? '' : 's') + ', ' + (open ? 'open — press to close' : 'closed — press to open');
   }
 
+  /* ── Columns a person chooses (team meeting 2026-11-10, item 13) ─────────────────────────────────
+     Each tab has its own default columns (the list's own: listSpecs casesListOpts). A person may hide any of
+     them except Case Ref and Client, and may add the columns of the OTHER tabs that have no equivalent on this
+     one. Two columns that show the same board fact in two looks are equivalents (COL_SAME): one tab never
+     offers both. What is kept is the DIFFERENCE from the default, per tab ({ hidden: [ids], added: [ids] }),
+     so a column added to a default later shows up by itself and an id that is gone is simply ignored.
+     tabCols: { '': [the All tab's column ids], viewKey: [ids], … } — the page's CM_TABCOLS. */
+  var COL_LOCKED = ['caseRef', 'clientName'];   // always shown (and pinned in the wide table)
+  var COL_FIXED = ['del'];                      // not a choice: stays where the tab has it, last
+  /* All's column, then the view tabs' column for the same thing (All's "Deadline" also carries the type and the window;
+     its own "Deadline type" column can still be added there). */
+  var COL_SAME = [['caseType', 'caseTypeV'], ['caseStage', 'stageV'], ['phase', 'phaseV'], ['deadline', 'actualDeadline'],
+    ['promised', 'internalDeadline'], ['officer', 'officerV'], ['manager', 'managerV']];
+  function colList(v) { var out = []; (Array.isArray(v) ? v : []).forEach(function (x) { if (typeof x === 'string' && x && out.indexOf(x) < 0) out.push(x); }); return out; }
+  /** The other ids that show the same thing as this one ([] = none). */
+  function colSame(id) {
+    var out = [];
+    COL_SAME.forEach(function (g) { if (g.indexOf(id) >= 0) g.forEach(function (x) { if (x !== id && out.indexOf(x) < 0) out.push(x); }); });
+    return out;
+  }
+  /** The storage name of a tab's choice ('' = the All tab). */
+  function colTabKey(tab) { var t = s(tab); return t === '' ? 'all' : t; }
+  /**
+   * What a tab offers: { tab, own: the tab's default columns that can be chosen (table order, the locked two first as the
+   * list has them), extra: the other tabs' columns with no equivalent here (their own order; All's first), locked, fixed:
+   * the tab's columns that are not a choice }. An unknown tab is read as All.
+   */
+  function colPlan(tabCols, tab) {
+    var tc = tabCols || {}, t = has(tc, s(tab)) ? s(tab) : '';
+    var mine = colList(tc[t]), own = [], fixed = [], extra = [];
+    mine.forEach(function (id) { (COL_FIXED.indexOf(id) >= 0 ? fixed : own).push(id); });
+    function taken(id) { return colSame(id).some(function (x) { return own.indexOf(x) >= 0 || extra.indexOf(x) >= 0; }); }
+    var keys = Object.keys(tc).filter(function (k) { return k !== t; }).sort(function (a, b) { return (a === '' ? 0 : 1) - (b === '' ? 0 : 1); });
+    keys.forEach(function (k) {
+      colList(tc[k]).forEach(function (id) {
+        if (COL_FIXED.indexOf(id) >= 0 || own.indexOf(id) >= 0 || extra.indexOf(id) >= 0 || taken(id)) return;
+        extra.push(id);
+      });
+    });
+    return { tab: t, own: own, extra: extra, fixed: fixed, locked: own.filter(function (id) { return COL_LOCKED.indexOf(id) >= 0; }) };
+  }
+  /** A kept choice made safe for a plan: only ids the tab can hide (never the locked two) and ids it can add. */
+  function colPref(plan, raw) {
+    var r = raw && typeof raw === 'object' ? raw : {};
+    return { hidden: colList(r.hidden).filter(function (id) { return plan.own.indexOf(id) >= 0 && plan.locked.indexOf(id) < 0; }),
+      added: colList(r.added).filter(function (id) { return plan.extra.indexOf(id) >= 0; }) };
+  }
+  /** The columns to draw, in order: the tab's own (without the hidden), then the added in their own set's order, then the fixed (All's delete column). */
+  function colIds(plan, raw) {
+    var p = colPref(plan, raw);
+    return plan.own.filter(function (id) { return p.hidden.indexOf(id) < 0; })
+      .concat(plan.extra.filter(function (id) { return p.added.indexOf(id) >= 0; })).concat(plan.fixed);
+  }
+  /** The choice after one box is ticked or unticked. A locked column, a fixed one or an id the tab does not offer changes nothing. */
+  function colToggle(plan, raw, id, on) {
+    var p = colPref(plan, raw), show = on === true;
+    function put(list, yes) { var at = list.indexOf(id); if (yes && at < 0) list.push(id); if (!yes && at >= 0) list.splice(at, 1); }
+    if (plan.locked.indexOf(id) >= 0) return p;
+    if (plan.own.indexOf(id) >= 0) put(p.hidden, !show);
+    else if (plan.extra.indexOf(id) >= 0) put(p.added, show);
+    return p;
+  }
+  /** How far a tab is from its default: { hidden, added, custom, text: '' | '3 hidden' | '2 added' | '3 hidden, 2 added' }. */
+  function colSummary(plan, raw) {
+    var p = colPref(plan, raw), parts = [];
+    if (p.hidden.length) parts.push(p.hidden.length + ' hidden');
+    if (p.added.length) parts.push(p.added.length + ' added');
+    return { hidden: p.hidden.length, added: p.added.length, custom: parts.length > 0, text: parts.join(', ') };
+  }
+  /** What was kept, made safe in shape only: { tabKey: { hidden: [ids], added: [ids] } } from { v: 1, tabs: {…} }; anything else → {}. */
+  function colStore(raw) {
+    var out = {}, k, t = raw && typeof raw === 'object' && !Array.isArray(raw) && raw.v === 1 ? raw.tabs : null;
+    if (!t || typeof t !== 'object' || Array.isArray(t)) return out;
+    for (k in t) {
+      if (!has(t, k) || !t[k] || typeof t[k] !== 'object' || Array.isArray(t[k])) continue;
+      var e = { hidden: colList(t[k].hidden).slice(0, 100), added: colList(t[k].added).slice(0, 100) };
+      if (e.hidden.length || e.added.length) out[k] = e;
+    }
+    return out;
+  }
+  /** The kept form of the choices: { v: 1, tabs } — or null when every tab is at its default (nothing to keep). */
+  function colStoreOut(map) {
+    var tabs = colStore({ v: 1, tabs: map || {} });
+    return Object.keys(tabs).length ? { v: 1, tabs: tabs } : null;
+  }
+  /** Does this set of columns need the wide table (sideways scroll, Case Ref and Client pinned)? A view tab always; All once a column is added to it. */
+  function colWide(tabCols, tab, ids) {
+    if (s(tab) !== '') return true;
+    var all = colList((tabCols || {})['']);
+    return (ids || []).some(function (id) { return all.indexOf(id) < 0; });
+  }
+  /** The plain All table's least width: it was tuned for its fifteen columns (1260px); with columns hidden it follows the number shown.
+      '' = leave it to the style sheet (the default fifteen or more). */
+  function colMinWidth(n) {
+    var k = Number(n);
+    if (!isFinite(k) || k >= 15) return '';
+    return Math.round(1260 * Math.max(1, Math.floor(k)) / 15) + 'px';
+  }
+  /** How small the wide table prints, by the number of columns that go on paper: 0 = up to twenty (as it always printed),
+      1 = 21 to 23, 2 = 24 and more. The print rules step the letters and the padding down by this, so every chosen column is on the sheet. */
+  function colPrintFit(n) {
+    var k = Number(n);
+    if (!isFinite(k) || k <= 20) return 0;
+    return k <= 23 ? 1 : 2;
+  }
+
+
   return { EMPTY: EMPTY, keyOf: keyOf, titleOf: titleOf, groupRows: groupRows, viewOrder: viewOrder, noOfficer: noOfficer,
     noOfficerCount: noOfficerCount, waitingWords: waitingWords, waitingCounts: waitingCounts, typeCounts: typeCounts, filteredLine: filteredLine, hasUserFilter: hasUserFilter,
     ALL_VIEW: ALL_VIEW, groupId: groupId, monthOf: monthOf, newestMonthId: newestMonthId, defaultOpenIds: defaultOpenIds, openMap: openMap, setOpen: setOpen,
-    normalizeKept: normalizeKept, filterSig: filterSig, groupLabel: groupLabel };
+    normalizeKept: normalizeKept, filterSig: filterSig, groupLabel: groupLabel,
+    COL_LOCKED: COL_LOCKED, COL_FIXED: COL_FIXED, COL_SAME: COL_SAME, colSame: colSame, colTabKey: colTabKey, colPlan: colPlan, colPref: colPref, colIds: colIds,
+    colToggle: colToggle, colSummary: colSummary, colStore: colStore, colStoreOut: colStoreOut, colWide: colWide, colMinWidth: colMinWidth, colPrintFit: colPrintFit };
 }
 
 module.exports = Object.assign({ clientMasterUi: clientMasterUi }, clientMasterUi(require('./clientMasterWindows')));

@@ -14,6 +14,7 @@ const { casesListSpec, casesListOpts } = require('./listSpecs');
 const clientMasterViews = require('../services/clientMasterViews');
 const { clientMasterWindows } = require('./clientMasterWindows');
 const { clientMasterUi } = require('./clientMasterUi');
+const { clientMasterColumnsUi, CM_COLUMNS_KEY } = require('./clientMasterColumnsUi');   // the Columns button (2026-11-12)
 const { DEADLINE_CHANGE_CSS, DEADLINE_CHANGE_HTML, DEADLINE_CHANGE_JS } = require('./deadlineChangeUi');   // Change… on the Deadlines tab (2026-11-10)
 
 // ─── View bodies ──────────────────────────────────────────────────────────
@@ -318,6 +319,8 @@ const ALL_CASES_BODY_HTML = `
           <button type="button" class="cm-oc-b" id="cm-open-all" onclick="cmGrpAll(true)" title="Open every group in the table">Open all</button>
           <button type="button" class="cm-oc-b" id="cm-close-all" onclick="cmGrpAll(false)" title="Close every group: only the headings and their counts stay">Close all</button>
         </span>
+        <!-- The columns of the tab on view (team meeting 2026-11-10, item 13): a panel of tick boxes, remembered on this browser. -->
+        <button type="button" class="cm-oc-b cm-cols-b" id="cm-cols-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Columns" title="Choose the columns of this tab">Columns</button>
         <span class="table-count" id="table-count" aria-live="polite"></span>
       </div>
       <div id="cs-chips" class="q-chips cs-chips" style="display:none" aria-live="polite"></div>
@@ -338,6 +341,22 @@ function cmTabCols() {
   const out = { '': on(cols, '').map((c) => c.id) };
   for (const v of views) out[v.key] = on(cols, v.key).map((c) => c.id);
   return out;
+}
+
+/** Each column's name for the Columns panel: { id: label } (the delete column has none and is not a choice). */
+function cmColNames() {
+  const out = {};
+  for (const c of casesListOpts({ views: clientMasterViews.pageViews() }).cols) if (c.label) out[c.id] = c.label;
+  return out;
+}
+/* The Columns button's code for the page (Client Master only). Built here, outside the page's template literal: the
+   function is injected with toString and its options are plain page JavaScript in a normal string. */
+function cmColumnsBoot() {
+  return 'var CM_COLNAMES = ' + JSON.stringify(cmColNames()) + ';\n'
+    + 'var CMCOLS = (' + clientMasterColumnsUi.toString() + ')(window, CMU, { key: ' + JSON.stringify(CM_COLUMNS_KEY) + ', tabCols: CM_TABCOLS, names: CM_COLNAMES, ids: { btn: "cm-cols-btn", pop: "cm-cols-pop" },\n'
+    + '  tabName: function(t) { var v = cmViewDef(t); return v ? v.label : "All"; },\n'
+    + '  tab: function() { var v = window.CasesTable ? cmView(window.CasesTable.state()) : null; return v ? v.key : ""; },\n'
+    + '  onChange: function() { if (window.CasesTable) window.CasesTable.apply("columns"); } });';
 }
 
 // The Client Master page's own look (block 3): the view tabs' header box, the group headings,
@@ -368,6 +387,18 @@ const CM_CSS = `
     .cm-oc { display:inline-flex; gap:6px; }
     .cm-oc-b { border:1px solid #e2e8f0; background:#fff; color:var(--navy); border-radius:8px; padding:6px 11px; font:inherit; font-size:12.5px; font-weight:700; cursor:pointer; white-space:nowrap; }
     .cm-oc-b:hover { border-color:var(--navy); background:#f8fafc; }
+    /* The Columns button (2026-11-12): blue with a count while the tab on view does not show its default columns, so nobody wonders where a column went. */
+    .cm-cols-b.open { border-color:var(--navy); background:#f8fafc; }
+    .cm-cols-b.on { border-color:var(--st-blue-solid); background:var(--st-blue-bg); color:var(--st-blue-fg); }
+    .cm-cols-n { font-weight:700; }
+    #cm-cols-pop .qp-row .qp-c { white-space:nowrap; }
+    #cm-cols-pop .qp-b { min-height:0; }   /* the list shrinks inside the panel: the heading and Reset to default / Done stay in view */
+    #cm-cols-pop .cmc-lock { cursor:default; color:#475569; }
+    #cm-cols-pop .cmc-lock:hover { background:none; }
+    #cm-cols-pop .cmc-lock .qp-c { color:#64748b; }
+    #cm-cols-pop .qp-link:disabled { color:#94a3b8; cursor:default; text-decoration:none; }
+    #cm-cols-pop .qp-link:focus-visible, #cm-cols-pop .qp-done:focus-visible, #cm-cols-pop .qp-x:focus-visible { outline:2px solid var(--st-focus); outline-offset:1px; }
+    @media (max-width: 760px) { #cm-cols-pop .qp-row { min-height:36px; } }
     .cm-st b { color:var(--navy); margin-left:2px; font-variant-numeric:tabular-nums; }
     .cm-line { font-size:12.5px; color:#334155; }
     /* Pre-Onboarding "Waiting for" (2026-11-10): the count strip above Assigning and the second line in the Stage cell.
@@ -447,6 +478,8 @@ const CM_CSS = `
     /* the soft shadow on the pinned edge: drawn as its own strip just past the Client column (a cell's box-shadow is not painted over its neighbours in this table) */
     #all-cases-table.cm-wide #cs-headrow th:nth-child(2)::after, #all-cases-table.cm-wide td.cm-pin2::after { content:''; position:absolute; top:0; bottom:0; left:100%; width:9px; pointer-events:none;
       background:linear-gradient(to right, rgba(15,23,42,.22), rgba(15,23,42,.07) 2px, rgba(15,23,42,0)); }
+    /* Client as the LAST column (every other column hidden): nothing scrolls under it, so no shadow strip — it would stick out past the table and make the box scroll 9px */
+    #all-cases-table.cm-wide #cs-headrow th:nth-child(2):last-child::after, #all-cases-table.cm-wide td.cm-pin2:last-child::after { display:none; }
     #all-cases-table.cm-wide #cs-headrow th:nth-child(-n+2) { z-index:3; }
     #all-cases-table.cm-wide td.cm-pin { background:#fff; }
     #all-cases-table.cm-wide td.cm-pin1 { font-weight:600; color:var(--navy); overflow:hidden; text-overflow:ellipsis; }
@@ -490,12 +523,14 @@ const CM_CSS = `
       body { background:#fff; }
       .admin-hdr, .refresh-bar, .view-switch, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop, .cm-assign, .cm-asg-ok, .dlc-btn, .dlc-ok { display:none !important; }
       #all-cases-table:not(.cm-wide) #cs-headrow th:last-child, #all-cases-table td.cm-del { display:none; }
+      /* All with columns added is wide too, and its last column is still the delete column */
+      #all-cases-table.cm-wide-all #cs-headrow th:last-child { display:none; }
       .wrap { padding:0; }
       .dash-header { margin:0 0 6px; }
       .sec-hd { display:none; }
       .table-card { box-shadow:none; border:0; overflow:visible; margin:0; }
       .tbl-wrap { overflow:visible; }
-      #all-cases-table { min-width:0; font-size:10pt; }
+      #all-cases-table { min-width:0 !important; font-size:10pt; }   /* !important: the plain table's width for hidden columns is an inline style */
       .data-table th, .data-table td { padding:3px 5px; }
       .data-table th { font-size:8pt; }
       .data-table tr.row-red, .data-table tr.row-orange { background:none; }
@@ -520,6 +555,22 @@ const CM_CSS = `
       #all-cases-table.cm-wide .cm-clip { overflow-wrap:break-word; }
       #all-cases-table.cm-wide td.cm-c-email .cm-clip { overflow-wrap:anywhere; }
       #all-cases-table.cm-wide td.cm-c-email { min-width:26mm !important; }
+      /* a chosen set of columns (the Columns button) prints whole, however many there are. The cells that come from the All tab lose
+         what keeps them wide: their own letter size, their one-line rule, the readiness bar's track (the percentage stays) … */
+      #all-cases-table.cm-wide td { font-size:7pt !important; white-space:normal !important; }
+      #all-cases-table.cm-wide .readiness-bar { display:block; }
+      #all-cases-table.cm-wide .r-bar-bg { display:none; }
+      #all-cases-table.cm-wide .r-bar-pct { font-size:inherit; min-width:0; }
+      /* … and past twenty columns the letters and the padding step down by the number of columns on paper (data-pfit, set with the
+         columns: 1 = 21 to 23, 2 = 24 and more). Words stay whole: a cell wraps between words, and only the email may break inside one. */
+      #all-cases-table.cm-wide[data-pfit] th, #all-cases-table.cm-wide[data-pfit] td { padding:2px 3px; }
+      #all-cases-table.cm-wide[data-pfit] td * { white-space:normal !important; font-size:inherit !important; letter-spacing:0; }
+      #all-cases-table.cm-wide[data-pfit] .badge, #all-cases-table.cm-wide[data-pfit] .cm-win, #all-cases-table.cm-wide[data-pfit] .cm-flag { padding:0 2px; margin-right:0 !important; }
+      #all-cases-table.cm-wide[data-pfit="1"] td, #all-cases-table.cm-wide[data-pfit="1"] tr.cm-grp td { font-size:6pt !important; }
+      #all-cases-table.cm-wide[data-pfit="1"] th { font-size:5.5pt; }
+      #all-cases-table.cm-wide[data-pfit="2"] td, #all-cases-table.cm-wide[data-pfit="2"] tr.cm-grp td { font-size:5.5pt !important; }
+      #all-cases-table.cm-wide[data-pfit="2"] th { font-size:5pt; }
+      #all-cases-table.cm-wide[data-pfit="2"] td.cm-c-email { min-width:20mm !important; }
       /* the header row repeated on pages 2+ prints its column names (Chrome leaves a button out of a repeated header; as plain text it prints) */
       #all-cases-table th .th-sortbtn { display:contents; }
       .cm-none-t { position:static !important; }
@@ -1196,6 +1247,8 @@ var CM_PRE_ONBOARDING = ${clientMasterViews.PRE_ONBOARDING_INDEX};   // Case Sta
 // rule the header is drawn by, listCore colsOnTab). The rows and the full-width rows follow it.
 var CM_TABCOLS = ${JSON.stringify(cmTabCols())};
 ${isSummary ? '' : 'var CMW = (' + clientMasterWindows.toString() + ')(); var CMU = (' + clientMasterUi.toString() + ')(CMW);'}
+// The columns a person chose for each tab (the Columns button; remembered on this browser): CMCOLS.ids(tab) is what is drawn.
+${isSummary ? '' : cmColumnsBoot()}
 
 /* ── Count-up animation ──────────────────────────────────────────── */
 function countUp(id, target) {
@@ -2181,9 +2234,20 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
   var ordered = mondayOrder ? CMU.viewOrder(v, rows) : rows;
   var groups = CMU.groupRows(v, ordered, (_data && _data.meta) || null);
   var tbody = document.getElementById('all-cases-body');
-  // a view tab has its own, wider column set (2026-11-12): the table says so (Case Ref and Client stay in view while it scrolls sideways)
-  var span = cmColIds(isAll ? null : v).length, tbl = document.getElementById('all-cases-table');
-  if (tbl) tbl.className = 'data-table' + (isAll ? '' : ' cm-wide');
+  // a view tab has its own, wider column set (2026-11-12): the table says so (Case Ref and Client stay in view while it scrolls sideways).
+  // The columns are the ones chosen for this tab (the Columns button); All is wide too once a view-tab column is added to it.
+  var colIds = cmColIds(isAll ? null : v), span = colIds.length, tbl = document.getElementById('all-cases-table');
+  var wide = !isAll || colIds.some(function(id) { return CM_TABCOLS[''].indexOf(id) < 0; });
+  if (tbl) {
+    tbl.className = 'data-table' + (wide ? ' cm-wide' : '') + (wide && isAll ? ' cm-wide-all' : '');
+    // the plain All table is no wider than its columns need once some are hidden (at its default: the style sheet's own width)
+    tbl.style.minWidth = wide ? '' : CMU.colMinWidth(span);
+    // paper: the wide table says how many columns it prints (All's delete column does not), and the print rules step the size down by it
+    var onPaper = span - (isAll ? 1 : 0), fit = wide ? CMU.colPrintFit(onPaper) : 0;
+    if (wide) tbl.setAttribute('data-ncols', String(onPaper)); else tbl.removeAttribute('data-ncols');
+    if (fit) tbl.setAttribute('data-pfit', String(fit)); else tbl.removeAttribute('data-pfit');
+  }
+  if (typeof CMCOLS !== 'undefined' && CMCOLS) CMCOLS.sync(isAll ? '' : v.key);   // the Columns button says how far this tab is from its default
   // a redraw must not take the focus off a heading someone is on (open / close with the keyboard, new data)
   var act = document.activeElement, back = act && act.getAttribute && act.className === 'cm-grp-b' ? act.getAttribute('data-gk') : null;
   tbody.innerHTML = '';
@@ -2200,7 +2264,7 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
     tr.innerHTML = '<td colspan="' + span + '"><span class="cm-none-t">' +
       (inView || isAll ? 'No cases match the current filters.' : 'No cases in the ' + escHtml(v.label) + ' view right now.') + '</span></td>';
     tbody.appendChild(tr);
-    cmScrollBox(isAll);
+    cmScrollBox(!wide);
     return { shown: 0, total: inView };
   }
   var today = cmToday(), deadlineTab = !!v.deadlineBox, rowView = isAll ? null : v;
@@ -2220,23 +2284,24 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
     tbody.appendChild(h);
     if (!open) return;
     g.rows.forEach(function(c, i) {
-      var r = caseRow(c, rowView, today);
+      var r = caseRow(c, rowView, today, wide);
       r.className = (r.className ? r.className + ' ' : '') + 'cm-in' + tone + (i === n - 1 ? ' cm-last' : '');
       tbody.appendChild(r);
     });
   });
   if (back !== null) { var nb = cmGrpButton(back); if (nb) { try { nb.focus({ preventScroll: true }); } catch (e) { nb.focus(); } } }
-  cmScrollBox(isAll);
+  cmScrollBox(!wide);
   return { shown: rows.length, total: inView };
 }
 
-/* The table's sideways scroll box as a keyboard stop (2026-11-12): on a view tab (the wide table) it is a named region that
-   Tab reaches and the arrow keys scroll; on All only while the table is wider than its box. Otherwise it is a plain box again. */
-function cmScrollBox(isAll) {
+/* The table's sideways scroll box as a keyboard stop (2026-11-12): with the wide table (a view tab; All with columns added) it is a
+   named region that Tab reaches and the arrow keys scroll; with the plain table (All) only while the table is wider than its box.
+   Otherwise it is a plain box again. plain = not the wide table. */
+function cmScrollBox(plain) {
   var tbl = document.getElementById('all-cases-table'), w = tbl && tbl.parentNode;
   if (!w || !w.classList || !w.classList.contains('tbl-wrap')) return;
-  w.classList.toggle('cm-scroll', !isAll);   // the room kept clear for the two pinned columns (view tabs only)
-  if (!isAll || w.scrollWidth > w.clientWidth + 1) {
+  w.classList.toggle('cm-scroll', !plain);   // the room kept clear for the two pinned columns (the wide table only)
+  if (!plain || w.scrollWidth > w.clientWidth + 1) {
     w.setAttribute('tabindex', '0');
     w.setAttribute('role', 'region');
     w.setAttribute('aria-label', 'Cases table, scrolls sideways');
@@ -2294,8 +2359,18 @@ function renderCmHead(v, rows, st, groups, inView) {
   el.innerHTML = h;
 }
 
-/* The columns of a tab, in order: v = the view tab, null on All. */
-function cmColIds(v) { return CM_TABCOLS[v ? v.key : ''] || CM_TABCOLS['']; }
+/* The columns of a tab, in order: v = the view tab, null on All. They are the ones the person chose for that tab
+   (the Columns button: CMCOLS, clientMasterColumnsUi.js); with no choice — and wherever CMCOLS is not on the page — the tab's own. */
+function cmColIds(v) {
+  var k = v && CM_TABCOLS[v.key] ? v.key : '';
+  return (typeof CMCOLS !== 'undefined' && CMCOLS) ? CMCOLS.ids(k) : CM_TABCOLS[k];
+}
+/* The shared list engine asks which columns to draw in the header (listSpecs casesListOpts pickCols): the same ids the rows are drawn from. */
+function cmPickCols(cols, tab, all) {
+  var by = {};
+  (all || []).forEach(function(c) { by[c.id] = c; });
+  return cmColIds(tab ? { key: tab } : null).map(function(id) { return by[id]; }).filter(Boolean);
+}
 /* A view-tab cell of plain text: "—" when blank; clip = long text is cut to two lines (the whole text is in the title). */
 function cmTextCell(cls, text, clip) {
   var t = String(text == null ? '' : text).trim();
@@ -2317,8 +2392,11 @@ function cmPortalCell(c) {
 
 /* One case row. v = the view tab (null on All): there an empty Case Stage and an empty Manager show "—",
    as Monday shows a blank, and the Deadlines tab shows the two flags with the Internal deadline.
-   All keeps the columns it has always had; a view tab draws the agreed list, one column each (cmColIds). */
-function caseRow(c, v, today) {
+   All keeps the columns it has always had; a view tab draws the agreed list, one column each (cmColIds).
+   A person may add the other set's columns to a tab (the Columns button), so every cell is made here by its column id.
+   wide = the table is the wide one (always on a view tab; on All once a column is added): Case Ref and Client are then the pinned cells. */
+function caseRow(c, v, today, wide) {
+  var pin = !!v || wide === true;
   var r = c.overallReadiness || 0;
   var barCls = r >= 70 ? '' : (r >= 40 ? ' mid' : ' low');
   var tr = document.createElement('tr');
@@ -2378,10 +2456,13 @@ function caseRow(c, v, today) {
   var del = '<td class="cm-del">' + (window.TDOT_IS_ADMIN && c.caseRef
       ? '<button class="del-btn" type="button" data-del-case="' + escHtml(c.caseRef) + '" title="Delete this case (careful — removes its Monday rows; the consultation record and the OneDrive folder are kept)">' + TDOT_DEL_SVG + '</button>'
       : '') + '</td>';
-  var cells = v ? {
-    // ── a view tab: Case Ref and Client stay in view while the table scrolls sideways (cm-pin) ──
-    caseRef: '<td class="cm-pin cm-pin1"' + (c.caseRef ? ' title="' + escHtml(c.caseRef) + '"' : '') + '>' + refCell + '</td>',
-    clientName: '<td class="cm-pin cm-pin2" title="' + escHtml(c.clientName) + '"><span class="cm-ell">' + escHtml(c.clientName) + '</span></td>',
+  var cells = {
+    // ── the wide table: Case Ref and Client stay in view while it scrolls sideways (cm-pin); the plain All table: as it has always been ──
+    caseRef: pin ? '<td class="cm-pin cm-pin1"' + (c.caseRef ? ' title="' + escHtml(c.caseRef) + '"' : '') + '>' + refCell + '</td>'
+      : '<td style="font-weight:600;color:var(--navy);white-space:nowrap">' + refCell + '</td>',
+    clientName: pin ? '<td class="cm-pin cm-pin2" title="' + escHtml(c.clientName) + '"><span class="cm-ell">' + escHtml(c.clientName) + '</span></td>'
+      : '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(c.clientName) + '</td>',
+    // ── the view tabs' columns ──
     dependents: cmTextCell('cm-c-dep', c.dependents, true),
     clientEmail: cmTextCell('cm-c-email', c.clientEmail, true),
     clientPhone: cmTextCell('cm-c-phone', c.clientPhone, false),
@@ -2401,11 +2482,8 @@ function caseRow(c, v, today) {
     officerV: '<td class="cm-off">' + off + '</td>',
     managerV: '<td class="cm-c-mgr">' + mgr + '</td>',
     qPct: cmPctCell('cm-c-q', c.qReadinessPct),
-    docPct: cmPctCell('cm-c-doc', c.docUploadedPct)
-  } : {
-    // ── the All tab: as it has always been ──
-    caseRef: '<td style="font-weight:600;color:var(--navy);white-space:nowrap">' + refCell + '</td>',
-    clientName: '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(c.clientName) + '</td>',
+    docPct: cmPctCell('cm-c-doc', c.docUploadedPct),
+    // ── the All tab's columns: as they have always been ──
     caseType: '<td style="color:var(--muted);font-size:11px">' + shortType(c.caseType) + '</td>',
     caseStage: '<td style="font-size:11px">' + stage + '</td>',
     phase: '<td style="font-size:11px;white-space:nowrap">' + (c.phase ? escHtml(c.phase) : cmNoneDash()) + '</td>',

@@ -302,6 +302,8 @@ function casesListOpts(ctx) {
     ids: { head: 'cs-headrow', chips: 'cs-chips', count: 'table-count', search: 'search-box', pop: 'cs-pop' },
     render: 'renderCasesList', api: 'CasesTable',
     initial: ctx.initial, onChange: ctx.onChange,
+    /* The columns a person chose for the tab on view (team meeting 2026-11-10, item 13): the page answers them (cmPickCols). */
+    pickCols: 'cmPickCols',
     /* The view tabs (block 3): All first (every case, newest first), then one per Monday view. No default: a new browser
        tab opens on All; the tab shown is kept until the browser tab is closed. A link's ?view= opens that tab. */
     quick: { facet: 'view', box: 'cs-quick', tabs: true, allLast: false, all: 'All', storeKey: 'tdot_list_cases_tab',
