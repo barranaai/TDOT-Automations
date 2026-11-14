@@ -29,6 +29,16 @@ const io = {
       throw err;
     }
   },
+  /** One file's text (Graph /content follows a redirect to the download). Capped; a 401 gets one retry. */
+  async getText(url) {
+    const axios = require('axios');
+    const mail = require('./microsoftMailService');
+    const once = async () => String((await axios.get(url, { headers: { Authorization: `Bearer ${await mail.getAccessToken()}` }, timeout: 30000, responseType: 'text', transformResponse: [(d) => d], maxContentLength: 3 * 1024 * 1024 })).data || '');
+    try { return await once(); } catch (err) {
+      if (err.response && err.response.status === 401) { try { mail.invalidateAccessToken(); } catch (_) { /* best-effort */ } return once(); }
+      throw err;
+    }
+  },
 };
 
 const ext = (name) => { const m = /\.([a-z0-9]{1,6})$/i.exec(String(name || '')); return m ? m[1].toLowerCase() : ''; };
@@ -114,4 +124,44 @@ async function recent({ days = 2, now = Date.now() } = {}) {
   return out;
 }
 
-module.exports = { look, recent, driveUser, io };
+/**
+ * The Zap's files in "Otter Recordings" (Faran 2026-11-12) — a READ-ONLY check before the reader is
+ * built: opens the newest few and says, per file, which of the 16 labelled parts are there and filled
+ * (lengths and counts only). It never returns a title, a name, an email, a link or any transcript text,
+ * never writes, and logs nothing.
+ */
+const RECORDINGS_FOLDER = () => String(process.env.OTTER_RECORDINGS_FOLDER || 'Otter Recordings').trim();
+async function checkRecordings({ max = 5 } = {}) {
+  const R = require('./otterRecordingFile');
+  const user = driveUser(), folder = RECORDINGS_FOLDER();
+  const base = `${GRAPH}/users/${encodeURIComponent(user)}/drive`;
+  const out = { ok: true, drive: user, folder: `/${folder}`, filesInFolder: 0, checked: [], problems: [] };
+  let items = [];
+  try {
+    const d = await io.get(`${base}/root:/${encodeURIComponent(folder)}:/children?$top=200&$select=id,name,size,file,folder,createdDateTime`);
+    items = (d.value || []).filter((f) => !f.folder);
+  } catch (err) { out.ok = false; out.problems.push(`the folder could not be read (${why(err)})`); return out; }
+  out.filesInFolder = items.length;
+  out.zapNamed = items.filter((f) => R.nameParts(f.name)).length;
+  const newest = items.slice().sort((a, b) => String(b.createdDateTime).localeCompare(String(a.createdDateTime))).slice(0, Math.min(10, Math.max(1, max)));
+  for (const f of newest) {
+    const row = { created: f.createdDateTime || '', sizeKb: Math.round((f.size || 0) / 1024), nameOk: !!R.nameParts(f.name) };
+    try {
+      const text = await io.getText(`${base}/items/${encodeURIComponent(f.id)}/content`);
+      const p = R.parse(text), np = R.nameParts(f.name);
+      row.characters = text.length;
+      row.missingLabels = p.missing;
+      row.filled = {};
+      for (const [k] of R.FIELDS) row.filled[k] = p.fields[k].length;
+      row.guestEmailCount = R.emailsOf(p.fields.guestEmails).length;
+      row.ownerEmailOk = R.emailsOf(p.fields.ownerEmail).length === 1;
+      const ms = R.startMs(p.fields.startTime);
+      row.startTime = ms ? new Date(ms).toISOString().slice(0, 16) : 'not readable';
+      row.nameMatchesContent = !!np && np.otterId === p.fields.otterId && np.start === p.fields.startTime;
+    } catch (err) { row.problem = why(err); }
+    out.checked.push(row);
+  }
+  return out;
+}
+
+module.exports = { look, recent, checkRecordings, driveUser, io };

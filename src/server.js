@@ -886,6 +886,16 @@ app.get('/admin/otter/files', async (req, res) => {
   res.json(req.query.deep ? await svc.recent({ days: Math.min(14, Math.max(1, parseInt(req.query.days, 10) || 2)) }) : await svc.look());
 });
 
+// ─── Otter recordings from the Zap: READ-ONLY check (Faran 2026-11-14) ──────────
+// Opens the newest files in the "Otter Recordings" folder and answers, per file, which of the
+// labelled parts are filled — lengths and counts only, never a name, an email or any text.
+app.get('/admin/otter/recordings-check', async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  if (!resolveAdminOrReject(req, res, 'Only an admin can check the Otter recordings.')) return;
+  try { res.json(await require('./services/otterFilesService').checkRecordings({ max: parseInt(req.query.max, 10) || 5 })); }
+  catch (err) { res.status(500).json({ error: 'The Otter recordings check could not run.' }); }
+});
+
 // ─── Otter API key: READ-ONLY check (Faran 2026-11-12) ─────────────────────────
 // Asks Otter a few GET questions with the key in the environment and answers only the
 // status and the SHAPE of each reply (field names, types, counts) — never meeting content,
